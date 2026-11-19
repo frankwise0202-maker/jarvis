@@ -1580,6 +1580,8 @@ export async function startApp(rootEl) {
     }
     if (saved && saved.id && Date.now() - (Number(saved.at) || 0) < RESTORE_WINDOW_MS) {
       const conv = await store.get(saved.id).catch(() => null);
+      // A slow start: the owner may already have opened or started a chat while this loaded.
+      if (state.conv || state.runs.size) return;
       if (conv && conv.turns && conv.turns.length) {
         setConversation(conv);
         return;

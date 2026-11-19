@@ -131,9 +131,35 @@ export function createOnboarding(o) {
     return h('li', { class: 'ob-feature' }, h('span', { class: 'ob-feature-icon' }, icon(iconName, { size: 18 })), h('div', null, h('strong', { text: title }), h('span', { text })));
   }
 
+  /** iPhone/iPad in a browser tab: install first, set up in the installed app (UX-2). */
+  function installFirstNote() {
+    if (!installFirst) return null;
+    const device = appleDevice();
+    return h(
+      'div',
+      { class: 'ob-note', attrs: { role: 'note', 'data-testid': 'onboarding-install-first' } },
+      h('span', { class: 'ob-note-icon' }, icon('phone', { size: 18 })),
+      h(
+        'div',
+        { class: 'ob-note-body' },
+        h('strong', { text: 'Set me up from your Home Screen' }),
+        h('span', { text: `On ${device}, add Jarvis to your Home Screen first and set it up there — a key entered here won’t carry over.` }),
+        o.openInstallGuide
+          ? h(
+              'button',
+              { class: 'btn btn-sm ob-note-btn', type: 'button', attrs: { 'data-testid': 'onboarding-how-install' }, on: { click: () => o.openInstallGuide() } },
+              icon('download', { size: 16 }),
+              h('span', { text: 'How to install' }),
+            )
+          : null,
+      ),
+    );
+  }
+
   function welcomeStep() {
     const content = [
       ...heading('Systems online', 'Hello. I’m Jarvis.', 'Your personal AI assistant — on your phone and your computer.'),
+      installFirstNote(),
       h(
         'ul',
         { class: 'ob-features' },
@@ -330,6 +356,7 @@ export function createOnboarding(o) {
     );
     const content = [
       ...heading('Connect', 'Connect to Claude', 'Paste your Anthropic API key. I’ll test it before saving.'),
+      installFirstNote(),
       h('div', { class: 'ob-field' }, h('div', { class: 'input-group' }, input, eye), error, success),
       h('p', { class: 'ob-privacy' }, icon('lock', { size: 15 }), h('span', { text: 'Your key stays on this device. Jarvis sends it only to api.anthropic.com — never anywhere else.' })),
       h('p', { class: 'label-caps ob-steps-title', text: 'No key yet?' }),
@@ -349,8 +376,15 @@ export function createOnboarding(o) {
     const content = [
       ...heading('Ready', `All systems ready, ${name}.`, keySaved ? (keyWarning ? 'One thing to sort out first — see the note in Settings → API key.' : 'Your key is connected and stored on this device.') : 'Add your API key any time in Settings → API key.'),
       h('ul', { class: 'ob-features' }, tips),
-      o.openInstallGuide
-        ? h('button', { class: 'ob-install', type: 'button', attrs: { 'data-testid': 'onboarding-install' }, on: { click: () => o.openInstallGuide() } }, icon('phone', { size: 18 }), h('span', { text: 'Install Jarvis on your phone or computer' }), icon('chevron-right', { size: 16 }))
+      // Already running as the installed app: never offer to install it again.
+      o.openInstallGuide && !standalone
+        ? h(
+            'button',
+            { class: 'ob-install', type: 'button', attrs: { 'data-testid': 'onboarding-install' }, on: { click: () => o.openInstallGuide() } },
+            icon('phone', { size: 18 }),
+            h('span', { text: installFirst ? `Add Jarvis to your ${appleDevice()}’s Home Screen` : 'Install Jarvis on your phone or computer' }),
+            icon('chevron-right', { size: 16 }),
+          )
         : null,
     ];
     const buttons = [
