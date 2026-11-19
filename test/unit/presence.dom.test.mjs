@@ -314,3 +314,49 @@ test('presence controller: state word, situation, Needs-you ledger, core feeds a
   assert.deepEqual(r.stored, { unread: 0, seen: ['c1'] });
   assert.deepEqual(p.problems, []);
 });
+
+test('HUD frames: each frame draws its own arm, color and weight; full-screen modes get the screen-window brackets only on wide screens', async () => {
+  const measure = () => {
+    const first = (el, pseudo) => getComputedStyle(el, pseudo).backgroundSize.split(',')[0].trim();
+    const color = (el, pseudo) => (getComputedStyle(el, pseudo).backgroundImage.match(/rgba?\([^)]*\)/) || [''])[0];
+    const mk = (cls) => {
+      const el = document.createElement('div');
+      el.className = cls;
+      el.style.cssText = 'width:200px;height:80px';
+      document.body.append(el);
+      return el;
+    };
+    const plain = mk('hud-frame');
+    const needs = mk('needs-card hud-frame');
+    const rail = mk('rail-live hud-frame');
+    const viewport = mk('hud-viewport');
+    const vm = mk('vm');
+    const hv = mk('hv');
+    return {
+      plain: first(plain, '::before'),
+      needs: first(needs, '::before'),
+      rail: first(rail, '::before'),
+      viewport: first(viewport, '::before'),
+      viewportColor: color(viewport, '::before'),
+      vm: { content: getComputedStyle(vm, '::after').content, size: first(vm, '::after'), events: getComputedStyle(vm, '::after').pointerEvents },
+      hv: { content: getComputedStyle(hv, '::after').content, size: first(hv, '::after'), z: getComputedStyle(hv, '::after').zIndex },
+    };
+  };
+  const wide = await page({ contextOptions: { viewport: { width: 1440, height: 900 } } });
+  const w = await wide.evaluate(measure);
+  // Before the fix every frame drew the :root defaults (12px arms in --line-3).
+  assert.equal(w.plain, '12px 1px', 'the default bracket');
+  assert.equal(w.needs, '9px 1px', 'a Needs-you card draws its own 9px arms');
+  assert.equal(w.rail, '14px 1px', 'the rail\'s live slot draws 14px arms');
+  assert.equal(w.viewport, '28px 1px', 'the shared viewport draws 28px arms');
+  assert.equal(w.viewportColor, 'rgba(138, 243, 255, 0.7)', 'in its own color');
+  assert.deepEqual(w.vm, { content: '""', size: '34px 2px', events: 'none' }, 'Voice Mode: the screen-window brackets, never in the way of a tap');
+  assert.deepEqual(w.hv, { content: '""', size: '34px 2px', z: '4' }, 'the hologram viewer: above its top bar and deck, under its cards');
+  const phone = await page({ contextOptions: { viewport: { width: 390, height: 844 } } });
+  const n = await phone.evaluate(measure);
+  assert.equal(n.needs, '9px 1px');
+  assert.equal(n.vm.content, 'none', 'phones skip the full-screen brackets (rounded display corners)');
+  assert.equal(n.hv.content, 'none');
+  assert.deepEqual(wide.problems, []);
+  assert.deepEqual(phone.problems, []);
+});
