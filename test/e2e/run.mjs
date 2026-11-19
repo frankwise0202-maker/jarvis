@@ -31,6 +31,7 @@ import interaction from './scenarios/interaction.mjs';
 import regressions from './scenarios/regressions.mjs';
 import holograms from './scenarios/holograms.mjs';
 import voiceSpeech from './scenarios/voice-speech.mjs';
+import optics from './scenarios/optics.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -40,7 +41,7 @@ async function optionalScenarios(rel) {
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech, ...optics];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };
@@ -117,6 +118,15 @@ async function main() {
 
   let playwright;
   let browser;
+  // Scenarios may need their own Chromium flags (Optics: a fake camera playing a test scene).
+  const browsers = new Map();
+  const browserFor = async (scenario) => {
+    const args = typeof scenario.browserArgs === 'function' ? await scenario.browserArgs() : scenario.browserArgs || [];
+    if (!args.length) return browser;
+    const key = args.join(' ');
+    if (!browsers.has(key)) browsers.set(key, await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0, args }));
+    return browsers.get(key);
+  };
   try {
     playwright = await loadPlaywright();
     browser = await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0 });
@@ -135,7 +145,7 @@ async function main() {
   const startedAll = Date.now();
   for (const scenario of selected) {
     server.mock.reset();
-    const t = new TestContext({ scenario, browser, playwright, server, artifactsDir: ARTIFACTS, devices: deviceMap });
+    const t = new TestContext({ scenario, browser: await browserFor(scenario), playwright, server, artifactsDir: ARTIFACTS, devices: deviceMap });
     const started = Date.now();
     let error = null;
     const run = Promise.resolve().then(() => scenario.run(t));
@@ -161,6 +171,7 @@ async function main() {
   }
 
   await browser.close().catch(() => {});
+  for (const b of browsers.values()) await b.close().catch(() => {});
   await server.close();
 
   // Summary table.

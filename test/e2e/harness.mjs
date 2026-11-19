@@ -186,11 +186,12 @@ export class TestContext {
    * seed: 'default' (mock key, onboarded, userName Tony), 'fresh' (only the dev API base),
    * 'empty' (nothing at all), or an object { apiKey, settings, apiBase }.
    */
-  async newPage({ device = this.scenario.device || 'iphone13', seed = this.scenario.seed || 'default', settings = this.scenario.settings || {}, serverUrl = this.url } = {}) {
+  async newPage({ device = this.scenario.device || 'iphone13', seed = this.scenario.seed || 'default', settings = this.scenario.settings || {}, serverUrl = this.url, scale = this.scenario.scale } = {}) {
     const d = this.devices[device];
     if (!d) throw new E2EError(`Unknown device "${device}"`);
     const context = await this.browser.newContext({
       ...d.options,
+      ...(scale ? { deviceScaleFactor: scale } : {}), // sharper screenshots for a deliverable (Optics)
       serviceWorkers: 'allow',
       locale: 'en-US',
       timezoneId: 'America/New_York',

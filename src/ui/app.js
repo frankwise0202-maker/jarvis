@@ -46,6 +46,11 @@ import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
 import * as tts from '../platform/voice/tts.js';
 import { markdownToPlainText } from '../lib/markdown.js';
+import { isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
+import { runWatchLook } from '../engine/watch.js';
+import { estimateLookCost } from '../lib/optics.js';
+import { cameraSupported, screenLookSupported } from '../platform/camera.js';
+import { base64ByteLength } from './attachments.js';
 
 const { sttSupported, startListening } = stt;
 const { ttsSupported, unlockSpeech, speak, stopSpeaking, toSpeech } = tts;
@@ -193,6 +198,8 @@ export async function startApp(rootEl) {
       getApiBase: getDevApiBase,
       memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
       library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
+      // Optics: the live camera while the Optics screen is open (look_through_camera, lead tools V5).
+      camera: opticsCameraBridge,
       // A busy or old device can take seconds to write a big spec to IndexedDB: wait longer than the
       // engine's default before going on without saving (an unsaved hologram can't get blueprints).
       libraryTimeoutMs: 12000,
@@ -272,6 +279,8 @@ export async function startApp(rootEl) {
     sounds,
     getGreeting: () => greeting(),
     ttsSupported: ttsOk,
+    // Optics: a Look's frame card (and a pins row) reopens the frozen frame with its labels.
+    onOpenOptics: (turn, seg) => reviewOptics(turn, seg),
   });
 
   const composer = createComposer({
@@ -279,6 +288,8 @@ export async function startApp(rootEl) {
     micSupported: sttOk,
     getSettings: () => getSettings(),
     onSend: (text, mode, extras) => send(text, mode, extras),
+    // The camera key opens Optics (live camera); false = no camera API here, use the system camera.
+    onCamera: () => (state.demo || !safe(() => cameraSupported(), false) ? false : openOpticsScreen()),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -602,6 +613,7 @@ export async function startApp(rootEl) {
     if (extras && extras.keepOnStop === true) input.keepOnStop = true; // Voice Mode: never withdrawn on Stop
     if (extras && extras.spoken === true) input.spoken = true; // Voice Mode: the reply is written for the ear
     if (extras && extras.blueprintFor) input.blueprintFor = extras.blueprintFor; // a 2D request from the hologram viewer
+    if (extras && extras.optics) input.optics = extras.optics; // a Look: the one image is an Optics frame
     clearFollowups();
     let run;
     try {
@@ -794,6 +806,165 @@ export async function startApp(rootEl) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
     }
+  }
+
+  // ---- Optics (the camera) ----------------------------------------------------------------------
+  // A Look is a normal turn of the current conversation (quick mode) whose one image is the frame;
+  // follow-up questions reuse it. Watch frames are one-off requests outside any conversation.
+
+  /** Dev and test overrides for Watch timing ('jarvis.dev.optics' JSON), clamped to safe ranges. */
+  function devOpticsOptions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.optics') || 'null');
+      if (!raw || typeof raw !== 'object') return {};
+      const out = {};
+      const num = (k, lo, hi) => {
+        const v = Number(raw[k]);
+        if (Number.isFinite(v)) out[k] = Math.min(hi, Math.max(lo, v));
+      };
+      num('minIntervalMs', 1000, 600000);
+      num('sessionMs', 5000, 5 * 60 * 1000);
+      num('sampleMs', 100, 5000);
+      num('settleMs', 0, 10000);
+      num('maxLooksPerDay', 1, 60);
+      if (typeof raw.model === 'string' && MODELS[raw.model]) out.model = raw.model;
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
+  function opticsProblem() {
+    if (!state.demo && !safe(getApiKey, '')) return 'Add your Anthropic API key first: close Optics, then open Settings → API key.';
+    if (!state.online) return 'You’re offline. Reconnect and try again.';
+    if (currentRunning()) return 'Jarvis is still answering. Try again in a moment.';
+    if (state.conv && runningElsewhere(state.conv.id)) return 'Jarvis is busy with this conversation in another window.';
+    return '';
+  }
+
+  function lookFromOptics({ text, frame }) {
+    const problem = opticsProblem();
+    if (problem) return { error: problem };
+    const at = frame.capturedAt || Date.now();
+    const clock = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const attachment = {
+      id: `optics_${at.toString(36)}`,
+      kind: 'image',
+      name: `Optics ${clock}`,
+      mediaType: 'image/jpeg',
+      size: base64ByteLength(frame.data),
+      data: frame.data,
+      thumb: frame.preview || null,
+      width: frame.width,
+      height: frame.height,
+    };
+    if (!send(text, 'quick', { attachments: [attachment], optics: { source: frame.source, capturedAt: at } })) return { error: 'That look couldn’t be sent.' };
+    const entry = state.conv && state.runs.get(state.conv.id);
+    if (!entry) return { error: 'That look couldn’t be sent.' };
+    const user = state.conv.turns[state.conv.turns.length - 2];
+    return { run: entry.run, frameId: user && user.optics ? user.optics.frameId : null };
+  }
+
+  function askFromOptics({ text }) {
+    const problem = opticsProblem();
+    if (problem) return { error: problem };
+    if (!send(text, 'quick')) return { error: 'That question couldn’t be sent.' };
+    const entry = state.conv && state.runs.get(state.conv.id);
+    return entry ? { run: entry.run } : { error: 'That question couldn’t be sent.' };
+  }
+
+  function watchFromOptics(frame, { goal, previous, signal, model } = {}) {
+    if (!state.online) return Promise.resolve({ ok: false, error: 'offline' });
+    return runWatchLook({
+      apiKey: safe(getApiKey, ''),
+      apiBase: safe(getDevApiBase, ''),
+      model: model || getSettings().leadModel,
+      frame,
+      goal,
+      previous,
+      signal,
+      onSpend: (usd) => safe(() => addSpend(usd)),
+    });
+  }
+
+  /** About what the next Look costs: the conversation's prompt is cached for 5 minutes after use. */
+  function lookEstimate() {
+    const conv = state.conv;
+    const warm = !!(conv && conv.apiMessages && conv.apiMessages.length && Date.now() - (conv.updatedAt || 0) < 4.5 * 60 * 1000);
+    return estimateLookCost({ model: getSettings().leadModel, prefixCached: warm }).usd;
+  }
+
+  function opticsDeps(extra = {}) {
+    return {
+      getSettings,
+      lookEstimate,
+      look: lookFromOptics,
+      ask: askFromOptics,
+      watchLook: watchFromOptics,
+      stt,
+      sttSupported: sttOk,
+      sounds,
+      wakeLock: { keepAwake: () => keepAwake('optics'), allowSleep: () => allowSleep('optics') },
+      // The system camera (a photo attachment) when the live camera is blocked or missing.
+      fallbackPhoto: state.layout === 'phone' ? () => composer.openCamera() : null,
+      watchOptions: devOpticsOptions(),
+      onClose: ({ cameraOff } = {}) => {
+        if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
+        if (!chat.isEmpty()) chat.scrollToBottom(false);
+        updateAll();
+      },
+      ...extra,
+    };
+  }
+
+  /** Opens Optics (call from a tap: iOS asks for the camera only inside a user gesture). */
+  function openOpticsScreen({ start } = {}) {
+    if (isOpticsOpen()) return true;
+    stopSpeakingNow();
+    if (state.listening) safe(() => state.listening.stop());
+    try {
+      openOptics(opticsDeps(start === 'screen' ? { start } : {}));
+      return true;
+    } catch (err) {
+      console.error('[jarvis] optics failed:', err);
+      toast('The camera couldn’t start in this browser.', { level: 'warn' });
+      return false;
+    }
+  }
+
+  /** Reopens a past Look (from the chat) frozen, with the labels pinned on it. */
+  function reviewOptics(turn, seg) {
+    const conv = state.conv;
+    if (!conv || isOpticsOpen()) return;
+    const turns = conv.turns || [];
+    const frameId = seg && seg.frameId ? seg.frameId : turn && turn.optics ? turn.optics.frameId : null;
+    const userTurn = turns.find((t) => t && t.role === 'user' && t.optics && t.optics.frameId === frameId) || (turn && turn.role === 'user' ? turn : null);
+    if (!userTurn || !userTurn.optics) return;
+    const meta = (userTurn.attachments || [])[0] || {};
+    const idx = turns.indexOf(userTurn);
+    // The labels: the given segment, else the newest pins on this frame in the turns that follow.
+    let pins = seg && Array.isArray(seg.labels) ? seg.labels : null;
+    let answerText = '';
+    for (let i = idx + 1; i < turns.length; i++) {
+      const t = turns[i];
+      if (!t || t.role !== 'jarvis') continue;
+      for (const s of t.segments || []) {
+        if (s && s.kind === 'pins' && s.status === 'done' && s.frameId === frameId && !seg) pins = s.labels;
+        if (i === idx + 1 && s && s.kind === 'text') answerText += `${answerText ? '\n\n' : ''}${s.text || ''}`;
+      }
+    }
+    openOptics(opticsDeps({
+      review: {
+        preview: meta.thumb,
+        width: userTurn.optics.width,
+        height: userTurn.optics.height,
+        source: userTurn.optics.source,
+        frameId,
+        question: userTurn.text || 'What am I looking at?',
+        answer: answerText,
+        pins: pins || [],
+      },
+    }));
   }
 
   // ---- holograms, blueprints and the saved library ------------------------------------------
@@ -2097,6 +2268,12 @@ export async function startApp(rootEl) {
       composer.focus();
       return;
     }
+    // Optics on a computer: Ctrl/⌘ Shift L (Look). Presence-ui's Look and Screen quick keys call the same.
+    if (mod && e.shiftKey && !e.altKey && (e.key === 'l' || e.key === 'L') && !isOverlayOpen() && !isVoiceModeOpen() && !anySheetOpen()) {
+      e.preventDefault();
+      openOpticsScreen();
+      return;
+    }
     if (e.key === '/' && !mod && !e.altKey && !anySheetOpen() && !isVoiceModeOpen() && !isOverlayOpen()) {
       const t = e.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
@@ -2242,6 +2419,8 @@ export async function startApp(rootEl) {
   state.bootDone = true;
   root.dataset.ready = 'true';
   root.setAttribute('aria-busy', 'false');
+  // ?optics=1 opens Optics at start (a bookmark on the Mac; tests). Phones open it from a tap.
+  if (!state.demo && params.get('optics') === '1' && safe(() => cameraSupported(), false)) setTimeout(() => openOpticsScreen(), 0);
 
   async function restoreLast() {
     let saved = null;
@@ -2290,5 +2469,8 @@ export async function startApp(rootEl) {
     openHologram: (turn, seg) => openVisualSegment(turn, seg),
     getHologramViewer,
     getBlueprintViewer,
+    // Optics: presence-ui's Look quick key and Voice Mode's Look call this (from a tap).
+    openOptics: (opts) => openOpticsScreen(opts), // { start: 'screen' } for the desktop Screen key
+    screenLookSupported: () => safe(() => screenLookSupported(), false),
   };
 }

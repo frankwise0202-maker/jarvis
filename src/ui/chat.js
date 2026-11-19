@@ -12,6 +12,7 @@ import { createCore } from './hud/core.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { createProtocolGrid, createProtocolBubble } from './protocols.js';
 import { createAttachmentStrip } from './attachments.js';
+import { createFrameSegmentView, createOpticsTurnCard, createPinsSegmentView } from './optics/chat-views.js';
 import { loadHologramRenderer } from './hologram/viewer.js';
 import { loadBlueprintModule } from './blueprint/open.js';
 import { MODELS } from '../engine/index.js';
@@ -531,7 +532,7 @@ export function createChat(o) {
 
   function createTurnView(turn) {
     try {
-      return turn.role === 'user' ? createUserTurnView(turn) : createJarvisTurnView(turn, ctx);
+      return turn.role === 'user' ? createUserTurnView(turn, o) : createJarvisTurnView(turn, ctx);
     } catch (err) {
       console.error('[jarvis] turn view failed:', err);
       return createBrokenTurnView(turn);
@@ -750,11 +751,20 @@ function createBrokenTurnView(turn) {
   return { el, kind: user ? 'user' : 'jarvis' };
 }
 
-function createUserTurnView(turn) {
-  const tag = turn.mode === 'swarm' || turn.mode === 'quick' ? h('span', { class: ['turn-mode', `turn-mode--${turn.mode}`], text: turn.mode === 'swarm' ? 'Swarm' : 'Quick' }) : null;
+function createUserTurnView(turn, o = {}) {
+  // An Optics Look shows its frame card instead of the mode tag and the attachment strip.
+  const optics = isObj(turn.optics) && Array.isArray(turn.attachments) && turn.attachments.length;
+  const tag = !optics && (turn.mode === 'swarm' || turn.mode === 'quick') ? h('span', { class: ['turn-mode', `turn-mode--${turn.mode}`], text: turn.mode === 'swarm' ? 'Swarm' : 'Quick' }) : null;
   // Photos and PDFs sent with the message (SPEC §15.1: metadata and thumbnails only).
   let strip = null;
-  if (Array.isArray(turn.attachments) && turn.attachments.length) {
+  if (optics) {
+    try {
+      strip = h('div', { class: 'turn-attachments' }, createOpticsTurnCard(turn, { onOpen: (t) => typeof o.onOpenOptics === 'function' && o.onOpenOptics(t, null) }));
+    } catch (err) {
+      console.error('[jarvis] optics card failed:', err);
+      strip = null;
+    }
+  } else if (Array.isArray(turn.attachments) && turn.attachments.length) {
     try {
       strip = h('div', { class: 'turn-attachments' }, createAttachmentStrip(turn.attachments, { size: 'md' }));
     } catch (err) {
@@ -892,6 +902,8 @@ function createJarvisTurnView(turn, ctx) {
       },
       canOpenVisual: () => typeof o.onOpenHologram === 'function',
       thumbs: o.thumbs || null,
+      // Optics: reopen the frozen frame with this turn's pinned labels.
+      openOptics: typeof o.onOpenOptics === 'function' ? (seg) => o.onOpenOptics(turn, seg) : null,
     };
   }
 
@@ -1098,6 +1110,10 @@ function createSegmentView(seg, sctx) {
     case 'hologram':
     case 'blueprint':
       return createVisualCardView(seg.kind, sctx);
+    case 'pins':
+      return createPinsSegmentView(sctx);
+    case 'frame':
+      return createFrameSegmentView(sctx);
     default:
       return { kind: seg.kind, el: h('div', { class: 'seg seg-unknown', hidden: true }), update() {} };
   }

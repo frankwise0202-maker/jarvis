@@ -54,6 +54,7 @@ import { DEPTHS, MODES } from '../engine/models.js';
 import { isKnownLeadSetup } from '../engine/prompts.js';
 import { normalizeHologramSpec } from '../lib/hologram-spec.js';
 import { normalizeBlueprintSpec, summarizeBlueprint } from '../lib/blueprint-spec.js';
+import { cleanFrame, cleanLabelText, OPTICS_LIMITS } from '../lib/optics.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -391,10 +392,49 @@ function segment(s, settled) {
     case 'blueprint':
       Object.assign(seg, visualSegment(s));
       break;
+    case 'pins':
+    case 'frame':
+      Object.assign(seg, opticsSegment(s));
+      break;
     default:
       break;
   }
   return seg;
+}
+
+/**
+ * Optics segments rebuilt from known fields: pins (labels re-checked: text ≤ 24 characters,
+ * integer pixels inside the frame size range) and a frame Jarvis took (id, size, source, a safe
+ * thumbnail). Nothing imported is still pinning.
+ */
+function opticsSegment(s) {
+  const frameId = typeof s.frameId === 'string' && /^f[1-9]\d{0,3}$/.test(s.frameId) ? s.frameId : null;
+  const toolUseId = typeof s.toolUseId === 'string' ? s.toolUseId : '';
+  if (s.kind === 'frame') {
+    const f = cleanFrame({ id: frameId, width: s.width, height: s.height, source: s.source });
+    const thumb = typeof s.thumb === 'string' && s.thumb.length <= MAX_THUMB_CHARS && SAFE_THUMB.test(s.thumb) ? s.thumb : null;
+    return f ? { toolUseId, frameId: f.id, width: f.width, height: f.height, source: f.source, reason: line(s.reason, 120), thumb } : { toolUseId, frameId: null };
+  }
+  const labels = (Array.isArray(s.labels) ? s.labels : [])
+    .filter((l) => isPlainObject(l) && Number.isInteger(l.x) && Number.isInteger(l.y) && l.x >= 0 && l.y >= 0 && l.x < 4096 && l.y < 4096)
+    .map((l) => ({ text: cleanLabelText(l.text), x: l.x, y: l.y }))
+    .filter((l) => l.text)
+    .slice(0, OPTICS_LIMITS.maxLabels);
+  const done = s.status === 'done' && !!frameId && labels.length > 0;
+  return {
+    toolUseId,
+    status: done ? 'done' : 'error',
+    frameId,
+    labels: done ? labels : [],
+    warnings: (Array.isArray(s.warnings) ? s.warnings : []).filter((w) => typeof w === 'string').slice(0, 10).map((w) => line(w, 300)),
+  };
+}
+
+/** A user turn's Optics frame record ({ frameId, width, height, source, capturedAt }), or null. */
+function opticsOfTurn(o) {
+  if (!isPlainObject(o)) return null;
+  const f = cleanFrame({ id: o.frameId, width: o.width, height: o.height, source: o.source });
+  return f ? { frameId: f.id, width: f.width, height: f.height, source: f.source, capturedAt: time(o.capturedAt) } : null;
 }
 
 const LIB_ID = /^lib_[a-z0-9]{6,16}$/;
@@ -499,6 +539,8 @@ function turnOf(t, fallbackTime) {
     if (typeof t.text !== 'string') return null;
     const turn = { id: t.id, role: 'user', text: t.text, mode: own(MODES, t.mode) ? t.mode : 'auto', createdAt: time(t.createdAt) ?? fallbackTime };
     if (Array.isArray(t.attachments)) turn.attachments = t.attachments.map(attachment).filter(Boolean);
+    const optics = opticsOfTurn(t.optics);
+    if (optics && turn.attachments && turn.attachments.length === 1) turn.optics = optics; // a Look keeps its frame id
     return turn;
   }
   if (t.role !== 'jarvis' || !TURN_STATUSES.includes(t.status) || !Array.isArray(t.segments)) return null;

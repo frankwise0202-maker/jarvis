@@ -6,7 +6,8 @@ import { createEmitter } from './emitter.js';
 import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
-import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest } from './prompts.js';
+import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest, withTurnContextBlocks } from './prompts.js';
+import { OPTICS_DEFAULT_TEXT, isPinsSegment, opticsContextLines, prepareOpticsFrame } from './optics.js';
 import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
 import { WORKER_MAX_TOKENS } from './worker.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
@@ -171,6 +172,8 @@ export function createJarvis(deps = {}) {
     memory: deps.memory && typeof deps.memory === 'object' ? deps.memory : null,
     // The saved library (holograms and blueprints): { save, get, list, findPartBlueprint }, see visuals.js.
     library: deps.library && typeof deps.library === 'object' ? deps.library : null,
+    // The live camera (Optics): { isLive(), source(), grab({ reason }) }, see optics.js.
+    camera: deps.camera && typeof deps.camera === 'object' ? deps.camera : null,
     libraryTimeoutMs: Number.isFinite(deps.libraryTimeoutMs) && deps.libraryTimeoutMs > 0 ? deps.libraryTimeoutMs : LIBRARY_TIMEOUT_MS,
     // How often a live hologram / blueprint segment is updated while its input streams (tests).
     liveIntervalMs: Number.isFinite(deps.liveIntervalMs) && deps.liveIntervalMs >= 0 ? deps.liveIntervalMs : LIVE_INTERVAL_MS,
@@ -318,6 +321,8 @@ export function createJarvis(deps = {}) {
     for (const seg of turn.segments || []) if (seg.kind === 'tool' && seg.toolUseId) toolSegments.set(seg.toolUseId, seg);
     const visualSegments = new Map(); // tool_use id → hologram / blueprint segment
     for (const seg of turn.segments || []) if (isVisualSegment(seg) && seg.toolUseId) visualSegments.set(seg.toolUseId, seg);
+    const pinsSegments = new Map(); // tool_use id → Optics pins segment (pin_labels)
+    for (const seg of turn.segments || []) if (isPinsSegment(seg) && seg.toolUseId) pinsSegments.set(seg.toolUseId, seg);
 
     const ctx = {
       deps: d,
@@ -347,6 +352,7 @@ export function createJarvis(deps = {}) {
       round: null,
       toolSegments,
       visualSegments,
+      pinsSegments,
       libraryTimeoutMs: d.libraryTimeoutMs,
       liveIntervalMs: d.liveIntervalMs,
       libraryCostCounted: 0,
@@ -618,7 +624,7 @@ export function createJarvis(deps = {}) {
      * the input is invalid, e.g. an attachment Claude would reject; the error message is worded for
      * the owner.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
@@ -630,7 +636,9 @@ export function createJarvis(deps = {}) {
         throw new Error('This conversation was started before Jarvis could draw blueprints. Start a new conversation and ask again.');
       }
       const override = maxAgents === undefined || maxAgents === null || maxAgents === '' ? null : clampInt(maxAgents, 1, 20, null);
-      const content = [...files.map(attachmentBlock), { type: 'text', text: body || ATTACHMENT_ONLY_TEXT }];
+      // Optics (a Look): the one image is a live camera or screen frame with an id per conversation.
+      const frame = optics === undefined || optics === null ? null : prepareOpticsFrame(conv, optics, files);
+      const content = [...files.map(attachmentBlock), { type: 'text', text: body || (frame ? OPTICS_DEFAULT_TEXT : ATTACHMENT_ONLY_TEXT) }];
       if (files.length) assertRequestFits(conv.apiMessages, { role: 'user', content }, { system: conv.system, tools: conv.tools });
       abandonPending(conv);
       answerDanglingToolUses(conv);
@@ -641,6 +649,7 @@ export function createJarvis(deps = {}) {
       const isFirst = !conv.turns.some((t) => t?.role === 'user');
       const userTurn = { id: uid(), role: 'user', text: body, mode: turnMode, createdAt: ts };
       if (files.length) userTurn.attachments = files.map(attachmentMeta);
+      if (frame) userTurn.optics = frame; // { frameId, width, height, source, capturedAt }
       const turn = {
         id: uid(),
         role: 'jarvis',
@@ -678,10 +687,12 @@ export function createJarvis(deps = {}) {
         // Voice Mode in a conversation that can show holograms: how they work by voice.
         visuals: spoken === true && hasVisualTools(conv, 'show_hologram'),
       });
+      const opticsLines = opticsContextLines(conv, frame, d);
+      const fullContext = opticsLines.length ? withTurnContextBlocks(turnContext, opticsLines) : turnContext;
       // Where this turn's messages start: a refused turn is removed from the history from here on.
       turn.apiStart = conv.apiMessages.length;
       // SPEC §15.1 order: turn context, attachments, then the owner's text (or the default text).
-      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, ...content] });
+      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: fullContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
       return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true });

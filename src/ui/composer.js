@@ -117,6 +117,7 @@ const carriesFiles = (dt) => !!dt && Array.from(dt.types || []).includes('Files'
  * @param {() => object} [o.getSettings]   defaults to the platform settings (maxAgents → team size)
  * @param {string} [o.mode]
  * @param {boolean} [o.micSupported]
+ * @param {() => boolean|void} [o.onCamera]  the camera key opens Optics; return false to use the system camera
  */
 export function createComposer(o) {
   let mode = MODE_INFO[o.mode] ? o.mode : 'auto';
@@ -342,8 +343,14 @@ export function createComposer(o) {
         {
           class: 'composer-btn composer-tool composer-camera',
           type: 'button',
-          attrs: { 'data-testid': 'composer-camera', 'aria-label': 'Take a photo', title: 'Take a photo — location data is removed before sending' },
-          on: { click: () => openPicker(cameraInput) },
+          // Optics (live camera, Look, pinned labels) when the app provides it; the system camera
+          // (a photo attachment) otherwise, and as Optics' own fallback when the camera is blocked.
+          attrs: {
+            'data-testid': 'composer-camera',
+            'aria-label': typeof o.onCamera === 'function' ? 'Optics: look with the camera' : 'Take a photo',
+            title: typeof o.onCamera === 'function' ? 'Optics: show Jarvis what you see' : 'Take a photo — location data is removed before sending',
+          },
+          on: { click: () => (typeof o.onCamera === 'function' && o.onCamera() !== false ? undefined : openPicker(cameraInput)) },
         },
         icon('camera', { size: 20 }),
       )
@@ -1043,6 +1050,8 @@ export function createComposer(o) {
     submit,
     /** Adds files (File objects) as attachments; returns how many were accepted for processing. */
     addFiles: (files) => addFiles(files, 'picker'),
+    /** The system camera (a photo attachment): Optics' fallback when the live camera is blocked. Call from a tap. */
+    openCamera: () => openPicker(cameraInput),
     /** The ready attachments (full objects, with base64 data). */
     getAttachments: () => readyAttachments(),
     /** Display metadata of the ready attachments (no data). */

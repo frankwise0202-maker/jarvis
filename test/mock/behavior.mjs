@@ -19,6 +19,7 @@ import {
   HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
   hologramPlan, openSavedPlan, savedIdsOf, turnContextText, visualFollowUpText,
 } from './visuals.mjs';
+import { OPTICS_TOOL_NAMES, cameraIsLive, isWatchRequest, lookThroughCameraPlan, opticsFollowUpPlan, opticsFrameOf, opticsLookPlan, watchAnswer } from './optics.mjs';
 
 const sentenceCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -124,6 +125,8 @@ export function planResponse({ body, kind, state, now }) {
   if (kind === 'lead') return planLead(body, state, now);
   if (kind === 'worker') return planWorker(body, state, now);
   if (kind === 'structured') {
+    // Optics Watch: a realistic { worth_saying, line, summary } for the frame.
+    if (isWatchRequest(body)) return { plan: { blocks: [text(watchAnswer(body))], stop_reason: 'end_turn', pace: 'quick' } };
     // Structured outputs: one text block whose text is JSON matching the schema.
     const schema = body.output_config.format.schema;
     return { plan: { blocks: [text(JSON.stringify(valueFromSchema(schema)))], stop_reason: 'end_turn', pace: 'quick' } };
@@ -263,6 +266,10 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
       return { plan: blueprintPlan({ think, sample, forIds: null, spoken }) };
     }
     if (d.has('open-saved') && hasTool(body, 'open_saved')) return { plan: openSavedPlan({ think, ids: savedIdsOf(turnContextText(userMsg)) }) };
+    // Optics (lead tools version 5): a Look's frame, or [[optics:look]] while the camera is live.
+    const opticsFrame = opticsFrameOf(turnContextText(userMsg));
+    if (opticsFrame && files.length) return { plan: opticsLookPlan({ think, frame: opticsFrame, d, pinsTool: hasTool(body, 'pin_labels') }) };
+    if (d.arg('optics') === 'look' && hasTool(body, 'look_through_camera') && cameraIsLive(turnContextText(userMsg))) return { plan: lookThroughCameraPlan({ think }) };
     if (d.has('search')) return { plan: searchPlan(env) };
     if (d.has('xss')) {
       const answer = spoken ? textBlocks(spokenXssAnswer(ctx, d)) : [text(xssAnswer())];
@@ -305,6 +312,11 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     uses.unshift(...blocks.filter((b) => b?.type === 'tool_use'));
   }
 
+  const opticsUse = [...uses].reverse().find((b) => OPTICS_TOOL_NAMES.includes(b.name));
+  if (opticsUse && results.has(opticsUse.id)) {
+    const result = results.get(opticsUse.id);
+    return { plan: opticsFollowUpPlan({ think, use: opticsUse, result, resultText: toolResultText(result?.content), body }) };
+  }
   const memoryUse = uses.find((b) => b.name === 'update_memory');
   const deployUse = uses.find((b) => b.name === 'deploy_agents');
   if (deployUse) {
