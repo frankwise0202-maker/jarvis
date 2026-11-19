@@ -171,8 +171,7 @@ function createVoiceMode(opts) {
     closed: false,
     sttOk: probe(() => typeof stt.startListening === 'function' && (typeof stt.sttSupported !== 'function' || !!stt.sttSupported())),
     ttsOk: probe(() => typeof tts.speak === 'function' && (typeof tts.ttsSupported !== 'function' || !!tts.ttsSupported())),
-    sttBlocked: false,
-    micWorked: false, // a listen session ran normally at least once (so a later refusal means "needs a tap")
+    sttBlocked: false, // the owner's microphone permission was refused (no hands-free re-listening)
     typing: false,
     continuous: readContinuous(),
     listen: null, // { gesture, text, stopRequested, handle, timers, heard }
@@ -927,7 +926,10 @@ function createVoiceMode(opts) {
     const text = toText(value).trim();
     if (!text) return;
     L.heard = true;
-    S.micWorked = true;
+    if (S.sttBlocked) {
+      S.sttBlocked = false; // permission was fixed: hands-free can resume
+      root.dataset.stt = 'ok';
+    }
     const firstWords = !L.text;
     L.text = text;
     showUserWords(text);
@@ -963,7 +965,6 @@ function createVoiceMode(opts) {
     clearTimers(L.timers);
     if (reason !== 'end' && reason !== 'final') abortHandle(L.handle);
     if (S.closed) return;
-    if (reason === 'end' || reason === 'final') S.micWorked = true;
     const text = (L.text || '').trim();
     if (reason === 'cancel') {
       play('listen-stop');
@@ -1005,7 +1006,6 @@ function createVoiceMode(opts) {
     if (S.listen !== L) return;
     const code = (err && err.code) || 'other';
     if (code === 'no-speech') {
-      S.micWorked = true;
       finishListening(L, 'silence');
       return;
     }
@@ -1020,8 +1020,9 @@ function createVoiceMode(opts) {
     // The platform's messages are already short and actionable (e.g. iPhone: turn on Dictation).
     const detail = err && typeof err.message === 'string' ? asSentence(clip(singleLine(err.message), 160)) : '';
     if (code === 'not-allowed') {
-      if (!L.gesture && S.micWorked) {
-        // The browser wants a fresh tap before it opens the microphone again (iOS).
+      if (!L.gesture) {
+        // Hands-free re-listening only ever follows a tap-started session the browser accepted,
+        // so a refusal here means it wants a fresh tap (iOS), not that the mic is blocked.
         goIdle('needs-tap');
         return;
       }
