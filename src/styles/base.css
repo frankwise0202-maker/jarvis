@@ -186,9 +186,12 @@ a {
     transform var(--dur-1) var(--ease);
 }
 
-.btn:hover {
-  border-color: var(--line-3);
-  background: var(--surface-3);
+/* Hover looks only where there is a real pointer: on a phone a tapped button would keep it. */
+@media (hover: hover) {
+  .btn:hover {
+    border-color: var(--line-3);
+    background: var(--surface-3);
+  }
 }
 
 .btn:active {
@@ -212,10 +215,12 @@ a {
   box-shadow: 0 0 0 1px var(--accent-3) inset, 0 6px 22px var(--accent-soft), 0 0 18px var(--accent-soft);
 }
 
-.btn-primary:hover {
-  border-color: transparent;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent-2));
-  box-shadow: 0 0 0 1px var(--accent) inset, 0 6px 26px var(--accent-glow);
+@media (hover: hover) {
+  .btn-primary:hover {
+    border-color: transparent;
+    background: linear-gradient(180deg, var(--accent-2), var(--accent-2));
+    box-shadow: 0 0 0 1px var(--accent) inset, 0 6px 26px var(--accent-glow);
+  }
 }
 
 .btn-ghost {
@@ -283,9 +288,11 @@ a {
     box-shadow var(--dur-2) var(--ease);
 }
 
-.icon-btn:hover {
-  background: var(--accent-soft);
-  color: var(--text);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
 }
 
 .icon-btn:active {

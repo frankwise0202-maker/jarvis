@@ -5,6 +5,7 @@
 
 import { WORKER_SYSTEM_V1, buildWorkerPrompt, workerTools } from './prompts.js';
 import {
+  accountPartialUsage,
   buildMessageParams,
   echoContent,
   mergeSources,
@@ -351,6 +352,7 @@ export async function runAgent(ctx, mission, agent) {
         limiter.succeed(); // a calmer moment: win back a slot after rate limiting
         return;
       }
+      accountPartialUsage(ctx, failure, agent.model, { mission, agent }); // a cut-short request still costs
       if (ctx.signal.aborted || isAbortError(failure)) throw failure;
 
       const info = classifyError(failure, { model: agent.model });

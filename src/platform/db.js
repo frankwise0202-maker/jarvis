@@ -7,6 +7,15 @@
 //                  preview = last user message (one line, ≤ 120 chars); turnCount = turns.length
 // A save writes both rows in one transaction, so the list never disagrees with the data.
 //
+// The API history (conversation.apiMessages: append-only, and it carries every photo and PDF as
+// base64) is kept in its own record of the conversations store, keyed [id, 'api'], and rewritten
+// only when it changed; the conversation record itself (turns, missions, pending...) holds
+// `apiSplit: { count, rev }` instead. Saves during a run (about one a second) then copy kilobytes,
+// not the whole multi-megabyte history. Both records (and the history row) are written in ONE
+// transaction, so a crash can never leave them out of step. getConversation() reassembles the
+// conversation (callers never see apiSplit); a record stored whole by an earlier version is read
+// as it is and split on its next save. No schema change: the database stays at version 1.
+//
 // Robustness rules:
 //   - Every operation goes through one serial queue: writes never interleave (per id or at all),
 //     and a read issued after a save sees that save. Queued saves of the same conversation are
@@ -18,13 +27,22 @@
 //     reports every change, so the UI can tell the owner (e.g. the device is out of storage).
 //   - Safari can drop the IndexedDB connection while the app is in the background; a failed
 //     transaction on a closed connection is retried once on a fresh connection.
+//   - Two windows on one conversation: every stored conversation record carries `rev`, raised by
+//     each save. A window remembers the rev it last read or wrote; a save over a NEWER stored rev
+//     (another window saved meanwhile) is refused - saveConversation() resolves false and
+//     onConversationConflict listeners hear { id } - instead of silently dropping the other
+//     window's turns. The check and the write happen in one transaction. Backup restores
+//     (restoreConversation) always win. Windows also tell each other, over
+//     BroadcastChannel('jarvis'), about every save ({ type: 'saved', id, updatedAt, rev }) and,
+//     through announceRun(id, running), about runs ({ type: 'run', id, running });
+//     onRemoteActivity(fn) receives the other windows' messages.
 //   - Deletion is final for this session: after deleteConversation(id) (or
 //     deleteAllConversations()), later saves of that id are ignored, so a turn that is still
 //     finishing in the background cannot resurrect a conversation the owner deleted.
 //     (Start a new conversation in the UI after deleting the open one.) Restoring a backup
 //     (restoreConversation, used by backup.js) lifts this.
 
-import { cleanLine, isPlainObject, reportWarning, truncate } from './util.js';
+import { cleanLine, isPlainObject, newId, reportWarning, truncate } from './util.js';
 
 export const DB_NAME = 'jarvis';
 export const DB_VERSION = 1;
@@ -41,6 +59,15 @@ const memory = new Map(); // id -> { conv, meta }: conversations not (yet) on di
 const deleted = new Set(); // ids deleted this session (see header)
 const queuedSaves = new Map(); // id -> { conv, promise } for saves waiting in the queue
 let queue = Promise.resolve();
+// What this page last wrote of each conversation's API history: { count, tail, rev }, where tail
+// is the last message object. The history is append-only (only trailing messages are ever
+// removed), so an unchanged count and last message mean an unchanged history.
+const apiWritten = new Map();
+const historyKey = (id) => [id, 'api'];
+const knownRev = new Map(); // id -> the stored rev this window last read or wrote
+const conflictListeners = new Set();
+const remoteListeners = new Set();
+let channel; // BroadcastChannel('jarvis'), null when unavailable (created on first use)
 const persistenceListeners = new Set();
 let lastWriteProblem = null; // why the latest failed save fell back to memory: 'quota' | 'unavailable'
 let reported = { persistent: true, reason: null }; // the state listeners last heard
@@ -72,8 +99,8 @@ export function getConversation(id) {
     if (deleted.has(id)) return null;
     const mem = memory.get(id);
     if (mem) return snapshot(mem.conv);
-    const res = await withDb((db) => readOne(db, STORE, id), 'load a conversation');
-    return res.ok && isPlainObject(res.value) && res.value.id === id ? res.value : null;
+    const res = await withDb((db) => readRecords(db, id), 'load a conversation');
+    return res.ok ? assemble(id, res.value) : null;
   }, null);
 }
 
@@ -95,10 +122,13 @@ export function deleteConversation(id) {
   if (typeof id !== 'string' || !id) return Promise.resolve();
   deleted.add(id);
   memory.delete(id);
+  apiWritten.delete(id);
+  knownRev.delete(id);
   notifyPersistence();
   return enqueue(async () => {
     await withDb((db) => write(db, (stores) => {
       stores[STORE].delete(id);
+      stores[STORE].delete(historyKey(id));
       stores[META].delete(id);
     }), 'delete a conversation');
   }, undefined);
@@ -109,6 +139,8 @@ export function deleteAllConversations() {
   for (const id of memory.keys()) deleted.add(id);
   for (const id of queuedSaves.keys()) deleted.add(id);
   memory.clear();
+  apiWritten.clear();
+  knownRev.clear();
   notifyPersistence();
   return enqueue(async () => {
     const keys = await withDb((db) => readAllKeys(db, META), 'list conversations');
@@ -154,13 +186,45 @@ export function onPersistenceChange(fn) {
 }
 
 /**
+ * fn({ id }) when a save was refused because another window saved a newer version of that
+ * conversation since this window loaded it: reload it with getConversation() before continuing.
+ * Returns an unsubscribe function.
+ */
+export function onConversationConflict(fn) {
+  if (typeof fn !== 'function') return () => {};
+  conflictListeners.add(fn);
+  return () => {
+    conflictListeners.delete(fn);
+  };
+}
+
+/**
+ * fn(message) for what OTHER windows of Jarvis report: { type: 'saved', id, updatedAt, rev } after
+ * each of their saves, { type: 'run', id, running } when they start or finish a run.
+ * Returns an unsubscribe function.
+ */
+export function onRemoteActivity(fn) {
+  if (typeof fn !== 'function') return () => {};
+  openChannel();
+  remoteListeners.add(fn);
+  return () => {
+    remoteListeners.delete(fn);
+  };
+}
+
+/** Tell the other windows that a run of conversation `id` started (true) or ended (false). */
+export function announceRun(id, running) {
+  if (typeof id === 'string' && id) post({ type: 'run', id, running: running === true });
+}
+
+/**
  * Save a conversation even if it was deleted earlier in this session (backup restore).
  * Same result as saveConversation().
  */
 export function restoreConversation(conv) {
   if (!isPlainObject(conv) || typeof conv.id !== 'string' || !conv.id) return Promise.resolve(false);
   deleted.delete(conv.id);
-  return queueSave(conv);
+  return queueSave(conv, { force: true });
 }
 
 /** History row for a conversation (exported for tests and backup). */
@@ -213,24 +277,25 @@ function enqueue(task, fallback) {
   return run;
 }
 
-function queueSave(conv) {
+function queueSave(conv, { force = false } = {}) {
   const id = conv.id;
   const waiting = queuedSaves.get(id);
   if (waiting) {
     waiting.conv = conv; // coalesce: the queued write will store the newest object
+    waiting.force = waiting.force || force;
     return waiting.promise;
   }
-  const entry = { conv, promise: null };
+  const entry = { conv, force, promise: null };
   queuedSaves.set(id, entry);
   entry.promise = enqueue(async () => {
     if (queuedSaves.get(id) === entry) queuedSaves.delete(id);
     if (deleted.has(id)) return false;
-    return writeConversation(entry.conv);
+    return writeConversation(entry.conv, entry.force);
   }, false);
   return entry.promise;
 }
 
-async function writeConversation(conv) {
+async function writeConversation(conv, force = false) {
   let meta;
   try {
     meta = conversationMeta(conv);
@@ -238,14 +303,44 @@ async function writeConversation(conv) {
     reportWarning('Could not index a conversation', err);
     return false;
   }
+  const parts = splitForStorage(conv, apiWritten.get(conv.id));
+  const base = knownRev.get(conv.id) ?? 0;
   try {
-    const res = await withDb((db) => write(db, (stores) => {
-      putClone(stores[STORE], conv);
-      stores[META].put(meta);
+    const res = await withDb((db) => write(db, (stores, box) => {
+      // Check and write in one transaction: no other window can save in between.
+      const current = stores[STORE].get(conv.id);
+      current.onsuccess = () => {
+        const stored = current.result;
+        const storedRev = isPlainObject(stored) && Number.isInteger(stored.rev) && stored.rev > 0 ? stored.rev : 0;
+        if (!force && storedRev > base) {
+          box.value = { conflict: true };
+          return; // another window saved a newer version: write nothing
+        }
+        try {
+          parts.main.rev = storedRev + 1;
+          putClone(stores[STORE], parts.main);
+          if (parts.history) putClone(stores[STORE], parts.history);
+          stores[META].put(meta);
+          box.value = { rev: parts.main.rev };
+        } catch (err) {
+          box.error = err;
+          stores[STORE].transaction.abort();
+        }
+      };
     }), null);
+    if (res.ok && res.value && res.value.conflict) {
+      reportWarning('Another window saved a newer version of this conversation; this save was skipped', conv.id);
+      emitTo(conflictListeners, { id: conv.id }, 'A conflict listener failed');
+      return false;
+    }
     if (res.ok) {
+      // A restore (force) replaced what this window may still hold open: leave its known rev
+      // behind, so saving such a stale copy is refused (and reported) rather than undoing it.
+      if (!force) knownRev.set(conv.id, res.value.rev);
+      apiWritten.set(conv.id, parts.mark);
       memory.delete(conv.id);
       notifyPersistence();
+      post({ type: 'saved', id: conv.id, updatedAt: finite(conv.updatedAt) ?? 0, rev: res.value.rev });
       return true;
     }
   } catch (err) {
@@ -261,9 +356,49 @@ async function writeConversation(conv) {
       );
     }
   }
+  apiWritten.delete(conv.id); // unsure what reached the disk: write the history again next time
   memory.set(conv.id, { conv: snapshot(conv), meta });
   notifyPersistence();
   return false;
+}
+
+/**
+ * The records a save writes: the conversation without its API history (plus apiSplit) and, when
+ * the history changed since this page last wrote it, the history record. `mark` is what to
+ * remember once the write succeeded.
+ */
+function splitForStorage(conv, last) {
+  const messages = Array.isArray(conv.apiMessages) ? conv.apiMessages : [];
+  const tail = messages.length ? messages[messages.length - 1] : null;
+  const unchanged = !!last && last.count === messages.length && last.tail === tail;
+  const rev = unchanged ? last.rev : newId();
+  const main = {};
+  for (const key of Object.keys(conv)) if (key !== 'apiMessages' && key !== 'apiSplit' && key !== 'rev') main[key] = conv[key];
+  main.apiSplit = { count: messages.length, rev };
+  return {
+    main,
+    history: unchanged ? null : { id: historyKey(conv.id), rev, apiMessages: messages },
+    mark: { count: messages.length, tail, rev },
+  };
+}
+
+/** The conversation from its stored records (see the header), or null. */
+function assemble(id, { main, history } = {}) {
+  if (!isPlainObject(main) || main.id !== id) return null;
+  knownRev.set(id, Number.isInteger(main.rev) && main.rev > 0 ? main.rev : 0);
+  const conv = {};
+  for (const key of Object.keys(main)) if (key !== 'apiSplit' && key !== 'rev') conv[key] = main[key];
+  if (!isPlainObject(main.apiSplit)) return conv; // stored whole (an earlier version): split on its next save
+  if (isPlainObject(history) && Array.isArray(history.apiMessages)) {
+    conv.apiMessages = history.apiMessages;
+    const messages = conv.apiMessages;
+    // Saving this same object again only rewrites the history once it grows.
+    apiWritten.set(id, { count: messages.length, tail: messages.length ? messages[messages.length - 1] : null, rev: history.rev });
+  } else {
+    reportWarning('A saved conversation is missing its message history', id);
+    conv.apiMessages = [];
+  }
+  return conv;
 }
 
 /** Tell listeners when getPersistence() changed since they last heard. Never throws. */
@@ -271,12 +406,48 @@ function notifyPersistence() {
   const next = getPersistence();
   if (next.persistent === reported.persistent && next.reason === reported.reason) return;
   reported = next;
-  for (const fn of Array.from(persistenceListeners)) {
+  emitTo(persistenceListeners, next, 'A persistence listener failed');
+}
+
+function emitTo(listeners, payload, label) {
+  for (const fn of Array.from(listeners)) {
     try {
-      fn({ ...next });
+      fn({ ...payload });
     } catch (err) {
-      reportWarning('A persistence listener failed', err);
+      reportWarning(label, err);
     }
+  }
+}
+
+/** The cross-window channel (created on first use); null where BroadcastChannel is unavailable. */
+function openChannel() {
+  if (channel !== undefined) return channel;
+  channel = null;
+  try {
+    if (typeof globalThis.BroadcastChannel === 'function') {
+      channel = new globalThis.BroadcastChannel('jarvis');
+      channel.onmessage = (event) => {
+        const msg = event && event.data;
+        if (!isPlainObject(msg) || typeof msg.id !== 'string' || !msg.id) return;
+        if (msg.type === 'saved' && Number.isInteger(msg.rev)) {
+          emitTo(remoteListeners, { type: 'saved', id: msg.id, updatedAt: finite(msg.updatedAt) ?? 0, rev: msg.rev }, 'A remote activity listener failed');
+        } else if (msg.type === 'run') {
+          emitTo(remoteListeners, { type: 'run', id: msg.id, running: msg.running === true }, 'A remote activity listener failed');
+        }
+      };
+    }
+  } catch {
+    channel = null;
+  }
+  return channel;
+}
+
+function post(message) {
+  try {
+    const ch = openChannel();
+    if (ch) ch.postMessage(message);
+  } catch {
+    /* another window simply does not hear about it */
   }
 }
 
@@ -466,9 +637,9 @@ function transaction(db, names, mode, body) {
       reject(err);
       return;
     }
-    const box = { value: undefined };
+    const box = { value: undefined, error: null };
     tx.oncomplete = () => resolve(box.value);
-    tx.onabort = () => reject(tx.error || new DOMException('Transaction aborted', 'AbortError'));
+    tx.onabort = () => reject(box.error || tx.error || new DOMException('Transaction aborted', 'AbortError'));
     tx.onerror = () => {
       /* onabort follows and rejects */
     };
@@ -488,14 +659,21 @@ function transaction(db, names, mode, body) {
 }
 
 function write(db, body) {
-  return transaction(db, [STORE, META], 'readwrite', (stores) => body(stores));
+  return transaction(db, [STORE, META], 'readwrite', (stores, box) => body(stores, box));
 }
 
-function readOne(db, name, key) {
-  return transaction(db, [name], 'readonly', (stores, box) => {
-    const req = stores[name].get(key);
-    req.onsuccess = () => {
-      box.value = req.result;
+/** A conversation's own record and its history record, read together (one consistent snapshot). */
+function readRecords(db, id) {
+  return transaction(db, [STORE], 'readonly', (stores, box) => {
+    box.value = { main: undefined, history: undefined };
+    const main = stores[STORE].get(id);
+    main.onsuccess = () => {
+      box.value.main = main.result;
+      if (!isPlainObject(main.result) || !isPlainObject(main.result.apiSplit)) return;
+      const history = stores[STORE].get(historyKey(id));
+      history.onsuccess = () => {
+        box.value.history = history.result;
+      };
     };
   });
 }

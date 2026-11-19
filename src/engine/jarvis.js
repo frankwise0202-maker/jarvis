@@ -8,6 +8,7 @@ import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
 import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest } from './prompts.js';
 import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
+import { WORKER_MAX_TOKENS } from './worker.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
 import {
   ATTACHMENT_ONLY_TEXT,
@@ -173,6 +174,7 @@ export function createJarvis(deps = {}) {
   const runs = new Map(); // conversation id → run context
   const limiters = new Map(); // model bucket → limiter (shared by every run: rate limits are per key)
   const maxTokenCaps = new Map(); // model → max_tokens cap learned from an output-tokens-per-minute 429
+  const otpmLimits = new Map(); // model bucket → that output-tokens-per-minute limit
   let lowLimitsNoticed = false;
 
   const nowDate = () => {
@@ -370,15 +372,26 @@ export function createJarvis(deps = {}) {
       for (const seg of removed) ctx.emit('segment-removed', { turn, segmentId: seg.id });
       return removed;
     };
+    /**
+     * How many agent requests of `model` may run at once: settings.maxParallel, or fewer once an
+     * output-tokens-per-minute limit is known - the API charges each request's max_tokens against
+     * it up front, so more at once than the limit covers would only collect 429s.
+     */
+    ctx.parallelFor = (model) => {
+      const otpm = otpmLimits.get(bucketOf(model));
+      if (!otpm) return settings.maxParallel;
+      const perRequest = ctx.maxTokensFor(model, ctx.depth.workerMaxTokens || WORKER_MAX_TOKENS);
+      return Math.max(1, Math.min(settings.maxParallel, Math.floor(otpm / perRequest)));
+    };
     ctx.limiterFor = (model) => {
       const bucket = bucketOf(model);
       let limiter = limiters.get(bucket);
       if (!limiter) {
-        limiter = createLimiter(settings.maxParallel);
+        limiter = createLimiter(ctx.parallelFor(model));
         limiters.set(bucket, limiter);
       } else if (!syncedBuckets.has(bucket) && limiter.isIdle()) {
         // A new run starts from the current setting; adaptive slow-downs persist within a run.
-        limiter.setCapacity(settings.maxParallel);
+        limiter.setCapacity(ctx.parallelFor(model));
       }
       syncedBuckets.add(bucket);
       return limiter;
@@ -423,10 +436,21 @@ export function createJarvis(deps = {}) {
     };
     /** max_tokens for `model`, within any cap learned from the account's rate limits this session. */
     ctx.maxTokensFor = (model, base) => Math.min(base, maxTokenCaps.get(model) ?? Infinity);
-    /** An output-tokens-per-minute 429: cap max_tokens for `model` for the rest of the session. */
-    ctx.capMaxTokens = (model, cap) => {
+    /**
+     * An output-tokens-per-minute 429 (limit `otpm`): cap max_tokens for `model` for the rest of the
+     * session, and from now on admit only as many of its agents at once as the limit covers (agents
+     * already running are not interrupted).
+     */
+    ctx.capMaxTokens = (model, cap, otpm) => {
       const current = maxTokenCaps.get(model) ?? Infinity;
       if (cap < current) maxTokenCaps.set(model, cap);
+      if (Number.isFinite(otpm) && otpm > 0) {
+        const bucket = bucketOf(model);
+        if (!(otpmLimits.get(bucket) <= otpm)) otpmLimits.set(bucket, otpm);
+        const limiter = limiters.get(bucket);
+        const ceiling = ctx.parallelFor(model);
+        if (limiter && limiter.capacity > ceiling) limiter.setCapacity(ceiling);
+      }
       ctx.lowLimitsNotice();
     };
     /** One clear explanation per session when the account's rate limits make Jarvis slow down. */

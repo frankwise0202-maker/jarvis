@@ -1645,7 +1645,7 @@
 
   .set-nav-btn {
     justify-content: flex-start;
-    min-height: 40px;
+    min-height: var(--tap); /* iPad landscape gets this layout too, by touch */
     border-color: transparent;
     font-size: var(--fs-sm);
   }
@@ -1685,7 +1685,7 @@
   width: 100%;
   max-width: 540px;
   min-height: 100%;
-  padding: 0 max(var(--sp-5), var(--safe-left)) 0 max(var(--sp-5), var(--safe-right));
+  padding: 0 max(var(--sp-5), var(--safe-right)) 0 max(var(--sp-5), var(--safe-left));
 }
 
 .ob-top {
@@ -1957,6 +1957,112 @@
     background:
       radial-gradient(90% 50% at 50% 0%, var(--accent-soft), transparent 70%),
       var(--surface-solid);
+  }
+}
+
+/* iPhone/iPad in a browser tab: the "install first" note (a key entered in Safari doesn't
+   reach the Home Screen app). */
+.ob-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-top: var(--sp-5);
+  padding: var(--sp-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
+}
+
+.ob-note-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--line-2) inset;
+}
+
+.ob-note-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.ob-note-body > strong {
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.ob-note-body > span {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ob-note-btn {
+  margin-top: var(--sp-2);
+}
+
+.ob-note--compact {
+  margin-top: var(--sp-4);
+  padding: var(--sp-3);
+}
+
+.ob-note--compact .ob-note-btn {
+  margin-top: var(--sp-1);
+}
+
+/* Shorter Safari screens (SE, mini): the note and its button come before the hero. */
+@media (max-height: 650px) {
+  .onboarding.has-install-note .ob-hero {
+    display: none;
+  }
+}
+
+/* On-screen keyboard (.app[data-keyboard='open'], set by app.js): the visible area is small,
+   so drop the hero, the install note and the key how-to, and let the actions flow after the
+   field instead of covering it. onboarding.js keeps the focused field in view. */
+.app[data-keyboard='open'] .ob-hero,
+.app[data-keyboard='open'] .ob-note,
+.app[data-keyboard='open'] .ob-steps-title,
+.app[data-keyboard='open'] .ob-steps {
+  display: none;
+}
+
+.app[data-keyboard='open'] .ob-actions {
+  position: static;
+  padding: 0 0 var(--sp-3);
+  background: none;
+}
+
+/* Landscape phones: a one-row action bar (not half the screen) and a smaller hero. */
+@media (max-height: 500px) {
+  .ob-hero {
+    margin: 0 0 var(--sp-2);
+  }
+
+  .ob-core {
+    --ob-core: clamp(56px, calc(var(--vvh, 100dvh) * 0.18), 76px);
+  }
+
+  .ob-hero.is-compact {
+    display: none;
+  }
+
+  .ob-actions {
+    flex-direction: row;
+    padding-top: var(--sp-3);
+  }
+
+  .ob-actions > .btn {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 

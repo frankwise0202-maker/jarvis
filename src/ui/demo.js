@@ -754,7 +754,7 @@ export function createDemo(opts = {}) {
         const seg = run.addSegment({ kind: 'text', text: '', req: 0, citations: [] });
         run.stream(
           seg,
-          `I’m running in **demo mode**, so I can’t reach Claude and nothing you type leaves this device — including “${short}”.\n\n- **To use Jarvis for real:** open it without \`?demo=1\` and connect your Anthropic API key.\n- **To see the agent team:** switch the mode to **Swarm** and send any research question.`,
+          `I’m running in **demo mode**, so I can’t reach Claude and nothing you type leaves this device — including “${short}”.\n\n- **To use Jarvis for real:** tap **DEMO** at the top (or Settings → About → Leave demo) and connect your Anthropic API key.\n- **To see the agent team:** switch the mode to **Swarm** and send any research question.`,
           2600,
           () => {
             run.addCost(0, {});
@@ -795,7 +795,7 @@ export function createDemo(opts = {}) {
           runMission(run, mission, specs, 3, () => {
             sched.after(500, () => {
               const seg = run.addSegment({ kind: 'text', text: '', req: 1, citations: [] });
-              run.stream(seg, 'That was a **simulated mission**: in demo mode Jarvis never contacts the Claude API. Connect your Anthropic API key to run real research with live web search and cited sources.', 2200, () => {
+              run.stream(seg, 'That was a **simulated mission**: in demo mode Jarvis never contacts the Claude API. To run real research with live web search and cited sources, tap **DEMO** at the top to leave the demo and connect your Anthropic API key.', 2200, () => {
                 sched.after(300, () => run.finish('done'));
               });
             });
@@ -812,7 +812,7 @@ export function createDemo(opts = {}) {
     resumeTurn: () => null,
     async testApiKey() {
       await new Promise((r) => setTimeout(r, 600));
-      return { ok: false, error: { kind: 'unknown', message: 'Keys aren’t tested in demo mode. Open Jarvis without ?demo=1 to connect.', retryable: false } };
+      return { ok: false, error: { kind: 'unknown', message: 'Keys aren’t tested in demo mode. Leave the demo first (tap DEMO at the top, or Settings → About → Leave demo), then connect your key.', retryable: false } };
     },
     isBusy: () => active.size > 0,
   };

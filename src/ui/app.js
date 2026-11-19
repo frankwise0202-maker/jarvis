@@ -31,7 +31,7 @@ import { getSettings, saveSettings, onSettingsChange } from '../platform/setting
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
 import { listMemory, addMemory, removeMemory, onMemoryChange } from '../platform/memory.js';
 import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
-import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent } from '../platform/db.js';
+import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
@@ -214,7 +214,8 @@ export async function startApp(rootEl) {
       for (const entry of state.runs.values()) if (entry.run.turn && entry.run.turn.id === turnId) return true;
       return false;
     },
-    canResume: () => !!(state.conv && !state.runs.has(state.conv.id) && safe(() => engine.canResume(state.conv), false)),
+    canResume: () => !!(state.conv && !state.runs.has(state.conv.id) && !runningElsewhere(state.conv.id) && safe(() => engine.canResume(state.conv), false)),
+    runningElsewhere: () => !!(state.conv && !state.runs.has(state.conv.id) && runningElsewhere(state.conv.id)),
     onResume: () => resume(),
     onRetry: (turn) => retry(turn),
     onCopy: (turn) => copyTurn(turn),
@@ -437,7 +438,8 @@ export async function startApp(rootEl) {
     try {
       const items = await store.list();
       history.setItems(items);
-      history.setPersistent(store.isPersistent());
+      const persistence = state.demo ? { persistent: true, reason: null } : safe(() => getPersistence(), { persistent: store.isPersistent(), reason: null });
+      history.setPersistent(persistence.persistent, persistence.reason);
       history.setActive(state.conv ? state.conv.id : null);
     } catch (err) {
       console.error('[jarvis] listing conversations failed:', err);
@@ -460,7 +462,7 @@ export async function startApp(rootEl) {
     // A turn saved as running with no live run here was cut off (the app was closed or killed
     // mid-reply). Asking the engine settles it (status "interrupted", agents and missions too)
     // before anything renders, so no mission card shows a stale RUNNING next to "Resume".
-    if (state.conv && !state.runs.has(state.conv.id)) safe(() => engine.canResume(state.conv));
+    if (state.conv && !state.runs.has(state.conv.id) && !runningElsewhere(state.conv.id)) safe(() => engine.canResume(state.conv));
     chat.setConversation(state.conv);
     history.setActive(state.conv ? state.conv.id : null);
     selectLatestMission();
@@ -534,6 +536,10 @@ export async function startApp(rootEl) {
       return false;
     }
     if (currentRunning()) return false;
+    if (state.conv && runningElsewhere(state.conv.id)) {
+      toast('Jarvis is still working on this conversation in another window. Wait for it, or start a new chat.', { level: 'info', id: 'elsewhere' });
+      return false;
+    }
     stopSpeakingNow();
     let conv = state.conv;
     const fresh = !conv;
@@ -649,11 +655,75 @@ export async function startApp(rootEl) {
       });
   }
 
+  // ---- other windows -------------------------------------------------------------------------
+  // Two windows (a tab and the installed app) share storage. Each tells the others which
+  // conversations it is running, so a conversation running elsewhere is never resumed or
+  // continued here (that would run the swarm twice), shows "Running in another window"
+  // instead, and reloads from storage when that run ends.
+  const windowId = Math.random().toString(36).slice(2);
+  const remoteRuns = new Map(); // conversation id -> when another window last said it runs it
+  const REMOTE_RUN_TTL_MS = 30000; // a window that vanished without saying so stops counting
+  let runChannel = null;
+  try {
+    runChannel = !state.demo && typeof BroadcastChannel === 'function' ? new BroadcastChannel('jarvis-runs') : null;
+  } catch {
+    runChannel = null;
+  }
+  function broadcastRun(id, running) {
+    try {
+      if (runChannel && id) runChannel.postMessage({ type: 'run', id, running, from: windowId });
+    } catch {
+      /* closed channel */
+    }
+  }
+  function runningElsewhere(id) {
+    const at = id ? remoteRuns.get(id) : 0;
+    if (!at) return false;
+    if (Date.now() - at > REMOTE_RUN_TTL_MS) {
+      remoteRuns.delete(id);
+      return false;
+    }
+    return true;
+  }
+  function reloadCurrentFromStore() {
+    const id = state.conv && state.conv.id;
+    if (!id || state.runs.has(id)) return;
+    Promise.resolve(store.get(id))
+      .then((fresh) => {
+        if (fresh && state.conv && state.conv.id === id && !state.runs.has(id)) setConversation(fresh, { remember: false });
+      })
+      .catch((err) => console.error('[jarvis] reloading the conversation failed:', err));
+  }
+  if (runChannel) {
+    runChannel.onmessage = (e) => {
+      const m = e && e.data;
+      if (!m || m.from === windowId) return;
+      if (m.type === 'hello') {
+        for (const id of state.runs.keys()) broadcastRun(id, true);
+        return;
+      }
+      if (m.type !== 'run' || typeof m.id !== 'string') return;
+      const before = runningElsewhere(m.id);
+      if (m.running) remoteRuns.set(m.id, Date.now());
+      else remoteRuns.delete(m.id);
+      // The open conversation started or finished running elsewhere: show the stored state.
+      if (state.conv && state.conv.id === m.id && before !== !!m.running) {
+        reloadCurrentFromStore();
+        scheduleHistoryRefresh();
+      }
+    };
+    runChannel.postMessage({ type: 'hello', from: windowId });
+    setInterval(() => {
+      for (const id of state.runs.keys()) broadcastRun(id, true);
+    }, 10000);
+  }
+
   /** `sent` = { text, attachments } of a new message: given back if the turn is withdrawn. */
   function attachRun(conv, run, sent = null) {
     const entry = { run, conv, sent, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
     state.runs.set(conv.id, entry);
     entry.unsub = run.on('*', (evt) => onRunEvent(entry, evt));
+    broadcastRun(conv.id, true);
     Promise.resolve(run.done)
       .catch((err) => console.error('[jarvis] run failed:', err))
       .then(() => onRunDone(entry));
@@ -707,6 +777,7 @@ export async function startApp(rootEl) {
 
   function onRunDone(entry) {
     if (entry.unsub) safe(() => entry.unsub());
+    broadcastRun(entry.conv.id, false);
     if (state.runs.get(entry.conv.id) === entry) state.runs.delete(entry.conv.id);
     if (!state.runs.size) safe(() => allowSleep('run'));
     const turn = entry.run.turn;
@@ -768,6 +839,10 @@ export async function startApp(rootEl) {
 
   function resume() {
     if (!state.conv || currentRunning()) return;
+    if (runningElsewhere(state.conv.id)) {
+      toast('Jarvis is still working on this in another window.', { level: 'info', id: 'elsewhere' });
+      return;
+    }
     if (!state.online) {
       toast('You’re offline. Reconnect to resume.', { level: 'warn' });
       return;
@@ -1226,6 +1301,16 @@ export async function startApp(rootEl) {
         location.replace(location.pathname);
       },
       refreshHistory: () => refreshHistory(),
+      // An import may have replaced the open conversation with the backup's newer copy.
+      onImported: (res) => {
+        const id = state.conv && state.conv.id;
+        if (!id || !res || !Array.isArray(res.replaced) || !res.replaced.includes(id) || state.runs.has(id)) return;
+        Promise.resolve(store.get(id))
+          .then((fresh) => {
+            if (fresh && state.conv && state.conv.id === id && !state.runs.has(id)) setConversation(fresh);
+          })
+          .catch((err) => console.error('[jarvis] reloading the imported conversation failed:', err));
+      },
       replayOnboarding: () => {
         if (settingsSheet) settingsSheet.close('navigate');
         setTimeout(() => openOnboarding(), 50);
@@ -1472,7 +1557,7 @@ export async function startApp(rootEl) {
       const was = state.online;
       state.online = typeof online === 'boolean' ? online : safe(() => isOnline(), true);
       updateAll();
-      if (!was && state.online && state.conv && !currentRunning() && safe(() => engine.canResume(state.conv), false)) {
+      if (!was && state.online && state.conv && !currentRunning() && !runningElsewhere(state.conv.id) && safe(() => engine.canResume(state.conv), false)) {
         toast('Back online.', { level: 'success', action: { label: 'Resume', fn: () => resume() } });
       }
     }),
@@ -1496,6 +1581,28 @@ export async function startApp(rootEl) {
   }));
   // A fact undone from a chip, edited in Settings or changed in another tab: update the chips.
   safe(() => onMemoryChange(() => chat.refreshMemory()));
+  // History stops reaching the device (full storage, blocked database): say so once, plainly.
+  let warnedStorage = false;
+  if (!state.demo) {
+    safe(() =>
+      onPersistenceChange((p) => {
+        scheduleHistoryRefresh();
+        if (p && p.persistent) {
+          if (warnedStorage) toast('Saving works again.', { level: 'success', id: 'storage' });
+          warnedStorage = false;
+        } else if (p && !warnedStorage) {
+          warnedStorage = true;
+          const full = p.reason === 'quota';
+          toast(full ? 'Your device is out of storage — new conversations aren’t being saved. Free up space or export a backup.' : 'This browser isn’t saving your conversations right now. Export a backup to keep them.', {
+            level: 'error',
+            timeout: 0,
+            id: 'storage',
+            action: { label: 'Export', fn: () => openSettings({ section: 'data' }) },
+          });
+        }
+      }),
+    );
+  }
 
   // Another tab saved or removed the API key.
   window.addEventListener('storage', (e) => {

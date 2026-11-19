@@ -1,6 +1,8 @@
 // Install guide: per-platform steps (iPhone/iPad Safari, Android Chrome, desktop
 // Chrome/Edge/Safari/Firefox) with a one-tap Install button where the browser offers
 // one. Tabs let the owner read the phone steps while on the computer, and vice versa.
+// Inside the installed app it never offers to install on this device again: it opens on
+// another device's tab ("open this address on that device").
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
@@ -26,6 +28,8 @@ function ctxSafe() {
 export function createInstallGuide(o) {
   let ctx = ctxSafe();
   let tab = TABS.some((t) => t.id === ctx.platform) ? ctx.platform : 'desktop';
+  // Already installed here: the guide is only useful for the owner's other device.
+  if (ctx.standalone) tab = ctx.platform === 'desktop' ? 'ios' : 'desktop';
   const cleanups = [];
 
   const tabButtons = TABS.map((t) =>
@@ -101,16 +105,16 @@ export function createInstallGuide(o) {
       h(
         'ol',
         { class: 'install-steps' },
-        step(1, 'share', 'Tap Share', 'The square with an arrow, in Safari’s toolbar (at the bottom on iPhone, top on iPad).'),
-        step(2, 'add-square', 'Tap “Add to Home Screen”', 'Scroll down the share sheet if you don’t see it.'),
-        step(3, null, 'Tap “Add”', 'Jarvis appears on your Home Screen and opens full-screen, like an app.'),
+        step(1, 'share', 'Tap Share', 'The square with an arrow in Safari’s toolbar (at the bottom on iPhone, top on iPad). Don’t see it? Tap ••• first.'),
+        step(2, 'add-square', 'Tap “Add to Home Screen”', 'Scroll down the share sheet (or tap More) if you don’t see it.'),
+        step(3, null, 'Tap “Add”', 'If you see “Open as Web App”, leave it on. Jarvis appears on your Home Screen and opens full-screen, like an app.'),
       ),
-      h('p', { class: 'install-foot', text: 'Open Jarvis from the Home Screen icon from now on. Your key and history live in the installed app.' }),
+      h('p', { class: 'install-foot', text: 'Then open Jarvis from the Home Screen icon and set it up there. The installed app keeps its own key and history — anything entered in Safari stays in Safari.' }),
     ];
   }
 
   function androidSteps() {
-    const canPrompt = ctx.platform === 'android' && ctx.canPrompt;
+    const canPrompt = ctx.platform === 'android' && ctx.canPrompt && !ctx.standalone;
     return [
       canPrompt ? installButton('Install Jarvis') : null,
       h(
@@ -126,12 +130,13 @@ export function createInstallGuide(o) {
 
   function desktopSteps() {
     const here = ctx.platform === 'desktop';
-    const canPrompt = here && ctx.canPrompt;
+    const canPrompt = here && ctx.canPrompt && !ctx.standalone;
     const browser = here ? ctx.browser : '';
     const items = [];
     if (canPrompt) items.push(installButton('Install Jarvis'));
     if (browser === 'safari') {
       items.push(h('ol', { class: 'install-steps' }, step(1, null, 'Open the File menu', 'In Safari’s menu bar (macOS Sonoma or later).'), step(2, null, 'Choose “Add to Dock…”', 'Then click Add. Jarvis opens in its own window from the Dock.')));
+      items.push(h('p', { class: 'install-foot', text: 'The Dock app keeps its own key and history, so paste your key there once more.' }));
     } else if (browser === 'firefox') {
       items.push(h('p', { class: 'install-note' }, icon('info', { size: 16 }), h('span', { text: 'Firefox doesn’t install web apps. Use Chrome, Edge or Safari to install Jarvis — or simply bookmark this page.' })));
     } else {
@@ -157,11 +162,16 @@ export function createInstallGuide(o) {
     }
     if (ctx.standalone) {
       status.hidden = false;
-      status.replaceChildren(h('span', { class: 'pill pill--ok' }, icon('check', { size: 14 }), h('span', { text: 'Installed' })), h('span', { text: 'You’re using the installed app.' }));
+      status.replaceChildren(h('span', { class: 'pill pill--ok' }, icon('check', { size: 14 }), h('span', { text: 'Installed' })), h('span', { text: 'You’re using the installed app. To add Jarvis to another device, pick it below.' }));
     } else {
       status.hidden = false;
       const where = ctx.platform === 'ios' ? 'iPhone or iPad' : ctx.platform === 'android' ? 'Android phone' : 'computer';
       status.replaceChildren(h('span', { class: 'install-status-icon' }, icon(ctx.platform === 'desktop' ? 'laptop' : 'phone', { size: 18 })), h('span', { text: `Install Jarvis on this ${where} for a full-screen app that opens instantly and works offline.` }));
+    }
+    if (ctx.standalone && tab === ctx.platform) {
+      // This device already runs the installed app: nothing to install here.
+      body.replaceChildren(h('p', { class: 'install-note', attrs: { 'data-testid': 'install-already' } }, icon('check', { size: 16 }), h('span', { text: 'Jarvis is already installed on this device. Pick another device above to see how to add it there.' })));
+      return;
     }
     body.replaceChildren(...(tab === 'ios' ? iosSteps() : tab === 'android' ? androidSteps() : desktopSteps()).filter(Boolean));
     if (tab !== ctx.platform) {

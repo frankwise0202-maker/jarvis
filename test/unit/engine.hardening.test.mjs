@@ -202,6 +202,29 @@ test('P2c: an output-tokens-per-minute 429 caps max_tokens for the session, with
   assert.equal(outputTokensLimit(apiErr(RateLimitError, 429, 'rate_limit_error', 'slow down')), null);
 });
 
+test('P2c+: once an output-tokens-per-minute limit is known, agents start only as many at once as it covers', async () => {
+  const limit = 8000;
+  const otpm = (body) => body.max_tokens > limit && { error: { status: 429, type: 'rate_limit_error', message: `This request would exceed your organization's rate limit of ${limit.toLocaleString('en-US')} output tokens per minute (model: ${body.model}).`, headers: { 'anthropic-ratelimit-output-tokens-limit': String(limit), 'retry-after': '30' } } };
+  const h = createHarness({
+    settings: { depth: 'deep', maxParallel: 4 },
+    handler: swarm({
+      lead: (req) => (trailingToolResults(req.body).length ? answer('Synthesis.') : deploy(3)),
+      worker: (req) => otpm(req.body) || { ...workerReply('W'), delayMs: 5 },
+    }),
+  });
+  const conv = h.jarvis.newConversation();
+  const { turn: first } = await runTurn(h.jarvis, conv, 'First', 'swarm'); // learns the limit from the agents' 429s
+  assert.equal(first.status, 'done');
+  h.api.reset();
+  const { turn } = await runTurn(h.jarvis, conv, 'Second', 'swarm');
+  assert.equal(turn.status, 'done');
+  const workers = h.api.byKind('worker');
+  assert.equal(workers.length, 3, 'no 429s: nothing is sent that the limit cannot take');
+  assert.ok(workers.every((r) => r.body.max_tokens === 7200));
+  // 7,200 tokens charged per request against 8,000 a minute: one agent at a time, the others queue.
+  assert.equal(h.api.stats.peakWorkers, 1);
+});
+
 test('P2d: agents start staggered', async () => {
   const h = createHarness({
     workerStaggerMs: 60,

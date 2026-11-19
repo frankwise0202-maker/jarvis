@@ -53,6 +53,7 @@ export function importSummary(res) {
   const m = count(r.memory);
   const p = count(r.protocols);
   const skipped = count(r.skipped);
+  const copies = count(r.copies);
   const prefs = r.settings === true || count(r.settingsChanged) > 0 || (Array.isArray(r.settings) && r.settings.length > 0);
   const parts = [];
   if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
@@ -64,6 +65,7 @@ export function importSummary(res) {
     : skipped
       ? 'Nothing was restored.'
       : 'Nothing new to restore: this device already has everything in that backup.';
+  if (copies) message += ` ${copies === 1 ? 'One conversation' : `${copies} conversations`} had changed on both devices, so the backup’s version ${copies === 1 ? 'was' : 'were'} added as a copy “(from backup)”.`;
   if (skipped) message += ` ${skipped} conversation${skipped === 1 ? ' wasn’t' : 's weren’t'} made by Jarvis (or ${skipped === 1 ? 'was' : 'were'} damaged) and ${skipped === 1 ? 'was' : 'were'} skipped.`;
   return { message, level: skipped ? 'warn' : 'success' };
 }
@@ -992,7 +994,7 @@ export function createSettingsPanel(o) {
       h('p', {
         class: 'set-help',
         attrs: { 'data-testid': 'import-confirm-text' },
-        text: `Merge “${file.name}” into this device? Its conversations and memories are added (nothing is deleted), and your preferences (name, style, voice, theme and sounds) are taken from it. Your models, agent limits and spending warning stay as they are.`,
+        text: `Merge “${file.name}” into this device? Its conversations and memories are added and nothing is deleted (a conversation that changed on both devices is kept twice), and your preferences (name, style, voice, theme and sounds) are taken from it. Your models, agent limits and spending warning stay as they are.`,
       }),
       h(
         'div',
@@ -1007,8 +1009,10 @@ export function createSettingsPanel(o) {
               click: async () => {
                 importConfirm.hidden = true;
                 try {
-                  const summary = importSummary(await importBackup(file));
+                  const res = await importBackup(file);
+                  const summary = importSummary(res);
                   o.toast(summary.message, { level: summary.level, timeout: summary.level === 'warn' ? 9000 : undefined });
+                  if (typeof o.onImported === 'function') o.onImported(res);
                   o.refreshHistory();
                   renderMemory();
                 } catch (err) {

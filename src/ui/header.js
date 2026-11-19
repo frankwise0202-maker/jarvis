@@ -1,5 +1,6 @@
 // App header: mini core orb mirroring Jarvis's state, the wordmark, a status readout,
 // and the History / Settings buttons (plus a New chat shortcut once a chat has started).
+// In demo mode the DEMO badge beside the wordmark is an "Exit demo" button.
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
@@ -36,17 +37,42 @@ export function createHeader(o) {
   const statusText = h('span', { class: 'status-text' }, statusLabel, statusDetail);
   const status = h('div', { class: 'brand-status', dataset: { tone: 'ok' } }, statusDot, statusText);
 
-  const brand = h(
-    'div',
-    { class: 'brand' },
-    coreWrap,
-    h(
-      'div',
-      { class: 'brand-text' },
-      h('div', { class: 'brand-row' }, h('span', { class: 'brand-word', text: 'JARVIS' }), o.demo ? h('span', { class: 'brand-badge', text: 'Demo', attrs: { title: 'Demo mode: nothing is sent to the API' } }) : null),
-      status,
-    ),
-  );
+  // Demo mode: the DEMO badge is also the way out — the installed app has no address bar to
+  // remove ?demo=1 from. It reloads the real app (./), like Settings → About → Leave demo.
+  const demoExit = o.demo
+    ? h(
+        'button',
+        {
+          class: 'brand-demo-exit',
+          type: 'button',
+          attrs: { 'data-testid': 'demo-exit', 'aria-label': 'Exit demo', title: 'Demo mode: nothing is sent to the API. Tap to exit the demo.' },
+          // A 44px hit area around the small badge that doesn't change the header's layout
+          // (positioned, so it sits above the status line; the header buttons still win).
+          style: { position: 'relative', display: 'inline-flex', alignItems: 'center', padding: '14px 8px', margin: '-14px -8px', borderRadius: 'var(--r-pill)' },
+          on: { click: () => exitDemo() },
+        },
+        h('span', { class: 'brand-badge', text: 'Demo' }),
+      )
+    : null;
+
+  const word = h('span', { class: 'brand-word', text: 'JARVIS' });
+  const brand = h('div', { class: 'brand' }, coreWrap, h('div', { class: 'brand-text' }, h('div', { class: 'brand-row' }, word, demoExit), status));
+  // The narrowest phones can't fit the wordmark, the DEMO button and four header buttons:
+  // drop the wordmark (the orb still says "Jarvis") so DEMO never slides under New chat.
+  let narrowMq = null;
+  const fitDemo = () => {
+    word.hidden = !!(narrowMq && narrowMq.matches);
+  };
+  if (o.demo) {
+    try {
+      narrowMq = window.matchMedia('(max-width: 359px)');
+      if (narrowMq.addEventListener) narrowMq.addEventListener('change', fitDemo);
+      else if (narrowMq.addListener) narrowMq.addListener(fitDemo);
+    } catch {
+      narrowMq = null;
+    }
+    fitDemo();
+  }
 
   const newBtn = h(
     'button',
@@ -111,10 +137,25 @@ export function createHeader(o) {
     },
     destroy() {
       try {
+        if (narrowMq && narrowMq.removeEventListener) narrowMq.removeEventListener('change', fitDemo);
+        else if (narrowMq && narrowMq.removeListener) narrowMq.removeListener(fitDemo);
+      } catch {
+        /* ignore */
+      }
+      try {
         core && core.destroy();
       } catch {
         /* ignore */
       }
     },
   };
+}
+
+/** Leave demo mode: load the app without ?demo=1 (and without any other query or hash). */
+function exitDemo() {
+  try {
+    location.assign(new URL('./', location.href).href);
+  } catch {
+    location.href = './';
+  }
 }

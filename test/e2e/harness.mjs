@@ -353,10 +353,16 @@ export class TestContext {
       if (canonicalJson(a.messages[0]) !== canonicalJson(b.messages[0])) continue; // different conversation
       this.assert(canonicalJson(a.system) === canonicalJson(b.system), `Lead request ${i + 1} changed the frozen system prompt`);
       this.assert(canonicalJson(a.tools) === canonicalJson(b.tools), `Lead request ${i + 1} changed the frozen tools`);
-      this.assert(b.messages.length >= a.messages.length, `Lead request ${i + 1} has fewer messages than the one before`);
-      for (let k = 0; k < a.messages.length; k++) {
-        this.assert(canonicalJson(a.messages[k]) === canonicalJson(b.messages[k]), `Lead request ${i + 1} edited history: messages[${k}] differs from the previous request`);
-      }
+      // A Stop may drop the end of the previous request's history, and only that: the partial
+      // assistant messages of a pause_turn continuation, or a message withdrawn before Jarvis
+      // replied (one user message, possibly followed by such a chain). What comes next must then
+      // be a new user message (a turn or tool results); everything before stays exactly as sent.
+      let p = 0;
+      while (p < a.messages.length && p < b.messages.length && canonicalJson(a.messages[p]) === canonicalJson(b.messages[p])) p++;
+      const dropped = a.messages.slice(p);
+      const droppable = dropped.every((m, j) => m.role === 'assistant' || (j === 0 && m.role === 'user'));
+      const nextOk = !dropped.length || !b.messages[p] || b.messages[p].role === 'user';
+      this.assert(droppable && nextOk, `Lead request ${i + 1} edited history: messages[${p}] differs from the previous request`);
     }
   }
 

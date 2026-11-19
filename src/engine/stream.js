@@ -74,10 +74,21 @@ export async function streamMessage({ client, params, signal, onEvent, state = {
   state.started = false;
   const rawByIndex = new Map();
   const idByIndex = new Map();
+  // For a request cut short after it started: what it already cost (see accountPartialUsage).
+  let startUsage = null;
+  let startModel = null;
+  let streamedChars = 0;
   const stream = client.beta.messages.stream(params, { signal, ...(requestOptions || {}) });
   stream.on('streamEvent', (event, snapshot) => {
     state.started = true;
     try {
+      if (event.type === 'message_start') {
+        startUsage = event.message?.usage || null;
+        startModel = event.message?.model || null;
+      } else if (event.type === 'content_block_delta') {
+        const d = event.delta || {};
+        streamedChars += String(d.text ?? '').length + String(d.thinking ?? '').length + String(d.partial_json ?? '').length;
+      }
       if (event.type === 'content_block_start') {
         const block = event.content_block;
         if (block && typeof block.id === 'string' && (block.type === 'tool_use' || block.type === 'server_tool_use')) {
@@ -99,6 +110,7 @@ export async function streamMessage({ client, params, signal, onEvent, state = {
     if (err && typeof err === 'object') {
       try {
         err.jarvisStarted = !!state.started;
+        if (startUsage) err.jarvisPartial = { model: startModel, usage: partialUsage(startUsage, streamedChars) };
       } catch {
         /* frozen error object */
       }
@@ -113,6 +125,33 @@ export async function streamMessage({ client, params, signal, onEvent, state = {
     if (id) rawInputs.set(id, raw);
   }
   return { message, rawInputs };
+}
+
+const tokens = (n) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0);
+
+/**
+ * Usage of a response that was cut short (Stop, a dropped connection, a mid-stream error): the
+ * input side is final from message_start; the output is estimated from the text streamed so far
+ * (about 4 characters a token; the API reports it only at the end).
+ */
+function partialUsage(start, chars) {
+  return {
+    input_tokens: tokens(start.input_tokens),
+    cache_creation_input_tokens: tokens(start.cache_creation_input_tokens),
+    cache_read_input_tokens: tokens(start.cache_read_input_tokens),
+    output_tokens: Math.max(tokens(start.output_tokens), Math.ceil(chars / 4)),
+  };
+}
+
+/**
+ * The API bills a request that was cut short for what it processed, so its estimate (attached to
+ * the error by streamMessage as `jarvisPartial`) counts toward the turn, agent and spend - once.
+ */
+export function accountPartialUsage(ctx, err, model, target = null) {
+  const partial = err && typeof err === 'object' ? err.jarvisPartial : null;
+  if (!partial || partial.accounted) return;
+  partial.accounted = true;
+  ctx.accountUsage({ model: partial.model || model, usage: partial.usage }, model, target);
 }
 
 /**
@@ -154,7 +193,7 @@ export async function requestWithFeatureFallback(ctx, makeParams, onEvent, opts 
         if (otpm && typeof ctx.capMaxTokens === 'function') {
           const cap = Math.max(MIN_MAX_TOKENS, Math.floor(otpm * 0.9));
           if (params.max_tokens > cap) {
-            ctx.capMaxTokens(params.model, cap);
+            ctx.capMaxTokens(params.model, cap, otpm);
             continue;
           }
         }

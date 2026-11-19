@@ -8,6 +8,7 @@
 // No DOM access here.
 
 import {
+  accountPartialUsage,
   buildMessageParams,
   echoContent,
   readFetchResult,
@@ -336,6 +337,7 @@ async function leadRequest(ctx, req) {
       ctx.adoptContainer(result.message.container);
       return { ...result, planning: view.planning };
     } catch (err) {
+      accountPartialUsage(ctx, err, ctx.leadModel, null);
       if (ctx.stopped || isAbortError(err)) throw err;
       if (isToolInputParseError(err) && jsonRetries < MAX_JSON_RETRIES) {
         jsonRetries += 1;

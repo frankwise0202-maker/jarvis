@@ -589,6 +589,63 @@ test('network drop on the lead: interrupted; resume drops the cut request and re
   assert.equal(conv.pending, null);
 });
 
+test('requests cut short still count what they cost: input from message_start, output estimated', async () => {
+  // The lead's stream drops mid-answer (interrupted), then a Stop mid-stream on the next turn.
+  let n = 0;
+  const h = createHarness({
+    handler: swarm({
+      lead: () => {
+        n += 1;
+        if (n === 1) return { content: [blk.thinking('Hmm'), blk.text('A partial answer that will be cut')], stop: 'end_turn', breakAfter: 9 };
+        return { content: [blk.text('This is a slow answer that will be stopped halfway through.')], stop: 'end_turn', delayMs: 30 };
+      },
+    }),
+  });
+  const conv = h.jarvis.newConversation();
+  const { turn } = await runTurn(h.jarvis, conv, 'Hello');
+  assert.equal(turn.status, 'interrupted');
+  const streamed = turn.segments.reduce((sum, seg) => sum + (seg.text || '').length, 0);
+  assert.ok(streamed > 0);
+  assert.deepEqual(turn.usage, { input: 100, output: Math.max(1, Math.ceil(streamed / 4)), cacheWrite: 0, cacheRead: 0, searches: 0, fetches: 0 });
+  assert.ok(Math.abs(turn.costUsd - costOf('claude-opus-5-5', { input_tokens: 100, output_tokens: turn.usage.output })) < 1e-12);
+  assert.equal(h.spend.length, 1);
+  assert.ok(Math.abs(h.spend[0] - turn.costUsd) < 1e-12);
+
+  const conv2 = h.jarvis.newConversation();
+  const { turn: stopped } = await runTurn(h.jarvis, conv2, 'Slow please', 'auto', {
+    onRun: (run) => run.on('segment', (e) => {
+      if (e.segment.kind === 'text' && e.segment.text.length > 10) run.abort();
+    }),
+  });
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.usage.input, 100);
+  assert.ok(stopped.costUsd > 0);
+  assert.equal(h.spend.length, 2);
+});
+
+test('an agent whose stream drops still counts its cost (and again when resumed)', async () => {
+  let resumed = false;
+  const h = createHarness({
+    handler: swarm({
+      lead: () => deployReply('toolu_cost', deployInput(2, 'Costly')),
+      worker: (req) => (!resumed && workerTaskNo(req.body) === 2 ? { ...workerReply('Cut'), breakAfter: 8 } : workerReply(`C${workerTaskNo(req.body)}`)),
+      synth: () => answer('Done.'),
+    }),
+  });
+  const conv = h.jarvis.newConversation();
+  const { turn } = await runTurn(h.jarvis, conv, 'Go', 'swarm');
+  assert.equal(turn.status, 'interrupted');
+  const [mission] = missionsOf(turn);
+  assert.deepEqual(mission.agents.map((a) => [a.status, a.usage.input]), [['done', 1000], ['interrupted', 1000]]);
+  assert.ok(mission.agents[1].costUsd > 0);
+  resumed = true;
+  const { turn: after } = await collect(h.jarvis.resumeTurn(conv));
+  assert.equal(after.status, 'done');
+  assert.equal(mission.agents[1].usage.input, 2000, 'the cut attempt and the resumed one');
+  const total = h.spend.reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(total - after.costUsd) < 1e-9, 'spend and the turn total agree');
+});
+
 test('a new turn after an interrupted tool round closes the round first', async () => {
   const h = createHarness({
     handler: swarm({

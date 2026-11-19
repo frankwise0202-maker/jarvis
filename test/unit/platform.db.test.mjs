@@ -46,6 +46,21 @@ const FACTORY = () => {
     const { LEAD_SYSTEM_V2, leadToolsV3 } = window.__mods.prompts;
     return { id, v: 1, title: userTexts[0].slice(0, 60), createdAt: updatedAt - 1000, updatedAt, system: LEAD_SYSTEM_V2, tools: leadToolsV3(), apiMessages: [{ role: 'user', content: [{ type: 'text', text: userTexts[0] }] }], turns, pending: null, ...extra };
   };
+  // JSON with sorted keys (stored records may order keys differently from the original object).
+  window.canonical = (value) => JSON.stringify(value, (key, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v));
+  // Every record of a store, read straight from IndexedDB.
+  window.rawRecords = (store = 'conversations') => new Promise((resolve, reject) => {
+    const req = indexedDB.open('jarvis');
+    req.onsuccess = () => {
+      const all = req.result.transaction(store).objectStore(store).getAll();
+      all.onsuccess = () => {
+        resolve(all.result);
+        req.result.close();
+      };
+      all.onerror = () => reject(all.error);
+    };
+    req.onerror = () => reject(req.error);
+  });
   // A finished swarm conversation exactly as the engine stores it: every segment kind, a mission
   // with agents and sources, attachments, the optional turn fields.
   window.richConv = (id, updatedAt) => {
@@ -280,6 +295,218 @@ test('db: a failing write (quota) keeps the conversation in memory and flags isP
     after: { persistent: true, reason: null },
     events: [{ persistent: false, reason: 'quota' }, { persistent: true, reason: null }],
   });
+});
+
+// ---- API history stored apart (photos and PDFs are not rewritten on every save) ----------
+
+test('db: the API history is stored apart and rewritten only when it changes', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const db = window.__mods.db;
+    const puts = [];
+    const realPut = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (this.name === 'conversations') puts.push(Array.isArray(value.id) ? 'history' : 'main');
+      return realPut.call(this, value, key);
+    };
+    const historyPuts = () => puts.filter((p) => p === 'history').length;
+    const c = conv('photos', 1000);
+    // A 2 MB photo in the first message, as the engine sends it.
+    c.apiMessages = [{ role: 'user', content: [{ type: 'text', text: '<turn_context>…</turn_context>' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'A'.repeat(2 * 1024 * 1024) } }, { type: 'text', text: 'What is this?' }] }];
+    const counts = [];
+    await db.saveConversation(c);
+    counts.push(historyPuts());
+    for (let i = 0; i < 5; i++) {
+      // A run streaming: turns change, the history does not.
+      c.turns[1].segments[0].text += ' and more';
+      c.updatedAt += 1;
+      await db.saveConversation(c);
+    }
+    counts.push(historyPuts());
+    c.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'A desk.' }] });
+    await db.saveConversation(c);
+    counts.push(historyPuts());
+    await db.saveConversation(c);
+    counts.push(historyPuts());
+    c.apiMessages.pop(); // a trailing removal (a withdrawn or refused turn)
+    await db.saveConversation(c);
+    counts.push(historyPuts());
+    c.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'Another reply.' }] }); // same length as before the pop
+    await db.saveConversation(c);
+    counts.push(historyPuts());
+    IDBObjectStore.prototype.put = realPut;
+    const got = await db.getConversation('photos');
+    const raw = (await rawRecords()).map((x) => ({ id: x.id, keys: Object.keys(x).sort(), split: x.apiSplit && x.apiSplit.count, messages: x.apiMessages && x.apiMessages.length }));
+    return { counts, mains: puts.length - historyPuts(), same: canonical(got) === canonical(c), split: 'apiSplit' in got, lastReply: got.apiMessages[1].content[0].text, raw };
+  });
+  assert.deepEqual(r.counts, [1, 1, 2, 2, 3, 4], 'the history is written only when it changed');
+  assert.equal(r.mains, 10, 'the conversation record itself is written on every save');
+  assert.equal(r.same, true, 'getConversation reassembles exactly what was saved');
+  assert.equal(r.split, false);
+  assert.equal(r.lastReply, 'Another reply.');
+  const main = r.raw.find((x) => x.id === 'photos');
+  const history = r.raw.find((x) => Array.isArray(x.id));
+  assert.equal(r.raw.length, 2);
+  assert.equal(main.keys.includes('apiMessages'), false, 'the conversation record does not carry the photos');
+  assert.equal(main.split, 2);
+  assert.deepEqual(history.id, ['photos', 'api']);
+  assert.equal(history.messages, 2);
+});
+
+test('db: a conversation stored whole (earlier versions) is read as it is and split on its next save', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const db = window.__mods.db;
+    const legacy = conv('legacy', 1000);
+    legacy.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'Hi' }] });
+    // Written the old way, straight into IndexedDB (as the E2E security scenario also does).
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.open('jarvis', 1);
+      req.onupgradeneeded = () => {
+        for (const name of ['conversations', 'meta']) req.result.createObjectStore(name, { keyPath: 'id' });
+      };
+      req.onsuccess = () => {
+        const tx = req.result.transaction(['conversations', 'meta'], 'readwrite');
+        tx.objectStore('conversations').put(legacy);
+        tx.objectStore('meta').put({ id: 'legacy', title: 'legacy', createdAt: 0, updatedAt: 1000, preview: 'Hello', turnCount: 2 });
+        tx.oncomplete = () => {
+          req.result.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    const first = await db.getConversation('legacy');
+    const readAsIs = canonical(first) === canonical(legacy);
+    first.turns[1].segments[0].text = 'Hi again';
+    await db.saveConversation(first);
+    const raw = (await rawRecords()).map((x) => ({ id: x.id, inline: Array.isArray(x.apiMessages) && !Array.isArray(x.id), split: !!x.apiSplit }));
+    const second = await db.getConversation('legacy');
+    return { readAsIs, raw, same: canonical(second) === canonical(first), version: await new Promise((res) => { const q = indexedDB.open('jarvis'); q.onsuccess = () => { res(q.result.version); q.result.close(); }; }) };
+  });
+  assert.equal(r.readAsIs, true);
+  assert.deepEqual(r.raw.sort((a, b) => String(a.id).localeCompare(String(b.id))), [{ id: 'legacy', inline: false, split: true }, { id: ['legacy', 'api'], inline: false, split: false }]);
+  assert.equal(r.same, true);
+  assert.equal(r.version, 1, 'no schema change');
+});
+
+test('db: a save that fails half-way changes nothing on disk (both records are written in one transaction)', async () => {
+  const page = await newPage();
+  const before = await page.evaluate(async () => {
+    const db = window.__mods.db;
+    const c = conv('atomic', 1000);
+    await db.saveConversation(c);
+    const realPut = IDBObjectStore.prototype.put;
+    // The conversation record goes in, then writing the (changed) history fails: a crash mid-save.
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (Array.isArray(value && value.id)) throw new DOMException('disk error', 'UnknownError');
+      return realPut.call(this, value, key);
+    };
+    const next = JSON.parse(JSON.stringify(c));
+    next.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'Hi' }] });
+    next.turns[1].segments[0].text = 'Changed';
+    next.updatedAt = 2000;
+    const saved = await db.saveConversation(next);
+    IDBObjectStore.prototype.put = realPut;
+    const inMemory = canonical(await db.getConversation('atomic')) === canonical(next);
+    return { saved, inMemory, stored: canonical(c) };
+  });
+  assert.equal(before.saved, false);
+  assert.equal(before.inMemory, true, 'this session keeps the newest version in memory');
+  await page.reload();
+  await page.waitForFunction(() => window.__ready === true);
+  const after = await page.evaluate(async () => canonical(await window.__mods.db.getConversation('atomic')));
+  assert.equal(after, before.stored, 'the disk still holds the previous, consistent version');
+});
+
+test('db: deleting a conversation removes its history record too', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const db = window.__mods.db;
+    for (const id of ['a', 'b', 'c']) await db.saveConversation(conv(id, 1000));
+    await db.deleteConversation('a');
+    const afterOne = (await rawRecords()).map((x) => (Array.isArray(x.id) ? x.id.join('/') : x.id)).sort();
+    await db.deleteAllConversations();
+    return { afterOne, afterAll: (await rawRecords()).length, meta: (await rawRecords('meta')).length };
+  });
+  assert.deepEqual(r.afterOne, ['b', 'b/api', 'c', 'c/api']);
+  assert.deepEqual([r.afterAll, r.meta], [0, 0]);
+});
+
+// ---- two windows on one conversation ------------------------------------------------------
+
+test('db: two windows on one conversation never overwrite each other silently, and hear each other', async () => {
+  const a = await newPage();
+  const b = await a.context().newPage();
+  await b.addInitScript(FACTORY);
+  await b.goto(h.url + '/');
+  await b.waitForFunction(() => window.__ready === true);
+  const listen = () => {
+    window.heard = [];
+    window.conflicts = [];
+    window.__mods.db.onRemoteActivity((m) => window.heard.push(m.type === 'saved' ? `saved ${m.id} rev ${m.rev} at ${m.updatedAt}` : `run ${m.id} ${m.running}`));
+    window.__mods.db.onConversationConflict((e) => window.conflicts.push(e));
+  };
+  await a.evaluate(listen);
+  await b.evaluate(listen);
+  // Window A starts the conversation; window B opens it.
+  await a.evaluate(async () => {
+    window.c = conv('shared', 1000);
+    await window.__mods.db.saveConversation(window.c);
+  });
+  await b.evaluate(async () => {
+    window.c = await window.__mods.db.getConversation('shared');
+  });
+  // A runs a turn (announced to the other windows) and saves it.
+  await a.evaluate(async () => {
+    const { db } = window.__mods;
+    db.announceRun('shared', true);
+    window.c.turns.push({ id: 'shared-u1', role: 'user', text: 'Asked in window A', mode: 'auto', createdAt: 1100 });
+    window.c.updatedAt = 1100;
+    await db.saveConversation(window.c);
+    db.announceRun('shared', false);
+  });
+  const r = await b.evaluate(async () => {
+    const { db } = window.__mods;
+    await new Promise((res) => setTimeout(res, 150)); // channel messages are asynchronous
+    // B still holds the stale copy: its save would drop A's turn, so it is refused and reported.
+    window.c.title = 'Renamed in window B';
+    const staleSave = await db.saveConversation(window.c);
+    const fresh = await db.getConversation('shared'); // B reloads the newest version...
+    fresh.title = 'Renamed in window B after reloading';
+    const freshSave = await db.saveConversation(fresh); // ...and can save again
+    window.c = fresh; // the copy B now has open
+    const stored = await db.getConversation('shared');
+    return { staleSave, freshSave, conflicts: window.conflicts, heard: window.heard, title: stored.title, turns: stored.turns.map((t) => t.id) };
+  });
+  assert.equal(r.staleSave, false);
+  assert.deepEqual(r.conflicts, [{ id: 'shared' }]);
+  assert.equal(r.freshSave, true);
+  assert.equal(r.title, 'Renamed in window B after reloading');
+  assert.ok(r.turns.includes('shared-u1'), "window A's turn survived");
+  assert.deepEqual(r.heard, ['saved shared rev 1 at 1000', 'run shared true', 'saved shared rev 2 at 1100', 'run shared false']);
+  const heardByA = await a.evaluate(async () => {
+    await new Promise((res) => setTimeout(res, 150));
+    return { heard: window.heard, conflicts: window.conflicts };
+  });
+  assert.deepEqual(heardByA, { heard: ['saved shared rev 3 at 1100'], conflicts: [] }, 'a window never hears its own saves');
+  // A backup restore always wins (the owner chose it). Every window still holding an older open
+  // copy - the one that restored included - gets a conflict instead of silently undoing it.
+  const inB = await b.evaluate(async () => {
+    const { db } = window.__mods;
+    window.conflicts = [];
+    const restored = await db.restoreConversation({ ...conv('shared', 1200), title: 'From a backup' });
+    window.c.title = 'B, still holding its copy from before the restore';
+    return { restored, saved: await db.saveConversation(window.c), conflicts: window.conflicts };
+  });
+  const inA = await a.evaluate(async () => {
+    window.conflicts = [];
+    window.c.title = 'A, unaware of the restore';
+    return { saved: await window.__mods.db.saveConversation(window.c), conflicts: window.conflicts, title: (await window.__mods.db.getConversation('shared')).title };
+  });
+  assert.deepEqual(inB, { restored: true, saved: false, conflicts: [{ id: 'shared' }] });
+  assert.deepEqual(inA, { saved: false, conflicts: [{ id: 'shared' }], title: 'From a backup' });
 });
 
 // ---- backup -----------------------------------------------------------------------------

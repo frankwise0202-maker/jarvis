@@ -588,6 +588,14 @@ export function createChat(o) {
         return false;
       }
     },
+    /** The open conversation is being run by another window (no Resume here). */
+    runningElsewhere: () => {
+      try {
+        return typeof o.runningElsewhere === 'function' && !!o.runningElsewhere();
+      } catch {
+        return false;
+      }
+    },
     isLastTurn: (turnId) => {
       const turns = Array.isArray(conv && conv.turns) ? conv.turns : [];
       const last = turns[turns.length - 1];
@@ -958,14 +966,25 @@ function createJarvisTurnView(turn, ctx) {
     const status = turn.status;
     const hasErrorSeg = segs.some((s) => s.kind === 'error');
     const showError = status === 'error' && !!turn.error && !hasErrorSeg;
-    const showResume = (status === 'interrupted' || isStale()) && ctx.isLastTurn(turn.id);
+    const elsewhere = (status === 'interrupted' || status === 'running') && ctx.isLastTurn(turn.id) && ctx.runningElsewhere();
+    const showResume = !elsewhere && (status === 'interrupted' || isStale()) && ctx.isLastTurn(turn.id);
     const canResume = showResume && ctx.canResume();
     // Rebuild the notices only when what they show changes (keeps focus on Resume).
-    const key = [showError && `${turn.error.kind}|${turn.error.message}`, showResume, canResume].join('|');
+    const key = [showError && `${turn.error.kind}|${turn.error.message}`, showResume, canResume, elsewhere].join('|');
     if (key !== noticeKey) {
       noticeKey = key;
       footerNotice.replaceChildren();
       if (showError) footerNotice.appendChild(createErrorView({ id: 'turn-error', kind: 'error', error: turn.error }, segCtx(), true).el);
+      if (elsewhere) {
+        footerNotice.appendChild(
+          h(
+            'div',
+            { class: 'resume-card', attrs: { role: 'status', 'data-testid': 'running-elsewhere' } },
+            h('span', { class: 'resume-icon' }, icon('layers', { size: 18 })),
+            h('div', { class: 'resume-text' }, h('strong', { text: 'Running in another window' }), h('span', { text: 'Jarvis is still working on this reply in another window or tab. It shows here when it’s done.' })),
+          ),
+        );
+      }
     }
     if (showResume && !footerNotice.querySelector('.resume-card')) {
       footerNotice.appendChild(
@@ -1321,11 +1340,34 @@ function createToolView() {
   };
 }
 
+// A big swarm sends agent events many times a second; the inline card is redrawn at most this
+// often (a mission starting or ending is shown at once, and the last change always lands).
+const MISSION_INTERVAL = 200;
+
 function createMissionView(sctx) {
   let card = null;
   let fallback = null;
   let missionId = null;
+  let latest = null;
+  let shownStatus = null;
+  let lastAt = 0;
+  let timer = 0;
   const el = h('div', { class: 'seg seg-mission', attrs: { 'data-testid': 'segment-mission' } });
+
+  function draw() {
+    clearTimeout(timer);
+    timer = 0;
+    lastAt = performance.now();
+    if (!latest) return;
+    shownStatus = latest.status;
+    try {
+      if (card) card.update(latest);
+      else if (fallback) fallback.update(latest);
+    } catch (err) {
+      console.error('[jarvis] mission card update failed:', err);
+    }
+  }
+
   return {
     kind: 'mission',
     el,
@@ -1334,22 +1376,28 @@ function createMissionView(sctx) {
       missionId = s.missionId;
       const mission = missionsOf(turn)[s.missionId];
       if (!isObj(mission)) return;
-      if (card) {
-        card.update(mission);
+      latest = mission;
+      if (card || fallback) {
+        const wait = MISSION_INTERVAL - (performance.now() - lastAt);
+        if (mission.status !== shownStatus || wait <= 0) draw();
+        else if (!timer) timer = setTimeout(draw, wait);
         return;
       }
-      if (!fallback) {
-        try {
-          card = createMissionCard(mission, { onOpen: () => sctx.openMission(missionId) });
-          el.replaceChildren(card.el);
-          return;
-        } catch (err) {
-          console.error('[jarvis] mission card failed:', err);
-          fallback = createFallbackMissionCard(() => sctx.openMission(missionId));
-          el.replaceChildren(fallback.el);
-        }
+      lastAt = performance.now();
+      shownStatus = mission.status;
+      try {
+        card = createMissionCard(mission, { onOpen: () => sctx.openMission(missionId) });
+        el.replaceChildren(card.el);
+        return;
+      } catch (err) {
+        console.error('[jarvis] mission card failed:', err);
+        fallback = createFallbackMissionCard(() => sctx.openMission(missionId));
+        el.replaceChildren(fallback.el);
       }
       fallback.update(mission);
+    },
+    destroy() {
+      clearTimeout(timer);
     },
   };
 }

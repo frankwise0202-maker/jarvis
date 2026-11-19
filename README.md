@@ -152,7 +152,8 @@ it once more (copy it from your password manager).
 - **Systems**: Settings → API key & spending → **Systems dashboard** (or the Systems row on a
   computer) shows how many agents, searches and sources Jarvis has used, and the spend.
 - **Memory**: say things like "remember that I prefer metric units" or "forget my old address".
-  Jarvis tells you when it saves something; review it in Settings → Memory.
+  Jarvis tells you when it saves something, with an **Undo** button right there in case it got it
+  wrong; review everything it remembers in Settings → Memory.
 - **History**: open the history list to search and reopen past conversations, or start a new
   chat. Shortcuts on a computer: **Ctrl/⌘ + K** new chat, **Esc** closes panels.
 - **Demo**: to show Jarvis to someone without using your account, open

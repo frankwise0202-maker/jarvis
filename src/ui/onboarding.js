@@ -67,7 +67,7 @@ export function createOnboarding(o) {
   const actions = h('div', { class: 'ob-actions' });
   const el = h(
     'div',
-    { class: 'onboarding', attrs: { 'data-testid': 'onboarding', 'data-step': step } },
+    { class: ['onboarding', installFirst && 'has-install-note'], attrs: { 'data-testid': 'onboarding', 'data-step': step } },
     h('div', { class: 'ob-inner' }, top, hero, stage, actions),
   );
 
@@ -132,17 +132,17 @@ export function createOnboarding(o) {
   }
 
   /** iPhone/iPad in a browser tab: install first, set up in the installed app (UX-2). */
-  function installFirstNote() {
+  function installFirstNote({ compact = false } = {}) {
     if (!installFirst) return null;
     const device = appleDevice();
     return h(
       'div',
-      { class: 'ob-note', attrs: { role: 'note', 'data-testid': 'onboarding-install-first' } },
+      { class: ['ob-note', compact && 'ob-note--compact'], attrs: { role: 'note', 'data-testid': 'onboarding-install-first' } },
       h('span', { class: 'ob-note-icon' }, icon('phone', { size: 18 })),
       h(
         'div',
         { class: 'ob-note-body' },
-        h('strong', { text: 'Set me up from your Home Screen' }),
+        compact ? null : h('strong', { text: 'Install Jarvis first' }),
         h('span', { text: `On ${device}, add Jarvis to your Home Screen first and set it up there — a key entered here won’t carry over.` }),
         o.openInstallGuide
           ? h(
@@ -356,7 +356,7 @@ export function createOnboarding(o) {
     );
     const content = [
       ...heading('Connect', 'Connect to Claude', 'Paste your Anthropic API key. I’ll test it before saving.'),
-      installFirstNote(),
+      installFirstNote({ compact: true }),
       h('div', { class: 'ob-field' }, h('div', { class: 'input-group' }, input, eye), error, success),
       h('p', { class: 'ob-privacy' }, icon('lock', { size: 15 }), h('span', { text: 'Your key stays on this device. Jarvis sends it only to api.anthropic.com — never anywhere else.' })),
       h('p', { class: 'label-caps ob-steps-title', text: 'No key yet?' }),
@@ -404,6 +404,94 @@ export function createOnboarding(o) {
     return [content, buttons];
   }
 
+  // ---- on-screen keyboard (UX-1) -----------------------------------------------------------
+  // When the keyboard opens, the sheet shrinks to the visible area above it. Keep the focused
+  // field — and the step's primary button, when both fit — inside that area. Only the
+  // onboarding's own scroller moves (scrollIntoView could also scroll the page on iOS).
+  const vv = safe(() => window.visualViewport || null, null);
+  let revealFrame = 0;
+  const timers = new Set();
+
+  function focusedField() {
+    const a = document.activeElement;
+    return a && el.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) ? a : null;
+  }
+
+  function scheduleReveal() {
+    if (destroyed || !focusedField()) return;
+    if (revealFrame) cancelAnimationFrame(revealFrame);
+    revealFrame = requestAnimationFrame(() => {
+      revealFrame = 0;
+      try {
+        revealField();
+      } catch (err) {
+        console.error('[jarvis] onboarding reveal failed:', err);
+      }
+    });
+  }
+
+  function later(fn, ms) {
+    const t = setTimeout(() => {
+      timers.delete(t);
+      if (!destroyed) fn();
+    }, ms);
+    timers.add(t);
+  }
+
+  function revealField() {
+    const field = focusedField();
+    const scroller = field && scrollParent(el);
+    if (!scroller) return;
+    const M = 12; // breathing room above and below
+    const sr = scroller.getBoundingClientRect();
+    let top = sr.top;
+    let bottom = sr.bottom;
+    if (vv) {
+      top = Math.max(top, vv.offsetTop || 0);
+      bottom = Math.min(bottom, (vv.offsetTop || 0) + vv.height);
+    }
+    // A sticky action bar (keyboard closed or not detected) covers the bottom of the area.
+    const sticky = getComputedStyle(actions).position === 'sticky';
+    if (sticky) {
+      const ar = actions.getBoundingClientRect();
+      if (ar.top < bottom && ar.bottom > top) bottom = Math.min(bottom, ar.top);
+    }
+    const avail = bottom - top - 2 * M;
+    if (avail <= 0) return;
+    const box = (field.closest('.ob-field') || field).getBoundingClientRect();
+    let first = box.top;
+    let last = box.bottom;
+    if (!sticky) {
+      // Actions in the flow: show the primary button under the field too, if both fit.
+      const btn = Array.from(actions.querySelectorAll('.ob-primary')).find((b) => !b.hidden);
+      const br = btn && btn.getBoundingClientRect();
+      if (br && br.height && br.top >= box.bottom && br.bottom - box.top <= avail) last = br.bottom;
+    }
+    let delta = 0;
+    if (last - first > avail) delta = (box.top + box.bottom) / 2 - (top + bottom) / 2; // too tall: center the field
+    else if (first < top + M) delta = first - (top + M);
+    else if (last > bottom - M) delta = last - (bottom - M);
+    if (Math.abs(delta) >= 1) scroller.scrollTop += Math.round(delta);
+  }
+
+  const onViewportResize = () => {
+    if (!focusedField()) return;
+    scheduleReveal();
+    later(scheduleReveal, 350); // iOS can report the size before the keyboard has settled
+  };
+  if (vv) vv.addEventListener('resize', onViewportResize);
+  el.addEventListener('focusin', (e) => {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) scheduleReveal();
+  });
+  // iOS sometimes leaves the page scrolled after the keyboard closes (as the composer does).
+  el.addEventListener('focusout', () => {
+    later(() => {
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+      if (window.scrollY) window.scrollTo(0, 0);
+    }, 120);
+  });
+
   render();
 
   return {
@@ -414,6 +502,10 @@ export function createOnboarding(o) {
     go,
     destroy() {
       destroyed = true;
+      if (vv) vv.removeEventListener('resize', onViewportResize);
+      if (revealFrame) cancelAnimationFrame(revealFrame);
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
       try {
         core && core.destroy();
       } catch {
@@ -429,4 +521,23 @@ function safe(fn, fallback) {
   } catch {
     return fallback;
   }
+}
+
+/** 'iPad' for iPads (including iPadOS's desktop user agent), otherwise 'iPhone'. */
+function appleDevice() {
+  try {
+    const ua = navigator.userAgent || '';
+    return /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad' : 'iPhone';
+  } catch {
+    return 'iPhone';
+  }
+}
+
+/** Nearest ancestor that scrolls vertically (the sheet body that hosts the onboarding). */
+function scrollParent(node) {
+  for (let p = node.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if (oy === 'auto' || oy === 'scroll') return p;
+  }
+  return null;
 }

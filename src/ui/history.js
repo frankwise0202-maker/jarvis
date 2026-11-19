@@ -57,6 +57,7 @@ export function createHistory(o) {
   let query = '';
   let confirming = null; // { id, timer }
   let persistent = true;
+  let persistReason = null;
   let searchTimer = 0;
 
   const collapseBtn = h(
@@ -221,7 +222,16 @@ export function createHistory(o) {
     }
     list.replaceChildren(...sections);
     const n = items.length;
-    setText(foot, persistent ? (n ? `${n} conversation${n === 1 ? '' : 's'} · stored on this device` : 'Stored on this device only') : 'History can’t be saved in this browser mode (private browsing?).');
+    setText(
+      foot,
+      persistent
+        ? n
+          ? `${n} conversation${n === 1 ? '' : 's'} · stored on this device`
+          : 'Stored on this device only'
+        : persistReason === 'quota'
+          ? 'Out of storage: new conversations aren’t being saved. Free up space or export a backup.'
+          : 'History can’t be saved in this browser mode (private browsing?).',
+    );
     foot.classList.toggle('is-warn', !persistent);
   }
 
@@ -247,8 +257,10 @@ export function createHistory(o) {
         }
       }
     },
-    setPersistent(value) {
+    /** reason (when not persistent): 'quota' (the device is full) or 'unavailable'. */
+    setPersistent(value, reason = null) {
       persistent = value !== false;
+      persistReason = persistent ? null : reason;
       render();
     },
     /** Re-render live markers (running conversations). */
