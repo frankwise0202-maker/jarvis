@@ -387,7 +387,7 @@ describe('helpers', () => {
     assert.equal(m.searches, 12);
     assert.equal(m.sources, 99);
     assert.equal(m.costUsd, 0.84);
-    assert.deepEqual(m.roles, ['Battery chemistry analyst', 'Market analyst', 'Supply chain analyst', 'patent researcher', 'Fact checker']);
+    assert.deepEqual(m.roles, ['Battery chemistry analyst', 'Market analyst', 'Supply chain analyst', 'patent researcher', 'Never started', 'Fact checker'], 'every agent of a launched mission, in order');
     const bare = swarmTurn();
     delete bare.stats;
     delete bare.usage;

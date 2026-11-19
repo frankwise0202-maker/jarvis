@@ -936,26 +936,36 @@ export function createSettingsPanel(o) {
   }
   markNav('profile');
 
-  // Highlight the section in view.
+  // Highlight the section in view. A section counts once its top passes just below the
+  // sticky nav; at the very end of the list the last visible section wins. Right after a
+  // nav tap the tapped section stays highlighted while the smooth scroll runs.
   let scrollRoot = null;
   let navTimer = 0;
+  let navLock = null; // { id, until }
   function onScroll() {
     clearTimeout(navTimer);
     navTimer = setTimeout(() => {
       if (!scrollRoot) return;
-      const top = scrollRoot.getBoundingClientRect().top + 90;
+      if (navLock && Date.now() < navLock.until) {
+        markNav(navLock.id);
+        return;
+      }
+      navLock = null;
+      const rect = scrollRoot.getBoundingClientRect();
+      const atEnd = scrollRoot.scrollTop + scrollRoot.clientHeight >= scrollRoot.scrollHeight - 4;
       let current = SETTINGS_SECTIONS[0].id;
       for (const sec of SETTINGS_SECTIONS) {
         const r = sectionEls[sec.id].getBoundingClientRect();
-        if (r.top <= top) current = sec.id;
+        if (r.top <= rect.top + 100 || (atEnd && r.top < rect.bottom - 48)) current = sec.id;
       }
       markNav(current);
-    }, 60);
+    }, 80);
   }
 
   function scrollToSection(id, smooth) {
     const target = sectionEls[id];
     if (!target) return;
+    navLock = { id, until: Date.now() + 1200 };
     markNav(id);
     const navBtn = navButtons.find((b) => b.dataset.section === id);
     if (navBtn && navBtn.scrollIntoView) {

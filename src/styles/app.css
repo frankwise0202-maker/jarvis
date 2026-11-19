@@ -1125,10 +1125,6 @@
 
 /* ---- settings ----------------------------------------------------------------------------- */
 
-.sheet--settings .sheet-body {
-  scroll-padding-top: 64px;
-}
-
 .settings {
   min-height: 100%;
 }

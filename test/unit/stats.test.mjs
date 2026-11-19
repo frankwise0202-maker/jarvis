@@ -164,8 +164,8 @@ describe('recordTurn / getStats', () => {
     assert.deepEqual(s.byDay['2026-11-19'], { turns: 2, missions: 2, agents: 6, searches: 13, sources: 11, costUsd: 0.431 });
     assert.deepEqual(s.byDay['2026-11-18'], { turns: 1, missions: 1, agents: 2, searches: 4, sources: 4, costUsd: 0.2 });
     assert.deepEqual(s.topRoles[0], ['Market analyst', 3], 'case-insensitive role counting');
-    assert.equal(s.topRoles.length, 6);
-    assert.ok(!s.topRoles.some(([r]) => r === 'Local guide'), 'agents that never started are not counted');
+    assert.equal(s.topRoles.length, 7);
+    assert.ok(s.topRoles.some(([r]) => r === 'Local guide'), "every agent of a launched mission has its role counted (like the engine's agent count)");
     assert.equal(s.since, at('2026-11-18T20:00:00Z'));
     assert.equal(s.updatedAt, NOW);
   });
@@ -183,7 +183,8 @@ describe('recordTurn / getStats', () => {
     const a1 = agent('Battery chemistry analyst');
     const a2 = agent('Market analyst');
     const a3 = agent('Supply chain analyst', 'interrupted', { report: '', sources: [], costUsd: 0.01, usage: { searches: 1, fetches: 0 }, searches: ['q'] });
-    const t = swarmTurn('resume-me', at('2026-11-18T23:50:00Z'), [[a1, a2, a3]], { status: 'interrupted' });
+    const a4 = agent('Regulatory analyst', 'queued'); // still waiting for a slot when the connection dropped
+    const t = swarmTurn('resume-me', at('2026-11-18T23:50:00Z'), [[a1, a2, a3, a4]], { status: 'interrupted' });
     t.stats = { agents: 3, searches: 5, sources: 4, waves: 1, durationMs: 60_000 };
     t.usage.searches = 5;
     t.costUsd = 0.3;
@@ -191,31 +192,37 @@ describe('recordTurn / getStats', () => {
     const mid = getStats({ now: NOW });
     assert.equal(mid.totals.agents, 3);
 
-    // Resume finished the interrupted agent and launched a second wave just after midnight.
+    // Resume re-ran the interrupted agent, started the queued one, and launched a second wave
+    // just after midnight.
     a3.status = 'done';
     a3.sources = [{ url: 'https://example.com/a3', title: 'x' }];
+    Object.assign(a4, { status: 'done', startedAt: NOW - 50_000, endedAt: NOW - 2000, attempts: 1, sources: [{ url: 'https://example.com/a4', title: 'y' }] });
     const wave2 = [agent('Fact checker'), agent('Historian')];
     t.missions['resume-me-m2'] = { id: 'resume-me-m2', wave: 2, title: 'More', status: 'done', agents: wave2 };
     t.segments.push({ id: 'seg-m2', kind: 'mission', missionId: 'resume-me-m2', req: 2 });
     t.status = 'done';
     t.endedAt = at('2026-11-19T00:10:00Z');
-    t.stats = { agents: 5, searches: 9, sources: 9, waves: 2, durationMs: 1_260_000 };
-    t.usage.searches = 9;
-    t.costUsd = 0.55;
+    t.stats = { agents: 6, searches: 11, sources: 11, waves: 2, durationMs: 1_260_000 };
+    t.usage.searches = 11;
+    t.costUsd = 0.6;
     assert.equal(recordTurn(t, { now: NOW }), true);
 
     const s = getStats({ now: NOW });
     assert.equal(s.totals.turns, 1, 'still one turn');
-    assert.equal(s.totals.agents, 5);
-    assert.equal(s.totals.agentsOk, 5);
+    assert.equal(s.totals.agents, 6);
+    assert.equal(s.totals.agentsOk, 6);
     assert.equal(s.totals.missions, 2);
-    assert.equal(s.totals.searches, 9);
-    assert.equal(s.totals.sources, 9);
-    assert.equal(s.totals.costUsd, 0.55);
+    assert.equal(s.totals.searches, 11);
+    assert.equal(s.totals.sources, 11);
+    assert.equal(s.totals.costUsd, 0.6);
     assert.deepEqual(s.byDay['2026-11-18'], { turns: 1, missions: 1, agents: 3, searches: 5, sources: 4, costUsd: 0.3 });
-    assert.deepEqual(s.byDay['2026-11-19'], { turns: 0, missions: 1, agents: 2, searches: 4, sources: 5, costUsd: 0.25 });
+    assert.deepEqual(s.byDay['2026-11-19'], { turns: 0, missions: 1, agents: 3, searches: 6, sources: 7, costUsd: 0.3 });
     const roles = Object.fromEntries(s.topRoles);
-    assert.deepEqual(roles, { 'Battery chemistry analyst': 1, 'Market analyst': 1, 'Supply chain analyst': 1, 'Fact checker': 1, Historian: 1 }, 'roles of re-run agents are not counted twice');
+    assert.deepEqual(
+      roles,
+      { 'Battery chemistry analyst': 1, 'Market analyst': 1, 'Supply chain analyst': 1, 'Regulatory analyst': 1, 'Fact checker': 1, Historian: 1 },
+      'each role counted exactly once: re-run and late-starting agents are not double counted',
+    );
     assert.equal(recordTurn(t, { now: NOW }), false, 'and recording the finished turn again is a no-op');
   });
 

@@ -307,7 +307,10 @@ export function turnMetrics(turn) {
     sources: Math.max(num(st.sources), turnSources(t, missions).size),
     costUsd: Math.max(num(t.costUsd), sum(deployed, (a) => num(a.costUsd))),
     durationMs: num(st.durationMs) || duration,
-    roles: deployed.map((a) => (typeof a.role === 'string' ? oneLine(a.role) : '')).filter(Boolean),
+    roles: launched
+      .flatMap(agentsOf)
+      .map((a) => (typeof a.role === 'string' ? oneLine(a.role) : ''))
+      .filter(Boolean),
   };
 }
 
