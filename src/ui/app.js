@@ -31,7 +31,7 @@ import { getSettings, saveSettings, onSettingsChange } from '../platform/setting
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
 import { listMemory, addMemory, removeMemory, onMemoryChange } from '../platform/memory.js';
 import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
-import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange } from '../platform/db.js';
+import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
@@ -716,6 +716,27 @@ export async function startApp(rootEl) {
     setInterval(() => {
       for (const id of state.runs.keys()) broadcastRun(id, true);
     }, 10000);
+  }
+
+  // Storage-level guard (db.js keeps a revision per conversation): another window saved this
+  // conversation more recently, so our stale copy was not written. Show the stored version
+  // instead of silently keeping changes that only live in this window's memory.
+  if (!state.demo) {
+    safe(() =>
+      onConversationConflict(({ id } = {}) => {
+        if (!id || !state.conv || state.conv.id !== id || state.runs.has(id)) return;
+        reloadCurrentFromStore();
+        toast('This conversation was updated in another window — showing the latest.', { level: 'info' });
+      }),
+    );
+    // Keep an idle open conversation in step with saves made in other windows.
+    safe(() =>
+      onRemoteSave(({ id } = {}) => {
+        // While that window is still running it, wait for its run-end message (one reload, not one per save).
+        if (id && state.conv && state.conv.id === id && !state.runs.has(id) && !runningElsewhere(id)) reloadCurrentFromStore();
+        scheduleHistoryRefresh();
+      }),
+    );
   }
 
   /** `sent` = { text, attachments } of a new message: given back if the turn is withdrawn. */
