@@ -138,9 +138,12 @@ function setThemeColorMeta(d, color) {
 }
 
 function fadeColors(root) {
-  if (prefersReducedMotion()) return;
-  root.setAttribute('data-theme-fading', '');
   clearTimeout(fadeTimer);
+  if (prefersReducedMotion()) {
+    root.removeAttribute('data-theme-fading'); // a fade still running from an earlier switch
+    return;
+  }
+  root.setAttribute('data-theme-fading', '');
   fadeTimer = setTimeout(() => root.removeAttribute('data-theme-fading'), 560);
 }
 

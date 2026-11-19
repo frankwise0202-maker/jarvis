@@ -4,7 +4,14 @@
   "private": true,
   "description": "Jarvis: a personal AI assistant with a swarm of web-searching agents. Runs in the browser on your computer and phone.",
   "type": "module",
-  "scripts": {},
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/serve.mjs",
+    "test": "node --test \"test/unit/**/*.test.mjs\"",
+    "e2e": "node test/e2e/run.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "deploy": "node scripts/deploy-pages.mjs"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0"
   },

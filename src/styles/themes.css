@@ -121,12 +121,6 @@
   gap: var(--sp-2);
 }
 
-@container (min-width: 560px) {
-  .amb-theme-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-}
-
 .amb-theme-option {
   -webkit-tap-highlight-color: transparent;
   appearance: none;
@@ -147,11 +141,6 @@
   font: inherit;
   cursor: pointer;
   transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
-}
-
-.amb-theme-option:hover {
-  background: var(--surface-2);
-  color: var(--text);
 }
 
 .amb-theme-option:focus {
@@ -260,15 +249,39 @@
   white-space: nowrap;
 }
 
-@keyframes amb-orbit {
-  to {
-    transform: rotate(360deg);
+/* Layout by container width: 3 columns on phones, one row of 6 when there is room. */
+@container (min-width: 560px) {
+  .amb-theme-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 
+/* 320px phones: tighter tracking so every name fits ("ARC CYAN" included). */
+@container (max-width: 300px) {
+  .amb-theme-option {
+    padding-inline: 2px;
+  }
+
+  .amb-theme-name {
+    letter-spacing: calc(var(--tracking-label) / 2);
+  }
+}
+
+/* Hover only where a real pointer hovers (no sticky hover after a tap on iPhone). */
 @media (hover: hover) {
+  .amb-theme-option:not([aria-checked="true"]):hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
   .amb-theme-option:hover .amb-theme-swatch {
     transform: scale(1.06);
+  }
+}
+
+@keyframes amb-orbit {
+  to {
+    transform: rotate(360deg);
   }
 }
 

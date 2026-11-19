@@ -958,7 +958,8 @@ function refreshGrids() {
 /**
  * The protocol grid: built-in and custom tiles, an inline input row for protocols that need
  * input, and a "New protocol" tile that opens the editor.
- *   onRun(promptText, mode, protocol) is called when the owner runs a protocol.
+ *   onRun(promptText, mode, protocol) is called when the owner runs a protocol. Return false
+ *   (e.g. the app's send() could not start a turn) to keep the input row open.
  * Optional extras: heading (default true) shows the "Protocols" label; sounds ({ play, haptic },
  * SPEC §14.3) adds subtle feedback; onEdit(protocol|null) replaces the built-in editor dialog.
  */
@@ -1228,14 +1229,17 @@ export function createProtocolGrid({ getSettings, onRun, compact = false, headin
       console.error('[jarvis] protocol prompt failed:', err);
     }
     if (!text) return;
-    if (open) {
-      open.input.blur();
-      closeRow({ silent: true });
-    }
+    let accepted = true;
     try {
-      if (typeof onRun === 'function') onRun(text, MODE_IDS.includes(p.mode) ? p.mode : 'auto', p);
+      if (typeof onRun === 'function') accepted = onRun(text, MODE_IDS.includes(p.mode) ? p.mode : 'auto', p) !== false;
     } catch (err) {
       console.error('[jarvis] protocol onRun failed:', err);
+      accepted = false;
+    }
+    // onRun returning false (offline, no key, busy) keeps the row open so the input isn't lost.
+    if (accepted && open) {
+      open.input.blur();
+      closeRow({ silent: true });
     }
   }
 
@@ -1336,7 +1340,8 @@ const STARTERS = Object.freeze([
 /**
  * The custom-protocol form (name, icon, brief, mode) with inline validation.
  * Pass a custom `protocol` to edit it (adds a two-step Delete). Returns { el, focus(), isDirty() }.
- *   onSaved(protocol) after a successful save; onCancel() on Cancel/close;
+ *   onSaved(protocol, { persisted }) after a successful save (persisted is false when browser
+ *   storage is unavailable: the protocol then lasts for this session only); onCancel() on Cancel/close;
  *   onDeleted(id) after a delete (falls back to onCancel when not provided).
  */
 export function createProtocolEditor({ onSaved, onCancel, onDeleted, protocol = null } = {}) {
@@ -1570,7 +1575,7 @@ export function createProtocolEditor({ onSaved, onCancel, onDeleted, protocol = 
       if (result.errors.name) nameInput.focus();
       return;
     }
-    if (typeof onSaved === 'function') onSaved(result.protocol);
+    if (typeof onSaved === 'function') onSaved(result.protocol, { persisted: result.persisted });
   }
 
   function onDelete() {
@@ -1638,10 +1643,10 @@ export function openProtocolEditor({ protocol = null, onSaved, onDeleted, onClos
 
   const editor = createProtocolEditor({
     protocol,
-    onSaved: (p) => {
+    onSaved: (p, info) => {
       result = p;
       try {
-        onSaved?.(p);
+        onSaved?.(p, info);
       } finally {
         close();
       }

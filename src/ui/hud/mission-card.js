@@ -70,7 +70,7 @@ export function createMissionCard(mission, opts = {}) {
   const pillIcon = h('span', { class: 'hud-pill__icon' });
   const pillText = h('span', { class: 'hud-pill__text' });
   const pill = h('span', { class: 'hud-pill' }, pillIcon, pillText);
-  const timer = h('span', { class: 'hud-mission__timer', attrs: { 'aria-label': 'Elapsed time' } });
+  const timer = h('span', { class: 'hud-mission__timer', attrs: { title: 'Elapsed time' } });
   const title = h('p', { class: 'hud-mission__title' });
 
   const barOk = h('span', { class: 'hud-progress__seg hud-progress__seg--ok' });
@@ -110,7 +110,7 @@ export function createMissionCard(mission, opts = {}) {
   // A tap anywhere on the card opens Mission Control (keyboard and screen-reader users get the
   // same through the button). Every part of the card stays directly hit-testable.
   const el = h(
-    'section',
+    'article',
     {
       class: 'hud-mission',
       dataset: { testid: 'mission-card' },

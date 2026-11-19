@@ -1,0 +1,297 @@
+# Jarvis
+
+Jarvis is your own personal AI assistant. It answers questions, searches the web, remembers
+what you tell it to, and for big questions it sends out a whole team of research agents at once
+and writes up what they found, with sources. It talks, it listens, and it lives on your computer
+and your phone like an app.
+
+**Open Jarvis here: <https://frankwise0202-maker.github.io/jarvis/>**
+
+There is no Jarvis company or server in the middle. Jarvis runs entirely in your web browser and
+talks directly to Claude, Anthropic's AI, using your own Anthropic account. You pay Anthropic only
+for what you use (usually cents), and your conversations stay on your device.
+
+---
+
+## Contents
+
+1. [What Jarvis can do](#what-jarvis-can-do)
+2. [Step 1: Get your API key](#step-1-get-your-api-key-about-5-minutes)
+3. [Step 2: Start Jarvis on your computer](#step-2-start-jarvis-on-your-computer)
+4. [Step 3: Install Jarvis on your phone](#step-3-install-jarvis-on-your-phone)
+5. [Using Jarvis](#using-jarvis)
+6. [What it costs](#what-it-costs)
+7. [Privacy](#privacy)
+8. [Settings at a glance](#settings-at-a-glance)
+9. [Updates](#updates)
+10. [Troubleshooting](#troubleshooting)
+11. [Running Jarvis on your own computer (optional)](#running-jarvis-on-your-own-computer-optional)
+12. [Coming next: Raspberry Pi 5 Jarvis Core](#coming-next-raspberry-pi-5-jarvis-core)
+13. [For developers](#for-developers)
+
+---
+
+## What Jarvis can do
+
+- **Answer anything**, from quick facts to careful explanations, in clear, nicely formatted replies.
+- **Search the web and read pages** for anything current: news, prices, opening hours, sports,
+  the latest version of something. Answers come with links to the sources.
+- **Deploy an agent swarm.** For big or many-sided questions ("compare the best family electric
+  cars for under $50k", "plan a week in Lisbon"), Jarvis sends several research agents out in
+  parallel, each with its own angle. You can watch every agent work live in **Mission Control**,
+  then Jarvis combines their reports into one answer.
+- **Talk and listen.** Tap the microphone to speak, and have Jarvis read its answers aloud.
+- **Remember things** you ask it to ("remember that I'm vegetarian"). You can see and edit
+  everything it remembers in Settings.
+- **Keep your history.** Every conversation is saved on your device, searchable, and you can
+  pick up where you left off.
+- **Install like an app** on your computer, iPhone or Android phone.
+
+## Step 1: Get your API key (about 5 minutes)
+
+Jarvis uses your own Anthropic account. You need an **API key**, which is like a password that
+lets Jarvis use your account. You only do this once.
+
+1. Go to **[console.anthropic.com](https://console.anthropic.com)** and sign up (or sign in).
+2. **Add some credit.** Open **Billing** and buy a small amount of credit, for example $10.
+   That lasts a long time for everyday use.
+3. **Set a monthly spend limit.** In the console's **Limits** section, set a monthly limit you
+   are comfortable with, for example $20. Anthropic will stop serving requests once it is
+   reached, so this is your real safety net. (Jarvis also shows you its own spending estimate.)
+4. **Create the key.** Open **API Keys**, choose **Create Key**, name it "Jarvis", and copy it.
+   It starts with `sk-ant-`. The console shows it only once, so save it in your password
+   manager.
+
+Keep your key private, like a password: anyone who has it can spend your credit. If you ever
+think it leaked, delete it in the console (API Keys) and create a new one.
+
+## Step 2: Start Jarvis on your computer
+
+1. Open **<https://frankwise0202-maker.github.io/jarvis/>** in Chrome, Edge or Safari.
+2. Follow the short welcome:
+   - tell Jarvis what to call you,
+   - paste your API key and press **Connect** (Jarvis sends one tiny test message to check it),
+   - and you're ready.
+3. Ask something! Try one of the suggestions on the start screen.
+
+**Install it as an app (optional, recommended):**
+
+- **Chrome or Edge:** click the install icon at the right end of the address bar (a small
+  monitor with an arrow), or open the menu **⋮** and choose **Install Jarvis**
+  (in some versions: **Cast, save and share → Install page as app**).
+- **Safari on a Mac** (macOS Sonoma or later): **File → Add to Dock**.
+
+Jarvis then opens in its own window and appears with your other apps.
+
+## Step 3: Install Jarvis on your phone
+
+Your API key is stored only on the device where you typed it, so on your phone you will paste
+it once more (copy it from your password manager).
+
+### iPhone (iOS 16.4 or later)
+
+1. Open **<https://frankwise0202-maker.github.io/jarvis/>** in **Safari**.
+2. Tap the **Share** button (the square with an arrow pointing up).
+3. Scroll down and tap **Add to Home Screen**, then **Add**.
+4. Open Jarvis from its new icon on your Home Screen. It opens full screen, like any app.
+5. Go through the short welcome and paste your key.
+6. The first time you tap the microphone, allow microphone access.
+
+### Android
+
+1. Open **<https://frankwise0202-maker.github.io/jarvis/>** in **Chrome**.
+2. Tap **Install** when Chrome offers it, or open the menu **⋮** and tap **Install app**
+   (or **Add to Home screen**).
+3. Open Jarvis from your home screen or app drawer, and go through the short welcome.
+
+## Using Jarvis
+
+- **Ask** by typing, or tap the **microphone** and speak. On a computer, **Enter** sends and
+  **Shift+Enter** starts a new line.
+- **Choose a mode** under the message box:
+  - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
+  - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).
+  - **Swarm**: always send the full agent team, as many as the question supports.
+- **Watch the swarm.** When Jarvis deploys agents you will see a mission card with every agent
+  (Atlas, Nova, Echo, …) and what each one is doing right now. Tap it to open
+  **Mission Control**: each agent's task, searches, sources, cost and full report. When they
+  are done, Jarvis writes one combined answer with sources.
+- **Stop** a reply at any time with the stop button.
+- **Resume** an interrupted mission: phones pause apps in the background, so if you switch away
+  in the middle of a big mission, it may say *Interrupted*. Come back and tap **Resume**; agents
+  that already finished are kept.
+- **Hear answers aloud**: tap **Speak** under an answer, or turn on spoken replies in
+  Settings → Voice (a short summary, or the full answer).
+- **Memory**: say things like "remember that I prefer metric units" or "forget my old address".
+  Jarvis tells you when it saves something; review it in Settings → Memory.
+- **History**: open the history list to search and reopen past conversations, or start a new
+  chat. Shortcuts on a computer: **Ctrl/⌘ + K** new chat, **Esc** closes panels.
+- **Demo**: to show Jarvis to someone without using your account, open
+  <https://frankwise0202-maker.github.io/jarvis/?demo=1>, a scripted demonstration that costs nothing.
+
+## What it costs
+
+Jarvis itself is free. You pay Anthropic for what Jarvis uses, at Anthropic's normal prices,
+from the credit in your account. Rough examples:
+
+| What you ask | Typical cost |
+|---|---|
+| A quick question | about a cent or less |
+| An answer that needs a web search | a few cents (each web search costs $0.01) |
+| An 8-agent swarm research mission | typically tens of cents |
+| A very deep, many-agent mission | can approach a dollar |
+
+- Under each answer Jarvis shows an **estimate** of what it cost, and Settings shows your
+  estimated spending this month. You can set a **warning threshold** there.
+- Estimates are approximate. Your exact bill is in the Anthropic console under Billing, and the
+  **monthly spend limit** you set in Step 1 is the hard stop.
+- To spend less: use **Quick** mode, choose the **Fast** depth, or lower **Max agents** in
+  Settings → AI.
+
+## Privacy
+
+- **No middleman.** The app is a set of files hosted on GitHub Pages. Once loaded, it runs in
+  your browser and sends your messages straight to Anthropic's API (`api.anthropic.com`).
+  Web searches are carried out by Anthropic on Jarvis's behalf.
+- **Your API key stays on your device.** It is stored only in this browser on this device. It is
+  never put in a web address, never included in backups, and never shown in full again after
+  you enter it.
+- **Your conversations stay on your device.** History, memory and settings are stored in the
+  browser on each device. They are not synced between devices. Clearing the site's data or
+  uninstalling the app deletes them, so use **Settings → Data → Export backup** to keep a copy.
+- **What others see.** GitHub sees ordinary visits to the app's files, like any website, but not
+  your conversations. Anthropic processes what you send under its own privacy policy and terms.
+- **Location** is never used unless you type one into Settings (it helps with local questions).
+- Anyone who can unlock your device can use your Jarvis, so keep a passcode on your devices.
+
+## Settings at a glance
+
+- **Profile:** what Jarvis calls you.
+- **AI:** the models used (Claude Opus 5.5 leads, Claude Sonnet 5.5 agents by default), research
+  depth (Fast, Balanced, Deep), default mode, max agents per wave, how many work at once, how
+  many follow-up waves, and whether to show Jarvis's thinking.
+- **Voice:** spoken replies, the voice and its speed, and the language you speak in.
+- **Location:** optional, for local answers (weather, opening hours, prices).
+- **Memory:** everything Jarvis remembers about you; edit or delete any of it.
+- **API key & spending:** test, replace or remove your key; this month's estimate; warning level.
+- **Data:** export a backup, import one, or reset Jarvis on this device.
+- **Install:** how to install Jarvis on this device.
+
+## Updates
+
+Jarvis updates itself. When a new version is published you will see a small message, "A new
+version of Jarvis is ready", with an **Update** button; tap it to reload. On an iPhone, if you
+don't see it, close Jarvis completely (swipe it away) and open it again.
+
+## Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| **"Your API key was rejected"** | Open Settings → API key and paste your key again (it starts with `sk-ant-`). If it was deleted in the console, create a new one. |
+| **"Out of credits"** | Add credit in the Anthropic console under Billing. |
+| **"Rate limit reached, slowing down"** | Nothing to do: Jarvis automatically runs fewer agents at once. If it happens often, lower Max agents or agents-at-once in Settings → AI. New Anthropic accounts start with lower limits that grow with use. |
+| **"Overloaded" or a server error** | Anthropic is busy. Jarvis retries automatically; if it still fails, try again in a minute. |
+| **A mission says "Interrupted"** | Your phone paused the app or the connection dropped. Open Jarvis and tap **Resume**. |
+| **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
+| **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
+| **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |
+| **A spending warning** | Your estimated spending passed the threshold you set. Change it in Settings → API key & spending. |
+| **Something looks stuck** | Reload the page. Your conversations are saved. |
+| **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key. |
+
+## Running Jarvis on your own computer (optional)
+
+You don't need this to use Jarvis, but you can run your own copy:
+
+1. Install **Node.js** version 20 or newer (22 recommended) from [nodejs.org](https://nodejs.org).
+2. Download this project (on GitHub: **Code → Download ZIP**, then unzip it), or `git clone` it.
+3. Open a terminal in the project folder and run:
+
+   ```sh
+   npm install && npm start
+   ```
+
+4. Open **<http://localhost:8642>**. The terminal also prints a network address that other
+   devices on your Wi-Fi can open. Installing the app, the microphone and offline mode need a
+   secure (`https://`) address, so on phones use the GitHub Pages link instead.
+
+Press **Ctrl+C** in the terminal to stop it.
+
+## Coming next: Raspberry Pi 5 Jarvis Core
+
+The next step is **Jarvis Core**: a small always-on box built on a Raspberry Pi 5 with a camera,
+a microphone and a speaker, so you can talk to Jarvis anywhere in the room without picking up a
+phone. Jarvis's brain (its "engine": how it talks to Claude, runs agent missions and handles
+interruptions) is already built separately from the screen you see today, so the same engine can
+run on the Pi. Your phone and computer apps stay exactly as they are.
+
+## For developers
+
+Jarvis is plain JavaScript ES modules (no framework) bundled with esbuild. The browser calls the
+Claude API directly through the official `@anthropic-ai/sdk`. **[SPEC.md](SPEC.md)** is the
+binding contract for every module.
+
+```text
+public/           static files copied into dist/ (index.html, manifest, service worker, icons)
+src/engine/       conversation engine: lead, agent missions, streaming, prompts (no DOM)
+src/platform/     settings, API key, IndexedDB history, memory, spend, voice, PWA helpers
+src/lib/          safe streaming Markdown → DOM renderer
+src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (core, Mission Control)
+src/styles/       design tokens and styles
+scripts/          build.mjs, serve.mjs, deploy-pages.mjs, make-icons.mjs
+test/unit/        node --test unit tests
+test/mock/        strict mock of the Claude Messages API (HTTP handler + in-process fetch)
+test/server.mjs   dist/ + mock API on one origin
+test/e2e/         Playwright end-to-end scenarios
+```
+
+| Command | What it does |
+|---|---|
+| `npm run build` | Bundles `src/main.js` into `dist/assets/app.js` + `app.css` (minified, source maps, target es2020/safari15), copies `public/`, stamps the build id and the service worker's precache list, prints sizes. |
+| `npm start` | Builds if `dist/` is missing (`-- --rebuild` to force), then serves `dist/` on `0.0.0.0:8642` (`PORT=…` to change). |
+| `npm test` | Unit tests (`node --test`). |
+| `npm run e2e` | Builds, then runs the Playwright Chromium scenarios against the real app and the mock API. Options: `-- --only swarm,xss`, `--headed`, `--list`, `--no-build`, `--mock-speed 0.5`. Screenshots and failure reports go to `test/artifacts/`. |
+| `npm run deploy` | Builds and commits `dist/` (plus `.nojekyll`) as "Deploy &lt;build id&gt;" on the `gh-pages` branch through a temporary git worktree; `main` is never touched. Add `-- --push` to publish to `origin`. |
+| `npm run icons` | Regenerates the app icons. |
+
+**GitHub Pages, first time:** on GitHub open **Settings → Pages**, choose **Deploy from a
+branch**, branch `gh-pages`, folder `/ (root)`. After `npm run deploy -- --push` the app is live
+at <https://frankwise0202-maker.github.io/jarvis/>.
+
+**Testing against the mock API by hand:** `node test/server.mjs` serves the app and the mock on
+one port and prints the snippet to paste into the browser console (it sets
+`jarvis.dev.apiBase`, a mock key `sk-ant-test-…` and an onboarded profile). The app honors
+`jarvis.dev.apiBase` only for its own origin or `localhost`/`127.0.0.1`.
+
+**The mock Claude API** (`test/mock/anthropic-mock.mjs`) validates requests like the real API
+(credentials, `anthropic-version`, browser-access header, models, `max_tokens`, no sampling
+parameters, adaptive thinking only, efforts, no forced `tool_choice`, exact server tools,
+structured-output schemas, beta-gated `fallbacks`/`context_management`, tool_use ↔ tool_result
+pairing, `pause_turn` resumes, no prefill) and emulates the history-editing check: every thinking
+block's signature is bound to the conversation before it, so an edited history gets a 400.
+Requests and violations are logged at `/__mock/requests` and `/__mock/violations`
+(`POST /__mock/reset` clears them). Directives in the latest user message script its behavior:
+
+| Directive | Behavior |
+|---|---|
+| *(none)* | short thinking, then a helpful answer ("Paris" for the capital of France) |
+| `[[search]]` | a web search, 3–5 results, and an answer with citations |
+| `[[swarm:N]]` | one sentence, then `deploy_agents` with N agents; the next request gets a synthesis naming every agent |
+| `[[waves:2]]` | a second wave of 2 agents after the first results |
+| `[[pause]]` / `[[workerpause]]` | the lead's / each agent's first response ends with `pause_turn` |
+| `[[ratelimit:K]]` | the first K agent requests get 429 (`retry-after: 0`) |
+| `[[overloaded]]` | the first lead request gets 529 |
+| `[[refuse]]` | `stop_reason: refusal` with `stop_details` |
+| `[[slow]]` | slow streaming (≈120 ms between lead events, ≈6 s per agent) |
+| `[[xss]]` | an answer (and agent reports) full of XSS payloads |
+| `[[badtool]]` | an invalid `deploy_agents` input first, a valid one after the error result |
+| `[[memory]]` | `update_memory` "Prefers metric units", then a confirmation |
+| `[[dropworkers]]` | each agent's first stream is cut mid-way; later attempts succeed |
+| `[[workerfail]]` / `[[workerrefuse]]` | one agent always gets a 500 / a refusal |
+| `[[long]]` | a long Markdown answer (headings, table, code, lists, quote) |
+
+Security rules worth knowing before you change anything: the Content-Security-Policy in
+`index.html` is fixed by SPEC §2; model, web and user text is rendered only through
+`src/lib/markdown.js` (never `innerHTML`); links from model output must be `http:`, `https:` or
+`mailto:` and open with `rel="noopener noreferrer"`; and the API key is never logged, put in a
+URL, or exported.

@@ -131,6 +131,41 @@ function getPalette() {
   return pal;
 }
 
+// Themes (SPEC 14.3) swap the accent tokens at runtime via <html data-theme> and announce it with
+// a window 'jarvis:themechange' event. Either signal re-reads the palette for every live core.
+const paletteListeners = new Set();
+let themeWatching = false;
+let themeQueued = false;
+
+function onThemeSignal() {
+  if (themeQueued) return;
+  themeQueued = true;
+  Promise.resolve().then(() => {
+    themeQueued = false;
+    const before = paletteCache;
+    paletteCache = null;
+    const next = getPalette();
+    if (before && next.accent.css === before.accent.css && next.bg.css === before.bg.css && next.ok.css === before.ok.css) {
+      paletteCache = before; // nothing visible changed: keep the old palette (and its sprites)
+      return;
+    }
+    for (const fn of Array.from(paletteListeners)) fn();
+  });
+}
+
+function watchTheme() {
+  if (themeWatching) return;
+  themeWatching = true;
+  try {
+    if (typeof MutationObserver === 'function') {
+      new MutationObserver(onThemeSignal).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    }
+    window.addEventListener('jarvis:themechange', onThemeSignal);
+  } catch {
+    /* theme changes then apply to cores created afterwards */
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Glow sprites: radial gradients rendered once per color, then blitted with drawImage. They are
 // cached on the palette color object itself so the per-frame lookup is a property read.
@@ -353,7 +388,8 @@ export function createCore(canvas, opts = {}) {
   const ownsLabel = !canvas.hasAttribute('aria-label') && canvas.getAttribute('aria-hidden') !== 'true';
   if (ownsLabel && !canvas.hasAttribute('role')) canvas.setAttribute('role', 'img');
 
-  const pal = getPalette();
+  let pal = getPalette();
+  watchTheme();
 
   // --- animated state -------------------------------------------------------------------------
   let state = 'idle';
@@ -1084,6 +1120,22 @@ export function createCore(canvas, opts = {}) {
     }
   }
 
+  // Theme change: cross-fade the state color into the new palette, recolor nodes, re-measure text.
+  function refreshPalette() {
+    if (destroyed) return;
+    const next = getPalette();
+    if (next === pal) return;
+    const prevColor = colorMix < 0.5 ? colorFrom : colorTo;
+    pal = next;
+    colorFrom = prevColor;
+    colorTo = pal[target.color] || pal.accent;
+    colorMix = 0;
+    for (const n of nodes) n.color = pal[NODE_COLOR[n.status] || 'mute'];
+    computeFonts();
+    if (isStatic()) drawStatic();
+  }
+  paletteListeners.add(refreshPalette);
+
   // --- public API ---------------------------------------------------------------------------
   function setAria() {
     if (!ownsLabel) return;
@@ -1195,6 +1247,7 @@ export function createCore(canvas, opts = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    paletteListeners.delete(refreshPalette);
     updateAwake();
     removeLive(frame);
     if (ro) ro.disconnect();

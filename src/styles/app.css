@@ -69,6 +69,7 @@
 
 .main {
   position: relative;
+  z-index: 1; /* own stacking context: the composer stays below the overlay sidebar */
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -116,6 +117,7 @@
 
 .brand {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -185,6 +187,12 @@
   white-space: nowrap;
 }
 
+.status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-dot {
   flex: none;
   width: 6px;
@@ -227,6 +235,30 @@
 .header .icon-btn[aria-expanded='true'] {
   color: var(--accent-2);
   background: var(--accent-soft);
+}
+
+@media (max-width: 360px) {
+  .header-inner {
+    gap: var(--sp-2);
+  }
+
+  .header-actions .icon-btn {
+    width: 40px;
+  }
+
+  .header-actions .icon-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0 -2px;
+  }
+
+  .brand {
+    gap: 8px;
+  }
+
+  .brand-word {
+    letter-spacing: 0.16em;
+  }
 }
 
 /* ---- banners ---------------------------------------------------------------------------- */
@@ -334,6 +366,23 @@
 
   .body {
     grid-template-columns: auto minmax(0, 1fr) clamp(380px, 30vw, 420px);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  /* Explicit cells: the sidebar may be taken out of flow (overlay) on narrower desktops. */
+  .sidebar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .panel {
+    grid-column: 3;
+    grid-row: 1;
   }
 
   .sidebar {

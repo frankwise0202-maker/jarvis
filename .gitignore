@@ -1,6 +1,21 @@
+# Dependencies
 node_modules/
+
+# Build output (npm run build) and the temporary GitHub Pages checkout (npm run deploy)
 dist/
-test/artifacts/
 .gh-pages-worktree/
+
+# E2E screenshots and failure reports (npm run e2e)
+test/artifacts/
+
+# Logs, editor and OS clutter
 *.log
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local secrets (Jarvis never needs them in the repo: the API key lives in the browser)
+.env
+.env.*

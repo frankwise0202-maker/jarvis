@@ -4,7 +4,7 @@
 //
 //   const mc = createMissionControl({ container, variant: 'sheet' | 'panel' });
 //   mc.show(turn, missionId?);   // display a turn (a given mission, else its latest one)
-//   mc.update(turn, mission?);   // after engine events; coalesced to one render per frame
+//   mc.update(turn, mission?);   // after engine events; coalesced (at most 10 renders/s)
 //   mc.clear();                  // idle core, nothing selected
 //
 // Selection rules: show() without a missionId (or with the turn's latest mission) follows the newest
@@ -30,6 +30,9 @@ import {
 } from './format.js';
 
 const GROUPS = ['Active', 'Queued', 'Done', 'Stopped / failed'];
+// update() renders at most this often (trailing): agent events can arrive every frame while a
+// big swarm streams, and status text does not need 60 Hz. The orbit animates on its own.
+const MIN_RENDER_MS = 100;
 
 const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
 
@@ -211,7 +214,7 @@ export function createMissionControl(opts = {}) {
     const head = h('p', { class: 'hud-mc__group', hidden: true }, h('span', { text: label }), count);
     return { head, count };
   });
-  const list = h('div', { class: 'hud-mc__list', attrs: { 'aria-label': 'Agents' } });
+  const list = h('div', { class: 'hud-mc__list', attrs: { role: 'group', 'aria-label': 'Agents' } });
 
   const header = h(
     'header',
@@ -224,7 +227,7 @@ export function createMissionControl(opts = {}) {
   const listWrap = h('div', { class: 'hud-mc__list-wrap' }, list);
   const el = h(
     'div',
-    { class: ['hud-mc', `hud-mc--${variant}`], dataset: { testid: 'mission-control' }, attrs: { 'aria-label': 'Mission Control' } },
+    { class: ['hud-mc', `hud-mc--${variant}`], dataset: { testid: 'mission-control' }, attrs: { role: 'region', 'aria-label': 'Mission Control' } },
     top,
     listWrap,
   );
@@ -245,7 +248,28 @@ export function createMissionControl(opts = {}) {
   let stopTick = null;
   let destroyed = false;
   const shown = { kicker: undefined, title: undefined, subtitle: undefined, status: undefined, idle: undefined, coreState: undefined };
-  const scheduleRender = raf(render);
+  const renderNextFrame = raf(render);
+  let renderTimer = 0;
+  let lastRenderAt = 0;
+
+  function scheduleRender() {
+    if (renderTimer) return;
+    const wait = lastRenderAt + MIN_RENDER_MS - Date.now();
+    if (wait > 0) {
+      renderTimer = setTimeout(() => {
+        renderTimer = 0;
+        renderNextFrame();
+      }, wait);
+    } else {
+      renderNextFrame();
+    }
+  }
+
+  function cancelScheduledRender() {
+    renderNextFrame.cancel();
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = 0;
+  }
 
   function selectedMission() {
     if (!turn || !selectedId || !turn.missions) return null;
@@ -260,7 +284,8 @@ export function createMissionControl(opts = {}) {
   // --- rendering ----------------------------------------------------------------------------
   function render() {
     if (destroyed) return;
-    scheduleRender.cancel();
+    cancelScheduledRender();
+    lastRenderAt = Date.now();
     const mission = selectedMission();
     renderHeader(mission);
     renderWaves();
@@ -283,11 +308,9 @@ export function createMissionControl(opts = {}) {
       idle.hidden = !isIdle;
       header.hidden = isIdle;
     }
-    if (!mission) {
-      stats.hidden = !(turn && turn.stats);
-      return;
-    }
-    stats.hidden = false;
+    const noStats = !mission && !(turn && turn.stats);
+    if (stats.hidden !== noStats) stats.hidden = noStats;
+    if (!mission) return;
     const kick = `Mission · Wave ${Number(mission.wave) > 0 ? Number(mission.wave) : 1}`;
     if (kick !== shown.kicker) {
       shown.kicker = kick;
@@ -326,7 +349,7 @@ export function createMissionControl(opts = {}) {
   function renderWaves() {
     const ms = missionsOf(turn);
     const multi = ms.length > 1;
-    waves.hidden = !multi;
+    if (waves.hidden === multi) waves.hidden = !multi;
     const seen = new Set();
     let prev = null;
     if (multi) {
@@ -574,7 +597,7 @@ export function createMissionControl(opts = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
-    scheduleRender.cancel();
+    cancelScheduledRender();
     if (stopTick) stopTick();
     stopTick = null;
     disposeCards();

@@ -594,7 +594,7 @@ export function createSettingsPanel(o) {
     const key = safeCall(getApiKey, '');
     keyState.replaceChildren(
       h('span', { class: ['key-dot', key ? 'is-on' : 'is-off'], attrs: { 'aria-hidden': 'true' } }),
-      h('div', { class: 'key-state-text' }, h('strong', { text: key ? 'Key saved on this device' : 'No API key' }), h('span', { class: 'mono key-mask', text: key ? maskKey(key) : 'Jarvis needs your Anthropic API key to work.' })),
+      h('div', { class: 'key-state-text' }, h('strong', { text: key ? 'Key saved on this device' : 'No API key' }), h('span', { class: ['key-mask', key && 'mono'], text: key ? maskKey(key) : 'Jarvis needs your Anthropic API key to work.' })),
     );
     removeBtn.hidden = !key;
     keyInput.placeholder = key ? 'Paste a new key to replace it' : 'sk-ant-…';

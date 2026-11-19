@@ -60,6 +60,13 @@ export function escapeInline(value) {
   return oneLine(value).replace(/[\\`*_[\]<>|~]/g, '\\$&');
 }
 
+/** Tidy display form of a model-written role: trimmed, first letter capitalized, no shouting. */
+function roleLabel(role) {
+  let s = oneLine(role);
+  if (s.length > 4 && s === s.toUpperCase() && s !== s.toLowerCase()) s = s.toLowerCase();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
 /** Absolute http(s) URL ready for a Markdown link destination, or null. */
 function linkTarget(url) {
   if (typeof url !== 'string' || !url.trim()) return null;
@@ -175,6 +182,20 @@ function linkedKeys(md) {
   return keys;
 }
 
+const GENERIC_LINK_TEXT = /^(?:source|sources|src|link|here|this|page|article|ref|\[?\d+\]?)$/i;
+
+/** [text](url) links in Markdown as sources; generic link text ("source", "[1]") is dropped as a title. */
+function markdownLinks(md) {
+  const out = [];
+  const re = /\[([^\]\n]*)\]\(\s*<?(https?:\/\/[^\s()<>]*(?:\([^\s()<>]*\)[^\s()<>]*)*)>?(?:\s+"[^"\n]*")?\s*\)/gi;
+  let m;
+  while ((m = re.exec(str(md)))) {
+    const text = oneLine(m[1].replace(/[*_`]/g, ''));
+    out.push({ url: m[2], title: text.length > 3 && !GENERIC_LINK_TEXT.test(text) ? text : '' });
+  }
+  return out;
+}
+
 /** Ordered, deduplicated source registry. */
 function createSourceList() {
   const map = new Map();
@@ -191,6 +212,11 @@ function createSourceList() {
         entry.title = oneLine(src.title);
       }
       if (by && !entry.by.includes(by)) entry.by.push(by);
+    },
+    /** Add only when the URL is new (links in prose: they do not change who found a page). */
+    addMissing(src, by) {
+      const key = isObj(src) ? sourceKey(src.url) : null;
+      if (key && !map.has(key)) this.add(src, by);
     },
     list: () => Array.from(map.values()),
     get size() {
@@ -436,7 +462,7 @@ export function answerMarkdown(turn, opts = {}) {
 function agentSection(agent, index, headingLevel) {
   const lines = [];
   const codename = oneLine(agent.codename) || `Agent ${index + 1}`;
-  const role = oneLine(agent.role);
+  const role = roleLabel(agent.role);
   lines.push(`${'#'.repeat(headingLevel)} ${escapeInline(codename)}${role ? ` · ${escapeInline(role)}` : ''}`, '');
 
   const status = AGENT_STATUS[agent.status] || (oneLine(agent.status) ? escapeInline(agent.status) : 'Unknown');
@@ -560,6 +586,9 @@ export function missionReportMarkdown(turn, mission, opts = {}) {
     }
   }
   for (const m of scope) for (const a of agentsOf(m)) for (const src of arr(a.sources)) master.add(src, oneLine(a.codename) || 'Agent');
+  // Pages linked only in prose (the answer or an agent's report) belong in the list too.
+  if (!single) for (const src of markdownLinks(answer)) master.addMissing(src, 'Jarvis');
+  for (const m of scope) for (const a of agentsOf(m)) for (const src of markdownLinks(a.report)) master.addMissing(src, oneLine(a.codename) || 'Agent');
   const entries = master.list();
 
   const out = [`# ${kind}: ${escapeInline(titleText)}`, ''];
@@ -682,7 +711,7 @@ function missionLine(mission) {
   const roster = agents
     .map((a) => {
       const name = escapeInline(a.codename) || 'Agent';
-      return oneLine(a.role) ? `${name} (${escapeInline(a.role)})` : name;
+      return roleLabel(a.role) ? `${name} (${escapeInline(roleLabel(a.role))})` : name;
     })
     .join(' · ');
   const summary = [status, agents.length ? `${plural(agents.length, 'agent')} — ${breakdown(agents)}` : ''].filter(Boolean).join(' · ');

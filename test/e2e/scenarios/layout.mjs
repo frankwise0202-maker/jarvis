@@ -23,6 +23,7 @@ function layoutScenario(name, device, label) {
       await t.checkNoHorizontalOverflow('empty state');
 
       if (phone) {
+        // Recorded as issues (the scenario still fails) so the remaining layout checks still run.
         await t.step('tap targets and input size', async () => {
           const small = [];
           for (const id of TAP_TARGETS) {
@@ -31,9 +32,9 @@ function layoutScenario(name, device, label) {
             const box = await loc.boundingBox();
             if (box && (box.width < 43.5 || box.height < 43.5)) small.push(`${id} ${Math.round(box.width)}×${Math.round(box.height)}`);
           }
-          t.assert(!small.length, `Tap targets must be at least 44×44 px (SPEC §2): ${small.join(', ')}`);
+          if (small.length) t.issue(`Tap targets must be at least 44×44 px (SPEC §2): ${small.join(', ')}`);
           const fontSize = await t.page.locator(tid('composer-input')).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-          t.assert(fontSize >= 16, `The composer input needs a font size of at least 16 px to avoid iOS zoom (got ${fontSize}px)`);
+          if (fontSize < 16) t.issue(`The composer input needs a font size of at least 16 px to avoid iOS zoom (got ${fontSize}px)`);
         });
       }
 

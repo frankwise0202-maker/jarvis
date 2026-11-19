@@ -243,10 +243,11 @@ export function createChat(o) {
   // owner expanding a section of a finished turn is not.
   let lastEventAt = -Infinity;
   function onGrow() {
+    if (!conv || !conv.turns || !conv.turns.length) return; // the empty state stays at the top
     if (stick) {
       lastProgrammatic = performance.now();
       scroller.scrollTop = scroller.scrollHeight;
-    } else if (conv && conv.turns && conv.turns.length && performance.now() - lastEventAt < 1500) {
+    } else if (performance.now() - lastEventAt < 1500) {
       pill.hidden = false;
     }
   }

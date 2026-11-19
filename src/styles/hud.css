@@ -245,8 +245,7 @@
   transition: width var(--dur-3) var(--ease-out);
 }
 .hud-progress__seg--ok {
-  background: linear-gradient(90deg, var(--accent-3), var(--ok));
-  box-shadow: 0 0 10px var(--ok);
+  background: var(--ok);
 }
 .hud-progress__seg--err {
   background: var(--err);

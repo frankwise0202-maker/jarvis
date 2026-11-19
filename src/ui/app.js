@@ -395,19 +395,19 @@ export async function startApp(rootEl) {
     uiSet(UI_KEYS.last, state.conv ? JSON.stringify({ id: state.conv.id, at: Date.now() }) : null);
   }
 
-  function setConversation(conv) {
+  function setConversation(conv, { remember = true } = {}) {
     state.conv = conv || null;
     chat.setConversation(state.conv);
     history.setActive(state.conv ? state.conv.id : null);
     selectLatestMission();
-    rememberCurrent();
+    if (remember) rememberCurrent();
     updateAll();
   }
 
   function newChat() {
     closePhoneSheets();
-    if (state.conv && (!state.conv.turns || !state.conv.turns.length)) {
-      composer.focus();
+    if (!state.conv || !state.conv.turns || !state.conv.turns.length) {
+      if (state.layout === 'desktop') composer.focus();
       return;
     }
     setConversation(null);
@@ -487,7 +487,7 @@ export async function startApp(rootEl) {
   }
 
   function attachRun(conv, run) {
-    const entry = { run, conv, unsub: null, missions: new Set() };
+    const entry = { run, conv, unsub: null, missions: new Set(), started: new Set(), ended: new Set() };
     state.runs.set(conv.id, entry);
     entry.unsub = run.on('*', (evt) => onRunEvent(entry, evt));
     Promise.resolve(run.done)
@@ -518,12 +518,13 @@ export async function startApp(rootEl) {
           state.mcSel = { turnId: evt.turn.id, missionId: m.id };
           mcShowSelected();
         }
-      } else if (m.status === 'running' && !entry[`started:${m.id}`]) {
-        entry[`started:${m.id}`] = true;
+      }
+      if (m.status === 'running' && !entry.started.has(m.id)) {
+        entry.started.add(m.id);
         const n = (m.agents || []).length;
         announce(`Mission launched: ${n} agent${n === 1 ? '' : 's'} deployed`);
-      } else if (['done', 'partial'].includes(m.status) && !entry[`ended:${m.id}`]) {
-        entry[`ended:${m.id}`] = true;
+      } else if ((m.status === 'done' || m.status === 'partial') && !entry.ended.has(m.id)) {
+        entry.ended.add(m.id);
         announce(m.status === 'done' ? 'Mission complete' : 'Mission finished with some agents failing');
       }
       if (current) mcMarkDirty(evt.turn, m);
@@ -701,7 +702,9 @@ export async function startApp(rootEl) {
     const prefix = composer.getText().trim();
     const join = (t) => [prefix, String(t || '').trim()].filter(Boolean).join(' ');
     let handle = null;
+    let ended = false; // the STT module may end (or fail) synchronously inside startListening()
     const finish = () => {
+      ended = true;
       if (state.listening === handle) state.listening = null;
       composer.setListening(false);
       header.setLevel(0);
@@ -745,6 +748,7 @@ export async function startApp(rootEl) {
       toast('Voice input couldn’t start.', { level: 'warn' });
       return;
     }
+    if (ended || !handle) return;
     state.listening = handle;
     composer.setListening(true);
     updateCore();
@@ -989,7 +993,6 @@ export async function startApp(rootEl) {
           settingsPanel = null;
         }
         updateAll();
-        chat.refreshEmpty();
       },
     });
     sheet.body.appendChild(panelCtl.el);
@@ -1196,8 +1199,7 @@ export async function startApp(rootEl) {
 
   // ---- boot ------------------------------------------------------------------------------------
   applyLayout();
-  setConversation(null);
-  updateAll();
+  setConversation(null, { remember: false });
 
   await withTimeout(refreshHistory(), 2500, null);
 
