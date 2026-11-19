@@ -92,6 +92,23 @@ export function chunkText(text, size, rng) {
   return out;
 }
 
+/**
+ * Split text into pieces of a few words (`min`–`max`, with the PRNG), the way a model streams
+ * tokens: each piece carries the whitespace before its first word, so no word is ever split and
+ * the pieces join back into the text exactly. Always returns at least one piece.
+ */
+export function wordChunks(text, rng, [min, max] = [2, 4]) {
+  const tokens = String(text).match(/\s*\S+|\s+/g);
+  if (!tokens) return [''];
+  const out = [];
+  for (let i = 0; i < tokens.length;) {
+    const n = rng ? rng.int(min, max) : max;
+    out.push(tokens.slice(i, i + n).join(''));
+    i += n;
+  }
+  return out;
+}
+
 /** Rough token estimate (≈ 4 characters per token), never below 1. */
 export function estimateTokens(value) {
   if (value === undefined || value === null) return 0;

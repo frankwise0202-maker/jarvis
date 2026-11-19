@@ -8,11 +8,25 @@
 // right away, and iOS only lets the microphone and speech synthesis start inside a gesture.
 //
 // The loop: listening -> thinking / working (live mission status) -> speaking (captions with the
-// current sentence highlighted) -> listening again when settings.voiceContinuous (default true).
+// current sentence and word highlighted) -> listening again when settings.voiceContinuous
+// (default true) and the speech ended normally.
+//
+// The reply is spoken while it streams (tts.createSpeechStream): its text segments, cut at the
+// first thematic break (---), converted for the ear, complete sentences only and never one twice,
+// about 1,500 characters at most ("The rest is on screen."). See voice-stream.js. What the lead
+// says before a search or a mission ("Let me check the latest on that.") is spoken while it works.
+// When nothing was spoken by the end of the turn, the answer's summary is spoken after a chime.
 //
 // Tap the core: listening = stop and send; thinking/working = stop the turn; speaking = stop
-// speaking and listen; otherwise = start listening. Esc or Exit closes; a running turn carries on
-// in the chat (Stop, or a tap on the core, is how to stop it).
+// speaking and listen. While Jarvis is still saying the reply itself (before the --- line or the
+// end of what is spoken) that tap stops the turn too, and it stays in the chat as far as it got;
+// once the spoken part is complete (Jarvis is saying its last sentences, or is quiet while the
+// details below the line are written) it only stops the voice and listens: the details keep
+// being written in the chat, and a question asked meanwhile is sent once they are done. The dock
+// button then reads "Stop" while Jarvis speaks (the voice only) and "Stop writing" while he
+// writes (that stops the turn). Otherwise = start listening. Esc or Exit closes; a running turn
+// carries on in the chat (Stop, or a tap on the core, is how to stop it). When Jarvis had already
+// begun saying the answer, the chat does not read it aloud again (voiceModeSpoke).
 //
 // Optional extras beyond SPEC 14.1 (all safe to omit):
 //   saveSettings(patch)   persists the Continuous toggle as settings.voiceContinuous
@@ -25,6 +39,9 @@
 
 import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
+import { createSpokenFeed, splitSentences } from './voice-stream.js';
+
+export { splitSentences };
 
 const SILENT_TRIES_MAX = 2; // consecutive silent listens before we stop and wait for a tap
 const SILENCE_MS = 12000; // our own no-speech watchdog (browsers usually give up after ~8 s)
@@ -33,6 +50,7 @@ const STOP_GRACE_MS = 1500; // after a manual stop, wait this long for the final
 const RETRY_DELAY_MS = 450; // pause before listening again after a silent try
 const REPLY_CHIME_MS = 260; // let the reply chime ring before the voice starts
 const RELISTEN_DELAY_MS = 350; // after speaking, let the audio settle before the mic opens again
+const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at most this often
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
 const MODES = ['auto', 'quick', 'swarm'];
 const AGENT_FINISHED = new Set(['done', 'error', 'stopped', 'interrupted']);
@@ -51,6 +69,15 @@ const AGENT_WORDS = {
 };
 
 let current = null; // the open instance; there is only ever one
+const voicedRuns = new WeakSet(); // runs whose answer Voice Mode had begun to say when it closed
+
+/**
+ * True when Voice Mode had already begun saying this run's answer (not just "Let me check…") when
+ * it was closed: the app then doesn't read the same reply aloud again when it finishes in the chat.
+ */
+export function voiceModeSpoke(run) {
+  return !!run && typeof run === 'object' && voicedRuns.has(run);
+}
 
 /**
  * Open the voice overlay (or focus it if it is already open).
@@ -102,47 +129,26 @@ export function finalAnswerMarkdown(turn) {
   return out.trim();
 }
 
-// A trailing period after these is not the end of a sentence.
-const ABBREVIATION = /(?:^|[\s(“"'])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|inc|ltd|co|corp|approx|no|fig|e\.g|i\.e|a\.m|p\.m|u\.s|u\.k|[a-z])\.$/i;
-
-/**
- * Split plain text into sentence ranges [{ start, end }] that tile the whole string (trailing
- * spaces and newlines stay with their sentence). Decimals, domains and common abbreviations
- * do not end a sentence.
- */
-export function splitSentences(text) {
-  const s = String(text ?? '');
-  const out = [];
-  let start = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    const c = s[i];
-    let end = -1;
-    if (c === '\n') {
-      end = i + 1;
-    } else if (c === '.' || c === '!' || c === '?' || c === '…') {
-      let j = i + 1;
-      while (j < s.length && /[.!?…"'”’)\]]/.test(s[j])) j += 1;
-      if (j < s.length && !/\s/.test(s[j])) continue; // "3.5", "example.com"
-      if (c === '.' && ABBREVIATION.test(s.slice(Math.max(start, i - 8), i + 1))) continue;
-      end = j;
-    }
-    if (end < 0) continue;
-    while (end < s.length && /\s/.test(s[end])) end += 1;
-    if (s.slice(start, end).trim()) {
-      out.push({ start, end });
-      start = end;
-    }
-    i = end - 1;
-  }
-  if (start < s.length) {
-    if (s.slice(start).trim() || !out.length) out.push({ start, end: s.length });
-    else out[out.length - 1].end = s.length;
-  }
-  return out;
-}
-
 function reqOf(segment) {
   return Number.isFinite(segment && segment.req) ? segment.req : 0;
+}
+
+/** True once the answer itself is being written: text after the last search or mission (any text without one). */
+function answerBegun(turn) {
+  const segs = Array.isArray(turn && turn.segments) ? turn.segments : [];
+  let last = -1;
+  for (let i = segs.length - 1; i >= 0; i -= 1) {
+    const kind = segs[i] && segs[i].kind;
+    if (kind === 'tool' || kind === 'mission') {
+      last = i;
+      break;
+    }
+  }
+  for (let i = last + 1; i < segs.length; i += 1) {
+    const seg = segs[i];
+    if (seg && seg.kind === 'text' && typeof seg.text === 'string' && seg.text.trim()) return true;
+  }
+  return false;
 }
 
 // =================================================================================================
@@ -177,12 +183,13 @@ function createVoiceMode(opts) {
     typing: false,
     continuous: readContinuous(),
     listen: null, // { gesture, text, stopRequested, handle, timers, heard }
-    run: null, // { run, offs, lastAgent } | { pending: true }
-    speech: null, // { token, kind, text, handle, timers, ... }
+    run: null, // { run, offs, lastAgent, feed, ... } | { pending: true } | { pending: true, held: text } (waits for S.bg)
+    bg: null, // a run whose spoken part is over, left writing its details in the chat while Voice Mode listens
+    speech: null, // { token, kind: 'live'|'summary'|'full'|'apology', text, map, stream|handle, timers, ... }
     speechToken: 0,
-    answer: null, // { md, summary, full }
+    answer: null, // { md, summary (what was spoken), full, more }
     showFull: false,
-    karaoke: null, // { spans, els, cursor }
+    karaoke: null, // { spans, els, texts, cursor, word }
     userEl: null,
     silentTries: 0,
     retryTimer: 0,
@@ -406,6 +413,17 @@ function createVoiceMode(opts) {
       label = words ? 'Send' : 'Stop';
       aria = words ? 'Stop listening and send' : 'Stop listening';
       coreAria = words ? 'Stop listening and send' : 'Stop listening';
+    } else if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
+      // Saying the last of the spoken part: the voice stops; the details keep being written.
+      ic = 'stop';
+      label = 'Stop';
+      aria = 'Stop speaking';
+      coreAria = 'Stop speaking and listen';
+    } else if (S.run && spokenDone(S.run)) {
+      ic = 'stop';
+      label = 'Stop writing';
+      aria = 'Stop writing the details';
+      coreAria = 'Talk to Jarvis';
     } else if (S.run) {
       ic = 'stop';
       label = 'Stop';
@@ -425,7 +443,7 @@ function createVoiceMode(opts) {
     setDockIcon(mainBtn, ic);
     setText(mainBtn.lb, label);
     mainBtn.btn.setAttribute('aria-label', aria);
-    mainBtn.btn.dataset.action = label.toLowerCase();
+    mainBtn.btn.dataset.action = label.toLowerCase().replace(/\s+/g, '-');
     coreBtn.setAttribute('aria-label', coreAria);
 
     typeBtn.btn.hidden = !S.sttOk;
@@ -439,7 +457,7 @@ function createVoiceMode(opts) {
 
   function renderReadFull() {
     const A = S.answer;
-    const more = !!A && !!A.full && A.full.length > A.summary.length + 24;
+    const more = !!A && !!A.full && (typeof A.more === 'boolean' ? A.more : A.full.length > A.summary.length + 24);
     const readingFull = !!S.speech && S.speech.kind === 'full';
     const busy = !!S.run || (!!S.listen && !!S.listen.text);
     const show = more && !busy && !S.closed;
@@ -467,7 +485,13 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.listen) return requestSend(S.listen, false);
-    if (S.run) return abortRun();
+    // The spoken part is complete (its last sentences are being said, or the details below the
+    // line are being written): stop the voice and listen; the details keep coming in the chat.
+    if (S.run && spokenDone(S.run)) return releaseRun();
+    // Speaking the reply while it is still being written: interrupt both and listen (what was
+    // written so far stays in the chat); also when sentences are already with the voice but it
+    // hasn't said it started (some voices never do). Thinking or working: stop.
+    if (S.run) return abortRun({ listen: S.state === 'speaking' || voiceStarting(liveOf(S.run)) });
     if (S.speech && S.speech.kind !== 'apology') {
       cancelSpeech();
       return startListening({ gesture: true, keepAnswer: true });
@@ -484,7 +508,13 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.listen) return requestSend(S.listen, false);
-    if (S.run) return abortRun();
+    if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
+      // Stop the voice only (as in v4): the details are still being written, then shown to read.
+      cancelSpeech();
+      renderRunNow();
+      return;
+    }
+    if (S.run) return abortRun(); // Stop (or "Stop writing" once the spoken part is over)
     if (S.speech) {
       const reply = S.speech.kind !== 'apology';
       cancelSpeech();
@@ -811,10 +841,35 @@ function createVoiceMode(opts) {
     const spans = splitSentences(text);
     showCaption('jarvis', '');
     captions.dataset.tone = tone;
-    setCaptionLength(text.length > 300 || /\n/.test(text) ? 'long' : text.length > 130 ? 'medium' : 'short');
-    const els = spans.map((sp) => h('span', { class: 'vm-s is-future', text: text.slice(sp.start, sp.end) }));
+    setCaptionLength(captionLength(text));
+    const texts = spans.map((sp) => text.slice(sp.start, sp.end));
+    const els = texts.map((t) => h('span', { class: 'vm-s is-future', text: t }));
     captions.appendChild(h('p', { class: 'vm-cap vm-cap--jarvis' }, els));
-    S.karaoke = { spans, els, cursor: -1 };
+    S.karaoke = { spans, els, texts, cursor: -1, word: -1 };
+  }
+
+  function captionLength(text) {
+    const t = String(text || '').trim();
+    return t.length > 300 || /\n/.test(t) ? 'long' : t.length > 130 ? 'medium' : 'short';
+  }
+
+  /** Captions that grow while the reply is spoken (one span per appended sentence). */
+  function startLiveCaptions() {
+    showCaption('jarvis', '');
+    captions.dataset.tone = 'answer';
+    const p = h('p', { class: 'vm-cap vm-cap--jarvis' });
+    captions.appendChild(p);
+    S.karaoke = { spans: [], els: [], texts: [], cursor: -1, word: -1, p };
+    return S.karaoke;
+  }
+
+  function addLiveCaption(K, start, text) {
+    if (!K || S.karaoke !== K || !K.p.isConnected) return;
+    const el = h('span', { class: 'vm-s is-future', text });
+    K.p.appendChild(el);
+    K.spans.push({ start, end: start + text.length });
+    K.els.push(el);
+    K.texts.push(text);
   }
 
   function setKaraoke(index) {
@@ -822,28 +877,63 @@ function createVoiceMode(opts) {
     if (!K || !K.els.length) return;
     const i = Math.max(0, Math.min(K.els.length - 1, index));
     if (i === K.cursor) return;
+    clearWord(K);
     K.cursor = i;
+    if (captions.dataset.done) delete captions.dataset.done;
     K.els.forEach((el, k) => {
       el.className = `vm-s ${k < i ? 'is-past' : k === i ? 'is-current' : 'is-future'}`;
     });
     scrollCaptionTo(K.els[i]);
   }
 
-  function setKaraokeChar(charIndex) {
-    const K = S.karaoke;
-    if (!K || !K.spans.length) return;
+  function sentenceAt(K, charIndex) {
     let idx = 0;
     for (let k = 0; k < K.spans.length; k += 1) {
       if (K.spans[k].start <= charIndex) idx = k;
       else break;
     }
-    setKaraoke(idx);
+    return idx;
+  }
+
+  function setKaraokeChar(charIndex) {
+    const K = S.karaoke;
+    if (!K || !K.spans.length) return;
+    setKaraoke(sentenceAt(K, charIndex));
+  }
+
+  /** The word being spoken (boundary events): its sentence is current and the word glows. */
+  function setKaraokeWord(charIndex, length) {
+    const K = S.karaoke;
+    if (!K || !K.spans.length) return;
+    const k = sentenceAt(K, charIndex);
+    setKaraoke(k);
+    const text = K.texts[k] || '';
+    const rel = charIndex - K.spans[k].start;
+    if (!(length > 0) || rel < 0 || rel >= text.length) {
+      clearWord(K);
+      return;
+    }
+    const end = Math.min(text.length, rel + length);
+    const el = K.els[k];
+    clearWord(K);
+    el.replaceChildren(text.slice(0, rel), h('span', { class: 'vm-w', text: text.slice(rel, end) }), text.slice(end));
+    K.word = k;
+  }
+
+  function clearWord(K) {
+    if (!K || !(K.word >= 0)) return;
+    const el = K.els[K.word];
+    if (el) el.textContent = K.texts[K.word] || '';
+    K.word = -1;
   }
 
   function finishKaraoke() {
-    if (!S.karaoke) return;
+    const K = S.karaoke;
+    if (!K) return;
+    clearWord(K);
+    K.cursor = -1;
     captions.dataset.done = 'true';
-    for (const el of S.karaoke.els) el.className = 'vm-s';
+    for (const el of K.els) el.className = 'vm-s';
   }
 
   /** Scroll as little as possible so the sentence being spoken is fully in view. */
@@ -1097,6 +1187,16 @@ function createVoiceMode(opts) {
     clearRetry();
     cancelSpeech();
     stopListening();
+    if (S.bg) {
+      // The previous reply is still writing its details in the chat (one turn at a time): ask
+      // this once it is done.
+      S.run = { pending: true, held: words };
+      setVoiceState('thinking');
+      setStatus('Finishing the details on screen…', 'edit');
+      showCaption('quote', `“${words}”`, 'I’ll take that as soon as the details are on screen.');
+      announce('Jarvis will answer once the details are on screen');
+      return;
+    }
     S.answer = null;
     S.showFull = false;
     S.silentTries = 0;
@@ -1153,11 +1253,28 @@ function createVoiceMode(opts) {
       sendFailed(new Error('Jarvis couldn’t start that request.'));
       return;
     }
-    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '' };
+    // feed: which sentences to speak next while the reply streams (null: speak the summary at the
+    // end, as for a reply started in the chat). liveDone: its speech already ended normally;
+    // liveOff: its speech was stopped or failed (nothing more is spoken for this reply).
+    // answerFrom: where the answer itself (text after the last search or mission) starts in the
+    // live speech's text; answerHeard: a chunk of it began to play.
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false };
     S.run = R;
+    if (speaksWhileStreaming(R)) {
+      R.feed = createSpokenFeed({ convert: speechMarkdown });
+      // Opened while a reply was already under way: what is on screen already is not read out.
+      if (!owned) {
+        try {
+          R.feed.skip(run.turn && run.turn.segments);
+        } catch (err) {
+          console.warn('[voice] could not read the reply so far', err);
+        }
+      }
+    }
     const onEvent = (event, type) => {
-      if (S.run !== R) return;
       const kind = type || (event && event.type);
+      if (S.bg === R && kind === 'end') return finishBackground(R, (event && event.turn) || run.turn);
+      if (S.run !== R) return;
       if (kind === 'agent' && event && event.agent) {
         const a = event.agent;
         if (a.activity && AGENT_ACTIVE.has(a.status)) R.lastAgent = a;
@@ -1166,6 +1283,7 @@ function createVoiceMode(opts) {
         finishRun(R, (event && event.turn) || run.turn);
         return;
       }
+      if (R.feed && (kind === 'segment' || kind === 'segment-removed')) scheduleFeed(R);
       scheduleRunRender();
     };
     try {
@@ -1179,6 +1297,20 @@ function createVoiceMode(opts) {
     );
     renderControls();
     scheduleRunRender();
+    if (R.feed) scheduleFeed(R);
+  }
+
+  /** Voice Mode's own questions (spoken turns) are read aloud while the reply streams in. */
+  function speaksWhileStreaming(R) {
+    if (!S.ttsOk || typeof tts.createSpeechStream !== 'function') return false;
+    return R.owned || !!(R.run.turn && R.run.turn.spoken === true);
+  }
+
+  function detachRun(R) {
+    for (const off of R.offs || []) callQuietly(off);
+    R.offs = [];
+    if (R.feedTimer) clearTimeout(R.feedTimer);
+    R.feedTimer = 0;
   }
 
   function scheduleRunRender() {
@@ -1187,6 +1319,11 @@ function createVoiceMode(opts) {
   function cancelRunRender() {
     if (runFrame) cancelAnimationFrame(runFrame);
     runFrame = 0;
+  }
+  /** Render now (the voice started or paused: the state changes at once). */
+  function renderRunNow() {
+    cancelRunRender();
+    renderRun();
   }
 
   function renderRun() {
@@ -1198,10 +1335,15 @@ function createVoiceMode(opts) {
     const missions = Object.values(turn.missions || {}).filter(Boolean);
     const latest = latestMission(missions);
     const active = latest && (latest.status === 'planning' || latest.status === 'running') ? latest : null;
-    const next = active ? 'working' : 'thinking';
+    const talking = isTalking(liveOf(R));
+    const next = talking ? 'speaking' : active ? 'working' : 'thinking';
     if (S.state !== next) setVoiceState(next);
-    const st = runStatus(turn, missions, active);
-    setStatus(st.text, st.icon);
+    if (talking) {
+      setStatus('Speaking', 'speaker');
+    } else {
+      const st = runStatus(turn, missions, active);
+      setStatus(st.text, st.icon);
+    }
     if (active && R.announcedMission !== active.id) {
       R.announcedMission = active.id;
       announce('Agents deployed');
@@ -1320,15 +1462,20 @@ function createVoiceMode(opts) {
   }
 
   function finishRun(R, turn) {
+    if (S.bg === R) return finishBackground(R, turn);
     if (S.run !== R) return;
     S.run = null;
-    for (const off of R.offs) callQuietly(off);
+    detachRun(R);
     cancelRunRender();
     showMission(false);
     if (S.closed) return;
     const status = turn && turn.status;
-    if (status === 'done') deliverAnswer(turn);
-    else if (status === 'error') deliverError(turn);
+    if (status === 'done') {
+      deliverAnswer(turn, R);
+      return;
+    }
+    cancelSpeech(); // a reply that failed or stopped is not read out any further
+    if (status === 'error') deliverError(turn);
     else if (status === 'interrupted') deliverInterrupted();
     else if (status === 'stopped') {
       syncCoreAgents(null);
@@ -1339,23 +1486,273 @@ function createVoiceMode(opts) {
     }
   }
 
-  function abortRun() {
+  /** Stop the turn and its speech; then listen (the owner interrupted the voice) or wait. */
+  function abortRun({ listen = false } = {}) {
     const R = S.run;
     if (!R) return;
     S.run = null;
-    if (R.offs) for (const off of R.offs) callQuietly(off);
+    detachRun(R);
     cancelRunRender();
+    cancelSpeech();
     if (R.run) abortQuietly(R.run);
+    if (R.held && S.bg) {
+      // Stop while a question waits for the previous reply's details: stop that reply too.
+      const B = S.bg;
+      S.bg = null;
+      detachRun(B);
+      abortQuietly(B.run);
+    }
     showMission(false);
     syncCoreAgents(null);
     haptic('light');
-    goIdle('stopped');
+    if (listen && S.sttOk) startListening({ gesture: true, keepAnswer: true });
+    else goIdle('stopped');
   }
 
-  function deliverAnswer(turn) {
+  /** The spoken part of this reply is complete: everything Jarvis says of it was handed to the voice. */
+  function spokenDone(R) {
+    if (!R || !R.feed || R.pending) return false;
+    try {
+      return R.liveDone || R.feed.state().finished;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Interrupted once the spoken part is complete: stop the voice and listen. The run keeps writing
+   * the details in the chat (S.bg); what the owner asks meanwhile is sent once it is done.
+   */
+  function releaseRun() {
+    const R = S.run;
+    if (!R) return;
+    S.run = null;
+    S.bg = R;
+    cancelRunRender();
+    cancelSpeech();
+    showMission(false);
+    syncCoreAgents(null);
+    haptic('light');
+    finishKaraoke();
+    // What was said stays on screen as context while listening (no "Read full answer" yet).
+    let said = '';
+    try {
+      said = String(R.feed.state().spoken || '').trim();
+    } catch {
+      said = '';
+    }
+    S.answer = said ? { md: '', summary: said, full: '' } : null;
+    if (S.sttOk) {
+      startListening({ gesture: true, keepAnswer: true });
+      if (S.listen) setSub('Finishing the details on screen…');
+    } else goIdle('keep');
+  }
+
+  /** A run left writing its details (S.bg) ended: offer its answer, then ask what was held. */
+  function finishBackground(R, turn) {
+    if (S.bg !== R) return;
+    S.bg = null;
+    detachRun(R);
+    if (S.closed) return;
+    if (turn && turn.status === 'done') {
+      const md = finalAnswerMarkdown(turn);
+      const full = fullDisplayText(md);
+      if (R.feed) {
+        try {
+          R.feed.update({ segments: turn.segments, done: true });
+        } catch {
+          /* what was said so far */
+        }
+        S.answer = answerFromFeed(R, md, full);
+      } else S.answer = { md, summary: speechText(md, 'summary') || clip(full, 400), full };
+      S.showFull = false;
+    }
+    if (S.listen && capSub.textContent === 'Finishing the details on screen…') setSub('');
+    const holder = S.run && S.run.held ? S.run : null;
+    if (!holder) {
+      renderControls();
+      return;
+    }
+    // The app lets go of the finished run only after run.done settles: ask after that.
+    Promise.resolve(R.run && R.run.done)
+      .catch(() => null)
+      .then(() =>
+        setTimeout(() => {
+          if (S.closed || S.run !== holder) return;
+          S.run = null;
+          send(holder.held);
+        }, 0),
+      );
+  }
+
+  // ------------------------------------------------------------------- speaking while it streams
+
+  function scheduleFeed(R) {
+    if (R.feedTimer || !R.feed) return;
+    R.feedTimer = setTimeout(() => {
+      R.feedTimer = 0;
+      if (S.run === R && !S.closed) feedLive(R, false);
+    }, FEED_DELAY_MS);
+  }
+
+  /** Speak the reply's newly complete sentences (done: the turn is over, speak the rest). */
+  function feedLive(R, done) {
+    if (!R.feed || S.closed) return null;
+    let step;
+    try {
+      step = R.feed.update({ segments: R.run.turn && R.run.turn.segments, done });
+    } catch (err) {
+      console.warn('[voice] could not follow the reply', err);
+      return null;
+    }
+    if (R.liveOff || (!step.pieces.length && !step.finish)) return step;
+    let sp = liveOf(R);
+    if (!sp) {
+      if (!step.pieces.length || R.liveDone) return step;
+      sp = startLive(R);
+      if (!sp) return step;
+    }
+    // From here on the pieces are the answer itself (not the "Let me check…" said before a search).
+    if (R.answerFrom < 0 && step.pieces.length && answerBegun(R.run.turn)) R.answerFrom = sp.display.length;
+    for (const piece of step.pieces) appendLive(sp, piece);
+    if (step.finish && !sp.finished) {
+      sp.finished = true;
+      try {
+        sp.stream.finish();
+      } catch (err) {
+        console.warn('[voice] speech failed', err);
+      }
+      renderControls(); // the spoken part is complete: a tap now stops only the voice
+    }
+    return step;
+  }
+
+  function liveOf(R) {
+    const sp = S.speech;
+    return sp && sp.kind === 'live' && sp.run === R ? sp : null;
+  }
+
+  /** The voice is audible (or about to be): a chunk started and the stream isn't waiting for text. */
+  function isTalking(sp) {
+    return !!sp && sp.started && !sp.idle;
+  }
+
+  /** Sentences are with the voice and not all said yet (it may be talking without having said so). */
+  function voiceStarting(sp) {
+    return !!sp && !sp.idle && !!sp.display;
+  }
+
+  function startLive(R) {
+    cancelSpeech();
+    const s = getS();
+    const sp = newSpeech('live', R);
+    S.speech = sp;
+    root.dataset.speech = 'live';
+    sp.karaoke = startLiveCaptions();
+    try {
+      sp.stream =
+        tts.createSpeechStream({
+          voiceURI: typeof s.voiceURI === 'string' ? s.voiceURI : '',
+          rate: speechRate(),
+          onStart: () => onSpeechStart(sp),
+          onChunk: (c) => onSpeechChunk(sp, c),
+          onBoundary: (b) => onSpeechBoundary(sp, b),
+          onIdle: () => onLiveIdle(sp),
+          onEnd: (info) => onSpeechEnd(sp, info),
+        }) || null;
+    } catch (err) {
+      console.warn('[voice] speech failed', err);
+      sp.stream = null;
+    }
+    if (!sp.stream || typeof sp.stream.append !== 'function') {
+      if (S.speech === sp) S.speech = null;
+      delete root.dataset.speech;
+      R.liveOff = true;
+      return null;
+    }
+    startEstimator(sp);
+    renderControls();
+    return sp;
+  }
+
+  function appendLive(sp, piece) {
+    if (!piece || sp.token !== S.speechToken) return;
+    const start = sp.display.length;
+    sp.display += piece;
+    addLiveCaption(sp.karaoke, start, piece);
+    if (S.karaoke === sp.karaoke) setCaptionLength(captionLength(sp.display));
+    const form = spokenForm(sp.display);
+    sp.text = form.spoken;
+    sp.map = form.map;
+    try {
+      sp.stream.append(piece);
+    } catch (err) {
+      console.warn('[voice] speech failed', err);
+    }
+  }
+
+  /** Everything written so far is spoken and the reply is still being written (or working). */
+  function onLiveIdle(sp) {
+    if (sp.token !== S.speechToken) return;
+    sp.idle = true;
+    sp.chunk = null;
+    if (S.karaoke === sp.karaoke) finishKaraoke();
+    if (S.run && S.run === sp.run) renderRunNow();
+    else renderControls();
+  }
+
+  function deliverAnswer(turn, R) {
     syncCoreAgents(null); // the mission is over: the core turns to the voice
     const md = finalAnswerMarkdown(turn);
     const full = fullDisplayText(md);
+    if (R && R.feed) {
+      const live = liveOf(R);
+      if (live || R.liveDone || R.liveOff) {
+        // Spoken (or being spoken) while it streamed: say the rest; no chime over the voice.
+        if (live) feedLive(R, true);
+        S.answer = answerFromFeed(R, md, full);
+        S.showFull = false;
+        announce('Answer ready');
+        if (live && S.speech === live) {
+          renderControls();
+          return; // the stream's end carries on (listen again, or wait)
+        }
+        if (R.liveDone && !R.liveOff) {
+          afterSpeech();
+          return;
+        }
+        // The voice stopped (someone else's speech, or the voice isn't working): show the whole
+        // spoken part to read instead, and wait for a tap.
+        try {
+          R.feed.update({ segments: turn && turn.segments, done: true });
+        } catch {
+          /* show what was said */
+        }
+        S.answer = answerFromFeed(R, md, full);
+        renderSpoken(S.answer.summary, 'answer');
+        finishKaraoke();
+        goIdle('answered');
+        return;
+      }
+      // Nothing was spoken yet (a one-sentence reply, or a fast one): the spoken part, after the chime.
+      let step = null;
+      try {
+        step = R.feed.update({ segments: turn && turn.segments, done: true });
+      } catch (err) {
+        console.warn('[voice] could not read the reply', err);
+      }
+      if (step && step.pieces.length && S.ttsOk) {
+        S.answer = answerFromFeed(R, md, full);
+        S.showFull = false;
+        play('reply-done');
+        haptic('success');
+        announce('Answer ready');
+        speak(S.answer.summary, 'summary', sounds ? REPLY_CHIME_MS : 0);
+        return;
+      }
+    }
+    // Nothing to speak from the stream (only a mission card, empty text, or a reply started in the
+    // chat): the answer's summary paragraph, after the chime.
     let summary = speechText(md, 'summary');
     if (!summary) summary = clip(full, 400);
     if (!summary) summary = `Done, ${ownerName()}. The details are in the chat.`;
@@ -1371,6 +1768,13 @@ function createVoiceMode(opts) {
       finishKaraoke();
       goIdle('answered');
     }
+  }
+
+  /** S.answer for a reply spoken from its stream: what was said, and the whole answer. */
+  function answerFromFeed(R, md, full) {
+    const st = R.feed.state();
+    const summary = st.spoken.trim() || clip(full, 400) || `Done, ${ownerName()}. The details are in the chat.`;
+    return { md, summary, full: full || summary, more: !!full && (st.cut || st.capped || full.length > summary.length + 24) };
   }
 
   function deliverError(turn) {
@@ -1419,36 +1823,46 @@ function createVoiceMode(opts) {
 
   // ================================================================================ speaking
 
+  function newSpeech(kind, run = null) {
+    return {
+      token: ++S.speechToken,
+      kind, // 'live' (the reply as it streams) | 'summary' | 'full' | 'apology'
+      run, // live: the run it belongs to
+      display: '', // the caption text (live: everything appended so far)
+      text: '', // display with whitespace collapsed, as the engine counts offsets
+      map: [], // text index -> display index
+      stream: null, // live: tts.createSpeechStream()
+      handle: null, // others: tts.speak()
+      karaoke: null,
+      timers: [],
+      started: false, // audio has started (onStart, a chunk or a word event)
+      boundary: false, // this voice sends word events
+      idle: false, // live: everything appended so far is spoken; waiting for more text
+      finished: false, // live: stream.finish() was called
+      chunk: null, // { start, end, at }: the chunk playing now (offsets in text)
+    };
+  }
+
   /**
-   * Speak `display` (shown as captions, may contain paragraph breaks). The engine gets the
-   * whitespace-collapsed form; boundary indices are mapped back to the displayed text.
+   * Speak `display` in one go (shown as captions, may contain paragraph breaks). The engine gets
+   * the same text, so its offsets (whitespace collapsed) map back to the display with spokenForm().
    */
   function speak(display, kind, delay = 0) {
     cancelSpeech();
-    const { spoken, map } = spokenForm(display);
-    const sp = {
-      token: ++S.speechToken,
-      kind,
-      text: spoken,
-      map,
-      handle: null,
-      timers: [],
-      started: false,
-      boundary: false,
-      startedAt: Date.now(),
-      prevIndex: -1,
-      relBase: 0,
-      chunkBases: new Map(),
-      searchFrom: 0,
-      quietPolls: 0,
-    };
+    const sp = newSpeech(kind);
+    const form = spokenForm(display);
+    sp.display = String(display ?? '');
+    sp.text = form.spoken;
+    sp.map = form.map;
     S.speech = sp;
+    root.dataset.speech = kind;
     if (kind === 'summary' || kind === 'full') {
       setVoiceState('speaking');
       setStatus(kind === 'full' ? 'Reading the full answer' : 'Speaking', 'speaker');
       announce('Jarvis is speaking');
     }
-    renderSpoken(display, kind === 'apology' ? 'error' : 'answer');
+    renderSpoken(sp.display, kind === 'apology' ? 'error' : 'answer');
+    sp.karaoke = S.karaoke;
     setKaraoke(0);
     renderControls();
 
@@ -1457,21 +1871,20 @@ function createVoiceMode(opts) {
       const s = getS();
       try {
         sp.handle =
-          tts.speak(speakable(spoken), {
+          tts.speak(sp.display, {
             voiceURI: typeof s.voiceURI === 'string' ? s.voiceURI : '',
             rate: speechRate(),
             onStart: () => onSpeechStart(sp),
+            onChunk: (c) => onSpeechChunk(sp, c),
+            onBoundary: (b) => onSpeechBoundary(sp, b),
             onEnd: (info) => onSpeechEnd(sp, info),
-            onBoundary: (event) => onSpeechBoundary(sp, event),
           }) || null;
       } catch (err) {
         console.warn('[voice] speech failed', err);
-        speechDone(sp);
+        speechFinished(sp, 'failed');
         return;
       }
-      sp.startedAt = Date.now();
       startEstimator(sp);
-      startSpeechWatchdog(sp);
     };
     if (delay > 0) sp.timers.push(setTimeout(begin, delay));
     else begin();
@@ -1480,31 +1893,41 @@ function createVoiceMode(opts) {
   function onSpeechStart(sp) {
     if (sp.token !== S.speechToken || sp.started) return;
     sp.started = true;
-    sp.startedAt = Date.now(); // the estimator counts from the first sound, not from the request
+    if (sp.kind === 'live') announce('Jarvis is speaking');
   }
 
+  /** A chunk starts playing: highlight it, and show that Jarvis is speaking. */
+  function onSpeechChunk(sp, c) {
+    if (sp.token !== S.speechToken || !c) return;
+    const start = Number(c.start);
+    const end = Number(c.end);
+    if (!Number.isFinite(start) || start < 0) return;
+    // `at`: when it started, which the engine may only learn later (a voice without start events).
+    const at = Number(c.at) <= Date.now() && Number(c.at) > Date.now() - 60000 ? Number(c.at) : Date.now();
+    sp.chunk = { start, end: Number.isFinite(end) && end > start ? end : start + 1, at };
+    sp.idle = false;
+    if (!sp.started) onSpeechStart(sp);
+    if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));
+    if (sp.kind !== 'live') return;
+    if (sp.run && sp.run.answerFrom >= 0 && displayIndex(sp, Math.max(start, sp.chunk.end - 1)) >= sp.run.answerFrom) sp.run.answerHeard = true;
+    if (S.run && S.run === sp.run) renderRunNow();
+    else if (S.state !== 'speaking') {
+      setVoiceState('speaking');
+      setStatus('Speaking', 'speaker');
+    }
+  }
+
+  /**
+   * The stream (or speak()) ended, exactly once: 'done' | 'empty' (finished), 'cancelled' |
+   * 'interrupted' (someone else stopped it; our own cancels never get here, the token changed),
+   * 'error' | 'unsupported' (speech isn't working).
+   */
   function onSpeechEnd(sp, info) {
     if (sp.token !== S.speechToken) return;
-    // Our own cancels are filtered out by the token, so 'cancelled' / 'interrupted' here means
-    // someone else stopped or replaced this speech: finish now and don't open the mic over them.
-    if (info && (info.reason === 'interrupted' || info.reason === 'cancelled')) {
-      sp.interrupted = true;
-      speechDone(sp);
-      return;
-    }
-    // Engines that speak in chunks may report each chunk's end: finish only when nothing is left.
-    sp.timers.push(
-      setTimeout(() => {
-        if (sp.token !== S.speechToken) return;
-        let still = false;
-        try {
-          still = !sp.interrupted && typeof tts.isSpeaking === 'function' && !!tts.isSpeaking();
-        } catch {
-          still = false;
-        }
-        if (!still) speechDone(sp);
-      }, 140),
-    );
+    const reason = info && info.reason;
+    if (reason === 'done' || reason === 'empty') speechFinished(sp, 'done');
+    else if (reason === 'cancelled' || reason === 'interrupted') speechFinished(sp, 'interrupted');
+    else speechFinished(sp, 'failed');
   }
 
   function onSpeechBoundary(sp, event) {
@@ -1513,8 +1936,12 @@ function createVoiceMode(opts) {
     const ci = Number(event.charIndex);
     if (!Number.isFinite(ci) || ci < 0) return;
     if (!sp.started) onSpeechStart(sp);
+    sp.idle = false;
     sp.boundary = true;
-    setKaraokeChar(displayIndex(sp, globalCharIndex(sp, event, ci)));
+    if (S.karaoke === sp.karaoke) {
+      const len = event.name === 'sentence' ? 0 : Number(event.charLength);
+      setKaraokeWord(displayIndex(sp, ci), Number.isFinite(len) && len > 0 ? len : 0);
+    }
     bumpLevel(0.55 + Math.random() * 0.35);
   }
 
@@ -1523,87 +1950,65 @@ function createVoiceMode(opts) {
     return sp.map[Math.max(0, Math.min(sp.map.length - 1, spokenIndex))];
   }
 
-  /** Map a boundary event (possibly relative to one queued chunk) to an index in the full text. */
-  function globalCharIndex(sp, event, ci) {
-    if (Number.isFinite(event.offset)) return event.offset + ci;
-    const utter = event.utterance && typeof event.utterance.text === 'string' ? event.utterance.text : '';
-    const chunk = utter || (typeof event.chunk === 'string' ? event.chunk : '') || (typeof event.chunkText === 'string' ? event.chunkText : '');
-    if (chunk) {
-      if (chunk.length >= sp.text.length - 1) return ci;
-      let base = sp.chunkBases.get(chunk);
-      if (base === undefined) {
-        const lead = chunk.length - chunk.trimStart().length;
-        const probeText = chunk.trim().slice(0, 24);
-        let at = probeText ? sp.text.indexOf(probeText, sp.searchFrom) : -1;
-        if (at < 0 && probeText) at = sp.text.indexOf(probeText);
-        base = at >= 0 ? at - lead : -1;
-        if (at >= 0) sp.searchFrom = at + 1;
-        sp.chunkBases.set(chunk, base);
-      }
-      if (base >= 0) return base + ci;
-    }
-    // Unknown framing: indices restart at each chunk; chunks start on sentence boundaries.
-    if (ci < sp.prevIndex) {
-      const passed = sp.relBase + sp.prevIndex;
-      const next = splitSentences(sp.text).find((s) => s.start > passed);
-      sp.relBase = next ? next.start : passed + 1;
-    }
-    sp.prevIndex = ci;
-    return sp.relBase + ci;
-  }
-
-  /** Voices without word events: move the highlight by elapsed time instead. */
+  /**
+   * Voices without word events: move the highlight through the chunk that is playing by elapsed
+   * time (restarting at every chunk, so it never drifts far). Time while the page is hidden
+   * doesn't count (iOS pauses speech in the background).
+   */
   function startEstimator(sp) {
+    let hiddenAt = 0;
     const timer = setInterval(() => {
-      if (sp.token !== S.speechToken || sp.boundary) {
+      if (sp.token !== S.speechToken) {
         clearInterval(timer);
         return;
       }
-      if (!sp.started && Date.now() - sp.startedAt < 1500) return;
-      const ci = Math.floor(((Date.now() - sp.startedAt) / 1000) * CHARS_PER_SEC * speechRate());
-      setKaraokeChar(displayIndex(sp, Math.min(ci, sp.text.length - 1)));
+      const c = sp.chunk;
+      if (document.hidden) {
+        if (!hiddenAt) hiddenAt = Date.now();
+        return;
+      }
+      if (hiddenAt) {
+        if (c) c.at += Date.now() - hiddenAt;
+        hiddenAt = 0;
+      }
+      if (sp.boundary || sp.idle || !c || S.karaoke !== sp.karaoke) return;
+      const ci = c.start + Math.floor(((Date.now() - c.at) / 1000) * CHARS_PER_SEC * speechRate());
+      setKaraokeChar(displayIndex(sp, Math.min(ci, c.end - 1)));
     }, 250);
     sp.timers.push(timer);
   }
 
-  function startSpeechWatchdog(sp) {
-    const expected = (sp.text.length / (CHARS_PER_SEC * speechRate())) * 1000;
-    sp.timers.push(setTimeout(() => speechDone(sp), expected * 2 + 6000));
-    if (typeof tts.isSpeaking !== 'function') return;
-    const poll = setInterval(() => {
-      if (sp.token !== S.speechToken) {
-        clearInterval(poll);
-        return;
-      }
-      let speaking = true;
-      try {
-        speaking = !!tts.isSpeaking();
-      } catch {
-        speaking = true;
-      }
-      const age = Date.now() - sp.startedAt;
-      if (!speaking && (sp.started || age > 4000)) {
-        sp.quietPolls += 1;
-        if (sp.quietPolls >= 2) speechDone(sp);
-      } else {
-        sp.quietPolls = 0;
-      }
-    }, 800);
-    sp.timers.push(poll);
-  }
-
-  function speechDone(sp) {
+  /** The speech `sp` is over: 'done' (spoken to the end), 'interrupted' or 'failed'. */
+  function speechFinished(sp, how) {
     if (sp.token !== S.speechToken) return;
     S.speechToken += 1;
     S.speech = null;
     clearTimers(sp.timers);
+    delete root.dataset.speech;
     if (S.closed) return;
-    finishKaraoke();
+    if (S.karaoke === sp.karaoke) finishKaraoke();
+    if (sp.kind === 'live' && S.run && S.run === sp.run) {
+      // The spoken part is over (or speech stopped) while the reply is still being written:
+      // nothing more is spoken for it; the end of the turn decides what comes next.
+      if (how === 'done') sp.run.liveDone = true;
+      else sp.run.liveOff = true;
+      renderRunNow();
+      renderControls();
+      return;
+    }
     if (sp.kind === 'apology') {
       afterApology();
       return;
     }
-    if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !sp.interrupted && !document.hidden) {
+    if (how === 'done') afterSpeech();
+    else goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
+  }
+
+  /** After a reply was spoken to the end: listen again (continuous) or wait for a tap. */
+  function afterSpeech() {
+    if (S.closed) return;
+    finishKaraoke();
+    if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
       // Hands-free: listen again once the speaker has gone quiet.
       setStatus('Your turn', 'mic');
       S.retryTimer = setTimeout(() => {
@@ -1623,16 +2028,23 @@ function createVoiceMode(opts) {
     S.speechToken += 1;
     S.speech = null;
     clearTimers(sp.timers);
+    delete root.dataset.speech;
+    if (sp.kind === 'live' && sp.run) sp.run.liveOff = true;
+    const handle = sp.stream || sp.handle;
     try {
-      if (sp.handle && typeof sp.handle.cancel === 'function') sp.handle.cancel();
+      // The engine cancels itself; an extra stopSpeaking() would only delay the next speech.
+      if (handle && typeof handle.cancel === 'function') handle.cancel();
+      else if (tts && typeof tts.stopSpeaking === 'function') tts.stopSpeaking();
     } catch {
       /* ignore */
     }
-    try {
-      if (tts && typeof tts.stopSpeaking === 'function') tts.stopSpeaking();
-    } catch {
-      /* ignore */
-    }
+  }
+
+  /** Markdown -> the text to read aloud (written for the ear). */
+  function speechMarkdown(md) {
+    if (typeof markdownToPlainText === 'function') return String(markdownToPlainText(md, { speech: true }) || '');
+    if (tts && typeof tts.toSpeech === 'function') return String(tts.toSpeech(md, 'full') || '');
+    return String(md || '');
   }
 
   function speechText(md, kind) {
@@ -1714,7 +2126,7 @@ function createVoiceMode(opts) {
     levelFrame = 0;
     const dt = levelLast ? Math.min(100, ts - levelLast) : 16;
     levelLast = ts;
-    if (S.speech && S.speech.started && !S.speech.boundary) {
+    if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
       // No word events from this voice: a soft synthetic envelope keeps the core "talking".
       const t = ts / 1000;
       bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
@@ -1745,14 +2157,22 @@ function createVoiceMode(opts) {
     if (current === instance) current = null;
     clearRetry();
     stopListening();
+    // Jarvis had begun saying this answer (or all of its spoken part): when it finishes in the
+    // chat, the chat doesn't read it aloud again.
+    for (const R of [S.run, S.bg]) if (R && R.run && (R.liveDone || R.answerHeard || R === S.bg)) voicedRuns.add(R.run);
     cancelSpeech();
+    if (S.bg) {
+      const B = S.bg;
+      S.bg = null;
+      detachRun(B);
+    }
     if (S.run) {
       // Leaving only stops listening and speaking: a running reply or mission carries on in the
       // chat (the app keeps the screen awake for it and shows Stop), so paid work is never lost
       // just to look at Mission Control. STOP, or a tap on the core, stops it.
       const R = S.run;
       S.run = null;
-      if (R.offs) for (const off of R.offs) callQuietly(off);
+      if (R.offs) detachRun(R);
     }
     cancelRunRender();
     if (levelFrame) cancelAnimationFrame(levelFrame);
@@ -1923,11 +2343,6 @@ function spokenForm(display) {
     }
   }
   return { spoken, map };
-}
-
-/** "→" reads as "right arrow" on some voices; swap it for a pause (same length keeps caption offsets). */
-function speakable(text) {
-  return String(text).replace(/→/g, ',');
 }
 
 function toText(value) {

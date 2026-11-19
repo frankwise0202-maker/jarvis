@@ -2,13 +2,15 @@
 // and decides the response from [[directives]] in the latest user text plus the conversation so
 // far. The lead's progress through a turn is derived from the request history itself (stateless);
 // only directives that count attempts ([[overloaded]], [[ratelimit:K]], [[dropworkers]],
-// [[droplead]]) keep state, in the `state` object owned by the mock instance. Holograms,
-// blueprints and the saved library (lead tools version 4) are in visuals.mjs; every directive is
-// documented in README.md.
+// [[droplead]]) keep state, in the `state` object owned by the mock instance. A Voice Mode turn
+// (the spoken reply channel in <turn_context>) gets spoken-style replies, streamed at a realistic
+// pace (plan.spoken). Holograms, blueprints and the saved library (lead tools version 4) are in
+// visuals.mjs; every directive is documented in README.md.
 
 import {
-  attachmentAnswer, attachmentTaskNote, attachmentsOf, defaultAnswer, directivesForAgent, fetchResultBlock,
-  longAnswer, parseAgentReports, parseAssignment, parseDirectives, searchResults, stripDirectives,
+  SPOKEN_PREAMBLE, attachmentAnswer, attachmentTaskNote, attachmentsOf, defaultAnswer, directivesForAgent, fetchResultBlock,
+  longAnswer, parseAgentReports, parseAssignment, parseDirectives, searchResults, spokenAnswer, spokenAttachmentAnswer,
+  spokenLongAnswer, spokenMemoryAnswer, spokenSearchAnswer, spokenSynthesisAnswer, spokenXssAnswer, stripDirectives,
   synthesisAnswer, textBlocks, toolResultText, topicOfPrompt, topicOfTask, turnContextOf, userTextOf,
   valueFromSchema, workerReportSegments, xssAnswer,
 } from './content.mjs';
@@ -146,6 +148,16 @@ function lastUserWithText(messages) {
 // Lead
 
 function planLead(body, state, now) {
+  // A Voice Mode turn (the spoken reply channel in the newest owner message's <turn_context>):
+  // replies are written for the ear, and every lead response streams its text a few words at a
+  // time at a model's real pace (anthropic-mock.mjs), so speech can start while it still arrives.
+  const spoken = turnContextOf(lastUserWithText(body.messages).message).spoken;
+  const decision = leadDecision(body, state, now, spoken);
+  if (spoken && decision.plan) decision.plan.spoken = true;
+  return decision;
+}
+
+function leadDecision(body, state, now, spoken) {
   const msgs = body.messages;
   const { index: u, message: userMsg } = lastUserWithText(msgs);
   const prompt = userTextOf(userMsg);
@@ -156,7 +168,7 @@ function planLead(body, state, now) {
   const rng = seededRandom(`lead|${prompt}|${msgs.length}`);
   const pace = d.has('slow') ? 'slow-lead' : d.has('long') ? 'long' : 'normal';
   const files = attachmentsOf(userMsg); // photos and PDFs the owner attached to this message
-  const env = { body, d, ctx, prompt, rng, pace, now, files };
+  const env = { body, d, ctx, prompt, rng, pace, now, files, spoken };
 
   // [[otpm:N]]: an output-tokens-per-minute limit of N; a max_tokens above it is rejected (429).
   if (d.has('otpm') && body.max_tokens > d.int('otpm', 8000, 1, 10_000_000)) return { error: SCRIPTED_ERRORS.outputTokensPerMinute(d.int('otpm', 8000, 1, 10_000_000), body.model) };
@@ -175,7 +187,7 @@ function planLead(body, state, now) {
 }
 
 function planLeadTurn(env, { msgs, u, last, after, state }) {
-  const { body, d, ctx, prompt, rng, pace, files } = env;
+  const { body, d, ctx, prompt, rng, pace, files, spoken } = env;
   const userMsg = msgs[u];
   const think = (t) => thinkingBlock(body, t);
 
@@ -203,7 +215,7 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
         plan: {
           blocks: [
             thinkingBlock(body, `The owner wants current information on "${topicOfPrompt(prompt)}". I'll search the web.`),
-            text('Let me check the latest information on that.'),
+            text(spoken ? SPOKEN_PREAMBLE : 'Let me check the latest information on that.'),
             { type: 'server_tool_use', id: newServerToolUseId(), name: 'web_search', input: { query } },
           ],
           stop_reason: 'pause_turn',
@@ -253,17 +265,19 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     if (d.has('open-saved') && hasTool(body, 'open_saved')) return { plan: openSavedPlan({ think, ids: savedIdsOf(turnContextText(userMsg)) }) };
     if (d.has('search')) return { plan: searchPlan(env) };
     if (d.has('xss')) {
-      return { plan: { blocks: [thinkingBlock(body, 'The owner wants raw markup echoed back as text.'), text(xssAnswer())], stop_reason: 'end_turn', pace } };
+      const answer = spoken ? textBlocks(spokenXssAnswer(ctx, d)) : [text(xssAnswer())];
+      return { plan: { blocks: [thinkingBlock(body, 'The owner wants raw markup echoed back as text.'), ...answer], stop_reason: 'end_turn', pace } };
     }
     if (d.has('long')) {
-      return { plan: { blocks: [thinkingBlock(body, 'A thorough, well-structured guide is called for here.'), text(longAnswer(prompt, ctx))], stop_reason: 'end_turn', pace } };
+      const answer = spoken ? textBlocks(spokenLongAnswer(prompt, ctx, d)) : [text(longAnswer(prompt, ctx))];
+      return { plan: { blocks: [thinkingBlock(body, 'A thorough, well-structured guide is called for here.'), ...answer], stop_reason: 'end_turn', pace } };
     }
     if (files.length) {
       return {
         plan: {
           blocks: [
             thinkingBlock(body, `The owner shared ${files.length === 1 ? 'a file' : `${files.length} files`}. I'll look at ${files.length === 1 ? 'it' : 'them'} closely before answering.`),
-            text(attachmentAnswer({ prompt, ctx, blocks: files })),
+            ...(spoken ? textBlocks(spokenAttachmentAnswer({ prompt, ctx, blocks: files, directives: d })) : [text(attachmentAnswer({ prompt, ctx, blocks: files }))]),
           ],
           stop_reason: 'end_turn',
           pace,
@@ -272,7 +286,10 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     }
     return {
       plan: {
-        blocks: [thinkingBlock(body, `The owner asked: "${truncate(stripDirectives(prompt), 120)}". I can answer this directly and concisely.`), text(defaultAnswer(prompt, ctx))],
+        blocks: [
+          thinkingBlock(body, `The owner asked: "${truncate(stripDirectives(prompt), 120)}". I can answer this directly and concisely.`),
+          ...(spoken ? textBlocks(spokenAnswer(prompt, ctx, d)) : [text(defaultAnswer(prompt, ctx))]),
+        ],
         stop_reason: 'end_turn',
         pace,
       },
@@ -320,6 +337,10 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
   }
   if (memoryUse) {
     const result = results.get(memoryUse.id);
+    if (spoken) {
+      const failure = result?.is_error ? toolResultText(result.content) || 'The request failed.' : '';
+      return { plan: { blocks: textBlocks(spokenMemoryAnswer({ ctx, failure, directives: d })), stop_reason: 'end_turn', pace } };
+    }
     const msg = result?.is_error
       ? `I couldn't save that to memory: ${toolResultText(result.content) || 'the request failed'}.`
       : `Noted, ${ctx.name}: you prefer metric units, so I'll use kilometres, kilograms and degrees Celsius from now on.`;
@@ -353,7 +374,7 @@ function deploysInTurn(after) {
 }
 
 function deployPlan(env, { wave, count, retry = false, followUp = false }) {
-  const { body, d, ctx, prompt, rng, pace, now, files = [] } = env;
+  const { body, d, ctx, prompt, rng, pace, now, files = [], spoken = false } = env;
   const topic = topicOfPrompt(prompt);
   const today = ctx.localTime || now.toDateString();
   const fileNote = attachmentTaskNote(files); // agents cannot see attachments: describe them in the task
@@ -371,7 +392,9 @@ function deployPlan(env, { wave, count, retry = false, followUp = false }) {
     ? 'That briefing was malformed, so let me deploy the team properly.'
     : followUp
       ? `A couple of gaps remain, so I'm sending a follow-up wave of ${count} agents.`
-      : `I'll send ${count} agent${count === 1 ? '' : 's'} to investigate this from different angles.`;
+      : spoken
+        ? SPOKEN_PREAMBLE // spoken while the agents work
+        : `I'll send ${count} agent${count === 1 ? '' : 's'} to investigate this from different angles.`;
   return {
     blocks: [
       thinkingBlock(body, `${followUp ? 'The first wave left gaps.' : 'This is broad research.'} I'll split it into ${count} distinct angles: ${agents.map((a) => a.role).join(', ')}.`),
@@ -385,12 +408,12 @@ function deployPlan(env, { wave, count, retry = false, followUp = false }) {
 }
 
 function synthesisPlan(env, deploys) {
-  const { body, ctx, prompt, pace } = env;
+  const { body, ctx, d, prompt, pace, spoken = false } = env;
   const reports = deploys.flatMap((x) => parseAgentReports(x.result.content).reports);
   return {
     blocks: [
       thinkingBlock(body, `Synthesizing ${reports.length} agent reports into one answer, reconciling where they differ.`),
-      text(synthesisAnswer({ prompt, ctx, reports })),
+      ...(spoken ? textBlocks(spokenSynthesisAnswer({ prompt, ctx, reports, directives: d })) : [text(synthesisAnswer({ prompt, ctx, reports }))]),
     ],
     stop_reason: 'end_turn',
     pace,
@@ -409,7 +432,7 @@ function citedAnswerSegments(topic, hits) {
 }
 
 function searchPlan(env) {
-  const { body, prompt, rng, pace } = env;
+  const { body, ctx, d, prompt, rng, pace, spoken = false } = env;
   const topic = topicOfPrompt(prompt);
   const query = `${topic} 2026`;
   const id = newServerToolUseId();
@@ -417,9 +440,10 @@ function searchPlan(env) {
   return {
     blocks: [
       thinkingBlock(body, `This needs current information. I'll search for "${query}".`),
+      ...(spoken ? [text(SPOKEN_PREAMBLE)] : []), // spoken while the search runs
       { type: 'server_tool_use', id, name: 'web_search', input: { query } },
       { type: 'web_search_tool_result', tool_use_id: id, content: hits.map((h) => h.result) },
-      ...textBlocks(citedAnswerSegments(topic, hits)),
+      ...textBlocks(spoken ? spokenSearchAnswer(topic, hits, ctx, d) : citedAnswerSegments(topic, hits)),
     ],
     stop_reason: 'end_turn',
     pace,
@@ -428,7 +452,7 @@ function searchPlan(env) {
 
 /** Continue a paused lead response: run the pending server tool, then answer. */
 function leadResume(env, last) {
-  const { body, prompt, rng, pace, now } = env;
+  const { body, ctx, d, prompt, rng, pace, now, spoken = false } = env;
   const pendingUse = last.content[last.content.length - 1];
   const topic = topicOfPrompt(prompt);
   const blocks = [];
@@ -441,7 +465,7 @@ function leadResume(env, last) {
     blocks.push({ type: 'web_search_tool_result', tool_use_id: pendingUse.id, content: hits.map((h) => h.result) });
   }
   blocks.push(thinkingBlock(body, 'The search results are in; they agree on the main points.'));
-  blocks.push(...textBlocks(citedAnswerSegments(topic, hits)));
+  blocks.push(...textBlocks(spoken ? spokenSearchAnswer(topic, hits, ctx, d) : citedAnswerSegments(topic, hits)));
   return { blocks, stop_reason: 'end_turn', pace };
 }
 

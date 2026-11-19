@@ -500,6 +500,13 @@ html.vm-open body {
   background-size: 100% 0.34em;
 }
 
+/* The word being spoken, when the voice reports words (boundary events). */
+.vm-w {
+  color: var(--accent-2);
+  text-shadow: 0 0 14px var(--accent-glow);
+  border-radius: 2px;
+}
+
 .vm-captions[data-tone='error'] .vm-s {
   background-image: linear-gradient(var(--err-soft), var(--err-soft));
 }

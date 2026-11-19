@@ -11,8 +11,8 @@ import { listMemory, addMemory, removeMemory, clearMemory, onMemoryChange } from
 import { getSpend, onSpendChange } from '../platform/spend.js';
 import { exportBackup, importBackup } from '../platform/backup.js';
 import { isPersistent } from '../platform/db.js';
-import { isStandalone } from '../platform/env.js';
-import { ttsSupported, getVoices, pickDefaultVoice, speak, stopSpeaking } from '../platform/voice/tts.js';
+import { isStandalone, parseUserAgent } from '../platform/env.js';
+import { ttsSupported, getVoices, pickDefaultVoice, rankVoices, voiceQuality, speak, stopSpeaking } from '../platform/voice/tts.js';
 import { sttSupported } from '../platform/voice/stt.js';
 import { MODELS, DEPTHS, MODES } from '../engine/index.js';
 import { createThemePicker, applyTheme } from './themes.js';
@@ -39,6 +39,80 @@ const LIMITS = {
   voiceRate: { min: 0.7, max: 1.5, step: 0.05 },
   spendWarnUsd: { min: 0, max: 100000 },
 };
+
+const QUALITY_LABELS = { premium: 'Premium', enhanced: 'Enhanced', natural: 'Natural' };
+
+/** The quality word a voice advertises ('Premium' | 'Enhanced' | 'Natural'), unless its name already says it. */
+function qualityTag(voice) {
+  let q = '';
+  try {
+    q = QUALITY_LABELS[voiceQuality(voice)] || '';
+  } catch {
+    q = '';
+  }
+  return q && !new RegExp(`\\b${q}\\b`, 'i').test(String(voice.name || '')) ? q : '';
+}
+
+/**
+ * A voice in the Settings picker: "Name (lang, Quality, online)", e.g. "Daniel (en-GB, Enhanced)",
+ * "Google UK English Male (en-GB, online)", "Serena (en-GB)". Online voices (localService false)
+ * send the text they read to their provider, so they say so.
+ */
+export function voiceOptionLabel(voice) {
+  const v = voice && typeof voice === 'object' ? voice : {};
+  const name = typeof v.name === 'string' && v.name.trim() ? v.name.trim() : String(v.voiceURI || 'Voice');
+  const tags = [typeof v.lang === 'string' ? v.lang.trim() : '', qualityTag(v), v.localService === false ? 'online' : ''].filter(Boolean);
+  return tags.length ? `${name} (${tags.join(', ')})` : name;
+}
+
+/** The first option of the picker: the voice Jarvis picks by itself (pickDefaultVoice). */
+export function autoVoiceLabel(voice) {
+  if (!voice || typeof voice !== 'object' || typeof voice.name !== 'string') return 'Automatic (best available voice)';
+  const tags = [qualityTag(voice), voice.localService === false ? 'online' : ''].filter(Boolean);
+  return `Automatic — ${voice.name}${tags.length ? ` (${tags.join(', ')})` : ''}`;
+}
+
+/**
+ * "Get a more natural voice", for the platform: os is parseUserAgent()'s ('ios' | 'mac' |
+ * 'windows' | 'android' | …). Returns { platform, text }.
+ */
+export function naturalVoiceTip(os) {
+  switch (os) {
+    case 'ios':
+      return {
+        platform: 'ios',
+        text: 'On iPhone or iPad: Settings → Accessibility → Spoken Content → Voices → English, pick a voice marked Enhanced or Premium (Daniel or Arthur for a British voice) and download it. Then close Jarvis completely and open it again. If it doesn’t appear in the list above, your version of iOS doesn’t offer it to web apps.',
+      };
+    case 'mac':
+      return {
+        platform: 'mac',
+        text: 'On a Mac: System Settings → Accessibility → Spoken Content → System voice → Manage Voices… → English (United Kingdom) → Daniel or Arthur (Enhanced or Premium). Then reload Jarvis.',
+      };
+    case 'windows':
+      return {
+        platform: 'windows',
+        text: 'On Windows: in Microsoft Edge, voices marked “Natural” sound the most human. They are online, so the text they read goes to Microsoft. Or add on-device voices: Settings → Time & language → Speech → Add voices → English (United Kingdom).',
+      };
+    case 'android':
+      return {
+        platform: 'android',
+        text: 'On Android: Settings → Text-to-speech output → Speech Services by Google → Install voice data → English (United Kingdom). Then reopen Jarvis.',
+      };
+    default:
+      return {
+        platform: 'other',
+        text: 'Voices come from your device and browser; ones marked Premium, Enhanced or Natural sound the most human. Add voices in your system’s speech or accessibility settings, then reload Jarvis.',
+      };
+  }
+}
+
+function currentOs() {
+  try {
+    return parseUserAgent(navigator.userAgent, navigator.maxTouchPoints).os;
+  } catch {
+    return 'other';
+  }
+}
 
 /**
  * The toast after a backup import, from importBackup()'s result { conversations, memory,
@@ -393,7 +467,7 @@ export function createSettingsPanel(o) {
   const voiceSelect = h(
     'select',
     { class: 'select', id: fieldId('voiceURI'), attrs: { 'data-testid': 'setting-voiceURI' }, disabled: !ttsOk, on: { change: () => commit({ voiceURI: voiceSelect.value }) } },
-    h('option', { value: '', text: 'Automatic (British voice if available)' }),
+    h('option', { value: '', text: autoVoiceLabel(null) }),
   );
   controls.set('voiceURI', {
     set(v) {
@@ -410,22 +484,31 @@ export function createSettingsPanel(o) {
       .catch((err) => console.error('[jarvis] getVoices failed:', err));
   }
   function fillVoices(voices) {
-    const list = Array.isArray(voices) ? voices.filter((v) => v && typeof v.voiceURI === 'string') : [];
+    const usable = Array.isArray(voices) ? voices.filter((v) => v && typeof v.voiceURI === 'string') : [];
+    // Best first (platform tts.js): English, on-device before online (online voices send the text
+    // they read to their provider, and say so), then Premium, Enhanced, Natural, then British.
+    let list = usable;
+    try {
+      list = rankVoices(usable);
+    } catch {
+      list = usable;
+    }
     let auto = null;
     try {
       auto = pickDefaultVoice(list);
     } catch {
       auto = null;
     }
-    // Online voices (localService === false) send the text they read to their provider, so
-    // they say so, and on-device voices come first within each language.
-    const online = (v) => v.localService === false;
-    const rank = (v) => (/^en-GB/i.test(v.lang) ? 0 : /^en/i.test(v.lang) ? 2 : 4) + (online(v) ? 1 : 0);
-    list.sort((a, b) => rank(a) - rank(b) || String(a.name).localeCompare(String(b.name)));
     const current = getSettings().voiceURI;
     voiceSelect.replaceChildren(
-      h('option', { value: '', text: auto ? `Automatic — ${auto.name}${online(auto) ? ' (online)' : ''}` : 'Automatic (British voice if available)' }),
-      ...list.map((v) => h('option', { value: v.voiceURI, text: `${v.name} (${v.lang}${online(v) ? ', online' : ''})`, attrs: { 'data-online': online(v) ? 'true' : 'false' } })),
+      h('option', { value: '', text: autoVoiceLabel(auto) }),
+      ...list.map((v) =>
+        h('option', {
+          value: v.voiceURI,
+          text: voiceOptionLabel(v),
+          attrs: { 'data-online': v.localService === false ? 'true' : 'false', 'data-quality': safeCall(() => voiceQuality(v), 'standard') },
+        }),
+      ),
     );
     if (current && !list.some((v) => v.voiceURI === current)) ensureOption(voiceSelect, current, `${current} (not on this device)`);
     voiceSelect.value = current;
@@ -497,28 +580,39 @@ export function createSettingsPanel(o) {
     icon('speaker', { size: 16 }),
     h('span', { text: 'Test voice' }),
   );
+  const tip = naturalVoiceTip(currentOs());
+  const voiceTip = ttsOk
+    ? h(
+        'div',
+        { class: 'set-row set-row--stacked', attrs: { 'data-testid': 'voice-tip', 'data-platform': tip.platform } },
+        h('div', { class: 'set-row-text' }, h('span', { class: 'set-label', text: 'Get a more natural voice' }), h('p', { class: 'set-help', text: tip.text })),
+      )
+    : null;
   const voice = section(
     'voice',
     card(
       row({
         label: 'Speak replies',
-        help: ttsOk ? 'Read Jarvis’s answers aloud: a short summary or the full reply.' : 'Spoken replies aren’t supported in this browser.',
+        help: ttsOk
+          ? 'Read each answer aloud as soon as it arrives in the chat. Short summary: its opening paragraph. Whole reply: all of it (code is skipped). The Speak button under an answer always reads all of it, and Voice Mode always speaks its replies.'
+          : 'Spoken replies aren’t supported in this browser.',
         forId: fieldId('speakReplies'),
         control: selectField('speakReplies', [
           { value: 'off', label: 'Off' },
-          { value: 'summary', label: 'Summary' },
-          { value: 'full', label: 'Full reply' },
+          { value: 'summary', label: 'Short summary' },
+          { value: 'full', label: 'Whole reply' },
         ]),
         stacked: true,
       }),
       row({
         label: 'Voice',
-        help: 'Voices come from your device or browser. Ones marked “online” send the text they read to their provider (such as Google or Microsoft); the others speak on this device. A British butler is preferred when available.',
+        help: 'Voices come from your device or browser, best first. Ones marked “online” send the text they read to their provider (such as Google or Microsoft); the others speak on this device. Premium, Enhanced and Natural voices sound the most human. A British butler is preferred when available.',
         forId: fieldId('voiceURI'),
         control: voiceSelect,
         stacked: true,
       }),
       row({ label: 'Speaking speed', forId: fieldId('voiceRate'), control: h('div', { class: 'range-wrap' }, rate, rateOut), stacked: true, extra: h('div', { class: 'set-row-actions' }, testVoiceBtn) }),
+      voiceTip,
     ),
     card(
       row({

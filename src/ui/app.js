@@ -20,7 +20,7 @@ import { createToasts } from './toasts.js';
 import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
-import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown } from './voice-mode.js';
+import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
@@ -581,6 +581,7 @@ export async function startApp(rootEl) {
     const maxAgents = extras ? Number(extras.maxAgents) : NaN;
     if (Number.isFinite(maxAgents) && maxAgents >= 1) input.maxAgents = Math.min(20, Math.round(maxAgents));
     if (extras && extras.keepOnStop === true) input.keepOnStop = true; // Voice Mode: never withdrawn on Stop
+    if (extras && extras.spoken === true) input.spoken = true; // Voice Mode: the reply is written for the ear
     if (extras && extras.blueprintFor) input.blueprintFor = extras.blueprintFor; // a 2D request from the hologram viewer
     clearFollowups();
     let run;
@@ -616,7 +617,8 @@ export async function startApp(rootEl) {
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
     // keepOnStop: a spoken question that is interrupted stays in the conversation (nothing is put
     // back in the hidden message box), so what the owner says next keeps its context.
-    if (!send(text, mode, { keepOnStop: true })) throw new Error('I couldn’t start that request.');
+    // spoken: the reply is read aloud, so Jarvis writes it for the ear (details for the screen go below a --- line).
+    if (!send(text, mode, { keepOnStop: true, spoken: true })) throw new Error('I couldn’t start that request.');
     const entry = state.conv && state.runs.get(state.conv.id);
     return entry ? entry.run : null;
   }
@@ -1157,7 +1159,9 @@ export async function startApp(rootEl) {
     const finished = safe(() => describeFinishedTurn(turn, entry.conv), null);
     if (finished) safe(() => missionFinished(finished));
     if (status === 'done' && isCurrent(entry)) {
-      if (!voiceOpen) autoSpeak(turn);
+      // Not when Voice Mode had already begun saying this answer before the owner left it: Exit
+      // was to silence Jarvis, and the chat reading it again from the start would undo that.
+      if (!voiceOpen && !safe(() => voiceModeSpoke(entry.run), false)) autoSpeak(turn);
       offerFollowups(entry.conv, turn);
     }
     updateAll();
@@ -1290,6 +1294,7 @@ export async function startApp(rootEl) {
     if (!state.speaking) return;
     const { handle } = state.speaking;
     state.speaking = null;
+    safe(() => allowSleep('speech'));
     safe(() => handle && handle.cancel && handle.cancel());
     safe(() => stopSpeaking());
     chat.refreshSpeaking();
@@ -1307,6 +1312,13 @@ export async function startApp(rootEl) {
     }, 180);
   }
 
+  /**
+   * Read a reply aloud: mode 'full' (the Speak button, Speak replies → Whole reply) reads the whole
+   * answer, 'summary' its opening paragraph. The speech engine (platform tts.js) chunks it, keeps
+   * the next chunk queued and recovers from the browsers' speech quirks, so onEnd always comes.
+   * The screen stays on while it reads (wake lock owner 'speech'): iOS pauses speech once the
+   * screen locks, so a long answer would otherwise stop after Auto-Lock's 30 s or a minute.
+   */
   function speakTurn(turn, mode) {
     if (!ttsOk) return;
     const md = answerText(turn);
@@ -1316,22 +1328,34 @@ export async function startApp(rootEl) {
     const s = getSettings();
     const entry = { turnId: turn.id, handle: null };
     state.speaking = entry;
+    safe(() => keepAwake('speech')); // after stopSpeakingNow(), which lets it go
     try {
       entry.handle = speak(text, {
         voiceURI: s.voiceURI,
         rate: s.voiceRate,
+        onChunk: () => pulseLevel(),
         onBoundary: () => pulseLevel(),
-        onEnd: () => {
+        onEnd: (info) => {
+          const reason = info && info.reason;
+          // Only while this read is the current one: a replaced read ends ('cancelled') inside the
+          // next one's speak(), and the lock (one per owner) now belongs to that one.
           if (state.speaking === entry) {
             state.speaking = null;
+            safe(() => allowSleep('speech'));
             chat.refreshSpeaking();
             updateCore();
+            // 'error': the voice stopped responding (the engine already retried); 'unsupported': no speech here.
+            if (reason === 'error') toast('The voice stopped responding. Try again, or pick another voice in Settings → Voice.', { level: 'warn', id: 'speech' });
+            else if (reason === 'unsupported') toast('This browser couldn’t play speech.', { level: 'warn', id: 'speech' });
           }
         },
       });
     } catch (err) {
       console.error('[jarvis] speak failed:', err);
-      state.speaking = null;
+      if (state.speaking === entry) {
+        state.speaking = null;
+        safe(() => allowSleep('speech'));
+      }
       toast('This browser couldn’t play speech.', { level: 'warn' });
     }
     chat.refreshSpeaking();

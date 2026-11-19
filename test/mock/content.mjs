@@ -1,5 +1,6 @@
 // Content generators for the mock Claude API: directive parsing, plausible web search results,
-// agent reports, lead answers and the special payloads ([[xss]], [[long]]).
+// agent reports, lead answers, the special payloads ([[xss]], [[long]]) and spoken replies for
+// Voice Mode turns.
 // Everything is deterministic for a given seed so failures reproduce.
 
 import { base64, isPlainObject, sha256Hex, slugify, titleCase, truncate } from './util.mjs';
@@ -66,7 +67,11 @@ export function userTextOf(message) {
     .trim();
 }
 
-/** Parsed fields of the <turn_context> block in a user message (all optional). */
+/**
+ * Parsed fields of the <turn_context> block in a user message (all optional). `spoken` is true for a
+ * Voice Mode turn: a line of the block starts with "Reply channel: spoken" (a "- …" memory note
+ * that merely contains those words does not count).
+ */
 export function turnContextOf(message) {
   const blocks = typeof message?.content === 'string'
     ? [message.content]
@@ -79,6 +84,7 @@ export function turnContextOf(message) {
     localTime: line('Local time'),
     location: line('Owner location'),
     mode: (line('Mode').split(/\s+/)[0] || '').toLowerCase(),
+    spoken: /^[ \t]*Reply channel:[ \t]*spoken\b/im.test(ctx),
   };
 }
 
@@ -437,13 +443,19 @@ const CAPITALS = {
   netherlands: 'Amsterdam', norway: 'Oslo', sweden: 'Stockholm', ireland: 'Dublin', egypt: 'Cairo',
 };
 
+/** { country, name, city } when the prompt asks for a capital ("the capital of France", "And what about Germany?"), else null. */
+function capitalAsked(prompt) {
+  const lower = stripDirectives(prompt).toLowerCase();
+  const country = Object.keys(CAPITALS).find((c) => lower.includes(c));
+  if (!country || !(lower.includes('capital') || /^(and\s+)?(what|how)\s+about\b/.test(lower))) return null;
+  return { country, name: titleCase(country), city: CAPITALS[country] };
+}
+
 export function defaultAnswer(prompt, ctx) {
   const clean = stripDirectives(prompt);
-  const lower = clean.toLowerCase();
-  const country = Object.keys(CAPITALS).find((c) => lower.includes(c));
-  if (country && (lower.includes('capital') || /^(and\s+)?(what|how)\s+about\b/.test(lower))) {
-    const name = titleCase(country);
-    const city = CAPITALS[country];
+  const capital = capitalAsked(clean);
+  if (capital) {
+    const { country, name, city } = capital;
     return [
       `The capital of ${name} is ${city}.`,
       '',
@@ -519,15 +531,13 @@ An unbreakable word: Pneumonoultramicroscopicsilicovolcanoconiosis-and-then-some
 - <https://reviews.example.net/compared>`;
 }
 
+/** The [[xss]] payload lines, each followed by a blank line, then a code block. */
+function xssPayloadMarkdown() {
+  return [...XSS_LINES.flatMap((l) => [l, '']), '```html', '<script>alert("xss-in-code-block")</script>', '```'].join('\n');
+}
+
 export function xssAnswer() {
-  return [
-    'Here are the test strings you asked for; they should all appear as harmless text.',
-    '',
-    ...XSS_LINES.flatMap((l) => [l, '']),
-    '```html',
-    '<script>alert("xss-in-code-block")</script>',
-    '```',
-  ].join('\n');
+  return ['Here are the test strings you asked for; they should all appear as harmless text.', '', xssPayloadMarkdown()].join('\n');
 }
 
 /** Parse the engine's mission tool_result text into agent reports (SPEC §8.4). */
@@ -597,6 +607,217 @@ export function toolResultText(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.map((b) => (isPlainObject(b) && typeof b.text === 'string' ? b.text : '')).join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spoken replies (Voice Mode). When the newest user message's <turn_context> carries the spoken
+// reply channel (turnContextOf(...).spoken), every scripted final answer is written for the ear:
+// two or three plain sentences (no Markdown, links or symbols), then a line containing only ---,
+// then a short Markdown section for the screen (a heading and a two-item list). Voice Mode speaks
+// only the part above the line. Each builder returns segments [{ text, cite? }] for textBlocks().
+
+/** The one sentence a spoken turn says before it searches or deploys agents (spoken while they work). */
+export const SPOKEN_PREAMBLE = 'Let me check the latest on that.';
+/** Between the spoken part and the details for the screen. */
+export const SPOKEN_BREAK = '\n\n---\n\n';
+export const SPOKEN_DETAILS_HEADING = 'Details';
+
+/**
+ * [[longspoken]]: twelve more plain sentences (about 1,800 characters) after the usual ones, so the
+ * spoken part runs to about 2,000 characters, past Voice Mode's cap of about 1,500.
+ */
+export const LONG_SPOKEN_SENTENCES = Object.freeze([
+  'First, a little background: this has been changing quickly, and what was true a couple of years ago is no longer a safe guide to what you will find today.',
+  'Second, the leading options are closer to each other than the marketing suggests, so the differences that matter are the ones that fit the way you actually live.',
+  'Third, the price you see up front is only part of the story, because running costs, maintenance and resale value add up to far more over five years or so.',
+  'Fourth, reliability and after-sales support come up again and again in owner surveys, which makes them worth checking before anything else on the list.',
+  'Fifth, the rules are changing next year, and that could shift the economics in either direction, so it is worth keeping an eye on the official announcements.',
+  'Sixth, availability has improved a great deal since last spring, so there is rarely a good reason to pay over the odds just to get something sooner.',
+  'Seventh, independent tests are more useful than reviews written after a launch event, because they run for longer and in conditions closer to everyday use.',
+  'Eighth, the community forums are full of practical tips, though they tend to overstate rare problems, so treat a single loud complaint with some caution.',
+  'Ninth, if you are torn between two options, a short trial in real conditions usually settles it faster than another evening of reading comparisons.',
+  'Tenth, financing offers can look generous, but the total you repay is what counts, so compare the full cost rather than the monthly figure alone.',
+  'Eleventh, it is worth writing down your three must-haves before you start, because it keeps the shortlist honest when the choices begin to blur together.',
+  'Finally, none of this has to be decided today, and I am happy to dig into any of these points whenever you would like to go further.',
+]);
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+/** A small count in words, for the ear ("three agents"). */
+const countWord = (n) => COUNT_WORDS[n] ?? String(n);
+
+/** "A", "A and B", "A, B and C". */
+const listWords = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+/**
+ * Segments of a spoken reply: `sentences` (read aloud), then SPOKEN_BREAK and either `details`
+ * (Markdown) or "## heading" with one list item per entry of `items` (a string, or segments for a
+ * cited item). [[nobreak]] keeps only the spoken part; [[longspoken]] adds LONG_SPOKEN_SENTENCES.
+ */
+export function spokenSegments({ sentences, heading = SPOKEN_DETAILS_HEADING, items = [], details, directives }) {
+  const said = directives?.has('longspoken') ? [...sentences, ...LONG_SPOKEN_SENTENCES] : sentences;
+  const segs = [{ text: said.join(' ') }];
+  if (directives?.has('nobreak')) return segs;
+  if (typeof details === 'string') {
+    segs.push({ text: `${SPOKEN_BREAK}${details}` });
+    return segs;
+  }
+  segs.push({ text: `${SPOKEN_BREAK}## ${heading}\n\n` });
+  items.forEach((item, i) => {
+    segs.push({ text: i ? '\n- ' : '- ' });
+    segs.push(...(typeof item === 'string' ? [{ text: item }] : item));
+  });
+  return segs;
+}
+
+/** The spoken default answer: a capital ("The capital of France is Paris."), or a short answer on the topic. */
+export function spokenAnswer(prompt, ctx, directives) {
+  const capital = capitalAsked(prompt);
+  if (capital) {
+    const { country, name, city } = capital;
+    const france = country === 'france';
+    return spokenSegments({
+      sentences: [
+        `The capital of ${name} is ${city}.`,
+        france
+          ? "It's the seat of government and the country's cultural heart, home to just over two million people."
+          : "It's the seat of government and one of the country's great cultural centres.",
+        `I've put a few details on screen; would you like a quick travel brief, ${ctx.name}?`,
+      ],
+      items: [
+        `**${city}** is ${name}'s seat of government${france ? ', home to the Louvre, the Eiffel Tower and about 2.1 million people in the city proper' : ''}.`,
+        `**Next step:** ask me for a quick travel brief for ${city}.`,
+      ],
+      directives,
+    });
+  }
+  const topic = topicOfPrompt(prompt);
+  return spokenSegments({
+    sentences: [
+      `Here's the short version on ${topic}, ${ctx.name}: start with the basics and the main trade-offs.`,
+      'What matters most is cost, reliability and how well it fits your situation.',
+      "I've put the details on screen, and I can dig deeper with a search or the full agent team if you like.",
+    ],
+    items: [
+      `**What it is:** ${titleCase(topic)} is best understood by starting with the basics and the main trade-offs.`,
+      '**Next step:** tell me your constraints and I will tailor the recommendation.',
+    ],
+    directives,
+  });
+}
+
+/** A spoken answer from web search hits; the two points for the screen carry citations and links. */
+export function spokenSearchAnswer(topic, hits, ctx, directives) {
+  const cited = (hit) => [{ text: hit.snippet, cite: hit }, { text: ` ([${hit.result.title.split(' | ')[0]}](${hit.result.url}))` }];
+  const items = hits.slice(0, 2).map(cited);
+  if (items.length < 2) items.push('**Next step:** ask me to read any of these sources in full.');
+  return spokenSegments({
+    sentences: [
+      `Here's what I found on ${topic}, ${ctx.name}.`,
+      'The sources broadly agree, and the picture has shifted noticeably this year.',
+      "I've put the key points and the sources on screen.",
+    ],
+    items,
+    directives,
+  });
+}
+
+/** The spoken synthesis of a swarm: the details for the screen name every agent and link the sources. */
+export function spokenSynthesisAnswer({ prompt, ctx, reports, directives }) {
+  const topic = topicOfPrompt(prompt);
+  if (!reports.length) {
+    return spokenSegments({
+      sentences: [
+        `I couldn't get reports from the team this time, ${ctx.name}, so here's what I can say about ${topic} myself.`,
+        'It mostly comes down to cost over time, reliability and fit.',
+        "I've put the details on screen.",
+      ],
+      items: ['**What I know:** cost over time, reliability and fit decide most choices like this.', '**Next step:** ask me to send the team again.'],
+      directives,
+    });
+  }
+  const done = reports.filter((r) => r.status === 'done');
+  const failed = reports.length - done.length;
+  const team = reports.length === 1 ? 'Your agent has' : `Your ${countWord(reports.length)} agents have`;
+  let opening = `${team} reported back on ${topic}, and the findings point the same way.`;
+  if (!done.length) opening = `${team} not been able to finish on ${topic}, so this rests on what I already know.`;
+  else if (failed) opening = `${team} reported back on ${topic}; ${countWord(done.length)} finished and ${countWord(failed)} couldn't, but the findings point the same way.`;
+  const sources = [];
+  for (const r of reports) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
+  const names = listWords(reports.map((r) => `**${r.codename || 'Agent'}**`));
+  const finding = done.length ? ` ${plainFinding(done[0].finding) || 'Each completed its assignment.'}` : '';
+  return spokenSegments({
+    sentences: [opening, `It comes down to cost over time, reliability and fit, ${ctx.name}.`, "I've put the full findings and the sources on screen."],
+    items: [
+      `**What the team found:** ${names} reported back${failed ? `; ${failed} could not finish, so that angle is thinner` : ''}.${finding}`,
+      `**Sources:** ${sources.slice(0, 4).map((s) => `[${s.title.split(' | ')[0]}](${s.url})`).join(', ') || 'none this time'}.`,
+    ],
+    directives,
+  });
+}
+
+/** A spoken answer about the photos and PDFs in the owner's message. */
+export function spokenAttachmentAnswer({ prompt, ctx, blocks, directives }) {
+  const files = blocks.map(describeAttachmentBlock);
+  const one = files.length === 1;
+  const phrase = attachmentPhrase(files);
+  const question = stripDirectives(prompt);
+  const asked = question && !/^please look at the attached file\(s\)\.?$/i.test(question);
+  const lines = files.map((f, i) => attachmentLine(f, i).replace(/^- /, ''));
+  return spokenSegments({
+    sentences: [
+      files.every((f) => f.kind !== 'image') ? `I've read ${phrase} you shared, ${ctx.name}.` : `I can see ${phrase} you shared, ${ctx.name}.`,
+      `${one ? "It's" : "They're"} clear enough to work with, and I've put what I can confirm on screen.`,
+      asked ? 'Ask me to dig into anything in particular.' : `Tell me what you'd like to know about ${one ? 'it' : 'them'}.`,
+    ],
+    items: [lines[0], lines[1] || (asked ? `**Your question:** “${truncate(question, 120)}”` : '**Next step:** ask me to describe, summarise or research anything in it.')],
+    directives,
+  });
+}
+
+/** [[long]] in a spoken turn: a spoken summary, and the whole long guide below the line. */
+export function spokenLongAnswer(prompt, ctx, directives) {
+  return spokenSegments({
+    sentences: [
+      `Here's a detailed guide to ${topicOfPrompt(prompt)}, ${ctx.name}.`,
+      'It covers the key numbers, the steps to take and the trade-offs worth knowing.',
+      "It's a lot to listen to, so the full guide is on screen.",
+    ],
+    details: longAnswer(prompt, ctx),
+    directives,
+  });
+}
+
+/** One payload inside the spoken part of [[xss]], so Voice Mode's captions get raw markup too. */
+export const XSS_SPOKEN = `<img src=x onerror="alert('xss-spoken')">`;
+
+/** [[xss]] in a spoken turn: one payload in the spoken part, every payload below the line. */
+export function spokenXssAnswer(ctx, directives) {
+  return spokenSegments({
+    sentences: [
+      `Here are the test strings you asked for, ${ctx.name}.`,
+      `The first is ${XSS_SPOKEN}, and like the rest it should show up as harmless text.`,
+      'The full list is on screen.',
+    ],
+    details: xssPayloadMarkdown(),
+    directives,
+  });
+}
+
+/** The spoken confirmation after update_memory ([[memory]]); `failure` is the tool's error text, if any. */
+export function spokenMemoryAnswer({ ctx, failure = '', directives }) {
+  if (failure) {
+    const why = String(failure).trim().replace(/[.!?]*$/, '.');
+    return spokenSegments({
+      sentences: [`I couldn't save that to memory, ${ctx.name}.`, why, "I've put the details on screen."],
+      items: [`**What happened:** ${why}`, '**Next step:** ask me again once memory can be saved.'],
+      directives,
+    });
+  }
+  return spokenSegments({
+    sentences: [`Noted, ${ctx.name}: from now on I'll use kilometres, kilograms and degrees Celsius.`, "I've put what I saved on screen."],
+    items: ['**Saved to memory:** Prefers metric units.', '**To undo it:** ask me to forget it, or remove it in Settings.'],
+    directives,
+  });
 }
 
 // ---------------------------------------------------------------------------------------------

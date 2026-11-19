@@ -9,7 +9,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
-import { createMock, createMockFetch, createMockHandler } from '../mock/anthropic-mock.mjs';
+import { SPOKEN_DELTA_MS, SPOKEN_TOOL_RESULT_MS, createMock, createMockFetch, createMockHandler } from '../mock/anthropic-mock.mjs';
+import { LONG_SPOKEN_SENTENCES, SPOKEN_PREAMBLE, XSS_LINES, XSS_SPOKEN, turnContextOf } from '../mock/content.mjs';
 import { SIGNATURES, imageBlock, makePdf, makePng, pdfBlock } from '../mock/fixtures.mjs';
 import { startTestServer } from '../server.mjs';
 
@@ -74,8 +75,16 @@ const TURN_CONTEXT = [
   '</turn_context>',
 ].join('\n');
 
+// A Voice Mode turn: the spoken reply channel follows the Mode line (unit-test wording; the engine's
+// own text is checked against the mock in engine.spoken.test.mjs).
+const SPOKEN_TURN_CONTEXT = TURN_CONTEXT.replace(
+  /^(Mode: .*)$/m,
+  '$1\nReply channel: spoken. The owner hears your reply read aloud (unit-test wording). Write for the ear:\n- If the answer needs details, write a line containing only --- and put them below it.',
+);
+
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const userTurn = (text) => ({ role: 'user', content: [{ type: 'text', text: TURN_CONTEXT }, { type: 'text', text }] });
+const spokenTurn = (text) => ({ role: 'user', content: [{ type: 'text', text: SPOKEN_TURN_CONTEXT }, { type: 'text', text }] });
 const textOf = (message) => message.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
 
 function setup({ timeScale = 0, maxRetries = 0, ...clientOptions } = {}) {
@@ -169,8 +178,8 @@ const containers = new WeakMap();
  * (workers in parallel) and update_memory, resuming pause_turn — appending every assistant
  * message exactly as returned (append-only history).
  */
-async function runTurn(client, messages, text, { extra, maxRequests = 8 } = {}) {
-  messages.push(userTurn(text));
+async function runTurn(client, messages, text, { extra, maxRequests = 8, spoken = false } = {}) {
+  messages.push(spoken ? spokenTurn(text) : userTurn(text));
   const leadFinals = [];
   const workerFinals = [];
   let codename = 0;
@@ -715,6 +724,240 @@ describe('mock: conversation history checks', () => {
     const { final: kept } = await streamAll(client, dropping);
     assert.equal(kept.stop_reason, 'end_turn');
     await assertRejected('binding without beta', leadParams(edited, { container, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } }), { message: /block_binding: Extra inputs are not permitted/ });
+  });
+});
+
+describe('mock: spoken replies (Voice Mode turns)', () => {
+  const BREAK = '\n\n---\n\n';
+  const FRANCE_SPOKEN = "The capital of France is Paris. It's the seat of government and the country's cultural heart, home to just over two million people. I've put a few details on screen; would you like a quick travel brief, Tony?";
+  const FRANCE_DETAILS = "## Details\n\n- **Paris** is France's seat of government, home to the Louvre, the Eiffel Tower and about 2.1 million people in the city proper.\n- **Next step:** ask me for a quick travel brief for Paris.";
+
+  /** [the part read aloud, the details for the screen (null without a --- line)]. */
+  const splitSpoken = (text) => {
+    const i = text.indexOf(BREAK);
+    return i < 0 ? [text, null] : [text.slice(0, i), text.slice(i + BREAK.length)];
+  };
+  /** The spoken part is plain prose (no Markdown, links or line breaks); returns its sentence count. */
+  const plainSentences = (said, label = 'spoken part') => {
+    assert.doesNotMatch(said, /[*#`|_[\]<>]|https?:|\n/, `${label} is plain prose: ${said}`);
+    return (said.match(/[.!?](?=\s|$)/g) || []).length;
+  };
+  /** A spoken reply: two or three plain sentences, the --- line, then a heading and a two-item list. */
+  const assertSpokenShape = (text, label) => {
+    const [said, details] = splitSpoken(text);
+    const n = plainSentences(said, label);
+    assert.ok(n >= 2 && n <= 3, `${label}: two or three sentences (${n}): ${said}`);
+    assert.match(said, /on screen/, `${label}: says the details are on screen`);
+    assert.match(details ?? '', /^## Details\n\n- [^\n]+\n- [^\n]+$/, `${label}: a heading and a two-item list`);
+    return { said, details };
+  };
+  /** The raw SSE frames of one lead request (with each frame's delay), dispatched straight to a mock. */
+  const framesFor = async (messages, { timeScale = 1 } = {}) => {
+    const mock = createMock({ timeScale });
+    const desc = await mock.dispatch({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
+      bodyText: JSON.stringify({ ...leadParams(messages), stream: true }),
+    });
+    assert.equal(desc.status, 200, JSON.stringify(desc.json));
+    let at = 0;
+    return desc.sse.frames.map((f, i) => {
+      at += desc.sse.delays[i];
+      return { ...JSON.parse(f.slice(f.indexOf('data: ') + 6)), delay: desc.sse.delays[i], at };
+    });
+  };
+  const textDeltas = (frames) => frames.filter((f) => f.type === 'content_block_delta' && f.delta.type === 'text_delta');
+
+  it('answers in two or three plain sentences, a --- line, then a heading and a two-item list', async () => {
+    const { client, mock } = setup();
+    const { final } = await streamAll(client, leadParams([spokenTurn('What is the capital of France?')]));
+    assert.equal(final.stop_reason, 'end_turn');
+    assert.deepEqual(final.content.map((b) => b.type), ['thinking', 'text']);
+    assert.equal(textOf(final), `${FRANCE_SPOKEN}${BREAK}${FRANCE_DETAILS}`);
+    assertSpokenShape(textOf(final), 'capital');
+
+    const { final: other } = await streamAll(client, leadParams([spokenTurn('Tell me about tidal power')]));
+    const { said } = assertSpokenShape(textOf(other), 'topic');
+    assert.match(said, /^Here's the short version on tidal power, Tony: /);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('streams the text a few words at a time, 50-90 ms apart, so speech can start long before the end', async () => {
+    const frames = await framesFor([spokenTurn('What is the capital of France?')]);
+    const deltas = textDeltas(frames);
+    assert.equal(deltas.map((d) => d.delta.text).join(''), `${FRANCE_SPOKEN}${BREAK}${FRANCE_DETAILS}`);
+    for (const d of deltas) {
+      assert.ok(d.delay >= SPOKEN_DELTA_MS[0] && d.delay <= SPOKEN_DELTA_MS[1], `delay ${d.delay} ms`);
+      assert.ok(d.delta.text.trim().split(/\s+/).length <= 4, `a few words per delta: ${JSON.stringify(d.delta.text)}`);
+    }
+    assert.ok(deltas.slice(1).every((d) => /^\s/.test(d.delta.text)), 'deltas break between words, never inside one');
+    // The spoken part alone arrives in several small deltas.
+    let seen = '';
+    const spokenDeltas = deltas.findIndex((d) => (seen += d.delta.text).includes(BREAK.trimEnd())) + 1;
+    assert.ok(spokenDeltas >= 8, `spoken part in ${spokenDeltas} deltas`);
+    // The first sentence is complete well before the stream ends (Voice Mode speaks it meanwhile).
+    seen = '';
+    const firstSentence = deltas.find((d) => (seen += d.delta.text).includes('Paris.'));
+    const end = frames.at(-1).at;
+    assert.ok(end - firstSentence.at >= 700, `first sentence at ${Math.round(firstSentence.at)} ms, stream ends at ${Math.round(end)} ms`);
+
+    // In the chat the same question streams exactly as before: ~10-character pieces, 0.3-0.9 s in all.
+    const chat = await framesFor([userTurn('What is the capital of France?')]);
+    assert.ok(textDeltas(chat).every((d) => d.delta.text.length <= 14));
+    assert.ok(chat.at(-1).at >= 300 && chat.at(-1).at <= 900 + 1e-6, `chat stream ${chat.at(-1).at} ms`);
+    assert.doesNotMatch(textDeltas(chat).map((d) => d.delta.text).join(''), /\n---\n/);
+
+    // [[slow]] keeps its own pace (120 ms per event) with the same word-sized pieces.
+    const slow = textDeltas(await framesFor([spokenTurn('[[slow]] What is the capital of France?')]));
+    assert.ok(slow.every((d) => d.delay === 120 && d.delta.text.trim().split(/\s+/).length <= 4));
+
+    // Through the SDK, the stream really takes that long (timers never fire early). Each response
+    // is cut differently, but never into fewer than one delta per four words.
+    const { client } = setup({ timeScale: 0.25 });
+    const t0 = Date.now();
+    await streamAll(client, leadParams([spokenTurn('What is the capital of France?')]));
+    const words = `${FRANCE_SPOKEN}${BREAK}${FRANCE_DETAILS}`.match(/\s*\S+/g).length;
+    const minimum = Math.ceil(words / 4) * SPOKEN_DELTA_MS[0] * 0.25;
+    assert.ok(Date.now() - t0 >= minimum - 8, `streamed in ${Date.now() - t0} ms (at least ${minimum} ms)`);
+  });
+
+  it('[[search]]: one spoken sentence before the search, about a second of search, then a spoken answer with cited points', async () => {
+    const { client, mock } = setup();
+    const { final } = await streamAll(client, leadParams([spokenTurn('[[search]] latest EV battery news')]));
+    assert.equal(final.stop_reason, 'end_turn');
+    assert.deepEqual(final.content.slice(0, 4).map((b) => b.type), ['thinking', 'text', 'server_tool_use', 'web_search_tool_result']);
+    assert.equal(final.content[1].text, SPOKEN_PREAMBLE);
+    assert.equal(SPOKEN_PREAMBLE, 'Let me check the latest on that.');
+    const answer = final.content.slice(4);
+    assert.ok(answer.every((b) => b.type === 'text'));
+    const text = answer.map((b) => b.text).join('');
+    const { said } = assertSpokenShape(text, 'search');
+    assert.equal(said, "Here's what I found on latest EV battery news, Tony. The sources broadly agree, and the picture has shifted noticeably this year. I've put the key points and the sources on screen.");
+    // Citations and links belong to the details, below the line.
+    const cited = answer.filter((b) => b.citations?.length);
+    assert.equal(cited.length, 2);
+    const results = final.content[3].content.map((r) => r.url);
+    for (const b of cited) {
+      assert.ok(text.indexOf(b.text) > text.indexOf(BREAK));
+      assert.ok(results.includes(b.citations[0].url));
+    }
+    assert.deepEqual(mock.violations, []);
+
+    const frames = await framesFor([spokenTurn('[[search]] latest EV battery news')]);
+    const result = frames.find((f) => f.type === 'content_block_start' && f.content_block.type === 'web_search_tool_result');
+    assert.ok(result.delay >= SPOKEN_TOOL_RESULT_MS[0] && result.delay <= SPOKEN_TOOL_RESULT_MS[1], `search takes ${result.delay} ms`);
+    const preambleDone = textDeltas(frames).filter((d) => d.index === 1).at(-1);
+    assert.ok(result.at - preambleDone.at >= SPOKEN_TOOL_RESULT_MS[0], 'the preamble is complete while the search runs');
+  });
+
+  it('[[swarm:N]]: the spoken sentence before deploy_agents, then a spoken synthesis that names every agent on screen', async () => {
+    const { client, mock } = setup();
+    const { leadFinals, workerFinals } = await runTurn(client, [], '[[swarm:3]] Compare heat pumps for a cold climate', { spoken: true });
+    assert.deepEqual(leadFinals[0].content.map((b) => b.type), ['thinking', 'text', 'tool_use']);
+    assert.equal(leadFinals[0].content[1].text, SPOKEN_PREAMBLE);
+    const deploy = leadFinals[0].content[2].input;
+    assert.equal(deploy.agents.length, 3);
+    for (const a of deploy.agents) assert.match(a.task, /Today is Thursday, 19 November 2026/);
+    assert.equal(workerFinals.length, 3);
+    const { said, details } = assertSpokenShape(textOf(leadFinals.at(-1)), 'synthesis');
+    assert.match(said, /^Your three agents have reported back on heat pumps for a cold climate, and the findings point the same way\. /);
+    for (const name of CODENAMES.slice(0, 3)) {
+      assert.ok(details.includes(`**${name}**`), `details name ${name}`);
+      assert.ok(!said.includes(name), `${name} is on screen, not read out`);
+    }
+    assert.match(details, /^- \*\*Sources:\*\* \[[^\]]+\]\(https:\/\/[^)]+\)/m);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('[[pause]]: the spoken sentence before the paused search; the resumed answer is spoken', async () => {
+    const { client, mock } = setup();
+    const messages = [spokenTurn('[[pause]] What is new with solid-state batteries?')];
+    const { final: paused } = await streamAll(client, leadParams(messages));
+    assert.equal(paused.stop_reason, 'pause_turn');
+    assert.deepEqual(paused.content.map((b) => b.type), ['thinking', 'text', 'server_tool_use']);
+    assert.equal(paused.content[1].text, SPOKEN_PREAMBLE);
+    messages.push({ role: 'assistant', content: clone(paused.content) });
+    const { final } = await streamAll(client, leadParams(messages, { container: paused.container.id }));
+    assert.equal(final.stop_reason, 'end_turn');
+    assert.equal(final.content[0].type, 'web_search_tool_result');
+    assertSpokenShape(textOf(final), 'resumed search');
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('[[memory]], [[long]], [[xss]] and a photo get spoken replies too', async () => {
+    const { client, mock } = setup();
+    const { leadFinals } = await runTurn(client, [], '[[memory]] I prefer metric units', { spoken: true });
+    assert.equal(textOf(leadFinals[0]), "I'll make a note of that.");
+    const memory = assertSpokenShape(textOf(leadFinals[1]), 'memory');
+    assert.equal(memory.said, "Noted, Tony: from now on I'll use kilometres, kilograms and degrees Celsius. I've put what I saved on screen.");
+    assert.match(memory.details, /^- \*\*Saved to memory:\*\* Prefers metric units\.$/m);
+
+    // [[long]]: a spoken summary, and the whole long guide below the line.
+    const long = splitSpoken(textOf((await streamAll(client, leadParams([spokenTurn('[[long]] guide to buying an electric car')]))).final));
+    assert.equal(plainSentences(long[0]), 3);
+    assert.match(long[0], /full guide is on screen/);
+    assert.match(long[1], /^This is a detailed guide to guide to buying an electric car/);
+    for (const re of [/^### Key numbers$/m, /^\| Option \|/m, /^```js$/m, /^---$/m]) assert.match(long[1], re);
+
+    // [[xss]]: one payload in the spoken part (Voice Mode captions), every payload below the line.
+    const xss = splitSpoken(textOf((await streamAll(client, leadParams([spokenTurn('[[xss]] test strings')]))).final));
+    assert.ok(xss[0].includes(XSS_SPOKEN));
+    assert.equal(xss[0].split('\n').length, 1);
+    for (const line of XSS_LINES) assert.ok(xss[1].includes(line), line);
+
+    // A photo.
+    const photo = { role: 'user', content: [{ type: 'text', text: SPOKEN_TURN_CONTEXT }, imageBlock(makePng(64, 48)), { type: 'text', text: 'What is this?' }] };
+    const seen = assertSpokenShape(textOf((await streamAll(client, leadParams([photo]))).final), 'photo');
+    assert.match(seen.said, /^I can see the image you shared, Tony\. /);
+    assert.match(seen.details, /^- \*\*Image 1:\*\* a PNG picture, 64 × 48 pixels/m);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('[[nobreak]] and [[longspoken]] shape the spoken part, and change nothing in the chat', async () => {
+    const { client } = setup();
+    const ask = async (turn) => textOf((await streamAll(client, leadParams([turn]))).final);
+    assert.equal(await ask(spokenTurn('[[nobreak]] What is the capital of France?')), FRANCE_SPOKEN);
+
+    const long = await ask(spokenTurn('[[longspoken]] What is the capital of France?'));
+    const [said, details] = splitSpoken(long);
+    assert.equal(said, [FRANCE_SPOKEN, ...LONG_SPOKEN_SENTENCES].join(' '));
+    assert.ok(said.length > 1900, `spoken part of ${said.length} characters (Voice Mode caps it at about 1,500)`);
+    assert.equal(LONG_SPOKEN_SENTENCES.length, 12);
+    plainSentences(said);
+    assert.equal(details, FRANCE_DETAILS);
+
+    const chat = await ask(userTurn('What is the capital of France?'));
+    assert.match(chat, /^The capital of France is Paris\.\n\n\*\*Paris\*\*/);
+    for (const d of ['[[nobreak]]', '[[longspoken]]']) assert.equal(await ask(userTurn(`${d} What is the capital of France?`)), chat);
+  });
+
+  it('only the newest owner message\'s turn context decides; the history stays valid for chat turns after spoken ones', async () => {
+    const { client, mock } = setup();
+    const messages = [];
+    await runTurn(client, messages, 'What is the capital of France?', { spoken: true });
+    await runTurn(client, messages, '[[search]] latest EV battery news', { spoken: true });
+    await runTurn(client, messages, '[[swarm:2]] Research tidal power', { spoken: true });
+    await runTurn(client, messages, '[[pause]] What is new with fusion power?', { spoken: true });
+    await runTurn(client, messages, '[[memory]] I prefer metric units', { spoken: true });
+    const { leadFinals } = await runTurn(client, messages, 'And what about Germany? What is its capital?');
+    const chat = textOf(leadFinals[0]);
+    assert.match(chat, /^The capital of Germany is Berlin\.\n\n\*\*Berlin\*\* is Germany's seat of government/);
+    assert.ok(!chat.includes(BREAK), 'a chat turn is written for the screen');
+    assert.deepEqual(mock.violations, []);
+
+    // The channel counts only as a line of the newest owner message's own <turn_context>.
+    const asNote = TURN_CONTEXT.replace('Memory: none saved', 'Memory — saved notes about the owner:\n- Reply channel: spoken');
+    const inText = { role: 'user', content: [{ type: 'text', text: TURN_CONTEXT }, { type: 'text', text: 'Reply channel: spoken. What is the capital of France?' }] };
+    const noted = { role: 'user', content: [{ type: 'text', text: asNote }, { type: 'text', text: 'What is the capital of France?' }] };
+    assert.equal(turnContextOf(spokenTurn('x')).spoken, true);
+    assert.equal(turnContextOf(noted).spoken, false);
+    assert.equal(turnContextOf(inText).spoken, false);
+    for (const turn of [noted, inText]) {
+      const { final } = await streamAll(client, leadParams([turn]));
+      assert.match(textOf(final), /^The capital of France is Paris\.\n\n\*\*Paris\*\*/);
+    }
+    assert.deepEqual(mock.violations, []);
   });
 });
 

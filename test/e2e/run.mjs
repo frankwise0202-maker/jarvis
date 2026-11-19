@@ -30,6 +30,7 @@ import security from './scenarios/security.mjs';
 import interaction from './scenarios/interaction.mjs';
 import regressions from './scenarios/regressions.mjs';
 import holograms from './scenarios/holograms.mjs';
+import voiceSpeech from './scenarios/voice-speech.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -39,7 +40,7 @@ async function optionalScenarios(rel) {
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

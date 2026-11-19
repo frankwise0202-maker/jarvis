@@ -173,7 +173,9 @@ export default [
 
       await t.step('an interrupted spoken question stays in the conversation', async () => {
         await t.page.evaluate(() => {
-          window.__voice.queue.push('[[slow]] What is the capital of Spain?', 'And what about Germany?');
+          // [[longspoken]]: the spoken part runs long, so the tap below always comes before it is
+          // complete (after that, a tap would only stop the voice and leave the reply writing).
+          window.__voice.queue.push('[[slow]] [[longspoken]] What is the capital of Spain?', 'And what about Germany?');
         });
         await (await t.visible('voice-open')).click();
         const vm = await t.visible('voice-mode');
