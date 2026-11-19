@@ -15,6 +15,9 @@
 //   screens-no-apis    no Window Management and no PiP (Safari-like): windows, and the owner is told
 //   screens-pip-snapshot  the floating panel's WebGL fails: a live-updating snapshot instead
 //   screens-phone      the iPhone: the phone layout is untouched, and screens open full screen in-app
+//   screens-tool       Jarvis decides (lead tools V5): open_screen through the real app and the strict
+//                      mock ([[screen:<what>:<where>]]): a window on screen 2, the one tap a floating
+//                      panel needs, "back"; the reply is one short sentence read from the result
 //
 // State is read from data-* hooks ([data-testid="screen"] data-kind/data-state/data-where, each
 // panel's data-gl/data-parts/data-status…), never from pixels.
@@ -642,6 +645,58 @@ export default [
       await typeCommand(t, 'float it');
       t.assert(/no floating panels|own window/i.test(await toastText(t)), `toast: ${await toastText(t)}`);
       await t.screenshot('safari-like');
+    },
+  },
+
+  {
+    name: 'screens-tool',
+    title: 'Jarvis decides (lead tools V5): open_screen through the app and the strict mock puts the report on screen 2, asks for the one tap a floating panel needs, and brings it back; one short sentence each',
+    device: 'desktop',
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installScreenStubs, { monitors: 2, perm: 'granted' });
+      await t.goto('/');
+      await sendDone(t, '[[search]] What does a 2024 Camry Hybrid cost?');
+      let screen;
+
+      await t.step('words the local matcher leaves to Jarvis: he calls open_screen and the window opens on screen 2', async () => {
+        const leadBefore = t.requests('lead').length;
+        let turn;
+        screen = await opensPage(t, async () => {
+          turn = await t.send('[[screen:answer:other_screen]] Could you put that report up on my second monitor when you get a chance?');
+        }, { timeout: 60000 });
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+        const leads = t.requests('lead').slice(leadBefore);
+        t.assert(leads.length === 2, `a tool round: the call, then its result (${leads.length} lead requests)`);
+        const tools = leads[0].body.tools.map((x) => x.name);
+        t.assert(tools.slice(-3).join(',') === 'pin_labels,look_through_camera,open_screen', `a new conversation has lead tools V5 (${tools.join(', ')})`);
+        t.assert(/# Camera and screens/.test(leads[0].body.system[0].text), 'and the V4 prompt');
+        const results = leads[1].body.messages.at(-1).content.filter((b) => b.type === 'tool_result');
+        t.assert(results.length === 1 && !results[0].is_error && /^Opened the (answer|report) ".*" on screen 2 \(the owner's other monitor, DELL U2720Q\), maximized\./.test(String(results[0].content)), `the tool_result says what happened (${JSON.stringify(results)})`);
+        const last = await t.page.evaluate(() => window.__opens.at(-1));
+        t.assert(last.features === 'popup=1,left=1440,top=0,width=2560,height=1415', `maximized on the second monitor (${last.features})`);
+        t.assert(new URL(screen.url()).searchParams.get('screen') === 'answer', `screen mode (${screen.url()})`);
+        t.assert((await t.text(turn.locator(tid('segment-text')).last())).includes("It's on screen 2, sir."), 'one short sentence');
+        await screen.setViewportSize({ width: 1600, height: 900 });
+        await screen.waitForSelector(tid('app', { 'data-ready': 'true' }), { state: 'attached', timeout: 20000 });
+        await waitAttr(t, screen, 'screen', 'kind', 'answer', { timeout: 20000 });
+        await t.screenshot('screen2-from-tool', screen);
+      });
+
+      await t.step('a floating panel needs a tap: the tool says so, Jarvis says so, the button waits', async () => {
+        const turn = await sendDone(t, '[[screen:answer:beside]] Actually could you float it beside what I am working on?');
+        await t.visible('screens-tap', { message: 'the one-tap button for the floating panel' });
+        t.assert(/Float it/.test(await t.text(t.locator('screens-tap-button'))), 'the button says what it does');
+        t.assert((await t.text(turn.locator(tid('segment-text')).last())).includes('Tap “Float it” and it\'ll appear, sir.'), 'Jarvis asks for the tap once');
+        await t.locator('screens-tap-dismiss').click();
+      });
+
+      await t.step('"back": the screen closes and Jarvis says so', async () => {
+        const turn = await sendDone(t, '[[screen:this:back]] I am done with the second display for now, thank you');
+        await t.waitFor(() => screen.isClosed(), { timeout: 10000, message: 'the screen window to close' });
+        t.assert((await t.text(turn.locator(tid('segment-text')).last())).includes("It's back on your main screen, sir."), 'one short sentence');
+      });
     },
   },
 

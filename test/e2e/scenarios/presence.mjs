@@ -1,7 +1,7 @@
 // Presence (SPEC 2.4): the home screen as a situation display, the Needs-you ledger end to end, the
 // core legend, the privacy pill, the desktop awareness rail and the Calm / Full HUD density, plus
 // the home-screen acceptance checks of SPEC 2.4.21 (the fold at 390×844 with a Needs-you card; no
-// sideways scroll at 320×568).
+// sideways scroll at 320×568), and the core's states with their exact state words (v7).
 
 import { tid } from '../harness.mjs';
 
@@ -159,6 +159,60 @@ export default [
       await t.locator('header-new-chat').click();
       await t.visible('core-readouts', { message: 'Full HUD shows the gauge labels around the core' });
       await t.screenshot('2-full-hud');
+    },
+  },
+  {
+    name: 'presence-core-states',
+    title: 'The core\'s states and their exact state words: STANDING BY → THINKING → WORKING · n AGENTS → STANDING BY; OFFLINE and back; the header, the home and the core agree',
+    device: 'iphone13',
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      await t.visible('empty-state');
+      const coreOf = () => t.page.locator(tid('app')).getAttribute('data-core');
+      const word = async () => t.text(t.locator('state-word'));
+      // The header splits the word at " · " (label, then detail on a second line when it fits).
+      const header = async () => {
+        const el = t.page.locator(tid('header-state'));
+        const detail = (await el.locator('.status-detail').textContent()) || '';
+        return { state: await el.getAttribute('data-state'), text: `${(await el.locator('.status-label').textContent()) || ''}${detail ? ` · ${detail}` : ''}` };
+      };
+      /** Wait until the app, the home's state word and the header all show this state. */
+      async function shows(core, re, label, timeout = 60000) {
+        await t.waitFor(async () => {
+          const hd = await header();
+          return (await coreOf()) === core && re.test(await word()) && hd.state === core && re.test(hd.text);
+        }, {
+          timeout,
+          message: async () => `${label}: core "${await coreOf()}", word "${await word()}", header ${JSON.stringify(await header())}`,
+        });
+      }
+
+      await t.step('idle: STANDING BY', async () => {
+        await shows('idle', /^STANDING BY$/, 'idle');
+        t.assert((await t.locator('state-word').getAttribute('data-tone')) === 'ok', 'idle is calm (tone ok)');
+      });
+
+      await t.step('a mission: THINKING while Jarvis plans, WORKING · n AGENTS while they run, then STANDING BY', async () => {
+        await t.send('[[slow]] [[swarm:2]] Compare two cordless drills for a small workshop');
+        await t.locator('header-new-chat').click(); // back to the home: its core and state word follow the run
+        await t.visible('empty-state');
+        await shows('thinking', /^THINKING$/, 'thinking');
+        await shows('working', /^WORKING · [12] AGENTS?$/, 'working');
+        await t.screenshot('1-working');
+        await shows('idle', /^STANDING BY$/, 'idle when the mission is done', 150000);
+        await t.visible('needs-card', { message: 'the mission that finished in the other chat needs the owner' });
+      });
+
+      await t.step('offline: OFFLINE, then STANDING BY when the network is back', async () => {
+        await t.page.context().setOffline(true);
+        await shows('offline', /^OFFLINE$/, 'offline');
+        t.assert((await t.locator('state-word').getAttribute('data-tone')) !== 'ok', 'offline is not shown as calm');
+        await t.screenshot('2-offline');
+        await t.page.context().setOffline(false);
+        await shows('idle', /^STANDING BY$/, 'online again');
+      });
     },
   },
 ];
