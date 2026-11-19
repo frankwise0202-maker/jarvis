@@ -666,11 +666,13 @@ network hosts of its own; v5 voice upgrade, see §16):
   - `stream.cancel()`: stop now, idempotent; `onEnd({ reason: 'cancelled' })` synchronously, after the engine is cancelled.
   - `stream.text()`: everything appended, whitespace runs as one space, trimmed (offsets never move);
     `stream.spokenUpTo()`: end offset of the last finished chunk; `stream.active()`: false once ended.
-  - `onStart()` once, just before the first `onChunk`. `onChunk({ index, start, end, text })` when a chunk starts
-    playing (`text === stream.text().slice(start, end)`; a skipped chunk never fires). `onBoundary({ charIndex,
+  - `onStart()` once, just before the first `onChunk`. `onChunk({ index, start, end, text, at })` when a chunk starts
+    playing, or is assumed to (`text === stream.text().slice(start, end)`; a skipped chunk never fires; `at` is the
+    `Date.now()` it started, earlier than the call when the engine only learns it later). `onBoundary({ charIndex,
     charLength, name, chunkIndex })` with `charIndex` an offset in `text()` (`charLength` computed for words when the
     engine omits it). `onIdle()` once per lull: every complete sentence so far is spoken and `finish()` hasn't been
-    called. `onEnd({ reason })` exactly once: `'done'` (`'error'` if nothing ever played and something was skipped),
+    called. `onEnd({ reason })` exactly once: `'done'` (`'error'` if chunks were skipped and nothing ever showed a real
+    sign of playing: an event, or the engine moving on to our next chunk; `onStart` may have fired for an assumed start),
     `'cancelled'` (our cancel, `stopSpeaking()`, or a newer stream or `speak()`), `'interrupted'` (someone else's
     `cancel()`), `'error'` (`not-allowed`, or two chunks in a row never played), `'empty'`, `'unsupported'` (async).
     Callback exceptions are caught and logged.
@@ -684,8 +686,9 @@ network hosts of its own; v5 voice upgrade, see §16):
   `'off'` = `''`.
 - `chunkText(text, max = 220)`, `splitSentences(text)` (pure helpers); `SPEECH_TIMING` (frozen): `charsPerSecond` 15,
   `endMinMs` 4000, `endFactor` 2.5, `endExtraMs` 1500, `engineQuietMs` 3000, `startTimeoutMs` 3000, `retryDelayMs` 250,
-  `deferMs` 30, `tickMs` 250, `cancelGraceMs` 1000, `maxClockStepMs` 1000, `maxQueued` 2, `deadChunks` 2,
-  `earlyEndFraction` 0.7, `drainExtraMs` 500.
+  `dropRetryMs` 500, `retryBackoffMs` 1000, `deferMs` 30, `tickMs` 250, `cancelGraceMs` 1000, `maxClockStepMs` 1000,
+  `maxQueued` 2, `deadChunks` 2, `earlyEndFraction` 0.7, `drainExtraMs` 500, `dropFactor` 1.5, `lastWordFactor` 1.5,
+  `lastWordExtraMs` 1000, `calFactor` 1.3, `calExtraMs` 1000, `stallFactor` 1.6, `stallExtraMs` 1500, `stallStartMs` 1000.
 
 Chunks pack whole sentences and never cross a line break: up to 360 characters for an on-device voice, and
 `max(100, min(220, ⌊220 × rate⌋))` for an online or unknown voice (under ~15 s; Chrome cuts long online utterances).
@@ -693,49 +696,78 @@ A longer sentence splits at a clause boundary (`, ; : — –`), else at a space
 sentence longer than the limit is released piece by piece.
 
 Recovery (real engines break an "onend → speak the next chunk" chain; each rule has a unit test against a scriptable
-fake engine on a virtual clock, `test/unit/platform.voice.*.test.mjs`):
+fake engine on a virtual clock, `test/unit/platform.voice.*.test.mjs`). Chromium and WebKit keep a FIFO queue:
+`speaking` is true from `speak()` on while anything is queued (audio or not, so a silently dropped utterance looks
+"speaking" and holds the queue until `cancel()`), `pending` while more than one is, and the next utterance goes to the
+platform only once the current one has completed (a lost completion stalls the queue). The fakes model exactly that.
 - Queue ahead: the next chunk is queued while the current one plays (at its start, or once it is assumed to be
   playing), never more than 2 of ours in the engine, with a reference to every queued utterance. The engine plays them
   back to back, so there is no gap and no `speak()` inside `onend` (WebKit drops it). `speak()` is never called inside
   an engine event: it waits 30 ms.
-- Started: a `start` event, a boundary event, or the engine saying it is speaking with nothing pending 3 s after the
-  chunk should have started. A later chunk's start settles every earlier chunk (FIFO).
+- Started: a `start` event or a boundary event (proof). Tentatively, when the engine says it is speaking with nothing
+  pending 3 s after the chunk should have started (quirk f): `onChunk` fires and the next chunk is queued behind it,
+  but that is never proof. A later chunk's start, or `pending` going off while our next chunk waited behind it (the
+  engine moved on), settles every earlier chunk (FIFO); so does queuing our next chunk while nothing else waits in the
+  engine, for a chunk only assumed to be playing. After an early `end` the next chunk's start time-out counts from the
+  early-ended chunk's expected end (its audio plays on).
 - Ended: `end`, or its time is up (`max(4 s, 2.5 × expected + 1.5 s)` from its start, expected = chars / (15 × rate)
   s; a boundary pushes it to at least 3 s after that boundary), or 3 s of the engine reporting silence. `speaking` /
-  `pending` are never trusted alone (WebKit leaves them stuck on).
+  `pending` are never trusted alone (WebKit leaves them stuck on). While they stay on, sooner when it is known: 1.5 × the
+  rest's expected time + 1 s after a boundary reached the chunk's last word; for the last chunk of a finished stream,
+  `max(1.3 × its measured time, expected) + 1 s` from its start (measured: the slowest speed of chunks of ≥ 24
+  characters that really started (`start` or a boundary) and played to their end, known by their own `end`, our next
+  chunk's real start or the engine moving on; never an early `end`; kept per voice and rate for later streams); and,
+  once this stream has had a stall, `1.6 × expected + 1.5 s` for a chunk with our next chunk waiting behind it.
+- Stall: when a chunk is settled by the clock (not by `end` or a later chunk) while our next chunk still waits behind
+  it (`pending`), the engine is stuck on it: `cancel()` and queue the waiting chunks again at once, without using up
+  their retry (once per chunk). When nothing of ours waited and the engine still reported busy, the next chunk queued
+  behind something gets 1 s to start before the same. A chunk not started by its time-out with `pending` still on is
+  behind such a stall too.
+- Drop: a chunk only assumed to be playing whose next chunk still waits behind it `1.5 × expected + 3 s` after it
+  should have started, or that is still held by the engine (busy) when its time is up, was dropped silently (quirk d).
+  On an on-device voice known to send word boundaries (one comes as soon as audio starts), a chunk with no event 3 s
+  after it should have started, nothing else queued, is a drop at once (first attempt; its retry falls back to the
+  tentative start).
 - Never started within 3 s: if the engine still says it is speaking or pending, wait once more (3 s, or until the
-  previous chunk's time is up); then `cancel()`, 250 ms, `speak()` again once, then skip it. An `interrupted` /
-  `canceled` error within 1 s of our own `cancel()` on a chunk that never started is the same drop and is retried at
-  once. After two chunks in a row were given up, the stream ends with `'error'` (about 12.5 s, not minutes of silence).
+  previous chunk's time is up); then `cancel()`, wait, `speak()` again once, then skip it. The wait: 250 ms; 500 ms
+  for a drop the engine held; 1 s when the dropped attempt was itself spoken 250 ms to 2 s after our own `cancel()` (by
+  an engine known to be alive: it held the utterance, reported the drop, or played before), which also makes every
+  later wait after our `cancel()` that long + 250 ms (at most 1 s; Chrome's drop window is longer here). An
+  `interrupted` / `canceled` error within 1 s of our own `cancel()` on a chunk that never played is the same drop and
+  is retried at once. After two chunks in a row were given up, the stream ends with `'error'`.
 - Each utterance is processed once; events of utterances we cancelled or gave up (a generation counter) are ignored,
   so the `interrupted` / `canceled` errors our own recovery causes never end the session; any other such error means
   someone else stopped speech: `'interrupted'`, without talking over them.
 - An `end` that came early (before 70 % of the expected time) on the last chunk while the engine still says it is
   speaking: `onEnd('done')` waits until it stops, at most until the expected end + 0.5 s (so a microphone never opens
   over the voice).
-- Once `unlockSpeech()` has run, the first `speak()` after our own `cancel()` waits 250 ms (Chrome drops one queued
-  right after a cancel).
+- Once `unlockSpeech()` has run, the first `speak()` after our own `cancel()` waits 250 ms, or the learned drop window
+  (Chrome drops one queued right after a cancel).
 - Time counts only while the page is visible (iOS pauses speech in the background; each clock step is capped at 1 s),
   and `speechSynthesis.resume()` is called when the engine is paused while the page is visible.
-- Known limits: a short utterance (under 3 s) that plays with no start, boundary or end event looks exactly like a
-  dropped one, so it is replayed once; a chunk dropped (with no cancel before it) while the previous chunk's audio still
-  plays after an early end is assumed played.
+- Known limits: a chunk that plays with no `start`, boundary or `end` event and is then held by the engine (it never
+  completes, or `speaking` stays stuck with nothing after it) looks exactly like a dropped one, so it is spoken once
+  more rather than risk losing it; a short one (under 3 s) whose engine then reports silence is replayed once too. On a
+  voice without word events, a drop is found only once the chunk could have finished (1.5 × its expected time + 3 s).
 
 Speech text (`markdownToPlainText(md, { speech: true })`, §9.1, used by `toSpeech` and Voice Mode): no code blocks,
 URLs reduced to their host name, no list markers or emoji, every block ends as a sentence (one line per block), and
 written for the ear: `e.g.` → "for example", `i.e.` → "that is", `etc.` → "et cetera", ` vs. ` → " versus ",
 `approx.` → "approximately", `&` between words → "and", `12%` → "12 percent", `°C` / `°F` / `5°` → "degrees
-Celsius" / "degrees Fahrenheit" / "5 degrees", digit ranges (`5–10`, `5-10`, `$5–$10`) → "5 to 10", `~5` → "about
-5", `20+` → "20 plus", `×` → "times", `24/7` → "twenty-four seven", `km/h` → "kilometres per hour", arrows → "to",
-`≈` → "about"; reference markers (`[1]`, `[source]`, a citation link `[1](url)`) and stray `**`, `__` and backticks are
-removed. Phone numbers, dates (2026-11-19), times (10:30) and hyphenated words are never touched. Chat rendering and
-plain-text copy are unchanged.
+Celsius" / "degrees Fahrenheit" / "5 degrees", digit ranges (`5–10`, `5-10`, `$5–$10`) → "5 to 10", `~5` (at the start
+of a word) → "about 5", `20+` → "20 plus", `×` → "times", `24/7` → "twenty-four seven", `km/h` → "kilometres per hour",
+arrows → "to", `≈` → "about"; reference markers (`[1]`, `[source]`, a citation link `[1](url)`) and stray `**`, `__`
+and backticks are removed. Inline code is said as written (none of these rewrites inside it: `HEAD~3`, `items[0]`).
+Phone numbers, dates (2026-11-19), times (10:30), hyphenated words, equal numbers (`0-0`, `50-50`), a range glued to
+a bracket (`5-3(b)`) and a hyphenated model number after a name mid-sentence (`a Boeing 737-800`) are never touched.
+Chat rendering and plain-text copy are unchanged.
 
 ### 9.3 `src/platform/env.js`, `wakelock.js`, `pwa.js`
 - env: `isOnline()`, `onOnlineChange(fn)`, `prefersReducedMotion()`, `isTouch()`,
   `isStandalone()`, `isIOS()` (incl. iPadOS desktop UA with touch), `isAndroid()`.
-- wakelock: `keepAwake()` (Screen Wake Lock API, re-acquire on visibilitychange while held),
-  `allowSleep()`. No-ops when unsupported.
+- wakelock: `keepAwake(owner)` (Screen Wake Lock API, re-acquire on visibilitychange while held),
+  `allowSleep(owner)`; reference-counted by owner (`'run'` while a reply runs, `'voice'` while Voice Mode is open,
+  `'speech'` while the chat reads a reply aloud). No-ops when unsupported.
 - pwa: `registerServiceWorker({ onUpdateReady })` — only if `'serviceWorker' in navigator` and secure
   context; register `./sw.js`; when a new worker is waiting, call `onUpdateReady(apply)` where
   `apply()` posts `{type:'SKIP_WAITING'}` and reloads on `controllerchange`.
@@ -965,9 +997,18 @@ openVoiceMode({
 States loop: listening → thinking/working (shows live mission mini-status: agents done/total,
 current activity line) → speaking (captions of what is being spoken) → listening again when
 `voiceContinuous`. Tap the core: while listening = stop listening and send; while
-thinking/working = abort the turn (and its speech); while speaking = stop speaking and listen (a reply still being
-written stops too and stays in the chat as far as it got). Exit stops listening and speaking; a running turn carries
-on in the chat (§16). Big exit button (`data-testid="voice-close"`), root `data-testid="voice-mode"` with `data-state`
+thinking/working = abort the turn (and its speech); while speaking = stop speaking and listen. Before the spoken part is
+complete (Jarvis is still saying the reply itself) the turn stops too and stays in the chat as far as it got; once it
+is complete (the feed has handed out everything above the `---` line or the cap: Jarvis says its last sentences, or is
+quiet while the details below the line are written) the tap only stops the voice and listens: the run keeps writing
+the details in the chat, a question heard meanwhile is held ("Finishing the details on screen…") and sent once that
+turn has ended, and its answer is then offered with "Read full answer". The dock button reads "Stop" (`aria-label`
+"Stop speaking", the voice only, as in v4) while those last sentences are said and "Stop writing" ("Stop writing the
+details", which stops the turn) while the details are written; a Stop while a question is held stops both. A tap while
+sentences are already with the voice but it hasn't said it started (voices without start events) counts as
+speaking. Exit stops listening and speaking; a running turn carries on in the chat (§16), and when Jarvis had already
+begun saying its answer (not just "Let me check…") the chat doesn't read that reply aloud again when it ends
+(`voiceModeSpoke(run)`). Big exit button (`data-testid="voice-close"`), root `data-testid="voice-mode"` with `data-state`
 (and `data-speech`: `live` | `summary` | `full` | `apology` while speaking). If STT is unsupported, show a clear
 message and a text box fallback (the iOS keyboard dictation key still works). Focus-trapped dialog, Escape closes,
 safe areas, reduced motion, works at 320px wide. Never uses innerHTML.
@@ -999,8 +1040,8 @@ is spoken **while it streams**, with `tts.createSpeechStream` (§9.2) and the pu
   Runs Voice Mode didn't start (opened while a chat reply runs, `turn.spoken` not set) use the summary path; a spoken
   turn adopted mid-reply speaks only what is written after Voice Mode opened.
 - Captions grow sentence by sentence; the chunk being spoken is highlighted (`onChunk`), and the word too when the
-  voice reports words (`onBoundary`, `.vm-w`); without word events a time estimate moves through the current chunk
-  (paused while the page is hidden). Captions stay as context while listening again.
+  voice reports words (`onBoundary`, `.vm-w`); without word events a time estimate moves through the current chunk from
+  when it started (`onChunk`'s `at`; paused while the page is hidden). Captions stay as context while listening again.
 - Continuous mode listens again only after `onEnd` with reason `done` (not after `interrupted`, `error` or
   `unsupported`; then the whole spoken part is shown to read and Voice Mode waits for a tap).
 - "Read full answer" (`voice-read-full`) stays: it reads the whole final answer, including what is below the cut, with
@@ -1143,9 +1184,11 @@ App and platform:
 - Send/Stop share one slot; Stop arms 700 ms after a send (double-tap safe).
 - A home-screen suggestion, like a protocol, runs in its own mode once; the composer keeps the owner's mode. The swarm
   team size is for one message: it returns to Settings → agents per wave once that message is sent.
-- Leaving Voice Mode (Exit, Esc) never stops a running reply: it carries on in the chat. Stop, or a tap on the core, stops it.
+- Leaving Voice Mode (Exit, Esc) never stops a running reply: it carries on in the chat. Stop, or a tap on the core, stops it
+  (a tap once its spoken part is complete only stops the voice, §14.1). With Speak replies on, the chat doesn't read
+  aloud a reply Voice Mode had already begun saying when the owner left.
 - A conversation started by a protocol is titled by the protocol's headline.
-- Wake lock is reference-counted by owner (`'run'`, `'voice'`).
+- Wake lock is reference-counted by owner (`'run'`, `'voice'`, `'speech'`).
 - Cross-window guard: BroadcastChannel `'jarvis-runs'` marks conversations running in another window (no Resume, no
   sends there); stale "running" turns are settled before rendering. The guard comes down only after the conversation is
   read again from storage: on the other window's run-end message, on its `pagehide`, or after 30 s without a message or
@@ -1185,7 +1228,8 @@ the CSP is unchanged.
 - Voice Mode speaks the spoken part while the reply streams, from the first complete sentence: §14.1.
 - Chat: the Speak button under an answer (`turn-speak`) reads the whole final answer (`toSpeech(md, 'full')`, including
   anything below a `---`); it shows Stop while reading and resets on `onEnd`, which always comes; a voice that stops
-  responding (`onEnd` `error`) shows a toast. Speak replies: **Off** / **Short summary** (the opening paragraph) /
+  responding (`onEnd` `error`) shows a toast. The screen stays on while it reads (wake lock owner `'speech'`, released
+  when reading ends or is stopped): iOS pauses speech once the screen locks. Speak replies: **Off** / **Short summary** (the opening paragraph) /
   **Whole reply** (values `off|summary|full`, no migration); its help says what each does.
 - Settings → Voice: the picker lists voices with `rankVoices` (best first). The first option names the automatic pick,
   "Automatic — <name>", with "(<quality>, online)" when they apply; the others read "<name> (<lang>, <Premium |
@@ -1195,9 +1239,14 @@ the CSP is unchanged.
   Arthur, reopen Jarvis; not every iOS version offers them to web apps), Mac (Manage Voices… → English (United
   Kingdom)), Windows (Edge's online "Natural" voices, or Add voices), Android (Speech Services by Google → Install voice
   data), else generic. Test voice speaks with the chosen voice; the speaking speed is unchanged.
-- Tests: unit `platform.voice.*` (engine quirks a–h, streams, ranking, speech text, and the fake engine itself),
+- Tests: unit `platform.voice.*` (engine quirks a–h, streams, ranking, speech text, the fake engine itself, and
+  `platform.voice.recovery`: drops, stalls and the measured speed under Chromium's queue semantics),
   `markdown.test.mjs`, `engine.spoken.test.mjs`, `mock.test.mjs` (spoken replies), `ui.voice.stream.test.mjs` (spoken
   part, feed, cap, retries, labels, tip, and a streamed reply through the real stream on the fake engine); E2E
   `voice-speech.mjs`: `chat-read-aloud-whole`, `voice-spoken-channel`, `voice-streams-speech`, `voice-search-preamble`,
-  `quirky-engine`, `settings-voice`. The E2E fake speech (`installFakeSpeech(options)` in `features.mjs`) records a
-  timing log and can model a stuck `speaking` flag, missing `end` events and dropped utterances.
+  `voice-spoken-cap`, `voice-barge-in`, `quirky-engine`, `chat-speak-replace-drop`, `voice-stall-recovery`,
+  `voice-tap-after-cut`, `voice-stop-after-cut`, `voice-tap-post-speech`, `voice-exit-no-reread`,
+  `chat-read-aloud-wakelock`, `voice-no-start-tap`, `settings-voice`. The E2E fake speech (`installFakeSpeech(options)`
+  in `features.mjs`) follows Chromium's queue semantics, records a timing log and can model a stuck `speaking` flag,
+  missing `end` events (and a stalled queue), dropped utterances (also right after `cancel()`), no `start` events and
+  durations proportional to the text.

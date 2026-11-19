@@ -489,8 +489,9 @@ function createVoiceMode(opts) {
     // line are being written): stop the voice and listen; the details keep coming in the chat.
     if (S.run && spokenDone(S.run)) return releaseRun();
     // Speaking the reply while it is still being written: interrupt both and listen (what was
-    // written so far stays in the chat). Thinking or working: stop.
-    if (S.run) return abortRun({ listen: S.state === 'speaking' });
+    // written so far stays in the chat); also when sentences are already with the voice but it
+    // hasn't said it started (some voices never do). Thinking or working: stop.
+    if (S.run) return abortRun({ listen: S.state === 'speaking' || voiceStarting(liveOf(S.run)) });
     if (S.speech && S.speech.kind !== 'apology') {
       cancelSpeech();
       return startListening({ gesture: true, keepAnswer: true });
@@ -1621,6 +1622,7 @@ function createVoiceMode(opts) {
       } catch (err) {
         console.warn('[voice] speech failed', err);
       }
+      renderControls(); // the spoken part is complete: a tap now stops only the voice
     }
     return step;
   }
@@ -1633,6 +1635,11 @@ function createVoiceMode(opts) {
   /** The voice is audible (or about to be): a chunk started and the stream isn't waiting for text. */
   function isTalking(sp) {
     return !!sp && sp.started && !sp.idle;
+  }
+
+  /** Sentences are with the voice and not all said yet (it may be talking without having said so). */
+  function voiceStarting(sp) {
+    return !!sp && !sp.idle && !!sp.display;
   }
 
   function startLive(R) {
@@ -1895,7 +1902,9 @@ function createVoiceMode(opts) {
     const start = Number(c.start);
     const end = Number(c.end);
     if (!Number.isFinite(start) || start < 0) return;
-    sp.chunk = { start, end: Number.isFinite(end) && end > start ? end : start + 1, at: Date.now() };
+    // `at`: when it started, which the engine may only learn later (a voice without start events).
+    const at = Number(c.at) <= Date.now() && Number(c.at) > Date.now() - 60000 ? Number(c.at) : Date.now();
+    sp.chunk = { start, end: Number.isFinite(end) && end > start ? end : start + 1, at };
     sp.idle = false;
     if (!sp.started) onSpeechStart(sp);
     if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));

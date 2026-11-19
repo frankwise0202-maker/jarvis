@@ -55,15 +55,17 @@
 //     when our next chunk still waits behind it 1.5 × its expected time + 3 s after it should
 //     have started, or when its time is up while the engine still says it is busy: it is
 //     retried like a chunk that never started;
-//   - retries a chunk that never started (cancel(), 250 ms, speak() again) once, then skips it;
-//     if the engine still says it is speaking or has something pending, it first waits once more
-//     (3 s, or until the previous chunk's time is up); an 'interrupted'/'canceled' error within
-//     1 s of our own cancel() on a chunk that never played is the same drop and is retried at
-//     once; after two chunks in a row were given up the stream ends with 'error', and a stream
+//   - retries a chunk that never started (cancel(), a short wait, speak() again) once, then skips
+//     it; if the engine still says it is speaking or has something pending, it first waits once
+//     more (3 s, or until the previous chunk's time is up); an 'interrupted'/'canceled' error
+//     within 1 s of our own cancel() on a chunk that never played is the same drop and is retried
+//     at once; after two chunks in a row were given up the stream ends with 'error', and a stream
 //     that skipped chunks and never showed a real sign of playing ends with 'error' too;
-//   - waits 1 s instead of 250 ms before a retry when the dropped attempt was itself spoken
-//     250 ms or more after our cancel() (Chrome's drop window is longer here: later waits after
-//     our cancel() grow to match, up to 1 s), or on the second recovery in a row;
+//   - the wait before a retry: 250 ms; 500 ms for a drop the engine held; 1 s when the dropped
+//     attempt was itself spoken 250 ms to 2 s after our cancel() by an engine known to be alive
+//     (Chrome's drop window is longer here: later waits after our cancel() grow to match, up to 1 s);
+//   - an on-device voice known to send word boundaries (one comes as soon as audio starts) that
+//     shows no event at all 3 s after a chunk should have started has dropped it: retried at once;
 //   - processes each utterance's events at most once and ignores events of utterances it has
 //     cancelled or given up (a generation counter); any other 'interrupted'/'canceled' error
 //     means someone else stopped speech: the stream ends with 'interrupted';
@@ -126,6 +128,8 @@ const FEMALE_HINT =
 // Apple's novelty voices and the old Eloquence voices sound like toys or robots: last resort only.
 const NOVELTY_NAME = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|princess|superstar|trinoids|whisper|wobble|zarvox)\b/i;
 const NOVELTY_URI = /\b(eloquence|novelty)\b/i;
+// Chrome on a Mac names the Eloquence voices "Eddy (English (UK))" (voiceURI = name, no "eloquence").
+const ELOQUENCE_NAME = /^(eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley) \(/i;
 const QUALITY_RANK = { premium: 0, enhanced: 1, natural: 2, standard: 3 };
 
 function synth() {
@@ -216,7 +220,7 @@ export function voiceQuality(voice) {
 }
 
 function isNovelty(v) {
-  return NOVELTY_NAME.test(v.name) || NOVELTY_URI.test(String(v.voiceURI || ''));
+  return NOVELTY_NAME.test(v.name) || ELOQUENCE_NAME.test(v.name) || NOVELTY_URI.test(String(v.voiceURI || ''));
 }
 
 function preferredRank(name) {
@@ -432,7 +436,9 @@ function cancelEngine(force) {
  *   stream.active()      false once ended.
  * Events (each optional; exceptions in callbacks are caught and logged):
  *   onStart()                               once, when audio first starts.
- *   onChunk({ index, start, end, text })    a chunk starts playing; start/end are offsets in text().
+ *   onChunk({ index, start, end, text, at })  a chunk starts playing; start/end are offsets in text();
+ *                                           at: Date.now() when it started (earlier than now when
+ *                                           it is only known later, e.g. a voice without start events).
  *   onBoundary({ charIndex, charLength, name, chunkIndex })  charIndex is an offset in text().
  *   onIdle()                                caught up: every complete sentence appended so far was
  *                                           spoken and finish() isn't called yet (once per lull).
@@ -765,8 +771,8 @@ function bind(s, rec) {
   rec.u.onerror = on((event) => failed(s, rec, event));
 }
 
-/** onStart once, then onChunk for a chunk that starts playing (or is assumed to). */
-function play(s, chunk) {
+/** onStart once, then onChunk for a chunk that starts playing (or is assumed to); `at`: Date.now() it started. */
+function play(s, chunk, at) {
   if (chunk.fired) return;
   chunk.fired = true;
   if (!s.started) {
@@ -774,7 +780,7 @@ function play(s, chunk) {
     call(s.opts.onStart);
     if (s.ended) return;
   }
-  call(s.opts.onChunk, { index: chunk.index, start: chunk.start, end: chunk.end, text: chunk.text });
+  call(s.opts.onChunk, { index: chunk.index, start: chunk.start, end: chunk.end, text: chunk.text, at });
 }
 
 /** A real sign that `rec` plays or played: its own event, or the engine's queue moving past it. */
@@ -825,7 +831,7 @@ function markStarted(s, rec, at) {
   rec.started = true;
   rec.startedAt = at;
   rec.progressAt = at;
-  play(s, rec.chunk);
+  play(s, rec.chunk, Date.now() - Math.max(0, vnow() - at)); // an assumed start is backdated
 }
 
 /**

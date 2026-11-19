@@ -389,3 +389,25 @@ test('an early end, then a last chunk with no start event and an early end: onEn
   heardOnce(ctx, ctx.tts.chunkText(text, LOCAL));
   assert.ok(r.endT >= ctx.fake.audio.at(-1).endT, `onEnd ${ctx.fake.audio.at(-1).endT - r.endT} ms before the last audio ended`);
 });
+
+// ---- ux:UX-5 - a voice without start events --------------------------------------------------------
+
+test('UX-5: onChunk says when the chunk started, also when the engine only learns it later (no start or word events)', async (t) => {
+  const ctx = await setup(t, { boundaries: false, quirks: { noStart: () => true } });
+  const text = paragraph(0, 12);
+  const at = [];
+  const r = run(ctx, text, { onChunk: (c) => at.push([c.text, c.at, ctx.clock.now]) });
+  assert.deepEqual(r.ends, ['done']);
+  heardOnce(ctx, ctx.tts.chunkText(text, LOCAL));
+  assert.equal(at.length, 3);
+  for (const [chunkText, startedAt, firedAt] of at) {
+    const audio = firstAudio(ctx, chunkText);
+    assert.ok(firedAt - audio.startT >= 2500, 'learned late (no start event)');
+    assert.ok(Math.abs(startedAt - audio.startT) <= 100, `reported start ${startedAt - audio.startT} ms from the audio's start`);
+  }
+  // With start events it is the moment of the event.
+  const ctx2 = await setup(t);
+  const at2 = [];
+  run(ctx2, text, { onChunk: (c) => at2.push([c.at, ctx2.clock.now]) });
+  for (const [startedAt, firedAt] of at2) assert.equal(startedAt, firedAt);
+});

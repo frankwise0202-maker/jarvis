@@ -139,8 +139,11 @@ it once more (copy it from your password manager).
   working. Longer details (steps, comparisons, sources) go on screen under the spoken part; tap
   **Read full answer** to hear those too. When it has finished speaking it listens again
   (**Continuous**, top right). Tap the core while Jarvis is talking to interrupt it and speak, or
-  while it is working to stop it. **Exit** leaves Voice Mode; a reply or mission that is still
-  running carries on in the chat.
+  while it is working to stop it. Once it has said all it will say aloud, a tap only stops the
+  voice: the details still appear on screen, and what you ask meanwhile is answered as soon as
+  they are done (the button below reads **Stop writing** if you want to stop the details too).
+  **Exit** leaves Voice Mode; a reply or mission that is still running carries on in the chat
+  (and isn't read out again there if Jarvis had already started saying it).
 - **Choose a mode** under the message box:
   - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
   - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).
@@ -155,6 +158,7 @@ it once more (copy it from your password manager).
   in the middle of a big mission, it may say *Interrupted*. Come back and tap **Resume**; agents
   that already finished are kept.
 - **Hear answers aloud**: tap **Speak** under an answer to hear all of it (tap again to stop).
+  The screen stays on while it reads, so a long answer isn't cut off when the phone would lock.
   To have every answer read out as it arrives, choose Settings → Voice → **Speak replies**:
   **Short summary** (its opening paragraph) or **Whole reply**.
 - **Ask next**: after an answer, up to three suggested follow-up questions appear; tap one to ask it.
@@ -320,7 +324,7 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
 | **Jarvis doesn't speak on iPhone** | Turn off silent mode and turn the volume up. Speech starts after you have tapped once in the app. |
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
-| **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls and skips what it can't play. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. |
+| **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
 | **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
 | **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |

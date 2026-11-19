@@ -1575,8 +1575,11 @@ function inlineToText(list, speech) {
   for (let n = list.first; n; n = n.next) {
     switch (n.t) {
       case 'text':
-      case 'code':
         s += n.v;
+        break;
+      case 'code':
+        // Speech: marked, so finishSpeech says it as written (no ear rewrites inside code).
+        s += speech ? CODE_OPEN + n.v.replace(CODE_MARKS_RE, '') + CODE_CLOSE : n.v;
         break;
       case 'br':
         s += '\n';
@@ -1669,14 +1672,24 @@ function spokenHost(url) {
   }
 }
 
+// Inline code in speech text, between these private-use marks until finishSpeech.
+const CODE_OPEN = '\uE000';
+const CODE_CLOSE = '\uE001';
+const CODE_MARKS_RE = /[\uE000\uE001]/g;
+const CODE_SPAN_RE = /\uE000([^\uE001]*)\uE001/;
+
 function finishSpeech(s) {
-  return forTheEar(
-    s
-      .replace(URL_IN_TEXT_RE, (u) => spokenHost(trimUrlTail(u)))
-      .replace(EMOJI_RE, '')
-      .replace(/[→⇒➜➔⟶]/g, ' to ')
-      .replace(/≈\s*/g, 'about '),
-  )
+  const plain = s
+    .replace(URL_IN_TEXT_RE, (u) => spokenHost(trimUrlTail(u)))
+    .replace(EMOJI_RE, '')
+    .replace(/[→⇒➜➔⟶]/g, ' to ')
+    .replace(/≈\s*/g, 'about ');
+  // Inline code (odd pieces) is said as written: `HEAD~3`, `items[0]` and `a-b` keep their meaning.
+  return plain
+    .split(CODE_SPAN_RE)
+    .map((part, i) => (i % 2 ? part : forTheEar(part)))
+    .join('')
+    .replace(CODE_MARKS_RE, '')
     .replace(/[ \t\u00A0]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/ ([.,!?;:])/g, '$1')
@@ -1693,8 +1706,11 @@ function finishSpeech(s) {
 const REF_MARKER_RE = /[ \t]*\[(?:\^?\d{1,3}(?:\s*[,–-]\s*\d{1,3})*|\^[A-Za-z][\w-]{0,19}|(?:sources?|citations?(?: needed)?|refs?|references?|notes?)(?:\s*\d{1,3})?)\]/gi;
 // The text of a citation link such as [1](https://…): nothing to say.
 const REF_LABEL_RE = /^\s*\[?\^?\d{1,3}\]?\s*$/;
-// A number range with an en dash (spaces allowed) or a hyphen (none): 5–10, 5-10, $5–$10, 50%–60%.
-const RANGE_RE = /(^|[^\w.,:/+\-–])([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(%?)(\s?–\s?|-)([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(?![\d:/\-–]|[.,]\d)/g;
+// A number range with an en dash (spaces allowed) or a hyphen (none): 5–10, 5-10, $5–$10, 50%–60%
+// (not one glued to a bracket: "section 5-3(b)").
+const RANGE_RE = /(^|[^\w.,:/+\-–])([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(%?)(\s?–\s?|-)([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(?![\d:/\-–(]|[.,]\d)/g;
+// Names that may precede a date range ("Monday 9-5", "June 5-10"), unlike a model name.
+const CALENDAR_RE = /^(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?|Mon(?:day)?|Tue(?:s|sday)?|Wed(?:nesday)?|Thu(?:rs|rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)$/;
 
 function spokenLinkText(text) {
   return REF_LABEL_RE.test(text) ? '' : text;
@@ -1713,7 +1729,7 @@ function forTheEar(s) {
     .replace(/(\d)\s?km\/h\b/gi, '$1 kilometres per hour')
     .replace(/\bkm\/h\b/gi, 'kilometres per hour')
     .replace(RANGE_RE, spokenRange)
-    .replace(/(^|[^\d~])~\s?(?=[$£€]?\d)/g, '$1about ')
+    .replace(/(^|[\s([{"“‘'])~\s?(?=[$£€]?\d)/g, '$1about ')
     .replace(/(\d)\+(?![\d+])/g, '$1 plus')
     .replace(/\s*×\s*/g, ' times ')
     .replace(/(\d)\s?%/g, '$1 percent')
@@ -1729,11 +1745,21 @@ function abbreviation(word, space, next) {
   return next === '' || (space && /[A-Z"“‘'(]/.test(next)) ? word + '.' : word;
 }
 
-function spokenRange(m, pre, cur1, a, pct, dash, cur2, b) {
+function spokenRange(m, pre, cur1, a, pct, dash, cur2, b, offset, str) {
+  if (a === b && !cur1 && !cur2) return m; // 0-0, 50-50: a score or odds, never a range
   if (dash === '-') {
     if (/^\d{3}$/.test(a) && /^\d{4}$/.test(b)) return m; // 555-1234: a phone number
     if (/^[12]\d{3}$/.test(a) && /^(?:0[1-9]|1[0-2])$/.test(b)) return m; // 2026-11: a year and month
     if (/^0\d/.test(a) || /^0\d/.test(b)) return m; // 020-7946, 08-15: codes
+    if (!cur1 && !pct && /^\d{3,4}$/.test(a) && /^\d{3,4}$/.test(b) && modelName(str.slice(0, offset + pre.length))) return m; // Boeing 737-800
   }
   return `${pre}${cur1}${a}${pct} to ${cur2}${b}`;
+}
+
+/** The text ends with a capitalised name and a space, mid-sentence ("… a Boeing "): a model number follows. */
+function modelName(before) {
+  const w = /(?:^|[\s(])([A-Z][A-Za-z]*)[ \u00A0]$/.exec(before);
+  if (!w || CALENDAR_RE.test(w[1])) return false;
+  const head = before.slice(0, w.index + w[0].length - w[1].length - 1).trimEnd();
+  return !!head && !/[.!?:;\n]["'”’)\]]*$/.test(head);
 }

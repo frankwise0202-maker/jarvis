@@ -113,6 +113,33 @@ test('rankVoices: Mac - Daniel first, never a novelty voice', () => {
   assert.equal(pickDefaultVoice(MAC.filter((x) => x.name !== 'Daniel')).name, 'Alex');
 });
 
+test('rankVoices: Chrome on a Mac - the Eloquence voices (voiceURI = their name) come after every standard voice (review UX-6)', () => {
+  // Chrome reports macOS voices with voiceURI equal to the name, so "eloquence" is not in it.
+  const MAC_CHROME = [
+    v('Samantha', 'en-US', true, { default: true }),
+    v('Albert', 'en-US', true),
+    v('Daniel', 'en-GB', true),
+    v('Eddy (English (UK))', 'en-GB', true),
+    v('Grandpa (English (UK))', 'en-GB', true),
+    v('Rocko (English (UK))', 'en-GB', true),
+    v('Shelley (English (US))', 'en-US', true),
+    v('Google UK English Male', 'en-GB', false),
+  ];
+  assert.deepEqual(names(rankVoices(MAC_CHROME)), [
+    'Daniel',
+    'Samantha',
+    'Eddy (English (UK))',
+    'Grandpa (English (UK))',
+    'Rocko (English (UK))',
+    'Albert',
+    'Shelley (English (US))',
+    'Google UK English Male',
+  ]);
+  assert.equal(pickDefaultVoice(MAC_CHROME.filter((x) => x.name !== 'Daniel')).name, 'Samantha');
+  // A voice merely named like one (no Chrome suffix) is not a novelty voice.
+  assert.equal(pickDefaultVoice([v('Reed', 'en-GB', true), v('Moira', 'en-IE', true)]).name, 'Reed');
+});
+
 test('rankVoices: Windows Edge - on-device voices before the online Natural ones (privacy), British first in each', () => {
   assert.deepEqual(names(rankVoices(EDGE)), [
     'Microsoft George - English (United Kingdom)',

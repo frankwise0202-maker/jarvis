@@ -111,14 +111,17 @@ export default [
 
   {
     name: 'ratelimit-swarm',
-    title: 'A rate-limited swarm ([[ratelimit:6]]: first 6 worker requests get 429) still completes',
+    title: 'A rate-limited swarm ([[ratelimit:6:1]]: first 6 worker requests get 429, retry after 1 s) still completes',
     device: 'iphone13',
     timeout: 150000,
     allowConsole: [/status of 429/],
     async run(t) {
       await t.newPage();
       await t.goto('/');
-      const turn = await t.send('[[swarm:5]] [[ratelimit:6]] Compare budget smartphones');
+      // retry-after 1 s: with 0 the engine retries after only its 0–2 s jitter, and about one run in
+      // a hundred the first agent used up its 5 attempts on 5 of the 6 rejections before the third
+      // agent's staggered start (1.4 s), so the swarm could not complete in full.
+      const turn = await t.send('[[swarm:5]] [[ratelimit:6:1]] Compare budget smartphones');
       const card = turn.locator(tid('mission-card')).first();
       await card.waitFor({ state: 'visible', timeout: 20000 });
       await waitForAgents(t, card, 5);

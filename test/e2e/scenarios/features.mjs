@@ -46,6 +46,7 @@ function lastLeadUserText(t) {
  *   quirks.dropSpeak       [k, …] non-empty speak() calls (0-based) dropped silently (Chrome): queued,
  *                          but never played and no event, so it holds the queue until cancel()
  *   quirks.dropAfterCancelMs  a non-empty speak() this soon after cancel() is dropped the same way
+ *   quirks.noStart         no 'start' events (audio plays; 'end' still fires)
  *   voices                 the voice list (default: an on-device British "Daniel")
  *   durationMs             how long each utterance plays (default 120)
  *   cps                    instead: each utterance plays text length / (cps × rate) seconds (min 120 ms)
@@ -190,7 +191,7 @@ export function installFakeSpeech(options) {
       };
       voice.log.push(entry);
     }
-    setTimeout(() => current === u && u.onstart && u.onstart({ type: 'start', utterance: u }), 10);
+    if (!quirks.noStart) setTimeout(() => current === u && u.onstart && u.onstart({ type: 'start', utterance: u }), 10);
     setTimeout(() => {
       if (current !== u) return;
       if (entry) entry.endAt = performance.now();

@@ -70,6 +70,27 @@ test('number ranges with an en dash or a hyphen become "to"; phone numbers, date
   ]) same(text);
 });
 
+test('ranges: equal numbers, a range glued to a bracket and a model number after a name are left alone (review F4)', () => {
+  for (const text of [
+    'The match ended 0-0, a 50-50 game, 3–3 at half time.',
+    'See section 5-3(b) for details.',
+    'We flew on a Boeing 737-800 to Rome, then an Airbus 320-200.',
+    'HEAD~3 is three commits back.',
+  ]) same(text);
+  // Still ranges: after a lowercase word, at the start of a sentence, after a month or a day.
+  assert.equal(say('Prices rose 100-200 dollars. In 1914-1918 the war raged.'), 'Prices rose 100 to 200 dollars. In 1914 to 1918 the war raged.');
+  assert.equal(say('Open Monday 9-5 and June 5-10, 1,200-1,500 km.'), 'Open Monday 9 to 5 and June 5 to 10, 1,200 to 1,500 km.');
+});
+
+test('inline code is said as written: no ear rewrites inside it (review F4)', () => {
+  assert.equal(say('Run `git rebase -i HEAD~3`, then read `items[0]` e.g. now.'), 'Run git rebase -i HEAD~3, then read items[0] for example now.');
+  assert.equal(say('The flag `5-10%` is literal; 5-10% is a range.'), 'The flag 5-10% is literal; 5 to 10 percent is a range.');
+  assert.equal(say('Ends with code: `npm test`'), 'Ends with code: npm test.');
+  assert.equal(say('| Cmd | Use |\n|---|---|\n| `ls ~1` | list |'), 'Cmd, Use.\nls ~1, list.');
+  // Copy (plain text) is unchanged.
+  assert.equal(markdownToPlainText('Run `HEAD~3` & `items[0]`.'), 'Run HEAD~3 & items[0].');
+});
+
 test('leftover reference markers and Markdown syntax are never spoken', () => {
   assert.equal(say('Growth was strong [1]. It doubled[2][3], rose [4, 5] and [6–8].'), 'Growth was strong. It doubled, rose and.');
   assert.equal(say('As noted [source] and [Source 2], see [^1] [citation needed].'), 'As noted and, see.');
