@@ -175,18 +175,15 @@ export function parsePartialJson(text) {
         return MISSING;
       }
     }
-    const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest);
-    if (!m) {
-      // A number cut off at the end of the buffer ("-", "1.", "1e-") is pending, not invalid.
-      if (/^-?(?:\d+(?:\.\d*)?(?:[eE][+-]?\d*)?)?$/.test(rest)) {
-        i = n;
-        eof = true;
-        return MISSING;
-      }
-      fail();
+    // A number running to the end of the buffer may still be streaming ("-", "1.", "1e-").
+    if (/^-?(?:\d+(?:\.\d*)?(?:[eE][+-]?\d*)?)?$/.test(rest)) {
+      i = n;
+      eof = true;
+      return /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(rest) ? Number(rest) : MISSING;
     }
+    const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest);
+    if (!m) fail();
     i += m[0].length;
-    if (i >= n) eof = true;
     return Number(m[0]);
   }
 
