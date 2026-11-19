@@ -144,12 +144,17 @@ export function isFinishedStatus(status) {
   return FINISHED.has(status);
 }
 
-/**
- * True while a queued agent waits out a retry ("Rate limited — retrying in 12s": the engine counts
- * the seconds down in agent.activity).
- */
+// The engine's retry countdown: "<what happened> — retrying in 12s" (the seconds count down).
+const RETRY_ACTIVITY = /—\s*retrying in \d+\s*s$/i;
+
+/** True for the engine's retry-countdown activity text (not for a search query that mentions it). */
+export function isRetryActivity(text) {
+  return RETRY_ACTIVITY.test(String(text || '').trim());
+}
+
+/** True while an unfinished agent waits out a retry (queued, or a transient wait while it runs). */
 export function isRetrying(agent) {
-  return !!agent && agent.status === 'queued' && /\bretrying in \d+\s*s\b/i.test(String(agent.activity || ''));
+  return !!agent && !FINISHED.has(agent.status) && isRetryActivity(agent.activity);
 }
 
 /** "example.com" for "https://www.example.com/a?b" ('' when the URL cannot be parsed). */

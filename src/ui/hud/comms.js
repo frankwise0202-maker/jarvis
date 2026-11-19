@@ -18,7 +18,7 @@
 //
 // No DOM access: plain data only (unit-tested in Node).
 
-import { errorPhrase, fmtDuration, hostname, plural } from './format.js';
+import { errorPhrase, fmtDuration, hostname, isRetryActivity, plural } from './format.js';
 
 export const MAX_ENTRIES = 300; // per mission
 const MAX_MISSIONS = 24; // logs kept (least recently observed are dropped)
@@ -42,8 +42,11 @@ function oneLine(text, max) {
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
+// Log lines read lower-case ("rate limited — retrying in 12s"), except for names
+// ("Claude is busy — …", "Anthropic’s API had a hiccup — …").
 function lowerFirst(text) {
-  return text ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+  if (!text || /^(Claude|Anthropic|Jarvis)\b/.test(text)) return text;
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 export function agentKey(agent, index) {
@@ -362,14 +365,17 @@ function diffAgent(log, snap, a, now) {
   }
 
   const activity = str(a.activity);
-  if (status !== was) {
-    if (AGENT_FINAL.has(status)) {
-      log.out.push(finalEntry(log, snap, a, now));
-    } else if (status === 'queued' && AGENT_ACTIVE.has(was)) {
-      // Back in the queue mid-run: a rate-limit or overload pause before a retry.
-      const text = lowerFirst(oneLine(activity, 90)) || 'waiting for a free slot';
-      log.out.push(entry(log, now, snap, 'wait', /rate|busy|overload|retry/i.test(text) ? 'warn' : 'idle', text));
-    }
+  const retryNow = isRetryActivity(activity);
+  if (status !== was && AGENT_FINAL.has(status)) {
+    log.out.push(finalEntry(log, snap, a, now));
+  } else if (retryNow && !isRetryActivity(snap.activity)) {
+    // A retry wait begins ("Rate limited — retrying in 12s"). The engine then counts the seconds
+    // down in the same text; the log records the episode once.
+    log.out.push(entry(log, now, snap, 'wait', 'warn', lowerFirst(oneLine(activity, 90))));
+  } else if (status !== was && status === 'queued' && AGENT_ACTIVE.has(was) && !retryNow) {
+    // Back in the queue mid-run without a countdown (older engines): say what it waits for.
+    const text = lowerFirst(oneLine(activity, 90)) || 'waiting for a free slot';
+    log.out.push(entry(log, now, snap, 'wait', /rate|busy|overload|retry/i.test(text) ? 'warn' : 'idle', text));
   }
   if (activity !== snap.activity && WARN_ACTIVITY.test(activity) && !AGENT_FINAL.has(status)) {
     log.out.push(entry(log, now, snap, 'warn', 'warn', lowerFirst(oneLine(activity, 120))));

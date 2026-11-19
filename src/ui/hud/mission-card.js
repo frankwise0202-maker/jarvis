@@ -14,7 +14,7 @@
 import { h, setText, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { observeMission } from './comms.js';
-import { elapsedMs, fmtDuration, isActiveStatus, onSecond, plural, statusIcon, statusLabel, statusTone } from './format.js';
+import { elapsedMs, fmtDuration, isActiveStatus, isRetrying, onSecond, plural, statusIcon, statusLabel, statusTone } from './format.js';
 
 const MAX_CHIPS = 20;
 const COMPACT_AFTER = 8; // more agents than this → single-line chips
@@ -49,14 +49,19 @@ function updateChip(chip, agent) {
   const status = str(agent.status) || 'queued';
   const codename = str(agent.codename);
   const roleText = str(agent.role).trim();
-  if (status !== chip.status) {
-    chip.status = status;
+  // A queued agent waiting out a retry shows a warning-toned refresh glyph ("Retrying"); its
+  // data-status stays the engine's status.
+  const retrying = isRetrying(agent);
+  const look = retrying ? 'retrying' : status;
+  const label = retrying ? 'Retrying' : statusLabel(status, 'agent');
+  if (look !== chip.status) {
+    chip.status = look;
     chip.li.dataset.status = status;
-    chip.li.dataset.tone = statusTone(status);
+    chip.li.dataset.tone = retrying ? 'warn' : statusTone(status);
     // Active agents share a spinning ring; finished/waiting ones get a distinct glyph.
-    const glyph = isActiveStatus(status) ? 'spinner' : statusIcon(status);
+    const glyph = retrying ? 'refresh' : isActiveStatus(status) ? 'spinner' : statusIcon(status);
     clear(chip.iconBox).append(icon(glyph, { size: 14, strokeWidth: 2 }));
-    setText(chip.sr, ` — ${statusLabel(status, 'agent')}`);
+    setText(chip.sr, ` — ${label}`);
   }
   if (codename !== chip.codename) {
     chip.codename = codename;
@@ -67,7 +72,7 @@ function updateChip(chip, agent) {
     chip.roleText = roleText;
     setText(chip.role, roleText || '…');
   }
-  const tip = `${codename || 'Agent'} — ${roleText || 'role pending'} — ${statusLabel(status, 'agent')}`;
+  const tip = `${codename || 'Agent'} — ${roleText || 'role pending'} — ${retrying ? str(agent.activity).trim() : label}`;
   if (chip.li.title !== tip) chip.li.title = tip;
 }
 

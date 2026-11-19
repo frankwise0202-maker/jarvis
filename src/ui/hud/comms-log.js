@@ -18,7 +18,7 @@
 import { h, setText, raf } from '../dom.js';
 import { icon } from '../icons.js';
 import { getMissionLog } from './comms.js';
-import { fmtClock, plural, statusLabel, statusTone } from './format.js';
+import { fmtClock, isRetrying, plural, statusLabel, statusTone } from './format.js';
 
 const MAX_LINES = 300; // DOM lines kept across all waves of the turn
 const STICK_PX = 28; // this close to the bottom counts as "at the bottom"
@@ -341,10 +341,11 @@ export function createCommsLog(opts = {}) {
           chip.btn.dataset.agent = key;
         }
         const status = str(a.status) || 'queued';
-        if (status !== chip.status) {
-          chip.status = status;
-          chip.btn.dataset.tone = status === 'thinking' ? 'think' : statusTone(status);
-          setText(chip.sr, `, ${statusLabel(status, 'agent')}`);
+        const look = isRetrying(a) ? 'retrying' : status;
+        if (look !== chip.status) {
+          chip.status = look;
+          chip.btn.dataset.tone = look === 'retrying' ? 'warn' : status === 'thinking' ? 'think' : statusTone(status);
+          setText(chip.sr, `, ${look === 'retrying' ? 'Retrying' : statusLabel(status, 'agent')}`);
         }
         if (prev.nextSibling !== chip.btn) filters.insertBefore(chip.btn, prev.nextSibling);
         prev = chip.btn;

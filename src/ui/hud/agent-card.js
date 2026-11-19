@@ -24,6 +24,7 @@ import {
   fmtUsd,
   hostname,
   isActiveStatus,
+  isRetrying,
   modelShort,
   onSecond,
   plural,
@@ -490,16 +491,22 @@ export function createAgentCard(agent, opts = {}) {
   function update(next) {
     if (next && typeof next === 'object') a = next;
     const status = str(a.status) || 'queued';
+    // A queued agent counting down to a retry reads as "Retrying" in the warning tone
+    // (data-status stays the engine's status).
+    const retrying = isRetrying(a);
+    const look = retrying ? 'retrying' : status;
 
-    if (status !== shown.status) {
-      shown.status = status;
-      const tone = statusTone(status);
+    if (look !== shown.status) {
+      shown.status = look;
+      const tone = retrying ? 'warn' : statusTone(status);
       el.dataset.status = status;
       el.dataset.tone = tone;
+      el.classList.toggle('is-retrying', retrying);
       pill.dataset.tone = tone;
-      clear(pillIcon).append(icon(statusIcon(status), { size: 13 }));
-      setText(pillText, statusLabel(status, 'agent'));
-      clear(activityIcon).append(icon(statusIcon(status), { size: 14 }));
+      const glyph = retrying ? 'refresh' : statusIcon(status);
+      clear(pillIcon).append(icon(glyph, { size: 13 }));
+      setText(pillText, retrying ? 'Retrying' : statusLabel(status, 'agent'));
+      clear(activityIcon).append(icon(glyph, { size: 14 }));
     }
 
     const name = str(a.codename) || 'Agent';

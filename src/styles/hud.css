@@ -399,6 +399,11 @@
 .hud-chip[data-tone='active'] .hud-chip__icon .icon {
   animation: hud-spin 1.1s linear infinite;
 }
+/* Waiting out a retry ("Rate limited — retrying in 12s"): a slowly turning refresh glyph. */
+.hud-chip .hud-chip__icon .icon-refresh,
+.hud-agent.is-retrying :is(.hud-pill__icon, .hud-agent__activity-icon) .icon-refresh {
+  animation: hud-spin 2.4s linear infinite;
+}
 .hud-chip[data-tone='ok'] .hud-chip__icon {
   filter: drop-shadow(0 0 4px var(--ok));
 }
@@ -1818,6 +1823,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .hud-chip .icon,
+  .hud-agent .icon-refresh,
   .hud-chip.is-entering,
   .hud-mission::after,
   .hud-progress.is-indeterminate::after,
