@@ -1,0 +1,566 @@
+// createJarvis(deps): the engine's public object (SPEC 7). Owns conversations' mutation while a
+// turn runs, the per-run context (events, throttled persistence, usage accounting), the shared
+// per-model concurrency limiters, and the start / resume / stop lifecycle. No DOM access here.
+
+import { createEmitter } from './emitter.js';
+import { createLimiter } from './limiter.js';
+import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
+import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODES, bucketOf } from './models.js';
+import { LEAD_SYSTEM_V1, buildTurnContext, leadToolsV1 } from './prompts.js';
+import { STOPPED_BY_OWNER, runLeadTurn, toolResultMessage } from './lead.js';
+import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
+import { clampInt, formatLocalTime, singleLine, truncate, uid } from './util.js';
+
+const PERSIST_INTERVAL_MS = 1000;
+const DEFAULT_RETRY_BASE_MS = 5000;
+const TEST_MODEL = 'claude-haiku-5-5';
+
+/** The settings fields the engine reads, validated (SPEC 5 ranges); bad values fall back to defaults. */
+export function normalizeSettings(raw) {
+  const s = raw && typeof raw === 'object' ? raw : {};
+  const str = (v) => (typeof v === 'string' ? v : '');
+  return {
+    userName: str(s.userName),
+    leadModel: str(s.leadModel).trim() || DEFAULT_LEAD_MODEL,
+    workerModel: str(s.workerModel).trim() || DEFAULT_WORKER_MODEL,
+    depth: DEPTHS[s.depth] ? s.depth : 'balanced',
+    mode: MODES[s.mode] ? s.mode : 'auto',
+    maxAgents: clampInt(s.maxAgents, 1, 20, 8),
+    maxParallel: clampInt(s.maxParallel, 1, 10, 4),
+    maxWaves: clampInt(s.maxWaves, 1, 4, 3),
+    showThinking: s.showThinking !== false,
+    location: str(s.location),
+    memoryEnabled: s.memoryEnabled !== false,
+    features: {
+      fallbacks: s.features?.fallbacks !== false,
+      compaction: s.features?.compaction !== false,
+    },
+  };
+}
+
+const lastJarvisTurn = (conv) => {
+  for (let i = (conv?.turns?.length ?? 0) - 1; i >= 0; i--) if (conv.turns[i]?.role === 'jarvis') return conv.turns[i];
+  return null;
+};
+
+const FINAL_AGENT = new Set(['done', 'error']);
+
+/**
+ * Settles everything still marked as in progress when a turn ends: running tool rows, open thinking,
+ * planning/running missions and their unfinished agents. `status` is the turn's final status.
+ */
+function settleUnfinished(turn, status, ts, notify = null) {
+  const code = status === 'interrupted' ? 'interrupted' : status === 'stopped' ? 'stopped' : 'incomplete';
+  for (const seg of turn.segments || []) {
+    if (seg.kind === 'tool' && seg.status === 'running') {
+      seg.status = 'error';
+      seg.errorCode = code;
+      notify?.segment(seg);
+    } else if (seg.kind === 'thinking' && !seg.endedAt) {
+      seg.endedAt = ts;
+      notify?.segment(seg);
+    }
+  }
+  const target = status === 'interrupted' ? 'interrupted' : 'stopped';
+  for (const mission of Object.values(turn.missions || {})) {
+    const open = mission.status === 'planning' || mission.status === 'running' || (target === 'stopped' && mission.status === 'interrupted');
+    if (!open) continue;
+    mission.status = target;
+    if (!mission.endedAt) mission.endedAt = ts;
+    for (const agent of mission.agents || []) {
+      if (FINAL_AGENT.has(agent.status) || agent.status === target) continue;
+      agent.status = target;
+      agent.activity = target === 'interrupted' ? 'Connection lost — waiting to resume' : 'Stopped';
+      if (!agent.endedAt) agent.endedAt = ts;
+      notify?.agent(mission, agent);
+    }
+    notify?.mission(mission);
+  }
+}
+
+/** Live stats from the turn's data (SPEC 6 `stats`). */
+function computeStats(turn, durationMs) {
+  const urls = new Set();
+  let agents = 0;
+  let observedSearches = 0;
+  let waves = 0;
+  for (const mission of Object.values(turn.missions || {})) {
+    if (!mission.startedAt) continue;
+    waves += 1;
+    for (const agent of mission.agents || []) {
+      agents += 1;
+      observedSearches += agent.searches?.length || 0;
+      for (const s of agent.sources || []) urls.add(s.url);
+    }
+  }
+  for (const seg of turn.segments || []) {
+    if (seg.kind === 'tool') {
+      if (seg.tool === 'web_search' && seg.status !== 'running') observedSearches += 1;
+      for (const r of seg.results || []) urls.add(r.url);
+    } else if (seg.kind === 'text') {
+      for (const c of seg.citations || []) urls.add(c.url);
+    }
+  }
+  return {
+    agents,
+    searches: Math.max(turn.usage?.searches || 0, observedSearches),
+    sources: urls.size,
+    waves,
+    durationMs: Math.max(0, Math.round(durationMs)),
+  };
+}
+
+function lastAssistantAsks(conv, toolUses) {
+  const last = conv.apiMessages[conv.apiMessages.length - 1];
+  if (!last || last.role !== 'assistant' || !Array.isArray(last.content)) return false;
+  const ids = new Set(last.content.filter((b) => b?.type === 'tool_use').map((b) => b.id));
+  return toolUses.length > 0 && toolUses.every((tu) => ids.has(tu.id));
+}
+
+/** Safety net: history must never end with an assistant tool_use that has no tool_result. */
+function answerDanglingToolUses(conv) {
+  const last = conv.apiMessages[conv.apiMessages.length - 1];
+  if (!last || last.role !== 'assistant' || !Array.isArray(last.content)) return;
+  const toolUses = last.content.filter((b) => b?.type === 'tool_use' && typeof b.id === 'string');
+  if (toolUses.length) conv.apiMessages.push(toolResultMessage(toolUses, {}, STOPPED_BY_OWNER));
+}
+
+export function createJarvis(deps = {}) {
+  if (typeof deps.getSettings !== 'function') throw new TypeError('createJarvis: deps.getSettings is required');
+  if (typeof deps.getApiKey !== 'function') throw new TypeError('createJarvis: deps.getApiKey is required');
+  const d = {
+    getSettings: deps.getSettings,
+    getApiKey: deps.getApiKey,
+    getApiBase: typeof deps.getApiBase === 'function' ? deps.getApiBase : () => '',
+    memory: deps.memory && typeof deps.memory === 'object' ? deps.memory : null,
+    persist: typeof deps.persist === 'function' ? deps.persist : null,
+    onSpend: typeof deps.onSpend === 'function' ? deps.onSpend : null,
+    fetch: typeof deps.fetch === 'function' ? deps.fetch : undefined,
+    now: typeof deps.now === 'function' ? deps.now : () => new Date(),
+    clientOptions: deps.clientOptions && typeof deps.clientOptions === 'object' ? deps.clientOptions : undefined,
+    retryBaseMs: Number.isFinite(deps.retryBaseMs) && deps.retryBaseMs >= 0 ? deps.retryBaseMs : DEFAULT_RETRY_BASE_MS,
+    onFeatureUnsupported: typeof deps.onFeatureUnsupported === 'function' ? deps.onFeatureUnsupported : null,
+  };
+
+  const runs = new Map(); // conversation id → run context
+  const limiters = new Map(); // model bucket → limiter (shared by every run: rate limits are per key)
+
+  const nowDate = () => {
+    const value = d.now();
+    return value instanceof Date && Number.isFinite(value.getTime()) ? value : new Date();
+  };
+  const stamp = () => nowDate().getTime();
+
+  function readSettings() {
+    try {
+      return normalizeSettings(d.getSettings());
+    } catch (err) {
+      console.error('[jarvis] getSettings failed:', err);
+      return normalizeSettings(null);
+    }
+  }
+
+  function apiBase() {
+    try {
+      const base = d.getApiBase();
+      return typeof base === 'string' ? base : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function memoryFacts() {
+    try {
+      const list = d.memory?.list?.();
+      if (!Array.isArray(list)) return [];
+      return list.map((m) => (typeof m === 'string' ? m : m?.text)).filter((t) => typeof t === 'string' && t.trim());
+    } catch (err) {
+      console.error('[jarvis] memory.list failed:', err);
+      return [];
+    }
+  }
+
+  /** A turn persisted as 'running' with no live run here was cut off (tab killed or suspended). */
+  function repairStale(conv) {
+    if (!conv || runs.has(conv.id)) return;
+    const turn = lastJarvisTurn(conv);
+    if (!turn || turn.status !== 'running') return;
+    const ts = stamp();
+    settleUnfinished(turn, 'interrupted', ts);
+    turn.status = 'interrupted';
+    turn.endedAt = turn.endedAt || ts;
+    turn.error = turn.error || { kind: 'network', message: 'Jarvis was interrupted before it finished.', retryable: true };
+    if (!conv.pending || conv.pending.turnId !== turn.id) {
+      answerDanglingToolUses(conv);
+      const reqs = (turn.segments || []).map((s) => s.req).filter((r) => typeof r === 'number');
+      conv.pending = { turnId: turn.id, toolUses: [], req: reqs.length ? Math.max(...reqs) + 1 : 0 };
+    }
+  }
+
+  /** Before a new turn: close an interrupted tool round as stopped so history stays valid (SPEC 8.6). */
+  function abandonPending(conv) {
+    repairStale(conv);
+    const pending = conv.pending;
+    if (!pending) return;
+    conv.pending = null;
+    if (Array.isArray(pending.toolUses) && pending.toolUses.length && lastAssistantAsks(conv, pending.toolUses)) {
+      conv.apiMessages.push(toolResultMessage(pending.toolUses, pending.results, STOPPED_BY_OWNER));
+    }
+    const turn = (conv.turns || []).find((t) => t.id === pending.turnId);
+    if (turn && (turn.status === 'interrupted' || turn.status === 'running')) {
+      settleUnfinished(turn, 'stopped', stamp());
+      turn.status = 'stopped';
+      turn.endedAt = turn.endedAt || stamp();
+    }
+  }
+
+  function createPersister(conv) {
+    let last = 0;
+    let timer = null;
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      last = Date.now();
+      if (!d.persist) return;
+      try {
+        Promise.resolve(d.persist(conv)).catch((err) => console.error('[jarvis] persist failed:', err));
+      } catch (err) {
+        console.error('[jarvis] persist failed:', err);
+      }
+    };
+    const schedule = () => {
+      if (!d.persist || timer) return;
+      const wait = last + PERSIST_INTERVAL_MS - Date.now();
+      if (wait <= 0) flush();
+      else timer = setTimeout(flush, wait);
+    };
+    const cancel = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    return { schedule, flush, cancel };
+  }
+
+  function createContext(conv, turn, settings, emitter, { req }) {
+    const controller = new AbortController();
+    const persister = createPersister(conv);
+    const apiKey = (() => {
+      try {
+        return String(d.getApiKey() ?? '').trim();
+      } catch {
+        return '';
+      }
+    })();
+    let client = null;
+    let clientError = null;
+    if (apiKey) {
+      try {
+        client = createClient({ apiKey, apiBase: apiBase(), fetch: d.fetch, clientOptions: d.clientOptions });
+      } catch (err) {
+        clientError = err; // reported as the turn's error instead of throwing from startTurn
+      }
+    }
+    const depthKey = DEPTHS[turn.depth] ? turn.depth : settings.depth;
+    const syncedBuckets = new Set();
+    const noticedMissions = new Set();
+    const toolSegments = new Map();
+    for (const seg of turn.segments || []) if (seg.kind === 'tool' && seg.toolUseId) toolSegments.set(seg.toolUseId, seg);
+
+    const ctx = {
+      deps: d,
+      conv,
+      turn,
+      settings,
+      mode: MODES[turn.mode] ? turn.mode : settings.mode,
+      leadModel: turn.leadModel || settings.leadModel,
+      workerModel: turn.workerModel || settings.workerModel,
+      depthKey,
+      depth: DEPTHS[depthKey],
+      features: { ...settings.features },
+      apiKey,
+      client,
+      clientError,
+      controller,
+      signal: controller.signal,
+      retryBaseMs: d.retryBaseMs,
+      stopped: false,
+      done: false,
+      req,
+      currentReq: req,
+      paused: [],
+      continuations: 0,
+      round: null,
+      toolSegments,
+      runStartedAt: Date.now(),
+      durationBase: Number(turn.stats?.durationMs) || 0,
+      now: nowDate,
+      stamp,
+    };
+
+    ctx.emit = (type, payload) => {
+      if (ctx.done) return;
+      emitter.emit(type, payload);
+      persister.schedule();
+    };
+    ctx.persistSoon = () => {
+      if (!ctx.done) persister.schedule();
+    };
+    ctx.notice = (level, message) => {
+      if (!ctx.done) emitter.emit('notice', { level, message });
+    };
+    ctx.missionNotice = (mission, message) => {
+      if (noticedMissions.has(mission.id)) return;
+      noticedMissions.add(mission.id);
+      ctx.notice('warn', message);
+    };
+    ctx.refreshStats = () => {
+      turn.stats = computeStats(turn, ctx.durationBase + (Date.now() - ctx.runStartedAt));
+    };
+    ctx.emitTurn = () => {
+      ctx.refreshStats();
+      ctx.emit('turn', { turn });
+    };
+    ctx.addSegment = (segment) => {
+      turn.segments.push(segment);
+      ctx.emit('segment', { turn, segment });
+      return segment;
+    };
+    ctx.touchSegment = (segment) => ctx.emit('segment', { turn, segment });
+    ctx.removeSegments = (predicate) => {
+      const removed = [];
+      for (let i = turn.segments.length - 1; i >= 0; i--) {
+        if (predicate(turn.segments[i])) removed.unshift(...turn.segments.splice(i, 1));
+      }
+      for (const seg of removed) ctx.emit('segment-removed', { turn, segmentId: seg.id });
+      return removed;
+    };
+    ctx.limiterFor = (model) => {
+      const bucket = bucketOf(model);
+      let limiter = limiters.get(bucket);
+      if (!limiter) {
+        limiter = createLimiter(settings.maxParallel);
+        limiters.set(bucket, limiter);
+      } else if (!syncedBuckets.has(bucket) && limiter.isIdle()) {
+        // A new run starts from the current setting; adaptive slow-downs persist within a run.
+        limiter.setCapacity(settings.maxParallel);
+      }
+      syncedBuckets.add(bucket);
+      return limiter;
+    };
+    ctx.accountUsage = (message, model, target) => {
+      const used = message?.model || model;
+      const delta = usageDelta(message?.usage);
+      const cost = responseCost(used, message?.usage);
+      addUsage(turn.usage, delta);
+      turn.costUsd = (Number(turn.costUsd) || 0) + cost;
+      if (target?.agent) {
+        addUsage(target.agent.usage, delta);
+        target.agent.costUsd = (Number(target.agent.costUsd) || 0) + cost;
+      }
+      if (cost > 0 && d.onSpend) {
+        try {
+          d.onSpend(cost);
+        } catch (err) {
+          console.error('[jarvis] onSpend failed:', err);
+        }
+      }
+      ctx.emit('usage', { turn });
+    };
+    ctx.disableFeature = (name) => {
+      if (!ctx.features[name]) return;
+      ctx.features[name] = false;
+      if (d.onFeatureUnsupported) {
+        try {
+          d.onFeatureUnsupported(name);
+        } catch (err) {
+          console.error('[jarvis] onFeatureUnsupported failed:', err);
+        }
+      }
+      ctx.notice('info', name === 'fallbacks'
+        ? 'Server-side fallback isn’t available for this API key, so Jarvis switched it off.'
+        : 'Automatic conversation compaction isn’t available for this API key, so Jarvis switched it off.');
+    };
+    ctx.stop = () => {
+      if (ctx.done || ctx.stopped) return;
+      ctx.stopped = true;
+      controller.abort();
+    };
+    ctx.finish = (status, error) => {
+      if (ctx.done) return turn;
+      const ts = stamp();
+      settleUnfinished(turn, status, ts, {
+        segment: (segment) => ctx.emit('segment', { turn, segment }),
+        mission: (mission) => ctx.emit('mission', { turn, mission }),
+        agent: (mission, agent) => ctx.emit('agent', { turn, mission, agent }),
+      });
+      turn.status = status;
+      turn.error = error || null;
+      turn.endedAt = ts;
+      if (status !== 'interrupted') conv.pending = null;
+      ctx.paused = [];
+      ctx.refreshStats();
+      conv.updatedAt = ts;
+      ctx.done = true;
+      persister.flush(); // always at turn end and at interruption
+      // Nothing may outlive the turn (only reachable after an unexpected error mid-round).
+      if (!controller.signal.aborted) controller.abort();
+      if (runs.get(conv.id) === ctx) runs.delete(conv.id);
+      emitter.emit('turn', { turn });
+      emitter.emit('end', { turn });
+      return turn;
+    };
+    return ctx;
+  }
+
+  function launch(conv, turn, settings, { resume, req }) {
+    const emitter = createEmitter();
+    const ctx = createContext(conv, turn, settings, emitter, { req });
+    runs.set(conv.id, ctx);
+    let resolveDone;
+    const done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
+    // Start on a microtask so the caller can subscribe with run.on() before the first event.
+    Promise.resolve()
+      .then(() => {
+        ctx.emitTurn();
+        return runLeadTurn(ctx, { resume });
+      })
+      .catch((err) => {
+        console.error('[jarvis] turn crashed:', err);
+        try {
+          ctx.finish('error', classifyError(err, { model: ctx.leadModel }));
+        } catch (finishErr) {
+          console.error('[jarvis] could not finish the turn:', finishErr);
+        }
+      })
+      .then(() => {
+        if (runs.get(conv.id) === ctx) runs.delete(conv.id);
+        resolveDone(turn);
+      });
+    return {
+      conversation: conv,
+      turn,
+      on: (type, fn) => emitter.on(type, fn),
+      abort: () => ctx.stop(),
+      done,
+    };
+  }
+
+  function assertConversation(conv, fn) {
+    if (!conv || typeof conv !== 'object' || !Array.isArray(conv.turns) || !Array.isArray(conv.apiMessages)) {
+      throw new TypeError(`${fn}: not a conversation`);
+    }
+  }
+
+  function canResume(conv) {
+    if (!conv || typeof conv !== 'object' || runs.has(conv.id)) return false;
+    repairStale(conv);
+    const turn = lastJarvisTurn(conv);
+    return !!(turn && turn.status === 'interrupted' && conv.pending && conv.pending.turnId === turn.id);
+  }
+
+  return {
+    newConversation() {
+      const ts = stamp();
+      return {
+        id: uid(),
+        v: 1,
+        title: '',
+        createdAt: ts,
+        updatedAt: ts,
+        system: LEAD_SYSTEM_V1,
+        tools: leadToolsV1(),
+        apiMessages: [],
+        turns: [],
+        pending: null,
+      };
+    },
+
+    startTurn(conv, { text, mode } = {}) {
+      assertConversation(conv, 'startTurn');
+      const body = typeof text === 'string' ? text.trim() : '';
+      if (!body) throw new TypeError('startTurn: text is required');
+      if (runs.has(conv.id)) throw new Error('A turn is already running for this conversation.');
+      abandonPending(conv);
+      answerDanglingToolUses(conv);
+
+      const settings = readSettings();
+      const turnMode = MODES[mode] ? mode : settings.mode;
+      const ts = stamp();
+      const isFirst = !conv.turns.some((t) => t?.role === 'user');
+      const userTurn = { id: uid(), role: 'user', text: body, mode: turnMode, createdAt: ts };
+      const turn = {
+        id: uid(),
+        role: 'jarvis',
+        createdAt: ts,
+        endedAt: null,
+        status: 'running',
+        mode: turnMode,
+        leadModel: settings.leadModel,
+        workerModel: settings.workerModel,
+        depth: settings.depth,
+        segments: [],
+        missions: {},
+        usage: emptyUsage(),
+        costUsd: 0,
+        stats: { agents: 0, searches: 0, sources: 0, waves: 0, durationMs: 0 },
+        error: null,
+      };
+      if (isFirst || !conv.title) conv.title = truncate(singleLine(body), 60);
+      conv.turns.push(userTurn, turn);
+      const turnContext = buildTurnContext({
+        localTime: formatLocalTime(nowDate()),
+        userName: settings.userName,
+        location: settings.location,
+        mode: turnMode,
+        maxAgents: settings.maxAgents,
+        maxWaves: settings.maxWaves,
+        memoryEnabled: settings.memoryEnabled,
+        memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
+      });
+      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, { type: 'text', text: body }] });
+      conv.updatedAt = ts;
+      conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
+      return launch(conv, turn, settings, { resume: false, req: 0 });
+    },
+
+    canResume,
+
+    resumeTurn(conv) {
+      if (!canResume(conv)) return null;
+      const turn = lastJarvisTurn(conv);
+      const settings = readSettings();
+      const req = Number.isInteger(conv.pending.req) && conv.pending.req >= 0 ? conv.pending.req : 0;
+      turn.status = 'running';
+      turn.error = null;
+      turn.endedAt = null;
+      conv.updatedAt = stamp();
+      return launch(conv, turn, settings, { resume: true, req });
+    },
+
+    async testApiKey(key) {
+      const apiKey = typeof key === 'string' ? key.trim() : '';
+      if (!apiKey) return { ok: false, error: { kind: 'auth', message: ERROR_MESSAGES.missingKey, retryable: false } };
+      try {
+        const client = createClient({ apiKey, apiBase: apiBase(), fetch: d.fetch, clientOptions: d.clientOptions });
+        await client.beta.messages.create(
+          {
+            model: TEST_MODEL,
+            max_tokens: 64,
+            output_config: { effort: 'low' },
+            messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
+          },
+          { maxRetries: 1, timeout: 30 * 1000 },
+        );
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: classifyError(err, { model: TEST_MODEL }) };
+      }
+    },
+
+    isBusy() {
+      return runs.size > 0;
+    },
+  };
+}

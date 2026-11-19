@@ -25,7 +25,7 @@ export function toFiniteNumber(value) {
 
 // C0/C1 control characters, plus invisible bidi controls that can visually
 // reorder text (they have no business in names, facts or locations).
-const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F‎‏‪-‮⁦-⁩]/g;
+const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 
 /**
  * Normalize user-ish text to one clean line: strip control characters, collapse

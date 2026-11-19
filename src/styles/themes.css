@@ -1,0 +1,279 @@
+/* Jarvis themes (SPEC 14.3): accent palettes for the heads-up display, plus the theme picker.
+
+   A theme overrides ONLY accent-family tokens (accent, accent-2/3, ink, soft, glow and the
+   accent-tinted hairlines --line*) and gives the background shades (--bg, --bg-2, --bg-3) a
+   subtle tint. Text, surfaces, status colors (--ok/--warn/--err/--violet), type, spacing,
+   radii and motion always come from tokens.css, so text contrast stays WCAG AA in every
+   theme (checked by test/unit/themes.test.mjs). --glow, --glow-strong and --focus-ring are
+   built from these tokens in tokens.css and follow the theme automatically.
+
+   "arc" is the default token set. src/ui/themes.js mirrors each theme's key colors (for
+   the picker swatches, <meta name="theme-color"> and canvas fallbacks); the unit test keeps
+   both files in sync. */
+
+:root[data-theme="arc"] {
+  /* Arc Cyan: the default tokens from tokens.css. */
+}
+
+/* Ember: forge-warm orange on a plum-black night. */
+:root[data-theme="ember"] {
+  --bg: #08060a;
+  --bg-2: #0d0a10;
+  --bg-3: #10101a;
+  --line: rgba(255, 152, 92, 0.14);
+  --line-2: rgba(255, 152, 92, 0.26);
+  --line-3: rgba(255, 178, 130, 0.5);
+  --accent: #ff9757;
+  --accent-2: #ffcaa6;
+  --accent-3: #ec6a34;
+  --accent-ink: #1c0900;
+  --accent-soft: rgba(255, 151, 87, 0.12);
+  --accent-glow: rgba(255, 151, 87, 0.36);
+}
+
+/* Verdant: fresh leaf green, kept clear of the mint "done" status color. */
+:root[data-theme="verdant"] {
+  --bg: #04080a;
+  --bg-2: #070f10;
+  --bg-3: #0a151b;
+  --line: rgba(158, 232, 102, 0.13);
+  --line-2: rgba(158, 232, 102, 0.24);
+  --line-3: rgba(176, 238, 130, 0.44);
+  --accent: #9ee866;
+  --accent-2: #d0f7b2;
+  --accent-3: #62bd38;
+  --accent-ink: #081400;
+  --accent-soft: rgba(158, 232, 102, 0.12);
+  --accent-glow: rgba(158, 232, 102, 0.34);
+}
+
+/* Aurora: orchid and magenta, like the high edge of the northern lights. */
+:root[data-theme="aurora"] {
+  --bg: #07050e;
+  --bg-2: #0b0a18;
+  --bg-3: #0d1122;
+  --line: rgba(240, 146, 232, 0.14);
+  --line-2: rgba(240, 146, 232, 0.27);
+  --line-3: rgba(246, 166, 238, 0.52);
+  --accent: #f48ce6;
+  --accent-2: #ffc9f3;
+  --accent-3: #c965e3;
+  --accent-ink: #1f0019;
+  --accent-soft: rgba(244, 140, 230, 0.12);
+  --accent-glow: rgba(244, 140, 230, 0.36);
+}
+
+/* Solar: bright lemon gold, held apart from the amber "warning" status color. The soft
+   tints and hairlines lean warmer so translucent layers read gold (not olive) over navy. */
+:root[data-theme="solar"] {
+  --bg: #07070a;
+  --bg-2: #0d0c10;
+  --bg-3: #121219;
+  --line: rgba(255, 214, 110, 0.13);
+  --line-2: rgba(255, 214, 110, 0.24);
+  --line-3: rgba(255, 224, 136, 0.44);
+  --accent: #f7e35c;
+  --accent-2: #fdf3b0;
+  --accent-3: #d8a930;
+  --accent-ink: #171000;
+  --accent-soft: rgba(255, 208, 92, 0.1);
+  --accent-glow: rgba(250, 218, 92, 0.3);
+}
+
+/* Mono: brushed titanium; the accent is silver-white and the glow is restrained. */
+:root[data-theme="mono"] {
+  --bg: #050608;
+  --bg-2: #0a0c0f;
+  --bg-3: #0f1217;
+  --line: rgba(208, 218, 230, 0.13);
+  --line-2: rgba(208, 218, 230, 0.24);
+  --line-3: rgba(222, 230, 240, 0.44);
+  --accent: #e6ebf0;
+  --accent-2: #ffffff;
+  --accent-3: #a3adb8;
+  --accent-ink: #0a0d10;
+  --accent-soft: rgba(230, 235, 240, 0.1);
+  --accent-glow: rgba(230, 235, 240, 0.26);
+}
+
+/* Cross-fade colors while the theme changes (applyTheme sets data-theme-fading for
+   ~0.5s; --dur-3 is 0ms under prefers-reduced-motion, which makes this a no-op). */
+:root[data-theme-fading],
+:root[data-theme-fading] *,
+:root[data-theme-fading] *::before,
+:root[data-theme-fading] *::after {
+  transition-property: color, background-color, border-color, outline-color, box-shadow, fill, stroke, text-decoration-color;
+  transition-duration: var(--dur-3);
+  transition-timing-function: var(--ease);
+}
+
+/* ---- Theme picker (createThemePicker) ------------------------------------------- */
+
+.amb-theme-picker {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+}
+
+.amb-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+@container (min-width: 560px) {
+  .amb-theme-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+.amb-theme-option {
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: var(--tap);
+  min-height: 96px;
+  margin: 0;
+  padding: var(--sp-3) var(--sp-1) var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.amb-theme-option:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.amb-theme-option:focus {
+  outline: none;
+}
+
+.amb-theme-option:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.amb-theme-option[aria-checked="true"] {
+  border-color: var(--line-2);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.amb-theme-swatch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--sw-ink);
+  background:
+    radial-gradient(circle at 50% 50%, var(--sw-accent-2) 0 13%, transparent 14.5%),
+    radial-gradient(circle at 50% 50%, transparent 0 27%, var(--sw-accent) 28.5% 33%, transparent 34.5%),
+    radial-gradient(circle at 50% 50%, transparent 0 46%, var(--sw-accent-3) 47.5% 50%, transparent 51.5%),
+    radial-gradient(circle at 50% 50%, var(--sw-glow) 0 30%, var(--sw-bg) 72%);
+  box-shadow: 0 0 0 1px var(--sw-line), 0 0 16px var(--sw-soft);
+  transition: box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
+}
+
+/* Segmented outer ring: a HUD tick ring drawn with a masked conic gradient. */
+.amb-theme-swatch::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 8deg, var(--sw-accent) 0 26deg, transparent 26deg 45deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 calc(50% - 3px), currentColor calc(50% - 2.5px) calc(50% - 0.5px), transparent 50%);
+  mask: radial-gradient(circle, transparent 0 calc(50% - 3px), currentColor calc(50% - 2.5px) calc(50% - 0.5px), transparent 50%);
+  opacity: 0.85;
+}
+
+/* Selected: a rotating dashed orbit and a check badge. */
+.amb-theme-swatch::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--sw-accent);
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-3) var(--ease-out);
+}
+
+.amb-theme-option[aria-checked="true"] .amb-theme-swatch {
+  box-shadow: 0 0 0 1px var(--sw-accent), 0 0 22px var(--sw-glow);
+}
+
+.amb-theme-option[aria-checked="true"] .amb-theme-swatch::after {
+  opacity: 0.9;
+  transform: scale(1);
+  animation: amb-orbit 14s linear infinite;
+}
+
+.amb-theme-check {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--sw-accent);
+  color: var(--sw-ink);
+  box-shadow: 0 0 0 2px var(--bg);
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
+}
+
+.amb-theme-check .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.amb-theme-option[aria-checked="true"] .amb-theme-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.amb-theme-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-label);
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@keyframes amb-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (hover: hover) {
+  .amb-theme-option:hover .amb-theme-swatch {
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amb-theme-option[aria-checked="true"] .amb-theme-swatch::after {
+    animation: none;
+  }
+}

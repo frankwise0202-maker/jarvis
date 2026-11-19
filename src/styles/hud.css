@@ -1,0 +1,1185 @@
+/* HUD components: core canvas, inline mission card + agent chips, agent cards, Mission Control.
+   Class prefix hud-. Colors, type, spacing, radii and shadows come from tokens.css only.
+   Status is always shown by color AND an icon/text; --tone carries the status color. */
+
+/* ---------------------------------------------------------------------------------------------
+   Shared */
+
+/* Components set display on many elements; keep the hidden attribute authoritative. */
+:is(.hud-mission, .hud-agent, .hud-mc) [hidden],
+:is(.hud-mission, .hud-agent, .hud-mc)[hidden] {
+  display: none !important;
+}
+
+.hud-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+:is(.hud-pill, .hud-chip, .hud-agent, .hud-mission, .hud-mc__wave) {
+  --tone: var(--text-3);
+  --tone-soft: transparent;
+}
+:is(.hud-pill, .hud-chip, .hud-agent, .hud-mission, .hud-mc__wave)[data-tone='active'] {
+  --tone: var(--accent);
+  --tone-soft: var(--accent-soft);
+}
+:is(.hud-pill, .hud-chip, .hud-agent, .hud-mission, .hud-mc__wave)[data-tone='ok'] {
+  --tone: var(--ok);
+  --tone-soft: var(--ok-soft);
+}
+:is(.hud-pill, .hud-chip, .hud-agent, .hud-mission, .hud-mc__wave)[data-tone='warn'] {
+  --tone: var(--warn);
+  --tone-soft: var(--warn-soft);
+}
+:is(.hud-pill, .hud-chip, .hud-agent, .hud-mission, .hud-mc__wave)[data-tone='err'] {
+  --tone: var(--err);
+  --tone-soft: var(--err-soft);
+}
+/* Thinking / planning read violet everywhere. */
+:is(.hud-chip, .hud-agent)[data-status='thinking'],
+.hud-mission[data-status='planning'],
+.hud-mission[data-status='planning'] .hud-pill,
+.hud-mc[data-status='planning'] .hud-pill,
+.hud-agent[data-status='thinking'] .hud-pill {
+  --tone: var(--violet);
+  --tone-soft: var(--violet-soft);
+}
+
+.hud-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--r-pill);
+  background: var(--tone-soft);
+  box-shadow: inset 0 0 0 1px var(--tone-soft);
+  color: var(--tone);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hud-pill__icon {
+  display: inline-flex;
+}
+
+@keyframes hud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hud-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes hud-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+@keyframes hud-scanline {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes hud-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Core canvas. Zero-specificity default size, so any sizing from the shell wins. */
+
+:where(.hud-core) {
+  display: block;
+  width: var(--hud-core-size, 100%);
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Inline mission card */
+
+.hud-mission {
+  container-type: inline-size;
+  position: relative;
+  isolation: isolate;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--accent-soft), transparent 55%),
+    linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-1);
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: box-shadow var(--dur-2) var(--ease);
+}
+.hud-mission:active {
+  box-shadow: inset 0 0 0 1px var(--line-3), var(--shadow-1);
+}
+/* HUD corner brackets. */
+.hud-mission::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line-3), var(--line-3)) left top / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left top / 1px 12px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 1px 12px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 1px 12px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 1px 12px no-repeat;
+}
+/* A light that runs along the top edge while the mission works; a steady tone line when finished. */
+.hud-mission::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--tone), transparent);
+  opacity: 0;
+}
+.hud-mission[data-tone='active']::after {
+  opacity: 1;
+  animation: hud-scanline 2.6s var(--ease) infinite;
+}
+.hud-mission:is([data-tone='ok'], [data-tone='warn'], [data-tone='err'])::after {
+  opacity: 0.7;
+}
+@media (hover: hover) {
+  .hud-mission:hover {
+    box-shadow: inset 0 0 0 1px var(--line-3), var(--glow);
+  }
+}
+
+.hud-mission__top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 24px;
+}
+.hud-mission__glyph {
+  display: inline-flex;
+  color: var(--accent);
+}
+.hud-mission__label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mission__spacer {
+  flex: 1;
+}
+.hud-mission__timer {
+  min-width: 5.5ch;
+  color: var(--text-2);
+  font: 500 var(--fs-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.hud-mission__title {
+  margin: var(--sp-2) 0 var(--sp-3);
+  color: var(--text);
+  font: 600 var(--fs-lg) / var(--lh-tight) var(--font-display);
+  overflow-wrap: anywhere;
+}
+.hud-mission__title.is-pending {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.hud-mission__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.hud-progress {
+  position: relative;
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--line);
+}
+.hud-progress__seg {
+  flex: none;
+  width: 0;
+  height: 100%;
+  transition: width var(--dur-3) var(--ease-out);
+}
+.hud-progress__seg--ok {
+  background: linear-gradient(90deg, var(--accent-3), var(--ok));
+  box-shadow: 0 0 10px var(--ok);
+}
+.hud-progress__seg--err {
+  background: var(--err);
+}
+.hud-progress__seg--warn {
+  background: var(--warn);
+}
+.hud-progress.is-indeterminate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 28%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: hud-sweep 1.8s var(--ease) infinite;
+}
+.hud-mission__progress-text {
+  color: var(--text-2);
+  font: 500 var(--fs-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hud-mission__placeholder {
+  margin: var(--sp-3) 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.hud-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+/* Wider cards: fewer, wider columns so roles stay readable. */
+@container (min-width: 560px) {
+  .hud-chips {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+.hud-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 10px 6px 9px;
+  border-radius: var(--r-sm);
+  background: var(--tone-soft);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  transition: background-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.hud-chip[data-tone='active'] {
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.hud-chip.is-entering {
+  animation: hud-enter var(--dur-3) var(--ease-out) both;
+}
+.hud-chip__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--tone);
+}
+.hud-chip[data-tone='active'] .hud-chip__icon .icon {
+  animation: hud-spin 1.1s linear infinite;
+}
+.hud-chip[data-tone='ok'] .hud-chip__icon {
+  filter: drop-shadow(0 0 4px var(--ok));
+}
+.hud-chip__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.hud-chip__code {
+  color: var(--text);
+  font: 700 var(--fs-2xs) / 1.1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hud-chip[data-tone='idle'] .hud-chip__code {
+  color: var(--text-2);
+}
+.hud-chip__role {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mission[data-density='compact'] .hud-chips {
+  gap: 5px;
+}
+.hud-mission[data-density='compact'] .hud-chip {
+  min-height: 36px;
+  padding: 4px 8px 4px 8px;
+  gap: 7px;
+}
+.hud-mission[data-density='compact'] .hud-chip__text {
+  gap: 2px;
+}
+.hud-chip--more {
+  justify-content: center;
+  color: var(--text-3);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+}
+
+.hud-mission__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+}
+.hud-mission__meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font: 500 var(--fs-xs) / 1.2 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mission__open {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--tap);
+  margin-right: -8px;
+  padding: 0 4px 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.hud-mission__open:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+/* Keyboard focus on the open button highlights the whole card where :has() is supported. */
+.hud-mission:has(.hud-mission__open:focus-visible) {
+  box-shadow: inset 0 0 0 1px var(--line-3), var(--focus-ring);
+}
+@media (hover: hover) {
+  .hud-mission__open:hover {
+    color: var(--accent-2);
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Agent card */
+
+.hud-agent {
+  position: relative;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  transition: box-shadow var(--dur-2) var(--ease), background-color var(--dur-2) var(--ease);
+}
+.hud-agent[data-tone='active'] {
+  background: linear-gradient(90deg, var(--tone-soft), transparent 42%), var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.hud-agent.is-expanded {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+/* Status rail. */
+.hud-agent::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--tone);
+  box-shadow: 0 0 8px var(--tone);
+  opacity: 0.9;
+}
+.hud-agent[data-tone='idle']::before {
+  box-shadow: none;
+  opacity: 0.5;
+}
+
+.hud-agent__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 10px var(--sp-3) 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hud-agent__head:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.hud-agent__avatar {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--tone-soft);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--tone);
+}
+.hud-agent__avatar::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid transparent;
+  border-radius: 50%;
+  opacity: 0;
+}
+.hud-agent[data-tone='active'] .hud-agent__avatar::after {
+  border-top-color: var(--tone);
+  border-right-color: var(--tone);
+  opacity: 1;
+  will-change: transform;
+  animation: hud-spin 1.2s linear infinite;
+}
+.hud-agent[data-tone='ok'] .hud-agent__avatar {
+  box-shadow: inset 0 0 0 1px var(--ok), 0 0 12px var(--ok-soft);
+}
+.hud-agent[data-tone='err'] .hud-agent__avatar {
+  box-shadow: inset 0 0 0 1px var(--err);
+}
+.hud-agent__initial {
+  font: 700 var(--fs-sm) / 1 var(--font-mono);
+}
+.hud-agent__ident {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.hud-agent__line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.hud-agent__codename {
+  color: var(--text);
+  font: 700 var(--fs-sm) / 1.1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hud-agent__badge {
+  flex: none;
+  padding: 3px 6px;
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hud-agent__badge--retry {
+  box-shadow: inset 0 0 0 1px var(--warn-soft);
+  color: var(--warn);
+}
+.hud-agent__role {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-agent__chev {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-2) var(--ease);
+}
+.hud-agent.is-expanded .hud-agent__chev {
+  transform: rotate(180deg);
+}
+.hud-agent__activity,
+.hud-agent__stats {
+  margin-right: var(--sp-3);
+  margin-left: calc(var(--sp-4) + 34px + var(--sp-3));
+}
+.hud-agent__activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 6px;
+  margin-bottom: 0;
+  color: var(--tone);
+  font: 500 var(--fs-xs) / 1.35 var(--font-mono);
+  cursor: pointer;
+}
+.hud-agent[data-tone='idle'] .hud-agent__activity {
+  color: var(--text-3);
+}
+.hud-agent__activity-icon {
+  display: inline-flex;
+  flex: none;
+}
+.hud-agent__activity-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-agent__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 6px;
+  margin-bottom: 11px;
+  color: var(--text-4);
+  font: 500 var(--fs-xs) / 1 var(--font-mono);
+  cursor: pointer;
+}
+.hud-agent__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.hud-agent__stat-value {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.hud-agent__body {
+  margin: 0 var(--sp-3) 0 var(--sp-4);
+  padding-bottom: var(--sp-1);
+  border-top: 1px solid var(--line);
+}
+.hud-agent__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 var(--sp-1);
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--err-soft);
+  color: var(--err);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.hud-agent__error-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Expandable sections (native <details>). */
+.hud-sec {
+  border-bottom: 1px solid var(--line);
+}
+.hud-sec:last-child {
+  border-bottom: 0;
+}
+.hud-sec__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  list-style: none;
+  cursor: pointer;
+}
+.hud-sec__summary::-webkit-details-marker {
+  display: none;
+}
+.hud-sec__summary:focus-visible {
+  outline: none;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
+}
+@media (hover: hover) {
+  .hud-sec__summary:hover {
+    color: var(--text-2);
+  }
+}
+.hud-sec__chev {
+  display: inline-flex;
+  transition: transform var(--dur-2) var(--ease);
+}
+.hud-sec[open] > .hud-sec__summary .hud-sec__chev {
+  transform: rotate(90deg);
+}
+.hud-sec__count {
+  margin-left: auto;
+  color: var(--text-4);
+  letter-spacing: 0.04em;
+}
+.hud-sec__body {
+  padding: 0 0 var(--sp-3);
+}
+.hud-agent__task {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.hud-agent__meta {
+  margin: var(--sp-2) 0 0;
+  color: var(--text-4);
+  font: 600 var(--fs-2xs) / 1.3 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.hud-agent__thinking {
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--violet-soft);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.hud-agent__plain {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.hud-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: hud-src;
+}
+.hud-src {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 0 7px 30px;
+  counter-increment: hud-src;
+}
+.hud-src::before {
+  content: counter(hud-src, decimal-leading-zero);
+  position: absolute;
+  top: 9px;
+  left: 0;
+  color: var(--text-4);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+}
+.hud-src__link {
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.hud-src__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.hud-src__link:focus-visible {
+  outline: none;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
+}
+.hud-src__meta {
+  color: var(--text-4);
+  font: 500 var(--fs-2xs) / 1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+/* Agent report Markdown (scoped, compact; complements any global md- styles). */
+.hud-md {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  overflow-wrap: anywhere;
+}
+.hud-md > :first-child {
+  margin-top: 0;
+}
+.hud-md > :last-child {
+  margin-bottom: 0;
+}
+.hud-md :is(p, ul, ol, blockquote, pre, table, .md-table-wrap, .md-codeblock) {
+  margin: 0 0 var(--sp-2);
+}
+.hud-md :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--sp-4) 0 var(--sp-2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: 650;
+  line-height: var(--lh-tight);
+}
+.hud-md :is(h5, h6) {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.hud-md :is(ul, ol) {
+  padding-left: 1.25em;
+}
+.hud-md li {
+  margin: 3px 0;
+}
+.hud-md li::marker {
+  color: var(--accent-3);
+}
+.hud-md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--line-3);
+  text-underline-offset: 2px;
+}
+.hud-md strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.hud-md code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--bg-3);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.hud-md .md-codeblock {
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hud-md .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 2px 4px 2px var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+.hud-md .md-code-lang {
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.hud-md pre {
+  margin: 0;
+  padding: var(--sp-3);
+  overflow: auto;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.hud-md pre:not(.md-codeblock pre) {
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hud-md pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+.hud-md blockquote {
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--line-3);
+  color: var(--text-2);
+}
+.hud-md .md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.hud-md table {
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+}
+.hud-md :is(th, td) {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.hud-md th {
+  color: var(--text-2);
+}
+.hud-md hr {
+  margin: var(--sp-3) 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.hud-md .md-copy {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.hud-md .md-copy[data-state='copied'] {
+  color: var(--ok);
+}
+.hud-md .md-copy[data-state='error'] {
+  color: var(--err);
+}
+.hud-md .md-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.hud-md .md-task-box {
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--accent);
+}
+.hud-md .md-task {
+  list-style: none;
+}
+.hud-md .md-link-pending {
+  color: var(--text-2);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Mission Control */
+
+.hud-mc {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text);
+}
+.hud-mc--panel {
+  height: 100%;
+}
+.hud-mc--sheet {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.hud-mc__top {
+  flex: none;
+  padding: var(--sp-2) var(--sp-4) var(--sp-1);
+}
+.hud-mc__orbit-wrap {
+  display: flex;
+  justify-content: center;
+}
+.hud-mc__orbit {
+  width: min(100%, 300px);
+}
+.hud-mc--panel .hud-mc__orbit {
+  width: min(100%, 272px);
+}
+@media (min-height: 1000px) {
+  .hud-mc--panel .hud-mc__orbit {
+    width: min(100%, 320px);
+  }
+}
+.hud-mc__header {
+  margin-top: var(--sp-1);
+  text-align: center;
+}
+.hud-mc__kicker-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+.hud-mc__spacer {
+  display: none;
+}
+.hud-mc__kicker {
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.hud-mc__title {
+  margin: var(--sp-2) 0 var(--sp-1);
+  color: var(--text);
+  font: 600 var(--fs-xl) / var(--lh-tight) var(--font-display);
+  overflow-wrap: anywhere;
+}
+.hud-mc--panel .hud-mc__title {
+  font-size: var(--fs-lg);
+}
+.hud-mc__subtitle {
+  margin: 0;
+  color: var(--text-3);
+  font: 500 var(--fs-xs) / 1.3 var(--font-mono);
+}
+
+.hud-mc__waves {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: var(--sp-3) calc(-1 * var(--sp-4)) 0;
+  padding: 0 var(--sp-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.hud-mc__waves::-webkit-scrollbar {
+  display: none;
+}
+.hud-mc__waves[hidden] {
+  display: none;
+}
+.hud-mc__wave {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text-2);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.hud-mc__wave[aria-pressed='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--line-3), 0 0 18px var(--accent-soft);
+  color: var(--text);
+}
+.hud-mc__wave:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.hud-mc__wave-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 8px var(--tone);
+}
+.hud-mc__wave[data-tone='active'] .hud-mc__wave-dot {
+  animation: hud-blink 1.4s var(--ease) infinite;
+}
+.hud-mc__wave-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-mc__stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--line);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hud-mc__stats[hidden] {
+  display: none;
+}
+.hud-mc__stat {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 4px 11px;
+  background: var(--surface-solid);
+  text-align: center;
+}
+.hud-mc__stat-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hud-mc__stat-label .icon {
+  flex: none;
+  color: var(--accent-3);
+}
+.hud-mc__stat-value {
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: var(--text);
+  font: 600 var(--fs-md) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mc__stat--agents .hud-mc__stat-value {
+  color: var(--ok);
+}
+@container (max-width: 400px) {
+  .hud-mc__stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .hud-mc__stat {
+    grid-column: span 2;
+  }
+  .hud-mc__stat--cost,
+  .hud-mc__stat--time {
+    grid-column: span 3;
+  }
+}
+
+.hud-mc__idle {
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  text-align: center;
+}
+.hud-mc__idle[hidden] {
+  display: none;
+}
+.hud-mc__idle-title {
+  margin: 0 0 var(--sp-2);
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.hud-mc__idle-text {
+  max-width: 34ch;
+  margin: 0 auto;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.hud-mc__list-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-1) var(--sp-4) calc(var(--sp-4) + var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.hud-mc--sheet .hud-mc__list-wrap {
+  flex: none;
+  overflow: visible;
+}
+.hud-mc.is-idle .hud-mc__list-wrap {
+  display: none;
+}
+.hud-mc__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.hud-mc__group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 2px;
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.hud-mc__group[hidden] {
+  display: none;
+}
+.hud-mc__group::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.hud-mc__group-count {
+  color: var(--text-4);
+}
+
+/* Short desktop windows: let the whole panel scroll instead of only the list. */
+@media (max-height: 760px) {
+  .hud-mc--panel {
+    overflow-y: auto;
+  }
+  .hud-mc--panel .hud-mc__list-wrap {
+    flex: none;
+    overflow: visible;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Reduced motion: no decorative animation (the canvas core draws static frames on its own). */
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-chip .icon,
+  .hud-chip.is-entering,
+  .hud-mission::after,
+  .hud-progress.is-indeterminate::after,
+  .hud-agent__avatar::after,
+  .hud-mc__wave-dot {
+    animation: none !important;
+  }
+  .hud-progress__seg,
+  .hud-chip,
+  .hud-agent,
+  .hud-agent__chev,
+  .hud-sec__chev {
+    transition: none;
+  }
+}

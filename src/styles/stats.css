@@ -1,0 +1,996 @@
+/* Records (SPEC 14.4): the "Systems" dashboard rendered by src/ui/stats.js.
+   Class prefix: sys-. Colors, type, spacing, radii and motion come from tokens.css only.
+   The root is a size container, so the layout follows the space it is given (a 320px phone,
+   the 400px desktop panel or a wide sheet), not the viewport. Hosts can set --sys-pad. */
+
+.sys {
+  container: sys / inline-size;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--sys-pad, var(--sp-4));
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: var(--lh);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.sys *,
+.sys *::before,
+.sys *::after {
+  box-sizing: border-box;
+}
+
+.sys [hidden] {
+  display: none !important;
+}
+
+.sys :where(h2, h3, p, dl, dt, dd, ol, li, table) {
+  margin: 0;
+  padding: 0;
+}
+
+.sys :where(ol) {
+  list-style: none;
+}
+
+.sys-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-3);
+}
+
+/* ---- header -------------------------------------------------------------------------- */
+
+.sys-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding-bottom: var(--sp-1);
+}
+
+.sys-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--sp-10);
+  height: var(--sp-10);
+  border-radius: var(--r-pill);
+  color: var(--accent);
+  background: radial-gradient(circle at 50% 50%, var(--accent-soft), transparent 70%);
+  box-shadow: var(--glow);
+}
+
+.sys-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sys-kicker {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--accent);
+  line-height: var(--lh-tight);
+}
+
+.sys-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text);
+  line-height: var(--lh-tight);
+}
+
+.sys-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: var(--lh-tight);
+  margin-top: var(--sp-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sys-icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+
+.sys-icon-btn:hover {
+  color: var(--accent-2);
+  border-color: var(--line-2);
+}
+
+.sys-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sys-icon-btn:active {
+  background: var(--surface-2);
+}
+
+.sys-refresh-icon {
+  display: grid;
+  place-items: center;
+}
+
+.sys-icon-btn.is-spinning .sys-refresh-icon {
+  animation: sys-spin calc(var(--dur-3) * 2) var(--ease-out) 1;
+}
+
+/* ---- panels ---------------------------------------------------------------------------- */
+
+.sys-panel,
+.sys-card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* Glass edge: a faint luminous line along the top of every panel. */
+.sys-panel::before,
+.sys-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: var(--sp-5);
+  right: var(--sp-5);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-3), transparent);
+  pointer-events: none;
+}
+
+.sys-card {
+  padding: var(--sp-4);
+  align-content: start;
+}
+
+.sys-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.sys-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-2);
+  line-height: var(--lh-tight);
+}
+
+.sys-card-title .icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.sys-card-meta {
+  color: var(--text-4);
+}
+
+.sys-card-sep {
+  margin-right: var(--sp-2);
+}
+
+.sys-note {
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  color: var(--text-3);
+}
+
+/* ---- counters -------------------------------------------------------------------------- */
+
+.sys-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.sys-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+}
+
+.sys-label .icon {
+  flex: none;
+  color: var(--accent-3);
+}
+
+.sys-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: clamp(var(--fs-lg), 7cqi, var(--fs-2xl));
+  line-height: var(--lh-tight);
+  color: var(--text);
+  text-shadow: 0 0 var(--sp-5) var(--accent-glow);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hero: agents deployed */
+.sys-hero {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4) var(--sp-4);
+  overflow: hidden;
+  background:
+    radial-gradient(120% 140% at 100% 50%, var(--accent-soft), transparent 55%),
+    var(--surface);
+}
+
+.sys-hero-dl {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  padding-right: min(calc(var(--sp-12) * 2), 25cqi);
+}
+
+.sys-hero .sys-label {
+  color: var(--accent-2);
+}
+
+.sys-hero .sys-label .icon {
+  color: var(--accent);
+}
+
+.sys-num--hero {
+  font-size: clamp(var(--fs-2xl), 14cqi, calc(var(--fs-3xl) * 1.55));
+  font-weight: 400;
+  color: var(--text);
+  text-shadow: 0 0 var(--sp-6) var(--accent-glow), 0 0 var(--sp-2) var(--accent-soft);
+}
+
+.sys-hero-sub {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: var(--lh-tight);
+}
+
+.sys-hero-art {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  width: min(calc(var(--sp-12) * 2), 25cqi);
+  height: min(calc(var(--sp-12) * 2), 25cqi);
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.sys-hero-art .sys-orbit {
+  width: 100%;
+  height: 100%;
+}
+
+/* Tiles: missions, searches, sources */
+.sys-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.sys-tile {
+  padding: var(--sp-3);
+  gap: var(--sp-2);
+}
+
+/* Spend (its own size container: amounts scale with the panel, which is narrower in the wide layout) */
+.sys-spend {
+  container: sys-spend / inline-size;
+  display: grid;
+  align-content: start;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.sys-spend .sys-card-title .icon {
+  color: var(--warn);
+}
+
+.sys-spend-dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.sys-num--money {
+  font-size: clamp(var(--fs-lg), 8.5cqi, var(--fs-2xl));
+  text-shadow: 0 0 var(--sp-5) var(--warn-soft);
+}
+
+/* Meters (spend alert, storage) */
+.sys-meter {
+  height: var(--sp-1);
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.sys-meter > i {
+  display: block;
+  height: 100%;
+  width: calc(var(--w, 0) * 100%);
+  min-width: 2px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-3), var(--accent));
+  box-shadow: 0 0 var(--sp-2) var(--accent-glow);
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+.sys-spend .sys-meter > i {
+  background: linear-gradient(90deg, var(--accent-3), var(--ok));
+  box-shadow: 0 0 var(--sp-2) var(--ok-soft);
+}
+
+.sys-meter.is-over > i,
+.sys-spend .sys-meter.is-over > i {
+  background: var(--warn);
+  box-shadow: 0 0 var(--sp-2) var(--warn-soft);
+}
+
+/* ---- activity chart -------------------------------------------------------------------- */
+
+.sys-activity {
+  --bar: var(--accent);
+  --bar-soft: var(--accent-soft);
+  --bar-glow: var(--accent-glow);
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.sys-activity[data-metric="searches"] {
+  --bar: var(--violet);
+  --bar-soft: var(--violet-soft);
+  --bar-glow: var(--violet-soft);
+}
+
+.sys-activity[data-metric="costUsd"] {
+  --bar: var(--warn);
+  --bar-soft: var(--warn-soft);
+  --bar-glow: var(--warn-soft);
+}
+
+/* Segmented metric switch: 36px visual, 44px hit area. */
+.sys-seg {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  padding: calc(var(--sp-1) - 1px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+}
+
+.sys-seg-btn {
+  position: relative;
+  min-height: calc(var(--tap) - var(--sp-2));
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-2) var(--ease), background-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+
+.sys-seg-btn::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--sp-1) * -1) 0;
+}
+
+.sys-seg-btn:hover {
+  color: var(--text);
+}
+
+.sys-seg-btn[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--bar, var(--accent));
+  box-shadow: 0 0 var(--sp-3) var(--bar-glow, var(--accent-glow));
+}
+
+.sys-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Readout (acts as the chart tooltip) */
+.sys-readout {
+  display: grid;
+  gap: calc(var(--sp-1) / 2);
+  min-height: calc(var(--sp-12) + var(--sp-1));
+  padding-top: var(--sp-2);
+}
+
+.sys-read-date {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--bar);
+}
+
+.sys-read-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--sp-3);
+  min-width: 0;
+}
+
+.sys-read-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xl);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.sys-read-sub {
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* Plot */
+.sys-plot {
+  position: relative;
+  height: calc(var(--sp-12) * 2.75);
+  margin-top: var(--sp-5);
+  border-radius: var(--r-xs);
+  touch-action: pan-y;
+  cursor: crosshair;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.sys-plot:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.sys-gridlines {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  pointer-events: none;
+}
+
+.sys-gridlines i {
+  border-top: 1px dashed var(--line);
+}
+
+.sys-gridlines i:first-child {
+  border-top-style: solid;
+  border-top-color: transparent;
+}
+
+.sys-bars {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line-2);
+}
+
+.sys-col {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+}
+
+/* Selection cursor */
+.sys-col::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(to top, var(--bar), transparent);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.sys-col.is-selected::before {
+  opacity: 0.55;
+}
+
+.sys-bar {
+  display: block;
+  width: 58%;
+  max-width: var(--sp-5);
+  height: calc(var(--v, 0) * 100%);
+  min-height: 2px;
+  border-radius: var(--r-xs) var(--r-xs) 1px 1px;
+  background: linear-gradient(to top, var(--bar-soft), var(--bar));
+  box-shadow: 0 0 var(--sp-3) var(--bar-glow);
+  opacity: 0.72;
+  transition:
+    height var(--dur-3) var(--ease-out) calc(var(--i, 0) * var(--dur-1) / 4),
+    opacity var(--dur-2) var(--ease),
+    background-color var(--dur-2) var(--ease);
+}
+
+.sys-col.is-today .sys-bar {
+  opacity: 0.9;
+}
+
+.sys-col.is-selected .sys-bar {
+  opacity: 1;
+  box-shadow: 0 0 var(--sp-4) var(--bar-glow), 0 0 0 1px var(--bar);
+}
+
+.sys-col.is-zero .sys-bar {
+  background: var(--line-2);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.sys-col.is-zero.is-selected .sys-bar {
+  background: var(--bar);
+}
+
+/* Value above the busiest day */
+.sys-col.is-peak::after {
+  content: attr(data-label);
+  content: attr(data-label) / ""; /* decorative: the slider's aria-valuetext carries the data */
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--v, 0) * 100% + var(--sp-1));
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: bottom var(--dur-3) var(--ease-out);
+}
+
+.sys-quiet {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-4);
+  pointer-events: none;
+}
+
+.sys-axis {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-4);
+  text-align: center;
+  line-height: var(--lh-tight);
+}
+
+.sys-axis .is-today {
+  color: var(--bar);
+  font-weight: 700;
+}
+
+.sys-range {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-4);
+  line-height: var(--lh-tight);
+}
+
+/* ---- top roles ------------------------------------------------------------------------- */
+
+.sys-roles {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.sys-roles-list {
+  display: grid;
+}
+
+.sys-role {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-1);
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.sys-role:first-child {
+  border-top: 0;
+}
+
+.sys-role-rank {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+
+.sys-role:first-child .sys-role-rank {
+  color: var(--accent);
+}
+
+.sys-role-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.sys-role-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  color: var(--accent-2);
+}
+
+.sys-role-bar {
+  grid-column: 2 / -1;
+  height: 2px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.sys-role-bar::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(var(--w, 0) * 100%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-3), var(--accent));
+  transition: width var(--dur-3) var(--ease-out) calc(var(--i, 0) * var(--dur-1) / 2);
+}
+
+/* ---- device ------------------------------------------------------------------------------ */
+
+.sys-device {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.sys-kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight);
+}
+
+.sys-device .sys-card-title + .sys-kv {
+  border-top: 0;
+}
+
+.sys-kv-key {
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.sys-kv-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- empty state ------------------------------------------------------------------------- */
+
+.sys-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-5) var(--sp-6);
+  text-align: center;
+  overflow: hidden;
+}
+
+.sys-empty-art {
+  width: calc(var(--sp-12) * 2.5);
+  height: calc(var(--sp-12) * 2.5);
+  margin-bottom: var(--sp-2);
+}
+
+.sys-empty-art .sys-orbit {
+  width: 100%;
+  height: 100%;
+}
+
+.sys-empty-title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+.sys-empty-text {
+  max-width: 34ch;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.sys-foot {
+  padding: var(--sp-1) var(--sp-1) 0;
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+  text-align: center;
+  line-height: var(--lh-tight);
+}
+
+/* ---- orbit art ----------------------------------------------------------------------------- */
+
+.sys-orbit {
+  display: block;
+  overflow: visible;
+}
+
+.sys-orbit .o-ring {
+  fill: none;
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.sys-orbit .o-ring--outer {
+  stroke: var(--line);
+  stroke-dasharray: 1 5;
+}
+
+.sys-orbit .o-ring--orbit {
+  stroke: var(--line-2);
+}
+
+.sys-orbit .o-ring--ticks {
+  stroke: var(--line-3);
+  stroke-width: 3;
+  stroke-dasharray: 1 6.33;
+  opacity: 0.6;
+}
+
+.sys-orbit .o-ring--inner {
+  stroke: var(--line-3);
+  stroke-dasharray: 22 8 4 8;
+}
+
+.sys-orbit .o-node {
+  fill: var(--accent-3);
+}
+
+.sys-orbit .o-node--hot {
+  fill: var(--accent-2);
+  filter: drop-shadow(0 0 3px var(--accent-glow));
+}
+
+.sys-orbit .o-halo {
+  fill: var(--accent-soft);
+}
+
+.sys-orbit .o-core {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+
+.sys-orbit .o-spin {
+  transform-origin: 60px 60px;
+  animation: sys-spin calc(var(--dur-3) * 100) linear infinite;
+}
+
+.sys-orbit .o-ring--inner {
+  transform-origin: 60px 60px;
+  animation: sys-spin calc(var(--dur-3) * 60) linear infinite reverse;
+}
+
+.sys-orbit .o-halo {
+  animation: sys-pulse calc(var(--dur-3) * 8) var(--ease) infinite;
+}
+
+/* ---- intro (count-up and growing bars when the view comes into sight) ------------------- */
+
+.sys.is-armed .sys-bar,
+.sys.is-armed .sys-col.is-peak::after {
+  transition: none;
+}
+
+.sys.is-armed .sys-bar {
+  height: 0;
+}
+
+.sys.is-armed .sys-col.is-peak::after {
+  bottom: var(--sp-1);
+  opacity: 0;
+}
+
+.sys.is-armed .sys-meter > i,
+.sys.is-armed .sys-role-bar::before {
+  width: 0;
+  transition: none;
+}
+
+/* ---- screen-reader-only ------------------------------------------------------------------ */
+
+.sys-sr {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* ---- container sizes --------------------------------------------------------------------- */
+
+/* Narrow phones (≤ 340px of room): tighter tiles, metric switch on its own full-width row. */
+@container sys (max-width: 340px) {
+  .sys-tile {
+    padding: var(--sp-3) var(--sp-2);
+  }
+
+  .sys-tile .sys-label .icon {
+    display: none;
+  }
+}
+
+@container sys (max-width: 460px) {
+  .sys-seg {
+    width: 100%;
+  }
+}
+
+/* Wide sheets: two columns (named areas only here, so hidden panels never leave empty rows). */
+@container sys (min-width: 640px) {
+  .sys-inner {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-areas:
+      "head head"
+      "hero spend"
+      "tiles tiles"
+      "activity activity"
+      "roles device"
+      "foot foot";
+    align-items: stretch;
+    gap: var(--sp-4);
+  }
+
+  .sys[data-empty="true"] .sys-inner {
+    grid-template-areas:
+      "head head"
+      "empty empty"
+      "spend device"
+      "foot foot";
+  }
+
+  .sys-head { grid-area: head; }
+  .sys-empty { grid-area: empty; }
+  .sys-hero { grid-area: hero; }
+  .sys-tiles { grid-area: tiles; }
+  .sys-spend { grid-area: spend; }
+  .sys-activity { grid-area: activity; }
+  .sys-roles { grid-area: roles; }
+  .sys-device { grid-area: device; }
+  .sys-foot { grid-area: foot; }
+
+  .sys-plot {
+    height: calc(var(--sp-12) * 3.5);
+  }
+
+  .sys-num--hero {
+    font-size: calc(var(--fs-3xl) * 1.55);
+  }
+}
+
+@keyframes sys-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sys-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sys-orbit .o-spin,
+  .sys-orbit .o-ring--inner,
+  .sys-orbit .o-halo,
+  .sys-icon-btn.is-spinning .sys-refresh-icon {
+    animation: none !important;
+  }
+
+  .sys-bar,
+  .sys-meter > i,
+  .sys-role-bar::before,
+  .sys-col.is-peak::after {
+    transition: none !important;
+  }
+}

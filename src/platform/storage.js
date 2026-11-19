@@ -80,21 +80,25 @@ export function removeItem(key) {
   return false;
 }
 
-/** Remove every key that starts with `prefix` (storage and overlay). Never throws. */
-export function removeItemsWithPrefix(prefix) {
+/**
+ * Remove every key that starts with `prefix` (storage and overlay), optionally only those for
+ * which `filter(key)` is true. Returns how many keys were removed. Never throws.
+ */
+export function removeItemsWithPrefix(prefix, filter) {
   const keys = new Set();
+  const wanted = (k) => k.startsWith(prefix) && (typeof filter !== 'function' || filter(k));
   const s = getStore();
   if (s) {
     try {
       for (let i = 0; i < s.length; i++) {
         const k = s.key(i);
-        if (k !== null && k.startsWith(prefix)) keys.add(k);
+        if (k !== null && wanted(k)) keys.add(k);
       }
     } catch {
       /* ignore */
     }
   }
-  for (const k of overlay.keys()) if (k.startsWith(prefix)) keys.add(k);
+  for (const k of overlay.keys()) if (wanted(k)) keys.add(k);
   for (const k of keys) removeItem(k);
   return keys.size;
 }

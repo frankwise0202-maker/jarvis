@@ -1,0 +1,184 @@
+// Backup, restore and reset (SPEC §5).
+//
+//   exportBackup()     -> Promise<Blob>  application/json:
+//                         { app: 'jarvis', version: 1, exportedAt, settings, memory, conversations }
+//                         settings exclude onboarded/features; never the API key, never spend.
+//   importBackup(file) -> Promise<{ conversations, memory, settings }>
+//                         conversations merged by id (the newer updatedAt wins), memory merged
+//                         (case-insensitive dedupe), settings restored (validated and clamped).
+//                         Throws an Error with a user-facing message for files that are not a
+//                         usable Jarvis backup.
+//   resetApp()         -> Promise<{ ok, failed }>  clears settings, API key, memory, spend, all
+//                         conversations and other jarvis.* local data, unregisters this app's
+//                         service worker and deletes its caches. Never throws. Reload afterwards.
+//   backupFileName()   -> 'jarvis-backup-YYYY-MM-DD.json' (local date)
+
+import { DEFAULT_SETTINGS, getSettings, saveSettings, resetSettings } from './settings.js';
+import { listMemory, mergeMemory, clearMemory } from './memory.js';
+import { getApiKey, clearApiKey } from './secrets.js';
+import { resetSpend } from './spend.js';
+import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
+import { removeItemsWithPrefix } from './storage.js';
+import { isPlainObject, reportWarning } from './util.js';
+
+export const BACKUP_APP = 'jarvis';
+export const BACKUP_VERSION = 1;
+const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
+const EXCLUDED_SETTINGS = ['onboarded', 'features'];
+const TURN_STATUSES = ['running', 'done', 'stopped', 'error', 'interrupted'];
+
+/** Everything worth keeping, as a JSON Blob. The API key and spend are never included. */
+export async function exportBackup() {
+  const settings = {};
+  const current = getSettings();
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (!EXCLUDED_SETTINGS.includes(key)) settings[key] = current[key];
+  }
+  const memory = listMemory().map(({ id, text, createdAt }) => ({ id, text, createdAt }));
+  const conversations = [];
+  for (const row of await listConversations()) {
+    const conv = await getConversation(row.id);
+    if (conv) conversations.push(conv);
+  }
+  const data = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), settings, memory, conversations };
+  let json = JSON.stringify(data);
+  // If the owner ever pasted their key into a chat, it must still never leave in a backup.
+  const key = getApiKey();
+  if (key && key.length >= 8 && json.includes(key)) json = json.split(key).join('[API key removed]');
+  return new Blob([json], { type: 'application/json' });
+}
+
+/** Suggested file name for a backup download. */
+export function backupFileName(date = new Date()) {
+  const d = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `jarvis-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+}
+
+/**
+ * Restore from a backup: a File/Blob (from an <input type="file">), JSON text, or the parsed
+ * object. Returns how many conversations were added or updated and how many facts were added.
+ */
+export async function importBackup(file) {
+  const data = await readBackup(file);
+  // Settings (validated by saveSettings; never the key, onboarding state or feature flags).
+  let settings = false;
+  if (isPlainObject(data.settings)) {
+    const patch = {};
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (!EXCLUDED_SETTINGS.includes(key) && Object.prototype.hasOwnProperty.call(data.settings, key)) patch[key] = data.settings[key];
+    }
+    if (Object.keys(patch).length) {
+      saveSettings(patch);
+      settings = true;
+    }
+  }
+  const memory = Array.isArray(data.memory) ? mergeMemory(data.memory) : 0;
+
+  let conversations = 0;
+  if (Array.isArray(data.conversations) && data.conversations.length) {
+    const existing = new Map((await listConversations()).map((row) => [row.id, row.updatedAt]));
+    const seen = new Set();
+    for (const raw of data.conversations) {
+      const conv = cleanConversation(raw);
+      if (!conv || seen.has(conv.id)) continue;
+      seen.add(conv.id);
+      if (existing.has(conv.id) && !(conv.updatedAt > existing.get(conv.id))) continue;
+      await restoreConversation(conv);
+      conversations++;
+    }
+  }
+  return { conversations, memory, settings };
+}
+
+/** Wipe everything Jarvis stored on this device. Reload the page afterwards. */
+export async function resetApp() {
+  const failed = [];
+  const step = async (name, fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      failed.push(name);
+      reportWarning(`Reset: could not clear ${name}`, err);
+    }
+  };
+  await step('settings', resetSettings);
+  await step('API key', clearApiKey);
+  await step('memory', clearMemory);
+  await step('spend', resetSpend);
+  await step('conversations', deleteAllConversations);
+  // Other jarvis.* keys (UI preferences). Test-only jarvis.dev.* overrides are left alone.
+  await step('local data', () => removeItemsWithPrefix('jarvis.', (key) => !key.startsWith('jarvis.dev.')));
+  await step('service worker', unregisterServiceWorkers);
+  await step('offline cache', clearCaches);
+  return { ok: failed.length === 0, failed };
+}
+
+// ---------------------------------------------------------------------------------------
+
+async function readBackup(file) {
+  let data = file;
+  if (typeof Blob !== 'undefined' && file instanceof Blob) {
+    if (file.size > MAX_BACKUP_BYTES) throw new Error('This backup file is too large to import.');
+    data = await file.text();
+  }
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      throw new Error("This file isn't a Jarvis backup (it isn't valid JSON).");
+    }
+  }
+  if (!isPlainObject(data) || data.app !== BACKUP_APP) throw new Error("This file isn't a Jarvis backup.");
+  if (typeof data.version !== 'number' || !Number.isFinite(data.version)) throw new Error("This Jarvis backup is missing its version, so it can't be imported.");
+  if (data.version > BACKUP_VERSION) throw new Error('This backup was made by a newer version of Jarvis. Update Jarvis, then try again.');
+  if (data.conversations !== undefined && !Array.isArray(data.conversations)) throw new Error('This Jarvis backup is damaged (conversations).');
+  if (data.memory !== undefined && !Array.isArray(data.memory)) throw new Error('This Jarvis backup is damaged (memory).');
+  return data;
+}
+
+/** Minimal structural validation so a bad record can never break the app or the engine. */
+function cleanConversation(raw) {
+  if (!isPlainObject(raw) || typeof raw.id !== 'string' || !raw.id || raw.id.length > 200) return null;
+  const num = (n) => (typeof n === 'number' && Number.isFinite(n) ? n : null);
+  const createdAt = num(raw.createdAt) ?? num(raw.updatedAt);
+  const updatedAt = num(raw.updatedAt) ?? createdAt;
+  if (createdAt === null || updatedAt === null) return null;
+  const turns = Array.isArray(raw.turns)
+    ? raw.turns.filter(
+        (t) =>
+          isPlainObject(t) &&
+          typeof t.id === 'string' &&
+          ((t.role === 'user' && typeof t.text === 'string') ||
+            (t.role === 'jarvis' && TURN_STATUSES.includes(t.status) && Array.isArray(t.segments))),
+      )
+    : [];
+  return {
+    ...raw,
+    v: typeof raw.v === 'number' ? raw.v : 1,
+    title: typeof raw.title === 'string' ? raw.title : '',
+    createdAt,
+    updatedAt,
+    system: typeof raw.system === 'string' ? raw.system : '',
+    tools: Array.isArray(raw.tools) ? raw.tools : [],
+    apiMessages: Array.isArray(raw.apiMessages) ? raw.apiMessages.filter(isPlainObject) : [],
+    turns,
+    pending: isPlainObject(raw.pending) ? raw.pending : null,
+  };
+}
+
+async function unregisterServiceWorkers() {
+  const sw = globalThis.navigator && globalThis.navigator.serviceWorker;
+  if (!sw || typeof sw.getRegistrations !== 'function') return;
+  // Only this app's registration: other apps may share the origin (e.g. user.github.io).
+  const base = new URL('./', globalThis.location.href).href;
+  const regs = await sw.getRegistrations();
+  await Promise.all(regs.filter((r) => typeof r.scope === 'string' && r.scope.startsWith(base)).map((r) => r.unregister()));
+}
+
+async function clearCaches() {
+  const store = globalThis.caches;
+  if (!store || typeof store.keys !== 'function') return;
+  const names = await store.keys();
+  await Promise.all(names.filter((n) => n.startsWith('jarvis-')).map((n) => store.delete(n)));
+}

@@ -103,8 +103,9 @@ export function addMemory(text) {
 }
 
 /**
- * Forget a fact by id, or by text (case-insensitive; if nothing matches exactly, a match
- * that ignores punctuation is tried). Returns true if something was removed.
+ * Forget a fact by id, or by text (case-insensitive). If no text matches exactly, a match
+ * that ignores punctuation and quotes is tried, but only when exactly one fact matches it
+ * (so a loose match can never remove several different facts). Returns true if removed.
  */
 export function removeMemory(idOrText) {
   if (typeof idOrText !== 'string' || !idOrText.trim()) return false;
@@ -116,7 +117,8 @@ export function removeMemory(idOrText) {
     next = list.filter((m) => dedupeKey(m.text) !== key);
     if (next.length === list.length) {
       const loose = looseKey(clean);
-      if (loose) next = list.filter((m) => looseKey(m.text) !== loose);
+      const hits = loose ? list.filter((m) => looseKey(m.text) === loose) : [];
+      if (hits.length === 1) next = list.filter((m) => m !== hits[0]);
     }
   }
   if (next.length === list.length) return false;

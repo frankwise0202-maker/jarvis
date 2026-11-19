@@ -1,0 +1,1544 @@
+/* Protocols & briefings (SPEC §14.2): the one-tap mission grid, its inline input row and the
+   custom-protocol editor dialog. Class prefix: proto-. Colors, type, spacing, radii, shadows and
+   motion come only from tokens.css. The grid adapts to its container width (2 columns on
+   phones, 4 when there is room), so it works wherever the integrator mounts it. */
+
+.proto {
+  container: protocols / inline-size;
+  width: 100%; /* explicit: inline-size containment must never shrink-wrap to 0 */
+  max-width: 760px;
+  min-width: 0;
+  margin-inline: auto;
+  font-family: var(--font-ui);
+  color: var(--text);
+  text-align: left;
+}
+
+.proto *,
+.proto *::before,
+.proto *::after,
+.proto-modal *,
+.proto-modal *::before,
+.proto-modal *::after {
+  box-sizing: border-box;
+}
+
+/* ---- heading ----------------------------------------------------------------------------- */
+
+.proto-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-3);
+  min-width: 0;
+}
+
+.proto-label {
+  margin: 0;
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: 0 0 12px var(--accent-glow);
+}
+
+.proto-rule {
+  flex: 1 1 auto;
+  min-width: var(--sp-4);
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-3), var(--line) 45%, transparent);
+}
+
+.proto-sub {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* ---- grid -------------------------------------------------------------------------------- */
+
+.proto-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: row dense; /* the input row slots in right under the tapped tile's row */
+  gap: var(--sp-2);
+}
+
+@container protocols (min-width: 640px) {
+  .proto-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--sp-3);
+  }
+}
+
+@supports not (container-type: inline-size) {
+  @media (min-width: 900px) {
+    .proto-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--sp-3);
+    }
+  }
+}
+
+/* ---- tiles ------------------------------------------------------------------------------- */
+
+.proto-tile {
+  position: relative;
+  isolation: isolate; /* keeps the edit button's z-index inside the tile */
+  display: flex;
+  min-width: 0;
+}
+
+.proto-tile-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+  min-height: 132px;
+  margin: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(140% 90% at 100% 0%, var(--accent-soft), transparent 52%),
+    linear-gradient(165deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    border-color var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease-out);
+}
+
+/* Luminous hairline along the top edge: faint at rest, bright on hover/open. */
+.proto-tile-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
+  opacity: 0.22;
+  transition: opacity var(--dur-2) var(--ease);
+  pointer-events: none;
+}
+
+.proto-tile-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-tile-btn:active {
+  transform: scale(0.985);
+}
+
+@media (hover: hover) {
+  .proto-tile-btn:hover {
+    border-color: var(--line-2);
+    box-shadow: var(--shadow-1), 0 0 26px var(--accent-soft);
+    transform: translateY(-1px);
+  }
+
+  .proto-tile-btn:hover::before {
+    opacity: 0.9;
+  }
+
+  .proto-tile-btn:hover .proto-icon {
+    border-color: var(--line-3);
+    box-shadow: inset 0 0 14px var(--accent-soft), 0 0 18px var(--accent-glow);
+  }
+}
+
+.proto-tile.is-open .proto-tile-btn {
+  border-color: var(--line-3);
+  box-shadow: var(--glow-strong);
+}
+
+.proto-tile.is-open .proto-tile-btn::before {
+  opacity: 1;
+}
+
+.proto-tile-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.proto-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-2);
+  background: radial-gradient(circle at 50% 35%, var(--accent-soft), transparent 72%), var(--bg-2);
+  color: var(--accent);
+  box-shadow: inset 0 0 12px var(--accent-soft), 0 0 12px var(--accent-soft);
+  transition:
+    border-color var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease);
+}
+
+.proto-icon .icon {
+  filter: drop-shadow(0 0 4px var(--accent-glow));
+}
+
+.proto-mode {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.proto-mode--swarm {
+  color: var(--accent-2);
+  border-color: var(--line-2);
+}
+
+.proto-name {
+  display: block;
+  margin-top: 2px;
+  font: 600 var(--fs-md) / var(--lh-tight) var(--font-display);
+  letter-spacing: 0.005em;
+  color: var(--text);
+  overflow-wrap: break-word;
+}
+
+.proto-blurb {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* Custom protocols: violet accents and an edit affordance. */
+.proto-tile.is-custom .proto-icon {
+  color: var(--violet);
+  background: radial-gradient(circle at 50% 35%, var(--violet-soft), transparent 72%), var(--bg-2);
+  box-shadow: inset 0 0 12px var(--violet-soft), 0 0 12px var(--violet-soft);
+}
+
+.proto-tile.is-custom .proto-icon .icon {
+  filter: none;
+}
+
+.proto-tile.is-custom .proto-tile-btn {
+  background:
+    radial-gradient(140% 90% at 100% 0%, var(--violet-soft), transparent 52%),
+    linear-gradient(165deg, var(--surface-2), var(--surface));
+}
+
+.proto-tile.is-custom .proto-blurb {
+  padding-right: 30px;
+}
+
+.proto-edit {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.proto-edit::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: var(--surface-3);
+  transition:
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.proto-edit .icon {
+  position: relative;
+}
+
+.proto-edit:focus-visible {
+  outline: none;
+}
+
+.proto-edit:focus-visible::before {
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-edit:hover {
+    color: var(--text);
+  }
+
+  .proto-edit:hover::before {
+    border-color: var(--line-3);
+  }
+}
+
+.proto-tile.is-fresh .proto-tile-btn {
+  animation: proto-fresh 1.6s var(--ease) both;
+}
+
+/* ---- "New protocol" tile ------------------------------------------------------------------ */
+
+.proto-add {
+  -webkit-appearance: none;
+  appearance: none;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 56px;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-lg);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    border-color var(--dur-2) var(--ease),
+    background-color var(--dur-2) var(--ease);
+}
+
+.proto-add-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.proto-add-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.proto-add-title {
+  font-weight: 600;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.proto-add-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.proto-add:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-add:active {
+  background: var(--accent-soft);
+}
+
+@media (hover: hover) {
+  .proto-add:hover {
+    border-color: var(--line-3);
+    background: var(--accent-soft);
+  }
+}
+
+/* ---- inline input row --------------------------------------------------------------------- */
+
+.proto-row {
+  grid-column: 1 / -1;
+  position: relative;
+  min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
+  box-shadow: var(--shadow-2), 0 0 28px var(--accent-soft);
+  animation: proto-row-in var(--dur-3) var(--ease-out) both;
+}
+
+/* The notch that points back at the tapped tile (its x is set from script). */
+.proto-row::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: var(--caret-x, 50%);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-top: 1px solid var(--line-3);
+  border-left: 1px solid var(--line-3);
+  border-top-left-radius: 3px;
+  background: var(--surface-3);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.proto-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: 28px;
+  margin-bottom: var(--sp-2);
+}
+
+.proto-row-label {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.proto-row-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.proto-row-meta::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--text-4);
+}
+
+.proto-row-close {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -8px -8px -8px auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.proto-row-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-row-close:hover {
+    color: var(--text);
+  }
+}
+
+.proto-row-field {
+  display: flex;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.proto-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 48px;
+  margin: 0;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text);
+  font: var(--fs-input) / 1.3 var(--font-ui);
+  caret-color: var(--accent);
+  transition:
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.proto-input::placeholder {
+  color: var(--text-4);
+}
+
+.proto-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.proto-row.has-error .proto-input {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+
+.proto-row.is-shaking .proto-row-field {
+  animation: proto-shake 380ms var(--ease);
+}
+
+.proto-run {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 48px;
+  min-width: 76px;
+  margin: 0;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 var(--fs-md) / 1 var(--font-ui);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 0 22px var(--accent-glow);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.proto-run:active {
+  transform: scale(0.97);
+}
+
+.proto-run:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-run:hover {
+    background: var(--accent-2);
+  }
+}
+
+.proto-hint {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--warn);
+}
+
+.proto-hint:empty {
+  display: none;
+}
+
+.proto-examples {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin-top: var(--sp-3);
+}
+
+.proto-examples-label {
+  flex: none;
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.proto-examples-list {
+  display: flex;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin: -6px 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, var(--bg) 88%, transparent);
+  mask-image: linear-gradient(90deg, var(--bg) 88%, transparent);
+}
+
+.proto-examples-list::-webkit-scrollbar {
+  display: none;
+}
+
+.proto-ex {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: none;
+  height: 32px;
+  margin: 0;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  font: 500 var(--fs-sm) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 44px-tall hit area around the 32px pill. */
+.proto-ex::after {
+  content: '';
+  position: absolute;
+  inset: -6px -3px;
+}
+
+.proto-ex:last-child {
+  margin-right: var(--sp-6);
+}
+
+.proto-ex:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-ex:active {
+  border-color: var(--line-3);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .proto-ex:hover {
+    border-color: var(--line-3);
+    color: var(--text);
+  }
+}
+
+/* ---- compact variant (icon + name, no blurbs) --------------------------------------------- */
+
+.proto--compact .proto-tile-btn {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap);
+  padding: 5px var(--sp-3) 5px 5px;
+  border-radius: var(--r-md);
+}
+
+.proto--compact .proto-tile-top {
+  flex: none;
+}
+
+.proto--compact .proto-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+}
+
+.proto--compact .proto-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+  overflow-wrap: normal;
+}
+
+.proto--compact .proto-tile.is-custom .proto-name {
+  padding-right: 30px;
+}
+
+.proto--compact .proto-edit {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+}
+
+.proto--compact .proto-add {
+  min-height: var(--tap);
+  border-radius: var(--r-md);
+}
+
+.proto--compact .proto-add-icon {
+  width: 28px;
+  height: 28px;
+}
+
+/* ---- entrance ----------------------------------------------------------------------------- */
+
+.proto.is-entering .proto-tile,
+.proto.is-entering .proto-add {
+  animation: proto-rise var(--dur-3) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 32ms);
+}
+
+/* ---- protocol prompt inside a chat bubble (createProtocolBubble) ------------------------- */
+
+.proto-bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  white-space: normal;
+  text-align: left;
+}
+
+.proto-bubble-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.proto-bubble-headline {
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.proto-bubble-brief {
+  align-self: stretch;
+  min-width: 0;
+}
+
+.proto-bubble-brief > summary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  list-style: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.proto-bubble-brief > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 44px-tall hit area around the short summary line. */
+.proto-bubble-brief > summary::after {
+  content: '';
+  position: absolute;
+  inset: -12px -8px;
+}
+
+.proto-bubble-brief > summary .icon {
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.proto-bubble-brief[open] > summary .icon {
+  transform: rotate(90deg);
+}
+
+.proto-bubble-brief > summary:focus-visible {
+  outline: none;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-bubble-brief > summary:hover {
+    color: var(--text-2);
+  }
+}
+
+.proto-bubble-text {
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- follow-up suggestion chips (createFollowupChips, SPEC 14.5) -------------------------- */
+
+.proto-fu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin-top: var(--sp-3);
+  font-family: var(--font-ui);
+}
+
+.proto-fu[hidden] {
+  display: none;
+}
+
+.proto-fu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.proto-fu-label .icon {
+  color: var(--accent);
+}
+
+.proto-fu-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.proto-fu-chip {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 100%;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 8px 12px 8px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-1);
+  color: var(--text-2);
+  font: 500 var(--fs-sm) / 1.35 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  animation: proto-rise var(--dur-3) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+  transition:
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.proto-fu-text {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.proto-fu-chip .icon {
+  flex: none;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.proto-fu-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-fu-chip:active {
+  border-color: var(--line-3);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .proto-fu-chip:hover {
+    border-color: var(--line-3);
+    color: var(--text);
+    box-shadow: var(--shadow-1), 0 0 18px var(--accent-soft);
+  }
+
+  .proto-fu-chip:hover .icon {
+    opacity: 1;
+  }
+}
+
+.proto-fu-skel {
+  width: calc(var(--sp-12) * 3.5);
+  max-width: 100%;
+  height: var(--tap);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(90deg, var(--surface) 20%, var(--surface-3) 50%, var(--surface) 80%);
+  background-size: 300% 100%;
+  animation: proto-shimmer 1.4s linear infinite;
+  animation-delay: calc(var(--i, 0) * 120ms);
+}
+
+.proto-fu-skel:nth-child(2) {
+  width: calc(var(--sp-12) * 4.5);
+}
+
+.proto-fu-skel:nth-child(3) {
+  width: calc(var(--sp-12) * 3);
+}
+
+/* ---- editor dialog ------------------------------------------------------------------------ */
+
+.proto-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: calc(var(--safe-top) + var(--sp-4)) var(--safe-right) 0 var(--safe-left);
+  background: var(--overlay);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  font-family: var(--font-ui);
+  color: var(--text);
+  animation: proto-fade var(--dur-2) var(--ease) both;
+}
+
+.proto-modal-panel {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--sp-5) var(--sp-4) calc(var(--sp-4) + var(--safe-bottom));
+  border: 1px solid var(--line-2);
+  border-bottom: 0;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-solid) 180px);
+  box-shadow: var(--shadow-2), 0 0 40px var(--accent-soft);
+  animation: proto-sheet-up var(--dur-3) var(--ease-out) both;
+}
+
+/* Luminous top edge of the sheet. */
+.proto-modal-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.proto-modal-panel.is-nudged {
+  animation: proto-nudge 320ms var(--ease);
+}
+
+@media (min-width: 640px) {
+  .proto-modal {
+    align-items: center;
+    padding: calc(var(--safe-top) + var(--sp-6)) var(--sp-6) calc(var(--safe-bottom) + var(--sp-6));
+  }
+
+  .proto-modal-panel {
+    padding: var(--sp-6);
+    border-bottom: 1px solid var(--line-2);
+    border-radius: var(--r-xl);
+    animation-name: proto-pop;
+  }
+}
+
+.proto-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  margin: 0;
+}
+
+.proto-ed-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.proto-ed-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-2);
+  background: radial-gradient(circle at 50% 35%, var(--violet-soft), transparent 72%), var(--bg-2);
+  color: var(--violet);
+  box-shadow: inset 0 0 14px var(--violet-soft), 0 0 18px var(--violet-soft);
+}
+
+.proto-ed-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.proto-ed-title {
+  margin: 0;
+  font: 600 var(--fs-xl) / var(--lh-tight) var(--font-display);
+  color: var(--text);
+}
+
+.proto-ed-title:focus {
+  outline: none;
+}
+
+.proto-ed-sub {
+  margin: 3px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.proto-ed-close {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -6px -8px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.proto-ed-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-ed-close:hover {
+    color: var(--text);
+  }
+}
+
+.proto-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.proto-field-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.proto-field-label {
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.proto-count {
+  font: 500 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text-4);
+}
+
+.proto-count.is-near {
+  color: var(--warn);
+}
+
+.proto-field-input {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text);
+  font: var(--fs-input) / 22px var(--font-ui);
+  caret-color: var(--accent);
+  transition:
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.proto-field-input::placeholder {
+  color: var(--text-4);
+}
+
+.proto-field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.proto-field-input[aria-invalid='true'] {
+  border-color: var(--err);
+  box-shadow: 0 0 0 3px var(--err-soft);
+}
+
+.proto-textarea {
+  min-height: 156px;
+  resize: vertical;
+}
+
+.proto-err {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--err);
+}
+
+.proto-err:empty,
+.proto-form-err:empty {
+  display: none;
+}
+
+.proto-form-err {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--err);
+  border-radius: var(--r-md);
+  background: var(--err-soft);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.proto-help {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.proto-token {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
+  color: var(--accent-2);
+}
+
+/* Icon picker: 6 per row, 44px targets. */
+.proto-icons {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.proto-icon-opt {
+  -webkit-appearance: none;
+  appearance: none;
+  display: grid;
+  place-items: center;
+  height: var(--tap);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.proto-icon-opt[aria-checked='true'] {
+  border-color: var(--violet);
+  background: var(--violet-soft);
+  color: var(--violet);
+  box-shadow: 0 0 16px var(--violet-soft);
+}
+
+.proto-icon-opt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-icon-opt:hover {
+    color: var(--text);
+    border-color: var(--line-2);
+  }
+}
+
+/* Mode: segmented control. */
+.proto-seg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+}
+
+.proto-seg-opt {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  font: 600 var(--fs-sm) / 1 var(--font-ui);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+
+.proto-seg-opt[aria-checked='true'] {
+  border-color: var(--line-3);
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: 0 0 16px var(--accent-soft);
+}
+
+.proto-seg-opt[aria-checked='true'] .icon {
+  color: var(--accent);
+}
+
+.proto-seg-opt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-mode-desc {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* Starter ideas (new protocols only). */
+.proto-starters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-md);
+}
+
+.proto-starters-label {
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.proto-starters-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.proto-starter {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  font: 500 var(--fs-sm) / 1 var(--font-ui);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.proto-starter .icon {
+  color: var(--violet);
+}
+
+.proto-starter:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) {
+  .proto-starter:hover {
+    border-color: var(--line-3);
+    color: var(--text);
+  }
+}
+
+/* Actions. */
+.proto-ed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+
+.proto-ed-spacer {
+  flex: 1 1 0;
+}
+
+.proto-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  font: 600 var(--fs-md) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.proto-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.proto-btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 22px var(--accent-glow);
+}
+
+.proto-btn--primary:focus-visible {
+  box-shadow: var(--focus-ring), 0 0 22px var(--accent-glow);
+}
+
+.proto-btn--ghost {
+  border-color: var(--line-2);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.proto-btn--danger {
+  padding: 0 var(--sp-3);
+  background: transparent;
+  color: var(--err);
+}
+
+.proto-btn--danger.is-armed {
+  border-color: var(--err);
+  background: var(--err-soft);
+}
+
+@media (hover: hover) {
+  .proto-btn--primary:hover {
+    background: var(--accent-2);
+  }
+
+  .proto-btn--ghost:hover {
+    border-color: var(--line-3);
+    color: var(--text);
+  }
+
+  .proto-btn--danger:hover {
+    background: var(--err-soft);
+  }
+}
+
+/* ---- motion ------------------------------------------------------------------------------- */
+
+@keyframes proto-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes proto-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes proto-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes proto-fresh {
+  0%,
+  35% {
+    border-color: var(--line-3);
+    box-shadow: var(--glow-strong);
+  }
+  100% {
+    border-color: var(--line);
+    box-shadow: var(--shadow-1);
+  }
+}
+
+@keyframes proto-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes proto-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes proto-sheet-up {
+  from {
+    transform: translateY(32px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes proto-pop {
+  from {
+    transform: translateY(8px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes proto-nudge {
+  0%,
+  100% {
+    transform: none;
+  }
+  40% {
+    transform: translateY(-6px);
+  }
+  70% {
+    transform: translateY(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proto *,
+  .proto-fu *,
+  .proto-bubble *,
+  .proto-modal,
+  .proto-modal * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .proto-tile-btn:hover,
+  .proto-tile-btn:active,
+  .proto-run:active {
+    transform: none !important;
+  }
+}

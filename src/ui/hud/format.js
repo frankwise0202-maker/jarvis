@@ -94,11 +94,16 @@ export function fmtCount(n) {
   if (Math.round(a) < 10000) return sign + groupDigits(Math.round(a));
   const units = ['K', 'M', 'B', 'T'];
   let u = -1;
-  while (u < units.length - 1 && a >= 999.95) {
+  while (u < units.length - 1 && a >= 1000) {
     a /= 1000;
     u += 1;
   }
-  const digits = a < 100 ? a.toFixed(1).replace(/\.0$/, '') : String(Math.round(a));
+  let digits = a < 100 ? a.toFixed(1).replace(/\.0$/, '') : String(Math.round(a));
+  if (digits === '1000' && u < units.length - 1) {
+    // 999,949 rounds to "1000K": show it as "1M" instead.
+    digits = '1';
+    u += 1;
+  }
   return sign + digits + units[u];
 }
 
