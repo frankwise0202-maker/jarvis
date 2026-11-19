@@ -45,6 +45,9 @@ test('settings: defaults match SPEC and are frozen', async () => {
     userName: '', leadModel: 'claude-opus-5-5', workerModel: 'claude-sonnet-5-5', depth: 'balanced', mode: 'auto',
     maxAgents: 8, maxParallel: 4, maxWaves: 3, showThinking: true, speakReplies: 'off', voiceURI: '', voiceRate: 1,
     listenLang: 'en-US', location: '', memoryEnabled: true, spendWarnUsd: 20, onboarded: false, features: { fallbacks: true, compaction: true },
+    // Feature pack (SPEC §14) and wave B (SPEC §15.1).
+    followups: true, tone: 'butler', verbosity: 'balanced', theme: 'arc', sounds: true, soundVolume: 0.6, haptics: true,
+    notifyOnFinish: true, voiceContinuous: true,
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);

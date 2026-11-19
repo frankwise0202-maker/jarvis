@@ -34,6 +34,16 @@ export const DEFAULT_SETTINGS = deepFreeze({
   spendWarnUsd: 20, // monthly estimate warning threshold; 0 = off
   onboarded: false,
   features: { fallbacks: true, compaction: true }, // auto-disabled after a 400 naming them
+  // Feature pack v1.1 (SPEC §14) and wave B (SPEC §15.1).
+  followups: true, // suggest follow-up questions after each answer (Claude Haiku)
+  tone: 'butler', // Jarvis's style: 'butler' | 'friendly' | 'professional' | 'playful'
+  verbosity: 'balanced', // 'concise' | 'balanced' | 'detailed'
+  theme: 'arc', // arc | ember | verdant | aurora | solar | mono (src/ui/themes.js)
+  sounds: true,
+  soundVolume: 0.6, // 0..1
+  haptics: true,
+  notifyOnFinish: true, // notify when a long mission finishes in the background
+  voiceContinuous: true, // Voice Mode keeps listening after each spoken reply
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -45,7 +55,12 @@ export const SETTINGS_LIMITS = Object.freeze({
   maxWaves: Object.freeze({ min: 1, max: 4 }),
   voiceRate: Object.freeze({ min: 0.7, max: 1.5 }),
   spendWarnUsd: Object.freeze({ min: 0, max: 100000 }),
+  soundVolume: Object.freeze({ min: 0, max: 1 }),
 });
+
+/** Allowed values of the enumerated wave-B settings (the Settings UI labels them). */
+export const TONES = Object.freeze(['butler', 'friendly', 'professional', 'playful']);
+export const VERBOSITIES = Object.freeze(['concise', 'balanced', 'detailed']);
 
 // Enumerations come from the engine's tables (single source of truth), with the SPEC
 // values as a safety net if a table is ever empty.
@@ -106,6 +121,17 @@ const VALIDATORS = {
   spendWarnUsd: decimalIn(SETTINGS_LIMITS.spendWarnUsd, 2),
   onboarded: bool,
   features,
+  followups: bool,
+  tone: oneOf(TONES),
+  verbosity: oneOf(VERBOSITIES),
+  // Theme ids are validated loosely here (platform knows nothing about the UI's theme list);
+  // applyTheme() falls back to the default theme for an unknown id.
+  theme: (v, fb) => (typeof v === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(v) ? v : fb),
+  sounds: bool,
+  soundVolume: decimalIn(SETTINGS_LIMITS.soundVolume, 2),
+  haptics: bool,
+  notifyOnFinish: bool,
+  voiceContinuous: bool,
 };
 
 /**
