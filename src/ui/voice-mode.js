@@ -101,6 +101,9 @@ export function finalAnswerMarkdown(turn) {
   return out.trim();
 }
 
+// A trailing period after these is not the end of a sentence.
+const ABBREVIATION = /(?:^|[\s(“"'])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|inc|ltd|co|corp|approx|no|fig|e\.g|i\.e|a\.m|p\.m|u\.s|u\.k|[a-z])\.$/i;
+
 /**
  * Split plain text into sentence ranges [{ start, end }] that tile the whole string (trailing
  * spaces and newlines stay with their sentence). Decimals, domains and common abbreviations
@@ -136,8 +139,6 @@ export function splitSentences(text) {
   }
   return out;
 }
-
-const ABBREVIATION = /(?:^|[\s(“"'])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|inc|ltd|co|corp|approx|no|fig|e\.g|i\.e|a\.m|p\.m|u\.s|u\.k|[a-z])\.$/i;
 
 function reqOf(segment) {
   return Number.isFinite(segment && segment.req) ? segment.req : 0;
