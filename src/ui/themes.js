@@ -2,8 +2,8 @@
 //
 //   applyTheme(getSettings().theme)          // at boot, and whenever settings.theme changes
 //   const picker = createThemePicker({ value: settings.theme, onChange: (id) => saveSettings({ theme: id }) });
-//   window.addEventListener('jarvis:themechange', (e) => core.setColors?.(e.detail.colors));
 //   const c = readThemeColors();             // { accent, accent2, accentGlow, ok, warn, err, violet, bg, ... } for canvas
+//   onThemeChange(({ colors }) => redraw(colors));   // window 'jarvis:themechange' (hud/core.js listens itself)
 //
 // The palettes live in src/styles/themes.css as overrides of accent-family tokens under
 // :root[data-theme="…"]. The key colors below mirror that file (for the picker swatches,
@@ -95,7 +95,7 @@ export function applyTheme(id) {
     const previous = root.getAttribute('data-theme');
     const changed = previous !== next || applied !== next;
     if (previous !== next) {
-      if (previous && BY_ID.has(previous)) fadeColors(root);
+      if (applied !== null && previous && BY_ID.has(previous)) fadeColors(root); // never at boot
       root.setAttribute('data-theme', next);
     }
     colorCache = null;

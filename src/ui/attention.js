@@ -45,8 +45,9 @@ export function initAttention(getSettings) {
  * granted, shows a system notification ({ title, summary } become its title and body).
  * Returns true if a system notification was requested (it is delivered asynchronously).
  */
-export function missionFinished({ title, summary } = {}) {
+export function missionFinished(info) {
   try {
+    const { title, summary } = info && typeof info === 'object' ? info : {};
     if (!notifyEnabled() || !isHidden()) return false;
     unseen += 1;
     setBadge(unseen);

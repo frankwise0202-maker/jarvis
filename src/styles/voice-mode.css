@@ -73,22 +73,21 @@ html.vm-open body {
   }
 }
 
-.vm *,
-.vm *::before,
-.vm *::after {
+/* Resets carry zero specificity so every component rule below wins over them. */
+:where(.vm *, .vm *::before, .vm *::after) {
   box-sizing: border-box;
 }
 
-.vm [hidden] {
-  display: none !important;
-}
-
-.vm button {
+:where(.vm button) {
   -webkit-appearance: none;
   appearance: none;
   font: inherit;
   color: inherit;
   margin: 0;
+}
+
+.vm [hidden] {
+  display: none !important;
 }
 
 .vm.is-leaving {
@@ -1045,9 +1044,15 @@ html.vm-open body {
     --vm-btn: 60px;
     --vm-btn-main: 80px;
   }
+  .vm[data-mission='true'] {
+    --vm-core: min(40vh, 400px);
+  }
   @supports (height: 1svh) {
     .vm {
       --vm-core: min(44svh, 420px);
+    }
+    .vm[data-mission='true'] {
+      --vm-core: min(40svh, 400px);
     }
   }
   .vm-top {
@@ -1087,13 +1092,19 @@ html.vm-open body {
 
 /* Landscape phones: core on the left, conversation on the right. */
 @media (orientation: landscape) and (max-height: 520px) {
-  .vm {
+  .vm,
+  .vm[data-mission='true'],
+  .vm[data-caplen='medium'],
+  .vm[data-caplen='long'] {
     --vm-core: min(58vh, 240px);
     --vm-btn: 48px;
     --vm-btn-main: 58px;
   }
   @supports (height: 1svh) {
-    .vm {
+    .vm,
+    .vm[data-mission='true'],
+    .vm[data-caplen='medium'],
+    .vm[data-caplen='long'] {
       --vm-core: min(58svh, 240px);
     }
   }

@@ -1613,6 +1613,25 @@
   box-shadow: 0 0 0 1px var(--violet-soft) inset, 0 0 14px var(--violet-soft);
 }
 
+/* Touch screens and the phone layout: the buttons themselves are full 44px tap
+   targets (SPEC §2) instead of relying on a pseudo-element hit area, which an
+   overflow-clipping ancestor could cut off. */
+@media (pointer: coarse), (max-width: 899px) {
+  .mode-switch {
+    padding: 0;
+  }
+
+  .mode-btn {
+    height: 44px;
+    min-width: 44px;
+    padding: 0 12px;
+  }
+
+  .mode-btn::after {
+    inset: 0;
+  }
+}
+
 .mode-icon {
   display: none;
 }
