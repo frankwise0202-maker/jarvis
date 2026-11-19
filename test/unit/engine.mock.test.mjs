@@ -76,6 +76,61 @@ test('engine ↔ strict mock: rate limits, failing worker, bad tool input, refus
   assert.deepEqual(mock.violations, []);
 });
 
+test('engine ↔ strict mock: Voice Mode turns get spoken replies; chat turns after them are valid and written for the screen', { skip }, async () => {
+  const { jarvis, mock } = setup();
+  const conv = jarvis.newConversation();
+  const BREAK = '\n\n---\n\n';
+  const PREAMBLE = 'Let me check the latest on that.';
+  const spoken = (text, mode = 'auto') => jarvis.startTurn(conv, { text, mode, spoken: true, keepOnStop: true }).done;
+  const texts = (t) => t.segments.filter((s) => s.kind === 'text').map((s) => s.text);
+  const kinds = (t) => t.segments.map((s) => s.kind).filter((k) => k !== 'thinking');
+  /** The reply's last text segment: plain spoken sentences, the --- line, then "## Details" and two points. */
+  const assertSpoken = (t, label) => {
+    assert.equal(t.status, 'done', label);
+    assert.equal(t.spoken, true, label);
+    const answer = texts(t).at(-1);
+    const [said, details] = answer.split(BREAK);
+    assert.doesNotMatch(said, /[*#`|[\]]|https?:|\n/, `${label}: the spoken part is plain prose`);
+    assert.match(details ?? '', /^## Details\n\n- [^\n]+\n- [^\n]+$/, `${label}: details for the screen`);
+    return { said, details };
+  };
+
+  const capital = await spoken('What is the capital of France?');
+  assert.match(assertSpoken(capital, 'capital').said, /^The capital of France is Paris\. /);
+  assert.deepEqual(kinds(capital), ['text']);
+
+  const search = await spoken('Latest EV battery news [[search]]');
+  assertSpoken(search, 'search');
+  assert.deepEqual(kinds(search), ['text', 'tool', 'text']); // the preamble is said before the search runs
+  assert.equal(texts(search)[0], PREAMBLE);
+  assert.ok(search.segments.find((s) => s.kind === 'tool').results.length >= 3);
+  assert.ok(search.segments.filter((s) => s.kind === 'text').at(-1).citations.length >= 1, 'cited points for the screen');
+
+  const swarm = await spoken('Research tidal power [[swarm:2]]', 'swarm');
+  const synthesis = assertSpoken(swarm, 'swarm');
+  assert.deepEqual(kinds(swarm), ['text', 'mission', 'text']);
+  assert.equal(texts(swarm)[0], PREAMBLE);
+  assert.deepEqual(statuses(swarm), [['done', ['done', 'done']]]);
+  for (const agent of Object.values(swarm.missions)[0].agents) assert.ok(synthesis.details.includes(`**${agent.codename}**`), agent.codename);
+
+  assertSpoken(await spoken('Long research [[pause]]'), 'pause');
+  const remember = await spoken('Remember this [[memory]]');
+  assertSpoken(remember, 'memory');
+  assert.equal(texts(remember)[0], "I'll make a note of that.");
+
+  // The next chat turn: no channel in its context, a reply for the screen, a valid history.
+  const chat = await turn(jarvis, conv, 'And what about Germany? What is its capital?');
+  assert.equal(chat.status, 'done');
+  assert.equal('spoken' in chat, false);
+  assert.match(texts(chat).join('\n'), /^The capital of Germany is Berlin\.\n\n\*\*Berlin\*\*/);
+  assert.ok(!texts(chat).join('\n').includes(BREAK));
+  const leads = mock.requests.filter((r) => r.kind === 'lead');
+  const newestContext = (r) => r.body.messages.findLast((m) => m.role === 'user' && m.content.some((b) => b.type === 'text' && b.text.startsWith('<turn_context>'))).content[0].text;
+  assert.ok(leads.slice(0, -1).every((r) => /^Reply channel: spoken\. /m.test(newestContext(r))));
+  assert.doesNotMatch(newestContext(leads.at(-1)), /Reply channel/);
+  assert.deepEqual(mock.violations, []);
+});
+
 test('engine ↔ strict mock: dropped workers resume; Stop mid-swarm keeps the history valid', { skip }, async () => {
   const { jarvis, mock } = setup();
   const conv = jarvis.newConversation();

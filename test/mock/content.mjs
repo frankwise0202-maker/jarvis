@@ -623,8 +623,8 @@ export const SPOKEN_BREAK = '\n\n---\n\n';
 export const SPOKEN_DETAILS_HEADING = 'Details';
 
 /**
- * [[longspoken]]: twelve more plain sentences (about 1,900 characters) after the usual ones, so the
- * spoken part runs past Voice Mode's cap of about 1,500 characters.
+ * [[longspoken]]: twelve more plain sentences (about 1,800 characters) after the usual ones, so the
+ * spoken part runs to about 2,000 characters, past Voice Mode's cap of about 1,500.
  */
 export const LONG_SPOKEN_SENTENCES = Object.freeze([
   'First, a little background: this has been changing quickly, and what was true a couple of years ago is no longer a safe guide to what you will find today.',
@@ -643,7 +643,7 @@ export const LONG_SPOKEN_SENTENCES = Object.freeze([
 
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 /** A small count in words, for the ear ("three agents"). */
-export const countWord = (n) => COUNT_WORDS[n] ?? String(n);
+const countWord = (n) => COUNT_WORDS[n] ?? String(n);
 
 /** "A", "A and B", "A, B and C". */
 const listWords = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);

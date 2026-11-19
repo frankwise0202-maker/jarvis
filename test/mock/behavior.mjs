@@ -141,14 +141,16 @@ function lastUserWithText(messages) {
 // Lead
 
 function planLead(body, state, now) {
-  const decision = leadDecision(body, state, now);
-  // A Voice Mode turn: every lead response streams its text a few words at a time, at a model's
-  // real pace (anthropic-mock.mjs), so speech can start while the reply is still arriving.
-  if (decision.plan && turnContextOf(lastUserWithText(body.messages).message).spoken) decision.plan.spoken = true;
+  // A Voice Mode turn (the spoken reply channel in the newest owner message's <turn_context>):
+  // replies are written for the ear, and every lead response streams its text a few words at a
+  // time at a model's real pace (anthropic-mock.mjs), so speech can start while it still arrives.
+  const spoken = turnContextOf(lastUserWithText(body.messages).message).spoken;
+  const decision = leadDecision(body, state, now, spoken);
+  if (spoken && decision.plan) decision.plan.spoken = true;
   return decision;
 }
 
-function leadDecision(body, state, now) {
+function leadDecision(body, state, now, spoken) {
   const msgs = body.messages;
   const { index: u, message: userMsg } = lastUserWithText(msgs);
   const prompt = userTextOf(userMsg);
@@ -159,8 +161,6 @@ function leadDecision(body, state, now) {
   const rng = seededRandom(`lead|${prompt}|${msgs.length}`);
   const pace = d.has('slow') ? 'slow-lead' : d.has('long') ? 'long' : 'normal';
   const files = attachmentsOf(userMsg); // photos and PDFs the owner attached to this message
-  // The newest owner message's turn context says whether the reply is heard (Voice Mode) or read.
-  const spoken = ctx.spoken;
   const env = { body, d, ctx, prompt, rng, pace, now, files, spoken };
 
   // [[otpm:N]]: an output-tokens-per-minute limit of N; a max_tokens above it is rejected (429).

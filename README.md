@@ -392,6 +392,8 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[dropworkers]]` | each agent's first stream is cut mid-way; later attempts succeed |
 | `[[workerfail]]` / `[[workerrefuse]]` | one agent always gets a 500 / a refusal |
 | `[[long]]` | a long Markdown answer (headings, table, code, lists, quote) |
+| *(Voice Mode turn: `Reply channel: spoken` in `<turn_context>`)* | every final answer is written for the ear: two or three plain sentences, a line `---`, then `## Details` with two list items (`[[long]]` puts its whole guide below the line; `[[xss]]` puts every payload there and one in the spoken part). The text streams a few words at a time, 50–90 ms apart, and a search takes about a second, so speech can start mid-reply. `[[search]]`, `[[pause]]` and `[[swarm:N]]` first say "Let me check the latest on that." |
+| `[[nobreak]]` / `[[longspoken]]` | Voice Mode turns only: a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
 
 Security rules worth knowing before you change anything: the Content-Security-Policy in
 `index.html` is fixed by SPEC §2; model, web and user text is rendered only through
