@@ -1024,8 +1024,16 @@
   z-index: 85;
 }
 .scr-inapp .scr {
-  padding-top: var(--safe-top);
-  padding-bottom: var(--safe-bottom);
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+/* The edge, its corner brackets and the grid keep to the safe area too: in the installed iPhone
+   app the status bar, the home indicator and the rounded display corners would cut them. */
+.scr-inapp .scr__edge,
+.scr-inapp .scr__bg::after {
+  top: calc(var(--safe-top) + var(--scr-inset));
+  right: calc(var(--safe-right) + var(--scr-inset));
+  bottom: calc(var(--safe-bottom) + var(--scr-inset));
+  left: calc(var(--safe-left) + var(--scr-inset));
 }
 .scr-pip-body {
   margin: 0;
