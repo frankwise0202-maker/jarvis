@@ -1737,10 +1737,10 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   the chosen screen (screens numbered primary first, then left to right; "screen 2" said on screen 2 means the other);
   "beside" → Document Picture-in-Picture (sized per kind: hologram/blueprint 640×480, answer 460×540, mission 440×500);
   "window" → a popup on the right half of the current screen; Safari/Firefox → a window to drag (said so); phones →
-  the app's own full-screen viewers, or the screen frame in an overlay; links → their own window (opened on
-  `about:blank`, opener cut), a tab on phones. A blocked popup or a PiP request without a gesture shows a one-tap
-  button (`screens-tap`), the first time with a tip to allow pop-ups (`screens-tip`, remembered in
-  `jarvis.screens.v1`). An open screen or panel takes new content without a gesture.
+  the app's own full-screen viewers, or the screen frame in an overlay (kept, edge and brackets included, inside the
+  safe area); links → their own window (opened on `about:blank`, opener cut), a tab on phones. A blocked popup or a
+  PiP request without a gesture shows a one-tap button (`screens-tap`), the first time with a tip to allow pop-ups
+  (`screens-tip`, remembered in `jarvis.screens.v1`). An open screen or panel takes new content without a gesture.
 - Screen mode (`?screen=<kind>&…`, `src/ui/screens/screen-page.js`): the HUD frame plus one panel, no chat. Saved items
   are read from IndexedDB (library, conversations; `getConversation(id, { track: false })`); live content follows over
   `BroadcastChannel('jarvis-screens')` (`hello` / `content` / `show` / `close` / `back` / `closed` / `who` / `here`).
