@@ -141,22 +141,14 @@
 .hud-mission:active {
   box-shadow: inset 0 0 0 1px var(--line-3), var(--shadow-1);
 }
-/* HUD corner brackets. */
+/* HUD corner brackets: the shared .hud-frame brackets (see "Presence building blocks" below). */
 .hud-mission::before {
   content: '';
   position: absolute;
-  inset: 5px;
+  inset: var(--frame-inset, 5px);
   z-index: -1;
   pointer-events: none;
-  background:
-    linear-gradient(var(--line-3), var(--line-3)) left top / 12px 1px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) left top / 1px 12px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) right top / 12px 1px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) right top / 1px 12px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) left bottom / 12px 1px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) left bottom / 1px 12px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) right bottom / 12px 1px no-repeat,
-    linear-gradient(var(--line-3), var(--line-3)) right bottom / 1px 12px no-repeat;
+  background: var(--frame-brackets);
 }
 /* A light that runs along the top edge while the mission works; a steady tone line when finished. */
 .hud-mission::after {
@@ -1859,5 +1851,367 @@
   .hud-comms__chev,
   .hud-comms__chip-face {
     transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Presence building blocks (SPEC 2.4.14). Used by the home screen, the desktop awareness rail,
+   Needs-you cards and the shared viewports (Optics, Workshop, Mission Control).
+
+   .hud-frame      corner brackets (--frame-arm 12px, --frame-inset 5px, --frame-color --line-3:
+                   3.3:1 against --bg, enough for graphics). Not for chat bubbles or settings rows.
+   .hud-key        a key with cut corners; the clip-path lives on ::before (the border) and ::after
+                   (the fill), never on the element, so the focus outline stays visible
+   .hud-label      mono 600 capitals, 10–11px, tracked
+   .hud-readout    a label and a value in tabular digits
+   .hud-leader     a 1px leader line, a 4px dot on the object and a label plate (--scrim-hud)
+   .hud-live       the privacy pill (a live mic or camera; tap to stop)
+   .hud-tape       the desktop sensor tape
+   .hud-scan       one 600ms scanline for an alpha event
+   .hud-viewport   the shared frame for Optics, the Workshop and Mission Control
+   .hud-grid       the background grid (--grid every 24px), only behind the hero and in viewports
+   .hud-assemble   mode change: brackets draw in (0–120ms), panels fade up 4px (120–320ms), 40ms apart */
+
+:root {
+  --frame-brackets:
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-arm, 12px) 1px no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / 1px var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-arm, 12px) 1px no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / 1px var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-arm, 12px) 1px no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / 1px var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-arm, 12px) 1px no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / 1px var(--frame-arm, 12px) no-repeat;
+}
+
+.hud-frame {
+  position: relative;
+  isolation: isolate;
+}
+.hud-frame::before {
+  content: '';
+  position: absolute;
+  inset: var(--frame-inset, 5px);
+  z-index: -1;
+  pointer-events: none;
+  background: var(--frame-brackets);
+}
+
+.hud-key {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: var(--tap);
+  min-height: 64px;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-1);
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-1) var(--ease);
+}
+.hud-key::before,
+.hud-key::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  transition: background-color var(--dur-1) var(--ease);
+}
+.hud-key::before {
+  inset: 0;
+  background: var(--line-2);
+}
+.hud-key::after {
+  inset: 1px;
+  background: var(--surface-2);
+}
+.hud-key[aria-pressed='true']::before {
+  background: var(--line-3);
+}
+.hud-key[aria-pressed='true']::after {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface-2);
+}
+.hud-key:focus {
+  outline: none;
+}
+.hud-key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.hud-key:active::after {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface-2);
+}
+@media (hover: hover) {
+  .hud-key:hover::before {
+    background: var(--line-3);
+  }
+}
+.hud-key .icon {
+  color: var(--accent);
+}
+
+.hud-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.hud-readout {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.hud-readout b,
+.hud-readout__value {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hud-leader {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.hud-leader line,
+.hud-leader path {
+  stroke: var(--line-3);
+  stroke-width: 1;
+  fill: none;
+}
+.hud-leader circle {
+  fill: var(--accent-2);
+}
+.hud-leader__plate {
+  position: absolute;
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
+  background: var(--scrim-hud);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.hud-live {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px 0 9px;
+  border: 1px solid rgba(255, 92, 114, 0.55);
+  border-radius: var(--r-pill);
+  background: var(--live-soft);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* A 44px hit area around the 28px pill that doesn't change the layout. */
+.hud-live::after {
+  content: '';
+  position: absolute;
+  inset: -8px -4px;
+}
+.hud-live__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  animation: hud-live-breath 1s var(--ease-breath) infinite alternate;
+}
+.hud-live:focus {
+  outline: none;
+}
+.hud-live:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@keyframes hud-live-breath {
+  from {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+
+.hud-tape {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.hud-tape__item {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.hud-tape__item + .hud-tape__item::before {
+  content: '·';
+  margin: 0 6px 0 2px;
+  color: var(--text-3);
+}
+.hud-tape__label {
+  color: var(--text-3);
+}
+.hud-tape__item[data-unknown='true'] .hud-tape__value {
+  color: var(--text-3);
+}
+.hud-tape__item:focus {
+  outline: none;
+}
+.hud-tape__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (hover: hover) {
+  .hud-tape__item:hover .hud-tape__value {
+    color: var(--accent-2);
+  }
+}
+
+.hud-scan {
+  position: relative;
+  overflow: hidden;
+}
+.hud-scan::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
+  box-shadow: 0 0 12px var(--accent-glow);
+  animation: hud-scan-once 600ms var(--ease) 1 both;
+}
+@keyframes hud-scan-once {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(var(--scan-distance, 300px));
+    opacity: 0;
+  }
+}
+
+.hud-viewport {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  --frame-arm: 28px;
+  --frame-inset: 16px;
+  --frame-color: rgba(138, 243, 255, 0.7);
+}
+.hud-viewport::before {
+  content: '';
+  position: absolute;
+  inset: var(--frame-inset);
+  z-index: 1;
+  pointer-events: none;
+  background: var(--frame-brackets);
+}
+.hud-viewport__title {
+  font-family: var(--font-hud);
+  font-size: var(--fs-hud-md);
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.hud-grid {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 50% 50%;
+}
+
+.hud-assemble > * {
+  animation: hud-assemble var(--dur-mode) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+.hud-assemble > .hud-frame::before,
+.hud-assemble .hud-frame--draw::before {
+  animation: hud-brackets 120ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+@keyframes hud-assemble {
+  0%,
+  37% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes hud-brackets {
+  from {
+    opacity: 0;
+    inset: calc(var(--frame-inset, 5px) + 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-live__dot,
+  .hud-scan::after,
+  .hud-assemble > *,
+  .hud-assemble > .hud-frame::before,
+  .hud-assemble .hud-frame--draw::before {
+    animation: none !important;
   }
 }

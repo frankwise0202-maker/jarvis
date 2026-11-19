@@ -1,0 +1,1014 @@
+/* Presence (SPEC 2.4): the display face, the global frame (state word, privacy pills, sensor
+   tape), the home screen (hero, state word, situation line, Needs-you, quick keys, the protocols
+   row), the desktop awareness rail and the Calm / Full HUD density. Colors, type, spacing and
+   motion come from tokens.css; the building blocks (.hud-frame, .hud-key, .hud-live, .hud-tape …)
+   live in hud.css. Idle chrome never moves: only the core animates at rest (rule 2). */
+
+/* ---- display face (self-hosted, OFL; public/fonts) -------------------------------------------- */
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/rajdhani-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/rajdhani-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---- global frame: header ------------------------------------------------------------------- */
+
+.brand-word {
+  font-family: var(--font-hud);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  line-height: 1;
+}
+
+.brand-status {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.14em;
+}
+
+.brand-status[data-tone='think'] .status-dot {
+  background: var(--violet);
+  box-shadow: 0 0 8px var(--violet);
+  animation: pulse-dot 1.4s var(--ease) infinite;
+}
+
+.brand-status[data-tone='think'] {
+  color: var(--violet);
+}
+
+/* Privacy pills sit in the status row; on a phone a pill replaces the status detail. */
+.live-pills {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.brand-status:has(.live-pills:not([hidden])) {
+  gap: 6px;
+}
+
+@media (max-width: 899px) {
+  .brand-status:has(.live-pills:not([hidden])) .status-text,
+  .brand-status:has(.live-pills:not([hidden])) .status-dot {
+    display: none;
+  }
+
+  .brand-status:has(.live-pills:not([hidden])) .live-pills {
+    margin-left: 0;
+  }
+}
+
+/* The header orb carries the Needs-you count (escalation step 2: a chip in the header). */
+.header-core[data-alert]::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--bg-2), 0 0 8px var(--warn);
+  pointer-events: none;
+}
+
+/* Desktop sensor tape: always in Full HUD; in Calm only on windows at least 1280px wide. */
+.header-tape {
+  display: none;
+}
+
+.header-tape-row {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .brand {
+    flex: 0 1 auto;
+  }
+
+  .header-actions {
+    margin-left: auto;
+  }
+
+  .app[data-density='full'] .header-tape {
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1280px) {
+  .header-tape {
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+  }
+}
+
+/* Phones in Full HUD: a 24px tape row under the header (text only: too short for tap targets). */
+@media (max-width: 899px) {
+  .app[data-density='full'] .header-tape-row {
+    display: flex;
+    justify-content: center;
+    height: 24px;
+    padding: 0 max(var(--sp-3), var(--safe-right)) 0 max(var(--sp-3), var(--safe-left));
+    border-top: 1px solid var(--line);
+  }
+
+  .hud-tape--phone {
+    font-size: var(--fs-2xs);
+  }
+
+  .hud-tape--phone .hud-tape__item {
+    min-height: 24px;
+    padding: 0 2px;
+  }
+
+  .hud-tape--phone .hud-tape__item[data-id='core'] {
+    display: none;
+  }
+}
+
+/* ---- home (SPEC 2.4.4) ------------------------------------------------------------------------ */
+
+.presence-home {
+  justify-content: flex-start;
+  padding-top: 0;
+}
+
+.presence-fold {
+  justify-content: flex-start;
+}
+
+.presence-home .hero {
+  margin-top: 0;
+}
+
+/* A faint grid behind the hero only (Calm and Full), masked to a disc so it never sits under text. */
+.presence-home .hero::after {
+  content: '';
+  position: absolute;
+  inset: -24%;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 50% 50%;
+  -webkit-mask-image: radial-gradient(closest-side, #000 40%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 40%, transparent 100%);
+}
+
+.presence-home .hero {
+  --hero-size: 184px; /* chat.js sets the exact size on .hero (SPEC 2.4.4) */
+}
+
+.presence-home .hero-core {
+  --hero-size: inherit;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.presence-home .hero-reticle {
+  inset: -8px;
+  opacity: 0.55;
+}
+
+.state-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 14px;
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.state-word__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.state-word[data-tone='think'] {
+  color: var(--violet);
+}
+
+.state-word[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.state-word[data-tone='err'] {
+  color: var(--err);
+}
+
+.presence-home .greeting {
+  margin-top: 8px;
+}
+
+.situation {
+  max-width: 32ch;
+  margin: 6px auto 0;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.presence-home .greeting-sub {
+  margin-top: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+/* Needs-you (phones; on desktop the items live in the rail). */
+.needs {
+  width: 100%;
+}
+
+.needs--home {
+  max-width: 560px;
+  margin-top: var(--sp-4);
+}
+
+.needs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.needs-card {
+  --frame-inset: 3px;
+  --frame-arm: 9px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 56px;
+  padding: 7px 11px 7px 16px;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: inset 0 0 0 1px var(--line);
+  text-align: left;
+  --tone: var(--accent);
+}
+
+.needs-card[data-tone='warn'] {
+  --tone: var(--warn);
+}
+
+.needs-card[data-tone='err'] {
+  --tone: var(--err);
+}
+
+.needs-card[data-tone='ok'] {
+  --tone: var(--ok);
+}
+
+.needs-card__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tone);
+  box-shadow: 0 0 10px var(--tone);
+}
+
+.needs-card__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--tone);
+}
+
+.needs-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.needs-card__title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-card__detail {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-card__action {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  min-width: 64px;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--accent-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.needs-card__action:hover {
+  border-color: var(--line-3);
+  background: var(--accent-soft);
+}
+
+.needs-card__action:focus {
+  outline: none;
+}
+
+.needs-card__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.needs-more {
+  -webkit-appearance: none;
+  appearance: none;
+  align-self: flex-end;
+  min-height: var(--tap);
+  margin: 2px 0 0;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.needs {
+  display: flex;
+  flex-direction: column;
+}
+
+.needs[hidden] {
+  display: none;
+}
+
+/* A new item slides in 8px (SPEC 2.4.17: the "Needs-you item arrives" alpha event). */
+.needs.is-arriving .needs-card {
+  animation: needs-in var(--dur-3) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+@keyframes needs-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* Quick keys: equal widths, 64px tall, 8px apart, a 20px icon above a mono 11px label. */
+.quick-keys {
+  display: grid;
+  grid-template-columns: repeat(var(--keys, 3), minmax(0, 1fr));
+  gap: var(--sp-2);
+  width: 100%;
+  max-width: 560px;
+  margin-top: var(--sp-4);
+}
+
+.quick-key {
+  min-height: 64px;
+}
+
+.quick-key__label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.suggestions--starters {
+  margin-top: var(--sp-4);
+}
+
+/* Full HUD: the core's gauge labels as three chips around the hero (148px cores and up). */
+.core-readouts {
+  display: none;
+}
+
+.app[data-density='full'] .presence-home:not([data-hero='120']) .core-readouts {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.core-readout {
+  position: absolute;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  background: var(--scrim-hud);
+  font-size: var(--fs-2xs);
+}
+
+.core-readout[data-unknown='true'] .hud-readout__value {
+  color: var(--text-3);
+}
+
+.core-readout[data-over='true'] .hud-readout__value {
+  color: var(--warn);
+}
+
+.core-readout--spend {
+  right: calc(50% + var(--hero-size, 184px) * 0.38);
+  top: 14%;
+}
+
+.core-readout--agents {
+  left: calc(50% + var(--hero-size, 184px) * 0.38);
+  top: 14%;
+}
+
+.core-readout--mission {
+  left: calc(50% + var(--hero-size, 184px) * 0.36);
+  bottom: 12%;
+}
+
+/* The legend popover ("What the rings mean"). */
+.core-legend {
+  --frame-inset: 5px;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 5;
+  width: min(360px, calc(100vw - 2 * var(--gutter)));
+  padding: 12px 14px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-solid);
+  box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2);
+  color: var(--text);
+  text-align: left;
+  transform: translateX(-50%);
+  animation: fade-up var(--dur-2) var(--ease-out) both;
+}
+
+.core-legend[hidden] {
+  display: none;
+}
+
+.core-legend__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.core-legend__title {
+  color: var(--accent);
+}
+
+.core-legend__close {
+  margin-right: -8px;
+}
+
+.core-legend__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.core-legend__row dt {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.core-legend__row dd {
+  margin: 1px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+/* Desktop center: the 232px core, the keys centered; Needs-you lives in the rail. */
+@media (min-width: 900px) {
+  .app[data-layout='desktop'] .needs--home {
+    display: none;
+  }
+
+  .presence-home {
+    padding-top: var(--sp-2);
+  }
+
+  .quick-keys {
+    max-width: 480px;
+  }
+
+  .presence-home .situation {
+    max-width: 40ch;
+  }
+}
+
+/* Boot (SPEC 2.4.13): only the core for the first second; from 1.0 s the state word types itself
+   in and the greeting and the rest fade in (600 ms). */
+.presence-home.is-booting .state-word {
+  visibility: hidden;
+}
+
+.presence-home.is-booting .greeting,
+.presence-home.is-booting .situation,
+.presence-home.is-booting .greeting-sub,
+.presence-home.is-booting .needs,
+.presence-home.is-booting .quick-keys,
+.presence-home.is-booting .suggestions,
+.presence-home.is-booting .empty-protocols {
+  opacity: 0;
+}
+
+.presence-home.is-booted .greeting,
+.presence-home.is-booted .situation,
+.presence-home.is-booted .greeting-sub,
+.presence-home.is-booted .needs,
+.presence-home.is-booted .quick-keys,
+.presence-home.is-booted .suggestions,
+.presence-home.is-booted .empty-protocols {
+  transition: opacity 600ms var(--ease);
+}
+
+/* ---- protocols row (SPEC 2.4.4 item 9): 152×92 cards, snapping, a 16px fade at the edge -------- */
+
+.presence-home .empty-protocols {
+  margin-top: 20px;
+}
+
+.proto--row {
+  max-width: none;
+}
+
+.proto--row .proto-grid {
+  display: flex;
+  gap: var(--sp-2);
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 2px var(--gutter) 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: var(--gutter);
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.proto--row .proto-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.proto--row .proto-tile,
+.proto--row .proto-add {
+  flex: 0 0 152px;
+  width: 152px;
+  height: 92px;
+  min-height: 92px;
+  scroll-snap-align: start;
+}
+
+.proto--row .proto-tile-btn {
+  gap: 6px;
+  min-height: 92px;
+  height: 92px;
+  padding: 10px;
+  border-radius: var(--r-md);
+}
+
+.proto--row .proto-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+}
+
+.proto--row .proto-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.proto--row .proto-name {
+  margin-top: auto;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The blurb stays the button's description (aria-describedby), out of sight. */
+.proto--row .proto-blurb {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.proto--row .proto-mode {
+  height: 18px;
+  padding: 0 6px 0 5px;
+}
+
+.proto--row .proto-add {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.proto--row .proto-add-sub {
+  display: none;
+}
+
+.proto--row .proto-row {
+  margin-top: var(--sp-2);
+}
+
+/* ---- desktop awareness rail (SPEC 2.4.4) ------------------------------------------------------- */
+
+.panel-rail {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .panel:not(.has-mission) .panel-mc,
+  .panel:not(.has-mission) .sys-launch {
+    display: none; /* the rail's Systems glance opens the dashboard */
+  }
+
+  .panel-rail {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-height: 0;
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .panel-rail[hidden] {
+    display: none;
+  }
+}
+
+.rail-panel {
+  flex: none;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-wide);
+}
+
+.rail-head__count {
+  color: var(--warn);
+}
+
+/* Live slot: the chronometer while idle. */
+.rail-live {
+  --frame-inset: 0px;
+  --frame-arm: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  padding: var(--sp-6) var(--sp-4);
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(80% 60% at 50% 40%, var(--accent-soft), transparent 70%),
+    var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.chrono {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.chrono__kicker {
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-wide);
+}
+
+.chrono__time {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text);
+  line-height: 1;
+}
+
+.chrono__digits {
+  font-family: var(--font-hud);
+  font-size: var(--fs-hud-xl);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 24px var(--accent-soft);
+}
+
+.chrono__period {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.chrono__date {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: var(--tracking-label);
+  color: var(--text-3);
+}
+
+.chrono__suggest {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+  margin: 14px 0 0;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.chrono__suggest:hover {
+  border-color: var(--line-3);
+  background: var(--accent-soft);
+}
+
+.chrono__suggest:focus {
+  outline: none;
+}
+
+.chrono__suggest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chrono__suggest-label {
+  color: var(--text-3);
+}
+
+.chrono__suggest .icon {
+  color: var(--accent);
+}
+
+/* Systems glance: one real reading per row; the whole panel opens the Systems sheet. */
+.rail-systems .rail-head .icon {
+  color: var(--text-3);
+}
+
+.glance {
+  -webkit-appearance: none;
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin: 0;
+  padding: 4px 12px 10px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.glance:hover {
+  box-shadow: inset 0 0 0 1px var(--line-3);
+}
+
+.glance:focus {
+  outline: none;
+}
+
+.glance:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.glance__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 30px;
+  padding: 7px 0 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.glance__label {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.glance__value {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.glance__row[data-tone='ok'] .glance__value {
+  color: var(--ok);
+}
+
+.glance__row[data-tone='warn'] .glance__value {
+  color: var(--warn);
+}
+
+.glance__row[data-tone='live'] .glance__value {
+  color: var(--live);
+}
+
+.glance__row[data-tone='muted'] .glance__value {
+  color: var(--text-3);
+}
+
+.glance__bar {
+  position: relative;
+  height: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.glance__bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+}
+
+.glance__bar[data-over='true'] .glance__bar-fill {
+  background: var(--warn);
+}
+
+.needs--rail .needs-list {
+  gap: 6px;
+}
+
+/* ---- Calm and Full HUD (SPEC 2.4.19) -------------------------------------------------------------- */
+
+/* Calm: the app-wide grid rests (the hero keeps its own faint grid). Full: the grid is on. */
+.app[data-density='calm'] .app-bg-grid {
+  display: none;
+}
+
+/* ---- reduced motion / Still ------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .needs.is-arriving .needs-card,
+  .core-legend,
+  .brand-status[data-tone='think'] .status-dot {
+    animation: none !important;
+  }
+
+  .presence-home.is-booting .greeting,
+  .presence-home.is-booting .situation,
+  .presence-home.is-booting .greeting-sub,
+  .presence-home.is-booting .needs,
+  .presence-home.is-booting .quick-keys,
+  .presence-home.is-booting .suggestions,
+  .presence-home.is-booting .empty-protocols {
+    opacity: 1;
+  }
+
+  .presence-home.is-booting .state-word {
+    visibility: visible;
+  }
+}
+
+/* "Still" (Settings → HUD → Motion): no animation anywhere, even with the system setting off. */
+:root[data-motion='still'] *,
+:root[data-motion='still'] *::before,
+:root[data-motion='still'] *::after {
+  animation-duration: 0s !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* ---- chat: the Jarvis label row's 14px core glyph (SPEC 2.4.5) -------------------------------- */
+
+svg.turn-glyph {
+  flex: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+}
+
+.turn-glyph__arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.turn-glyph__dot {
+  fill: var(--accent);
+}
+
+.turn--jarvis[data-status='error'] .turn-glyph__dot {
+  fill: var(--err);
+}
+
+.turn--jarvis[data-status='stopped'] .turn-glyph__dot,
+.turn--jarvis[data-status='interrupted'] .turn-glyph__dot,
+.turn--jarvis.is-stale .turn-glyph__dot {
+  fill: var(--warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn--jarvis.is-running svg.turn-glyph {
+    animation: none;
+  }
+}

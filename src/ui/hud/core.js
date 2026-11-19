@@ -1,22 +1,43 @@
-// The animated HUD core: concentric segmented rings, tick marks and a glowing core whose color,
-// pulse and spin reflect Jarvis's state. In 'orbit' mode the mission's agents circle the core as
-// status-colored nodes with live links, and the center reads out how many have finished.
+// The Living Core (v2, "Presence"): JARVIS's heart and data rings. One drawing at every size:
+// the 32px header orb ('mini'), the home screen's hero ('hero') and Mission Control / Voice Mode
+// ('orbit', where the mission's agents circle the core as status-colored nodes).
 //
-//   const core = createCore(canvas, { size: 220, mode: 'hero' });   // 'hero' | 'mini' | 'orbit'
-//   core.setState('thinking'); core.setAgents(mission.agents); core.setLevel(0.4); core.destroy();
-//   core.celebrate();   // mission-complete burst (orbit/hero; skipped under reduced motion)
+//   const core = createCore(canvas, { size: 184, mode: 'hero' });   // 'hero' | 'mini' | 'orbit'
+//   core.setState('thinking');           // idle listening thinking working speaking optics error offline
+//   core.setLevel(0.4);                  // voice level 0..1 (all eight voice-band segments)
+//   core.setBands(float32x8 | null);     // real voice bands 0..1 (mic analyser); null = synthetic
+//   core.setTelemetry({ spend: 0.08, agents: [0, 8], mission: null });   // real data; null = unknown
+//   core.setSensors({ mic: 'off' | 'ready' | 'live', optics: 'off' });
+//   core.setAlert(2);                    // Needs-you items: an amber bead at 12 o'clock
+//   core.cue('answer' | 'capture');      // alpha events: a core flare / one scanner pass
+//   await core.boot();                   // 1.6 s assembly; resolves when done or skipped
+//   core.setAgents(mission.agents); core.celebrate('ok'); core.destroy(); core.debugStats();
 //
-// Rendering: Canvas 2D, DPR-aware (at most 2× on phones, 3× elsewhere), backing store resized by a
-// ResizeObserver. One shared requestAnimationFrame loop drives every awake core; each core caps
-// itself at 30fps on small or touch screens (and for the 32px mini orb) and 60fps on desktop. A
-// core sleeps while the page is hidden, while its canvas is off-screen, zero-sized, detached or
-// covered (inside an `inert` subtree: a sheet or overlay is on top), and under
-// prefers-reduced-motion it draws one static frame per change instead of animating. The header's
-// mini orb also rests on a static frame after 30s in a resting state and wakes on any change.
+// The hero's rings, outside in (radius as a fraction of the core radius R; SPEC 2.4.13):
+//   0.965  bezel: hairline + four brackets (~126 s a turn); the alert bead at 12 o'clock
+//   0.90   telemetry: three fixed gauges of 36 ticks (SPEND · AGENTS · MISSION), a sweeping
+//          highlight laps them (~16.5 s). Lit ticks are real data; unknown gauges stay dark.
+//   0.79   data ring: segmented arcs (~39 s a turn, reversed while thinking) carrying packets,
+//          short bright dashes that travel and drop to the voice band (6 thinking, 1 per agent)
+//   0.70   scanner ring: dashes; the scanner sweeps only while thinking / working or on a capture
+//   0.585  voice band: 8 thick segments, thickness × (1 + 1.6 × band); tightens to 0.56 listening
+//   0.475  sensor ring: turns under two fixed beads, MIC (8 o'clock) and OPTICS (4 o'clock)
+//   core   the heart: breathes every 5 s at rest, follows the voice while speaking
+//
+// Rendering: Canvas 2D only (the holograms own the single WebGL context), DPR-aware (at most 2×
+// on phones, 3× elsewhere), backing store resized by a ResizeObserver. One shared
+// requestAnimationFrame loop drives every awake core; each core caps itself at 30 fps on small or
+// touch screens (and for the 32px mini orb) and 60 fps on desktop. A core sleeps while the page is
+// hidden, while its canvas is off-screen, zero-sized, detached or covered (inside an `inert`
+// subtree: a sheet or overlay is on top), and under prefers-reduced-motion (or the HUD's "Still"
+// motion setting) it draws one static frame per change instead of animating. The header's mini
+// orb rests on a static frame after 30 s in a resting state and wakes on any change.
 //
 // Hot path: the per-frame code allocates nothing. Colors are prebuilt strings, glows are sprites
-// rendered once per color, tick directions come from precomputed tables, and everything derived
-// from agents (labels, colors, counts, readout text) is prepared in setAgents().
+// rendered once per color, tick directions come from precomputed tables, packets and bands live
+// in preallocated typed arrays, and everything derived from data (gauge fractions, labels, node
+// colors, readout text) is prepared in the setters. Nothing on the core is random: phases come
+// from fixed tables or a hash of an agent's id.
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
@@ -27,22 +48,30 @@ const MAX_DPR_SMALL = 2;
 // The header's mini orb rests on a static frame after this long without news in a resting state
 // (idle / offline / error), and wakes on the next change. Saves battery while the app sits open.
 const MINI_DOZE_MS = 30000;
+// HUD motion "Reduced": hero and orbit cores rest too, after a short spell at rest.
+const REDUCED_DOZE_MS = 4000;
 const RESTING = new Set(['idle', 'offline', 'error']);
 
-const STATES = ['idle', 'listening', 'thinking', 'working', 'speaking', 'error', 'offline'];
+export const CORE_STATES = Object.freeze(['idle', 'listening', 'thinking', 'working', 'speaking', 'optics', 'error', 'offline']);
+const STATES = CORE_STATES;
 
 // Per-state targets. Every number eases toward its target, so state changes glide.
-//   speed: ring spin multiplier · pulseHz/pulse: core breathing rate/depth · glow: halo strength
-//   scan: sweeping scanner arc · bars: level bars (voice) · dim: overall line brightness
+//   speed: ring spin multiplier · dir: data/scanner direction (-1 = reversed while thinking)
+//   pulseHz/pulse: core breathing rate/depth · glow: halo strength · scan: sweeping scanner arc
+//   voice: voice-band response (listening/speaking) · tight: voice band eases in to 0.56R
+//   packets: data packets on the data ring (-1 = one per active agent) · cross: optics crosshair
+//   dim: overall line brightness
 const STATE_PARAMS = {
-  idle: { color: 'accent', speed: 1, pulseHz: 0.2, pulse: 0.16, glow: 0.85, scan: 0, bars: 0, dim: 1 },
-  listening: { color: 'accent2', speed: 1.35, pulseHz: 0.55, pulse: 0.2, glow: 1, scan: 0, bars: 1, dim: 1 },
-  thinking: { color: 'violet', speed: 2.1, pulseHz: 0.7, pulse: 0.22, glow: 0.95, scan: 1, bars: 0, dim: 1 },
-  working: { color: 'accent', speed: 2.5, pulseHz: 0.9, pulse: 0.24, glow: 1.05, scan: 0.85, bars: 0, dim: 1 },
-  speaking: { color: 'accent2', speed: 1.5, pulseHz: 0.8, pulse: 0.2, glow: 1, scan: 0, bars: 1, dim: 1 },
-  error: { color: 'err', speed: 0.45, pulseHz: 0.4, pulse: 0.3, glow: 0.9, scan: 0, bars: 0, dim: 0.9 },
-  offline: { color: 'mute', speed: 0.2, pulseHz: 0.1, pulse: 0.06, glow: 0.35, scan: 0, bars: 0, dim: 0.55 },
+  idle: { color: 'accent', speed: 1, dir: 1, pulseHz: 0.2, pulse: 0.16, glow: 0.85, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 1 },
+  listening: { color: 'accent2', speed: 1.35, dir: 1, pulseHz: 0.55, pulse: 0.2, glow: 1, scan: 0, voice: 1, tight: 1, packets: 0, cross: 0, dim: 1 },
+  thinking: { color: 'violet', speed: 2.1, dir: -1, pulseHz: 0.7, pulse: 0.22, glow: 0.95, scan: 1, voice: 0, tight: 0, packets: 6, cross: 0, dim: 1 },
+  working: { color: 'accent', speed: 2.5, dir: 1, pulseHz: 0.9, pulse: 0.24, glow: 1.05, scan: 0.85, voice: 0, tight: 0, packets: -1, cross: 0, dim: 1 },
+  speaking: { color: 'accent2', speed: 1.5, dir: 1, pulseHz: 0.8, pulse: 0.2, glow: 1, scan: 0, voice: 1, tight: 0, packets: 0, cross: 0, dim: 1 },
+  optics: { color: 'accent', speed: 0.8, dir: 1, pulseHz: 0.3, pulse: 0.12, glow: 0.9, scan: 0, voice: 0, tight: 0, packets: 0, cross: 1, dim: 1 },
+  error: { color: 'err', speed: 0.45, dir: 1, pulseHz: 0.4, pulse: 0.3, glow: 0.9, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 0.9 },
+  offline: { color: 'mute', speed: 0.2, dir: 1, pulseHz: 0.1, pulse: 0.06, glow: 0.35, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 0.55 },
 };
+const PARAM_KEYS = ['speed', 'dir', 'pulseHz', 'pulse', 'glow', 'scan', 'voice', 'tight', 'cross', 'dim'];
 
 const STATE_TEXT = {
   idle: 'standing by',
@@ -50,6 +79,7 @@ const STATE_TEXT = {
   thinking: 'thinking',
   working: 'agents working',
   speaking: 'speaking',
+  optics: 'optics live',
   error: 'error',
   offline: 'offline',
 };
@@ -87,6 +117,17 @@ const NODE_KIND = {
 // Speed (cycles/s) of the data pulse that travels along an active agent's link.
 const LINK_RATE = { starting: 0.45, thinking: 0.5, searching: 0.95, reading: 0.75, writing: 1.15 };
 
+/** A stable 0..1 phase for an agent id (FNV-1a): the same agent always wobbles the same way. */
+export function phaseOf(id) {
+  const s = String(id);
+  let x = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    x ^= s.charCodeAt(i);
+    x = Math.imul(x, 0x01000193);
+  }
+  return (x >>> 0) / 4294967296;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Palette (read from tokens.css custom properties; fallbacks mirror the tokens)
 
@@ -98,6 +139,7 @@ const TOKENS = {
   ok: ['--ok', '#3dffb0'],
   warn: ['--warn', '#ffc457'],
   err: ['--err', '#ff5c72'],
+  live: ['--live', '#ff5c72'],
   mute: ['--text-4', '#4f6a7c'],
   text3: ['--text-3', '#7393a8'],
   text: ['--text', '#e1f6ff'],
@@ -205,6 +247,26 @@ function watchTheme() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// HUD motion setting (SPEC 2.4.12): 'full' animates (the system's reduced-motion still wins),
+// 'reduced' lets hero and orbit cores rest on a static frame when Jarvis is at rest, 'still'
+// draws static frames only. Every live core follows a change at once.
+
+let motionPref = 'full';
+const motionListeners = new Set();
+
+/** Set the HUD motion preference for every core: 'full' | 'reduced' | 'still'. */
+export function setCoreMotion(value) {
+  const next = value === 'still' || value === 'reduced' ? value : 'full';
+  if (next === motionPref) return;
+  motionPref = next;
+  for (const fn of Array.from(motionListeners)) fn();
+}
+
+export function getCoreMotion() {
+  return motionPref;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Glow sprites: radial gradients rendered once per color, then blitted with drawImage. They are
 // cached on the palette color object itself so the per-frame lookup is a property read.
 
@@ -277,13 +339,52 @@ function tickTable(count) {
   return t;
 }
 
+// Telemetry gauges: three fixed arcs of 108° (36 ticks of 3°) with 12° gaps centered on 12, 4 and
+// 8 o'clock (the 12 o'clock gap leaves room for the alert bead). Each fills clockwise from its
+// start: AGENTS from 12 to 4 o'clock, MISSION from 4 to 8, SPEND from 8 to 12. Fixed, so each
+// gauge always sits in the same place beside its label; the sweeping highlight keeps it alive.
+export const GAUGES = Object.freeze(['spend', 'agents', 'mission']);
+const GAUGE_START_DEG = { agents: -84, mission: 36, spend: 156 };
+const gaugeCache = new Map();
+function gaugeTable(perGauge) {
+  let t = gaugeCache.get(perGauge);
+  if (!t) {
+    const n = perGauge * 3;
+    t = { per: perGauge, cos: new Float32Array(n), sin: new Float32Array(n) };
+    const cell = 108 / perGauge;
+    GAUGES.forEach((name, g) => {
+      for (let j = 0; j < perGauge; j++) {
+        const a = (GAUGE_START_DEG[name] + (j + 0.5) * cell) * DEG;
+        t.cos[g * perGauge + j] = Math.cos(a);
+        t.sin[g * perGauge + j] = Math.sin(a);
+      }
+    });
+    gaugeCache.set(perGauge, t);
+  }
+  return t;
+}
+
 const HERO_SEG = arcSet(0, 84, 98, 38, 150, 128, 292, 52);
+const HERO_SEG_N = HERO_SEG.length / 2;
 const HERO_THICK = evenArcs(8, 35);
-const HERO_THICK_HI = arcSet(0, 35, 180, 35);
 const HERO_BRACKETS = arcSet(-5, 10, 85, 10, 175, 10, 265, 10);
 const MINI_SEG = arcSet(0, 96, 120, 96, 240, 96);
 const ORBIT_SEG = arcSet(0, 64, 76, 96, 186, 28, 228, 118);
 const ORBIT_BRACKETS = arcSet(-3, 6, 87, 6, 177, 6, 267, 6);
+// Voice band: 8 segments; band i is segment i, counted clockwise from 12 o'clock.
+const BANDS = 8;
+// Fixed sensor beads (canvas angles): MIC at 8 o'clock, OPTICS at 4 o'clock.
+export const SENSORS = Object.freeze(['mic', 'optics']);
+const SENSOR_ANGLE = new Float32Array([150 * DEG, 30 * DEG]);
+const SENSOR_CODE = { off: 0, ready: 1, live: 2 };
+// Packets ride the data ring: at most 12, re-seeded at golden-angle steps (no randomness).
+const MAX_PACKETS = 12;
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+const PACKET_S = 2.8; // one life (travel, then drop to the voice band) at ring speed ×1
+// Boot: the rings assemble outward, 90 ms apart, each growing to full length in 450 ms.
+const BOOT_S = 1.6;
+const BOOT_LAYER = { heart: 0, sensor: 0.15, voice: 0.24, scanner: 0.33, data: 0.42, ticks: 0.51, bezel: 0.6 };
+const BOOT_GROW = 0.45;
 
 // ---------------------------------------------------------------------------------------------
 // Drawing primitives (no allocation)
@@ -294,20 +395,36 @@ function strokeCircle(ctx, cx, cy, r) {
   ctx.stroke();
 }
 
-function strokeArcs(ctx, cx, cy, r, rot, set) {
+/** A circle drawn from 12 o'clock clockwise to `frac` of a turn (boot reveal); 1 = full. */
+function strokeCirclePart(ctx, cx, cy, r, frac) {
+  if (frac >= 1) {
+    strokeCircle(ctx, cx, cy, r);
+    return;
+  }
+  if (frac <= 0) return;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * TAU);
+  ctx.stroke();
+}
+
+/** Arc set at radius r, each arc grown to `grow` of its length (1 = full). */
+function strokeArcs(ctx, cx, cy, r, rot, set, grow = 1) {
+  if (grow <= 0) return;
   ctx.beginPath();
   for (let i = 0; i < set.length; i += 2) {
     const a0 = rot + set[i];
     ctx.moveTo(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r);
-    ctx.arc(cx, cy, r, a0, a0 + set[i + 1]);
+    ctx.arc(cx, cy, r, a0, a0 + set[i + 1] * (grow < 1 ? grow : 1));
   }
   ctx.stroke();
 }
 
-function strokeDashes(ctx, cx, cy, r, rot, count, dash) {
+function strokeDashes(ctx, cx, cy, r, rot, count, dash, shown = 1) {
   const step = TAU / count;
+  const n = shown >= 1 ? count : Math.floor(count * shown);
+  if (n <= 0) return;
   ctx.beginPath();
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < n; i++) {
     const a0 = rot + i * step;
     ctx.moveTo(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r);
     ctx.arc(cx, cy, r, a0, a0 + dash);
@@ -342,6 +459,10 @@ function blit(ctx, img, x, y, r, alpha) {
 function easeOutCubic(t) {
   const u = 1 - t;
   return 1 - u * u * u;
+}
+
+function clamp01(v) {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 function angleDelta(from, to) {
@@ -401,7 +522,22 @@ function watchMedia(query, fn) {
   };
 }
 
-const NOOP_CORE = Object.freeze({ setState() {}, setAgents() {}, setLevel() {}, celebrate() {}, destroy() {}, debugStats: () => null });
+const resolved = Promise.resolve(false);
+const NOOP_CORE = Object.freeze({
+  setState() {},
+  setAgents() {},
+  setLevel() {},
+  setBands() {},
+  setTelemetry() {},
+  setSensors() {},
+  setAlert() {},
+  cue() {},
+  boot: () => resolved,
+  skipBoot() {},
+  celebrate() {},
+  destroy() {},
+  debugStats: () => null,
+});
 
 // Mission-complete burst: a flash at the core, two rings racing outward and the agent nodes
 // lighting up as the first ring passes them.
@@ -410,9 +546,22 @@ const BURST_STALE_MS = 2500; // a burst that could not be shown in time (core as
 
 // ---------------------------------------------------------------------------------------------
 
+/** Gauge fraction from telemetry input: a number (fraction), [value, max], or null (unknown). */
+export function gaugeFraction(v) {
+  if (v === null || v === undefined) return null;
+  if (Array.isArray(v)) {
+    const a = Number(v[0]);
+    const b = Number(v[1]);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b <= 0) return null;
+    return Math.max(0, a / b);
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, n) : null;
+}
+
 /**
  * @param {HTMLCanvasElement} canvas
- * @param {{ size?: number, mode?: 'hero'|'mini'|'orbit' }} [opts]
+ * @param {{ size?: number, mode?: 'hero'|'mini'|'orbit', idleSleepMs?: number }} [opts]
  *   size: preferred CSS size in px (applied through a zero-specificity rule, so the caller's
  *   own CSS wins); without it the canvas fills its container's width as a square.
  */
@@ -437,7 +586,7 @@ export function createCore(canvas, opts = {}) {
   // --- animated state -------------------------------------------------------------------------
   let state = 'idle';
   let target = STATE_PARAMS.idle;
-  const cur = { speed: 1, pulseHz: 0.2, pulse: 0.16, glow: 0.85, scan: 0, bars: 0, dim: 1 };
+  const cur = { speed: 1, dir: 1, pulseHz: 0.2, pulse: 0.16, glow: 0.85, scan: 0, voice: 0, tight: 0, cross: 0, dim: 1 };
   let colorFrom = pal.accent;
   let colorTo = pal.accent;
   let colorMix = 1;
@@ -454,19 +603,50 @@ export function createCore(canvas, opts = {}) {
   let orbitRot = 0;
   let level = 0;
   let levelTarget = 0;
+  let levelAt = -10; // clock when the level was last set above zero
   let burstColor = null; // palette color while a completion burst plays
   let burstAt = 0; // animation clock when it started
   let burstWall = 0; // performance.now() when it was requested
   let burstRing = -1; // radius of the leading burst ring this frame (-1: none)
 
-  const BAR_COUNT = 56;
-  const barFreq = new Float32Array(BAR_COUNT);
-  const barPhase = new Float32Array(BAR_COUNT);
-  const barLevel = new Float32Array(BAR_COUNT);
-  for (let i = 0; i < BAR_COUNT; i++) {
-    barFreq[i] = 1.6 + ((i * 7919) % 97) / 97 * 3.4;
-    barPhase[i] = ((i * 104729) % 1000) / 1000 * TAU;
+  // Voice band: displayed values (eased), targets, and the optional external source.
+  const bandCur = new Float32Array(BANDS);
+  const bandTarget = new Float32Array(BANDS);
+  const bandExt = new Float32Array(BANDS);
+  let hasExt = false;
+  let ripple = 0; // rotating phase that spreads a single level over the eight segments
+
+  // Telemetry gauges (spend, agents, mission): target and eased lit fractions.
+  const gTarget = new Float32Array(3);
+  const gCur = new Float32Array(3);
+  const gKnown = new Uint8Array(3);
+  const gOver = new Uint8Array(3);
+  let agentsActive = 0;
+
+  // Sensors and the alert bead.
+  const sensor = new Uint8Array(2); // SENSOR_CODE per SENSORS entry
+  let alertCount = 0;
+  let alertAt = -10;
+
+  // Packets on the data ring.
+  const pkAng = new Float32Array(MAX_PACKETS);
+  const pkLife = new Float32Array(MAX_PACKETS);
+  const pkOn = new Float32Array(MAX_PACKETS);
+  let pkSeq = MAX_PACKETS;
+  for (let i = 0; i < MAX_PACKETS; i++) {
+    pkAng[i] = (i * GOLDEN) % TAU;
+    pkLife[i] = i / MAX_PACKETS;
   }
+
+  // One-shot alpha events and the error jitter.
+  let flareAt = -10; // cue('answer')
+  let captureAt = -10; // cue('capture'): one scanner pass
+  let jitterAt = -10; // entering the error state
+
+  // Boot sequence.
+  let bootAt = -1; // clock at boot start (-1: not booting)
+  let bootResolve = null;
+  let bootTimer = 0;
 
   // --- agents -----------------------------------------------------------------------------
   const nodes = []; // records in agents[] order
@@ -503,16 +683,29 @@ export function createCore(canvas, opts = {}) {
   let statCount = 0;
   let statFrames = 0;
   let statSince = 0;
+  let staticDraws = 0; // static frames drawn (reduced motion / dozing)
 
-  const reducedMq = watchMedia('(prefers-reduced-motion: reduce)', () => {
-    updateAwake();
-    if (reducedMq.matches) drawStatic();
-  });
+  const reducedMq = watchMedia('(prefers-reduced-motion: reduce)', () => onMotionChange());
   const smallMq = watchMedia('(max-width: 899px), (pointer: coarse)', () => {
     updateFps();
     measure(); // the resolution cap depends on it too
   });
   updateFps();
+  motionListeners.add(onMotionChange);
+
+  function stillMotion() {
+    return reducedMq.matches || motionPref === 'still';
+  }
+
+  function onMotionChange() {
+    if (destroyed) return;
+    if (stillMotion()) skipBoot();
+    updateDozeMs();
+    scheduleDoze();
+    if (!stillMotion() && dozing && !dozeMs) dozing = false;
+    updateAwake();
+    if (isStatic()) drawStatic();
+  }
 
   function updateFps() {
     fps = mode === 'mini' || smallMq.matches ? 30 : 60;
@@ -616,10 +809,17 @@ export function createCore(canvas, opts = {}) {
   document.addEventListener('visibilitychange', onVisibility);
   const unwatchCover = watchCover(() => updateAwake());
 
-  // Dozing (mini orb only, see MINI_DOZE_MS): no animation loop, one static frame per change.
-  const dozeMs = Number.isFinite(opts.idleSleepMs) ? Math.max(0, opts.idleSleepMs) : mode === 'mini' ? MINI_DOZE_MS : 0;
+  // Dozing: no animation loop, one static frame per change. The mini orb dozes after 30 s at
+  // rest; with HUD motion "Reduced" every core does, after a few seconds.
+  let dozeMs = 0;
   let dozing = false;
   let dozeTimer = 0;
+  function updateDozeMs() {
+    if (Number.isFinite(opts.idleSleepMs)) dozeMs = Math.max(0, opts.idleSleepMs);
+    else if (mode === 'mini') dozeMs = MINI_DOZE_MS;
+    else dozeMs = motionPref === 'reduced' ? REDUCED_DOZE_MS : 0;
+  }
+  updateDozeMs();
 
   function scheduleDoze() {
     if (dozeTimer) clearTimeout(dozeTimer);
@@ -627,7 +827,7 @@ export function createCore(canvas, opts = {}) {
     if (!dozeMs || destroyed || !RESTING.has(state)) return;
     dozeTimer = setTimeout(() => {
       dozeTimer = 0;
-      if (destroyed || !RESTING.has(state)) return;
+      if (destroyed || !RESTING.has(state) || bootAt >= 0) return;
       dozing = true;
       updateAwake();
       drawStatic();
@@ -644,14 +844,14 @@ export function createCore(canvas, opts = {}) {
   }
 
   function isStatic() {
-    return !destroyed && (reducedMq.matches || dozing);
+    return !destroyed && (stillMotion() || dozing);
   }
 
   function updateAwake() {
     const should =
       !destroyed &&
       !dozing &&
-      !reducedMq.matches &&
+      !stillMotion() &&
       !document.hidden &&
       inView &&
       width > 1 &&
@@ -696,41 +896,34 @@ export function createCore(canvas, opts = {}) {
   function step(dt) {
     clock += dt;
     const k = 1 - Math.exp(-dt / 0.35);
-    cur.speed = ease(cur.speed, target.speed, k);
-    cur.pulseHz = ease(cur.pulseHz, target.pulseHz, k);
-    cur.pulse = ease(cur.pulse, target.pulse, k);
-    cur.glow = ease(cur.glow, target.glow, k);
-    cur.scan = ease(cur.scan, target.scan, k);
-    cur.bars = ease(cur.bars, target.bars, k);
-    cur.dim = ease(cur.dim, target.dim, k);
+    for (let i = 0; i < PARAM_KEYS.length; i++) {
+      const key = PARAM_KEYS[i];
+      cur[key] = ease(cur[key], target[key], key === 'tight' ? 1 - Math.exp(-dt / 0.22) : k);
+    }
 
     if (colorMix < 1) colorMix = Math.min(1, colorMix + dt / 0.45);
     updateLineColor();
 
     const sp = cur.speed;
-    rot[0] += dt * 0.05 * sp;
-    rot[1] -= dt * 0.035 * sp;
-    rot[2] += dt * 0.16 * sp;
-    rot[3] -= dt * 0.09 * sp;
-    rot[4] -= dt * 0.21 * sp;
-    rot[5] += dt * 0.42 * sp;
+    const dir = cur.dir;
+    rot[0] += dt * 0.05 * sp; // bezel brackets, ~126 s a turn
+    rot[1] -= dt * 0.035 * sp; // orbit/mini ticks, ~180 s a turn
+    rot[2] += dt * 0.16 * sp * dir; // data ring, ~39 s a turn (reversed while thinking)
+    rot[3] -= dt * 0.09 * sp * dir; // scanner dashes
+    rot[4] -= dt * 0.21 * sp; // voice band, ~30 s a turn
+    rot[5] += dt * 0.42 * sp; // sensor ring, ~15 s a turn
     rot[6] += dt * 0.7 * sp; // mini ring
     pulsePhase += dt * cur.pulseHz * TAU;
-    scanAngle += dt * (1.1 + 0.55 * sp);
-    highlight += dt * 0.38 * sp;
+    scanAngle += dt * (1.1 + 0.55 * sp) * (dir < 0 ? -1 : 1);
+    highlight += dt * 0.38 * sp; // telemetry sweep, ~16.5 s a lap
     orbitRot += dt * 0.03 * (0.6 + 0.4 * sp);
 
     const kl = 1 - Math.exp(-dt / (levelTarget > level ? 0.05 : 0.25));
     level += (levelTarget - level) * kl;
 
-    if (cur.bars > 0.01) {
-      // Voice bars: real input level when provided, otherwise a gentle synthetic murmur.
-      const base = Math.max(level, 0.18 + 0.12 * Math.sin(clock * 1.7));
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const osc = 0.5 + 0.5 * Math.sin(clock * barFreq[i] + barPhase[i]);
-        barLevel[i] = base * (0.35 + 0.65 * osc);
-      }
-    }
+    stepBands(dt);
+    stepGauges(dt);
+    if (mode === 'hero') stepPackets(dt);
 
     const kp = 1 - Math.exp(-dt / 0.4);
     const t = total || 1;
@@ -744,16 +937,66 @@ export function createCore(canvas, opts = {}) {
       if (n.spawn < 1) n.spawn = Math.min(1, n.spawn + dt / 0.6);
       n.angle += angleDelta(n.angle, n.targetAngle) * ka;
     }
+
+    if (bootAt >= 0 && clock - bootAt >= BOOT_S) endBoot();
+  }
+
+  // Voice band targets: the external bands (mic analyser) when set; otherwise the voice level
+  // spread over the eight segments by a rotating phase so the band ripples clockwise; with no
+  // level at all while listening or speaking, the "auto" murmur (a gentle synthetic level).
+  function stepBands(dt) {
+    ripple += dt * 2.6;
+    const v = cur.voice;
+    if (hasExt) {
+      for (let i = 0; i < BANDS; i++) bandTarget[i] = bandExt[i] * v;
+    } else {
+      let lv = level;
+      if (lv < 0.02 && clock - levelAt > 0.6) lv = 0.16 + 0.1 * Math.sin(clock * 1.7) + 0.05 * Math.sin(clock * 4.3);
+      for (let i = 0; i < BANDS; i++) {
+        const w = 0.5 + 0.5 * Math.sin(ripple - i * (TAU / BANDS));
+        bandTarget[i] = lv * (0.45 + 0.55 * w) * v;
+      }
+    }
+    // 50 ms rise, 250 ms fall.
+    const up = 1 - Math.exp(-dt / 0.05);
+    const down = 1 - Math.exp(-dt / 0.25);
+    for (let i = 0; i < BANDS; i++) {
+      const tgt = bandTarget[i];
+      bandCur[i] += (tgt - bandCur[i]) * (tgt > bandCur[i] ? up : down);
+    }
+  }
+
+  function stepGauges(dt) {
+    const kg = 1 - Math.exp(-dt / 0.4);
+    for (let g = 0; g < 3; g++) gCur[g] = ease(gCur[g], gKnown[g] ? gTarget[g] : 0, kg);
+  }
+
+  function packetWant() {
+    if (target.packets < 0) return agentsActive > MAX_PACKETS ? MAX_PACKETS : agentsActive;
+    return target.packets;
+  }
+
+  function stepPackets(dt) {
+    const want = packetWant();
+    const kf = 1 - Math.exp(-dt / 0.3);
+    const rate = (0.55 + 0.45 * cur.speed) / PACKET_S;
+    for (let i = 0; i < MAX_PACKETS; i++) {
+      const on = i < want ? 1 : 0;
+      pkOn[i] += (on - pkOn[i]) * kf;
+      if (pkOn[i] < 0.004 && !on) {
+        pkOn[i] = 0;
+        continue;
+      }
+      pkLife[i] += dt * rate;
+      if (pkLife[i] >= 1) {
+        pkLife[i] -= 1;
+        pkAng[i] = (pkSeq++ * GOLDEN) % TAU;
+      }
+    }
   }
 
   function snapAll() {
-    cur.speed = target.speed;
-    cur.pulseHz = target.pulseHz;
-    cur.pulse = target.pulse;
-    cur.glow = target.glow;
-    cur.scan = target.scan;
-    cur.bars = target.bars;
-    cur.dim = target.dim;
+    for (let i = 0; i < PARAM_KEYS.length; i++) cur[PARAM_KEYS[i]] = target[PARAM_KEYS[i]];
     colorMix = 1;
     updateLineColor();
     const t = total || 1;
@@ -765,8 +1008,16 @@ export function createCore(canvas, opts = {}) {
       nodes[i].angle = nodes[i].targetAngle;
       nodes[i].changedAt = -10; // no frozen bursts or call-outs in a static frame
     }
-    for (let i = 0; i < BAR_COUNT; i++) barLevel[i] = 0.25 + 0.2 * Math.sin(barPhase[i]);
+    for (let g = 0; g < 3; g++) gCur[g] = gKnown[g] ? gTarget[g] : 0;
+    // A static voice band shows the real bands, or a calm fixed shape while voice is active.
+    for (let i = 0; i < BANDS; i++) bandCur[i] = hasExt ? bandExt[i] * target.voice : target.voice * (0.22 + 0.12 * Math.cos(i * 0.9));
+    const want = packetWant();
+    for (let i = 0; i < MAX_PACKETS; i++) pkOn[i] = i < want ? 1 : 0;
     burstColor = null;
+    flareAt = -10;
+    captureAt = -10;
+    jitterAt = -10;
+    alertAt = -10;
   }
 
   function updateLineColor() {
@@ -824,10 +1075,17 @@ export function createCore(canvas, opts = {}) {
     if (destroyed || width <= 1 || height <= 1) return;
     snapAll();
     drawFrame(0);
+    staticDraws++;
   }
 
   function corePulse() {
     return cur.pulse * (0.5 + 0.5 * Math.sin(pulsePhase)) + level * 0.45;
+  }
+
+  /** Boot reveal 0..1 for a layer (1 when not booting). */
+  function reveal(layer) {
+    if (bootAt < 0) return 1;
+    return clamp01((clock - bootAt - layer) / BOOT_GROW);
   }
 
   function drawMini(cx, cy, R) {
@@ -849,74 +1107,296 @@ export function createCore(canvas, opts = {}) {
     const dim = cur.dim;
     const amp = corePulse();
     const thin = Math.max(1, R * 0.007);
+    const booting = bootAt >= 0;
+    const flare = clock - flareAt < 0.3 ? 1 - (clock - flareAt) / 0.3 : 0;
 
-    // Bezel: hairline circle and four brackets.
+    // Bezel: hairline circle and four brackets; the alert bead at 12 o'clock.
+    const rvBezel = reveal(BOOT_LAYER.bezel);
     ctx.lineWidth = thin;
     ctx.globalAlpha = 0.14 * dim;
-    strokeCircle(ctx, cx, cy, R * 0.965);
+    strokeCirclePart(ctx, cx, cy, R * 0.965, rvBezel);
     ctx.lineWidth = Math.max(1.5, R * 0.016);
-    ctx.globalAlpha = 0.7 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.965, rot[0], HERO_BRACKETS);
+    ctx.globalAlpha = 0.7 * dim * rvBezel;
+    strokeArcs(ctx, cx, cy, R * 0.965, rot[0], HERO_BRACKETS, rvBezel);
 
-    // Tick ring with a sweeping highlight sector.
-    const ticks = tickTable(R > 80 ? 120 : 72);
-    ctx.lineWidth = thin;
-    ctx.globalAlpha = 0.22 * dim;
-    strokeTicks(ctx, cx, cy, R * 0.9, rot[1], ticks, R * 0.022, 10, R * 0.055, 0, 0, -3);
-    ctx.globalAlpha = 0.75 * dim;
-    strokeTicks(ctx, cx, cy, R * 0.9, rot[1], ticks, R * 0.022, 10, R * 0.055, Math.cos(highlight), Math.sin(highlight), 0.93);
+    // Telemetry gauges and their sweeping highlight.
+    drawGauges(cx, cy, R * 0.9, thin, dim, reveal(BOOT_LAYER.ticks), booting);
 
-    // Segmented ring over a faint full circle.
+    // Data ring: faint full circle, segmented arcs (with the error jitter) and packets.
+    const rvData = reveal(BOOT_LAYER.data);
     ctx.lineWidth = thin;
     ctx.globalAlpha = 0.12 * dim;
-    strokeCircle(ctx, cx, cy, R * 0.79);
+    strokeCirclePart(ctx, cx, cy, R * 0.79, rvData);
     ctx.lineWidth = Math.max(1.25, R * 0.014);
-    ctx.globalAlpha = 0.82 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.79, rot[2], HERO_SEG);
+    ctx.globalAlpha = 0.82 * dim * rvData;
+    const jit = clock - jitterAt < 0.4 ? 1 - (clock - jitterAt) / 0.4 : 0;
+    if (jit > 0) drawJitteredSegments(cx, cy, R * 0.79, jit);
+    else strokeArcs(ctx, cx, cy, R * 0.79, rot[2], HERO_SEG, rvData);
+    drawPackets(cx, cy, R * 0.79, R * (0.585 - 0.025 * cur.tight), R, dim * rvData);
 
-    // Dashed ring and the scanner that sweeps along it while thinking/working.
+    // Scanner ring: dashes, plus the scanner while thinking / working or on a capture.
+    const rvScan = reveal(BOOT_LAYER.scanner);
     ctx.lineWidth = Math.max(1, R * 0.012);
     ctx.globalAlpha = 0.36 * dim;
-    strokeDashes(ctx, cx, cy, R * 0.7, rot[3], R > 80 ? 72 : 48, 2.2 * DEG);
-    if (cur.scan > 0.01) drawScanner(cx, cy, R * 0.7, Math.max(1.5, R * 0.02), 0.95 * cur.scan * dim);
+    strokeDashes(ctx, cx, cy, R * 0.7, rot[3], R > 80 ? 72 : 48, 2.2 * DEG, rvScan);
+    const cap = clock - captureAt < 0.6 ? (clock - captureAt) / 0.6 : -1;
+    if (cur.scan > 0.01) drawScanner(cx, cy, R * 0.7, Math.max(1.5, R * 0.02), 0.95 * cur.scan * dim, scanAngle);
+    if (cap >= 0) drawScanner(cx, cy, R * 0.7, Math.max(1.5, R * 0.02), 0.95 * (1 - cap * 0.4) * dim, -Math.PI / 2 + cap * TAU);
 
-    // Thick segmented band, two brighter segments.
-    ctx.lineWidth = R * 0.045;
-    ctx.globalAlpha = 0.17 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.585, rot[4], HERO_THICK);
-    ctx.globalAlpha = 0.55 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.585, rot[4], HERO_THICK_HI);
+    // Voice band.
+    drawVoiceBand(cx, cy, R * (0.585 - 0.025 * cur.tight), R * 0.045, dim, reveal(BOOT_LAYER.voice), flare, rot[4]);
 
-    // Inner ring with three satellites.
-    ctx.lineWidth = thin;
-    ctx.globalAlpha = 0.45 * dim;
-    strokeCircle(ctx, cx, cy, R * 0.475);
-    ctx.globalAlpha = 0.9 * dim;
-    const sat = Math.max(1.4, R * 0.014);
-    ctx.beginPath();
-    for (let i = 0; i < 3; i++) {
-      const a = rot[5] + (i * TAU) / 3;
-      const x = cx + Math.cos(a) * R * 0.475;
-      const y = cy + Math.sin(a) * R * 0.475;
-      ctx.moveTo(x + sat, y);
-      ctx.arc(x, y, sat, 0, TAU);
-    }
-    ctx.fill();
+    // Sensor ring: turns under the two fixed beads.
+    drawSensors(cx, cy, R * 0.475, R, thin, dim, reveal(BOOT_LAYER.sensor));
 
-    if (cur.bars > 0.01) drawBars(cx, cy, R * 0.34, R * 0.1, cur.bars * dim);
     if (total > 0) drawProgress(cx, cy, R * 0.965, Math.max(1.5, R * 0.016), dim, false);
     burstRing = burstColor ? burstRadius(R * 0.3, R * 0.98) : -1;
     if (nodes.length) drawNodes(cx, cy, R, R * 0.79, false);
     if (burstColor) drawBurst(cx, cy, R, R * 0.3, Math.max(1.5, R * 0.016));
 
-    // The core itself.
+    // The heart.
+    const light = booting ? clamp01((clock - bootAt) / 0.3) : 1;
     ctx.globalCompositeOperation = 'lighter';
-    stateGlow('soft', cx, cy, R * 0.64 * (1 + 0.1 * amp), cur.glow * (0.5 + 0.45 * amp) * dim);
-    stateGlow('hot', cx, cy, R * 0.36 * (1 + 0.22 * amp), (0.85 + 0.15 * amp) * dim);
+    stateGlow('soft', cx, cy, R * 0.64 * (1 + 0.1 * amp + 0.12 * flare), (cur.glow * (0.5 + 0.45 * amp) + 0.35 * flare) * dim * light);
+    stateGlow('hot', cx, cy, R * 0.36 * (1 + 0.22 * amp + 0.15 * flare), (0.85 + 0.15 * amp) * dim * light);
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineWidth = Math.max(1, R * 0.01);
-    ctx.globalAlpha = (0.4 + 0.35 * amp) * dim;
+    ctx.globalAlpha = (0.4 + 0.35 * amp) * dim * light;
     strokeCircle(ctx, cx, cy, R * 0.215 * (1 + 0.05 * amp));
+
+    // Optics crosshair: four ticks at 0.2R.
+    if (cur.cross > 0.01) {
+      ctx.lineWidth = Math.max(1, R * 0.012);
+      ctx.globalAlpha = 0.85 * cur.cross * dim;
+      ctx.strokeStyle = pal.text.css;
+      const r0 = R * 0.2;
+      const r1 = R * 0.13;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r0);
+      ctx.lineTo(cx, cy - r1);
+      ctx.moveTo(cx, cy + r0);
+      ctx.lineTo(cx, cy + r1);
+      ctx.moveTo(cx - r0, cy);
+      ctx.lineTo(cx - r1, cy);
+      ctx.moveTo(cx + r0, cy);
+      ctx.lineTo(cx + r1, cy);
+      ctx.stroke();
+      ctx.strokeStyle = lineCss;
+    }
+
+    if (alertCount > 0) drawAlertBead(cx, cy - R * 0.965, R, rvBezel);
+  }
+
+  // The three telemetry gauges: unlit ticks .2, lit ticks .75 (amber when spend is over the
+  // alert), an unknown gauge stays dark with no lit ticks. The highlight sweeps over all three.
+  function drawGauges(cx, cy, r, thin, dim, rv, booting) {
+    const per = r > 36 ? 36 : 18;
+    const table = gaugeTable(per);
+    const len = r * 0.042;
+    const major = r * 0.08;
+    const shownTicks = rv >= 1 ? per : Math.floor(per * rv);
+    if (shownTicks <= 0) return;
+    ctx.lineWidth = thin;
+    for (let pass = 0; pass < 5; pass++) {
+      // 0: unknown gauges · 1: unlit ticks · 2: lit ticks (state color) · 3: lit, spend over the
+      // alert (warn) · 4: lit mission progress (ok, like the orbit's progress ring)
+      let any = false;
+      ctx.beginPath();
+      for (let g = 0; g < 3; g++) {
+        const known = gKnown[g] === 1;
+        if ((pass === 0) === known) continue;
+        const lit = known ? gCur[g] * per : 0;
+        const tone = gOver[g] === 1 ? 3 : g === 2 ? 4 : 2;
+        if (pass >= 2 && pass !== tone) continue;
+        for (let j = 0; j < shownTicks; j++) {
+          const isLit = known && j < lit - 0.5;
+          if (pass === 1 && isLit) continue;
+          if (pass >= 2 && !isLit) continue;
+          const k = g * per + j;
+          const c = table.cos[k];
+          const s = table.sin[k];
+          const l = j === 0 || j === per - 1 ? major : len;
+          ctx.moveTo(cx + c * r, cy + s * r);
+          ctx.lineTo(cx + c * (r - l), cy + s * (r - l));
+          any = true;
+        }
+      }
+      if (!any) continue;
+      if (pass === 0) ctx.globalAlpha = 0.09 * dim;
+      else if (pass === 1) ctx.globalAlpha = 0.2 * dim;
+      else ctx.globalAlpha = 0.85 * dim;
+      if (pass === 3) ctx.strokeStyle = pal.warn.css;
+      else if (pass === 4) ctx.strokeStyle = pal.ok.css;
+      ctx.stroke();
+      if (pass >= 3) ctx.strokeStyle = lineCss;
+    }
+    // Sweep: one fast lap during boot (600–1200 ms), else ~16.5 s a lap.
+    let sweep = highlight;
+    if (booting) {
+      const t = (clock - bootAt - 0.6) / 0.6;
+      if (t < 0 || t > 1) return;
+      sweep = -Math.PI / 2 + t * TAU;
+    }
+    const sc = Math.cos(sweep);
+    const ss = Math.sin(sweep);
+    ctx.globalAlpha = 0.5 * dim;
+    ctx.beginPath();
+    for (let k = 0; k < per * 3; k++) {
+      if ((k % per) >= shownTicks) continue;
+      const c = table.cos[k];
+      const s = table.sin[k];
+      if (c * sc + s * ss < 0.93) continue;
+      ctx.moveTo(cx + c * r, cy + s * r);
+      ctx.lineTo(cx + c * (r - len), cy + s * (r - len));
+    }
+    ctx.stroke();
+  }
+
+  // "Ultron jitter" (entering the error state): the data ring's segments shift by up to 1.5 px
+  // for 400 ms, then settle. Deterministic offsets per segment.
+  function drawJitteredSegments(cx, cy, r, amount) {
+    for (let i = 0; i < HERO_SEG_N; i++) {
+      const off = 1.5 * amount * Math.sin(clock * 97 + i * 2.39);
+      const a0 = rot[2] + HERO_SEG[i * 2];
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + off, a0, a0 + HERO_SEG[i * 2 + 1]);
+      ctx.stroke();
+    }
+  }
+
+  // Packets: short bright dashes (6°) that travel along the data ring, then drop to the voice band.
+  function drawPackets(cx, cy, r, rIn, R, dim) {
+    if (pkOn[0] <= 0.01 && packetWant() === 0) {
+      let any = false;
+      for (let i = 1; i < MAX_PACKETS; i++) if (pkOn[i] > 0.01) any = true;
+      if (!any) return;
+    }
+    ctx.lineWidth = Math.max(1.6, R * 0.024);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = pal.text.css;
+    ctx.globalCompositeOperation = 'lighter';
+    const dash = 6 * DEG;
+    const travel = 0.72;
+    const span = 64 * DEG * cur.dir;
+    for (let i = 0; i < MAX_PACKETS; i++) {
+      const on = pkOn[i];
+      if (on <= 0.01) continue;
+      const life = pkLife[i];
+      if (life < travel) {
+        const a = pkAng[i] + rot[2] + span * (life / travel);
+        const fade = life < 0.08 ? life / 0.08 : 1;
+        ctx.globalAlpha = 0.9 * on * fade * dim;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, a, a + dash);
+        ctx.stroke();
+      } else {
+        const p = (life - travel) / (1 - travel);
+        const a = pkAng[i] + rot[2] + span + dash * 0.5;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        const head = r - (r - rIn) * easeOutCubic(p);
+        const tail = Math.min(r, head + R * 0.05);
+        ctx.globalAlpha = 0.9 * on * (1 - p) * dim;
+        ctx.beginPath();
+        ctx.moveTo(cx + c * tail, cy + s * tail);
+        ctx.lineTo(cx + c * head, cy + s * head);
+        ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = lineCss;
+  }
+
+  // Voice band: 8 thick segments. Thickness = base × (1 + 1.6 × band); brightness follows too.
+  function drawVoiceBand(cx, cy, r, base, dim, rv, flare, rotation) {
+    if (rv <= 0) return;
+    const seg = HERO_THICK;
+    for (let i = 0; i < BANDS; i++) {
+      const b = bandCur[i];
+      const a0 = rotation + seg[i * 2] - Math.PI / 2;
+      ctx.lineWidth = base * (1 + 1.6 * b);
+      const hi = i === 0 || i === 4 ? 0.38 : 0; // two brighter segments at rest, as before
+      ctx.globalAlpha = (0.17 + hi + 0.55 * b + 0.25 * flare) * dim;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, a0, a0 + seg[i * 2 + 1] * (rv < 1 ? rv : 1));
+      ctx.stroke();
+    }
+  }
+
+  // Sensor ring: a hairline that turns (three notches show the turn) under two fixed beads.
+  // Off: hollow, .3 · ready: small, accent · live: --live, breathing at 1 Hz.
+  function drawSensors(cx, cy, r, R, thin, dim, rv) {
+    ctx.lineWidth = thin;
+    ctx.globalAlpha = 0.45 * dim;
+    strokeCirclePart(ctx, cx, cy, r, rv);
+    if (rv < 1) return;
+    // Three notches across the ring show it turning (dots would read as sensor beads).
+    const notch = Math.max(2, R * 0.032);
+    ctx.lineWidth = Math.max(1, R * 0.01);
+    ctx.globalAlpha = 0.55 * dim;
+    ctx.beginPath();
+    for (let i = 0; i < 3; i++) {
+      const a = rot[5] + (i * TAU) / 3;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      ctx.moveTo(cx + c * (r - notch), cy + s * (r - notch));
+      ctx.lineTo(cx + c * (r + notch), cy + s * (r + notch));
+    }
+    ctx.stroke();
+    const breath = 0.5 + 0.5 * Math.sin(clock * TAU);
+    for (let i = 0; i < 2; i++) {
+      const code = sensor[i];
+      const x = cx + Math.cos(SENSOR_ANGLE[i]) * r;
+      const y = cy + Math.sin(SENSOR_ANGLE[i]) * r;
+      if (code === 0) {
+        ctx.lineWidth = Math.max(1, R * 0.008);
+        ctx.globalAlpha = 0.3 * dim;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(2, R * 0.022), 0, TAU);
+        ctx.stroke();
+      } else if (code === 1) {
+        ctx.fillStyle = pal.accent.css;
+        ctx.globalAlpha = 0.9 * dim;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(1.6, R * 0.016), 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = lineCss;
+      } else {
+        const br = isStatic() ? 1 : breath;
+        ctx.globalCompositeOperation = 'lighter';
+        blit(ctx, getSprite(pal.live, 'soft'), x, y, Math.max(6, R * 0.08), (0.45 + 0.4 * br) * dim);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = pal.live.css;
+        ctx.globalAlpha = (0.75 + 0.25 * br) * dim;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(2.2, R * 0.026) * (0.9 + 0.15 * br), 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = lineCss;
+      }
+    }
+  }
+
+  // Needs-you: an amber bead at 12 o'clock on the bezel; two 600 ms pulses when an item arrives.
+  function drawAlertBead(x, y, R, rv) {
+    if (rv < 1) return;
+    const since = clock - alertAt;
+    const r = Math.max(2.4, R * 0.028);
+    if (since >= 0 && since < 1.2) {
+      const p = (since % 0.6) / 0.6;
+      ctx.globalCompositeOperation = 'lighter';
+      blit(ctx, getSprite(pal.warn, 'soft'), x, y, r * (3 + 5 * p), (1 - p) * 0.9);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    blit(ctx, getSprite(pal.warn, 'soft'), x, y, r * 3.2, 0.55);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = pal.warn.css;
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = lineCss;
   }
 
   function drawOrbit(cx, cy, R) {
@@ -949,7 +1429,10 @@ export function createCore(canvas, opts = {}) {
     strokeCircle(ctx, cx, cy, R * 0.505);
     ctx.globalAlpha = 0.28 * dim;
     strokeTicks(ctx, cx, cy, R * 0.44, rot[3], tickTable(72), R * 0.02, 6, R * 0.04, 0, 0, -3);
-    if (cur.scan > 0.01) drawScanner(cx, cy, R * 0.585, Math.max(1.5, R * 0.016), 0.75 * cur.scan * dim);
+    if (cur.scan > 0.01) drawScanner(cx, cy, R * 0.585, Math.max(1.5, R * 0.016), 0.75 * cur.scan * dim, scanAngle);
+
+    // The voice band rides the scanner track while Jarvis listens or speaks (Voice Mode).
+    if (cur.voice > 0.01) drawVoiceBand(cx, cy, R * (0.585 - 0.02 * cur.tight), R * 0.03, dim * cur.voice, 1, 0, rot[4]);
 
     // Mission progress ring (done / failed / stopped) around the core.
     drawProgress(cx, cy, R * 0.345, Math.max(2, R * 0.022), dim, true);
@@ -1028,36 +1511,20 @@ export function createCore(canvas, opts = {}) {
     ctx.strokeStyle = lineCss;
   }
 
-  function drawScanner(cx, cy, r, lw, alpha) {
+  function drawScanner(cx, cy, r, lw, alpha, angle) {
     const steps = 12;
     const seg = (80 * DEG) / steps;
+    const back = cur.dir < 0 ? -1 : 1; // the trail follows the sweep direction
     ctx.lineWidth = lw;
     ctx.strokeStyle = lineCss;
     for (let i = 0; i < steps; i++) {
       const f = 1 - i / steps;
       ctx.globalAlpha = alpha * f * f;
       ctx.beginPath();
-      ctx.arc(cx, cy, r, scanAngle - (i + 1) * seg, scanAngle - i * seg + 0.004);
+      if (back > 0) ctx.arc(cx, cy, r, angle - (i + 1) * seg, angle - i * seg + 0.004);
+      else ctx.arc(cx, cy, r, angle + i * seg - 0.004, angle + (i + 1) * seg);
       ctx.stroke();
     }
-  }
-
-  function drawBars(cx, cy, r0, maxLen, alpha) {
-    const step = TAU / BAR_COUNT;
-    ctx.lineWidth = Math.max(1.2, r0 * 0.035);
-    ctx.lineCap = 'round';
-    ctx.globalAlpha = 0.8 * alpha;
-    ctx.beginPath();
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const a = rot[5] * 0.25 + i * step;
-      const c = Math.cos(a);
-      const s = Math.sin(a);
-      const len = 1.5 + barLevel[i] * maxLen;
-      ctx.moveTo(cx + c * r0, cy + s * r0);
-      ctx.lineTo(cx + c * (r0 + len), cy + s * (r0 + len));
-    }
-    ctx.stroke();
-    ctx.lineCap = 'butt';
   }
 
   function drawProgress(cx, cy, r, lw, dim, withTrack) {
@@ -1225,6 +1692,8 @@ export function createCore(canvas, opts = {}) {
         ctx.stroke();
       }
     }
+    ctx.strokeStyle = lineCss;
+    ctx.fillStyle = lineCss;
 
     if (!withLabels) return;
     // Labels: all of them when there is room, otherwise only the agents doing something now,
@@ -1257,6 +1726,7 @@ export function createCore(canvas, opts = {}) {
       ctx.globalAlpha = a;
       ctx.fillText(n.label, lx, ly);
     }
+    ctx.fillStyle = lineCss;
   }
 
   // Theme change: cross-fade the state color into the new palette, recolor nodes, re-measure text.
@@ -1274,6 +1744,48 @@ export function createCore(canvas, opts = {}) {
     if (isStatic()) drawStatic();
   }
   paletteListeners.add(refreshPalette);
+
+  // --- boot ---------------------------------------------------------------------------------
+  function endBoot() {
+    if (bootTimer) clearTimeout(bootTimer);
+    bootTimer = 0;
+    const wasBooting = bootAt >= 0;
+    bootAt = -1;
+    const done = bootResolve;
+    bootResolve = null;
+    if (done) done(wasBooting);
+    if (wasBooting && isStatic()) drawStatic();
+    scheduleDoze();
+  }
+
+  /**
+   * The 1.6 s boot: the heart lights, the rings assemble outward and the sweep runs one fast
+   * lap. Resolves true when it played to the end, false when skipped (skipBoot, reduced motion
+   * or "Still", a non-hero core). Never plays late: a core asleep at the time just resolves.
+   */
+  function boot() {
+    if (destroyed || mode !== 'hero' || stillMotion()) return Promise.resolve(false);
+    if (bootResolve) return Promise.resolve(false); // already booting: the first caller waits
+    noteNews();
+    bootAt = clock;
+    const p = new Promise((resolve) => {
+      bootResolve = resolve;
+    });
+    // The clock only advances while drawing: a hidden page or a covered core ends the boot on time.
+    bootTimer = setTimeout(() => endBoot(), BOOT_S * 1000 + 250);
+    return p;
+  }
+
+  function skipBoot() {
+    if (bootAt < 0) return;
+    const done = bootResolve;
+    bootResolve = null;
+    if (bootTimer) clearTimeout(bootTimer);
+    bootTimer = 0;
+    bootAt = -1;
+    if (done) done(false);
+    if (isStatic()) drawStatic();
+  }
 
   // --- public API ---------------------------------------------------------------------------
   function setAria() {
@@ -1297,6 +1809,7 @@ export function createCore(canvas, opts = {}) {
       colorTo = nextColor;
       colorMix = 0;
     }
+    if (s === 'error') jitterAt = clock;
     setAria();
     noteNews();
     if (isStatic()) drawStatic();
@@ -1306,7 +1819,94 @@ export function createCore(canvas, opts = {}) {
     if (destroyed) return;
     const v = Number(value);
     levelTarget = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-    if (dozing && levelTarget > 0.02) noteNews(); // a voice level means something is happening
+    if (levelTarget > 0.02) {
+      levelAt = clock;
+      if (dozing) noteNews(); // a voice level means something is happening
+    }
+  }
+
+  /** Real voice bands (8 values 0..1, e.g. from the mic analyser), or null for synthetic bands. */
+  function setBands(bands) {
+    if (destroyed) return;
+    if (!bands || typeof bands.length !== 'number' || bands.length < BANDS) {
+      hasExt = false;
+      return;
+    }
+    hasExt = true;
+    for (let i = 0; i < BANDS; i++) {
+      const v = Number(bands[i]);
+      bandExt[i] = Number.isFinite(v) ? (v < 0 ? 0 : v > 1 ? 1 : v) : 0;
+    }
+    // Up to 30 updates a second: a static core (reduced motion, "Still") keeps its calm frame.
+    if (dozing) noteNews();
+  }
+
+  /**
+   * Real telemetry for the three gauges. Each value is a fraction, [value, max], or null when the
+   * value is unknown (the gauge then stays dark): { spend, agents, mission }. spend above 1 (the
+   * month's estimate past the owner's alert) lights the gauge amber.
+   */
+  function setTelemetry(t) {
+    if (destroyed || !t || typeof t !== 'object') return;
+    let changed = false;
+    GAUGES.forEach((name, g) => {
+      if (!(name in t)) return;
+      const f = gaugeFraction(t[name]);
+      const known = f === null ? 0 : 1;
+      const frac = f === null ? 0 : f > 1 ? 1 : f;
+      const over = f !== null && name === 'spend' && f > 1 ? 1 : 0;
+      if (known !== gKnown[g] || Math.abs(frac - gTarget[g]) > 1e-4 || over !== gOver[g]) changed = true;
+      gKnown[g] = known;
+      gTarget[g] = frac;
+      gOver[g] = over;
+    });
+    if ('agents' in t) {
+      const a = t.agents;
+      const n = Array.isArray(a) ? Number(a[0]) : 0;
+      const next = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+      if (next !== agentsActive) changed = true;
+      agentsActive = next;
+    }
+    if (changed) {
+      noteNews();
+      if (isStatic()) drawStatic();
+    }
+  }
+
+  /** Sensor beads: { mic, optics } each 'off' | 'ready' | 'live'. */
+  function setSensors(s) {
+    if (destroyed || !s || typeof s !== 'object') return;
+    let changed = false;
+    SENSORS.forEach((name, i) => {
+      if (!(name in s)) return;
+      const code = SENSOR_CODE[s[name]] ?? 0;
+      if (code !== sensor[i]) changed = true;
+      sensor[i] = code;
+    });
+    if (changed) {
+      noteNews();
+      if (isStatic()) drawStatic();
+    }
+  }
+
+  /** Needs-you count: an amber bead at 12 o'clock while above 0; two pulses when it grows. */
+  function setAlert(count) {
+    if (destroyed) return;
+    const n = Math.max(0, Math.floor(Number(count) || 0));
+    if (n === alertCount) return;
+    if (n > alertCount && !isStatic()) alertAt = clock;
+    alertCount = n;
+    noteNews();
+    if (isStatic()) drawStatic();
+  }
+
+  /** Alpha events: 'answer' (one flare of the heart, the voice band brightens) or 'capture'. */
+  function cue(name) {
+    if (destroyed || isStatic()) return;
+    if (name === 'answer') flareAt = clock;
+    else if (name === 'capture') captureAt = clock;
+    else return;
+    noteNews();
   }
 
   /**
@@ -1315,7 +1915,7 @@ export function createCore(canvas, opts = {}) {
    * for more than a moment (it never plays late).
    */
   function celebrate(tone) {
-    if (destroyed || reducedMq.matches) return;
+    if (destroyed || stillMotion()) return;
     noteNews();
     burstColor = tone === 'warn' ? pal.warn : pal.ok;
     burstAt = clock;
@@ -1352,7 +1952,7 @@ export function createCore(canvas, opts = {}) {
           spawn: isStatic() ? 1 : 0,
           angle: 0,
           targetAngle: 0,
-          phase: Math.random(),
+          phase: phaseOf(id),
           changedAt: -10,
           gen: 0,
           x: 0,
@@ -1408,10 +2008,12 @@ export function createCore(canvas, opts = {}) {
 
   function destroy() {
     if (destroyed) return;
+    skipBoot();
     destroyed = true;
     if (dozeTimer) clearTimeout(dozeTimer);
     dozeTimer = 0;
     paletteListeners.delete(refreshPalette);
+    motionListeners.delete(onMotionChange);
     updateAwake();
     removeLive(frame);
     if (ro) ro.disconnect();
@@ -1432,10 +2034,21 @@ export function createCore(canvas, opts = {}) {
       statCount = 0;
       statFrames = 0;
       statSince = 0;
+      staticDraws = 0;
       return null;
     }
+    const base = {
+      awake,
+      dozing,
+      mode,
+      state,
+      agents: total,
+      booting: bootAt >= 0,
+      staticDraws,
+      backing: [canvas.width, canvas.height],
+    };
     const n = Math.min(statCount, statBuf.length);
-    if (!n) return { frames: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0, awake, dozing, mode, agents: total, backing: [canvas.width, canvas.height] };
+    if (!n) return { frames: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0, fpsCap: fps, ...base };
     const arr = Array.from(statBuf.subarray(0, n)).sort((a, b) => a - b);
     const sum = arr.reduce((s, v) => s + v, 0);
     const elapsed = (performance.now() - statSince) / 1000;
@@ -1446,12 +2059,8 @@ export function createCore(canvas, opts = {}) {
       maxMs: arr[n - 1],
       fps: elapsed > 0 ? statFrames / elapsed : 0,
       fpsCap: fps,
-      awake,
-      dozing,
-      mode,
-      agents: total,
       bursting: !!burstColor,
-      backing: [canvas.width, canvas.height],
+      ...base,
     };
   }
 
@@ -1460,5 +2069,5 @@ export function createCore(canvas, opts = {}) {
   measure();
   scheduleDoze();
 
-  return { setState, setAgents, setLevel, celebrate, destroy, debugStats };
+  return { setState, setAgents, setLevel, setBands, setTelemetry, setSensors, setAlert, cue, boot, skipBoot, celebrate, destroy, debugStats };
 }

@@ -1041,6 +1041,11 @@ export function createComposer(o) {
     // ---- attachments & team size (SPEC §15.1) ----
     /** Sends what is in the composer (text, attachments, team size), like the Send button. */
     submit,
+    /**
+     * The system camera ("Take photo"): the native capture path, and the fallback for Look when
+     * the live camera (Optics) is missing or denied. Call inside a tap (iOS opens pickers only then).
+     */
+    takePhoto: () => openPicker(cameraInput),
     /** Adds files (File objects) as attachments; returns how many were accepted for processing. */
     addFiles: (files) => addFiles(files, 'picker'),
     /** The ready attachments (full objects, with base64 data). */

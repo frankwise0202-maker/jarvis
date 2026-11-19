@@ -339,6 +339,8 @@ export function createChat(o) {
         getSettings: o.getSettings,
         onRun: (text, mode, p) => o.onProtocol(text, mode, p),
         sounds: o.sounds || null,
+        // Presence home (SPEC 2.4.4 item 9): one horizontally scrolling row of 152×92 cards.
+        layout: o.home ? 'row' : 'grid',
       });
       return h('div', { class: 'empty-protocols' }, protocolGrid.el);
     } catch (err) {
@@ -347,8 +349,106 @@ export function createChat(o) {
       return null;
     }
   }
+  // ---- Presence home (SPEC 2.4.4) ----------------------------------------------------------------
+  // From the top: the hero core (tap: Voice Mode; long-press: what the rings mean), the state
+  // word, the greeting, the situation line, Needs-you, the quick keys, the starter prompts (first
+  // three conversations only), then the protocols row. o.home (src/ui/presence/presence.js) owns
+  // the live pieces; this places them and runs the hero core.
+  function renderPresenceHome() {
+    const home = o.home;
+    const g = o.getGreeting();
+    const canvas = h('canvas', { class: 'hero-core-canvas', attrs: { 'data-testid': 'hero-core', 'aria-hidden': 'true' } });
+    const starters = typeof o.showStarters === 'function' ? !!o.showStarters() : true;
+    const suggestions = starters
+      ? pickSuggestions().map((s) =>
+          h(
+            'button',
+            {
+              class: ['suggestion', `suggestion--${s.mode}`],
+              type: 'button',
+              attrs: { 'data-testid': 'suggestion', 'data-mode': s.mode },
+              on: { click: () => o.onSuggestion(s.text, s.mode) },
+            },
+            h('span', { class: 'suggestion-icon' }, icon(s.icon, { size: 18 })),
+            h('span', { class: 'suggestion-body' }, h('span', { class: 'suggestion-tag', text: s.tag }), h('span', { class: 'suggestion-text', text: s.text })),
+            icon('chevron-right', { size: 16, class: 'suggestion-go' }),
+          ),
+        )
+      : [];
+    greetEls = {
+      title: h('h1', { class: 'greeting', text: g.title }),
+      // The capability line is onboarding: it shows with the starter prompts only.
+      sub: h('p', { class: 'greeting-sub', text: g.subtitle, hidden: !starters }),
+      meta: h('p', { class: 'greeting-meta', text: '', hidden: true }),
+    };
+    const reticle = h('div', { class: 'hero-reticle', attrs: { 'aria-hidden': 'true' } });
+    let core;
+    if (typeof o.onVoice === 'function') {
+      core = h(
+        'button',
+        {
+          class: 'hero-core hero-core--talk',
+          type: 'button',
+          attrs: { 'aria-label': 'Talk to Jarvis (voice mode). Long-press for what the rings mean', title: 'Talk to Jarvis · long-press: what the rings mean', 'data-testid': 'hero-talk', 'aria-haspopup': 'dialog' },
+        },
+        canvas,
+        reticle,
+      );
+      home.bindHero(core, () => o.onVoice());
+    } else {
+      core = h('div', { class: 'hero-core' }, canvas, reticle);
+    }
+    const fold = h(
+      'div',
+      { class: 'empty-fold presence-fold' },
+      h('div', { class: 'hero' }, core, home.readoutsEl, home.legendEl),
+      home.stateWordEl,
+      greetEls.title,
+      home.situationEl,
+      greetEls.sub,
+      greetEls.meta,
+      home.needsEl,
+      home.keysEl,
+      suggestions.length ? h('div', { class: 'suggestions suggestions--starters', attrs: { role: 'list', 'aria-label': 'Suggestions' } }, suggestions.map((b) => h('div', { class: 'suggestion-item', attrs: { role: 'listitem' } }, b))) : null,
+    );
+    const protocols = mountProtocols();
+    emptyEl = h('div', { class: ['empty-state', 'presence-home', protocols && 'has-protocols'], attrs: { 'data-testid': 'empty-state' } }, fold, protocols);
+    emptyHost.appendChild(emptyEl);
+    sizeHero(true);
+    try {
+      heroCore = createCore(canvas, { mode: 'hero' });
+      heroCore.setState(coreState);
+    } catch (err) {
+      console.error('[jarvis] hero core failed:', err);
+      heroCore = null;
+    }
+    home.attachCore(heroCore);
+  }
+
+  // Discrete hero sizes (SPEC 2.4.4): 232 on desktop; 184 / 148 / 120 on phones by height.
+  let sizeKey = '';
+  function sizeHero(force) {
+    if (!emptyEl || !o.home) return;
+    const core = emptyEl.querySelector('.hero-core');
+    if (!core) return;
+    const active = document.activeElement;
+    if (!force && active && emptyEl.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+    const size = o.home.heroSize();
+    const key = String(size);
+    if (!force && key === sizeKey) return;
+    sizeKey = key;
+    const hero = core.parentElement;
+    if (hero) hero.style.setProperty('--hero-size', `${size}px`);
+    emptyEl.dataset.hero = String(size);
+    if (force) scroller.scrollTop = 0;
+  }
+
   function renderEmpty() {
     destroyEmpty();
+    if (o.home) {
+      renderPresenceHome();
+      return;
+    }
     const g = o.getGreeting();
     const canvas = h('canvas', { class: 'hero-core-canvas', attrs: { 'data-testid': 'hero-core', 'aria-hidden': 'true' } });
     const suggestions = pickSuggestions().map((s) =>
@@ -409,6 +509,7 @@ export function createChat(o) {
     const g = o.getGreeting();
     setText(greetEls.title, g.title);
     setText(greetEls.sub, g.subtitle);
+    if (o.home) return; // the Presence home has no meta line (the rail's Systems glance shows the model)
     setText(greetEls.meta, g.meta || '');
     greetEls.meta.hidden = !g.meta;
   }
@@ -422,6 +523,10 @@ export function createChat(o) {
   let fitKey = '';
   function fitHero(force) {
     if (!emptyEl) return;
+    if (o.home) {
+      sizeHero(force);
+      return;
+    }
     const core = emptyEl.querySelector('.hero-core');
     const hero = emptyEl.querySelector('.hero');
     const fold = emptyEl.querySelector('.empty-fold');
@@ -470,6 +575,7 @@ export function createChat(o) {
 
   function destroyEmpty() {
     if (heroCore) {
+      if (o.home) o.home.attachCore(null);
       try {
         heroCore.destroy();
       } catch {
@@ -709,6 +815,14 @@ export function createChat(o) {
     refreshEmpty() {
       updateGreeting();
     },
+    /** Rebuild the home screen (the starter prompts' onboarding window changed). */
+    rebuildEmpty() {
+      if (emptyEl) renderEmpty();
+    },
+    /** The empty state's element (the Presence boot sequence animates it), or null. */
+    emptyElement: () => emptyEl,
+    /** The hero core, while the home screen shows. */
+    heroCore: () => heroCore,
     isEmpty: () => !conv || !conv.turns || conv.turns.length === 0,
     /** Place follow-up chips (SPEC §14.5) under a turn. Returns false if the turn isn't shown. */
     showFollowups(turnId, chipsEl) {
@@ -735,6 +849,17 @@ function oneColumn() {
   } catch {
     return true;
   }
+}
+
+/** The Jarvis label row's mark (SPEC 2.4.5): a static 14px core, two arcs and a dot. */
+function coreGlyph() {
+  return h(
+    'svg',
+    { class: 'turn-glyph', viewBox: '0 0 14 14', width: '14', height: '14', 'aria-hidden': 'true', focusable: 'false' },
+    h('path', { class: 'turn-glyph__arc', d: 'M2.5 4.2A5.4 5.4 0 0 1 11.8 4.4' }),
+    h('path', { class: 'turn-glyph__arc', d: 'M11.5 9.8A5.4 5.4 0 0 1 2.2 9.6' }),
+    h('circle', { class: 'turn-glyph__dot', cx: '7', cy: '7', r: '2.1' }),
+  );
 }
 
 // ---- user turn ----------------------------------------------------------------------
@@ -786,7 +911,7 @@ function createJarvisTurnView(turn, ctx) {
   const head = h(
     'div',
     { class: 'turn-head' },
-    h('span', { class: 'turn-glyph', attrs: { 'aria-hidden': 'true' } }),
+    coreGlyph(),
     h('span', { class: 'turn-name', text: 'Jarvis' }),
     modelShort ? h('span', { class: 'turn-model', text: modelShort }) : null,
   );

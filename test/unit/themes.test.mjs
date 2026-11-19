@@ -357,3 +357,55 @@ test('readThemeColors resolves the computed CSS variables of the active theme', 
     delete globalThis.getComputedStyle;
   }
 });
+
+// ---- Presence tokens (SPEC 2.4.16): the same in every theme, checked in every theme ------------
+
+test('Presence tokens exist once, in tokens.css only (no theme overrides them)', () => {
+  for (const token of ['--live', '--live-solid', '--live-soft', '--scrim-hud', '--grid']) {
+    assert.ok(token in BASE, `tokens.css defines ${token}`);
+    color(BASE[token]);
+    for (const [id, decls] of Object.entries(BLOCKS)) assert.ok(!(token in decls), `${id} must not override ${token}`);
+  }
+  assert.equal(BASE['--live'], '#ff5c72');
+  assert.equal(BASE['--live-solid'], '#c8283e');
+});
+
+test('WCAG AA for the LIVE pill and the live readouts on every surface, in every theme', () => {
+  const failures = [];
+  for (const { id } of THEMES) {
+    const t = tokensFor(id);
+    for (const [surfaceName, surface] of Object.entries(surfacesFor(id))) {
+      // The LIVE dot, border and "live" values: --live on the surface.
+      const live = contrast(color(t['--live']), surface);
+      if (live < 4.5) failures.push(`${id}: --live on ${surfaceName} = ${live.toFixed(2)}`);
+      // Pill text: --text on --live-soft over the surface.
+      const pill = over(color(t['--live-soft']), surface);
+      const text = contrast(color(t['--text']), pill);
+      if (text < 4.5) failures.push(`${id}: --text on --live-soft over ${surfaceName} = ${text.toFixed(2)}`);
+    }
+    // Stop buttons: white on --live-solid.
+    const solid = contrast([255, 255, 255, 1], color(t['--live-solid']));
+    if (solid < 4.5) failures.push(`${id}: white on --live-solid = ${solid.toFixed(2)}`);
+  }
+  assert.deepEqual(failures, []);
+  assert.ok(contrast(color(BASE['--live']), color(BASE['--bg'])) >= 6.7, '--live on --bg about 6.75:1');
+  assert.ok(Math.abs(contrast([255, 255, 255, 1], color(BASE['--live-solid'])) - 5.48) < 0.05, 'white on --live-solid 5.48:1');
+});
+
+test('--scrim-hud label plates stay readable over the worst camera frame (pure white) and black', () => {
+  const plateOnWhite = over(color(BASE['--scrim-hud']), [255, 255, 255, 1]);
+  const plateOnBlack = over(color(BASE['--scrim-hud']), [0, 0, 0, 1]);
+  const textWhite = contrast(color(BASE['--text']), plateOnWhite);
+  assert.ok(textWhite >= 7, `--text on the plate over white = ${textWhite.toFixed(2)} (SPEC: 7.71)`);
+  assert.ok(contrast(color(BASE['--text']), plateOnBlack) >= 7);
+  // Accent labels on a plate: AA in Arc Cyan (SPEC: 5.45); at least 3:1 (graphics) in every theme.
+  const arc = contrast(color(tokensFor('arc')['--accent']), plateOnWhite);
+  assert.ok(arc >= 4.5, `arc --accent on the plate over white = ${arc.toFixed(2)}`);
+  for (const { id } of THEMES) {
+    const r = contrast(color(tokensFor(id)['--accent']), plateOnWhite);
+    assert.ok(r >= 3, `${id}: --accent on the plate over white = ${r.toFixed(2)}`);
+  }
+  // Below 0.60 opacity the plate fails (SPEC note): keep 0.72.
+  const thin = over([4, 7, 12, 0.6], [255, 255, 255, 1]);
+  assert.ok(contrast(color(BASE['--text']), thin) < 7);
+});

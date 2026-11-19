@@ -1035,7 +1035,10 @@ function refreshGrids() {
  * Optional extras: heading (default true) shows the "Protocols" label; sounds ({ play, haptic },
  * SPEC §14.3) adds subtle feedback; onEdit(protocol|null) replaces the built-in editor dialog.
  */
-export function createProtocolGrid({ getSettings, onRun, compact = false, heading = true, sounds = null, onEdit = null } = {}) {
+export function createProtocolGrid({ getSettings, onRun, compact = false, heading = true, sounds = null, onEdit = null, layout = 'grid' } = {}) {
+  // layout 'row' (the Presence home, SPEC 2.4.4): one horizontally scrolling row of 152×92 cards
+  // that snaps to each card; a protocol's input row then opens under the whole row.
+  const rowLayout = layout === 'row';
   const readSettings = () => {
     try {
       const s = typeof getSettings === 'function' ? getSettings() : null;
@@ -1050,7 +1053,7 @@ export function createProtocolGrid({ getSettings, onRun, compact = false, headin
   const root = h(
     'section',
     {
-      class: ['proto', compact && 'proto--compact', 'is-entering'],
+      class: ['proto', compact && 'proto--compact', rowLayout && 'proto--row', 'is-entering'],
       attrs: { 'data-testid': 'protocol-grid', 'aria-labelledby': heading ? labelId : null, 'aria-label': heading ? null : 'Protocols' },
     },
     heading
@@ -1246,7 +1249,8 @@ export function createProtocolGrid({ getSettings, onRun, compact = false, headin
       }
     }
 
-    tile.after(row);
+    if (rowLayout) grid.after(row);
+    else tile.after(row);
     tile.classList.add('is-open');
     btn.setAttribute('aria-expanded', 'true');
     btn.setAttribute('aria-controls', rowId);
@@ -1269,6 +1273,8 @@ export function createProtocolGrid({ getSettings, onRun, compact = false, headin
     if (resizeObserver || typeof ResizeObserver !== 'function') return;
     resizeObserver = new ResizeObserver(() => placeCaret());
     resizeObserver.observe(grid);
+    // The row scrolls sideways: keep the caret under the open tile.
+    if (rowLayout) grid.addEventListener('scroll', placeCaret, { passive: true });
   }
 
   function closeRow({ focusTile = false, silent = false } = {}) {
@@ -1345,6 +1351,7 @@ export function createProtocolGrid({ getSettings, onRun, compact = false, headin
       resizeObserver.disconnect();
       resizeObserver = null;
     }
+    grid.removeEventListener('scroll', placeCaret);
   }
 
   pruneGrids();

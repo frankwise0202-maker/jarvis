@@ -72,6 +72,9 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     entryNames: '[name]',
     assetNames: '[name]-[hash]',
     loader: { '.png': 'file', '.jpg': 'file', '.webp': 'file', '.svg': 'file', '.woff': 'file', '.woff2': 'file' },
+    // Self-hosted fonts live in public/fonts (with their license) and are copied as they are:
+    // the stylesheet's url(../fonts/…) then resolves from assets/app.css to fonts/ (SPEC 2.4.15).
+    external: ['../fonts/*'],
     logLevel: quiet ? 'error' : 'warning',
     absWorkingDir: root,
   };

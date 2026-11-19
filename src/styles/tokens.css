@@ -45,10 +45,26 @@
   --err: #ff5c72;             /* error */
   --err-soft: rgba(255, 92, 114, 0.14);
 
+  /* Presence (SPEC 2.4.16). Like the status colors, the same in every theme. --live marks a live
+     sensor (always beside the word LIVE or a sensor name, so it never reads as "error"). */
+  --live: #ff5c72;            /* LIVE dot and border: 6.75:1 on --bg */
+  --live-solid: #c8283e;      /* Stop buttons with white text or icon: 5.48:1 */
+  --live-soft: rgba(255, 92, 114, 0.16); /* privacy pill fill */
+  --scrim-hud: rgba(4, 7, 12, 0.72);     /* label plates over camera video: --text stays >= 7:1 on white */
+  --grid: rgba(78, 196, 255, 0.06);      /* decorative background grid */
+
   /* Type */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Display face (SPEC 2.4.15): the wordmark, mode titles (18px and up) and big numbers only;
+     never sentences or text below 16px. Its digits are proportional (no tnum): numbers that change
+     every second stay in --font-mono. */
+  --font-hud: "Rajdhani", var(--font-display);
+  --fs-hud-md: 18px;
+  --fs-hud-lg: 28px;
+  --fs-hud-xl: 44px;
+  --fs-hud-2xl: clamp(64px, 15vmin, 160px);
   --fs-2xs: 10px;
   --fs-xs: 11px;
   --fs-sm: 13px;
@@ -96,6 +112,10 @@
   --dur-1: 120ms;
   --dur-2: 220ms;
   --dur-3: 420ms;
+  --dur-mode: 320ms;          /* mode change: brackets draw in, content fades up 4px */
+  --stagger: 40ms;            /* between panels assembling (at most 6) */
+  --dur-boot: 1600ms;         /* the core's boot sequence */
+  --ease-breath: cubic-bezier(0.37, 0, 0.63, 1);
 
   /* Layout */
   --safe-top: env(safe-area-inset-top, 0px);
@@ -123,5 +143,18 @@
     --dur-1: 0ms;
     --dur-2: 0ms;
     --dur-3: 0ms;
+    --dur-mode: 0ms;
+    --stagger: 0ms;
+    --dur-boot: 0ms;
   }
+}
+
+/* HUD motion "Still" (Settings → HUD): static even when the system setting is off. */
+:root[data-motion='still'] {
+  --dur-1: 0ms;
+  --dur-2: 0ms;
+  --dur-3: 0ms;
+  --dur-mode: 0ms;
+  --stagger: 0ms;
+  --dur-boot: 0ms;
 }

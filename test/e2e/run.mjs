@@ -38,9 +38,11 @@ async function optionalScenarios(rel) {
   return existsSync(url) ? (await import(url.href)).default : [];
 }
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
+/** Presence UI (SPEC 2.4): the home, Needs-you, the rail, the privacy pill. */
+const presence = await optionalScenarios('./scenarios/presence.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

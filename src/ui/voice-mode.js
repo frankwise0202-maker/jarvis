@@ -205,6 +205,7 @@ function createVoiceMode(opts) {
     mode,
     container,
     visuals,
+    createMicBands,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -387,6 +388,28 @@ function createVoiceMode(opts) {
   if (!core || typeof core.setState !== 'function') {
     coreBtn.classList.add('vm-core--css');
     core = cssCore(coreBtn);
+  }
+
+  // Living Core v2 (SPEC 2.4.13): while Jarvis listens, the mic's real bands drive the core's voice
+  // band (one AnalyserNode, listening only; released when listening ends or the page hides). The
+  // app passes createMicBands only where a second mic stream is safe beside speech recognition;
+  // elsewhere, and if it fails, the synthetic envelope stays.
+  let micBands = null;
+  try {
+    if (typeof createMicBands === 'function' && typeof core.setBands === 'function') {
+      micBands = createMicBands({
+        onBands: (b) => {
+          try {
+            core.setBands(b);
+          } catch {
+            /* optional */
+          }
+        },
+      });
+    }
+  } catch (err) {
+    console.warn('[voice] mic bands unavailable', err);
+    micBands = null;
   }
 
   const offs = [
@@ -731,6 +754,10 @@ function createVoiceMode(opts) {
       core.setState(next);
     } catch (err) {
       console.warn('[voice] core.setState failed', err);
+    }
+    if (micBands) {
+      if (next === 'listening' && !reducedMotion) micBands.start();
+      else micBands.stop();
     }
     renderControls();
     updateLevelLoop();
@@ -2339,7 +2366,9 @@ function createVoiceMode(opts) {
       const len = event.name === 'sentence' ? 0 : Number(event.charLength);
       setKaraokeWord(displayIndex(sp, ci), Number.isFinite(len) && len > 0 ? len : 0);
     }
-    bumpLevel(0.55 + Math.random() * 0.35);
+    // The core's bump follows the spoken word's length (real speech data, never chance: SPEC 2.4.1).
+    const wordLen = Number(event.charLength);
+    bumpLevel(0.55 + Math.min(0.35, (Number.isFinite(wordLen) && wordLen > 0 ? wordLen : 4) * 0.045));
   }
 
   function displayIndex(sp, spokenIndex) {
@@ -2589,6 +2618,7 @@ function createVoiceMode(opts) {
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
     S.confirm = null;
     S.heldWords = '';
+    if (micBands) callQuietly(() => micBands.destroy());
     for (const off of offs) callQuietly(off);
     try {
       if (typeof core.destroy === 'function') core.destroy();

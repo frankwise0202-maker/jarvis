@@ -21,9 +21,13 @@ import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
-import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats } from './stats.js';
+import { createMicBands } from './hud/voice-bands.js';
+import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
-import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
+import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols, getProtocol } from './protocols.js';
+import { createPresence } from './presence/presence.js';
+import { exportHud, importHud } from './presence/hud-prefs.js';
+import { partOfDay } from './presence/model.js';
 import { fmtUsd } from './hud/format.js';
 import { openHologramViewer, getHologramViewer } from './hologram/viewer.js';
 import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
@@ -40,7 +44,7 @@ import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
-import { isOnline, onOnlineChange } from '../platform/env.js';
+import { isOnline, onOnlineChange, isIOS } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
@@ -146,6 +150,7 @@ export async function startApp(rootEl) {
     pendingUpdate: null,
     lastSettings: safe(getSettings, {}),
     bootDone: false,
+    convCount: 0, // conversations in History (the home's starter prompts show for the first three)
   };
 
   // Ambience (SPEC §14.3): theme first (before anything paints), then sounds and attention.
@@ -155,6 +160,8 @@ export async function startApp(rootEl) {
   // Backups also carry the owner's custom protocols and usage statistics (merged on import).
   safe(() => registerBackupPart('protocols', { exportData: () => exportCustomProtocols(), importData: (list) => importCustomProtocols(list) }));
   safe(() => registerBackupPart('stats', { exportData: () => exportStats(), importData: (data) => importStats(data) }));
+  // HUD preferences (Calm/Full, motion, boot) travel in backups too (src/ui/presence/hud-prefs.js).
+  safe(() => registerBackupPart('hud', { exportData: () => exportHud(), importData: (data) => importHud(data) }));
 
   const ttsOk = safe(() => ttsSupported(), false);
   const sttOk = safe(() => sttSupported(), false);
@@ -222,7 +229,54 @@ export async function startApp(rootEl) {
   const live = h('div', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', role: 'status', 'data-testid': 'live-region' } });
   const sheetLayer = h('div', { class: 'sheet-layer' });
 
+  // Presence (SPEC 2.4): the state word, privacy pills, sensor tape, home and awareness rail.
+  const presence = createPresence({
+    root,
+    demo: state.demo,
+    sttOk,
+    getSettings: () => getSettings(),
+    getSpend: () => getSpend(),
+    getTodaySpend: () => todaySpend(),
+    modelLabel: () => modelLabel(),
+    // The scan reads without tracking: it must never reset the two-window baseline of a chat.
+    store: { list: () => store.list(), get: (id) => (state.demo ? store.get(id) : getConversation(id, { track: false })) },
+    canResume: (conv) => !state.runs.has(conv.id) && !runningElsewhere(conv.id) && engine.canResume(conv),
+    sounds,
+    onRendered: ({ needs }) => header.setAlert(needs.length),
+    onHud: () => {
+      renderPanelStatsSoon();
+      updateCore();
+    },
+    actions: {
+      talk: () => openVoice(),
+      look: () => look(),
+      brief: () => briefMe(),
+      openConversation: (id) => openConversation(id),
+      resume: (id) => openThen(id, () => resume()),
+      retry: (id, turnId) => openThen(id, () => {
+        const turn = findTurn(turnId);
+        if (turn) retry(turn);
+      }),
+      openSettings: (opts) => openSettings(opts),
+      openSystems: () => openSystems(),
+      openHistory: () => openHistory(),
+      stopSensor: (kind) => {
+        if ((kind === 'mic' || kind === 'all') && state.listening) {
+          safe(() => state.listening.stop());
+          toast('Microphone off.', { level: 'info', id: 'sensor-off' });
+        }
+      },
+      spendDismissed: () => {
+        const s = getSettings();
+        return uiGet(UI_KEYS.spendDismissed) === `${monthKey()}:${s.spendWarnUsd}`;
+      },
+    },
+  });
+
   const header = createHeader({
+    pills: presence.pills.el,
+    tape: presence.tape.el,
+    phoneTape: presence.phoneTape.el,
     demo: state.demo,
     voice: sttOk || ttsOk,
     onVoice: () => openVoice(),
@@ -266,12 +320,19 @@ export async function startApp(rootEl) {
     },
     // A protocol's mode applies to that run only (the composer keeps its own mode). Returning
     // send()'s boolean keeps the protocol's input row open when the run couldn't start.
-    onProtocol: (text, mode) => send(text, mode),
+    onProtocol: (text, mode, p) => {
+      const ok = send(text, mode);
+      if (ok && p && p.id === 'morning-briefing') presence.noteBriefing(new Date());
+      return ok;
+    },
     onVoice: sttOk || ttsOk ? () => openVoice() : null,
     getSettings: () => getSettings(),
     sounds,
     getGreeting: () => greeting(),
     ttsSupported: ttsOk,
+    // Presence home (SPEC 2.4.4); the starter prompts are onboarding: first three conversations.
+    home: presence.home,
+    showStarters: () => state.demo || state.convCount < 3,
   });
 
   const composer = createComposer({
@@ -302,13 +363,16 @@ export async function startApp(rootEl) {
   const panelMcHost = h('div', { class: 'panel-mc' });
   const panelStats = h('div', { class: 'panel-stats', attrs: { 'aria-label': 'Session' } });
   const statsLauncher = createStatsLauncher({ onOpen: () => openSystems() });
-  const panel = h('aside', { class: 'panel', attrs: { 'aria-label': 'Mission Control' } }, panelMcHost, panelStats, statsLauncher.el);
+  // Desktop awareness rail (SPEC 2.4.4): replaces Mission Control's empty "Standing by" panel; a
+  // mission still takes the whole rail (Mission mode).
+  const panelRail = presence.rail.el;
+  const panel = h('aside', { class: 'panel', attrs: { 'aria-label': 'Mission Control' } }, panelMcHost, panelRail, panelStats, statsLauncher.el);
   const main = h('main', { class: 'main' }, banners, chat.el, composer.el);
   const body = h('div', { class: 'body' }, sidebar, sidebarScrim, main, panel);
   const shell = h('div', { class: 'shell' }, header.el, body);
   const bg = h('div', { class: 'app-bg', attrs: { 'aria-hidden': 'true' } }, h('div', { class: 'app-bg-grid' }), h('div', { class: 'app-bg-glow' }));
 
-  root.replaceChildren(bg, shell, sheetLayer, toasts.el, live);
+  root.replaceChildren(bg, shell, sheetLayer, toasts.el, live, presence.announcer);
   root.classList.add('app');
   root.dataset.demo = state.demo ? 'true' : 'false';
   initSheets({ layer: sheetLayer, shell });
@@ -393,11 +457,63 @@ export async function startApp(rootEl) {
   }
 
   const updateCore = raf(() => {
-    const [coreState, text] = computeCore();
-    header.setState(coreState, text);
+    const [coreState] = computeCore();
+    const { n } = activeMissionAgents();
+    const turns = [];
+    const titles = [];
+    for (const entry of state.runs.values()) {
+      if (entry.run && entry.run.turn) turns.push(entry.run.turn);
+      titles.push(entry.conv && typeof entry.conv.title === 'string' ? entry.conv.title : '');
+    }
+    presence.update({ coreState, agents: n, listening: !!state.listening, speaking: !!state.speaking, online: state.online, convId: state.conv ? state.conv.id : null, turns, titles });
+    const word = presence.word();
+    header.setState(coreState, word.word, word.tone);
     chat.setCoreState(coreState);
     root.dataset.core = coreState;
   });
+
+  // ---- Presence data and actions ----------------------------------------------------------------
+  /** Today's spend: what Records logged today plus the replies still running (USD). */
+  function todaySpend() {
+    const stats = safe(() => getStats(), null);
+    const day = stats && stats.byDay ? stats.byDay[dayKey(Date.now())] : null;
+    let usd = day ? Number(day.costUsd) || 0 : 0;
+    for (const entry of state.runs.values()) usd += Number(entry.run && entry.run.turn && entry.run.turn.costUsd) || 0;
+    return usd;
+  }
+  function modelLabel() {
+    const s = getSettings();
+    const model = (MODELS[s.leadModel] && MODELS[s.leadModel].short) || s.leadModel;
+    const depth = (DEPTHS[s.depth] && DEPTHS[s.depth].label) || s.depth;
+    return `${model} · ${String(depth).toLowerCase()}`;
+  }
+  /** Open a conversation, then act on it (Needs-you: Resume, Retry). */
+  async function openThen(id, fn) {
+    if (!state.conv || state.conv.id !== id) await openConversation(id);
+    if (state.conv && state.conv.id === id) safe(fn);
+  }
+  /** Brief me: the briefing protocol for the time of day, in a fresh conversation. */
+  function briefMe() {
+    const p = safe(() => getProtocol('morning-briefing'), null);
+    if (!p) return false;
+    const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
+    if (!text) return false;
+    if (state.conv && turnsOf(state.conv).length && !currentRunning()) newChat();
+    const ok = send(text, p.mode || 'swarm');
+    if (ok) presence.noteBriefing(new Date());
+    return ok;
+  }
+  /**
+   * Look: the live camera (Optics, SPEC 2.4.9) when this build has it; otherwise the system
+   * camera, which is also Optics' fallback when the camera is missing or denied.
+   */
+  function look() {
+    if (typeof window.__jarvisOptics === 'function') {
+      safe(() => window.__jarvisOptics());
+      return;
+    }
+    composer.takePhoto();
+  }
 
   // ---- banners ------------------------------------------------------------------------------
   function banner(testid, tone, iconName, text, actions = []) {
@@ -489,6 +605,11 @@ export async function startApp(rootEl) {
     try {
       const items = await store.list();
       history.setItems(items);
+      const before = state.convCount;
+      state.convCount = Array.isArray(items) ? items.length : 0;
+      // The starter prompts are onboarding (first three conversations): rebuild the home when the
+      // window opens or closes, never while a protocol's input row is in use.
+      if ((before < 3) !== (state.convCount < 3) && chat.isEmpty() && !(document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName))) chat.rebuildEmpty();
       const persistence = state.demo ? { persistent: true, reason: null } : safe(() => getPersistence(), { persistent: store.isPersistent(), reason: null });
       history.setPersistent(persistence.persistent, persistence.reason);
       history.setActive(state.conv ? state.conv.id : null);
@@ -518,6 +639,7 @@ export async function startApp(rootEl) {
     history.setActive(state.conv ? state.conv.id : null);
     selectLatestMission();
     if (remember) rememberCurrent();
+    if (state.conv) presence.noteSeen(state.conv.id);
     updateAll();
   }
 
@@ -563,6 +685,7 @@ export async function startApp(rootEl) {
       await withTimeout(entry.run.done, 3000, null);
     }
     await store.remove(id);
+    presence.forget(id);
     if (state.conv && state.conv.id === id) setConversation(null);
     await refreshHistory();
     toast('Conversation deleted.', { level: 'success' });
@@ -779,6 +902,9 @@ export async function startApp(rootEl) {
         activeRun: entry ? entry.run : null,
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
+        // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
+        // recognizer may hold the mic, so a second stream must be tested on a device first.
+        createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
@@ -1352,6 +1478,15 @@ export async function startApp(rootEl) {
     else if (status === 'error' && !voiceOpen) safe(() => sounds.cue('error'));
     const finished = safe(() => describeFinishedTurn(turn, entry.conv), null);
     if (finished) safe(() => missionFinished(finished));
+    // Presence: a mission that ended while the owner was away becomes a Needs-you item.
+    const away = document.hidden || !isCurrent(entry);
+    const briefing = safe(() => {
+      const first = turnsOf(entry.conv).find((t) => t.role === 'user');
+      const parsed = first ? parseProtocolPrompt(first.text || '') : null;
+      return parsed && /briefing/i.test(parsed.name || '') ? partOfDay(new Date(Number(first.createdAt) || Date.now())) : '';
+    }, '');
+    safe(() => presence.noteRunEnded(entry.conv, turn, { away, briefing }));
+    if (status === 'done' && !away) safe(() => presence.cue('answer'));
     if (status === 'done' && isCurrent(entry)) {
       // Not when Voice Mode had already begun saying this answer before the owner left it: Exit
       // was to silence Jarvis, and the chat reading it again from the start would undo that.
@@ -1668,6 +1803,9 @@ export async function startApp(rootEl) {
       safe(() => (turn ? mcPanel.show(turn, state.mcSel.missionId) : mcPanel.clear()));
       panel.classList.toggle('has-mission', !!turn);
     }
+    // The awareness rail stands in for Mission Control's empty state (and the panel says which).
+    panelRail.hidden = !!turn;
+    panel.setAttribute('aria-label', turn ? 'Mission Control' : 'Awareness');
     if (mcSheet && turn) safe(() => mcSheet.mc.show(turn, state.mcSel.missionId));
     renderPanelStats();
   }
@@ -1690,7 +1828,7 @@ export async function startApp(rootEl) {
   function createPanelMc() {
     if (mcPanel) return;
     try {
-      mcPanel = createMissionControl({ container: panelMcHost, variant: 'panel' });
+      mcPanel = createMissionControl({ container: panelMcHost, variant: 'panel', commsOpen: presence.getHud().density === 'full' });
       if (mcPanel.el && mcPanel.el.parentNode !== panelMcHost) panelMcHost.appendChild(mcPanel.el);
       ensureMcTestId(panelMcHost);
     } catch (err) {
@@ -1748,7 +1886,7 @@ export async function startApp(rootEl) {
     });
     let mc;
     try {
-      mc = createMissionControl({ container: sheet.body, variant: 'sheet' });
+      mc = createMissionControl({ container: sheet.body, variant: 'sheet', commsOpen: presence.getHud().density === 'full' });
       if (mc.el && mc.el.parentNode !== sheet.body) sheet.body.appendChild(mc.el);
     } catch (err) {
       console.error('[jarvis] Mission Control failed:', err);
@@ -1875,6 +2013,15 @@ export async function startApp(rootEl) {
             if (fresh && state.conv && state.conv.id === id && !state.runs.has(id)) setConversation(fresh);
           })
           .catch((err) => console.error('[jarvis] reloading the imported conversation failed:', err));
+      },
+      // HUD → Boot sequence → Replay now: back on the home screen, once the sheet is gone (a
+      // covered core sleeps, and the boot would play unseen).
+      replayBoot: () => {
+        if (settingsSheet) settingsSheet.close('navigate');
+        setTimeout(() => {
+          if (!chat.isEmpty()) newChat();
+          setTimeout(() => safe(() => presence.boot({ force: true, emptyEl: chat.emptyElement() })), 80);
+        }, 460);
       },
       replayOnboarding: () => {
         if (settingsSheet) settingsSheet.close('navigate');
@@ -2243,6 +2390,11 @@ export async function startApp(rootEl) {
   root.dataset.ready = 'true';
   root.setAttribute('aria-busy', 'false');
 
+  // Presence: the boot sequence on the home screen (once a session by default), then the scan for
+  // interrupted replies in recent conversations (Needs-you).
+  if (chat.isEmpty() && !onboardingSheet) safe(() => presence.boot({ emptyEl: chat.emptyElement() }));
+  setTimeout(() => safe(() => presence.scan()), 400);
+
   async function restoreLast() {
     let saved = null;
     try {
@@ -2261,19 +2413,8 @@ export async function startApp(rootEl) {
         return;
       }
     }
-    // Not restoring: still point out an interrupted reply in the newest conversation.
-    try {
-      const items = await store.list();
-      const newest = items && items[0];
-      if (!newest || Date.now() - newest.updatedAt > 24 * 3600 * 1000) return;
-      const conv = await store.get(newest.id);
-      const last = conv && conv.turns && conv.turns[conv.turns.length - 1];
-      if (last && last.role === 'jarvis' && (last.status === 'interrupted' || last.status === 'running')) {
-        toast('Your last request was interrupted.', { level: 'warn', timeout: 9000, action: { label: 'Open', fn: () => openConversation(conv.id) } });
-      }
-    } catch {
-      /* best effort */
-    }
+    // Not restoring: an interrupted reply in a recent conversation becomes a Needs-you item
+    // (presence.scan(), after the boot), quieter than a toast (SPEC 2.4.1 rule 8).
   }
 
   return {
@@ -2290,5 +2431,6 @@ export async function startApp(rootEl) {
     openHologram: (turn, seg) => openVisualSegment(turn, seg),
     getHologramViewer,
     getBlueprintViewer,
+    presence,
   };
 }

@@ -18,6 +18,7 @@ import { MODELS, DEPTHS, MODES } from '../engine/index.js';
 import { createThemePicker, applyTheme } from './themes.js';
 import * as sounds from './sounds.js';
 import { notifyPermission, requestNotifyPermission, explainNotifyPermission } from './attention.js';
+import { getHud, saveHud, onHudChange } from './presence/hud-prefs.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -220,6 +221,7 @@ function metaContent(name) {
  * @param {() => Promise<void>} o.resetApp
  * @param {() => void} o.refreshHistory
  * @param {() => void} o.replayOnboarding
+ * @param {() => void} [o.replayBoot]   HUD → Boot sequence → Replay now (the Presence boot)
  * @param {(msg: string, opts?: object) => void} o.toast
  * @param {boolean} [o.demo]
  */
@@ -737,9 +739,41 @@ export function createSettingsPanel(o) {
   syncNotify();
   const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 
+  // HUD (SPEC 2.4.12 / 2.4.19): density, motion and the boot sequence. Stored apart from the
+  // settings (src/ui/presence/hud-prefs.js); every option shows what it changes.
+  const hudSelect = (key, testid, options) => {
+    const select = h(
+      'select',
+      { class: 'select', id: fieldId(testid), attrs: { 'data-testid': `setting-${testid}` }, on: { change: () => saveHud({ [key]: select.value }) } },
+      options.map(([value, label]) => h('option', { value, text: label })),
+    );
+    select.value = getHud()[key];
+    return select;
+  };
+  const hudDensity = hudSelect('density', 'hudDensity', [['calm', 'Calm'], ['full', 'Full']]);
+  const hudMotion = hudSelect('motion', 'hudMotion', [['full', 'Full'], ['reduced', 'Reduced'], ['still', 'Still']]);
+  const hudBoot = hudSelect('boot', 'hudBoot', [['session', 'Once per session'], ['launch', 'Every launch'], ['never', 'Never']]);
+  cleanups.push(
+    onHudChange((p) => {
+      hudDensity.value = p.density;
+      hudMotion.value = p.motion;
+      hudBoot.value = p.boot;
+    }),
+  );
+  const replayBoot = typeof o.replayBoot === 'function'
+    ? h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'boot-replay' }, on: { click: () => o.replayBoot() } }, icon('play', { size: 14 }), h('span', { text: 'Replay now' }))
+    : null;
+  const hudCard = card(
+    row({ label: 'HUD density', help: 'Calm keeps the screen quiet. Full adds the sensor tape, the core’s gauge labels and the open comms log.', forId: fieldId('hudDensity'), control: hudDensity }),
+    row({ label: 'Motion', help: 'Reduced lets the core rest when Jarvis is idle. Still shows static frames only. Your system’s reduce-motion setting always wins.', forId: fieldId('hudMotion'), control: hudMotion }),
+    row({ label: 'Boot sequence', help: 'The core assembling when Jarvis opens (1.6 s). Any tap skips it.', forId: fieldId('hudBoot'), control: hudBoot, extra: replayBoot ? h('div', { class: 'set-row-actions' }, replayBoot) : null }),
+  );
+  hudCard.dataset.testid = 'settings-hud';
+
   const appearance = section(
     'appearance',
     card(row({ label: 'Theme', help: 'Accent colors for the whole interface.', control: h('div', { class: 'theme-setting', attrs: { 'data-testid': 'setting-theme' } }, themePicker.el), stacked: true })),
+    hudCard,
     card(
       row({
         label: 'Sounds',

@@ -12,7 +12,7 @@
 // page is hidden, or before the owner has interacted with the page (browsers block audio
 // until then). Rapid repeats are rate-limited (e.g. at most one 'agent-done' per 120 ms).
 
-export const SOUND_NAMES = Object.freeze(['send', 'launch', 'agent-done', 'mission-done', 'reply-done', 'error', 'listen-start', 'listen-stop', 'tap', 'notify']);
+export const SOUND_NAMES = Object.freeze(['send', 'launch', 'agent-done', 'mission-done', 'reply-done', 'error', 'listen-start', 'listen-stop', 'tap', 'notify', 'boot', 'optics', 'scan', 'alert']);
 
 // gap: minimum ms between two plays of the same sound. big: a prominent sound; small
 // sounds are skipped for a moment after one so they never clutter it. gain: output level,
@@ -29,6 +29,11 @@ const SPECS = {
   'listen-start': { gap: 90, gain: 0.49, verb: 0.25 },
   'listen-stop': { gap: 90, gain: 0.47, verb: 0.25 },
   notify: { gap: 600, big: true, gain: 1.22, verb: 1 },
+  // Presence cues (SPEC 2.4.18). The boot, a camera capture and its scan, a Needs-you item.
+  boot: { gap: 2000, big: true, gain: 0.7, verb: 1 },
+  optics: { gap: 250, small: true, gain: 0.5, verb: 0.4 },
+  scan: { gap: 500, small: true, gain: 0.22, verb: 0.3 },
+  alert: { gap: 1200, big: true, gain: 0.8, verb: 0.6 },
 };
 
 const DEFAULT_VOLUME = 0.6;
@@ -155,7 +160,7 @@ export function haptic(kind) {
 const HAPTICS = { light: 8, success: [10, 70, 18], error: [26, 60, 26, 60, 34] };
 
 // Haptic that accompanies each sound in cue().
-const CUE_HAPTIC = { send: 'light', launch: 'light', 'mission-done': 'success', error: 'error', 'listen-start': 'light', 'listen-stop': 'light', tap: 'light', notify: 'success' };
+const CUE_HAPTIC = { send: 'light', launch: 'light', 'mission-done': 'success', error: 'error', 'listen-start': 'light', 'listen-stop': 'light', tap: 'light', notify: 'success', optics: 'light', alert: 'light' };
 
 /** play(name) plus the matching haptic. Returns what play() returned. */
 export function cue(name, opts) {
@@ -718,6 +723,35 @@ const RECIPES = {
   'listen-stop'(k, t) {
     k.noise({ t, decay: 0.01, peak: 0.03, type: 'bandpass', f: 4800, q: 1.4 });
     k.blip({ f: N.A6, to: N.E6, t, glide: 0.03, decay: 0.055, peak: 0.065 });
+  },
+
+  // Boot (the core assembling): FM bells climbing A4 → E5, then a soft C#6 bell as the state
+  // word types itself in (+1.1 s).
+  boot(k, t) {
+    k.warm({ f: N.A3, t, decay: 0.5, peak: 0.014, attack: 0.08, cutoff: 900, detune: 6 });
+    k.bell({ f: N.A4, t, decay: 0.32, peak: 0.05, ratio: 2, index: 0.8, attack: 0.006, pan: -0.15 });
+    k.bell({ f: N.Cs5, t: t + 0.12, decay: 0.3, peak: 0.045, ratio: 2, index: 0.7, attack: 0.006, pan: 0 });
+    k.bell({ f: N.E5, t: t + 0.24, decay: 0.42, peak: 0.05, ratio: 2, index: 0.7, attack: 0.006, pan: 0.15 });
+    k.noise({ t: t + 0.05, decay: 0.5, peak: 0.01, attack: 0.25, type: 'bandpass', f: 700, to: 2600, q: 0.8 });
+    k.bell({ f: N.Cs6, t: t + 1.1, decay: 0.45, peak: 0.032, ratio: 3.5, index: 0.45, attack: 0.008 });
+  },
+
+  // Optics capture: a 30 ms filtered-noise tick (the shutter) and an E6 glass ping.
+  optics(k, t) {
+    k.noise({ t, decay: 0.03, peak: 0.04, type: 'bandpass', f: 5200, q: 1.2 });
+    k.bell({ f: N.E6, t: t + 0.02, decay: 0.16, peak: 0.06, ratio: 4.2, index: 0.5, attack: 0.002 });
+  },
+
+  // Scan: a 500 ms rising filtered-noise sweep, 800 → 3000 Hz.
+  scan(k, t) {
+    k.noise({ t, decay: 0.42, peak: 0.05, attack: 0.08, type: 'bandpass', f: 800, to: 3000, q: 1.6 });
+  },
+
+  // Needs-you item: a falling E5 → C#5, soft and clear.
+  alert(k, t) {
+    k.bell({ f: N.E5, t, decay: 0.2, peak: 0.06, ratio: 2, index: 0.6, attack: 0.004, pan: -0.08 });
+    k.bell({ f: N.Cs5, t: t + 0.16, decay: 0.3, peak: 0.06, ratio: 2, index: 0.55, attack: 0.004, pan: 0.08 });
+    k.warm({ f: N.A4, t: t + 0.16, decay: 0.26, peak: 0.016, attack: 0.012, cutoff: 1600 });
   },
 
   // Attention: two bright glass pings over a soft fundamental.

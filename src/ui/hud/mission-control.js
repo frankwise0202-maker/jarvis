@@ -192,7 +192,9 @@ function restoreAnchor(anchor) {
 }
 
 /**
- * @param {{ container?: Element, variant?: 'sheet'|'panel' }} [opts]
+ * @param {{ container?: Element, variant?: 'sheet'|'panel', commsOpen?: boolean }} [opts]
+ *   commsOpen: whether the comms log starts open (the HUD density) when the owner hasn't opened
+ *   or closed it this session; omitted: open in the desktop panel, collapsed in the sheet
  */
 export function createMissionControl(opts = {}) {
   const variant = opts.variant === 'sheet' ? 'sheet' : 'panel';
@@ -216,7 +218,8 @@ export function createMissionControl(opts = {}) {
     h('span', { class: 'hud-mc__summary-head' }, summaryIcon, summaryLead, h('span', { class: 'hud-sr', text: ' · ' })),
     summaryText,
   );
-  const comms = createCommsLog({ variant, onToggle: () => fitCommsSoon() });
+  // HUD density (SPEC 2.4.19): Calm starts the comms log collapsed, Full open (undefined: as before).
+  const comms = createCommsLog({ variant, defaultOpen: typeof opts.commsOpen === 'boolean' ? opts.commsOpen : undefined, onToggle: () => fitCommsSoon() });
 
   const waves = h('div', { class: 'hud-mc__waves', attrs: { role: 'group', 'aria-label': 'Mission waves' }, hidden: true });
 

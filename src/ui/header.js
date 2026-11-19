@@ -1,5 +1,6 @@
-// App header: mini core orb mirroring Jarvis's state, the wordmark, a status readout,
-// and the History / Settings buttons (plus a New chat shortcut once a chat has started).
+// App header: mini core orb mirroring Jarvis's state, the wordmark, the state word (SPEC 2.4.3:
+// mono capitals with a colored dot), the privacy pills while a sensor is live, the desktop sensor
+// tape, and the History / Settings buttons (plus a New chat shortcut once a chat has started).
 // In demo mode the DEMO badge beside the wordmark is an "Exit demo" button.
 
 import { h, setText } from './dom.js';
@@ -9,17 +10,20 @@ import { createCore } from './hud/core.js';
 const STATE_TONE = {
   idle: 'ok',
   listening: 'active',
-  thinking: 'active',
+  thinking: 'think',
   working: 'active',
   speaking: 'active',
+  optics: 'active',
   error: 'err',
   offline: 'warn',
 };
 
 /**
  * @param {{ onHistory: () => void, onSettings: () => void, onNewChat: () => void, demo?: boolean,
- *           voice?: boolean, onVoice?: () => void, onLibrary?: () => void }} o   voice: show the Voice
- *           Mode button; onLibrary: show the Blueprints library button (saved holograms and blueprints)
+ *           voice?: boolean, onVoice?: () => void, onLibrary?: () => void, pills?: Element,
+ *           tape?: Element, phoneTape?: Element }} o   voice: show the Voice Mode button; onLibrary:
+ *           show the Blueprints library button (saved holograms and blueprints); pills / tape /
+ *           phoneTape: the Presence privacy pills and sensor tapes (src/ui/presence/views.js)
  */
 export function createHeader(o) {
   const canvas = h('canvas', { class: 'header-core-canvas', attrs: { 'data-testid': 'header-core', 'aria-hidden': 'true' } });
@@ -36,7 +40,7 @@ export function createHeader(o) {
   const statusLabel = h('span', { class: 'status-label', text: 'Online' });
   const statusDetail = h('span', { class: 'status-detail' });
   const statusText = h('span', { class: 'status-text' }, statusLabel, statusDetail);
-  const status = h('div', { class: 'brand-status', dataset: { tone: 'ok' } }, statusDot, statusText);
+  const status = h('div', { class: 'brand-status', attrs: { 'data-testid': 'header-state' }, dataset: { tone: 'ok' } }, statusDot, statusText, o.pills || null);
 
   // Demo mode: the DEMO badge is also the way out — the installed app has no address bar to
   // remove ?demo=1 from. It reloads the real app (./), like Settings → About → Leave demo.
@@ -107,7 +111,13 @@ export function createHeader(o) {
     icon('settings', { size: 22 }),
   );
 
-  const el = h('header', { class: 'header' }, h('div', { class: 'header-inner' }, brand, h('div', { class: 'header-actions' }, newBtn, voiceBtn, libraryBtn, historyBtn, settingsBtn)));
+  const tapeSlot = o.tape ? h('div', { class: 'header-tape' }, o.tape) : null;
+  const el = h(
+    'header',
+    { class: 'header' },
+    h('div', { class: 'header-inner' }, brand, tapeSlot, h('div', { class: 'header-actions' }, newBtn, voiceBtn, libraryBtn, historyBtn, settingsBtn)),
+    o.phoneTape ? h('div', { class: 'header-tape-row' }, o.phoneTape) : null,
+  );
 
   let lastState = '';
   return {
@@ -115,11 +125,12 @@ export function createHeader(o) {
     core,
     historyBtn,
     settingsBtn,
-    /** Mirror Jarvis's state on the orb and in the status readout. */
-    setState(state, text) {
+    /** Mirror Jarvis's state on the orb and in the status readout (tone: the dot's color). */
+    setState(state, text, tone) {
+      const nextTone = tone || STATE_TONE[state] || 'ok';
+      if (status.dataset.tone !== nextTone) status.dataset.tone = nextTone;
       if (state !== lastState) {
         lastState = state;
-        status.dataset.tone = STATE_TONE[state] || 'ok';
         status.dataset.state = state;
         try {
           core && core.setState(state);
@@ -138,6 +149,12 @@ export function createHeader(o) {
       } catch {
         /* optional */
       }
+    },
+    /** Needs-you count: an amber dot on the orb (the second step of the escalation ladder). */
+    setAlert(count) {
+      const n = Math.max(0, Math.floor(Number(count) || 0));
+      if (n) coreWrap.dataset.alert = String(n);
+      else delete coreWrap.dataset.alert;
     },
     setHistoryExpanded(expanded) {
       historyBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');

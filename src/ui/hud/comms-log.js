@@ -47,13 +47,15 @@ function titleCase(who) {
 }
 
 /**
- * @param {{ variant?: 'sheet'|'panel', open?: boolean, onToggle?: (open: boolean) => void }} [opts]
+ * @param {{ variant?: 'sheet'|'panel', open?: boolean, defaultOpen?: boolean, onToggle?: (open: boolean) => void }} [opts]
  */
 export function createCommsLog(opts = {}) {
   const variant = opts.variant === 'sheet' ? 'sheet' : 'panel';
   const onToggle = typeof opts.onToggle === 'function' ? opts.onToggle : null;
   const id = `hud-comms-${++seq}`;
-  let open = typeof opts.open === 'boolean' ? opts.open : openPref[variant] ?? variant === 'panel';
+  // open: explicit; else the owner's choice this session; else defaultOpen (the HUD density);
+  // else open in the desktop panel and collapsed in the phone sheet.
+  let open = typeof opts.open === 'boolean' ? opts.open : openPref[variant] ?? (typeof opts.defaultOpen === 'boolean' ? opts.defaultOpen : variant === 'panel');
 
   // --- structure ------------------------------------------------------------------------------
   const live = h(
