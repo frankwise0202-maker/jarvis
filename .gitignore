@@ -1,0 +1,6 @@
+node_modules/
+dist/
+test/artifacts/
+.gh-pages-worktree/
+*.log
+.DS_Store
