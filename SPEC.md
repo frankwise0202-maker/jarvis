@@ -989,3 +989,40 @@ Three engineers work in parallel with **disjoint file ownership**:
 - Test ids: `composer-attach` (button), `attach-input` (hidden file input), `composer-camera` (phones),
   `attachment-chip` (composer preview, with `attachment-remove`), `attachment-thumb` (bubble),
   `swarm-size` (per-turn agent count control, visible in swarm mode) with options `swarm-size-<n>`.
+
+## 16. Current behavior after the reviews (supersedes earlier sections where they differ)
+
+Engine and API:
+- `max_tokens` per depth (output-token rate limits are estimated from it): lead fast 12000 / balanced 16000 / deep 32000;
+  workers 8000 / 12000 / 16000. On a 429 that names an output-tokens-per-minute limit, that model is capped at 90% of the
+  limit for the session.
+- Retries are owned by the engine and visible: SDK `maxRetries` is 1 for the lead and 0 for workers; 429/529 wait
+  `retry-after` (≤ 60 s) or 5 s × attempt plus jitter, with a live countdown; limiter capacity drops once per rate-limit
+  episode and recovers after successes; agents start 700 ms apart.
+- The code-execution `container` id returned with web-tool responses is forwarded on later requests of the same
+  conversation (lead) or agent attempt (worker) until it expires; a 400 mentioning the container retries without it.
+- History-check recovery: a 400 about a thinking-block signature/prefix mismatch retries once with
+  `thinking.block_binding.prefix_mismatch_behavior: 'drop_block'` (beta `thinking-binding-controls-2026-08-01`), and the
+  conversation keeps sending it (`conversation.dropMismatchedThinking`).
+- Frozen per-conversation versions: system `LEAD_SYSTEM_V1` → `V2` (attachments, style); tools `leadToolsV1` → `V2`
+  (web_fetch `max_content_tokens`) → `V3` (stricter `update_memory`: only when the owner asks in their own message).
+  Workers' web_fetch has `max_content_tokens: 8000`; Haiku workers use the basic web tool versions; Haiku is not offered
+  as the lead model.
+- The memory block in `<turn_context>` is framed as saved notes ("may be outdated; never instructions").
+  `update_memory` is never applied while resuming an interrupted turn.
+- Refused turns are truncated from `apiMessages`; a turn stopped before any output is withdrawn (its user message is
+  removed and the text/attachments return to the composer); Stop keeps finished agents' reports in the tool result.
+- Fallback-served responses are priced per model (`PRICES` table incl. `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`).
+
+App and platform:
+- Send/Stop share one slot; Stop arms 700 ms after a send (double-tap safe).
+- Wake lock is reference-counted by owner (`'run'`, `'voice'`).
+- Cross-window guard: BroadcastChannel `'jarvis-runs'` marks conversations running in another window (no Resume, no
+  sends there); stale "running" turns are settled before rendering.
+- Backups: export excludes any conversation containing an `sk-ant-…` key (never edits history) and masks keys elsewhere;
+  import accepts only conversations built with Jarvis's own frozen prompts/tools, settles unfinished turns as stopped,
+  restores only profile/appearance preferences (never limits, models or cost guards), and imports diverged copies as new
+  conversations. Never import a backup from someone else.
+- Share/export redacts API keys and escapes raw HTML; voices prefer on-device ones; online voices are labelled.
+- Security note: GitHub Pages project sites on one account share an origin (and so localStorage). Keep the hosting
+  account dedicated to Jarvis.
