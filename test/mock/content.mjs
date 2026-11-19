@@ -712,7 +712,7 @@ export function spokenSearchAnswer(topic, hits, ctx, directives) {
   if (items.length < 2) items.push('**Next step:** ask me to read any of these sources in full.');
   return spokenSegments({
     sentences: [
-      `Here's the latest on ${topic}, ${ctx.name}.`,
+      `Here's what I found on ${topic}, ${ctx.name}.`,
       'The sources broadly agree, and the picture has shifted noticeably this year.',
       "I've put the key points and the sources on screen.",
     ],
