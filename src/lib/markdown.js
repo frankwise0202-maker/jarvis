@@ -82,7 +82,12 @@ export function renderMarkdown(md, options) {
  *
  * Extension options (used by voice/tts.js):
  *   speech: true          -> text meant to be read aloud: no code blocks, URLs reduced to their
- *                            host name, no list markers or emoji, every block ends as a sentence.
+ *                            host name, no list markers or emoji, every block ends as a sentence
+ *                            (one line per block); written for the ear: e.g./i.e./etc./vs./approx.,
+ *                            &, %, °C/°F/°, number ranges (5–10 → "5 to 10"), ~, 20+, ×, 24/7 and
+ *                            km/h in words; reference markers ([1], [source], [1](url)) and stray
+ *                            Markdown (**, __, backticks) removed. Phone numbers, dates, times and
+ *                            hyphenated words are left alone.
  *   firstParagraph: true  -> only the first paragraph (falls back to the first block with text).
  * @param {string} md
  * @param {{ speech?: boolean, firstParagraph?: boolean }} [options]

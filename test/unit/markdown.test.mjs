@@ -379,6 +379,23 @@ test('markdownToPlainText speech mode and first paragraph', async () => {
   assert.equal(await plain('- only a list', { firstParagraph: true }), '- only a list');
 });
 
+test('markdownToPlainText speech mode: text for the ear (abbreviations, symbols, ranges, units, markers) in Chromium', async () => {
+  const md =
+    '## Outlook\n\nPrices rose 5-10% [1](https://reuters.com/a), e.g. in R&D & sales, i.e. ~$20 each [2]; temps 18–20°C, 24/7, 100 km/h, 20+ teams, 2×3, etc.\n\n' +
+    '- Call 555-123-4567 on 2026-11-19 at 10:30 for the well-known Lakers vs. Celtics game\n- Wind approx. 15 mph';
+  assert.equal(
+    await plain(md, { speech: true }),
+    'Outlook.\nPrices rose 5 to 10 percent, for example in R&D and sales, that is about $20 each; temps 18 to 20 degrees Celsius, twenty-four seven, 100 kilometres per hour, 20 plus teams, 2 times 3, et cetera.\n' +
+      'Call 555-123-4567 on 2026-11-19 at 10:30 for the well-known Lakers versus Celtics game.\nWind approximately 15 mph.',
+  );
+  // Copy (plain text) is unchanged.
+  assert.equal(
+    await plain(md),
+    'Outlook\n\nPrices rose 5-10% 1, e.g. in R&D & sales, i.e. ~$20 each [2]; temps 18–20°C, 24/7, 100 km/h, 20+ teams, 2×3, etc.\n\n' +
+      '- Call 555-123-4567 on 2026-11-19 at 10:30 for the well-known Lakers vs. Celtics game\n- Wind approx. 15 mph',
+  );
+});
+
 // ---- robustness and performance ---------------------------------------------------------
 
 test('robustness: odd inputs and pathological nesting never throw', async () => {

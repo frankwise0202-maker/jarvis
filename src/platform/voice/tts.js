@@ -36,10 +36,19 @@
 //     boundary event moves that to at least 3 s after the boundary), or after the engine has
 //     reported 3 s of silence;
 //   - retries a chunk that never started (cancel(), 250 ms, speak() again) once, then skips it;
-//     after two chunks in a row were given up it ends with 'error';
+//     if the engine still says it is speaking or has something pending, it first waits once more
+//     (3 s, or until the previous chunk's time is up); an 'interrupted'/'canceled' error within
+//     1 s of our own cancel() on a chunk that never started is the same drop and is retried at
+//     once; after two chunks in a row were given up the stream ends with 'error';
 //   - processes each utterance's events at most once and ignores events of utterances it has
-//     cancelled or given up (a generation counter);
-//   - counts time only while the page is visible (iOS pauses speech in the background).
+//     cancelled or given up (a generation counter); any other 'interrupted'/'canceled' error
+//     means someone else stopped speech: the stream ends with 'interrupted';
+//   - after an 'end' that came early (before 70 % of the expected time) on the last chunk, waits
+//     while the engine still says it is speaking (at most until the expected end + 0.5 s) before
+//     onEnd, so a listening microphone never opens over the voice;
+//   - once unlockSpeech() has run, waits 250 ms after our own cancel() before the next speak();
+//   - counts time only while the page is visible (iOS pauses speech in the background), and
+//     calls speechSynthesis.resume() if the engine is paused while the page is visible.
 //
 // Chunks pack whole sentences: ≤ 220 characters for an online or unknown voice (fewer below rate
 // 1, so a chunk stays under ~15 s), up to 360 for an on-device voice. A sentence longer than the
@@ -237,12 +246,14 @@ export function resolveVoice(voiceURI, voices) {
 }
 
 let unlocked = false;
+let unlockedAt = -Infinity;
 
 /** Unlock speech for later use (iOS needs the first speak() inside a user gesture). */
 export function unlockSpeech() {
   if (unlocked || !ttsSupported()) return;
   unlocked = true;
   if (current) return; // already speaking, nothing to unlock
+  unlockedAt = Date.now();
   try {
     const u = new globalThis.SpeechSynthesisUtterance('');
     u.volume = 0;
@@ -465,7 +476,9 @@ function openStream(options) {
   }
   const replacing = !!current;
   for (let guard = 0; current && guard < 8; guard++) cancelStream(current); // an onEnd above may start speech re-entrantly: this call wins
-  if (!replacing) cancelEngine(false); // something else may still be speaking
+  // Something else may still be speaking; but not our silent unlock utterance of the same gesture
+  // (cancelling it would delay the first chunk past the gesture iOS needs).
+  if (!replacing && Date.now() - unlockedAt > 1000) cancelEngine(false);
   current = s;
   watchVisibility();
   s.timer = setInterval(() => tick(s), T.tickMs);

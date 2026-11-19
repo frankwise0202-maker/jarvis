@@ -289,6 +289,19 @@ test('quirk d: once speech is unlocked, the first speak() after a cancel() waits
   assert.ok(started >= 250 && started < 400, `started after ${started} ms`);
 });
 
+test('unlockSpeech() then speak() in the same gesture: the first chunk is queued at once, the silent utterance is not cancelled', async (t) => {
+  const ctx = await setup(t, { quirks: { dropAfterCancelMs: 150 } });
+  ctx.tts.unlockSpeech();
+  ctx.tts.unlockSpeech();
+  const r = recorder(ctx.clock);
+  ctx.tts.speak(TEXT, r.opts);
+  assert.deepEqual(ctx.fake.submitted.map((s) => s.text), ['', ctx.tts.chunkText(TEXT, LOCAL)[0]], 'synchronously, inside the gesture');
+  assert.equal(ctx.fake.cancels, 0);
+  ctx.clock.runUntil(() => r.ends.length > 0, 10 * 60_000);
+  assert.deepEqual(r.ends, ['done']);
+  assert.deepEqual(ctx.fake.completed(), ctx.tts.chunkText(TEXT, LOCAL));
+});
+
 test('quirk d after a recovery cancel: the retry waits out the drop window, so it is not dropped again', async (t) => {
   const ctx = await setup(t, { quirks: { dropAfterCancelMs: 200, stuckSpeaking: true, dropEnd: (u, n) => n === 1, stallAfterLostEnd: true } });
   const expected = ctx.tts.chunkText(paragraph(0, 20), LOCAL);
