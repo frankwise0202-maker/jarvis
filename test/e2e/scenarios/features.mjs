@@ -32,18 +32,29 @@ function lastLeadUserText(t) {
  * state / speech: Voice Mode's data-state / data-speech; captions: Voice Mode's caption text), and
  * window.__voice.listenLog (performance.now() of every listen).
  *
+ * Like Chromium's and WebKit's engines, it is a FIFO queue: `speaking` is true from speak() on
+ * (audio or not) while anything is queued, `pending` while more than one is, and the next utterance
+ * starts only once the current one has completed.
+ *
  * Opt-in options (page.addInitScript(installFakeSpeech, options); without them nothing changes):
  *   quirks.stuckSpeaking   speechSynthesis.speaking stays true after audio ends, until cancel() (WebKit)
- *   quirks.dropEnd         [n, …] utterances (0-based, in the order they start playing) whose 'end'
- *                          event never fires; the engine still moves on to the next one
- *   quirks.dropSpeak       [k, …] non-empty speak() calls (0-based) dropped silently (Chrome)
+ *   quirks.dropEnd         [n, …] utterances (0-based, in the order they start playing; or a string:
+ *                          the utterances containing it) whose 'end' event never fires; the engine
+ *                          still moves on to the next one ...
+ *   quirks.stallOnLostEnd  ... unless this is true: then it never completes either, so it stays
+ *                          current (speaking) and nothing behind it plays until cancel()
+ *   quirks.dropSpeak       [k, …] non-empty speak() calls (0-based) dropped silently (Chrome): queued,
+ *                          but never played and no event, so it holds the queue until cancel()
+ *   quirks.dropAfterCancelMs  a non-empty speak() this soon after cancel() is dropped the same way
  *   voices                 the voice list (default: an on-device British "Daniel")
  *   durationMs             how long each utterance plays (default 120)
+ *   cps                    instead: each utterance plays text length / (cps × rate) seconds (min 120 ms)
+ * window.__voice.dropped holds the texts dropped, window.__voice.cancels counts cancel() calls.
  */
 export function installFakeSpeech(options) {
   const opts = options && typeof options === 'object' ? options : {};
   const quirks = opts.quirks && typeof opts.quirks === 'object' ? opts.quirks : {};
-  const voice = { queue: ['What is the capital of France?'], said: [], listens: 0, log: [], listenLog: [], calls: 0, dropped: [] };
+  const voice = { queue: ['What is the capital of France?'], said: [], listens: 0, log: [], listenLog: [], calls: 0, dropped: [], cancels: 0 };
   window.__voice = voice;
   const has = (list, n) => Array.isArray(list) && list.includes(n);
   const seen = (selector) => {
@@ -114,7 +125,9 @@ export function installFakeSpeech(options) {
   let current = null;
   let stuck = false; // quirks.stuckSpeaking: set once audio has ended, cleared by cancel()
   let played = 0;
+  let lastCancel = -Infinity;
   const duration = Number.isFinite(opts.durationMs) && opts.durationMs > 0 ? opts.durationMs : 120;
+  const playTime = (u) => (Number.isFinite(opts.cps) && opts.cps > 0 ? Math.max(120, (u.text.length / (opts.cps * (Number(u.rate) || 1))) * 1000) : duration);
   const voices = Array.isArray(opts.voices) && opts.voices.length ? opts.voices : [{ name: 'Daniel', lang: 'en-GB', voiceURI: 'fake-daniel', localService: true, default: true }];
   const synth = {
     speaking: false,
@@ -127,9 +140,10 @@ export function installFakeSpeech(options) {
     speak(u) {
       if (u && u.text) {
         const k = voice.calls++;
-        if (has(quirks.dropSpeak, k)) {
-          voice.dropped.push(u.text); // never queued, no events
-          return;
+        const afterCancel = Number.isFinite(quirks.dropAfterCancelMs) && performance.now() - lastCancel < quirks.dropAfterCancelMs;
+        if (has(quirks.dropSpeak, k) || afterCancel) {
+          voice.dropped.push(u.text); // queued, but never played and no event: it holds the queue
+          u.__dropped = true;
         }
       }
       queue.push(u);
@@ -137,6 +151,8 @@ export function installFakeSpeech(options) {
       if (!current) next();
     },
     cancel() {
+      voice.cancels += 1;
+      lastCancel = performance.now();
       queue.length = 0;
       const u = current;
       current = null;
@@ -153,6 +169,7 @@ export function installFakeSpeech(options) {
     synth.speaking = !!current || stuck;
     if (!current) return;
     const u = current;
+    if (u.__dropped) return; // silent: it stays current (speaking) and nothing behind it plays until cancel()
     const n = u.text ? played++ : -1;
     let entry = null;
     if (u.text) {
@@ -178,9 +195,11 @@ export function installFakeSpeech(options) {
       if (current !== u) return;
       if (entry) entry.endAt = performance.now();
       if (u.text && quirks.stuckSpeaking) stuck = true;
-      if (!has(quirks.dropEnd, n)) u.onend && u.onend({ type: 'end', utterance: u });
+      const lost = has(quirks.dropEnd, n) || (Array.isArray(quirks.dropEnd) && quirks.dropEnd.some((x) => typeof x === 'string' && u.text.includes(x)));
+      if (!lost) u.onend && u.onend({ type: 'end', utterance: u });
+      if (lost && quirks.stallOnLostEnd) return; // never completes: the queue stalls until cancel()
       next();
-    }, u.text ? duration : 5);
+    }, u.text ? playTime(u) : 5);
   }
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
 }

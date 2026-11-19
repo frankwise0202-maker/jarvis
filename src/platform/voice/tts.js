@@ -1037,6 +1037,7 @@ function tick(s) {
       // `pending` went off while our next chunk waited behind the head: the engine moved on to it
       // (it starts the next one only once the current one has completed). Its 'end' was lost.
       proof(s, head);
+      measure(s, head, now); // it played until about now (at most a tick ago)
       settleHead(s, 'done', now);
       pump(s);
       return;

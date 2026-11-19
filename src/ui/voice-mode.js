@@ -18,9 +18,15 @@
 // When nothing was spoken by the end of the turn, the answer's summary is spoken after a chime.
 //
 // Tap the core: listening = stop and send; thinking/working = stop the turn; speaking = stop
-// speaking and listen (a reply still being written stops too, and stays in the chat as far as it
-// got); otherwise = start listening. Esc or Exit closes; a running turn carries on in the chat
-// (Stop, or a tap on the core, is how to stop it).
+// speaking and listen. While Jarvis is still saying the reply itself (before the --- line or the
+// end of what is spoken) that tap stops the turn too, and it stays in the chat as far as it got;
+// once the spoken part is complete (Jarvis is saying its last sentences, or is quiet while the
+// details below the line are written) it only stops the voice and listens: the details keep
+// being written in the chat, and a question asked meanwhile is sent once they are done. The dock
+// button then reads "Stop" while Jarvis speaks (the voice only) and "Stop writing" while he
+// writes (that stops the turn). Otherwise = start listening. Esc or Exit closes; a running turn
+// carries on in the chat (Stop, or a tap on the core, is how to stop it). When Jarvis had already
+// begun saying the answer, the chat does not read it aloud again (voiceModeSpoke).
 //
 // Optional extras beyond SPEC 14.1 (all safe to omit):
 //   saveSettings(patch)   persists the Continuous toggle as settings.voiceContinuous
@@ -63,6 +69,15 @@ const AGENT_WORDS = {
 };
 
 let current = null; // the open instance; there is only ever one
+const voicedRuns = new WeakSet(); // runs whose answer Voice Mode had begun to say when it closed
+
+/**
+ * True when Voice Mode had already begun saying this run's answer (not just "Let me check…") when
+ * it was closed: the app then doesn't read the same reply aloud again when it finishes in the chat.
+ */
+export function voiceModeSpoke(run) {
+  return !!run && typeof run === 'object' && voicedRuns.has(run);
+}
 
 /**
  * Open the voice overlay (or focus it if it is already open).
@@ -118,6 +133,24 @@ function reqOf(segment) {
   return Number.isFinite(segment && segment.req) ? segment.req : 0;
 }
 
+/** True once the answer itself is being written: text after the last search or mission (any text without one). */
+function answerBegun(turn) {
+  const segs = Array.isArray(turn && turn.segments) ? turn.segments : [];
+  let last = -1;
+  for (let i = segs.length - 1; i >= 0; i -= 1) {
+    const kind = segs[i] && segs[i].kind;
+    if (kind === 'tool' || kind === 'mission') {
+      last = i;
+      break;
+    }
+  }
+  for (let i = last + 1; i < segs.length; i += 1) {
+    const seg = segs[i];
+    if (seg && seg.kind === 'text' && typeof seg.text === 'string' && seg.text.trim()) return true;
+  }
+  return false;
+}
+
 // =================================================================================================
 
 function createVoiceMode(opts) {
@@ -150,7 +183,8 @@ function createVoiceMode(opts) {
     typing: false,
     continuous: readContinuous(),
     listen: null, // { gesture, text, stopRequested, handle, timers, heard }
-    run: null, // { run, offs, lastAgent, feed, ... } | { pending: true }
+    run: null, // { run, offs, lastAgent, feed, ... } | { pending: true } | { pending: true, held: text } (waits for S.bg)
+    bg: null, // a run whose spoken part is over, left writing its details in the chat while Voice Mode listens
     speech: null, // { token, kind: 'live'|'summary'|'full'|'apology', text, map, stream|handle, timers, ... }
     speechToken: 0,
     answer: null, // { md, summary (what was spoken), full, more }
@@ -379,6 +413,17 @@ function createVoiceMode(opts) {
       label = words ? 'Send' : 'Stop';
       aria = words ? 'Stop listening and send' : 'Stop listening';
       coreAria = words ? 'Stop listening and send' : 'Stop listening';
+    } else if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
+      // Saying the last of the spoken part: the voice stops; the details keep being written.
+      ic = 'stop';
+      label = 'Stop';
+      aria = 'Stop speaking';
+      coreAria = 'Stop speaking and listen';
+    } else if (S.run && spokenDone(S.run)) {
+      ic = 'stop';
+      label = 'Stop writing';
+      aria = 'Stop writing the details';
+      coreAria = 'Talk to Jarvis';
     } else if (S.run) {
       ic = 'stop';
       label = 'Stop';
@@ -398,7 +443,7 @@ function createVoiceMode(opts) {
     setDockIcon(mainBtn, ic);
     setText(mainBtn.lb, label);
     mainBtn.btn.setAttribute('aria-label', aria);
-    mainBtn.btn.dataset.action = label.toLowerCase();
+    mainBtn.btn.dataset.action = label.toLowerCase().replace(/\s+/g, '-');
     coreBtn.setAttribute('aria-label', coreAria);
 
     typeBtn.btn.hidden = !S.sttOk;
@@ -440,8 +485,11 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.listen) return requestSend(S.listen, false);
-    // Speaking while the reply is still being written: interrupt both and listen (what was written
-    // so far stays in the chat). Thinking or working: stop.
+    // The spoken part is complete (its last sentences are being said, or the details below the
+    // line are being written): stop the voice and listen; the details keep coming in the chat.
+    if (S.run && spokenDone(S.run)) return releaseRun();
+    // Speaking the reply while it is still being written: interrupt both and listen (what was
+    // written so far stays in the chat). Thinking or working: stop.
     if (S.run) return abortRun({ listen: S.state === 'speaking' });
     if (S.speech && S.speech.kind !== 'apology') {
       cancelSpeech();
@@ -459,7 +507,13 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.listen) return requestSend(S.listen, false);
-    if (S.run) return abortRun();
+    if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
+      // Stop the voice only (as in v4): the details are still being written, then shown to read.
+      cancelSpeech();
+      renderRunNow();
+      return;
+    }
+    if (S.run) return abortRun(); // Stop (or "Stop writing" once the spoken part is over)
     if (S.speech) {
       const reply = S.speech.kind !== 'apology';
       cancelSpeech();
@@ -1132,6 +1186,16 @@ function createVoiceMode(opts) {
     clearRetry();
     cancelSpeech();
     stopListening();
+    if (S.bg) {
+      // The previous reply is still writing its details in the chat (one turn at a time): ask
+      // this once it is done.
+      S.run = { pending: true, held: words };
+      setVoiceState('thinking');
+      setStatus('Finishing the details on screen…', 'edit');
+      showCaption('quote', `“${words}”`, 'I’ll take that as soon as the details are on screen.');
+      announce('Jarvis will answer once the details are on screen');
+      return;
+    }
     S.answer = null;
     S.showFull = false;
     S.silentTries = 0;
@@ -1191,7 +1255,9 @@ function createVoiceMode(opts) {
     // feed: which sentences to speak next while the reply streams (null: speak the summary at the
     // end, as for a reply started in the chat). liveDone: its speech already ended normally;
     // liveOff: its speech was stopped or failed (nothing more is spoken for this reply).
-    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false };
+    // answerFrom: where the answer itself (text after the last search or mission) starts in the
+    // live speech's text; answerHeard: a chunk of it began to play.
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false };
     S.run = R;
     if (speaksWhileStreaming(R)) {
       R.feed = createSpokenFeed({ convert: speechMarkdown });
@@ -1205,8 +1271,9 @@ function createVoiceMode(opts) {
       }
     }
     const onEvent = (event, type) => {
-      if (S.run !== R) return;
       const kind = type || (event && event.type);
+      if (S.bg === R && kind === 'end') return finishBackground(R, (event && event.turn) || run.turn);
+      if (S.run !== R) return;
       if (kind === 'agent' && event && event.agent) {
         const a = event.agent;
         if (a.activity && AGENT_ACTIVE.has(a.status)) R.lastAgent = a;
@@ -1394,6 +1461,7 @@ function createVoiceMode(opts) {
   }
 
   function finishRun(R, turn) {
+    if (S.bg === R) return finishBackground(R, turn);
     if (S.run !== R) return;
     S.run = null;
     detachRun(R);
@@ -1426,11 +1494,94 @@ function createVoiceMode(opts) {
     cancelRunRender();
     cancelSpeech();
     if (R.run) abortQuietly(R.run);
+    if (R.held && S.bg) {
+      // Stop while a question waits for the previous reply's details: stop that reply too.
+      const B = S.bg;
+      S.bg = null;
+      detachRun(B);
+      abortQuietly(B.run);
+    }
     showMission(false);
     syncCoreAgents(null);
     haptic('light');
     if (listen && S.sttOk) startListening({ gesture: true, keepAnswer: true });
     else goIdle('stopped');
+  }
+
+  /** The spoken part of this reply is complete: everything Jarvis says of it was handed to the voice. */
+  function spokenDone(R) {
+    if (!R || !R.feed || R.pending) return false;
+    try {
+      return R.liveDone || R.feed.state().finished;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Interrupted once the spoken part is complete: stop the voice and listen. The run keeps writing
+   * the details in the chat (S.bg); what the owner asks meanwhile is sent once it is done.
+   */
+  function releaseRun() {
+    const R = S.run;
+    if (!R) return;
+    S.run = null;
+    S.bg = R;
+    cancelRunRender();
+    cancelSpeech();
+    showMission(false);
+    syncCoreAgents(null);
+    haptic('light');
+    finishKaraoke();
+    // What was said stays on screen as context while listening (no "Read full answer" yet).
+    let said = '';
+    try {
+      said = String(R.feed.state().spoken || '').trim();
+    } catch {
+      said = '';
+    }
+    S.answer = said ? { md: '', summary: said, full: '' } : null;
+    if (S.sttOk) {
+      startListening({ gesture: true, keepAnswer: true });
+      if (S.listen) setSub('Finishing the details on screen…');
+    } else goIdle('keep');
+  }
+
+  /** A run left writing its details (S.bg) ended: offer its answer, then ask what was held. */
+  function finishBackground(R, turn) {
+    if (S.bg !== R) return;
+    S.bg = null;
+    detachRun(R);
+    if (S.closed) return;
+    if (turn && turn.status === 'done') {
+      const md = finalAnswerMarkdown(turn);
+      const full = fullDisplayText(md);
+      if (R.feed) {
+        try {
+          R.feed.update({ segments: turn.segments, done: true });
+        } catch {
+          /* what was said so far */
+        }
+        S.answer = answerFromFeed(R, md, full);
+      } else S.answer = { md, summary: speechText(md, 'summary') || clip(full, 400), full };
+      S.showFull = false;
+    }
+    if (S.listen && capSub.textContent === 'Finishing the details on screen…') setSub('');
+    const holder = S.run && S.run.held ? S.run : null;
+    if (!holder) {
+      renderControls();
+      return;
+    }
+    // The app lets go of the finished run only after run.done settles: ask after that.
+    Promise.resolve(R.run && R.run.done)
+      .catch(() => null)
+      .then(() =>
+        setTimeout(() => {
+          if (S.closed || S.run !== holder) return;
+          S.run = null;
+          send(holder.held);
+        }, 0),
+      );
   }
 
   // ------------------------------------------------------------------- speaking while it streams
@@ -1460,6 +1611,8 @@ function createVoiceMode(opts) {
       sp = startLive(R);
       if (!sp) return step;
     }
+    // From here on the pieces are the answer itself (not the "Let me check…" said before a search).
+    if (R.answerFrom < 0 && step.pieces.length && answerBegun(R.run.turn)) R.answerFrom = sp.display.length;
     for (const piece of step.pieces) appendLive(sp, piece);
     if (step.finish && !sp.finished) {
       sp.finished = true;
@@ -1747,6 +1900,7 @@ function createVoiceMode(opts) {
     if (!sp.started) onSpeechStart(sp);
     if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));
     if (sp.kind !== 'live') return;
+    if (sp.run && sp.run.answerFrom >= 0 && displayIndex(sp, Math.max(start, sp.chunk.end - 1)) >= sp.run.answerFrom) sp.run.answerHeard = true;
     if (S.run && S.run === sp.run) renderRunNow();
     else if (S.state !== 'speaking') {
       setVoiceState('speaking');
@@ -1994,7 +2148,15 @@ function createVoiceMode(opts) {
     if (current === instance) current = null;
     clearRetry();
     stopListening();
+    // Jarvis had begun saying this answer (or all of its spoken part): when it finishes in the
+    // chat, the chat doesn't read it aloud again.
+    for (const R of [S.run, S.bg]) if (R && R.run && (R.liveDone || R.answerHeard || R === S.bg)) voicedRuns.add(R.run);
     cancelSpeech();
+    if (S.bg) {
+      const B = S.bg;
+      S.bg = null;
+      detachRun(B);
+    }
     if (S.run) {
       // Leaving only stops listening and speaking: a running reply or mission carries on in the
       // chat (the app keeps the screen awake for it and shows Stop), so paid work is never lost

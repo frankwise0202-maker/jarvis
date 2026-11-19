@@ -29,6 +29,47 @@ async function waitForNewTurn(t, before) {
 }
 
 const voiceState = (t) => t.page.evaluate(() => JSON.parse(JSON.stringify(window.__voice)));
+const now = (t) => t.page.evaluate(() => performance.now());
+const caption = async (t) => norm(await t.page.locator(tid('voice-captions')).textContent().catch(() => ''));
+
+/** Records screen wake locks (navigator.wakeLock stub): window.__wl.held is how many are held now. */
+function stubWakeLock() {
+  window.__wl = { held: 0, requests: 0 };
+  const sentinel = () => {
+    const s = {
+      released: false,
+      type: 'screen',
+      addEventListener() {},
+      removeEventListener() {},
+      release: async () => {
+        if (s.released) return;
+        s.released = true;
+        window.__wl.held -= 1;
+      },
+    };
+    return s;
+  };
+  Object.defineProperty(Navigator.prototype, 'wakeLock', {
+    configurable: true,
+    get: () => ({
+      request: async () => {
+        window.__wl.held += 1;
+        window.__wl.requests += 1;
+        return sentinel();
+      },
+    }),
+  });
+}
+
+/** Voice Mode with a [[slow]] [[long]] spoken reply: wait until its last spoken sentence plays (the spoken part is complete). */
+async function untilLastSpokenSentence(t, turn) {
+  const entry = await t.waitFor(async () => (await voiceState(t)).log.find((e) => /the full guide is on screen/.test(e.text)), { timeout: 40000, message: 'Jarvis to say the last sentence above the --- line' });
+  t.assert((await turn.getAttribute('data-status')) === 'running', 'The details below the line are still being written');
+  return entry;
+}
+
+/** The newest owner message's text in the chat. */
+const lastUserText = async (t) => t.text(t.page.locator(tid('turn-user')).last());
 
 /** The <turn_context> of the newest owner message in the latest lead request. */
 function lastTurnContext(t) {
@@ -320,6 +361,294 @@ export default [
       t.assert(said[0] === v.dropped[0], 'The dropped chunk was spoken again');
       t.assert(await t.page.evaluate(() => window.speechSynthesis.speaking === true), 'The engine still claims to be speaking (the quirk), yet the button reset');
       t.note(`${said.length} chunks`);
+    },
+  },
+
+  {
+    name: 'chat-speak-replace-drop',
+    title: 'Chat: Speak on a second answer while the first is read, Chrome dropping speech for 400 ms after cancel(): the second answer is read in full, and the next switch waits out the window',
+    device: 'desktop',
+    timeout: 150000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { quirks: { dropAfterCancelMs: 400 }, cps: 30 });
+      await t.goto('/');
+      const first = await t.send('[[long]] Explain home EV charging');
+      await t.waitForTurn(first, ['done']);
+      const second = await t.send('What is the capital of France?');
+      await t.waitForTurn(second, ['done']);
+      const expected = toSpeech(finalAnswerMarkdown(await storedTurn(t)), 'full');
+      const btn1 = first.locator(tid('turn-speak'));
+      const btn2 = second.locator(tid('turn-speak'));
+
+      await t.step('switch while the first answer is read: the drop is caught and the second answer read in full', async () => {
+        await btn1.scrollIntoViewIfNeeded();
+        await btn1.click();
+        await t.waitFor(async () => (await voiceState(t)).said.length >= 2, { timeout: 15000, message: 'the first answer to be read' });
+        const before = (await voiceState(t)).said.length;
+        await btn2.scrollIntoViewIfNeeded();
+        const tapAt = await now(t);
+        await btn2.click();
+        await t.waitFor(async () => (await btn2.getAttribute('aria-label')) === 'Stop reading', { timeout: 5000, message: 'the second Speak button to show Stop' });
+        await t.waitFor(async () => (await btn2.getAttribute('aria-label')) === 'Read reply aloud', { timeout: 90000, message: async () => `the second answer to be read to the end (said ${(await voiceState(t)).said.length - before} chunks)` });
+        const v = await voiceState(t);
+        const said = v.said.slice(before);
+        t.assert(v.dropped.length === 1, `Chrome dropped one utterance right after the cancel (${JSON.stringify(v.dropped)})`);
+        t.assert(norm(said.join(' ')) === norm(expected), `The whole second answer, once, in order.\nexpected: ${norm(expected).slice(0, 300)}\nsaid:     ${norm(said.join(' ')).slice(0, 300)}`);
+        t.assert(said[0] === v.dropped[0], 'The dropped chunk was spoken again first');
+        // This voice sends no events the engine could see the drop by (no word events): it is assumed
+        // playing after 3 s, the next chunk is queued behind it and still waits there 1.5 × its
+        // expected time + 3 s later; the retry then waits 1 s (the drop came 250 ms after our cancel).
+        const heard = v.log.find((e) => e.at > tapAt && e.text === said[0]);
+        const bound = 1.5 * (said[0].length / 15) * 1000 + 3000 + 1000 + 1500;
+        t.assert(heard.at - tapAt <= bound, `Heard ${Math.round(heard.at - tapAt)} ms after the tap (≤ ${Math.round(bound)})`);
+        t.assert((await t.page.locator(tid('toast')).filter({ hasText: 'voice stopped responding' }).count()) === 0, 'No "voice stopped responding" toast');
+      });
+
+      await t.step('the next switch waits out the drop window: nothing is dropped', async () => {
+        await btn2.click();
+        await t.waitFor(async () => (await voiceState(t)).log.filter((e) => e.text === expected.split('\n')[0]).length >= 2, { timeout: 15000, message: 'the second answer to be read again' });
+        const tapAt = await now(t);
+        await btn1.scrollIntoViewIfNeeded();
+        await btn1.click();
+        const entry = await t.waitFor(async () => (await voiceState(t)).log.find((e) => e.at > tapAt), { timeout: 10000, message: 'the first answer to start' });
+        const v = await voiceState(t);
+        t.assert(v.dropped.length === 1, `No new drop (${JSON.stringify(v.dropped)})`);
+        t.assert(entry.at - tapAt >= 450, `It waited ${Math.round(entry.at - tapAt)} ms after the cancel (the learned window)`);
+        await btn1.click();
+      });
+    },
+  },
+
+  {
+    name: 'voice-stall-recovery',
+    title: 'Voice Mode on an engine that never completes an utterance whose end is lost (WebKit/Chromium stall): the next sentence follows within seconds, and the mic opens soon after the last one',
+    device: 'iphone13',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { cps: 15, quirks: { stuckSpeaking: true, stallOnLostEnd: true, dropEnd: ['The capital of France is Paris.', 'quick travel brief'] } });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['What is the capital of France?', 'And what is the capital of Germany?'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+
+      await t.step('a stalled first sentence: the second follows within the stall time-out', async () => {
+        const turn = await waitForNewTurn(t, 0);
+        await t.waitForTurn(turn, ['done']);
+        const v = await t.waitFor(async () => {
+          const s = await voiceState(t);
+          const i = s.log.findIndex((e) => e.text.startsWith('The capital of France is Paris.'));
+          return i >= 0 && s.log[i + 1] ? s : null;
+        }, { timeout: 30000, message: 'the sentence after the stalled one to play' });
+        const i = v.log.findIndex((e) => e.text.startsWith('The capital of France is Paris.'));
+        const stalled = v.log[i];
+        const gap = v.log[i + 1].at - stalled.endAt;
+        // Its time-out from its start (max(4 s, 2.5 × expected + 1.5 s)), less its audio, then cancel() and 250 ms.
+        const expected = (stalled.text.length / 15) * 1000;
+        const bound = Math.max(4000, 2.5 * expected + 1500) - expected + 1500;
+        t.assert(gap <= bound, `Silence after the stalled sentence: ${Math.round(gap)} ms (≤ ${Math.round(bound)}; it was about 11 s)`);
+        t.assert(norm(v.log.slice(i + 1).map((e) => e.text).join(' ')).length > 40, 'The rest of the reply was spoken');
+      });
+
+      await t.step('a stalled last sentence: the mic opens soon after it, at the measured speed', async () => {
+        const turn = await waitForNewTurn(t, 1);
+        await t.waitForTurn(turn, ['done']);
+        const lastOf = (s) => s.log.filter((e) => /quick travel brief/.test(e.text) && /Germany|Berlin/.test(e.captions)).at(-1);
+        const v = await t.waitFor(async () => {
+          const s = await voiceState(t);
+          const last = lastOf(s);
+          return last && last.endAt && s.listenLog.some((x) => x > last.endAt) ? s : null;
+        }, { timeout: 40000, message: 'Voice Mode to listen again after the stalled last sentence' });
+        const last = lastOf(v);
+        const listen = v.listenLog.find((x) => x > last.at);
+        t.assert(listen >= last.endAt, 'Not over the voice');
+        const dur = last.endAt - last.at;
+        t.assert(listen - last.endAt <= 0.3 * dur + 1500 + 350 + 600, `The mic opened ${Math.round(listen - last.endAt)} ms after the voice stopped (audio ${Math.round(dur)} ms; it was about 9 s)`);
+      });
+    },
+  },
+
+  {
+    name: 'voice-tap-after-cut',
+    title: 'Voice Mode: a tap while Jarvis says the last of the spoken part stops only the voice: it listens at once, the details are still written in full, and the follow-up is asked once they are done',
+    device: 'iphone13',
+    timeout: 150000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { cps: 15 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[slow]] [[long]] Explain home EV charging', 'And roughly what does installation cost?'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+      const turn = await waitForNewTurn(t, 0);
+      await untilLastSpokenSentence(t, turn);
+      t.assert((await vm.getAttribute('data-state')) === 'speaking', 'Speaking');
+      t.assert((await t.page.locator(tid('voice-core')).getAttribute('aria-label')) === 'Stop speaking and listen', 'The core says what a tap does');
+      const tapAt = await now(t);
+      await (await t.visible('voice-core')).click();
+      await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 3000, message: 'Voice Mode to listen at once' });
+      await t.screenshot('1-listening-while-details-are-written');
+      await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+      const text = await t.text(turn);
+      t.assert(/Key numbers/.test(text) && /Checklist/.test(text) && /Sources/.test(text), 'The details were written in full (Key numbers, Checklist, Sources)');
+      const v = await voiceState(t);
+      t.assert(!v.log.some((e) => e.at > tapAt && /guide|on screen/.test(e.text)), 'Nothing more of that reply was spoken after the tap');
+      const next = await waitForNewTurn(t, 1);
+      t.assert((await turn.getAttribute('data-status')) === 'done', 'The follow-up was asked only after the first reply was done');
+      t.assert((await lastUserText(t)) === 'And roughly what does installation cost?', `The follow-up was sent (${await lastUserText(t)})`);
+      await t.waitForTurn(next, ['done'], { timeout: 60000 });
+    },
+  },
+
+  {
+    name: 'voice-stop-after-cut',
+    title: 'Voice Mode: the dock Stop while Jarvis says the last of the spoken part stops the voice only; the details are written in full; "Stop writing" is then offered',
+    device: 'iphone13',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { cps: 15 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[slow]] [[long]] Explain home EV charging'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+      const turn = await waitForNewTurn(t, 0);
+      await untilLastSpokenSentence(t, turn);
+      const dock = t.page.locator(tid('voice-mic'));
+      t.assert((await dock.getAttribute('aria-label')) === 'Stop speaking', `The dock button stops the voice (${await dock.getAttribute('aria-label')})`);
+      const stopAt = await now(t);
+      await dock.click();
+      await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 3000, message: 'the voice to stop' });
+      t.assert((await turn.getAttribute('data-status')) === 'running', 'The reply is still being written');
+      await t.waitFor(async () => (await dock.getAttribute('data-action')) === 'stop-writing', { timeout: 3000, message: 'the dock to offer "Stop writing"' });
+      t.assert((await dock.getAttribute('aria-label')) === 'Stop writing the details', 'Labelled for what it does');
+      await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+      t.assert(/Checklist/.test(await t.text(turn)) && /Sources/.test(await t.text(turn)), 'The details were written in full');
+      t.assert(!(await voiceState(t)).log.some((e) => e.at > stopAt), 'Nothing more was spoken');
+      await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'idle', { timeout: 5000, message: 'Voice Mode to wait for a tap' });
+      t.assert(!/Stopped/.test(await caption(t)), `Not "Stopped" (${await caption(t)})`);
+      await t.visible('voice-read-full', { message: 'The details are offered to read' });
+    },
+  },
+
+  {
+    name: 'voice-tap-post-speech',
+    title: 'Voice Mode: a tap while the details are written after the spoken part listens (no "Stopped"); "Stop writing" stops a reply',
+    device: 'iphone13',
+    timeout: 150000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { cps: 90 }); // a quick voice: done long before the details
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[slow]] [[long]] Explain home EV charging', '', '', '[[slow]] [[long]] Explain home solar panels'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+      const dock = t.page.locator(tid('voice-mic'));
+
+      await t.step('a tap in the wait after the spoken part: Voice Mode listens; the details are finished', async () => {
+        const turn = await waitForNewTurn(t, 0);
+        await untilLastSpokenSentence(t, turn);
+        await t.waitFor(async () => (await dock.getAttribute('data-action')) === 'stop-writing', { timeout: 15000, message: 'the spoken part to end while the details are written' });
+        t.assert((await turn.getAttribute('data-status')) === 'running', 'The details are still being written');
+        await (await t.visible('voice-core')).click();
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 3000, message: 'Voice Mode to listen' });
+        t.assert(!/Stopped/.test(await caption(t)), 'Not "Stopped"');
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+        t.assert(/Sources/.test(await t.text(turn)), 'The details were written in full');
+      });
+
+      await t.step('"Stop writing" stops a reply after its spoken part', async () => {
+        await t.waitFor(async () => ['idle', 'listening'].includes(await vm.getAttribute('data-state')) && !(await t.count('turn-jarvis', { 'data-status': 'running' })), { timeout: 15000, message: 'Voice Mode to be ready' });
+        if ((await vm.getAttribute('data-state')) !== 'listening') await (await t.visible('voice-core')).click();
+        const turn = await waitForNewTurn(t, 1);
+        await untilLastSpokenSentence(t, turn);
+        await t.waitFor(async () => (await dock.getAttribute('data-action')) === 'stop-writing', { timeout: 15000, message: '"Stop writing"' });
+        await dock.click();
+        await t.waitForTurn(turn, ['stopped'], { timeout: 10000 });
+        await t.waitFor(async () => /Stopped/.test(await caption(t)), { timeout: 3000, message: 'Voice Mode to say "Stopped."' });
+      });
+    },
+  },
+
+  {
+    name: 'voice-exit-no-reread',
+    title: 'Speak replies on: Exit while Voice Mode says the answer does not make the chat read it again; Exit before the answer is said still lets the chat read it',
+    device: 'iphone13',
+    settings: { speakReplies: 'summary' },
+    timeout: 150000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { cps: 15 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[slow]] [[long]] Explain home EV charging'];
+      });
+      await t.goto('/');
+
+      await t.step('Exit while the answer is spoken: silence afterwards', async () => {
+        await (await t.visible('voice-open')).click();
+        const vm = await t.visible('voice-mode');
+        const turn = await waitForNewTurn(t, 0);
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'speaking', { timeout: 20000, message: 'Jarvis to speak the answer' });
+        t.assert((await turn.getAttribute('data-status')) === 'running', 'The reply is still being written');
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        const exitAt = await now(t);
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+        await t.page.waitForTimeout(3000);
+        const later = (await voiceState(t)).log.filter((e) => e.at > exitAt);
+        t.assert(later.length === 0, `Nothing was read after Exit (${later.map((e) => e.text.slice(0, 40)).join(' | ')})`);
+      });
+
+      await t.step('Exit while the agents work: the chat reads the answer when it is done', async () => {
+        await t.page.evaluate(() => window.__voice.queue.push('[[swarm:2]] [[slow]] Research tidal power'));
+        await (await t.visible('voice-open')).click();
+        const vm = await t.visible('voice-mode');
+        const turn = await waitForNewTurn(t, 1);
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'working', { timeout: 30000, message: 'the agents to be at work' });
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        await t.waitForTurn(turn, ['done'], { timeout: 90000 });
+        const doneAt = await now(t);
+        const read = await t.waitFor(async () => (await voiceState(t)).log.find((e) => e.at >= doneAt - 500), { timeout: 10000, message: 'the chat to read the answer (Speak replies: Short summary)' });
+        t.assert(/tidal power/i.test(read.text), `The answer's summary was read (${read.text.slice(0, 80)})`);
+      });
+    },
+  },
+
+  {
+    name: 'chat-read-aloud-wakelock',
+    title: 'Chat: the screen stays on while the Speak button reads an answer, and may sleep again when it ends or is stopped',
+    device: 'iphone13',
+    timeout: 90000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(stubWakeLock);
+      await t.page.addInitScript(installFakeSpeech, { cps: 60 });
+      await t.goto('/');
+      const turn = await t.send('[[long]] Explain home EV charging');
+      await t.waitForTurn(turn, ['done']);
+      const held = () => t.page.evaluate(() => window.__wl.held);
+      await t.waitFor(async () => (await held()) === 0, { timeout: 5000, message: 'the run to let the screen sleep' });
+      const btn = turn.locator(tid('turn-speak'));
+      await btn.scrollIntoViewIfNeeded();
+      await btn.click();
+      await t.waitFor(async () => (await btn.getAttribute('aria-label')) === 'Stop reading', { timeout: 5000, message: 'reading' });
+      await t.waitFor(async () => (await held()) === 1, { timeout: 3000, message: 'a wake lock while reading' });
+      await t.waitFor(async () => (await btn.getAttribute('aria-label')) === 'Read reply aloud', { timeout: 60000, message: 'the reading to end' });
+      await t.waitFor(async () => (await held()) === 0, { timeout: 3000, message: 'the lock to be released when reading ends' });
+      await btn.click();
+      await t.waitFor(async () => (await held()) === 1, { timeout: 3000, message: 'a wake lock while reading again' });
+      await btn.click(); // Stop
+      await t.waitFor(async () => (await held()) === 0, { timeout: 3000, message: 'the lock to be released on Stop' });
     },
   },
 
