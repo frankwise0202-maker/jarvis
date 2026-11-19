@@ -117,6 +117,11 @@ export async function registerServiceWorker({ onUpdateReady } = {}) {
     reportWarning('Service worker registration failed; offline mode is unavailable.', err && err.message);
     return null;
   }
+  // Some environments (blocked service workers, stubbed APIs) resolve without a registration.
+  if (!reg || typeof reg.addEventListener !== 'function') {
+    reportWarning('Service worker registration failed; offline mode is unavailable.', 'no registration');
+    return null;
+  }
 
   const announced = new WeakSet();
   const announce = (worker) => {

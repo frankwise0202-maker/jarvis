@@ -29,7 +29,7 @@ import { createJarvis, MODELS, DEPTHS } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
-import { listMemory, addMemory, removeMemory } from '../platform/memory.js';
+import { listMemory, addMemory, removeMemory, onMemoryChange } from '../platform/memory.js';
 import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
@@ -87,6 +87,11 @@ function usd(v) {
 function monthKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+/** A conversation's turns / a turn's segments, objects only (stored records can be damaged). */
+const turnsOf = (conv) => (conv && Array.isArray(conv.turns) ? conv.turns.filter(isObj) : []);
+const segmentsOf = (turn) => (turn && Array.isArray(turn.segments) ? turn.segments.filter(isObj) : []);
+const missionsOf = (turn) => (turn && isObj(turn.missions) ? turn.missions : {});
 function withTimeout(promise, ms, fallback) {
   return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
 }
@@ -214,6 +219,9 @@ export async function startApp(rootEl) {
     onRetry: (turn) => retry(turn),
     onCopy: (turn) => copyTurn(turn),
     onShare: (turn) => openShare(turn),
+    // Memory chips: "Undo" removes a fact Jarvis just saved (the demo has no real memory).
+    isRemembered: (fact) => (state.demo ? null : isRemembered(fact)),
+    onForgetMemory: state.demo ? null : (fact) => forgetMemory(fact),
     onSpeak: (turn) => toggleSpeakTurn(turn),
     isSpeaking: (turnId) => !!(state.speaking && state.speaking.turnId === turnId),
     onOpenMission: (turn, missionId) => openMission(turn, missionId),
@@ -592,7 +600,7 @@ export async function startApp(rootEl) {
     const answer = (answerText(turn) || turnText(turn, false)).trim();
     if (!answer) return;
     const turns = (conv && conv.turns) || [];
-    const user = turns.slice(0, Math.max(0, turns.indexOf(turn))).reverse().find((t) => t.role === 'user');
+    const user = turns.slice(0, Math.max(0, turns.indexOf(turn))).reverse().find((t) => isObj(t) && t.role === 'user');
     const parsed = user ? safe(() => parseProtocolPrompt(user.text), null) : null;
     const question = user ? (parsed ? parsed.headline : user.text || '') : '';
     clearFollowups();
@@ -755,7 +763,7 @@ export async function startApp(rootEl) {
     const idx = turns.indexOf(turn);
     let user = null;
     for (let i = (idx >= 0 ? idx : turns.length) - 1; i >= 0; i--) {
-      if (turns[i].role === 'user') {
+      if (isObj(turns[i]) && turns[i].role === 'user') {
         user = turns[i];
         break;
       }
@@ -772,9 +780,37 @@ export async function startApp(rootEl) {
     send(user.text, user.mode || composer.getMode());
   }
 
+  // ---- memory chips ----------------------------------------------------------------------
+  // Like the platform's removal by text: case-insensitive, ignoring punctuation and spacing.
+  const memoryKey = (text) =>
+    String(text || '')
+      .toLowerCase()
+      .replace(/[\p{P}\p{S}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  /** Is a fact Jarvis remembered still saved? null when memory can't be read. */
+  function isRemembered(fact) {
+    const key = memoryKey(fact);
+    if (!key) return null;
+    return safe(() => listMemory().some((m) => {
+      const k = memoryKey(m.text);
+      return k === key || (/…$/.test(m.text) && k.length > 20 && key.startsWith(k)); // stored facts are capped at 300 characters
+    }), null);
+  }
+
+  /** Undo a remembered fact from its chip in the transcript. */
+  function forgetMemory(fact) {
+    const removed = safe(() => removeMemory(fact), false);
+    const shown = fact.length > 60 ? `${fact.slice(0, 57).trimEnd()}…` : fact;
+    toast(removed ? `Forgot “${shown}”.` : 'That isn’t in Jarvis’s memory any more.', { level: removed ? 'success' : 'info', id: 'memory-undo' });
+    chat.refreshMemory();
+    return removed;
+  }
+
   // ---- copy & speech ---------------------------------------------------------------------
   function turnText(turn, lastRequestOnly) {
-    const segs = (turn.segments || []).filter((s) => s.kind === 'text' && s.text && s.text.trim());
+    const segs = segmentsOf(turn).filter((s) => s.kind === 'text' && typeof s.text === 'string' && s.text.trim());
     if (!segs.length) return '';
     let use = segs;
     if (lastRequestOnly) {
@@ -933,17 +969,18 @@ export async function startApp(rootEl) {
 
   function findTurn(turnId) {
     if (!state.conv || !turnId) return null;
-    return (state.conv.turns || []).find((t) => t.id === turnId) || null;
+    return turnsOf(state.conv).find((t) => t.id === turnId) || null;
   }
 
   function selectLatestMission() {
     state.mcSel = null;
-    const turns = (state.conv && state.conv.turns) || [];
+    const turns = turnsOf(state.conv);
     for (let i = turns.length - 1; i >= 0 && !state.mcSel; i--) {
       const t = turns[i];
-      if (t.role !== 'jarvis' || !t.missions) continue;
-      const segs = (t.segments || []).filter((s) => s.kind === 'mission' && t.missions[s.missionId]);
-      const ids = segs.length ? segs.map((s) => s.missionId) : Object.keys(t.missions);
+      const missions = missionsOf(t);
+      if (t.role !== 'jarvis') continue;
+      const segs = segmentsOf(t).filter((s) => s.kind === 'mission' && isObj(missions[s.missionId]));
+      const ids = segs.length ? segs.map((s) => s.missionId) : Object.keys(missions).filter((id) => isObj(missions[id]));
       if (ids.length) state.mcSel = { turnId: t.id, missionId: ids[ids.length - 1] };
     }
     mcShowSelected();
@@ -1000,7 +1037,7 @@ export async function startApp(rootEl) {
 
   function openMission(turn, missionId) {
     if (!turn) return;
-    const id = missionId || Object.keys(turn.missions || {}).pop();
+    const id = missionId || Object.keys(missionsOf(turn)).pop();
     if (!id) return;
     state.mcSel = { turnId: turn.id, missionId: id };
     if (state.layout === 'desktop') {
@@ -1063,15 +1100,15 @@ export async function startApp(rootEl) {
     let sources = 0;
     let cost = 0;
     for (const t of turns) {
-      if (t.role !== 'jarvis') continue;
+      if (!isObj(t) || t.role !== 'jarvis') continue;
       replies += 1;
-      const st = t.stats || {};
+      const st = isObj(t.stats) ? t.stats : {};
       if (t.status === 'running') {
-        for (const m of Object.values(t.missions || {})) agents += (m.agents || []).length;
+        for (const m of Object.values(missionsOf(t))) agents += isObj(m) && Array.isArray(m.agents) ? m.agents.length : 0;
       } else {
-        agents += st.agents || 0;
-        searches += st.searches || 0;
-        sources += st.sources || 0;
+        agents += Number(st.agents) || 0;
+        searches += Number(st.searches) || 0;
+        sources += Number(st.sources) || 0;
       }
       cost += Number(t.costUsd) || 0;
     }
@@ -1425,6 +1462,8 @@ export async function startApp(rootEl) {
     renderBanners();
     renderPanelStatsSoon();
   }));
+  // A fact undone from a chip, edited in Settings or changed in another tab: update the chips.
+  safe(() => onMemoryChange(() => chat.refreshMemory()));
 
   // Another tab saved or removed the API key.
   window.addEventListener('storage', (e) => {

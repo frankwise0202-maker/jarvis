@@ -46,6 +46,27 @@ export function pagesUrlFor(remoteUrl) {
   return repo.toLowerCase() === `${owner.toLowerCase()}.github.io` ? `https://${repo.toLowerCase()}/` : `https://${owner.toLowerCase()}.github.io/${repo}/`;
 }
 
+/**
+ * The reminder printed on every deploy: all GitHub Pages sites of one account share the origin
+ * https://<owner>.github.io, and with it Jarvis's storage (API key, history) and its offline
+ * cache, so the account must not publish any other Pages site. Returns the lines to print.
+ */
+export function sharedOriginWarning(pagesUrl = '') {
+  let origin = 'https://<owner>.github.io';
+  try {
+    if (pagesUrl) origin = new URL(pagesUrl).origin;
+  } catch {
+    /* keep the placeholder */
+  }
+  return [
+    `⚠ Security: Jarvis keeps the API key and the conversation history in browser storage for ${origin}.`,
+    '  Every GitHub Pages site published from this GitHub account shares that origin, so it could read them',
+    "  (or plant files in Jarvis's offline cache). Keep this account just for Jarvis: don't publish other",
+    '  Pages sites from it. Alternatives: a dedicated GitHub account, a custom subdomain for Jarvis, or a host',
+    '  with per-project origins (README: "Who can read your key").',
+  ];
+}
+
 async function readBuildIdFromDist(dist) {
   const html = await readFile(path.join(dist, 'index.html'), 'utf8').catch(() => '');
   return html.match(/app\.js\?v=([0-9a-f]{8})/)?.[1] || '';
@@ -148,6 +169,10 @@ export async function deploy({ push = false, doBuild = true, keepWorktree = fals
     }
 
     // 4. Publish (only with --push and a remote named origin).
+    const remind = () => {
+      log('');
+      for (const line of sharedOriginWarning(pagesUrl)) log(line);
+    };
     if (push && hasOrigin) {
       log('Pushing to origin…');
       const pushed = git(['push', '--quiet', 'origin', `${BRANCH}:${BRANCH}`], { cwd: worktree, allowFail: true });
@@ -155,16 +180,19 @@ export async function deploy({ push = false, doBuild = true, keepWorktree = fals
       log(`\n✔ Published build ${buildId}.`);
       if (pagesUrl) log(`  Your app: ${pagesUrl}  (GitHub can take a minute to update)`);
       log(`  First time? On GitHub open Settings → Pages and set "Deploy from a branch" → ${BRANCH} / (root).`);
+      remind();
     } else if (push) {
       log(`\nThe ${BRANCH} branch is ready, but there is no git remote named "origin" to push to.`);
       log('Add your GitHub repository, then deploy again:');
       log('  git remote add origin https://github.com/<you>/<repo>.git');
       log('  npm run deploy -- --push');
+      remind();
       return { buildId, committed, pushed: false, pagesUrl, missingOrigin: true };
     } else {
       log(`\n${committed ? 'Done' : 'Up to date'}: nothing was pushed.`);
       log(hasOrigin ? `To publish it:  npm run deploy -- --push   (or: git push origin ${BRANCH})` : 'To publish it, add a remote named origin, then run:  npm run deploy -- --push');
       if (pagesUrl) log(`It will then be live at ${pagesUrl}`);
+      remind();
     }
     return { buildId, committed, pushed: push && hasOrigin, pagesUrl };
   } finally {

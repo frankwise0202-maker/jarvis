@@ -40,6 +40,32 @@ const LIMITS = {
   spendWarnUsd: { min: 0, max: 100000 },
 };
 
+/**
+ * The toast after a backup import, from importBackup()'s result { conversations, memory,
+ * settings, settingsChanged, skipped, protocols? }: what was restored, e.g. "Restored 3
+ * conversations, 5 memories and your preferences.", plus a warning when conversations were
+ * left out. Returns { message, level }.
+ */
+export function importSummary(res) {
+  const r = res && typeof res === 'object' ? res : {};
+  const count = (v) => (Array.isArray(v) ? v.length : typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+  const c = count(r.conversations);
+  const m = count(r.memory);
+  const p = count(r.protocols);
+  const skipped = count(r.skipped);
+  const prefs = r.settings === true || count(r.settingsChanged) > 0 || (Array.isArray(r.settings) && r.settings.length > 0);
+  const parts = [];
+  if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
+  if (m) parts.push(`${m} memor${m === 1 ? 'y' : 'ies'}`);
+  if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
+  if (prefs) parts.push('your preferences');
+  let message = parts.length
+    ? `Restored ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]}.`
+    : 'Nothing new to restore: this device already has everything in that backup.';
+  if (skipped) message += ` ${skipped} conversation${skipped === 1 ? ' was' : 's were'} left out (damaged or not made by Jarvis).`;
+  return { message, level: skipped ? 'warn' : 'success' };
+}
+
 const MODEL_NOTES = {
   'claude-opus-5-5': 'most capable',
   'claude-sonnet-5-5': 'fast and capable',
@@ -378,19 +404,22 @@ export function createSettingsPanel(o) {
       .catch((err) => console.error('[jarvis] getVoices failed:', err));
   }
   function fillVoices(voices) {
-    const list = Array.isArray(voices) ? voices.slice() : [];
+    const list = Array.isArray(voices) ? voices.filter((v) => v && typeof v.voiceURI === 'string') : [];
     let auto = null;
     try {
       auto = pickDefaultVoice(list);
     } catch {
       auto = null;
     }
-    const rank = (v) => (/^en-GB/i.test(v.lang) ? 0 : /^en/i.test(v.lang) ? 1 : 2);
+    // Online voices (localService === false) send the text they read to their provider, so
+    // they say so, and on-device voices come first within each language.
+    const online = (v) => v.localService === false;
+    const rank = (v) => (/^en-GB/i.test(v.lang) ? 0 : /^en/i.test(v.lang) ? 2 : 4) + (online(v) ? 1 : 0);
     list.sort((a, b) => rank(a) - rank(b) || String(a.name).localeCompare(String(b.name)));
     const current = getSettings().voiceURI;
     voiceSelect.replaceChildren(
-      h('option', { value: '', text: auto ? `Automatic — ${auto.name}` : 'Automatic (British voice if available)' }),
-      ...list.map((v) => h('option', { value: v.voiceURI, text: `${v.name} (${v.lang})` })),
+      h('option', { value: '', text: auto ? `Automatic — ${auto.name}${online(auto) ? ' (online)' : ''}` : 'Automatic (British voice if available)' }),
+      ...list.map((v) => h('option', { value: v.voiceURI, text: `${v.name} (${v.lang}${online(v) ? ', online' : ''})`, attrs: { 'data-online': online(v) ? 'true' : 'false' } })),
     );
     if (current && !list.some((v) => v.voiceURI === current)) ensureOption(voiceSelect, current, `${current} (not on this device)`);
     voiceSelect.value = current;
@@ -476,13 +505,21 @@ export function createSettingsPanel(o) {
         ]),
         stacked: true,
       }),
-      row({ label: 'Voice', help: 'Voices come from your device. A British butler is preferred when available.', forId: fieldId('voiceURI'), control: voiceSelect, stacked: true }),
+      row({
+        label: 'Voice',
+        help: 'Voices come from your device or browser. Ones marked “online” send the text they read to their provider (such as Google or Microsoft); the others speak on this device. A British butler is preferred when available.',
+        forId: fieldId('voiceURI'),
+        control: voiceSelect,
+        stacked: true,
+      }),
       row({ label: 'Speaking speed', forId: fieldId('voiceRate'), control: h('div', { class: 'range-wrap' }, rate, rateOut), stacked: true, extra: h('div', { class: 'set-row-actions' }, testVoiceBtn) }),
     ),
     card(
       row({
         label: 'Listening language',
-        help: sttOk ? 'The language you speak to the microphone in.' : 'Voice input isn’t supported in this browser.',
+        help: sttOk
+          ? 'The language you speak to the microphone in. Your browser’s speech service (Google’s in Chrome, Apple’s in Safari) turns your voice into text, possibly on its servers.'
+          : 'Voice input isn’t supported in this browser.',
         forId: fieldId('listenLang'),
         control: selectField('listenLang', langOptions),
         stacked: true,
@@ -950,7 +987,11 @@ export function createSettingsPanel(o) {
     if (!file) return;
     importConfirm.hidden = false;
     importConfirm.replaceChildren(
-      h('p', { class: 'set-help', text: `Merge “${file.name}” into this device? Conversations and memories are added; nothing is deleted.` }),
+      h('p', {
+        class: 'set-help',
+        attrs: { 'data-testid': 'import-confirm-text' },
+        text: `Merge “${file.name}” into this device? Its conversations and memories are added (nothing is deleted), and your preferences (name, style, voice, theme and sounds) are taken from it. Your models, agent limits and spending warning stay as they are.`,
+      }),
       h(
         'div',
         { class: 'set-row-actions' },
@@ -964,13 +1005,8 @@ export function createSettingsPanel(o) {
               click: async () => {
                 importConfirm.hidden = true;
                 try {
-                  const res = await importBackup(file);
-                  const c = (res && res.conversations) || 0;
-                  const m = (res && res.memory) || 0;
-                  const p = (res && Number(res.protocols)) || 0;
-                  const parts = [`${c} conversation${c === 1 ? '' : 's'}`, `${m} memor${m === 1 ? 'y' : 'ies'}`];
-                  if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
-                  o.toast(`Imported ${parts.length > 2 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join(' and ')}.`, { level: 'success' });
+                  const summary = importSummary(await importBackup(file));
+                  o.toast(summary.message, { level: summary.level, timeout: summary.level === 'warn' ? 9000 : undefined });
                   o.refreshHistory();
                   renderMemory();
                 } catch (err) {

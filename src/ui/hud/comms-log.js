@@ -112,11 +112,11 @@ export function createCommsLog(opts = {}) {
   let lastSeq = 0; // newest entry rendered
   let lineCount = 0;
   let visibleCount = 0; // lines that pass the filter
-  let primed = false; // first batch rendered (later live lines get the "just printed" glow)
   let filter = null; // agent key or null (all)
   let atBottom = true;
   let jumpUntil = 0; // a smooth "jump to latest" is in flight until this time
   let userUntil = 0; // scroll events until this time come from the owner's own gesture
+  let pointerDown = false; // a pointer is down on the log (e.g. dragging its scrollbar)
   let unseen = 0; // lines added while scrolled up
   let whoCh = 0;
   let disposed = false;
@@ -132,18 +132,32 @@ export function createCommsLog(opts = {}) {
     log.scrollTop = log.scrollHeight;
   });
 
-  // Only the owner's own scrolling pauses the feed. Scroll events also come from our own jumps to
-  // the newest line and from the browser clamping the position when old lines are dropped; those
-  // must never unstick it, so a scroll away from the bottom counts only shortly after a wheel,
-  // touch, pointer or key input on the log (touch momentum keeps scrolling after the finger lifts).
+  // Only the owner's own scrolling pauses or resumes the feed. Scroll events also come from our own
+  // jumps to the newest line and from the browser clamping the position when old lines are dropped;
+  // those return before reading any layout (a big swarm fires them several times a second). A
+  // gesture counts while a pointer is down on the log (scrollbar drags) and for 2.5s after the
+  // last wheel, touch or key input (touch momentum keeps scrolling after the finger lifts).
   const markUser = () => {
-    userUntil = Date.now() + 1500;
+    userUntil = Date.now() + 2500;
   };
-  for (const type of ['wheel', 'touchstart', 'touchmove', 'pointerdown']) log.addEventListener(type, markUser, { passive: true });
+  const onPointerDown = () => {
+    pointerDown = true;
+    markUser();
+  };
+  const onPointerUp = () => {
+    if (!pointerDown) return;
+    pointerDown = false;
+    markUser();
+  };
+  for (const type of ['wheel', 'touchstart', 'touchmove']) log.addEventListener(type, markUser, { passive: true });
   log.addEventListener('keydown', markUser);
+  log.addEventListener('pointerdown', onPointerDown, { passive: true });
+  window.addEventListener('pointerup', onPointerUp, { passive: true });
+  window.addEventListener('pointercancel', onPointerUp, { passive: true });
   log.addEventListener(
     'scroll',
     () => {
+      if (!pointerDown && !jumpUntil && Date.now() > userUntil) return; // ours, or the browser's
       const bottom = log.scrollHeight - log.scrollTop - log.clientHeight <= STICK_PX;
       if (bottom) {
         jumpUntil = 0;
@@ -208,12 +222,18 @@ export function createCommsLog(opts = {}) {
       h('span', { class: 'hud-comms__msg', text: e.text }),
     );
     if (e.detail) line.title = e.detail;
-    if (primed && !e.replay) line.classList.add('is-new'); // a brief "just printed" glow
     if (filter !== null && e.agent && e.agent !== filter) line.hidden = true;
     return line;
   }
 
   function appendEntries(list) {
+    // Paused, but the owner has scrolled back to the newest line (e.g. a long momentum scroll that
+    // ended after the gesture window): follow again. Measured once per batch, only while paused.
+    if (open && !atBottom && log.scrollHeight - log.scrollTop - log.clientHeight <= STICK_PX) {
+      atBottom = true;
+      unseen = 0;
+      syncJump();
+    }
     const start = list.length > MAX_LINES ? list.length - MAX_LINES : 0;
     const frag = document.createDocumentFragment();
     let visibleAdded = 0;
@@ -223,7 +243,6 @@ export function createCommsLog(opts = {}) {
       frag.appendChild(line);
       lineCount++;
     }
-    primed = true;
     visibleCount += visibleAdded;
     if (empty.parentNode) empty.remove();
     log.appendChild(frag);
@@ -265,7 +284,6 @@ export function createCommsLog(opts = {}) {
     lastSeq = 0;
     unseen = 0;
     atBottom = true;
-    primed = false;
     syncJump();
   }
 
@@ -503,6 +521,8 @@ export function createCommsLog(opts = {}) {
     if (announceTimer) clearTimeout(announceTimer);
     announceTimer = 0;
     announceQueue = [];
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
   }
 
   return {

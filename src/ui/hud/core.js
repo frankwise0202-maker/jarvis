@@ -19,6 +19,13 @@
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
 const MAX_DPR = 3;
+// Phones and tablets: a 2× backing store keeps rings and glows crisp at under half the fill cost of
+// 3× (Mission Control's orbit during a big swarm was the heaviest thing on a phone-class CPU).
+const MAX_DPR_SMALL = 2;
+// The header's mini orb rests on a static frame after this long without news in a resting state
+// (idle / offline / error), and wakes on the next change. Saves battery while the app sits open.
+const MINI_DOZE_MS = 30000;
+const RESTING = new Set(['idle', 'offline', 'error']);
 
 const STATES = ['idle', 'listening', 'thinking', 'working', 'speaking', 'error', 'offline'];
 
@@ -471,7 +478,10 @@ export function createCore(canvas, opts = {}) {
     updateAwake();
     if (reducedMq.matches) drawStatic();
   });
-  const smallMq = watchMedia('(max-width: 899px), (pointer: coarse)', () => updateFps());
+  const smallMq = watchMedia('(max-width: 899px), (pointer: coarse)', () => {
+    updateFps();
+    measure(); // the resolution cap depends on it too
+  });
   updateFps();
 
   function updateFps() {
@@ -501,7 +511,7 @@ export function createCore(canvas, opts = {}) {
       w = rect.width;
       h = rect.height;
     }
-    const ratio = Math.min(MAX_DPR, Math.max(1, window.devicePixelRatio || 1));
+    const ratio = Math.min(smallMq.matches ? MAX_DPR_SMALL : MAX_DPR, Math.max(1, window.devicePixelRatio || 1));
     const bw = Math.max(0, Math.round(w * ratio));
     const bh = Math.max(0, Math.round(h * ratio));
     const changed = Math.abs(w - width) > 0.01 || Math.abs(h - height) > 0.01 || ratio !== dpr;
@@ -575,13 +585,40 @@ export function createCore(canvas, opts = {}) {
   const onVisibility = () => updateAwake();
   document.addEventListener('visibilitychange', onVisibility);
 
+  // Dozing (mini orb only, see MINI_DOZE_MS): no animation loop, one static frame per change.
+  const dozeMs = Number.isFinite(opts.idleSleepMs) ? Math.max(0, opts.idleSleepMs) : mode === 'mini' ? MINI_DOZE_MS : 0;
+  let dozing = false;
+  let dozeTimer = 0;
+
+  function scheduleDoze() {
+    if (dozeTimer) clearTimeout(dozeTimer);
+    dozeTimer = 0;
+    if (!dozeMs || destroyed || !RESTING.has(state)) return;
+    dozeTimer = setTimeout(() => {
+      dozeTimer = 0;
+      if (destroyed || !RESTING.has(state)) return;
+      dozing = true;
+      updateAwake();
+      drawStatic();
+    }, dozeMs);
+  }
+
+  // Something visible changed: wake up if dozing, and restart the countdown to the next doze.
+  function noteNews() {
+    if (dozing) {
+      dozing = false;
+      updateAwake();
+    }
+    scheduleDoze();
+  }
+
   function isStatic() {
-    return !destroyed && reducedMq.matches;
+    return !destroyed && (reducedMq.matches || dozing);
   }
 
   function updateAwake() {
     const should =
-      !destroyed && !reducedMq.matches && !document.hidden && inView && width > 1 && height > 1 && canvas.isConnected;
+      !destroyed && !dozing && !reducedMq.matches && !document.hidden && inView && width > 1 && height > 1 && canvas.isConnected;
     if (should === awake) return;
     awake = should;
     if (awake) {
@@ -1222,6 +1259,7 @@ export function createCore(canvas, opts = {}) {
       colorMix = 0;
     }
     setAria();
+    noteNews();
     if (isStatic()) drawStatic();
   }
 
@@ -1229,6 +1267,7 @@ export function createCore(canvas, opts = {}) {
     if (destroyed) return;
     const v = Number(value);
     levelTarget = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+    if (dozing && levelTarget > 0.02) noteNews(); // a voice level means something is happening
   }
 
   /**
@@ -1238,6 +1277,7 @@ export function createCore(canvas, opts = {}) {
    */
   function celebrate(tone) {
     if (destroyed || reducedMq.matches) return;
+    noteNews();
     burstColor = tone === 'warn' ? pal.warn : pal.ok;
     burstAt = clock;
     burstWall = performance.now();
@@ -1254,12 +1294,14 @@ export function createCore(canvas, opts = {}) {
     haltCount = 0;
     activeCount = 0;
     const count = Math.min(list.length, 24);
+    let changed = false;
     for (let i = 0; i < count; i++) {
       const a = list[i];
       if (!a || typeof a !== 'object') continue;
       const id = a.id != null ? String(a.id) : `#${i}`;
       let n = nodeById.get(id);
       if (!n) {
+        changed = true;
         n = {
           id,
           label: '',
@@ -1289,6 +1331,7 @@ export function createCore(canvas, opts = {}) {
       }
       const status = typeof a.status === 'string' ? a.status : 'queued';
       if (status !== n.status) {
+        changed = true;
         if (n.status !== null) n.changedAt = clock;
         n.status = status;
         n.kind = NODE_KIND[status] ?? K_WAITING;
@@ -1302,7 +1345,11 @@ export function createCore(canvas, opts = {}) {
       else if (n.kind === K_HALTED) haltCount++;
       else if (n.kind === K_ACTIVE) activeCount++;
     }
-    for (const [id, n] of nodeById) if (n.gen !== gen) nodeById.delete(id);
+    for (const [id, n] of nodeById) {
+      if (n.gen === gen) continue;
+      nodeById.delete(id);
+      changed = true;
+    }
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
       n.targetAngle = -Math.PI / 2 + (i * TAU) / nodes.length;
@@ -1316,12 +1363,15 @@ export function createCore(canvas, opts = {}) {
       readoutSub = '';
     }
     setAria();
+    if (changed) noteNews();
     if (isStatic()) drawStatic();
   }
 
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    if (dozeTimer) clearTimeout(dozeTimer);
+    dozeTimer = 0;
     paletteListeners.delete(refreshPalette);
     updateAwake();
     removeLive(frame);
@@ -1345,7 +1395,7 @@ export function createCore(canvas, opts = {}) {
       return null;
     }
     const n = Math.min(statCount, statBuf.length);
-    if (!n) return { frames: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0, awake, mode, agents: total };
+    if (!n) return { frames: 0, avgMs: 0, p95Ms: 0, maxMs: 0, fps: 0, awake, dozing, mode, agents: total, backing: [canvas.width, canvas.height] };
     const arr = Array.from(statBuf.subarray(0, n)).sort((a, b) => a - b);
     const sum = arr.reduce((s, v) => s + v, 0);
     const elapsed = (performance.now() - statSince) / 1000;
@@ -1357,6 +1407,7 @@ export function createCore(canvas, opts = {}) {
       fps: elapsed > 0 ? statFrames / elapsed : 0,
       fpsCap: fps,
       awake,
+      dozing,
       mode,
       agents: total,
       bursting: !!burstColor,
@@ -1367,6 +1418,7 @@ export function createCore(canvas, opts = {}) {
   watchDpr();
   setAria();
   measure();
+  scheduleDoze();
 
   return { setState, setAgents, setLevel, celebrate, destroy, debugStats };
 }

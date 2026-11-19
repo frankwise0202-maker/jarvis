@@ -10,7 +10,15 @@ and your phone like an app.
 There is no Jarvis company or server in the middle. Jarvis runs entirely in your web browser and
 talks directly to Claude, Anthropic's AI, using your own Anthropic account. You pay Anthropic only
 for what you use (cents for everyday questions, a dollar or two for a big research mission),
-and your conversations stay on your device.
+and your conversations are stored only on your device.
+
+> **Important: keep this GitHub account just for Jarvis.** Don't publish any other GitHub Pages
+> site from the `frankwise0202-maker` account. Every Pages site of one account lives at the same
+> web address (`frankwise0202-maker.github.io`), and sites at the same address share the
+> browser's storage, so another site there could read your API key and your conversations, or
+> tamper with the copy of Jarvis saved on your device. Want to publish other sites? Use a
+> different GitHub account for them. See [Who can read your key](#who-can-read-your-key) for
+> other options.
 
 ---
 
@@ -179,20 +187,48 @@ in that conversation (at a reduced, cached price), so start a new chat when you 
 - **No middleman.** The app is a set of files hosted on GitHub Pages. Once loaded, it runs in
   your browser and sends your messages straight to Anthropic's API (`api.anthropic.com`).
   Web searches are carried out by Anthropic on Jarvis's behalf.
-- **Your API key stays on your device.** It is stored only in this browser on this device. It is
-  never put in a web address, never included in backups, and never shown in full again after
-  you enter it. (If you ever paste the key into a chat, that conversation is left out of
-  backups, and Jarvis tells you so.)
+- **Your API key stays on your device.** It is stored only in this browser on this device (see
+  below for what else can read it there). It is never put in a web address, never included in
+  backups, and never shown in full again after you enter it. If you paste something that looks
+  like a key into a message, Jarvis asks before sending it; if you send it anyway, that
+  conversation is left out of backups, and the key is replaced by "[API key removed]" in
+  anything you share, copy or download.
 - **Your conversations stay on your device.** History, memory and settings are stored in the
   browser on each device. They are not synced between devices. Clearing the site's data or
   uninstalling the app deletes them, so use **Settings → Data → Export backup** to keep a copy.
 - **What others see.** GitHub sees ordinary visits to the app's files, like any website, but not
   your conversations. Anthropic processes what you send under its own privacy policy and terms.
+- **Voice.** Dictation (the microphone) uses your browser's speech service: Google's in Chrome,
+  Microsoft's in Edge, Apple's in Safari and on iPhone, which may process your voice on its
+  servers. Spoken replies use a voice from your device or browser: voices marked "(online)" in
+  Settings → Voice send the text they read aloud to their provider (Google or Microsoft); the
+  others speak on your device without sending anything.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
   backups).
 - Anyone who can unlock your device can use your Jarvis, so keep a passcode on your devices.
+
+### Who can read your key
+
+Browsers keep each website's storage separate, by web address. Jarvis keeps your key and your
+history in the storage for `https://frankwise0202-maker.github.io`. Anything that runs at that
+address can read them:
+
+- **Jarvis itself**, which only ever sends the key to Anthropic.
+- **Any other GitHub Pages site published from the `frankwise0202-maker` account.** GitHub serves
+  all of an account's sites from that one address, so they share Jarvis's storage. Such a site
+  could read your key and history, and could even change the offline copy of Jarvis on your
+  device. **So keep this GitHub account just for Jarvis.** If you want to publish other sites,
+  you can: publish them from a different GitHub account (the simplest); give Jarvis its own web
+  address with a custom subdomain (for example `jarvis.your-domain.com`, set in the repository's
+  **Settings → Pages → Custom domain**); or host Jarvis somewhere that gives every project its own
+  address (for example Cloudflare Pages or Netlify). A new address starts Jarvis fresh: paste your
+  key again and use **Export backup** / **Import backup** to bring your conversations along.
+- **Browser extensions** that you have allowed to "read and change data on all websites". Only
+  install extensions you trust.
+
+Other websites (at other addresses) cannot read it.
 
 ## Settings at a glance
 
@@ -298,6 +334,13 @@ test/e2e/         Playwright end-to-end scenarios
 branch**, branch `gh-pages`, folder `/ (root)`. After `npm run deploy -- --push` the app is live
 at <https://frankwise0202-maker.github.io/jarvis/>.
 
+**One Pages site per account (security).** All GitHub Pages project sites of an account share
+one origin (`https://<owner>.github.io`), and with it `localStorage`, IndexedDB, Cache Storage
+and service-worker scope at the root. Any other Pages site of the same account could read the
+API key and history, or plant files in Jarvis's offline cache. Publish Jarvis from an account
+that hosts nothing else, or give it its own origin (a custom subdomain, or a host with
+per-project origins). `npm run deploy` prints this reminder on every run.
+
 **Testing against the mock API by hand:** `node test/server.mjs` serves the app and the mock on
 one port and prints the snippet to paste into the browser console (it sets
 `jarvis.dev.apiBase`, a mock key `sk-ant-test-…` and an onboarded profile). The app honors
@@ -336,4 +379,6 @@ Security rules worth knowing before you change anything: the Content-Security-Po
 `index.html` is fixed by SPEC §2; model, web and user text is rendered only through
 `src/lib/markdown.js` (never `innerHTML`); links from model output must be `http:`, `https:` or
 `mailto:` and open with `rel="noopener noreferrer"`; and the API key is never logged, put in a
-URL, or exported.
+URL, or exported. Shared and downloaded Markdown goes through `safeMarkdown` and
+`redactSecrets` in `src/ui/share.js` (no raw HTML, no non-http(s) links, no API keys), and
+backups leave out conversations that contain a key.

@@ -20,7 +20,19 @@ const MAX_CHIPS = 5;
 
 // ---- small helpers ----------------------------------------------------------------
 
+// Conversations come from storage, and a stored record can be damaged or (via an old backup)
+// malformed: rendering reads every field through these, so a bad field shows as empty instead
+// of breaking the transcript.
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const txt = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
+const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+const missionsOf = (turn) => (isObj(turn.missions) ? turn.missions : {});
+/** table[key] for the table's own keys only ("constructor" is not an error kind). */
+const lookup = (table, key) => (typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined);
+const turnsOf = (conv) => (conv && Array.isArray(conv.turns) ? conv.turns.filter(isObj) : []);
+
 function safeHost(url) {
+  if (typeof url !== 'string') return '';
   try {
     return hostname(url) || '';
   } catch {
@@ -201,6 +213,8 @@ function pickSuggestions(date = new Date()) {
  * @param {(text: string, mode: string) => void} o.onSuggestion
  * @param {(text: string, mode: string, protocol: object) => boolean} [o.onProtocol]  runs a protocol (SPEC §14.2)
  * @param {(turn: object) => void} [o.onShare]          opens Share & export for a reply (SPEC §14.4)
+ * @param {(fact: string) => boolean|null} [o.isRemembered]  is a remembered fact still saved (null = unknown)
+ * @param {(fact: string) => boolean} [o.onForgetMemory]  undo a remembered fact (shows an Undo button)
  * @param {() => object} [o.getSettings]
  * @param {{ play: Function, haptic: Function }} [o.sounds]   optional feedback (SPEC §14.3)
  * @param {() => { title: string, subtitle: string, meta: string }} o.getGreeting
@@ -494,26 +508,44 @@ export function createChat(o) {
     syncTurns();
     for (const [turnId, d] of dirty) {
       const view = turnViews.get(turnId);
-      if (view && view.reconcile) view.reconcile(d);
+      // One turn that can't render must never stop the others (or the live one) from updating.
+      if (view && view.reconcile) reconcileSafely(view, d);
     }
     dirty.clear();
     updateEmpty();
     updateTicker();
   }
 
+  function reconcileSafely(view, d) {
+    try {
+      view.reconcile(d);
+    } catch (err) {
+      console.error('[jarvis] turn render failed:', err);
+    }
+  }
+
+  function createTurnView(turn) {
+    try {
+      return turn.role === 'user' ? createUserTurnView(turn) : createJarvisTurnView(turn, ctx);
+    } catch (err) {
+      console.error('[jarvis] turn view failed:', err);
+      return createBrokenTurnView(turn);
+    }
+  }
+
   // ---- turns ------------------------------------------------------------------------
   function syncTurns() {
-    const turns = (conv && conv.turns) || [];
+    const turns = Array.isArray(conv && conv.turns) ? conv.turns : [];
     const seen = new Set();
     let prev = null;
     for (const turn of turns) {
-      if (!turn || !turn.id) continue;
+      if (!isObj(turn) || !turn.id || seen.has(turn.id)) continue;
       seen.add(turn.id);
       let view = turnViews.get(turn.id);
       if (!view) {
-        view = turn.role === 'user' ? createUserTurnView(turn) : createJarvisTurnView(turn, ctx);
+        view = createTurnView(turn);
         turnViews.set(turn.id, view);
-        if (view.reconcile) view.reconcile({ full: true, segs: new Set(), missions: new Set() });
+        if (view.reconcile) reconcileSafely(view, { full: true, segs: new Set(), missions: new Set() });
       }
       const expected = prev ? prev.nextSibling : transcript.firstChild;
       if (view.el !== expected) transcript.insertBefore(view.el, expected);
@@ -557,8 +589,9 @@ export function createChat(o) {
       }
     },
     isLastTurn: (turnId) => {
-      const turns = (conv && conv.turns) || [];
-      return turns.length > 0 && turns[turns.length - 1].id === turnId;
+      const turns = Array.isArray(conv && conv.turns) ? conv.turns : [];
+      const last = turns[turns.length - 1];
+      return isObj(last) && last.id === turnId;
     },
     isSpeaking: (turnId) => {
       try {
@@ -599,7 +632,7 @@ export function createChat(o) {
     /** Reconcile the turn list now (after startTurn/resumeTurn appended turns). */
     sync() {
       if (!conv) return;
-      for (const turn of conv.turns || []) mark(turn.id, 'full');
+      for (const turn of turnsOf(conv)) mark(turn.id, 'full');
       schedule.flush();
     },
     /** A TurnRun event for the current conversation. */
@@ -629,11 +662,15 @@ export function createChat(o) {
     refresh(turnId) {
       if (!conv) return;
       if (turnId) mark(turnId, 'full');
-      else for (const turn of conv.turns || []) mark(turn.id, 'full');
+      else for (const turn of turnsOf(conv)) mark(turn.id, 'full');
     },
     /** Update speaking indicators on footers. */
     refreshSpeaking() {
       for (const view of turnViews.values()) if (view.syncSpeak) view.syncSpeak();
+    },
+    /** Memory changed (undo, Settings, another tab): update the "Remembered" chips. */
+    refreshMemory() {
+      for (const view of turnViews.values()) if (view.refreshMemory) view.refreshMemory();
     },
     scrollToBottom,
     setCoreState(state) {
@@ -689,8 +726,19 @@ function oneColumn() {
 
 // ---- user turn ----------------------------------------------------------------------
 
+/** Stand-in for a stored turn too damaged to render (keeps the rest of the transcript usable). */
+function createBrokenTurnView(turn) {
+  const user = isObj(turn) && turn.role === 'user';
+  const el = h(
+    'div',
+    { class: ['turn', user ? 'turn--user' : 'turn--jarvis', 'turn--broken'], attrs: { 'data-testid': user ? 'turn-user' : 'turn-jarvis', 'data-status': user ? null : 'error' } },
+    h('p', { class: 'turn-broken-text', text: user ? txt(turn.text) || 'This message couldn’t be displayed.' : 'This reply couldn’t be displayed.' }),
+  );
+  return { el, kind: user ? 'user' : 'jarvis' };
+}
+
 function createUserTurnView(turn) {
-  const tag = turn.mode && turn.mode !== 'auto' ? h('span', { class: ['turn-mode', `turn-mode--${turn.mode}`], text: turn.mode === 'swarm' ? 'Swarm' : 'Quick' }) : null;
+  const tag = turn.mode === 'swarm' || turn.mode === 'quick' ? h('span', { class: ['turn-mode', `turn-mode--${turn.mode}`], text: turn.mode === 'swarm' ? 'Swarm' : 'Quick' }) : null;
   // Photos and PDFs sent with the message (SPEC §15.1: metadata and thumbnails only).
   let strip = null;
   if (Array.isArray(turn.attachments) && turn.attachments.length) {
@@ -773,7 +821,7 @@ function createJarvisTurnView(turn, ctx) {
   const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, missionBtn, shareBtn);
   const footer = h('div', { class: 'turn-footer', hidden: true }, footerNotice, h('div', { class: 'turn-foot-row' }, actions, stats));
 
-  const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': turn.status || 'running', 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
+  const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': txt(turn.status) || 'running', 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
 
   let copyTimer = 0;
   function doCopy() {
@@ -788,12 +836,13 @@ function createJarvisTurnView(turn, ctx) {
   }
 
   function lastMissionId() {
-    const ids = Object.keys(turn.missions || {});
+    const missions = missionsOf(turn);
+    const ids = Object.keys(missions).filter((id) => isObj(missions[id]));
     if (!ids.length) return undefined;
     // Prefer the mission of the last mission segment (display order), else the newest.
-    const segs = (turn.segments || []).filter((s) => s.kind === 'mission' && turn.missions[s.missionId]);
+    const segs = (Array.isArray(turn.segments) ? turn.segments : []).filter((s) => isObj(s) && s.kind === 'mission' && isObj(missions[s.missionId]));
     if (segs.length) return segs[segs.length - 1].missionId;
-    return ids.sort((a, b) => (turn.missions[a].createdAt || 0) - (turn.missions[b].createdAt || 0)).pop();
+    return ids.sort((a, b) => count(missions[a].createdAt) - count(missions[b].createdAt)).pop();
   }
 
   const isRunning = () => turn.status === 'running' && ctx.isActive(turn.id);
@@ -806,11 +855,28 @@ function createJarvisTurnView(turn, ctx) {
       newChat: () => o.onNewChat(),
       retry: () => o.onRetry(turn),
       turnStatus: () => turn.status,
+      // Memory chips (SPEC §6 memory segments): is the fact still saved, and undoing it.
+      isRemembered: (fact) => {
+        try {
+          return typeof o.isRemembered === 'function' ? o.isRemembered(fact) : null;
+        } catch {
+          return null;
+        }
+      },
+      canForget: () => typeof o.onForgetMemory === 'function',
+      forgetMemory: (fact) => {
+        try {
+          return typeof o.onForgetMemory === 'function' ? !!o.onForgetMemory(fact) : false;
+        } catch (err) {
+          console.error('[jarvis] forgetting a memory failed:', err);
+          return false;
+        }
+      },
     };
   }
 
   function reconcile(d) {
-    const segs = Array.isArray(turn.segments) ? turn.segments : [];
+    const segs = (Array.isArray(turn.segments) ? turn.segments : []).filter(isObj);
     const running = isRunning();
     const lastIdx = segs.length - 1;
     const seen = new Set();
@@ -850,7 +916,7 @@ function createJarvisTurnView(turn, ctx) {
         segViews.delete(id);
       }
     }
-    el.dataset.status = turn.status || 'running';
+    el.dataset.status = txt(turn.status) || 'running';
     el.classList.toggle('is-running', running);
     el.classList.toggle('is-stale', isStale());
     updatePending(segs, running);
@@ -866,8 +932,8 @@ function createJarvisTurnView(turn, ctx) {
     let label = '';
     if (!last) label = 'Thinking…';
     else if (last.kind === 'mission') {
-      const m = turn.missions && turn.missions[last.missionId];
-      if (m && !['planning', 'running'].includes(m.status)) label = 'Synthesizing reports…';
+      const m = missionsOf(turn)[last.missionId];
+      if (isObj(m) && !['planning', 'running'].includes(m.status)) label = 'Synthesizing reports…';
     } else if (last.kind === 'tool' && last.status !== 'running') label = 'Thinking…';
     else if (last.kind === 'memory' || last.kind === 'notice') label = 'Thinking…';
     else if (last.kind === 'thinking' && last.endedAt) label = 'Writing…';
@@ -879,7 +945,7 @@ function createJarvisTurnView(turn, ctx) {
 
   function tick() {
     if (pending.hidden) return;
-    const started = turn.createdAt || Date.now();
+    const started = count(turn.createdAt) || Date.now();
     setText(pendingTime, duration(Date.now() - started));
   }
 
@@ -921,20 +987,20 @@ function createJarvisTurnView(turn, ctx) {
     }
     footerNotice.hidden = !footerNotice.firstChild;
 
-    const hasText = segs.some((s) => s.kind === 'text' && s.text && s.text.trim());
+    const hasText = segs.some((s) => s.kind === 'text' && txt(s.text).trim());
     copyBtn.hidden = !hasText;
     if (speakBtn) speakBtn.hidden = !hasText;
-    missionBtn.hidden = !Object.keys(turn.missions || {}).length;
+    missionBtn.hidden = !Object.values(missionsOf(turn)).some(isObj);
     if (shareBtn) shareBtn.hidden = !hasText && missionBtn.hidden;
     syncSpeak();
 
-    const st = turn.stats || {};
+    const st = isObj(turn.stats) ? turn.stats : {};
     const parts = [];
     if (status === 'stopped') parts.push('Stopped');
-    if (st.agents) parts.push(plural(st.agents, 'agent', 'agents'));
-    if (st.searches) parts.push(plural(st.searches, 'search', 'searches'));
-    if (st.sources) parts.push(plural(st.sources, 'source', 'sources'));
-    const dur = st.durationMs || (turn.endedAt && turn.createdAt ? turn.endedAt - turn.createdAt : 0);
+    if (count(st.agents)) parts.push(plural(st.agents, 'agent', 'agents'));
+    if (count(st.searches)) parts.push(plural(st.searches, 'search', 'searches'));
+    if (count(st.sources)) parts.push(plural(st.sources, 'source', 'sources'));
+    const dur = count(st.durationMs) || (count(turn.endedAt) && count(turn.createdAt) ? Math.max(0, turn.endedAt - turn.createdAt) : 0);
     if (dur) parts.push(duration(dur));
     parts.push(usd(turn.costUsd || 0));
     setText(stats, parts.join(' · '));
@@ -950,12 +1016,26 @@ function createJarvisTurnView(turn, ctx) {
     speakIcon.replaceChildren(icon(speaking ? 'speaker-off' : 'speaker', { size: 16 }));
   }
 
+  /** Re-check the memory chips (memory changed: a fact was undone or edited in Settings). */
+  function refreshMemory() {
+    for (const view of segViews.values()) {
+      if (view.kind === 'memory' && view.refresh) {
+        try {
+          view.refresh();
+        } catch (err) {
+          console.error('[jarvis] memory chip failed:', err);
+        }
+      }
+    }
+  }
+
   return {
     el,
     kind: 'jarvis',
     reconcile,
     syncSpeak,
     tick,
+    refreshMemory,
     isLive: () => isRunning(),
     destroy() {
       clearTimeout(copyTimer);
@@ -1019,7 +1099,7 @@ function createThinkingView() {
 
   function renderBody(force) {
     if (!open || !seg) return;
-    const text = seg.text || '';
+    const text = txt(seg.text);
     if (!force && text === renderedText && live === renderedLive) return;
     const wait = MD_INTERVAL - (performance.now() - lastAt);
     if (!force && live && wait > 0) {
@@ -1046,9 +1126,9 @@ function createThinkingView() {
       live = !!running && !s.endedAt;
       el.dataset.active = live ? 'true' : 'false';
       if (live) setText(label, 'Thinking…');
-      else if (s.endedAt && s.startedAt) setText(label, `Thought for ${duration(Math.max(1000, s.endedAt - s.startedAt))}`);
+      else if (count(s.endedAt) && count(s.startedAt)) setText(label, `Thought for ${duration(Math.max(1000, s.endedAt - s.startedAt))}`);
       else setText(label, 'Thought briefly');
-      const hasText = !!(s.text && s.text.trim());
+      const hasText = !!txt(s.text).trim();
       toggle.disabled = !hasText;
       chevron.hidden = !hasText;
       renderBody(false);
@@ -1077,7 +1157,7 @@ function createTextView() {
     clearTimeout(timer);
     timer = 0;
     lastAt = performance.now();
-    const text = (seg && seg.text) || '';
+    const text = seg ? txt(seg.text) : '';
     body.replaceChildren(md(text, streaming));
     sizeTables(body);
     if (streaming) appendCaret(body);
@@ -1089,10 +1169,10 @@ function createTextView() {
     const seen = new Set();
     const items = [];
     for (const src of Array.isArray(list) ? list : []) {
-      const href = src && safeUrl(src.url);
+      const href = isObj(src) && safeUrl(src.url);
       if (!href || seen.has(href)) continue;
       seen.add(href);
-      items.push({ href, title: (src.title || '').trim(), host: safeHost(href) });
+      items.push({ href, title: txt(src.title).trim(), host: safeHost(href) });
     }
     const key = `${showAll}|${items.map((i) => i.href).join('|')}`;
     if (key === sourcesKey) return;
@@ -1135,7 +1215,7 @@ function createTextView() {
       seg = s;
       streaming = !!live;
       el.dataset.streaming = streaming ? 'true' : 'false';
-      const text = s.text || '';
+      const text = txt(s.text);
       if (text !== renderedText || streaming !== renderedStreaming) {
         const wait = MD_INTERVAL - (performance.now() - lastAt);
         if (!streaming || renderedText === null || wait <= 0) render();
@@ -1186,30 +1266,31 @@ function createToolView() {
         lastIcon = iconName;
         iconWrap.replaceChildren(icon(iconName, { size: 15 }));
       }
-      const results = Array.isArray(s.results) ? s.results : [];
-      const query = (s.query || '').trim();
-      const host = s.url ? safeHost(s.url) : '';
+      const results = Array.isArray(s.results) ? s.results.filter(isObj) : [];
+      const query = txt(s.query).trim();
+      const host = safeHost(s.url);
+      const code = txt(s.errorCode);
       let text = '';
       let meta = '';
-      const cut = CUT_CODES[s.errorCode] || '';
-      if (status === 'error' && cut) el.dataset.cut = s.errorCode;
+      const cut = lookup(CUT_CODES, code) || '';
+      if (status === 'error' && cut) el.dataset.cut = code;
       if (tool === 'web_search') {
         if (status === 'running') text = query ? `Searching “${query}”` : 'Searching the web…';
         else if (status === 'error' && cut) text = query ? `Search ${cut}: “${query}”` : `Search ${cut}`;
         else if (status === 'error') {
           text = query ? `Search failed: “${query}”` : 'Search failed';
-          meta = s.errorCode ? TOOL_ERRORS[s.errorCode] || String(s.errorCode).replace(/_/g, ' ') : '';
+          meta = code ? lookup(TOOL_ERRORS, code) || code.replace(/_/g, ' ') : '';
         } else {
           text = query ? `Searched “${query}”` : 'Searched the web';
           meta = plural(results.length, 'result', 'results');
         }
       } else {
-        const doc = results[0] && results[0].title ? results[0].title : '';
+        const doc = results.length ? txt(results[0].title).trim() : '';
         if (status === 'running') text = host ? `Reading ${host}` : 'Reading a page…';
         else if (status === 'error' && cut) text = host ? `Reading ${host} ${cut}` : `Reading ${cut}`;
         else if (status === 'error') {
           text = host ? `Couldn’t read ${host}` : 'Couldn’t read the page';
-          meta = s.errorCode ? TOOL_ERRORS[s.errorCode] || String(s.errorCode).replace(/_/g, ' ') : '';
+          meta = code ? lookup(TOOL_ERRORS, code) || code.replace(/_/g, ' ') : '';
         } else {
           text = `Read ${doc || host || 'a page'}`;
           meta = doc && host ? host : '';
@@ -1223,15 +1304,15 @@ function createToolView() {
       hasResults = results.length > 0 && status !== 'running';
       chevron.hidden = !hasResults;
       row.disabled = !hasResults;
-      const key = results.map((r) => r && r.url).join('|');
+      const key = results.map((r) => txt(r.url)).join('|');
       if (key !== resultsKey) {
         resultsKey = key;
         const items = [];
         for (const r of results) {
-          const href = r && safeUrl(r.url);
+          const href = safeUrl(r.url);
           if (!href) continue;
-          const a = extLink(href, (r.title || '').trim() || safeHost(href) || href, { class: 'result-link' });
-          items.push(h('li', { class: 'result' }, a, h('span', { class: 'result-host', text: [safeHost(href), r.pageAge].filter(Boolean).join(' · ') })));
+          const a = extLink(href, txt(r.title).trim() || safeHost(href) || href, { class: 'result-link' });
+          items.push(h('li', { class: 'result' }, a, h('span', { class: 'result-host', text: [safeHost(href), txt(r.pageAge)].filter(Boolean).join(' · ') })));
         }
         list.replaceChildren(...items);
       }
@@ -1251,8 +1332,8 @@ function createMissionView(sctx) {
     live: null,
     update(s, { turn }) {
       missionId = s.missionId;
-      const mission = turn.missions && turn.missions[s.missionId];
-      if (!mission) return;
+      const mission = missionsOf(turn)[s.missionId];
+      if (!isObj(mission)) return;
       if (card) {
         card.update(mission);
         return;
@@ -1282,39 +1363,72 @@ function createFallbackMissionCard(onOpen) {
   return {
     el,
     update(m) {
-      el.setAttribute('data-status', m.status || 'planning');
-      el.setAttribute('data-mission-id', m.id || '');
-      setText(title, m.title || 'Mission');
-      const agents = Array.isArray(m.agents) ? m.agents : [];
+      el.setAttribute('data-status', txt(m.status) || 'planning');
+      el.setAttribute('data-mission-id', txt(m.id));
+      setText(title, txt(m.title) || 'Mission');
+      const agents = Array.isArray(m.agents) ? m.agents.filter(isObj) : [];
       const done = agents.filter((a) => a.status === 'done').length;
-      setText(meta, `Mission · wave ${m.wave || 1} · ${done}/${agents.length} done`);
+      setText(meta, `Mission · wave ${count(m.wave) || 1} · ${done}/${agents.length} done`);
       chips.replaceChildren(
-        ...agents.map((a) => h('span', { class: 'fallback-chip', attrs: { 'data-testid': 'agent-chip', 'data-status': a.status || 'queued', 'data-codename': a.codename || '' }, text: `${a.codename || 'Agent'} · ${a.status || ''}` })),
+        ...agents.map((a) => h('span', { class: 'fallback-chip', attrs: { 'data-testid': 'agent-chip', 'data-status': txt(a.status) || 'queued', 'data-codename': txt(a.codename) }, text: `${txt(a.codename) || 'Agent'} · ${txt(a.status)}` })),
       );
     },
   };
 }
 
+/**
+ * "Remembered: <fact>" chip. A fact Jarvis saved can be undone right here (one tap removes it
+ * from memory), in case it was saved by mistake or because a web page asked for it. A saved
+ * fact that is no longer in memory (undone, or removed in Settings) shows as "Forgotten".
+ */
 function createMemoryView(sctx) {
+  let seg = null;
   const label = h('span', { class: 'memory-label' });
   const fact = h('span', { class: 'memory-fact' });
+  const undoBtn = h('button', { class: 'memory-undo', type: 'button', hidden: true, attrs: { 'data-testid': 'memory-undo' }, on: { click: () => undo() } }, h('span', { text: 'Undo' }));
+  const manageBtn = h('button', { class: 'memory-manage', type: 'button', text: 'Manage', attrs: { 'aria-label': 'Manage memory in Settings' }, on: { click: () => sctx.openSettings('memory') } });
   const el = h(
     'div',
     { class: 'seg seg-memory', attrs: { 'data-testid': 'segment-memory' } },
     h('span', { class: 'memory-icon' }, icon('memory', { size: 15 })),
     h('span', { class: 'memory-text' }, label, fact),
-    h('button', { class: 'memory-manage', type: 'button', text: 'Manage', attrs: { 'aria-label': 'Manage memory in Settings' }, on: { click: () => sctx.openSettings('memory') } }),
+    h('span', { class: 'memory-actions' }, undoBtn, manageBtn),
   );
+
+  function render() {
+    if (!seg) return;
+    const text = txt(seg.fact).trim();
+    const removed = seg.action === 'remove';
+    const state = removed ? 'removed' : text && sctx.isRemembered(text) === false ? 'forgotten' : 'remembered';
+    el.dataset.action = removed ? 'remove' : 'add';
+    el.dataset.state = state;
+    setText(label, state === 'removed' ? 'Forgot' : state === 'forgotten' ? 'Forgotten' : 'Remembered');
+    setText(fact, text);
+    undoBtn.hidden = !(state === 'remembered' && text && sctx.canForget());
+    undoBtn.setAttribute('aria-label', `Undo: forget “${text}”`);
+  }
+
+  function undo() {
+    const text = txt(seg && seg.fact).trim();
+    if (!text) return;
+    sctx.forgetMemory(text);
+    render();
+    try {
+      manageBtn.focus({ preventScroll: true }); // the Undo button just went away
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
     kind: 'memory',
     el,
     live: null,
     update(s) {
-      const removed = s.action === 'remove';
-      el.dataset.action = removed ? 'remove' : 'add';
-      setText(label, removed ? 'Forgot' : 'Remembered');
-      setText(fact, s.fact || '');
+      seg = s;
+      render();
     },
+    refresh: render,
   };
 }
 
@@ -1334,7 +1448,7 @@ function createNoticeView() {
         el.dataset.level = lv;
         iconWrap.replaceChildren(icon(lv === 'warn' ? 'alert' : 'info', { size: 15 }));
       }
-      setText(text, s.text || '');
+      setText(text, txt(s.text));
     },
   };
 }
@@ -1356,15 +1470,16 @@ function createErrorView(seg, sctx, isTurnLevel) {
   }
 
   function render(s) {
-    const err = (s && s.error) || {};
-    const kind = ERROR_TITLES[err.kind] ? err.kind : 'unknown';
+    const err = isObj(s) && isObj(s.error) ? s.error : {};
+    const kind = lookup(ERROR_TITLES, err.kind) ? err.kind : 'unknown';
     const status = sctx.turnStatus();
-    const key = `${kind}|${err.message}|${status}`;
+    const message = txt(err.message);
+    const key = `${kind}|${message}|${status}`;
     if (key === lastKey) return;
     lastKey = key;
     el.dataset.kind = kind;
     setText(titleEl, ERROR_TITLES[kind]);
-    setText(msg, err.message || 'Jarvis hit an unexpected problem.');
+    setText(msg, message || 'Jarvis hit an unexpected problem.');
     const btns = [];
     switch (kind) {
       case 'auth':

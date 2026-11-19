@@ -176,13 +176,16 @@ export function safeMarkdown(md) {
 // An API key the owner pasted into a chat must never leave in an export (the backup leaves
 // such conversations out; shared and downloaded text gets the key replaced instead).
 
-/** Anthropic API keys, also after a Markdown escaper put a backslash before an underscore. */
-const API_KEY_RE = /sk-ant-(?:\\?[A-Za-z0-9_-]){20,}/g;
+/**
+ * Anthropic API keys, also after a Markdown escaper put a backslash before an underscore, and
+ * with a capitalized prefix ("Sk-ant-…" at the start of a sentence still holds the secret).
+ */
+const API_KEY_RE = /sk-ant-(?:\\?[A-Za-z0-9_-]){20,}/gi;
 export const REDACTED_KEY = '[API key removed]';
 
 /** True when `text` contains something shaped like an Anthropic API key. */
 export function containsApiKey(text) {
-  return typeof text === 'string' && /sk-ant-[A-Za-z0-9_-]{20,}/.test(text);
+  return typeof text === 'string' && /sk-ant-[A-Za-z0-9_-]{20,}/i.test(text);
 }
 
 /**

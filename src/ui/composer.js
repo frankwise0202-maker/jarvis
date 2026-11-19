@@ -13,6 +13,7 @@ import { icon } from './icons.js';
 import { MODES } from '../engine/index.js';
 import { getSettings as platformGetSettings, onSettingsChange } from '../platform/settings.js';
 import { ATTACHMENT_LIMITS, AttachmentError, attachmentMeta, describeAttachments, formatBytes, processFile, safeThumb } from './attachments.js';
+import { containsApiKey } from './share.js';
 
 const MODE_INFO = {
   auto: { icon: 'sparkle', hint: 'Jarvis decides: answer, search, or deploy agents' },
@@ -270,6 +271,7 @@ export function createComposer(o) {
       input: () => {
         autoGrow();
         syncButtons();
+        if (!keyGuard.hidden) keyGuard.hidden = true; // an edit answers the question
       },
       keydown: onKeyDown,
       paste: onPaste,
@@ -396,6 +398,59 @@ export function createComposer(o) {
   function hideNotice() {
     clearTimeout(noticeTimer);
     notice.hidden = true;
+  }
+
+  // ---- API key guard ------------------------------------------------------------------
+  // A key pasted into a message by mistake would go to Claude and stay in this chat's history
+  // (and keep the chat out of backups), so ask first. "Send anyway" applies to that exact text.
+  let keyOkText = null;
+  const keyGuardRemove = h(
+    'button',
+    { class: 'btn btn-sm btn-primary', type: 'button', attrs: { 'data-testid': 'key-warning-remove' }, on: { click: () => removeKeyFromText() } },
+    h('span', { text: 'Remove key' }),
+  );
+  const keyGuardSend = h(
+    'button',
+    { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'key-warning-send' }, on: { click: () => sendAnyway() } },
+    h('span', { text: 'Send anyway' }),
+  );
+  const keyGuard = h(
+    'div',
+    { class: 'composer-keyguard', hidden: true, attrs: { role: 'alert', 'data-testid': 'key-warning' } },
+    h('span', { class: 'composer-keyguard-icon', attrs: { 'aria-hidden': 'true' } }, icon('key', { size: 16 })),
+    h(
+      'div',
+      { class: 'composer-keyguard-body' },
+      h('p', { class: 'composer-keyguard-text', text: 'That looks like an API key. Send it to Claude anyway? It would also be saved in this chat.' }),
+      h('div', { class: 'composer-keyguard-actions' }, keyGuardRemove, keyGuardSend),
+    ),
+  );
+
+  function askAboutKey() {
+    keyGuard.hidden = false;
+    try {
+      keyGuardRemove.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function removeKeyFromText() {
+    input.value = input.value
+      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/gi, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+    keyGuard.hidden = true;
+    autoGrow();
+    syncButtons();
+    focusInput();
+    announce('Key removed from your message.');
+  }
+
+  function sendAnyway() {
+    keyOkText = input.value.trim();
+    keyGuard.hidden = true;
+    if (!submit()) focusInput();
   }
 
   // ---- attachment previews -------------------------------------------------------------
@@ -633,7 +688,7 @@ export function createComposer(o) {
     fileInput,
     cameraInput,
   );
-  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, notice, hint, box), live);
+  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, notice, keyGuard, hint, box), live);
 
   // ---- behaviour --------------------------------------------------------------------
   function onKeyDown(e) {
@@ -663,12 +718,18 @@ export function createComposer(o) {
       showNotice('One moment — still preparing your attachment.', 'info');
       return false;
     }
+    if (containsApiKey(text) && text !== keyOkText) {
+      askAboutKey();
+      return false;
+    }
     const extras = { attachments };
     if (mode === 'swarm') extras.maxAgents = swarmSize;
     closePop(false);
     const accepted = o.onSend(text, mode, extras);
     if (accepted !== false) {
       input.value = '';
+      keyOkText = null;
+      keyGuard.hidden = true;
       clearAttachments();
       hideNotice();
       autoGrow();
@@ -730,6 +791,10 @@ export function createComposer(o) {
   }
 
   function syncButtons() {
+    // Send turns into Stop while a turn runs and back afterwards. Hiding the focused button
+    // would drop keyboard and VoiceOver focus to the page, so it moves to the button that
+    // takes its place (Stop), or back to the message box when Stop goes away.
+    const active = document.activeElement;
     const hasText = input.value.trim().length > 0;
     const ready = items.length - pendingCount();
     sendBtn.disabled = !!blocked || pendingCount() > 0 || (!hasText && ready === 0);
@@ -737,6 +802,16 @@ export function createComposer(o) {
     sendBtn.hidden = running;
     stopBtn.hidden = !running;
     el.dataset.running = running ? 'true' : 'false';
+    if (running && active === sendBtn) focusButton(stopBtn);
+    else if (!running && active === stopBtn) focusInput();
+  }
+
+  function focusButton(btn) {
+    try {
+      btn.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   function syncAll() {

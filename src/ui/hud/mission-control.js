@@ -36,11 +36,16 @@ import {
 
 const GROUPS = ['Active', 'Queued', 'Done', 'Stopped / failed'];
 // update() renders at most this often (trailing): agent events can arrive every frame while a
-// big swarm streams, and status text does not need 60 Hz. The orbit animates on its own.
+// big swarm streams, and status text does not need 60 Hz. The orbit animates on its own. With
+// many agents in flight the interval stretches (25ms per unfinished agent, at most 600ms): a big
+// swarm on a phone-class CPU otherwise spends most of its time re-rendering Mission Control.
 const MIN_RENDER_MS = 100;
+const MS_PER_LIVE_AGENT = 25;
+const MAX_RENDER_MS = 600;
 const CELEBRATE_MS = 2400;
 const SUMMARY_LEAD = { done: 'Mission complete', partial: 'Mission complete', stopped: 'Mission stopped', interrupted: 'Mission interrupted' };
 const SUMMARY_ICON = { done: 'check', partial: 'check', stopped: 'stop', interrupted: 'pause' };
+const AGENT_FINAL = new Set(['done', 'error', 'stopped', 'interrupted']);
 
 const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
 
@@ -303,10 +308,15 @@ export function createMissionControl(opts = {}) {
   const renderNextFrame = raf(render);
   let renderTimer = 0;
   let lastRenderAt = 0;
+  let liveAgents = 0; // unfinished agents in the shown turn at the last render (sets the pace)
+
+  function renderInterval() {
+    return Math.min(MAX_RENDER_MS, Math.max(MIN_RENDER_MS, MS_PER_LIVE_AGENT * liveAgents));
+  }
 
   function scheduleRender() {
     if (renderTimer) return;
-    const wait = lastRenderAt + MIN_RENDER_MS - Date.now();
+    const wait = lastRenderAt + renderInterval() - Date.now();
     if (wait > 0) {
       renderTimer = setTimeout(() => {
         renderTimer = 0;
@@ -370,6 +380,7 @@ export function createMissionControl(opts = {}) {
   // mission went from working to done/partial since the previous render (seen live, not restored).
   function observeTurn(mission) {
     let justFinished = false;
+    let live = 0;
     if (seenStatus.size > 64) seenStatus.clear(); // long sessions: only recent missions matter
     for (const m of missionsOf(turn)) {
       try {
@@ -377,6 +388,7 @@ export function createMissionControl(opts = {}) {
       } catch (err) {
         console.error('[hud] comms update failed', err);
       }
+      if (Array.isArray(m.agents)) for (const a of m.agents) if (a && !AGENT_FINAL.has(a.status)) live++;
       const id = String(m.id);
       const status = str(m.status);
       const before = seenStatus.get(id);
@@ -384,6 +396,7 @@ export function createMissionControl(opts = {}) {
       seenStatus.set(id, status);
       if (m === mission && (before === 'running' || before === 'planning') && (status === 'done' || status === 'partial')) justFinished = true;
     }
+    liveAgents = live;
     return justFinished;
   }
 

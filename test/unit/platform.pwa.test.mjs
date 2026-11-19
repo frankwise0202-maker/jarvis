@@ -549,3 +549,17 @@ test('service worker: registration is skipped without a secure context or servic
   const page = await h.newPage({ init: () => Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => undefined, configurable: true }) });
   assert.equal(await page.evaluate(() => window.__mods.pwa.registerServiceWorker({ onUpdateReady() {} })), null);
 });
+
+test('service worker: a register() that resolves without a registration (blocked/stubbed) resolves null, never throws', async () => {
+  const page = await h.newPage({
+    init: () => Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => ({ controller: null, register: async () => undefined }), configurable: true }),
+  });
+  const r = await page.evaluate(async () => {
+    try {
+      return { value: await window.__mods.pwa.registerServiceWorker({ onUpdateReady() {} }) };
+    } catch (err) {
+      return { threw: String(err) };
+    }
+  });
+  assert.deepEqual(r, { value: null });
+});

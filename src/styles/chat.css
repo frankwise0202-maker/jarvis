@@ -1264,6 +1264,57 @@
   background: var(--bg-2);
 }
 
+.memory-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.memory-undo {
+  position: relative;
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--ok-soft);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.memory-undo[hidden] {
+  display: none;
+}
+
+.memory-undo::after {
+  content: '';
+  position: absolute;
+  inset: -6px -2px;
+}
+
+.memory-undo:hover {
+  border-color: var(--ok);
+}
+
+/* A saved fact that is no longer in memory (undone here or removed in Settings). */
+.seg-memory[data-state='forgotten'] {
+  border-color: var(--line-2);
+  background: var(--surface);
+}
+
+.seg-memory[data-state='forgotten'] .memory-icon,
+.seg-memory[data-state='forgotten'] .memory-label {
+  color: var(--text-3);
+}
+
+.seg-memory[data-state='forgotten'] .memory-fact {
+  color: var(--text-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+}
+
 .seg-notice {
   display: flex;
   align-items: flex-start;

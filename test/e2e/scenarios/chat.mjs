@@ -202,6 +202,25 @@ export default [
       await t.screenshot('2-settings-memory');
       await (await t.visible('settings-close')).click();
       await t.page.locator(tid('settings-sheet')).waitFor({ state: 'hidden', timeout: 5000 });
+
+      // A fact saved by mistake (or because a web page asked for it) is one tap from gone.
+      await t.step('Undo on the memory chip', async () => {
+        t.assert((await seg.getAttribute('data-state')) === 'remembered', 'The chip starts as "remembered"');
+        const undo = seg.locator(tid('memory-undo'));
+        await undo.click();
+        await t.waitFor(async () => (await seg.getAttribute('data-state')) === 'forgotten', { timeout: 3000, message: 'the chip to switch to "forgotten"' });
+        t.assert(/forgotten/i.test(await t.text(seg)), 'The chip says "Forgotten"');
+        t.assert(!(await undo.isVisible()), 'Undo goes away once the fact is forgotten');
+        t.assert(await t.page.evaluate(() => document.activeElement?.classList.contains('memory-manage')), 'Focus moves to "Manage" (not lost)');
+        const stored = await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.memory.v1') || '[]'));
+        t.assert(!stored.some((m) => /metric/i.test(m.text)), 'The fact is removed from memory');
+        await t.screenshot('3-memory-undone');
+        await (await t.visible('settings-button')).click();
+        await t.visible('settings-sheet');
+        await t.page.waitForTimeout(300);
+        t.assert((await t.page.locator(tid('memory-item')).filter({ hasText: 'Prefers metric units' }).count()) === 0, 'Settings → Memory no longer lists it');
+        await (await t.visible('settings-close')).click();
+      });
     },
   },
 ];
