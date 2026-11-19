@@ -1,12 +1,12 @@
-// Screens (v7) in the engine: the open_screen client tool, staged for the next frozen tools version
-// (leadToolsWithScreens = V4 + open_screen). Input validation, the tool_result for every outcome,
-// a whole tool round through the real SDK and the scripted fake API, Resume (never reopens a
-// window), and conversations frozen with V4 (where the tool does not exist).
+// Screens (v7) in the engine: the open_screen client tool of lead tools version 5 (new
+// conversations: V4 + the Optics tools + open_screen, with LEAD_SYSTEM_V4). Input validation, the
+// tool_result for every outcome, a whole tool round through the real SDK and the scripted fake API,
+// Resume (never reopens a window), and conversations frozen with V4 (where the tool does not exist).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createJarvis } from '../../src/engine/index.js';
-import { LEAD_SYSTEM_V3, LEAD_SYSTEM_WITH_SCREENS, leadToolsV4, leadToolsWithScreens, leadToolVersions } from '../../src/engine/prompts.js';
-import { OPEN_SCREEN_DESCRIPTION, SCREENS_SECTION, SCREEN_NOT_RESUMED, openScreenTool, runOpenScreen, screenToolResult, validateOpenScreenInput } from '../../src/engine/screens.js';
+import { CAMERA_AND_SCREENS_SECTION, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, leadToolsV4, leadToolsV5, leadToolVersions } from '../../src/engine/prompts.js';
+import { OPEN_SCREEN_DESCRIPTION, SCREEN_NOT_RESUMED, openScreenTool, runOpenScreen, screenToolResult, validateOpenScreenInput } from '../../src/engine/screens.js';
 import { DEFAULT_TEST_SETTINGS, KEY, blk, collect, createFakeApi, trailingToolResults } from './engine.support.test.mjs';
 
 const screenUse = (id, input) => ({ type: 'tool_use', id, name: 'open_screen', input });
@@ -29,17 +29,17 @@ function harness(handler, { screens } = {}) {
   return { api, jarvis, persisted };
 }
 
-/** A conversation frozen with the staged tools (what the next version's new conversations get). */
+/** A new conversation: it freezes LEAD_SYSTEM_V4 and leadToolsV5, which has open_screen. */
 function screensConversation(jarvis) {
   const conv = jarvis.newConversation();
-  conv.system = LEAD_SYSTEM_WITH_SCREENS;
-  conv.tools = leadToolsWithScreens();
+  assert.equal(conv.system, LEAD_SYSTEM_V4);
+  assert.deepEqual(conv.tools, leadToolsV5());
   return conv;
 }
 
-test('the tool definition: appended after V4, with its prompt section', () => {
-  const tools = leadToolsWithScreens();
-  assert.deepEqual(tools.slice(0, -1), leadToolsV4(), 'the V4 part of the list is unchanged (prefix caching, history)');
+test('the tool definition: appended after V4 (and the Optics tools) in V5, with its prompt section', () => {
+  const tools = leadToolsV5();
+  assert.deepEqual(tools.slice(0, leadToolsV4().length), leadToolsV4(), 'the V4 part of the list is unchanged (prefix caching, history)');
   const t = tools.at(-1);
   assert.equal(t.name, 'open_screen');
   assert.equal(t.description, OPEN_SCREEN_DESCRIPTION);
@@ -48,11 +48,13 @@ test('the tool definition: appended after V4, with its prompt section', () => {
   assert.deepEqual(t.input_schema.properties.where.enum, ['other_screen', 'beside', 'window', 'back']);
   assert.deepEqual(openScreenTool(), t, 'a fresh copy each call');
   assert.notEqual(openScreenTool(), openScreenTool());
-  // Staged, not shipped: no frozen version contains it yet, and new conversations still get V4.
-  assert.ok(leadToolVersions().every((v) => !v.some((x) => x.name === 'open_screen')));
-  assert.ok(LEAD_SYSTEM_WITH_SCREENS.includes(`${SCREENS_SECTION}\n\n# Writing the answer\n`));
-  assert.equal(LEAD_SYSTEM_WITH_SCREENS.replace(`\n\n${SCREENS_SECTION}`, ''), LEAD_SYSTEM_V3, 'V3 plus the section, nothing else');
-  assert.ok(OPEN_SCREEN_DESCRIPTION.length < 900 && SCREENS_SECTION.length < 500, 'kept short: it is cached with every request');
+  // Only version 5 has it; versions 1-4 (older conversations) never change.
+  assert.deepEqual(leadToolVersions().map((v) => v.some((x) => x.name === 'open_screen')), [false, false, false, false, true]);
+  assert.ok(LEAD_SYSTEM_V4.includes(`${CAMERA_AND_SCREENS_SECTION}\n\n# Writing the answer\n`));
+  assert.equal(LEAD_SYSTEM_V4.replace(`\n\n${CAMERA_AND_SCREENS_SECTION}`, ''), LEAD_SYSTEM_V3, 'V3 plus the section, nothing else');
+  for (const needle of ['open_screen', 'only when the owner asks', 'one short sentence', 'tap a button first']) assert.ok(CAMERA_AND_SCREENS_SECTION.includes(needle), needle);
+  assert.match(OPEN_SCREEN_DESCRIPTION, / With what "this", the app shows whatever the owner is looking at: the open viewer, else the newest card in the chat\./);
+  assert.ok(OPEN_SCREEN_DESCRIPTION.length < 900 && CAMERA_AND_SCREENS_SECTION.length < 1200, 'kept short: it is cached with every request');
 });
 
 test('input validation', () => {
@@ -119,7 +121,7 @@ test('a whole round: Jarvis calls open_screen, the app places it, the reply says
   assert.equal(turn.status, 'done');
   assert.equal(h.api.requests.length, 2);
   assert.deepEqual(h.api.requests[0].body.tools.at(-1).name, 'open_screen', 'the frozen tools are sent');
-  assert.deepEqual(h.api.requests[0].body.system, [{ type: 'text', text: LEAD_SYSTEM_WITH_SCREENS }]);
+  assert.deepEqual(h.api.requests[0].body.system, [{ type: 'text', text: LEAD_SYSTEM_V4 }]);
   assert.deepEqual(calls, [{ what: 'answer', where: 'other', screen: null, url: null, id: null, conversationId: conv.id, turnId: turn.id }]);
   const [result] = trailingToolResults(h.api.requests[1].body);
   assert.equal(result.tool_use_id, 'toolu_s1');
@@ -145,7 +147,8 @@ test('a conversation frozen with V4 has no open_screen: a stray call is an unkno
   let h;
   h = harness(() => (h.api.requests.length === 1 ? { content: [screenUse('toolu_s3', { what: 'this', where: 'beside' })], stop: 'tool_use' } : { content: [blk.text('Sorry.')], stop: 'end_turn' }), { screens });
   const conv = h.jarvis.newConversation();
-  assert.deepEqual(conv.tools, leadToolsV4());
+  conv.system = LEAD_SYSTEM_V3; // a v6 conversation
+  conv.tools = leadToolsV4();
   await collect(h.jarvis.startTurn(conv, { text: 'float it', mode: 'auto' }));
   assert.equal(asked, 0);
   const [result] = trailingToolResults(h.api.requests[1].body);

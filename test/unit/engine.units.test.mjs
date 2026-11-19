@@ -25,6 +25,7 @@ import {
   LEAD_SYSTEM_V1,
   LEAD_SYSTEM_V2,
   LEAD_SYSTEM_V3,
+  LEAD_SYSTEM_V4,
   WORKER_SYSTEM_V1,
   DEPLOY_AGENTS_DESCRIPTION,
   UPDATE_MEMORY_DESCRIPTION,
@@ -35,6 +36,7 @@ import {
   leadToolsV2,
   leadToolsV3,
   leadToolsV4,
+  leadToolsV5,
   leadToolVersions,
   workerTools,
   buildTurnContext,
@@ -299,7 +301,11 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
   const v4 = leadToolsV4();
   assert.deepEqual(v4.slice(0, v3.length), v3);
   assert.deepEqual(v4.slice(v3.length).map((t) => [t.name, t.eager_input_streaming]), [['show_hologram', true], ['draw_blueprint', true], ['open_saved', true]]);
-  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4]);
+  // Version 5 (v7) appends the Optics tools and open_screen to V4, unchanged.
+  const v5 = leadToolsV5();
+  assert.deepEqual(v5.slice(0, v4.length), v4);
+  assert.deepEqual(v5.slice(v4.length).map((t) => [t.name, t.eager_input_streaming]), [['pin_labels', true], ['look_through_camera', undefined], ['open_screen', undefined]]);
+  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4, v5]);
   assert.deepEqual(workerTools('deep', 'claude-sonnet-5-5'), [
     { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
     { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5, max_content_tokens: 8000 },
@@ -313,7 +319,7 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
 });
 
 test('system prompts are static and cover the required behaviour', () => {
-  for (const text of [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, WORKER_SYSTEM_V1, DEPLOY_AGENTS_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION_V3]) {
+  for (const text of [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, WORKER_SYSTEM_V1, DEPLOY_AGENTS_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION_V3]) {
     assert.equal(typeof text, 'string');
     assert.doesNotMatch(text, /\$\{|20\d\d-\d\d-\d\d/); // nothing interpolated, no dates
   }
@@ -321,6 +327,7 @@ test('system prompts are static and cover the required behaviour', () => {
     assert.ok(LEAD_SYSTEM_V1.toLowerCase().includes(needle.toLowerCase()), `lead prompt mentions ${needle}`);
     assert.ok(LEAD_SYSTEM_V2.toLowerCase().includes(needle.toLowerCase()), `lead prompt V2 mentions ${needle}`);
     assert.ok(LEAD_SYSTEM_V3.toLowerCase().includes(needle.toLowerCase()), `lead prompt V3 mentions ${needle}`);
+    assert.ok(LEAD_SYSTEM_V4.toLowerCase().includes(needle.toLowerCase()), `lead prompt V4 mentions ${needle}`);
   }
   for (const needle of ['## Key findings', '## Details', '## Confidence and gaps', 'web_fetch', 'untrusted', '250-700 words', 'no preamble']) {
     assert.ok(WORKER_SYSTEM_V1.toLowerCase().includes(needle.toLowerCase()), `worker prompt mentions ${needle}`);
@@ -333,7 +340,7 @@ test('update_memory V3 acts only on the owner’s own words; only prompt/tool ve
   assert.match(UPDATE_MEMORY_DESCRIPTION_V3, /Never store|secrets such as passwords/);
   // Every prompt / tool combination Jarvis has frozen into a conversation, also after a JSON round
   // trip (IndexedDB, backups) with its keys in another order.
-  for (const system of [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3]) {
+  for (const system of [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4]) {
     for (const tools of leadToolVersions()) {
       assert.equal(isKnownLeadSetup(system, tools), true);
       const reordered = JSON.parse(JSON.stringify(tools)).map((t) => Object.fromEntries(Object.entries(t).reverse()));
@@ -621,8 +628,8 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   const jarvis = createJarvis({ getSettings: () => ({}), getApiKey: () => '', now: () => new Date('2026-11-19T12:00:00Z') });
   const conv = jarvis.newConversation();
   assert.equal(conv.v, 1);
-  assert.equal(conv.system, LEAD_SYSTEM_V3); // new conversations freeze the latest prompt (SPEC §15.1, holograms §2)
-  assert.deepEqual(conv.tools, leadToolsV4()); // and the latest tools
+  assert.equal(conv.system, LEAD_SYSTEM_V4); // new conversations freeze the latest prompt (SPEC §15.1, holograms §2, v7)
+  assert.deepEqual(conv.tools, leadToolsV5()); // and the latest tools
   assert.equal(isKnownLeadSetup(conv.system, conv.tools), true);
   assert.deepEqual(conv.apiMessages, []);
   assert.deepEqual(conv.turns, []);

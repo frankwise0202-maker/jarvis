@@ -4,11 +4,12 @@
 // the placement (deps.screens.open, src/ui/screens/controller.js) and reports what happened; this
 // module validates the input and turns the outcome into the tool_result. No DOM access here.
 //
-// Lead tools are frozen per conversation, so open_screen ships in the NEXT tools version after V4:
-//   leadToolsV5() = [...leadToolsV4(), <Optics tools, if they ship together>, openScreenTool()]
-//   LEAD_SYSTEM_V4 = LEAD_SYSTEM_V3 + <Optics section> + SCREENS_SECTION, before "# Writing the answer"
-// See prompts.js (leadToolsWithScreens, the staged list) and lead.js (the dispatch, which runs the
-// tool only when the conversation's frozen tools include it).
+// Lead tools are frozen per conversation, so open_screen ships in lead tools version 5 (v7, new
+// conversations), after the Optics tools:
+//   leadToolsV5() = [...leadToolsV4(), pinLabelsTool(), lookThroughCameraTool(), openScreenTool()]
+//   LEAD_SYSTEM_V4 = LEAD_SYSTEM_V3 + "# Camera and screens", before "# Writing the answer"
+// See prompts.js, and lead.js (the dispatch, which runs the tool only when the conversation's frozen
+// tools include it: a V4 conversation answers a stray call with "Unknown tool").
 //
 // The app's dependency (deps.screens; it may return a value or a Promise):
 //   open({ what, where, screen, url, id, conversationId, turnId }) -> outcome
@@ -25,9 +26,9 @@ export const SCREEN_WHERES = Object.freeze(['other_screen', 'beside', 'window', 
 export const SCREEN_TIMEOUT_MS = 4000;
 const LIBRARY_ID = /^lib_[a-z0-9]{6,16}$/;
 
-export const OPEN_SCREEN_DESCRIPTION = `Put something on another screen for the owner, or bring it back: their second monitor, a floating panel that stays on top beside what they are working on, or its own window. The app does it on the owner's device at no cost and reports what happened. Use it only when the owner asks ("put the report on my second screen", "float the hologram", "open that link in a window", "bring it back"), never on your own initiative. what "this" means whatever the owner is looking at: the open viewer, else the newest card in the chat. When the result says the owner must tap a button first, tell them so and do not call the tool again for that request.`;
+export const OPEN_SCREEN_DESCRIPTION = `Put something on another screen for the owner, or bring it back: their second monitor, a floating panel that stays on top beside what they are working on, or its own window. The app does it on the owner's device at no cost and reports what happened. Use it only when the owner asks ("put the report on my second screen", "float the hologram", "open that link in a window", "bring it back"), never on your own initiative. With what "this", the app shows whatever the owner is looking at: the open viewer, else the newest card in the chat. When the result says the owner must tap a button first, tell them so and do not call the tool again for that request.`;
 
-/** The open_screen tool definition (a fresh copy). Part of the next frozen tools version: never edit it once shipped. */
+/** The open_screen tool definition (a fresh copy). Part of leadToolsV5: never edit it. */
 export function openScreenTool() {
   return {
     name: SCREEN_TOOL,
@@ -53,11 +54,6 @@ export function openScreenTool() {
     },
   };
 }
-
-/** The lead prompt section that ships with open_screen (kept short: it is cached). */
-export const SCREENS_SECTION = `# Screens
-- open_screen moves what the owner is looking at, or a named item, to their second monitor, a floating panel beside their work or its own window, and brings it back. Use it only when the owner asks; never move things on your own.
-- After it, say one short sentence ("It's on your second screen, sir."). If the result says the owner must tap a button first, tell them once and do not call it again.`;
 
 const WHAT_ALIASES = { report: 'answer', reply: 'answer', research: 'answer', mission_control: 'mission', optics: 'camera', image: 'photo', picture: 'photo', url: 'link' };
 const WHERE_ALIASES = { other: 'other_screen', second_screen: 'other_screen', monitor: 'other_screen', screen: 'other_screen', float: 'beside', floating: 'beside', pip: 'beside', popup: 'window', tab: 'window', here: 'back', close: 'back' };

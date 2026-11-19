@@ -8,13 +8,14 @@ import {
   LEAD_SYSTEM_V1,
   LEAD_SYSTEM_V2,
   LEAD_SYSTEM_V3,
+  LEAD_SYSTEM_V4,
   MODE_INSTRUCTIONS,
   SPOKEN_REPLY_CHANNEL,
   WORKER_SYSTEM_V1,
   buildTurnContext,
   leadToolVersions,
   leadToolsLatest,
-  leadToolsV4,
+  leadToolsV5,
 } from '../../src/engine/prompts.js';
 import { formatLocalTime } from '../../src/engine/util.js';
 import { turnContextOf } from '../mock/content.mjs';
@@ -107,15 +108,18 @@ test('frozen prompts and tools are untouched by the spoken channel', () => {
   assert.equal(sha256(LEAD_SYSTEM_V2), '264ac70a8bd41f548d536db778df0b4e315b0785455bfeb93f55181b3ef68bc0');
   // v6: holograms added the V3 prompt and V4 tools (pinned the same way in engine.visuals.test.mjs).
   assert.equal(sha256(LEAD_SYSTEM_V3), '2e37e85dad970e69d2202205dd5d38353efd9ff769adaaeca0158c134dd07d06');
+  // v7: the V4 prompt (Camera and screens) and V5 tools (Optics, open_screen); see engine.v7.test.mjs.
+  assert.equal(sha256(LEAD_SYSTEM_V4), '9f1288337652364612f37caf959f6ee1f890829e5d79b5a1f4f25a68fc051a20');
   assert.equal(sha256(WORKER_SYSTEM_V1), 'c9b4f5ad7323cf9c2a76dbffe9269cd75f8b76cb283095161a8659db90f279b1');
   assert.deepEqual(leadToolVersions().map((tools) => sha256(JSON.stringify(tools))), [
     '1e441fd51e0e6df7238adab762ce0a2c5a56f4df5f82cc25bde40e4bf395f932',
     '939eaacb2c2dc9fb69e772df4b12700b577539b09f9c52a99ec41bbce1dc76a7',
     'c837163eb2264fda141d92eb1f74285bf33d5f242dd357af45d864afdf6e1af0',
     'bd0bdaf62227786e8836881e41ca9f7c046abb0ee0afe1b5ca28ee1e7b69d974',
+    '6e4ad0baac92331bf81f51695c54564a2c9dcd436dab8254a25f444b770cf616',
   ]);
-  assert.deepEqual(leadToolsLatest(), leadToolsV4());
-  const frozen = [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, WORKER_SYSTEM_V1, ...leadToolVersions().map((t) => JSON.stringify(t))];
+  assert.deepEqual(leadToolsLatest(), leadToolsV5());
+  const frozen = [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, WORKER_SYSTEM_V1, ...leadToolVersions().map((t) => JSON.stringify(t))];
   for (const text of frozen) assert.ok(!text.includes('Reply channel'), 'the channel lives only in <turn_context>');
 });
 
@@ -139,10 +143,10 @@ test('startTurn({ spoken: true }): the channel is in the new user message\'s fir
   assert.equal(count(context, SPOKEN_REPLY_CHANNEL), 1);
   assert.match(context, new RegExp(`^Mode: auto — .+\\n${EXPECTED_CHANNEL.split('\n')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
   // The conversation's frozen prefix is the same as for any other turn (new conversations: the
-  // V3 prompt and V4 tools since holograms).
-  assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V3 }]);
-  assert.deepEqual(body.tools, leadToolsV4());
-  assert.equal(conv.system, LEAD_SYSTEM_V3);
+  // V4 prompt and V5 tools since v7).
+  assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V4 }]);
+  assert.deepEqual(body.tools, leadToolsV5());
+  assert.equal(conv.system, LEAD_SYSTEM_V4);
   // Persisted with the turn (exports and the UI can tell a spoken reply).
   assert.equal(h.persisted.at(-1).turns.at(-1).spoken, true);
   assert.equal('spoken' in conv.turns[0], false, 'the owner\'s UserTurn is unchanged');

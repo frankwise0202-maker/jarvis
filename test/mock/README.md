@@ -64,6 +64,23 @@ visible; the answer after the `tool_result` is one or two sentences.
 Precedence for a new owner message: a `Blueprint request` block, then `[[swarm]]`/`[[waves]]`,
 then `[[hologram]]`, `[[blueprint]]`, `[[open-saved]]`, then the other directives.
 
+### Screens (lead tools version 5, v7)
+
+Only when the request defines `open_screen` (new conversations since v7); an older conversation
+gets a plain answer. Local screen commands ("float it", "bring it back") never reach the API: these
+test the tool path, Jarvis deciding from words the local matcher does not take.
+
+| Directive | What the mock does |
+| --- | --- |
+| `[[screen]]` | `open_screen` with `{ what: "this", where: "other_screen" }` |
+| `[[screen:<what>:<where>]]` / `[[screen:<what>:<where>:<n>]]` | `open_screen` with that `what` (`this`, `hologram`, `blueprint`, `mission`, `answer`, `photo`, `camera`, `link`) and `where` (`other_screen`, `beside`, `window`, `back`), and monitor `n`; a `link` takes the first http(s) URL in the owner's text |
+
+After the `tool_result`, one short sentence read from it: "It's on screen 2, sir.", "It's floating
+beside your work, sir.", "Tap “Open on screen 2” and it'll appear, sir." (needs a tap), "Tap Allow
+once, and I can use your other screen, sir." (the permission), "It's back on your main screen,
+sir.", or "I couldn't do that: …" for an `is_error` result. `[[screen]]` comes after `[[search]]`
+in the precedence above.
+
 ### Voice Mode turns (the spoken reply channel)
 
 A lead request whose newest `<turn_context>` holds the line `Reply channel: spoken` (Voice Mode's

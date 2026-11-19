@@ -14,6 +14,7 @@ import {
   synthesisAnswer, textBlocks, toolResultText, topicOfPrompt, topicOfTask, turnContextOf, userTextOf,
   valueFromSchema, workerReportSegments, xssAnswer,
 } from './content.mjs';
+import { SCREEN_TOOL_NAME, openScreenPlan, screenFollowUpText, screenInputOf } from './screens.mjs';
 import { canonicalJson, newServerToolUseId, newToolUseId, seededRandom, sha256Hex, truncate } from './util.mjs';
 import {
   HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
@@ -264,6 +265,8 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     }
     if (d.has('open-saved') && hasTool(body, 'open_saved')) return { plan: openSavedPlan({ think, ids: savedIdsOf(turnContextText(userMsg)) }) };
     if (d.has('search')) return { plan: searchPlan(env) };
+    // Screens (lead tools version 5): [[screen:<what>:<where>]] calls open_screen.
+    if (d.has('screen') && hasTool(body, SCREEN_TOOL_NAME)) return { plan: openScreenPlan({ think, input: screenInputOf(d.arg('screen'), stripDirectives(prompt)) }) };
     if (d.has('xss')) {
       const answer = spoken ? textBlocks(spokenXssAnswer(ctx, d)) : [text(xssAnswer())];
       return { plan: { blocks: [thinkingBlock(body, 'The owner wants raw markup echoed back as text.'), ...answer], stop_reason: 'end_turn', pace } };
@@ -336,6 +339,11 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
       return { plan: { blocks: [think('The hologram is up; now the explanation, with sources.'), text(`${line}\n\n${synthesisAnswer({ prompt, ctx, reports })}`)], stop_reason: 'end_turn', pace } };
     }
     return { plan: { blocks: [text(line)], stop_reason: 'end_turn', pace } };
+  }
+  const screenUse = uses.find((b) => b.name === SCREEN_TOOL_NAME);
+  if (screenUse) {
+    const result = results.get(screenUse.id);
+    return { plan: { blocks: [text(screenFollowUpText(result, toolResultText(result?.content)))], stop_reason: 'end_turn', pace } };
   }
   if (memoryUse) {
     const result = results.get(memoryUse.id);
