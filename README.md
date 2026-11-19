@@ -206,8 +206,9 @@ Jarvis's home screen now tells you what is going on before you ask.
   you, and **Systems** (network, microphone, camera, model and spend; click it for the full
   dashboard). A running mission takes the panel over. On wide windows a line at the top shows the
   network, today's spend and the time.
-- **The microphone is never on unseen**: while it listens, a red **MIC** pill appears at the
-  top; tap it to turn the microphone off.
+- **The microphone is never on unseen**: while the microphone key listens, a red **MIC** pill
+  appears at the top; tap it to turn the microphone off. In Voice Mode the screen says
+  **LISTENING** and the big button stops it.
 - **Settings → Appearance → HUD**: **Density** (**Calm**, the default, or **Full**: labels
   around the core, the line at the top always, and Mission Control's log open), **Motion**
   (**Full**, **Reduced** or **Still**: still pictures, no movement) and the short start-up
