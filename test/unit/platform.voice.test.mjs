@@ -129,6 +129,55 @@ test('pickDefaultVoice prefers a British male voice, then en-GB, en-US, default,
   });
 });
 
+test('pickDefaultVoice prefers on-device voices: online voices send the spoken text to Google/Microsoft', async () => {
+  const r = await page.evaluate(() => {
+    const { pickDefaultVoice, resolveVoice } = window.__mods.tts;
+    const v = (name, lang, localService, extra = {}) => ({ name, lang, localService, voiceURI: name, default: false, ...extra });
+    const pick = (list) => {
+      const p = pickDefaultVoice(list);
+      return p ? `${p.name} | ${p.localService ? 'local' : 'online'}` : null;
+    };
+    // Real voice lists (security review): before the fix Chrome and Edge on Windows picked an online voice.
+    const chromeWindows = [
+      v('Microsoft George - English (United Kingdom)', 'en-GB', true), v('Microsoft Hazel - English (United Kingdom)', 'en-GB', true),
+      v('Microsoft David - English (United States)', 'en-US', true, { default: true }), v('Microsoft Zira - English (United States)', 'en-US', true),
+      v('Google US English', 'en-US', false), v('Google UK English Female', 'en-GB', false), v('Google UK English Male', 'en-GB', false),
+    ];
+    return {
+      chromeWindows: pick(chromeWindows),
+      edgeWindows: pick([
+        v('Microsoft George - English (United Kingdom)', 'en-GB', true),
+        v('Microsoft Ryan Online (Natural) - English (United Kingdom)', 'en-GB', false), v('Microsoft Sonia Online (Natural) - English (United Kingdom)', 'en-GB', false),
+        v('Microsoft Guy Online (Natural) - English (United States)', 'en-US', false),
+      ]),
+      chromeMac: pick([v('Daniel', 'en-GB', true), v('Samantha', 'en-US', true, { default: true }), v('Google UK English Male', 'en-GB', false)]),
+      iphone: pick([v('Daniel', 'en-GB', true), v('Samantha', 'en-US', true, { default: true })]),
+      // A local American voice still beats an online British one.
+      localUsOnly: pick([v('Microsoft David - English (United States)', 'en-US', true, { default: true }), v('Google UK English Male', 'en-GB', false)]),
+      // No local English voice at all: fall back to the online ones (the preference order still applies).
+      onlineOnly: pick([v('Google US English', 'en-US', false), v('Google UK English Male', 'en-GB', false)]),
+      localNonEnglishOnly: pick([v('Thomas', 'fr-FR', true, { default: true }), v('Google UK English Male', 'en-GB', false)]),
+      // A browser that does not report localService keeps the plain preference order.
+      unreported: pick([v('Google US English', 'en-US', undefined), v('Google UK English Male', 'en-GB', undefined)]),
+      // A voice the owner chose in Settings is honoured, online or not.
+      chosenOnline: resolveVoice('Google UK English Male', chromeWindows).name,
+      autoWhenMissing: resolveVoice('No Such Voice', chromeWindows).name,
+    };
+  });
+  assert.deepEqual(r, {
+    chromeWindows: 'Microsoft George - English (United Kingdom) | local',
+    edgeWindows: 'Microsoft George - English (United Kingdom) | local',
+    chromeMac: 'Daniel | local',
+    iphone: 'Daniel | local',
+    localUsOnly: 'Microsoft David - English (United States) | local',
+    onlineOnly: 'Google UK English Male | online',
+    localNonEnglishOnly: 'Google UK English Male | online',
+    unreported: 'Google UK English Male | online',
+    chosenOnline: 'Google UK English Male',
+    autoWhenMissing: 'Microsoft George - English (United Kingdom)',
+  });
+});
+
 // ---- speak() against a fake speechSynthesis ---------------------------------------------
 
 const FAKE_SPEECH = () => {

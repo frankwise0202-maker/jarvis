@@ -11,6 +11,8 @@
 //
 // Reads settings.notifyOnFinish (default true) through the injected getter. Never throws.
 
+import { redactSecrets } from './share.js';
+
 const TAG = 'jarvis-finished';
 const SW_READY_TIMEOUT_MS = 3000;
 
@@ -332,10 +334,13 @@ function firstParagraph(md) {
   return '';
 }
 
-/** Markdown-ish text to one plain line (no links/URLs), cut to `max` characters. */
+/**
+ * Markdown-ish text to one plain line (no links/URLs), cut to `max` characters. Notifications
+ * show on the lock screen, so anything shaped like an API key is removed first.
+ */
 function plainText(value, max) {
   if (typeof value !== 'string') return '';
-  let s = value
+  let s = redactSecrets(value)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1') // images -> alt
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // links -> text
     .replace(/<(https?:|mailto:)[^>]*>/gi, '') // autolinks

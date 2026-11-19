@@ -22,7 +22,7 @@ import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown } from './voice-mode.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats } from './stats.js';
-import { createShareOptions } from './share.js';
+import { createShareOptions, redactSecrets } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
 import { fmtUsd } from './hud/format.js';
 import { createJarvis, MODELS, DEPTHS } from '../engine/index.js';
@@ -790,7 +790,8 @@ export async function startApp(rootEl) {
   }
 
   async function copyTurn(turn) {
-    const text = plainText(answerText(turn) || turnText(turn, false));
+    // Copied text leaves the app like a share does: never with the API key in it.
+    const text = redactSecrets(plainText(answerText(turn) || turnText(turn, false)), state.demo ? '' : safe(getApiKey, ''));
     const ok = await copyText(text);
     toast(ok ? 'Copied to clipboard.' : 'Couldn’t copy. Select the text instead.', { level: ok ? 'success' : 'warn', id: 'copy' });
   }
@@ -1197,6 +1198,7 @@ export async function startApp(rootEl) {
         turn,
         conversation: state.conv,
         mission: missionId,
+        apiKey: state.demo ? '' : safe(getApiKey, ''),
         onDone: () => {
           if (shareSheet) shareSheet.close('done');
         },

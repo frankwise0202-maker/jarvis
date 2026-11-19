@@ -116,10 +116,21 @@ const quality = (v) => (QUALITY_HINT.test(v.name) ? 1 : 0) + (v.localService ? 0
  * English Male, Microsoft Ryan, Microsoft George - in that order, English variants only), then
  * any en-GB voice, then any en-US voice (male-sounding names first in both), then the
  * browser's default voice, then the first voice. Null for an empty list.
+ *
+ * Privacy: an online voice (localService false, e.g. "Google UK English Male" in Chrome or
+ * "Microsoft Ryan Online" in Edge) sends the text it speaks to Google or Microsoft. So the order
+ * above is applied to the on-device voices (localService === true) first, and online voices are
+ * considered only when the device has no local English voice. The owner can still choose an
+ * online voice in Settings.
  */
 export function pickDefaultVoice(voices) {
   const list = Array.isArray(voices) ? voices.filter((v) => v && typeof v.name === 'string') : [];
   if (!list.length) return null;
+  const local = list.filter((v) => v.localService === true);
+  return pickFrom(local.some(isEnglish) ? local : list);
+}
+
+function pickFrom(list) {
   for (const re of PREFERRED_VOICES) {
     const hits = list.filter((v) => re.test(v.name) && isEnglish(v));
     if (hits.length) return best(hits, (v) => (isBritish(v) ? 2 : 0) + quality(v));

@@ -62,6 +62,150 @@ export function escapeInline(value) {
   return oneLine(value).replace(/[\\`*_[\]<>|~]/g, '\\$&');
 }
 
+// Exported files are opened in Markdown viewers we don't control, and some of them render raw
+// HTML. Text from the model, agents, web pages or the owner is therefore made inert in every
+// export (safeMarkdown): "<" that could open a tag, comment or autolink becomes "&lt;", and links
+// or reference definitions whose target isn't http(s), mailto or a #fragment lose their link
+// syntax. Fenced code blocks at column 0 are kept as written so code stays readable, but only
+// when every fence-like line of the document sits at column 0: an indented or quoted fence may
+// belong to a list item or quote that ends before the fence does, and a viewer would then read
+// the following lines as Markdown while we took them for code. In that case nothing is exempt.
+// (Inline code is not exempt either: link destinations, table cells and spans that cross lines
+// decide where a code span ends, so "<" is escaped there too.)
+
+const FENCE_OPEN_RE = /^(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const FENCE_LIKE_RE = /^([\s>*+\-\d.)]*)(`{3,}|~{3,})/;
+const SAFE_TARGET_RE = /^(?:https?:\/\/|mailto:|#)/i;
+const TAG_START_RE = /[A-Za-z!/?]/;
+
+/** The opening fence of a column-0 fenced code block ("```js", "~~~~"), or null. */
+function fenceOpen(line) {
+  const m = FENCE_OPEN_RE.exec(line);
+  if (!m || (m[1][0] === '`' && m[2].includes('`'))) return null; // backtick fences: no backticks in the info string
+  return { fence: m[1], info: m[2] };
+}
+
+const closesFence = (line, fence) => {
+  const m = FENCE_CLOSE_RE.exec(line);
+  return !!m && m[1][0] === fence[0] && m[1].length >= fence.length;
+};
+
+/**
+ * Close a column-0 fenced code block left open at the end of `md` (a stopped or truncated
+ * reply), so an embedded field can never turn the rest of an export into code.
+ */
+export function closeFences(md) {
+  const text = str(md);
+  let fence = null;
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (fence) {
+      if (closesFence(line, fence)) fence = null;
+    } else {
+      const open = fenceOpen(line);
+      if (open) fence = open.fence;
+    }
+  }
+  return fence ? `${text.replace(/\s+$/, '')}\n${fence}` : text;
+}
+
+/** One line of Markdown outside code: escape tag openers, unlink unsafe targets. */
+function neutralizeLine(line) {
+  let out = '';
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\') {
+      // "\<b>" is safe in CommonMark but not in older Markdown dialects: use the entity.
+      if (line[i + 1] === '<' && TAG_START_RE.test(line[i + 2] || '')) {
+        out += '&lt;';
+        i += 1;
+      } else {
+        out += c + (line[i + 1] ?? '');
+        i += 1;
+      }
+      continue;
+    }
+    if (c === '<' && TAG_START_RE.test(line[i + 1] || '')) {
+      out += '&lt;';
+      continue;
+    }
+    if (c === ']' && (line[i + 1] === '(' || line[i + 1] === ':')) {
+      const target = line.slice(i + 2).replace(/^[ \t]+/, '');
+      const footnote = line[i + 1] === ':' && /\[\^[^\]]*$/.test(out);
+      if (!SAFE_TARGET_RE.test(target) && !footnote) {
+        // "]\(" is no link, "\]:" no reference definition: the text stays, the target goes inert.
+        out += line[i + 1] === '(' ? ']\\(' : '\\]:';
+        i += 1;
+        continue;
+      }
+    }
+    out += c;
+  }
+  return out;
+}
+
+/**
+ * Markdown that is inert in any viewer (see the note above). Idempotent: running it twice
+ * changes nothing more.
+ */
+export function safeMarkdown(md) {
+  const lines = str(md).replace(/\r\n?/g, '\n').split('\n');
+  const keepCode = lines.every((line) => {
+    const m = FENCE_LIKE_RE.exec(line);
+    return !m || m[1] === '';
+  });
+  let fence = null;
+  return lines
+    .map((line) => {
+      if (keepCode) {
+        if (fence) {
+          if (closesFence(line, fence)) fence = null;
+          return line;
+        }
+        const open = fenceOpen(line);
+        if (open) {
+          fence = open.fence;
+          return open.fence + neutralizeLine(open.info);
+        }
+      }
+      return neutralizeLine(line);
+    })
+    .join('\n');
+}
+
+// An API key the owner pasted into a chat must never leave in an export (the backup leaves
+// such conversations out; shared and downloaded text gets the key replaced instead).
+
+/** Anthropic API keys, also after a Markdown escaper put a backslash before an underscore. */
+const API_KEY_RE = /sk-ant-(?:\\?[A-Za-z0-9_-]){20,}/g;
+export const REDACTED_KEY = '[API key removed]';
+
+/** True when `text` contains something shaped like an Anthropic API key. */
+export function containsApiKey(text) {
+  return typeof text === 'string' && /sk-ant-[A-Za-z0-9_-]{20,}/.test(text);
+}
+
+/**
+ * `text` with the saved key (`knownKey`, also in its Markdown-escaped form) and anything else
+ * shaped like an Anthropic API key replaced by "[API key removed]".
+ */
+export function redactSecrets(text, knownKey) {
+  let out = str(text);
+  if (!out) return out;
+  const key = typeof knownKey === 'string' ? knownKey.trim() : '';
+  if (key.length >= 8) {
+    for (const variant of new Set([key, key.replace(/[\\`*_[\]<>|~]/g, '\\$&')])) {
+      if (out.includes(variant)) out = out.split(variant).join(REDACTED_KEY);
+    }
+  }
+  return out.replace(API_KEY_RE, REDACTED_KEY);
+}
+
+/** Last step of every export: inert Markdown, no secrets. */
+function finishExport(md, opts) {
+  return redactSecrets(safeMarkdown(md), isObj(opts) ? opts.apiKey : '');
+}
+
 /** Tidy display form of a model-written role: trimmed, first letter capitalized, no shouting. */
 function roleLabel(role) {
   let s = oneLine(role);
@@ -438,30 +582,41 @@ function joinText(segments) {
     .join('\n\n');
 }
 
-/**
- * The final answer of a Jarvis turn as Markdown (its text segments joined). When the turn
- * deployed agents, only the text written after the last mission counts (the synthesis), so the
- * "I'm sending four agents…" preamble is left out; if nothing was written after it, all text is
- * used. Options: `{ sources: true }` appends a "Sources" list of cited pages that the text does
- * not already link to.
- */
-export function answerMarkdown(turn, opts = {}) {
+/** The answer text exactly as the model wrote it (see answerMarkdown), for analysis and embedding. */
+function answerSource(turn) {
   const segments = arr(isObj(turn) ? turn.segments : null);
   let lastMission = -1;
   segments.forEach((s, i) => {
     if (isObj(s) && s.kind === 'mission') lastMission = i;
   });
-  let md = lastMission >= 0 ? joinText(segments.slice(lastMission + 1)) : '';
-  if (!md) md = joinText(segments);
-  if (!md || !opts || !opts.sources) return md;
+  const md = lastMission >= 0 ? joinText(segments.slice(lastMission + 1)) : '';
+  return md || joinText(segments);
+}
 
-  const linked = linkedKeys(md);
-  const cited = createSourceList();
-  for (const seg of textSegments(turn)) for (const src of arr(seg.citations)) cited.add(src);
-  const extra = cited.list().filter((s) => !linked.has(s.key));
-  if (!extra.length) return md;
-  const hasList = /^\s{0,3}(?:#{1,6}\s*)?(?:\*\*|__)?(?:sources|references)(?:\*\*|__)?:?\s*$/im.test(md);
-  return `${md}\n\n**${hasList ? 'More sources' : 'Sources'}**\n\n${extra.map((s) => `- ${mdLink(s.title, s.url)}`).join('\n')}`;
+/**
+ * The final answer of a Jarvis turn as Markdown (its text segments joined). When the turn
+ * deployed agents, only the text written after the last mission counts (the synthesis), so the
+ * "I'm sending four agents…" preamble is left out; if nothing was written after it, all text is
+ * used. Options: `{ sources: true }` appends a "Sources" list of cited pages that the text does
+ * not already link to; `apiKey` is the saved key, removed wherever it appears (anything else
+ * shaped like an API key is removed too). The result is safe Markdown (see safeMarkdown).
+ */
+export function answerMarkdown(turn, opts = {}) {
+  const o = isObj(opts) ? opts : {};
+  const source = answerSource(turn);
+  if (!source) return '';
+  let md = closeFences(source);
+  if (o.sources) {
+    const linked = linkedKeys(source);
+    const cited = createSourceList();
+    for (const seg of textSegments(turn)) for (const src of arr(seg.citations)) cited.add(src);
+    const extra = cited.list().filter((s) => !linked.has(s.key));
+    if (extra.length) {
+      const hasList = /^\s{0,3}(?:#{1,6}\s*)?(?:\*\*|__)?(?:sources|references)(?:\*\*|__)?:?\s*$/im.test(source);
+      md = `${md}\n\n**${hasList ? 'More sources' : 'Sources'}**\n\n${extra.map((s) => `- ${mdLink(s.title, s.url)}`).join('\n')}`;
+    }
+  }
+  return finishExport(md, o);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -492,7 +647,7 @@ function agentSection(agent, index, headingLevel) {
   lines.push('');
 
   const task = str(agent.task).trim();
-  if (task) lines.push('**Task**', '', quoteBlock(task), '');
+  if (task) lines.push('**Task**', '', quoteBlock(closeFences(task)), '');
 
   const queries = arr(agent.searches).map(oneLine).filter(Boolean);
   if (queries.length) lines.push(`**Search log:** ${queries.map((q) => `“${escapeInline(q)}”`).join(' · ')}`, '');
@@ -500,7 +655,7 @@ function agentSection(agent, index, headingLevel) {
   const report = tidy(agent.report);
   if (report.trim()) {
     const partial = agent.status !== 'done' ? ' (partial)' : '';
-    lines.push(`**Report${partial}**`, '', demoteHeadings(report, Math.min(6, headingLevel + 1)), '');
+    lines.push(`**Report${partial}**`, '', demoteHeadings(closeFences(report), Math.min(6, headingLevel + 1)), '');
   } else {
     const why = {
       error: 'No report: the agent failed before writing one.',
@@ -557,8 +712,9 @@ function breakdown(agents) {
 /**
  * A complete, shareable dossier for one mission (wave) of a turn, or for every mission of the
  * turn when `mission` is omitted / null. `mission` may be a Mission object or a mission id.
- * Options: { conversation, question, now, locale, timeZone }. `conversation` (or `question`)
- * lets the dossier quote the owner's request.
+ * Options: { conversation, question, apiKey, now, locale, timeZone }. `conversation` (or
+ * `question`) lets the dossier quote the owner's request; `apiKey` as in answerMarkdown. The
+ * result is safe Markdown (see safeMarkdown).
  */
 export function missionReportMarkdown(turn, mission, opts = {}) {
   const t = isObj(turn) ? turn : {};
@@ -571,7 +727,7 @@ export function missionReportMarkdown(turn, mission, opts = {}) {
   if (single) scope = [single];
 
   const question = questionFor(t, o);
-  const answer = answerMarkdown(t);
+  const answer = answerSource(t);
   const metrics = turnMetrics(t);
   const totals = missionTotals(scope);
   // Title: the mission's own title (wave 1 summarizes a multi-wave request best); for a turn
@@ -600,7 +756,7 @@ export function missionReportMarkdown(turn, mission, opts = {}) {
   const entries = master.list();
 
   const out = [`# ${kind}: ${escapeInline(titleText)}`, ''];
-  if (question && titleText !== oneLine(question)) out.push(quoteBlock(userBlock(question)), '');
+  if (question && titleText !== oneLine(question)) out.push(quoteBlock(userBlock(closeFences(question))), '');
 
   // Header
   const header = [];
@@ -641,7 +797,7 @@ export function missionReportMarkdown(turn, mission, opts = {}) {
 
   // Final answer
   out.push('## Final answer', '');
-  if (answer) out.push(demoteHeadings(answer, 3), '');
+  if (answer) out.push(demoteHeadings(closeFences(answer), 3), '');
   else out.push(`*${t.status === 'running' ? 'Jarvis was still working when this report was exported.' : 'No final answer was written for this request.'}*`, '');
 
   if (t.status === 'error' && isObj(t.error) && oneLine(t.error.message)) out.push(`> **Error:** ${escapeInline(t.error.message)}`, '');
@@ -691,7 +847,7 @@ export function missionReportMarkdown(turn, mission, opts = {}) {
   }
 
   out.push('---', '', `*Exported from Jarvis on ${fmtWhen(num(o.now) || Date.now(), o, 'full')}. Costs are estimates from token counts. Agent reports summarize web pages; check important facts at the sources.*`);
-  return `${out.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+  return finishExport(`${out.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`, o);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -733,7 +889,7 @@ function jarvisBody(turn) {
   let toolRun = [];
   const flushText = () => {
     const md = joinText(textRun);
-    if (md) out.push(demoteHeadings(md, 3));
+    if (md) out.push(demoteHeadings(closeFences(md), 3));
     textRun = [];
   };
   const flushTools = () => {
@@ -791,7 +947,8 @@ function userBlock(text) {
 /**
  * The whole conversation as a Markdown transcript: every exchange with the owner's words,
  * Jarvis's replies (searches, missions, memory and errors as compact lines; thinking omitted)
- * and per-turn stats. Options: { now, locale, timeZone }.
+ * and per-turn stats. Options: { apiKey, now, locale, timeZone } (`apiKey` as in
+ * answerMarkdown). The result is safe Markdown (see safeMarkdown).
  */
 export function conversationMarkdown(conversation, opts = {}) {
   const c = isObj(conversation) ? conversation : {};
@@ -827,7 +984,7 @@ export function conversationMarkdown(conversation, opts = {}) {
     if (day) lastDay = day;
     if (turn.role === 'user') {
       if (count++) out.push('---', '');
-      out.push(`## You${when ? ` · ${when}` : ''}`, '', userBlock(turn.text) || '*(empty message)*', '');
+      out.push(`## You${when ? ` · ${when}` : ''}`, '', userBlock(closeFences(turn.text)) || '*(empty message)*', '');
     } else if (turn.role === 'jarvis') {
       const tags = [when, turn.mode && turn.mode !== 'auto' ? MODES[turn.mode] : ''].filter(Boolean).join(' · ');
       out.push(`## Jarvis${tags ? ` · ${tags}` : ''}`, '');
@@ -840,7 +997,7 @@ export function conversationMarkdown(conversation, opts = {}) {
   }
   if (!turns.length) out.push('*This conversation is empty.*', '');
   out.push('---', '', `*Exported from Jarvis on ${fmtWhen(num(o.now) || Date.now(), o, 'full')}. Costs are estimates.*`);
-  return `${out.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+  return finishExport(`${out.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`, o);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1000,45 +1157,51 @@ function summaryLine(md) {
 }
 
 /**
- * createShareOptions({ turn, conversation, mission, onDone, toast }) → { el, destroy() }
+ * createShareOptions({ turn, conversation, mission, apiKey, onDone, toast }) → { el, destroy() }
  * Rows: share (or copy) the answer; share (or copy) the mission dossier; download the dossier
  * as .md; download the conversation transcript as .md. Rows that do not apply are left out.
  * Each row confirms inline ("Copied", "Saved", "Shared"), then calls onDone(action, result) so
  * the host can close its sheet. A dismissed share sheet is not an error and changes nothing.
  * `mission` (object or id) picks the wave for the dossier; omitted = every wave of the turn.
+ * `apiKey` is the saved API key: it never appears in anything shared, copied or saved here
+ * (titles and file names included), nor does anything else shaped like an API key.
  * `toast(message, { level })` is optional and only used for failures.
  */
 export function createShareOptions(opts = {}) {
   const o = isObj(opts) ? opts : {};
   const turn = isObj(o.turn) ? o.turn : {};
   const conv = isObj(o.conversation) ? o.conversation : null;
+  const apiKey = typeof o.apiKey === 'string' ? o.apiKey : '';
+  const clean = (text) => oneLine(redactSecrets(text, apiKey));
   const native = canShareNatively();
   const timers = new Set();
   let busy = false;
   let destroyed = false;
 
   const question = questionFor(turn, { conversation: conv });
-  const title = (conv && oneLine(conv.title)) || shortTitle(question, 60) || 'Jarvis';
-  const answer = answerMarkdown(turn, { sources: true });
+  const title = (conv && clean(conv.title)) || shortTitle(clean(question), 60) || 'Jarvis';
+  const answer = answerMarkdown(turn, { sources: true, apiKey });
   const missions = missionsOf(turn).filter((m) => agentsOf(m).length);
   const metrics = turnMetrics(turn);
   const scopeMission = isObj(o.mission) || (typeof o.mission === 'string' && o.mission) ? o.mission : null;
-  const dossierTitle = (isObj(scopeMission) && oneLine(scopeMission.title)) || (missions[0] && oneLine(missions[0].title)) || title;
+  const dossierTitle = (isObj(scopeMission) && clean(scopeMission.title)) || (missions[0] && clean(missions[0].title)) || title;
   const exchanges = conv ? arr(conv.turns).filter((t) => isObj(t) && t.role === 'user').length : 0;
 
   const metaParts = [fmtWhen(turn.createdAt, {}, 'stamp')];
   if (metrics.agents) metaParts.push(plural(metrics.agents, 'agent'));
   if (metrics.sources) metaParts.push(plural(metrics.sources, 'source'));
   const live = h('p', { class: 'rec-sr', attrs: { role: 'status', 'aria-live': 'polite' } });
+  // The preview is page text (never HTML): it shows the answer as written, minus any key.
+  const summary = summaryLine(redactSecrets(answerSource(turn), apiKey));
   const preview = h(
     'div',
     { class: 'rec-preview' },
     h('p', { class: 'rec-preview-title', text: title }),
-    summaryLine(answer) ? h('p', { class: 'rec-preview-text', text: summaryLine(answer) }) : null,
+    summary ? h('p', { class: 'rec-preview-text', text: summary }) : null,
     h('p', { class: 'rec-preview-meta', text: metaParts.filter(Boolean).map((p) => p.replace(/ /g, '\u00a0')).join(' · ') }),
   );
 
-  const dossier = () => missionReportMarkdown(turn, scopeMission, { conversation: conv });
+  const dossier = () => missionReportMarkdown(turn, scopeMission, { conversation: conv, apiKey });
   const actions = [];
   if (answer) {
     actions.push({
@@ -1072,7 +1235,7 @@ export function createShareOptions(opts = {}) {
       icon: 'layers',
       label: 'Download conversation',
       desc: `${plural(exchanges, 'exchange')} · full transcript · Markdown file`,
-      run: () => (downloadText(reportFilename('conversation', title, new Date(num(conv.createdAt) || Date.now())), conversationMarkdown(conv)) ? 'saved' : 'failed'),
+      run: () => (downloadText(reportFilename('conversation', title, new Date(num(conv.createdAt) || Date.now())), conversationMarkdown(conv, { apiKey })) ? 'saved' : 'failed'),
     });
   }
 

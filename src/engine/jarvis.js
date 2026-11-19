@@ -542,8 +542,8 @@ export function createJarvis(deps = {}) {
         title: '',
         createdAt: ts,
         updatedAt: ts,
-        system: LEAD_SYSTEM_LATEST, // V2; older conversations keep the prompt and tools they were created with
-        tools: leadToolsLatest(),
+        system: LEAD_SYSTEM_LATEST, // older conversations keep the prompt and tools they were created with
+        tools: leadToolsLatest(), // V3: update_memory acts only on the owner's own words
         apiMessages: [],
         turns: [],
         pending: null,

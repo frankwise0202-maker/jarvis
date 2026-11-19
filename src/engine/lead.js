@@ -43,6 +43,11 @@ const MAX_JSON_RETRIES = 2;
 const COUNTDOWN_MIN_MS = 1500;
 
 export const STOPPED_BY_OWNER = 'Stopped by the owner.';
+/**
+ * A memory change still pending when a turn is resumed is never applied: Resume is one tap on a
+ * checkpoint (possibly from an imported backup), not the owner asking for that change now.
+ */
+export const MEMORY_NOT_RESUMED = 'Memory changes are not applied when resuming; ask again.';
 
 class RoundInterrupted extends Error {}
 
@@ -483,7 +488,6 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
 
 /** Resumes the tool round saved in conversation.pending: re-runs unfinished agents only. */
 async function resumeToolRound(ctx, pending) {
-  const req = ctx.req - 1;
   const round = {
     toolUses: pending.toolUses.map(({ id, name, input }) => ({ id, name, input })),
     results: { ...(pending.results || {}) },
@@ -503,7 +507,7 @@ async function resumeToolRound(ctx, pending) {
       if (!round.missionIds.includes(mission.id)) round.missionIds.push(mission.id);
       missionRuns.push(resumeMission(ctx, mission).then(() => missionDone(ctx, round, tu, mission)));
     } else if (tu.name === 'update_memory') {
-      round.results[tu.id] = await applyMemory(ctx, tu, req);
+      round.results[tu.id] = { content: MEMORY_NOT_RESUMED, is_error: true };
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }

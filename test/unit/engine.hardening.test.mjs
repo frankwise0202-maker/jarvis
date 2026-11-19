@@ -8,7 +8,7 @@ import { BadRequestError, InternalServerError, RateLimitError } from '@anthropic
 import { createJarvis } from '../../src/engine/index.js';
 import { LOW_LIMITS_NOTICE } from '../../src/engine/jarvis.js';
 import { DEPTHS, PRICES, costOf } from '../../src/engine/models.js';
-import { LEAD_SYSTEM_V1, leadToolsV1, leadToolsV2 } from '../../src/engine/prompts.js';
+import { LEAD_SYSTEM_V1, leadToolsV1, leadToolsLatest } from '../../src/engine/prompts.js';
 import { responseCost, usageDelta } from '../../src/engine/stream.js';
 import { isContainerError, isThinkingMismatch, outputTokensLimit, retryAfterMs, unsupportedFeature } from '../../src/engine/client.js';
 import { RETRY_ATTEMPTS, retryDelayMs, shouldRetry } from '../../src/engine/retry.js';
@@ -251,7 +251,7 @@ test('P2: retry policy and limiter units', () => {
 test('P3: new conversations cap web_fetch page text; old conversations keep their frozen tools', async () => {
   const h = createHarness({ handler: () => answer('ok') });
   const fresh = h.jarvis.newConversation();
-  assert.deepEqual(fresh.tools, leadToolsV2());
+  assert.deepEqual(fresh.tools, leadToolsLatest());
   assert.equal(fresh.tools.find((t) => t.name === 'web_fetch').max_content_tokens, 12000);
   const old = h.jarvis.newConversation();
   old.system = LEAD_SYSTEM_V1;
