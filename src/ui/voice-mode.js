@@ -8,11 +8,19 @@
 // right away, and iOS only lets the microphone and speech synthesis start inside a gesture.
 //
 // The loop: listening -> thinking / working (live mission status) -> speaking (captions with the
-// current sentence highlighted) -> listening again when settings.voiceContinuous (default true).
+// current sentence and word highlighted) -> listening again when settings.voiceContinuous
+// (default true) and the speech ended normally.
+//
+// The reply is spoken while it streams (tts.createSpeechStream): its text segments, cut at the
+// first thematic break (---), converted for the ear, complete sentences only and never one twice,
+// about 1,500 characters at most ("The rest is on screen."). See voice-stream.js. What the lead
+// says before a search or a mission ("Let me check the latest on that.") is spoken while it works.
+// When nothing was spoken by the end of the turn, the answer's summary is spoken after a chime.
 //
 // Tap the core: listening = stop and send; thinking/working = stop the turn; speaking = stop
-// speaking and listen; otherwise = start listening. Esc or Exit closes; a running turn carries on
-// in the chat (Stop, or a tap on the core, is how to stop it).
+// speaking and listen (a reply still being written stops too, and stays in the chat as far as it
+// got); otherwise = start listening. Esc or Exit closes; a running turn carries on in the chat
+// (Stop, or a tap on the core, is how to stop it).
 //
 // Optional extras beyond SPEC 14.1 (all safe to omit):
 //   saveSettings(patch)   persists the Continuous toggle as settings.voiceContinuous
@@ -25,6 +33,9 @@
 
 import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
+import { createSpokenFeed, splitSentences } from './voice-stream.js';
+
+export { splitSentences };
 
 const SILENT_TRIES_MAX = 2; // consecutive silent listens before we stop and wait for a tap
 const SILENCE_MS = 12000; // our own no-speech watchdog (browsers usually give up after ~8 s)
@@ -33,6 +44,7 @@ const STOP_GRACE_MS = 1500; // after a manual stop, wait this long for the final
 const RETRY_DELAY_MS = 450; // pause before listening again after a silent try
 const REPLY_CHIME_MS = 260; // let the reply chime ring before the voice starts
 const RELISTEN_DELAY_MS = 350; // after speaking, let the audio settle before the mic opens again
+const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at most this often
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
 const MODES = ['auto', 'quick', 'swarm'];
 const AGENT_FINISHED = new Set(['done', 'error', 'stopped', 'interrupted']);
@@ -102,45 +114,6 @@ export function finalAnswerMarkdown(turn) {
   return out.trim();
 }
 
-// A trailing period after these is not the end of a sentence.
-const ABBREVIATION = /(?:^|[\s(“"'])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|inc|ltd|co|corp|approx|no|fig|e\.g|i\.e|a\.m|p\.m|u\.s|u\.k|[a-z])\.$/i;
-
-/**
- * Split plain text into sentence ranges [{ start, end }] that tile the whole string (trailing
- * spaces and newlines stay with their sentence). Decimals, domains and common abbreviations
- * do not end a sentence.
- */
-export function splitSentences(text) {
-  const s = String(text ?? '');
-  const out = [];
-  let start = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    const c = s[i];
-    let end = -1;
-    if (c === '\n') {
-      end = i + 1;
-    } else if (c === '.' || c === '!' || c === '?' || c === '…') {
-      let j = i + 1;
-      while (j < s.length && /[.!?…"'”’)\]]/.test(s[j])) j += 1;
-      if (j < s.length && !/\s/.test(s[j])) continue; // "3.5", "example.com"
-      if (c === '.' && ABBREVIATION.test(s.slice(Math.max(start, i - 8), i + 1))) continue;
-      end = j;
-    }
-    if (end < 0) continue;
-    while (end < s.length && /\s/.test(s[end])) end += 1;
-    if (s.slice(start, end).trim()) {
-      out.push({ start, end });
-      start = end;
-    }
-    i = end - 1;
-  }
-  if (start < s.length) {
-    if (s.slice(start).trim() || !out.length) out.push({ start, end: s.length });
-    else out[out.length - 1].end = s.length;
-  }
-  return out;
-}
-
 function reqOf(segment) {
   return Number.isFinite(segment && segment.req) ? segment.req : 0;
 }
@@ -177,12 +150,12 @@ function createVoiceMode(opts) {
     typing: false,
     continuous: readContinuous(),
     listen: null, // { gesture, text, stopRequested, handle, timers, heard }
-    run: null, // { run, offs, lastAgent } | { pending: true }
-    speech: null, // { token, kind, text, handle, timers, ... }
+    run: null, // { run, offs, lastAgent, feed, ... } | { pending: true }
+    speech: null, // { token, kind: 'live'|'summary'|'full'|'apology', text, map, stream|handle, timers, ... }
     speechToken: 0,
-    answer: null, // { md, summary, full }
+    answer: null, // { md, summary (what was spoken), full, more }
     showFull: false,
-    karaoke: null, // { spans, els, cursor }
+    karaoke: null, // { spans, els, texts, cursor, word }
     userEl: null,
     silentTries: 0,
     retryTimer: 0,
@@ -439,7 +412,7 @@ function createVoiceMode(opts) {
 
   function renderReadFull() {
     const A = S.answer;
-    const more = !!A && !!A.full && A.full.length > A.summary.length + 24;
+    const more = !!A && !!A.full && (typeof A.more === 'boolean' ? A.more : A.full.length > A.summary.length + 24);
     const readingFull = !!S.speech && S.speech.kind === 'full';
     const busy = !!S.run || (!!S.listen && !!S.listen.text);
     const show = more && !busy && !S.closed;
@@ -467,7 +440,9 @@ function createVoiceMode(opts) {
     unlockSpeech();
     clearRetry();
     if (S.listen) return requestSend(S.listen, false);
-    if (S.run) return abortRun();
+    // Speaking while the reply is still being written: interrupt both and listen (what was written
+    // so far stays in the chat). Thinking or working: stop.
+    if (S.run) return abortRun({ listen: S.state === 'speaking' });
     if (S.speech && S.speech.kind !== 'apology') {
       cancelSpeech();
       return startListening({ gesture: true, keepAnswer: true });
@@ -811,10 +786,35 @@ function createVoiceMode(opts) {
     const spans = splitSentences(text);
     showCaption('jarvis', '');
     captions.dataset.tone = tone;
-    setCaptionLength(text.length > 300 || /\n/.test(text) ? 'long' : text.length > 130 ? 'medium' : 'short');
-    const els = spans.map((sp) => h('span', { class: 'vm-s is-future', text: text.slice(sp.start, sp.end) }));
+    setCaptionLength(captionLength(text));
+    const texts = spans.map((sp) => text.slice(sp.start, sp.end));
+    const els = texts.map((t) => h('span', { class: 'vm-s is-future', text: t }));
     captions.appendChild(h('p', { class: 'vm-cap vm-cap--jarvis' }, els));
-    S.karaoke = { spans, els, cursor: -1 };
+    S.karaoke = { spans, els, texts, cursor: -1, word: -1 };
+  }
+
+  function captionLength(text) {
+    const t = String(text || '').trim();
+    return t.length > 300 || /\n/.test(t) ? 'long' : t.length > 130 ? 'medium' : 'short';
+  }
+
+  /** Captions that grow while the reply is spoken (one span per appended sentence). */
+  function startLiveCaptions() {
+    showCaption('jarvis', '');
+    captions.dataset.tone = 'answer';
+    const p = h('p', { class: 'vm-cap vm-cap--jarvis' });
+    captions.appendChild(p);
+    S.karaoke = { spans: [], els: [], texts: [], cursor: -1, word: -1, p };
+    return S.karaoke;
+  }
+
+  function addLiveCaption(K, start, text) {
+    if (!K || S.karaoke !== K || !K.p.isConnected) return;
+    const el = h('span', { class: 'vm-s is-future', text });
+    K.p.appendChild(el);
+    K.spans.push({ start, end: start + text.length });
+    K.els.push(el);
+    K.texts.push(text);
   }
 
   function setKaraoke(index) {
@@ -822,28 +822,63 @@ function createVoiceMode(opts) {
     if (!K || !K.els.length) return;
     const i = Math.max(0, Math.min(K.els.length - 1, index));
     if (i === K.cursor) return;
+    clearWord(K);
     K.cursor = i;
+    if (captions.dataset.done) delete captions.dataset.done;
     K.els.forEach((el, k) => {
       el.className = `vm-s ${k < i ? 'is-past' : k === i ? 'is-current' : 'is-future'}`;
     });
     scrollCaptionTo(K.els[i]);
   }
 
-  function setKaraokeChar(charIndex) {
-    const K = S.karaoke;
-    if (!K || !K.spans.length) return;
+  function sentenceAt(K, charIndex) {
     let idx = 0;
     for (let k = 0; k < K.spans.length; k += 1) {
       if (K.spans[k].start <= charIndex) idx = k;
       else break;
     }
-    setKaraoke(idx);
+    return idx;
+  }
+
+  function setKaraokeChar(charIndex) {
+    const K = S.karaoke;
+    if (!K || !K.spans.length) return;
+    setKaraoke(sentenceAt(K, charIndex));
+  }
+
+  /** The word being spoken (boundary events): its sentence is current and the word glows. */
+  function setKaraokeWord(charIndex, length) {
+    const K = S.karaoke;
+    if (!K || !K.spans.length) return;
+    const k = sentenceAt(K, charIndex);
+    setKaraoke(k);
+    const text = K.texts[k] || '';
+    const rel = charIndex - K.spans[k].start;
+    if (!(length > 0) || rel < 0 || rel >= text.length) {
+      clearWord(K);
+      return;
+    }
+    const end = Math.min(text.length, rel + length);
+    const el = K.els[k];
+    clearWord(K);
+    el.replaceChildren(text.slice(0, rel), h('span', { class: 'vm-w', text: text.slice(rel, end) }), text.slice(end));
+    K.word = k;
+  }
+
+  function clearWord(K) {
+    if (!K || !(K.word >= 0)) return;
+    const el = K.els[K.word];
+    if (el) el.textContent = K.texts[K.word] || '';
+    K.word = -1;
   }
 
   function finishKaraoke() {
-    if (!S.karaoke) return;
+    const K = S.karaoke;
+    if (!K) return;
+    clearWord(K);
+    K.cursor = -1;
     captions.dataset.done = 'true';
-    for (const el of S.karaoke.els) el.className = 'vm-s';
+    for (const el of K.els) el.className = 'vm-s';
   }
 
   /** Scroll as little as possible so the sentence being spoken is fully in view. */
@@ -1153,8 +1188,22 @@ function createVoiceMode(opts) {
       sendFailed(new Error('Jarvis couldn’t start that request.'));
       return;
     }
-    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '' };
+    // feed: which sentences to speak next while the reply streams (null: speak the summary at the
+    // end, as for a reply started in the chat). liveDone: its speech already ended normally;
+    // liveOff: its speech was stopped or failed (nothing more is spoken for this reply).
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false };
     S.run = R;
+    if (speaksWhileStreaming(R)) {
+      R.feed = createSpokenFeed({ convert: speechMarkdown });
+      // Opened while a reply was already under way: what is on screen already is not read out.
+      if (!owned) {
+        try {
+          R.feed.skip(run.turn && run.turn.segments);
+        } catch (err) {
+          console.warn('[voice] could not read the reply so far', err);
+        }
+      }
+    }
     const onEvent = (event, type) => {
       if (S.run !== R) return;
       const kind = type || (event && event.type);
@@ -1166,6 +1215,7 @@ function createVoiceMode(opts) {
         finishRun(R, (event && event.turn) || run.turn);
         return;
       }
+      if (R.feed && (kind === 'segment' || kind === 'segment-removed')) scheduleFeed(R);
       scheduleRunRender();
     };
     try {
@@ -1179,6 +1229,20 @@ function createVoiceMode(opts) {
     );
     renderControls();
     scheduleRunRender();
+    if (R.feed) scheduleFeed(R);
+  }
+
+  /** Voice Mode's own questions (spoken turns) are read aloud while the reply streams in. */
+  function speaksWhileStreaming(R) {
+    if (!S.ttsOk || typeof tts.createSpeechStream !== 'function') return false;
+    return R.owned || !!(R.run.turn && R.run.turn.spoken === true);
+  }
+
+  function detachRun(R) {
+    for (const off of R.offs || []) callQuietly(off);
+    R.offs = [];
+    if (R.feedTimer) clearTimeout(R.feedTimer);
+    R.feedTimer = 0;
   }
 
   function scheduleRunRender() {
@@ -1187,6 +1251,11 @@ function createVoiceMode(opts) {
   function cancelRunRender() {
     if (runFrame) cancelAnimationFrame(runFrame);
     runFrame = 0;
+  }
+  /** Render now (the voice started or paused: the state changes at once). */
+  function renderRunNow() {
+    cancelRunRender();
+    renderRun();
   }
 
   function renderRun() {
@@ -1198,10 +1267,15 @@ function createVoiceMode(opts) {
     const missions = Object.values(turn.missions || {}).filter(Boolean);
     const latest = latestMission(missions);
     const active = latest && (latest.status === 'planning' || latest.status === 'running') ? latest : null;
-    const next = active ? 'working' : 'thinking';
+    const talking = isTalking(liveOf(R));
+    const next = talking ? 'speaking' : active ? 'working' : 'thinking';
     if (S.state !== next) setVoiceState(next);
-    const st = runStatus(turn, missions, active);
-    setStatus(st.text, st.icon);
+    if (talking) {
+      setStatus('Speaking', 'speaker');
+    } else {
+      const st = runStatus(turn, missions, active);
+      setStatus(st.text, st.icon);
+    }
     if (active && R.announcedMission !== active.id) {
       R.announcedMission = active.id;
       announce('Agents deployed');
@@ -1322,13 +1396,17 @@ function createVoiceMode(opts) {
   function finishRun(R, turn) {
     if (S.run !== R) return;
     S.run = null;
-    for (const off of R.offs) callQuietly(off);
+    detachRun(R);
     cancelRunRender();
     showMission(false);
     if (S.closed) return;
     const status = turn && turn.status;
-    if (status === 'done') deliverAnswer(turn);
-    else if (status === 'error') deliverError(turn);
+    if (status === 'done') {
+      deliverAnswer(turn, R);
+      return;
+    }
+    cancelSpeech(); // a reply that failed or stopped is not read out any further
+    if (status === 'error') deliverError(turn);
     else if (status === 'interrupted') deliverInterrupted();
     else if (status === 'stopped') {
       syncCoreAgents(null);
@@ -1339,23 +1417,173 @@ function createVoiceMode(opts) {
     }
   }
 
-  function abortRun() {
+  /** Stop the turn and its speech; then listen (the owner interrupted the voice) or wait. */
+  function abortRun({ listen = false } = {}) {
     const R = S.run;
     if (!R) return;
     S.run = null;
-    if (R.offs) for (const off of R.offs) callQuietly(off);
+    detachRun(R);
     cancelRunRender();
+    cancelSpeech();
     if (R.run) abortQuietly(R.run);
     showMission(false);
     syncCoreAgents(null);
     haptic('light');
-    goIdle('stopped');
+    if (listen && S.sttOk) startListening({ gesture: true, keepAnswer: true });
+    else goIdle('stopped');
   }
 
-  function deliverAnswer(turn) {
+  // ------------------------------------------------------------------- speaking while it streams
+
+  function scheduleFeed(R) {
+    if (R.feedTimer || !R.feed) return;
+    R.feedTimer = setTimeout(() => {
+      R.feedTimer = 0;
+      if (S.run === R && !S.closed) feedLive(R, false);
+    }, FEED_DELAY_MS);
+  }
+
+  /** Speak the reply's newly complete sentences (done: the turn is over, speak the rest). */
+  function feedLive(R, done) {
+    if (!R.feed || S.closed) return null;
+    let step;
+    try {
+      step = R.feed.update({ segments: R.run.turn && R.run.turn.segments, done });
+    } catch (err) {
+      console.warn('[voice] could not follow the reply', err);
+      return null;
+    }
+    if (R.liveOff || (!step.pieces.length && !step.finish)) return step;
+    let sp = liveOf(R);
+    if (!sp) {
+      if (!step.pieces.length || R.liveDone) return step;
+      sp = startLive(R);
+      if (!sp) return step;
+    }
+    for (const piece of step.pieces) appendLive(sp, piece);
+    if (step.finish && !sp.finished) {
+      sp.finished = true;
+      try {
+        sp.stream.finish();
+      } catch (err) {
+        console.warn('[voice] speech failed', err);
+      }
+    }
+    return step;
+  }
+
+  function liveOf(R) {
+    const sp = S.speech;
+    return sp && sp.kind === 'live' && sp.run === R ? sp : null;
+  }
+
+  /** The voice is audible (or about to be): a chunk started and the stream isn't waiting for text. */
+  function isTalking(sp) {
+    return !!sp && sp.started && !sp.idle;
+  }
+
+  function startLive(R) {
+    cancelSpeech();
+    const s = getS();
+    const sp = newSpeech('live', R);
+    S.speech = sp;
+    root.dataset.speech = 'live';
+    sp.karaoke = startLiveCaptions();
+    try {
+      sp.stream =
+        tts.createSpeechStream({
+          voiceURI: typeof s.voiceURI === 'string' ? s.voiceURI : '',
+          rate: speechRate(),
+          onStart: () => onSpeechStart(sp),
+          onChunk: (c) => onSpeechChunk(sp, c),
+          onBoundary: (b) => onSpeechBoundary(sp, b),
+          onIdle: () => onLiveIdle(sp),
+          onEnd: (info) => onSpeechEnd(sp, info),
+        }) || null;
+    } catch (err) {
+      console.warn('[voice] speech failed', err);
+      sp.stream = null;
+    }
+    if (!sp.stream || typeof sp.stream.append !== 'function') {
+      if (S.speech === sp) S.speech = null;
+      delete root.dataset.speech;
+      R.liveOff = true;
+      return null;
+    }
+    startEstimator(sp);
+    renderControls();
+    return sp;
+  }
+
+  function appendLive(sp, piece) {
+    if (!piece || sp.token !== S.speechToken) return;
+    const start = sp.display.length;
+    sp.display += piece;
+    addLiveCaption(sp.karaoke, start, piece);
+    if (S.karaoke === sp.karaoke) setCaptionLength(captionLength(sp.display));
+    const form = spokenForm(sp.display);
+    sp.text = form.spoken;
+    sp.map = form.map;
+    try {
+      sp.stream.append(piece);
+    } catch (err) {
+      console.warn('[voice] speech failed', err);
+    }
+  }
+
+  /** Everything written so far is spoken and the reply is still being written (or working). */
+  function onLiveIdle(sp) {
+    if (sp.token !== S.speechToken) return;
+    sp.idle = true;
+    sp.chunk = null;
+    if (S.karaoke === sp.karaoke) finishKaraoke();
+    if (S.run && S.run === sp.run) renderRunNow();
+    else renderControls();
+  }
+
+  function deliverAnswer(turn, R) {
     syncCoreAgents(null); // the mission is over: the core turns to the voice
     const md = finalAnswerMarkdown(turn);
     const full = fullDisplayText(md);
+    if (R && R.feed) {
+      const live = liveOf(R);
+      if (live || R.liveDone || R.liveOff) {
+        // Spoken (or being spoken) while it streamed: say the rest; no chime over the voice.
+        if (live) feedLive(R, true);
+        S.answer = answerFromFeed(R, md, full);
+        S.showFull = false;
+        announce('Answer ready');
+        if (live && S.speech === live) {
+          renderControls();
+          return; // the stream's end carries on (listen again, or wait)
+        }
+        if (R.liveDone && !R.liveOff) {
+          afterSpeech();
+          return;
+        }
+        finishKaraoke();
+        goIdle('answered');
+        return;
+      }
+      // Nothing was spoken yet (a one-sentence reply, or a fast one): the spoken part, after the chime.
+      let step = null;
+      try {
+        step = R.feed.update({ segments: turn && turn.segments, done: true });
+      } catch (err) {
+        console.warn('[voice] could not read the reply', err);
+      }
+      if (step && step.pieces.length && S.ttsOk) {
+        S.answer = answerFromFeed(R, md, full);
+        S.showFull = false;
+        play('reply-done');
+        haptic('success');
+        announce('Answer ready');
+        speak(S.answer.summary, 'summary', sounds ? REPLY_CHIME_MS : 0);
+        return;
+      }
+    }
+    // Nothing to speak from the stream (only a mission card, empty text, or a reply started in the
+    // chat): the answer's summary paragraph, after the chime.
     let summary = speechText(md, 'summary');
     if (!summary) summary = clip(full, 400);
     if (!summary) summary = `Done, ${ownerName()}. The details are in the chat.`;
@@ -1371,6 +1599,13 @@ function createVoiceMode(opts) {
       finishKaraoke();
       goIdle('answered');
     }
+  }
+
+  /** S.answer for a reply spoken from its stream: what was said, and the whole answer. */
+  function answerFromFeed(R, md, full) {
+    const st = R.feed.state();
+    const summary = st.spoken.trim() || clip(full, 400) || `Done, ${ownerName()}. The details are in the chat.`;
+    return { md, summary, full: full || summary, more: !!full && (st.cut || st.capped || full.length > summary.length + 24) };
   }
 
   function deliverError(turn) {
