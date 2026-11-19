@@ -31,23 +31,44 @@ const PLACEHOLDER = {
 const BLOCKED_SHORT = { nokey: 'Add your API key to start', offline: 'You’re offline' };
 const MAX_LINES = 6;
 
-/** Team sizes offered in swarm mode (SPEC §15: swarm-size-<n>). */
+/**
+ * Team sizes offered in swarm mode (SPEC §15: swarm-size-<n>), plus the owner's own default
+ * (Settings → AI → agents per wave) when it isn't one of them: the control starts there.
+ */
 export const SWARM_SIZES = Object.freeze([3, 6, 10, 15, 20]);
-const SWARM_SIZE_INFO = {
-  3: 'Focused — a small team for a narrow question.',
-  6: 'Balanced — several angles at a moderate cost.',
-  10: 'Broad — wide coverage for big comparisons.',
-  15: 'Extensive — deep coverage at a noticeably higher cost.',
-  20: 'Maximum — exhaustive research at the highest cost.',
-};
 
-/** settings.maxAgents snapped to the nearest offered size (halfway rounds up: swarm means the full team). */
-export function snapSwarmSize(value) {
+/** The sizes offered for a given default: SWARM_SIZES plus the default, ascending. */
+export function swarmSizesFor(defaultSize) {
+  return [...new Set([...SWARM_SIZES, defaultTeamSize(defaultSize)])].sort((a, b) => a - b);
+}
+
+/** settings.maxAgents as a team size (1–20; 8 when unusable). */
+export function defaultTeamSize(value) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n >= 1 ? Math.min(20, n) : 8;
+}
+
+/** `value` snapped to the nearest of `sizes` (halfway rounds up: swarm means the full team). */
+export function snapSwarmSize(value, sizes = SWARM_SIZES) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return 10;
-  let best = SWARM_SIZES[0];
-  for (const size of SWARM_SIZES) if (Math.abs(size - n) <= Math.abs(best - n)) best = size;
+  if (!Number.isFinite(n)) return sizes.includes(10) ? 10 : sizes[sizes.length - 1];
+  let best = sizes[0];
+  for (const size of sizes) if (Math.abs(size - n) <= Math.abs(best - n)) best = size;
   return best;
+}
+
+function swarmSizeInfo(n, defaultSize) {
+  const what =
+    n <= 3
+      ? 'Focused — a small team for a narrow question.'
+      : n <= 6
+        ? 'Balanced — several angles at a moderate cost.'
+        : n <= 10
+          ? 'Broad — wide coverage for big comparisons.'
+          : n <= 15
+            ? 'Extensive — deep coverage at a noticeably higher cost.'
+            : 'Maximum — exhaustive research at the highest cost.';
+  return n === defaultSize ? `Your default (Settings → AI). ${what}` : what;
 }
 
 const ATTACH_TITLE = 'Attach photos or PDFs — photos are resized and their location data removed';
@@ -135,8 +156,9 @@ export function createComposer(o) {
   );
 
   // ---- team size (swarm mode) ---------------------------------------------------------
-  let defaultMax = Number(readSettings().maxAgents);
-  let swarmSize = snapSwarmSize(defaultMax);
+  let defaultMax = defaultTeamSize(readSettings().maxAgents);
+  let sizes = swarmSizesFor(defaultMax);
+  let swarmSize = defaultMax;
   const popId = `swarm-pop-${Math.random().toString(36).slice(2, 9)}`;
   const chipCount = h('span', { class: 'swarm-chip-count' });
   const chip = h(
@@ -152,44 +174,52 @@ export function createComposer(o) {
     h('span', { class: 'swarm-chip-label', text: 'agents' }),
     icon('chevron-up', { size: 14, class: 'swarm-chip-caret' }),
   );
-  const sizeButtons = SWARM_SIZES.map((n) =>
-    h(
-      'button',
-      {
-        class: 'swarm-opt',
-        type: 'button',
-        attrs: { 'data-testid': `swarm-size-${n}`, 'aria-pressed': 'false', 'aria-label': `${n} agents`, 'data-value': String(n) },
-        on: {
-          click: () => {
-            setSwarmSize(n);
-            closePop(true);
-          },
-          focus: () => setText(popCaption, SWARM_SIZE_INFO[n]),
-          mouseenter: () => setText(popCaption, SWARM_SIZE_INFO[n]),
-        },
-      },
-      String(n),
-    ),
-  );
+  let sizeButtons = [];
   const popCaption = h('p', { class: 'swarm-pop-caption', attrs: { 'aria-live': 'polite' } });
+  const popRow = h('div', { class: 'swarm-pop-row', on: { keydown: onPopKey, mouseleave: () => setText(popCaption, swarmSizeInfo(swarmSize, defaultMax)) } });
   const pop = h(
     'div',
     { class: 'swarm-pop', id: popId, hidden: true, attrs: { role: 'group', 'aria-label': 'Agents per wave for this message' } },
     h('div', { class: 'swarm-pop-title' }, h('span', { text: 'Agents per wave' }), h('span', { class: 'swarm-pop-sub', text: 'this message' })),
-    h('div', { class: 'swarm-pop-row', on: { keydown: onPopKey, mouseleave: () => setText(popCaption, SWARM_SIZE_INFO[swarmSize]) } }, sizeButtons),
+    popRow,
     popCaption,
   );
+
+  function renderSizeButtons() {
+    sizeButtons = sizes.map((n) =>
+      h(
+        'button',
+        {
+          class: ['swarm-opt', n === defaultMax && 'is-default'],
+          type: 'button',
+          attrs: { 'data-testid': `swarm-size-${n}`, 'aria-pressed': 'false', 'aria-label': `${n} agents${n === defaultMax ? ' (your default)' : ''}`, 'data-value': String(n) },
+          on: {
+            click: () => {
+              setSwarmSize(n);
+              closePop(true);
+            },
+            focus: () => setText(popCaption, swarmSizeInfo(n, defaultMax)),
+            mouseenter: () => setText(popCaption, swarmSizeInfo(n, defaultMax)),
+          },
+        },
+        String(n),
+      ),
+    );
+    popRow.dataset.count = String(sizes.length);
+    popRow.replaceChildren(...sizeButtons);
+  }
+  renderSizeButtons();
   const swarmWrap = h('div', { class: 'swarm-size', hidden: mode !== 'swarm' }, chip, pop);
   let popOpen = false;
 
   function setSwarmSize(n) {
-    swarmSize = SWARM_SIZES.includes(n) ? n : snapSwarmSize(n);
+    swarmSize = sizes.includes(n) ? n : snapSwarmSize(n, sizes);
     setText(chipCount, String(swarmSize));
     chip.dataset.value = String(swarmSize);
     chip.setAttribute('aria-label', `Agents per wave: ${swarmSize}. Change`);
     chip.title = `Up to ${swarmSize} agents per wave for this message`;
     for (const b of sizeButtons) b.setAttribute('aria-pressed', b.dataset.value === String(swarmSize) ? 'true' : 'false');
-    setText(popCaption, SWARM_SIZE_INFO[swarmSize]);
+    setText(popCaption, swarmSizeInfo(swarmSize, defaultMax));
   }
 
   function openPop() {
@@ -198,7 +228,7 @@ export function createComposer(o) {
     pop.hidden = false;
     chip.setAttribute('aria-expanded', 'true');
     swarmWrap.classList.add('is-open');
-    setText(popCaption, SWARM_SIZE_INFO[swarmSize]);
+    setText(popCaption, swarmSizeInfo(swarmSize, defaultMax));
     const current = sizeButtons.find((b) => b.dataset.value === String(swarmSize)) || sizeButtons[0];
     try {
       current.focus({ preventScroll: true });
@@ -753,7 +783,11 @@ export function createComposer(o) {
     }
     const cs = getComputedStyle(input);
     const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-    const max = lineHeight * MAX_LINES + pad;
+    // Up to 6 lines, but never more than about a fifth of what is visible (the on-screen
+    // keyboard can leave 180 px in landscape): the conversation must stay in view.
+    const vv = window.visualViewport;
+    const visible = vv && vv.height > 0 ? vv.height : window.innerHeight;
+    const max = Math.min(lineHeight * MAX_LINES + pad, Math.max(lineHeight * 2 + pad, Math.floor(visible * 0.22)));
     const next = Math.min(input.scrollHeight, max);
     input.style.height = `${Math.ceil(next)}px`;
     input.classList.toggle('is-scrolling', input.scrollHeight > max + 1);
@@ -845,14 +879,27 @@ export function createComposer(o) {
   // The default team size follows Settings → AI → agents per wave.
   try {
     onSettingsChange((s) => {
-      const next = Number(s && s.maxAgents);
-      if (Number.isFinite(next) && next !== defaultMax) {
+      const next = defaultTeamSize(s && s.maxAgents);
+      if (next !== defaultMax) {
         defaultMax = next;
-        setSwarmSize(snapSwarmSize(next));
+        sizes = swarmSizesFor(next);
+        renderSizeButtons();
+        setSwarmSize(next);
       }
     });
   } catch {
     /* settings unavailable: keep the initial size */
+  }
+
+  // The keyboard opening or closing (or a rotation) changes how tall the message box may grow.
+  if (window.visualViewport) {
+    let lastVisible = 0;
+    window.visualViewport.addEventListener('resize', () => {
+      const visible = Math.round(window.visualViewport.height);
+      if (visible === lastVisible) return;
+      lastVisible = visible;
+      autoGrow();
+    });
   }
 
   // Re-fit the placeholder when the text row changes width (rotation, sidebar, attachments).
@@ -938,7 +985,7 @@ export function createComposer(o) {
     /** What onSend's third argument would be right now. */
     getExtras: () => (mode === 'swarm' ? { attachments: readyAttachments(), maxAgents: swarmSize } : { attachments: readyAttachments() }),
     getSwarmSize: () => swarmSize,
-    setSwarmSize: (n) => setSwarmSize(snapSwarmSize(n)),
+    setSwarmSize: (n) => setSwarmSize(snapSwarmSize(n, sizes)),
     describeAttachments: () => describeAttachments(readyAttachments()),
   };
 }

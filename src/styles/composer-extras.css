@@ -251,6 +251,27 @@
   color: var(--text);
 }
 
+/* Six sizes (the owner's default is not a standard one): two rows of three keep 44px targets. */
+.swarm-pop-row[data-count='6'] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.swarm-opt.is-default {
+  position: relative;
+}
+
+.swarm-opt.is-default::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--violet);
+  opacity: 0.8;
+}
+
 .swarm-opt[aria-pressed='true'] {
   border-color: var(--violet);
   background: var(--violet-soft);

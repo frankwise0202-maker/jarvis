@@ -6,11 +6,13 @@
 //   core.setState('thinking'); core.setAgents(mission.agents); core.setLevel(0.4); core.destroy();
 //   core.celebrate();   // mission-complete burst (orbit/hero; skipped under reduced motion)
 //
-// Rendering: Canvas 2D, DPR-aware, backing store resized by a ResizeObserver. One shared
-// requestAnimationFrame loop drives every awake core; each core caps itself at 30fps on small or
-// touch screens (and for the 32px mini orb) and 60fps on desktop. A core sleeps while the page is
-// hidden, while its canvas is off-screen, zero-sized or detached, and under prefers-reduced-motion
-// it draws one static frame per change instead of animating.
+// Rendering: Canvas 2D, DPR-aware (at most 2× on phones, 3× elsewhere), backing store resized by a
+// ResizeObserver. One shared requestAnimationFrame loop drives every awake core; each core caps
+// itself at 30fps on small or touch screens (and for the 32px mini orb) and 60fps on desktop. A
+// core sleeps while the page is hidden, while its canvas is off-screen, zero-sized, detached or
+// covered (inside an `inert` subtree: a sheet or overlay is on top), and under
+// prefers-reduced-motion it draws one static frame per change instead of animating. The header's
+// mini orb also rests on a static frame after 30s in a resting state and wakes on any change.
 //
 // Hot path: the per-frame code allocates nothing. Colors are prebuilt strings, glows are sprites
 // rendered once per color, tick directions come from precomputed tables, and everything derived
@@ -159,6 +161,34 @@ function onThemeSignal() {
     }
     for (const fn of Array.from(paletteListeners)) fn();
   });
+}
+
+// Covered cores sleep: sheets (Settings, History, Mission Control, …), Voice Mode and other
+// overlays make everything behind them `inert`, and a canvas inside an inert subtree cannot be
+// seen properly or used, so it stops animating (its last frame stays). One observer serves every
+// live core: it re-checks them whenever any element's `inert` attribute changes.
+const coverListeners = new Set();
+let coverObserver = null;
+
+function watchCover(fn) {
+  coverListeners.add(fn);
+  if (!coverObserver && typeof MutationObserver === 'function') {
+    try {
+      coverObserver = new MutationObserver(() => {
+        for (const listener of Array.from(coverListeners)) listener();
+      });
+      coverObserver.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['inert'] });
+    } catch {
+      coverObserver = null; // cores then simply keep animating when covered
+    }
+  }
+  return () => {
+    coverListeners.delete(fn);
+    if (!coverListeners.size && coverObserver) {
+      coverObserver.disconnect();
+      coverObserver = null;
+    }
+  };
 }
 
 function watchTheme() {
@@ -584,6 +614,7 @@ export function createCore(canvas, opts = {}) {
 
   const onVisibility = () => updateAwake();
   document.addEventListener('visibilitychange', onVisibility);
+  const unwatchCover = watchCover(() => updateAwake());
 
   // Dozing (mini orb only, see MINI_DOZE_MS): no animation loop, one static frame per change.
   const dozeMs = Number.isFinite(opts.idleSleepMs) ? Math.max(0, opts.idleSleepMs) : mode === 'mini' ? MINI_DOZE_MS : 0;
@@ -618,7 +649,15 @@ export function createCore(canvas, opts = {}) {
 
   function updateAwake() {
     const should =
-      !destroyed && !dozing && !reducedMq.matches && !document.hidden && inView && width > 1 && height > 1 && canvas.isConnected;
+      !destroyed &&
+      !dozing &&
+      !reducedMq.matches &&
+      !document.hidden &&
+      inView &&
+      width > 1 &&
+      height > 1 &&
+      canvas.isConnected &&
+      !canvas.closest('[inert]'); // covered by a sheet or an overlay
     if (should === awake) return;
     awake = should;
     if (awake) {
@@ -1379,6 +1418,7 @@ export function createCore(canvas, opts = {}) {
     else window.removeEventListener('resize', onWindowResize);
     if (io) io.disconnect();
     document.removeEventListener('visibilitychange', onVisibility);
+    unwatchCover();
     reducedMq.off();
     smallMq.off();
     if (dprWatch) dprWatch.off();

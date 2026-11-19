@@ -212,10 +212,16 @@ export default [
         t.assert(!(await t.page.locator(tid('swarm-size')).isVisible()), 'The team size control is hidden outside swarm mode');
         await t.selectMode('swarm');
         const chip = await t.visible('swarm-size', { message: 'Swarm mode shows the team size control' });
-        t.assert((await chip.getAttribute('data-value')) === '10', `The default (settings.maxAgents 8) snaps to 10 (got ${await chip.getAttribute('data-value')})`);
+        // The control starts at the owner's own default (settings.maxAgents 8, as the greeting
+        // says), which is offered next to the standard sizes.
+        t.assert((await chip.getAttribute('data-value')) === '8', `The default is settings.maxAgents = 8 (got ${await chip.getAttribute('data-value')})`);
         await chip.click();
         await t.visible('swarm-size-3', { message: 'The popover lists the sizes' });
-        for (const n of [3, 6, 10, 15, 20]) t.assert(await t.page.locator(tid(`swarm-size-${n}`)).isVisible(), `swarm-size-${n} is offered`);
+        for (const n of [3, 6, 8, 10, 15, 20]) t.assert(await t.page.locator(tid(`swarm-size-${n}`)).isVisible(), `swarm-size-${n} is offered`);
+        t.assert((await t.page.locator(tid('swarm-size-8')).getAttribute('aria-pressed')) === 'true', 'The default size is the selected one');
+        for (const box of await t.page.locator('.swarm-opt').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON()))) {
+          t.assert(box.width >= 44 && box.height >= 44, `Team size buttons stay at least 44×44 px (got ${Math.round(box.width)}×${Math.round(box.height)})`);
+        }
         t.assert((await chip.getAttribute('aria-expanded')) === 'true', 'aria-expanded reflects the open popover');
         await t.screenshot('2-team-size');
         await t.page.locator(tid('swarm-size-3')).click();
