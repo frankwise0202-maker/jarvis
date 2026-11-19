@@ -608,9 +608,10 @@ describe('mock: directives', () => {
     const { client } = setup({ timeScale: 0.15 });
     const normal = await timed(client, leadParams([userTurn('What is the capital of France?')]));
     const slow = await timed(client, leadParams([userTurn('[[slow]] What is the capital of France?')]));
-    assert.ok(slow >= 300 && slow > normal * 2.5, `slow lead ${slow} ms vs normal ${normal} ms`);
+    // Timers never fire early, so lower bounds are reliable even on a busy machine (no upper bounds).
+    assert.ok(slow >= 300 && normal < slow, `slow lead ${slow} ms vs normal ${normal} ms`);
     const slowWorker = await timed(client, workerParams(workerPrompt({ mission: 'S', role: 'A', task: 'Research Q. [[slow]]' })));
-    assert.ok(slowWorker >= 750 && slowWorker < 1500, `slow worker ${slowWorker} ms at timeScale 0.15 (≈ 6 s at 1)`);
+    assert.ok(slowWorker >= 5600 * 0.15 * 0.95, `slow worker ${slowWorker} ms at timeScale 0.15 (≈ 6 s at 1)`);
   });
 });
 

@@ -1105,6 +1105,41 @@ export function createStatsView(opts = {}) {
   };
 }
 
+/**
+ * A compact launcher row for the dashboard ("Systems · 227 agents · 44 missions ›"), e.g. under
+ * the desktop Mission Control panel. Keeps its readout current as turns are recorded.
+ *   createStatsLauncher({ onOpen, testid = 'open-systems-panel' }) → { el, destroy() }
+ */
+export function createStatsLauncher(opts = {}) {
+  const o = isObj(opts) ? opts : {};
+  const readout = h('span', { class: 'sys-launch-readout' });
+  const el = h(
+    'button',
+    {
+      class: 'sys-launch',
+      type: 'button',
+      attrs: { 'data-testid': typeof o.testid === 'string' && o.testid ? o.testid : 'open-systems-panel', 'aria-label': 'Open the Systems dashboard' },
+      on: { click: () => typeof o.onOpen === 'function' && o.onOpen() },
+    },
+    h('span', { class: 'sys-launch-icon', attrs: { 'aria-hidden': 'true' } }, icon('chip', { size: 16 })),
+    h('span', { class: 'sys-launch-label', text: 'Systems' }),
+    readout,
+    h('span', { class: 'sys-launch-chevron', attrs: { 'aria-hidden': 'true' } }, icon('chevron-right', { size: 16 })),
+  );
+  const update = () => {
+    const t = getStats().totals;
+    setText(readout, t.turns ? [plural(t.agents, 'agent'), plural(t.missions, 'mission')].map(nb).join(' · ') : 'Standing by');
+  };
+  update();
+  const off = onStatsChange(raf(update));
+  return {
+    el,
+    destroy() {
+      off();
+    },
+  };
+}
+
 /** Round up to 1, 2, 2.5 or 5 × 10^n. */
 function niceCeil(x) {
   if (!(x > 0)) return 1;

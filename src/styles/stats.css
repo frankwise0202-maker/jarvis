@@ -915,6 +915,68 @@
   transition: none;
 }
 
+/* ---- launcher row (stats.js createStatsLauncher) ------------------------------------------ */
+
+.sys-launch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: calc(100% - var(--sp-8));
+  min-height: var(--tap);
+  margin: var(--sp-2) var(--sp-4) var(--sp-3);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.sys-launch:hover {
+  border-color: var(--line-2);
+  color: var(--text);
+  box-shadow: 0 0 var(--sp-4) var(--accent-soft);
+}
+
+.sys-launch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sys-launch-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.sys-launch-label {
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
+.sys-launch-readout {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-3);
+}
+
+.sys-launch-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--text-4);
+}
+
 /* ---- share & export options (share.js createShareOptions; mounted in a bottom sheet) ------ */
 
 .rec-share {
@@ -1076,6 +1138,24 @@
 .rec-empty {
   font-size: var(--fs-sm);
   color: var(--text-3);
+}
+
+/* Turn-footer Share button (added to chat.js by the integrator, data-testid "turn-share"):
+   icon-only on the narrowest phones so Copy · Speak · Mission · Share fit on one row. */
+@media (max-width: 359px) {
+  [data-testid="turn-share"] {
+    justify-content: center;
+    min-width: var(--tap);
+  }
+
+  [data-testid="turn-share"] > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 /* ---- screen-reader-only ------------------------------------------------------------------ */

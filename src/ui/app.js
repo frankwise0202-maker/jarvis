@@ -566,6 +566,13 @@ export async function startApp(rootEl) {
     }
   }
 
+  /** Abort every run and wait (briefly) for each to settle, so no late persist re-saves data. */
+  async function stopAllRuns() {
+    const entries = Array.from(state.runs.values());
+    for (const entry of entries) safe(() => entry.run.abort());
+    await Promise.all(entries.map((entry) => withTimeout(Promise.resolve(entry.run.done).catch(() => null), 3000, null)));
+  }
+
   function stop() {
     if (!state.conv) return;
     const entry = state.runs.get(state.conv.id);
@@ -959,13 +966,13 @@ export async function startApp(rootEl) {
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),
       deleteAllConversations: async () => {
-        for (const entry of Array.from(state.runs.values())) safe(() => entry.run.abort());
+        await stopAllRuns();
         await store.removeAll();
         setConversation(null);
         await refreshHistory();
       },
       resetApp: async () => {
-        for (const entry of Array.from(state.runs.values())) safe(() => entry.run.abort());
+        await stopAllRuns();
         if (!state.demo) await resetApp();
         uiSet(UI_KEYS.last, null);
         uiSet(UI_KEYS.sidebar, null);

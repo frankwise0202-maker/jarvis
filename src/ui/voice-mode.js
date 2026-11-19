@@ -367,7 +367,7 @@ function createVoiceMode(opts) {
     const asked = userTextFor(activeRun);
     if (asked) showCaption('quote', `“${asked}”`);
     else showCaption('hint', 'Working on it.');
-    attachRun(activeRun, S.run);
+    attachRun(activeRun, S.run, false); // the owner started it in the chat: exiting won't stop it
   } else if (S.sttOk) {
     startListening({ gesture: true });
   } else {
@@ -688,6 +688,16 @@ function createVoiceMode(opts) {
         showCaption('hint', `Still here whenever you need me, ${name}.`, tapHint);
         announce('Stopped listening');
         break;
+      case 'offline-kept':
+        setStatus('Offline', 'wifi-off');
+        showCaption('error', 'You’re offline, so I can’t answer just yet.', 'Your request is in the box below — send it once you’re back online.');
+        announce('Offline. Your request was kept.');
+        break;
+      case 'back-online':
+        setStatus('Ready', 'dot');
+        showCaption('hint', 'You’re back online.', 'Your request is waiting below — send it when you’re ready.');
+        announce('Back online');
+        break;
       case 'unsupported':
         setStatus('Type to talk', 'edit');
         showCaption('hint', 'Voice input isn’t available in this browser.', `Type below — your keyboard’s dictation key works too.${S.ttsOk ? ' I’ll answer out loud.' : ''}`);
@@ -701,16 +711,19 @@ function createVoiceMode(opts) {
         }
         announce('Ready');
     }
-    if (offline) {
+    if (offline && reason !== 'offline-kept') {
       setStatus('Offline', 'wifi-off');
+      if (reason !== 'answered') setSub('You’re offline — I’ll need a connection to answer.');
       announce('Offline');
     }
     renderControls();
   }
 
   function onConnectivity() {
-    if (S.closed) return;
-    if (!S.listen && !S.run && !S.speech && (S.state === 'idle' || S.state === 'offline')) goIdle(S.idleReason === 'offline-kept' ? 'keep' : S.idleReason);
+    if (S.closed || S.listen || S.run || S.speech) return;
+    if (S.state !== 'idle' && S.state !== 'offline') return;
+    const kept = S.idleReason === 'offline-kept' || S.idleReason === 'back-online';
+    goIdle(kept ? (isOnline() ? 'back-online' : 'offline-kept') : S.idleReason);
   }
 
   function onVisibility() {
@@ -1087,12 +1100,7 @@ function createVoiceMode(opts) {
       // Keep their words so nothing is lost.
       S.typing = true;
       input.value = words;
-      setVoiceState('offline');
-      setStatus('Offline', 'wifi-off');
-      showCaption('error', 'You’re offline, so I can’t answer just yet.', 'Your request is in the box below — send it once you’re back online.');
-      S.idleReason = 'offline-kept';
-      announce('Offline. Your request was kept.');
-      renderControls();
+      goIdle('offline-kept');
       return;
     }
     const pending = { pending: true };
@@ -1130,13 +1138,9 @@ function createVoiceMode(opts) {
     attachRun(result, pending);
   }
 
-  function attachRun(run, pending) {
-    if (S.closed) {
-      abortQuietly(run);
-      return;
-    }
-    if (S.run !== pending) {
-      abortQuietly(run);
+  function attachRun(run, pending, owned = true) {
+    if (S.closed || S.run !== pending) {
+      if (owned) abortQuietly(run);
       return;
     }
     if (!run || typeof run.on !== 'function') {
@@ -1144,7 +1148,7 @@ function createVoiceMode(opts) {
       sendFailed(new Error('Jarvis couldn’t start that request.'));
       return;
     }
-    const R = { run, offs: [], lastAgent: null, announcedMission: '' };
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '' };
     S.run = R;
     const onEvent = (event, type) => {
       if (S.run !== R) return;
@@ -1225,7 +1229,7 @@ function createVoiceMode(opts) {
       }
       return { text: seg.query ? `Searching “${clip(singleLine(seg.query), 40)}”` : 'Searching the web…', icon: 'search' };
     }
-    if (seg && seg.kind === 'text' && seg.text) return { text: hadMission ? 'Writing your briefing…' : 'Composing the answer…', icon: 'edit' };
+    if (seg && seg.kind === 'text' && seg.text) return { text: hadMission ? 'Writing your briefing…' : 'Writing…', icon: 'edit' };
     if (seg && seg.kind === 'memory') return { text: 'Updating memory…', icon: 'memory' };
     if (hadMission) return { text: 'Synthesizing the findings…', icon: 'layers' };
     return { text: 'Thinking…', icon: 'sparkle' };
@@ -1736,7 +1740,7 @@ function createVoiceMode(opts) {
       const R = S.run;
       S.run = null;
       if (R.offs) for (const off of R.offs) callQuietly(off);
-      if (R.run) abortQuietly(R.run); // leaving voice mode hangs up: stop the turn
+      if (R.run && R.owned) abortQuietly(R.run); // leaving voice mode hangs up: stop its turn
     }
     cancelRunRender();
     if (levelFrame) cancelAnimationFrame(levelFrame);

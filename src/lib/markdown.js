@@ -130,7 +130,7 @@ function normalizeSource(md) {
   if (!s) return '';
   if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
   if (s.indexOf('\r') !== -1) s = s.replace(/\r\n?/g, '\n');
-  if (s.indexOf('\u0000') !== -1) s = s.replace(/\u0000/g, '�');
+  if (s.indexOf('\u0000') !== -1) s = s.replace(/\u0000/g, '\uFFFD');
   BIDI_CONTROL_RE.lastIndex = 0;
   if (BIDI_CONTROL_RE.test(s)) s = s.replace(BIDI_CONTROL_RE, '');
   return s;
@@ -650,7 +650,7 @@ const EMAIL_AUTOLINK_RE =
 const BARE_URL_RE = /(?:https?:\/\/|www\.)[^\s<\]]+/gi;
 const URL_PREV_OK_RE = /[\s*_~(["'>:]/;
 
-const PUNCT_RE = safeRegExp('[\\p{P}\\p{S}]', 'u', /[!-/:-@[-`{-~¡-¿‐-‧‰-⁞　-〿]/);
+const PUNCT_RE = safeRegExp('[\\p{P}\\p{S}]', 'u', /[!-/:-@[-`{-~\u00A1-\u00BF\u2010-\u2027\u2030-\u205E\u3000-\u303F]/);
 const WS_RE = /\s/;
 
 function safeRegExp(source, flags, fallback) {
@@ -682,7 +682,7 @@ const ENTITIES = {
 function decodeEntity(m) {
   if (m[1] !== undefined || m[2] !== undefined) {
     const code = m[1] !== undefined ? parseInt(m[1], 16) : parseInt(m[2], 10);
-    if (!code || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '�';
+    if (!code || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '\uFFFD';
     if ((code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)) return '';
     return String.fromCodePoint(code);
   }
@@ -1648,7 +1648,7 @@ function tidyPlain(s) {
 }
 
 const URL_IN_TEXT_RE = /\b(?:https?:\/\/|www\.)[^\s<>()[\]]+/gi;
-const EMOJI_RE = safeRegExp('\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*\\uFE0F?', 'gu', /[☀-➿]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]/g);
+const EMOJI_RE = safeRegExp('\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*\\uFE0F?', 'gu', /[\u2600-\u27BF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]/g);
 
 function spokenHost(url) {
   try {
