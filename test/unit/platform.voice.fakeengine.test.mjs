@@ -8,23 +8,33 @@
 //   ... clock.advance(ms) / clock.runUntil(() => done, maxMs)
 //   fake.uninstall(); clock.restore();
 //
-// The fake engine is a FIFO queue like the real one: speak() queues, utterances play back to back
-// (a small engine gap), 'start' -> word 'boundary' events while it plays -> 'end'; cancel() empties
-// the queue with 'interrupted' (playing) and 'canceled' (queued) errors. Audio is simulated in
+// The fake engine is a FIFO queue like Chromium's and WebKit's: speak() appends to the queue; the
+// first utterance in it is the current one (handed to the "platform" after a small engine gap) and
+// the next one is handed over only once the current one has completed. `speaking` is true while
+// anything is queued, from the moment speak() is called (audio or not), `pending` while more than
+// one is. While it plays: 'start' -> word 'boundary' events -> 'end'; cancel() empties the queue
+// with 'interrupted' (the current one) and 'canceled' (the others) errors. Audio is simulated in
 // steps of 50 ms at `cps` characters per second × rate, and every stretch of audio is recorded in
 // fake.audio as { id, text, complete } (complete: it played to the end; a cancel or a cut-off
 // leaves it incomplete).
 //
 // Quirks (config.quirks), alone or combined; predicates get (utterance, n) with n the utterance's
-// position among the non-empty utterances the engine accepted (0-based):
+// position among the non-empty utterances the engine played or will play (0-based):
 //   a  stuckSpeaking: true       speaking stays true after audio ends (until cancel(), or for
 //                                good with stuckThroughCancel); stuckPending: true does the same for pending
 //   b  dropEnd(u, n)             no 'end' event; the engine still moves on to the next queued
-//      stallAfterLostEnd: true   ... unless this is set: then the engine stops until cancel()
+//                                (the event was lost, the completion was not)
+//      stallAfterLostEnd: true   ... unless this is set: the completion is lost too, so the
+//                                utterance stays current (speaking, nothing behind it plays) until cancel()
 //   c  dropSpeakInEnd: true      speak() called synchronously inside an 'end' handler is dropped
-//   d  dropAfterCancelMs: ms     speak() within ms after cancel() is dropped silently (dropWithError:
-//                                true fires 'canceled' for it instead); dropSpeak(u, k) drops the
-//                                k-th speak() call (0-based, all calls)
+//   d  dropAfterCancelMs: ms     speak() within ms after cancel() is dropped silently: it is queued
+//                                but never plays and never sends an event, so it holds the queue
+//                                (speaking stays true, nothing behind it plays) until cancel(), as
+//                                in Chromium (dropWithError: true fires 'canceled' for it instead,
+//                                which removes it); dropSpeak(u, k) drops the k-th speak() call the
+//                                same way (0-based, all calls); invisibleDrops: true models an
+//                                engine that forgets a dropped utterance instead (never queued,
+//                                `speaking` unaffected)
 //   e  cutoffMs: ms              audio stops after ms of playback (cutoffOnlineOnly: only voices
 //                                with localService false): no 'end', speaking stays true, the
 //                                engine is stuck until cancel()
@@ -32,9 +42,11 @@
 //      doubleEnd(u, n)          'end' fires twice
 //      noStart(u, n)            no 'start' event although audio plays
 //      boundaries: false        (config) no boundary events
+//      cpsFor(u, n) -> cps      (config) this utterance's own speed (default cps)
 //   g  fake.setHidden(true)      document.hidden: audio pauses, nothing new starts
 //   h  cancelErrorDelayMs: ms    when cancel()'s 'interrupted'/'canceled' errors arrive
-//      deadEngine: true          nothing ever plays and no event ever fires
+//      deadEngine: true          nothing ever plays and no event ever fires (each utterance is
+//                                dropped as in d, so `speaking` stays true)
 //      failWith(u, n) -> code    the utterance fails with an 'error' event of that code instead of playing
 
 import { test } from 'node:test';
@@ -132,31 +144,37 @@ export function createFakeSpeech(clock, config = {}) {
   const byId = new Map();
   let accepted = 0;
   let calls = 0;
-  let queue = [];
-  let cur = null; // { u, n, dur, played, words, nextWord, earlyFired, seg, begun }
-  let stalled = false;
+  let items = []; // the engine's queue; items[0] is the current utterance (playing, about to, stuck or dropped)
+  let cur = null; // the platform's playback of items[0]: { u, n, dur, played, words, nextWord, earlyFired, seg } | { u, dead: true }
+  let stuck = false; // items[0] never completed (a lost completion, a cut-off): nothing behind it plays until cancel()
   let stuckSpeaking = false;
   let stuckPending = false;
   let lastCancel = -Infinity;
   let inEnd = 0;
-  let kickTimer = 0;
+  let handTimer = 0;
   const doc = new EventTarget();
   doc.hidden = false;
   doc.visibilityState = 'visible';
 
   const fake = {
-    submitted: [], // every speak() call: { id, text, t, dropped: false | 'in-end' | 'after-cancel' | 'custom' | 'dead' }
+    submitted: [], // every speak() call: { id, text, t, dropped: false | 'in-end' | 'after-cancel' | 'custom' | 'dead', reached }
+    // (reached: the engine handed it to the platform, i.e. it got to the front of the queue)
     audio: [], // { id, text, startT, endT, complete, cut, cancelled }
     events: [], // { t, type, id, error? }
     cancels: 0,
-    maxOurs: 0, // most utterances in the engine (queued + playing) at once
+    maxOurs: 0, // most utterances in the engine (current + queued) at once
     get hidden() {
       return doc.hidden;
     },
     document: doc,
     completed: () => fake.audio.filter((s) => s.complete).map((s) => s.text),
     partial: () => fake.audio.filter((s) => !s.complete && s.endT !== null),
-    queued: () => queue.length + (cur ? 1 : 0),
+    queued: () => items.length,
+    /** Ids of utterances that sent no event at all (no start, boundary, end or error). */
+    silent: () => {
+      const heard = new Set(fake.events.map((e) => e.id));
+      return fake.submitted.filter((s) => !heard.has(s.id)).map((s) => s.id);
+    },
     /** Replace the voice list and announce it ('voiceschanged'), like Chrome loading voices late. */
     setVoices(list) {
       cfg.voices = list.slice();
@@ -164,12 +182,12 @@ export function createFakeSpeech(clock, config = {}) {
     },
     /** Fire an event on any utterance spoken earlier (a late or stray event), e.g. fake.fire(id, 'error', { error: 'interrupted' }). */
     fire: (id, type, extra) => fire(byId.get(id), type, extra),
-    idle: () => !cur && !queue.length,
+    idle: () => !items.length,
     setHidden(hidden) {
       doc.hidden = !!hidden;
       doc.visibilityState = hidden ? 'hidden' : 'visible';
       doc.dispatchEvent(new Event('visibilitychange'));
-      if (!hidden) kick();
+      if (!hidden) handOff();
     },
     install() {
       for (const k of ['speechSynthesis', 'SpeechSynthesisUtterance', 'document']) saved[k] = Object.getOwnPropertyDescriptor(globalThis, k);
@@ -214,8 +232,8 @@ export function createFakeSpeech(clock, config = {}) {
 
   const synth = new EventTarget();
   Object.defineProperties(synth, {
-    speaking: { get: () => !!cur || stuckSpeaking || stalled },
-    pending: { get: () => queue.length > 0 || stuckPending },
+    speaking: { get: () => items.length > 0 || stuckSpeaking },
+    pending: { get: () => items.length > 1 || stuckPending },
     paused: { get: () => false },
   });
   synth.getVoices = () => cfg.voices.slice();
@@ -223,69 +241,77 @@ export function createFakeSpeech(clock, config = {}) {
   synth.resume = () => {};
   synth.speak = (u) => {
     const k = calls++;
-    const rec = { id: u.__id, text: u.text, t: clock.now, dropped: false, voice: u.voice ? u.voice.voiceURI : null, rate: u.rate, lang: u.lang };
+    const rec = { id: u.__id, text: u.text, t: clock.now, dropped: false, reached: false, voice: u.voice ? u.voice.voiceURI : null, rate: u.rate, lang: u.lang };
+    u.__rec = rec;
     byId.set(u.__id, u);
     fake.submitted.push(rec);
-    if (q.deadEngine) {
-      rec.dropped = 'dead';
-      return;
-    }
     if (inEnd && q.dropSpeakInEnd) {
       rec.dropped = 'in-end';
       return;
     }
-    if (clock.now - lastCancel < (q.dropAfterCancelMs || 0)) {
-      rec.dropped = 'after-cancel';
-      if (q.dropWithError) setTimeout(() => fire(u, 'error', { error: 'canceled' }), 5);
-      return;
+    let drop = '';
+    if (q.deadEngine) drop = 'dead';
+    else if (clock.now - lastCancel < (q.dropAfterCancelMs || 0)) {
+      if (q.dropWithError) {
+        rec.dropped = 'after-cancel';
+        setTimeout(() => fire(u, 'error', { error: 'canceled' }), 5);
+        return;
+      }
+      drop = 'after-cancel';
+    } else if (q.dropSpeak && q.dropSpeak(u, k)) drop = 'custom';
+    if (drop) {
+      rec.dropped = drop;
+      if (q.invisibleDrops) return;
+      u.__dead = true; // queued, but it never plays and never sends an event
     }
-    if (q.dropSpeak && q.dropSpeak(u, k)) {
-      rec.dropped = 'custom';
-      return;
-    }
-    u.__n = u.text ? accepted++ : -1;
-    queue.push(u);
-    fake.maxOurs = Math.max(fake.maxOurs, fake.queued());
-    kick();
+    u.__n = u.text && !drop ? accepted++ : -1;
+    items.push(u);
+    fake.maxOurs = Math.max(fake.maxOurs, items.length);
+    handOff();
   };
   synth.cancel = () => {
     fake.cancels += 1;
     lastCancel = clock.now;
-    stalled = false;
+    stuck = false;
     if (!q.stuckThroughCancel) {
       stuckSpeaking = false;
       stuckPending = false;
     }
-    const victims = [];
-    if (cur) {
-      if (cur.seg) {
-        cur.seg.endT = clock.now;
-        cur.seg.cancelled = true;
-      }
-      victims.push([cur.u, 'interrupted']);
-      cur = null;
+    clearTimeout(handTimer);
+    handTimer = 0;
+    if (cur && cur.seg && cur.seg.endT === null) {
+      cur.seg.endT = clock.now;
+      cur.seg.cancelled = true;
     }
-    for (const u of queue) victims.push([u, 'canceled']);
-    queue = [];
+    const victims = items.map((u, i) => [u, i === 0 ? 'interrupted' : 'canceled']);
+    items = [];
+    cur = null;
     for (const [u, code] of victims) setTimeout(() => fire(u, 'error', { error: code }), q.cancelErrorDelayMs || 0);
   };
 
-  function kick() {
-    if (kickTimer || cur || stalled || !queue.length || doc.hidden) return;
-    kickTimer = setTimeout(() => {
-      kickTimer = 0;
-      startNext();
+  /** Hand the first queued utterance to the platform (after the engine's gap) once nothing holds it. */
+  function handOff() {
+    if (handTimer || cur || stuck || !items.length || doc.hidden) return;
+    handTimer = setTimeout(() => {
+      handTimer = 0;
+      startFront();
     }, cfg.gapMs);
   }
 
-  function startNext() {
-    if (cur || stalled || !queue.length || doc.hidden) return;
-    const u = queue.shift();
+  function startFront() {
+    if (cur || stuck || !items.length || doc.hidden) return;
+    const u = items[0];
+    if (u.__rec) u.__rec.reached = true;
+    if (u.__dead) {
+      cur = { u, dead: true }; // the platform never plays it: the queue waits until cancel()
+      return;
+    }
     const rate = Number(u.rate) || 1;
     const words = [];
     for (const m of u.text.matchAll(/\S+/g)) words.push({ at: m.index, len: m[0].length });
-    const dur = u.text ? Math.max(cfg.minMs, (u.text.length / (cfg.cps * rate)) * 1000) : 5;
-    const c = { u, n: u.__n, rate, dur, played: 0, words, nextWord: 0, earlyFired: false, seg: null };
+    const cps = (cfg.cpsFor && cfg.cpsFor(u, u.__n)) || cfg.cps;
+    const dur = u.text ? Math.max(cfg.minMs, (u.text.length / (cps * rate)) * 1000) : 5;
+    const c = { u, n: u.__n, rate, cps, dur, played: 0, words, nextWord: 0, earlyFired: false, seg: null };
     cur = c;
     setTimeout(() => begin(c), cfg.startLatencyMs);
   }
@@ -294,9 +320,10 @@ export function createFakeSpeech(clock, config = {}) {
     if (cur !== c) return;
     const failure = q.failWith ? q.failWith(c.u, c.n) : '';
     if (failure) {
-      cur = null; // the engine could not speak it: an error instead of audio
+      cur = null; // the engine could not speak it: an error instead of audio, and it moves on
+      items.shift();
       fire(c.u, 'error', { error: failure });
-      kick();
+      handOff();
       return;
     }
     c.seg = { id: c.u.__id, text: c.u.text, startT: clock.now, endT: null, complete: false };
@@ -309,7 +336,7 @@ export function createFakeSpeech(clock, config = {}) {
 
   function boundaries(c) {
     if (cfg.boundaries === false) return;
-    while (cur === c && c.nextWord < c.words.length && (c.words[c.nextWord].at / (cfg.cps * c.rate)) * 1000 <= c.played) {
+    while (cur === c && c.nextWord < c.words.length && (c.words[c.nextWord].at / (c.cps * c.rate)) * 1000 <= c.played) {
       const w = c.words[c.nextWord++];
       fire(c.u, 'boundary', { name: 'word', charIndex: w.at, charLength: w.len });
     }
@@ -335,7 +362,7 @@ export function createFakeSpeech(clock, config = {}) {
       c.seg.endT = clock.now;
       c.seg.cut = true;
       cur = null;
-      stalled = true; // Chrome: the voice goes silent, speaking stays true, nothing else plays
+      stuck = true; // Chrome: the voice goes silent, speaking stays true, nothing else plays
       return;
     }
     if (c.played < c.dur) {
@@ -349,13 +376,14 @@ export function createFakeSpeech(clock, config = {}) {
     if (q.stuckSpeaking) stuckSpeaking = true;
     if (q.stuckPending) stuckPending = true;
     const lost = q.dropEnd && q.dropEnd(c.u, c.n);
-    if (!lost && !c.earlyFired) fire(c.u, 'end');
-    if (!lost && q.doubleEnd && q.doubleEnd(c.u, c.n)) fire(c.u, 'end');
     if (lost && q.stallAfterLostEnd) {
-      stalled = true;
+      stuck = true; // the platform never reports completion: it stays current, nothing behind it plays
       return;
     }
-    kick();
+    items.shift(); // completed: the engine moves on
+    if (!lost && !c.earlyFired) fire(c.u, 'end');
+    if (!lost && q.doubleEnd && q.doubleEnd(c.u, c.n)) fire(c.u, 'end');
+    handOff();
   }
 
   return fake;
@@ -409,6 +437,9 @@ if (isMain) {
         u.onboundary = (e) => seen.push(['b', u.text.slice(e.charIndex, e.charIndex + e.charLength)]);
       }
       globalThis.speechSynthesis.speak(a);
+      // Chromium and WebKit: `speaking` from speak() on (before any audio or event), `pending`
+      // only while more than one is queued.
+      assert.deepEqual([globalThis.speechSynthesis.speaking, globalThis.speechSynthesis.pending, fake.events.length], [true, false, 0]);
       globalThis.speechSynthesis.speak(b);
       assert.equal(globalThis.speechSynthesis.pending, true);
       assert.equal(fake.maxOurs, 2);
@@ -446,15 +477,56 @@ if (isMain) {
       clock.advance(1000);
       const t = clock.now;
       globalThis.speechSynthesis.cancel();
-      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('dropped.'));
+      const dropped = new globalThis.SpeechSynthesisUtterance('dropped.');
+      const seen = [];
+      dropped.onstart = dropped.onend = dropped.onboundary = dropped.onerror = (e) => seen.push(e.type);
+      globalThis.speechSynthesis.speak(dropped);
       clock.advance(150);
       assert.deepEqual(errors, [['interrupted', t + 100]]);
       clock.advance(100);
-      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('kept.'));
+      // Outside the window, but queued behind the dropped utterance: the dropped one never plays and
+      // never sends an event, yet it stays current (Chromium), so nothing behind it plays either.
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('behind.'));
       clock.advance(5000);
       assert.equal(fake.submitted[1].dropped, 'after-cancel');
+      assert.deepEqual([fake.completed(), seen], [[], []]);
+      assert.deepEqual([globalThis.speechSynthesis.speaking, globalThis.speechSynthesis.pending, fake.queued()], [true, true, 2]);
+      assert.deepEqual(fake.silent(), [fake.submitted[1].id, fake.submitted[2].id]);
+      // Only cancel() clears it; a speak() outside the window after that plays.
+      globalThis.speechSynthesis.cancel();
+      clock.advance(300);
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('kept.'));
+      clock.advance(5000);
       assert.deepEqual(fake.completed(), ['kept.']);
       assert.equal(fake.partial().length, 1);
+      assert.equal(globalThis.speechSynthesis.speaking, false);
+    });
+    // dropSpeak and a dead engine hold the queue the same way; invisibleDrops forgets the utterance.
+    withFake({ quirks: { dropSpeak: (u, k) => k === 0 } }, (clock, fake) => {
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('lost.'));
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('stuck behind it.'));
+      clock.advance(10_000);
+      assert.deepEqual([fake.completed(), fake.events.length, globalThis.speechSynthesis.speaking, globalThis.speechSynthesis.pending], [[], 0, true, true]);
+    });
+    withFake({ quirks: { deadEngine: true } }, (clock, fake) => {
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('Hello.'));
+      clock.advance(60_000);
+      assert.deepEqual([fake.audio.length, fake.events.length, globalThis.speechSynthesis.speaking, fake.submitted[0].dropped], [0, 0, true, 'dead']);
+    });
+    withFake({ quirks: { deadEngine: true, invisibleDrops: true } }, (clock, fake) => {
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance('Hello.'));
+      assert.deepEqual([globalThis.speechSynthesis.speaking, globalThis.speechSynthesis.pending, fake.queued()], [false, false, 0]);
+    });
+    // b with a lost completion: the utterance played, but it stays current and the queue stalls.
+    withFake({ quirks: { dropEnd: (u, n) => n === 0, stallAfterLostEnd: true } }, (clock, fake) => {
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance(words(5, 'a')));
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance(words(5, 'b')));
+      clock.advance(30_000);
+      assert.deepEqual([fake.completed(), globalThis.speechSynthesis.speaking, globalThis.speechSynthesis.pending], [[words(5, 'a')], true, true]);
+      globalThis.speechSynthesis.cancel();
+      globalThis.speechSynthesis.speak(new globalThis.SpeechSynthesisUtterance(words(5, 'b')));
+      clock.advance(30_000);
+      assert.deepEqual(fake.completed(), [words(5, 'a'), words(5, 'b')]);
     });
     withFake({ quirks: { cutoffMs: 15_000, cutoffOnlineOnly: true } }, (clock, fake) => {
       const u = new globalThis.SpeechSynthesisUtterance(words(80, 'w'));

@@ -23,30 +23,55 @@
 // onend" chain in many ways (WebKit leaves speaking/pending stuck, onend goes missing or comes
 // early or twice, speak() inside onend is dropped, Chrome drops an utterance queued right after
 // cancel() and stops long online utterances, iOS pauses in the background, our own cancel()
-// produces 'interrupted' errors). So the engine:
+// produces 'interrupted' errors). Chromium and WebKit keep a FIFO queue: `speaking` is true while
+// anything is queued (from the moment speak() is called, audio or not, so a silently dropped
+// utterance looks "speaking" until cancel()), `pending` while more than one is, and the next
+// utterance goes to the platform only once the current one has completed (a lost completion
+// stalls the queue). So the engine:
 //   - keeps the next chunk already queued in speechSynthesis while the current one plays
 //     (queued at the current chunk's start, or when it is assumed to be playing), never more
 //     than 2 of ours at a time, and keeps a reference to every queued utterance;
 //   - never calls speechSynthesis.speak() from inside an engine event (it waits 30 ms);
-//   - treats a chunk as started on 'start', on a boundary event, or when the engine says it is
-//     speaking with nothing pending 3 s after the chunk should have started; a later chunk's
-//     start means every earlier chunk has finished;
+//   - treats a chunk as playing on 'start' or a boundary event (proof), and also, tentatively,
+//     when the engine says it is speaking with nothing pending 3 s after the chunk should have
+//     started (quirk f; onChunk fires and the next chunk is queued behind it, but this is never
+//     proof: a dropped utterance looks the same); a later chunk's start, or `pending` going false
+//     while our next chunk waited behind it (the engine moved on), means every earlier chunk has
+//     finished;
 //   - treats a started chunk as ended when 'end' comes, when its time is up
 //     (max(4 s, 2.5 × expected + 1.5 s) from its start, expected = chars / (15 × rate) s; a
 //     boundary event moves that to at least 3 s after the boundary), or after the engine has
-//     reported 3 s of silence;
+//     reported 3 s of silence; while the engine's flags stay on, sooner when it is known: 1.5 ×
+//     the rest's expected time + 1 s after a boundary reached the chunk's last word, the stream's
+//     measured speed for its last chunk (max(1.3 × measured, expected) + 1 s; measured on chunks
+//     with a real start that played to their end, ≥ 24 characters, kept per voice and rate), and
+//     1.6 × expected + 1.5 s for a chunk with our next one waiting behind it once this stream
+//     has had a stall;
+//   - a stall: when a chunk is settled that way while our next chunk still waits behind it
+//     (`pending`), the engine is stuck on it: cancel() and queue the waiting chunks again at once
+//     (this costs no retry); when nothing of ours waited, the next chunk queued behind something
+//     gets 1 s to start before the same;
+//   - a chunk that was only assumed to be playing and shows no event is a silent drop (quirk d)
+//     when our next chunk still waits behind it 1.5 × its expected time + 3 s after it should
+//     have started, or when its time is up while the engine still says it is busy: it is
+//     retried like a chunk that never started;
 //   - retries a chunk that never started (cancel(), 250 ms, speak() again) once, then skips it;
 //     if the engine still says it is speaking or has something pending, it first waits once more
 //     (3 s, or until the previous chunk's time is up); an 'interrupted'/'canceled' error within
-//     1 s of our own cancel() on a chunk that never started is the same drop and is retried at
-//     once; after two chunks in a row were given up the stream ends with 'error';
+//     1 s of our own cancel() on a chunk that never played is the same drop and is retried at
+//     once; after two chunks in a row were given up the stream ends with 'error', and a stream
+//     that skipped chunks and never showed a real sign of playing ends with 'error' too;
+//   - waits 1 s instead of 250 ms before a retry when the dropped attempt was itself spoken
+//     250 ms or more after our cancel() (Chrome's drop window is longer here: later waits after
+//     our cancel() grow to match, up to 1 s), or on the second recovery in a row;
 //   - processes each utterance's events at most once and ignores events of utterances it has
 //     cancelled or given up (a generation counter); any other 'interrupted'/'canceled' error
 //     means someone else stopped speech: the stream ends with 'interrupted';
 //   - after an 'end' that came early (before 70 % of the expected time) on the last chunk, waits
 //     while the engine still says it is speaking (at most until the expected end + 0.5 s) before
 //     onEnd, so a listening microphone never opens over the voice;
-//   - once unlockSpeech() has run, waits 250 ms after our own cancel() before the next speak();
+//   - once unlockSpeech() has run, waits 250 ms (or the learned drop window) after our own
+//     cancel() before the next speak();
 //   - counts time only while the page is visible (iOS pauses speech in the background), and
 //     calls speechSynthesis.resume() if the engine is paused while the page is visible.
 //
@@ -72,6 +97,8 @@ export const SPEECH_TIMING = Object.freeze({
   engineQuietMs: 3000, // ... or after the engine has said it is not speaking for this long
   startTimeoutMs: 3000, // a chunk with no sign of playing after this long is retried once, then skipped
   retryDelayMs: 250, // between our cancel() and the next speak() (Chrome drops one queued right after)
+  dropRetryMs: 500, // a chunk the engine held but never played (a silent drop) is retried after this ...
+  retryBackoffMs: 1000, // ... or this once a drop came that late after our cancel() (Chrome's window is longer)
   deferMs: 30, // speak() is never called inside an engine event (WebKit drops it); it waits this long
   tickMs: 250, // watchdog period
   cancelGraceMs: 1000, // an 'interrupted'/'canceled' error this soon after our own cancel() is a drop
@@ -80,6 +107,14 @@ export const SPEECH_TIMING = Object.freeze({
   deadChunks: 2, // chunks in a row that never played before the stream ends with 'error'
   earlyEndFraction: 0.7, // an 'end' before this share of the expected time is early (quirk f) ...
   drainExtraMs: 500, // ... so the last one's onEnd waits while speaking, up to expected + this
+  dropFactor: 1.5, // an assumed chunk with our next one still behind it this × expected + startTimeoutMs on was dropped
+  lastWordFactor: 1.5, // flags stuck on: a chunk is over this × the rest's expected time ...
+  lastWordExtraMs: 1000, // ... + this after a boundary reached its last word
+  calFactor: 1.3, // flags stuck on, last chunk: over after max(this × its measured time, expected) ...
+  calExtraMs: 1000, // ... + this
+  stallFactor: 1.6, // after a stall in this stream: a chunk with our next one behind it is over after this × expected ...
+  stallExtraMs: 1500, // ... + this
+  stallStartMs: 1000, // queued behind an utterance we settled while the engine stayed busy: this long to start
 });
 const T = SPEECH_TIMING;
 
@@ -269,8 +304,12 @@ export function unlockSpeech() {
 
 let current = null; // the stream being spoken (one at a time)
 let lastOwnCancelAt = -Infinity; // Date.now() of our last speechSynthesis.cancel()
+let cancelWaitMs = T.retryDelayMs; // how long a speak() waits after our cancel(); grows when Chrome's drop window is longer
 let eventDepth = 0; // > 0 while one of our utterance event handlers runs
 let userDepth = 0; // > 0 while append()/finish()/speak() run (their caller expects no onEnd inside)
+const speeds = new Map(); // `${voiceURI}|${rate}` -> slowest measured ms per character (calibration)
+const wordVoices = new Set(); // voices that send word boundary events (one comes as soon as audio starts)
+let everPlayed = false; // the engine has shown a real sign of playing (it works: a drop is a drop, not a dead engine)
 
 function report(err) {
   try {
@@ -442,10 +481,17 @@ function openStream(options) {
     ended: false,
     hold: 0,
     started: false,
+    evidence: false, // a real sign of playing came (an event, or the engine's queue moving on)
     idle: false, // onIdle was called for the current lull
     settledTo: 0,
     spokenUpTo: 0,
     failures: 0,
+    msPerChar: 0, // slowest measured speed of this voice (calibration; 0: none yet)
+    voiceKey: '',
+    speedKey: '',
+    suspectStall: false, // we settled a chunk while the engine stayed busy and nothing of ours waited behind it
+    stallCheck: false, // a stall recovery waits for a real start to confirm it
+    stalls: 0, // confirmed stalls in this stream
     prev: null, // the last settled utterance
     retryUntil: 0,
     draining: 0, // visible time until which a finished stream waits for its last audio
@@ -505,6 +551,14 @@ function setVoice(s, voice) {
   s.voice = voice || null;
   s.voiceReady = true;
   s.limit = chunkLimit(s.voice, s.rate);
+  s.voiceKey = (s.voice && (s.voice.voiceURI || s.voice.name)) || '';
+  s.speedKey = `${s.voiceKey}|${s.rate}`;
+  s.msPerChar = speeds.get(s.speedKey) || 0;
+}
+
+/** An on-device voice known to send word boundaries: its audio never plays without one. */
+function sendsWords(s) {
+  return !!s.voice && s.voice.localService === true && wordVoices.has(s.voiceKey);
 }
 
 function append(s, text) {
@@ -572,7 +626,7 @@ function pump(s) {
   if (s.draining) return;
   // Quirk d: Chrome drops an utterance queued right after cancel(). Once speech is unlocked (iOS
   // allows speak() outside a gesture from then on), wait a moment; otherwise the retry handles it.
-  if (!s.inflight.length && unlocked && now < lastOwnCancelAt + T.retryDelayMs) return wakeAt(s, lastOwnCancelAt + T.retryDelayMs);
+  if (!s.inflight.length && unlocked && now < lastOwnCancelAt + cancelWaitMs) return wakeAt(s, lastOwnCancelAt + cancelWaitMs);
   while (s.inflight.length < T.maxQueued) {
     const last = s.inflight[s.inflight.length - 1];
     if (last && !last.started) break; // queue ahead only behind a chunk that is playing
@@ -590,7 +644,9 @@ function pump(s) {
       s.draining = p.startedAt + expectedMs(p.chunk, s.rate) + T.drainExtraMs;
       return;
     }
-    const played = s.started || !s.chunks.some((c) => c.state === 'skipped');
+    // 'error' when chunks were given up and nothing ever really played (onStart may have fired for
+    // a chunk only assumed to be playing): the app tells the owner instead of a silent 'done'.
+    const played = s.evidence || !s.chunks.some((c) => c.state === 'skipped');
     endStream(s, played ? 'done' : 'error');
     return;
   }
@@ -625,7 +681,28 @@ function submit(s, chunk) {
   }
   const now = vnow();
   const head = !s.inflight.length;
-  const rec = { u, chunk, gen: s.gen, started: false, startedAt: 0, progressAt: 0, headSince: head ? now : -1, due: head ? now + T.startTimeoutMs : 0, extended: false, quietSince: -1, settled: false };
+  const rec = {
+    u,
+    chunk,
+    gen: s.gen,
+    started: false,
+    startedAt: 0,
+    progressAt: 0,
+    assumed: false, // started only tentatively: no event, the engine said it was speaking (quirk f)
+    evidence: false, // a real sign it played: its own event, a later chunk's, or the engine moving on
+    realStart: false, // its start was a real 'start' or boundary event (calibration)
+    lastWordAt: -1, // when a boundary reached its last word
+    lastWordMs: 0, // the expected time of the rest from there
+    sawPending: false, // the engine said pending while our next chunk waited behind this one
+    stall: false, // queued behind an utterance we settled while the engine stayed busy
+    submittedAt: now,
+    sinceCancel: Date.now() - lastOwnCancelAt, // spoken this long after our last cancel()
+    headSince: head ? now : -1,
+    due: head ? now + T.startTimeoutMs : 0,
+    extended: false,
+    quietSince: -1,
+    settled: false,
+  };
   bind(s, rec);
   s.inflight.push(rec);
   s.keep.push(u);
@@ -637,7 +714,35 @@ function submit(s, chunk) {
     endStream(s, 'error', true);
     return false;
   }
-  return !s.ended;
+  if (s.ended) return false;
+  const pending = enginePending();
+  if (!head) {
+    if (pending) s.inflight[0].sawPending = true;
+    else if (s.inflight[0].assumed) {
+      // Nothing waits in the engine besides the chunk just queued: the one before it, only assumed
+      // to be playing, has left the queue, so it has completed (Chromium and WebKit keep even a
+      // dropped utterance queued until cancel()). It played without any event.
+      proof(s, s.inflight[0]);
+      settleHead(s, 'done', now);
+    }
+  } else if (s.suspectStall) {
+    // We settled the previous chunk by the clock while the engine still said it was busy: if this
+    // one is queued behind something, it is likely the stalled utterance (no completion ever came).
+    s.suspectStall = false;
+    if (pending) {
+      rec.stall = true;
+      rec.due = now + T.stallStartMs;
+    }
+  }
+  return true;
+}
+
+function enginePending() {
+  try {
+    return !!synth().pending;
+  } catch {
+    return false;
+  }
 }
 
 function bind(s, rec) {
@@ -660,7 +765,7 @@ function bind(s, rec) {
   rec.u.onerror = on((event) => failed(s, rec, event));
 }
 
-/** onStart once, then onChunk for a chunk that starts playing. */
+/** onStart once, then onChunk for a chunk that starts playing (or is assumed to). */
 function play(s, chunk) {
   if (chunk.fired) return;
   chunk.fired = true;
@@ -672,10 +777,47 @@ function play(s, chunk) {
   call(s.opts.onChunk, { index: chunk.index, start: chunk.start, end: chunk.end, text: chunk.text });
 }
 
-/** The engine plays in order: when `rec` shows life, every utterance before it has finished. */
-function settleBefore(s, rec, now) {
+/** A real sign that `rec` plays or played: its own event, or the engine's queue moving past it. */
+function proof(s, rec) {
+  rec.evidence = true;
+  s.evidence = true;
+  everPlayed = true;
+  s.failures = 0;
+  if (s.stallCheck) {
+    s.stallCheck = false; // what we queued again after a stall plays: the engine really had stalled
+    s.stalls += 1;
+  }
+}
+
+/**
+ * The engine plays in order: when `rec` shows life, every utterance before it has finished. With
+ * `real` (rec's own event), they really played, and the one just before it is measured: its audio
+ * lasted until now, give or take the engine's gap (when rec was queued while it played).
+ */
+function settleBefore(s, rec, now, real) {
   if (!s.inflight.includes(rec)) return;
-  while (s.inflight.length && s.inflight[0] !== rec) settleHead(s, 'done', now);
+  while (s.inflight.length && s.inflight[0] !== rec) {
+    const h = s.inflight[0];
+    if (real) {
+      h.evidence = true;
+      if (s.inflight[1] === rec && rec.submittedAt <= h.startedAt + T.earlyEndFraction * expectedMs(h.chunk, s.rate)) measure(s, h, now);
+    }
+    settleHead(s, 'done', now);
+  }
+}
+
+/**
+ * Calibration: the speed of a chunk that really started ('start' or a boundary) and played to its
+ * end (never an early 'end'), at least 24 characters; implausible speeds are ignored. The stream
+ * keeps the slowest; so does the voice (per rate) for later streams.
+ */
+function measure(s, rec, now) {
+  if (!rec.started || !rec.realStart || rec.endedEarly || rec.chunk.text.length < 24) return;
+  const ms = (now - rec.startedAt) / rec.chunk.text.length;
+  const nominal = 1000 / (T.charsPerSecond * s.rate);
+  if (!(ms >= 0.7 * nominal && ms <= T.endFactor * nominal) || ms <= s.msPerChar) return;
+  s.msPerChar = ms;
+  if (s.speedKey) speeds.set(s.speedKey, Math.max(speeds.get(s.speedKey) || 0, ms));
 }
 
 function markStarted(s, rec, at) {
@@ -683,27 +825,50 @@ function markStarted(s, rec, at) {
   rec.started = true;
   rec.startedAt = at;
   rec.progressAt = at;
-  s.failures = 0;
   play(s, rec.chunk);
 }
 
+/**
+ * `rec` starts playing: a 'start' or boundary event, or (assumed) the watchdog's guess when the
+ * engine says it is speaking with nothing pending (quirk f). An assumption is never proof:
+ * Chromium's `speaking` is true from speak() on, so a silently dropped utterance looks the same.
+ */
 function started(s, rec, assumed) {
   const now = vnow();
-  settleBefore(s, rec, now);
-  markStarted(s, rec, assumed && rec.headSince >= 0 ? rec.headSince : now);
+  if (!assumed) proof(s, rec);
+  settleBefore(s, rec, now, !assumed);
+  if (!rec.started) {
+    rec.assumed = assumed;
+    rec.realStart = !assumed;
+    markStarted(s, rec, assumed && rec.headSince >= 0 ? rec.headSince : now);
+  } else if (!assumed && rec.assumed) {
+    // Only assumed so far; it really starts now (late): its time counts from here.
+    rec.assumed = false;
+    rec.realStart = true;
+    rec.startedAt = now;
+    rec.progressAt = now;
+  }
   pump(s); // queue the next chunk now, while this one plays
 }
 
 function boundary(s, rec, event) {
-  if (!rec.started) started(s, rec, false); // a boundary event means it is playing
+  if (!rec.started || rec.assumed) started(s, rec, false); // a boundary event means it is playing
+  else proof(s, rec);
   if (s.ended || rec.settled) return;
-  rec.progressAt = vnow();
+  if (s.voiceKey) wordVoices.add(s.voiceKey);
+  const now = vnow();
+  rec.progressAt = now;
   const text = rec.chunk.text;
   let ci = Number(event && event.charIndex);
   ci = Number.isFinite(ci) && ci > 0 ? Math.min(Math.floor(ci), text.length) : 0;
   const name = (event && typeof event.name === 'string' && event.name) || 'word';
   let len = Number(event && event.charLength);
   if (!Number.isFinite(len) || len <= 0) len = name === 'word' ? wordLength(text, ci) : 0;
+  if (ci >= lastWordStart(text)) {
+    // The last word is being said: its audio is nearly over (used when 'end' never comes).
+    rec.lastWordAt = now;
+    rec.lastWordMs = ((text.length - ci) / (T.charsPerSecond * s.rate)) * 1000;
+  }
   call(s.opts.onBoundary, { charIndex: rec.chunk.start + ci, charLength: len, name, chunkIndex: rec.chunk.index });
 }
 
@@ -712,12 +877,20 @@ function wordLength(text, at) {
   return m ? m[0].length : 0;
 }
 
+function lastWordStart(text) {
+  const t = text.trimEnd();
+  const m = /\S+$/.exec(t);
+  return m ? m.index : t.length;
+}
+
 function ended(s, rec) {
   const now = vnow();
-  settleBefore(s, rec, now);
+  proof(s, rec);
+  settleBefore(s, rec, now, true);
   markStarted(s, rec, rec.headSince >= 0 ? rec.headSince : now); // 'end' without 'start' (quirk f): it played
   if (s.ended || rec.settled) return;
   rec.endedEarly = now < rec.startedAt + T.earlyEndFraction * expectedMs(rec.chunk, s.rate);
+  measure(s, rec, now);
   settleHead(s, 'done', now);
   pump(s);
 }
@@ -726,8 +899,8 @@ function failed(s, rec, event) {
   const code = String((event && event.error) || '');
   if (code === 'interrupted' || code === 'canceled') {
     // Right after our own cancel(), an utterance that never played was dropped with it (quirk d).
-    if (!rec.started && Date.now() - lastOwnCancelAt < T.cancelGraceMs) {
-      recover(s, rec, false);
+    if (!rec.evidence && Date.now() - lastOwnCancelAt < T.cancelGraceMs) {
+      recover(s, rec, { reported: true });
       return;
     }
     endStream(s, 'interrupted'); // someone else stopped speech: don't talk over them
@@ -740,13 +913,13 @@ function failed(s, rec, event) {
   // This chunk failed (synthesis-failed, network, voice-unavailable, ...): skip it, carry on.
   const now = vnow();
   const i = s.inflight.indexOf(rec);
-  if (i === 0) settleHead(s, rec.started ? 'done' : 'skipped', now);
+  if (i === 0) settleHead(s, rec.evidence ? 'done' : 'skipped', now);
   else if (i > 0) {
     s.inflight.splice(i, 1);
     rec.settled = true;
     rec.chunk.state = 'skipped';
   }
-  if (!rec.started && fail(s)) return;
+  if (!rec.evidence && fail(s)) return;
   pump(s);
 }
 
@@ -766,8 +939,10 @@ function settleHead(s, how, now) {
   s.prev = rec;
   const head = s.inflight[0];
   if (head && head.headSince < 0) {
-    head.headSince = now;
-    head.due = now + T.startTimeoutMs;
+    // After an early 'end' (quirk f) the audio plays on: the next one can't start before it is over.
+    const since = rec.endedEarly ? Math.max(now, rec.startedAt + expectedMs(rec.chunk, s.rate)) : now;
+    head.headSince = since;
+    head.due = since + T.startTimeoutMs;
   }
   advance(s);
 }
@@ -780,28 +955,47 @@ function advance(s) {
 }
 
 /**
- * `rec` never started: speak it again once (after a short wait), else skip it. With cancelFirst
- * (the watchdog; rec is the head) speechSynthesis is cancelled first, which also drops whatever
- * else of ours it held; those chunks are queued again in order. Without it (the engine already
- * dropped rec with an error), only rec and the chunks after it are queued again.
+ * `rec` never played: speak it again once (after a short wait), else skip it. With `cancel` (the
+ * watchdog; rec is the head) speechSynthesis is cancelled first, which also drops whatever else of
+ * ours it held; those chunks are queued again in order. Without it (the engine already dropped rec
+ * with an error), only rec and the chunks after it are queued again.
+ *   stall: rec (the head) waited behind an utterance the engine never completed: cancel() unsticks
+ *          the engine and rec is queued again without using up its retry (once per chunk).
+ *   held:  the engine kept rec (it said it was speaking) but never played it, a silent drop by an
+ *          engine that is alive: retried after dropRetryMs, or 1 s once Chrome's drop window has
+ *          shown to be longer than our wait (a drop that came that late after our cancel()).
+ *   reported: the engine reported dropping it ('interrupted'/'canceled' right after our cancel()).
  */
-function recover(s, rec, cancelFirst) {
+function recover(s, rec, { cancel = false, stall = false, held = false, reported = false } = {}) {
   const i = s.inflight.indexOf(rec);
   if (i < 0) return;
-  const dropped = s.inflight.splice(cancelFirst ? 0 : i);
+  const dropped = s.inflight.splice(cancel ? 0 : i);
   const chunks = dropped.map((r) => {
     r.settled = true; // their late 'interrupted'/'canceled' errors are ours: ignored (quirk h)
     return r.chunk;
   });
   if (!s.inflight.length) s.gen += 1;
-  if (rec.chunk.retried) {
-    rec.chunk.state = 'skipped';
-    chunks.splice(chunks.indexOf(rec.chunk), 1);
-  } else rec.chunk.retried = true;
+  let wait = Math.max(T.retryDelayMs, cancelWaitMs);
+  if (stall && !rec.chunk.stalled) {
+    rec.chunk.stalled = true;
+    s.stallCheck = true;
+  } else {
+    if (rec.chunk.retried) {
+      rec.chunk.state = 'skipped';
+      chunks.splice(chunks.indexOf(rec.chunk), 1);
+    } else rec.chunk.retried = true;
+    // Dropped although it was spoken this long after our cancel(), by an engine that is alive:
+    // Chrome's drop window is longer here. Wait longer now, and after our later cancel()s too.
+    const late = (held || reported || everPlayed) && rec.sinceCancel >= T.retryDelayMs && rec.sinceCancel < 2000;
+    if (late) cancelWaitMs = Math.min(T.retryBackoffMs, Math.max(cancelWaitMs, rec.sinceCancel + T.retryDelayMs));
+    if (late) wait = T.retryBackoffMs;
+    else if (held) wait = Math.max(T.dropRetryMs, cancelWaitMs);
+  }
   for (const c of chunks) c.state = 'queued';
   s.requeue = chunks.concat(s.requeue);
-  if (cancelFirst) cancelEngine(true);
-  s.retryUntil = Date.now() + T.retryDelayMs;
+  s.suspectStall = false;
+  if (cancel) cancelEngine(true);
+  s.retryUntil = Date.now() + wait;
   advance(s);
   if (rec.chunk.state === 'skipped' && fail(s)) return;
   pump(s);
@@ -835,22 +1029,77 @@ function tick(s) {
     /* treat as quiet */
   }
   if (paused && !isHidden()) resumeEngine();
+  const busy = speaking || pending;
+  const behind = s.inflight.length > 1; // our next chunk is queued behind the head
   if (head.started) {
-    if (speaking || pending) head.quietSince = -1;
-    else if (head.quietSince < 0) head.quietSince = now;
-    const due = Math.max(head.startedAt + endTimeout(head.chunk, s.rate), head.progressAt + T.engineQuietMs);
-    if (now >= due || (head.quietSince >= 0 && now - head.quietSince >= T.engineQuietMs)) {
-      settleHead(s, 'done', now); // its 'end' never came (quirks a, b, e): treat it as ended, move on
+    if (behind && pending) head.sawPending = true;
+    else if (behind && head.sawPending) {
+      // `pending` went off while our next chunk waited behind the head: the engine moved on to it
+      // (it starts the next one only once the current one has completed). Its 'end' was lost.
+      proof(s, head);
+      settleHead(s, 'done', now);
       pump(s);
+      return;
     }
+    if (busy) head.quietSince = -1;
+    else if (head.quietSince < 0) head.quietSince = now;
+    const expected = expectedMs(head.chunk, s.rate);
+    let due = Math.max(head.startedAt + endTimeout(head.chunk, s.rate), head.progressAt + T.engineQuietMs);
+    if (busy) {
+      // The flags can't tell us it has ended: use what is known about this chunk.
+      if (head.lastWordAt >= 0) due = Math.min(due, head.lastWordAt + T.lastWordFactor * head.lastWordMs + T.lastWordExtraMs);
+      if (head.realStart && !behind && s.msPerChar > 0 && s.tx.finished && !s.requeue.length && !s.tx.spans.length) {
+        // The last chunk, at this voice's measured speed (quirks a+b: no later chunk can settle it).
+        const cal = head.startedAt + Math.max(T.calFactor * head.chunk.text.length * s.msPerChar, expected) + T.calExtraMs;
+        due = Math.min(due, Math.max(cal, head.progressAt + T.engineQuietMs));
+      }
+      if (head.realStart && behind && pending && s.stalls > 0) due = Math.min(due, head.startedAt + T.stallFactor * expected + T.stallExtraMs);
+    }
+    if (head.assumed && !head.evidence && behind && pending && now >= head.headSince + T.dropFactor * expected + T.startTimeoutMs) {
+      // Only assumed to be playing, and the engine still hasn't moved on to our next chunk long
+      // after this one would have ended: it was dropped silently (quirk d). Speak it again.
+      recover(s, head, { cancel: true, held: true });
+      return;
+    }
+    const quiet = head.quietSince >= 0 && now - head.quietSince >= T.engineQuietMs;
+    if (now < due && !quiet) return;
+    if (head.assumed && !head.evidence && busy) {
+      recover(s, head, { cancel: true, held: true }); // no sign of playing ever came and the engine still holds it: dropped
+      return;
+    }
+    settleHead(s, 'done', now); // its 'end' never came (quirks a, b, e): treat it as ended, move on
+    if (busy && !quiet) {
+      // The engine may be stuck on the chunk we just settled (its completion never came, so it
+      // never moves on). Our next chunk waiting behind it says so: unstick the engine now.
+      const next = s.inflight[0];
+      if (next && pending) {
+        recover(s, next, { cancel: true, stall: true });
+        return;
+      }
+      if (!next) s.suspectStall = true; // the next chunk we queue may wait behind it
+    }
+    pump(s);
     return;
   }
   if (head.headSince < 0 || now < head.due) return;
+  if (head.stall) {
+    head.stall = false;
+    if (pending) {
+      recover(s, head, { cancel: true, stall: true }); // still behind the utterance the engine is stuck on
+      return;
+    }
+    head.due = head.headSince + T.startTimeoutMs;
+    if (now < head.due) return;
+  }
   if (speaking && !pending) {
-    started(s, head, true); // audio without a start event (quirk f)
+    // Nothing else is queued, so it should be playing. A voice that sends word boundaries would
+    // have sent one: it was dropped (quirk d; Chromium still says "speaking"). Otherwise assume it
+    // plays without a start event (quirk f), or, on its retry, that a drop can't be told apart.
+    if (sendsWords(s) && !head.chunk.retried) recover(s, head, { cancel: true, held: true });
+    else started(s, head, true);
     return;
   }
-  if ((speaking || pending) && !head.extended) {
+  if (busy && !head.extended) {
     // Something is still playing or loading (an earlier chunk whose 'end' came early, an online
     // voice fetching audio, or flags stuck on): wait once more, at most until the earlier chunk's
     // own time is up.
@@ -859,7 +1108,10 @@ function tick(s) {
     head.due = Math.max(now + T.startTimeoutMs, prev);
     return;
   }
-  recover(s, head, true);
+  // Still behind something in the engine (`pending`): an utterance it never completed, not this
+  // chunk's fault. Otherwise this one never started: a drop the engine held (busy) or forgot.
+  if (pending) recover(s, head, { cancel: true, stall: true });
+  else recover(s, head, { cancel: true, held: busy });
 }
 
 /** Stop whatever Jarvis is saying. */

@@ -180,19 +180,25 @@ test('quirk b: a missing end event; the next chunk starting settles it, the last
 });
 
 test('quirks a+b: no end event and speaking stuck true; even a stalled engine is recovered (cancel, re-queue)', async (t) => {
-  // The engine keeps playing its queue: each next start settles the previous chunk; the last one
-  // ends on its time-out because the stuck flag never reports silence.
-  const ctx = await setup(t, { quirks: { stuckSpeaking: true, dropEnd: () => true } });
-  const expected = ctx.tts.chunkText(TEXT, LOCAL);
-  const r = run(ctx, TEXT);
-  assertSpokenOnce(ctx, expected);
-  assert.deepEqual(r.ends, ['done']);
-  const last = ctx.fake.audio.at(-1);
-  const timeout = Math.max(4000, 2.5 * (last.text.length / 15) * 1000 + 1500);
-  assert.ok(r.endT - last.startT >= timeout && r.endT - last.startT <= timeout + 600, 'last chunk ends on its time-out');
+  // The engine keeps playing its queue: each next start settles the previous chunk. Nothing settles
+  // the last one and the stuck flag never reports silence: it ends soon after its audio anyway,
+  // from its last word's boundary event, or (no word events) from the speed this stream measured.
+  for (const boundaries of [true, false]) {
+    const ctx = await setup(t, { boundaries, quirks: { stuckSpeaking: true, dropEnd: () => true } });
+    const expected = ctx.tts.chunkText(TEXT, LOCAL);
+    const r = run(ctx, TEXT);
+    assertSpokenOnce(ctx, expected);
+    assert.deepEqual(r.ends, ['done']);
+    const last = ctx.fake.audio.at(-1);
+    const dur = last.endT - last.startT;
+    const timeout = Math.max(4000, 2.5 * (last.text.length / 15) * 1000 + 1500);
+    assert.ok(r.endT >= last.endT, `onEnd after the last audio (boundaries ${boundaries}): ${r.endT - last.endT} ms`);
+    assert.ok(r.endT - last.endT <= 0.3 * dur + 1500 + 250, `onEnd ${r.endT - last.endT} ms after the last audio (${dur} ms), not on the ${timeout} ms time-out (boundaries ${boundaries})`);
+  }
 
   // Worst case: after the lost end the engine stops altogether (only cancel() revives it).
   const ctx2 = await setup(t, { quirks: { stuckSpeaking: true, dropEnd: (u, n) => n === 0, stallAfterLostEnd: true } });
+  const expected = ctx2.tts.chunkText(TEXT, LOCAL);
   const r2 = run(ctx2, TEXT);
   assertSpokenOnce(ctx2, expected);
   assert.deepEqual(r2.ends, ['done']);
@@ -412,8 +418,9 @@ test('quirk g: time while the page is hidden is not counted; speech carries on w
   assert.deepEqual(r.ends, ['done']);
   assert.equal(ctx.fake.cancels, 0, 'no recovery while the engine was paused');
 
-  // A lost end with speaking stuck: the time-out counts visible time only.
-  const ctx2 = await setup(t, { quirks: { stuckSpeaking: true, dropEnd: () => true } });
+  // A lost end with speaking stuck, on a voice without word events (nothing earlier to measure its
+  // speed by): the time-out counts visible time only.
+  const ctx2 = await setup(t, { boundaries: false, quirks: { stuckSpeaking: true, dropEnd: () => true } });
   const one = 'A single sentence whose end event never comes.';
   const timeout = Math.max(4000, 2.5 * (one.length / 15) * 1000 + 1500);
   const r2 = run(ctx2, one, {}, {
@@ -427,6 +434,23 @@ test('quirk g: time while the page is hidden is not counted; speech carries on w
   assert.deepEqual(r2.ends, ['done']);
   const fromStart = r2.endT - ctx2.fake.audio[0].startT - 5 * 60_000;
   assert.ok(fromStart >= timeout && fromStart <= timeout + 600, `visible time to the time-out: ${fromStart} ms (expected ${timeout})`);
+
+  // With word events the deadline is 1.5 × the last word's time + 1 s after its boundary event:
+  // visible time too.
+  const ctx4 = await setup(t, { quirks: { stuckSpeaking: true, dropEnd: () => true } });
+  const r4 = run(ctx4, one, {}, {
+    before: () => {
+      ctx4.clock.runUntil(() => ctx4.fake.audio.length && ctx4.fake.audio[0].complete, 10_000);
+      ctx4.fake.setHidden(true);
+      ctx4.clock.advance(5 * 60_000);
+      ctx4.fake.setHidden(false);
+    },
+  });
+  assert.deepEqual(r4.ends, ['done']);
+  const lastWord = ctx4.fake.events.filter((e) => e.type === 'boundary').at(-1);
+  const after = r4.endT - lastWord.t - 5 * 60_000;
+  const deadline = 1.5 * (('comes.'.length / 15) * 1000) + 1000;
+  assert.ok(after >= deadline && after <= deadline + 300, `visible time after the last word: ${after} ms (expected ${deadline})`);
 
   // Nothing starts while hidden: no start time-out either.
   const ctx3 = await setup(t);
@@ -545,8 +569,8 @@ test('a chunk that fails is skipped and the rest is spoken; "not-allowed" ends w
   assert.deepEqual(ctx2.fake.completed(), []);
 });
 
-test('a dead engine (nothing plays, no events) ends with "error" after two chunks were given up, never stuck', async (t) => {
-  const ctx = await setup(t, { quirks: { deadEngine: true } });
+test('a dead engine that forgets what it is given (nothing plays, no events, never "speaking") ends with "error" after two chunks were given up, never stuck', async (t) => {
+  const ctx = await setup(t, { quirks: { deadEngine: true, invisibleDrops: true } });
   const r = run(ctx, paragraph(0, 30));
   assert.deepEqual(r.ends, ['error']);
   assert.ok(r.ms >= 12_000 && r.ms <= 14_000, `${r.ms} ms`);
@@ -643,9 +667,43 @@ test('chaos: random combinations of quirks a-d, f, g and h, 40 seeds', async (t)
     });
     const label = `seed ${seed}: ${JSON.stringify({ ...quirks, voiceURI, rate, hideAt })}`;
     assert.deepEqual(r.ends, ['done'], label);
-    assert.deepEqual(ctx.fake.completed(), expected, label);
+    assert.deepEqual(withoutSilentRepeats(ctx), expected, label);
     assert.equal(ctx.fake.partial().length, 0, label);
     assert.ok(ctx.fake.maxOurs <= 2, label);
-    for (const c of expected) assert.ok(queuedTimes(ctx, c) <= 2, label);
+    for (const c of expected) assertAttempts(ctx, c, label);
   }
 });
+
+/**
+ * A chunk reaches the engine's platform at most twice (once more after a drop), and is queued at
+ * most twice, or three times when one of those never reached the platform because it waited behind
+ * an utterance the engine never completed (a stall: queuing it again costs no retry).
+ */
+function assertAttempts(ctx, text, label) {
+  const calls = ctx.fake.submitted.filter((s) => s.text === text);
+  const reached = calls.filter((s) => s.reached).length;
+  const stuckBehind = calls.filter((s) => !s.reached && !s.dropped).length;
+  assert.ok(reached <= 2, `${label}: reached the platform ${reached} times: ${text.slice(0, 40)}`);
+  assert.ok(calls.length <= 2 || (calls.length === 3 && stuckBehind >= 1), `${label}: queued ${calls.length} times: ${text.slice(0, 40)}`);
+}
+
+/**
+ * What was heard, in order, where a chunk heard twice in a row is counted once only if its first
+ * playing sent no event at all (no start, boundary or end) and the engine then held it (stalled):
+ * in Chromium and WebKit that is exactly what a silently dropped utterance looks like, so it is
+ * spoken again rather than risk losing it. Any other repeat stays in the list (and fails).
+ */
+function withoutSilentRepeats(ctx) {
+  const evented = new Set(ctx.fake.events.filter((e) => e.type === 'start' || e.type === 'boundary' || e.type === 'end').map((e) => e.id));
+  const out = [];
+  let prev = null;
+  for (const a of ctx.fake.audio.filter((x) => x.complete)) {
+    if (prev && prev.text === a.text && !evented.has(prev.id)) {
+      prev = a;
+      continue;
+    }
+    out.push(a.text);
+    prev = a;
+  }
+  return out;
+}
