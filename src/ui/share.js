@@ -292,13 +292,16 @@ export function turnMetrics(turn) {
   const missions = missionsOf(t);
   const deployed = missions.flatMap(agentsOf).filter(isDeployed);
   const tools = arr(t.segments).filter((s) => isObj(s) && s.kind === 'tool');
-  const launched = missions.filter((m) => agentsOf(m).some(isDeployed)).length;
+  // A mission counts once it started (like the engine's `waves`); a deploy_agents call that was
+  // refused (quick mode, wave limit) never starts. Its agents, in order, give the roles: that
+  // list only ever grows, even when a resumed turn starts agents that were queued before.
+  const launched = missions.filter((m) => num(m.startedAt) > 0 || agentsOf(m).some(isDeployed));
   const duration = num(t.endedAt) && num(t.createdAt) ? Math.max(0, t.endedAt - t.createdAt) : 0;
   return {
     agents: Math.max(num(st.agents), deployed.length),
     agentsOk: deployed.filter((a) => a.status === 'done').length,
     agentsFailed: deployed.filter((a) => a.status === 'error').length,
-    missions: missions.length ? launched : num(st.waves),
+    missions: missions.length ? launched.length : num(st.waves),
     searches: Math.max(num(st.searches), num(usage.searches), tools.filter((s) => s.tool === 'web_search').length + sum(deployed, agentSearches)),
     fetches: Math.max(num(usage.fetches), tools.filter((s) => s.tool === 'web_fetch').length + sum(deployed, agentFetches)),
     sources: Math.max(num(st.sources), turnSources(t, missions).size),

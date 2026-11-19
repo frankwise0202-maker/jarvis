@@ -566,9 +566,11 @@ function createVoiceMode(opts) {
 
   function onKeydown(event) {
     if (S.closed) return;
+    // Modal: the app's global shortcuts (new chat, focus composer…) must not act underneath.
+    // Default actions (typing, Enter to submit, Space on buttons) are unaffected.
+    event.stopPropagation();
     if (event.key === 'Escape' || event.key === 'Esc') {
       event.preventDefault();
-      event.stopPropagation();
       close();
       return;
     }
