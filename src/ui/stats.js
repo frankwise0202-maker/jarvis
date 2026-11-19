@@ -196,9 +196,9 @@ export function resetStats() {
 // Aggregation
 
 /**
- * Display form of a role: "  battery tech analyst. " → "Battery tech analyst", and a shouted
- * "TECH REVIEWER" → "Tech reviewer" (mixed case such as "EV market analyst" is kept as written).
- * Ranking uses the lowercase form, so every spelling counts toward the same role.
+ * Display form of a role: "  battery tech analyst. " → "Battery tech analyst"; shouting is tamed
+ * ("TECH REVIEWER" → "Tech reviewer", "Market ANALYST" → "Market analyst") while short acronyms
+ * stay ("EV market analyst"). Ranking uses the lowercase form, so every spelling counts together.
  */
 function cleanRole(role) {
   if (typeof role !== 'string') return '';
@@ -207,11 +207,12 @@ function cleanRole(role) {
   if (s.length > 60) s = s.slice(0, 60).trim();
   if (!s) return '';
   if (s.length > 4 && s === s.toUpperCase() && s !== s.toLowerCase()) s = s.toLowerCase();
+  else s = s.replace(/\b[A-Z]{5,}\b/g, (w) => w.toLowerCase());
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** True when a display form carries real capitalization worth preferring ("EV market analyst"). */
-const isMixedCase = (s) => /[a-z]/.test(s.slice(1)) && /[A-Z]/.test(s.slice(1));
+/** A display form with a short acronym ("EV", "AI", "NASA") beats one that lost it ("Ev …"). */
+const hasAcronym = (s) => /\b[A-Z]{2,4}\b/.test(s);
 
 function rankRoles(roles) {
   return roles.slice().sort((a, b) => b[2] - a[2] || b[3] - a[3] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
@@ -293,7 +294,7 @@ export function recordTurn(turn, opts = {}) {
     if (hit) {
       hit[2] += 1;
       hit[3] = Math.max(hit[3], at);
-      if (!isMixedCase(hit[1]) && isMixedCase(display)) hit[1] = display;
+      if (!hasAcronym(hit[1]) && hasAcronym(display)) hit[1] = display;
     } else {
       state.roles.push([rkey, display, 1, at]);
     }

@@ -4,9 +4,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { createMock, createMockFetch, createMockHandler } from '../mock/anthropic-mock.mjs';
+import { startTestServer } from '../server.mjs';
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures: request shapes that follow SPEC §8 (independent of the engine's prompt text).
@@ -995,5 +999,69 @@ describe('mock: control routes and HTTP handler', () => {
     assert.equal(res.status, 204);
     assert.equal(res.headers.get('access-control-allow-origin'), '*');
     assert.match(res.headers.get('access-control-allow-headers'), /x-api-key/);
+  });
+});
+
+describe('test server: dist/ and the mock API on one origin', () => {
+  /** Raw GET without URL normalization (fetch would resolve "/../" before sending). */
+  const rawGet = (url, rawPath) =>
+    new Promise((resolve, reject) => {
+      const u = new URL(url);
+      const req = http.request({ host: u.hostname, port: u.port, path: rawPath, method: 'GET' }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+  it('serves files with correct types and caching, SPA fallback, no traversal, and the mock', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'jarvis-dist-'));
+    await mkdir(path.join(root, 'assets'));
+    await writeFile(path.join(root, 'index.html'), '<!doctype html><title>Jarvis test</title>');
+    await writeFile(path.join(root, 'assets', 'app.js'), 'console.log("app")');
+    await writeFile(path.join(root, 'assets', 'app.css'), 'body{}');
+    await writeFile(path.join(root, 'assets', 'app.js.map'), '{}');
+    await writeFile(path.join(root, 'manifest.webmanifest'), '{"name":"Jarvis"}');
+    await writeFile(path.join(root, 'sw.js'), '// sw');
+    await writeFile(path.join(root, '.nojekyll'), '');
+    const srv = await startTestServer({ root, build: 'never', mock: { timeScale: 0 } });
+    try {
+      assert.match(srv.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+      const head = async (p) => {
+        const res = await fetch(srv.url + p);
+        await res.arrayBuffer();
+        return { status: res.status, type: res.headers.get('content-type'), cache: res.headers.get('cache-control'), etag: res.headers.get('etag') };
+      };
+      const index = await head('/');
+      assert.deepEqual([index.status, index.type, index.cache], [200, 'text/html; charset=utf-8', 'no-cache']);
+      assert.equal((await head('/assets/app.js')).type, 'text/javascript; charset=utf-8');
+      assert.equal((await head('/assets/app.css')).type, 'text/css; charset=utf-8');
+      assert.equal((await head('/assets/app.js.map')).type, 'application/json; charset=utf-8');
+      assert.equal((await head('/manifest.webmanifest')).type, 'application/manifest+json; charset=utf-8');
+      const sw = await head('/sw.js');
+      assert.deepEqual([sw.status, sw.cache], [200, 'no-cache']);
+      const spa = await head('/conversations/abc');
+      assert.deepEqual([spa.status, spa.type], [200, 'text/html; charset=utf-8'], 'page routes fall back to index.html');
+      assert.equal((await head('/assets/missing.js')).status, 404, 'missing assets are 404s, not HTML');
+      assert.equal((await head('/.nojekyll')).status, 404, 'dotfiles are not served');
+      const cached = await fetch(`${srv.url}/assets/app.js`, { headers: { 'if-none-match': (await head('/assets/app.js')).etag } });
+      assert.equal(cached.status, 304);
+      for (const p of ['/../package.json', '/assets/../../package.json', '/%2e%2e/package.json', '/assets/..%2f..%2fpackage.json', '/..%5cpackage.json']) {
+        const status = await rawGet(srv.url, p);
+        assert.ok(status === 400 || status === 404, `${p} must not be served (got ${status})`);
+      }
+      assert.equal((await fetch(`${srv.url}/`, { method: 'POST' })).status, 405);
+
+      const client = new Anthropic({ apiKey: KEY, baseURL: srv.url, maxRetries: 0 });
+      const final = await client.beta.messages.stream(leadParams(okMessages())).finalMessage();
+      assert.match(textOf(final), /Paris/);
+      assert.equal(srv.mock.requests.length, 1, 'startTestServer exposes the mock instance');
+      const logged = await (await fetch(`${srv.url}/__mock/requests`)).json();
+      assert.equal(logged[0].kind, 'lead');
+    } finally {
+      await srv.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

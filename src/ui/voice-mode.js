@@ -975,7 +975,7 @@ function createVoiceMode(opts) {
     abortHandle(L.handle);
     if (S.closed) return;
     // The platform's messages are already short and actionable (e.g. iPhone: turn on Dictation).
-    const detail = err && typeof err.message === 'string' ? clip(singleLine(err.message), 160) : '';
+    const detail = err && typeof err.message === 'string' ? asSentence(clip(singleLine(err.message), 160)) : '';
     if (code === 'not-allowed') {
       if (!L.gesture && S.micWorked) {
         // The browser wants a fresh tap before it opens the microphone again (iOS).
@@ -1887,6 +1887,12 @@ function errorText(err) {
   if (!err) return '';
   if (typeof err === 'string') return err;
   return String(err.message || '');
+}
+
+/** Make sure a message ends like a sentence before another sentence follows it. */
+function asSentence(s) {
+  const t = String(s ?? '').trim();
+  return !t || /[.!?…]["'”’)\]]*$/.test(t) ? t : `${t}.`;
 }
 
 function singleLine(s) {

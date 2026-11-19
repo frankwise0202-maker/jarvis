@@ -185,6 +185,7 @@ describe('recordTurn / getStats', () => {
     const a3 = agent('Supply chain analyst', 'interrupted', { report: '', sources: [], costUsd: 0.01, usage: { searches: 1, fetches: 0 }, searches: ['q'] });
     const t = swarmTurn('resume-me', at('2026-11-18T23:50:00Z'), [[a1, a2, a3]], { status: 'interrupted' });
     t.stats = { agents: 3, searches: 5, sources: 4, waves: 1, durationMs: 60_000 };
+    t.usage.searches = 5;
     t.costUsd = 0.3;
     assert.equal(recordTurn(t, { now: NOW }), true);
     const mid = getStats({ now: NOW });
@@ -199,6 +200,7 @@ describe('recordTurn / getStats', () => {
     t.status = 'done';
     t.endedAt = at('2026-11-19T00:10:00Z');
     t.stats = { agents: 5, searches: 9, sources: 9, waves: 2, durationMs: 1_260_000 };
+    t.usage.searches = 9;
     t.costUsd = 0.55;
     assert.equal(recordTurn(t, { now: NOW }), true);
 
@@ -230,14 +232,16 @@ describe('recordTurn / getStats', () => {
     assert.equal(s.totals.turns, 3);
     assert.deepEqual(Object.keys(s.byDay), ['2026-11-19', '2026-11-20']);
 
-    // 59 days later both days are still inside the window; 61 days later the 19th has aged out.
+    // The window is today plus the 59 days before it: on 17 Jan both days are kept; on 18 Jan
+    // the 19th has aged out; on 19 Jan the 20th has too.
     assert.deepEqual(Object.keys(getStats({ now: at('2027-01-17T12:00:00Z') }).byDay), ['2026-11-19', '2026-11-20']);
-    assert.deepEqual(Object.keys(getStats({ now: at('2027-01-19T12:00:00Z') }).byDay), ['2026-11-20']);
+    assert.deepEqual(Object.keys(getStats({ now: at('2027-01-18T12:00:00Z') }).byDay), ['2026-11-20']);
+    assert.deepEqual(Object.keys(getStats({ now: at('2027-01-19T12:00:00Z') }).byDay), []);
 
     // Recording prunes stored buckets that fell out of the window.
-    recordTurn(quickTurn('later', at('2027-01-19T12:00:00Z')), { now: at('2027-01-19T12:00:00Z') });
-    assert.deepEqual(Object.keys(raw().byDay).sort(), ['2026-11-20', '2027-01-19']);
-    assert.equal(getStats({ now: at('2027-01-19T12:00:00Z') }).totals.turns, 4);
+    recordTurn(quickTurn('later', at('2027-01-18T12:00:00Z')), { now: at('2027-01-18T12:00:00Z') });
+    assert.deepEqual(Object.keys(raw().byDay).sort(), ['2026-11-20', '2027-01-18']);
+    assert.equal(getStats({ now: at('2027-01-18T12:00:00Z') }).totals.turns, 4);
   });
 
   test('top roles: normalized case, whitespace and punctuation; ranked; at most 20', () => {

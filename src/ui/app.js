@@ -1219,7 +1219,8 @@ export async function startApp(rootEl) {
 
   if (!state.demo) {
     try {
-      registerServiceWorker({
+      Promise.resolve(
+        registerServiceWorker({
         onUpdateReady: (apply) => {
           toast('A new version of Jarvis is ready.', {
             level: 'info',
@@ -1236,7 +1237,8 @@ export async function startApp(rootEl) {
             },
           });
         },
-      });
+        }),
+      ).catch((err) => console.error('[jarvis] service worker registration failed:', err));
     } catch (err) {
       console.error('[jarvis] service worker registration failed:', err);
     }
