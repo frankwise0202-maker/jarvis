@@ -32,6 +32,7 @@ import regressions from './scenarios/regressions.mjs';
 import holograms from './scenarios/holograms.mjs';
 import voiceSpeech from './scenarios/voice-speech.mjs';
 import optics from './scenarios/optics.mjs';
+import { opticsToolsShim } from './optics-tools-shim.mjs'; // v7 split, temporary (see the file)
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -106,7 +107,7 @@ async function main() {
   if (opts.build) {
     process.stdout.write('Building the app… ');
     try {
-      const { buildId, warnings } = await build({ quiet: true });
+      const { buildId, warnings } = await build({ quiet: true, plugins: [opticsToolsShim(ROOT)] });
       console.log(`build ${buildId}`);
       for (const w of warnings) console.log(`  warning: ${w}`);
     } catch (err) {
