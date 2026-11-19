@@ -1,0 +1,40 @@
+/* Settings → Voice → Natural voice (src/ui/natural-voice-settings.js). */
+.nv-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.nv-status[data-state='error'],
+.nv-status[data-state='slow'] {
+  color: var(--warn);
+}
+.nv-progress {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.nv-progress::-webkit-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--line);
+}
+.nv-progress::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease-out);
+}
+.nv-progress::-moz-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+.nv-card .set-row-actions .btn[hidden] {
+  display: none;
+}

@@ -44,7 +44,9 @@ import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
-import * as tts from '../platform/voice/tts.js';
+import * as deviceTts from '../platform/voice/tts.js';
+import { createVoiceRouter } from '../platform/voice/voice-router.js';
+import { createNaturalVoice } from '../platform/voice/natural/setup.js';
 import { markdownToPlainText } from '../lib/markdown.js';
 import { isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
@@ -53,7 +55,20 @@ import { cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
 
 const { sttSupported, startListening } = stt;
+// Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
+// is on and ready; the router has tts.js's API, so Voice Mode and the chat use it unchanged.
+const naturalVoice = safeInit(() => createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId }));
+const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, getSettings });
 const { ttsSupported, unlockSpeech, speak, stopSpeaking, toSpeech } = tts;
+
+function safeInit(fn) {
+  try {
+    return fn();
+  } catch (err) {
+    console.error('[jarvis] natural voice unavailable:', err);
+    return null;
+  }
+}
 
 const UI_KEYS = {
   last: 'jarvis.ui.lastConversation',
@@ -2018,6 +2033,7 @@ export async function startApp(rootEl) {
     closePhoneSheets();
     const panelCtl = createSettingsPanel({
       demo: state.demo,
+      naturalVoice: naturalVoice ? { natural: naturalVoice, tts } : null,
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),

@@ -44,6 +44,10 @@ export const DEFAULT_SETTINGS = deepFreeze({
   haptics: true,
   notifyOnFinish: true, // notify when a long mission finishes in the background
   voiceContinuous: true, // Voice Mode keeps listening after each spoken reply
+  // Natural voice (Kokoro-82M in a Worker, platform/voice/natural/): off until the owner opts in
+  // and the model is downloaded; the device voice (voiceURI) stays the fallback.
+  naturalVoice: false,
+  naturalVoiceId: 'bm_george', // a Kokoro voice id (platform/voice/natural/catalog.js)
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -143,6 +147,9 @@ const VALIDATORS = {
   haptics: bool,
   notifyOnFinish: bool,
   voiceContinuous: bool,
+  naturalVoice: bool,
+  // Kokoro voice ids look like 'bm_george' (language+gender letter, underscore, name).
+  naturalVoiceId: (v, fb) => (typeof v === 'string' && /^[a-z]{2}_[a-z]{2,20}$/.test(v) ? v : fb),
 };
 
 /**

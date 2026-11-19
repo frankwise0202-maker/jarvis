@@ -2339,7 +2339,7 @@ function createVoiceMode(opts) {
       const len = event.name === 'sentence' ? 0 : Number(event.charLength);
       setKaraokeWord(displayIndex(sp, ci), Number.isFinite(len) && len > 0 ? len : 0);
     }
-    bumpLevel(0.55 + Math.random() * 0.35);
+    if (outputLevel() === null) bumpLevel(0.55 + Math.random() * 0.35); // a real level needs no bumps
   }
 
   function displayIndex(sp, spokenIndex) {
@@ -2515,6 +2515,19 @@ function createVoiceMode(opts) {
     levelTarget = Math.max(levelTarget, Math.min(1, v));
   }
 
+  /** 0..1 from the speech engine's output analyser (the natural voice), or null (device voice). */
+  function outputLevel() {
+    try {
+      if (tts && typeof tts.getOutputLevel === 'function') {
+        const v = tts.getOutputLevel();
+        return typeof v === 'number' && Number.isFinite(v) ? v : null;
+      }
+    } catch {
+      /* no level */
+    }
+    return null;
+  }
+
   function updateLevelLoop() {
     // Not while a hologram or blueprint viewer covers Voice Mode (inert): nobody sees the core then.
     const want = !reducedMotion && !document.hidden && !S.closed && !root.inert && (S.state === 'listening' || S.state === 'speaking');
@@ -2535,7 +2548,11 @@ function createVoiceMode(opts) {
     levelFrame = 0;
     const dt = levelLast ? Math.min(100, ts - levelLast) : 16;
     levelLast = ts;
-    if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
+    const real = outputLevel();
+    if (real !== null) {
+      // The natural voice plays through Web Audio: follow its real loudness.
+      bumpLevel(real);
+    } else if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
       // No word events from this voice: a soft synthetic envelope keeps the core "talking".
       const t = ts / 1000;
       bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));

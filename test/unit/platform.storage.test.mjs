@@ -48,6 +48,7 @@ test('settings: defaults match SPEC and are frozen', async () => {
     // Feature pack (SPEC §14) and wave B (SPEC §15.1).
     followups: true, tone: 'butler', verbosity: 'balanced', theme: 'arc', sounds: true, soundVolume: 0.6, haptics: true,
     notifyOnFinish: true, voiceContinuous: true,
+    naturalVoice: false, naturalVoiceId: 'bm_george', // the opt-in natural voice (prototype C)
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);

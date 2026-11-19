@@ -1,0 +1,173 @@
+// The natural voice's audio output (natural/audio-out.js) on a fake AudioContext, the pure
+// helpers of the stream (silence trimming, word timing) and the download catalog.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createAudioOut, bandBins, bandEdges, bandsFromDb, levelFromSamples, BAND_COUNT } from '../../src/platform/voice/natural/audio-out.js';
+import { trimSilence, estimateWords, speedFor } from '../../src/platform/voice/natural/natural-stream.js';
+import { MODEL, RUNTIME, VOICES, DEFAULT_VOICE, downloadPlan, formatMegabytes, voiceById, voiceLabel, sourceConfig } from '../../src/platform/voice/natural/catalog.js';
+
+function fakeContextClass(log) {
+  return class FakeAudioContext {
+    constructor(opts) {
+      log.push(['new', opts]);
+      this.sampleRate = (opts && opts.sampleRate) || 48000;
+      this.state = 'suspended';
+      this.currentTime = 0;
+      this.destination = { kind: 'destination' };
+      this.outputLatency = 0.012;
+    }
+    resume() {
+      this.state = 'running';
+      log.push(['resume']);
+      return Promise.resolve();
+    }
+    suspend() {
+      this.state = 'suspended';
+      return Promise.resolve();
+    }
+    close() {
+      this.state = 'closed';
+    }
+    createGain() {
+      return { connect: (n) => log.push(['gain->', n.kind || 'node']), kind: 'gain' };
+    }
+    createAnalyser() {
+      const a = {
+        kind: 'analyser',
+        fftSize: 2048,
+        smoothingTimeConstant: 0.8,
+        get frequencyBinCount() {
+          return a.fftSize / 2;
+        },
+        connect: (n) => log.push(['analyser->', n.kind]),
+        getFloatFrequencyData: (arr) => arr.fill(-60),
+        getFloatTimeDomainData: (arr) => arr.fill(0.1),
+      };
+      return a;
+    }
+    createBuffer(ch, length, sampleRate) {
+      const data = new Float32Array(length);
+      return { length, sampleRate, duration: length / sampleRate, copyToChannel: (src) => data.set(src), getChannelData: () => data, data };
+    }
+    createBufferSource() {
+      const src = {
+        buffer: null,
+        connect: (n) => log.push(['src->', n.kind || 'destination']),
+        disconnect() {},
+        start: (when) => log.push(['start', when]),
+        stop: () => {
+          log.push(['stop']);
+          if (src.onended) src.onended();
+        },
+        onended: null,
+      };
+      return src;
+    }
+  };
+}
+
+test('audio out: one 24 kHz context, gain -> analyser -> speakers; unlock() resumes it in the gesture and asks iOS for playback', () => {
+  const log = [];
+  const nav = { audioSession: { type: 'auto' } };
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: { navigator: nav }, idleSuspendMs: 0 });
+  assert.equal(out.supported(), true);
+  assert.equal(out.unlock(), true);
+  assert.deepEqual(log[0], ['new', { sampleRate: 24000, latencyHint: 'interactive' }]);
+  assert.ok(log.some((e) => e[0] === 'resume'));
+  assert.ok(log.some((e) => e[0] === 'gain->' && e[1] === 'analyser') && log.some((e) => e[0] === 'analyser->' && e[1] === 'destination'));
+  assert.equal(nav.audioSession.type, 'playback', 'Web Audio is not silenced by the ring/silent switch');
+  assert.equal(out.context.sampleRate, 24000);
+  assert.equal(out.latency(), 0.012);
+});
+
+test('audio out: play() schedules at the given time (never in the past); level/bands only while something plays; stopAll()', () => {
+  const log = [];
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: {}, idleSuspendMs: 0 });
+  out.unlock();
+  out.context.currentTime = 5;
+  const h1 = out.play(new Float32Array(24000), 24000, 4);
+  assert.equal(h1.when, 5, 'not in the past');
+  assert.equal(h1.duration, 1);
+  const h2 = out.play(new Float32Array(12000), 24000, 6.14);
+  assert.equal(h2.when, 6.14);
+  assert.ok(log.some((e) => e[0] === 'start' && e[1] === 6.14));
+  assert.equal(out.busy(), true);
+  assert.ok(out.level() > 0);
+  const bands = new Float32Array(BAND_COUNT);
+  out.bands(bands);
+  assert.ok(bands.every((b) => Math.abs(b - 0.5) < 1e-6), '−60 dB is halfway between −90 and −30');
+  out.stopAll();
+  assert.equal(out.busy(), false);
+  assert.equal(out.level(), 0);
+  out.bands(bands);
+  assert.ok(bands.every((b) => b === 0));
+});
+
+test('audio math: 8 log bands from 100 Hz to 4 kHz, each with at least one FFT bin; dB and RMS mappings', () => {
+  const edges = bandEdges();
+  assert.equal(edges.length, 9);
+  assert.ok(Math.abs(edges[0] - 100) < 1e-9 && Math.abs(edges[8] - 4000) < 1e-9);
+  for (const [sr, fft] of [[24000, 512], [48000, 512], [44100, 512]]) {
+    const ranges = bandBins(sr, fft);
+    assert.equal(ranges.length, 8);
+    for (const [from, to] of ranges) assert.ok(to > from && from >= 0 && to <= fft / 2, `${sr}: [${from}, ${to})`);
+  }
+  const db = new Float32Array(256).fill(-90);
+  const out = new Float32Array(8);
+  bandsFromDb(db, bandBins(24000, 512), out);
+  assert.ok(out.every((v) => v === 0));
+  db.fill(-20);
+  bandsFromDb(db, bandBins(24000, 512), out);
+  assert.ok(out.every((v) => v === 1));
+  db.fill(-Infinity);
+  bandsFromDb(db, bandBins(24000, 512), out);
+  assert.ok(out.every((v) => v === 0), '-Infinity (silence) is the floor');
+  assert.equal(levelFromSamples(new Float32Array(64)), 0);
+  assert.ok(Math.abs(levelFromSamples(new Float32Array(64).fill(0.1)) - 0.75) < 1e-6, '−20 dBFS -> 0.75');
+  assert.equal(levelFromSamples(new Float32Array(64).fill(1)), 1);
+});
+
+test('stream helpers: silence is trimmed to 20 ms before and 50 ms after the voice; word times follow length and punctuation', () => {
+  const sr = 24000;
+  const pcm = new Float32Array(sr); // 1 s: voice from 0.3 s to 0.6 s
+  for (let i = Math.round(0.3 * sr); i < Math.round(0.6 * sr); i++) pcm[i] = 0.3;
+  const cut = trimSilence(pcm, sr);
+  assert.equal(cut.from, Math.round(0.28 * sr));
+  assert.equal(cut.to, Math.round(0.65 * sr));
+  assert.equal(cut.voicedFrom, Math.round(0.02 * sr));
+  assert.equal(cut.voicedTo, Math.round(0.32 * sr));
+  assert.deepEqual(trimSilence(new Float32Array(100), sr), { from: 0, to: 100, voicedFrom: 0, voicedTo: 100, silent: true });
+  const text = 'Good evening, sir. Systems online.';
+  const words = estimateWords(text, 1, 3);
+  assert.deepEqual(words.map((w) => text.slice(w.ci, w.ci + w.len)), ['Good', 'evening,', 'sir.', 'Systems', 'online.']);
+  assert.equal(words[0].at, 1);
+  for (let i = 1; i < words.length; i++) assert.ok(words[i].at > words[i - 1].at);
+  assert.ok(words.at(-1).at < 3);
+  // A word's time is its length plus the pause its punctuation brings: "two." takes longer than "one".
+  const w2 = estimateWords('one two. six ten', 0, 1);
+  assert.ok(w2[2].at - w2[1].at > 1.9 * (w2[1].at - w2[0].at));
+  assert.ok(Math.abs(w2[3].at - w2[2].at - (w2[1].at - w2[0].at)) < 1e-9, 'same length, no punctuation: same time');
+  assert.equal(speedFor(0.7), 0.7);
+  assert.equal(speedFor(9), 2);
+  assert.equal(speedFor(undefined), 1);
+});
+
+test('catalog: pinned model, British voices first, download sizes', () => {
+  assert.equal(MODEL.revision.length, 40);
+  assert.equal(DEFAULT_VOICE, 'bm_george');
+  assert.deepEqual(VOICES.slice(0, 4).map((v) => v.id), ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel']);
+  assert.ok(VOICES.slice(0, 8).every((v) => v.accent === 'British'));
+  assert.equal(voiceLabel(voiceById('bm_fable')), 'Fable — British male (grade C)');
+  const plan = downloadPlan();
+  assert.equal(plan.bytes, 44 + 3497 + 113 + 92361116 + 522240 + RUNTIME.bytes + RUNTIME.workerBytes);
+  assert.equal(formatMegabytes(plan.bytes), '117 MB');
+  assert.equal(formatMegabytes(downloadPlan({ dtype: 'fp32' }).bytes), '350 MB');
+  const self = sourceConfig('self', { base: 'https://owner.github.io/jarvis/index.html' });
+  assert.equal(self.remoteHost, 'https://owner.github.io/jarvis/models/');
+  assert.equal(self.wasmBase, 'https://owner.github.io/jarvis/voice/ort/');
+  assert.deepEqual(self.allowOrigins, ['https://owner.github.io']);
+  const hf = sourceConfig('hf', { base: 'https://owner.github.io/jarvis/' });
+  assert.deepEqual(hf.allowOrigins, ['https://owner.github.io', 'https://huggingface.co']);
+  assert.deepEqual(hf.allowHostSuffixes, ['.hf.co']);
+});
