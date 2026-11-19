@@ -589,10 +589,12 @@ export function createJarvis(deps = {}) {
      * turn context and the text; a message may be attachments only. `maxAgents` (1–20) overrides
      * settings.maxAgents for this turn only. `keepOnStop: true` (Voice Mode, where nothing can be
      * handed back to a message box) keeps the message in the history even when the turn is stopped
-     * before any reply. Throws (before anything is appended) when the input is invalid, e.g. an
-     * attachment Claude would reject; the error message is worded for the owner.
+     * before any reply. `spoken: true` (Voice Mode, where the reply is read aloud) adds the spoken
+     * reply channel to this turn's <turn_context> and marks the turn `spoken: true`; without it the
+     * request is exactly as before. Throws (before anything is appended) when the input is invalid,
+     * e.g. an attachment Claude would reject; the error message is worded for the owner.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
@@ -628,6 +630,7 @@ export function createJarvis(deps = {}) {
         error: null,
       };
       if (override !== null) turn.maxAgents = override; // survives a resume (launch applies it)
+      if (spoken === true) turn.spoken = true; // a Voice Mode reply, written for the ear (UI and exports can tell)
       if (isFirst || !conv.title) conv.title = truncate(singleLine(body || attachmentsTitle(files)), 60);
       conv.turns.push(userTurn, turn);
       const turnContext = buildTurnContext({
@@ -641,6 +644,7 @@ export function createJarvis(deps = {}) {
         maxWaves: settings.maxWaves,
         memoryEnabled: settings.memoryEnabled,
         memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
+        spoken: spoken === true,
       });
       // Where this turn's messages start: a refused turn is removed from the history from here on.
       turn.apiStart = conv.apiMessages.length;

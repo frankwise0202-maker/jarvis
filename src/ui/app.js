@@ -554,6 +554,7 @@ export async function startApp(rootEl) {
     const maxAgents = extras ? Number(extras.maxAgents) : NaN;
     if (Number.isFinite(maxAgents) && maxAgents >= 1) input.maxAgents = Math.min(20, Math.round(maxAgents));
     if (extras && extras.keepOnStop === true) input.keepOnStop = true; // Voice Mode: never withdrawn on Stop
+    if (extras && extras.spoken === true) input.spoken = true; // Voice Mode: the reply is written for the ear
     clearFollowups();
     let run;
     try {
@@ -588,7 +589,8 @@ export async function startApp(rootEl) {
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
     // keepOnStop: a spoken question that is interrupted stays in the conversation (nothing is put
     // back in the hidden message box), so what the owner says next keeps its context.
-    if (!send(text, mode, { keepOnStop: true })) throw new Error('I couldn’t start that request.');
+    // spoken: the reply is read aloud, so Jarvis writes it for the ear (details for the screen go below a --- line).
+    if (!send(text, mode, { keepOnStop: true, spoken: true })) throw new Error('I couldn’t start that request.');
     const entry = state.conv && state.runs.get(state.conv.id);
     return entry ? entry.run : null;
   }

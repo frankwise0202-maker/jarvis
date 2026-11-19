@@ -15,7 +15,7 @@
 import { classifyRequest, createBehaviorState, planResponse } from './behavior.mjs';
 import { describeAttachmentBlock, parseDirectives, userTextOf } from './content.mjs';
 import { signThinkingBlocks, validateBody, validateHeaders, mergeTurns } from './validate.mjs';
-import { abortError, canonicalJson, chunkText, estimateTokens, isPlainObject, newMessageId, newRequestId, randomId, seededRandom, sha256Hex, sleep } from './util.mjs';
+import { abortError, canonicalJson, chunkText, estimateTokens, isPlainObject, newMessageId, newRequestId, randomId, seededRandom, sha256Hex, sleep, wordChunks } from './util.mjs';
 
 export { parseDirectives } from './content.mjs';
 
@@ -391,10 +391,21 @@ function usesCaching(body) {
 
 const sseFrame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
+// Spoken replies (lead responses of a Voice Mode turn, plan.spoken): text arrives a few words at a
+// time at a real model's pace, 50–90 ms apart (about 200–300 characters a second), and a web search
+// or page read takes about a second, so Voice Mode can start speaking while the reply still streams.
+// [[slow]] keeps its own pace (≈120 ms per event) with the same word-sized pieces.
+export const SPOKEN_WORDS_PER_DELTA = Object.freeze([2, 4]);
+export const SPOKEN_DELTA_MS = Object.freeze([50, 90]);
+export const SPOKEN_TOOL_RESULT_MS = Object.freeze([900, 1300]);
+
 function buildFrames(message, plan, rng) {
   const frames = [];
-  const push = (event, data, weight = 1) => frames.push({ text: sseFrame(event, data), weight });
+  // `delay` (ms before timeScale): a frame's own wait; frames without one share the pace's total.
+  const push = (event, data, weight = 1, delay = undefined) => frames.push({ text: sseFrame(event, data), weight, delay });
   const slow = plan.pace === 'slow-lead';
+  const spoken = plan.spoken === true;
+  const paced = spoken && !slow;
   const textChunk = slow ? 28 : plan.pace === 'worker' || plan.pace === 'slow-worker' ? 40 : 10;
   const jsonChunk = plan.jsonChunk || (slow ? 40 : 24);
   const u = message.usage;
@@ -413,8 +424,8 @@ function buildFrames(message, plan, rng) {
   push('ping', { type: 'ping' });
 
   message.content.forEach((block, index) => {
-    const start = (content_block, weight = 1) => push('content_block_start', { type: 'content_block_start', index, content_block }, weight);
-    const delta = (d) => push('content_block_delta', { type: 'content_block_delta', index, delta: d });
+    const start = (content_block, weight = 1, delay = undefined) => push('content_block_start', { type: 'content_block_start', index, content_block }, weight, delay);
+    const delta = (d, delay = undefined) => push('content_block_delta', { type: 'content_block_delta', index, delta: d }, 1, delay);
     const stop = () => push('content_block_stop', { type: 'content_block_stop', index });
     switch (block.type) {
       case 'thinking':
@@ -423,12 +434,14 @@ function buildFrames(message, plan, rng) {
         delta({ type: 'signature_delta', signature: block.signature });
         stop();
         break;
-      case 'text':
+      case 'text': {
         start({ type: 'text', text: '', citations: block.citations ? [] : null });
         for (const citation of block.citations || []) delta({ type: 'citations_delta', citation });
-        for (const c of chunkText(block.text, textChunk, rng)) delta({ type: 'text_delta', text: c });
+        const pieces = spoken ? wordChunks(block.text, rng, SPOKEN_WORDS_PER_DELTA) : chunkText(block.text, textChunk, rng);
+        for (const c of pieces) delta({ type: 'text_delta', text: c }, paced ? rng.int(SPOKEN_DELTA_MS[0], SPOKEN_DELTA_MS[1]) : undefined);
         stop();
         break;
+      }
       case 'server_tool_use':
       case 'tool_use': {
         start({ type: block.type, id: block.id, name: block.name, input: {} });
@@ -440,7 +453,8 @@ function buildFrames(message, plan, rng) {
       }
       case 'web_search_tool_result':
       case 'web_fetch_tool_result':
-        start(block, 8); // results arrive complete, after the "search" latency
+        // Results arrive complete, after the "search" latency.
+        start(block, 8, paced ? rng.int(SPOKEN_TOOL_RESULT_MS[0], SPOKEN_TOOL_RESULT_MS[1]) : undefined);
         stop();
         break;
       default:
@@ -480,9 +494,10 @@ function computeDelays(frames, pace, rng, timeScale) {
   if (!(timeScale > 0)) return frames.map(() => 0);
   const p = PACES[pace] || PACES.normal;
   if (p.perFrame) return frames.map((f) => p.perFrame * Math.min(f.weight, 3) * timeScale);
+  // Frames with a delay of their own (spoken replies) keep it; the others share the pace's total.
   const total = rng.int(p.total[0], p.total[1]) * timeScale;
-  const weights = frames.reduce((a, f) => a + f.weight, 0);
-  return frames.map((f) => (total * f.weight) / weights);
+  const weights = frames.reduce((a, f) => a + (f.delay === undefined ? f.weight : 0), 0) || 1;
+  return frames.map((f) => (f.delay === undefined ? (total * f.weight) / weights : f.delay * timeScale));
 }
 
 /**
