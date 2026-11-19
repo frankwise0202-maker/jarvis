@@ -253,14 +253,14 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     const request = hasTool(body, 'draw_blueprint') ? blueprintRequestOf(turnContextText(userMsg)) : null;
     if (request) {
       const sample = chooseBlueprintSample({ part: request.part, partName: request.partName, title: request.title, prompt: stripDirectives(prompt) });
-      return { plan: blueprintPlan({ think, sample, forIds: request.model ? { model: request.model, part: request.part } : null, partName: request.partName }) };
+      return { plan: blueprintPlan({ think, sample, forIds: request.model ? { model: request.model, part: request.part } : null, partName: request.partName, spoken }) };
     }
     if (d.has('swarm') || d.has('waves')) return { plan: deployPlan(env, { wave: 1, count: d.int('swarm', 3, 1, 20) }) };
-    if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d) }) };
+    if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d), spoken }) };
     if (d.has('blueprint') && hasTool(body, 'draw_blueprint')) {
       const named = d.arg('blueprint');
       const sample = BLUEPRINT_SAMPLES.includes(named) ? named : chooseBlueprintSample({ prompt: stripDirectives(prompt) });
-      return { plan: blueprintPlan({ think, sample, forIds: null }) };
+      return { plan: blueprintPlan({ think, sample, forIds: null, spoken }) };
     }
     if (d.has('open-saved') && hasTool(body, 'open_saved')) return { plan: openSavedPlan({ think, ids: savedIdsOf(turnContextText(userMsg)) }) };
     if (d.has('search')) return { plan: searchPlan(env) };
@@ -319,18 +319,20 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     if (successful.length < d.int('waves', 1, 1, 4)) return { plan: deployPlan(env, { wave: successful.length + 1, count: 2, followUp: true }) };
     // A Blueprint mission: research first, then the hologram (the synthesis follows its result).
     if (d.has('hologram') && hasTool(body, 'show_hologram')) {
-      return { plan: hologramPlan({ think, sample: hologramSample(d), intro: 'With the research in, here is the hologram, built from what the team found.' }) };
+      return { plan: hologramPlan({ think, sample: hologramSample(d), intro: 'With the research in, here is the hologram, built from what the team found.', spoken }) };
     }
     return { plan: synthesisPlan(env, successful) };
   }
   const visualUse = uses.find((b) => VISUAL_TOOL_NAMES.includes(b.name));
   if (visualUse) {
     const result = results.get(visualUse.id);
-    const line = visualFollowUpText(visualUse, result, toolResultText(result?.content));
+    const partName = blueprintRequestOf(turnContextText(userMsg))?.partName || '';
+    const line = visualFollowUpText(visualUse, result, toolResultText(result?.content), { spoken, partName });
     const research = deploysInTurn(after).filter((x) => x.result && !x.result.is_error);
     if (research.length && !result?.is_error) {
       // The mission's write-up: what the hologram shows first, then how it works and how it is made.
       const reports = research.flatMap((x) => parseAgentReports(x.result.content).reports);
+      if (spoken) return { plan: { blocks: [think('The hologram is up; now the explanation, with sources.'), ...textBlocks([{ text: `${line} ` }, ...spokenSynthesisAnswer({ prompt, ctx, reports, directives: d })])], stop_reason: 'end_turn', pace } };
       return { plan: { blocks: [think('The hologram is up; now the explanation, with sources.'), text(`${line}\n\n${synthesisAnswer({ prompt, ctx, reports })}`)], stop_reason: 'end_turn', pace } };
     }
     return { plan: { blocks: [text(line)], stop_reason: 'end_turn', pace } };

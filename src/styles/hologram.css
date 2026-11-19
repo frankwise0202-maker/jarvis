@@ -501,6 +501,15 @@
   color: var(--accent-ink);
   box-shadow: 0 0 0 4px var(--accent-soft), 0 0 22px var(--accent-glow);
 }
+/* Voice Mode is open under the viewer and listens for it: the mic is its talk button. While Jarvis
+   thinks or speaks it stops him (as the core does), shown with a stop sign and a soft ring. */
+.hv__cmd-btn[data-voice='busy'] {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+.hv[data-voice='listening'] .hv__cmd-input::placeholder {
+  color: var(--accent);
+}
 .hv__cmd-send {
   background: var(--accent);
   color: var(--accent-ink);

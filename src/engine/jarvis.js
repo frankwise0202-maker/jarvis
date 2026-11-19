@@ -675,6 +675,8 @@ export function createJarvis(deps = {}) {
         memoryEnabled: settings.memoryEnabled,
         memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
         spoken: spoken === true,
+        // Voice Mode in a conversation that can show holograms: how they work by voice.
+        visuals: spoken === true && hasVisualTools(conv, 'show_hologram'),
       });
       // Where this turn's messages start: a refused turn is removed from the history from here on.
       turn.apiStart = conv.apiMessages.length;

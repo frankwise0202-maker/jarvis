@@ -9,6 +9,10 @@
 //   [[open-saved]]                         open_saved with the first id of the turn context's saved list
 // After the tool_result: one or two sentences (a Blueprint mission's research synthesis when agents
 // ran first). Only tools the request defines are ever called, as with the real API.
+// A Voice Mode turn (spoken: the spoken reply channel in the turn context) says it the way Voice
+// Mode wants it: "Pulling up the AA alkaline battery now." before show_hologram, "Here's the AA
+// alkaline battery. Say "expand it", or tap any part." after it, and a blueprint "is ready; it's
+// open on your screen".
 
 import { readFileSync } from 'node:fs';
 import { newToolUseId, truncate } from './util.mjs';
@@ -127,13 +131,29 @@ export function chooseBlueprintSample({ part = null, partName = '', title = '', 
 
 const text = (t) => ({ type: 'text', text: t, citations: null });
 
+/** A title or part name as it is said after a verb: "AA alkaline battery (LR6)" -> "the AA alkaline battery". */
+export function spokenName(name) {
+  let s = String(name ?? '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[\u2212+]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\s,;:.]+$/, '');
+  if (!s) return 'it';
+  s = s.replace(/^the\s+/i, '');
+  const first = s.split(' ')[0];
+  if (!/[A-Z0-9].*[A-Z0-9]/.test(first) && /^[A-Z][a-z]/.test(first)) s = s[0].toLowerCase() + s.slice(1);
+  return `the ${s}`;
+}
+
 /** One streamed show_hologram call (realistic, visible pacing for the live build). */
-export function hologramPlan({ think, sample, intro }) {
+export function hologramPlan({ think, sample, intro, spoken = false }) {
   const input = sample === 'broken' ? JSON.parse(JSON.stringify(BROKEN_HOLOGRAM)) : sample === 'huge' ? hugeHologram() : loadFixture(sample);
+  const say = intro || (spoken ? `Pulling up ${spokenName(input.title)} now.` : `Here is ${input.title} as a hologram; it builds part by part.`);
   return {
     blocks: [
       think(`The owner wants to see ${input.title}. I'll build the hologram: the big recognizable structure first, then the smaller and inner parts, every part labeled.`),
-      text(intro || `Here is ${input.title} as a hologram; it builds part by part.`),
+      text(say),
       { type: 'tool_use', id: newToolUseId(), name: 'show_hologram', input },
     ],
     stop_reason: 'tool_use',
@@ -143,14 +163,14 @@ export function hologramPlan({ think, sample, intro }) {
 }
 
 /** One streamed draw_blueprint call with a sample sheet, linked to `forIds` when given. */
-export function blueprintPlan({ think, sample, forIds, partName }) {
+export function blueprintPlan({ think, sample, forIds, partName, spoken = false }) {
   const sheet = loadFixture(sample);
   const input = forIds && forIds.model ? { ...sheet, for: forIds.part ? { model: forIds.model, part: forIds.part } : { model: forIds.model } } : sheet;
   const what = partName || sheet.title;
   return {
     blocks: [
       think(`The owner asked for the 2D blueprint of ${what}. One sheet, drawn once, with the parts numbered against the list.`),
-      text(`Drawing the 2D blueprint of ${what} now.`),
+      text(spoken ? `Drawing the blueprint of ${spokenName(what)} now.` : `Drawing the 2D blueprint of ${what} now.`),
       { type: 'tool_use', id: newToolUseId(), name: 'draw_blueprint', input },
     ],
     stop_reason: 'tool_use',
@@ -174,19 +194,27 @@ export function openSavedPlan({ think, ids }) {
 
 const quoted = (s) => `“${truncate(String(s || '').replace(/\s+/g, ' ').trim(), 80)}”`;
 
-/** The one or two sentences after a show_hologram / draw_blueprint / open_saved result. */
-export function visualFollowUpText(use, result, resultText) {
+/**
+ * The one or two sentences after a show_hologram / draw_blueprint / open_saved result. spoken (a
+ * Voice Mode turn): said for the ear; partName: the part a "Blueprint request" asked for.
+ */
+export function visualFollowUpText(use, result, resultText, { spoken = false, partName = '' } = {}) {
   const failed = result?.is_error === true;
   if (use.name === 'show_hologram') {
+    if (failed && spoken) return "I couldn't build that hologram this time. Shall I try again?";
     if (failed) return `I couldn't build that hologram: ${truncate(resultText.split('\n').slice(1).join(' ') || resultText, 160)}`;
+    if (spoken) return `Here's ${spokenName(use.input?.title)}. Say "expand it", or tap any part.`;
     const parts = Array.isArray(use.input?.parts) ? use.input.parts.length : 0;
     return `There it is: ${quoted(use.input?.title)}, with ${parts} labeled parts. Tap any part for details, or say "expand" to take it apart.`;
   }
   if (use.name === 'draw_blueprint') {
+    if (failed && spoken) return "I couldn't draw that blueprint this time. Shall I try again?";
     if (failed) return `I couldn't draw that blueprint: ${truncate(resultText, 160)}`;
+    if (spoken) return `The blueprint of ${spokenName(partName || use.input?.title)} is ready; it's open on your screen. Tap a numbered callout to see that part.`;
     return `Here is the 2D blueprint of ${quoted(use.input?.title)}. Tap a numbered callout to see that part.`;
   }
   if (failed) return 'I couldn’t find that in your saved library, so nothing was opened. Shall I build it again?';
   const m = /^Opened the saved (hologram|blueprint) "([^"]*)"/.exec(resultText);
+  if (m && spoken) return `Here's your saved ${m[1]} of ${spokenName(m[2])}; no need to build it again.`;
   return m ? `I've reopened your saved ${m[1]} ${quoted(m[2])}: no need to build it again.` : 'I have reopened it from your library.';
 }

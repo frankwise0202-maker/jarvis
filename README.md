@@ -2,8 +2,8 @@
 
 Jarvis is your own personal AI assistant. It answers questions, searches the web, remembers
 what you tell it to, and for big questions it sends out a whole team of research agents at once
-and writes up what they found, with sources. It talks, it listens, and it lives on your computer
-and your phone like an app.
+and writes up what they found, with sources. It talks, it listens, it can pull up a 3D hologram of
+how something is built, and it lives on your computer and your phone like an app.
 
 **Open Jarvis here: <https://frankwise0202-maker.github.io/jarvis/>**
 
@@ -49,10 +49,15 @@ and your conversations are stored only on your device.
   cars for under $50k", "plan a week in Lisbon"), Jarvis sends several research agents out in
   parallel, each with its own angle. You can watch every agent work live in **Mission Control**,
   then Jarvis combines their reports into one answer.
-- **One-tap missions ("Protocols").** Morning Briefing, Deep Research, Compare & Decide, Trip
-  Planner, Fact Check, Explain Simply, News Sweep and Gift Finder are ready on the home screen,
-  and you can save your own.
+- **One-tap missions ("Protocols").** Morning Briefing, Deep Research, Blueprint, Compare &
+  Decide, Trip Planner, Fact Check, Explain Simply, News Sweep and Gift Finder are ready on the
+  home screen, and you can save your own.
 - **Show Jarvis.** Attach photos (or take one) and PDFs, and ask about them.
+- **See how things are built.** Ask "show me a 2024 Camry" or "what's inside an AA battery?" and
+  Jarvis builds a glowing **3D hologram** with every part labeled, which you can turn, take apart
+  and tap. A **2D blueprint** of a part (or the whole thing) is drawn only when you ask for one,
+  everything is kept in your **Blueprints** library to reopen for free, and **Photos** shows real
+  pictures of any part. It all works by voice too.
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
@@ -143,7 +148,9 @@ it once more (copy it from your password manager).
   voice: the details still appear on screen, and what you ask meanwhile is answered as soon as
   they are done (the button below reads **Stop writing** if you want to stop the details too).
   **Exit** leaves Voice Mode; a reply or mission that is still running carries on in the chat
-  (and isn't read out again there if Jarvis had already started saying it).
+  (and isn't read out again there if Jarvis had already started saying it). Ask to see something
+  ("show me this car") and the hologram opens right over Voice Mode while it builds; see
+  [Holograms and blueprints](#holograms-and-blueprints).
 - **Choose a mode** under the message box:
   - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
   - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).
@@ -173,6 +180,48 @@ it once more (copy it from your password manager).
   chat. Shortcuts on a computer: **Ctrl/⌘ + K** new chat, **Esc** closes panels.
 - **Demo**: to show Jarvis to someone without using your account, open
   <https://frankwise0202-maker.github.io/jarvis/?demo=1>, a scripted demonstration that costs nothing.
+
+### Holograms and blueprints
+
+- **Ask to see something:** "show me a 2024 Toyota Camry Hybrid", "how does a car alternator
+  work?", "what's inside an AA battery?". Jarvis builds a glowing 3D hologram of that exact thing,
+  part by part while you watch, with every part labeled. A card appears in the chat: tap **Open**
+  to see it full screen (in Voice Mode it opens by itself).
+- **Look around:** drag to turn it, pinch or scroll to zoom, and drag with two fingers to move it.
+  **Exploded** (or the slider) takes it apart so you can see inside; **Assembled** puts it back
+  together. **Labels**, **Rotate**, **View** (front, side, top…), **Parts** (a list of every part)
+  and **Reset** are along the bottom.
+- **Tap a part** to highlight it and read what it does and what it's made of. Its card also has
+  **Photos**, **Isolate** (show only that part) and **Focus** (zoom to it).
+- **Say or type commands** in the box at the bottom, or tap its microphone. These happen on your
+  device, instantly and for free: "expand it", "put it back together", "show the alternator",
+  "isolate the rotor", "zoom in on the pulley", "labels off", "rotate", "stop", "front view",
+  "photos of the fan", "close". Anything else, like "why is the cathode a ring?", goes to Jarvis
+  as a normal question, and the answer appears over the hologram.
+- **2D blueprints are drawn only when you ask:** tap **Build 2D blueprint** on a part's card, tap
+  **2D** for the whole object, or say "blueprint the alternator". You get an engineering sheet
+  with numbered parts, a parts list, sizes and notes; zoom in, tap a number to find that part, or
+  download it as an SVG or PNG picture. Each new blueprint costs about 15¢ (the button shows the
+  estimate first). A part that already has one shows **Open blueprint**, which is free; **Rebuild**
+  draws a fresh one.
+- **Your Blueprints library** (the **Blueprints** button at the top, or History → **Blueprints**
+  on a small phone) keeps every hologram and blueprint Jarvis has made for you, each with a small
+  picture. Opening one again is free, needs no internet, and asks Jarvis nothing. You can also
+  download or delete them there. When you ask for something you've already seen, Jarvis reopens
+  the saved one instead of building it again.
+- **Photos** shows real photographs of the object or a part from Wikimedia Commons, with the
+  photographer's name and license. Photos are free (see [Privacy](#privacy)).
+- **The Blueprint protocol** on the home screen asks "What should I blueprint?", sends a research
+  team to find out how that exact thing is built and made, then builds the hologram and explains
+  it, with sources. It draws no 2D sheets until you ask.
+- **In Voice Mode**, say "show me this car" and the hologram opens over Voice Mode as it builds,
+  while Jarvis tells you what you're looking at ("Here's the Camry. Say 'expand it' or tap any
+  part."). Then just talk: "expand it" or "show the alternator" happen at once, with a short
+  answer ("Expanding.", "Here's the alternator."); "blueprint the alternator" draws that blueprint
+  and opens it when it's ready; any other question is answered out loud and shown over the
+  hologram. With **Continuous** on, Jarvis keeps listening between commands; otherwise tap the
+  microphone in the hologram's command box (while Jarvis is working or talking, that button stops
+  him, like the glowing core does). Close the hologram to get back to Voice Mode.
 
 ### A more natural voice
 
@@ -208,11 +257,16 @@ from the credit in your account. Rough examples:
 | An answer that needs a web search | about 6–16¢ (each web search is $0.01 of that) |
 | An 8-agent swarm at the Balanced depth | about $1–2.50, typically around $1.70 |
 | A Deep swarm with 20 agents | about $7–15 |
+| A 3D hologram | about 10–30¢ (a battery at the low end, a whole car at the high end) |
+| A 2D blueprint | about 15¢ (shown on the button before you ask) |
+| Reopening a saved hologram or blueprint, hologram commands, Photos | free |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
 are Fast), with room left over for everyday questions. Follow-up suggestions use the small Claude Haiku model
 and cost a tiny fraction of a cent. A photo or PDF you attach is re-read with every later message
 in that conversation (at a reduced, cached price), so start a new chat when you change topic.
+The instructions for holograms and blueprints are part of what Jarvis sends, so the first message
+of a new conversation costs about 3¢ more; later messages reuse them for a tenth of a cent.
 
 - Under each answer Jarvis shows an **estimate** of what it cost, and Settings shows your
   estimated spending this month. You can set a **warning threshold** there.
@@ -242,6 +296,15 @@ in that conversation (at a reduced, cached price), so start a new chat when you 
   servers. Spoken replies use a voice from your device or browser: voices marked "(online)" in
   Settings → Voice send the text they read aloud to their provider (Google or Microsoft); the
   others speak on your device without sending anything.
+- **Photos of parts.** When you open **Photos** in a hologram, its search words (the name of the
+  object or part, which you can change) are sent to Wikimedia Commons (`commons.wikimedia.org`),
+  and the pictures load from `upload.wikimedia.org`. No account, cookies or referrer are sent,
+  and nothing else goes to Wikimedia. Photos are searched only when you open them.
+- **Holograms and blueprints** you've made are saved on this device only, like your
+  conversations, and are included in backups. Deleting a conversation keeps its saved holograms
+  and blueprints (delete those in the Blueprints library); **Reset Jarvis** deletes them. If the
+  device's storage is full, new ones last only until you close Jarvis, and the storage notice
+  says so.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
@@ -272,11 +335,12 @@ Other websites (at other addresses) cannot read it.
 ### Backups
 
 - **Export backup** (Settings → Data) saves your conversations, memory, preferences, your own
-  protocols and statistics in a file. It never contains your API key: a conversation that
-  contains an API key (yours or any other) is left out, and Jarvis tells you how many were.
-- **Import backup** adds the backup's conversations and memory notes (nothing is deleted) and
-  restores your preferences: name, style, voice, theme and sounds. It never changes your models,
-  agent limits or spending warning. Only conversations that Jarvis itself made are imported (any
+  protocols, statistics and your Blueprints library (holograms and blueprints) in a file. It never
+  contains your API key: a conversation that contains an API key (yours or any other) is left
+  out, and Jarvis tells you how many were.
+- **Import backup** adds the backup's conversations, memory notes and saved holograms and
+  blueprints (nothing is deleted) and restores your preferences: name, style, voice, theme and
+  sounds. It never changes your models, agent limits or spending warning. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
   comes back as stopped: it can't be resumed.
 - **Only import your own backups.** Never import a backup someone else gave you: its
@@ -301,7 +365,8 @@ Other websites (at other addresses) cannot read it.
 - **Memory:** everything Jarvis remembers about you; edit or delete any of it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
   level; the **Systems dashboard**.
-- **Data:** export a backup (conversations, memory, settings, your own protocols and statistics),
+- **Data:** export a backup (conversations, memory, settings, your own protocols, statistics and
+  the Blueprints library),
   import one of your own (see [Backups](#backups)), or reset Jarvis on this device.
 - **Install:** how to install Jarvis on this device.
 
@@ -329,6 +394,10 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
 | **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |
 | **A spending warning** | Your estimated spending passed the threshold you set. Change it in Settings → API key & spending. |
+| **"This device could not start the 3D view"** | 3D graphics (WebGL) are turned off in this browser, for example by Lockdown Mode on an iPhone. The parts list and part cards still work, and so do blueprints. |
+| **"The 3D view couldn't load"** | The 3D viewer couldn't be fetched (for example right after an update, while offline). Check your connection and tap **Try again**. Once Jarvis is installed and up to date, holograms open offline too. |
+| **Photos don't appear** | Photos need an internet connection (holograms and blueprints don't). If Wikimedia Commons is slow or busy, try again in a moment. |
+| **A hologram says "incomplete"** | It was stopped, or the connection dropped, while Jarvis was building it. Ask again (or tap **Resume** if the reply was interrupted). |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
 | **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key. |
 
@@ -366,21 +435,21 @@ binding contract for every module.
 
 ```text
 public/           static files copied into dist/ (index.html, manifest, service worker, icons)
-src/engine/       conversation engine: lead, agent missions, streaming, prompts (no DOM)
-src/platform/     settings, API key, IndexedDB history, memory, spend, voice, PWA helpers
-src/lib/          safe streaming Markdown → DOM renderer
-src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (core, Mission Control)
+src/engine/       conversation engine: lead, agent missions, streaming, prompts, holograms and blueprints (visuals.js) (no DOM)
+src/platform/     settings, API key, IndexedDB history and the saved library, memory, spend, voice, Wikimedia photo search, PWA helpers
+src/lib/          safe streaming Markdown → DOM renderer; hologram and blueprint spec validators and the hologram command matcher (pure)
+src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (core, Mission Control); src/ui/hologram/ the 3D viewer (three.js, loaded on demand); src/ui/blueprint/ the blueprint viewer
 src/styles/       design tokens and styles
 scripts/          build.mjs, serve.mjs, deploy-pages.mjs, make-icons.mjs
 test/unit/        node --test unit tests
-test/mock/        strict mock of the Claude Messages API (HTTP handler + in-process fetch)
+test/mock/        strict mock of the Claude Messages API (HTTP handler + in-process fetch; directives in test/mock/README.md)
 test/server.mjs   dist/ + mock API on one origin
 test/e2e/         Playwright end-to-end scenarios
 ```
 
 | Command | What it does |
 |---|---|
-| `npm run build` | Bundles `src/main.js` into `dist/assets/app.js` + `app.css` (minified, source maps, target es2020/safari15), copies `public/`, stamps the build id and the service worker's precache list, prints sizes. |
+| `npm run build` | Bundles `src/main.js` into `dist/assets/app.js` + `app.css` (minified, source maps, target es2020/safari15), with the 3D viewer and three.js split into lazy chunks in `dist/assets/chunks/`; copies `public/`, stamps the build id and the service worker's precache list (chunks included, so saved holograms open offline), prints sizes. |
 | `npm start` | Builds if `dist/` is missing (`-- --rebuild` to force), then serves `dist/` on `0.0.0.0:8642` (`PORT=…` to change). |
 | `npm test` | Unit tests (`node --test`). |
 | `npm run e2e` | Builds, then runs the Playwright Chromium scenarios against the real app and the mock API. Options: `-- --only swarm,xss`, `--headed`, `--list`, `--no-build`, `--mock-speed 0.5`. Screenshots and failure reports go to `test/artifacts/`. |
@@ -431,11 +500,19 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[dropworkers]]` | each agent's first stream is cut mid-way; later attempts succeed |
 | `[[workerfail]]` / `[[workerrefuse]]` | one agent always gets a 500 / a refusal |
 | `[[long]]` | a long Markdown answer (headings, table, code, lists, quote) |
-| *(Voice Mode turn: `Reply channel: spoken` in `<turn_context>`)* | every final answer is written for the ear: two or three plain sentences, a line `---`, then `## Details` with two list items (`[[long]]` puts its whole guide below the line; `[[xss]]` puts every payload there and one in the spoken part). The text streams a few words at a time, 50–90 ms apart, and a search takes about a second, so speech can start mid-reply. `[[search]]`, `[[pause]]` and `[[swarm:N]]` first say "Let me check the latest on that." |
+| `[[droplead]]` / `[[droplead:N]]` | the lead's first response to each request is cut after N frames (default 60); sending it again (Resume) succeeds |
+| `[[hologram:battery]]` / `[[hologram:alternator]]` / `[[hologram:camry]]` | a sentence, then `show_hologram` with a realistic sample (AA battery, 9 parts; car alternator, 19; 2024 Camry Hybrid, 43; camry by default), streamed in small chunks over about 3 seconds so the live build shows, then one or two sentences |
+| `[[hologram:broken]]` / `[[hologram:huge]]` | `show_hologram` with nothing that can be shown (an error card) / far beyond every limit (capped, with warnings) |
+| *(a `Blueprint request` block in `<turn_context>`)* | `draw_blueprint` once, with the best-matching sample sheet and the requested `for` ids, then a sentence |
+| `[[blueprint:<sample>]]` | `draw_blueprint` with that sample (`alternator-part`, `battery-cutaway`, `battery-process`, `camry-assembly`), no `for` |
+| `[[open-saved]]` | `open_saved` with the first id of the turn context's saved list (an unknown id when it is empty) |
+| `[[swarm:N]] [[hologram:x]]` | a Blueprint mission: agents first, then `show_hologram`, then a synthesis with sources |
+| *(Voice Mode turn: `Reply channel: spoken` in `<turn_context>`)* | every final answer is written for the ear: two or three plain sentences, a line `---`, then `## Details` with two list items (`[[long]]` puts its whole guide below the line; `[[xss]]` puts every payload there and one in the spoken part). The text streams a few words at a time, 50–90 ms apart, and a search takes about a second, so speech can start mid-reply. `[[search]]`, `[[pause]]` and `[[swarm:N]]` first say "Let me check the latest on that." Holograms and blueprints are said for the ear too: "Pulling up the AA alkaline battery now." before `show_hologram`, "Here's the AA alkaline battery. Say "expand it", or tap any part." after it; "Drawing the blueprint of the separator now.", then "The blueprint of the separator is ready; it's open on your screen." |
 | `[[nobreak]]` / `[[longspoken]]` | Voice Mode turns only: a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
 
 Security rules worth knowing before you change anything: the Content-Security-Policy in
-`index.html` is fixed by SPEC §2; model, web and user text is rendered only through
+`index.html` is fixed by SPEC §2 (besides `api.anthropic.com`, it allows only the Wikimedia
+Commons photo search and `upload.wikimedia.org` images); model, web and user text is rendered only through
 `src/lib/markdown.js` (never `innerHTML`); links from model output must be `http:`, `https:` or
 `mailto:` and open with `rel="noopener noreferrer"`; and the API key is never logged, put in a
 URL, or exported. Shared and downloaded Markdown goes through `safeMarkdown` and

@@ -28,18 +28,41 @@
 // carries on in the chat (Stop, or a tap on the core, is how to stop it). When Jarvis had already
 // begun saying the answer, the chat does not read it aloud again (voiceModeSpoke).
 //
+// Holograms and blueprints (SPEC §14.1, §16, v6): a Voice Mode reply that calls show_hologram
+// opens the hologram viewer over Voice Mode as soon as it starts building (the live build is
+// visible), and one that calls draw_blueprint opens the blueprint viewer once it is drawn; the
+// reply is still spoken. While a viewer is open, listening carries on hands-free (Continuous) and
+// each thing heard goes to the viewer's local command matcher first: a matched command acts at
+// once and Jarvis says a short acknowledgement ("Expanding.", "Here's the separator."); "blueprint
+// the <part>" opens a saved sheet or starts the paid build as a Voice Mode turn; anything else is a
+// Voice Mode turn in the same conversation, spoken and captioned in the viewer. The viewer's mic
+// button acts like the core. Closing the viewer shows Voice Mode again.
+//
 // Optional extras beyond SPEC 14.1 (all safe to omit):
 //   saveSettings(patch)   persists the Continuous toggle as settings.voiceContinuous
 //   wakeLock              { keepAwake, allowSleep } (platform/wakelock.js) keeps the screen on
 //   activeRun             a TurnRun already in progress: watch it here and speak its answer
 //   mode                  'auto' | 'quick' | 'swarm', or a function returning one (default settings.mode)
 //   container             where to mount the overlay (default document.body)
+//   visuals               the hologram and blueprint viewers (app.js):
+//                           open(run, segment)  show a hologram or blueprint of a Voice Mode reply
+//                           isOpen()            a viewer covers Voice Mode
+//                           command(text)       words heard while one is open: { handled: false }
+//                                               or { handled: true, command, done? } (done: the
+//                                               outcome of "blueprint the <part>", a Promise of
+//                                               { opened } | { run } | { held } | { error })
+//                           sync(info)          { state, label, listening, heard, busy } for the
+//                                               viewer's mic button
+// The returned api also has ask(text, { mode, blueprintFor }) -> { run } | { held } | { error }
+// (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn) and tap()
+// (the viewer's mic button: the same as tapping the core).
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
 
 import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
+import { commandAck, savedBlueprintAck } from './voice-visuals.js';
 
 export { splitSentences };
 
@@ -97,9 +120,12 @@ export function isVoiceModeOpen() {
   return current !== null;
 }
 
+// Segments that are a tool call: the answer is the text written after the last of them.
+const ACTIONS = new Set(['tool', 'mission', 'hologram', 'blueprint']);
+
 /**
- * The Markdown of a turn's final answer: the text written after the last tool call or mission
- * (so the "I'll deploy six agents…" preamble is not read out as the summary).
+ * The Markdown of a turn's final answer: the text written after the last tool call, mission,
+ * hologram or blueprint (so the "I'll deploy six agents…" preamble is not read out as the summary).
  */
 export function finalAnswerMarkdown(turn) {
   const segs = Array.isArray(turn && turn.segments) ? turn.segments : [];
@@ -107,7 +133,7 @@ export function finalAnswerMarkdown(turn) {
   let cut = -1;
   for (let i = segs.length - 1; i >= 0; i -= 1) {
     const kind = segs[i] && segs[i].kind;
-    if (kind === 'tool' || kind === 'mission') {
+    if (ACTIONS.has(kind)) {
       cut = i;
       break;
     }
@@ -133,13 +159,13 @@ function reqOf(segment) {
   return Number.isFinite(segment && segment.req) ? segment.req : 0;
 }
 
-/** True once the answer itself is being written: text after the last search or mission (any text without one). */
+/** True once the answer itself is being written: text after the last search, mission, hologram or blueprint (any text without one). */
 function answerBegun(turn) {
   const segs = Array.isArray(turn && turn.segments) ? turn.segments : [];
   let last = -1;
   for (let i = segs.length - 1; i >= 0; i -= 1) {
     const kind = segs[i] && segs[i].kind;
-    if (kind === 'tool' || kind === 'mission') {
+    if (ACTIONS.has(kind)) {
       last = i;
       break;
     }
@@ -168,6 +194,7 @@ function createVoiceMode(opts) {
     activeRun,
     mode,
     container,
+    visuals,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -365,6 +392,10 @@ function createVoiceMode(opts) {
       return S.state;
     },
     el: root,
+    /** Words typed in a viewer over Voice Mode, or its 2D request: a Voice Mode turn. */
+    ask: (text, options) => askFromViewer(text, options),
+    /** The mic button of a viewer over Voice Mode: the same as tapping the core. */
+    tap: () => onCoreTap(),
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -453,6 +484,7 @@ function createVoiceMode(opts) {
     root.dataset.typing = String(S.typing);
     sendBtn.disabled = !!S.run;
     renderReadFull();
+    syncVisuals();
   }
 
   function renderReadFull() {
@@ -597,6 +629,8 @@ function createVoiceMode(opts) {
 
   function onKeydown(event) {
     if (S.closed) return;
+    // A hologram or blueprint viewer is open over Voice Mode (which it made inert): the keys are its own.
+    if (root.inert) return;
     // Modal: the app's global shortcuts (new chat, focus composer…) must not act underneath.
     // Default actions (typing, Enter to submit, Space on buttons) are unaffected.
     event.stopPropagation();
@@ -1027,6 +1061,7 @@ function createVoiceMode(opts) {
     showUserWords(text);
     bumpLevel(0.5 + ((text.length * 7) % 10) / 30);
     if (firstWords) renderControls();
+    else syncVisuals();
   }
 
   function onFinal(L, value) {
@@ -1066,7 +1101,7 @@ function createVoiceMode(opts) {
     if (text) {
       S.silentTries = 0;
       play('listen-stop');
-      send(text);
+      heard(text);
       return;
     }
     if (L.stopRequested) {
@@ -1181,21 +1216,27 @@ function createVoiceMode(opts) {
 
   // ================================================================================== a turn
 
-  function send(text) {
+  /**
+   * Ask Jarvis: a Voice Mode turn (the spoken reply channel). opts: { mode, blueprintFor } (a 2D
+   * request from a hologram viewer over Voice Mode). Returns { run } | { held: true } | { pending:
+   * true } | { error } (the error is also said).
+   */
+  function send(text, opts = {}) {
     const words = String(text || '').trim();
-    if (!words || S.closed || S.run) return;
+    if (!words || S.closed) return { error: 'Nothing to send.' };
+    if (S.run) return { error: 'I’m still working on the previous request.' };
     clearRetry();
     cancelSpeech();
     stopListening();
     if (S.bg) {
       // The previous reply is still writing its details in the chat (one turn at a time): ask
       // this once it is done.
-      S.run = { pending: true, held: words };
+      S.run = { pending: true, held: words, opts };
       setVoiceState('thinking');
       setStatus('Finishing the details on screen…', 'edit');
       showCaption('quote', `“${words}”`, 'I’ll take that as soon as the details are on screen.');
       announce('Jarvis will answer once the details are on screen');
-      return;
+      return { held: true };
     }
     S.answer = null;
     S.showFull = false;
@@ -1206,7 +1247,7 @@ function createVoiceMode(opts) {
       S.typing = true;
       input.value = words;
       goIdle('offline-kept');
-      return;
+      return { error: 'You’re offline. Reconnect and try again.' };
     }
     const pending = { pending: true };
     S.run = pending;
@@ -1217,11 +1258,13 @@ function createVoiceMode(opts) {
     let result;
     try {
       if (typeof startTurn !== 'function') throw new Error('Voice mode is not connected to Jarvis yet.');
-      result = startTurn(words, { mode: resolveMode() });
+      const input = { mode: opts && MODES.includes(opts.mode) ? opts.mode : resolveMode() };
+      if (opts && opts.blueprintFor) input.blueprintFor = opts.blueprintFor;
+      result = startTurn(words, input);
     } catch (err) {
       S.run = null;
       sendFailed(err);
-      return;
+      return { error: errorText(err) || 'I couldn’t start that request.' };
     }
     if (result && typeof result.then === 'function' && typeof result.on !== 'function') {
       result.then(
@@ -1238,9 +1281,10 @@ function createVoiceMode(opts) {
           sendFailed(err);
         },
       );
-      return;
+      return { pending: true };
     }
     attachRun(result, pending);
+    return S.run && S.run.run === result ? { run: result } : { error: 'Jarvis couldn’t start that request.' };
   }
 
   function attachRun(run, pending, owned = true) {
@@ -1258,7 +1302,8 @@ function createVoiceMode(opts) {
     // liveOff: its speech was stopped or failed (nothing more is spoken for this reply).
     // answerFrom: where the answer itself (text after the last search or mission) starts in the
     // live speech's text; answerHeard: a chunk of it began to play.
-    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false };
+    // visuals: ids of the holograms and blueprints of this reply already shown over Voice Mode.
+    const R = { run, owned, offs: [], lastAgent: null, announcedMission: '', feed: null, feedTimer: 0, liveDone: false, liveOff: false, answerFrom: -1, answerHeard: false, visuals: new Set() };
     S.run = R;
     if (speaksWhileStreaming(R)) {
       R.feed = createSpokenFeed({ convert: speechMarkdown });
@@ -1283,6 +1328,7 @@ function createVoiceMode(opts) {
         finishRun(R, (event && event.turn) || run.turn);
         return;
       }
+      if (kind === 'segment' && event && event.segment) showVisual(R, event.segment);
       if (R.feed && (kind === 'segment' || kind === 'segment-removed')) scheduleFeed(R);
       scheduleRunRender();
     };
@@ -1376,6 +1422,8 @@ function createVoiceMode(opts) {
       }
       return { text: seg.query ? `Searching “${clip(singleLine(seg.query), 40)}”` : 'Searching the web…', icon: 'search' };
     }
+    if (seg && seg.kind === 'hologram' && seg.status === 'building') return { text: 'Building the hologram…', icon: 'hologram' };
+    if (seg && seg.kind === 'blueprint' && seg.status === 'building') return { text: 'Drawing the blueprint…', icon: 'blueprint' };
     if (seg && seg.kind === 'text' && seg.text) return { text: hadMission ? 'Writing your briefing…' : 'Writing…', icon: 'edit' };
     if (seg && seg.kind === 'memory') return { text: 'Updating memory…', icon: 'memory' };
     if (hadMission) return { text: 'Synthesizing the findings…', icon: 'layers' };
@@ -1580,9 +1628,123 @@ function createVoiceMode(opts) {
         setTimeout(() => {
           if (S.closed || S.run !== holder) return;
           S.run = null;
-          send(holder.held);
+          send(holder.held, holder.opts);
         }, 0),
       );
+  }
+
+  // -------------------------------------------------------------- holograms and blueprints (v6)
+
+  /** True while a hologram or blueprint viewer covers Voice Mode. */
+  function viewerOpen() {
+    try {
+      return !!(visuals && typeof visuals.isOpen === 'function' && visuals.isOpen());
+    } catch {
+      return false;
+    }
+  }
+
+  /** What the owner said: a local command while a viewer covers Voice Mode, otherwise a turn. */
+  function heard(text) {
+    let res = null;
+    if (viewerOpen() && typeof visuals.command === 'function') {
+      try {
+        res = visuals.command(text);
+      } catch (err) {
+        console.warn('[voice] the viewer could not take that command', err);
+        res = null;
+      }
+    }
+    if (res && res.handled) viewerCommand(text, res);
+    else send(text);
+  }
+
+  /**
+   * A viewer command heard while a viewer covers Voice Mode has acted (free: no turn). Jarvis says a
+   * short acknowledgement, then listens again (Continuous). "blueprint the <part>" waits for its
+   * outcome: a saved sheet opened (said so), the paid build started as a Voice Mode turn (the app
+   * hands it to ask(), which takes over), or it can't be done (said why).
+   */
+  function viewerCommand(text, res) {
+    const cmd = res.command && typeof res.command === 'object' ? res.command : {};
+    showCaption('quote', `“${text}”`);
+    if (res.done && typeof res.done.then === 'function') {
+      const marker = { pending: true, viewer: true };
+      S.run = marker;
+      setVoiceState('thinking');
+      setStatus(cmd.action === 'blueprint' ? 'Getting the blueprint…' : 'One moment…', cmd.action === 'blueprint' ? 'blueprint' : 'sparkle');
+      res.done.then(
+        (out) => viewerOutcome(marker, cmd, out),
+        (err) => viewerOutcome(marker, cmd, { error: errorText(err) || 'That didn’t work.' }),
+      );
+      return;
+    }
+    speakAck(commandAck(cmd));
+  }
+
+  function viewerOutcome(marker, cmd, out) {
+    if (S.closed || S.run !== marker) return; // a turn started through ask(), or the owner stopped it
+    S.run = null;
+    const o = out && typeof out === 'object' ? out : {};
+    if (o.error) speakAck(asSentence(clip(singleLine(o.error), 220)));
+    else speakAck(o.opened ? savedBlueprintAck(cmd) : '');
+  }
+
+  /** Say a short line (shown in the captions too), then listen again when Continuous is on. */
+  function speakAck(text) {
+    if (S.closed) return;
+    const line = String(text || '').trim();
+    if (line && S.ttsOk) {
+      speak(line, 'ack');
+      return;
+    }
+    if (line) {
+      renderSpoken(line, 'answer');
+      finishKaraoke();
+    }
+    afterSpeech();
+  }
+
+  /** ask(): words typed in a viewer over Voice Mode, or its 2D request, sent as a Voice Mode turn. */
+  function askFromViewer(text, options) {
+    if (S.closed) return { error: 'Voice Mode is closed.' };
+    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" was waiting for this turn
+    const o = options && typeof options === 'object' ? options : {};
+    return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null });
+  }
+
+  /**
+   * Something a Voice Mode reply shows: a hologram opens over Voice Mode as soon as it starts
+   * building (the live build is visible), a blueprint once it is drawn. Once per segment; a reply
+   * started in the chat (not a Voice Mode turn) stays in the chat.
+   */
+  function showVisual(R, seg) {
+    if (!visuals || typeof visuals.open !== 'function' || !seg || typeof seg.id !== 'string') return;
+    if (!(R.owned || (R.run.turn && R.run.turn.spoken === true))) return;
+    const ready = seg.kind === 'hologram' ? seg.status !== 'error' : seg.kind === 'blueprint' && seg.status === 'done';
+    if (!ready || R.visuals.has(seg.id)) return;
+    R.visuals.add(seg.id);
+    try {
+      visuals.open(R.run, seg);
+    } catch (err) {
+      console.warn('[voice] could not show it', err);
+    }
+  }
+
+  /** A viewer over Voice Mode shows on its mic button whether Jarvis listens (and what is heard). */
+  function syncVisuals() {
+    if (!visuals || typeof visuals.sync !== 'function' || S.closed) return;
+    try {
+      visuals.sync({
+        state: S.state,
+        label: coreBtn.getAttribute('aria-label') || '',
+        listening: !!S.listen,
+        heard: S.listen ? S.listen.text || '' : '',
+        busy: !!S.run || !!S.speech,
+      });
+    } catch {
+      /* decoration */
+    }
   }
 
   // ------------------------------------------------------------------- speaking while it streams
@@ -1826,7 +1988,7 @@ function createVoiceMode(opts) {
   function newSpeech(kind, run = null) {
     return {
       token: ++S.speechToken,
-      kind, // 'live' (the reply as it streams) | 'summary' | 'full' | 'apology'
+      kind, // 'live' (the reply as it streams) | 'summary' | 'full' | 'apology' | 'ack' (a viewer command acted)
       run, // live: the run it belongs to
       display: '', // the caption text (live: everything appended so far)
       text: '', // display with whitespace collapsed, as the engine counts offsets
@@ -1856,10 +2018,10 @@ function createVoiceMode(opts) {
     sp.map = form.map;
     S.speech = sp;
     root.dataset.speech = kind;
-    if (kind === 'summary' || kind === 'full') {
+    if (kind === 'summary' || kind === 'full' || kind === 'ack') {
       setVoiceState('speaking');
       setStatus(kind === 'full' ? 'Reading the full answer' : 'Speaking', 'speaker');
-      announce('Jarvis is speaking');
+      announce(kind === 'ack' ? sp.display : 'Jarvis is speaking');
     }
     renderSpoken(sp.display, kind === 'apology' ? 'error' : 'answer');
     sp.karaoke = S.karaoke;

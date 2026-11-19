@@ -412,11 +412,19 @@ export const SPOKEN_REPLY_CHANNEL = `Reply channel: spoken. The owner is talking
 - If the answer needs more detail than is comfortable to listen to (research findings, comparisons, steps, sources), speak a short summary first, then write a line containing only --- and put the details below it in normal Markdown for the screen. Only the part above that line is read aloud, so mention that the details are on screen.`;
 
 /**
+ * Follows SPOKEN_REPLY_CHANNEL in conversations that can show holograms (lead tools version 4): in
+ * Voice Mode a hologram opens full screen over Voice Mode while it builds, and the owner then works
+ * it by voice (the app's own commands). Spoken turns only; chat turns never carry it.
+ */
+export const SPOKEN_VISUALS_NOTE = `In Voice Mode a hologram opens full screen while you build it, and a blueprint once it is drawn; the owner can then say "expand it", "show the alternator", "isolate it" or "blueprint the alternator", which the app handles itself. Before show_hologram, say one short sentence ("Pulling up the Camry now."). After it, say one short sentence such as "Here's the Camry. Say 'expand it' or tap any part." After a blueprint, say that it is open on the screen.`;
+
+/**
  * The per-turn context block, sent as the first text block of every new user message. `spoken: true`
- * (Voice Mode) adds SPOKEN_REPLY_CHANNEL after the Mode line; otherwise the block is unchanged.
+ * (Voice Mode) adds SPOKEN_REPLY_CHANNEL after the Mode line, and with `visuals: true` (the
+ * conversation can show holograms) SPOKEN_VISUALS_NOTE after it; otherwise the block is unchanged.
  * @param {{ localTime: string, userName?: string, location?: string, tone?: string, verbosity?: string,
  *           mode: string, maxAgents: number, maxWaves: number, memoryEnabled: boolean, memoryFacts: string[],
- *           spoken?: boolean }} p
+ *           spoken?: boolean, visuals?: boolean }} p
  */
 export function buildTurnContext(p) {
   const name = singleLine(p.userName) || 'sir';
@@ -426,7 +434,10 @@ export function buildTurnContext(p) {
   if (location) lines.push(`Owner location: ${neutralize(location)}`);
   lines.push(styleLine(p.tone, p.verbosity));
   lines.push(`Mode: ${mode} — ${MODE_INSTRUCTIONS[mode]}`);
-  if (p.spoken === true) lines.push(SPOKEN_REPLY_CHANNEL);
+  if (p.spoken === true) {
+    lines.push(SPOKEN_REPLY_CHANNEL);
+    if (p.visuals === true) lines.push(SPOKEN_VISUALS_NOTE);
+  }
   lines.push(`Agent limits: up to ${p.maxAgents} agents per wave, at most ${p.maxWaves} waves this turn`);
   if (!p.memoryEnabled) {
     lines.push('Memory: disabled');

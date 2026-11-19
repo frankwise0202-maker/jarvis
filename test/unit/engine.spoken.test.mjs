@@ -48,9 +48,13 @@ const BASE_LINES = [
   '</turn_context>',
 ];
 
-/** The turn context the engine builds under DEFAULT_TEST_SETTINGS at FIXED. */
+/**
+ * The turn context the engine builds under DEFAULT_TEST_SETTINGS at FIXED. New conversations can show
+ * holograms (lead tools V4), so a spoken turn also carries the Voice Mode note on holograms
+ * (engine.voice-visuals.test.mjs); `visuals` changes nothing unless the turn is spoken.
+ */
 const engineContext = (spoken) =>
-  buildTurnContext({ localTime: formatLocalTime(FIXED), userName: '', location: '', tone: 'butler', verbosity: 'balanced', mode: 'auto', maxAgents: 8, maxWaves: 3, memoryEnabled: true, memoryFacts: [], spoken });
+  buildTurnContext({ localTime: formatLocalTime(FIXED), userName: '', location: '', tone: 'butler', verbosity: 'balanced', mode: 'auto', maxAgents: 8, maxWaves: 3, memoryEnabled: true, memoryFacts: [], spoken, visuals: true });
 
 const count = (text, needle) => text.split(needle).length - 1;
 

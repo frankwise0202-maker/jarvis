@@ -4,7 +4,8 @@
 //   spokenSource(segments)    the reply's text segments, in order, joined with blank lines (what
 //                             the chat shows)
 //   textClosed(segments)      true once the last text segment is followed by a search, a mission,
-//                             a memory change or thinking: that text is complete
+//                             a memory change, thinking, a hologram or a blueprint: that text is
+//                             complete
 //   cutAtBreak(md, final)     { text, cut }: the Markdown above the first thematic break (---, ***
 //                             or ___ alone on a line, outside code fences). Text below it is for
 //                             the screen and is never spoken.
@@ -29,8 +30,9 @@ export const SPOKEN_CAP = 1500;
 export const SPOKEN_CLOSING = 'The rest is on screen.';
 
 // Segments after which the text before them is finished (the model moved on to something else).
-// A notice or an error is not one: a retry may still remove and replace that text.
-const CLOSERS = new Set(['tool', 'mission', 'memory', 'thinking']);
+// A notice or an error is not one: a retry may still remove and replace that text. A hologram or a
+// blueprint is a tool call too: "Pulling up the Camry now." is spoken while it builds.
+const CLOSERS = new Set(['tool', 'mission', 'memory', 'thinking', 'hologram', 'blueprint']);
 
 const isText = (s) => !!s && s.kind === 'text' && typeof s.text === 'string' && s.text.trim() !== '';
 
@@ -41,7 +43,7 @@ export function spokenSource(segments) {
   return out.join('\n\n');
 }
 
-/** True when the last text segment is followed by a search, a mission, a memory change or thinking. */
+/** True when the last text segment is followed by a search, a mission, a memory change, thinking, a hologram or a blueprint. */
 export function textClosed(segments) {
   const list = Array.isArray(segments) ? segments : [];
   let last = -1;

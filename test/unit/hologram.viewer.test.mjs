@@ -2,7 +2,9 @@
 // app's CSP (platform harness; WebGL runs on SwiftShader): opening a saved item, explode by button
 // and by typed command, labels, the parts list and part card, a saved part blueprint, words for
 // Jarvis captioned from a (fake) run, the live build from segment updates, photos through a faked
-// Wikimedia Commons, Escape order, and closing. State is read from the viewer's data-* test hooks.
+// Wikimedia Commons, Escape order, and closing; and under Voice Mode (v6): the mic is Voice Mode's,
+// follow() captions only what is spoken, a blueprint command reports its outcome. State is read
+// from the viewer's data-* test hooks.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -24,13 +26,13 @@ after(async () => {
 });
 
 /** A page with the viewer open on `sample` (a saved item, or a live segment when `live`). */
-async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 }, live = false } = {}) {
+async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 }, live = false, voice = false } = {}) {
   const p = await harness.newPage({ contextOptions: { viewport, hasTouch: viewport.width < 500 } });
   await p.route('https://commons.wikimedia.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: FIXTURE }));
   await p.route('https://upload.wikimedia.org/**', (r) => r.fulfill({ status: 200, contentType: 'image/png', headers: { 'access-control-allow-origin': '*' }, body: PIXEL }));
   await p.addStyleTag({ content: CSS });
   await p.evaluate(
-    ({ raw, live }) => {
+    ({ raw, live, voice }) => {
       const { openHologramViewer } = window.__mods.viewer;
       const { normalizeHologramSpec } = window.__mods.spec;
       const full = normalizeHologramSpec(raw).spec;
@@ -71,6 +73,20 @@ async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 },
         },
         onClose: () => log.closed++,
       };
+      if (voice) {
+        // Voice Mode open under the viewer (app.js): a microphone, Voice Mode's talk button, and
+        // the app's answer to a 2D request (the separator's blueprint is saved: it just opens).
+        Object.assign(log, { listens: 0, taps: 0, opened: [] });
+        window.__voiceOn = true;
+        deps.stt = { sttSupported: () => true, startListening: () => (log.listens++, { stop() {}, abort() {} }) };
+        deps.voice = { active: () => window.__voiceOn, tap: () => log.taps++ };
+        deps.openBlueprint = (src) => log.opened.push(src && src.segment && src.segment.id);
+        deps.requestBlueprint = async (req) => {
+          log.blueprints.push(req);
+          return req.part === 'separator' ? { opened: true } : { run: fakeRun('turn-bp') };
+        };
+      }
+      window.__fakeRun = fakeRun;
       window.__full = full;
       window.__partial = (n) => normalizeHologramSpec({ ...raw, parts: raw.parts.slice(0, n) }, { partial: true, stable: false }).spec;
       const source = live
@@ -78,7 +94,7 @@ async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 },
         : { item: { id: 'lib_battery001', kind: 'hologram', title: full.title, spec: full, conversationId: 'conv-1' } };
       window.__viewer = openHologramViewer({ source, deps });
     },
-    { raw: sample, live },
+    { raw: sample, live, voice },
   );
   await p.waitForSelector('[data-testid="hologram-viewer"]');
   p.state = (name) => p.getAttribute('[data-testid="hologram-viewer"]', `data-${name}`);
@@ -249,5 +265,91 @@ test('hologram viewer (phone): photos of a part come from Wikimedia Commons and 
   assert.ok(overflow <= 0, `no horizontal overflow (${overflow}px)`);
   await p.click('[data-testid="hologram-close"]');
   await p.waitForSelector('[data-testid="hologram-viewer"]', { state: 'detached' });
+  await p.done();
+});
+
+test('hologram viewer under Voice Mode: its mic is Voice Mode\'s and shows its state; follow() captions only what is spoken; a blueprint command reports its outcome', async () => {
+  const p = await open({ voice: true });
+  await p.waitState('state', 'ready');
+  const mic = '[data-testid="hologram-mic"]';
+  const field = '[data-testid="hologram-command"]';
+  // Voice Mode listens: the button is pressed and the field shows the words as they are heard.
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'listening', label: 'Stop listening and send', listening: true, heard: 'show the', busy: false }));
+  assert.equal(await p.getAttribute(mic, 'aria-pressed'), 'true');
+  assert.equal(await p.getAttribute(mic, 'aria-label'), 'Stop listening and send');
+  assert.equal(await p.getAttribute(mic, 'data-voice'), 'listening');
+  assert.equal(await p.inputValue(field), 'show the');
+  assert.equal(await p.getAttribute(field, 'placeholder'), 'Listening…');
+  assert.equal(await p.state('voice'), 'listening');
+  // Jarvis works: a stop sign (a tap stops him, as the core does); the heard words are cleared.
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'thinking', label: 'Stop Jarvis', listening: false, heard: '', busy: true }));
+  assert.equal(await p.getAttribute(mic, 'aria-pressed'), 'false');
+  assert.equal(await p.getAttribute(mic, 'data-voice'), 'busy');
+  assert.equal(await p.getAttribute(mic, 'data-icon'), 'stop');
+  assert.equal(await p.getAttribute(mic, 'aria-label'), 'Stop Jarvis');
+  assert.equal(await p.inputValue(field), '');
+  assert.equal(await p.getAttribute(field, 'placeholder'), 'Type or say a command…');
+  // The button taps Voice Mode; the viewer's own recognizer never starts.
+  await p.click(mic);
+  assert.deepEqual(await p.evaluate(() => [window.__log.taps, window.__log.listens]), [1, 0]);
+  // Words the owner types are theirs: what Voice Mode hears never replaces them.
+  await p.fill(field, 'labels o');
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'listening', label: 'Stop listening', listening: true, heard: 'expand', busy: false }));
+  assert.equal(await p.inputValue(field), 'labels o');
+  await p.fill(field, '');
+
+  // follow(): a Voice Mode reply is captioned up to its --- line; a hologram or blueprint in it is
+  // Voice Mode's to open (the viewer neither switches nor opens anything).
+  await p.evaluate(() => {
+    window.__vrun = window.__fakeRun('turn-v');
+    window.__viewer.follow(window.__vrun);
+    window.__viewer.follow(window.__vrun); // once per run
+  });
+  const caption = p.locator('[data-testid="hologram-caption"]');
+  await caption.waitFor({ state: 'visible' });
+  assert.equal(await caption.getAttribute('data-state'), 'thinking');
+  await p.evaluate(() => {
+    const turn = { id: 'turn-v', status: 'running', spoken: true, segments: [{ id: 't1', kind: 'text', req: 0, text: 'It keeps the zinc and the cathode apart.\n\n---\n\n## Details\n\n- **Material:** cellulose' }] };
+    window.__emit('segment', { turn, segment: turn.segments[0] });
+    window.__emit('segment', { turn, segment: { id: 'h2', kind: 'hologram', status: 'building', title: 'Another', spec: window.__partial(1), libraryId: null } });
+    window.__emit('segment', { turn, segment: { id: 'b2', kind: 'blueprint', status: 'done', title: 'Sheet', spec: null, libraryId: null } });
+  });
+  await p.waitForFunction(() => /keeps the zinc and the cathode apart/.test(document.querySelector('[data-testid="hologram-caption"]').textContent));
+  assert.equal(await caption.getAttribute('data-state'), 'streaming');
+  assert.doesNotMatch(await caption.textContent(), /Details|Material|cellulose/, 'the details below --- are for the chat');
+  assert.equal(await p.state('parts'), '9', 'still the battery: no switch to the reply\'s hologram');
+  assert.equal(await p.state('model'), 'lib_battery001');
+  assert.deepEqual(await p.evaluate(() => window.__log.opened), [], 'nothing opened by the viewer');
+  await p.evaluate(() => {
+    const turn = { id: 'turn-v', status: 'done', spoken: true, segments: [{ id: 't1', kind: 'text', req: 0, text: 'It keeps the zinc and the cathode apart, so the cell cannot short.\n\n---\n\nDetails.' }] };
+    window.__emit('end', { turn });
+  });
+  await p.waitForFunction(() => document.querySelector('[data-testid="hologram-caption"]').dataset.state === 'done');
+  assert.equal((await caption.textContent()).match(/so the cell cannot short/g)?.length, 1, 'one caption, followed once');
+
+  // "blueprint the separator": the command returns at once; its outcome follows (a saved sheet opened).
+  const out = await p.evaluate(async () => {
+    const r = window.__viewer.command('blueprint the separator', { source: 'voice' });
+    return { handled: r.handled, action: r.command.action, part: r.command.partId, outcome: await r.done };
+  });
+  assert.deepEqual(out, { handled: true, action: 'blueprint', part: 'separator', outcome: { opened: true } });
+  assert.equal(await p.state('last-source'), 'voice');
+  const other = await p.evaluate(async () => {
+    const r = window.__viewer.command('blueprint the zinc anode gel', { source: 'voice' });
+    const o = await r.done;
+    return { part: r.command.partId, run: !!(o && o.run) };
+  });
+  assert.deepEqual(other, { part: 'anode', run: true }, 'a new part blueprint starts a turn');
+
+  // Voice Mode closed: the viewer's own mic again.
+  await p.evaluate(() => {
+    window.__voiceOn = false;
+    window.__viewer.setVoice(null);
+  });
+  assert.equal(await p.getAttribute(mic, 'aria-label'), 'Speak a command');
+  assert.equal(await p.getAttribute(mic, 'data-voice'), null);
+  assert.equal(await p.state('voice'), '');
+  await p.click(mic);
+  assert.deepEqual(await p.evaluate(() => [window.__log.taps, window.__log.listens]), [1, 1]);
   await p.done();
 });

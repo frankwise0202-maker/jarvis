@@ -30,6 +30,7 @@ import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
 import { createLibraryView } from './library.js';
 import { createThumbs } from './thumbs.js';
 import { isOverlayOpen } from './overlay.js';
+import { matchHologramCommand } from '../lib/hologram-commands.js';
 import { createJarvis, MODELS, DEPTHS, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
@@ -611,16 +612,84 @@ export async function startApp(rootEl) {
   // ---- Voice Mode (SPEC §14.1) ----------------------------------------------------------------
   // send() reports problems with toasts or by opening Settings, both hidden behind the overlay,
   // so Voice Mode gets errors it can say out loud instead.
-  function startTurnForVoice(text, { mode } = {}) {
+  let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
+  let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
+
+  function startTurnForVoice(text, { mode, blueprintFor } = {}) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
     if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
     // keepOnStop: a spoken question that is interrupted stays in the conversation (nothing is put
     // back in the hidden message box), so what the owner says next keeps its context.
     // spoken: the reply is read aloud, so Jarvis writes it for the ear (details for the screen go below a --- line).
-    if (!send(text, mode, { keepOnStop: true, spoken: true })) throw new Error('I couldn’t start that request.');
+    // blueprintFor: "blueprint the <part>" from a hologram viewer over Voice Mode.
+    const extras = { keepOnStop: true, spoken: true };
+    if (blueprintFor) extras.blueprintFor = blueprintFor;
+    if (!send(text, mode, extras)) throw new Error('I couldn’t start that request.');
     const entry = state.conv && state.runs.get(state.conv.id);
-    return entry ? entry.run : null;
+    const run = entry ? entry.run : null;
+    // A hologram is open over Voice Mode: the reply is captioned there too.
+    const viewer = run ? getHologramViewer() : null;
+    if (viewer) safe(() => viewer.follow(run));
+    return run;
+  }
+
+  /**
+   * Voice Mode × holograms (SPEC §14.1, §16): a hologram of a Voice Mode reply opens over Voice
+   * Mode as soon as it starts building, a blueprint once it is drawn; what is heard while one is
+   * open goes to its local commands first; the viewer's mic button is Voice Mode's.
+   */
+  const voiceVisuals = {
+    open: (run, seg) => openVisualForVoice(run, seg),
+    isOpen: () => !!(getHologramViewer() || getBlueprintViewer()),
+    command: (text) => voiceCommand(text),
+    sync: (info) => {
+      voiceInfo = info && typeof info === 'object' ? info : null;
+      const viewer = getHologramViewer();
+      if (viewer) safe(() => viewer.setVoice(voiceInfo));
+    },
+  };
+
+  function openVisualForVoice(run, seg) {
+    if (!run || !isVisualSegment(seg)) return null;
+    const conv = run.conversation || state.conv;
+    const source = { segment: seg, conversationId: conv ? conv.id : null, turnId: run.turn ? run.turn.id : null, run };
+    if (seg.kind === 'blueprint') return openBlueprintSource(source);
+    // A new hologram replaces what is shown, a blueprint on top included (it would cover the new one).
+    const sheet = getBlueprintViewer();
+    if (sheet) safe(() => sheet.close());
+    let viewer = null;
+    try {
+      viewer = openHologramViewer({ source, deps: viewerDeps() });
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+      return null;
+    }
+    safe(() => viewer.follow(run)); // the spoken reply is captioned in the viewer
+    if (voiceInfo) safe(() => viewer.setVoice(voiceInfo));
+    return viewer;
+  }
+
+  /**
+   * Words heard in Voice Mode while a viewer is open: a hologram command acts at once ({ handled:
+   * true, command, done? }), anything else is for Jarvis ({ handled: false }). With a blueprint on
+   * top, "close" closes it and another hologram command acts on the hologram under it, shown again.
+   */
+  function voiceCommand(text) {
+    const holo = getHologramViewer();
+    const sheet = getBlueprintViewer();
+    if (sheet) {
+      const cmd = safe(() => matchHologramCommand(String(text || ''), [], {}), null);
+      if (cmd && cmd.action === 'close') {
+        safe(() => sheet.close());
+        return { handled: true, command: cmd };
+      }
+    }
+    if (!holo) return { handled: false };
+    const res = safe(() => holo.command(text, { source: 'voice' }), null);
+    if (!res || !res.handled) return { handled: false };
+    if (sheet && res.command && res.command.action !== 'blueprint' && res.command.action !== 'close') safe(() => sheet.close());
+    return res;
   }
 
   /** Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). */
@@ -629,7 +698,7 @@ export async function startApp(rootEl) {
     if (state.listening) safe(() => state.listening.stop());
     const entry = state.conv && state.runs.get(state.conv.id);
     try {
-      openVoiceMode({
+      voiceApi = openVoiceMode({
         getSettings,
         saveSettings,
         startTurn: startTurnForVoice,
@@ -642,7 +711,12 @@ export async function startApp(rootEl) {
         wakeLock: { keepAwake: () => keepAwake('voice'), allowSleep: () => allowSleep('voice') },
         activeRun: entry ? entry.run : null,
         mode: () => composer.getMode(),
+        visuals: voiceVisuals,
         onClose: () => {
+          voiceApi = null;
+          voiceInfo = null;
+          const viewer = getHologramViewer();
+          if (viewer) safe(() => viewer.setVoice(null)); // its own mic again
           // The home screen (greeting and core) stays where it was; a conversation shows its end.
           if (!chat.isEmpty()) chat.scrollToBottom(false);
           updateAll();
@@ -693,6 +767,13 @@ export async function startApp(rootEl) {
     if (blueprintFor && conv && !hasVisualTools(conv, 'draw_blueprint')) {
       setConversation(null);
       conv = null;
+    }
+    // Voice Mode is open under the viewer: the words (or the 2D request) become a Voice Mode turn,
+    // so the reply is spoken and captioned, and Voice Mode listens again afterwards.
+    if (voiceApi && safe(() => isVoiceModeOpen(), false)) {
+      const res = safe(() => voiceApi.ask(clean, { mode: blueprintFor ? mode : undefined, blueprintFor }), null);
+      if (res && res.run) viewerStartedTurn = true;
+      return res && typeof res === 'object' ? res : { error: 'That message couldn’t be sent.' };
     }
     const problem = viewerSendProblem(conv);
     if (problem) return { error: problem };
@@ -746,6 +827,8 @@ export async function startApp(rootEl) {
       sendMessage: (text, opts) => sendFromViewer(text, opts),
       openBlueprint: (source) => openBlueprintSource(source),
       openInChat: ({ conversationId, turnId } = {}) => showInChat(conversationId, turnId),
+      // Voice Mode open under the viewer: the mic button is its talk button.
+      voice: { active: () => !!voiceApi && safe(() => isVoiceModeOpen(), false), tap: () => voiceApi && voiceApi.tap() },
       onClose: () => onViewerClosed(),
     };
   }

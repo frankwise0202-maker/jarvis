@@ -7,8 +7,12 @@
 //           | { item }                                    a saved library item (with its spec)
 //     deps:   see openHologramViewer below (library, requestBlueprint, sendMessage, stt, …)
 //   v.update(segment)       a newer copy of the followed segment (live build)
-//   v.command(text, { source: 'voice' }) -> { handled: true, command } | { handled: false }
+//   v.command(text, { source: 'voice' }) -> { handled: true, command, done? } | { handled: false }
+//                           done (a 2D request): a Promise of { opened } | { run } | { held } | { error }
 //   v.submit(text)          what the command field does: local command first, else a chat message
+//   v.follow(run)           caption a reply that Voice Mode follows (text only: Voice Mode opens
+//                           what it shows)
+//   v.setVoice(info|null)   Voice Mode drives the mic: { listening, heard, label, busy, state }
 //   v.close()  v.isOpen()  v.getState()
 //   getHologramViewer()     the open viewer or null (one at a time)
 //
@@ -31,6 +35,7 @@ import { openOverlay } from '../overlay.js';
 import { matchHologramCommand } from '../../lib/hologram-commands.js';
 import { markdownToPlainText } from '../../lib/markdown.js';
 import { createPhotoStrip, createPhotoViewer } from '../photos.js';
+import { cutAtBreak } from '../voice-stream.js';
 
 const LIVE_INTERVAL = 125; // ms between live-build updates (about 8 per second)
 const VIEW_CYCLE = ['front-left', 'front', 'left', 'top', 'back', 'front-right'];
@@ -169,6 +174,8 @@ function fmtNum(n) {
  *   openInChat({ conversationId, turnId })   close the viewer and show that reply in the chat
  *   blueprintCost() -> '≈ $0.15'            the part card's cost estimate
  *   stt: { sttSupported(), startListening(opts) }, getSettings()
+ *   voice: { active(), tap() }               Voice Mode is open under the viewer: the mic button
+ *                                             is its talk button (it listens for the viewer)
  *   onClose()
  */
 export function openHologramViewer({ source, deps = {} } = {}) {
@@ -185,6 +192,9 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   const pendingOps = []; // commands given before the renderer is ready
   const runSubs = new Set(); // unsubscribe functions for watched runs
   const blueprintCache = new Map(); // partId|'*' -> saved blueprint item | null
+  const trackedRuns = new WeakSet(); // replies already captioned here (each run once)
+  let voiceInfo = null; // Voice Mode's listening state while it drives the mic (setVoice)
+  let voiceWords = false; // the command field shows words Voice Mode is hearing
   let thumbDone = false;
 
   // ---- DOM ------------------------------------------------------------------------------------
@@ -257,7 +267,10 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   const syncSend = () => {
     sendBtn.hidden = !cmdInput.value.trim() && !!micBtn;
   };
-  cmdInput.addEventListener('input', syncSend);
+  cmdInput.addEventListener('input', () => {
+    voiceWords = false; // typed words are the owner's own, never replaced by what Voice Mode hears
+    syncSend();
+  });
   syncSend();
 
   const bar = h(
@@ -622,16 +635,22 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     requestBlueprint(selectedPart.id, { rebuild });
   }
 
-  /** The owner asked for a 2D blueprint (part or whole object): open a saved one, else build it. */
+  /**
+   * The owner asked for a 2D blueprint (part or whole object): open a saved one, else build it.
+   * Resolves to the outcome: { opened } | { run } | { held } (Voice Mode sends it once its previous
+   * reply is done) | { error } (also shown here).
+   */
   async function requestBlueprint(partId, { rebuild = false } = {}) {
-    if (typeof deps.requestBlueprint !== 'function') return;
+    if (typeof deps.requestBlueprint !== 'function') return { error: 'Blueprints aren’t available here.' };
     if (model.status === 'building') {
-      say('The blueprint can be drawn once the hologram is finished.');
-      return;
+      const msg = 'The blueprint can be drawn once the hologram is finished.';
+      say(msg);
+      return { error: msg };
     }
     if (!model.libraryId) {
-      say('This hologram isn’t saved, so a blueprint can’t be linked to it.');
-      return;
+      const msg = 'This hologram isn’t saved, so a blueprint can’t be linked to it.';
+      say(msg);
+      return { error: msg };
     }
     const part = partId ? partById(partId) : null;
     let res;
@@ -640,16 +659,22 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     } catch (err) {
       res = { error: (err && err.message) || 'The blueprint couldn’t be started.' };
     }
-    if (disposed || !res) return;
+    if (!res || typeof res !== 'object') res = { error: 'The blueprint couldn’t be started.' };
+    if (disposed) return res;
     if (res.error) {
       showCaption({ status: 'error', text: res.error });
-      return;
+      return res;
+    }
+    if (res.held) {
+      showCaption({ status: 'thinking', text: 'I’ll draw it as soon as the details on screen are done.' });
+      return res;
     }
     if (res.run) {
       const what = part ? `the ${part.name}` : (model.spec && model.spec.title) || 'the whole object';
       showCaption({ status: 'thinking', text: `Drawing a 2D blueprint of ${what}…`, turnId: res.run.turn && res.run.turn.id });
       trackReply(res.run, { blueprint: true });
     }
+    return res;
   }
 
   // ---- side panel -----------------------------------------------------------------------------
@@ -938,8 +963,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     deps.openInChat(target);
   }
 
-  /** Follow a run started from here: caption the reply; follow a new hologram; open a new blueprint. */
-  function trackReply(runObj, { blueprint = false } = {}) {
+  /**
+   * Follow a run started from here: caption the reply; follow a new hologram; open a new blueprint.
+   * captionOnly (a Voice Mode reply, see follow()): only the caption; Voice Mode opens what it
+   * shows. Each run is followed once (the first call decides how).
+   */
+  function trackReply(runObj, { blueprint = false, captionOnly = false } = {}) {
+    if (!runObj || typeof runObj !== 'object' || trackedRuns.has(runObj)) return;
+    trackedRuns.add(runObj);
     const turn = runObj && runObj.turn;
     const conversationId = (runObj && runObj.conversation && runObj.conversation.id) || model.conversationId;
     if (conversationId) model.conversationId = conversationId;
@@ -949,11 +980,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       const segs = t && Array.isArray(t.segments) ? t.segments.filter((s) => isObj(s) && s.kind === 'text' && typeof s.text === 'string' && s.text.trim()) : [];
       if (!segs.length) return '';
       const maxReq = Math.max(...segs.map((s) => Number(s.req) || 0));
-      const md = segs.filter((s) => (Number(s.req) || 0) === maxReq).map((s) => s.text).join('\n\n');
+      let md = segs.filter((s) => (Number(s.req) || 0) === maxReq).map((s) => s.text).join('\n\n');
+      // A spoken reply (Voice Mode): the caption is what Jarvis says; the details below --- stay in the chat.
+      if (t && t.spoken === true) md = safe(() => cutAtBreak(md, true).text, md);
       return safe(() => markdownToPlainText(md), md).replace(/\s+/g, ' ').trim();
     };
     const onSegmentEvent = (seg, t) => {
         if (disposed || !isObj(seg)) return;
+        if (captionOnly && seg.kind !== 'text') return;
         if (seg.kind === 'hologram' && !followed && !blueprint) {
           followed = true;
           switchTo({ segment: seg, conversationId, turnId: t && t.id });
@@ -1008,17 +1042,26 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       res = { error: (err && err.message) || 'That message couldn’t be sent.' };
     }
     if (disposed) return;
+    if (res && res.held) {
+      showCaption({ status: 'thinking', text: 'I’ll take that as soon as the details on screen are done.' });
+      return;
+    }
     if (!res || res.error || !res.run) {
       showCaption({ status: 'error', text: (res && res.error) || 'That message couldn’t be sent.' });
       return;
     }
-    showCaption({ status: 'thinking', text: '', turnId: res.run.turn && res.run.turn.id });
+    if (!trackedRuns.has(res.run)) showCaption({ status: 'thinking', text: '', turnId: res.run.turn && res.run.turn.id });
     trackReply(res.run);
   }
 
   // ---- microphone -------------------------------------------------------------------------------
 
   function toggleMic() {
+    // Voice Mode is open under the viewer and listens for it: the mic button is its talk button.
+    if (deps.voice && safe(() => deps.voice.active(), false)) {
+      safe(() => deps.voice.tap());
+      return;
+    }
     if (listening) {
       safe(() => listening.stop());
       return;
@@ -1066,6 +1109,56 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       micBtn.classList.add('is-listening');
     }
     cmdInput.placeholder = 'Listening…';
+  }
+
+  /**
+   * Voice Mode drives the mic (setVoice): the button shows whether it listens, the words it hears
+   * appear in the command field, and while Jarvis thinks or speaks the button stops him (as the
+   * core does). null: the viewer's own mic again.
+   */
+  function syncVoiceMic() {
+    if (!micBtn) return;
+    const v = voiceInfo;
+    if (!v) {
+      delete micBtn.dataset.voice;
+      micBtn.setAttribute('aria-label', 'Speak a command');
+      if (micBtn.dataset.icon === 'stop') {
+        micBtn.dataset.icon = 'mic';
+        clear(micBtn).appendChild(icon('mic', { size: 20 }));
+      }
+      if (voiceWords) {
+        voiceWords = false;
+        cmdInput.value = '';
+        cmdInput.placeholder = 'Type or say a command…';
+        syncSend();
+      }
+      if (!listening) {
+        micBtn.setAttribute('aria-pressed', 'false');
+        micBtn.classList.remove('is-listening');
+      }
+      return;
+    }
+    const on = !!v.listening;
+    micBtn.dataset.voice = on ? 'listening' : v.busy ? 'busy' : 'idle';
+    micBtn.setAttribute('aria-pressed', String(on));
+    micBtn.classList.toggle('is-listening', on);
+    if (typeof v.label === 'string' && v.label) micBtn.setAttribute('aria-label', v.label);
+    const want = !on && v.busy ? 'stop' : 'mic';
+    if ((micBtn.dataset.icon || 'mic') !== want) {
+      micBtn.dataset.icon = want;
+      clear(micBtn).appendChild(icon(want, { size: 20 }));
+    }
+    if (document.activeElement === cmdInput && !voiceWords) return; // the owner is typing
+    if (on) {
+      cmdInput.placeholder = 'Listening…';
+      cmdInput.value = typeof v.heard === 'string' ? v.heard : '';
+      voiceWords = true;
+    } else {
+      cmdInput.placeholder = 'Type or say a command…';
+      if (voiceWords) cmdInput.value = '';
+      voiceWords = false;
+    }
+    syncSend();
   }
 
   // ---- thumbnail for the saved library ----------------------------------------------------------
@@ -1180,11 +1273,30 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       if (disposed) return { handled: false };
       const cmd = matchHologramCommand(String(text || ''), partsForMatcher(), { selected: state.selected });
       if (!cmd) return { handled: false };
-      const word = run(cmd);
-      if (word) say(word);
       el.dataset.lastCommand = cmd.action;
       el.dataset.lastSource = from;
+      if (cmd.action === 'blueprint') {
+        // The owner asked in words, so the paid build may start (or a saved sheet opens): the
+        // outcome comes later (Voice Mode says it).
+        return { handled: true, command: cmd, done: requestBlueprint(cmd.partId || null) };
+      }
+      const word = run(cmd);
+      if (word) say(word);
       return { handled: true, command: cmd };
+    },
+    /** Caption a reply that Voice Mode follows (text only: Voice Mode opens what it shows). */
+    follow(runObj) {
+      if (disposed || !runObj || typeof runObj !== 'object' || trackedRuns.has(runObj)) return;
+      const turn = runObj.turn;
+      if (turn && turn.status === 'running') showCaption({ status: 'thinking', text: '', turnId: turn.id });
+      trackReply(runObj, { captionOnly: true });
+    },
+    /** Voice Mode drives the mic: { state, label, listening, heard, busy }, or null to stop. */
+    setVoice(info) {
+      if (disposed) return;
+      voiceInfo = info && typeof info === 'object' ? { ...info } : null;
+      syncVoiceMic();
+      el.dataset.voice = voiceInfo ? (voiceInfo.listening ? 'listening' : voiceInfo.state || 'idle') : '';
     },
     /** The command field: a local command first, otherwise a chat message to Jarvis. */
     submit(text, opts = {}) {

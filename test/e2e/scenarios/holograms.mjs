@@ -3,7 +3,8 @@
 // and by typed command → a part's card → "Build 2D blueprint" (a new turn) → the blueprint card and
 // viewer; the Blueprints library reopening both without any API request; a part whose blueprint
 // is saved; photos from a faked Wikimedia Commons; words for Jarvis captioned in the viewer; the
-// Blueprint protocol; the backup round trip; and the phone layout.
+// Blueprint protocol; the backup round trip; and the phone layout. Voice Mode × holograms
+// (voice-holograms): spoken requests open the viewer over Voice Mode, spoken commands act on it.
 //
 // State is read from the viewers' data-* test hooks (data-state, data-parts, data-exploded,
 // data-labels, data-selected, data-panel), never from raycast pixels.
@@ -11,6 +12,8 @@
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { tid } from '../harness.mjs';
+import { turnContextOf } from '../../mock/content.mjs';
+import { installFakeSpeech } from './features.mjs';
 
 // ---- helpers -------------------------------------------------------------------------------------
 
@@ -118,6 +121,61 @@ async function openLibrary(t, { viaHistory = false } = {}) {
 async function closeLibrary(t) {
   await t.page.locator(`${tid('library-sheet')} ${tid('sheet-close')}`).click();
   await t.page.locator(tid('library-sheet')).waitFor({ state: 'detached', timeout: 5000 });
+}
+
+// ---- Voice Mode × holograms helpers -------------------------------------------------------------
+
+const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const voiceState = (t) => t.page.evaluate(() => JSON.parse(JSON.stringify(window.__voice)));
+const holoLog = (t) => t.page.evaluate(() => JSON.parse(JSON.stringify(window.__holo.log)));
+
+/**
+ * In the page: every 40 ms, record what changed in the hologram viewer's test hooks and caption,
+ * the blueprint viewer's state, Voice Mode's state and whether a viewer covers it (inert), so the
+ * scenario can check the order of things after the fact instead of racing them.
+ */
+function recordViewers() {
+  const rec = { log: [] };
+  window.__holo = rec;
+  let last = '';
+  setInterval(() => {
+    const v = document.querySelector('[data-testid="hologram-viewer"]');
+    const vm = document.querySelector('[data-testid="voice-mode"]');
+    const cap = v ? v.querySelector('[data-testid="hologram-caption"]') : null;
+    const bp = document.querySelector('[data-testid="blueprint-overlay"]');
+    const mic = v ? v.querySelector('[data-testid="hologram-mic"]') : null;
+    const e = {
+      viewer: v ? v.getAttribute('data-state') || '' : null,
+      parts: v ? v.getAttribute('data-parts') || '' : '',
+      exploded: v ? v.getAttribute('data-exploded') || '' : '',
+      selected: v ? v.getAttribute('data-selected') || '' : '',
+      voice: v ? v.getAttribute('data-voice') || '' : '',
+      mic: mic ? mic.getAttribute('aria-pressed') || '' : '',
+      caption: cap && !cap.hidden ? ((cap.querySelector('.hv__caption-text') || {}).textContent || '').replace(/\s+/g, ' ').trim() : '',
+      captionState: cap && !cap.hidden ? cap.getAttribute('data-state') || '' : '',
+      blueprint: bp ? bp.getAttribute('data-state') || '' : null,
+      vm: vm ? vm.getAttribute('data-state') || '' : null,
+      covered: vm ? !!vm.inert : false,
+    };
+    const key = JSON.stringify(e);
+    if (key === last) return;
+    last = key;
+    rec.log.push({ at: performance.now(), ...e });
+  }, 40);
+}
+
+/** The newest owner message (with text) of a request body, and its text without the turn context. */
+function newestUserMessage(body) {
+  const msgs = Array.isArray(body?.messages) ? body.messages : [];
+  return [...msgs].reverse().find((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((b) => b.type === 'text')) || null;
+}
+function newestUserText(body) {
+  const msg = newestUserMessage(body);
+  return msg ? msg.content.filter((b) => b.type === 'text' && !/<turn_context>/.test(b.text)).map((b) => b.text).join('\n') : '';
+}
+function newestTurnContext(body) {
+  const msg = newestUserMessage(body);
+  return msg ? (msg.content.find((b) => b.type === 'text' && /<turn_context>/.test(b.text)) || {}).text || '' : '';
 }
 
 // ---- scenarios -------------------------------------------------------------------------------------
@@ -494,6 +552,190 @@ export default [
       t.assert(/Delete/.test(await t.text(del)) && (await t.count('library-item')) === 1, 'The first tap only asks to confirm');
       await del.click();
       await t.visible('library-empty', { message: 'Deleting the only item empties the library' });
+    },
+  },
+  {
+    name: 'voice-holograms',
+    title: 'Voice Mode × holograms: "show me an AA battery" opens the viewer over Voice Mode with the live build while Jarvis speaks; "expand it" and "show the separator" act at once with a spoken acknowledgement; a question is a spoken-channel turn, spoken and captioned in the viewer; "blueprint the separator" builds the part blueprint, which opens when ready and is announced; the viewer\'s mic is Voice Mode\'s; closing returns to Voice Mode; outside it the viewer\'s own mic works',
+    device: 'iphone13',
+    timeout: 300000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      // One phrase per listen, in order (the fake recognizer hears the next one each time).
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[hologram:battery]] Show me an AA battery', 'Expand it.', 'Show the separator.', 'How does the separator work?', 'Blueprint the separator.'];
+      });
+      await t.page.addInitScript(recordViewers);
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+
+      await t.step('"show me an AA battery": the viewer opens over Voice Mode with the live build while Jarvis speaks', async () => {
+        await t.visible('hologram-viewer', { timeout: 30000, message: 'The hologram viewer opens over Voice Mode as soon as the hologram starts building' });
+        await waitViewer(t, 'state', 'ready', { timeout: 60000 });
+        t.assert((await viewerAttr(t, 'parts')) === '9', `The finished AA battery has its 9 parts (got ${await viewerAttr(t, 'parts')})`);
+        const v = await t.waitFor(async () => {
+          const st = await voiceState(t);
+          return /Say "expand it", or tap any part\./.test(norm(st.said.join(' '))) ? st : null;
+        }, { timeout: 30000, message: async () => `Jarvis to say the hologram is up (said: ${norm((await voiceState(t)).said.join(' | '))})` });
+        const log = await holoLog(t);
+        const building = log.filter((e) => e.viewer === 'building');
+        t.assert(building.length > 0, 'The viewer was open while the hologram was still building');
+        t.assert(building.every((e) => e.vm !== null && e.covered), 'It showed the build over Voice Mode, which stayed open (inert) underneath');
+        const counts = [...new Set(building.map((e) => e.parts))];
+        t.assert(counts.length >= 2, `The live build grew in the viewer (part counts seen while building: ${counts.join(', ')})`);
+        const builtAt = log.find((e, i) => i > log.indexOf(building[0]) && e.viewer !== 'building')?.at ?? Infinity;
+        const pulling = v.log.find((e) => /Pulling up the AA alkaline battery now\./.test(e.text));
+        t.assert(pulling, `Jarvis said what he was doing (said: ${norm(v.said.join(' | '))})`);
+        t.assert(pulling.at < builtAt, 'He said it while the hologram was still building');
+        t.assert(norm(v.said.join(' ')).includes('Here\'s the AA alkaline battery. Say "expand it", or tap any part.'), 'Then the spoken reply: "Here\'s the AA alkaline battery. Say "expand it", or tap any part."');
+        t.note(`live build in the viewer: ${counts.join('→')} parts`);
+        await t.screenshot('1-viewer-over-voice');
+      });
+
+      await t.step('"expand it" and "show the separator": local commands act at once, each with a short spoken acknowledgement', async () => {
+        await waitViewer(t, 'exploded', '1', { timeout: 30000, message: async () => `"Expand it." to explode the hologram (data-exploded "${await viewerAttr(t, 'exploded')}")` });
+        await waitViewer(t, 'selected', 'separator', { timeout: 30000, message: async () => `"Show the separator." to select it (data-selected "${await viewerAttr(t, 'selected')}")` });
+        await t.visible('hologram-part-card');
+        const v = await t.waitFor(async () => {
+          const st = await voiceState(t);
+          return st.said.some((x) => norm(x) === "Here's the separator.") ? st : null;
+        }, { timeout: 15000, message: async () => `"Here's the separator." to be said (said: ${norm((await voiceState(t)).said.join(' | '))})` });
+        const expanding = v.log.findIndex((e) => norm(e.text) === 'Expanding.');
+        const separator = v.log.findIndex((e) => norm(e.text) === "Here's the separator.");
+        t.assert(expanding >= 0 && separator > expanding, `"Expanding." then "Here's the separator." were said (said: ${norm(v.said.join(' | '))})`);
+        const sent = t.requests('lead').map((r) => newestUserText(r.body));
+        t.assert(!sent.some((x) => /Expand it|Show the separator/.test(x)), 'Viewer commands never reach the API');
+        await t.screenshot('2-commands');
+      });
+
+      await t.step('a question is a spoken-channel turn in the same conversation, spoken and captioned in the viewer', async () => {
+        const req = await t.waitFor(() => t.requests('lead').find((r) => /How does the separator work\?/.test(newestUserText(r.body))), { timeout: 30000, message: 'the question to be sent to Jarvis' });
+        t.assert(turnContextOf(newestUserMessage(req.body)).spoken, 'It is sent on the spoken reply channel');
+        t.assert(req.body.messages.some((m) => m.role === 'assistant' && Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_use' && b.name === 'show_hologram')), "It went to the hologram's conversation");
+        // The next request (the blueprint) shows the reply was over; read what was said and shown.
+        await t.waitFor(() => t.requests('lead').some((r) => /Blueprint request/.test(newestTurnContext(r.body))), { timeout: 45000, message: 'the reply to finish and the next request to go out' });
+        const v = await voiceState(t);
+        const said = norm(v.said.join(' '));
+        t.assert(/Here's the short version on .*separator/i.test(said) && /I've put the details on screen/.test(said), `The reply was spoken (said: ${said})`);
+        t.assert(!/What it is|Next step|\*\*/.test(said), 'Nothing below its --- line was spoken');
+        const caps = (await holoLog(t)).filter((e) => e.caption && /short version on .*separator/i.test(e.caption));
+        t.assert(caps.length > 0, 'The reply was captioned in the viewer');
+        t.assert(caps.some((e) => e.captionState === 'done' && /I've put the details on screen/.test(e.caption)), 'The caption ended with the whole spoken part');
+        t.assert(!caps.some((e) => /What it is|Next step/.test(e.caption)), 'The caption shows what was said, not the details for the screen');
+      });
+
+      await t.step('"blueprint the separator": the part blueprint is a Voice Mode turn; its viewer opens when it is ready, and Jarvis says so', async () => {
+        const req = t.requests('lead').find((r) => /Blueprint request/.test(newestTurnContext(r.body)));
+        t.assert(turnContextOf(newestUserMessage(req.body)).spoken, 'The blueprint request is on the spoken reply channel');
+        t.assert(/^Blueprint: Separator \(AA alkaline battery/.test(newestUserText(req.body)), `The message names the part ("${newestUserText(req.body)}")`);
+        const overlay = await t.visible('blueprint-overlay', { timeout: 60000, message: 'The blueprint viewer opens once the sheet is drawn' });
+        await t.waitFor(async () => (await overlay.getAttribute('data-state')) === 'done', { timeout: 10000, message: 'the blueprint to be finished' });
+        const v = await t.waitFor(async () => {
+          const st = await voiceState(t);
+          return st.log.find((e) => /it's open on your screen/.test(e.text)) ? st : null;
+        }, { timeout: 30000, message: async () => `Jarvis to say the blueprint is open (said: ${norm((await voiceState(t)).said.join(' | '))})` });
+        const log = await holoLog(t);
+        const first = log.find((e) => e.blueprint !== null);
+        t.assert(first && first.blueprint === 'done', `The blueprint viewer opened when the sheet was ready, not while it was drawn (first seen "${first && first.blueprint}")`);
+        const line = v.log.find((e) => /it's open on your screen/.test(e.text));
+        t.assert(/The blueprint of the separator is ready/.test(norm(v.said.join(' '))), 'The spoken line names the part');
+        t.assert(line.at > first.at - 100, 'The line was said once the blueprint was open');
+        t.assert((await t.count('blueprint-part')) >= 5, 'The blueprint lists its parts');
+        await t.page.waitForTimeout(500);
+        await t.screenshot('3-blueprint-over-voice');
+      });
+
+      await t.step("the viewer's mic is Voice Mode's: after a quiet spell, a tap listens and the words act", async () => {
+        await t.page.locator(`${tid('blueprint-overlay')} ${tid('blueprint-close')}`).click();
+        await t.page.locator(tid('blueprint-overlay')).waitFor({ state: 'detached', timeout: 5000 });
+        await t.visible('hologram-viewer', { message: 'Closing the blueprint shows the hologram again' });
+        // Nothing more was said, so Voice Mode stopped listening after its quiet tries and waits.
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'idle', { timeout: 30000, message: async () => `Voice Mode to wait after its quiet tries (data-state "${await vm.getAttribute('data-state')}")` });
+        const listening = (await holoLog(t)).filter((e) => e.voice === 'listening' && e.mic === 'true');
+        t.assert(listening.length > 0, "While Voice Mode listened, the viewer's mic showed it");
+        await t.page.evaluate(() => window.__voice.queue.push('Put it back together.'));
+        const before = await voiceState(t);
+        await (await t.visible('hologram-mic')).click();
+        await waitViewer(t, 'exploded', '0', { timeout: 15000, message: async () => `"Put it back together." to collapse the hologram (data-exploded "${await viewerAttr(t, 'exploded')}")` });
+        const v = await t.waitFor(async () => {
+          const st = await voiceState(t);
+          return st.said.slice(before.said.length).some((x) => norm(x) === 'Putting it back together.') ? st : null;
+        }, { timeout: 15000, message: 'the acknowledgement for "Put it back together."' });
+        t.assert(v.listens === before.listens + 1, `The tap made Voice Mode listen (${v.listens - before.listens} listens)`);
+      });
+
+      await t.step('closing the viewer returns to Voice Mode; Exit closes it as before', async () => {
+        await (await t.visible('hologram-close')).click();
+        await t.page.locator(tid('hologram-viewer')).waitFor({ state: 'detached', timeout: 5000 });
+        await vm.waitFor({ state: 'visible', timeout: 5000 });
+        t.assert(!(await vm.evaluate((el) => el.inert)), 'Voice Mode is usable again');
+        await t.screenshot('4-back-to-voice');
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+      });
+
+      await t.step("outside Voice Mode the viewer's own mic and commands work as before (nothing is spoken)", async () => {
+        const turns = t.page.locator(tid('turn-jarvis'));
+        t.assert((await turns.count()) === 3, `Three replies in the chat: the hologram, the answer and the blueprint (got ${await turns.count()})`);
+        await turns.first().locator(tid('hologram-open')).click();
+        await waitViewer(t, 'state', 'ready', { timeout: 30000 });
+        t.assert(!(await viewerAttr(t, 'voice')), 'No Voice Mode behind this viewer');
+        await t.page.evaluate(() => window.__voice.queue.push('Expand it.'));
+        const before = await voiceState(t);
+        await (await t.visible('hologram-mic')).click();
+        await waitViewer(t, 'exploded', '1', { timeout: 15000 });
+        t.assert((await viewerAttr(t, 'last-source')) === 'voice', "The words came through the viewer's own mic");
+        await t.page.waitForTimeout(800);
+        t.assert((await voiceState(t)).said.length === before.said.length, 'Outside Voice Mode, commands are not spoken');
+        await (await t.visible('hologram-close')).click();
+        t.assertAppendOnly();
+      });
+    },
+  },
+  {
+    name: 'voice-holograms-stop',
+    title: 'Voice Mode × holograms, Stop as in v5: a tap on the viewer\'s mic while the hologram builds stops the turn (the card stays, incomplete); closing the viewer shows Voice Mode, stopped',
+    device: 'desktop',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[hologram:camry]] Show me a 2024 Toyota Camry Hybrid'];
+      });
+      await t.page.addInitScript(recordViewers);
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+      await t.step('a tap on the viewer\'s mic while the hologram builds stops the turn', async () => {
+        await t.visible('hologram-viewer', { timeout: 30000, message: 'The hologram viewer opens over Voice Mode while it builds' });
+        await t.waitFor(async () => (await viewerAttr(t, 'state')) === 'building' && Number(await viewerAttr(t, 'parts')) >= 2, { timeout: 20000, interval: 50, message: 'the live build to be under way' });
+        const label = await t.page.locator(tid('hologram-mic')).getAttribute('aria-label');
+        t.assert(/^Stop/.test(label || ''), `While Jarvis works, the viewer's mic stops him, as the core does (aria-label "${label}")`);
+        await (await t.visible('hologram-mic')).click();
+        await waitViewer(t, 'state', 'incomplete', { timeout: 15000 });
+        const parts = Number(await viewerAttr(t, 'parts'));
+        t.assert(parts >= 2 && parts < 43, `The viewer keeps what was built (${parts} of 43 parts)`);
+        await t.screenshot('1-stopped-in-viewer');
+      });
+      await t.step('closing the viewer shows Voice Mode, stopped; Exit leaves the stopped turn and its card in the chat', async () => {
+        await (await t.visible('hologram-close')).click();
+        await t.page.locator(tid('hologram-viewer')).waitFor({ state: 'detached', timeout: 5000 });
+        t.assert(!(await vm.evaluate((el) => el.inert)), 'Voice Mode is usable again');
+        const state = await vm.getAttribute('data-state');
+        t.assert(state === 'idle' || state === 'listening', `Voice Mode waits or listens after the stop (data-state "${state}")`);
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        const turn = t.page.locator(tid('turn-jarvis')).last();
+        await t.waitForTurn(turn, ['stopped'], { timeout: 15000 });
+        const card = turn.locator(tid('hologram-card'));
+        await card.waitFor({ state: 'visible', timeout: 5000 });
+        t.assert((await card.getAttribute('data-status')) === 'error', 'The card stays, marked incomplete');
+        t.assert((await t.count('turn-user')) === 1, 'The spoken question stays in the conversation (keepOnStop)');
+        t.assertAppendOnly();
+      });
     },
   },
 ];
