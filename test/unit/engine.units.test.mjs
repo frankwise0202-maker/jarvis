@@ -23,6 +23,7 @@ import { createLimiter } from '../../src/engine/limiter.js';
 import { createEmitter } from '../../src/engine/emitter.js';
 import {
   LEAD_SYSTEM_V1,
+  LEAD_SYSTEM_V2,
   WORKER_SYSTEM_V1,
   DEPLOY_AGENTS_DESCRIPTION,
   UPDATE_MEMORY_DESCRIPTION,
@@ -284,12 +285,13 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
 });
 
 test('system prompts are static and cover the required behaviour', () => {
-  for (const text of [LEAD_SYSTEM_V1, WORKER_SYSTEM_V1, DEPLOY_AGENTS_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION]) {
+  for (const text of [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, WORKER_SYSTEM_V1, DEPLOY_AGENTS_DESCRIPTION, UPDATE_MEMORY_DESCRIPTION]) {
     assert.equal(typeof text, 'string');
     assert.doesNotMatch(text, /\$\{|20\d\d-\d\d-\d\d/); // nothing interpolated, no dates
   }
   for (const needle of ['<turn_context>', 'web_search', 'web_fetch', 'deploy_agents', 'update_memory', 'untrusted', 'first paragraph', 'raw HTML', 'Sources']) {
     assert.ok(LEAD_SYSTEM_V1.toLowerCase().includes(needle.toLowerCase()), `lead prompt mentions ${needle}`);
+    assert.ok(LEAD_SYSTEM_V2.toLowerCase().includes(needle.toLowerCase()), `lead prompt V2 mentions ${needle}`);
   }
   for (const needle of ['## Key findings', '## Details', '## Confidence and gaps', 'web_fetch', 'untrusted', '250-700 words', 'no preamble']) {
     assert.ok(WORKER_SYSTEM_V1.toLowerCase().includes(needle.toLowerCase()), `worker prompt mentions ${needle}`);
@@ -305,6 +307,7 @@ test('turn context: time, default "sir", location omitted when empty, mode line,
       '<turn_context>',
       'Local time: Thursday, 19 November 2026, 16:35 (America/New_York)',
       'Address the owner as: sir',
+      'Style: butler tone (polished and courteous, like a trusted British butler, with a light, dry wit); balanced length (match the length to the request)',
       `Mode: auto — ${MODE_INSTRUCTIONS.auto}`,
       'Agent limits: up to 8 agents per wave, at most 3 waves this turn',
       'Memory: none saved',
@@ -552,7 +555,7 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   const jarvis = createJarvis({ getSettings: () => ({}), getApiKey: () => '', now: () => new Date('2026-11-19T12:00:00Z') });
   const conv = jarvis.newConversation();
   assert.equal(conv.v, 1);
-  assert.equal(conv.system, LEAD_SYSTEM_V1);
+  assert.equal(conv.system, LEAD_SYSTEM_V2); // new conversations freeze the latest prompt (SPEC §15.1)
   assert.deepEqual(conv.tools, leadToolsV1());
   assert.deepEqual(conv.apiMessages, []);
   assert.deepEqual(conv.turns, []);

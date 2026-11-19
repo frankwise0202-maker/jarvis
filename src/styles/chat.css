@@ -115,6 +115,42 @@
   height: 100%;
 }
 
+/* The hero core doubles as the Voice Mode button. */
+.hero-core--talk {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-2) var(--ease), filter var(--dur-2) var(--ease);
+}
+
+.hero-core--talk:active {
+  transform: scale(0.97);
+}
+
+.hero-core--talk:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+}
+
+@media (hover: hover) {
+  .hero-core--talk:hover {
+    filter: drop-shadow(0 0 18px var(--accent-glow));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-core--talk,
+  .hero-core--talk:active {
+    transition: none;
+    transform: none;
+  }
+}
+
 .hero-reticle {
   position: absolute;
   inset: -10px;
@@ -1372,6 +1408,26 @@
 
 .foot-btn.is-active {
   color: var(--accent-2);
+}
+
+/* The narrowest phones: Copy · Speak · Mission · Share as icons (each has an aria-label), so
+   the row never wraps or clips a label. */
+@media (max-width: 359px) {
+  .turn-actions .foot-btn {
+    position: relative;
+    justify-content: center;
+    min-width: var(--tap);
+    padding: 0 8px;
+  }
+
+  .turn-actions .foot-btn > span:not(.foot-icon) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .turn-stats {

@@ -19,6 +19,8 @@ import { initSheets, createSheet, anySheetOpen } from './sheet.js';
 import { createToasts } from './toasts.js';
 import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
+import { createCore } from './hud/core.js';
+import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown } from './voice-mode.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats } from './stats.js';
 import { createShareOptions } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
@@ -34,8 +36,12 @@ import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
-import { sttSupported, startListening } from '../platform/voice/stt.js';
-import { ttsSupported, unlockSpeech, speak, stopSpeaking, toSpeech } from '../platform/voice/tts.js';
+import * as stt from '../platform/voice/stt.js';
+import * as tts from '../platform/voice/tts.js';
+import { markdownToPlainText } from '../lib/markdown.js';
+
+const { sttSupported, startListening } = stt;
+const { ttsSupported, unlockSpeech, speak, stopSpeaking, toSpeech } = tts;
 
 const UI_KEYS = {
   last: 'jarvis.ui.lastConversation',
@@ -191,6 +197,8 @@ export async function startApp(rootEl) {
 
   const header = createHeader({
     demo: state.demo,
+    voice: sttOk || ttsOk,
+    onVoice: () => openVoice(),
     onHistory: () => openHistory(),
     onSettings: () => openSettings(),
     onNewChat: () => newChat(),
@@ -218,6 +226,7 @@ export async function startApp(rootEl) {
     // A protocol's mode applies to that run only (the composer keeps its own mode). Returning
     // send()'s boolean keeps the protocol's input row open when the run couldn't start.
     onProtocol: (text, mode) => send(text, mode),
+    onVoice: sttOk || ttsOk ? () => openVoice() : null,
     getSettings: () => getSettings(),
     sounds,
     getGreeting: () => greeting(),
@@ -512,7 +521,7 @@ export async function startApp(rootEl) {
       return false;
     }
     attachRun(conv, run);
-    safe(() => sounds.cue('send'));
+    if (!safe(() => isVoiceModeOpen(), false)) safe(() => sounds.cue('send')); // Voice Mode has its own cues
     if (fresh || state.conv !== conv) setConversation(conv);
     else chat.sync();
     chat.scrollToBottom(false);
@@ -520,6 +529,47 @@ export async function startApp(rootEl) {
     scheduleHistoryRefresh();
     if (state.layout === 'phone') composer.blur();
     return true;
+  }
+
+  // ---- Voice Mode (SPEC §14.1) ----------------------------------------------------------------
+  // send() reports problems with toasts or by opening Settings, both hidden behind the overlay,
+  // so Voice Mode gets errors it can say out loud instead.
+  function startTurnForVoice(text, { mode } = {}) {
+    if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
+    if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
+    if (currentRunning()) throw new Error('I’m still working on the previous request.');
+    if (!send(text, mode)) throw new Error('I couldn’t start that request.');
+    const entry = state.conv && state.runs.get(state.conv.id);
+    return entry ? entry.run : null;
+  }
+
+  /** Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). */
+  function openVoice() {
+    stopSpeakingNow();
+    if (state.listening) safe(() => state.listening.stop());
+    const entry = state.conv && state.runs.get(state.conv.id);
+    try {
+      openVoiceMode({
+        getSettings,
+        saveSettings,
+        startTurn: startTurnForVoice,
+        createCore,
+        stt,
+        tts,
+        markdownToPlainText,
+        sounds,
+        wakeLock: { keepAwake, allowSleep },
+        activeRun: entry ? entry.run : null,
+        mode: () => composer.getMode(),
+        onClose: () => {
+          chat.scrollToBottom(false);
+          updateAll();
+        },
+      });
+    } catch (err) {
+      console.error('[jarvis] voice mode failed:', err);
+      toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
+    }
   }
 
   // ---- follow-up suggestions (SPEC §14.5) ----------------------------------------------------
@@ -536,9 +586,10 @@ export async function startApp(rootEl) {
 
   function offerFollowups(conv, turn) {
     const s = getSettings();
-    const key = safe(getApiKey, '');
-    if (s.followups === false || state.demo || !state.online || !key || !turn) return;
-    const answer = (turnText(turn, true) || turnText(turn, false)).trim();
+    const key = state.demo ? '' : safe(getApiKey, '');
+    if (s.followups === false || !turn) return;
+    if (!state.demo && (!state.online || !key)) return;
+    const answer = (answerText(turn) || turnText(turn, false)).trim();
     if (!answer) return;
     const turns = (conv && conv.turns) || [];
     const user = turns.slice(0, Math.max(0, turns.indexOf(turn))).reverse().find((t) => t.role === 'user');
@@ -556,7 +607,10 @@ export async function startApp(rootEl) {
     const current = { controller, chips };
     followup = current;
     chips.setLoading(true);
-    suggestFollowups({ apiKey: key, apiBase: safe(getDevApiBase, ''), question, answer, signal: controller.signal, onSpend: (usd) => safe(() => addSpend(usd)) })
+    const request = state.demo
+      ? demo.suggestFollowups(turn, { signal: controller.signal })
+      : suggestFollowups({ apiKey: key, apiBase: safe(getDevApiBase, ''), question, answer, signal: controller.signal, onSpend: (usd) => safe(() => addSpend(usd)) });
+    Promise.resolve(request)
       .catch(() => [])
       .then((qs) => {
         if (followup === current) chips.set(qs);
@@ -640,12 +694,14 @@ export async function startApp(rootEl) {
       state.errorUntil = Date.now() + 2500;
       setTimeout(updateCore, 2600);
     }
-    if (status === 'done') safe(() => sounds.play('reply-done'));
-    else if (status === 'error') safe(() => sounds.cue('error'));
+    // Voice Mode plays its own listen/reply/error sounds and speaks the answer itself.
+    const voiceOpen = safe(() => isVoiceModeOpen(), false);
+    if (status === 'done' && !voiceOpen) safe(() => sounds.play('reply-done'));
+    else if (status === 'error' && !voiceOpen) safe(() => sounds.cue('error'));
     const finished = safe(() => describeFinishedTurn(turn, entry.conv), null);
     if (finished) safe(() => missionFinished(finished));
     if (status === 'done' && isCurrent(entry)) {
-      autoSpeak(turn);
+      if (!voiceOpen) autoSpeak(turn);
       offerFollowups(entry.conv, turn);
     }
     updateAll();
@@ -728,8 +784,13 @@ export async function startApp(rootEl) {
     return use.map((s) => s.text).join('\n\n');
   }
 
+  /** The reply's final answer (the text after its last search or mission), for speech and copy. */
+  function answerText(turn) {
+    return safe(() => finalAnswerMarkdown(turn), '') || turnText(turn, true);
+  }
+
   async function copyTurn(turn) {
-    const text = plainText(turnText(turn, false));
+    const text = plainText(answerText(turn) || turnText(turn, false));
     const ok = await copyText(text);
     toast(ok ? 'Copied to clipboard.' : 'Couldn’t copy. Select the text instead.', { level: ok ? 'success' : 'warn', id: 'copy' });
   }
@@ -757,7 +818,7 @@ export async function startApp(rootEl) {
 
   function speakTurn(turn, mode) {
     if (!ttsOk) return;
-    const md = turnText(turn, true);
+    const md = answerText(turn);
     const text = safe(() => toSpeech(md, mode), '');
     if (!text) return;
     stopSpeakingNow();
@@ -1303,7 +1364,7 @@ export async function startApp(rootEl) {
   on(document, 'keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-      if (onboardingSheet) return;
+      if (onboardingSheet || isVoiceModeOpen()) return;
       e.preventDefault();
       if (settingsSheet) settingsSheet.close('shortcut');
       if (installSheet) installSheet.close('shortcut');
@@ -1313,7 +1374,7 @@ export async function startApp(rootEl) {
       composer.focus();
       return;
     }
-    if (e.key === '/' && !mod && !e.altKey && !anySheetOpen()) {
+    if (e.key === '/' && !mod && !e.altKey && !anySheetOpen() && !isVoiceModeOpen()) {
       const t = e.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault();
@@ -1321,14 +1382,15 @@ export async function startApp(rootEl) {
     }
   });
 
-  // iOS needs speech to be started from a user gesture once.
+  // iOS needs speech to be started from a user gesture once. unlockSpeech() is one-shot and iOS
+  // does not accept pointerdown as that gesture, so listen for click (and keydown) instead.
   const unlockOnce = () => {
     safe(() => unlockSpeech());
-    document.removeEventListener('pointerdown', unlockOnce, true);
+    document.removeEventListener('click', unlockOnce, true);
     document.removeEventListener('keydown', unlockOnce, true);
   };
   if (ttsOk) {
-    document.addEventListener('pointerdown', unlockOnce, true);
+    document.addEventListener('click', unlockOnce, true);
     document.addEventListener('keydown', unlockOnce, true);
   }
 

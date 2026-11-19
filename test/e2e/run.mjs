@@ -13,6 +13,7 @@
 // to test/artifacts/ (plus <scenario>-FAILED.png/.html/-mock.json when something fails).
 // Exits 1 when any scenario fails.
 
+import { existsSync } from 'node:fs';
 import { readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { build, BuildError, ROOT } from '../../scripts/build.mjs';
@@ -25,8 +26,15 @@ import pwa from './scenarios/pwa.mjs';
 import layout from './scenarios/layout.mjs';
 import features from './scenarios/features.mjs';
 
+/** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
+async function optionalScenarios(rel) {
+  const url = new URL(rel, import.meta.url);
+  return existsSync(url) ? (await import(url.href)).default : [];
+}
+const attachments = await optionalScenarios('./scenarios/attachments.mjs');
+
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features];
+export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features, ...attachments];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

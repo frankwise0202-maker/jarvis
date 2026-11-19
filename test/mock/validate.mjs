@@ -415,6 +415,138 @@ function validateTools(tools) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Images and documents (user content and tool_result content)
+
+export const IMAGE_MEDIA_TYPES = Object.freeze(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+export const MAX_IMAGE_BASE64 = 5 * 1024 * 1024; // the API's per-image limit (base64 characters)
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** The image type from its file signature, or null. `buf` holds the first bytes of the image. */
+export function sniffImageType(buf) {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.subarray(0, 6).toString('latin1'))) return 'image/gif';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+
+const headOf = (b64, bytes) => Buffer.from(b64.slice(0, Math.ceil(bytes / 3) * 4), 'base64');
+
+/** Strict base64: a string, no data: URL prefix, no whitespace or line breaks, padded to a multiple of 4. */
+function checkBase64(data, path) {
+  if (typeof data !== 'string') return bad(`${path}: Input should be a valid string`);
+  if (!data.length) return bad(`${path}: base64 data must not be empty`);
+  if (/^data:/i.test(data)) return bad(`${path}: base64 data must not include a data: URL prefix`);
+  if (/\s/.test(data)) return bad(`${path}: base64 data must not contain whitespace or line breaks`);
+  if (data.length % 4 !== 0 || !BASE64_RE.test(data)) return bad(`${path}: Invalid base64 data`);
+  return null;
+}
+
+function checkHttpUrl(url, path) {
+  if (typeof url !== 'string' || !/^https?:\/\/[^\s]+$/i.test(url)) return bad(`${path}: Input should be a valid URL`);
+  return null;
+}
+
+export function validateImageBlock(block, path) {
+  let err = extraKeys(block, new Set(['type', 'source', 'cache_control', 'transformations']), path);
+  if (err) return err;
+  const src = block.source;
+  if (!isPlainObject(src)) return bad(`${path}.source: Field required`);
+  if (src.type === 'base64') {
+    const sp = `${path}.source.base64`;
+    err = extraKeys(src, new Set(['type', 'media_type', 'data']), sp);
+    if (err) return err;
+    if (!IMAGE_MEDIA_TYPES.includes(src.media_type)) {
+      return bad(`${sp}.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'`);
+    }
+    err = checkBase64(src.data, `${sp}.data`);
+    if (err) return err;
+    if (src.data.length > MAX_IMAGE_BASE64) return bad(`${sp}: image exceeds 5 MB maximum: ${src.data.length} bytes > ${MAX_IMAGE_BASE64} bytes`);
+    const actual = sniffImageType(headOf(src.data, 12));
+    if (!actual) return bad(`${sp}.data: Could not process image`);
+    if (actual !== src.media_type) return bad(`${sp}: Image does not match the provided media type ${src.media_type}`);
+  } else if (src.type === 'url') {
+    err = extraKeys(src, new Set(['type', 'url']), `${path}.source.url`) || checkHttpUrl(src.url, `${path}.source.url.url`);
+    if (err) return err;
+  } else if (src.type === 'file') {
+    err = extraKeys(src, new Set(['type', 'file_id']), `${path}.source.file`);
+    if (err) return err;
+    if (!nonBlank(src.file_id)) return bad(`${path}.source.file.file_id: Field required`);
+  } else {
+    return bad(`${path}.source.type: Input tag '${src.type}' found using 'type' does not match any of the expected tags: 'base64', 'url', 'file'`);
+  }
+  if (block.transformations !== undefined && block.transformations !== null) {
+    const t = block.transformations;
+    if (!isPlainObject(t)) return bad(`${path}.transformations: Input should be a valid dictionary`);
+    err = extraKeys(t, new Set(['oversized_image']), `${path}.transformations`);
+    if (err) return err;
+    if (t.oversized_image !== undefined && t.oversized_image !== 'downsize' && t.oversized_image !== 'error') {
+      return bad(`${path}.transformations.oversized_image: Input should be 'downsize' or 'error'`);
+    }
+  }
+  return null;
+}
+
+/** Whether decoded PDF bytes start like a PDF ("%PDF-" within the first kilobyte). */
+export function looksLikePdf(buf) {
+  return buf.subarray(0, 1024).toString('latin1').includes('%PDF-');
+}
+
+export function validateDocumentBlock(block, path) {
+  let err = extraKeys(block, new Set(['type', 'source', 'title', 'context', 'citations', 'cache_control']), path);
+  if (err) return err;
+  for (const key of ['title', 'context']) {
+    if (block[key] !== undefined && block[key] !== null && typeof block[key] !== 'string') return bad(`${path}.${key}: Input should be a valid string`);
+  }
+  if (block.citations !== undefined && block.citations !== null) {
+    if (!isPlainObject(block.citations)) return bad(`${path}.citations: Input should be a valid dictionary`);
+    err = extraKeys(block.citations, new Set(['enabled']), `${path}.citations`);
+    if (err) return err;
+    if (block.citations.enabled !== undefined && typeof block.citations.enabled !== 'boolean') return bad(`${path}.citations.enabled: Input should be a valid boolean`);
+  }
+  const src = block.source;
+  if (!isPlainObject(src)) return bad(`${path}.source: Field required`);
+  const sp = `${path}.source.${src.type}`;
+  switch (src.type) {
+    case 'base64':
+      err = extraKeys(src, new Set(['type', 'media_type', 'data']), sp);
+      if (err) return err;
+      if (src.media_type !== 'application/pdf') return bad(`${sp}.media_type: Input should be 'application/pdf'`);
+      err = checkBase64(src.data, `${sp}.data`);
+      if (err) return err;
+      if (!looksLikePdf(headOf(src.data, 1024))) return bad(`${sp}.data: The PDF specified was not valid.`);
+      return null;
+    case 'text':
+      err = extraKeys(src, new Set(['type', 'media_type', 'data']), sp);
+      if (err) return err;
+      if (src.media_type !== 'text/plain') return bad(`${sp}.media_type: Input should be 'text/plain'`);
+      return typeof src.data === 'string' ? null : bad(`${sp}.data: Field required`);
+    case 'content':
+      err = extraKeys(src, new Set(['type', 'content']), sp);
+      if (err) return err;
+      if (typeof src.content === 'string') return nonBlank(src.content) ? null : bad(`${sp}.content: text content blocks must contain non-whitespace text`);
+      if (!Array.isArray(src.content) || !src.content.length) return bad(`${sp}.content: Input should be a valid string or a non-empty list`);
+      for (let i = 0; i < src.content.length; i++) {
+        const inner = src.content[i];
+        const ip = `${sp}.content.${i}`;
+        if (inner?.type === 'image') err = validateImageBlock(inner, ip);
+        else if (inner?.type === 'text') err = nonBlank(inner.text) ? extraKeys(inner, new Set(['type', 'text', 'citations', 'cache_control']), ip) : bad(`${ip}.text: text content blocks must contain non-whitespace text`);
+        else err = bad(`${ip}.type: Input should be 'text' or 'image'`);
+        if (err) return err;
+      }
+      return null;
+    case 'url':
+      return extraKeys(src, new Set(['type', 'url']), sp) || checkHttpUrl(src.url, `${sp}.url`);
+    case 'file':
+      err = extraKeys(src, new Set(['type', 'file_id']), sp);
+      if (err) return err;
+      return nonBlank(src.file_id) ? null : bad(`${sp}.file_id: Field required`);
+    default:
+      return bad(`${path}.source.type: Input tag '${src.type}' found using 'type' does not match any of the expected tags: 'base64', 'text', 'content', 'url', 'file'`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Messages
 
 const USER_BLOCK_TYPES = new Set(['text', 'image', 'document', 'search_result', 'tool_result']);
@@ -480,7 +612,7 @@ function validateBlock(block, role, path) {
   const type = block.type;
   const allowed = role === 'user' ? USER_BLOCK_TYPES : ASSISTANT_BLOCK_TYPES;
   if (!allowed.has(type)) {
-    if (role === 'assistant' && type === 'document') return bad(`${path}: \`document\` blocks are not permitted in \`assistant\` messages`);
+    if (role === 'assistant' && (type === 'document' || type === 'image')) return bad(`${path}: \`${type}\` blocks are not permitted in \`assistant\` messages`);
     if (typeof type !== 'string') return bad(`${path}.type: Field required`);
     return bad(`${path}.type: \`${type}\` blocks are not permitted in \`${role}\` messages`);
   }
@@ -573,16 +705,21 @@ function validateBlock(block, role, path) {
           if (!nonBlank(inner.text)) return bad(`${ip}.text: text content blocks must contain non-whitespace text`);
           err = extraKeys(inner, new Set(['type', 'text', 'citations', 'cache_control']), ip);
           if (err) return err;
-        } else if (!['image', 'document', 'search_result', 'tool_reference'].includes(inner.type)) {
+        } else if (inner.type === 'image' || inner.type === 'document') {
+          err = inner.type === 'image' ? validateImageBlock(inner, ip) : validateDocumentBlock(inner, ip);
+          if (err) return err;
+        } else if (!['search_result', 'tool_reference'].includes(inner.type)) {
           return bad(`${ip}.type: \`${inner.type}\` blocks are not permitted in tool_result content`);
         }
       }
       return null;
     }
     case 'image':
+      return validateImageBlock(block, path);
     case 'document':
+      return validateDocumentBlock(block, path);
     case 'search_result':
-      return isPlainObject(block.source) || type === 'search_result' ? null : bad(`${path}.source: Field required`);
+      return null;
     default:
       return null; // fallback, compaction: opaque blocks the API returned; sent back as-is
   }

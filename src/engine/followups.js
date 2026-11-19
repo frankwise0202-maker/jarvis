@@ -154,7 +154,7 @@ function parseQuestions(text) {
 
 const strip = (s) =>
   s
-    .replace(/[\u0000-\u001F\u007F-\u009F​-‏‪-‮⁦-⁩]/g, ' ')
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^(?:[-*•–—]+|\d{1,2}[.)])\s*/, '') // leading bullet or "1." numbering

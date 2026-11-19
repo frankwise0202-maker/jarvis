@@ -1,22 +1,55 @@
-// Composer: mode selector (Auto / Quick / Swarm), auto-growing textarea, mic, and a
-// Send button that becomes Stop while a turn runs. Enter sends on desktop
-// (Shift+Enter = newline); on touch devices Enter inserts a newline and Ctrl/⌘+Enter sends.
+// Composer: mode selector (Auto / Quick / Swarm) with a per-message team size in swarm mode, an
+// auto-growing textarea, photo and PDF attachments ("Show Jarvis": picker, camera on phones, paste,
+// drag and drop), the mic, and a Send button that becomes Stop while a turn runs. Enter sends on
+// desktop (Shift+Enter = newline); on touch devices Enter inserts a newline and Ctrl/⌘+Enter sends.
+//
+// Layout: [attachment previews] / [textarea | attach, camera, mic] / [modes, team size | send].
+// The attachment and voice tools sit in the text row so the bottom bar keeps room for the team
+// size control even on a 320 px phone, with nothing moving when the mode changes.
 
+import '../styles/composer-extras.css';
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import { MODES } from '../engine/index.js';
+import { getSettings as platformGetSettings, onSettingsChange } from '../platform/settings.js';
+import { ATTACHMENT_LIMITS, AttachmentError, attachmentMeta, describeAttachments, formatBytes, processFile, safeThumb } from './attachments.js';
 
 const MODE_INFO = {
   auto: { icon: 'sparkle', hint: 'Jarvis decides: answer, search, or deploy agents' },
   quick: { icon: 'bolt', hint: 'Direct answer, no agents' },
   swarm: { icon: 'agents', hint: 'Deploy the full agent team' },
 };
+// Placeholders, longest first: the longest that fits the text row on one line is shown.
 const PLACEHOLDER = {
-  auto: 'Ask Jarvis anything…',
-  quick: 'Ask a quick question…',
-  swarm: 'Describe a research mission…',
+  auto: ['Ask Jarvis anything…', 'Ask Jarvis…'],
+  quick: ['Ask a quick question…', 'Quick question…'],
+  swarm: ['Describe a research mission…', 'Describe the mission…', 'Your mission…'],
+  one: ['Ask about it, or just send…', 'Ask about it…'],
+  many: ['Ask about them, or just send…', 'Ask about them…'],
 };
+const BLOCKED_SHORT = { nokey: 'Add your API key to start', offline: 'You’re offline' };
 const MAX_LINES = 6;
+
+/** Team sizes offered in swarm mode (SPEC §15: swarm-size-<n>). */
+export const SWARM_SIZES = Object.freeze([3, 6, 10, 15, 20]);
+const SWARM_SIZE_INFO = {
+  3: 'Focused — a small team for a narrow question.',
+  6: 'Balanced — several angles at a moderate cost.',
+  10: 'Broad — wide coverage for big comparisons.',
+  15: 'Extensive — deep coverage at a noticeably higher cost.',
+  20: 'Maximum — exhaustive research at the highest cost.',
+};
+
+/** settings.maxAgents snapped to the nearest offered size (halfway rounds up: swarm means the full team). */
+export function snapSwarmSize(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 10;
+  let best = SWARM_SIZES[0];
+  for (const size of SWARM_SIZES) if (Math.abs(size - n) <= Math.abs(best - n)) best = size;
+  return best;
+}
+
+const ATTACH_TITLE = 'Attach photos or PDFs — photos are resized and their location data removed';
 
 function modeLabel(id) {
   return (MODES && MODES[id]) || id.charAt(0).toUpperCase() + id.slice(1);
@@ -30,13 +63,36 @@ function isTouchKeyboard() {
   }
 }
 
+function isEditable(el) {
+  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
+/** Files of a DataTransfer (paste or drop), or [] when it carries none. */
+function filesOf(dt) {
+  if (!dt) return [];
+  const out = [];
+  if (dt.items && dt.items.length) {
+    for (const item of dt.items) {
+      if (item.kind !== 'file') continue;
+      const f = item.getAsFile();
+      if (f) out.push(f);
+    }
+  }
+  if (!out.length && dt.files && dt.files.length) out.push(...dt.files);
+  return out;
+}
+
+const carriesFiles = (dt) => !!dt && Array.from(dt.types || []).includes('Files');
+
 /**
  * @param {object} o
- * @param {(text: string, mode: string) => boolean} o.onSend   return true when accepted (input is cleared)
+ * @param {(text: string, mode: string, extras: { attachments: object[], maxAgents?: number }) => boolean} o.onSend
+ *        return true when accepted (the input and attachments are then cleared); false keeps them
  * @param {() => void} o.onStop
  * @param {() => void} o.onMic
  * @param {(code: string) => void} [o.onHintAction]
  * @param {(mode: string) => void} [o.onModeChange]
+ * @param {() => object} [o.getSettings]   defaults to the platform settings (maxAgents → team size)
  * @param {string} [o.mode]
  * @param {boolean} [o.micSupported]
  */
@@ -47,6 +103,13 @@ export function createComposer(o) {
   let blocked = null; // { code, message, actionLabel }
 
   const touch = isTouchKeyboard();
+  const readSettings = () => {
+    try {
+      return (typeof o.getSettings === 'function' ? o.getSettings() : platformGetSettings()) || {};
+    } catch {
+      return {};
+    }
+  };
 
   // ---- mode switch ------------------------------------------------------------------
   const modeButtons = {};
@@ -70,11 +133,131 @@ export function createComposer(o) {
     }),
   );
 
+  // ---- team size (swarm mode) ---------------------------------------------------------
+  let defaultMax = Number(readSettings().maxAgents);
+  let swarmSize = snapSwarmSize(defaultMax);
+  const popId = `swarm-pop-${Math.random().toString(36).slice(2, 9)}`;
+  const chipCount = h('span', { class: 'swarm-chip-count' });
+  const chip = h(
+    'button',
+    {
+      class: 'swarm-chip',
+      type: 'button',
+      attrs: { 'data-testid': 'swarm-size', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': popId },
+      on: { click: () => (popOpen ? closePop(true) : openPop()) },
+    },
+    icon('agents', { size: 16, class: 'swarm-chip-icon' }),
+    chipCount,
+    h('span', { class: 'swarm-chip-label', text: 'agents' }),
+    icon('chevron-up', { size: 14, class: 'swarm-chip-caret' }),
+  );
+  const sizeButtons = SWARM_SIZES.map((n) =>
+    h(
+      'button',
+      {
+        class: 'swarm-opt',
+        type: 'button',
+        attrs: { 'data-testid': `swarm-size-${n}`, 'aria-pressed': 'false', 'aria-label': `${n} agents`, 'data-value': String(n) },
+        on: {
+          click: () => {
+            setSwarmSize(n);
+            closePop(true);
+          },
+          focus: () => setText(popCaption, SWARM_SIZE_INFO[n]),
+          mouseenter: () => setText(popCaption, SWARM_SIZE_INFO[n]),
+        },
+      },
+      String(n),
+    ),
+  );
+  const popCaption = h('p', { class: 'swarm-pop-caption', attrs: { 'aria-live': 'polite' } });
+  const pop = h(
+    'div',
+    { class: 'swarm-pop', id: popId, hidden: true, attrs: { role: 'group', 'aria-label': 'Agents per wave for this message' } },
+    h('div', { class: 'swarm-pop-title' }, h('span', { text: 'Agents per wave' }), h('span', { class: 'swarm-pop-sub', text: 'this message' })),
+    h('div', { class: 'swarm-pop-row', on: { keydown: onPopKey, mouseleave: () => setText(popCaption, SWARM_SIZE_INFO[swarmSize]) } }, sizeButtons),
+    popCaption,
+  );
+  const swarmWrap = h('div', { class: 'swarm-size', hidden: mode !== 'swarm' }, chip, pop);
+  let popOpen = false;
+
+  function setSwarmSize(n) {
+    swarmSize = SWARM_SIZES.includes(n) ? n : snapSwarmSize(n);
+    setText(chipCount, String(swarmSize));
+    chip.dataset.value = String(swarmSize);
+    chip.setAttribute('aria-label', `Agents per wave: ${swarmSize}. Change`);
+    chip.title = `Up to ${swarmSize} agents per wave for this message`;
+    for (const b of sizeButtons) b.setAttribute('aria-pressed', b.dataset.value === String(swarmSize) ? 'true' : 'false');
+    setText(popCaption, SWARM_SIZE_INFO[swarmSize]);
+  }
+
+  function openPop() {
+    if (popOpen) return;
+    popOpen = true;
+    pop.hidden = false;
+    chip.setAttribute('aria-expanded', 'true');
+    swarmWrap.classList.add('is-open');
+    setText(popCaption, SWARM_SIZE_INFO[swarmSize]);
+    const current = sizeButtons.find((b) => b.dataset.value === String(swarmSize)) || sizeButtons[0];
+    try {
+      current.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+    document.addEventListener('pointerdown', onOutside, true);
+    document.addEventListener('keydown', onPopEscape, true);
+  }
+
+  function closePop(returnFocus) {
+    if (!popOpen) return;
+    popOpen = false;
+    pop.hidden = true;
+    chip.setAttribute('aria-expanded', 'false');
+    swarmWrap.classList.remove('is-open');
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onPopEscape, true);
+    if (returnFocus) {
+      try {
+        chip.focus({ preventScroll: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function onOutside(e) {
+    if (!swarmWrap.contains(e.target)) closePop(false);
+  }
+
+  function onPopEscape(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation(); // Esc closes the popover only, not a sheet behind it
+      closePop(true);
+    }
+  }
+
+  function onPopKey(e) {
+    const i = sizeButtons.indexOf(document.activeElement);
+    if (i < 0) return;
+    let next = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = Math.min(sizeButtons.length - 1, i + 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = Math.max(0, i - 1);
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = sizeButtons.length - 1;
+    if (next >= 0) {
+      e.preventDefault();
+      sizeButtons[next].focus();
+    }
+  }
+
+  setSwarmSize(swarmSize);
+
   // ---- input ------------------------------------------------------------------------
   const input = h('textarea', {
     class: 'composer-input',
     rows: 1,
-    placeholder: PLACEHOLDER[mode],
+    placeholder: PLACEHOLDER[mode][0],
     attrs: {
       'data-testid': 'composer-input',
       'aria-label': 'Message Jarvis',
@@ -89,13 +272,54 @@ export function createComposer(o) {
         syncButtons();
       },
       keydown: onKeyDown,
+      paste: onPaste,
     },
   });
 
+  // ---- tools: attach, camera, mic ------------------------------------------------------
+  const fileInput = h('input', {
+    class: 'composer-file-input',
+    type: 'file',
+    multiple: true,
+    accept: 'image/*,application/pdf',
+    tabIndex: -1,
+    attrs: { 'data-testid': 'attach-input', 'aria-hidden': 'true' },
+    on: { change: () => takeFromInput(fileInput, 'picker') },
+  });
+  const cameraInput = h('input', {
+    class: 'composer-file-input',
+    type: 'file',
+    accept: 'image/*',
+    tabIndex: -1,
+    attrs: { capture: 'environment', 'data-testid': 'camera-input', 'aria-hidden': 'true' },
+    on: { change: () => takeFromInput(cameraInput, 'camera') },
+  });
+  const attachBtn = h(
+    'button',
+    {
+      class: 'composer-btn composer-tool composer-attach',
+      type: 'button',
+      attrs: { 'data-testid': 'composer-attach', 'aria-label': 'Attach photos or PDFs', title: ATTACH_TITLE },
+      on: { click: () => openPicker(fileInput) },
+    },
+    icon('paperclip', { size: 20 }),
+  );
+  const cameraBtn = touch
+    ? h(
+        'button',
+        {
+          class: 'composer-btn composer-tool composer-camera',
+          type: 'button',
+          attrs: { 'data-testid': 'composer-camera', 'aria-label': 'Take a photo', title: 'Take a photo — location data is removed before sending' },
+          on: { click: () => openPicker(cameraInput) },
+        },
+        icon('camera', { size: 20 }),
+      )
+    : null;
   const micBtn = h(
     'button',
     {
-      class: 'composer-btn composer-mic',
+      class: 'composer-btn composer-tool composer-mic',
       type: 'button',
       hidden: !o.micSupported,
       attrs: { 'data-testid': 'composer-mic', 'aria-label': 'Speak to Jarvis', 'aria-pressed': 'false', title: 'Voice input' },
@@ -104,6 +328,10 @@ export function createComposer(o) {
     h('span', { class: 'mic-ring', attrs: { 'aria-hidden': 'true' } }),
     icon('mic', { size: 20 }),
   );
+  // The mic only exists where speech recognition does (SPEC 13: "only if STT supported").
+  const tools = h('div', { class: 'composer-tools' }, attachBtn, cameraBtn, o.micSupported ? micBtn : null);
+
+  // ---- send / stop -------------------------------------------------------------------
   const sendBtn = h(
     'button',
     {
@@ -145,14 +373,267 @@ export function createComposer(o) {
   });
   const hint = h('div', { class: 'composer-hint', hidden: true, attrs: { role: 'note', 'data-testid': 'composer-hint' } }, hintIcon, hintText, hintAction);
 
+  // ---- attachment notices (inline, friendly) -------------------------------------------
+  const noticeIcon = h('span', { class: 'composer-notice-icon', attrs: { 'aria-hidden': 'true' } });
+  const noticeText = h('span', { class: 'composer-notice-text' });
+  const noticeClose = h(
+    'button',
+    { class: 'composer-notice-close', type: 'button', attrs: { 'aria-label': 'Dismiss' }, on: { click: () => hideNotice() } },
+    icon('close', { size: 14 }),
+  );
+  const notice = h('div', { class: 'composer-notice', hidden: true, attrs: { role: 'alert', 'data-testid': 'attachment-error' } }, noticeIcon, noticeText, noticeClose);
+  let noticeTimer = 0;
+
+  function showNotice(message, level = 'warn') {
+    clearTimeout(noticeTimer);
+    noticeIcon.replaceChildren(icon(level === 'info' ? 'info' : 'alert', { size: 16 }));
+    setText(noticeText, message);
+    notice.dataset.level = level;
+    notice.hidden = false;
+    noticeTimer = setTimeout(hideNotice, 8000);
+  }
+
+  function hideNotice() {
+    clearTimeout(noticeTimer);
+    notice.hidden = true;
+  }
+
+  // ---- attachment previews -------------------------------------------------------------
+  const filesRow = h('div', { class: 'composer-files', hidden: true, attrs: { role: 'list', 'aria-label': 'Attachments' } });
+  const live = h('div', { class: 'composer-sr', attrs: { 'aria-live': 'polite', 'aria-atomic': 'true' } });
+  const dropZone = h('div', { class: 'composer-drop', attrs: { 'aria-hidden': 'true' } }, icon('paperclip', { size: 20 }), h('span', { text: 'Drop photos or PDFs to attach' }));
+
+  /** @type {Array<{ id: string, status: 'processing'|'ready', kind: string, name: string, attachment: object|null, el: HTMLElement, removeBtn: HTMLElement }>} */
+  const items = [];
+  let seq = 0;
+
+  function announce(text) {
+    setText(live, '');
+    requestAnimationFrame(() => setText(live, text));
+  }
+
+  function chipFor(item) {
+    const removeBtn = h(
+      'button',
+      {
+        class: 'composer-file-remove',
+        type: 'button',
+        attrs: { 'data-testid': 'attachment-remove', 'aria-label': `Remove ${item.name}` },
+        on: { click: () => removeItem(item.id, true) },
+      },
+      icon('close', { size: 12, strokeWidth: 2.4 }),
+    );
+    const el = h('div', {
+      class: ['composer-file', `composer-file--${item.kind}`, 'is-processing'],
+      attrs: { role: 'listitem', 'data-testid': 'attachment-chip', 'data-kind': item.kind, 'data-status': 'processing', 'aria-busy': 'true', 'aria-label': `${item.kind === 'pdf' ? 'PDF' : 'Photo'}: ${item.name}, preparing` },
+    });
+    item.removeBtn = removeBtn;
+    item.el = el;
+    renderChip(item);
+    return el;
+  }
+
+  function renderChip(item) {
+    const { el } = item;
+    const a = item.attachment;
+    let body;
+    if (item.kind === 'pdf') {
+      body = h(
+        'div',
+        { class: 'composer-file-doc' },
+        h('span', { class: 'composer-file-doc-icon' }, icon('file', { size: 18 }), h('span', { class: 'composer-file-badge', text: 'PDF' })),
+        h(
+          'span',
+          { class: 'composer-file-doc-text' },
+          h('span', { class: 'composer-file-name', text: item.name }),
+          h('span', { class: 'composer-file-size', text: a ? formatBytes(a.size) : 'Reading…' }),
+        ),
+      );
+    } else {
+      const src = a ? safeThumb(a.thumb) : null;
+      body = h('div', { class: 'composer-file-img' }, src ? h('img', { src, alt: '', attrs: { draggable: 'false' } }) : icon(a ? 'image' : 'spinner', { size: 20, class: a ? '' : 'composer-file-spin' }));
+    }
+    el.replaceChildren(body, item.removeBtn);
+    el.classList.toggle('is-processing', item.status === 'processing');
+    el.dataset.status = item.status;
+    if (item.status === 'ready') {
+      el.removeAttribute('aria-busy');
+      const size = a ? formatBytes(a.size) : '';
+      el.setAttribute('aria-label', `${item.kind === 'pdf' ? 'PDF' : 'Photo'}: ${item.name}${size ? `, ${size}` : ''}`);
+      el.title = item.kind === 'pdf' ? `${item.name} · ${size}` : `${item.name}${a && a.width ? ` · ${a.width}×${a.height}` : ''} · ${size}`;
+    }
+  }
+
+  function readyAttachments() {
+    return items.filter((i) => i.status === 'ready' && i.attachment).map((i) => i.attachment);
+  }
+
+  function totalBase64() {
+    return readyAttachments().reduce((sum, a) => sum + String(a.data || '').length, 0);
+  }
+
+  function addFiles(fileList, source = 'picker') {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return 0;
+    const room = ATTACHMENT_LIMITS.maxFiles - items.length;
+    if (room <= 0) {
+      showNotice(`You can attach up to ${ATTACHMENT_LIMITS.maxFiles} files per message. Remove one to add another.`, 'info');
+      return 0;
+    }
+    const accepted = files.slice(0, room);
+    if (files.length > room) {
+      showNotice(`You can attach up to ${ATTACHMENT_LIMITS.maxFiles} files per message, so only the first ${room === 1 ? 'one was' : `${room} were`} added.`, 'info');
+    } else {
+      hideNotice();
+    }
+    for (const file of accepted) {
+      const item = { id: `f${++seq}`, status: 'processing', kind: guessKind(file), name: String(file.name || (source === 'paste' ? 'Pasted image' : 'File')), attachment: null, el: null, removeBtn: null };
+      items.push(item);
+      filesRow.append(chipFor(item));
+      processFile(file, { source })
+        .then((attachment) => {
+          if (!items.includes(item)) return; // removed while it was being prepared
+          if (totalBase64() + attachment.data.length > ATTACHMENT_LIMITS.messageMaxBase64) {
+            throw new AttachmentError('limit', `“${attachment.name}” would make this message too large to send. Attachments in one message can add up to about ${formatBytes((ATTACHMENT_LIMITS.messageMaxBase64 * 3) / 4)}.`);
+          }
+          item.attachment = attachment;
+          item.name = attachment.name;
+          item.kind = attachment.kind;
+          item.status = 'ready';
+          item.removeBtn.setAttribute('aria-label', `Remove ${attachment.name}`);
+          renderChip(item);
+          announce(`${attachment.kind === 'pdf' ? 'PDF' : 'Photo'} attached: ${attachment.name}`);
+          syncAll();
+        })
+        .catch((err) => {
+          if (!items.includes(item)) return;
+          removeItem(item.id, false);
+          showNotice(err instanceof AttachmentError ? err.message : `“${item.name}” couldn’t be attached.`);
+          if (!(err instanceof AttachmentError)) console.error('[jarvis] attachment failed:', err);
+        });
+    }
+    syncAll();
+    return accepted.length;
+  }
+
+  function guessKind(file) {
+    const type = String(file.type || '');
+    return type === 'application/pdf' || /\.pdf$/i.test(String(file.name || '')) ? 'pdf' : 'image';
+  }
+
+  function removeItem(id, fromUser) {
+    const index = items.findIndex((i) => i.id === id);
+    if (index < 0) return;
+    const [item] = items.splice(index, 1);
+    item.el.remove();
+    if (fromUser) {
+      announce(`Removed ${item.name}`);
+      const next = items[index] || items[index - 1];
+      try {
+        (next ? next.removeBtn : input).focus({ preventScroll: true });
+      } catch {
+        /* ignore */
+      }
+    }
+    syncAll();
+  }
+
+  function clearAttachments() {
+    for (const item of items.splice(0)) item.el.remove();
+    syncAll();
+  }
+
+  function takeFromInput(el, source) {
+    const files = Array.from(el.files || []);
+    el.value = ''; // picking the same file again must fire `change`
+    addFiles(files, source);
+  }
+
+  function openPicker(el) {
+    try {
+      if (typeof el.showPicker === 'function') el.showPicker();
+      else el.click();
+    } catch {
+      el.click();
+    }
+  }
+
+  function onPaste(e) {
+    const files = filesOf(e.clipboardData);
+    if (!files.length) return; // plain text pastes as usual
+    e.preventDefault();
+    addFiles(files, 'paste');
+  }
+
+  // Paste with nothing focused (desktop): attach the images to the composer.
+  document.addEventListener('paste', (e) => {
+    if (e.defaultPrevented || isEditable(e.target) || isEditable(document.activeElement)) return;
+    if (e.target && e.target.closest && e.target.closest('dialog, [role="dialog"], [aria-modal="true"]')) return;
+    const files = filesOf(e.clipboardData);
+    if (!files.length || !el.isConnected) return;
+    e.preventDefault();
+    addFiles(files, 'paste');
+    focusInput();
+  });
+
+  // Drag and drop: onto the composer, or anywhere in the chat; never inside a sheet or onto a file input.
+  let dragDepth = 0;
+  const dropArea = () => el.closest('main') || el;
+  const dropAllowed = (target) => {
+    if (!target || !target.closest) return false;
+    if (target.closest('dialog, [role="dialog"], [aria-modal="true"]')) return false;
+    if (target.matches && target.matches('input[type="file"]')) return false;
+    return dropArea().contains(target);
+  };
+  const setDropping = (on) => el.classList.toggle('is-dropping', !!on);
+  document.addEventListener('dragenter', (e) => {
+    if (!carriesFiles(e.dataTransfer)) return;
+    dragDepth += 1;
+    setDropping(dropAllowed(e.target));
+  });
+  document.addEventListener('dragover', (e) => {
+    if (!carriesFiles(e.dataTransfer)) return;
+    const ok = dropAllowed(e.target);
+    setDropping(ok);
+    if (ok) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    } else if (!(e.target && e.target.matches && e.target.matches('input[type="file"]'))) {
+      e.preventDefault(); // no drop target here: never let the browser navigate to the file
+      e.dataTransfer.dropEffect = 'none';
+    }
+  });
+  document.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) setDropping(false);
+  });
+  document.addEventListener('drop', (e) => {
+    dragDepth = 0;
+    setDropping(false);
+    if (!carriesFiles(e.dataTransfer)) return;
+    if (e.target && e.target.matches && e.target.matches('input[type="file"]')) return;
+    e.preventDefault();
+    if (!dropAllowed(e.target)) return;
+    addFiles(filesOf(e.dataTransfer), 'drop');
+    focusInput();
+  });
+  document.addEventListener('dragend', () => {
+    dragDepth = 0;
+    setDropping(false);
+  });
+
+  // ---- assembly -----------------------------------------------------------------------
   const box = h(
     'div',
     { class: 'composer-box' },
-    input,
-    // The mic only exists where speech recognition does (SPEC 13: "only if STT supported").
-    h('div', { class: 'composer-bar' }, modeSwitch, meta, h('div', { class: 'composer-actions' }, o.micSupported ? micBtn : null, sendBtn, stopBtn)),
+    filesRow,
+    h('div', { class: 'composer-field' }, input, tools),
+    h('div', { class: 'composer-bar' }, modeSwitch, swarmWrap, meta, h('div', { class: 'composer-actions' }, sendBtn, stopBtn)),
+    dropZone,
+    fileInput,
+    cameraInput,
   );
-  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, hint, box));
+  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, notice, hint, box), live);
 
   // ---- behaviour --------------------------------------------------------------------
   function onKeyDown(e) {
@@ -164,19 +645,36 @@ export function createComposer(o) {
     }
   }
 
+  function pendingCount() {
+    return items.filter((i) => i.status === 'processing').length;
+  }
+
+  /** Sends the text and the ready attachments. Returns true when the app accepted the message. */
   function submit() {
-    if (running) return;
+    if (running) return false;
     const text = input.value.trim();
-    if (!text || blocked) {
-      if (blocked && o.onHintAction && text) flashHint();
-      return;
+    const attachments = readyAttachments();
+    if (!text && !attachments.length) return false;
+    if (blocked) {
+      if (o.onHintAction) flashHint();
+      return false;
     }
-    const accepted = o.onSend(text, mode);
+    if (pendingCount()) {
+      showNotice('One moment — still preparing your attachment.', 'info');
+      return false;
+    }
+    const extras = { attachments };
+    if (mode === 'swarm') extras.maxAgents = swarmSize;
+    closePop(false);
+    const accepted = o.onSend(text, mode, extras);
     if (accepted !== false) {
       input.value = '';
+      clearAttachments();
+      hideNotice();
       autoGrow();
       syncButtons();
     }
+    return accepted !== false;
   }
 
   function flashHint() {
@@ -200,12 +698,54 @@ export function createComposer(o) {
     input.classList.toggle('is-scrolling', input.scrollHeight > max + 1);
   }
 
+  function placeholderOptions() {
+    if (listening) return ['Listening…'];
+    if (blocked) return [blocked.placeholder || blocked.message, BLOCKED_SHORT[blocked.code]].filter(Boolean);
+    if (items.length) return items.length === 1 ? PLACEHOLDER.one : PLACEHOLDER.many;
+    return PLACEHOLDER[mode];
+  }
+
+  // The longest option that fits on one line (a wrapped placeholder would be cut off, and growing
+  // the box for it would make the layout jump when the mode changes).
+  let measureCtx = null;
+  function placeholderText() {
+    const options = placeholderOptions();
+    if (options.length < 2 || !input.isConnected) return options[0];
+    try {
+      const cs = getComputedStyle(input);
+      const room = input.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0) - 2;
+      if (!(room > 0)) return options[0];
+      measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+      if (!measureCtx) return options[0];
+      measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      return options.find((text) => measureCtx.measureText(text).width <= room) || options[options.length - 1];
+    } catch {
+      return options[0];
+    }
+  }
+
+  function syncPlaceholder() {
+    const text = placeholderText();
+    if (input.placeholder !== text) input.placeholder = text;
+  }
+
   function syncButtons() {
     const hasText = input.value.trim().length > 0;
-    sendBtn.disabled = !hasText || !!blocked;
+    const ready = items.length - pendingCount();
+    sendBtn.disabled = !!blocked || pendingCount() > 0 || (!hasText && ready === 0);
+    sendBtn.title = blocked ? blocked.message : pendingCount() ? 'Preparing attachments…' : touch ? 'Send' : 'Send (Enter)';
     sendBtn.hidden = running;
     stopBtn.hidden = !running;
     el.dataset.running = running ? 'true' : 'false';
+  }
+
+  function syncAll() {
+    filesRow.hidden = items.length === 0;
+    el.dataset.attachments = String(items.length);
+    attachBtn.disabled = false;
+    attachBtn.setAttribute('aria-label', items.length ? `Attach photos or PDFs (${items.length} of ${ATTACHMENT_LIMITS.maxFiles} attached)` : 'Attach photos or PDFs');
+    syncPlaceholder();
+    syncButtons();
   }
 
   function setMode(id, fromUser) {
@@ -213,11 +753,46 @@ export function createComposer(o) {
     mode = id;
     el.dataset.mode = id;
     for (const key of Object.keys(modeButtons)) modeButtons[key].setAttribute('aria-pressed', key === id ? 'true' : 'false');
-    if (!listening && !blocked) input.placeholder = PLACEHOLDER[id];
+    swarmWrap.hidden = id !== 'swarm';
+    if (id !== 'swarm') closePop(false);
+    syncPlaceholder();
     if (fromUser && o.onModeChange) o.onModeChange(id);
   }
 
-  syncButtons();
+  function focusInput() {
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // The default team size follows Settings → AI → agents per wave.
+  try {
+    onSettingsChange((s) => {
+      const next = Number(s && s.maxAgents);
+      if (Number.isFinite(next) && next !== defaultMax) {
+        defaultMax = next;
+        setSwarmSize(snapSwarmSize(next));
+      }
+    });
+  } catch {
+    /* settings unavailable: keep the initial size */
+  }
+
+  // Re-fit the placeholder when the text row changes width (rotation, sidebar, attachments).
+  if (typeof ResizeObserver === 'function') {
+    let lastWidth = 0;
+    new ResizeObserver(() => {
+      const w = input.clientWidth;
+      if (w && w !== lastWidth) {
+        lastWidth = w;
+        syncPlaceholder();
+      }
+    }).observe(input);
+  }
+
+  syncAll();
 
   return {
     el,
@@ -244,8 +819,7 @@ export function createComposer(o) {
         hint.dataset.code = blocked.code;
       }
       el.dataset.blocked = blocked ? blocked.code : '';
-      if (!listening) input.placeholder = blocked ? blocked.placeholder || blocked.message : PLACEHOLDER[mode];
-      sendBtn.title = blocked ? blocked.message : touch ? 'Send' : 'Send (Enter)';
+      syncPlaceholder();
       syncButtons();
     },
     setListening(value) {
@@ -253,13 +827,12 @@ export function createComposer(o) {
       micBtn.classList.toggle('is-listening', listening);
       micBtn.setAttribute('aria-pressed', listening ? 'true' : 'false');
       micBtn.setAttribute('aria-label', listening ? 'Stop listening' : 'Speak to Jarvis');
-      input.placeholder = listening ? 'Listening…' : blocked ? blocked.placeholder || blocked.message : PLACEHOLDER[mode];
+      syncPlaceholder();
       el.classList.toggle('is-listening', listening);
     },
     setMicSupported(supported) {
       micBtn.hidden = !supported;
-      const actions = sendBtn.parentNode;
-      if (supported && !micBtn.isConnected && actions) actions.insertBefore(micBtn, sendBtn);
+      if (supported && !micBtn.isConnected) tools.append(micBtn);
       else if (!supported && micBtn.isConnected) micBtn.remove();
     },
     setText(text) {
@@ -271,16 +844,26 @@ export function createComposer(o) {
     setMeta(text) {
       setText(meta, text || '');
     },
-    focus() {
-      try {
-        input.focus({ preventScroll: true });
-      } catch {
-        /* ignore */
-      }
-    },
+    focus: focusInput,
     blur() {
       input.blur();
     },
     refreshSize: autoGrow,
+
+    // ---- attachments & team size (SPEC §15.1) ----
+    /** Sends what is in the composer (text, attachments, team size), like the Send button. */
+    submit,
+    /** Adds files (File objects) as attachments; returns how many were accepted for processing. */
+    addFiles: (files) => addFiles(files, 'picker'),
+    /** The ready attachments (full objects, with base64 data). */
+    getAttachments: () => readyAttachments(),
+    /** Display metadata of the ready attachments (no data). */
+    getAttachmentMeta: () => readyAttachments().map(attachmentMeta),
+    clearAttachments,
+    /** What onSend's third argument would be right now. */
+    getExtras: () => (mode === 'swarm' ? { attachments: readyAttachments(), maxAgents: swarmSize } : { attachments: readyAttachments() }),
+    getSwarmSize: () => swarmSize,
+    setSwarmSize: (n) => setSwarmSize(snapSwarmSize(n)),
+    describeAttachments: () => describeAttachments(readyAttachments()),
   };
 }

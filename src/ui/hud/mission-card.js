@@ -7,16 +7,29 @@
 //   transcript.append(card.el); … card.update(mission);   // after every mission/agent event
 //
 // update() patches the DOM in place: chips are keyed by agent id and never rebuilt, so there is
-// no flicker however often it is called.
+// no flicker however often it is called. Every update also feeds the swarm's comms log (comms.js),
+// so Mission Control can show the whole story even if it was closed while the agents worked.
+// When the mission finishes while the card is on screen, the progress bar sweeps and glows once.
 
 import { h, setText, clear } from '../dom.js';
 import { icon } from '../icons.js';
+import { observeMission } from './comms.js';
 import { elapsedMs, fmtDuration, isActiveStatus, onSecond, plural, statusIcon, statusLabel, statusTone } from './format.js';
 
 const MAX_CHIPS = 20;
 const COMPACT_AFTER = 8; // more agents than this → single-line chips
+const CELEBRATE_MS = 2200;
+const NBSP = String.fromCharCode(160); // keeps "3 interrupted" together when the line wraps
 
 const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+
+function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch {
+    return false;
+  }
+}
 
 function agentKey(agent, index) {
   return agent && agent.id !== undefined && agent.id !== null ? String(agent.id) : `#${index}`;
@@ -66,7 +79,9 @@ export function createMissionCard(mission, opts = {}) {
   const onOpen = typeof opts.onOpen === 'function' ? opts.onOpen : null;
   let m = mission || {};
 
-  const label = h('span', { class: 'hud-mission__label' });
+  // "Mission · Wave 2"; narrow cards with a long status drop the "Mission · " part (CSS).
+  const labelWave = h('span', { class: 'hud-mission__label-wave' });
+  const label = h('span', { class: 'hud-mission__label' }, h('span', { class: 'hud-mission__label-pre', text: 'Mission · ' }), labelWave);
   const pillIcon = h('span', { class: 'hud-pill__icon' });
   const pillText = h('span', { class: 'hud-pill__text' });
   const pill = h('span', { class: 'hud-pill' }, pillIcon, pillText);
@@ -125,7 +140,14 @@ export function createMissionCard(mission, opts = {}) {
         },
       },
     },
-    h('div', { class: 'hud-mission__top' }, h('span', { class: 'hud-mission__glyph', attrs: { 'aria-hidden': 'true' } }, icon('target', { size: 14 })), label, h('span', { class: 'hud-mission__spacer' }), pill, timer),
+    h(
+      'div',
+      { class: 'hud-mission__top' },
+      h('span', { class: 'hud-mission__glyph', attrs: { 'aria-hidden': 'true' } }, icon('target', { size: 14 })),
+      label,
+      // Status and timer stay together; if they cannot fit beside the label they wrap below it.
+      h('span', { class: 'hud-mission__status' }, pill, timer),
+    ),
     title,
     h('div', { class: 'hud-mission__progress' }, bar, progressText),
     placeholder,
@@ -149,6 +171,19 @@ export function createMissionCard(mission, opts = {}) {
   let stopTick = null;
   let detachedTicks = 0;
   let rendered = false; // chips that arrive after the first render animate in
+  let celebrateTimer = 0;
+
+  // Mission complete while the owner watches: one sweep and glow over the bar (not under reduced
+  // motion, and never for a mission that was already finished when the card was built).
+  function celebrate() {
+    if (!el.isConnected || prefersReducedMotion()) return;
+    el.classList.add('is-celebrating');
+    if (celebrateTimer) clearTimeout(celebrateTimer);
+    celebrateTimer = setTimeout(() => {
+      celebrateTimer = 0;
+      el.classList.remove('is-celebrating');
+    }, CELEBRATE_MS);
+  }
 
   function timeText(now) {
     const ms = elapsedMs(m.startedAt || m.createdAt, m.endedAt, now);
@@ -190,7 +225,14 @@ export function createMissionCard(mission, opts = {}) {
     const status = str(m.status) || 'planning';
     const agents = Array.isArray(m.agents) ? m.agents : [];
 
+    try {
+      observeMission(m);
+    } catch (err) {
+      console.error('[hud] comms update failed', err);
+    }
+
     if (status !== shown.status) {
+      const before = shown.status;
       shown.status = status;
       const tone = statusTone(status);
       el.dataset.status = status;
@@ -198,13 +240,14 @@ export function createMissionCard(mission, opts = {}) {
       pill.dataset.tone = tone;
       clear(pillIcon).append(icon(statusIcon(status), { size: 13 }));
       setText(pillText, statusLabel(status, 'mission'));
+      if (rendered && (before === 'running' || before === 'planning') && (status === 'done' || status === 'partial')) celebrate();
     }
     if (m.id !== undefined && el.dataset.missionId !== str(m.id)) el.dataset.missionId = str(m.id);
 
-    const labelText = `Mission · Wave ${Number(m.wave) > 0 ? Number(m.wave) : 1}`;
+    const labelText = `Wave ${Number(m.wave) > 0 ? Number(m.wave) : 1}`;
     if (labelText !== shown.label) {
       shown.label = labelText;
-      setText(label, labelText);
+      setText(labelWave, labelText);
     }
     const titleText = str(m.title).trim();
     if (titleText !== shown.title) {
@@ -220,26 +263,30 @@ export function createMissionCard(mission, opts = {}) {
     // Counts, searches and unique sources.
     let done = 0;
     let failed = 0;
-    let halted = 0;
+    let stopped = 0;
+    let interrupted = 0;
     let searches = 0;
     const urls = new Set();
     for (const a of agents) {
       if (!a) continue;
       if (a.status === 'done') done++;
       else if (a.status === 'error') failed++;
-      else if (a.status === 'stopped' || a.status === 'interrupted') halted++;
+      else if (a.status === 'stopped') stopped++;
+      else if (a.status === 'interrupted') interrupted++;
       if (Array.isArray(a.searches)) searches += a.searches.length;
       if (Array.isArray(a.sources)) for (const s of a.sources) if (s && s.url) urls.add(s.url);
     }
+    const halted = stopped + interrupted;
     const total = agents.length;
     const pct = (n) => (total ? `${((n / total) * 100).toFixed(2)}%` : '0%');
     if (pct(done) !== shown.ok) barOk.style.width = shown.ok = pct(done);
     if (pct(failed) !== shown.err) barErr.style.width = shown.err = pct(failed);
     if (pct(halted) !== shown.warn) barWarn.style.width = shown.warn = pct(halted);
     // While the team is still being planned the placeholder says so; no count line yet.
-    let progress = total ? `${done}/${total} done` : status === 'planning' ? '' : 'No agents';
-    if (failed) progress += ` · ${failed} failed`;
-    if (halted) progress += ` · ${halted} stopped`;
+    let progress = total ? `${done}/${total}${NBSP}done` : status === 'planning' ? '' : 'No agents';
+    if (failed) progress += ` · ${failed}${NBSP}failed`;
+    if (stopped) progress += ` · ${stopped}${NBSP}stopped`;
+    if (interrupted) progress += ` · ${interrupted}${NBSP}interrupted`;
     if (progress !== shown.progress) {
       shown.progress = progress;
       setText(progressText, progress);
@@ -278,6 +325,10 @@ export function createMissionCard(mission, opts = {}) {
         chipById.set(key, chip);
       }
       updateChip(chip, agent);
+      if (chip.index !== i) {
+        chip.index = i; // staggers the completion flash across the chips
+        chip.li.style.setProperty('--hud-i', String(i));
+      }
       const expected = prev ? prev.nextSibling : chips.firstChild;
       if (chip.li !== expected) chips.insertBefore(chip.li, expected);
       if (chip.isNew) {
@@ -309,6 +360,10 @@ export function createMissionCard(mission, opts = {}) {
     el,
     update,
     /** Stop the live timer (call when the card is discarded). */
-    dispose: stopTimer,
+    dispose() {
+      stopTimer();
+      if (celebrateTimer) clearTimeout(celebrateTimer);
+      celebrateTimer = 0;
+    },
   };
 }

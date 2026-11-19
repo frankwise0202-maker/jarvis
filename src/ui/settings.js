@@ -485,6 +485,12 @@ export function createSettingsPanel(o) {
         control: selectField('listenLang', langOptions),
         stacked: true,
       }),
+      row({
+        label: 'Continuous conversation',
+        help: 'In Voice Mode, Jarvis listens again after each spoken reply.',
+        forId: fieldId('voiceContinuous'),
+        control: switchField('voiceContinuous', { label: 'Continuous conversation' }),
+      }),
     ),
   );
 
@@ -549,18 +555,52 @@ export function createSettingsPanel(o) {
         commit({ notifyOnFinish: notifySwitch.checked });
         // The switch's change event is a user gesture: the only safe moment to ask.
         const permission = notifySwitch.checked && notifyPermission() === 'default' ? await requestNotifyPermission() : notifyPermission();
-        setText(notifyHelp, explainNotifyPermission(permission));
+        syncNotify(permission);
       },
     },
   });
-  controls.set('notifyOnFinish', { set: (v) => (notifySwitch.checked = !!v) });
-  const notifyRow = row({ label: 'Notify when finished', help: safeCall(() => explainNotifyPermission(), ''), forId: fieldId('notifyOnFinish'), control: notifySwitch });
+  // The setting is on by default, so the browser hasn't been asked yet: offer the prompt here
+  // (a tap is a user gesture) instead of making the owner toggle the switch off and on.
+  const notifyAllow = h(
+    'button',
+    {
+      class: 'btn btn-sm',
+      type: 'button',
+      attrs: { 'data-testid': 'notify-allow' },
+      on: {
+        click: async () => {
+          if (!getSettings().notifyOnFinish) commit({ notifyOnFinish: true });
+          syncNotify(await requestNotifyPermission());
+        },
+      },
+    },
+    icon('check', { size: 16 }),
+    h('span', { text: 'Allow notifications' }),
+  );
+  controls.set('notifyOnFinish', {
+    set: (v) => {
+      notifySwitch.checked = !!v;
+      syncNotify();
+    },
+  });
+  const notifyRow = row({
+    label: 'Notify when finished',
+    help: safeCall(() => explainNotifyPermission(), ''),
+    forId: fieldId('notifyOnFinish'),
+    control: notifySwitch,
+    extra: h('div', { class: 'set-row-actions set-row-actions--start', hidden: true }, notifyAllow),
+  });
   const notifyHelp = notifyRow.querySelector('.set-help');
+  function syncNotify(permission = safeCall(() => notifyPermission(), 'unsupported')) {
+    setText(notifyHelp, safeCall(() => explainNotifyPermission(permission), ''));
+    notifyAllow.parentNode.hidden = !(getSettings().notifyOnFinish && permission === 'default');
+  }
+  syncNotify();
   const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 
   const appearance = section(
     'appearance',
-    card(row({ label: 'Theme', help: 'Accent colors for the whole interface.', control: themePicker.el, stacked: true })),
+    card(row({ label: 'Theme', help: 'Accent colors for the whole interface.', control: h('div', { class: 'theme-setting', attrs: { 'data-testid': 'setting-theme' } }, themePicker.el), stacked: true })),
     card(
       row({
         label: 'Sounds',

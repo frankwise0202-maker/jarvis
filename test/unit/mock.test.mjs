@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { createMock, createMockFetch, createMockHandler } from '../mock/anthropic-mock.mjs';
+import { SIGNATURES, imageBlock, makePdf, makePng, pdfBlock } from '../mock/fixtures.mjs';
 import { startTestServer } from '../server.mjs';
 
 // ---------------------------------------------------------------------------------------------
@@ -856,6 +857,105 @@ describe('mock: request validation (each rule rejects)', () => {
     ...base(),
     messages: [...okMessages(), { role: 'assistant', content: [{ type: 'web_search_tool_result', tool_use_id: 'srvtoolu_01Nope', content: [] }, { type: 'text', text: 'x' }] }, userTurn('next')],
   }, { message: /does not match any preceding/ }));
+});
+
+describe('mock: photos and PDF documents (SPEC §15.1)', () => {
+  const PNG = makePng(64, 48);
+  const PDF = makePdf(3);
+  const withFiles = (blocks, text) => ({ role: 'user', content: [{ type: 'text', text: TURN_CONTEXT }, ...blocks, { type: 'text', text }] });
+  const imagePart = (source) => ({ type: 'image', source });
+  const b64 = (buf) => buf.toString('base64');
+
+  it('accepts base64 photos and PDFs in user messages and acknowledges them', async () => {
+    const { client, mock } = setup();
+    const { final } = await streamAll(client, leadParams([withFiles([imageBlock(PNG), pdfBlock(PDF, 'Plan.pdf')], 'What are these?')]));
+    const text = textOf(final);
+    assert.equal(final.stop_reason, 'end_turn');
+    assert.match(text, /^I can see the image and the PDF you shared, Tony\./);
+    assert.match(text, /\*\*Image 1:\*\* a PNG picture, 64 × 48 pixels/);
+    assert.match(text, /\*\*Plan\.pdf:\*\* a PDF of 3 pages/);
+    assert.match(text, /On your question, “What are these\?”/);
+    const pdfOnly = await streamAll(client, leadParams([withFiles([pdfBlock(PDF, 'Plan.pdf')], 'Please look at the attached file(s).')]));
+    assert.match(textOf(pdfOnly.final), /^I've read the PDF you shared, Tony: “Plan\.pdf”\.\n/);
+    assert.match(textOf(pdfOnly.final), /Tell me what you would like to know/);
+    const photos = await streamAll(client, leadParams([withFiles([imageBlock(PNG), imageBlock(PNG)], 'Compare them')]));
+    assert.match(textOf(photos.final), /^I can see the 2 images you shared, Tony\./);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('a [[swarm]] with a photo writes tasks that describe it (agents cannot see attachments)', async () => {
+    const { client, mock } = setup();
+    const { final } = await streamAll(client, leadParams([withFiles([imageBlock(PNG)], '[[swarm:2]] Where can I buy this?')]));
+    const use = final.content.find((b) => b.type === 'tool_use');
+    assert.equal(use.input.agents.length, 2);
+    for (const a of use.input.agents) assert.match(a.task, /Context: the owner shared a PNG photo \(64×48\); the details that matter are described in this task\./);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('counts photos by their pixels and PDFs by their pages, not by base64 length', async () => {
+    const { client } = setup();
+    const big = makePng(1200, 900);
+    const { final } = await streamAll(client, leadParams([withFiles([imageBlock(big)], 'Describe it')], { cache_control: undefined }));
+    const tokens = final.usage.input_tokens;
+    assert.ok(b64(big).length > 4000, 'the fixture is not tiny');
+    assert.ok(tokens > 1400 && tokens < 8000, `about 1,440 image tokens plus the prompt (got ${tokens})`);
+    const doc = await streamAll(client, leadParams([withFiles([pdfBlock(PDF)], 'Summarise')], { cache_control: undefined }));
+    assert.ok(doc.final.usage.input_tokens >= 9000, '3 pages × 3,000 tokens');
+  });
+
+  const base = () => leadParams([withFiles([imageBlock(PNG)], 'What is this?')]);
+  const withImage = (image) => leadParams([withFiles([image], 'What is this?')]);
+  const withDoc = (doc) => leadParams([withFiles([doc], 'Read this')]);
+
+  it('accepts every documented image type, plus url and file sources', async () => {
+    const { client, mock } = setup();
+    await streamAll(client, base());
+    for (const [buf, type] of [[SIGNATURES.jpeg, 'image/jpeg'], [SIGNATURES.gif, 'image/gif'], [SIGNATURES.webp, 'image/webp']]) await streamAll(client, withImage(imageBlock(buf, type)));
+    await streamAll(client, withImage(imagePart({ type: 'url', url: 'https://www.example.com/photo.jpg' })));
+    await streamAll(client, withImage(imagePart({ type: 'file', file_id: 'file_011CabcDEF' })));
+    await streamAll(client, withImage({ ...imageBlock(PNG), cache_control: { type: 'ephemeral' }, transformations: { oversized_image: 'error' } }));
+    await streamAll(client, withDoc({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Plain notes.' }, title: 'Notes', context: 'From the owner', citations: { enabled: true } }));
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('rejects an unsupported image media type', () => assertRejected('heic', withImage({ type: 'image', source: { type: 'base64', media_type: 'image/heic', data: b64(PNG) } }), { message: /media_type: Input should be 'image\/jpeg', 'image\/png', 'image\/gif' or 'image\/webp'/ }));
+  it('rejects a data: URL prefix in base64 data', () => assertRejected('prefix', withImage(imagePart({ type: 'base64', media_type: 'image/png', data: `data:image/png;base64,${b64(PNG)}` })), { message: /data: URL prefix/ }));
+  it('rejects line breaks in base64 data', () => assertRejected('newlines', withImage(imagePart({ type: 'base64', media_type: 'image/png', data: `${b64(PNG).slice(0, 40)}\n${b64(PNG).slice(40)}` })), { message: /whitespace or line breaks/ }));
+  it('rejects malformed base64', () => assertRejected('base64', withImage(imagePart({ type: 'base64', media_type: 'image/png', data: 'abc' })), { message: /Invalid base64/ }));
+  it('rejects empty image data', () => assertRejected('empty', withImage(imagePart({ type: 'base64', media_type: 'image/png', data: '' })), { message: /must not be empty/ }));
+  it('rejects image bytes that do not match the declared media type', () => assertRejected('mismatch', withImage(imageBlock(PNG, 'image/jpeg')), { message: /Image does not match the provided media type image\/jpeg/ }));
+  it('rejects data that is not an image at all', () => assertRejected('not image', withImage(imageBlock(Buffer.from('hello world, not an image'), 'image/png')), { message: /Could not process image/ }));
+  it('rejects images over 5 MB', () => assertRejected('5mb', withImage(imageBlock(Buffer.concat([PNG, Buffer.alloc(4 * 1024 * 1024)]))), { message: /exceeds 5 MB maximum: \d+ bytes > 5242880 bytes/ }));
+  it('rejects an image without a source, with extra fields, or with an unknown source type', async () => {
+    await assertRejected('no source', withImage({ type: 'image' }), { message: /source: Field required/ });
+    await assertRejected('extra', withImage({ ...imageBlock(PNG), alt: 'desk' }), { message: /alt: Extra inputs are not permitted/ });
+    await assertRejected('source type', withImage(imagePart({ type: 'path', path: '/tmp/x.png' })), { message: /does not match any of the expected tags: 'base64', 'url', 'file'/ });
+    await assertRejected('bad url', withImage(imagePart({ type: 'url', url: 'javascript:alert(1)' })), { message: /valid URL/ });
+  });
+  it('rejects PDFs with the wrong media type or bytes, and bad document fields', async () => {
+    await assertRejected('pdf type', withDoc({ type: 'document', source: { type: 'base64', media_type: 'application/msword', data: b64(PDF) } }), { message: /media_type: Input should be 'application\/pdf'/ });
+    await assertRejected('pdf bytes', withDoc(pdfBlock(PNG, 'Fake.pdf')), { message: /The PDF specified was not valid/ });
+    await assertRejected('title', withDoc({ ...pdfBlock(PDF), title: 42 }), { message: /title: Input should be a valid string/ });
+    await assertRejected('doc extra', withDoc({ ...pdfBlock(PDF), pages: 3 }), { message: /pages: Extra inputs are not permitted/ });
+    await assertRejected('citations', withDoc({ ...pdfBlock(PDF), citations: { enabled: 'yes' } }), { message: /citations\.enabled: Input should be a valid boolean/ });
+  });
+  it('rejects images and documents in assistant messages', async () => {
+    const msgs = (block) => [userTurn('Show me'), { role: 'assistant', content: [{ type: 'text', text: 'Here:' }, block] }, userTurn('Thanks')];
+    await assertRejected('assistant image', leadParams(msgs(imageBlock(PNG))), { message: /`image` blocks are not permitted in `assistant` messages/ });
+    await assertRejected('assistant pdf', leadParams(msgs(pdfBlock(PDF))), { message: /`document` blocks are not permitted in `assistant` messages/ });
+  });
+  it('validates images inside tool_result content', async () => {
+    const { client } = setup();
+    const messages = [userTurn('[[swarm:1]] research kites')];
+    const { final } = await streamAll(client, leadParams(messages));
+    messages.push({ role: 'assistant', content: clone(final.content) });
+    const use = final.content.find((b) => b.type === 'tool_use');
+    const reply = (inner) => [...messages, { role: 'user', content: [{ type: 'tool_result', tool_use_id: use.id, content: [{ type: 'text', text: 'Chart:' }, inner] }] }];
+    await assertRejected('tool image', leadParams(reply(imageBlock(PNG, 'image/gif'))), { message: /content\.1\.source\.base64: Image does not match/ });
+    const ok = setup();
+    await streamAll(ok.client, leadParams(reply(imageBlock(PNG))));
+    assert.deepEqual(ok.mock.violations, []);
+  });
 });
 
 describe('mock: structured outputs (follow-up suggestions, SPEC §14.5)', () => {

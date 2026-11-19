@@ -4,6 +4,7 @@
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
+import { listProtocols } from './protocols.js';
 
 const DAY = 86400000;
 const CONFIRM_MS = 4000;
@@ -157,7 +158,7 @@ export function createHistory(o) {
           on: { click: () => o.onSelect(item.id) },
         },
         h('span', { class: 'history-row1' }, running ? h('span', { class: 'history-live', attrs: { title: 'Working' } }) : null, h('span', { class: 'history-item-title', text: item.title || 'New conversation' }), h('span', { class: 'history-when', text: whenLabel(item.updatedAt, group, now) })),
-        item.preview ? h('span', { class: 'history-preview', text: item.preview }) : null,
+        item.preview ? h('span', { class: 'history-preview', text: previewText(item.preview, protocolNames) }) : null,
       ),
       h(
         'button',
@@ -178,9 +179,15 @@ export function createHistory(o) {
     return row;
   }
 
+  let protocolNames = [];
   function render() {
     cancelConfirm();
     const now = Date.now();
+    try {
+      protocolNames = listProtocols().map((p) => p.name);
+    } catch {
+      protocolNames = [];
+    }
     const filtered = query ? items.filter((it) => `${it.title || ''}\n${it.preview || ''}`.toLowerCase().includes(query)) : items;
     const groups = new Map();
     for (const it of filtered) {
@@ -262,4 +269,16 @@ export function createHistory(o) {
 function cssEscape(s) {
   if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
   return String(s).replace(/["\\]/g, '\\$&');
+}
+
+/**
+ * A protocol run is sent as "<headline>\n\nProtocol: <name>\n<brief>" (SPEC §14.2), which the
+ * one-line preview turns into a run-on of the whole brief: show "Protocol · <headline>" instead.
+ */
+function previewText(preview, names) {
+  const text = String(preview || '');
+  const cut = text.indexOf(' Protocol: ');
+  if (cut <= 0 || cut > 90) return text;
+  const rest = text.slice(cut + ' Protocol: '.length);
+  return names.some((n) => n && (rest === n || rest.startsWith(`${n} `))) ? `Protocol · ${text.slice(0, cut)}` : text;
 }

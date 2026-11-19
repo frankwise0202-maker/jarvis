@@ -16,7 +16,8 @@ const STATE_TONE = {
 };
 
 /**
- * @param {{ onHistory: () => void, onSettings: () => void, onNewChat: () => void, demo?: boolean }} o
+ * @param {{ onHistory: () => void, onSettings: () => void, onNewChat: () => void, demo?: boolean,
+ *           voice?: boolean, onVoice?: () => void }} o   voice: show the Voice Mode button
  */
 export function createHeader(o) {
   const canvas = h('canvas', { class: 'header-core-canvas', attrs: { 'data-testid': 'header-core', 'aria-hidden': 'true' } });
@@ -29,7 +30,10 @@ export function createHeader(o) {
   }
 
   const statusDot = h('span', { class: 'status-dot', attrs: { 'aria-hidden': 'true' } });
-  const statusText = h('span', { class: 'status-text', text: 'Online' });
+  // "Working · 4 agents" = label + detail; narrow phones show only the detail (see app.css).
+  const statusLabel = h('span', { class: 'status-label', text: 'Online' });
+  const statusDetail = h('span', { class: 'status-detail' });
+  const statusText = h('span', { class: 'status-text' }, statusLabel, statusDetail);
   const status = h('div', { class: 'brand-status', dataset: { tone: 'ok' } }, statusDot, statusText);
 
   const brand = h(
@@ -49,6 +53,13 @@ export function createHeader(o) {
     { class: 'icon-btn header-new', type: 'button', hidden: true, attrs: { 'aria-label': 'New chat', 'data-testid': 'header-new-chat', title: 'New chat (Ctrl/⌘ K)' }, on: { click: () => o.onNewChat() } },
     icon('add-square', { size: 22 }),
   );
+  // Voice Mode (SPEC §14.1). Opened synchronously from the click: iOS only starts the mic and
+  // speech inside a user gesture.
+  const voiceBtn = h(
+    'button',
+    { class: 'icon-btn header-voice', type: 'button', hidden: !o.voice, attrs: { 'aria-label': 'Voice mode', 'data-testid': 'voice-open', title: 'Talk to Jarvis (voice mode)' }, on: { click: () => o.onVoice && o.onVoice() } },
+    icon('wave', { size: 22 }),
+  );
   const historyBtn = h(
     'button',
     { class: 'icon-btn', type: 'button', attrs: { 'aria-label': 'History', 'data-testid': 'history-button', 'aria-expanded': 'false', title: 'History' }, on: { click: () => o.onHistory() } },
@@ -60,7 +71,7 @@ export function createHeader(o) {
     icon('settings', { size: 22 }),
   );
 
-  const el = h('header', { class: 'header' }, h('div', { class: 'header-inner' }, brand, h('div', { class: 'header-actions' }, newBtn, historyBtn, settingsBtn)));
+  const el = h('header', { class: 'header' }, h('div', { class: 'header-inner' }, brand, h('div', { class: 'header-actions' }, newBtn, voiceBtn, historyBtn, settingsBtn)));
 
   let lastState = '';
   return {
@@ -80,7 +91,10 @@ export function createHeader(o) {
           console.error('[jarvis] core.setState failed:', err);
         }
       }
-      setText(statusText, text);
+      const [label, ...rest] = String(text || '').split(' · ');
+      setText(statusLabel, label);
+      setText(statusDetail, rest.join(' · '));
+      statusText.classList.toggle('has-detail', rest.length > 0);
     },
     setLevel(level) {
       try {

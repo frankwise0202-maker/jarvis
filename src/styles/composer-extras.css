@@ -1,0 +1,739 @@
+/* Composer extras (wave B, SPEC §15): photo/PDF attachments (previews, drop zone, inline notices),
+   the text-row tools (attach, camera, mic), the per-message team size in swarm mode, and the
+   attachment strip + preview lightbox shown in user messages. Imported by src/ui/composer.js.
+   Colors, radii, spacing, fonts and shadows come from tokens.css only. */
+
+/* ---- text row: textarea + tools ------------------------------------------------------------ */
+
+.composer-field {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.composer-field .composer-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  padding-right: var(--sp-1);
+}
+
+/* A placeholder never wraps: a wrapped one would be cut off by the one-line row (composer.js picks
+   a variant that fits; this keeps any other text, such as a long blocked reason, on one line). */
+.composer-input:placeholder-shown {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.composer-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 2px 6px 0 0;
+}
+
+.composer-tool {
+  color: var(--text-3);
+}
+
+.composer-tool:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.composer-tool:focus-visible {
+  color: var(--text);
+}
+
+/* Native file inputs stay in the DOM (iOS opens the picker reliably) but are never seen or tabbed to. */
+.composer-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composer-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* A 320 px phone keeps the attach button and the mic; the photo picker offers the camera there. */
+@media (max-width: 359px) {
+  .composer-camera {
+    display: none;
+  }
+}
+
+/* ---- the bar: the meta line gives way to the team size in swarm mode ------------------------ */
+
+.composer-bar {
+  position: relative;
+}
+
+.composer[data-mode='swarm'] .composer-meta {
+  display: none;
+}
+
+/* ---- team size (swarm mode) ---------------------------------------------------------------- */
+
+.swarm-size {
+  flex: none;
+}
+
+.swarm-size[hidden] {
+  display: none;
+}
+
+.swarm-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 40px;
+  min-width: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--violet-soft);
+  border-radius: var(--r-pill);
+  background: var(--violet-soft);
+  color: var(--violet);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+  animation: swarm-chip-in var(--dur-2) var(--ease-out) both;
+}
+
+.swarm-chip::after {
+  content: '';
+  position: absolute;
+  inset: -4px -1px;
+}
+
+.swarm-chip:hover,
+.swarm-size.is-open .swarm-chip {
+  border-color: var(--violet);
+  box-shadow: 0 0 14px var(--violet-soft);
+  color: var(--text);
+}
+
+.swarm-chip-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.swarm-chip-label,
+.swarm-chip-caret {
+  display: none;
+}
+
+.swarm-chip-caret {
+  margin-right: -3px;
+  opacity: 0.8;
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.swarm-size.is-open .swarm-chip-caret {
+  transform: rotate(180deg);
+}
+
+@keyframes swarm-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+@media (min-width: 520px) {
+  .swarm-chip-label,
+  .swarm-chip-caret {
+    display: inline;
+  }
+}
+
+/* Phones: a full 44 px target, the same height as the mode buttons. */
+@media (pointer: coarse), (max-width: 899px) {
+  .swarm-chip {
+    height: 46px;
+    padding: 0 10px;
+  }
+
+  .swarm-chip::after {
+    inset: 0;
+  }
+}
+
+/* 320 px: modes (162) + chip (50) + send (44) fit the 272 px bar with tighter gaps. */
+@media (max-width: 359px) {
+  .swarm-chip {
+    gap: 3px;
+    padding: 0 6px;
+  }
+
+  .composer[data-mode='swarm'] .composer-bar {
+    gap: 6px;
+  }
+}
+
+/* The popover opens above the bar, aligned with its left edge, so it fits a 320 px screen. */
+.swarm-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 6px;
+  z-index: 6;
+  width: min(300px, calc(100% - 12px));
+  padding: var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-2), 0 0 0 1px var(--violet-soft);
+  animation: fade-up var(--dur-2) var(--ease-out) both;
+}
+
+.swarm-pop[hidden] {
+  display: none;
+}
+
+.swarm-pop-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.swarm-pop-sub {
+  color: var(--text-4);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.swarm-pop-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.swarm-opt {
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.swarm-opt:hover {
+  border-color: var(--line-3);
+  color: var(--text);
+}
+
+.swarm-opt[aria-pressed='true'] {
+  border-color: var(--violet);
+  background: var(--violet-soft);
+  color: var(--violet);
+  box-shadow: 0 0 14px var(--violet-soft);
+}
+
+.swarm-pop-caption {
+  min-height: calc(2 * 1.4em);
+  margin: var(--sp-2) 2px 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+/* ---- attachment previews in the composer ----------------------------------------------------- */
+
+.composer-files {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-3) 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.composer-files::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-files[hidden] {
+  display: none;
+}
+
+.composer-file {
+  position: relative;
+  flex: none;
+  animation: fade-up var(--dur-2) var(--ease-out) both;
+}
+
+.composer-file-img {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  color: var(--text-3);
+}
+
+.composer-file-img img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-file-doc {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 64px;
+  min-width: 150px;
+  max-width: min(232px, 62vw);
+  padding: 0 44px 0 var(--sp-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+}
+
+.composer-file-doc-icon,
+.att-file-icon {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 42px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--accent-2);
+}
+
+.composer-file-badge,
+.att-file-badge {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  background: var(--err);
+  color: var(--bg);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  transform: translateX(-50%);
+}
+
+.composer-file-doc-text,
+.att-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.composer-file-name,
+.att-file-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-file-size,
+.att-file-size {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Preparing: a quiet sweep across the tile. */
+.composer-file.is-processing .composer-file-img,
+.composer-file.is-processing .composer-file-doc {
+  background: linear-gradient(100deg, var(--bg-3) 30%, var(--surface-3) 50%, var(--bg-3) 70%);
+  background-size: 200% 100%;
+  animation: att-sweep 1.2s linear infinite;
+}
+
+.composer-file-spin {
+  color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes att-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.composer-file-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background: var(--overlay);
+  color: var(--text);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.composer-file-remove::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+.composer-file-remove:hover {
+  background: var(--err);
+  color: var(--bg);
+}
+
+.composer-file--pdf .composer-file-remove {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+
+/* ---- inline notices (attachment problems) ------------------------------------------------------- */
+
+.composer-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 2px var(--sp-2);
+  padding: 6px 4px 6px var(--sp-3);
+  border: 1px solid var(--warn-soft);
+  border-radius: var(--r-md);
+  background: var(--surface-solid);
+  box-shadow: inset 0 0 0 100vmax var(--warn-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  animation: fade-up var(--dur-2) var(--ease-out) both;
+}
+
+.composer-notice[hidden] {
+  display: none;
+}
+
+.composer-notice[data-level='info'] {
+  border-color: var(--line-2);
+  box-shadow: inset 0 0 0 100vmax var(--accent-soft);
+}
+
+.composer-notice-icon {
+  display: grid;
+  flex: none;
+  color: var(--warn);
+}
+
+.composer-notice[data-level='info'] .composer-notice-icon {
+  color: var(--accent);
+}
+
+.composer-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.composer-notice-close {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--text-3);
+}
+
+.composer-notice-close::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.composer-notice-close:hover {
+  color: var(--text);
+}
+
+/* ---- drag and drop ------------------------------------------------------------------------------ */
+
+.composer-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  border: 1.5px dashed var(--accent);
+  border-radius: inherit;
+  background: var(--surface-3);
+  color: var(--accent-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+.composer.is-dropping .composer-drop {
+  display: flex;
+}
+
+.composer.is-dropping .composer-box {
+  box-shadow: var(--shadow-1), 0 0 30px var(--accent-soft);
+}
+
+/* ---- attachment strip in messages ------------------------------------------------------------- */
+
+.att-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.att-item {
+  display: flex;
+  min-width: 0;
+}
+
+.att-thumb {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  color: var(--text-3);
+  cursor: zoom-in;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+
+.att-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.att-thumb:hover {
+  border-color: var(--line-3);
+  box-shadow: 0 0 18px var(--accent-soft);
+}
+
+.att-strip--sm .att-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-sm);
+}
+
+/* A single photo shows at its own shape (up to 200 × 160). */
+.att-strip--single .att-thumb {
+  --att-ratio: 1;
+  width: min(200px, calc(160px * var(--att-ratio)));
+  height: auto;
+  aspect-ratio: var(--att-ratio);
+  max-height: 200px;
+}
+
+.att-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 260px;
+  height: 56px;
+  padding: 0 14px 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.att-strip--sm .att-file {
+  height: 44px;
+}
+
+.att-strip--sm .att-file-icon {
+  width: 28px;
+  height: 32px;
+}
+
+/* ---- preview lightbox ----------------------------------------------------------------------------- */
+
+.att-preview {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.att-preview::backdrop {
+  background: var(--overlay);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.att-preview--fallback {
+  z-index: 90;
+  display: block;
+  background: var(--overlay);
+}
+
+.att-preview-panel {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: max(var(--sp-4), var(--safe-top)) max(var(--sp-4), var(--safe-right)) max(var(--sp-4), var(--safe-bottom)) max(var(--sp-4), var(--safe-left));
+}
+
+.att-preview-figure {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: min(400px, 100%);
+  margin: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-2), 0 0 40px var(--accent-soft);
+  animation: att-preview-in var(--dur-3) var(--ease-out) both;
+}
+
+.att-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 62vh;
+  object-fit: contain;
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+}
+
+.att-preview-missing {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  min-height: 180px;
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.att-preview-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 var(--sp-1) var(--sp-1);
+  padding-right: 48px;
+}
+
+.att-preview-name {
+  overflow-wrap: anywhere;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.att-preview-meta {
+  color: var(--accent-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.att-preview-note {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.att-preview-close {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.att-preview-close:hover {
+  border-color: var(--line-3);
+  box-shadow: 0 0 18px var(--accent-soft);
+}
+
+@keyframes att-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}

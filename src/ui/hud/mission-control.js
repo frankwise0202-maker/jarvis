@@ -1,6 +1,9 @@
 // Mission Control: the orbit core (agents circling Jarvis), a wave selector for multi-wave turns,
-// summary counters (agents done/total, searches, sources, cost, elapsed) and the agent card list,
-// sorted active → queued → done → stopped/failed.
+// summary counters (agents done/total, searches, sources, cost, elapsed), the Comms feed (a live
+// terminal log of the swarm, see comms-log.js) and the agent card list, sorted active → queued →
+// done → stopped/failed. A finished mission shows a summary strip ("Mission complete · 8/8 agents ·
+// 23 searches · 41 sources · 1m 12s"); when it finishes while on screen, the orbit core bursts and
+// the strip sweeps in (not under reduced motion).
 //
 //   const mc = createMissionControl({ container, variant: 'sheet' | 'panel' });
 //   mc.show(turn, missionId?);   // display a turn (a given mission, else its latest one)
@@ -16,6 +19,8 @@ import { h, setText, clear, raf } from '../dom.js';
 import { icon } from '../icons.js';
 import { createCore } from './core.js';
 import { createAgentCard } from './agent-card.js';
+import { createCommsLog } from './comms-log.js';
+import { agentTrail, missionTotals, observeMission } from './comms.js';
 import {
   elapsedMs,
   fmtCount,
@@ -33,8 +38,19 @@ const GROUPS = ['Active', 'Queued', 'Done', 'Stopped / failed'];
 // update() renders at most this often (trailing): agent events can arrive every frame while a
 // big swarm streams, and status text does not need 60 Hz. The orbit animates on its own.
 const MIN_RENDER_MS = 100;
+const CELEBRATE_MS = 2400;
+const SUMMARY_LEAD = { done: 'Mission complete', partial: 'Mission complete', stopped: 'Mission stopped', interrupted: 'Mission interrupted' };
+const SUMMARY_ICON = { done: 'check', partial: 'check', stopped: 'stop', interrupted: 'pause' };
 
 const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+
+function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch {
+    return false;
+  }
+}
 
 function groupOf(status) {
   if (isActiveStatus(status)) return 0;
@@ -182,6 +198,16 @@ export function createMissionControl(opts = {}) {
   const pill = h('span', { class: 'hud-pill' }, pillIcon, pillText);
   const title = h('h2', { class: 'hud-mc__title' });
   const subtitle = h('p', { class: 'hud-mc__subtitle' });
+  const summaryIcon = h('span', { class: 'hud-mc__summary-icon', attrs: { 'aria-hidden': 'true' } });
+  const summaryLead = h('span', { class: 'hud-mc__summary-lead' });
+  const summaryText = h('span', { class: 'hud-mc__summary-text' });
+  const summary = h(
+    'p',
+    { class: 'hud-mc__summary', dataset: { testid: 'mission-summary' }, hidden: true },
+    h('span', { class: 'hud-mc__summary-head' }, summaryIcon, summaryLead, h('span', { class: 'hud-sr', text: ' · ' })),
+    summaryText,
+  );
+  const comms = createCommsLog({ variant });
 
   const waves = h('div', { class: 'hud-mc__waves', attrs: { role: 'group', 'aria-label': 'Mission waves' }, hidden: true });
 
@@ -222,13 +248,16 @@ export function createMissionControl(opts = {}) {
     h('div', { class: 'hud-mc__kicker-row' }, kicker, h('span', { class: 'hud-mc__spacer' }), pill),
     title,
     subtitle,
+    summary,
   );
   const top = h('div', { class: 'hud-mc__top' }, h('div', { class: 'hud-mc__orbit-wrap' }, canvas), header, waves, stats, idle);
+  const commsWrap = h('div', { class: 'hud-mc__comms', hidden: true }, comms.el);
   const listWrap = h('div', { class: 'hud-mc__list-wrap' }, list);
   const el = h(
     'div',
     { class: ['hud-mc', `hud-mc--${variant}`], dataset: { testid: 'mission-control' }, attrs: { role: 'region', 'aria-label': 'Mission Control' } },
     top,
+    commsWrap,
     listWrap,
   );
   if (opts.container && typeof opts.container.append === 'function') opts.container.append(el);
@@ -247,7 +276,9 @@ export function createMissionControl(opts = {}) {
   let candidatesHost = null;
   let stopTick = null;
   let destroyed = false;
-  const shown = { kicker: undefined, title: undefined, subtitle: undefined, status: undefined, idle: undefined, coreState: undefined };
+  const shown = { kicker: undefined, title: undefined, subtitle: undefined, status: undefined, idle: undefined, coreState: undefined, summary: undefined };
+  const seenStatus = new Map(); // mission id → status at the previous render (to spot "just finished")
+  let celebrateTimer = 0;
   const renderNextFrame = raf(render);
   let renderTimer = 0;
   let lastRenderAt = 0;
@@ -287,9 +318,11 @@ export function createMissionControl(opts = {}) {
     cancelScheduledRender();
     lastRenderAt = Date.now();
     const mission = selectedMission();
+    const justFinished = observeTurn(mission);
     renderHeader(mission);
     renderWaves();
     renderStats(mission);
+    renderComms(mission);
     renderCards(mission);
     const state = coreStateFor(mission, turn);
     if (state !== shown.coreState) {
@@ -298,6 +331,81 @@ export function createMissionControl(opts = {}) {
     }
     core.setAgents(mission && Array.isArray(mission.agents) ? mission.agents : []);
     syncTimer(mission);
+    if (justFinished) celebrate();
+  }
+
+  // Feed the comms log with every wave of the turn and note status changes. True when the shown
+  // mission went from working to done/partial since the previous render (seen live, not restored).
+  function observeTurn(mission) {
+    let justFinished = false;
+    for (const m of missionsOf(turn)) {
+      try {
+        observeMission(m);
+      } catch (err) {
+        console.error('[hud] comms update failed', err);
+      }
+      const id = String(m.id);
+      const status = str(m.status);
+      const before = seenStatus.get(id);
+      if (before === status) continue;
+      seenStatus.set(id, status);
+      if (m === mission && (before === 'running' || before === 'planning') && (status === 'done' || status === 'partial')) justFinished = true;
+    }
+    return justFinished;
+  }
+
+  function celebrate() {
+    if (!el.isConnected || prefersReducedMotion()) return;
+    core.celebrate('ok');
+    el.classList.add('is-celebrating');
+    if (celebrateTimer) clearTimeout(celebrateTimer);
+    celebrateTimer = setTimeout(() => {
+      celebrateTimer = 0;
+      el.classList.remove('is-celebrating');
+    }, CELEBRATE_MS);
+  }
+
+  function renderComms(mission) {
+    const hide = !mission;
+    if (commsWrap.hidden !== hide) commsWrap.hidden = hide;
+    if (hide) return;
+    try {
+      comms.update(turn);
+    } catch (err) {
+      console.error('[hud] comms render failed', err);
+    }
+  }
+
+  // "Mission complete · 8/8 agents · 23 searches · 41 sources · 1m 12s" once a mission has ended.
+  function renderSummary(mission, status) {
+    const lead = SUMMARY_LEAD[status];
+    if (!lead) {
+      if (!summary.hidden) summary.hidden = true;
+      shown.summary = '';
+      return;
+    }
+    const t = missionTotals(mission);
+    const parts = [`${t.done}/${t.total} agents`];
+    if (t.failed) parts.push(`${t.failed} failed`);
+    if (t.stopped) parts.push(`${t.stopped} stopped`);
+    if (t.interrupted) parts.push(`${t.interrupted} interrupted`);
+    parts.push(plural(t.searches, 'search', 'searches'), plural(t.sources, 'source'));
+    if (t.durationMs !== null) parts.push(fmtDuration(t.durationMs));
+    const key = `${status}|${parts.join('|')}`;
+    if (key === shown.summary) return;
+    shown.summary = key;
+    summary.dataset.tone = status === 'done' || status === 'partial' ? 'ok' : 'warn';
+    summary.dataset.status = status;
+    clear(summaryIcon).append(icon(SUMMARY_ICON[status], { size: 14, strokeWidth: 2 }));
+    setText(summaryLead, lead);
+    // Segments never break inside; on narrow screens the line wraps between them.
+    const segs = [];
+    parts.forEach((p, i) => {
+      if (i) segs.push(' ');
+      segs.push(h('span', { class: 'hud-mc__summary-seg', text: i < parts.length - 1 ? `${p} ·` : p }));
+    });
+    clear(summaryText).append(...segs);
+    if (summary.hidden) summary.hidden = false;
   }
 
   function renderHeader(mission) {
@@ -339,6 +447,7 @@ export function createMissionControl(opts = {}) {
       shown.subtitle = sub;
       setText(subtitle, sub);
     }
+    renderSummary(mission, status);
   }
 
   function modelLabel(id) {
@@ -523,6 +632,7 @@ export function createMissionControl(opts = {}) {
         const card = createAgentCard(p.agent, {
           expanded: expandedIds.has(key),
           onToggle: (open) => (open ? expandedIds.add(key) : expandedIds.delete(key)),
+          getTrail: () => agentTrail(missionId, key),
         });
         cards.set(key, { card, group: p.group });
       }
@@ -600,7 +710,10 @@ export function createMissionControl(opts = {}) {
     cancelScheduledRender();
     if (stopTick) stopTick();
     stopTick = null;
+    if (celebrateTimer) clearTimeout(celebrateTimer);
+    celebrateTimer = 0;
     disposeCards();
+    comms.dispose();
     core.destroy();
     el.remove();
   }

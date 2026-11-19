@@ -82,6 +82,124 @@ export function turnContextOf(message) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Attachments (SPEC §15.1): image and PDF document blocks in the owner's message
+
+/** The image and document blocks of a user message, in order. */
+export function attachmentsOf(message) {
+  if (!message || message.role !== 'user' || !Array.isArray(message.content)) return [];
+  return message.content.filter((b) => b && (b.type === 'image' || b.type === 'document'));
+}
+
+function imageSize(buf, mediaType) {
+  try {
+    if (mediaType === 'image/png' && buf.length >= 24) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    if (mediaType === 'image/gif' && buf.length >= 10) return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+    if (mediaType === 'image/webp' && buf.length >= 30) {
+      const chunk = buf.subarray(12, 16).toString('latin1');
+      if (chunk === 'VP8X') return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+      if (chunk === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      if (chunk === 'VP8L') {
+        const bits = buf.readUInt32LE(21);
+        return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      }
+    }
+    if (mediaType === 'image/jpeg') {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) {
+          i++;
+          continue;
+        }
+        const marker = buf[i + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+        }
+        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+          i += 2;
+          continue;
+        }
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+    }
+  } catch {
+    /* truncated or unusual file */
+  }
+  return null;
+}
+
+/**
+ * What the mock "sees" in an attachment block: { kind: 'image'|'pdf'|'document', label, width?,
+ * height?, pages?, title? } (dimensions from the image header, pages counted in the PDF).
+ */
+export function describeAttachmentBlock(block) {
+  const src = block?.source || {};
+  if (block?.type === 'image') {
+    const mediaType = src.type === 'base64' ? src.media_type : '';
+    const size = src.type === 'base64' ? imageSize(Buffer.from(String(src.data || ''), 'base64'), mediaType) : null;
+    const format = { 'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/gif': 'GIF', 'image/webp': 'WebP' }[mediaType] || 'linked';
+    return { kind: 'image', format, width: size?.width || null, height: size?.height || null };
+  }
+  const title = typeof block?.title === 'string' && block.title.trim() ? block.title.trim() : '';
+  if (src.type === 'base64' && src.media_type === 'application/pdf') {
+    const text = Buffer.from(String(src.data || ''), 'base64').toString('latin1');
+    const pages = (text.match(/\/Type\s*\/Page(?![s\w])/g) || []).length || 1;
+    return { kind: 'pdf', title, pages };
+  }
+  return { kind: 'document', title, pages: null };
+}
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function attachmentPhrase(files) {
+  const images = files.filter((f) => f.kind === 'image').length;
+  const docs = files.length - images;
+  const parts = [];
+  if (images) parts.push(images === 1 ? 'the image' : `the ${images} images`);
+  if (docs) parts.push(docs === 1 ? 'the PDF' : `the ${docs} PDFs`);
+  return parts.join(' and ');
+}
+
+function attachmentLine(f, i) {
+  if (f.kind === 'image') {
+    const dims = f.width && f.height ? `${f.width} × ${f.height} pixels` : 'size unknown';
+    return `- **Image ${i + 1}:** a ${f.format} picture, ${dims}, clear enough to read.`;
+  }
+  const name = f.title || `Document ${i + 1}`;
+  return `- **${name}:** a PDF${f.pages ? ` of ${plural(f.pages, 'page')}` : ''}; I have read it in full.`;
+}
+
+/** A short "I can see the image…" / "I've read the PDF…" answer about the files in the owner's message. */
+export function attachmentAnswer({ prompt, ctx, blocks }) {
+  const files = blocks.map(describeAttachmentBlock);
+  const phrase = attachmentPhrase(files);
+  const onlyDocs = files.every((f) => f.kind !== 'image');
+  const opener = onlyDocs
+    ? `I've read ${phrase} you shared, ${ctx.name}${files.length === 1 && files[0].title ? `: “${files[0].title}”` : ''}.`
+    : `I can see ${phrase} you shared, ${ctx.name}.`;
+  const question = stripDirectives(prompt);
+  const asked = question && !/^please look at the attached file\(s\)\.?$/i.test(question);
+  return [
+    opener,
+    '',
+    ...files.map(attachmentLine),
+    '',
+    asked
+      ? `On your question, “${truncate(question, 120)}”: the details above are what I can confirm from the files; ask me to dig into any of them.`
+      : 'Tell me what you would like to know, and I can describe, summarise or research anything in them.',
+  ].join('\n');
+}
+
+/** One sentence the mock lead adds to agent tasks, since agents cannot see attachments. */
+export function attachmentTaskNote(blocks) {
+  const files = blocks.map(describeAttachmentBlock);
+  if (!files.length) return '';
+  const desc = files
+    .map((f) => (f.kind === 'image' ? `a ${f.format} photo${f.width ? ` (${f.width}×${f.height})` : ''}` : `a PDF${f.title ? ` titled “${f.title}”` : ''}${f.pages ? ` (${plural(f.pages, 'page')})` : ''}`))
+    .join(' and ');
+  return `Context: the owner shared ${desc}; the details that matter are described in this task.`;
+}
+
 /** Fields of a worker assignment message built by the engine (SPEC §8.5). */
 export function parseAssignment(text) {
   const t = String(text ?? '');

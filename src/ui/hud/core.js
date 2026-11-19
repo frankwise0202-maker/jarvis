@@ -4,6 +4,7 @@
 //
 //   const core = createCore(canvas, { size: 220, mode: 'hero' });   // 'hero' | 'mini' | 'orbit'
 //   core.setState('thinking'); core.setAgents(mission.agents); core.setLevel(0.4); core.destroy();
+//   core.celebrate();   // mission-complete burst (orbit/hero; skipped under reduced motion)
 //
 // Rendering: Canvas 2D, DPR-aware, backing store resized by a ResizeObserver. One shared
 // requestAnimationFrame loop drives every awake core; each core caps itself at 30fps on small or
@@ -363,7 +364,12 @@ function watchMedia(query, fn) {
   };
 }
 
-const NOOP_CORE = Object.freeze({ setState() {}, setAgents() {}, setLevel() {}, destroy() {}, debugStats: () => null });
+const NOOP_CORE = Object.freeze({ setState() {}, setAgents() {}, setLevel() {}, celebrate() {}, destroy() {}, debugStats: () => null });
+
+// Mission-complete burst: a flash at the core, two rings racing outward and the agent nodes
+// lighting up as the first ring passes them.
+const BURST_S = 1.7;
+const BURST_STALE_MS = 2500; // a burst that could not be shown in time (core asleep) is dropped
 
 // ---------------------------------------------------------------------------------------------
 
@@ -411,6 +417,10 @@ export function createCore(canvas, opts = {}) {
   let orbitRot = 0;
   let level = 0;
   let levelTarget = 0;
+  let burstColor = null; // palette color while a completion burst plays
+  let burstAt = 0; // animation clock when it started
+  let burstWall = 0; // performance.now() when it was requested
+  let burstRing = -1; // radius of the leading burst ring this frame (-1: none)
 
   const BAR_COUNT = 56;
   const barFreq = new Float32Array(BAR_COUNT);
@@ -576,6 +586,8 @@ export function createCore(canvas, opts = {}) {
     awake = should;
     if (awake) {
       lastFrame = 0;
+      // A burst requested while asleep is only worth showing if it is still fresh.
+      if (burstColor && performance.now() - burstWall > BURST_STALE_MS) burstColor = null;
       addLive(frame);
     } else {
       removeLive(frame);
@@ -678,6 +690,7 @@ export function createCore(canvas, opts = {}) {
       nodes[i].changedAt = -10; // no frozen bursts or call-outs in a static frame
     }
     for (let i = 0; i < BAR_COUNT; i++) barLevel[i] = 0.25 + 0.2 * Math.sin(barPhase[i]);
+    burstColor = null;
   }
 
   function updateLineColor() {
@@ -816,7 +829,9 @@ export function createCore(canvas, opts = {}) {
 
     if (cur.bars > 0.01) drawBars(cx, cy, R * 0.34, R * 0.1, cur.bars * dim);
     if (total > 0) drawProgress(cx, cy, R * 0.965, Math.max(1.5, R * 0.016), dim, false);
+    burstRing = burstColor ? burstRadius(R * 0.3, R * 0.98) : -1;
     if (nodes.length) drawNodes(cx, cy, R, R * 0.79, false);
+    if (burstColor) drawBurst(cx, cy, R, R * 0.3, Math.max(1.5, R * 0.016));
 
     // The core itself.
     ctx.globalCompositeOperation = 'lighter';
@@ -863,7 +878,9 @@ export function createCore(canvas, opts = {}) {
     // Mission progress ring (done / failed / stopped) around the core.
     drawProgress(cx, cy, R * 0.345, Math.max(2, R * 0.022), dim, true);
 
+    burstRing = burstColor ? burstRadius(R * 0.345, R * 0.98) : -1;
     if (nodes.length) drawNodes(cx, cy, R, orbitR, true);
+    if (burstColor) drawBurst(cx, cy, R, R * 0.345, Math.max(2, R * 0.022));
 
     // Core: a luminous ring around a dark readout when there are agents; a hot core otherwise.
     ctx.globalCompositeOperation = 'lighter';
@@ -892,6 +909,47 @@ export function createCore(canvas, opts = {}) {
       ctx.globalAlpha = 0.75 * dim;
       ctx.fillText(readoutSub, cx, cy + R * 0.085);
     }
+  }
+
+  // Radius of the leading burst ring (eases from r0 to r1), or -1 once the burst is over.
+  function burstRadius(r0, r1) {
+    const since = clock - burstAt;
+    if (since < 0 || since >= BURST_S) {
+      burstColor = null;
+      return -1;
+    }
+    return r0 + (r1 - r0) * easeOutCubic(since / BURST_S);
+  }
+
+  function drawBurst(cx, cy, R, r0, lw) {
+    const since = clock - burstAt;
+    if (since < 0 || since >= BURST_S) {
+      burstColor = null;
+      return;
+    }
+    const c = burstColor;
+    const p = since / BURST_S;
+    ctx.globalCompositeOperation = 'lighter';
+    // Flash at the core.
+    const f = Math.min(1, since / 0.75);
+    blit(ctx, getSprite(c, 'soft'), cx, cy, R * (0.3 + 0.38 * easeOutCubic(f)), (1 - f) * (1 - f) * 0.95);
+    blit(ctx, getSprite(c, 'hot'), cx, cy, R * 0.3, (1 - f) * (1 - f) * 0.55);
+    // The progress ring swells and glows.
+    ctx.strokeStyle = c.css;
+    ctx.lineWidth = lw * (1 + 1.6 * (1 - p));
+    ctx.globalAlpha = (1 - p) * 0.7;
+    strokeCircle(ctx, cx, cy, r0);
+    // Two rings racing outward.
+    for (let k = 0; k < 2; k++) {
+      const q = (since - k * 0.22) / (BURST_S - 0.22);
+      if (q <= 0 || q >= 1) continue;
+      const r = r0 + (R * 0.98 - r0) * easeOutCubic(q);
+      ctx.lineWidth = Math.max(1, lw * 1.4 * (1 - q) + 0.5);
+      ctx.globalAlpha = (1 - q) * (1 - q) * (k === 0 ? 0.95 : 0.5);
+      strokeCircle(ctx, cx, cy, r);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = lineCss;
   }
 
   function drawScanner(cx, cy, r, lw, alpha) {
@@ -1010,6 +1068,11 @@ export function createCore(canvas, opts = {}) {
       if ((n.kind === K_DONE || n.kind === K_FAILED) && since >= 0 && since < 1.1) {
         const p = since / 1.1;
         blit(ctx, getSprite(n.color, 'soft'), n.x, n.y, nr * (4 + 6 * p), (1 - p) * 0.9);
+      }
+      // Mission-complete burst: finished nodes light up as the leading ring sweeps past them.
+      if (burstRing > 0 && n.kind === K_DONE) {
+        const d = Math.abs(burstRing - orbitR) / (R * 0.09);
+        if (d < 1) blit(ctx, getSprite(n.color, 'soft'), n.x, n.y, nr * 5.5, (1 - d) * 0.95 * n.spawn);
       }
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -1168,6 +1231,18 @@ export function createCore(canvas, opts = {}) {
     levelTarget = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
   }
 
+  /**
+   * Mission-complete moment: a flash, rings racing outward and the finished agents lighting up
+   * (~1.7s, tone 'ok' or 'warn'). Nothing under reduced motion; dropped if the core is asleep
+   * for more than a moment (it never plays late).
+   */
+  function celebrate(tone) {
+    if (destroyed || reducedMq.matches) return;
+    burstColor = tone === 'warn' ? pal.warn : pal.ok;
+    burstAt = clock;
+    burstWall = performance.now();
+  }
+
   function setAgents(agents) {
     if (destroyed) return;
     const list = Array.isArray(agents) ? agents : [];
@@ -1284,6 +1359,7 @@ export function createCore(canvas, opts = {}) {
       awake,
       mode,
       agents: total,
+      bursting: !!burstColor,
       backing: [canvas.width, canvas.height],
     };
   }
@@ -1292,5 +1368,5 @@ export function createCore(canvas, opts = {}) {
   setAria();
   measure();
 
-  return { setState, setAgents, setLevel, destroy, debugStats };
+  return { setState, setAgents, setLevel, celebrate, destroy, debugStats };
 }

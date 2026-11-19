@@ -1140,24 +1140,6 @@
   color: var(--text-3);
 }
 
-/* Turn-footer Share button (added to chat.js by the integrator, data-testid "turn-share"):
-   icon-only on the narrowest phones so Copy · Speak · Mission · Share fit on one row. */
-@media (max-width: 359px) {
-  [data-testid="turn-share"] {
-    justify-content: center;
-    min-width: var(--tap);
-  }
-
-  [data-testid="turn-share"] > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-
 /* ---- screen-reader-only ------------------------------------------------------------------ */
 
 .rec-sr,

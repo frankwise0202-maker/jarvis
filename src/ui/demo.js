@@ -398,11 +398,14 @@ export function createDemo(opts = {}) {
     return { id: newId('demo-conv'), v: 1, title: '', createdAt: now, updatedAt: now, system: 'demo', tools: [], apiMessages: [], turns: [], pending: null };
   }
 
-  function startTurn(conv, { text, mode = 'auto' } = {}) {
+  function startTurn(conv, { text, mode = 'auto', attachments } = {}) {
     if (active.has(conv.id)) throw new Error('A turn is already running for this conversation.');
     const s = getSettings() || {};
     const now = Date.now();
     const userTurn = { id: newId('u'), role: 'user', text: String(text || ''), mode, createdAt: now };
+    // Like the engine (SPEC §15.1): keep display metadata only, never the file data.
+    const files = Array.isArray(attachments) ? attachments.filter((a) => a && typeof a === 'object') : [];
+    if (files.length) userTurn.attachments = files.map(({ id, kind, name, mediaType, size, thumb, width, height }) => ({ id, kind, name, mediaType, size, thumb, width, height }));
     const turn = {
       id: newId('j'),
       role: 'jarvis',
@@ -421,18 +424,19 @@ export function createDemo(opts = {}) {
       error: null,
     };
     conv.turns.push(userTurn, turn);
-    if (!conv.title) conv.title = userTurn.text.replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!conv.title) conv.title = (userTurn.text.replace(/\s+/g, ' ').trim() || (files.length ? `Shared ${files.length} file${files.length === 1 ? '' : 's'}` : '')).slice(0, 60);
     conv.updatedAt = now;
 
     const run = createRun(conv, turn);
     active.set(conv.id, run);
     const showcase = userTurn.text === SHOWCASE_PROMPT;
+    const topic = userTurn.text || (files.length > 1 ? 'the files you shared' : files.length ? 'the file you shared' : 'your message');
     // Let the caller subscribe before the first event.
     setTimeout(() => {
       run.emit('turn', { turn });
       if (showcase) playShowcase(run);
-      else if (mode === 'swarm') playGenericSwarm(run, userTurn.text, Math.min(6, Math.max(3, Number(s.maxAgents) || 5)));
-      else playGenericAnswer(run, userTurn.text);
+      else if (mode === 'swarm') playGenericSwarm(run, topic, Math.min(6, Math.max(3, Number(s.maxAgents) || 5)));
+      else playGenericAnswer(run, topic);
     }, 0);
     return run.api;
   }
@@ -813,11 +817,22 @@ export function createDemo(opts = {}) {
     isBusy: () => active.size > 0,
   };
 
+  /** Canned follow-up chips (SPEC §14.5) for a finished demo turn; never calls the API. */
+  async function suggestFollowups(turn, { signal } = {}) {
+    await new Promise((r) => setTimeout(r, Math.round(700 / speed)));
+    if (signal && signal.aborted) return [];
+    const missions = Object.keys((turn && turn.missions) || {}).length;
+    return missions
+      ? ['Which ryokan would you book for us?', 'What should we reserve before we fly?', 'Swap the day trip for somewhere quieter']
+      : ['Can you go deeper on that?', 'What are the main trade-offs?', 'Summarize it in three bullets'];
+  }
+
   return {
     engine,
     store: demoStore,
     showcaseId: 'demo-kyoto',
     showcasePrompt: SHOWCASE_PROMPT,
     speed,
+    suggestFollowups,
   };
 }

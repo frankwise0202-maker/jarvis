@@ -13,7 +13,7 @@
 // Control routes: GET /__mock/requests, GET /__mock/violations, POST /__mock/reset, GET /__mock/health
 
 import { classifyRequest, createBehaviorState, planResponse } from './behavior.mjs';
-import { parseDirectives, userTextOf } from './content.mjs';
+import { describeAttachmentBlock, parseDirectives, userTextOf } from './content.mjs';
 import { signThinkingBlocks, validateBody, validateHeaders, mergeTurns } from './validate.mjs';
 import { abortError, canonicalJson, chunkText, estimateTokens, isPlainObject, newMessageId, newRequestId, seededRandom, sha256Hex, sleep } from './util.mjs';
 
@@ -263,9 +263,32 @@ function directivesOf(body, kind) {
 // Usage, with a simple prompt-cache simulation (automatic caching via top-level cache_control or
 // block breakpoints): the longest previously seen prefix is a cache read, the rest a cache write.
 
+/**
+ * Token estimate of one message. Images and PDFs are not counted by their base64 length (which
+ * would make a photo cost ~200K tokens): an image costs about width × height / 750 tokens (capped
+ * like the API's scaling), a PDF page about 1,500 text tokens plus its page image.
+ */
+function blockTokens(block) {
+  if (block?.type === 'image') {
+    const f = describeAttachmentBlock(block);
+    const pixels = f.width && f.height ? Math.min(f.width * f.height, 1568 * 1568) : 1150 * 1150;
+    return Math.max(85, Math.ceil(pixels / 750));
+  }
+  if (block?.type === 'document' && block.source?.type === 'base64') {
+    return (describeAttachmentBlock(block).pages || 1) * 3000;
+  }
+  if (block?.type === 'tool_result' && Array.isArray(block.content)) return 10 + block.content.reduce((sum, b) => sum + blockTokens(b), 0);
+  return estimateTokens(block);
+}
+
+function messageTokens(m) {
+  if (!Array.isArray(m?.content)) return estimateTokens(m);
+  return 4 + m.content.reduce((sum, b) => sum + blockTokens(b), 0);
+}
+
 function computeUsage(mock, body, blocks) {
   const sysTokens = estimateTokens(body.system) + estimateTokens(body.tools);
-  const msgTokens = body.messages.map((m) => estimateTokens(m));
+  const msgTokens = body.messages.map((m) => messageTokens(m));
   const total = sysTokens + msgTokens.reduce((a, b) => a + b, 0);
   let input = total;
   let cacheRead = 0;

@@ -6,9 +6,17 @@ import { createEmitter } from './emitter.js';
 import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODES, bucketOf } from './models.js';
-import { LEAD_SYSTEM_V1, buildTurnContext, leadToolsV1 } from './prompts.js';
+import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsV1 } from './prompts.js';
 import { STOPPED_BY_OWNER, runLeadTurn, toolResultMessage } from './lead.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
+import {
+  ATTACHMENT_ONLY_TEXT,
+  assertRequestFits,
+  attachmentBlock,
+  attachmentMeta,
+  attachmentsTitle,
+  normalizeAttachments,
+} from './attachments.js';
 import { clampInt, formatLocalTime, singleLine, truncate, uid } from './util.js';
 
 const PERSIST_INTERVAL_MS = 1000;
@@ -31,6 +39,8 @@ export function normalizeSettings(raw) {
     showThinking: s.showThinking !== false,
     location: str(s.location),
     memoryEnabled: s.memoryEnabled !== false,
+    tone: typeof s.tone === 'string' && Object.prototype.hasOwnProperty.call(TONE_STYLES, s.tone) ? s.tone : DEFAULT_TONE,
+    verbosity: typeof s.verbosity === 'string' && Object.prototype.hasOwnProperty.call(LENGTH_STYLES, s.verbosity) ? s.verbosity : DEFAULT_VERBOSITY,
     features: {
       fallbacks: s.features?.fallbacks !== false,
       compaction: s.features?.compaction !== false,
@@ -412,9 +422,15 @@ export function createJarvis(deps = {}) {
     return ctx;
   }
 
+  /** A run's settings with the turn's own overrides applied (SPEC §15.1: maxAgents for that turn only). */
+  function turnSettings(settings, turn) {
+    const max = Number(turn?.maxAgents);
+    return Number.isInteger(max) && max >= 1 && max <= 20 ? { ...settings, maxAgents: max } : settings;
+  }
+
   function launch(conv, turn, settings, { resume, req }) {
     const emitter = createEmitter();
-    const ctx = createContext(conv, turn, settings, emitter, { req });
+    const ctx = createContext(conv, turn, turnSettings(settings, turn), emitter, { req });
     runs.set(conv.id, ctx);
     let resolveDone;
     const done = new Promise((resolve) => {
@@ -469,7 +485,7 @@ export function createJarvis(deps = {}) {
         title: '',
         createdAt: ts,
         updatedAt: ts,
-        system: LEAD_SYSTEM_V1,
+        system: LEAD_SYSTEM_LATEST, // V2; older conversations keep the prompt they were created with
         tools: leadToolsV1(),
         apiMessages: [],
         turns: [],
@@ -477,19 +493,30 @@ export function createJarvis(deps = {}) {
       };
     },
 
-    startTurn(conv, { text, mode } = {}) {
+    /**
+     * Starts a turn. `attachments` (SPEC §15.1) become image / PDF document blocks between the
+     * turn context and the text; a message may be attachments only. `maxAgents` (1–20) overrides
+     * settings.maxAgents for this turn only. Throws (before anything is appended) when the input
+     * is invalid, e.g. an attachment Claude would reject; the error message is worded for the owner.
+     */
+    startTurn(conv, { text, mode, attachments, maxAgents } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
-      if (!body) throw new TypeError('startTurn: text is required');
+      const files = normalizeAttachments(attachments);
+      if (!body && !files.length) throw new TypeError('startTurn: text is required');
       if (runs.has(conv.id)) throw new Error('A turn is already running for this conversation.');
+      const override = maxAgents === undefined || maxAgents === null || maxAgents === '' ? null : clampInt(maxAgents, 1, 20, null);
+      const content = [...files.map(attachmentBlock), { type: 'text', text: body || ATTACHMENT_ONLY_TEXT }];
+      if (files.length) assertRequestFits(conv.apiMessages, { role: 'user', content }, { system: conv.system, tools: conv.tools });
       abandonPending(conv);
       answerDanglingToolUses(conv);
 
-      const settings = readSettings();
+      const settings = turnSettings(readSettings(), { maxAgents: override });
       const turnMode = MODES[mode] ? mode : settings.mode;
       const ts = stamp();
       const isFirst = !conv.turns.some((t) => t?.role === 'user');
       const userTurn = { id: uid(), role: 'user', text: body, mode: turnMode, createdAt: ts };
+      if (files.length) userTurn.attachments = files.map(attachmentMeta);
       const turn = {
         id: uid(),
         role: 'jarvis',
@@ -507,19 +534,23 @@ export function createJarvis(deps = {}) {
         stats: { agents: 0, searches: 0, sources: 0, waves: 0, durationMs: 0 },
         error: null,
       };
-      if (isFirst || !conv.title) conv.title = truncate(singleLine(body), 60);
+      if (override !== null) turn.maxAgents = override; // survives a resume (launch applies it)
+      if (isFirst || !conv.title) conv.title = truncate(singleLine(body || attachmentsTitle(files)), 60);
       conv.turns.push(userTurn, turn);
       const turnContext = buildTurnContext({
         localTime: formatLocalTime(nowDate()),
         userName: settings.userName,
         location: settings.location,
+        tone: settings.tone,
+        verbosity: settings.verbosity,
         mode: turnMode,
         maxAgents: settings.maxAgents,
         maxWaves: settings.maxWaves,
         memoryEnabled: settings.memoryEnabled,
         memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
       });
-      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, { type: 'text', text: body }] });
+      // SPEC §15.1 order: turn context, attachments, then the owner's text (or the default text).
+      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
       return launch(conv, turn, settings, { resume: false, req: 0 });

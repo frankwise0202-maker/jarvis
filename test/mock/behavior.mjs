@@ -5,9 +5,10 @@
 // state, in the `state` object owned by the mock instance.
 
 import {
-  defaultAnswer, directivesForAgent, fetchResultBlock, longAnswer, parseAgentReports, parseAssignment,
-  parseDirectives, searchResults, stripDirectives, synthesisAnswer, textBlocks, toolResultText,
-  topicOfPrompt, topicOfTask, turnContextOf, userTextOf, valueFromSchema, workerReportSegments, xssAnswer,
+  attachmentAnswer, attachmentTaskNote, attachmentsOf, defaultAnswer, directivesForAgent, fetchResultBlock,
+  longAnswer, parseAgentReports, parseAssignment, parseDirectives, searchResults, stripDirectives,
+  synthesisAnswer, textBlocks, toolResultText, topicOfPrompt, topicOfTask, turnContextOf, userTextOf,
+  valueFromSchema, workerReportSegments, xssAnswer,
 } from './content.mjs';
 import { canonicalJson, newServerToolUseId, newToolUseId, seededRandom, sha256Hex, truncate } from './util.mjs';
 
@@ -131,7 +132,8 @@ function planLead(body, state, now) {
   const last = msgs[msgs.length - 1];
   const rng = seededRandom(`lead|${prompt}|${msgs.length}`);
   const pace = d.has('slow') ? 'slow-lead' : d.has('long') ? 'long' : 'normal';
-  const env = { body, d, ctx, prompt, rng, pace, now };
+  const files = attachmentsOf(userMsg); // photos and PDFs the owner attached to this message
+  const env = { body, d, ctx, prompt, rng, pace, now, files };
 
   if (last.role === 'assistant') return { plan: leadResume(env, last) };
 
@@ -201,6 +203,18 @@ function planLead(body, state, now) {
     if (d.has('long')) {
       return { plan: { blocks: [thinkingBlock(body, 'A thorough, well-structured guide is called for here.'), text(longAnswer(prompt, ctx))], stop_reason: 'end_turn', pace } };
     }
+    if (files.length) {
+      return {
+        plan: {
+          blocks: [
+            thinkingBlock(body, `The owner shared ${files.length === 1 ? 'a file' : `${files.length} files`}. I'll look at ${files.length === 1 ? 'it' : 'them'} closely before answering.`),
+            text(attachmentAnswer({ prompt, ctx, blocks: files })),
+          ],
+          stop_reason: 'end_turn',
+          pace,
+        },
+      };
+    }
     return {
       plan: {
         blocks: [thinkingBlock(body, `The owner asked: "${truncate(stripDirectives(prompt), 120)}". I can answer this directly and concisely.`), text(defaultAnswer(prompt, ctx))],
@@ -262,16 +276,17 @@ function deploysInTurn(after) {
 }
 
 function deployPlan(env, { wave, count, retry = false, followUp = false }) {
-  const { body, d, ctx, prompt, rng, pace, now } = env;
+  const { body, d, ctx, prompt, rng, pace, now, files = [] } = env;
   const topic = topicOfPrompt(prompt);
   const today = ctx.localTime || now.toDateString();
+  const fileNote = attachmentTaskNote(files); // agents cannot see attachments: describe them in the task
   const pool = rng.shuffle(ANGLES);
   const agents = [];
   for (let i = 0; i < count; i++) {
     const base = pool[i % pool.length];
     const role = i < pool.length ? base.role : `${base.role} ${Math.floor(i / pool.length) + 1}`;
     const extra = directivesForAgent(d, i, count);
-    const task = `Research ${topic} with a focus on ${base.angle}. Deliver a concise Markdown report: key findings with a source link for each, then confidence and gaps. Today is ${today}.${extra.length ? ` ${extra.join(' ')}` : ''}`;
+    const task = `Research ${topic} with a focus on ${base.angle}. Deliver a concise Markdown report: key findings with a source link for each, then confidence and gaps. Today is ${today}.${fileNote ? ` ${fileNote}` : ''}${extra.length ? ` ${extra.join(' ')}` : ''}`;
     agents.push({ role, task, web: true });
   }
   const mission = truncate(followUp ? `Follow-up: ${topic}` : sentenceCase(topic), 56);

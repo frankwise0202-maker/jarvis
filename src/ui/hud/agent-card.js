@@ -1,13 +1,17 @@
 // Agent card (Mission Control): codename, role, status pill, live activity line and counters,
-// plus expandable Task / Thinking / Report / Sources / Error sections.
+// plus expandable Task / Search log / Thinking / Report / Sources / Error sections.
 //
-//   const card = createAgentCard(agent, { expanded: false });
+//   const card = createAgentCard(agent, { expanded: false, getTrail: () => agentTrail(missionId, agentId) });
 //   list.append(card.el); … card.update(agent);   // call again whenever the agent changes
 //
 // update() patches the existing DOM in place and never rebuilds it, so the expanded state, open
 // sections, focus and scroll positions survive any number of updates. The expensive parts (the
-// Markdown report, thinking text and sources list) are only rendered while visible, and the report
-// re-renders at most 4×/s while it streams.
+// Markdown report, thinking text, search log and sources list) are only rendered while visible, and
+// the report re-renders at most 4×/s while it streams.
+//
+// The search log is the agent's queries and page reads in order. `getTrail` (optional, from
+// comms.js) supplies the order they were seen in and when; without it, or for steps from before
+// the app was watching, queries are listed first and page reads after them, without times.
 
 import { h, setText, safeUrl, clear } from '../dom.js';
 import { icon } from '../icons.js';
@@ -16,11 +20,13 @@ import {
   elapsedMs,
   fmtCount,
   fmtDuration,
+  fmtOffset,
   fmtUsd,
   hostname,
   isActiveStatus,
   modelShort,
   onSecond,
+  plural,
   statusIcon,
   statusLabel,
   statusTone,
@@ -54,6 +60,54 @@ function activityFor(a, words) {
   return `${statusLabel(status, 'agent')}…`;
 }
 
+/** "/e/e3913.html" — the readable part of a URL after the host ('' for a bare host). */
+function urlPath(url) {
+  let parsed = null;
+  try {
+    parsed = new URL(str(url));
+  } catch {
+    return '';
+  }
+  let path = parsed.pathname || '';
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* keep it encoded */
+  }
+  path = path.replace(/\/+$/, '');
+  if (parsed.search) path += parsed.search.length > 40 ? `${parsed.search.slice(0, 39)}…` : parsed.search;
+  return path;
+}
+
+/**
+ * The agent's steps in order: the observed trail first (dropping steps past the current lists),
+ * then anything it does not cover — queries before page reads, without times.
+ */
+function trailSteps(a, trail) {
+  const searches = Array.isArray(a.searches) ? a.searches : [];
+  const fetches = Array.isArray(a.fetches) ? a.fetches : [];
+  const steps = [];
+  const hasS = new Uint8Array(searches.length);
+  const hasF = new Uint8Array(fetches.length);
+  if (Array.isArray(trail)) {
+    for (const s of trail) {
+      if (!s || !Number.isInteger(s.index) || s.index < 0) continue;
+      if (s.kind === 'search' && s.index < searches.length && !hasS[s.index]) {
+        hasS[s.index] = 1;
+        steps.push({ kind: 'search', index: s.index, at: s.at || null });
+      } else if (s.kind === 'read' && s.index < fetches.length && !hasF[s.index]) {
+        hasF[s.index] = 1;
+        steps.push({ kind: 'read', index: s.index, at: s.at || null });
+      }
+    }
+  }
+  const missing = [];
+  for (let i = 0; i < searches.length; i++) if (!hasS[i]) missing.push({ kind: 'search', index: i, at: null });
+  for (let i = 0; i < fetches.length; i++) if (!hasF[i]) missing.push({ kind: 'read', index: i, at: null });
+  // Unseen steps happened before the observed ones (they were already there when we first looked).
+  return missing.length ? missing.concat(steps) : steps;
+}
+
 function section(name, label, open) {
   const count = h('span', { class: 'hud-sec__count' });
   const summary = h(
@@ -76,6 +130,7 @@ export function createAgentCard(agent, opts = {}) {
   const id = `hud-agent-${++seq}`;
   let expanded = !!opts.expanded;
   const onToggle = typeof opts.onToggle === 'function' ? opts.onToggle : null;
+  const getTrail = typeof opts.getTrail === 'function' ? opts.getTrail : null;
   let a = agent || {};
 
   // --- static structure ---------------------------------------------------------------------
@@ -128,6 +183,10 @@ export function createAgentCard(agent, opts = {}) {
   const taskMeta = h('p', { class: 'hud-agent__meta' });
   secTask.body.append(taskText, taskMeta);
 
+  const secTrail = section('trail', 'Search log', false);
+  const trailList = h('ol', { class: 'hud-trail', attrs: { 'aria-label': 'Searches and pages read, in order' } });
+  secTrail.body.append(trailList);
+
   const secThinking = section('thinking', 'Thinking', false);
   const thinkingText = h('div', { class: 'hud-agent__thinking' });
   secThinking.body.append(thinkingText);
@@ -150,6 +209,7 @@ export function createAgentCard(agent, opts = {}) {
     { class: 'hud-agent__body', id: `${id}-body`, hidden: !expanded },
     errorBox,
     secTask.details,
+    secTrail.details,
     secThinking.details,
     secReport.details,
     secSources.details,
@@ -175,7 +235,7 @@ export function createAgentCard(agent, opts = {}) {
     setExpanded(!expanded, true);
   });
 
-  for (const sec of [secThinking, secReport, secSources]) {
+  for (const sec of [secTrail, secThinking, secReport, secSources]) {
     sec.details.addEventListener('toggle', () => refreshLazy(true));
   }
 
@@ -198,6 +258,8 @@ export function createAgentCard(agent, opts = {}) {
     reportStreaming: null,
     thinkingText: null,
     sourcesKey: null,
+    trailKey: null,
+    trailCount: undefined,
   };
   let wordsFor = null;
   let words = 0;
@@ -258,6 +320,80 @@ export function createAgentCard(agent, opts = {}) {
     if (secReport.details.open && !secReport.details.hidden) scheduleReport(immediate);
     if (secThinking.details.open && !secThinking.details.hidden) scheduleThinking(immediate);
     if (secSources.details.open && !secSources.details.hidden) renderSources();
+    if (secTrail.details.open && !secTrail.details.hidden) renderTrail();
+  }
+
+  // Search log rows are keyed by step ("search:3" / "read:0"); a row is rebuilt only if its text
+  // or time changed (a retry restarts the lists), and rows are only moved when the order changes.
+  const trailRows = new Map();
+  function readTrail() {
+    if (!getTrail) return null;
+    try {
+      return getTrail();
+    } catch {
+      return null;
+    }
+  }
+
+  function renderTrail() {
+    const trail = readTrail();
+    const searches = Array.isArray(a.searches) ? a.searches : [];
+    const fetches = Array.isArray(a.fetches) ? a.fetches : [];
+    const start = Number(a.startedAt) || 0;
+    const key = `${searches.length}|${fetches.length}|${trail ? trail.length : -1}|${start}|${a.attempts}`;
+    if (key === shown.trailKey) return;
+    shown.trailKey = key;
+    const steps = trailSteps(a, trail);
+    const seen = new Set();
+    let prev = null;
+    for (const step of steps) {
+      const rowKey = `${step.kind}:${step.index}`;
+      seen.add(rowKey);
+      const raw = str(step.kind === 'search' ? searches[step.index] : fetches[step.index]);
+      const when = step.at && start ? fmtOffset(step.at - start) : '';
+      let row = trailRows.get(rowKey);
+      if (!row || row.raw !== raw || row.when !== when) {
+        const li = trailRow(step.kind, raw, when);
+        if (row) row.li.replaceWith(li);
+        row = { li, raw, when };
+        trailRows.set(rowKey, row);
+      }
+      const expected = prev ? prev.nextSibling : trailList.firstChild;
+      if (row.li !== expected) trailList.insertBefore(row.li, expected);
+      prev = row.li;
+    }
+    for (const [rowKey, row] of trailRows) {
+      if (!seen.has(rowKey)) {
+        row.li.remove();
+        trailRows.delete(rowKey);
+      }
+    }
+  }
+
+  function trailRow(kind, raw, when) {
+    const glyph = h('span', { class: 'hud-trail__icon', attrs: { 'aria-hidden': 'true' } }, icon(kind === 'search' ? 'search' : 'globe', { size: 13 }));
+    const time = h('span', { class: 'hud-trail__time', text: when, attrs: when ? { title: 'Time since the agent started' } : null });
+    let row;
+    if (kind === 'search') {
+      const text = h('span', { class: 'hud-trail__text' }, h('span', { class: 'hud-sr', text: 'Searched ' }), `“${raw.replace(/\s+/g, ' ').trim()}”`);
+      row = h('div', { class: 'hud-trail__row' }, glyph, text, time);
+    } else {
+      // A page read: the whole row is the link (opens in a new tab; unsafe URLs stay plain text).
+      const host = hostname(raw);
+      const path = host ? urlPath(raw) : '';
+      const text = h(
+        'span',
+        { class: 'hud-trail__text' },
+        h('span', { class: 'hud-sr', text: 'Read ' }),
+        h('span', { class: 'hud-trail__host', text: host || raw }),
+        path ? h('span', { class: 'hud-trail__path', text: path }) : null,
+      );
+      const href = safeUrl(raw);
+      row = href
+        ? h('a', { class: 'hud-trail__row hud-trail__row--link', href, title: raw, attrs: { target: '_blank', rel: 'noopener noreferrer' } }, glyph, text, time)
+        : h('div', { class: 'hud-trail__row' }, glyph, text, time);
+    }
+    return h('li', { class: 'hud-trail__step', dataset: { kind } }, row);
   }
 
   function scheduleReport(immediate) {
@@ -450,6 +586,15 @@ export function createAgentCard(agent, opts = {}) {
     if (secThinking.details.hidden === hasThinking) secThinking.details.hidden = !hasThinking;
     if (secReport.details.hidden === !!report) secReport.details.hidden = !report;
     if (secSources.details.hidden === sourceCount > 0) secSources.details.hidden = sourceCount === 0;
+    const nSearch = Array.isArray(a.searches) ? a.searches.length : 0;
+    const nRead = Array.isArray(a.fetches) ? a.fetches.length : 0;
+    const hasTrail = nSearch + nRead > 0;
+    if (secTrail.details.hidden === hasTrail) secTrail.details.hidden = !hasTrail;
+    const trailCount = [nSearch ? plural(nSearch, 'search', 'searches') : '', nRead ? plural(nRead, 'page') : ''].filter(Boolean).join(' · ');
+    if (trailCount !== shown.trailCount) {
+      shown.trailCount = trailCount;
+      setText(secTrail.count, trailCount);
+    }
 
     syncTimer();
     refreshLazy(false);

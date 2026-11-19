@@ -285,8 +285,26 @@ export function createChat(o) {
     const ro = new ResizeObserver(() => onGrow());
     ro.observe(content);
     // The visible area changed (rotation, keyboard, banners): re-fit the empty-state hero.
-    const roScroller = new ResizeObserver(() => fitHero());
+    const roScroller = new ResizeObserver(() => {
+      fitHero();
+      keepFocusInView();
+    });
     roScroller.observe(scroller);
+  }
+
+  // The on-screen keyboard shrinks the scroller (iOS): keep a focused field in it (a protocol's
+  // input row) visible instead of leaving it under the keyboard.
+  function keepFocusInView() {
+    const a = document.activeElement;
+    if (!a || !scroller.contains(a) || !/^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
+    const r = a.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    if (r.bottom <= box.bottom - 8 && r.top >= box.top) return;
+    try {
+      a.scrollIntoView({ block: 'center', behavior: 'auto' });
+    } catch {
+      /* ignore */
+    }
   }
 
   // ---- empty state ----------------------------------------------------------------
@@ -333,10 +351,21 @@ export function createChat(o) {
       sub: h('p', { class: 'greeting-sub', text: g.subtitle }),
       meta: h('p', { class: 'greeting-meta', text: g.meta || '', hidden: !g.meta }),
     };
+    const reticle = h('div', { class: 'hero-reticle', attrs: { 'aria-hidden': 'true' } });
+    // With Voice Mode available, the core itself is the way in: tap it to talk to Jarvis.
+    const core =
+      typeof o.onVoice === 'function'
+        ? h(
+            'button',
+            { class: 'hero-core hero-core--talk', type: 'button', attrs: { 'aria-label': 'Talk to Jarvis (voice mode)', title: 'Talk to Jarvis', 'data-testid': 'hero-talk' }, on: { click: () => o.onVoice() } },
+            canvas,
+            reticle,
+          )
+        : h('div', { class: 'hero-core' }, canvas, reticle);
     const fold = h(
       'div',
       { class: 'empty-fold' },
-      h('div', { class: 'hero' }, h('div', { class: 'hero-core' }, canvas, h('div', { class: 'hero-reticle', attrs: { 'aria-hidden': 'true' } }))),
+      h('div', { class: 'hero' }, core),
       greetEls.title,
       greetEls.sub,
       greetEls.meta,

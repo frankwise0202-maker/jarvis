@@ -27,6 +27,7 @@ import {
   updatePlanning,
 } from './mission.js';
 import { invalidJsonResult, parseToolJson, validateMemoryInput } from './validate.js';
+import { isAttachmentBlock } from './attachments.js';
 import { MODELS } from './models.js';
 import { abortError, jsonCopy, parsePartialJson, sleep, uid } from './util.js';
 
@@ -553,6 +554,32 @@ function stopTurn(ctx) {
   return ctx.finish('stopped', null);
 }
 
+/**
+ * A photo or PDF that Claude rejects (400, or 413 too large, on the turn's first request) would
+ * otherwise stay in the append-only history and make every later request fail too. The user
+ * message carrying it is then the last message and nothing was built on it (no assistant content,
+ * no thinking block is bound to it), so it is withdrawn from apiMessages; the transcript keeps it,
+ * with this error. Returns the ErrorInfo to report.
+ */
+function withdrawRejectedAttachments(ctx, info) {
+  if (ctx.req !== 0 || (info.kind !== 'bad_request' && info.kind !== 'context')) return info;
+  const messages = ctx.conv.apiMessages;
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'user' || !Array.isArray(last.content) || !last.content.some(isAttachmentBlock)) return info;
+  messages.pop();
+  ctx.conv.updatedAt = ctx.stamp();
+  const several = last.content.filter(isAttachmentBlock).length > 1;
+  const files = several ? 'the attached files' : 'the attached file';
+  if (info.kind === 'context') {
+    return { ...info, message: `${several ? 'The attached files are' : 'The attached file is'} too large for Claude to read here, so this message was left out of the conversation. Try ${several ? 'fewer or smaller files' : 'a smaller file'}.` };
+  }
+  const detail = String(info.message || '').replace(/^Claude rejected the request:\s*/, '').trim();
+  return {
+    ...info,
+    message: `Claude couldn’t accept ${files}, so this message was left out of the conversation. Try ${several ? 'different files' : 'a different file'}.${detail ? ` (${detail})` : ''}`,
+  };
+}
+
 function failTurn(ctx, info, req) {
   if (ctx.round) closeRound(ctx, `Not completed: ${info.message}`);
   ctx.paused = [];
@@ -594,7 +621,7 @@ export async function runLeadTurn(ctx, { resume = false } = {}) {
       const info = classifyError(err, { model: ctx.leadModel });
       if (info.kind === 'network') return interruptTurn(ctx, info);
       if (info.kind === 'unknown') console.error('[jarvis] lead request failed:', err);
-      return failTurn(ctx, info, ctx.currentReq);
+      return failTurn(ctx, withdrawRejectedAttachments(ctx, info), ctx.currentReq);
     } catch (fatal) {
       console.error('[jarvis] could not finish the turn cleanly:', fatal);
       return ctx.finish('error', { kind: 'unknown', message: 'Something went wrong.', retryable: false });

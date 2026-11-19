@@ -5,9 +5,11 @@
 @import './tokens.css';
 @import './base.css';
 @import './chat.css';
+@import './composer-extras.css'; /* B2 (SPEC §15); composer.js imports it too, esbuild keeps one copy */
 @import './protocols.css';
 @import './hud.css';
 @import './stats.css';
+@import './voice-mode.css';
 @import './themes.css';
 
 /* ---- shell ---------------------------------------------------------------------------- */
@@ -194,6 +196,22 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.status-text.has-detail .status-detail::before {
+  content: ' · ';
+}
+
+/* Phones: "Working · 12 agents" doesn't fit beside four header buttons; the pulsing accent
+   dot already says "working", so show just "12 agents". */
+@media (max-width: 420px) {
+  .status-text.has-detail .status-label {
+    display: none;
+  }
+
+  .status-text.has-detail .status-detail::before {
+    content: none;
+  }
 }
 
 .status-dot {
@@ -1301,6 +1319,13 @@
 
 .set-row > .set-row-actions {
   padding: 0;
+}
+
+/* Settings → Appearance: the theme picker sizes itself from its container (inline-size
+   containment), so its wrapper must take the full row width. */
+.theme-setting {
+  width: 100%;
+  min-width: 0;
 }
 
 .range-wrap {
