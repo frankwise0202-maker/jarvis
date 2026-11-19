@@ -26,6 +26,7 @@ import pwa from './scenarios/pwa.mjs';
 import layout from './scenarios/layout.mjs';
 import features from './scenarios/features.mjs';
 import security from './scenarios/security.mjs';
+import interaction from './scenarios/interaction.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -35,7 +36,7 @@ async function optionalScenarios(rel) {
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features, ...attachments, ...security];
+export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features, ...attachments, ...security, ...interaction];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

@@ -13,7 +13,9 @@
 //     coalesced (the newest object wins), so a fast-streaming turn never piles up writes.
 //   - Nothing here throws or rejects for storage problems (private mode, quota, a lost
 //     connection, a blocked upgrade). Problems are logged once; affected conversations are kept
-//     in memory for this session, and isPersistent() turns false.
+//     in memory for this session, and isPersistent() turns false. getPersistence() says why
+//     ({ persistent, reason: null | 'quota' | 'unavailable' }) and onPersistenceChange(fn)
+//     reports every change, so the UI can tell the owner (e.g. the device is out of storage).
 //   - Safari can drop the IndexedDB connection while the app is in the background; a failed
 //     transaction on a closed connection is retried once on a fresh connection.
 //   - Deletion is final for this session: after deleteConversation(id) (or
@@ -39,6 +41,9 @@ const memory = new Map(); // id -> { conv, meta }: conversations not (yet) on di
 const deleted = new Set(); // ids deleted this session (see header)
 const queuedSaves = new Map(); // id -> { conv, promise } for saves waiting in the queue
 let queue = Promise.resolve();
+const persistenceListeners = new Set();
+let lastWriteProblem = null; // why the latest failed save fell back to memory: 'quota' | 'unavailable'
+let reported = { persistent: true, reason: null }; // the state listeners last heard
 
 // ---------------------------------------------------------------------------------------
 // Public API
@@ -90,6 +95,7 @@ export function deleteConversation(id) {
   if (typeof id !== 'string' || !id) return Promise.resolve();
   deleted.add(id);
   memory.delete(id);
+  notifyPersistence();
   return enqueue(async () => {
     await withDb((db) => write(db, (stores) => {
       stores[STORE].delete(id);
@@ -103,6 +109,7 @@ export function deleteAllConversations() {
   for (const id of memory.keys()) deleted.add(id);
   for (const id of queuedSaves.keys()) deleted.add(id);
   memory.clear();
+  notifyPersistence();
   return enqueue(async () => {
     const keys = await withDb((db) => readAllKeys(db, META), 'list conversations');
     if (keys.ok) for (const id of keys.value) if (typeof id === 'string') deleted.add(id);
@@ -119,6 +126,31 @@ export function deleteAllConversations() {
  */
 export function isPersistent() {
   return !openFailed && hasIndexedDB() && memory.size === 0;
+}
+
+/**
+ * Whether history is reaching the device's storage, and if not why:
+ * { persistent: true, reason: null } | { persistent: false, reason: 'quota' | 'unavailable' }.
+ * 'quota': the device is out of storage space; 'unavailable': IndexedDB is blocked, missing (e.g.
+ * private browsing) or failing. Same facts as isPersistent(); accurate after the first db call.
+ */
+export function getPersistence() {
+  if (openFailed || !hasIndexedDB()) return { persistent: false, reason: 'unavailable' };
+  if (memory.size > 0) return { persistent: false, reason: lastWriteProblem || 'unavailable' };
+  return { persistent: true, reason: null };
+}
+
+/**
+ * fn({ persistent, reason }) whenever getPersistence() changes (saving stopped, or works again
+ * after space was freed). Not called on subscribe: read getPersistence() for the current state.
+ * Returns an unsubscribe function.
+ */
+export function onPersistenceChange(fn) {
+  if (typeof fn !== 'function') return () => {};
+  persistenceListeners.add(fn);
+  return () => {
+    persistenceListeners.delete(fn);
+  };
 }
 
 /**
@@ -213,12 +245,14 @@ async function writeConversation(conv) {
     }), null);
     if (res.ok) {
       memory.delete(conv.id);
+      notifyPersistence();
       return true;
     }
   } catch (err) {
+    const full = !!err && (err.name === 'QuotaExceededError' || /quota/i.test(String(err.message)));
+    lastWriteProblem = full ? 'quota' : 'unavailable';
     if (!warnedWrite) {
       warnedWrite = true;
-      const full = err && (err.name === 'QuotaExceededError' || /quota/i.test(String(err.message)));
       reportWarning(
         full
           ? 'Device storage is full: new conversation history is kept only until this page closes.'
@@ -228,7 +262,22 @@ async function writeConversation(conv) {
     }
   }
   memory.set(conv.id, { conv: snapshot(conv), meta });
+  notifyPersistence();
   return false;
+}
+
+/** Tell listeners when getPersistence() changed since they last heard. Never throws. */
+function notifyPersistence() {
+  const next = getPersistence();
+  if (next.persistent === reported.persistent && next.reason === reported.reason) return;
+  reported = next;
+  for (const fn of Array.from(persistenceListeners)) {
+    try {
+      fn({ ...next });
+    } catch (err) {
+      reportWarning('A persistence listener failed', err);
+    }
+  }
 }
 
 /** put() a structured clone; values that cannot be cloned (functions…) fall back to JSON. */
@@ -353,6 +402,7 @@ function giveUp(why) {
     warnedOpen = true;
     reportWarning('Conversation history cannot be saved on this device (private browsing or blocked storage); it lasts until this page closes.', why && why.name ? why.name : why);
   }
+  notifyPersistence();
   return null;
 }
 

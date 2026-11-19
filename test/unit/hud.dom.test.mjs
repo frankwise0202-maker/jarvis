@@ -275,6 +275,110 @@ test('queued agents show why they wait; a retry countdown reads "Retrying" on th
   assert.deepEqual(r.after.chip, { status: 'starting', tone: 'active', refresh: false, sr: ' — Starting' });
 });
 
+test('header mini orb rests on a static frame after a quiet spell and wakes on any change', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const { createCore } = window.__mods.core;
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const mk = (mode, extra) => {
+      const c = document.createElement('canvas');
+      c.style.width = mode === 'mini' ? '32px' : '200px';
+      document.body.append(c);
+      return createCore(c, { mode, ...extra });
+    };
+    const mini = mk('mini', { idleSleepMs: 300 });
+    const orbit = mk('orbit', {});
+    const seen = {};
+    await sleep(150);
+    seen.start = mini.debugStats();
+    await sleep(400);
+    seen.dozed = mini.debugStats();
+    mini.setState('thinking'); // any change wakes it
+    await sleep(100);
+    seen.woke = mini.debugStats();
+    await sleep(500);
+    seen.busy = mini.debugStats(); // not resting: never dozes while working
+    mini.setState('idle');
+    await sleep(450);
+    seen.again = mini.debugStats();
+    seen.orbit = orbit.debugStats(); // other cores never doze on their own
+    mini.destroy();
+    orbit.destroy();
+    return Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, { awake: v.awake, dozing: v.dozing }]));
+  });
+  assert.deepEqual(r.start, { awake: true, dozing: false });
+  assert.deepEqual(r.dozed, { awake: false, dozing: true });
+  assert.deepEqual(r.woke, { awake: true, dozing: false });
+  assert.deepEqual(r.busy, { awake: true, dozing: false });
+  assert.deepEqual(r.again, { awake: false, dozing: true });
+  assert.deepEqual(r.orbit, { awake: true, dozing: false });
+});
+
+test('canvas resolution: capped at 2x on phones, up to 3x on desktop', async () => {
+  const measure = async (contextOptions) => {
+    const p = await page({ contextOptions });
+    return p.evaluate(async () => {
+      const c = document.createElement('canvas');
+      c.style.width = '200px';
+      document.body.append(c);
+      window.__mods.core.createCore(c, { mode: 'orbit' });
+      await new Promise((res) => setTimeout(res, 100));
+      return c.width;
+    });
+  };
+  assert.equal(await measure({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }), 400);
+  assert.equal(await measure({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 3 }), 600);
+  assert.equal(await measure({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }), 200);
+});
+
+test('comms filter chips (even "All") are at least 44×44 on touch screens', async () => {
+  const p = await page({ contextOptions: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+  const r = await p.evaluate(() => {
+    const m = mkMission([mkAgent('Atlas', { status: 'searching', attempts: 1, startedAt: Date.now() })]);
+    const host = document.createElement('div');
+    host.style.cssText = 'width:390px;height:800px;display:flex;flex-direction:column';
+    document.body.append(host);
+    const mc = window.__mods.mc.createMissionControl({ container: host, variant: 'sheet' });
+    mc.show(mkTurn([m]));
+    mc.el.querySelector('[data-testid="comms-toggle"]').click();
+    return [...mc.el.querySelectorAll('.hud-comms__chip')].map((b) => { const r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)]; });
+  });
+  for (const [label, w, h] of r) assert.ok(w >= 44 && h >= 44, `${label}: ${w}×${h}`);
+});
+
+test('Mission Control re-renders less often while many agents are in flight', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const run = async (n) => {
+      const agents = Array.from({ length: n }, (_, i) => mkAgent(`A${i}`, { status: 'searching', attempts: 1, startedAt: Date.now() }));
+      const m = mkMission(agents);
+      const turn = mkTurn([m]);
+      const host = document.createElement('div');
+      host.style.cssText = 'width:400px;height:800px;display:flex;flex-direction:column';
+      document.body.append(host);
+      const mc = window.__mods.mc.createMissionControl({ container: host, variant: 'panel' });
+      mc.show(turn);
+      const text = () => mc.el.querySelector('[data-testid="agent-card"] .hud-agent__activity-text').textContent;
+      const shown = new Set();
+      const t0 = performance.now();
+      let k = 0;
+      while (performance.now() - t0 < 2000) {
+        agents[0].activity = `Searching “q${++k}”`;
+        mc.update(turn, m);
+        shown.add(text());
+        await sleep(16);
+      }
+      mc.destroy();
+      host.remove();
+      return shown.size;
+    };
+    return { few: await run(2), many: await run(20) };
+  });
+  assert.ok(r.few >= 12, `2 agents: ${r.few} renders in 2s (expected about 20)`);
+  assert.ok(r.many <= 6, `20 agents: ${r.many} renders in 2s (expected about 4)`);
+});
+
 test('core: celebrate() exists on every core (including the no-canvas fallback) and is safe', async () => {
   const p = await page();
   const r = await p.evaluate(() => {

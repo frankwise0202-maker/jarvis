@@ -377,6 +377,27 @@ function toolResultBlock(id, result) {
   return block;
 }
 
+export const STOPPED_BEFORE_ALL_FINISHED = 'Stopped by the owner before all agents finished.';
+
+/**
+ * Results for a tool round the owner cut short (Stop, or a new message instead of Resume): a
+ * deploy_agents call whose mission has at least one finished agent gets the mission report
+ * (missionResultText, which also lists the stopped agents) after STOPPED_BEFORE_ALL_FINISHED, as a
+ * normal result, so the finished agents' work is not thrown away. Calls that already have a
+ * result keep it; the rest are left for toolResultMessage's fallback error. Returns a new map.
+ */
+export function stoppedRoundResults(turn, toolUses, results, { limit } = {}) {
+  const out = { ...(results || {}) };
+  for (const tu of toolUses || []) {
+    if (!tu || out[tu.id] || tu.name !== 'deploy_agents') continue;
+    const mission = findMissionByToolUse(turn, tu.id);
+    if (!mission || !mission.startedAt || !(mission.agents || []).some((a) => a.status === 'done')) continue;
+    const requested = Array.isArray(tu.input?.agents) ? tu.input.agents.length : mission.agents.length;
+    out[tu.id] = { content: `${STOPPED_BEFORE_ALL_FINISHED}\n${missionResultText(mission, { requested, limit })}` };
+  }
+  return out;
+}
+
 /** ONE user message holding a tool_result per tool_use, in tool_use order. */
 export function toolResultMessage(toolUses, results, fallbackText = STOPPED_BY_OWNER) {
   return {
@@ -588,9 +609,31 @@ function interruptTurn(ctx, info) {
 }
 
 function stopTurn(ctx) {
-  if (ctx.round) closeRound(ctx, STOPPED_BY_OWNER);
+  if (ctx.round) {
+    // The round's missions have settled by now (finishRound waits for every agent to stop).
+    ctx.round.results = stoppedRoundResults(ctx.turn, ctx.round.toolUses, ctx.round.results, { limit: ctx.settings.maxAgents });
+    closeRound(ctx, STOPPED_BY_OWNER);
+  }
   ctx.paused = [];
+  withdrawUnanswered(ctx);
   return ctx.finish('stopped', null);
+}
+
+/**
+ * A turn stopped before Jarvis appended anything to the history (e.g. Send tapped twice, the
+ * second tap landing on Stop) is withdrawn: its user message is the last one and nothing was built
+ * on it, so removing it edits no earlier prefix (as in withdrawRejectedAttachments). Otherwise the
+ * message - with any photos - would stay in the history, and sending it again would carry it twice.
+ * `turn.withdrawn = true` (emitted with the final 'turn' event) tells the UI to put the text and
+ * attachments back into the composer; the UserTurn and the JarvisTurn stay in conversation.turns.
+ */
+function withdrawUnanswered(ctx) {
+  const start = ctx.turn.apiStart;
+  const messages = ctx.conv.apiMessages;
+  if (!Number.isInteger(start) || start < 0 || messages.length !== start + 1 || messages[start]?.role !== 'user') return;
+  messages.pop();
+  ctx.turn.withdrawn = true;
+  ctx.conv.updatedAt = ctx.stamp();
 }
 
 /**

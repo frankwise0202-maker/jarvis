@@ -274,6 +274,62 @@ test('wakelock: keeps the screen awake, re-acquires after the page is shown agai
   });
 });
 
+test('wakelock: owners are counted - closing Voice Mode keeps the lock while a run still holds it', async () => {
+  const page = await h.newPage({ init: FAKE_WAKELOCK });
+  const r = await page.evaluate(async () => {
+    const { keepAwake, allowSleep, isAwake, awakeOwners } = window.__mods.wakelock;
+    const tick = () => new Promise((res) => setTimeout(res, 20));
+    const out = {};
+    await keepAwake('run');
+    await keepAwake('voice');
+    await keepAwake('voice'); // an owner counts once however often it asks
+    out.owners = awakeOwners().sort();
+    out.requests = window.__wl.requests;
+    allowSleep('voice'); // Voice Mode closes while the swarm runs
+    await tick();
+    out.afterVoice = { awake: isAwake(), releases: window.__wl.releases, owners: awakeOwners() };
+    window.__hide(); // the phone locks; the browser drops the lock
+    window.__show();
+    await tick();
+    out.reacquired = { awake: isAwake(), requests: window.__wl.requests };
+    allowSleep('run'); // the run ends: nobody needs the screen any more
+    await tick();
+    out.afterRun = { awake: isAwake(), owners: awakeOwners() };
+    window.__hide();
+    window.__show();
+    await tick();
+    out.notReacquired = window.__wl.requests;
+    // Calls without an owner keep their old meaning ('default'); a stray event argument counts as 'default'.
+    await keepAwake(new Event('click'));
+    out.defaultOwner = awakeOwners();
+    allowSleep();
+    await tick();
+    out.afterDefault = isAwake();
+    // The last owner leaving while a request is still in flight releases the late lock.
+    window.__wl.delay = 30;
+    const pending = keepAwake('voice');
+    keepAwake('run');
+    allowSleep('voice');
+    out.stillWanted = await pending; // 'run' still wants it
+    allowSleep('run');
+    await tick();
+    out.end = { awake: isAwake(), owners: awakeOwners() };
+    return out;
+  });
+  assert.deepEqual(r, {
+    owners: ['run', 'voice'],
+    requests: 1,
+    afterVoice: { awake: true, releases: 0, owners: ['run'] },
+    reacquired: { awake: true, requests: 2 },
+    afterRun: { awake: false, owners: [] },
+    notReacquired: 2,
+    defaultOwner: ['default'],
+    afterDefault: false,
+    stillWanted: true,
+    end: { awake: false, owners: [] },
+  });
+});
+
 test('wakelock: a quiet no-op without the Wake Lock API', async () => {
   const page = await h.newPage({ init: () => Object.defineProperty(Navigator.prototype, 'wakeLock', { get: () => undefined, configurable: true }) });
   const r = await page.evaluate(async () => {

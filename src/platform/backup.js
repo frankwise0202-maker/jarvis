@@ -7,8 +7,13 @@
 //                         anything shaped like an Anthropic key (sk-ant-…), is left out and listed
 //                         in blob.excludedConversations ([{ id }]); everywhere else (memory,
 //                         protocols, …) such text is replaced by "[API key removed]".
-//   importBackup(file) -> Promise<{ conversations, memory, settings, settingsChanged, skipped }>
-//                         conversations merged by id (the newer updatedAt wins), memory merged
+//   importBackup(file) -> Promise<{ conversations, copies, replaced, memory, settings,
+//                         settingsChanged, skipped }>
+//                         conversations merged by id (the newer updatedAt wins; `replaced` lists
+//                         the ids of local conversations overwritten). A newer backup copy never
+//                         deletes local turns: when this device's copy has turns the backup's lacks
+//                         (the two diverged), the backup's is added as a separate conversation
+//                         (title + " (from backup)"; counted in `copies`). Memory merged
 //                         (case-insensitive dedupe). Only the owner's profile, voice and
 //                         appearance settings are restored (RESTORED_SETTINGS; never limits,
 //                         models, spending or feature flags): `settings` says whether any changed
@@ -127,9 +132,11 @@ export function backupFileName(date = new Date()) {
 
 /**
  * Restore from a backup: a File/Blob (from an <input type="file">), JSON text, or the parsed
- * object. Returns { conversations (added or updated), memory (facts added), settings (whether any
- * restored setting changed), settingsChanged (those keys), skipped (conversations left out: not
- * made by Jarvis, or damaged), ...one entry per registered part }.
+ * object. Returns { conversations (added or updated, copies included), copies (diverged ones added
+ * as a separate conversation), replaced (ids of local conversations overwritten by a newer copy),
+ * memory (facts added), settings (whether any restored setting changed), settingsChanged (those
+ * keys), skipped (conversations left out: not made by Jarvis, or damaged), ...one entry per
+ * registered part }.
  */
 export async function importBackup(file) {
   const data = await readBackup(file);
@@ -137,24 +144,37 @@ export async function importBackup(file) {
   const memory = Array.isArray(data.memory) ? mergeMemory(data.memory) : 0;
 
   let conversations = 0;
+  let copies = 0; // diverged conversations added as a separate copy
+  const replaced = []; // ids of local conversations a newer backup copy overwrote
   let skipped = 0; // not made by Jarvis, or damaged
   if (Array.isArray(data.conversations) && data.conversations.length) {
     const existing = new Map((await listConversations()).map((row) => [row.id, row.updatedAt]));
     const seen = new Set();
     for (const raw of data.conversations) {
-      const conv = cleanConversation(raw);
+      let conv = cleanConversation(raw);
       if (!conv) {
         skipped++;
         continue;
       }
       if (seen.has(conv.id)) continue;
       seen.add(conv.id);
-      if (existing.has(conv.id) && !(conv.updatedAt > existing.get(conv.id))) continue;
+      if (existing.has(conv.id)) {
+        if (!(conv.updatedAt > existing.get(conv.id))) continue;
+        if (await divergedFrom(conv)) {
+          // Both copies moved on: keep the local one whole and add the backup's next to it. The
+          // copy's id is derived from the original, so importing the same file again adds nothing.
+          conv = { ...conv, id: `${conv.id}~backup-${conv.updatedAt}`, title: `${conv.title.trim() || 'Conversation'} (from backup)` };
+          if (existing.has(conv.id) && !(conv.updatedAt > existing.get(conv.id))) continue;
+          copies++;
+        } else {
+          replaced.push(conv.id);
+        }
+      }
       await restoreConversation(conv);
       conversations++;
     }
   }
-  const result = { conversations, memory, settings: settingsChanged.length > 0, settingsChanged, skipped };
+  const result = { conversations, copies, replaced, memory, settings: settingsChanged.length > 0, settingsChanged, skipped };
   for (const [name, part] of parts) {
     if (data[name] === undefined) continue;
     try {
@@ -212,6 +232,14 @@ async function readBackup(file) {
   if (data.conversations !== undefined && !Array.isArray(data.conversations)) throw new Error('This Jarvis backup is damaged (conversations).');
   if (data.memory !== undefined && !Array.isArray(data.memory)) throw new Error('This Jarvis backup is damaged (memory).');
   return data;
+}
+
+/** Whether this device's copy of `conv` has turns that the (newer) backup copy lacks. */
+async function divergedFrom(conv) {
+  const local = await getConversation(conv.id);
+  if (!local || !Array.isArray(local.turns)) return false;
+  const inBackup = new Set(conv.turns.map((t) => t.id));
+  return local.turns.some((t) => isPlainObject(t) && typeof t.id === 'string' && !inBackup.has(t.id));
 }
 
 /**

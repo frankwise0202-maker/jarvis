@@ -433,6 +433,7 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    padding-bottom: var(--safe-bottom); /* iPad: keep the Systems launcher off the home indicator */
     border-left: 1px solid var(--line);
     background: var(--surface);
     -webkit-backdrop-filter: var(--blur);
@@ -464,7 +465,7 @@
 
   .panel-stats {
     flex: none;
-    padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + var(--safe-bottom));
+    padding: var(--sp-3) var(--sp-4);
     border-top: 1px solid var(--line);
     background: var(--bg-2);
   }
@@ -717,9 +718,10 @@
   top: 0;
   bottom: 0;
   left: 0;
-  width: min(86vw, 360px);
+  width: min(86vw, calc(360px + var(--safe-left)));
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
   border-left: 0;
   border-radius: 0 var(--r-xl) var(--r-xl) 0;
   touch-action: pan-y;
@@ -730,6 +732,12 @@
   display: none;
 }
 
+/* The History list scrolls vertically; horizontal swipes on it close the drawer (sheet.js). */
+.sheet--left .history-list,
+.sheet--left .history-open {
+  touch-action: pan-y;
+}
+
 .sheet-wrap[data-state='open'] .sheet--left {
   transform: translateX(var(--drag, 0px));
 }
@@ -738,6 +746,8 @@
 .sheet--full {
   inset: 0;
   padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
   border: 0;
   border-radius: 0;
   opacity: 0;
@@ -941,6 +951,10 @@
 
 .history .new-chat .icon {
   color: var(--accent);
+}
+
+.history .new-chat:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .history .new-chat:hover {
@@ -1173,7 +1187,7 @@
   flex: none;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
+  min-height: var(--tap);
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-pill);

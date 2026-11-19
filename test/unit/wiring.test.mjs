@@ -226,8 +226,8 @@ test('backup: registered parts travel in the backup and merge on import; reset c
     return result;
   }, file);
   // Settings are the defaults on both sides, so none changed (only changes are reported).
-  assert.deepEqual(r.first, { conversations: 0, memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 1, stats: true });
-  assert.deepEqual(r.second, { conversations: 0, memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 0, stats: false });
+  assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 1, stats: true });
+  assert.deepEqual(r.second, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 0, stats: false });
   assert.deepEqual(r.names, ['Weekend Planner']);
   assert.equal(r.agents, 1);
   assert.deepEqual(r.after, { protocols: null, stats: null });
@@ -255,6 +255,6 @@ test('backup: part names are validated and a failing part never breaks a backup'
   });
   assert.deepEqual(r.errors, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
   assert.equal(r.hasBroken, false);
-  assert.deepEqual(r.imported, { conversations: 0, memory: 0, settings: false, settingsChanged: [], skipped: 0, broken: 0 });
+  assert.deepEqual(r.imported, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, broken: 0 });
   assert.deepEqual(r.keysAfter, ['app', 'conversations', 'exportedAt', 'memory', 'settings', 'version']);
 });

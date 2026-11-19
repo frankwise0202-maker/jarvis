@@ -3,7 +3,7 @@
 // activity onto the HUD core (idle / listening / thinking / working / speaking / error /
 // offline). Demo mode (?demo=1) swaps in a scripted engine and an in-memory store.
 
-import { h, on, raf, throttle } from './dom.js';
+import { h, on, raf } from './dom.js';
 import { icon } from './icons.js';
 import { createHeader } from './header.js';
 import { createChat, plainText } from './chat.js';
@@ -283,14 +283,33 @@ export async function startApp(rootEl) {
 
   // ---- announcements (throttled aria-live) ------------------------------------------------
   let lastAnnounce = '';
-  const announce = throttle((msg) => {
-    if (!msg || msg === lastAnnounce) return;
+  // Each message is spoken, at most one every 2.5 s (a burst such as "Mission complete" then
+  // "Reply ready" is queued, not collapsed to its last line); repeats of the line just spoken
+  // or already waiting are skipped.
+  const ANNOUNCE_GAP_MS = 2500;
+  const announceQueue = [];
+  let announceTimer = 0;
+  let lastAnnouncedAt = -Infinity;
+  function speakNextAnnouncement() {
+    announceTimer = 0;
+    const msg = announceQueue.shift();
+    if (!msg) return;
     lastAnnounce = msg;
+    lastAnnouncedAt = performance.now();
     live.textContent = msg;
     setTimeout(() => {
       if (lastAnnounce === msg) lastAnnounce = '';
     }, 4000);
-  }, 2500);
+    if (announceQueue.length) announceTimer = setTimeout(speakNextAnnouncement, ANNOUNCE_GAP_MS);
+  }
+  function announce(msg) {
+    if (!msg || msg === lastAnnounce || announceQueue.includes(msg)) return;
+    announceQueue.push(msg);
+    if (announceQueue.length > 4) announceQueue.splice(0, announceQueue.length - 4); // stay current
+    if (announceTimer) return;
+    const wait = Math.max(0, lastAnnouncedAt + ANNOUNCE_GAP_MS - performance.now());
+    announceTimer = setTimeout(speakNextAnnouncement, wait);
+  }
 
   // ---- greeting & readouts --------------------------------------------------------------
   function metaLine() {
@@ -335,7 +354,7 @@ export async function startApp(rootEl) {
       return ['thinking', 'Working…'];
     }
     if (!state.online) return ['offline', 'Offline'];
-    if (Date.now() < state.errorUntil) return ['error', 'Online'];
+    if (Date.now() < state.errorUntil) return ['error', 'Check reply'];
     return ['idle', 'Online'];
   }
 
@@ -438,6 +457,10 @@ export async function startApp(rootEl) {
   function setConversation(conv, { remember = true } = {}) {
     clearFollowups();
     state.conv = conv || null;
+    // A turn saved as running with no live run here was cut off (the app was closed or killed
+    // mid-reply). Asking the engine settles it (status "interrupted", agents and missions too)
+    // before anything renders, so no mission card shows a stale RUNNING next to "Resume".
+    if (state.conv && !state.runs.has(state.conv.id)) safe(() => engine.canResume(state.conv));
     chat.setConversation(state.conv);
     history.setActive(state.conv ? state.conv.id : null);
     selectLatestMission();
@@ -528,7 +551,7 @@ export async function startApp(rootEl) {
       toast(err && err.message ? err.message : 'Jarvis couldn’t start that request.', { level: 'error' });
       return false;
     }
-    attachRun(conv, run);
+    attachRun(conv, run, { text: clean, attachments });
     if (!safe(() => isVoiceModeOpen(), false)) safe(() => sounds.cue('send')); // Voice Mode has its own cues
     if (fresh || state.conv !== conv) setConversation(conv);
     else chat.sync();
@@ -566,7 +589,8 @@ export async function startApp(rootEl) {
         tts,
         markdownToPlainText,
         sounds,
-        wakeLock: { keepAwake, allowSleep },
+        // Its own owner: closing Voice Mode must not let the screen sleep while a run continues.
+        wakeLock: { keepAwake: () => keepAwake('voice'), allowSleep: () => allowSleep('voice') },
         activeRun: entry ? entry.run : null,
         mode: () => composer.getMode(),
         onClose: () => {
@@ -625,14 +649,15 @@ export async function startApp(rootEl) {
       });
   }
 
-  function attachRun(conv, run) {
-    const entry = { run, conv, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
+  /** `sent` = { text, attachments } of a new message: given back if the turn is withdrawn. */
+  function attachRun(conv, run, sent = null) {
+    const entry = { run, conv, sent, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
     state.runs.set(conv.id, entry);
     entry.unsub = run.on('*', (evt) => onRunEvent(entry, evt));
     Promise.resolve(run.done)
       .catch((err) => console.error('[jarvis] run failed:', err))
       .then(() => onRunDone(entry));
-    safe(() => keepAwake());
+    safe(() => keepAwake('run'));
     announce('Jarvis is working');
     updateCore();
   }
@@ -683,7 +708,7 @@ export async function startApp(rootEl) {
   function onRunDone(entry) {
     if (entry.unsub) safe(() => entry.unsub());
     if (state.runs.get(entry.conv.id) === entry) state.runs.delete(entry.conv.id);
-    if (!state.runs.size) safe(() => allowSleep());
+    if (!state.runs.size) safe(() => allowSleep('run'));
     const turn = entry.run.turn;
     if (turn && !state.demo) safe(() => recordTurn(turn));
     if (isCurrent(entry)) {
@@ -691,6 +716,13 @@ export async function startApp(rootEl) {
       mcMarkDirty(turn, null);
     }
     refreshHistory();
+    // Stopped before Jarvis wrote anything, the message was taken back (the engine marks the turn
+    // withdrawn): its text and attachments go back in the box, ready to edit or send again.
+    if (turn && turn.withdrawn === true && entry.sent && isCurrent(entry)) {
+      safe(() => composer.restoreMessage(entry.sent.text, entry.sent.attachments));
+      toast('Stopped before Jarvis replied. Your message is back in the box.', { level: 'info', id: 'withdrawn' });
+    }
+    entry.sent = null;
     const status = turn && turn.status;
     if (status === 'done') announce('Reply ready');
     else if (status === 'stopped') announce('Stopped');
@@ -936,7 +968,7 @@ export async function startApp(rootEl) {
           const code = e && e.code;
           const msg =
             code === 'not-allowed'
-              ? 'Microphone access is blocked. Allow it in your browser’s site settings.'
+              ? (e && e.message) || 'Microphone access is blocked. Allow it in your browser’s site settings.'
               : code === 'no-speech'
                 ? 'I didn’t catch that. Tap the mic and try again.'
                 : code === 'network'

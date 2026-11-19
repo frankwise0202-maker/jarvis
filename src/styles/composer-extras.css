@@ -103,7 +103,7 @@
   justify-content: center;
   gap: 5px;
   height: 40px;
-  min-width: 44px;
+  min-width: 48px; /* one-digit sizes too: ≥ 44 px even while it scales in */
   padding: 0 12px;
   border: 1px solid var(--violet-soft);
   border-radius: var(--r-pill);
@@ -429,8 +429,8 @@
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--line-2);
   border-radius: 50%;
   background: var(--overlay);

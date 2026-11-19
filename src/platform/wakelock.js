@@ -1,14 +1,20 @@
 // Keep the screen awake while Jarvis works (SPEC §9.3), so a phone does not lock and suspend
 // the page in the middle of a swarm.
 //
-//   keepAwake()  -> Promise<boolean>  request a screen wake lock and keep holding it: browsers
-//                   release it whenever the page is hidden, so it is re-acquired when the page
-//                   becomes visible again, until allowSleep().
-//   allowSleep()    release it and stop re-acquiring.
+//   keepAwake(owner = 'default') -> Promise<boolean>  request a screen wake lock and keep holding
+//                   it: browsers release it whenever the page is hidden, so it is re-acquired
+//                   when the page becomes visible again, until no owner wants it any more.
+//   allowSleep(owner = 'default')  this owner no longer needs the screen on; the lock is released
+//                   (and no longer re-acquired) once no owner remains.
 //   isAwake()       whether a wake lock is currently held.
+//   awakeOwners()   the owners currently keeping the screen on (diagnostics, tests).
+// Owners are names, e.g. 'run' for agent runs and 'voice' for Voice Mode: closing Voice Mode must
+// not let the phone sleep while a swarm is still running. Each owner counts once however many
+// times it calls keepAwake(). Calls without an owner (or with a non-string, such as an event
+// passed by an event listener) use 'default', so the old one-flag behaviour is unchanged.
 // Unsupported browsers (or a denied request, e.g. battery saver) make these quiet no-ops.
 
-let wanted = false; // the app asked to stay awake
+const owners = new Set(); // who wants the screen on
 let sentinel = null; // current WakeLockSentinel
 let requesting = null; // in-flight request promise
 let listening = false;
@@ -30,8 +36,11 @@ function visible() {
   }
 }
 
+const ownerName = (owner) => (typeof owner === 'string' && owner ? owner : 'default');
+const wanted = () => owners.size > 0;
+
 function onVisibility() {
-  if (wanted && !sentinel && visible()) acquire();
+  if (wanted() && !sentinel && visible()) acquire();
 }
 
 function acquire() {
@@ -43,8 +52,8 @@ function acquire() {
   requesting = (async () => {
     try {
       const s = await wl.request('screen');
-      if (!wanted) {
-        // allowSleep() was called while the request was in flight.
+      if (!wanted()) {
+        // The last owner called allowSleep() while the request was in flight.
         s.release().catch(() => {});
         return false;
       }
@@ -62,9 +71,9 @@ function acquire() {
   return requesting;
 }
 
-/** Hold a screen wake lock until allowSleep(). Resolves true if a lock is held now. */
-export function keepAwake() {
-  wanted = true;
+/** Keep the screen on for `owner` until allowSleep(owner). Resolves true if a lock is held now. */
+export function keepAwake(owner) {
+  owners.add(ownerName(owner));
   if (!api()) return Promise.resolve(false);
   if (!listening && globalThis.document && typeof globalThis.document.addEventListener === 'function') {
     listening = true;
@@ -73,9 +82,10 @@ export function keepAwake() {
   return acquire();
 }
 
-/** Release the wake lock (if any) and stop re-acquiring it. */
-export function allowSleep() {
-  wanted = false;
+/** `owner` no longer needs the screen on: the lock is released once no owner remains. */
+export function allowSleep(owner) {
+  owners.delete(ownerName(owner));
+  if (wanted()) return;
   const s = sentinel;
   sentinel = null;
   if (s) {
@@ -89,4 +99,8 @@ export function allowSleep() {
 
 export function isAwake() {
   return !!sentinel && !sentinel.released;
+}
+
+export function awakeOwners() {
+  return Array.from(owners);
 }

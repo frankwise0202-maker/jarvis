@@ -22,8 +22,10 @@
   /* Text */
   --text: #e1f6ff;
   --text-2: #abc8d9;
-  --text-3: #7393a8;
-  --text-4: #4f6a7c;
+  /* Every text token passes WCAG AA (4.5:1) on every surface it sits on, down to the lightest
+     (the selected History row, rgb(33,43,55)): --text-3 5.76:1, --text-4 4.90:1. */
+  --text-3: #8ca8bc;
+  --text-4: #7d9bb0;
 
   /* Accent (HUD cyan) */
   --accent: #3ee0ff;

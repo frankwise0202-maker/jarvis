@@ -189,7 +189,7 @@ const BASE_FALLBACK = {
   bg3: '#0a1420',
   text: '#e1f6ff',
   text2: '#abc8d9',
-  text3: '#7393a8',
+  text3: '#8ca8bc',
   line: 'rgba(78, 196, 255, 0.14)',
   line3: 'rgba(98, 220, 255, 0.46)',
 };

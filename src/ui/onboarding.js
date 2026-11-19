@@ -1,6 +1,15 @@
 // First-run onboarding: Welcome → Name → API key (tested before saving) → Ready.
 // Explains where to get a key, adding credits, setting a spend limit, and that the
 // key never leaves this device except to api.anthropic.com.
+//
+// iPhone/iPad in a browser tab: Home Screen web apps get their own storage, so a key entered
+// in Safari doesn't reach the installed app. The Welcome and Key steps say so and offer the
+// install guide first (the owner may still continue). Inside the installed app nothing
+// offers to install it again.
+//
+// On-screen keyboard: the app follows the visual viewport (app.js sets --vvh and
+// .app[data-keyboard]); app.css then hides the hero and lets the action bar flow after the
+// content, and this module keeps the focused field visible.
 
 import { h, setText, extLink } from './dom.js';
 import { icon } from './icons.js';
@@ -8,6 +17,7 @@ import { createCore } from './hud/core.js';
 import { getSettings, saveSettings } from '../platform/settings.js';
 import { setApiKey, looksLikeApiKey, getApiKey } from '../platform/secrets.js';
 import { sttSupported } from '../platform/voice/stt.js';
+import { isIOS, isStandalone } from '../platform/env.js';
 
 const STEPS = ['welcome', 'name', 'key', 'ready'];
 const LINKS = {
@@ -29,6 +39,9 @@ export function createOnboarding(o) {
   let keySaved = !!safe(getApiKey, '');
   let keyWarning = '';
   let destroyed = false;
+  const standalone = safe(isStandalone, false);
+  // iPhone/iPad outside the installed app: set Jarvis up from the Home Screen instead.
+  const installFirst = !standalone && safe(isIOS, false);
 
   const canvas = h('canvas', { class: 'ob-core-canvas', attrs: { 'aria-hidden': 'true', 'data-testid': 'onboarding-core' } });
   const hero = h('div', { class: 'ob-hero' }, h('div', { class: 'ob-core' }, canvas));

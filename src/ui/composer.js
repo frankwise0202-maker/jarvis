@@ -375,6 +375,14 @@ export function createComposer(o) {
     },
     icon('send', { size: 20, strokeWidth: 2.1 }),
   );
+  // Send and Stop share one spot, so a quick second tap on Send (a double-click, a repeated key)
+  // would land on Stop and cancel the message it just sent. Stop therefore ignores activation for
+  // a moment after it appears (and key auto-repeat always).
+  const STOP_ARM_MS = 700;
+  let stopArmedAt = 0;
+  let armTimer = 0;
+  let focusStopWhenArmed = false;
+  const stopArmed = () => performance.now() >= stopArmedAt;
   const stopBtn = h(
     'button',
     {
@@ -382,7 +390,17 @@ export function createComposer(o) {
       type: 'button',
       hidden: true,
       attrs: { 'data-testid': 'composer-stop', 'aria-label': 'Stop', title: 'Stop' },
-      on: { click: () => o.onStop() },
+      on: {
+        click: () => {
+          if (stopArmed()) o.onStop();
+        },
+        keydown: (e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && (e.repeat || !stopArmed())) e.preventDefault();
+        },
+        keyup: (e) => {
+          if (e.key === ' ' && !stopArmed()) e.preventDefault();
+        },
+      },
     },
     h('span', { class: 'stop-ring', attrs: { 'aria-hidden': 'true' } }),
     icon('stop', { size: 16 }),
@@ -628,6 +646,25 @@ export function createComposer(o) {
     syncAll();
   }
 
+  /**
+   * Put a message that never reached Jarvis back in the box: its text (unless the owner has
+   * typed something new meanwhile) and its prepared attachments.
+   */
+  function restoreMessage(text, attachments) {
+    if (typeof text === 'string' && text && !input.value.trim()) input.value = text;
+    for (const attachment of Array.isArray(attachments) ? attachments : []) {
+      if (!attachment || typeof attachment !== 'object' || items.length >= ATTACHMENT_LIMITS.maxFiles) continue;
+      if (items.some((i) => i.attachment && i.attachment.id === attachment.id)) continue;
+      const item = { id: `f${++seq}`, status: 'ready', kind: attachment.kind === 'pdf' ? 'pdf' : 'image', name: String(attachment.name || 'File'), attachment, el: null, removeBtn: null };
+      items.push(item);
+      filesRow.append(chipFor(item));
+      item.removeBtn.setAttribute('aria-label', `Remove ${item.name}`);
+      renderChip(item);
+    }
+    autoGrow();
+    syncAll();
+  }
+
   function takeFromInput(el, source) {
     const files = Array.from(el.files || []);
     el.value = ''; // picking the same file again must fire `change`
@@ -836,8 +873,28 @@ export function createComposer(o) {
     sendBtn.hidden = running;
     stopBtn.hidden = !running;
     el.dataset.running = running ? 'true' : 'false';
-    if (running && active === sendBtn) focusButton(stopBtn);
-    else if (!running && active === stopBtn) focusInput();
+    if (running && active === sendBtn) {
+      if (stopArmed()) focusButton(stopBtn);
+      else focusStopWhenArmed = true; // a second key press must not land on Stop
+    } else if (!running && active === stopBtn) focusInput();
+  }
+
+  function armStop() {
+    stopArmedAt = performance.now() + STOP_ARM_MS;
+    stopBtn.classList.add('is-arming');
+    clearTimeout(armTimer);
+    armTimer = setTimeout(() => {
+      stopBtn.classList.remove('is-arming');
+      const active = document.activeElement;
+      if (focusStopWhenArmed && running && (!active || active === document.body)) focusButton(stopBtn);
+      focusStopWhenArmed = false;
+    }, STOP_ARM_MS);
+  }
+
+  function disarmStop() {
+    clearTimeout(armTimer);
+    stopBtn.classList.remove('is-arming');
+    focusStopWhenArmed = false;
   }
 
   function focusButton(btn) {
@@ -922,7 +979,10 @@ export function createComposer(o) {
     setMode: (id) => setMode(id, false),
     getMode: () => mode,
     setRunning(value) {
-      running = !!value;
+      const next = !!value;
+      if (next && !running) armStop();
+      else if (!next) disarmStop();
+      running = next;
       syncButtons();
     },
     /**
@@ -982,6 +1042,7 @@ export function createComposer(o) {
     /** Display metadata of the ready attachments (no data). */
     getAttachmentMeta: () => readyAttachments().map(attachmentMeta),
     clearAttachments,
+    restoreMessage,
     /** What onSend's third argument would be right now. */
     getExtras: () => (mode === 'swarm' ? { attachments: readyAttachments(), maxAgents: swarmSize } : { attachments: readyAttachments() }),
     getSwarmSize: () => swarmSize,

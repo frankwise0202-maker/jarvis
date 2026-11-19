@@ -7,7 +7,7 @@ import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
 import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest } from './prompts.js';
-import { STOPPED_BY_OWNER, runLeadTurn, toolResultMessage } from './lead.js';
+import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
 import {
   ATTACHMENT_ONLY_TEXT,
@@ -227,20 +227,24 @@ export function createJarvis(deps = {}) {
     }
   }
 
-  /** Before a new turn: close an interrupted tool round as stopped so history stays valid (SPEC 8.6). */
+  /**
+   * Before a new turn: close an interrupted tool round as stopped so history stays valid (SPEC 8.6).
+   * Agents that finished before the interruption keep their reports (stoppedRoundResults).
+   */
   function abandonPending(conv) {
     repairStale(conv);
     const pending = conv.pending;
     if (!pending) return;
     conv.pending = null;
-    if (Array.isArray(pending.toolUses) && pending.toolUses.length && lastAssistantAsks(conv, pending.toolUses)) {
-      conv.apiMessages.push(toolResultMessage(pending.toolUses, pending.results, STOPPED_BY_OWNER));
-    }
     const turn = (conv.turns || []).find((t) => t.id === pending.turnId);
     if (turn && (turn.status === 'interrupted' || turn.status === 'running')) {
       settleUnfinished(turn, 'stopped', stamp());
       turn.status = 'stopped';
       turn.endedAt = turn.endedAt || stamp();
+    }
+    if (Array.isArray(pending.toolUses) && pending.toolUses.length && lastAssistantAsks(conv, pending.toolUses)) {
+      const results = turn ? stoppedRoundResults(turn, pending.toolUses, pending.results) : pending.results;
+      conv.apiMessages.push(toolResultMessage(pending.toolUses, results, STOPPED_BY_OWNER));
     }
   }
 

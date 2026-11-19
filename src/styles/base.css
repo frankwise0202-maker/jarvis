@@ -617,6 +617,11 @@ input[type='number']::-webkit-outer-spin-button {
   color: var(--accent-2);
 }
 
+/* The number field draws no ring of its own: the whole stepper shows where focus is. */
+.stepper:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
 /* Segmented control (install tabs) */
 .seg-control {
   display: flex;

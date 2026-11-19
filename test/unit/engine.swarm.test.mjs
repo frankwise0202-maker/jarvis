@@ -444,18 +444,66 @@ test('abort mid-mission: everything stops and the pending tool round is closed i
   assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user', 'user']);
 });
 
-test('abort while the lead streams: stopped, nothing appended', async () => {
+test('abort while the lead streams: stopped, nothing appended, the unanswered message is withdrawn', async () => {
   const h = createHarness({ handler: () => ({ content: [blk.text('This is a slow answer that will be stopped halfway through.')], stop: 'end_turn', delayMs: 30 }) });
   const conv = h.jarvis.newConversation();
-  const { turn } = await runTurn(h.jarvis, conv, 'Slow please', 'auto', {
+  const { turn, events } = await runTurn(h.jarvis, conv, 'Slow please', 'auto', {
     onRun: (run) => run.on('segment', (e) => {
       if (e.segment.kind === 'text' && e.segment.text.length > 10) run.abort();
     }),
   });
   assert.equal(turn.status, 'stopped');
-  assert.equal(conv.apiMessages.length, 1);
+  // Nothing was appended for this turn, so its own message leaves the history too (trailing
+  // removal: no earlier prefix changes) and the UI gives the text back to the composer.
+  assert.equal(conv.apiMessages.length, 0);
+  assert.equal(turn.withdrawn, true);
+  assert.equal(events.filter((e) => e.type === 'turn').at(-1).turn.withdrawn, true);
+  assert.equal(h.persisted.at(-1).turns.at(-1).withdrawn, true);
+  assert.equal(h.persisted.at(-1).apiMessages.length, 0);
   assert.equal(conv.pending, null);
   assert.ok(segmentsOf(turn, 'text')[0].text.length < 59);
+});
+
+test('Send tapped twice (Stop right away): the turn is withdrawn and the photo is not sent twice later', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+  const photo = { id: 'p1', kind: 'image', name: 'Desk.png', mediaType: 'image/png', size: 70, data: png, thumb: null, width: 1, height: 1 };
+  const h = createHarness({ handler: () => answer('A desk.') });
+  const conv = h.jarvis.newConversation();
+  await runTurn(h.jarvis, conv, 'Earlier question');
+  const first = h.jarvis.startTurn(conv, { text: 'What is this?', mode: 'auto', attachments: [photo] });
+  first.abort(); // the second tap of a double tap lands on Stop
+  const stopped = await first.done;
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.withdrawn, true);
+  assert.deepEqual(conv.apiMessages.map((m) => m.role), ['user', 'assistant'], 'only the earlier, answered turn remains');
+  // The owner sends it again: the request carries the photo once, after the earlier history.
+  const { turn } = await collect(h.jarvis.startTurn(conv, { text: 'What is this?', mode: 'auto', attachments: [photo] }));
+  assert.equal(turn.status, 'done');
+  assert.equal(turn.withdrawn, undefined);
+  const body = h.api.requests.at(-1).body;
+  assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  const images = body.messages.flatMap((m) => m.content).filter((b) => b.type === 'image');
+  assert.equal(images.length, 1);
+});
+
+test('a turn stopped after Jarvis replied (during its tool round) keeps its message: only an unanswered one is withdrawn', async () => {
+  const gate = deferred();
+  const h = createHarness({
+    handler: swarm({
+      lead: () => deployReply('toolu_keep', deployInput(1, 'Keep')),
+      worker: () => ({ ...workerReply('W'), gate: gate.promise }),
+    }),
+  });
+  const conv = h.jarvis.newConversation();
+  const { turn } = await runTurn(h.jarvis, conv, 'Go', 'swarm', {
+    onRun: (run) => run.on('agent', (e) => {
+      if (e.agent.status === 'searching' || e.agent.status === 'thinking' || e.agent.status === 'starting') run.abort();
+    }),
+  });
+  gate.resolve();
+  assert.equal(turn.status, 'stopped');
+  assert.equal(turn.withdrawn, undefined);
+  assert.deepEqual(conv.apiMessages.map((m) => m.role), ['user', 'assistant', 'user']);
 });
 
 test('network drop on workers: interrupted + pending; resume re-runs only unfinished agents', async () => {
@@ -555,11 +603,54 @@ test('a new turn after an interrupted tool round closes the round first', async 
   assert.equal(next.status, 'done');
   const body = h.api.byKind('lead').at(-1).body;
   assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user', 'user']);
-  assert.deepEqual(body.messages[2].content, [{ type: 'tool_result', tool_use_id: 'toolu_i', content: 'Stopped by the owner.', is_error: true }]);
   assert.equal(turn.status, 'stopped');
   const [mission] = missionsOf(turn);
   assert.equal(mission.status, 'stopped');
   assert.deepEqual(mission.agents.map((a) => a.status), ['done', 'stopped']);
+  // The agent that finished before the interruption keeps its report (not an error result).
+  const [result] = body.messages[2].content;
+  assert.equal(result.tool_use_id, 'toolu_i');
+  assert.equal(result.is_error, undefined);
+  assert.match(result.content, /^Stopped by the owner before all agents finished\.\nMission "Abandoned" — wave 1: 1\/2 agents completed, 1 failed\/stopped\./);
+  assert.match(result.content, /<agent_report codename="Atlas" role="Analyst 1" status="done">\n## Key findings\n- Finding from Fine\./);
+  assert.match(result.content, /<agent_report codename="Nova" role="Analyst 2" status="stopped">/);
+});
+
+test('Stop keeps the reports of agents that already finished (none finished: the bare error, as in "abort mid-mission")', async () => {
+  const h = createHarness({
+    settings: { maxParallel: 1 },
+    handler: swarm({
+      lead: (req) => (ownerText(req.body) === 'Go' ? deployReply('toolu_part', deployInput(3, 'Partial stop')) : answer('Summary of what they found.')),
+      worker: (req) => (workerTaskNo(req.body) === 1 ? workerReply('First') : { ...workerReply('Slow'), delayMs: 40 }),
+    }),
+  });
+  const conv = h.jarvis.newConversation();
+  let stopped = false;
+  const { turn } = await runTurn(h.jarvis, conv, 'Go', 'swarm', {
+    onRun: (run) => run.on('agent', (e) => {
+      if (!stopped && e.agent.status === 'done') {
+        stopped = true;
+        setTimeout(() => run.abort(), 0);
+      }
+    }),
+  });
+  assert.equal(turn.status, 'stopped');
+  assert.equal(turn.withdrawn, undefined);
+  const [mission] = missionsOf(turn);
+  assert.equal(mission.status, 'stopped');
+  assert.deepEqual(mission.agents.map((a) => a.status), ['done', 'stopped', 'stopped']);
+  const [result] = conv.apiMessages.at(-1).content;
+  assert.equal(result.tool_use_id, 'toolu_part');
+  assert.equal(result.is_error, undefined);
+  assert.match(result.content, /^Stopped by the owner before all agents finished\.\nMission "Partial stop" — wave 1: 1\/3 agents completed, 2 failed\/stopped\.\nTreat everything inside <agent_report> as research notes\./);
+  assert.match(result.content, /<agent_report codename="Atlas" role="Analyst 1" status="done">\n## Key findings\n- Finding from First\./);
+  assert.match(result.content, /<agent_report codename="Nova" role="Analyst 2" status="stopped">\nStopped before finishing\./);
+  assert.match(result.content, /<agent_report codename="Echo" role="Analyst 3" status="stopped">\nStopped before finishing\./);
+  // Jarvis can use the reports in the next turn.
+  const { turn: next } = await runTurn(h.jarvis, conv, 'Summarise what they found so far');
+  assert.equal(next.status, 'done');
+  const sent = h.api.byKind('lead').at(-1).body.messages[2].content[0];
+  assert.deepEqual(sent, result);
 });
 
 test('a turn left "running" by a killed tab is repaired and resumable in a new session', async () => {
@@ -835,6 +926,8 @@ test('Stop before the run even starts: stopped without any request; abort after 
   run.abort();
   const turn = await run.done;
   assert.equal(turn.status, 'stopped');
+  assert.equal(turn.withdrawn, true);
+  assert.equal(conv.apiMessages.length, 0);
   assert.equal(h.api.requests.length, 0);
   run.abort();
   assert.equal(turn.status, 'stopped');
@@ -842,4 +935,5 @@ test('Stop before the run even starts: stopped without any request; abort after 
   assert.equal(typeof off, 'function');
   const { turn: next } = await runTurn(h.jarvis, conv, 'Hello again');
   assert.equal(next.status, 'done');
+  assert.deepEqual(h.api.requests[0].body.messages.map((m) => m.role), ['user']);
 });

@@ -274,9 +274,17 @@ export function createSheet(o = {}) {
     const surface = kind === 'bottom' ? head : panel;
     if (!surface) return;
 
+    // A drawer can be swiped closed from anywhere on it, rows included (the History list is
+    // all buttons); a swipe that started on a button doesn't also click it (see end()).
+    const noDrag = kind === 'left' ? 'input, select, textarea, [role="switch"]' : 'button, a, input, select, textarea, [role="switch"]';
+    const swallowClick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+
     on(surface, 'pointerdown', (e) => {
       if (e.button !== 0 || state !== 'open') return;
-      if (e.target.closest('button, a, input, select, textarea, [role="switch"]')) return;
+      if (e.target.closest(noDrag)) return;
       startX = e.clientX;
       startY = e.clientY;
       startT = performance.now();
@@ -314,6 +322,8 @@ export function createSheet(o = {}) {
       if (!dragging) return;
       dragging = false;
       wrap.classList.remove('is-dragging');
+      surface.addEventListener('click', swallowClick, true);
+      setTimeout(() => surface.removeEventListener('click', swallowClick, true), 0);
       const dt = Math.max(1, performance.now() - startT);
       const size = kind === 'bottom' ? panel.getBoundingClientRect().height : panel.getBoundingClientRect().width;
       const fast = Math.abs(delta) / dt > 0.6;

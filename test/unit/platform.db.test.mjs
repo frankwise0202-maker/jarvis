@@ -231,29 +231,55 @@ test('db: without IndexedDB (blocked / private mode) history works in memory and
   });
   const r = await page.evaluate(async () => {
     const db = window.__mods.db;
+    const events = [];
+    db.onPersistenceChange((e) => events.push(e));
     const saved = [await db.saveConversation(conv('x', 1)), await db.saveConversation(conv('y', 2))];
     const list = (await db.listConversations()).map((m) => m.id);
     const got = (await db.getConversation('x')).title;
     await db.deleteConversation('y');
-    return { saved, list, got, after: (await db.listConversations()).map((m) => m.id), persistent: db.isPersistent() };
+    return { saved, list, got, after: (await db.listConversations()).map((m) => m.id), persistent: db.isPersistent(), state: db.getPersistence(), events };
   });
-  assert.deepEqual(r, { saved: [false, false], list: ['y', 'x'], got: 'x', after: ['x'], persistent: false });
+  assert.deepEqual(r, {
+    saved: [false, false], list: ['y', 'x'], got: 'x', after: ['x'], persistent: false,
+    state: { persistent: false, reason: 'unavailable' },
+    events: [{ persistent: false, reason: 'unavailable' }], // reported once, not on every save
+  });
 });
 
 test('db: a failing write (quota) keeps the conversation in memory and flags isPersistent()', async () => {
   const page = await newPage();
   const r = await page.evaluate(async () => {
     const db = window.__mods.db;
+    const events = [];
+    db.onPersistenceChange((e) => events.push(e));
+    db.onPersistenceChange(() => {
+      throw new Error('a broken listener never stops the others');
+    });
     await db.saveConversation(conv('ok', 1000));
+    const before = db.getPersistence();
     const realPut = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function () {
       throw new DOMException('full', 'QuotaExceededError');
     };
     const saved = await db.saveConversation(conv('big', 2000));
+    await db.saveConversation(conv('big', 2001)); // still full: no second event
+    const during = db.getPersistence();
     IDBObjectStore.prototype.put = realPut;
-    return { saved, list: (await db.listConversations()).map((m) => m.id), got: !!(await db.getConversation('big')), persistent: db.isPersistent() };
+    const out = { saved, list: (await db.listConversations()).map((m) => m.id), got: !!(await db.getConversation('big')), persistent: db.isPersistent(), before, during };
+    // Space was freed: the next save of that conversation reaches the disk and saving is back.
+    out.resaved = await db.saveConversation(conv('big', 2002));
+    out.after = db.getPersistence();
+    out.events = events;
+    return out;
   });
-  assert.deepEqual(r, { saved: false, list: ['big', 'ok'], got: true, persistent: false });
+  assert.deepEqual(r, {
+    saved: false, list: ['big', 'ok'], got: true, persistent: false,
+    before: { persistent: true, reason: null },
+    during: { persistent: false, reason: 'quota' },
+    resaved: true,
+    after: { persistent: true, reason: null },
+    events: [{ persistent: false, reason: 'quota' }, { persistent: true, reason: null }],
+  });
 });
 
 // ---- backup -----------------------------------------------------------------------------
@@ -344,7 +370,7 @@ test('backup: import merges conversations (newer wins), memory and profile setti
     };
   }, file);
   // 4 records are not usable conversations ('', no dates, null, 'junk'): skipped and counted.
-  assert.deepEqual(r.result, { conversations: 3, memory: 1, settings: true, settingsChanged: ['userName'], skipped: 4 });
+  assert.deepEqual(r.result, { conversations: 3, copies: 0, replaced: ['replace'], memory: 1, settings: true, settingsChanged: ['userName'], skipped: 4 });
   assert.deepEqual(r.ids, ['replace', 'keep-local', 'new', 'turns-bad']);
   assert.equal(r.keep, 'local is newer');
   assert.equal(r.replaced, 'newer in backup');
@@ -359,7 +385,7 @@ test('backup: import merges conversations (newer wins), memory and profile setti
 
   // Importing the same file again changes nothing.
   const again = await page.evaluate((json) => window.__mods.backup.importBackup(json), file);
-  assert.deepEqual(again, { conversations: 0, memory: 0, settings: false, settingsChanged: [], skipped: 4 });
+  assert.deepEqual(again, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 4 });
 });
 
 test('backup: import restores only profile, voice and appearance settings - never limits, models or spending', async () => {
@@ -393,7 +419,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
   });
   const guards = (s) => ({ spendWarnUsd: s.spendWarnUsd, maxAgents: s.maxAgents, maxParallel: s.maxParallel, maxWaves: s.maxWaves, depth: s.depth, mode: s.mode, leadModel: s.leadModel, workerModel: s.workerModel, features: s.features, onboarded: s.onboarded });
   const before = { spendWarnUsd: 20, maxAgents: 4, maxParallel: 4, maxWaves: 1, depth: 'fast', mode: 'auto', leadModel: 'claude-opus-5-5', workerModel: 'claude-sonnet-5-5', features: { fallbacks: true, compaction: true }, onboarded: true };
-  assert.deepEqual(r.first, { conversations: 0, memory: 0, settings: true, settingsChanged: ['userName'], skipped: 0 });
+  assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: true, settingsChanged: ['userName'], skipped: 0 });
   assert.equal(r.afterFirst.userName, 'Mallory');
   assert.deepEqual(guards(r.afterFirst), before);
   assert.deepEqual(r.second.settingsChanged, r.restorable, 'all 17 changed');
@@ -443,7 +469,7 @@ test('backup: a conversation Jarvis made round-trips exactly; nothing imported c
     const jarvis = engine.createJarvis({ getSettings: () => ({}), getApiKey: () => '' });
     return { result, rich, original: richConv('rich', 5000), cut, canResume: jarvis.canResume(structuredClone(cut)), canResumeRich: jarvis.canResume(structuredClone(rich)) };
   }, file);
-  assert.deepEqual(r.result, { conversations: 2, memory: 0, settings: false, settingsChanged: [], skipped: 0 });
+  assert.deepEqual(r.result, { conversations: 2, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0 });
   assert.deepEqual(r.rich, r.original, 'a finished conversation comes back exactly as Jarvis stored it');
   // The cut conversation keeps its history and transcript, but nothing in it is live any more.
   assert.equal(r.cut.pending, null);
@@ -499,7 +525,7 @@ test('backup: conversations Jarvis did not make are skipped (own prompt or tools
     const result = await backup.importBackup({ app: 'jarvis', version: 1, conversations });
     return { result, ids: (await db.listConversations()).map((m) => m.id).sort(), memory: window.__mods.memory.listMemory().length };
   });
-  assert.deepEqual(r.result, { conversations: 2, memory: 0, settings: false, settingsChanged: [], skipped: 9 });
+  assert.deepEqual(r.result, { conversations: 2, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 9 });
   assert.deepEqual(r.ids, ['made-by-v1', 'made-by-v2']);
   assert.equal(r.memory, 0);
 });
@@ -551,7 +577,7 @@ test('backup: damaged records are rebuilt with the right types, so they can neve
     return { result, c: await db.getConversation('bad-types'), polluted: ({}).status !== undefined || ({}).agents !== undefined };
   });
   assert.equal(r.polluted, false);
-  assert.deepEqual(r.result, { conversations: 1, memory: 0, settings: false, settingsChanged: [], skipped: 0 });
+  assert.deepEqual(r.result, { conversations: 1, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0 });
   const { c } = r;
   assert.equal(c.title, '7');
   assert.deepEqual(c.turns.map((t) => t.id), ['u1', 'u2', 'j1']);
@@ -591,6 +617,41 @@ test('backup: damaged records are rebuilt with the right types, so they can neve
     error: { kind: 'unknown', message: 'str', retryable: false },
   });
   assert.equal(c.pending, null);
+});
+
+test('backup: a newer backup copy never deletes local turns - a diverged conversation is added as a copy', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const { db, backup } = window.__mods;
+    // This device: X continued with a turn the backup does not have; Y is simply behind.
+    const localX = conv('x', 5000, ['First question', 'Only on this device']);
+    await db.saveConversation(localX);
+    await db.saveConversation(conv('y', 5000, ['Y question']));
+    // The backup (another device): X continued differently (newer); Y continued (newer).
+    const otherX = conv('x', 6000, ['First question']);
+    otherX.turns.push(
+      { id: 'x-u-other', role: 'user', text: 'Asked on the other device', mode: 'auto', createdAt: 5900 },
+      { ...otherX.turns[1], id: 'x-j-other' },
+    );
+    const otherY = conv('y', 6000, ['Y question', 'Y follow-up']);
+    const file = { app: 'jarvis', version: 1, conversations: [otherX, otherY] };
+    const first = await backup.importBackup(file);
+    const second = await backup.importBackup(file); // the same file again adds nothing
+    const ids = (await db.listConversations()).map((m) => m.id).sort();
+    const x = await db.getConversation('x');
+    const copy = await db.getConversation('x~backup-6000');
+    const y = await db.getConversation('y');
+    return { first, second, ids, x, localX, copy, y };
+  });
+  assert.deepEqual(r.first, { conversations: 2, copies: 1, replaced: ['y'], memory: 0, settings: false, settingsChanged: [], skipped: 0 });
+  assert.deepEqual(r.second, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0 });
+  assert.deepEqual(r.ids, ['x', 'x~backup-6000', 'y']);
+  assert.deepEqual(r.x, r.localX, 'the local conversation keeps every turn');
+  assert.equal(r.copy.title, 'First question (from backup)');
+  assert.deepEqual(r.copy.turns.map((t) => t.id), ['x-u0', 'x-j0', 'x-u-other', 'x-j-other']);
+  assert.equal(r.copy.updatedAt, 6000);
+  // Y only moved forward in the backup (every local turn is in it): replaced as before.
+  assert.deepEqual(r.y.turns.map((t) => t.text ?? t.status), ['Y question', 'done', 'Y follow-up', 'done']);
 });
 
 test('backup: invalid files are rejected with a clear message', async () => {

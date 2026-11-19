@@ -570,7 +570,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
-  min-height: 34px;
+  min-height: 36px;
   padding: 0 12px 0 10px;
   border: 1px solid var(--violet-soft);
   border-radius: var(--r-pill);
@@ -583,7 +583,7 @@
 .think-toggle::after {
   content: '';
   position: absolute;
-  inset: -5px -2px;
+  inset: -4px -2px; /* 44 px */
 }
 
 .think-toggle:not(:disabled):hover {
@@ -726,8 +726,17 @@
   animation: fade-up var(--dur-2) var(--ease-out) both;
 }
 
+/* The whole result row (title and site) is the link's target: 44 px, not one 18 px line. */
 .result {
+  position: relative;
   min-width: 0;
+  padding: 5px 0;
+}
+
+.result-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
 }
 
 .result-link {
@@ -800,7 +809,7 @@
 .src-chip::after {
   content: '';
   position: absolute;
-  inset: -6px 0;
+  inset: -7px 0; /* 44 px */
 }
 
 .src-chip:hover {
@@ -1944,6 +1953,16 @@
 
 .composer-stop:hover {
   color: var(--err);
+}
+
+/* Just after Send: Stop ignores taps for a moment (a double tap must not cancel the message). */
+.composer-stop.is-arming {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.composer-stop {
+  transition: opacity var(--dur-2) var(--ease);
 }
 
 .stop-ring {
