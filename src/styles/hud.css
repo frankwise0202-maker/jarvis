@@ -1874,14 +1874,34 @@
 
 :root {
   --frame-brackets:
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-arm, 12px) 1px no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / 1px var(--frame-arm, 12px) no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-arm, 12px) 1px no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / 1px var(--frame-arm, 12px) no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-arm, 12px) 1px no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / 1px var(--frame-arm, 12px) no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-arm, 12px) 1px no-repeat,
-    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / 1px var(--frame-arm, 12px) no-repeat;
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat;
+}
+
+/* Resolved where the brackets are drawn. A custom property declared on :root is substituted on
+   :root, so an element's own --frame-arm, --frame-color or --frame-weight would be ignored (the
+   arms were always 12px); declaring it again on each pseudo-element that draws them lets every
+   frame use its own. :root keeps the defaults for any other consumer. */
+.hud-mission::before,
+.hud-frame::before,
+.hud-viewport::before,
+.vm::after,
+.hv::after {
+  --frame-brackets:
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat;
 }
 
 .hud-frame {
