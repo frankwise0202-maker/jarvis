@@ -1,0 +1,2 @@
+import{c as e}from"./chunk-OOWRP336.js";import"./chunk-KVMUXFPB.js";function t(r){return new Proxy({},{get(n,o){if(typeof o!="symbol")throw new e(`\`${r}.${o}\` is not available in this environment; it needs a Node.js-compatible runtime`)}})}var i=t("child_process"),c=t("crypto"),p=t("fs"),a=t("os"),l=t("path"),m=t("stream"),u=t("util");export{i as child_process,c as crypto,p as fs,a as os,l as path,m as stream,u as util};
+//# sourceMappingURL=node.browser-5YEBY7KY.js.map
