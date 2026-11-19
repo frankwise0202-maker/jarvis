@@ -19,3 +19,6 @@ Thumbs.db
 # Local secrets (Jarvis never needs them in the repo: the API key lives in the browser)
 .env
 .env.*
+
+# Stray tool downloads (never part of Jarvis)
+*.whl
