@@ -1086,6 +1086,11 @@ export async function startApp(rootEl) {
     }, 180);
   }
 
+  /**
+   * Read a reply aloud: mode 'full' (the Speak button, Speak replies → Whole reply) reads the whole
+   * answer, 'summary' its opening paragraph. The speech engine (platform tts.js) chunks it, keeps
+   * the next chunk queued and recovers from the browsers' speech quirks, so onEnd always comes.
+   */
   function speakTurn(turn, mode) {
     if (!ttsOk) return;
     const md = answerText(turn);
@@ -1099,12 +1104,17 @@ export async function startApp(rootEl) {
       entry.handle = speak(text, {
         voiceURI: s.voiceURI,
         rate: s.voiceRate,
+        onChunk: () => pulseLevel(),
         onBoundary: () => pulseLevel(),
-        onEnd: () => {
+        onEnd: (info) => {
+          const reason = info && info.reason;
           if (state.speaking === entry) {
             state.speaking = null;
             chat.refreshSpeaking();
             updateCore();
+            // 'error': the voice stopped responding (the engine already retried); 'unsupported': no speech here.
+            if (reason === 'error') toast('The voice stopped responding. Try again, or pick another voice in Settings → Voice.', { level: 'warn', id: 'speech' });
+            else if (reason === 'unsupported') toast('This browser couldn’t play speech.', { level: 'warn', id: 'speech' });
           }
         },
       });

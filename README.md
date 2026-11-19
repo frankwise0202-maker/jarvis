@@ -53,8 +53,9 @@ and your conversations are stored only on your device.
   Planner, Fact Check, Explain Simply, News Sweep and Gift Finder are ready on the home screen,
   and you can save your own.
 - **Show Jarvis.** Attach photos (or take one) and PDFs, and ask about them.
-- **Talk and listen.** Tap the microphone to dictate, have Jarvis read its answers aloud, or open
-  **Voice Mode** for a hands-free spoken conversation.
+- **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
+  **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
+  and starts talking while it is still writing.
 - **Suggest what to ask next** after each answer, and **share or export** answers and full
   mission dossiers (every agent's task, report and sources).
 - **Remember things** you ask it to ("remember that I'm vegetarian"). You can see and edit
@@ -132,8 +133,14 @@ it once more (copy it from your password manager).
 - **Show Jarvis a photo or PDF** with the paperclip (or the camera on a phone). Photos are
   resized and their location data removed before they are sent.
 - **Voice Mode**: tap the sound-wave button at the top (or the glowing core on the home screen)
-  and just talk. Jarvis answers out loud and listens again; tap the core to interrupt. **Exit**
-  leaves Voice Mode; a reply or mission that is still running carries on in the chat.
+  and just talk. Jarvis writes its reply for listening (a few natural sentences, no lists or
+  links) and starts speaking within a second or two, while the rest is still being written. Before
+  it searches the web or sends agents it says so ("Let me check the latest on that."), then keeps
+  working. Longer details (steps, comparisons, sources) go on screen under the spoken part; tap
+  **Read full answer** to hear those too. When it has finished speaking it listens again
+  (**Continuous**, top right). Tap the core while Jarvis is talking to interrupt it and speak, or
+  while it is working to stop it. **Exit** leaves Voice Mode; a reply or mission that is still
+  running carries on in the chat.
 - **Choose a mode** under the message box:
   - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
   - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).
@@ -147,8 +154,9 @@ it once more (copy it from your password manager).
 - **Resume** an interrupted mission: phones pause apps in the background, so if you switch away
   in the middle of a big mission, it may say *Interrupted*. Come back and tap **Resume**; agents
   that already finished are kept.
-- **Hear answers aloud**: tap **Speak** under an answer, or turn on spoken replies in
-  Settings → Voice (a short summary, or the full answer).
+- **Hear answers aloud**: tap **Speak** under an answer to hear all of it (tap again to stop).
+  To have every answer read out as it arrives, choose Settings → Voice → **Speak replies**:
+  **Short summary** (its opening paragraph) or **Whole reply**.
 - **Ask next**: after an answer, up to three suggested follow-up questions appear; tap one to ask it.
 - **Share** an answer, or a whole mission as a dossier, from the **Share** button under it
   (on a phone this opens the usual share sheet; elsewhere it copies or downloads Markdown).
@@ -161,6 +169,29 @@ it once more (copy it from your password manager).
   chat. Shortcuts on a computer: **Ctrl/⌘ + K** new chat, **Esc** closes panels.
 - **Demo**: to show Jarvis to someone without using your account, open
   <https://frankwise0202-maker.github.io/jarvis/?demo=1>, a scripted demonstration that costs nothing.
+
+### A more natural voice
+
+Jarvis speaks with the voices your device and browser already have, so it costs nothing extra.
+The basic voices sound robotic; better ones are a free download. Settings → Voice lists the
+voices best first and marks the good ones **Premium**, **Enhanced** or **Natural**; leave it on
+**Automatic** to get the best one you have (voices on your device before online ones, British
+ones preferred).
+
+- **iPhone or iPad:** Settings → Accessibility → Spoken Content → Voices → English, pick a voice
+  marked Enhanced or Premium (Daniel or Arthur for a British voice) and download it. Then close
+  Jarvis completely (swipe it away) and open it again. If it doesn't appear in Jarvis's list, your
+  version of iOS doesn't offer it to web apps.
+- **Mac:** System Settings → Accessibility → Spoken Content → System voice → Manage Voices… →
+  English (United Kingdom) → Daniel or Arthur (Enhanced or Premium), then reload Jarvis.
+- **Windows:** in Microsoft Edge, voices marked "Natural" sound the most human. They are online,
+  so the text they read goes to Microsoft. Or add on-device voices: Settings → Time & language →
+  Speech → Add voices → English (United Kingdom).
+- **Android:** Settings → Text-to-speech output → Speech Services by Google → Install voice data →
+  English (United Kingdom).
+
+Settings → Voice shows the same tip for the device you're on. **Test voice** plays a short
+greeting with the voice you picked.
 
 ## What it costs
 
@@ -256,7 +287,9 @@ Other websites (at other addresses) cannot read it.
   Sonnet can lead, and agents can also use the cheaper Claude Haiku), research depth (Fast,
   Balanced, Deep), default mode, agents per wave, how many work at once, how many follow-up
   waves, whether to show Jarvis's thinking, and follow-up suggestions.
-- **Voice:** spoken replies, the voice and its speed, the language you speak in, and whether
+- **Voice:** whether answers in the chat are read out (**Off**, **Short summary** or **Whole
+  reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
+  tip for getting a more natural voice on your device, the language you speak in, and whether
   Voice Mode keeps listening after each reply.
 - **Appearance & sound:** six color themes, sounds and their volume, vibration (Android), and a
   notification when a mission finishes while Jarvis is in the background.
@@ -286,6 +319,8 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **A mission says "Interrupted"** | Your phone paused the app or the connection dropped. Open Jarvis and tap **Resume**. |
 | **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
 | **Jarvis doesn't speak on iPhone** | Turn off silent mode and turn the volume up. Speech starts after you have tapped once in the app. |
+| **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
+| **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls and skips what it can't play. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
 | **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
 | **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |

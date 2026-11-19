@@ -24,10 +24,35 @@ function lastLeadUserText(t) {
  * Deterministic speech for headless Chromium (no microphone, no voices): the recognizer "hears"
  * window.__voice.queue items one per listen (then reports no speech), and the synthesizer
  * "speaks" each utterance in ~120 ms, recording what was said in window.__voice.said.
+ *
+ * Also recorded (for timing checks): window.__voice.log, one entry per utterance that starts
+ * playing { text, at, endAt, voice, running, searchRunning, searchDone, state, speech, captions }
+ * (at/endAt from performance.now(); voice: the utterance's voiceURI; running: a Jarvis turn in the
+ * chat is still running; searchRunning / searchDone: a search row in the chat is running / done;
+ * state / speech: Voice Mode's data-state / data-speech; captions: Voice Mode's caption text), and
+ * window.__voice.listenLog (performance.now() of every listen).
+ *
+ * Opt-in options (page.addInitScript(installFakeSpeech, options); without them nothing changes):
+ *   quirks.stuckSpeaking   speechSynthesis.speaking stays true after audio ends, until cancel() (WebKit)
+ *   quirks.dropEnd         [n, …] utterances (0-based, in the order they start playing) whose 'end'
+ *                          event never fires; the engine still moves on to the next one
+ *   quirks.dropSpeak       [k, …] non-empty speak() calls (0-based) dropped silently (Chrome)
+ *   voices                 the voice list (default: an on-device British "Daniel")
+ *   durationMs             how long each utterance plays (default 120)
  */
-export function installFakeSpeech() {
-  const voice = { queue: ['What is the capital of France?'], said: [], listens: 0 };
+export function installFakeSpeech(options) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const quirks = opts.quirks && typeof opts.quirks === 'object' ? opts.quirks : {};
+  const voice = { queue: ['What is the capital of France?'], said: [], listens: 0, log: [], listenLog: [], calls: 0, dropped: [] };
   window.__voice = voice;
+  const has = (list, n) => Array.isArray(list) && list.includes(n);
+  const seen = (selector) => {
+    try {
+      return !!document.querySelector(selector);
+    } catch {
+      return false;
+    }
+  };
   class FakeRecognition {
     constructor() {
       this.lang = 'en-US';
@@ -39,6 +64,7 @@ export function installFakeSpeech() {
     }
     start() {
       voice.listens += 1;
+      voice.listenLog.push(performance.now());
       const phrase = voice.queue.shift();
       setTimeout(() => this.onstart && this.onstart({ type: 'start' }), 20);
       setTimeout(() => {
@@ -86,15 +112,26 @@ export function installFakeSpeech() {
 
   const queue = [];
   let current = null;
+  let stuck = false; // quirks.stuckSpeaking: set once audio has ended, cleared by cancel()
+  let played = 0;
+  const duration = Number.isFinite(opts.durationMs) && opts.durationMs > 0 ? opts.durationMs : 120;
+  const voices = Array.isArray(opts.voices) && opts.voices.length ? opts.voices : [{ name: 'Daniel', lang: 'en-GB', voiceURI: 'fake-daniel', localService: true, default: true }];
   const synth = {
     speaking: false,
     pending: false,
     paused: false,
     onvoiceschanged: null,
-    getVoices: () => [{ name: 'Daniel', lang: 'en-GB', voiceURI: 'fake-daniel', localService: true, default: true }],
+    getVoices: () => voices.slice(),
     addEventListener() {},
     removeEventListener() {},
     speak(u) {
+      if (u && u.text) {
+        const k = voice.calls++;
+        if (has(quirks.dropSpeak, k)) {
+          voice.dropped.push(u.text); // never queued, no events
+          return;
+        }
+      }
       queue.push(u);
       synth.pending = queue.length > 0;
       if (!current) next();
@@ -103,6 +140,7 @@ export function installFakeSpeech() {
       queue.length = 0;
       const u = current;
       current = null;
+      stuck = false;
       synth.speaking = synth.pending = false;
       if (u) setTimeout(() => u.onerror && u.onerror({ type: 'error', error: 'interrupted', utterance: u }), 0);
     },
@@ -112,16 +150,37 @@ export function installFakeSpeech() {
   function next() {
     current = queue.shift() || null;
     synth.pending = queue.length > 0;
-    synth.speaking = !!current;
+    synth.speaking = !!current || stuck;
     if (!current) return;
     const u = current;
-    if (u.text) voice.said.push(u.text);
+    const n = u.text ? played++ : -1;
+    let entry = null;
+    if (u.text) {
+      voice.said.push(u.text);
+      const vm = document.querySelector('[data-testid="voice-mode"]');
+      const caps = document.querySelector('[data-testid="voice-captions"]');
+      entry = {
+        text: u.text,
+        at: performance.now(),
+        endAt: 0,
+        voice: u.voice && u.voice.voiceURI ? u.voice.voiceURI : '',
+        running: seen('[data-testid="turn-jarvis"][data-status="running"]'),
+        searchRunning: seen('[data-testid="segment-tool"][data-status="running"]'),
+        searchDone: seen('[data-testid="segment-tool"][data-status="done"]'),
+        state: vm ? vm.getAttribute('data-state') || '' : '',
+        speech: vm ? vm.getAttribute('data-speech') || '' : '',
+        captions: caps ? (caps.textContent || '').replace(/\s+/g, ' ').trim() : '',
+      };
+      voice.log.push(entry);
+    }
     setTimeout(() => current === u && u.onstart && u.onstart({ type: 'start', utterance: u }), 10);
     setTimeout(() => {
       if (current !== u) return;
-      u.onend && u.onend({ type: 'end', utterance: u });
+      if (entry) entry.endAt = performance.now();
+      if (u.text && quirks.stuckSpeaking) stuck = true;
+      if (!has(quirks.dropEnd, n)) u.onend && u.onend({ type: 'end', utterance: u });
       next();
-    }, u.text ? 120 : 5);
+    }, u.text ? duration : 5);
   }
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
 }

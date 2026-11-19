@@ -166,7 +166,12 @@ export function createSpokenFeed(options = {}) {
 
   function read(segments, done) {
     const closed = !!done || textClosed(segments);
-    const { text, cut } = cutAtBreak(spokenSource(segments), closed);
+    const source = spokenSource(segments);
+    // Thinking deltas, tool rows and other events that leave the text as it was: nothing to do.
+    const key = `${closed ? 1 : 0}|${source}`;
+    if (key === lastKey && !done) return null;
+    lastKey = key;
+    const { text, cut } = cutAtBreak(source, closed);
     let speech = '';
     if (text.trim()) {
       try {
@@ -194,10 +199,7 @@ export function createSpokenFeed(options = {}) {
   function update({ segments, done = false } = {}) {
     if (st.finished) return { pieces: [], finish: false };
     const r = read(segments, done);
-    // Thinking deltas and other events that leave the spoken text as it was: nothing to do.
-    const key = `${r.final ? 1 : 0}|${r.speech}`;
-    if (key === lastKey && !done) return { pieces: [], finish: false };
-    lastKey = key;
+    if (!r) return { pieces: [], finish: false };
     const { flat, ranges, final } = r;
     const usable = final ? ranges.length : Math.max(0, ranges.length - 1);
     const from = resume(flat, ranges);
@@ -206,13 +208,17 @@ export function createSpokenFeed(options = {}) {
     for (let k = from; k < usable; k += 1) {
       const range = ranges[k];
       const raw = r.speech.slice(range.start, range.end);
-      const body = raw.trim();
+      let body = raw.trim();
+      // A line break ends a paragraph or list item: a pause, and a new line in the captions.
+      const endsBlock = raw.includes('\n') || (final && k === ranges.length - 1);
+      // The speech engine queues a line without . ! ? or … only once more text follows it (or at
+      // finish()). Text that stops here while a search or mission runs ("Let me look into that:")
+      // must end like a sentence to be spoken now.
+      if (final && !r.cut && !done && k === ranges.length - 1 && !/[.!?…]["'”’)\]]*$/.test(body)) body = `${body.replace(/[\s,;:–—-]+$/, '')}.`;
       if (st.chars > 0 && st.chars + body.length > cap) {
         st.capped = true;
         break;
       }
-      // A line break ends a paragraph or list item: a pause, and a new line in the captions.
-      const endsBlock = raw.includes('\n') || (final && k === ranges.length - 1);
       const piece = body + (endsBlock ? '\n\n' : ' ');
       pieces.push(piece);
       st.spoken += piece;
@@ -238,6 +244,7 @@ export function createSpokenFeed(options = {}) {
 
   function skip(segments) {
     if (st.finished) return;
+    lastKey = null;
     const r = read(segments, false);
     const usable = r.final ? r.ranges.length : Math.max(0, r.ranges.length - 1);
     if (r.cut) st.cut = true;

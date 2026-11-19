@@ -1561,6 +1561,15 @@ function createVoiceMode(opts) {
           afterSpeech();
           return;
         }
+        // The voice stopped (someone else's speech, or the voice isn't working): show the whole
+        // spoken part to read instead, and wait for a tap.
+        try {
+          R.feed.update({ segments: turn && turn.segments, done: true });
+        } catch {
+          /* show what was said */
+        }
+        S.answer = answerFromFeed(R, md, full);
+        renderSpoken(S.answer.summary, 'answer');
         finishKaraoke();
         goIdle('answered');
         return;
@@ -1654,36 +1663,46 @@ function createVoiceMode(opts) {
 
   // ================================================================================ speaking
 
+  function newSpeech(kind, run = null) {
+    return {
+      token: ++S.speechToken,
+      kind, // 'live' (the reply as it streams) | 'summary' | 'full' | 'apology'
+      run, // live: the run it belongs to
+      display: '', // the caption text (live: everything appended so far)
+      text: '', // display with whitespace collapsed, as the engine counts offsets
+      map: [], // text index -> display index
+      stream: null, // live: tts.createSpeechStream()
+      handle: null, // others: tts.speak()
+      karaoke: null,
+      timers: [],
+      started: false, // audio has started (onStart, a chunk or a word event)
+      boundary: false, // this voice sends word events
+      idle: false, // live: everything appended so far is spoken; waiting for more text
+      finished: false, // live: stream.finish() was called
+      chunk: null, // { start, end, at }: the chunk playing now (offsets in text)
+    };
+  }
+
   /**
-   * Speak `display` (shown as captions, may contain paragraph breaks). The engine gets the
-   * whitespace-collapsed form; boundary indices are mapped back to the displayed text.
+   * Speak `display` in one go (shown as captions, may contain paragraph breaks). The engine gets
+   * the same text, so its offsets (whitespace collapsed) map back to the display with spokenForm().
    */
   function speak(display, kind, delay = 0) {
     cancelSpeech();
-    const { spoken, map } = spokenForm(display);
-    const sp = {
-      token: ++S.speechToken,
-      kind,
-      text: spoken,
-      map,
-      handle: null,
-      timers: [],
-      started: false,
-      boundary: false,
-      startedAt: Date.now(),
-      prevIndex: -1,
-      relBase: 0,
-      chunkBases: new Map(),
-      searchFrom: 0,
-      quietPolls: 0,
-    };
+    const sp = newSpeech(kind);
+    const form = spokenForm(display);
+    sp.display = String(display ?? '');
+    sp.text = form.spoken;
+    sp.map = form.map;
     S.speech = sp;
+    root.dataset.speech = kind;
     if (kind === 'summary' || kind === 'full') {
       setVoiceState('speaking');
       setStatus(kind === 'full' ? 'Reading the full answer' : 'Speaking', 'speaker');
       announce('Jarvis is speaking');
     }
-    renderSpoken(display, kind === 'apology' ? 'error' : 'answer');
+    renderSpoken(sp.display, kind === 'apology' ? 'error' : 'answer');
+    sp.karaoke = S.karaoke;
     setKaraoke(0);
     renderControls();
 
@@ -1692,21 +1711,20 @@ function createVoiceMode(opts) {
       const s = getS();
       try {
         sp.handle =
-          tts.speak(speakable(spoken), {
+          tts.speak(sp.display, {
             voiceURI: typeof s.voiceURI === 'string' ? s.voiceURI : '',
             rate: speechRate(),
             onStart: () => onSpeechStart(sp),
+            onChunk: (c) => onSpeechChunk(sp, c),
+            onBoundary: (b) => onSpeechBoundary(sp, b),
             onEnd: (info) => onSpeechEnd(sp, info),
-            onBoundary: (event) => onSpeechBoundary(sp, event),
           }) || null;
       } catch (err) {
         console.warn('[voice] speech failed', err);
-        speechDone(sp);
+        speechFinished(sp, 'failed');
         return;
       }
-      sp.startedAt = Date.now();
       startEstimator(sp);
-      startSpeechWatchdog(sp);
     };
     if (delay > 0) sp.timers.push(setTimeout(begin, delay));
     else begin();
@@ -1715,31 +1733,38 @@ function createVoiceMode(opts) {
   function onSpeechStart(sp) {
     if (sp.token !== S.speechToken || sp.started) return;
     sp.started = true;
-    sp.startedAt = Date.now(); // the estimator counts from the first sound, not from the request
+    if (sp.kind === 'live') announce('Jarvis is speaking');
   }
 
+  /** A chunk starts playing: highlight it, and show that Jarvis is speaking. */
+  function onSpeechChunk(sp, c) {
+    if (sp.token !== S.speechToken || !c) return;
+    const start = Number(c.start);
+    const end = Number(c.end);
+    if (!Number.isFinite(start) || start < 0) return;
+    sp.chunk = { start, end: Number.isFinite(end) && end > start ? end : start + 1, at: Date.now() };
+    sp.idle = false;
+    if (!sp.started) onSpeechStart(sp);
+    if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));
+    if (sp.kind !== 'live') return;
+    if (S.run && S.run === sp.run) renderRunNow();
+    else if (S.state !== 'speaking') {
+      setVoiceState('speaking');
+      setStatus('Speaking', 'speaker');
+    }
+  }
+
+  /**
+   * The stream (or speak()) ended, exactly once: 'done' | 'empty' (finished), 'cancelled' |
+   * 'interrupted' (someone else stopped it; our own cancels never get here, the token changed),
+   * 'error' | 'unsupported' (speech isn't working).
+   */
   function onSpeechEnd(sp, info) {
     if (sp.token !== S.speechToken) return;
-    // Our own cancels are filtered out by the token, so 'cancelled' / 'interrupted' here means
-    // someone else stopped or replaced this speech: finish now and don't open the mic over them.
-    if (info && (info.reason === 'interrupted' || info.reason === 'cancelled')) {
-      sp.interrupted = true;
-      speechDone(sp);
-      return;
-    }
-    // Engines that speak in chunks may report each chunk's end: finish only when nothing is left.
-    sp.timers.push(
-      setTimeout(() => {
-        if (sp.token !== S.speechToken) return;
-        let still = false;
-        try {
-          still = !sp.interrupted && typeof tts.isSpeaking === 'function' && !!tts.isSpeaking();
-        } catch {
-          still = false;
-        }
-        if (!still) speechDone(sp);
-      }, 140),
-    );
+    const reason = info && info.reason;
+    if (reason === 'done' || reason === 'empty') speechFinished(sp, 'done');
+    else if (reason === 'cancelled' || reason === 'interrupted') speechFinished(sp, 'interrupted');
+    else speechFinished(sp, 'failed');
   }
 
   function onSpeechBoundary(sp, event) {
@@ -1748,8 +1773,12 @@ function createVoiceMode(opts) {
     const ci = Number(event.charIndex);
     if (!Number.isFinite(ci) || ci < 0) return;
     if (!sp.started) onSpeechStart(sp);
+    sp.idle = false;
     sp.boundary = true;
-    setKaraokeChar(displayIndex(sp, globalCharIndex(sp, event, ci)));
+    if (S.karaoke === sp.karaoke) {
+      const len = event.name === 'sentence' ? 0 : Number(event.charLength);
+      setKaraokeWord(displayIndex(sp, ci), Number.isFinite(len) && len > 0 ? len : 0);
+    }
     bumpLevel(0.55 + Math.random() * 0.35);
   }
 
@@ -1758,87 +1787,65 @@ function createVoiceMode(opts) {
     return sp.map[Math.max(0, Math.min(sp.map.length - 1, spokenIndex))];
   }
 
-  /** Map a boundary event (possibly relative to one queued chunk) to an index in the full text. */
-  function globalCharIndex(sp, event, ci) {
-    if (Number.isFinite(event.offset)) return event.offset + ci;
-    const utter = event.utterance && typeof event.utterance.text === 'string' ? event.utterance.text : '';
-    const chunk = utter || (typeof event.chunk === 'string' ? event.chunk : '') || (typeof event.chunkText === 'string' ? event.chunkText : '');
-    if (chunk) {
-      if (chunk.length >= sp.text.length - 1) return ci;
-      let base = sp.chunkBases.get(chunk);
-      if (base === undefined) {
-        const lead = chunk.length - chunk.trimStart().length;
-        const probeText = chunk.trim().slice(0, 24);
-        let at = probeText ? sp.text.indexOf(probeText, sp.searchFrom) : -1;
-        if (at < 0 && probeText) at = sp.text.indexOf(probeText);
-        base = at >= 0 ? at - lead : -1;
-        if (at >= 0) sp.searchFrom = at + 1;
-        sp.chunkBases.set(chunk, base);
-      }
-      if (base >= 0) return base + ci;
-    }
-    // Unknown framing: indices restart at each chunk; chunks start on sentence boundaries.
-    if (ci < sp.prevIndex) {
-      const passed = sp.relBase + sp.prevIndex;
-      const next = splitSentences(sp.text).find((s) => s.start > passed);
-      sp.relBase = next ? next.start : passed + 1;
-    }
-    sp.prevIndex = ci;
-    return sp.relBase + ci;
-  }
-
-  /** Voices without word events: move the highlight by elapsed time instead. */
+  /**
+   * Voices without word events: move the highlight through the chunk that is playing by elapsed
+   * time (restarting at every chunk, so it never drifts far). Time while the page is hidden
+   * doesn't count (iOS pauses speech in the background).
+   */
   function startEstimator(sp) {
+    let hiddenAt = 0;
     const timer = setInterval(() => {
-      if (sp.token !== S.speechToken || sp.boundary) {
+      if (sp.token !== S.speechToken) {
         clearInterval(timer);
         return;
       }
-      if (!sp.started && Date.now() - sp.startedAt < 1500) return;
-      const ci = Math.floor(((Date.now() - sp.startedAt) / 1000) * CHARS_PER_SEC * speechRate());
-      setKaraokeChar(displayIndex(sp, Math.min(ci, sp.text.length - 1)));
+      const c = sp.chunk;
+      if (document.hidden) {
+        if (!hiddenAt) hiddenAt = Date.now();
+        return;
+      }
+      if (hiddenAt) {
+        if (c) c.at += Date.now() - hiddenAt;
+        hiddenAt = 0;
+      }
+      if (sp.boundary || sp.idle || !c || S.karaoke !== sp.karaoke) return;
+      const ci = c.start + Math.floor(((Date.now() - c.at) / 1000) * CHARS_PER_SEC * speechRate());
+      setKaraokeChar(displayIndex(sp, Math.min(ci, c.end - 1)));
     }, 250);
     sp.timers.push(timer);
   }
 
-  function startSpeechWatchdog(sp) {
-    const expected = (sp.text.length / (CHARS_PER_SEC * speechRate())) * 1000;
-    sp.timers.push(setTimeout(() => speechDone(sp), expected * 2 + 6000));
-    if (typeof tts.isSpeaking !== 'function') return;
-    const poll = setInterval(() => {
-      if (sp.token !== S.speechToken) {
-        clearInterval(poll);
-        return;
-      }
-      let speaking = true;
-      try {
-        speaking = !!tts.isSpeaking();
-      } catch {
-        speaking = true;
-      }
-      const age = Date.now() - sp.startedAt;
-      if (!speaking && (sp.started || age > 4000)) {
-        sp.quietPolls += 1;
-        if (sp.quietPolls >= 2) speechDone(sp);
-      } else {
-        sp.quietPolls = 0;
-      }
-    }, 800);
-    sp.timers.push(poll);
-  }
-
-  function speechDone(sp) {
+  /** The speech `sp` is over: 'done' (spoken to the end), 'interrupted' or 'failed'. */
+  function speechFinished(sp, how) {
     if (sp.token !== S.speechToken) return;
     S.speechToken += 1;
     S.speech = null;
     clearTimers(sp.timers);
+    delete root.dataset.speech;
     if (S.closed) return;
-    finishKaraoke();
+    if (S.karaoke === sp.karaoke) finishKaraoke();
+    if (sp.kind === 'live' && S.run && S.run === sp.run) {
+      // The spoken part is over (or speech stopped) while the reply is still being written:
+      // nothing more is spoken for it; the end of the turn decides what comes next.
+      if (how === 'done') sp.run.liveDone = true;
+      else sp.run.liveOff = true;
+      renderRunNow();
+      renderControls();
+      return;
+    }
     if (sp.kind === 'apology') {
       afterApology();
       return;
     }
-    if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !sp.interrupted && !document.hidden) {
+    if (how === 'done') afterSpeech();
+    else goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
+  }
+
+  /** After a reply was spoken to the end: listen again (continuous) or wait for a tap. */
+  function afterSpeech() {
+    if (S.closed) return;
+    finishKaraoke();
+    if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
       // Hands-free: listen again once the speaker has gone quiet.
       setStatus('Your turn', 'mic');
       S.retryTimer = setTimeout(() => {
@@ -1858,16 +1865,23 @@ function createVoiceMode(opts) {
     S.speechToken += 1;
     S.speech = null;
     clearTimers(sp.timers);
+    delete root.dataset.speech;
+    if (sp.kind === 'live' && sp.run) sp.run.liveOff = true;
+    const handle = sp.stream || sp.handle;
     try {
-      if (sp.handle && typeof sp.handle.cancel === 'function') sp.handle.cancel();
+      // The engine cancels itself; an extra stopSpeaking() would only delay the next speech.
+      if (handle && typeof handle.cancel === 'function') handle.cancel();
+      else if (tts && typeof tts.stopSpeaking === 'function') tts.stopSpeaking();
     } catch {
       /* ignore */
     }
-    try {
-      if (tts && typeof tts.stopSpeaking === 'function') tts.stopSpeaking();
-    } catch {
-      /* ignore */
-    }
+  }
+
+  /** Markdown -> the text to read aloud (written for the ear). */
+  function speechMarkdown(md) {
+    if (typeof markdownToPlainText === 'function') return String(markdownToPlainText(md, { speech: true }) || '');
+    if (tts && typeof tts.toSpeech === 'function') return String(tts.toSpeech(md, 'full') || '');
+    return String(md || '');
   }
 
   function speechText(md, kind) {
@@ -1949,7 +1963,7 @@ function createVoiceMode(opts) {
     levelFrame = 0;
     const dt = levelLast ? Math.min(100, ts - levelLast) : 16;
     levelLast = ts;
-    if (S.speech && S.speech.started && !S.speech.boundary) {
+    if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
       // No word events from this voice: a soft synthetic envelope keeps the core "talking".
       const t = ts / 1000;
       bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
@@ -1987,7 +2001,7 @@ function createVoiceMode(opts) {
       // just to look at Mission Control. STOP, or a tap on the core, stops it.
       const R = S.run;
       S.run = null;
-      if (R.offs) for (const off of R.offs) callQuietly(off);
+      if (R.offs) detachRun(R);
     }
     cancelRunRender();
     if (levelFrame) cancelAnimationFrame(levelFrame);
@@ -2158,11 +2172,6 @@ function spokenForm(display) {
     }
   }
   return { spoken, map };
-}
-
-/** "→" reads as "right arrow" on some voices; swap it for a pause (same length keeps caption offsets). */
-function speakable(text) {
-  return String(text).replace(/→/g, ',');
 }
 
 function toText(value) {

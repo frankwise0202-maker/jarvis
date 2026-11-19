@@ -638,14 +638,98 @@ provide a tiny shim; choose one and document it). Include XSS cases: `<script>`,
 using `SpeechRecognition || webkitSpeechRecognition`, `interimResults: true`,
 `continuous: false`. Errors mapped to `{ code: 'not-allowed'|'no-speech'|'network'|'aborted'|'unsupported'|'other', message }`.
 
-`src/platform/voice/tts.js`:
-`ttsSupported()`, `getVoices()` (resolves after `voiceschanged` or 1.5s), `pickDefaultVoice(voices)`
-(prefer en-GB male-sounding: names containing "Daniel", "Arthur", "Oliver", "Google UK English Male",
-"Microsoft Ryan", "Microsoft George", then any en-GB, then en-US, then default),
-`unlockSpeech()` (speak an empty utterance on first user gesture; iOS), `speak(text, { voiceURI, rate, onStart, onEnd, onBoundary })`
-→ `{ cancel() }` (split into ≤ 220-char sentence chunks queued sequentially — Chrome stops long
-utterances), `stopSpeaking()`, `isSpeaking()`, `toSpeech(markdown, mode)` (`'summary'` = first
-paragraph's plain text, max ~400 chars; `'full'` = full plain text without code blocks/URLs).
+`src/platform/voice/tts.js` (the browser's built-in `speechSynthesis` only: free voices, no accounts, no
+network hosts of its own; v5 voice upgrade, see §16):
+- `ttsSupported()`; `getVoices()` (resolves after `voiceschanged` or 1.5 s).
+- `voiceQuality(voice)` → `'premium'|'enhanced'|'natural'|'standard'`: a whole-word, case-insensitive match on the name
+  or voiceURI (`-`, `.`, `_`, brackets delimit): "Premium", "Enhanced", "Natural" or "Neural" (so "Supernatural" is not).
+- `rankVoices(voices)` → a new array, best first (the Settings picker). Sort keys in order: English before other
+  languages; on-device (`localService === true`), then unknown, then online; novelty and Eloquence voices (Bubbles,
+  Zarvox, Albert, …) last; quality (premium, enhanced, natural, standard); en-GB; the preferred names in order
+  (Daniel, Arthur, Oliver, Jamie, Malcolm, George, Ryan, Thomas); male-sounding before a list of female names; the
+  browser's default voice; the browser's order. The novelty, en-GB, name and male keys apply to English voices only.
+  Entries without a name are dropped.
+- `pickDefaultVoice(voices)` = `rankVoices(voices)[0] || null`, so a downloaded "Daniel (Enhanced)" or "Arthur
+  (Premium)" beats the compact "Daniel". Privacy rule: an online voice (it sends the text to Google or Microsoft) is
+  picked only when the device has no on-device English voice. `resolveVoice(voiceURI, voices)`: the stored voice,
+  else the default pick.
+- `unlockSpeech()`: speak a silent empty utterance once, from the first click/keydown (iOS needs speech to start in a
+  gesture). The unlock utterance is never cancelled, so unlock + speak in one tap stays synchronous.
+- `createSpeechStream({ voiceURI, rate, onStart, onChunk, onBoundary, onIdle, onEnd })` → stream, for text that is
+  spoken while it is still being written (Voice Mode):
+  - `stream.append(text)`: plain speech text, joined exactly as given (include the spaces and line breaks; mid-word
+    pieces are fine). A sentence is complete when `[.!?…]` (plus closing quotes/brackets) is followed by whitespace;
+    text before a line break is complete once more text follows it. Complete sentences are queued at once; the
+    unfinished tail waits for more text or `finish()`. Ignored after `finish()`, `cancel()` or the end.
+  - `stream.finish()`: speak the tail; `onEnd({ reason: 'done' })` after the last chunk (never inside `finish()`);
+    `'empty'` when nothing was ever appended.
+  - `stream.cancel()`: stop now, idempotent; `onEnd({ reason: 'cancelled' })` synchronously, after the engine is cancelled.
+  - `stream.text()`: everything appended, whitespace runs as one space, trimmed (offsets never move);
+    `stream.spokenUpTo()`: end offset of the last finished chunk; `stream.active()`: false once ended.
+  - `onStart()` once, just before the first `onChunk`. `onChunk({ index, start, end, text })` when a chunk starts
+    playing (`text === stream.text().slice(start, end)`; a skipped chunk never fires). `onBoundary({ charIndex,
+    charLength, name, chunkIndex })` with `charIndex` an offset in `text()` (`charLength` computed for words when the
+    engine omits it). `onIdle()` once per lull: every complete sentence so far is spoken and `finish()` hasn't been
+    called. `onEnd({ reason })` exactly once: `'done'` (`'error'` if nothing ever played and something was skipped),
+    `'cancelled'` (our cancel, `stopSpeaking()`, or a newer stream or `speak()`), `'interrupted'` (someone else's
+    `cancel()`), `'error'` (`not-allowed`, or two chunks in a row never played), `'empty'`, `'unsupported'` (async).
+    Callback exceptions are caught and logged.
+  - Only one stream or `speak()` at a time: starting one cancels the previous (`'cancelled'`).
+- `speak(text, { voiceURI, rate, onStart, onChunk, onBoundary, onEnd })` → `{ cancel() }`: a stream given all its text
+  at once (chunked exactly like `chunkText`); its first `speechSynthesis.speak()` is synchronous (inside the gesture).
+- `stopSpeaking()` cancels the active stream (else the engine, if it is speaking or pending); `isSpeaking()` is true
+  while a stream or `speak()` is open, including a stream that is idle and waiting for text.
+- `toSpeech(markdown, mode)`: `'summary'` = the first paragraph as speech text, ≤ ~400 chars (cut at a sentence end);
+  `'full'` = all of it without code blocks or URLs, one line per block (paragraphs and list items become pauses);
+  `'off'` = `''`.
+- `chunkText(text, max = 220)`, `splitSentences(text)` (pure helpers); `SPEECH_TIMING` (frozen): `charsPerSecond` 15,
+  `endMinMs` 4000, `endFactor` 2.5, `endExtraMs` 1500, `engineQuietMs` 3000, `startTimeoutMs` 3000, `retryDelayMs` 250,
+  `deferMs` 30, `tickMs` 250, `cancelGraceMs` 1000, `maxClockStepMs` 1000, `maxQueued` 2, `deadChunks` 2,
+  `earlyEndFraction` 0.7, `drainExtraMs` 500.
+
+Chunks pack whole sentences and never cross a line break: up to 360 characters for an on-device voice, and
+`max(100, min(220, ⌊220 × rate⌋))` for an online or unknown voice (under ~15 s; Chrome cuts long online utterances).
+A longer sentence splits at a clause boundary (`, ; : — –`), else at a space, else hard; a growing unfinished
+sentence longer than the limit is released piece by piece.
+
+Recovery (real engines break an "onend → speak the next chunk" chain; each rule has a unit test against a scriptable
+fake engine on a virtual clock, `test/unit/platform.voice.*.test.mjs`):
+- Queue ahead: the next chunk is queued while the current one plays (at its start, or once it is assumed to be
+  playing), never more than 2 of ours in the engine, with a reference to every queued utterance. The engine plays them
+  back to back, so there is no gap and no `speak()` inside `onend` (WebKit drops it). `speak()` is never called inside
+  an engine event: it waits 30 ms.
+- Started: a `start` event, a boundary event, or the engine saying it is speaking with nothing pending 3 s after the
+  chunk should have started. A later chunk's start settles every earlier chunk (FIFO).
+- Ended: `end`, or its time is up (`max(4 s, 2.5 × expected + 1.5 s)` from its start, expected = chars / (15 × rate)
+  s; a boundary pushes it to at least 3 s after that boundary), or 3 s of the engine reporting silence. `speaking` /
+  `pending` are never trusted alone (WebKit leaves them stuck on).
+- Never started within 3 s: if the engine still says it is speaking or pending, wait once more (3 s, or until the
+  previous chunk's time is up); then `cancel()`, 250 ms, `speak()` again once, then skip it. An `interrupted` /
+  `canceled` error within 1 s of our own `cancel()` on a chunk that never started is the same drop and is retried at
+  once. After two chunks in a row were given up, the stream ends with `'error'` (about 12.5 s, not minutes of silence).
+- Each utterance is processed once; events of utterances we cancelled or gave up (a generation counter) are ignored,
+  so the `interrupted` / `canceled` errors our own recovery causes never end the session; any other such error means
+  someone else stopped speech: `'interrupted'`, without talking over them.
+- An `end` that came early (before 70 % of the expected time) on the last chunk while the engine still says it is
+  speaking: `onEnd('done')` waits until it stops, at most until the expected end + 0.5 s (so a microphone never opens
+  over the voice).
+- Once `unlockSpeech()` has run, the first `speak()` after our own `cancel()` waits 250 ms (Chrome drops one queued
+  right after a cancel).
+- Time counts only while the page is visible (iOS pauses speech in the background; each clock step is capped at 1 s),
+  and `speechSynthesis.resume()` is called when the engine is paused while the page is visible.
+- Known limits: a short utterance (under 3 s) that plays with no start, boundary or end event looks exactly like a
+  dropped one, so it is replayed once; a chunk dropped (with no cancel before it) while the previous chunk's audio still
+  plays after an early end is assumed played.
+
+Speech text (`markdownToPlainText(md, { speech: true })`, §9.1, used by `toSpeech` and Voice Mode): no code blocks,
+URLs reduced to their host name, no list markers or emoji, every block ends as a sentence (one line per block), and
+written for the ear: `e.g.` → "for example", `i.e.` → "that is", `etc.` → "et cetera", ` vs. ` → " versus ",
+`approx.` → "approximately", `&` between words → "and", `12%` → "12 percent", `°C` / `°F` / `5°` → "degrees
+Celsius" / "degrees Fahrenheit" / "5 degrees", digit ranges (`5–10`, `5-10`, `$5–$10`) → "5 to 10", `~5` → "about
+5", `20+` → "20 plus", `×` → "times", `24/7` → "twenty-four seven", `km/h` → "kilometres per hour", arrows → "to",
+`≈` → "about"; reference markers (`[1]`, `[source]`, a citation link `[1](url)`) and stray `**`, `__` and backticks are
+removed. Phone numbers, dates (2026-11-19), times (10:30) and hyphenated words are never touched. Chat rendering and
+plain-text copy are unchanged.
 
 ### 9.3 `src/platform/env.js`, `wakelock.js`, `pwa.js`
 - env: `isOnline()`, `onOnlineChange(fn)`, `prefersReducedMotion()`, `isTouch()`,
@@ -881,12 +965,47 @@ openVoiceMode({
 States loop: listening → thinking/working (shows live mission mini-status: agents done/total,
 current activity line) → speaking (captions of what is being spoken) → listening again when
 `voiceContinuous`. Tap the core: while listening = stop listening and send; while
-thinking = abort the turn; while speaking = stop speaking and listen. Big exit button
-(`data-testid="voice-close"`), root `data-testid="voice-mode"` with `data-state`. Speaks the
-answer's summary paragraph (via `tts.toSpeech(md,'summary')`) — a "Read full answer" button
-speaks everything. If STT is unsupported, show a clear message and a text box fallback (the
-iOS keyboard dictation key still works). Focus-trapped dialog, Escape closes, safe areas,
-reduced motion, works at 320px wide. Never uses innerHTML.
+thinking/working = abort the turn (and its speech); while speaking = stop speaking and listen (a reply still being
+written stops too and stays in the chat as far as it got). Exit stops listening and speaking; a running turn carries
+on in the chat (§16). Big exit button (`data-testid="voice-close"`), root `data-testid="voice-mode"` with `data-state`
+(and `data-speech`: `live` | `summary` | `full` | `apology` while speaking). If STT is unsupported, show a clear
+message and a text box fallback (the iOS keyboard dictation key still works). Focus-trapped dialog, Escape closes,
+safe areas, reduced motion, works at 320px wide. Never uses innerHTML.
+
+Speaking (v5): Voice Mode's own questions are sent with `spoken: true` (the spoken reply channel, §16) and the reply
+is spoken **while it streams**, with `tts.createSpeechStream` (§9.2) and the pure helpers in `src/ui/voice-stream.js`:
+- Spoken source: the turn's text segments, in order, joined with blank lines (what the chat shows), cut at the first
+  thematic-break line (`---`, `***` or `___` alone on a line, up to 3 spaces of indentation, outside fenced code; only
+  complete lines count while streaming). Text below the cut is never spoken.
+- It is converted with the speech conversion (§9.2), split into sentences (decimals, domains and common abbreviations
+  don't end one; a line break does), and only **complete** sentences are appended, each once, with its separator
+  (`" "`, or `"\n\n"` at the end of a block). A sentence is complete when more text follows it, when the last text
+  segment is followed by a search, a mission, a memory change or thinking (so "Let me check the latest on that." is
+  spoken while the tools run; text that stops there without `.`, `!`, `?` or `…` gets a full stop, because the engine
+  holds such a line until more text or `finish()`), at the cut, or at the end of the turn. The unfinished last
+  sentence waits.
+- What was appended is tracked by its text and by its sentence count: while the text only grows it continues right
+  after what was said; if an earlier part changes (Markdown read differently once more text arrives, or a segment
+  removed by a retry), what was said stays said and it continues after the same number of sentences. Never a
+  sentence twice; a failing conversion speaks nothing and never throws.
+- About 1,500 characters at most: the first sentence that would pass it is not appended, "The rest is on screen." is
+  appended instead (only when something was left out) and the stream is finished. The stream is also finished at the
+  cut; at the end of the turn (`done`) the rest is appended and the stream finished.
+- States: `speaking` while a chunk plays; when the stream is idle (caught up) and the turn still works, back to
+  thinking/working (the mission strip keeps showing). When the speech ended normally before the turn did, it waits for
+  the turn and then listens again.
+- The reply chime plays only when nothing was spoken yet at the end of the turn; then the spoken part (if any) is
+  spoken after it, else today's summary path: the final answer's summary paragraph (`tts.toSpeech(md, 'summary')`).
+  Runs Voice Mode didn't start (opened while a chat reply runs, `turn.spoken` not set) use the summary path; a spoken
+  turn adopted mid-reply speaks only what is written after Voice Mode opened.
+- Captions grow sentence by sentence; the chunk being spoken is highlighted (`onChunk`), and the word too when the
+  voice reports words (`onBoundary`, `.vm-w`); without word events a time estimate moves through the current chunk
+  (paused while the page is hidden). Captions stay as context while listening again.
+- Continuous mode listens again only after `onEnd` with reason `done` (not after `interrupted`, `error` or
+  `unsupported`; then the whole spoken part is shown to read and Voice Mode waits for a tap).
+- "Read full answer" (`voice-read-full`) stays: it reads the whole final answer, including what is below the cut, with
+  `tts.speak()`. It is offered when the reply was cut or capped, or the answer is clearly longer than what was spoken.
+- Voice Mode keeps no speech watchdog of its own: the engine guarantees `onEnd`.
 
 ### 14.2 Protocols & briefings — `src/ui/protocols.js`, `src/styles/protocols.css`
 One-tap mission presets ("Protocols") plus owner-defined custom protocols.
@@ -1040,3 +1159,45 @@ App and platform:
 - Share/export redacts API keys and escapes raw HTML; voices prefer on-device ones; online voices are labelled.
 - Security note: GitHub Pages project sites on one account share an origin (and so localStorage). Keep the hosting
   account dedicated to Jarvis.
+
+Voice (v5). Free voices only: the browser's `speechSynthesis`; no new accounts, paid text-to-speech or network hosts;
+the CSP is unchanged.
+- Why: the owner wanted a more fluid voice that sounds like Jarvis, and read-aloud "only reads the first sentence".
+  Causes: Voice Mode spoke only the summary paragraph; Speak replies "Summary" did the same without saying so; and real
+  engines broke the "onend → speak the next chunk" chain (WebKit leaves `speaking`/`pending` stuck on, `onend` goes
+  missing or comes early or twice, `speak()` inside `onend` is dropped, Chrome drops an utterance queued after
+  `cancel()` and cuts long online ones, iOS pauses speech in the background, our own `cancel()` causes `interrupted`
+  errors).
+- Speech engine and speech text: §9.2 (streams with queue-ahead, a time-based watchdog in visible time, retries and a
+  guaranteed `onEnd`; chunks of whole sentences, 360 characters on-device and 220 online, line breaks as pauses; the
+  voice ranking; Markdown for the ear).
+- Spoken reply channel: `startTurn(conv, { …, spoken: true })` (Voice Mode sends `keepOnStop: true, spoken: true`; the
+  input is `{ text, mode, attachments?, maxAgents?, keepOnStop?, spoken? }`) adds `SPOKEN_REPLY_CHANNEL`
+  (`src/engine/prompts.js`) to that turn's `<turn_context>`, on the line right after `Mode:`, in the first text block of
+  the new user message, and marks the JarvisTurn `spoken: true` (saved, survives a resume; other turns have no `spoken`
+  key, so their requests and stored turns are byte-identical; a backup import rebuilds turns from known fields and
+  drops the mark, which is harmless). It tells Jarvis the owner hears the reply: natural spoken sentences with
+  contractions, in character; no Markdown, headings, lists, tables, links, emoji or symbols; the answer first, usually
+  one to four sentences; numbers rounded and dates and times said the way people say them; one short sentence before a
+  search, reading pages or deploying agents (spoken while it works); details for the screen below a line containing
+  only `---`, mentioning that they are on screen. The frozen system prompts and tool lists are unchanged (all of it is
+  per turn). Chat turns never carry it: in the chat the lead keeps writing for the screen.
+- Voice Mode speaks the spoken part while the reply streams, from the first complete sentence: §14.1.
+- Chat: the Speak button under an answer (`turn-speak`) reads the whole final answer (`toSpeech(md, 'full')`, including
+  anything below a `---`); it shows Stop while reading and resets on `onEnd`, which always comes; a voice that stops
+  responding (`onEnd` `error`) shows a toast. Speak replies: **Off** / **Short summary** (the opening paragraph) /
+  **Whole reply** (values `off|summary|full`, no migration); its help says what each does.
+- Settings → Voice: the picker lists voices with `rankVoices` (best first). The first option names the automatic pick,
+  "Automatic — <name>", with "(<quality>, online)" when they apply; the others read "<name> (<lang>, <Premium |
+  Enhanced | Natural>, online)" (the quality only when the name doesn't already say it; options carry `data-quality`
+  and `data-online`). Under it, "Get a more natural voice" (`data-testid="voice-tip"`, `data-platform`) is worded for
+  the platform (`parseUserAgent`): iPhone/iPad (Spoken Content → Voices → English, Enhanced or Premium, Daniel or
+  Arthur, reopen Jarvis; not every iOS version offers them to web apps), Mac (Manage Voices… → English (United
+  Kingdom)), Windows (Edge's online "Natural" voices, or Add voices), Android (Speech Services by Google → Install voice
+  data), else generic. Test voice speaks with the chosen voice; the speaking speed is unchanged.
+- Tests: unit `platform.voice.*` (engine quirks a–h, streams, ranking, speech text, and the fake engine itself),
+  `markdown.test.mjs`, `engine.spoken.test.mjs`, `mock.test.mjs` (spoken replies), `ui.voice.stream.test.mjs` (spoken
+  part, feed, cap, retries, labels, tip, and a streamed reply through the real stream on the fake engine); E2E
+  `voice-speech.mjs`: `chat-read-aloud-whole`, `voice-spoken-channel`, `voice-streams-speech`, `voice-search-preamble`,
+  `quirky-engine`, `settings-voice`. The E2E fake speech (`installFakeSpeech(options)` in `features.mjs`) records a
+  timing log and can model a stuck `speaking` flag, missing `end` events and dropped utterances.
