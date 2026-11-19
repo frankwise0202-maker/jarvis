@@ -14,10 +14,14 @@ export const DEFAULT_WORKER_MODEL = 'claude-sonnet-5-5';
 // max_tokens per depth. Output-tokens-per-minute rate limits are charged from max_tokens when a
 // request starts, so a huge cap can make every request of a new (low-tier) account fail with 429.
 // These leave ample room for adaptive thinking plus the answer; a max_tokens stop is handled.
+// visualLeadMaxTokens: the lead's budget in conversations that can show holograms (lead tools
+// version 4). A vehicle hologram alone is about 11–17K output tokens (the show_hologram schema asks
+// for 35–60 parts, at most 80), and adaptive thinking shares the budget. max_tokens is not billed,
+// and an output-tokens-per-minute 429 still caps it for the session (stream.js).
 export const DEPTHS = Object.freeze({
-  fast: Object.freeze({ label: 'Fast', leadEffort: 'low', workerEffort: 'low', workerSearches: 3, workerFetches: 2, leadMaxTokens: 12000, workerMaxTokens: 8000 }),
-  balanced: Object.freeze({ label: 'Balanced', leadEffort: 'medium', workerEffort: 'medium', workerSearches: 5, workerFetches: 3, leadMaxTokens: 16000, workerMaxTokens: 12000 }),
-  deep: Object.freeze({ label: 'Deep', leadEffort: 'high', workerEffort: 'high', workerSearches: 8, workerFetches: 5, leadMaxTokens: 32000, workerMaxTokens: 16000 }),
+  fast: Object.freeze({ label: 'Fast', leadEffort: 'low', workerEffort: 'low', workerSearches: 3, workerFetches: 2, leadMaxTokens: 12000, visualLeadMaxTokens: 32000, workerMaxTokens: 8000 }),
+  balanced: Object.freeze({ label: 'Balanced', leadEffort: 'medium', workerEffort: 'medium', workerSearches: 5, workerFetches: 3, leadMaxTokens: 16000, visualLeadMaxTokens: 32000, workerMaxTokens: 12000 }),
+  deep: Object.freeze({ label: 'Deep', leadEffort: 'high', workerEffort: 'high', workerSearches: 8, workerFetches: 5, leadMaxTokens: 32000, visualLeadMaxTokens: 48000, workerMaxTokens: 16000 }),
 });
 
 export const MODES = Object.freeze({ auto: 'Auto', quick: 'Quick', swarm: 'Swarm' });
@@ -63,4 +67,22 @@ export function costOf(model, usage) {
     num(usage.cache_creation_input_tokens) * p.cacheWrite5mPerM +
     num(usage.cache_read_input_tokens) * p.cacheReadPerM;
   return tokens / 1e6 + num(usage.server_tool_use?.web_search_requests) * WEB_SEARCH_USD;
+}
+
+/**
+ * The approximate cost of one 2D blueprint (shown before the owner builds one): about 6K output
+ * tokens with thinking, 4K new input, and about 45K tokens of conversation so far (tools, the
+ * hologram's spec). That prefix is a cheap cache read only while the prompt cache is warm (5
+ * minutes after the conversation's last request); after that it is written to the cache again.
+ */
+export function blueprintCostUsd(model, { warm = true } = {}) {
+  const p = priceOf(model);
+  return (6000 * p.outPerM + 45000 * (warm ? p.cacheReadPerM : p.cacheWrite5mPerM) + 4000 * p.inPerM) / 1e6;
+}
+
+/** "≈ $0.15": to the cent below 10 cents, else to the nearest 5 cents. */
+export function costLabel(usd) {
+  const v = Number.isFinite(usd) && usd > 0 ? usd : 0;
+  const shown = v < 0.1 ? v.toFixed(2) : (Math.round(v * 20) / 20).toFixed(2);
+  return '≈ $' + shown;
 }

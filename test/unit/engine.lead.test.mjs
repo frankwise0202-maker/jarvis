@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { costOf } from '../../src/engine/index.js';
-import { LEAD_SYSTEM_V3, leadToolsV4 } from '../../src/engine/prompts.js';
+import { LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, leadToolsV3, leadToolsV4 } from '../../src/engine/prompts.js';
 import {
   KEY,
   blk,
@@ -83,7 +83,9 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   const { body, headers, url } = h.api.requests[0];
   assert.match(url, /\/v1\/messages$/);
   assert.equal(body.model, 'claude-opus-5-5');
-  assert.equal(body.max_tokens, 16000); // balanced depth (OTPM limits are charged from max_tokens)
+  // A conversation that can show holograms has room for a vehicle (11–17K output tokens on its own)
+  // plus adaptive thinking: 32K at balanced depth (OTPM limits are charged from max_tokens; a 429 caps it).
+  assert.equal(body.max_tokens, 32000);
   assert.equal(body.stream, true);
   assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V3 }]);
   assert.deepEqual(body.tools, leadToolsV4());
@@ -108,7 +110,7 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   const { turn } = await runTurn(h2.jarvis, conv2, 'Hello');
   const b2 = h2.api.requests[0].body;
   assert.deepEqual(b2.output_config, { effort: 'high' });
-  assert.equal(b2.max_tokens, 32000); // deep depth
+  assert.equal(b2.max_tokens, 48000); // deep depth, a conversation that can show holograms
   assert.deepEqual(b2.thinking, { type: 'adaptive', display: 'omitted' });
   assert.equal('fallbacks' in b2, false);
   assert.equal('context_management' in b2, false);
@@ -121,8 +123,21 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   const b3 = h3.api.requests[0].body;
   assert.equal(b3.model, 'claude-sonnet-5-5');
   assert.equal(t3.leadModel, 'claude-sonnet-5-5');
-  assert.equal(b3.max_tokens, 12000); // fast depth
+  assert.equal(b3.max_tokens, 32000); // fast depth, a conversation that can show holograms
   assert.equal(b3.fallbacks, 'default');
+});
+
+test('lead max_tokens: conversations from before holograms keep each depth\'s budget (12K / 16K / 32K); new ones get room for a vehicle hologram', async () => {
+  for (const [depth, old, visual] of [['fast', 12000, 32000], ['balanced', 16000, 32000], ['deep', 32000, 48000]]) {
+    const h = createHarness({ handler: () => answer('ok'), settings: { depth } });
+    const before = h.jarvis.newConversation();
+    before.system = LEAD_SYSTEM_V2;
+    before.tools = leadToolsV3();
+    await runTurn(h.jarvis, before, 'Hello');
+    assert.equal(h.api.requests.at(-1).body.max_tokens, old, `${depth}: a conversation without show_hologram`);
+    await runTurn(h.jarvis, h.jarvis.newConversation(), 'Hello');
+    assert.equal(h.api.requests.at(-1).body.max_tokens, visual, `${depth}: a new conversation (it can show holograms)`);
+  }
 });
 
 test('web_search and web_fetch tool segments with results; cited text stays one segment', async () => {

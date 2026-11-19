@@ -47,22 +47,31 @@
 //   visuals               the hologram and blueprint viewers (app.js):
 //                           open(run, segment)  show a hologram or blueprint of a Voice Mode reply
 //                           isOpen()            a viewer covers Voice Mode
-//                           command(text)       words heard while one is open: { handled: false }
+//                           command(text, { signal, spoken, later })
+//                                               words heard while one is open: { handled: false }
 //                                               or { handled: true, command, done? } (done: the
 //                                               outcome of "blueprint the <part>", a Promise of
-//                                               { opened } | { run } | { held } | { error })
-//                           sync(info)          { state, label, listening, heard, busy } for the
-//                                               viewer's mic button
-// The returned api also has ask(text, { mode, blueprintFor }) -> { run } | { held } | { error }
-// (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn) and tap()
-// (the viewer's mic button: the same as tapping the core).
+//                                               { opened } | { run } | { held } | { confirm } |
+//                                               { error }); signal: Stop aborts it; later: said
+//                                               while the reply that builds it streams (a 2D
+//                                               request then waits: { handled: false, later })
+//                           sync(info)          { state, label, listening, heard, busy, canListen }
+//                                               for the viewer's mic button
+//                           note(text)          a caption in the viewer ("I'll take that once …")
+//                           spoken()            a reply or acknowledgement has been said (the
+//                                               viewer's caption of it can leave)
+// The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
+// { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
+// one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
+// viewer's mic button: the core's tap, except that while a hologram of the reply builds it listens
+// for a command), stop() (the viewer's "Stop building") and note(text) (a line under the caption).
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
 
 import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
-import { commandAck, savedBlueprintAck } from './voice-visuals.js';
+import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
 
 export { splitSentences };
 
@@ -75,6 +84,7 @@ const REPLY_CHIME_MS = 260; // let the reply chime ring before the voice starts
 const RELISTEN_DELAY_MS = 350; // after speaking, let the audio settle before the mic opens again
 const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at most this often
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
+const CONFIRM_MS = 60000; // "Shall I draw a blueprint of …?" waits this long for a yes
 const MODES = ['auto', 'quick', 'swarm'];
 const AGENT_FINISHED = new Set(['done', 'error', 'stopped', 'interrupted']);
 const AGENT_ACTIVE = new Set(['starting', 'thinking', 'searching', 'reading', 'writing']);
@@ -225,6 +235,9 @@ function createVoiceMode(opts) {
     coreAgentSig: '',
     unlocked: false,
     announced: '',
+    confirm: null, // { proceed, cmd, at }: "Shall I draw a blueprint of …?" waits for yes or no
+    heldWords: '', // said while a hologram built and not a viewer command: handled once the reply is said
+    canListen: false, // last value sent to the viewer's mic (a hologram of this reply is building)
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -382,6 +395,17 @@ function createVoiceMode(opts) {
     on(window, 'online', onConnectivity),
     on(window, 'offline', onConnectivity),
   ];
+  // A hologram or blueprint viewer over Voice Mode makes it inert (overlay.js): the core's level
+  // animation stops while it is covered and starts again once it shows.
+  let inertObserver = null;
+  try {
+    if (typeof MutationObserver === 'function') {
+      inertObserver = new MutationObserver(() => updateLevelLoop());
+      inertObserver.observe(root, { attributes: true, attributeFilter: ['inert'] });
+    }
+  } catch {
+    inertObserver = null;
+  }
 
   unlockSpeech(); // inside the opening gesture (iOS)
   keepAwake();
@@ -394,8 +418,19 @@ function createVoiceMode(opts) {
     el: root,
     /** Words typed in a viewer over Voice Mode, or its 2D request: a Voice Mode turn. */
     ask: (text, options) => askFromViewer(text, options),
-    /** The mic button of a viewer over Voice Mode: the same as tapping the core. */
+    /** The core's tap (v5). */
     tap: () => onCoreTap(),
+    /**
+     * The mic button of a viewer over Voice Mode: like the core, except while a hologram of this
+     * reply is building, when it listens for a command (acted on the live model) instead of stopping.
+     */
+    viewerTap: () => onViewerMic(),
+    /** "Stop building" in the viewer: stop the turn (v5 Stop). True when there was one to stop. */
+    stop: () => stopFromViewer(),
+    /** A short line under Voice Mode's caption (e.g. "New chat: older chats can’t show holograms."). */
+    note: (text) => {
+      if (!S.closed && typeof text === 'string') setSub(text);
+    },
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -994,8 +1029,13 @@ function createVoiceMode(opts) {
 
   // =============================================================================== listening
 
-  function startListening({ gesture = false, retry = false, keepAnswer = false } = {}) {
-    if (S.closed || S.run) return;
+  /**
+   * duringBuild: the owner tapped the viewer's mic while a hologram of the streaming reply builds.
+   * The reply goes on (its speech is not cut; no new sentence is spoken while the mic is open), and
+   * what is heard is taken by heardDuringBuild(); the listen is one utterance (no retries).
+   */
+  function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false } = {}) {
+    if (S.closed || (S.run && !duringBuild)) return;
     clearRetry();
     if (!S.sttOk) {
       S.typing = true;
@@ -1003,14 +1043,14 @@ function createVoiceMode(opts) {
       focusInput();
       return;
     }
-    cancelSpeech();
+    if (!duringBuild) cancelSpeech();
     stopListening();
     if (gesture) {
       S.silentTries = 0;
       S.typing = false;
       unlockSpeech();
     }
-    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false };
+    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild };
     S.listen = L;
     syncCoreAgents(null);
     setVoiceState('listening');
@@ -1093,6 +1133,11 @@ function createVoiceMode(opts) {
     if (reason !== 'end' && reason !== 'final') abortHandle(L.handle);
     if (S.closed) return;
     const text = (L.text || '').trim();
+    if (L.duringBuild) {
+      play('listen-stop');
+      afterBuildListen(text);
+      return;
+    }
     if (reason === 'cancel') {
       play('listen-stop');
       goIdle('ready');
@@ -1144,6 +1189,11 @@ function createVoiceMode(opts) {
     clearTimers(L.timers);
     abortHandle(L.handle);
     if (S.closed) return;
+    if (L.duringBuild) {
+      // A listen while the hologram builds failed: the reply carries on (the viewer's mic shows it).
+      afterBuildListen('');
+      return;
+    }
     // The platform's messages are already short and actionable (e.g. iPhone: turn on Dictation).
     const detail = err && typeof err.message === 'string' ? asSentence(clip(singleLine(err.message), 160)) : '';
     if (code === 'not-allowed') {
@@ -1225,6 +1275,7 @@ function createVoiceMode(opts) {
     const words = String(text || '').trim();
     if (!words || S.closed) return { error: 'Nothing to send.' };
     if (S.run) return { error: 'I’m still working on the previous request.' };
+    S.confirm = null; // a new request: a pending "Shall I draw …?" is moot
     clearRetry();
     cancelSpeech();
     stopListening();
@@ -1328,7 +1379,11 @@ function createVoiceMode(opts) {
         finishRun(R, (event && event.turn) || run.turn);
         return;
       }
-      if (kind === 'segment' && event && event.segment) showVisual(R, event.segment);
+      if (kind === 'segment' && event && event.segment) {
+        showVisual(R, event.segment);
+        // The viewer's mic listens while this reply's hologram builds, and stops him again after.
+        if (event.segment.kind === 'hologram' && S.canListen !== (!S.listen && S.sttOk && buildingVisual(R))) syncVisuals();
+      }
       if (R.feed && (kind === 'segment' || kind === 'segment-removed')) scheduleFeed(R);
       scheduleRunRender();
     };
@@ -1378,6 +1433,7 @@ function createVoiceMode(opts) {
     if (!R || !R.run || S.closed) return;
     const turn = R.run.turn;
     if (!turn) return;
+    if (S.listen) return; // the owner is speaking a command while it builds: the listening state stays
     const missions = Object.values(turn.missions || {}).filter(Boolean);
     const latest = latestMission(missions);
     const active = latest && (latest.status === 'planning' || latest.status === 'running') ? latest : null;
@@ -1512,12 +1568,24 @@ function createVoiceMode(opts) {
   function finishRun(R, turn) {
     if (S.bg === R) return finishBackground(R, turn);
     if (S.run !== R) return;
+    // The owner is speaking a command while the hologram builds: the reply is delivered once the
+    // words are in (afterBuildListen), so the voice never talks over the open microphone.
+    if (S.listen && S.listen.duringBuild && !S.closed) {
+      R.endedTurn = turn || (R.run && R.run.turn) || null;
+      return;
+    }
     S.run = null;
     detachRun(R);
     cancelRunRender();
     showMission(false);
     if (S.closed) return;
     const status = turn && turn.status;
+    // Words held while it built are taken once the reply has been said (dropped if it failed or stopped).
+    if (R.heldWords) {
+      if (status === 'done') S.heldWords = R.heldWords;
+      R.heldWords = '';
+    }
+    syncVisuals();
     if (status === 'done') {
       deliverAnswer(turn, R);
       return;
@@ -1539,6 +1607,10 @@ function createVoiceMode(opts) {
     const R = S.run;
     if (!R) return;
     S.run = null;
+    S.confirm = null;
+    S.heldWords = '';
+    // "blueprint the …" still looking in the library: whatever it finds, nothing starts.
+    if (R.ctl) callQuietly(() => R.ctl.abort());
     detachRun(R);
     cancelRunRender();
     cancelSpeech();
@@ -1644,48 +1716,195 @@ function createVoiceMode(opts) {
     }
   }
 
+  /** A streaming reply of Voice Mode's whose hologram is still building in the open viewer. */
+  function buildingVisual(R) {
+    if (!R || !R.run || R.pending || !R.visuals || !viewerOpen()) return false;
+    const segs = R.run.turn && Array.isArray(R.run.turn.segments) ? R.run.turn.segments : [];
+    return segs.some((s) => s && s.kind === 'hologram' && s.status === 'building' && R.visuals.has(s.id));
+  }
+
   /** What the owner said: a local command while a viewer covers Voice Mode, otherwise a turn. */
   function heard(text) {
+    // "Shall I draw a blueprint of …?" was asked: yes draws it, no drops it; anything else drops the
+    // question and is taken as usual.
+    const asked = S.confirm;
+    S.confirm = null;
+    if (asked && Date.now() - asked.at < CONFIRM_MS) {
+      const reply = confirmReply(text);
+      if (reply === 'yes') return confirmBlueprint(text, asked);
+      if (reply === 'no') {
+        showCaption('quote', `“${text}”`);
+        speakAck('Okay, no blueprint.');
+        return;
+      }
+    }
+    // Said while a hologram of the reply builds (the owner tapped the viewer's mic): see below.
+    if (S.run && S.run.run) {
+      heardDuringBuild(text, S.run);
+      return;
+    }
+    // A 2D request heard here is cancelled by Stop while its library lookup is still running.
+    // With no viewer open, the app may open the hologram shown last for a command about it.
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
     let res = null;
-    if (viewerOpen() && typeof visuals.command === 'function') {
+    if (visuals && typeof visuals.command === 'function') {
       try {
-        res = visuals.command(text);
+        res = visuals.command(text, { signal: ctl ? ctl.signal : null, spoken: true });
       } catch (err) {
         console.warn('[voice] the viewer could not take that command', err);
         res = null;
       }
     }
-    if (res && res.handled) viewerCommand(text, res);
+    if (res && res.handled) viewerCommand(text, res, ctl);
     else send(text);
+  }
+
+  /**
+   * Words heard while a hologram of the streaming reply builds: a viewer command acts on the live
+   * model at once (its toast says so; speaking now would cut the reply's own speech). A question,
+   * or a 2D request (it needs the finished hologram), waits until the reply has been said.
+   */
+  function heardDuringBuild(text, R) {
+    let res = null;
+    if (viewerOpen() && typeof visuals.command === 'function') {
+      try {
+        res = visuals.command(text, { spoken: false, later: true });
+      } catch (err) {
+        console.warn('[voice] the viewer could not take that command', err);
+        res = null;
+      }
+    }
+    if (!(res && res.handled && !res.done)) {
+      R.heldWords = text;
+      try {
+        if (typeof visuals.note === 'function') visuals.note('I’ll take that once the hologram is built.');
+      } catch {
+        /* decoration */
+      }
+    }
+    showCaption('quote', `“${text}”`);
+    resumeRun(R);
+  }
+
+  /** Back to the reply after a listen while it streams: its state, status and speech carry on. */
+  function resumeRun(R) {
+    if (S.closed || S.run !== R) return;
+    renderRunNow();
+    renderControls();
+    if (R.feed) scheduleFeed(R);
+  }
+
+  /**
+   * A listen started while a hologram built is over (`text` heard, or nothing): act on the words,
+   * then go back to the reply. When the reply ended meanwhile, it is delivered now and the words
+   * are taken once it has been said.
+   */
+  function afterBuildListen(text) {
+    const R = S.run;
+    const ended = R && R.endedTurn;
+    if (ended) {
+      R.endedTurn = null;
+      if (text) S.heldWords = text;
+      finishRun(R, ended);
+      return;
+    }
+    if (text) heard(text);
+    else if (R && R.run) resumeRun(R);
+    else goIdle('ready');
+  }
+
+  /** The viewer's mic: listens for a command while a hologram of this reply builds, else the core's tap. */
+  function onViewerMic() {
+    if (S.closed) return;
+    if (!S.listen && S.sttOk && buildingVisual(S.run)) {
+      haptic('light');
+      unlockSpeech();
+      clearRetry();
+      startListening({ gesture: true, duringBuild: true });
+      return;
+    }
+    onCoreTap();
+  }
+
+  /** "Stop building" in the viewer: stop the turn as Stop does (v5). False when none is running here. */
+  function stopFromViewer() {
+    if (S.closed) return false;
+    if (S.listen && S.listen.duringBuild) stopListening();
+    if (S.run && S.run.run) {
+      abortRun();
+      return true;
+    }
+    return false;
+  }
+
+  /** Words held while a hologram built: taken once the reply has been said (true when they were). */
+  function takeHeld() {
+    const words = S.heldWords;
+    if (!words || S.closed || S.run || S.listen) return false;
+    S.heldWords = '';
+    heard(words);
+    return true;
   }
 
   /**
    * A viewer command heard while a viewer covers Voice Mode has acted (free: no turn). Jarvis says a
    * short acknowledgement, then listens again (Continuous). "blueprint the <part>" waits for its
    * outcome: a saved sheet opened (said so), the paid build started as a Voice Mode turn (the app
-   * hands it to ask(), which takes over), or it can't be done (said why).
+   * hands it to ask(), which takes over), a question first (a softer wording: "Shall I draw …?"),
+   * or it can't be done (said why). `ctl` aborts the lookup when the owner says Stop meanwhile.
    */
-  function viewerCommand(text, res) {
+  function viewerCommand(text, res, ctl = null) {
     const cmd = res.command && typeof res.command === 'object' ? res.command : {};
     showCaption('quote', `“${text}”`);
     if (res.done && typeof res.done.then === 'function') {
-      const marker = { pending: true, viewer: true };
-      S.run = marker;
-      setVoiceState('thinking');
-      setStatus(cmd.action === 'blueprint' ? 'Getting the blueprint…' : 'One moment…', cmd.action === 'blueprint' ? 'blueprint' : 'sparkle');
-      res.done.then(
-        (out) => viewerOutcome(marker, cmd, out),
-        (err) => viewerOutcome(marker, cmd, { error: errorText(err) || 'That didn’t work.' }),
-      );
+      waitForBlueprint(res.done, cmd, ctl);
       return;
     }
     speakAck(commandAck(cmd));
+  }
+
+  /** "Getting the blueprint…" until `done` says what happened (Stop aborts `ctl`: nothing starts). */
+  function waitForBlueprint(done, cmd, ctl) {
+    const marker = { pending: true, viewer: true, ctl };
+    S.run = marker;
+    setVoiceState('thinking');
+    setStatus(cmd.action === 'blueprint' ? 'Getting the blueprint…' : 'One moment…', cmd.action === 'blueprint' ? 'blueprint' : 'sparkle');
+    Promise.resolve(done).then(
+      (out) => viewerOutcome(marker, cmd, out),
+      (err) => viewerOutcome(marker, cmd, { error: errorText(err) || 'That didn’t work.' }),
+    );
+    return marker;
+  }
+
+  /** "Yes" to "Shall I draw a blueprint of …?": build it now (a Voice Mode turn, through ask()). */
+  function confirmBlueprint(text, asked) {
+    showCaption('quote', `“${text}”`);
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const marker = waitForBlueprint(new Promise((resolve) => setTimeout(() => resolve(proceed()), 0)), asked.cmd, ctl);
+    function proceed() {
+      if (S.run !== marker || S.closed) return { error: 'Stopped.', stopped: true };
+      try {
+        return asked.proceed({ signal: ctl ? ctl.signal : null });
+      } catch (err) {
+        return { error: errorText(err) || 'That didn’t work.' };
+      }
+    }
   }
 
   function viewerOutcome(marker, cmd, out) {
     if (S.closed || S.run !== marker) return; // a turn started through ask(), or the owner stopped it
     S.run = null;
     const o = out && typeof out === 'object' ? out : {};
+    if (o.stopped) {
+      goIdle('stopped');
+      return;
+    }
+    if (o.confirm && typeof o.confirm.proceed === 'function') {
+      // Nothing saved and the words were not an outright request: ask before spending money.
+      S.confirm = { proceed: o.confirm.proceed, cmd, at: Date.now() };
+      speakAck(blueprintQuestion(o.confirm));
+      return;
+    }
     if (o.error) speakAck(asSentence(clip(singleLine(o.error), 220)));
     else speakAck(o.opened ? savedBlueprintAck(cmd) : '');
   }
@@ -1705,11 +1924,15 @@ function createVoiceMode(opts) {
     afterSpeech();
   }
 
-  /** ask(): words typed in a viewer over Voice Mode, or its 2D request, sent as a Voice Mode turn. */
+  /**
+   * ask(): words typed in a viewer over Voice Mode, or its 2D request, sent as a Voice Mode turn.
+   * A 2D request the owner stopped while it looked in the library (its signal aborted) never starts.
+   */
   function askFromViewer(text, options) {
     if (S.closed) return { error: 'Voice Mode is closed.' };
-    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" was waiting for this turn
     const o = options && typeof options === 'object' ? options : {};
+    if (o.signal && o.signal.aborted) return { error: 'Stopped.', stopped: true };
+    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" was waiting for this turn
     return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null });
   }
 
@@ -1729,11 +1952,19 @@ function createVoiceMode(opts) {
     } catch (err) {
       console.warn('[voice] could not show it', err);
     }
+    updateLevelLoop(); // the viewer covers Voice Mode now
+    syncVisuals(); // its mic listens while this hologram builds
   }
 
-  /** A viewer over Voice Mode shows on its mic button whether Jarvis listens (and what is heard). */
+  /**
+   * A viewer over Voice Mode shows on its mic button whether Jarvis listens (and what is heard);
+   * canListen: a hologram of this reply is building, so a tap listens for a command (Stop is the
+   * viewer's own button then).
+   */
   function syncVisuals() {
     if (!visuals || typeof visuals.sync !== 'function' || S.closed) return;
+    const canListen = !S.listen && S.sttOk && buildingVisual(S.run);
+    S.canListen = canListen;
     try {
       visuals.sync({
         state: S.state,
@@ -1741,6 +1972,7 @@ function createVoiceMode(opts) {
         listening: !!S.listen,
         heard: S.listen ? S.listen.text || '' : '',
         busy: !!S.run || !!S.speech,
+        canListen,
       });
     } catch {
       /* decoration */
@@ -1751,6 +1983,7 @@ function createVoiceMode(opts) {
 
   function scheduleFeed(R) {
     if (R.feedTimer || !R.feed) return;
+    if (S.listen) return; // the microphone is open (a command while it builds): nothing new is said
     R.feedTimer = setTimeout(() => {
       R.feedTimer = 0;
       if (S.run === R && !S.closed) feedLive(R, false);
@@ -1894,6 +2127,7 @@ function createVoiceMode(opts) {
         renderSpoken(S.answer.summary, 'answer');
         finishKaraoke();
         goIdle('answered');
+        takeHeld();
         return;
       }
       // Nothing was spoken yet (a one-sentence reply, or a fast one): the spoken part, after the chime.
@@ -1929,6 +2163,7 @@ function createVoiceMode(opts) {
       renderSpoken(summary, 'answer');
       finishKaraoke();
       goIdle('answered');
+      takeHeld();
     }
   }
 
@@ -2163,13 +2398,23 @@ function createVoiceMode(opts) {
       return;
     }
     if (how === 'done') afterSpeech();
-    else goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
+    else {
+      goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
+      takeHeld();
+    }
   }
 
   /** After a reply was spoken to the end: listen again (continuous) or wait for a tap. */
   function afterSpeech() {
     if (S.closed) return;
     finishKaraoke();
+    // A viewer over Voice Mode captions what was just said: it can make room for the model now.
+    try {
+      if (visuals && typeof visuals.spoken === 'function') visuals.spoken();
+    } catch {
+      /* decoration */
+    }
+    if (takeHeld()) return; // what the owner said while the hologram built comes first
     if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
       // Hands-free: listen again once the speaker has gone quiet.
       setStatus('Your turn', 'mic');
@@ -2271,7 +2516,9 @@ function createVoiceMode(opts) {
   }
 
   function updateLevelLoop() {
-    const want = !reducedMotion && !document.hidden && !S.closed && (S.state === 'listening' || S.state === 'speaking');
+    // Not while a hologram or blueprint viewer covers Voice Mode (inert): nobody sees the core then.
+    const want = !reducedMotion && !document.hidden && !S.closed && !root.inert && (S.state === 'listening' || S.state === 'speaking');
+    root.dataset.levelLoop = want ? 'on' : 'off'; // test hook: the core's level animation runs
     if (want && !levelFrame) {
       levelLast = 0;
       levelFrame = requestAnimationFrame(levelTick);
@@ -2339,6 +2586,9 @@ function createVoiceMode(opts) {
     cancelRunRender();
     if (levelFrame) cancelAnimationFrame(levelFrame);
     levelFrame = 0;
+    if (inertObserver) callQuietly(() => inertObserver.disconnect());
+    S.confirm = null;
+    S.heldWords = '';
     for (const off of offs) callQuietly(off);
     try {
       if (typeof core.destroy === 'function') core.destroy();

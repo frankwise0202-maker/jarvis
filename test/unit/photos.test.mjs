@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { searchPhotos, parseSearchResponse, buildSearchUrl, htmlToText, cleanQuery, safeUploadUrl, PhotoSearchError, COMMONS_API } from '../../src/platform/photos.js';
+import { searchPhotos, searchPhotosMerged, photoQueries, parseSearchResponse, buildSearchUrl, htmlToText, cleanQuery, safeUploadUrl, PhotoSearchError, COMMONS_API } from '../../src/platform/photos.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURE = JSON.parse(readFileSync(path.join(ROOT, 'test', 'unit', 'fixtures', 'commons-search.json'), 'utf8'));
@@ -167,4 +167,53 @@ test('errors: offline, HTTP, API error, bad JSON, timeout, abort', async () => {
   setTimeout(() => controller.abort(), 10);
   assert.equal(await pending, 'aborted');
   assert.equal(await kind(null), 'offline');
+});
+
+test('part photo searches name the object too ("alternator rotor", "battery separator", "Toyota Camry hood"), then the part alone', () => {
+  assert.deepEqual(photoQueries('Car alternator', 'Rotor (claw poles)'), ['alternator rotor', 'rotor']);
+  assert.deepEqual(photoQueries('AA alkaline battery (LR6)', 'Separator'), ['battery separator', 'separator']);
+  assert.deepEqual(photoQueries('AA alkaline battery (LR6)', 'Steel can (+)'), ['battery steel can', 'steel can']);
+  assert.deepEqual(photoQueries('2024 Toyota Camry Hybrid (XV70)', 'Hood'), ['Toyota Camry hood', 'hood']);
+  assert.deepEqual(photoQueries('2024 Toyota Camry Hybrid (XV70)', 'DC-DC converter'), ['Toyota Camry DC-DC converter', 'DC-DC converter']);
+  assert.deepEqual(photoQueries('2024 Toyota Camry Hybrid (XV70)', 'Hybrid battery'), ['Toyota Camry hybrid battery', 'hybrid battery']);
+  assert.deepEqual(photoQueries('2024 Toyota Camry Hybrid (XV70)', '2.5 L engine'), ['Toyota Camry 2.5 L engine', '2.5 L engine']);
+  assert.deepEqual(photoQueries('Car alternator', 'Alternator housing'), ['alternator housing'], 'no repeated word, and no second query when it is the same');
+  assert.deepEqual(photoQueries('Saturn V rocket', 'First stage'), ['Saturn V first stage', 'first stage']);
+  // The whole object: its title without qualifiers, as before.
+  assert.deepEqual(photoQueries('2024 Toyota Camry Hybrid (XV70)'), ['2024 Toyota Camry Hybrid']);
+  assert.deepEqual(photoQueries('Car alternator', ''), ['Car alternator']);
+  assert.deepEqual(photoQueries('', 'Rotor'), ['rotor']);
+  assert.deepEqual(photoQueries('', ''), []);
+  for (const q of photoQueries('An object (with) a "very" long title that goes on and on and on and on and on and on and on', 'A part with a long name too')) assert.ok(q.length <= 80, q);
+});
+
+test('a part search merges both searches: object-qualified photos first, no duplicates, at most the limit, partial results kept', async () => {
+  const photo = (title) => ({ title, thumbUrl: 'https://upload.wikimedia.org/t.jpg', fullUrl: 'https://upload.wikimedia.org/f.jpg' });
+  const fake = (byQuery) => {
+    const calls = [];
+    const fn = async (q) => {
+      calls.push(q);
+      const r = byQuery[q];
+      if (r instanceof Error) throw r;
+      return r || [];
+    };
+    fn.calls = calls;
+    return fn;
+  };
+  let search = fake({ 'alternator rotor': [photo('A'), photo('B')], rotor: [photo('B'), photo('C'), photo('D')] });
+  let out = await searchPhotosMerged(['alternator rotor', 'rotor'], { limit: 3, search });
+  assert.deepEqual(out.map((p) => p.title), ['A', 'B', 'C']);
+  assert.deepEqual(search.calls.sort(), ['alternator rotor', 'rotor']);
+  // A failed second search keeps the first's photos; all failing is an error.
+  search = fake({ 'alternator rotor': [photo('A')], rotor: new PhotoSearchError('http', 'Commons is busy.') });
+  out = await searchPhotosMerged(['alternator rotor', 'rotor'], { search });
+  assert.deepEqual(out.map((p) => p.title), ['A']);
+  search = fake({ 'alternator rotor': new PhotoSearchError('offline', 'offline'), rotor: new PhotoSearchError('offline', 'offline') });
+  await assert.rejects(searchPhotosMerged(['alternator rotor', 'rotor'], { search }), PhotoSearchError);
+  // Through the real search: one Commons request per query, each with its own words.
+  const fetch = fakeFetch(() => ({ body: FIXTURE }));
+  out = await searchPhotosMerged(['battery separator', 'separator'], { fetch, limit: 12 });
+  assert.ok(out.length > 0 && out.length <= 12);
+  assert.deepEqual(fetch.calls.map((c) => new URL(c.url).searchParams.get('gsrsearch')).sort(), ['battery separator filetype:bitmap|drawing', 'separator filetype:bitmap|drawing']);
+  assert.equal(new Set(out.map((p) => p.title)).size, out.length, 'no duplicates');
 });

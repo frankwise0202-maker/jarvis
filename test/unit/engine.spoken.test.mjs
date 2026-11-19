@@ -106,13 +106,13 @@ test('frozen prompts and tools are untouched by the spoken channel', () => {
   assert.equal(sha256(LEAD_SYSTEM_V1), '64cae163ccc3813d87162893c484b9daa970981d45ccc1245bf88f1ff79b23ef');
   assert.equal(sha256(LEAD_SYSTEM_V2), '264ac70a8bd41f548d536db778df0b4e315b0785455bfeb93f55181b3ef68bc0');
   // v6: holograms added the V3 prompt and V4 tools (pinned the same way in engine.visuals.test.mjs).
-  assert.equal(sha256(LEAD_SYSTEM_V3), '2bef0a8ae60c28271f8c79f375859ed088f962f1c5381c4ad3365d5755c3a98a');
+  assert.equal(sha256(LEAD_SYSTEM_V3), '2e37e85dad970e69d2202205dd5d38353efd9ff769adaaeca0158c134dd07d06');
   assert.equal(sha256(WORKER_SYSTEM_V1), 'c9b4f5ad7323cf9c2a76dbffe9269cd75f8b76cb283095161a8659db90f279b1');
   assert.deepEqual(leadToolVersions().map((tools) => sha256(JSON.stringify(tools))), [
     '1e441fd51e0e6df7238adab762ce0a2c5a56f4df5f82cc25bde40e4bf395f932',
     '939eaacb2c2dc9fb69e772df4b12700b577539b09f9c52a99ec41bbce1dc76a7',
     'c837163eb2264fda141d92eb1f74285bf33d5f242dd357af45d864afdf6e1af0',
-    '2e55ba18c5d9c982e2937f5c79b43b91a3f9384bf1c6d4d54ca8c32a270f1ce8',
+    'bd0bdaf62227786e8836881e41ca9f7c046abb0ee0afe1b5ca28ee1e7b69d974',
   ]);
   assert.deepEqual(leadToolsLatest(), leadToolsV4());
   const frozen = [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, WORKER_SYSTEM_V1, ...leadToolVersions().map((t) => JSON.stringify(t))];

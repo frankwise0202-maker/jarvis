@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 // Local hologram commands (src/lib/hologram-commands.js): typed or spoken phrasings, speech-to-text
 // slips and part matching against the prototype samples (test/mock/fixtures).
-import { matchHologramCommand as match, normalizeCommandText, resolvePart } from '../../src/lib/hologram-commands.js';
+import { matchHologramCommand as match, normalizeCommandText, resolvePart, blueprintAskedOutright, commandNeedingPart } from '../../src/lib/hologram-commands.js';
 import { normalizeHologramSpec } from '../../src/lib/hologram-spec.js';
 
 const partsOf = (name) =>
@@ -216,6 +216,10 @@ test('isolate', () => {
   }
   assert.deepEqual(match('isolate it', CAMRY, { selected: 'pcu' }), { action: 'isolate', partId: 'pcu' });
   assert.equal(match('isolate it', CAMRY), null);
+  // With nothing selected the viewer handles these itself (the last part shown, or "which part?").
+  for (const text of ['isolate it', 'Isolate it.', 'isolate', 'isolate this', 'show only that']) assert.equal(commandNeedingPart(text), 'isolate', text);
+  for (const text of ['zoom in on it', 'focus on it', 'zoom in on that']) assert.equal(commandNeedingPart(text), 'focus', text);
+  for (const text of ['isolate the engine', 'show it', 'expand it', 'blueprint this', 'photos of it', 'what is it', '']) assert.equal(commandNeedingPart(text), null, text);
 });
 
 test('photos (free) for the object or a part', () => {
@@ -248,6 +252,100 @@ test('2D / blueprint: whole object or a part (the paid build)', () => {
     assert.equal(got.partId, id, text);
   }
   assert.deepEqual(match('blueprint this', ALT, { selected: 'fan' }), { action: 'blueprint', partId: 'fan' });
+});
+
+test('everyday and negative phrases never start the paid 2D build (talk about a blueprint is not a request)', () => {
+  const never = [
+    [ALT, ['skip the blueprint', 'skip the 2D', 'read the blueprint', 'cool blueprint', 'cool drawing', 'make a plan', 'give me a plan for the rotor', 'give me a plan for replacing the rotor', 'show me the drawing', 'do a drawing', 'what\'s the plan', 'fix the drawing', 'save the drawing', 'print the blueprint', 'share the blueprint', 'delete the blueprint', 'email the blueprint', 'hold the blueprint', 'hide the blueprint', 'leave the blueprint', 'no blueprint', 'not the blueprint', 'no blueprint please, how does the regulator work?', "don't make a blueprint", 'do not draw the blueprint', 'blueprint later', "I'll do the blueprint later", 'maybe a blueprint later', 'the blueprint can wait', 'not now, the blueprint', 'never mind the blueprint', 'cancel the blueprint', 'is a blueprint expensive', 'how much is a blueprint', "what's a blueprint"]],
+    [CAMRY, ['hold the blueprint', 'hide the blueprint', 'good plan', 'good blueprint', 'read the blueprint', "let's make a plan", 'make a plan for the battery', 'skip the blueprint', 'leave the blueprint']],
+    [AA, ['leave the blueprint', 'show me the plans', 'plans', 'the plan', 'show me the drawing', 'skip the blueprint']],
+  ];
+  for (const [parts, list] of never) {
+    for (const text of list) {
+      const got = match(text, parts);
+      assert.ok(!got || got.action !== 'blueprint', `"${text}" must not start a blueprint (got ${JSON.stringify(got)})`);
+    }
+  }
+  // Talking about it while asking something else is a question for Jarvis.
+  assert.equal(match('No blueprint please, how does the regulator work?', ALT), null);
+  assert.equal(match('skip the blueprint', ALT), null);
+  assert.equal(match('let\'s make a plan', CAMRY), null);
+});
+
+test('2D requests that still start (or open) a blueprint: explicit wording, exact part names', () => {
+  const whole = ['open the blueprint', 'flat drawing', 'technical drawing', 'schematic', '2D drawing', 'show me the blueprint'];
+  for (const text of whole) assert.deepEqual(match(text, ALT), { action: 'blueprint' }, text);
+  const cases = [
+    ['rotor blueprint', ALT, 'rotor'],
+    ['the rotor blueprint', ALT, 'rotor'],
+    ['show me the rotor blueprint', ALT, 'rotor'],
+    ['slip rings blueprint', ALT, 'slip-rings'],
+    ['the stator in 2D', ALT, 'stator-core'],
+    ['2D drawing of the pulley', ALT, 'pulley'],
+    ['technical drawing of the rotor', ALT, 'rotor'],
+    ['schematic of the regulator', ALT, 'regulator'],
+    ['blueprint the router', ALT, 'rotor'], // a speech slip after "blueprint" is still forgiven
+    ['blueprint the separator', AA, 'separator'],
+    ['hood blueprint', CAMRY, 'hood'],
+    ['engine in 2d', CAMRY, 'engine'],
+    ['blueprint the hood', CAMRY, 'hood'],
+  ];
+  for (const [text, parts, id] of cases) {
+    const got = match(text, parts);
+    assert.equal(got && got.action, 'blueprint', `${text} -> ${JSON.stringify(got)}`);
+    assert.equal(got.partId, id, text);
+  }
+  // "<word> blueprint" must name the part exactly: no fuzzy guesses (good ≠ hood, skip ≠ slip, cool ≠ coil, read ≠ rear).
+  for (const [text, parts] of [['good blueprint', CAMRY], ['skip blueprint', ALT], ['cool blueprint', ALT], ['router blueprint', ALT]]) {
+    const got = match(text, parts);
+    assert.ok(!got || got.action !== 'blueprint', `${text} -> ${JSON.stringify(got)}`);
+  }
+});
+
+test('the owner\'s own phrasings: "switch it to 2D", "I want a blueprint of …", "pull up …"', () => {
+  for (const text of ['Switch it to 2D.', 'okay switch it to 2D', 'make it 2D', 'turn it into a blueprint', 'flip to 2D', 'change it to 2D', 'convert it to 2D', 'put it in 2D', 'turn it into 2D', 'switch over to 2D', 'go to 2D']) {
+    assert.deepEqual(match(text, AA), { action: 'blueprint' }, text);
+    assert.deepEqual(match(text, AA, { selected: 'separator' }), { action: 'blueprint' }, `${text} (a part selected: "it" is still the whole object)`);
+  }
+  assert.deepEqual(match('switch this part to 2D', AA, { selected: 'separator' }), { action: 'blueprint', partId: 'separator' });
+  for (const text of ['I want a blueprint of the separator', "I'd like a blueprint of the separator", 'I would like a blueprint of the separator', 'I need a 2D drawing of the separator']) {
+    const got = match(text, AA);
+    assert.equal(got && got.action, 'blueprint', `${text} -> ${JSON.stringify(got)}`);
+    assert.equal(got.partId, 'separator', text);
+  }
+  const pull = [
+    ['pull up the alternator', CAMRY, 'dcdc-converter'],
+    ['pull up the separator', AA, 'separator'],
+    ['bring up the rotor', ALT, 'rotor'],
+  ];
+  for (const [text, parts, id] of pull) {
+    const got = match(text, parts);
+    assert.equal(got && got.action, 'select', `${text} -> ${JSON.stringify(got)}`);
+    assert.equal(got.partId, id, text);
+  }
+  assert.deepEqual(match('pull up the labels', AA), { action: 'labels-on' }, 'not the "Label sleeve" part');
+  assert.deepEqual(match('bring up the parts list', AA), { action: 'parts-list' });
+  for (const text of ['make it red', 'turn it into a car', 'flip it over', 'switch it off', 'I want a Tesla', 'pull up a Tesla']) assert.equal(match(text, CAMRY), null, text);
+});
+
+test('a blueprint sheet is closed by name ("close the blueprint", "back to the hologram"), never read as a part', () => {
+  const closing = ['close the blueprint', 'Close the blueprint.', 'close blueprint', 'hide the blueprint', 'hide blueprint', 'exit the blueprint', 'dismiss the blueprint', 'quit the blueprint', 'leave the blueprint', 'close the drawing', 'close the sheet', 'close the 2D view', 'close the 2D', 'close the plan', 'close the schematic', 'remove the blueprint', 'get rid of the blueprint', 'take the blueprint away', 'put the blueprint away', "I'm done with the blueprint", 'back to the hologram', 'go back to the hologram', 'back to the 3D model', 'go back', 'blueprint off', 'no more blueprint', 'no more blueprints'];
+  for (const parts of [[], AA, ALT, CAMRY]) {
+    for (const text of closing) assert.deepEqual(match(text, parts), { action: 'close-blueprint' }, `${text} (${parts.length} parts)`);
+  }
+  // Closing the hologram itself is unchanged.
+  for (const text of ['close', 'close it', 'close the hologram', 'exit', "we're done", 'close the viewer']) assert.deepEqual(match(text, CAMRY), { action: 'close' }, text);
+  // "go back" no longer focuses the rear housing (back -> rear); "back" alone is still the back view.
+  assert.deepEqual(match('back', ALT), { action: 'view', view: 'back' });
+});
+
+test('blueprintAskedOutright: "blueprint …", "2D …" or a build verb asks outright; other wordings get a spoken check first', () => {
+  for (const text of ['blueprint the separator', 'Blueprint.', '2D', '2D blueprint of the stator', 'blue print of the stater', 'make a blueprint', 'draw the blueprint', 'build a 2D drawing of the rotor', 'switch it to 2D', 'Switch to 2D.', 'turn it into a blueprint', 'I want a blueprint of the separator', 'Jarvis, can you blueprint the rotor', 'please make a blueprint for the hybrid battery']) {
+    assert.equal(blueprintAskedOutright(text), true, text);
+  }
+  for (const text of ['rotor blueprint', 'open the blueprint', 'show me the blueprint', 'show the rectifier in 2D', 'the stator in 2D', 'give me the blueprint', 'see the 2D view', '', 'expand it', 'make it red']) {
+    assert.equal(blueprintAskedOutright(text), false, text);
+  }
 });
 
 test('anything else goes to Jarvis (null)', () => {

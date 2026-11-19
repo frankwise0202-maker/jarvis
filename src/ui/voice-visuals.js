@@ -5,9 +5,15 @@
 //                              ("Expanding.", "Here's the separator."), or '' for none
 //   savedBlueprintAck(command) said when "blueprint the <part>" opened a saved sheet (free)
 //   spokenPart(name)           a part name as it is said after "the" ("Steel can (+)" -> "the steel can")
+//   blueprintQuestion({ partName, title, cost })
+//                              asked before a 2D build from a softer wording ("rotor blueprint"):
+//                              "Shall I draw a blueprint of the rotor? It costs about 15 cents."
+//   confirmReply(text)         the owner's answer to it: 'yes' | 'no' | null (not an answer)
+//   spokenCost('≈ $0.15')      "about 15 cents"
 //
 // `command` is what matchHologramCommand (src/lib/hologram-commands.js) returns: { action, partId?,
-// partName?, view?, query? }.
+// partName?, view?, query? }, or { action: 'which-part', for: 'isolate'|'focus' } (the viewer:
+// "isolate it" with nothing selected).
 
 const VIEW_WORDS = Object.freeze({
   front: 'Front view.',
@@ -74,8 +80,10 @@ export function commandAck(command) {
       const query = String(cmd.query ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
       return query ? `Photos of ${query}.` : 'Here are some photos.';
     }
+    case 'which-part':
+      return `Which part? Tap one, or say ${cmd.for === 'focus' ? 'zoom in on' : 'isolate'} and its name.`;
     default:
-      // close: the viewer is gone and Voice Mode is back; blueprint: its outcome speaks for it.
+      // close / close-blueprint: the viewer or sheet is gone; blueprint: its outcome speaks for it.
       return '';
   }
 }
@@ -84,4 +92,53 @@ export function commandAck(command) {
 export function savedBlueprintAck(command) {
   const part = spokenPart(command && command.partName);
   return part ? `Here's your saved blueprint of ${part}.` : "Here's your saved blueprint.";
+}
+
+/** A cost label like "≈ $0.15" or "≈ $0.15–0.35" as it is said: "about 15 cents" ('' when none). */
+export function spokenCost(label) {
+  const nums = String(label ?? '').match(/\d+(?:\.\d+)?/g);
+  const vals = (nums || []).slice(0, 2).map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  if (!vals.length) return '';
+  const cents = (n) => Math.round(n * 100);
+  if (vals.every((n) => n < 1)) {
+    return vals.length === 2 && cents(vals[0]) !== cents(vals[1]) ? `about ${cents(vals[0])} to ${cents(vals[1])} cents` : `about ${cents(vals[0])} cents`;
+  }
+  const dollars = (n) => {
+    const d = Math.floor(n);
+    const c = Math.round((n - d) * 100);
+    return `${d} dollar${d === 1 ? '' : 's'}${c ? ` ${c}` : ''}`;
+  };
+  return vals.length === 2 ? `about ${dollars(vals[0])} to ${dollars(vals[1])}` : `about ${dollars(vals[0])}`;
+}
+
+/**
+ * Asked before a 2D blueprint is built from a softer wording ("rotor blueprint", "open the
+ * blueprint" with none saved): each sheet costs money, and Voice Mode hears the whole room.
+ */
+export function blueprintQuestion({ partName = '', title = '', cost = '' } = {}) {
+  const what = spokenPart(partName) || spokenPart(title) || 'the whole object';
+  const price = spokenCost(cost);
+  return `Shall I draw a blueprint of ${what}? It costs ${price || 'a few cents'}.`;
+}
+
+const YES_WORDS = '(?:yes|yeah|yea|yep|yup|sure|ok|okay|alright|all right|please|please do|do it|go ahead|go for it|draw it|build it|make it|absolutely|definitely|of course|sounds good|why not|affirmative|yes please)';
+const NO_WORDS = '(?:no|nope|nah|no thanks|no thank you|don\'t|dont|do not|cancel|cancel it|never mind|nevermind|not now|not yet|no need|skip|skip it|forget it|stop|leave it)';
+const POLITE = '(?: (?:please|thanks|thank you|jarvis|sir))*';
+const YES_RE = new RegExp(`^${YES_WORDS}(?: ${YES_WORDS})*${POLITE}$`);
+const NO_RE = new RegExp(`^${NO_WORDS}(?: ${NO_WORDS})*${POLITE}$`);
+
+/** The owner's answer to blueprintQuestion: 'yes', 'no', or null when the words are something else. */
+export function confirmReply(text) {
+  const s = String(text ?? '')
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/[^a-z' ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:hey |ok |okay )?jarvis /, '')
+    .replace(/^(?:um|uh|er|well) /, '');
+  if (!s) return null;
+  if (YES_RE.test(s)) return 'yes';
+  if (NO_RE.test(s)) return 'no';
+  return null;
 }

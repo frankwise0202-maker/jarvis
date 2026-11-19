@@ -16,7 +16,7 @@ import {
 } from '@anthropic-ai/sdk';
 
 import { MODELS, DEPTHS, MODES, DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, costOf, createJarvis } from '../../src/engine/index.js';
-import { WEB_SEARCH_USD, bucketOf, supportsFallbacks } from '../../src/engine/models.js';
+import { WEB_SEARCH_USD, bucketOf, supportsFallbacks, blueprintCostUsd, costLabel } from '../../src/engine/models.js';
 import { validateDeployInput, validateMemoryInput, parseToolJson, invalidJsonResult } from '../../src/engine/validate.js';
 import { parsePartialJson, formatLocalTime, truncate, singleLine, sleep, uid, jsonCopy } from '../../src/engine/util.js';
 import { createLimiter } from '../../src/engine/limiter.js';
@@ -632,4 +632,17 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   assert.equal(jarvis.isBusy(), false);
   assert.equal(jarvis.canResume(conv), false);
   assert.equal(jarvis.resumeTurn(conv), null);
+});
+
+test('the 2D blueprint estimate: the conversation so far is a cache read only while the cache is warm (5 minutes)', () => {
+  // About 6K output tokens with thinking, 45K tokens of conversation so far, 4K new input.
+  const warm = blueprintCostUsd('claude-opus-5-5', { warm: true });
+  const cold = blueprintCostUsd('claude-opus-5-5', { warm: false });
+  assert.ok(Math.abs(warm - (6000 * 20 + 45000 * 0.2 + 4000 * 4) / 1e6) < 1e-9, `warm ${warm}`);
+  assert.ok(Math.abs(cold - (6000 * 20 + 45000 * 5 + 4000 * 4) / 1e6) < 1e-9, `cold ${cold}`);
+  assert.equal(costLabel(warm), '≈ $0.15');
+  assert.equal(costLabel(cold), '≈ $0.35');
+  assert.equal(costLabel(blueprintCostUsd('claude-sonnet-5-5', { warm: true })), '≈ $0.07'); // (60,000 + 4,500 + 8,000) / 1e6
+  assert.equal(costLabel(blueprintCostUsd('claude-sonnet-5-5', { warm: false })), '≈ $0.20');
+  assert.equal(costLabel(blueprintCostUsd('not-a-model')), costLabel(blueprintCostUsd('claude-opus-5-5')), 'unknown models are priced as Opus 5.5');
 });

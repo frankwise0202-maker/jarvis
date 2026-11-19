@@ -305,6 +305,32 @@
   width: 36px;
   height: 36px;
 }
+/* "Stop building" while the hologram streams in (the mic listens meanwhile in Voice Mode) */
+.hv__stopbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: var(--tap);
+  padding: 0 14px 0 12px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--text);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.hv__stopbtn:hover {
+  box-shadow: inset 0 0 0 1px var(--line-3);
+}
+.hv__stopbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 .hv__iconbtn--xs {
   width: 28px;
   height: 28px;
@@ -865,6 +891,55 @@
 .hv__caption-text:empty {
   display: none;
 }
+/* Phones with the part card or a panel open: a one-line pill under the top bar (a tap opens the
+   whole reply, with its Open in chat) */
+.hv__caption[data-compact='true'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 12px;
+  border-radius: var(--r-pill);
+  animation: none;
+}
+.hv__caption[data-compact='true'] .hv__caption-head {
+  display: contents;
+}
+.hv__caption[data-compact='true'] .hv__caption-who,
+.hv__caption[data-compact='true'] .hv__caption-status,
+.hv__caption[data-compact='true']:not([data-expanded='true']) [data-testid='hologram-caption-open'] {
+  display: none;
+}
+.hv__caption[data-compact='true'] .hv__caption-dot {
+  flex: none;
+}
+.hv__caption[data-compact='true'] .hv__caption-text {
+  order: 1;
+  flex: 1;
+  min-width: 0;
+  max-height: 1.5em;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.hv__caption[data-compact='true'] .hv__caption-actions {
+  order: 2;
+  margin-left: 0;
+}
+.hv__caption[data-compact='true'][data-expanded='true'] {
+  align-items: flex-start;
+  padding: 8px 4px 8px 12px;
+  border-radius: var(--r-lg);
+}
+.hv__caption[data-compact='true'][data-expanded='true'] .hv__caption-dot {
+  margin-top: 8px;
+}
+.hv__caption[data-compact='true'][data-expanded='true'] .hv__caption-text {
+  max-height: 9em;
+  overflow-y: auto;
+  white-space: normal;
+}
 
 .hv__toast {
   position: absolute;
@@ -934,6 +1009,31 @@
   }
   .hv__panel {
     max-height: 44%;
+  }
+}
+
+/* Short phones (a Safari tab on an iPhone SE): the card and the title make room for the model */
+@media (max-width: 899px) and (max-height: 700px) {
+  .hv__subtitle {
+    display: none;
+  }
+  .hv__card {
+    padding-top: 10px;
+    padding-bottom: 8px;
+  }
+  .hv__card-info {
+    -webkit-line-clamp: 1;
+  }
+  .hv__card-material {
+    display: none;
+  }
+  .hv__card-actions {
+    margin-top: 8px;
+  }
+  /* With the part card open, the card takes the Assembled/Exploded row's place too (as it does the
+     tools'); "expand it" / "collapse" still work, and closing the card brings the row back. */
+  .hv[data-card='open'] .hv__row {
+    display: none;
   }
 }
 

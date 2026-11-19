@@ -190,7 +190,8 @@ test('P2c: an output-tokens-per-minute 429 caps max_tokens for the session, with
   const { turn } = await runTurn(h.jarvis, conv, 'Go deep', 'swarm', { onRun: (run) => run.on('notice', (e) => notices.push(e.message)) });
   assert.equal(turn.status, 'done');
   const lead = h.api.byKind('lead');
-  assert.deepEqual(lead.map((r) => r.body.max_tokens), [32000, 7200, 7200], 'capped to 90% of the limit, retried at once');
+  // 48000: deep depth in a conversation that can show holograms (DEPTHS.deep.visualLeadMaxTokens).
+  assert.deepEqual(lead.map((r) => r.body.max_tokens), [48000, 7200, 7200], 'capped to 90% of the limit, retried at once');
   const workers = h.api.byKind('worker').map((r) => r.body.max_tokens);
   assert.ok(workers.every((m) => m === 16000 || m === 7200) && workers.filter((m) => m === 7200).length === 2, `workers: ${workers}`);
   assert.deepEqual(notices, [LOW_LIMITS_NOTICE]);

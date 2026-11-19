@@ -195,22 +195,32 @@ it once more (copy it from your password manager).
   **Photos**, **Isolate** (show only that part) and **Focus** (zoom to it).
 - **Say or type commands** in the box at the bottom, or tap its microphone. These happen on your
   device, instantly and for free: "expand it", "put it back together", "show the alternator",
-  "isolate the rotor", "zoom in on the pulley", "labels off", "rotate", "stop", "front view",
-  "photos of the fan", "close". Anything else, like "why is the cathode a ring?", goes to Jarvis
-  as a normal question, and the answer appears over the hologram.
+  "isolate the rotor" (or "isolate it" for the part you're looking at), "zoom in on the pulley",
+  "labels off", "rotate", "stop", "front view", "photos of the fan", "close". Anything else, like
+  "why is the cathode a ring?", goes to Jarvis as a normal question, and the answer appears over
+  the hologram. On a small phone with a part's card open, the answer is a one-line strip under
+  the title so the hologram stays in view: tap it to read it all.
+- **While it builds**, a square **Stop building** button sits next to the microphone. What was
+  built so far stays on screen, but an unfinished hologram isn't saved and can't get a 2D
+  blueprint: ask again to build the whole thing.
 - **2D blueprints are drawn only when you ask:** tap **Build 2D blueprint** on a part's card, tap
-  **2D** for the whole object, or say "blueprint the alternator". You get an engineering sheet
-  with numbered parts, a parts list, sizes and notes; zoom in, tap a number to find that part, or
-  download it as an SVG or PNG picture. Each new blueprint costs about 15¢ (the button shows the
-  estimate first). A part that already has one shows **Open blueprint**, which is free; **Rebuild**
-  draws a fresh one.
+  **2D** for the whole object (a first tap shows the price, a second one draws it), or say
+  "blueprint the alternator" or "switch it to 2D". You get an engineering sheet with numbered parts, a parts
+  list, sizes and notes; zoom in, tap a number to find that part, or download it as an SVG or PNG
+  picture. Each new blueprint costs about 15¢, or about 35¢ once the conversation has been quiet
+  for 5 minutes (the button shows the estimate first). A part that already has one shows **Open
+  blueprint**, which is free; **Rebuild** (with its price) draws a fresh one. Just mentioning a
+  blueprint ("no blueprint for now", "skip the 2D") never builds one. Say "close the blueprint"
+  or "back to the hologram" to close a sheet.
 - **Your Blueprints library** (the **Blueprints** button at the top, or History → **Blueprints**
   on a small phone) keeps every hologram and blueprint Jarvis has made for you, each with a small
   picture. Opening one again is free, needs no internet, and asks Jarvis nothing. You can also
   download or delete them there. When you ask for something you've already seen, Jarvis reopens
   the saved one instead of building it again.
 - **Photos** shows real photographs of the object or a part from Wikimedia Commons, with the
-  photographer's name and license. Photos are free (see [Privacy](#privacy)).
+  photographer's name and license. A part's photos are searched together with the object's name
+  ("alternator rotor", then "rotor"), and you can change the search words. Photos are free (see
+  [Privacy](#privacy)).
 - **The Blueprint protocol** on the home screen asks "What should I blueprint?", sends a research
   team to find out how that exact thing is built and made, then builds the hologram and explains
   it, with sources. It draws no 2D sheets until you ask.
@@ -218,10 +228,19 @@ it once more (copy it from your password manager).
   while Jarvis tells you what you're looking at ("Here's the Camry. Say 'expand it' or tap any
   part."). Then just talk: "expand it" or "show the alternator" happen at once, with a short
   answer ("Expanding.", "Here's the alternator."); "blueprint the alternator" draws that blueprint
-  and opens it when it's ready; any other question is answered out loud and shown over the
-  hologram. With **Continuous** on, Jarvis keeps listening between commands; otherwise tap the
-  microphone in the hologram's command box (while Jarvis is working or talking, that button stops
-  him, like the glowing core does). Close the hologram to get back to Voice Mode.
+  and opens it when it's ready. If you put it more loosely ("alternator blueprint?"), Jarvis
+  asks first: "Shall I draw a blueprint of the alternator? It costs about 15 cents." Say yes or
+  no. Any other question is answered out loud and shown over the hologram; when the answer has
+  more details on screen, **Open in chat** leaves Voice Mode and shows all of it. With
+  **Continuous** on, Jarvis keeps listening between commands; otherwise tap the microphone in
+  the hologram's command box (while Jarvis is working or talking, that button stops him, like the
+  glowing core does). While the hologram is still building, that microphone listens instead:
+  "expand it" works on it right away, and a question waits until it's built (to stop the build,
+  use **Stop building**). Close the hologram to get back to Voice Mode; "expand it" opens it
+  again, for free.
+- **Chats from before holograms** (started before this update) can't show them. Ask in a new
+  chat: a note at the top of the chat offers **Start one**, and Voice Mode starts a new chat by
+  itself. Your old chats stay in History.
 
 ### A more natural voice
 
@@ -258,7 +277,7 @@ from the credit in your account. Rough examples:
 | An 8-agent swarm at the Balanced depth | about $1–2.50, typically around $1.70 |
 | A Deep swarm with 20 agents | about $7–15 |
 | A 3D hologram | about 10–30¢ (a battery at the low end, a whole car at the high end) |
-| A 2D blueprint | about 15¢ (shown on the button before you ask) |
+| A 2D blueprint | about 15¢, or about 35¢ once the conversation has been quiet for 5 minutes (shown on the button before you ask) |
 | Reopening a saved hologram or blueprint, hologram commands, Photos | free |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
@@ -297,7 +316,8 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   Settings → Voice send the text they read aloud to their provider (Google or Microsoft); the
   others speak on your device without sending anything.
 - **Photos of parts.** When you open **Photos** in a hologram, its search words (the name of the
-  object or part, which you can change) are sent to Wikimedia Commons (`commons.wikimedia.org`),
+  object, or of the part with the object's name, such as "alternator rotor" and "rotor"; you can
+  change them) are sent to Wikimedia Commons (`commons.wikimedia.org`),
   and the pictures load from `upload.wikimedia.org`. No account, cookies or referrer are sent,
   and nothing else goes to Wikimedia. Photos are searched only when you open them.
 - **Holograms and blueprints** you've made are saved on this device only, like your
@@ -397,7 +417,8 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **"This device could not start the 3D view"** | 3D graphics (WebGL) are turned off in this browser, for example by Lockdown Mode on an iPhone. The parts list and part cards still work, and so do blueprints. |
 | **"The 3D view couldn't load"** | The 3D viewer couldn't be fetched (for example right after an update, while offline). Check your connection and tap **Try again**. Once Jarvis is installed and up to date, holograms open offline too. |
 | **Photos don't appear** | Photos need an internet connection (holograms and blueprints don't). If Wikimedia Commons is slow or busy, try again in a moment. |
-| **A hologram says "incomplete"** | It was stopped, or the connection dropped, while Jarvis was building it. Ask again (or tap **Resume** if the reply was interrupted). |
+| **A hologram says "incomplete"** | It was stopped, or the connection dropped, while Jarvis was building it. An incomplete hologram isn't saved and can't get a 2D blueprint. Ask again (or tap **Resume** if the reply was interrupted). |
+| **"Show me …" gives no hologram in an older chat** | Chats started before holograms existed can't show them. Tap **Start one** in the note at the top of the chat, or start a new chat. |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
 | **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key. |
 
@@ -502,6 +523,7 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[long]]` | a long Markdown answer (headings, table, code, lists, quote) |
 | `[[droplead]]` / `[[droplead:N]]` | the lead's first response to each request is cut after N frames (default 60); sending it again (Resume) succeeds |
 | `[[hologram:battery]]` / `[[hologram:alternator]]` / `[[hologram:camry]]` | a sentence, then `show_hologram` with a realistic sample (AA battery, 9 parts; car alternator, 19; 2024 Camry Hybrid, 43; camry by default), streamed in small chunks over about 3 seconds so the live build shows, then one or two sentences |
+| `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 8–9 seconds, so a test can speak or tap while it builds |
 | `[[hologram:broken]]` / `[[hologram:huge]]` | `show_hologram` with nothing that can be shown (an error card) / far beyond every limit (capped, with warnings) |
 | *(a `Blueprint request` block in `<turn_context>`)* | `draw_blueprint` once, with the best-matching sample sheet and the requested `for` ids, then a sentence |
 | `[[blueprint:<sample>]]` | `draw_blueprint` with that sample (`alternator-part`, `battery-cutaway`, `battery-process`, `camry-assembly`), no `for` |

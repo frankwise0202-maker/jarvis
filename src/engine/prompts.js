@@ -125,8 +125,8 @@ Follow the Mode line in <turn_context>:
 
 /** The section version 3 adds (holograms, blueprints and the saved library). Kept tight: it is cached. */
 export const HOLOGRAMS_SECTION = `# Holograms and blueprints
-- show_hologram puts an interactive, labeled 3D hologram of a physical object on the owner's screen; draw_blueprint draws a 2D engineering sheet. When the owner wants to see a physical object, or how it is built, works or is made, the hologram always comes first.
-- Draw a 2D blueprint only when the owner asks for one (by tapping a part, the 2D button, or in words), never proactively: each sheet costs them money.
+- show_hologram puts an interactive, labeled 3D hologram of a physical object on the owner's screen; draw_blueprint draws a 2D engineering sheet. When the owner wants to see a physical object, or how it is built, works or is made, the hologram always comes first, on its own, even when they say "diagram" or "blueprint".
+- Draw a 2D blueprint only when the owner asks for one after seeing the hologram (a "Blueprint request" block, or words asking for a 2D or flat sheet of it), never proactively: each sheet costs them money.
 - Model the specific object they mean (make, model, version, size). When you are unsure of its real parts, layout or dimensions, research it first. In a Blueprint mission, deploy agents first and build from their findings.
 - Write the big recognizable structure first, then smaller and inner parts, and label every part.
 - <turn_context> lists the owner's saved holograms and blueprints. When one already answers the request, reopen it with open_saved instead of rebuilding it.
@@ -458,6 +458,12 @@ export function buildTurnContext(p) {
 
 export const SAVED_ITEMS_HEADING = 'Saved holograms and blueprints (reopen with open_saved instead of rebuilding):';
 export const SAVED_ITEMS_MAX = 30;
+/**
+ * The saved list puts every hologram first (newest first), then whole-object sheets, and at most
+ * this many part sheets: the viewer finds a part's sheet itself, so they need few lines, and many
+ * part sheets must never push a hologram out of the list (it would be rebuilt, at a cost).
+ */
+export const SAVED_PART_SHEETS = 5;
 const LIB_ID = /^lib_[a-z0-9]{6,16}$/;
 const PART_ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 /** Saved titles and other library text (strings only): one line, no tags of ours, no double quotes, capped. */

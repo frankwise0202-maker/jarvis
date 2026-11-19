@@ -14,6 +14,7 @@ import { createHarness, ROOT } from './platform.harness.test.mjs';
 const FIXTURE = readFileSync(path.join(ROOT, 'test', 'unit', 'fixtures', 'commons-search.json'), 'utf8');
 const BATTERY = JSON.parse(readFileSync(path.join(ROOT, 'test', 'mock', 'fixtures', 'battery.json'), 'utf8'));
 const ALTERNATOR = JSON.parse(readFileSync(path.join(ROOT, 'test', 'mock', 'fixtures', 'alternator.json'), 'utf8'));
+const CAMRY = JSON.parse(readFileSync(path.join(ROOT, 'test', 'mock', 'fixtures', 'camry.json'), 'utf8'));
 const CSS = ['tokens.css', 'base.css', 'hologram.css', 'blueprint.css', 'library.css'].map((f) => readFileSync(path.join(ROOT, 'src', 'styles', f), 'utf8')).join('\n');
 const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -53,11 +54,26 @@ async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 },
       };
       window.__listening = (type) => (listeners[type] || []).length > 0;
       const saved = { id: 'lib_bp00000001', kind: 'blueprint', title: 'Separator' };
+      // Saved part sheets by part id ('*': the whole object); __libChange(part, item|null) changes
+      // the library the way another window or a finished build does (onChange subscribers hear it).
+      const savedParts = new Map([['separator', saved]]);
+      const libListeners = new Set();
       const lib = {
         get: async (id) => (id === 'lib_battery001' ? { id, kind: 'hologram', title: full.title, spec: full, thumbnail: null } : null),
-        findPartBlueprint: async (model, part) => (model === 'lib_battery001' && part === 'separator' ? saved : null),
+        findPartBlueprint: async (model, part) => (model === 'lib_battery001' ? savedParts.get(part || '*') || null : null),
         setThumbnail: async (id, url) => log.thumbs.push({ id, head: url.slice(0, 22), length: url.length }),
+        onChange: (fn) => {
+          libListeners.add(fn);
+          return () => libListeners.delete(fn);
+        },
       };
+      window.__libChange = (part, item) => {
+        const before = savedParts.get(part);
+        if (item) savedParts.set(part, item);
+        else savedParts.delete(part);
+        for (const fn of libListeners) fn({ type: item ? 'saved' : 'deleted', id: (item || before || {}).id || null, remote: !item });
+      };
+      window.__libListeners = () => libListeners.size;
       const deps = {
         library: lib,
         blueprintCost: () => '≈ $0.15',
@@ -75,15 +91,22 @@ async function open({ sample = BATTERY, viewport = { width: 1280, height: 800 },
       };
       if (voice) {
         // Voice Mode open under the viewer (app.js): a microphone, Voice Mode's talk button, and
-        // the app's answer to a 2D request (the separator's blueprint is saved: it just opens).
-        Object.assign(log, { listens: 0, taps: 0, opened: [] });
+        // the app's answer to a 2D request (the separator's blueprint is saved: it just opens; with
+        // `ask`, nothing is built and the price comes back; a stopped signal starts nothing).
+        Object.assign(log, { listens: 0, taps: 0, opened: [], stops: [] });
         window.__voiceOn = true;
         deps.stt = { sttSupported: () => true, startListening: () => (log.listens++, { stop() {}, abort() {} }) };
         deps.voice = { active: () => window.__voiceOn, tap: () => log.taps++ };
         deps.openBlueprint = (src) => log.opened.push(src && src.segment && src.segment.id);
+        deps.stopBuild = (req) => log.stops.push(req);
+        deps.openInChat = (target) => (log.inChat = target);
         deps.requestBlueprint = async (req) => {
-          log.blueprints.push(req);
-          return req.part === 'separator' ? { opened: true } : { run: fakeRun('turn-bp') };
+          await new Promise((r) => setTimeout(r, 0)); // the library lookup (the app checks the signal after it)
+          log.blueprints.push({ ...req, signal: req.signal ? (req.signal.aborted ? 'aborted' : 'live') : null });
+          if (req.signal && req.signal.aborted) return { error: 'Stopped.', stopped: true };
+          if (req.part === 'separator') return { opened: true };
+          if (req.ask) return { ask: true, cost: '≈ $0.15' };
+          return { run: fakeRun('turn-bp') };
         };
       }
       window.__fakeRun = fakeRun;
@@ -247,11 +270,19 @@ test('hologram viewer (phone): photos of a part come from Wikimedia Commons and 
   const p = await open({ viewport: { width: 390, height: 844 } });
   await p.waitState('state', 'ready');
   assert.equal(await p.state('layout'), 'phone');
+  const searched = [];
+  p.on('request', (r) => {
+    if (r.url().startsWith('https://commons.wikimedia.org/')) searched.push(new URL(r.url()).searchParams.get('gsrsearch'));
+  });
   await p.fill('[data-testid="hologram-command"]', 'photos of the steel can');
   await p.press('[data-testid="hologram-command"]', 'Enter');
   await p.waitState('panel', 'photos');
-  assert.match(await p.inputValue('[data-testid="hologram-photo-query"]'), /Steel can/i);
+  // The search names the object too ("battery steel can"), then the part alone; the field shows the first.
+  assert.equal(await p.inputValue('[data-testid="hologram-photo-query"]'), 'battery steel can');
   await p.waitForSelector('[data-testid="photo-thumb"]');
+  assert.deepEqual(searched.slice().sort(), ['battery steel can filetype:bitmap|drawing', 'steel can filetype:bitmap|drawing']);
+  const titles = await p.evaluate(() => Array.from(document.querySelectorAll('[data-testid="photo-thumb"]')).map((b) => b.getAttribute('aria-label')));
+  assert.equal(new Set(titles).size, titles.length, 'each photo once');
   const srcs = await p.evaluate(() => Array.from(document.querySelectorAll('[data-testid="photo-thumb"] img')).map((i) => i.src));
   assert.ok(srcs.length > 0 && srcs.every((s) => s.startsWith('https://upload.wikimedia.org/')));
   await p.click('[data-testid="photo-thumb"] >> nth=0');
@@ -351,5 +382,310 @@ test('hologram viewer under Voice Mode: its mic is Voice Mode\'s and shows its s
   assert.equal(await p.state('voice'), '');
   await p.click(mic);
   assert.deepEqual(await p.evaluate(() => [window.__log.taps, window.__log.listens]), [1, 1]);
+  await p.done();
+});
+
+test('hologram viewer under Voice Mode: a softer 2D wording is asked first; Stop starts nothing; "close the blueprint" and "isolate it" never reach Jarvis', async () => {
+  const p = await open({ voice: true });
+  await p.waitState('state', 'ready');
+  // "anode blueprint" (not an outright request): nothing is built; the outcome is a question with
+  // the price, and proceed() builds it.
+  const asked = await p.evaluate(async () => {
+    const r = window.__viewer.command('anode blueprint', { source: 'voice', spoken: true, confirmBuild: true });
+    const o = await r.done;
+    const c = o && o.confirm;
+    const before = window.__log.blueprints.slice();
+    const built = c ? await c.proceed() : null;
+    return { action: r.command.action, part: r.command.partId, confirm: c ? { partName: c.partName, cost: c.cost, title: c.title } : null, before, ran: !!(built && built.run), after: window.__log.blueprints.slice(before.length) };
+  });
+  assert.equal(asked.action, 'blueprint');
+  assert.equal(asked.part, 'anode');
+  assert.deepEqual(asked.confirm, { partName: 'Zinc anode gel', cost: '≈ $0.15', title: 'AA alkaline battery (LR6)' });
+  assert.equal(asked.before.at(-1).ask, true, 'the app was asked not to build yet');
+  assert.equal(asked.ran, true, 'proceed() starts the build');
+  assert.equal(asked.after.length, 1);
+  assert.equal(asked.after[0].ask, false);
+  // An outright request ("blueprint the …") builds at once, even with confirmBuild.
+  const outright = await p.evaluate(async () => {
+    const r = window.__viewer.command('blueprint the zinc anode gel', { source: 'voice', spoken: true, confirmBuild: true });
+    const o = await r.done;
+    return { ran: !!(o && o.run), ask: window.__log.blueprints.at(-1).ask };
+  });
+  assert.deepEqual(outright, { ran: true, ask: false });
+  // Stop said while the library was looked up (an aborted signal): nothing starts, nothing is shown.
+  const stopped = await p.evaluate(async () => {
+    const ctl = new AbortController();
+    const r = window.__viewer.command('blueprint the zinc anode gel', { source: 'voice', spoken: true, signal: ctl.signal });
+    ctl.abort();
+    const o = await r.done;
+    const cap = document.querySelector('[data-testid="hologram-caption"]');
+    return { out: o, signal: window.__log.blueprints.at(-1).signal, captionError: !!cap && !cap.hidden && cap.dataset.state === 'error' };
+  });
+  assert.deepEqual(stopped, { out: { error: 'Stopped.', stopped: true }, signal: 'aborted', captionError: false });
+  // "close the blueprint" with no sheet over the viewer: handled, nothing happens, nothing is sent.
+  const closing = await p.evaluate(() => window.__viewer.command('Close the blueprint.', { source: 'voice', spoken: true }));
+  assert.deepEqual(closing, { handled: true, command: { action: 'close-blueprint' } });
+  assert.equal(await p.locator('[data-testid="hologram-viewer"]').count(), 1, 'the hologram stays open');
+  // "isolate it" with nothing selected asks which part; after a part was shown, it is that part.
+  const which = await p.evaluate(() => window.__viewer.command('isolate it', { source: 'voice', spoken: true }));
+  assert.deepEqual(which, { handled: true, command: { action: 'which-part', for: 'isolate' } });
+  await p.evaluate(() => window.__viewer.command('show the separator', { source: 'voice', spoken: true }));
+  await p.waitState('selected', 'separator');
+  await p.evaluate(() => window.__viewer.command('never mind', { source: 'voice', spoken: true }));
+  await p.waitState('selected', '');
+  const iso = await p.evaluate(() => window.__viewer.command('isolate it', { source: 'voice', spoken: true }));
+  assert.equal(iso.handled, true);
+  assert.deepEqual([iso.command.action, iso.command.partId], ['isolate', 'separator']);
+  await p.waitState('isolated', 'separator');
+  // Voice Mode says the acknowledgement: no toast over the model; typed commands still get one.
+  assert.equal(await p.isHidden('[data-testid="hologram-toast"]'), true, 'no toast for a spoken command');
+  await p.evaluate(() => window.__viewer.command('show everything', { source: 'typed' }));
+  await p.waitForFunction(() => !document.querySelector('[data-testid="hologram-toast"]').hidden);
+  assert.deepEqual(await p.evaluate(() => window.__log.sent), [], 'none of this reached Jarvis');
+  await p.done();
+});
+
+test('hologram viewer: while it builds, Stop is its own button and Voice Mode\'s mic listens; a stopped build says why it has no blueprint', async () => {
+  const p = await open({ sample: ALTERNATOR, live: true, voice: true });
+  await p.waitState('state', 'building');
+  const stop = '[data-testid="hologram-stop"]';
+  const mic = '[data-testid="hologram-mic"]';
+  assert.equal(await p.isVisible(stop), true, 'a labelled Stop while it builds');
+  assert.equal(await p.getAttribute(stop, 'aria-label'), 'Stop building');
+  // Voice Mode works on the reply that builds it: the mic listens for a command (not a stop sign).
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'thinking', label: 'Stop Jarvis', listening: false, heard: '', busy: true, canListen: true }));
+  assert.equal(await p.getAttribute(mic, 'aria-label'), 'Speak a command');
+  assert.notEqual(await p.getAttribute(mic, 'data-icon'), 'stop');
+  assert.equal(await p.getAttribute(mic, 'data-voice'), 'idle');
+  // Once it is built (Jarvis still writing), the mic stops him again, as the core does.
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'thinking', label: 'Stop Jarvis', listening: false, heard: '', busy: true, canListen: false }));
+  assert.equal(await p.getAttribute(mic, 'aria-label'), 'Stop Jarvis');
+  assert.equal(await p.getAttribute(mic, 'data-icon'), 'stop');
+  // A 2D request while the reply that builds it streams waits (Voice Mode takes it afterwards).
+  const later = await p.evaluate(() => window.__viewer.command('switch it to 2D', { source: 'voice', later: true }));
+  assert.deepEqual(later, { handled: false, later: true });
+  assert.deepEqual(await p.evaluate(() => window.__log.blueprints), [], 'nothing was requested');
+  // A command acts on the live model meanwhile.
+  await p.evaluate(() => window.__viewer.command('expand it', { source: 'voice', later: true }));
+  await p.waitState('exploded', '1');
+  await p.click(stop);
+  assert.deepEqual(await p.evaluate(() => window.__log.stops), [{ conversationId: 'conv-1' }]);
+  // The turn stopped: the card is incomplete, unsaved; the part card says why there is no blueprint.
+  await p.evaluate(() => window.__emit('end', { turn: { id: 'turn-1', status: 'stopped', segments: [{ id: 'seg-1', kind: 'hologram', status: 'error', title: window.__full.title, spec: window.__partial(6), libraryId: null }] } }));
+  await p.waitState('state', 'incomplete');
+  assert.equal(await p.isHidden(stop), true, 'no Stop once it is not building');
+  await p.evaluate(() => window.__viewer.command('show the rotor', { source: 'typed' }));
+  await p.waitState('selected', 'rotor');
+  assert.equal(await p.isDisabled('[data-testid="hologram-build-blueprint"]'), true);
+  assert.match(await p.textContent('.hv__card-hint'), /stopped before it finished, so it wasn’t saved/);
+  assert.doesNotMatch(await p.textContent('.hv__card-hint'), /storage may be full/);
+  await p.done();
+});
+
+test('hologram viewer (phone): zooming in on the exploded Camry labels what is in view instead of losing labels', async () => {
+  const p = await open({ sample: CAMRY, viewport: { width: 390, height: 664 } });
+  await p.waitState('state', 'ready');
+  await p.evaluate(() => window.__viewer.command('expand it', { source: 'typed' }));
+  await p.waitState('exploded', '1');
+  const shown = () => p.evaluate(() => Array.from(document.querySelectorAll('.holo-label.is-shown')).map((l) => l.textContent));
+  const settle = async () => {
+    await p.waitForTimeout(1600); // the camera move and the label layout settle
+    return shown();
+  };
+  const before = await settle();
+  assert.ok(before.length >= 4, `labels are shown before zooming (${before.length})`);
+  const seen = new Set(before);
+  const counts = [before.length];
+  for (let i = 0; i < 3; i++) {
+    await p.evaluate(() => window.__viewer.command('zoom in', { source: 'typed' }));
+    const now = await settle();
+    counts.push(now.length);
+    for (const name of now) seen.add(name);
+  }
+  assert.ok(counts.every((n) => n >= before.length), `zooming in never loses labels (shown: ${counts.join(' → ')})`);
+  assert.ok(seen.size > before.length, `zooming in reveals labels of other parts (${seen.size} distinct, ${before.length} before)`);
+  await p.done();
+});
+
+test('hologram viewer: idle auto-rotation starts by itself after the opening delay (Rotate shows on and it turns)', async () => {
+  const p = await open({ viewport: { width: 390, height: 664 } });
+  await p.waitState('state', 'ready');
+  assert.equal(await p.state('rotate'), 'on');
+  await p.waitForTimeout(7500); // rotateAfterMs is 6 s; no input meanwhile
+  const canvas = p.locator('.holo__canvas');
+  const a = await canvas.screenshot();
+  await p.waitForTimeout(1200);
+  const b = await canvas.screenshot();
+  assert.ok(!a.equals(b), 'the model turns on its own (the canvas changed with no input)');
+  await p.done();
+});
+
+test('hologram viewer: "Restart 3D view" brings the model back after a context loss the browser never restores', async () => {
+  const p = await open();
+  await p.waitState('state', 'ready');
+  const lost = await p.evaluate(() => {
+    const c = document.querySelector('.holo__canvas');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    const ext = gl && gl.getExtension('WEBGL_lose_context');
+    if (!ext) return false;
+    ext.loseContext(); // and never restoreContext(): iOS memory pressure, a backgrounded app
+    return true;
+  });
+  assert.ok(lost, 'the test can lose the WebGL context');
+  const btn = p.locator('.holo__notice-btn');
+  await btn.waitFor({ state: 'visible', timeout: 8000 });
+  await btn.click();
+  await p.waitForFunction(() => document.querySelector('.holo__notice').hidden, null, { timeout: 8000 });
+  assert.equal(await p.state('state'), 'ready');
+  await p.waitForTimeout(600);
+  const shot = await p.locator('.holo__canvas').screenshot();
+  const lit = await p.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 110 && d[i + 1] > 70) n++;
+    return n;
+  }, shot.toString('base64'));
+  assert.ok(lit > 200, `the model is drawn again (${lit} lit pixels)`);
+  assert.equal(await p.locator('.holo__canvas').count(), 1, 'one canvas');
+  await p.done();
+});
+
+test('hologram viewer: the part card follows the library (a sheet saved or deleted meanwhile); Rebuild shows its price; 2D asks for a second tap before a paid build', async () => {
+  const p = await open();
+  await p.waitState('state', 'ready');
+  const build = '[data-testid="hologram-build-blueprint"]';
+  await p.evaluate(() => window.__viewer.command('show the zinc anode gel', { source: 'typed' }));
+  await p.waitState('selected', 'anode');
+  await p.waitForFunction((sel) => document.querySelector(sel).dataset.saved === 'false' && /Build 2D blueprint/.test(document.querySelector(sel).textContent), build);
+  // Its sheet is saved meanwhile (a build that just finished, another window): the card says so at once.
+  await p.evaluate(() => window.__libChange('anode', { id: 'lib_bpanode001', kind: 'blueprint', title: 'Zinc anode gel' }));
+  await p.waitForFunction((sel) => document.querySelector(sel).dataset.saved === 'true' && /Open blueprint/.test(document.querySelector(sel).textContent), build, { timeout: 5000 });
+  // Rebuild is a paid build: its price shows on it (not only in a tooltip).
+  assert.match(await p.textContent('[data-testid="hologram-rebuild-blueprint"]'), /Rebuild.*≈ \$0\.15/);
+  // The sheet is deleted elsewhere: the card no longer promises a free one.
+  await p.evaluate(() => window.__libChange('anode', null));
+  await p.waitForFunction((sel) => document.querySelector(sel).dataset.saved === 'false' && /Build 2D blueprint/.test(document.querySelector(sel).textContent), build, { timeout: 5000 });
+  // The 2D tool: nothing saved for the whole object, so the first tap only asks (with the price).
+  const tool = '[data-testid="hologram-2d"]';
+  await p.click(tool);
+  await p.waitForFunction((sel) => document.querySelector(sel).dataset.armed === 'true', tool);
+  assert.match(await p.textContent('[data-testid="hologram-toast"]'), /Tap 2D again.*≈ \$0\.15/);
+  assert.deepEqual(await p.evaluate(() => window.__log.blueprints.length), 0, 'nothing requested yet');
+  await p.click(tool);
+  await p.waitForFunction(() => window.__log.blueprints.length === 1);
+  assert.equal(await p.evaluate(() => window.__log.blueprints[0].part), null, 'the whole object');
+  // A saved whole-object sheet opens at the first tap (free).
+  await p.evaluate(() => window.__libChange('*', { id: 'lib_bpwhole001', kind: 'blueprint', title: 'AA battery' }));
+  await p.click(tool);
+  await p.waitForFunction(() => window.__log.blueprints.length === 2);
+  await p.click('[data-testid="hologram-close"]');
+  assert.equal(await p.evaluate(() => window.__libListeners()), 0, 'closing the viewer stops listening to the library');
+  await p.done();
+});
+
+/** In the page: boxes [top, bottom, left, right] of the viewer's chrome, and how much of each shown label is under it. */
+function chromeGeometry() {
+  const box = (sel) => {
+    const e = document.querySelector(sel);
+    if (!e || e.hidden || !e.getClientRects().length) return null;
+    const b = e.getBoundingClientRect();
+    return { top: b.top, bottom: b.bottom, left: b.left, right: b.right };
+  };
+  const chrome = ['.hv__caption', '.hv__card', '.hv__toast'].map(box).filter(Boolean);
+  const covered = (r) => {
+    let worst = 0;
+    for (const c of chrome) {
+      const w = Math.max(0, Math.min(r.right, c.right) - Math.max(r.left, c.left));
+      const h = Math.max(0, Math.min(r.bottom, c.bottom) - Math.max(r.top, c.top));
+      worst = Math.max(worst, (w * h) / Math.max(1, (r.right - r.left) * (r.bottom - r.top)));
+    }
+    return worst;
+  };
+  const labels = Array.from(document.querySelectorAll('.holo-label.is-shown')).map((l) => ({ name: l.textContent, under: covered(l.getBoundingClientRect()) }));
+  return { vh: window.innerHeight, top: box('.hv__top'), caption: box('.hv__caption'), card: box('.hv__card'), compact: document.querySelector('.hv__caption').dataset.compact, labels };
+}
+
+test('hologram viewer (small phone, Voice Mode): a reply caption never stacks on the part card; the model keeps a third of the screen; a said caption leaves', async () => {
+  const p = await open({ voice: true, viewport: { width: 375, height: 553 } });
+  await p.waitState('state', 'ready');
+  await p.evaluate(() => window.__viewer.setVoice({ state: 'listening', label: 'Stop listening', listening: true, heard: '', busy: false }));
+  await p.evaluate(() => window.__viewer.command('expand it', { source: 'voice', spoken: true }));
+  await p.evaluate(() => window.__viewer.command('show the separator', { source: 'voice', spoken: true }));
+  await p.waitState('selected', 'separator');
+  assert.equal(await p.isHidden('[data-testid="hologram-toast"]'), true, 'Voice Mode says the acknowledgement: no toast on the model');
+  // A question answered while the card is open (Voice Mode follows the reply into the caption).
+  await p.evaluate(() => {
+    window.__vrun = window.__fakeRun('turn-q');
+    window.__viewer.follow(window.__vrun);
+    const turn = { id: 'turn-q', status: 'running', spoken: true, segments: [{ id: 'q1', kind: 'text', req: 0, text: 'The separator is a thin porous sleeve that keeps the zinc gel and the manganese dioxide cathode apart, while letting the electrolyte ions pass, so the cell can deliver current without shorting out.' }] };
+    window.__emit('segment', { turn, segment: turn.segments[0] });
+  });
+  await p.waitForFunction(() => /porous sleeve/.test(document.querySelector('[data-testid="hologram-caption"]').textContent));
+  await p.waitForTimeout(1500); // the camera refits to the new room and the labels settle
+  const g = await p.evaluate(chromeGeometry);
+  assert.equal(g.compact, 'true', 'with the card open, the caption is a one-line pill');
+  assert.ok(g.caption.top >= g.top.bottom - 4 && g.caption.bottom <= g.top.bottom + 44, `the pill sits under the top bar (${JSON.stringify(g.caption)})`);
+  const free = g.card.top - Math.max(g.top.bottom, g.caption.bottom);
+  assert.ok(free >= g.vh / 3, `the model keeps at least a third of the screen (${Math.round(free)} of ${g.vh} px)`);
+  const sep = g.labels.find((l) => l.name === 'Separator');
+  assert.ok(sep, `the selected part keeps its label (${g.labels.map((l) => l.name).join(', ')})`);
+  for (const l of g.labels) assert.ok(l.under <= 0.3, `"${l.name}" is ${Math.round(l.under * 100)}% under the caption, card or toast`);
+  // A tap on the pill shows the whole reply; another folds it again.
+  await p.click('.hv__caption-text');
+  await p.waitForFunction(() => document.querySelector('[data-testid="hologram-caption"]').dataset.expanded === 'true');
+  await p.click('.hv__caption-text');
+  await p.waitForFunction(() => document.querySelector('[data-testid="hologram-caption"]').dataset.expanded === 'false');
+  // The reply ends and Voice Mode has said it: the caption leaves within a few seconds (not 20).
+  await p.evaluate(() => {
+    const turn = { id: 'turn-q', status: 'done', spoken: true, segments: [{ id: 'q1', kind: 'text', req: 0, text: 'The separator keeps the zinc and the cathode apart.' }] };
+    window.__emit('end', { turn });
+    window.__viewer.captionSpoken();
+  });
+  await p.waitForFunction(() => document.querySelector('[data-testid="hologram-caption"]').hidden, null, { timeout: 6000 });
+  // A said reply with details in the chat (below its --- line) stays: "Open in chat" leads to them.
+  await p.evaluate(() => {
+    window.__zrun = window.__fakeRun('turn-z');
+    window.__viewer.follow(window.__zrun);
+    const turn = { id: 'turn-z', status: 'done', spoken: true, segments: [{ id: 'z1', kind: 'text', req: 0, text: 'The zinc gives up electrons.\n\n---\n\n## What it is\n\n- **Material:** zinc powder gel' }] };
+    window.__emit('end', { turn });
+    window.__viewer.captionSpoken();
+  });
+  await p.waitForFunction(() => /gives up electrons/.test(document.querySelector('[data-testid="hologram-caption"]').textContent));
+  await p.waitForTimeout(4500); // longer than a said caption without details stays
+  assert.equal(await p.isHidden('[data-testid="hologram-caption"]'), false, 'the reply with details is still captioned');
+  assert.doesNotMatch(await p.locator('[data-testid="hologram-caption"]').textContent(), /What it is|zinc powder gel/, 'the details stay in the chat');
+  // The folded pill has no room for "Open in chat"; a tap opens the whole reply with it.
+  assert.equal(await p.isHidden('[data-testid="hologram-caption-open"]'), true, 'the one-line pill keeps to the reply');
+  await p.click('.hv__caption-text');
+  await p.waitForFunction(() => document.querySelector('[data-testid="hologram-caption"]').dataset.expanded === 'true');
+  assert.equal(await p.isHidden('[data-testid="hologram-caption-open"]'), false, '"Open in chat" is there once the pill is open');
+  await p.click('[data-testid="hologram-caption-open"]');
+  assert.deepEqual(await p.evaluate(() => window.__log.inChat), { conversationId: 'conv-1', turnId: 'turn-z' }, '"Open in chat" shows that reply');
+  await p.done();
+});
+
+test('hologram viewer (desktop): the model and its labels keep clear of a reply caption', async () => {
+  const p = await open({ viewport: { width: 1280, height: 800 } });
+  await p.waitState('state', 'ready');
+  await p.evaluate(() => {
+    window.__vrun = window.__fakeRun('turn-d');
+    window.__viewer.follow(window.__vrun);
+    const turn = { id: 'turn-d', status: 'running', spoken: true, segments: [{ id: 'd1', kind: 'text', req: 0, text: 'This is the AA alkaline cell: a steel can holds the manganese dioxide cathode rings, the separator and the zinc anode gel, with a brass nail collecting the current at the negative end.' }] };
+    window.__emit('segment', { turn, segment: turn.segments[0] });
+  });
+  await p.waitForFunction(() => /steel can holds/.test(document.querySelector('[data-testid="hologram-caption"]').textContent));
+  await p.waitForTimeout(1500);
+  const g = await p.evaluate(chromeGeometry);
+  assert.ok(g.caption, 'the caption shows');
+  assert.ok(g.labels.length >= 4, `labels are placed (${g.labels.length})`);
+  for (const l of g.labels) assert.ok(l.under <= 0.3, `"${l.name}" is ${Math.round(l.under * 100)}% under the caption`);
   await p.done();
 });

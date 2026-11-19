@@ -23,7 +23,7 @@
 
 import { hologramToolResult, normalizeHologramSpec, partBounds, specBounds } from '../lib/hologram-spec.js';
 import { blueprintStablePrefix, blueprintToolResult, normalizeBlueprintSpec, sheetLabel, summarizeBlueprint } from '../lib/blueprint-spec.js';
-import { SAVED_ITEMS_MAX, buildBlueprintRequestBlock, buildSavedItemsBlock, withTurnContextBlocks } from './prompts.js';
+import { SAVED_ITEMS_MAX, SAVED_PART_SHEETS, buildBlueprintRequestBlock, buildSavedItemsBlock, withTurnContextBlocks } from './prompts.js';
 import { abortError, isPlainObject, parsePartialJson, singleLine, truncate, uid } from './util.js';
 
 export const LIBRARY_ID = /^lib_[a-z0-9]{6,16}$/;
@@ -140,6 +140,21 @@ async function loadHologram(ctx, id) {
   return spec;
 }
 
+/**
+ * Saved items for the model to reuse, at most `max`: every hologram first (newest first), then
+ * whole-object sheets, then at most `partMax` part sheets (the viewer finds a part's sheet itself).
+ * Many part sheets never push a hologram out (it would be rebuilt, at a cost). null when the
+ * library could not be listed at all.
+ */
+async function savedRows(ctx, max, partMax) {
+  const [holos, sheets] = await Promise.all([callLibrary(ctx, 'list', { kind: 'hologram', limit: max }), callLibrary(ctx, 'list', { kind: 'blueprint', limit: max })]);
+  if (!Array.isArray(holos) && !Array.isArray(sheets)) return null;
+  const usable = (rows, kind) => (Array.isArray(rows) ? rows : []).filter((r) => isPlainObject(r) && typeof r.id === 'string' && LIBRARY_ID.test(r.id) && r.kind === kind);
+  const ofPart = (r) => isPlainObject(r.parent) && typeof r.parent.part === 'string' && r.parent.part !== '';
+  const blueprints = usable(sheets, 'blueprint');
+  return [...usable(holos, 'hologram'), ...blueprints.filter((r) => !ofPart(r)), ...blueprints.filter(ofPart).slice(0, partMax)].slice(0, max);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Turn context (before the turn's first request)
 
@@ -166,11 +181,8 @@ async function addVisualBlocks(ctx) {
   const first = Array.isArray(message?.content) ? message.content[0] : null;
   if (!message || message.role !== 'user' || first?.type !== 'text' || !String(first.text).startsWith('<turn_context>')) return;
   const blocks = [];
-  const rows = await callLibrary(ctx, 'list', { limit: SAVED_ITEMS_MAX });
-  if (Array.isArray(rows)) {
-    const usable = rows.filter((r) => isPlainObject(r) && typeof r.id === 'string' && LIBRARY_ID.test(r.id) && (r.kind === 'hologram' || r.kind === 'blueprint'));
-    blocks.push(buildSavedItemsBlock(usable.slice(0, SAVED_ITEMS_MAX)));
-  }
+  const rows = await savedRows(ctx, SAVED_ITEMS_MAX, SAVED_PART_SHEETS);
+  if (rows) blocks.push(buildSavedItemsBlock(rows));
   const target = cleanBlueprintFor(turn.blueprintFor);
   if (target) {
     const hologram = await loadHologram(ctx, target.model);
@@ -452,9 +464,11 @@ async function openSaved(ctx, toolUse, req) {
     }
   }
   if (!spec) {
-    const rows = await callLibrary(ctx, 'list', { limit: 5 });
+    // Holograms first, as in the saved list (a fresh conversation most often wants one of those).
+    const rows = await savedRows(ctx, 6, 5);
     const known = (Array.isArray(rows) ? rows : [])
-      .filter((r) => isPlainObject(r) && typeof r.id === 'string' && LIBRARY_ID.test(r.id) && r.id !== id)
+      .filter((r) => r.id !== id)
+      .slice(0, 5)
       .map((r) => `${r.id} (${r.kind === 'blueprint' ? 'blueprint' : 'hologram'} "${oneLine(r.title, 60).replace(/"/g, "'")}")`);
     const why = item === null || item === undefined || !isPlainObject(item) ? `No saved item has the id ${id}.` : `The saved item ${id} is damaged and cannot be opened.`;
     return { content: `${why}${known.length ? ` Saved items include: ${known.join(', ')}.` : ' The library is empty.'} Use an id from <turn_context>, or build it again if the owner wants it.`, is_error: true };

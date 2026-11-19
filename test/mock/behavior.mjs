@@ -256,7 +256,7 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
       return { plan: blueprintPlan({ think, sample, forIds: request.model ? { model: request.model, part: request.part } : null, partName: request.partName, spoken }) };
     }
     if (d.has('swarm') || d.has('waves')) return { plan: deployPlan(env, { wave: 1, count: d.int('swarm', 3, 1, 20) }) };
-    if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d), spoken }) };
+    if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d), spoken, slow: d.has('slowbuild') }) };
     if (d.has('blueprint') && hasTool(body, 'draw_blueprint')) {
       const named = d.arg('blueprint');
       const sample = BLUEPRINT_SAMPLES.includes(named) ? named : chooseBlueprintSample({ prompt: stripDirectives(prompt) });

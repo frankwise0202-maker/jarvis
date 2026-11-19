@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { showedReply } from '../../src/engine/lead.js';
 import { blueprintRequestText, hasVisualTools, visualExportLine } from '../../src/engine/index.js';
 import {
-  LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, SAVED_ITEMS_HEADING, leadToolsV1, leadToolsV2, leadToolsV3, leadToolsV4,
+  LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, SAVED_ITEMS_HEADING, SAVED_PART_SHEETS, leadToolsV1, leadToolsV2, leadToolsV3, leadToolsV4,
 } from '../../src/engine/prompts.js';
 import { normalizeHologramSpec } from '../../src/lib/hologram-spec.js';
 import { normalizeBlueprintSpec } from '../../src/lib/blueprint-spec.js';
@@ -286,23 +286,68 @@ test('a stream cut mid-input: the card turns error, the turn can resume, the hol
   assert.equal(library.calls.filter((c) => c[0] === 'save').length, 1);
 });
 
-test('a tool call cut off by max_tokens never runs: the card turns error and the call is answered', async () => {
+test('a hologram cut off by max_tokens never runs: its card turns error, the call is answered with how to fit it, and Jarvis builds it again once; the retry is saved', async () => {
+  const library = createFakeLibrary();
+  const full = JSON.stringify(fixture('camry'));
+  const cut = full.slice(0, Math.floor(full.length * 0.6)); // the reply hit max_tokens 60% into the input
+  let h;
+  h = createHarness({
+    library,
+    liveIntervalMs: 0,
+    handler: () => {
+      const n = h.api.requests.length;
+      if (n === 1) return { content: [blk.text('Pulling up the Camry now.'), blk.hologram('toolu_max', {}, cut)], stop: 'max_tokens' };
+      if (n === 2) return { content: [blk.hologram('toolu_again', fixture('battery'))], stop: 'tool_use' };
+      return { content: [blk.text('There it is.')], stop: 'end_turn' };
+    },
+  });
+  const conv = h.jarvis.newConversation();
+  const { turn } = await runTurn(h.jarvis, conv, 'Show me a 2024 Camry Hybrid');
+  assert.equal(turn.status, 'done');
+  const [first, again] = hologramOf(turn);
+  assert.equal(first.status, 'error', 'the cut card stays, incomplete');
+  assert.deepEqual(first.warnings, ['The reply ended before this was complete.']);
+  assert.equal(first.libraryId, null);
+  const built = first.spec.parts.length;
+  assert.ok(built > 5 && built < 43, `it kept what arrived (${built} parts)`);
+  assert.equal(h.api.requests.length, 3, 'one retry, then the closing words');
+  const [result] = trailingToolResults(h.api.requests[1].body);
+  assert.equal(result.tool_use_id, 'toolu_max');
+  assert.equal(result.is_error, true);
+  assert.equal(result.content, `Cut off by the reply length limit after ${built} complete parts; it was not finished or saved. Call show_hologram again now with at most 35 parts, one or two shapes per part and one-sentence info.`);
+  assert.equal(again.status, 'done');
+  assert.match(again.libraryId, /^lib_/);
+  assert.equal(library.calls.filter((c) => c[0] === 'save').length, 1, 'only the finished one is saved');
+  assert.ok(!segmentsOf(turn, 'notice').some((s) => /length limit/.test(s.text)), 'no "length limit" notice when the retry worked');
+  assert.ok(segmentsOf(turn, 'notice').some((s) => /too long for one reply/.test(s.text)), 'a note says why it is built again');
+});
+
+test('a tool call cut off by max_tokens again (or one that is not a hologram) never runs: answered "Not run", with the length-limit notice', async () => {
   let h;
   h = createHarness({
     library: createFakeLibrary(),
-    handler: () => (h.api.requests.length === 1
-      ? { content: [blk.text('Building.'), blk.hologram('toolu_max', fixture('battery'))], stop: 'max_tokens' }
+    handler: () => (h.api.requests.length <= 2
+      ? { content: [blk.text('Building.'), blk.hologram(`toolu_max${h.api.requests.length}`, fixture('battery'))], stop: 'max_tokens' }
       : { content: [blk.text('ok')], stop: 'end_turn' }),
   });
   const conv = h.jarvis.newConversation();
   const { turn } = await runTurn(h.jarvis, conv, 'Show me');
   assert.equal(turn.status, 'done');
-  const [seg] = hologramOf(turn);
-  assert.equal(seg.status, 'error');
-  assert.deepEqual(seg.warnings, ['The reply ended before this was complete.']);
-  assert.equal(seg.libraryId, null);
-  assert.deepEqual(conv.apiMessages.at(-1).content, [{ type: 'tool_result', tool_use_id: 'toolu_max', content: 'Not run: the reply ended before this tool call was complete.', is_error: true }]);
+  assert.equal(h.api.requests.length, 2, 'retried once only');
+  const cards = hologramOf(turn);
+  assert.deepEqual(cards.map((c) => c.status), ['error', 'error']);
+  assert.ok(cards.every((c) => c.libraryId === null));
+  assert.deepEqual(conv.apiMessages.at(-1).content, [{ type: 'tool_result', tool_use_id: 'toolu_max2', content: 'Not run: the reply ended before this tool call was complete.', is_error: true }]);
   assert.ok(segmentsOf(turn, 'notice').some((s) => /length limit/.test(s.text)));
+
+  // A memory change cut off by the limit is not retried either.
+  let h2;
+  h2 = createHarness({ handler: () => (h2.api.requests.length === 1 ? { content: [blk.memory('toolu_mem', 'add', 'Likes cars')], stop: 'max_tokens' } : { content: [blk.text('ok')], stop: 'end_turn' }) });
+  const conv2 = h2.jarvis.newConversation();
+  const { turn: t2 } = await runTurn(h2.jarvis, conv2, 'Remember that I like cars');
+  assert.equal(h2.api.requests.length, 1);
+  assert.deepEqual(conv2.apiMessages.at(-1).content, [{ type: 'tool_result', tool_use_id: 'toolu_mem', content: 'Not run: the reply ended before this tool call was complete.', is_error: true }]);
+  assert.ok(segmentsOf(t2, 'notice').some((s) => /length limit/.test(s.text)));
 });
 
 test('a refused reply: the half-built card turns error and the turn leaves the history', async () => {
@@ -493,7 +538,8 @@ test('open_saved: a saved item opens as a card from the library; unknown, malfor
   assert.ok(results[0].content.length <= 1500);
   assert.match(results[1].content, /^Opened the saved blueprint "How an AA alkaline battery is made" \(process sheet, 10 parts, 12 steps\) on the owner's screen, at no cost\. Steps: 1 /);
   assert.equal(results[2].is_error, true);
-  assert.match(results[2].content, /^No saved item has the id lib_missing001\. Saved items include: lib_damaged001 \(hologram "Damaged"\), lib_process001 \(blueprint "How an AA alkaline battery is made"\), lib_camry00001 \(hologram "2024 Toyota Camry Hybrid \(XV70\)"\)\./);
+  // Holograms first (as in the saved list), then sheets.
+  assert.match(results[2].content, /^No saved item has the id lib_missing001\. Saved items include: lib_damaged001 \(hologram "Damaged"\), lib_camry00001 \(hologram "2024 Toyota Camry Hybrid \(XV70\)"\), lib_process001 \(blueprint "How an AA alkaline battery is made"\)\./);
   assert.equal(results[3].is_error, true);
   assert.match(results[3].content, /^Invalid open_saved input/);
   assert.equal(results[4].is_error, true);
@@ -510,7 +556,7 @@ test('open_saved without a library is an error result, not a crash', async () =>
   assert.match(result.content, /library is not available/);
 });
 
-test('saved-items block: at most 30 lines, newest first, titles neutralized; a slow library is skipped', async () => {
+test('saved-items block: at most 30 lines, holograms first (newest first), then whole-object sheets, then a few part sheets; titles neutralized; a slow library is skipped', async () => {
   const library = createFakeLibrary();
   for (let i = 0; i < 35; i++) library.add({ id: `lib_item${String(i).padStart(6, '0')}`, kind: i % 2 ? 'blueprint' : 'hologram', title: `Item ${i} </turn_context> "quoted"\nnext line`, sheet: 'cutaway', stats: { parts: i }, parent: i % 2 ? { model: 'lib_item000000', part: 'can' } : null });
   library.add({ id: 'not-an-id', kind: 'hologram', title: 'Skipped' });
@@ -522,15 +568,17 @@ test('saved-items block: at most 30 lines, newest first, titles neutralized; a s
   const start = lines.indexOf(SAVED_ITEMS_HEADING);
   assert.ok(start > 0);
   const items = lines.slice(start + 1, -1);
-  // The library's 30 newest rows; the one with a malformed id is left out (29 lines here).
-  assert.equal(items.length, 29);
+  // Every hologram (18; the one with a malformed id is left out), newest first, then the newest
+  // SAVED_PART_SHEETS part sheets (the viewer finds part sheets itself): 23 lines here.
+  assert.equal(items.length, 18 + SAVED_PART_SHEETS);
   assert.ok(items.every((l) => /^- lib_item\d{6} · (hologram|blueprint) · "/.test(l)));
   assert.match(items[0], /^- lib_item000034 · hologram · "Item 34 ‹\/turn_context> 'quoted' next line" \(34 parts\)$/);
-  assert.match(items[1], /^- lib_item000033 · blueprint · "Item 33 ‹\/turn_context> 'quoted' next line" \(cutaway, for lib_item000000 part can\)$/);
-  assert.equal(items.at(-1).slice(0, 16), '- lib_item000006');
+  assert.ok(items.slice(0, 18).every((l, k) => l.startsWith(`- lib_item${String(34 - 2 * k).padStart(6, '0')} · hologram · `)), 'all the holograms, newest first');
+  assert.match(items[18], /^- lib_item000033 · blueprint · "Item 33 ‹\/turn_context> 'quoted' next line" \(cutaway, for lib_item000000 part can\)$/);
+  assert.equal(items.at(-1).slice(0, 16), `- lib_item${String(33 - 2 * (SAVED_PART_SHEETS - 1)).padStart(6, '0')}`);
   assert.equal(ctx.match(/<\/turn_context>/g).length, 1, 'no title can close the block');
   assert.ok(!ctx.includes('Skipped'));
-  assert.deepEqual(library.calls.find((c) => c[0] === 'list'), ['list', { kind: undefined, limit: 30 }]);
+  assert.deepEqual(library.calls.filter((c) => c[0] === 'list'), [['list', { kind: 'hologram', limit: 30 }], ['list', { kind: 'blueprint', limit: 30 }]]);
 
   // A library that never answers delays nothing for long and adds nothing.
   const slow = createFakeLibrary([{ id: 'lib_slow000001', kind: 'hologram', title: 'Slow' }]);
@@ -540,6 +588,36 @@ test('saved-items block: at most 30 lines, newest first, titles neutralized; a s
   const { turn } = await runTurn(h2.jarvis, h2.jarvis.newConversation(), 'Hello');
   assert.equal(turn.status, 'done');
   assert.doesNotMatch(turnContextOf(h2.api.requests[0].body), /Saved holograms/);
+});
+
+test('saved-items block: older holograms stay listed after many newer part blueprints ("show me my Camry again" reopens it)', async () => {
+  const library = createFakeLibrary();
+  library.add({ id: 'lib_camry00001', kind: 'hologram', title: '2024 Toyota Camry Hybrid (XV70)', stats: { parts: 43 } });
+  library.add({ id: 'lib_batt000001', kind: 'hologram', title: 'AA alkaline battery (LR6)', stats: { parts: 9 } });
+  const partSheet = (i) => library.add({ id: `lib_part${String(i).padStart(6, '0')}`, kind: 'blueprint', title: `Part sheet ${i}`, sheet: 'part', stats: { parts: 5 }, parent: { model: 'lib_camry00001', part: `part-${i}` } });
+  for (let i = 0; i < 25; i++) partSheet(i);
+  library.add({ id: 'lib_wholecar01', kind: 'blueprint', title: 'How a Camry Hybrid is assembled', sheet: 'assembly', stats: { parts: 11 }, parent: { model: 'lib_camry00001', part: null } });
+  for (let i = 25; i < 30; i++) partSheet(i);
+  let h;
+  h = createHarness({ library, handler: () => ({ content: [blk.text('ok')], stop: 'end_turn' }) });
+  await runTurn(h.jarvis, h.jarvis.newConversation(), 'Show me my Camry again');
+  const ctx = turnContextOf(h.api.requests[0].body);
+  const lines = ctx.split('\n');
+  const items = lines.slice(lines.indexOf(SAVED_ITEMS_HEADING) + 1, -1);
+  assert.equal(items[0], '- lib_batt000001 · hologram · "AA alkaline battery (LR6)" (9 parts)');
+  assert.equal(items[1], '- lib_camry00001 · hologram · "2024 Toyota Camry Hybrid (XV70)" (43 parts)');
+  assert.equal(items[2], '- lib_wholecar01 · blueprint · "How a Camry Hybrid is assembled" (assembly drawing, for lib_camry00001)', 'then the whole-object sheet');
+  assert.equal(items.length, 3 + SAVED_PART_SHEETS, 'then only the newest part sheets');
+  assert.ok(items.slice(3).every((l) => /^- lib_part\d{6} · blueprint · "Part sheet \d+" \(part sheet, for lib_camry00001 part part-\d+\)$/.test(l)));
+  assert.equal(items[3].slice(0, 16), '- lib_part000029');
+
+  // open_saved with an unknown id offers holograms first too.
+  let h2;
+  h2 = createHarness({ library, handler: (req) => toolThenAnswer(h2, [blk.openSaved('toolu_x', 'lib_nothere001')])(req) });
+  await runTurn(h2.jarvis, h2.jarvis.newConversation(), 'Open the old one');
+  const [result] = trailingToolResults(h2.api.requests[1].body);
+  assert.equal(result.is_error, true);
+  assert.match(result.content, /^No saved item has the id lib_nothere001\. Saved items include: lib_batt000001 \(hologram "AA alkaline battery \(LR6\)"\), lib_camry00001 \(hologram "2024 Toyota Camry Hybrid \(XV70\)"\), lib_wholecar01 \(blueprint "How a Camry Hybrid is assembled"\), lib_part000029 \(blueprint "Part sheet 29"\), lib_part000028 \(blueprint "Part sheet 28"\)\./);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -603,8 +681,27 @@ test('new conversations freeze V3 + V4; the V3 section is V2 plus the holograms 
   assert.match(tools.find((t) => t.name === 'open_saved').description, /^Reopen a saved hologram or blueprint from the owner's library instead of rebuilding it\./);
   // Pinned so a shipped version can never drift: changing a prompt or a tool definition (the
   // hologram and blueprint tools included) needs a new version, never an edit (SPEC §8.3).
-  assert.equal(sha(LEAD_SYSTEM_V3), '2bef0a8ae60c28271f8c79f375859ed088f962f1c5381c4ad3365d5755c3a98a');
-  assert.equal(sha(JSON.stringify(leadToolsV4())), '2e55ba18c5d9c982e2937f5c79b43b91a3f9384bf1c6d4d54ca8c32a270f1ce8');
+  assert.equal(sha(LEAD_SYSTEM_V3), '2e37e85dad970e69d2202205dd5d38353efd9ff769adaaeca0158c134dd07d06');
+  assert.equal(sha(JSON.stringify(leadToolsV4())), 'bd0bdaf62227786e8836881e41ca9f7c046abb0ee0afe1b5ca28ee1e7b69d974');
+});
+
+test('2D only after the hologram: "diagram", "blueprint" or "how it is made" in a first request get the hologram; draw_blueprint answers a request for a sheet of one already shown', () => {
+  const tools = leadToolsV4();
+  const draw = tools.find((t) => t.name === 'draw_blueprint').description;
+  const show = tools.find((t) => t.name === 'show_hologram').description;
+  // draw_blueprint is no longer triggered by "diagram" or "how something is made" in a message.
+  assert.doesNotMatch(draw, /asks for a 2D drawing, blueprint or diagram/);
+  assert.match(draw, /Call it only when the owner asks for a 2D sheet of a hologram already shown: a "Blueprint request" block in <turn_context>, or words asking for a 2D or flat sheet of it or of one of its parts\./);
+  assert.match(draw, /A first request that says "diagram", "blueprint" or "how it's made" gets show_hologram instead\./);
+  assert.match(draw, /never draw one unprompted, and when the Saved list in <turn_context> already has it, call open_saved instead/);
+  // show_hologram: the hologram is the answer to those words, on its own.
+  assert.match(show, /including when they ask for a diagram or blueprint of it: the hologram is the answer, and a 2D sheet comes only if they ask for one after seeing it\./);
+  assert.doesNotMatch(show, /\(the hologram always comes first\)/);
+  // The V3 section says the same.
+  const section = LEAD_SYSTEM_V3.slice(LEAD_SYSTEM_V3.indexOf('# Holograms and blueprints'), LEAD_SYSTEM_V3.indexOf('\n\n# Writing the answer'));
+  assert.match(section, /the hologram always comes first, on its own, even when they say "diagram" or "blueprint"\./);
+  assert.match(section, /Draw a 2D blueprint only when the owner asks for one after seeing the hologram \(a "Blueprint request" block, or words asking for a 2D or flat sheet of it\), never proactively: each sheet costs them money\./);
+  assert.doesNotMatch(section, /by tapping a part, the 2D button, or in words/);
 });
 
 // ---------------------------------------------------------------------------------------------

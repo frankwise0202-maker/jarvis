@@ -7,12 +7,19 @@
 //           | { item }                                    a saved library item (with its spec)
 //     deps:   see openHologramViewer below (library, requestBlueprint, sendMessage, stt, …)
 //   v.update(segment)       a newer copy of the followed segment (live build)
-//   v.command(text, { source: 'voice' }) -> { handled: true, command, done? } | { handled: false }
-//                           done (a 2D request): a Promise of { opened } | { run } | { held } | { error }
+//   v.command(text, { source: 'voice', signal, spoken, confirmBuild, later })
+//                           -> { handled: true, command, done? } | { handled: false, later? }
+//                           done (a 2D request): a Promise of { opened } | { run } | { held } |
+//                           { confirm } (confirmBuild and a softer wording: ask first, then
+//                           confirm.proceed()) | { error } | { error, stopped } (signal aborted)
+//                           spoken: Voice Mode says the acknowledgement, so no toast; later: the
+//                           reply that builds it still streams, so a 2D request waits ({ later: true })
 //   v.submit(text)          what the command field does: local command first, else a chat message
 //   v.follow(run)           caption a reply that Voice Mode follows (text only: Voice Mode opens
 //                           what it shows)
-//   v.setVoice(info|null)   Voice Mode drives the mic: { listening, heard, label, busy, state }
+//   v.note(text)            a caption from Voice Mode ("I'll take that once the hologram is built.")
+//   v.setVoice(info|null)   Voice Mode drives the mic: { listening, heard, label, busy, state,
+//                           canListen (the mic listens instead of stopping: a hologram is building) }
 //   v.close()  v.isOpen()  v.getState()
 //   getHologramViewer()     the open viewer or null (one at a time)
 //
@@ -32,9 +39,10 @@
 import { h, setText, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { openOverlay } from '../overlay.js';
-import { matchHologramCommand } from '../../lib/hologram-commands.js';
+import { matchHologramCommand, blueprintAskedOutright, commandNeedingPart } from '../../lib/hologram-commands.js';
 import { markdownToPlainText } from '../../lib/markdown.js';
 import { createPhotoStrip, createPhotoViewer } from '../photos.js';
+import { photoQueries, searchPhotos, searchPhotosMerged } from '../../platform/photos.js';
 import { cutAtBreak } from '../voice-stream.js';
 
 const LIVE_INTERVAL = 125; // ms between live-build updates (about 8 per second)
@@ -52,6 +60,7 @@ const VIEW_LABELS = {
   'back-right': 'Rear three-quarter view (right)',
 };
 const CAPTION_HIDE_MS = 20000;
+const SPOKEN_HIDE_MS = 3000; // Voice Mode has said the reply: the caption only repeats it
 const DESKTOP_MQ = '(min-width: 900px)';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -148,15 +157,6 @@ function specParts(spec) {
     .map((p) => ({ id: p.id, name: txt(p.name), group: p.group || null, groupName: groups.get(p.group) || '', tone: p.tone, info: txt(p.info), material: txt(p.material), aka: Array.isArray(p.aka) ? p.aka.filter((a) => typeof a === 'string') : [] }));
 }
 
-/** Words for a Wikimedia Commons search: the name without "(FL)"-style qualifiers. */
-function photoQuery(text) {
-  return String(text || '')
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80);
-}
-
 function fmtNum(n) {
   if (!Number.isFinite(n)) return '';
   const r = n >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
@@ -167,12 +167,15 @@ function fmtNum(n) {
  * Open the viewer (closing any other hologram viewer first).
  *
  * deps (all optional; a missing one turns its feature off):
- *   library: { get(id), findPartBlueprint(modelId, partId|null), setThumbnail(id, dataUrl) }
- *   requestBlueprint({ model, part, partName, title, rebuild }) -> Promise<{ opened } | { run } | { error }>
- *     opens a saved blueprint, or starts the paid build (a new turn) and returns its run
+ *   library: { get(id), findPartBlueprint(modelId, partId|null), setThumbnail(id, dataUrl), onChange(fn) }
+ *   requestBlueprint({ model, part, partName, title, rebuild, conversationId, signal, ask })
+ *       -> Promise<{ opened } | { run } | { held } | { ask: true, cost } | { error, stopped? }>
+ *     opens a saved blueprint, or starts the paid build (a new turn) and returns its run; with
+ *     `ask`, nothing is built (the caller asks the owner first); a stopped `signal` starts nothing
  *   sendMessage(text, { conversationId }) -> { run } | { error }   unmatched words go to Jarvis
  *   openInChat({ conversationId, turnId })   close the viewer and show that reply in the chat
- *   blueprintCost() -> '≈ $0.15'            the part card's cost estimate
+ *   blueprintCost(conversationId) -> '≈ $0.15'   the part card's cost estimate
+ *   stopBuild({ conversationId })           stop the turn that is building this hologram
  *   stt: { sttSupported(), startListening(opts) }, getSettings()
  *   voice: { active(), tap() }               Voice Mode is open under the viewer: the mic button
  *                                             is its talk button (it listens for the viewer)
@@ -196,6 +199,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   let voiceInfo = null; // Voice Mode's listening state while it drives the mic (setVoice)
   let voiceWords = false; // the command field shows words Voice Mode is hearing
   let thumbDone = false;
+  let lastSelectedId = null; // the last part shown ("isolate it" after the card was closed)
 
   // ---- DOM ------------------------------------------------------------------------------------
 
@@ -205,7 +209,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   const title = h('h2', { class: 'hv__title', id: `hv-title-${Math.random().toString(36).slice(2, 8)}` });
   const subtitle = h('p', { class: 'hv__subtitle' });
   const closeBtn = h('button', { class: 'hv__iconbtn', type: 'button', attrs: { 'aria-label': 'Close hologram', 'data-testid': 'hologram-close', title: 'Close (Esc)' }, on: { click: () => api.close() } }, icon('close', { size: 20 }));
-  const top = h('header', { class: 'hv__top' }, h('div', { class: 'hv__heading' }, h('div', { class: 'hv__eyebrow-row' }, eyebrow, savedBadge), title, subtitle), closeBtn);
+  // While the hologram builds, Stop is its own labelled control (the mic listens instead: Voice Mode).
+  const stopBtn = h(
+    'button',
+    { class: 'hv__stopbtn', type: 'button', hidden: true, attrs: { 'aria-label': 'Stop building', 'data-testid': 'hologram-stop', title: 'Stop building (what is built so far stays, unsaved)' }, on: { click: () => stopBuild() } },
+    icon('stop', { size: 16 }),
+    h('span', { text: 'Stop' }),
+  );
+  const top = h('header', { class: 'hv__top' }, h('div', { class: 'hv__heading' }, h('div', { class: 'hv__eyebrow-row' }, eyebrow, savedBadge), title, subtitle), stopBtn, closeBtn);
   const readout = h('p', { class: 'hv__readout', attrs: { 'aria-hidden': 'true' } });
   const stage = h('div', { class: 'hv__stage', attrs: { 'data-testid': 'hologram-stage' } });
   const loadingText = h('span', { text: 'Starting the 3D view…' });
@@ -230,7 +241,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   const tRotate = tool('refresh', 'Rotate', 'hologram-rotate', () => run({ action: state.autoRotate ? 'stop' : 'rotate' }), false);
   const tView = tool('cube', 'View', 'hologram-view', () => cycleView());
   const tParts = tool('list', 'Parts', 'hologram-parts-button', () => togglePanel('parts'), false);
-  const t2d = tool('blueprint', '2D', 'hologram-2d', () => run({ action: 'blueprint' }));
+  const t2d = tool('blueprint', '2D', 'hologram-2d', () => onTwoDTool());
   const tPhotos = tool('image', 'Photos', 'hologram-photos-button', () => togglePanel('photos'), false);
   const tReset = tool('reset-view', 'Reset', 'hologram-reset', () => run({ action: 'reset' }));
   t2d.title = 'A 2D blueprint of the whole object (built on request)';
@@ -334,6 +345,12 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     h('div', { class: 'hv__caption-head' }, h('span', { class: 'hv__caption-dot', attrs: { 'aria-hidden': 'true' } }), h('span', { class: 'hv__caption-who', text: 'Jarvis' }), capStatus, h('span', { class: 'hv__caption-actions' }, capOpen, capClose)),
     capText,
   );
+  // A one-line caption (phones, with the part card open) opens to its whole text on a tap.
+  capText.addEventListener('click', () => {
+    if (caption.dataset.compact !== 'true') return;
+    caption.dataset.expanded = caption.dataset.expanded === 'true' ? 'false' : 'true';
+    layoutSoon();
+  });
 
   const toast = h('div', { class: 'hv__toast', hidden: true, attrs: { role: 'status', 'data-testid': 'hologram-toast' } });
 
@@ -505,6 +522,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   function syncState(s) {
     if (!s || disposed) return;
     state = { ...state, ...s };
+    if (state.selected) lastSelectedId = state.selected;
     syncChrome();
   }
 
@@ -531,6 +549,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     tParts.setAttribute('aria-pressed', String(panel === 'parts'));
     tPhotos.setAttribute('aria-pressed', String(panel === 'photos'));
     t2d.disabled = !model.libraryId || building;
+    stopBtn.hidden = !(building && typeof deps.stopBuild === 'function');
 
     // test hooks: data-state is the model's (building follows the stream even while the 3D chunk
     // loads); data-gl says whether the 3D view is up (loading | ready | none | error).
@@ -583,6 +602,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     card.hidden = false;
     // On a phone the panel and the card share the bottom of the screen: the card wins.
     if (panel && !isDesktop()) closePanel();
+    // In Voice Mode a reply caption only repeats what Jarvis said: the card needs the room.
+    if (!isDesktop() && voiceInfo && caption.dataset.state === 'done') hideCaption();
     syncBlueprintButton();
     layoutSoon();
   }
@@ -601,12 +622,20 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     return item;
   }
 
+  /** Why this hologram can't get a blueprint ('' when it can): still building, stopped or cut short, or not saved. */
+  function unsavedReason() {
+    if (model.status === 'building') return 'Blueprints are available once the hologram is finished.';
+    if (model.libraryId) return '';
+    if (model.status === 'error') return 'The build was stopped before it finished, so it wasn’t saved and can’t be blueprinted. Ask again to build the whole model.';
+    return 'Blueprints need the hologram saved in your library (storage may be full).';
+  }
+
   let bpSync = 0;
   async function syncBlueprintButton() {
     const part = selectedPart;
     if (!part) return;
     const mine = ++bpSync;
-    const label = typeof deps.blueprintCost === 'function' ? safe(() => deps.blueprintCost(), '') : '';
+    const label = typeof deps.blueprintCost === 'function' ? safe(() => deps.blueprintCost(model.conversationId), '') : '';
     const canBuild = !!model.libraryId && model.status !== 'building' && typeof deps.requestBlueprint === 'function';
     bpBtn.disabled = !canBuild;
     bpBtn.dataset.saved = 'false';
@@ -615,8 +644,9 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     setText(cost, label);
     cost.hidden = !label;
     rebuildBtn.hidden = true;
+    setText(rebuildBtn, label ? `Rebuild ${label}` : 'Rebuild'); // a paid build: its price is on it
     bpHint.hidden = canBuild;
-    setText(bpHint, model.status === 'building' ? 'Blueprints are available once the hologram is finished.' : model.libraryId ? '' : 'Blueprints need the hologram saved in your library (storage may be full).');
+    setText(bpHint, unsavedReason());
     if (!canBuild) return;
     const saved = await savedBlueprint(part.id);
     if (mine !== bpSync || disposed || selectedPart !== part) return;
@@ -636,11 +666,55 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   }
 
   /**
+   * The 2D tool (the whole object): a saved sheet opens at once (free); a new one is a paid build,
+   * so the first tap only says so, with the price, and a second tap within 4 s builds it.
+   */
+  let twoDArmed = 0;
+  let twoDTimer = 0;
+  function disarmTwoD() {
+    twoDArmed = 0;
+    clearTimeout(twoDTimer);
+    delete t2d.dataset.armed;
+  }
+  async function onTwoDTool() {
+    if (disposed) return;
+    if (twoDArmed && Date.now() < twoDArmed) {
+      disarmTwoD();
+      run({ action: 'blueprint' });
+      return;
+    }
+    disarmTwoD();
+    const saved = model.libraryId && model.status === 'done' ? await savedBlueprint(null) : null;
+    if (disposed) return;
+    if (saved || !model.libraryId || model.status !== 'done') {
+      run({ action: 'blueprint' }); // opens the saved sheet, or says why there is none
+      return;
+    }
+    twoDArmed = Date.now() + 4000;
+    t2d.dataset.armed = 'true';
+    const label = typeof deps.blueprintCost === 'function' ? safe(() => deps.blueprintCost(model.conversationId), '') : '';
+    say(`Tap 2D again to draw the whole object${label ? ` · ${label}` : ''}`);
+    twoDTimer = setTimeout(disarmTwoD, 4000);
+  }
+
+  // The library changes under an open viewer (a sheet saved by a finished build, deleted or
+  // imported in another window): the part card's "Open blueprint · Saved" must follow it.
+  const offLibrary = deps.library && typeof deps.library.onChange === 'function'
+    ? safe(() => deps.library.onChange((evt) => {
+      if (disposed || (evt && evt.type === 'thumbnail')) return;
+      blueprintCache.clear();
+      if (selectedPart) syncBlueprintButton();
+    }), null)
+    : null;
+
+  /**
    * The owner asked for a 2D blueprint (part or whole object): open a saved one, else build it.
    * Resolves to the outcome: { opened } | { run } | { held } (Voice Mode sends it once its previous
-   * reply is done) | { error } (also shown here).
+   * reply is done) | { error } (also shown here) | { error, stopped } (`signal` aborted: Stop in
+   * Voice Mode while the library was looked up; nothing started, nothing shown) | { confirm } (`ask`:
+   * nothing is saved, so the owner is asked first; confirm.proceed() builds it).
    */
-  async function requestBlueprint(partId, { rebuild = false } = {}) {
+  async function requestBlueprint(partId, { rebuild = false, signal = null, ask = false } = {}) {
     if (typeof deps.requestBlueprint !== 'function') return { error: 'Blueprints aren’t available here.' };
     if (model.status === 'building') {
       const msg = 'The blueprint can be drawn once the hologram is finished.';
@@ -648,19 +722,31 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       return { error: msg };
     }
     if (!model.libraryId) {
-      const msg = 'This hologram isn’t saved, so a blueprint can’t be linked to it.';
-      say(msg);
+      const msg = model.status === 'error' ? 'The build was stopped before it finished, so it wasn’t saved and can’t be blueprinted. Ask again to build the whole model.' : 'This hologram isn’t saved, so a blueprint can’t be linked to it.';
+      say(model.status === 'error' ? 'This hologram wasn’t finished, so it can’t be blueprinted.' : msg);
       return { error: msg };
     }
     const part = partId ? partById(partId) : null;
+    const title = (model.spec && model.spec.title) || model.title;
     let res;
     try {
-      res = await deps.requestBlueprint({ model: model.libraryId, part: part ? part.id : null, partName: part ? part.name : '', title: (model.spec && model.spec.title) || model.title, rebuild, conversationId: model.conversationId });
+      res = await deps.requestBlueprint({ model: model.libraryId, part: part ? part.id : null, partName: part ? part.name : '', title, rebuild, conversationId: model.conversationId, signal, ask });
     } catch (err) {
       res = { error: (err && err.message) || 'The blueprint couldn’t be started.' };
     }
     if (!res || typeof res !== 'object') res = { error: 'The blueprint couldn’t be started.' };
-    if (disposed) return res;
+    if (disposed || res.stopped) return res; // Stop in Voice Mode: nothing started, nothing to show
+    if (res.ask) {
+      // Nothing is saved for it: Voice Mode asks the owner first ("Shall I draw …? It costs …").
+      return {
+        confirm: {
+          partName: part ? part.name : '',
+          title,
+          cost: typeof res.cost === 'string' ? res.cost : '',
+          proceed: (opts = {}) => (disposed ? Promise.resolve({ error: 'The hologram was closed.' }) : requestBlueprint(partId, { rebuild, signal: (opts && opts.signal) || null, ask: false })),
+        },
+      };
+    }
     if (res.error) {
       showCaption({ status: 'error', text: res.error });
       return res;
@@ -688,12 +774,12 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     else openPanel(kind);
   }
 
-  function openPanel(kind, partId) {
+  function openPanel(kind, partId, query = '') {
     panel = kind;
     panelEl.hidden = false;
     panelEl.dataset.kind = kind;
     if (kind === 'parts') renderParts();
-    else renderPhotos(partId);
+    else renderPhotos(partId, query);
     if (!isDesktop() && !card.hidden) card.hidden = true;
     syncChrome();
     layoutSoon();
@@ -775,14 +861,18 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     }
   }
 
-  function renderPhotos(partId) {
+  function renderPhotos(partId, asked = '') {
     const part = partId ? partById(partId) : null;
     const objectTitle = (model.spec && model.spec.title) || model.title || '';
-    const query = photoQuery(part ? part.name : objectTitle);
+    // A part's photos name the object too ("alternator rotor", then "rotor"): a bare part name
+    // finds unrelated things on Commons. Words the owner gave ("photos of a rusty alternator") as they are.
+    const queries = asked ? [String(asked).slice(0, 80)] : photoQueries(objectTitle, part ? part.name : '');
+    const query = queries[0] || '';
     setText(panelTitle, part ? `Photos · ${part.name}` : 'Photos');
     clear(panelBody);
     if (photoStrip) photoStrip.destroy();
-    photoStrip = createPhotoStrip({ onOpen: (photos, i) => openPhoto(photos, i), limit: 12 });
+    const search = (q, opts) => (q === query && queries.length > 1 ? searchPhotosMerged(queries, opts) : searchPhotos(q, opts));
+    photoStrip = createPhotoStrip({ search, onOpen: (photos, i) => openPhoto(photos, i), limit: 12 });
     photoSearchInput = h('input', { class: 'hv__photo-input', type: 'search', value: query, attrs: { 'aria-label': 'Search Wikimedia Commons', enterkeyhint: 'search', 'data-testid': 'hologram-photo-query', maxlength: '100' } });
     const form = h(
       'form',
@@ -897,7 +987,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
         holo.select(null);
         break;
       case 'photos':
-        openPanel('photos', cmd.partId || null);
+        openPanel('photos', cmd.partId || null, !cmd.partId && typeof cmd.query === 'string' ? cmd.query : '');
         return cmd.partName ? `Photos · ${cmd.partName}` : 'Photos';
       case 'blueprint':
         requestBlueprint(cmd.partId || null);
@@ -937,8 +1027,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   let captionTimer = 0;
   let captionTurn = null; // { conversationId, turnId } for "Open in chat"
-  function showCaption({ status, text, turnId }) {
+  let spokenSoon = false; // Voice Mode has said this reply: once it is done, it leaves after SPOKEN_HIDE_MS
+  let captionDetails = false; // the chat holds more of this reply (its details below ---) than was said
+  /** How long a finished caption stays: a said one only repeats Jarvis, unless "Open in chat" leads to more. */
+  const doneHideMs = () => (spokenSoon && !captionDetails ? SPOKEN_HIDE_MS : CAPTION_HIDE_MS);
+  function showCaption({ status, text, turnId, details = false }) {
     clearTimeout(captionTimer);
+    if (status === 'thinking' && caption.dataset.state !== 'thinking') spokenSoon = false; // a new question
+    captionDetails = details === true;
     caption.hidden = false;
     caption.dataset.state = status;
     setText(capStatus, status === 'thinking' ? 'Thinking…' : status === 'streaming' ? 'Replying' : status === 'error' ? 'Couldn’t send' : status === 'stopped' ? 'Stopped' : '');
@@ -946,7 +1042,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     capText.scrollTop = capText.scrollHeight;
     if (turnId) captionTurn = { conversationId: model.conversationId, turnId };
     capOpen.hidden = !captionTurn || typeof deps.openInChat !== 'function';
-    if (status === 'done' || status === 'error' || status === 'stopped') captionTimer = setTimeout(hideCaption, CAPTION_HIDE_MS);
+    if (status === 'done' || status === 'error' || status === 'stopped') captionTimer = setTimeout(hideCaption, status === 'done' ? doneHideMs() : CAPTION_HIDE_MS);
     layoutSoon();
   }
 
@@ -978,12 +1074,19 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     let followed = false;
     const replyText = (t) => {
       const segs = t && Array.isArray(t.segments) ? t.segments.filter((s) => isObj(s) && s.kind === 'text' && typeof s.text === 'string' && s.text.trim()) : [];
-      if (!segs.length) return '';
+      if (!segs.length) return { text: '', details: false };
       const maxReq = Math.max(...segs.map((s) => Number(s.req) || 0));
       let md = segs.filter((s) => (Number(s.req) || 0) === maxReq).map((s) => s.text).join('\n\n');
       // A spoken reply (Voice Mode): the caption is what Jarvis says; the details below --- stay in the chat.
-      if (t && t.spoken === true) md = safe(() => cutAtBreak(md, true).text, md);
-      return safe(() => markdownToPlainText(md), md).replace(/\s+/g, ' ').trim();
+      let details = false;
+      if (t && t.spoken === true) {
+        const cut = safe(() => cutAtBreak(md, true), null);
+        if (cut) {
+          md = cut.text;
+          details = cut.cut === true;
+        }
+      }
+      return { text: safe(() => markdownToPlainText(md), md).replace(/\s+/g, ' ').trim(), details };
     };
     const onSegmentEvent = (seg, t) => {
         if (disposed || !isObj(seg)) return;
@@ -1005,20 +1108,20 @@ export function openHologramViewer({ source, deps = {} } = {}) {
           return;
         }
         if (seg.kind === 'text') {
-          const text = replyText(t || turn);
-          if (text) showCaption({ status: 'streaming', text, turnId: t && t.id });
+          const { text, details } = replyText(t || turn);
+          if (text) showCaption({ status: 'streaming', text, turnId: t && t.id, details });
         }
       };
     const onEnd = (t) => {
         if (disposed) return;
         const final = t || turn;
-        const text = replyText(final);
+        const { text, details } = replyText(final);
         const status = final && final.status;
         if (status === 'error') {
           const msg = final.error && final.error.message ? final.error.message : 'Jarvis hit a problem with that request.';
           showCaption({ status: 'error', text: msg, turnId: final.id });
         } else if (status === 'stopped') showCaption({ status: 'stopped', text: text || 'Stopped.', turnId: final && final.id });
-        else if (text) showCaption({ status: 'done', text, turnId: final && final.id });
+        else if (text) showCaption({ status: 'done', text, turnId: final && final.id, details });
         else if (blueprint && openedBlueprint) showCaption({ status: 'done', text: 'Blueprint ready.', turnId: final && final.id });
         else hideCaption();
         if (followed) onFollowedRunEnd(final);
@@ -1052,6 +1155,12 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     }
     if (!trackedRuns.has(res.run)) showCaption({ status: 'thinking', text: '', turnId: res.run.turn && res.run.turn.id });
     trackReply(res.run);
+  }
+
+  /** "Stop building": stop the turn that streams this hologram (what is built so far stays, unsaved). */
+  function stopBuild() {
+    if (disposed || model.status !== 'building' || typeof deps.stopBuild !== 'function') return;
+    safe(() => deps.stopBuild({ conversationId: model.conversationId }));
   }
 
   // ---- microphone -------------------------------------------------------------------------------
@@ -1139,11 +1248,15 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       return;
     }
     const on = !!v.listening;
-    micBtn.dataset.voice = on ? 'listening' : v.busy ? 'busy' : 'idle';
+    // canListen: Jarvis is building this hologram; a tap listens (commands act on the live model)
+    // instead of stopping him, and the labelled Stop button stops the build.
+    const listenable = !on && !!v.canListen;
+    micBtn.dataset.voice = on ? 'listening' : listenable ? 'idle' : v.busy ? 'busy' : 'idle';
     micBtn.setAttribute('aria-pressed', String(on));
     micBtn.classList.toggle('is-listening', on);
-    if (typeof v.label === 'string' && v.label) micBtn.setAttribute('aria-label', v.label);
-    const want = !on && v.busy ? 'stop' : 'mic';
+    if (listenable) micBtn.setAttribute('aria-label', 'Speak a command');
+    else if (typeof v.label === 'string' && v.label) micBtn.setAttribute('aria-label', v.label);
+    const want = !on && v.busy && !listenable ? 'stop' : 'mic';
     if ((micBtn.dataset.icon || 'mic') !== want) {
       micBtn.dataset.icon = want;
       clear(micBtn).appendChild(icon(want, { size: 20 }));
@@ -1225,10 +1338,41 @@ export function openHologramViewer({ source, deps = {} } = {}) {
         stack += panelEl.offsetHeight + 8;
       }
     }
-    caption.style.bottom = `${(desktop ? bottomGap + 12 : stack)}px`;
-    const capH = caption.hidden ? 0 : caption.offsetHeight + 8;
-    toast.style.bottom = `${(desktop ? bottomGap + 12 : stack) + capH}px`;
-    if (holo && holoReady) safe(() => holo.setInsets({ top: Math.max(0, topH - 4), bottom: desktop ? bottomGap : stack + capH - 8, right, left }));
+    // Phones: the caption never stacks on the part card or the panel (with the model squeezed
+    // between them, nothing of it was left to see): with either open, or when it would take more
+    // than half the screen, it is a one-line pill under the top bar (tap it to read it all).
+    let topStack = topH; // where floating things under the top bar start (px from the top)
+    let compact = false;
+    if (!desktop && !caption.hidden) {
+      compact = !card.hidden || !!panel;
+      if (!compact) {
+        caption.dataset.compact = 'false'; // measured full-size (the final state is set below, in the same frame)
+        compact = stack + caption.offsetHeight > vh * 0.5;
+      }
+    }
+    caption.dataset.compact = compact ? 'true' : 'false';
+    if (!compact) delete caption.dataset.expanded;
+    if (compact) {
+      caption.style.top = `${topH + 2}px`;
+      caption.style.bottom = 'auto';
+      topStack = topH + 2 + caption.offsetHeight + 4;
+    } else {
+      caption.style.top = '';
+      caption.style.bottom = `${desktop ? bottomGap + 12 : stack}px`;
+    }
+    const capH = caption.hidden || compact ? 0 : caption.offsetHeight + 8;
+    // The toast: on phones under the top bar (never on the model or the selected part); on desktop
+    // above the bar and the caption.
+    if (desktop) {
+      toast.style.top = '';
+      toast.style.bottom = `${bottomGap + 12 + capH}px`;
+    } else {
+      toast.style.bottom = 'auto';
+      toast.style.top = `${topStack + 2}px`;
+    }
+    // The model and its labels keep clear of everything: the caption counts on desktop too.
+    const insetBottom = desktop ? bottomGap + (capH ? 12 + capH : 0) : stack + capH - 8;
+    if (holo && holoReady) safe(() => holo.setInsets({ top: Math.max(0, topStack - 4), bottom: insetBottom, right, left }));
   }
 
   const onResize = () => layoutSoon();
@@ -1268,21 +1412,62 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     /**
      * A local (free) viewer command, typed or spoken. Returns { handled: true, command } when the
      * words were a command (and runs it), { handled: false } when they are for Jarvis.
+     *   signal        Voice Mode's Stop for a 2D request still looking in the library
+     *   spoken        Voice Mode says the acknowledgement itself (no toast over the model)
+     *   confirmBuild  Voice Mode: a 2D build from a softer wording ("rotor blueprint") is asked first
+     *   later         the owner spoke while the reply that builds it streams: a 2D request waits
+     *                 ({ handled: false, later: true })
      */
-    command(text, { source: from = 'typed' } = {}) {
+    command(text, { source: from = 'typed', signal = null, spoken = false, confirmBuild = false, later = false } = {}) {
       if (disposed) return { handled: false };
-      const cmd = matchHologramCommand(String(text || ''), partsForMatcher(), { selected: state.selected });
-      if (!cmd) return { handled: false };
+      const words = String(text || '');
+      let cmd = matchHologramCommand(words, partsForMatcher(), { selected: state.selected });
+      if (!cmd) {
+        // "isolate it" with nothing selected: the last part shown, else ask which (never a paid message).
+        const wants = commandNeedingPart(words);
+        if (!wants) return { handled: false };
+        const last = lastSelectedId ? partById(lastSelectedId) : null;
+        cmd = last ? { action: wants, partId: last.id, partName: last.name } : { action: 'which-part', for: wants };
+      }
       el.dataset.lastCommand = cmd.action;
       el.dataset.lastSource = from;
+      if (cmd.action === 'which-part') {
+        if (!spoken) say('Which part? Tap one first.');
+        return { handled: true, command: cmd };
+      }
+      // "close the blueprint" with no blueprint open over the viewer: nothing to do (never a paid message).
+      if (cmd.action === 'close-blueprint') return { handled: true, command: cmd };
       if (cmd.action === 'blueprint') {
+        // Said while the reply that builds it still streams: a 2D request waits for that reply.
+        if (later) return { handled: false, later: true };
         // The owner asked in words, so the paid build may start (or a saved sheet opens): the
-        // outcome comes later (Voice Mode says it).
-        return { handled: true, command: cmd, done: requestBlueprint(cmd.partId || null) };
+        // outcome comes later (Voice Mode says it). A softer wording heard in Voice Mode is asked first.
+        const ask = !!confirmBuild && !blueprintAskedOutright(words);
+        return { handled: true, command: cmd, done: requestBlueprint(cmd.partId || null, { signal, ask }) };
       }
       const word = run(cmd);
-      if (word) say(word);
+      if (word && !spoken) say(word);
+      // Spoken commands move on from the last reply: its caption (said already) makes room.
+      if (from === 'voice' && caption.dataset.state === 'done') hideCaption();
       return { handled: true, command: cmd };
+    },
+    /** A caption from Voice Mode ("I'll take that once the hologram is built."). */
+    note(text) {
+      if (disposed || !text) return;
+      showCaption({ status: 'thinking', text: String(text) });
+    },
+    /**
+     * Voice Mode has said the reply (or an acknowledgement): the caption only repeats it, so a
+     * finished one leaves after a few seconds (and one still streaming, once it finishes). A reply
+     * with details in the chat stays as long as any caption: "Open in chat" is the way to them.
+     */
+    captionSpoken() {
+      if (disposed) return;
+      spokenSoon = true;
+      if (!caption.hidden && caption.dataset.state === 'done') {
+        clearTimeout(captionTimer);
+        captionTimer = setTimeout(hideCaption, doneHideMs());
+      }
     },
     /** Caption a reply that Voice Mode follows (text only: Voice Mode opens what it shows). */
     follow(runObj) {
@@ -1312,6 +1497,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       clearTimeout(toastTimer);
       clearTimeout(captionTimer);
       clearTimeout(thumbTimer);
+      clearTimeout(twoDTimer);
+      if (typeof offLibrary === 'function') safe(() => offLibrary());
       for (const off of Array.from(runSubs)) off();
       if (listening) safe(() => listening.abort ? listening.abort() : listening.stop());
       if (photoViewer) photoViewer.close();

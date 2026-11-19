@@ -147,7 +147,7 @@ export function spokenName(name) {
 }
 
 /** One streamed show_hologram call (realistic, visible pacing for the live build). */
-export function hologramPlan({ think, sample, intro, spoken = false }) {
+export function hologramPlan({ think, sample, intro, spoken = false, slow = false }) {
   const input = sample === 'broken' ? JSON.parse(JSON.stringify(BROKEN_HOLOGRAM)) : sample === 'huge' ? hugeHologram() : loadFixture(sample);
   const say = intro || (spoken ? `Pulling up ${spokenName(input.title)} now.` : `Here is ${input.title} as a hologram; it builds part by part.`);
   return {
@@ -157,7 +157,7 @@ export function hologramPlan({ think, sample, intro, spoken = false }) {
       { type: 'tool_use', id: newToolUseId(), name: 'show_hologram', input },
     ],
     stop_reason: 'tool_use',
-    pace: 'hologram',
+    pace: slow ? 'slow-hologram' : 'hologram',
     jsonChunk: 28,
   };
 }

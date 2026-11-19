@@ -4,7 +4,7 @@
 // Mode summarizes is the text after the last hologram or blueprint (src/ui/voice-mode.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { commandAck, savedBlueprintAck, spokenPart } from '../../src/ui/voice-visuals.js';
+import { commandAck, savedBlueprintAck, spokenPart, blueprintQuestion, confirmReply, spokenCost } from '../../src/ui/voice-visuals.js';
 import { createSpokenFeed, textClosed } from '../../src/ui/voice-stream.js';
 import { finalAnswerMarkdown } from '../../src/ui/voice-mode.js';
 import { matchHologramCommand } from '../../src/lib/hologram-commands.js';
@@ -95,4 +95,32 @@ test('Voice Mode\'s answer: the text after the last hologram or blueprint (the l
   // Unchanged for turns without them.
   assert.equal(finalAnswerMarkdown({ segments: [{ kind: 'text', req: 0, text: 'Let me check.' }, { kind: 'tool', status: 'done' }, { kind: 'text', req: 0, text: 'Paris.' }] }), 'Paris.');
   assert.equal(finalAnswerMarkdown({ segments: [{ kind: 'text', req: 0, text: 'Only this.' }] }), 'Only this.');
+});
+
+test('a softer 2D wording in Voice Mode is asked first: the question names the part and the price, said for the ear', () => {
+  assert.equal(spokenCost('≈ $0.15'), 'about 15 cents');
+  assert.equal(spokenCost('≈ $0.05'), 'about 5 cents');
+  assert.equal(spokenCost('≈ $0.15–0.35'), 'about 15 to 35 cents');
+  assert.equal(spokenCost('≈ $1.20'), 'about 1 dollar 20');
+  assert.equal(spokenCost('≈ $2.00'), 'about 2 dollars');
+  assert.equal(spokenCost(''), '');
+  assert.equal(spokenCost(null), '');
+  assert.equal(blueprintQuestion({ partName: 'Hood', cost: '≈ $0.15' }), 'Shall I draw a blueprint of the hood? It costs about 15 cents.');
+  assert.equal(blueprintQuestion({ partName: 'Steel can (+)', cost: '≈ $0.15–0.35' }), 'Shall I draw a blueprint of the steel can? It costs about 15 to 35 cents.');
+  assert.equal(blueprintQuestion({ title: 'AA alkaline battery (LR6)', cost: '≈ $0.15' }), 'Shall I draw a blueprint of the AA alkaline battery? It costs about 15 cents.');
+  assert.equal(blueprintQuestion({}), 'Shall I draw a blueprint of the whole object? It costs a few cents.');
+  for (const q of [blueprintQuestion({ partName: 'DC-DC converter', cost: '≈ $0.15' }), blueprintQuestion({ title: '2024 Toyota Camry Hybrid (XV70)', cost: '≈ $0.36' })]) assert.doesNotMatch(q, /[*_`#()$≈]/, q);
+});
+
+test('the answer to that question: yes draws it, no drops it, anything else is not an answer', () => {
+  for (const t of ['Yes.', 'yes please', 'Yeah', 'yep', 'sure', 'okay', 'OK, do it', 'go ahead', 'do it', 'draw it', 'please do', 'yes, draw it', 'go for it', 'absolutely', 'sounds good', 'Jarvis, yes']) assert.equal(confirmReply(t), 'yes', t);
+  for (const t of ['No.', 'no thanks', 'nope', 'nah', "don't", 'cancel', 'never mind', 'not now', 'skip it', 'forget it', 'no, leave it', 'stop']) assert.equal(confirmReply(t), 'no', t);
+  for (const t of ['', 'expand it', 'how does the separator work?', 'show the hood', 'yes and also explain the rotor', 'no I meant the rotor blueprint']) assert.equal(confirmReply(t), null, t);
+});
+
+test('"isolate it" with nothing selected asks which part; closing a sheet by name says nothing', () => {
+  assert.equal(commandAck({ action: 'which-part', for: 'isolate' }), 'Which part? Tap one, or say isolate and its name.');
+  assert.equal(commandAck({ action: 'which-part', for: 'focus' }), 'Which part? Tap one, or say zoom in on and its name.');
+  assert.equal(commandAck({ action: 'close-blueprint' }), '');
+  assert.equal(ack('close the blueprint'), '');
 });

@@ -53,6 +53,7 @@ export function devices(playwright) {
   return {
     iphone13: phone(390, 844, 'iPhone 13 (390×844)'),
     small: phone(375, 667, 'Small phone (375×667)'),
+    safaritab: phone(375, 553, 'Small phone, Safari tab (375×553)'),
     desktop: { label: 'Desktop (1440×900)', phone: false, options: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 } },
   };
 }

@@ -17,7 +17,10 @@
 //   show-all                        "show everything", "unisolate"
 //   deselect
 //   photos      { partId? }         "photos of <part>" (no partId: the whole object)
-//   blueprint   { partId? }         "2D", "blueprint", "blueprint <part>" (the owner asked: the paid build starts)
+//   blueprint   { partId? }         "2D", "blueprint", "blueprint <part>", "switch it to 2D" (the owner
+//                                   asked: the paid build starts, or a saved sheet opens)
+//   close-blueprint                 "close the blueprint", "hide the drawing", "back to the hologram",
+//                                   "go back": closes a blueprint sheet shown over the hologram
 // A part command also carries { partName, score, alternatives } (alternatives: other ids that
 // matched as well, e.g. "front brake" with left and right brakes).
 //
@@ -25,6 +28,13 @@
 // split letters are joined ("d c to d c" -> "dc dc", "twelve volt" -> "12 volt"), plurals and
 // spelling variants fold together, and part names match by word, by joined spelling and by a
 // consonant skeleton ("router" ~ "rotor", "alternate or" ~ "alternator").
+//
+// A 2D sheet costs the owner money, so the 2D rules are strict: bare "plan" and "drawing" are
+// everyday words, talk about a blueprint ("skip the blueprint", "the blueprint can wait") is not a
+// request, and "<words> blueprint" builds only when the words name a part exactly (no fuzzy
+// guesses there: "good" is not "hood"). blueprintAskedOutright(text) tells a request that starts
+// with "blueprint"/"2D" or a build verb from softer wordings ("rotor blueprint", "open the
+// blueprint"), which Voice Mode confirms out loud before it builds.
 
 const NUMBER_WORDS = {
   zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
@@ -251,7 +261,7 @@ const SIMPLE = [
   { re: /^(back together|put back together|close it up|assembled view|(show|give) (me )?(the )?assembled view)$/, action: 'collapse' },
   // labels
   // (singular "the label" is left to part matching first: a battery has a "Label sleeve")
-  { re: /^((show|turn on|enable|add|display|bring back|put) (the |all )?(labels|names|labelling|labeling|tags)( on| back)?|(labels?|label son|labels own|names) (on|back)|labels|label (it|everything|the parts|them))$/, action: 'labels-on' },
+  { re: /^((show|turn on|enable|add|display|bring back|bring up|pull up|put) (the |all )?(labels|names|labelling|labeling|tags)( on| back)?|(labels?|label son|labels own|names) (on|back)|labels|label (it|everything|the parts|them))$/, action: 'labels-on' },
   { re: /^((hide|turn off|disable|remove|clear|lose|drop|get rid of) (the |all )?(labels?|names|labelling|labeling|tags)( off)?|(labels?|names) (off|of|away)|no (more )?labels?)$/, action: 'labels-off' },
   // rotation
   { re: new RegExp(`^(stop|pause|freeze|halt|hold)( (it|that|this))?( (rotating|spinning|turning|the rotation|the spin|moving|still))?$`), action: 'stop' },
@@ -263,7 +273,7 @@ const SIMPLE = [
   { re: /^(zoom in|closer|get closer|move closer|bigger|make it bigger|enlarge|magnify)$/, action: 'zoom-in' },
   { re: /^(zoom out|further|farther|further away|back up|smaller|make it smaller|pull back|move back)$/, action: 'zoom-out' },
   // parts list
-  { re: /^((show|open|list|give me|see) (me )?(the |all )?(the )?(parts|parts list|list of parts|components|component list)( list)?|parts list|what parts( are there)?|what are the parts)$/, action: 'parts-list' },
+  { re: /^((show|open|list|give me|see|pull up|bring up) (me )?(the |all )?(the )?(parts|parts list|list of parts|components|component list)( list)?|parts list|what parts( are there)?|what are the parts)$/, action: 'parts-list' },
   // selection / isolation housekeeping
   { re: /^(deselect|unselect|clear (the )?selection|select nothing|never mind|nevermind)$/, action: 'deselect' },
   { re: /^(show (all|everything|all parts|the whole thing|it all)|unisolate|un isolate|unhide( all| everything)?|bring (it all|everything) back|exit isolation|stop isolating|show all parts)$/, action: 'show-all' },
@@ -290,12 +300,68 @@ function matchView(s) {
   return null;
 }
 
-const BLUEPRINT_WORD = '(?:2d|2 d|2 dee|to d|too d|blue ?prints?|schematics?|technical drawings?|drawings?|plans?|2d drawings?|2d views?|2d blueprints?|2d plans?|flat drawings?)';
+// Words that ask for a 2D sheet. Bare "plan(s)" and "drawing(s)" are everyday words ("let's make a
+// plan", "nice drawing"): only their 2D / technical forms count.
+const BLUEPRINT_WORD = '(?:2d|2 d|2 dee|to d|too d|blue ?prints?|schematics?|technical drawings?|2d drawings?|2d views?|2d blueprints?|2d plans?|flat drawings?)';
+const HAS_BLUEPRINT_WORD = new RegExp(`(?:^| )${BLUEPRINT_WORD}(?: |$)`);
+// What a blueprint sheet is called when closing it (here "the drawing" or "the plan" is the sheet).
+const SHEET_WORD = `(?:${BLUEPRINT_WORD}|sheets?|drawings?|plans?)`;
+
+// Closing a blueprint sheet by name ("close the blueprint", "hide the drawing", "back to the
+// hologram", "go back"). Checked before the 2D rules, so "hide the" is never read as a part ("hood").
+const SHEET_CLOSE = new RegExp(
+  `^(?:close|exit|quit|dismiss|leave|hide|remove|clear|lose|drop|get rid of|put away|(?:i'm|i am|we're|we are) (?:done|finished) with)(?: (?:the|this|that|my))? ${SHEET_WORD}(?: view| sheet)?(?: away)?$` +
+    `|^(?:take|put) (?:the |this |that |my )?${SHEET_WORD} away$` +
+    `|^(?:go )?back to (?:the )?(?:hologram|model|3d(?: view| model| hologram)?|3 d(?: view| model| hologram)?)$` +
+    `|^go back$` +
+    `|^(?:no more|enough|enough of) (?:the )?${SHEET_WORD}$|^(?:the )?${SHEET_WORD} (?:off|away|closed|gone)$`,
+);
+
+// Talking about a blueprint is not asking for one: "skip / hold / leave / cancel / no / not / don't …
+// the blueprint", "the blueprint can wait", "a blueprint later" (only with a blueprint word).
+const NOT_A_REQUEST = /^(?:no|not|nope|nah|don't|dont|do not|never|never mind|nevermind|skip|hold|hold off|leave|hide|close|exit|dismiss|cancel|stop|forget|drop|lose|kill|pass|without|wait|delay|postpone|i don't|i do not|we don't|we do not)\b|\b(?:later|for now|yet|next time|can wait|not now|another time)$/;
+
+// A closing verb before "blueprint" is never a part ("hide the" ~ "hood", "leave the" ~ "label").
+const CLOSING_VERB = /^(?:close|exit|quit|dismiss|leave|hide|remove|delete|clear|lose|drop|get rid of|put away|take away)\b/;
+
+// Asked outright: the words start with "blueprint" / "2D", or with a build verb before the blueprint word.
+const OUTRIGHT = new RegExp(`^(?:${BLUEPRINT_WORD}|blue ?print)(?: |$)|^(?:make|build|draw|create|generate|do|switch|change|convert|turn|flip|put|move|go|i want|i'd like|i would like|i need)\\b.*(?:^| )${BLUEPRINT_WORD}(?: |$)`);
+
+/**
+ * Whether the words ask for a 2D blueprint outright ("blueprint the rotor", "2D", "make a blueprint",
+ * "switch it to 2D", "I want a blueprint of …"), rather than in a softer wording that could be talk
+ * ("rotor blueprint", "open the blueprint", "show it in 2D"). Voice Mode builds the former at once
+ * and asks first for the latter (each sheet costs money).
+ */
+export function blueprintAskedOutright(text) {
+  const s = stripFillers(normalizeCommandText(text));
+  return !!s && s.length <= 120 && OUTRIGHT.test(s);
+}
+
+/**
+ * "isolate it", "zoom in on it" … said with no part selected (the matcher returns null for them):
+ * the action they ask for ('isolate' | 'focus'), so the viewer can use the last part shown or ask
+ * which one, instead of sending the words to Jarvis. null for anything else.
+ */
+export function commandNeedingPart(text) {
+  const marker = '\u0000part';
+  const cmd = matchHologramCommand(text, [], { selected: marker });
+  return cmd && cmd.partId === marker && (cmd.action === 'isolate' || cmd.action === 'focus') ? cmd.action : null;
+}
 
 function partCommand(action, phrase, parts, extra = {}) {
   const hit = resolvePart(phrase, parts);
   if (!hit) return null;
   return { action, partId: hit.part.id, partName: hit.part.name, score: hit.score, alternatives: hit.alternatives, ...extra };
+}
+
+/** Every word said is one of the part's own name, id or aka words (no fuzzy guesses: "good" is not "hood"). */
+function namesPartExactly(phrase, part) {
+  const said = tokens(phrase);
+  if (!said.length || !part || !part.id) return false;
+  const names = [part.name, String(part.id).replace(/[-_]+/g, ' '), ...(Array.isArray(part.aka) ? part.aka : [])].filter(Boolean);
+  const words = new Set(names.flatMap((n) => tokens(String(n).replace(/[()]/g, ' '))));
+  return said.every((w) => words.has(w));
 }
 
 const IT = /^(it|this|that|this one|that one|this part|that part|the selected part|the selection|selected)$/;
@@ -311,8 +377,21 @@ export function matchHologramCommand(text, parts = [], context = {}) {
   const selected = context.selected || null;
   const list = Array.isArray(parts) ? parts : [];
 
-  // 2D / blueprint (the owner asked explicitly, so the paid build may start)
-  let m = new RegExp(`^(?:(?:make|build|draw|create|generate|do|show|give|get|open|switch to|go to|change to|see|view)(?: me)? (?:a |an |the |it in |it as |into )?)?(?:the )?${BLUEPRINT_WORD}(?: (?:view|version|mode|drawing|sheet))?(?: (?:of|for|on) (.+))?$`).exec(s);
+  // A blueprint sheet closed by name (the app closes the sheet shown over the hologram).
+  if (SHEET_CLOSE.test(s)) return { action: 'close-blueprint' };
+
+  // 2D / blueprint (the owner asked explicitly, so the paid build may start). Talk about a
+  // blueprint ("skip the blueprint", "the blueprint can wait") is never a request.
+  if (HAS_BLUEPRINT_WORD.test(s) && NOT_A_REQUEST.test(s)) return null;
+  // "switch it to 2D", "turn it into a blueprint", "flip to 2D", "make it 2D" ("it" is the whole
+  // object; "this part" the selected one). A preposition is needed: "move the blueprint" is not it.
+  const which = '(?: (it|this|that|this one|that one|this part|that part|the selected part|the whole thing|everything))';
+  let m = new RegExp(`^(?:(?:switch|change|convert|turn|flip|put|move|go)${which}?(?: over| back)? (?:in|into|to|in to)|make${which}) (?:a |an |the )?${BLUEPRINT_WORD}(?: (?:view|version|mode|drawing|sheet))?$`).exec(s);
+  if (m) {
+    const obj = m[1] || m[2] || '';
+    return /part|one|selected/.test(obj) && selected ? { action: 'blueprint', partId: selected } : { action: 'blueprint' };
+  }
+  m = new RegExp(`^(?:(?:make|build|draw|create|generate|do|show|give|get|open|switch to|go to|change to|see|view|i want|i'd like|i would like|i need)(?: me)? (?:a |an |the |it in |it as |into )?)?(?:(?:a|an|the) )?${BLUEPRINT_WORD}(?: (?:view|version|mode|drawing|sheet))?(?: (?:of|for|on) (.+))?$`).exec(s);
   if (m) {
     const target = m[1] ? m[1].trim() : '';
     if (!target || IT.test(target)) return target && selected ? { action: 'blueprint', partId: selected } : { action: 'blueprint' };
@@ -322,11 +401,16 @@ export function matchHologramCommand(text, parts = [], context = {}) {
     if (/^(the )?(whole|entire|full)( thing| model| object| car| assembly)?$|^(it all|everything)$/.test(target)) return { action: 'blueprint' };
     return null;
   }
+  // "<part> blueprint", "the stator in 2D": the words before must name a part exactly ("read the
+  // blueprint" names none; "good blueprint" is not the hood).
   m = new RegExp(`^(.+?) (?:in |as (?:a )?)?${BLUEPRINT_WORD}$`).exec(s);
-  if (m && !/^(show|make|draw|switch|go|change|open)$/.test(m[1])) {
+  if (m && !/^(show|make|draw|switch|go|change|open)$/.test(m[1]) && !CLOSING_VERB.test(m[1])) {
     if (IT.test(m[1])) return selected ? { action: 'blueprint', partId: selected } : { action: 'blueprint' };
-    const hit = partCommand('blueprint', m[1].replace(/^(show|draw|make|give me)( me)? /, ''), list);
-    if (hit) return hit;
+    const phrase = m[1].replace(/^(show|draw|make|give me|see|view|open|get)( me)? /, '');
+    if (!/(^| )(the|a|an|this|that|my|your|our|his|her|their|its)$/.test(phrase)) {
+      const hit = partCommand('blueprint', phrase, list);
+      if (hit && namesPartExactly(phrase, list.find((p) => p && p.id === hit.partId))) return hit;
+    }
   }
   m = /^blue ?print (.+)$/.exec(s);
   if (m) {
@@ -385,7 +469,7 @@ export function matchHologramCommand(text, parts = [], context = {}) {
   }
 
   // Select / show a part
-  m = /^(?:show|select|highlight|find|locate|point to|point out|point at|tap|click|click on|pick|choose|mark|where is|where's|wheres|where are|which (?:one|part) is|identify|open|display)(?: me)?(?: where)? (?:the |a |an )?(.+?)(?: is| are)?$/.exec(s);
+  m = /^(?:show|select|highlight|find|locate|point to|point out|point at|tap|click|click on|pick|choose|mark|where is|where's|wheres|where are|which (?:one|part) is|identify|open|display|pull up|bring up)(?: me)?(?: where)? (?:the |a |an )?(.+?)(?: is| are)?$/.exec(s);
   if (m) {
     const target = m[1].trim();
     if (IT.test(target)) return null;

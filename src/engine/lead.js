@@ -47,6 +47,8 @@ import { abortError, jsonCopy, parsePartialJson, sleep, uid } from './util.js';
 
 /** Default lead max_tokens (balanced depth); each depth sets its own (models.js DEPTHS.leadMaxTokens). */
 export const LEAD_MAX_TOKENS = 16000;
+/** Default lead max_tokens in conversations that can show holograms (DEPTHS.visualLeadMaxTokens). */
+export const VISUAL_LEAD_MAX_TOKENS = 32000;
 export const MAX_LEAD_REQUESTS = 12;
 export const MAX_CONTINUATIONS = 6;
 /** The SDK makes one quick retry; longer, visible waits are the engine's (retry.js). */
@@ -56,6 +58,15 @@ const MAX_JSON_RETRIES = 2;
 const COUNTDOWN_MIN_MS = 1500;
 
 export const STOPPED_BY_OWNER = 'Stopped by the owner.';
+
+/**
+ * The tool_result of a show_hologram / draw_blueprint call cut off by max_tokens (its input can't be
+ * continued): what to do instead, so the one retry fits. `parts` = complete parts that arrived.
+ */
+export const CUT_VISUAL_RETRY = Object.freeze({
+  show_hologram: (parts) => `Cut off by the reply length limit after ${parts} complete part${parts === 1 ? '' : 's'}; it was not finished or saved. Call show_hologram again now with at most 35 parts, one or two shapes per part and one-sentence info.`,
+  draw_blueprint: () => 'Cut off by the reply length limit; the blueprint was not finished or saved. Call draw_blueprint again now with fewer shapes (about 150 at most), fewer callouts and shorter notes.',
+});
 /**
  * A memory change still pending when a turn is resumed is never applied: Resume is one tap on a
  * checkpoint (possibly from an imported backup), not the owner asking for that change now.
@@ -308,10 +319,20 @@ function discardRequest(ctx, req) {
   }
 }
 
+/**
+ * A lead request's max_tokens: the depth's budget, or in a conversation that can show holograms
+ * (lead tools version 4) its visual budget, so a vehicle hologram plus adaptive thinking fits in
+ * one reply. Older conversations keep their budget (their requests stay byte-identical).
+ */
+function leadMaxTokens(ctx) {
+  const base = ctx.depth.leadMaxTokens || LEAD_MAX_TOKENS;
+  return hasVisualTools(ctx.conv, 'show_hologram') ? Math.max(base, ctx.depth.visualLeadMaxTokens || VISUAL_LEAD_MAX_TOKENS) : base;
+}
+
 function leadParams(ctx, features) {
   return buildMessageParams({
     model: ctx.leadModel,
-    maxTokens: ctx.maxTokensFor(ctx.leadModel, ctx.depth.leadMaxTokens || LEAD_MAX_TOKENS),
+    maxTokens: ctx.maxTokensFor(ctx.leadModel, leadMaxTokens(ctx)),
     system: ctx.conv.system,
     tools: ctx.conv.tools,
     messages: [...ctx.conv.apiMessages, ...ctx.paused],
@@ -643,9 +664,23 @@ async function leadLoop(ctx) {
     }
     if (toolUses.length) {
       // Never run a tool call cut off by a limit; answer it so the history stays valid.
+      const builtParts = (id) => ctx.visualSegments.get(id)?.spec?.parts?.length || 0;
       for (const b of toolUses) {
         dropMission(ctx, planning.get(b.id));
         failVisualSegment(ctx, b.id, 'The reply ended before this was complete.');
+      }
+      // A hologram or blueprint cut off by max_tokens can't be continued: answer it with how to
+      // make it fit and build it again once, smaller (a same-size try would only fail again).
+      const cutVisual = stop === 'max_tokens' && !ctx.visualRetried ? toolUses.find((b) => CUT_VISUAL_RETRY[b.name] && isLiveVisualTool(ctx, b.name)) : null;
+      if (cutVisual) {
+        ctx.visualRetried = true;
+        const results = {};
+        for (const b of toolUses) {
+          results[b.id] = { content: CUT_VISUAL_RETRY[b.name] ? CUT_VISUAL_RETRY[b.name](builtParts(b.id)) : 'Not run: the reply ended before this tool call was complete.', is_error: true };
+        }
+        ctx.conv.apiMessages.push(toolResultMessage(toolUses, results));
+        ctx.addSegment({ id: uid(), kind: 'notice', level: 'info', text: cutVisual.name === 'show_hologram' ? 'The hologram was too long for one reply, so Jarvis is building it again with fewer parts.' : 'The blueprint was too long for one reply, so Jarvis is drawing it again, simpler.', req });
+        continue;
       }
       answerUnrun(ctx, toolUses, 'Not run: the reply ended before this tool call was complete.');
     }
@@ -702,11 +737,20 @@ export function showedReply(turn) {
  * a resumed turn, or one started with keepOnStop (Voice Mode) keeps its message instead, plus the
  * reply text the owner saw as a text-only assistant message, so the next message has its context.
  * That is an append (the next user message follows it), not a prefill.
+ *
+ * A 2D request (turn.blueprintFor) stopped before its blueprint was drawn never keeps its message:
+ * that message's "Blueprint request … call draw_blueprint" block would otherwise be merged with the
+ * owner's next message and ask for the sheet they just stopped. See withdrawBlueprintRequest.
  */
 function withdrawUnanswered(ctx) {
   const start = ctx.turn.apiStart;
   const messages = ctx.conv.apiMessages;
-  if (!Number.isInteger(start) || start < 0 || messages.length !== start + 1 || messages[start]?.role !== 'user') return;
+  if (!Number.isInteger(start) || start < 0 || messages[start]?.role !== 'user') return;
+  if (ctx.turn.blueprintFor && !drewBlueprint(messages, start)) {
+    withdrawBlueprintRequest(ctx, start);
+    return;
+  }
+  if (messages.length !== start + 1) return;
   if (ctx.resumed || ctx.keepOnStop || showedReply(ctx.turn)) {
     // Nothing of this turn is in the history yet, so all of its text is what the owner saw.
     const shown = ctx.turn.segments
@@ -721,6 +765,35 @@ function withdrawUnanswered(ctx) {
   }
   messages.pop();
   ctx.turn.withdrawn = true;
+  ctx.conv.updatedAt = ctx.stamp();
+}
+
+/** Closes a stopped 2D request in the history when a tool round of it is already there. */
+export const BLUEPRINT_STOPPED = 'The owner stopped this blueprint request before the blueprint was drawn; do not draw it unless they ask again.';
+
+/** Whether the turn's own messages (from `start`) already hold a draw_blueprint call. */
+function drewBlueprint(messages, start) {
+  return messages.slice(start + 1).some((m) => m && m.role === 'assistant' && Array.isArray(m.content) && m.content.some((b) => b && b.type === 'tool_use' && b.name === 'draw_blueprint'));
+}
+
+/**
+ * A stopped 2D request whose draw_blueprint call never reached the history. When its message is
+ * the last one, nothing was built on it, so it is removed (an edit of no earlier prefix), and
+ * `withdrawn` is set only where a chat turn would be withdrawn anyway (the UI then puts the text
+ * back in the composer; Voice Mode or a card already on screen don't). Shown text is not appended
+ * for it. When a client tool round of the turn is already in the history (rare: e.g. a memory
+ * change before the drawing), its last message is that round's results, and an assistant line
+ * saying the request was stopped follows them: an append, so the next request is still valid.
+ */
+function withdrawBlueprintRequest(ctx, start) {
+  const messages = ctx.conv.apiMessages;
+  if (messages.length === start + 1) {
+    const chatWithdraw = !(ctx.resumed || ctx.keepOnStop || showedReply(ctx.turn));
+    messages.pop();
+    if (chatWithdraw) ctx.turn.withdrawn = true;
+  } else if (messages[messages.length - 1]?.role === 'user') {
+    messages.push({ role: 'assistant', content: [{ type: 'text', text: BLUEPRINT_STOPPED }] });
+  } else return;
   ctx.conv.updatedAt = ctx.stamp();
 }
 

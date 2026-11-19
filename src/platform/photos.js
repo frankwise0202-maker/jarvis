@@ -275,3 +275,88 @@ export async function searchPhotos(query, { fetch: fetchFn = globalThis.fetch, l
   return parseSearchResponse(await fetchJson(buildSearchUrl(q, { limit, thumbWidth, types: 'bitmap' }), opts)).slice(0, limit);
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Search words for a hologram's part
+
+/** A name as search words: no "(FL)"-style qualifiers, signs or quotes. */
+const plainWords = (s) => String(s ?? '').replace(/\([^)]*\)/g, ' ').replace(/[+−"“”]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * What an object is called in a search, from its title: the make and model of a proper name
+ * ("2024 Toyota Camry Hybrid (XV70)" -> "Toyota Camry", "Saturn V rocket" -> "Saturn V"), else
+ * the head noun ("Car alternator" -> "alternator", "AA alkaline battery (LR6)" -> "battery").
+ * Years, voltages and other words starting with a digit are left out.
+ */
+function objectNoun(title) {
+  const words = plainWords(title).split(' ').filter((w) => w && !/^\d/.test(w));
+  if (!words.length) return '';
+  const proper = (w) => /^[A-Z]/.test(w) || /[a-z][A-Z]/.test(w);
+  if (words.length >= 2 && proper(words[0]) && proper(words[1])) return `${words[0]} ${words[1]}`;
+  return words[words.length - 1];
+}
+
+/** A part name as search words, lower-case unless it starts with an acronym ("DC-DC converter"). */
+function partWords(name) {
+  const s = plainWords(name);
+  const first = s.split(' ')[0] || '';
+  return /^[A-Z][a-z]/.test(first) && !/[A-Z0-9].*[A-Z0-9]/.test(first) ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+/** Words once each (case-insensitive), at most 80 characters, cut at a word. */
+function tidy(words) {
+  const seen = new Set();
+  const out = [];
+  for (const w of words.split(' ')) {
+    const k = w.toLowerCase();
+    if (!w || seen.has(k)) continue;
+    seen.add(k);
+    out.push(w);
+  }
+  let s = out.join(' ');
+  if (s.length > 80) s = s.slice(0, 80).replace(/\s+\S*$/, '');
+  return s;
+}
+
+/**
+ * Search words for reference photos, best first. A part: "<object> <part>" ("alternator rotor",
+ * "battery separator", "Toyota Camry hood"), then the part alone; a bare part name finds unrelated
+ * things on Commons (a "Hood" is a mountain, a headgear and an admiral), and the full title
+ * finds almost nothing. The whole object (no part): its title without qualifiers.
+ */
+export function photoQueries(title, partName = '') {
+  const part = partWords(partName);
+  if (!part) {
+    const whole = tidy(plainWords(title));
+    return whole ? [whole] : [];
+  }
+  const bare = tidy(part);
+  const noun = objectNoun(title);
+  const qualified = noun ? tidy(`${noun} ${part}`) : bare;
+  return qualified === bare ? [bare] : [qualified, bare];
+}
+
+/**
+ * Photos for several search words at once (photoQueries): the first words' photos first, then
+ * the others', each photo once, at most `limit`. A search that fails is skipped when another
+ * found something; when every one fails, the first error is thrown. `search` is searchPhotos.
+ */
+export async function searchPhotosMerged(queries, { search = searchPhotos, limit = 12, ...opts } = {}) {
+  const list = [...new Set((Array.isArray(queries) ? queries : []).map((q) => String(q ?? '').trim()).filter(Boolean))];
+  if (!list.length) return [];
+  const settled = await Promise.allSettled(list.map((q) => search(q, { ...opts, limit })));
+  const out = [];
+  const seen = new Set();
+  for (const r of settled) {
+    if (r.status !== 'fulfilled') continue;
+    for (const p of Array.isArray(r.value) ? r.value : []) {
+      const key = p && (p.title || p.fullUrl);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+      if (out.length >= limit) return out;
+    }
+  }
+  if (!out.length && settled.every((r) => r.status === 'rejected')) throw settled[0].reason;
+  return out;
+}

@@ -185,7 +185,9 @@ export function createHologram(container, options = {}) {
   // DOM
 
   const root = el('div', 'holo');
-  const canvas = el('canvas', 'holo__canvas');
+  // `let`: after a context loss the browser never restores, "Restart 3D view" needs a fresh canvas
+  // (a canvas whose context is lost can't give a new one).
+  let canvas = el('canvas', 'holo__canvas');
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', 'Hologram');
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -899,6 +901,14 @@ export function createHologram(container, options = {}) {
     }
     const center = Number.isFinite(mx0) ? { x: (mx0 + mx1) / 2, y: (my0 + my1) / 2 } : { x: width / 2, y: height / 2 };
     const candidates = live.length;
+    // Only parts whose anchor is inside the visible region compete for the budget (layoutLabels
+    // skips the others anyway): zoomed in, big off-screen parts would otherwise use up the slots,
+    // and zooming in would hide labels instead of revealing the parts in view.
+    let kept = 0;
+    for (const it of live) {
+      if (it.pinned || (it.x >= bounds.left - 1 && it.x <= bounds.right + 1 && it.y >= bounds.top - 1 && it.y <= bounds.bottom + 1)) live[kept++] = it;
+    }
+    live.length = kept;
     // Label budget: assembled, a compact model only gets labels for its biggest parts (about one
     // per LABEL_AREA px² of view); exploded, every part may be labeled if there is room. The
     // selected and hovered parts are always included.
@@ -1314,6 +1324,21 @@ export function createHologram(container, options = {}) {
     return now - lastInteraction > AUTO_ROTATE_RESUME_MS && idle < AUTO_ROTATE_MAX_MS;
   }
 
+  // The loop sleeps when nothing moves; idle rotation that is due later (the opening delay, or
+  // the resume delay after the owner's last touch) wakes it then. Touch has no hover renders.
+  let rotateWake = 0;
+  function scheduleRotateWake() {
+    clearTimeout(rotateWake);
+    rotateWake = 0;
+    if (disposed || !autoRotateOn || (reducedMq.matches && !rotateRequested)) return;
+    const due = lastInteraction + AUTO_ROTATE_RESUME_MS - performance.now();
+    if (!(due > 0) || !Number.isFinite(due)) return; // due now: whatever blocks it requests a render when it ends
+    rotateWake = setTimeout(() => {
+      rotateWake = 0;
+      requestRender();
+    }, Math.ceil(due) + 20);
+  }
+
   function stepAnimations(dt, nowMs) {
     let busy = false;
     const now = clock();
@@ -1456,7 +1481,10 @@ export function createHologram(container, options = {}) {
     applyHover();
     renderNow();
     if (busy || needsRender || autoRotating()) rafId = requestAnimationFrame(frame);
-    else lastFrame = 0;
+    else {
+      lastFrame = 0;
+      scheduleRotateWake();
+    }
   }
 
   function renderNow() {
@@ -1552,6 +1580,16 @@ export function createHologram(container, options = {}) {
     } catch {
       /* lost context */
     }
+    // On a fresh canvas: the old one's context stays lost when the browser never restores it.
+    const fresh = el('canvas', 'holo__canvas');
+    fresh.setAttribute('role', 'img');
+    fresh.setAttribute('aria-label', canvas.getAttribute('aria-label') || 'Hologram');
+    canvas.removeEventListener('webglcontextlost', onContextLost, false);
+    canvas.removeEventListener('webglcontextrestored', onContextRestored, false);
+    fresh.addEventListener('webglcontextlost', onContextLost, false);
+    fresh.addEventListener('webglcontextrestored', onContextRestored, false);
+    canvas.replaceWith(fresh);
+    canvas = fresh;
     try {
       renderer = makeRenderer();
     } catch {
@@ -1867,6 +1905,7 @@ export function createHologram(container, options = {}) {
       disposed = true;
       if (rafId) cancelAnimationFrame(rafId);
       clearTimeout(restoreTimer);
+      clearTimeout(rotateWake);
       if (ro) ro.disconnect();
       if (io) io.disconnect();
       window.removeEventListener('resize', onWindowResize);

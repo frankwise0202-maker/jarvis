@@ -603,8 +603,16 @@ input stays near 1/8 of a CPU), forced at `content_block_stop` and when a reques
 validates the full input, saves it to the library, then emits one `done` event (final spec, warnings, `libraryId`)
 and answers with the tool_result; an unshowable input is an `error` card and an `is_error` result with the warnings.
 `open_saved` adds a `fromLibrary` card. Stop, a cut stream, a refusal or `max_tokens` leaves an `error` card and saves
-nothing; a resumed round never saves twice. `showedReply(turn)` counts hologram and blueprint cards (even while
-building) as a reply.
+nothing; a resumed round never saves twice. A `show_hologram` / `draw_blueprint` call cut off by `max_tokens` can't be
+continued, so once per turn its `is_error` tool_result (`CUT_VISUAL_RETRY`) says how to make it fit ("Cut off by the
+reply length limit after N complete parts; it was not finished or saved. Call show_hologram again now with at most 35
+parts, one or two shapes per part and one-sentence info."; a blueprint: about 150 shapes at most) and the loop goes on,
+with a `notice` ("The hologram was too long for one reply, so Jarvis is building it again with fewer parts."). A
+stopped 2D request (`blueprintFor`) whose `draw_blueprint` never reached the history keeps no message asking for it:
+its trailing user message is removed (marked `withdrawn` only where a chat turn would be withdrawn anyway), or, after a
+client tool round of the turn, the assistant line `BLUEPRINT_STOPPED` ("The owner stopped this blueprint request
+before the blueprint was drawn; do not draw it unless they ask again.") is appended. `showedReply(turn)` counts
+hologram and blueprint cards (even while building) as a reply.
 
 ### 8.5 Worker agents (`mission.js`, `worker.js`)
 
@@ -687,10 +695,13 @@ unanswered `tool_use`).
   instructions found there; never claim to have done things you didn't do.
 
 Versions since v1 (frozen per conversation, §16): `LEAD_SYSTEM_V2` (attachments, style) and, in v6, `LEAD_SYSTEM_V3`
-= V2 plus a "# Holograms and blueprints" section before "# Writing the answer" (about 1,300 characters): show_hologram
-puts an interactive, labeled 3D hologram on screen and draw_blueprint a 2D sheet; the hologram always comes first; draw
-a 2D blueprint only when the owner asks (a part tap, the 2D button, or words), never proactively, since each sheet
-costs money; model the specific object, researching it first when unsure (in a Blueprint mission, deploy agents
+= V2 plus a "# Holograms and blueprints" section before "# Writing the answer" (about 1,400 characters): show_hologram
+puts an interactive, labeled 3D hologram on screen and draw_blueprint a 2D sheet; the hologram always comes first, on
+its own, even when the owner says "diagram" or "blueprint"; draw a 2D blueprint only when the owner asks for one after
+seeing the hologram (a "Blueprint request" block, or words asking for a 2D or flat sheet of it), never proactively,
+since each sheet costs money (the V4 tool descriptions agree: a first request that says "diagram", "blueprint" or "how
+it's made" gets show_hologram, and draw_blueprint answers a request for a sheet of a hologram already shown); model
+the specific object, researching it first when unsure (in a Blueprint mission, deploy agents
 first); the big recognizable structure first, every part labeled; reopen saved items with `open_saved` instead of
 rebuilding; a "Blueprint request" block means exactly one `draw_blueprint` for that target with its `for` ids and no
 new hologram; after showing something, one or two sentences (the labels and part cards carry the details). Per-turn
@@ -987,12 +998,29 @@ selected/most recent mission (or an idle core with session stats when none).
 - Hologram viewer (`src/ui/hologram/viewer.js`, in the main bundle; the renderer and three.js load with `import()`):
   top bar with title, part count, a Saved badge and a grid/size readout; Assembled/Exploded and a slider; Labels,
   Rotate, View (cycles views), Parts, 2D, Photos, Reset, Close. Part card: group, name, info, material, **Build 2D
-  blueprint ≈ $x** (computed from the lead model's prices: ≈ $0.15 on Opus 5.5), or **Open blueprint** with a Saved
-  badge and **Rebuild** when one is saved (`findPartBlueprint`), Photos, Isolate, Focus. Side panel: the parts list by
-  group, or Photos (an editable query, a Commons strip; a photo opens with its credits). Command field and mic
-  (`stt.js`): the local matcher first (free, a toast), anything else is sent in the hologram's conversation and the
-  reply is captioned (plain text, "Open in chat"); a reply that builds a new hologram switches to it live, a 2D
-  request opens the blueprint viewer live on top. Live build: a viewer opened while building follows
+  blueprint ≈ $x**, or **Open blueprint** with a Saved badge and **Rebuild ≈ $x** when one is saved
+  (`findPartBlueprint`; the card follows library changes while it is open, `library.onChange`), Photos, Isolate,
+  Focus; a hologram stopped before it finished (never saved) says why it has no blueprint. The price (`blueprintCost`,
+  `blueprintCostUsd(model, { warm })`, `costLabel`): about 6K output, 4K new input and a 45K-token conversation prefix
+  on the lead model, the prefix read from the prompt cache while it is warm (within 4.5 minutes of the conversation's
+  last request) and written again after: ≈ $0.15 or ≈ $0.35 on Opus 5.5. The 2D button opens a saved whole-object
+  sheet at once; a paid one needs a second tap within 4 s ("Tap 2D again to draw the whole object · ≈ $x",
+  `data-armed`). While the hologram builds, **Stop building** (`hologram-stop`, a square button beside the mic) stops
+  the turn: what is built stays, `incomplete` and unsaved. Side panel: the parts list by group, or Photos (an
+  editable query, a Commons strip; a photo opens with its credits); a part's photos search the object's noun with the
+  part ("alternator rotor": the make and model when the title starts with them, else its head noun; digits dropped)
+  and the part alone, both at once, merged in that order (`photoQueries`, `searchPhotosMerged`). Command field and
+  mic (`stt.js`): the local matcher first (free, a toast), anything else is sent in the hologram's conversation and
+  the reply is captioned (plain text, "Open in chat"); a reply that builds a new hologram switches to it live, a 2D
+  request opens the blueprint viewer live on top. Layout: on phones the caption never stacks on the part card or the
+  panel: with either open, or when it would take more than half the screen, it is a one-line pill under the top bar
+  (`data-compact`; a tap opens the whole reply with its Open in chat, `data-expanded`), and the toast sits under the
+  top bar; on desktop the model and its labels keep clear of the caption. Phones under 700 px tall hide the top bar's
+  subtitle and the card's material, clamp the card's info to one line and, while the card is open, hide the
+  Assembled/Exploded row (the words still work). Labels are budgeted among the parts on screen (zooming in
+  labels what is in view). Idle auto-rotation starts by itself 6 s after the last input (the sleeping render loop
+  wakes for it). "Restart 3D view" after a WebGL context loss the browser never restores swaps in a fresh canvas.
+  Live build: a viewer opened while building follows
   `run.on('segment')` about 8 times a second. Thumbnail: 0.9 s after the first full render of a saved item without
   one, a 320×240 JPEG (≤ 60 KB). No WebGL: the parts list opens and parts still show their cards; a chunk that can't
   load offers "Try again". Escape closes the photo viewer, then the panel, then the selection, then the viewer.
@@ -1014,7 +1042,10 @@ selected/most recent mission (or an idle core with session stats when none).
   readable `{ error }` (no key, offline, busy, another window); a 2D request opens a saved blueprint with no request,
   else sends a `'quick'` turn with `blueprintRequestText` and `blueprintFor` (in a new conversation when the old one
   has no draw_blueprint); Copy prepends `visualExportLine` lines; no "/" shortcut while an overlay is up; the chat
-  scrolls to the reply when a viewer that started a turn closes. Voice Mode routing: §14.1.
+  scrolls to the reply when a viewer that started a turn closes. A chat from before holograms (its frozen tools have
+  no show_hologram) is not reopened at launch, and when its last message asked for one ("show me", "pull up",
+  "hologram", "blueprint", "diagram", "3D", "2D") `banner-new-chat` says "Holograms and blueprints need a new chat (this
+  one is from before them)." with **Start one** and a dismiss button. Voice Mode routing: §14.1.
 
 ## 11. Build, serve, deploy, test (`infra`)
 
@@ -1122,9 +1153,10 @@ selected/most recent mission (or an idle core with session stats when none).
 | `hologram-open` / `blueprint-open` | a card's Open | |
 | `hologram-viewer` | hologram viewer root | `data-state` (building\|ready\|loading\|incomplete\|error\|nogl), `data-gl`, `data-parts`, `data-exploded`, `data-labels`, `data-rotate`, `data-selected`, `data-isolated`, `data-view`, `data-panel`, `data-model`, `data-segment`, `data-layout`, `data-last-command`, `data-last-source`, `data-voice` (Voice Mode's state while it drives the mic) |
 | `hologram-stage`, `hologram-close`, `hologram-explode`, `hologram-assemble`, `hologram-explode-slider`, `hologram-labels`, `hologram-rotate`, `hologram-view`, `hologram-parts-button`, `hologram-2d`, `hologram-photos-button`, `hologram-reset` | viewer bar and tools | |
-| `hologram-command`, `hologram-command-send`, `hologram-mic` | command field, send, mic | `hologram-mic`: `aria-pressed`, `data-voice` (listening\|busy\|idle under Voice Mode), `data-icon` |
+| `hologram-command`, `hologram-command-send`, `hologram-mic`, `hologram-stop` | command field, send, mic, Stop building (only while it builds) | `hologram-mic`: `aria-pressed`, `data-voice` (listening\|busy\|idle under Voice Mode), `data-icon`; `hologram-2d`: `data-armed` while a second tap would build |
 | `hologram-part-card`, `hologram-build-blueprint` (`data-saved`), `hologram-rebuild-blueprint`, `hologram-part-photos`, `hologram-isolate`, `hologram-focus` | part card | |
-| `hologram-part` (`data-part-id`), `hologram-panel-close`, `hologram-photo-query`, `hologram-caption` (`data-state`), `hologram-caption-open`, `hologram-toast` | panel and caption | |
+| `hologram-part` (`data-part-id`), `hologram-panel-close`, `hologram-photo-query`, `hologram-caption` (`data-state`, `data-compact`, `data-expanded`), `hologram-caption-open`, `hologram-toast` | panel and caption | |
+| `banner-new-chat` | "Holograms and blueprints need a new chat" banner | |
 | `blueprint-overlay` (`data-state`, `data-model`), `blueprint-live`, `blueprint-viewer` (`data-layout`), `blueprint-stage`, `blueprint-panel`, `blueprint-parts-toggle`, `blueprint-part` (`data-n`), `blueprint-chip`, `blueprint-zoom-in`, `blueprint-zoom-out`, `blueprint-fit`, `blueprint-download-svg`, `blueprint-download-png`, `blueprint-close` | blueprint viewer | |
 | `photo-strip`, `photo-strip-list`, `photo-thumb`, `photo-viewer`, `photo-stage`, `photo-prev`, `photo-next`, `photo-credit`, `photo-source`, `photo-close` | photos | |
 | `library-sheet`, `library-item` (`data-id`, `data-kind`), `library-open`, `library-download`, `library-delete`, `library-filter-all` / `-hologram` / `-blueprint`, `library-empty`, `library-button`, `history-library` | Blueprints library | |
@@ -1216,14 +1248,20 @@ is spoken **while it streams**, with `tts.createSpeechStream` (§9.2) and the pu
 
 Holograms and blueprints (v6). The owner: "if I say, show me this car, it can pull up a 3D hologram, then if I say
 like, okay, now expand it, it expands it, and I can click on a part … and it builds a 2D blueprint." Voice Mode gets
-an optional `visuals` bridge from app.js and its returned API gains `ask(text, { mode, blueprintFor })` →
-`{ run } | { held: true } | { pending: true } | { error }` and `tap()`:
+an optional `visuals` bridge from app.js and its returned API gains `ask(text, { mode, blueprintFor, signal })` →
+`{ run } | { held: true } | { pending: true } | { error }` (an aborted `signal` starts nothing: `{ error, stopped:
+true }`), `tap()` (the core's tap), `viewerTap()` (the viewer's mic button), `stop()` (the viewer's Stop building) and
+`note(text)` (a line under Voice Mode's caption):
 ```js
 openVoiceMode({ …, visuals: {
   open(run, segment),   // show a hologram (as it starts building) or a finished blueprint of a Voice Mode reply
   isOpen(),             // a hologram or blueprint viewer covers Voice Mode
-  command(text),        // words heard while one is open: { handled: false } | { handled: true, command, done? }
-  sync(info),           // { state, label, listening, heard, busy } for the hologram viewer's mic button
+  command(text, { signal, spoken, later }),
+                        // words heard: { handled: false[, later] } | { handled: true, command, done? }; done
+                        // settles to { opened } | { run } | { held } | { confirm } | { error[, stopped] }
+  sync(info),           // { state, label, listening, heard, busy, canListen } for the hologram viewer's mic button
+  note(text),           // a caption in the viewer ("I'll take that once the hologram is built.")
+  spoken(),             // a reply or acknowledgement has been said (its caption in the viewer can leave)
 } })
 ```
 - A Voice Mode reply (a run Voice Mode started, or a turn with `spoken: true`) that emits a `hologram` segment opens the
@@ -1237,30 +1275,61 @@ openVoiceMode({ …, visuals: {
   turn; it never switches the model or opens a blueprint for a followed run, Voice Mode does that). Status while it
   builds: "Building the hologram…" / "Drawing the blueprint…".
 - While a viewer is open, listening carries on hands-free as usual (Continuous; otherwise after a tap), and each
-  final transcript goes to `visuals.command(text)` first (the hologram viewer's local matcher, free):
+  final transcript goes to `visuals.command(text, { signal, spoken: true })` first (the hologram viewer's local
+  matcher, free):
   - a matched command acts at once and Voice Mode says a short acknowledgement (`src/ui/voice-visuals.js`
     `commandAck`: "Expanding.", "Putting it back together.", "Here's the separator.", "Just the rotor.", "Zooming in on
-    the pulley.", "Labels off.", "Front view.", "Photos of the fan." …; nothing for "close", which closes the viewer
-    and shows Voice Mode), then listens again (Continuous) or waits;
-  - "blueprint the <part>" (or "2D", "blueprint", for the whole object) returns `done`: a saved sheet opens for free
-    and Voice Mode says "Here's your saved blueprint of the <part>."; otherwise the app sends the paid request back
-    through `ask(text, { mode: 'quick', blueprintFor })`, so it is a Voice Mode turn (spoken channel, `keepOnStop`,
-    `blueprintFor`; a pre-holograms conversation gets a new one); a reason it can't be done is said;
+    the pulley.", "Labels off.", "Front view.", "Photos of the fan." …; "isolate it" with nothing selected takes the
+    part shown last, else "Which part? Tap one, or say isolate and its name."; nothing for "close", which closes the
+    viewer and shows Voice Mode), then listens again (Continuous) or waits; the viewer's finished reply caption makes
+    room;
+  - a 2D request ("blueprint the <part>"; "2D", "blueprint", "switch it to 2D" for the whole object) returns `done`, and
+    Voice Mode shows "Getting the blueprint…" until it settles: a saved sheet opens for free ("Here's your saved
+    blueprint of the <part>."). Otherwise an outright request (it starts with "blueprint" or "2D", or with a build verb:
+    "draw a blueprint of the rotor", "switch it to 2D", "make it a blueprint"; `blueprintAskedOutright`) has the app
+    send the paid request back through `ask(text, { mode: 'quick', blueprintFor, signal })`, so it is a Voice Mode turn
+    (spoken channel, `keepOnStop`, `blueprintFor`; a pre-holograms conversation gets a new one). A softer wording
+    ("rotor blueprint", "open the blueprint" with none saved) builds nothing and asks first: "Shall I draw a blueprint
+    of the rotor? It costs about 15 cents." (`blueprintQuestion`; the price is `blueprintCost`, said by `spokenCost`). A
+    yes within 60 s (`confirmReply`: "yes", "sure", "go ahead", "do it" …) builds it, a no ("no", "not now", "never
+    mind" …) gets "Okay, no blueprint.", and anything else drops the question and is taken as usual. Stop (the core,
+    the dock or the viewer's mic) while the library is still looked up aborts the `signal`: nothing opens and nothing
+    is sent. A reason it can't be done is said;
+  - talk about a blueprint is not a request: negative or postponing words ("no blueprint", "don't draw the 2D", "skip
+    the blueprint", "the blueprint can wait") are a turn, and "<words> blueprint" builds only when the words name a part
+    exactly (§10.6's matcher, `src/lib/hologram-commands.js`);
   - anything else is a Voice Mode turn in the same conversation (`spoken: true`), spoken as usual and captioned in the
     viewer.
-  With a blueprint viewer on top, "close" closes it, and another hologram command closes it and acts on the hologram
-  under it.
+  With a blueprint viewer on top, "close", "close the blueprint", "hide the drawing", "I'm done with the sheet", "back
+  to the hologram" or "go back" close it (free; `close-blueprint`, never read as a part or sent as a message), and
+  another hologram command closes it and acts on the hologram under it.
+- While a hologram of the streaming reply builds, the viewer's mic listens instead of stopping (`viewerTap()`; `sync`
+  sends `canListen`), and Stop is the viewer's own **Stop building** button (`stop()`, the v5 Stop: what is built
+  stays, unsaved). The reply's speech is not cut and no new sentence starts while the mic is open; a command heard
+  then ("expand it") acts on the live model at once (its toast says so), while a question or a 2D request is held
+  (the viewer captions "I'll take that once the hologram is built.") and taken once the reply has been said (dropped
+  if the turn failed or was stopped).
 - Words typed in the hologram viewer's command field while Voice Mode is open, its **Build 2D blueprint** button and
   its 2D button go the same way: app.js routes `sendFromViewer` through `ask()`, so every turn started while Voice Mode
   is open is a Voice Mode turn (a question held while the previous reply writes its details keeps its `blueprintFor`).
   app.js has every Voice Mode turn started while a hologram viewer is open captioned there (`follow`).
-- The hologram viewer's mic button is Voice Mode's (`deps.voice`): a tap is `tap()`, exactly a tap on the core (listening
-  = stop and send; thinking or working = Stop; speaking = stop speaking and listen). `sync` mirrors Voice Mode on it:
-  pressed while listening (the words heard appear in the command field, never replacing words the owner typed), a stop
-  sign and the core's `aria-label` while Jarvis thinks, works or speaks.
+- The hologram viewer's mic button is Voice Mode's (`deps.voice`): a tap is `viewerTap()`, exactly a tap on the core
+  (listening = stop and send; thinking or working = Stop; speaking = stop speaking and listen) except while a hologram
+  of the reply builds (above). `sync` mirrors Voice Mode on it: pressed while listening (the words heard appear in the
+  command field, never replacing words the owner typed), a stop sign and the core's `aria-label` while Jarvis thinks,
+  works or speaks.
+- The viewer's caption of a Voice Mode reply leaves 3 s after Voice Mode has said it (`spoken()` →
+  `captionSpoken()`), unless the chat holds more of it (details below its `---` line): then it stays the usual 20 s
+  with **Open in chat**, which leaves Voice Mode (as Exit does: a running reply carries on in the chat) and shows that
+  reply, details included.
 - Closing the viewer (its Close, Escape, or "close") shows Voice Mode again, unchanged: Exit and Stop are as defined
-  above. While a viewer covers it, Voice Mode ignores keys (the viewer's own). Outside Voice Mode the viewer's own mic
-  and command field work as before (§10.6).
+  above. Afterwards a command for the hologram shown last ("expand it", "show the separator", "blueprint the
+  separator") opens it again for free and acts on it, instead of becoming a paid turn. While a viewer covers it, Voice
+  Mode ignores keys (the viewer's own) and the core's level animation stops (`data-level-loop` on `voice-mode`: `on` |
+  `off`). Outside Voice Mode the viewer's own mic and command field work as before (§10.6).
+- A Voice Mode request in a chat from before holograms (its frozen tools have no show_hologram) starts a new chat, and
+  Voice Mode says so under its caption ("New chat: older chats can’t show holograms."); the old chat stays in
+  History.
 
 ### 14.2 Protocols & briefings — `src/ui/protocols.js`, `src/styles/protocols.css`
 One-tap mission presets ("Protocols") plus owner-defined custom protocols.
@@ -1371,8 +1440,10 @@ Three engineers work in parallel with **disjoint file ownership**:
 
 Engine and API:
 - `max_tokens` per depth (output-token rate limits are estimated from it): lead fast 12000 / balanced 16000 / deep 32000;
-  workers 8000 / 12000 / 16000. On a 429 that names an output-tokens-per-minute limit, that model is capped at 90% of the
-  limit for the session.
+  workers 8000 / 12000 / 16000. In conversations that can show holograms (lead tools V4) the lead gets
+  `visualLeadMaxTokens` instead: 32000 / 32000 / 48000 (a vehicle hologram alone is about 11–17K output tokens, and
+  adaptive thinking shares the budget; older conversations keep theirs, byte for byte). On a 429 that names an
+  output-tokens-per-minute limit, that model is capped at 90% of the limit for the session.
 - Retries are owned by the engine and visible: SDK `maxRetries` is 1 for the lead and 0 for workers; 429/529 wait
   `retry-after` (≤ 60 s) or 5 s × attempt plus jitter, with a live countdown; limiter capacity drops once per rate-limit
   episode and recovers after successes; agents start 700 ms apart.
@@ -1492,10 +1563,13 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   the owner: "T" with N labeled parts (S shapes). … Saved to the owner's library as lib_… (reopen it later with
   open_saved)." or "It could not be saved to the owner's library this time."); `for`: the turn's `blueprintFor` wins,
   otherwise the spec's `for` counts only if that model and part exist; `open_saved` adds a `fromLibrary` card and a
-  summary of at most 1,500 characters, and a malformed, unknown or damaged id gets `is_error` listing up to 5 saved ids.
+  summary of at most 1,500 characters, and a malformed, unknown or damaged id gets `is_error` listing up to 5 saved ids
+  (holograms first, in the same order).
 - Turn context (V4 conversations, added just before the first request because the library is asynchronous; never on
-  resume): `Saved holograms and blueprints (reopen with open_saved instead of rebuilding):` with up to 30 lines, newest
-  first (`- lib_ab12cd34ef · hologram · "2024 Toyota Camry Hybrid" (43 parts)`; titles neutralized like other
+  resume): `Saved holograms and blueprints (reopen with open_saved instead of rebuilding):` with up to 30 lines: every
+  hologram first, newest first, then whole-object sheets, then at most 5 part sheets (`SAVED_PART_SHEETS`: the viewer
+  finds a part's sheet itself, and part sheets must never push a hologram out of the list)
+  (`- lib_ab12cd34ef · hologram · "2024 Toyota Camry Hybrid" (43 parts)`; titles neutralized like other
   turn-context text), and with `blueprintFor` the `Blueprint request (the owner asked for this 2D blueprint):` block
   (the target part's name and id or the whole object, the hologram's title, the part's group, material, approximate
   size from its shapes and info, an already saved blueprint, and "Call draw_blueprint exactly once for this target,
@@ -1508,13 +1582,16 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   and the library, blueprints SVG → PNG (JPEG when too big), ≤ 60,000 characters. The app's library timeout is 12 s.
 - Exports, share and copy show one `visualExportLine` per card ("[Hologram: 2024 Toyota Camry Hybrid · 43 parts]",
   "[Blueprint: Alternator · part sheet · 18 parts]"), never the spec. The import summary counts library items.
-- Photos (§2, §10.6): one anonymous search per Photos open; only `upload.wikimedia.org` images are shown.
+- Photos (§2, §10.6): anonymous searches only when Photos opens (the object's photos: one; a part's: two at once, the
+  object's noun with the part and the part alone, merged); only `upload.wikimedia.org` images are shown.
 - UI §10.6; Voice Mode §14.1; build and chunks §11; the Blueprint protocol §14.2; test hooks §13.
 - Voice Mode × holograms (§14.1): a spoken hologram opens over Voice Mode as it builds, the reply is still spoken
   (`SPOKEN_VISUALS_NOTE` in the spoken turn's context tells Jarvis to say one short sentence before show_hologram and
   one after it, such as "Here's the Camry. Say 'expand it' or tap any part.", and that a blueprint is open on the
   screen), heard words go to the local matcher first with a spoken acknowledgement, "blueprint the <part>" builds that
-  sheet as a Voice Mode turn and opens it when ready, other words are spoken-channel turns captioned in the viewer.
+  sheet as a Voice Mode turn and opens it when ready (a softer wording is asked first, with its price), "close the
+  blueprint" closes a sheet, other words are spoken-channel turns captioned in the viewer; while the hologram builds,
+  the viewer's mic listens and Stop is its own button.
 - Risks known at integration: real-device WebGL performance and gestures (only Chromium with SwiftShader was tested);
   the real Wikimedia API (tests fake it); the larger cached tool prefix (about 5.7K tokens more, a cache write on the
   first request of every new conversation); live parsing of very large inputs on a phone (bounded by the adaptive
@@ -1528,6 +1605,22 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   `voice-holograms` (iPhone: "show me an AA battery" → the viewer over Voice Mode with the live build and the spoken
   lines; "expand it" and "show the separator" with their acknowledgements and no API request; a question on the
   spoken channel, spoken and captioned; "blueprint the separator" → a spoken Blueprint request → the blueprint viewer
-  opened when ready and announced; the viewer's mic as Voice Mode's; back to Voice Mode; the viewer's own mic outside
-  it) and `voice-holograms-stop` (a tap on the viewer's mic while the hologram builds stops the turn; the card stays,
-  incomplete).
+  opened when ready and announced; the viewer's mic as Voice Mode's; back to Voice Mode, where "expand it" opens the
+  hologram again for free; the viewer's own mic outside it), `voice-holograms-stop` (while the Camry builds the
+  viewer's mic listens: "expand it" acts on the live build and a question waits for the reply; Stop during "Getting the
+  blueprint…" with a slow library starts nothing; **Stop building** keeps an incomplete, unsaved hologram whose part
+  card says why it has no blueprint; the stopped turns stay in the chat), `voice-holograms-small` (a 375×553 Safari
+  tab: with the part card open the model keeps a third of the screen, no label is under the chrome and a reply is a
+  one-line pill; "switch it to 2D" builds the whole-object sheet, "close the blueprint" closes it and "switch it to 2D"
+  reopens it free; "Open in chat" leaves Voice Mode for the reply with its details) and `holograms-old-chat` (a chat
+  frozen before holograms: not restored at launch; the new-chat banner; Voice Mode asks in a new chat).
+- Fixes after the v6 review (before release, so the V3 prompt and V4 tools were edited in place and re-pinned: no
+  stored conversation has them yet): 2D only when asked (strict matcher, a spoken question before a build from a
+  softer wording, the prompt and tool descriptions), sheets closed by voice, a stopped 2D request out of the history,
+  holograms first in the saved list, room for vehicle holograms (`visualLeadMaxTokens`, one smaller retry), the
+  phone layout of caption and card, a mic that listens while it builds with its own Stop, Stop during the blueprint
+  lookup, photos searched with the object's name, labels for what is on screen, idle rotation, Restart 3D view after
+  a lost context, prices on Rebuild and a second tap on 2D, the warm or cold cache in the price, a part card that
+  follows the library, "Open in chat" from Voice Mode, reopening the last hologram by voice, no level animation under
+  a viewer, and chats from before holograms (not restored; a banner; Voice Mode starts a new chat). Mock:
+  `[[slowbuild]]` (with `[[hologram:…]]`) streams the hologram over 8–9 s so a test can speak while it builds.

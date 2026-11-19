@@ -30,8 +30,8 @@ import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
 import { createLibraryView } from './library.js';
 import { createThumbs } from './thumbs.js';
 import { isOverlayOpen } from './overlay.js';
-import { matchHologramCommand } from '../lib/hologram-commands.js';
-import { createJarvis, MODELS, DEPTHS, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
+import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
+import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
@@ -413,6 +413,7 @@ export async function startApp(rootEl) {
     return h('button', { class: ['banner-btn', extra.icon && 'banner-btn--icon'], type: 'button', attrs: { 'aria-label': extra.label || null }, on: { click: fn } }, extra.icon ? icon(extra.icon, { size: 16 }) : h('span', { text: label }));
   }
 
+  const newChatHintDismissed = new Set(); // conversation ids whose "need a new chat" hint was dismissed
   function renderBanners() {
     const list = [];
     const s = getSettings();
@@ -433,6 +434,23 @@ export async function startApp(rootEl) {
               uiSet(UI_KEYS.spendDismissed, dismissedKey);
               renderBanners();
             }, { icon: 'close', label: 'Dismiss spend warning' }),
+          ]),
+        );
+      }
+    }
+    // A chat from before holograms (its tools are frozen without show_hologram) answers "show me…"
+    // in words only: after such a request in it, say how to get one.
+    const conv = state.conv;
+    if (!state.demo && conv && !state.runs.has(conv.id) && !hasVisualTools(conv, 'show_hologram') && !newChatHintDismissed.has(conv.id)) {
+      const asked = turnsOf(conv).filter((t) => t.role === 'user').pop();
+      if (asked && /\b(show me|pull up|hologram|blueprint|diagram|3d|2d)\b/i.test(String(asked.text || ''))) {
+        list.push(
+          banner('banner-new-chat', 'info', 'hologram', 'Holograms and blueprints need a new chat (this one is from before them).', [
+            bannerBtn('Start one', () => newChat()),
+            bannerBtn('', () => {
+              newChatHintDismissed.add(conv.id);
+              renderBanners();
+            }, { icon: 'close', label: 'Dismiss' }),
           ]),
         );
       }
@@ -614,6 +632,10 @@ export async function startApp(rootEl) {
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
+  // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
+  // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
+  let lastVoiceHologram = null;
+  const REOPEN_ACTIONS = new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']);
 
   function startTurnForVoice(text, { mode, blueprintFor } = {}) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
@@ -625,7 +647,12 @@ export async function startApp(rootEl) {
     // blueprintFor: "blueprint the <part>" from a hologram viewer over Voice Mode.
     const extras = { keepOnStop: true, spoken: true };
     if (blueprintFor) extras.blueprintFor = blueprintFor;
+    // A chat from before holograms (its tools are frozen without show_hologram) can't show one: Voice
+    // Mode, whose headline is "show me this car", asks in a new chat instead (the old one stays in History).
+    const oldChat = !state.demo && !!state.conv && turnsOf(state.conv).length > 0 && !hasVisualTools(state.conv, 'show_hologram') && !state.runs.has(state.conv.id);
+    if (oldChat) setConversation(null);
     if (!send(text, mode, extras)) throw new Error('I couldn’t start that request.');
+    if (oldChat && voiceApi) safe(() => voiceApi.note('New chat: older chats can’t show holograms.'));
     const entry = state.conv && state.runs.get(state.conv.id);
     const run = entry ? entry.run : null;
     // A hologram is open over Voice Mode: the reply is captioned there too.
@@ -642,7 +669,15 @@ export async function startApp(rootEl) {
   const voiceVisuals = {
     open: (run, seg) => openVisualForVoice(run, seg),
     isOpen: () => !!(getHologramViewer() || getBlueprintViewer()),
-    command: (text) => voiceCommand(text),
+    command: (text, opts) => voiceCommand(text, opts),
+    note: (text) => {
+      const viewer = getHologramViewer();
+      if (viewer) safe(() => viewer.note(text));
+    },
+    spoken: () => {
+      const viewer = getHologramViewer();
+      if (viewer) safe(() => viewer.captionSpoken());
+    },
     sync: (info) => {
       voiceInfo = info && typeof info === 'object' ? info : null;
       const viewer = getHologramViewer();
@@ -667,27 +702,59 @@ export async function startApp(rootEl) {
     }
     safe(() => viewer.follow(run)); // the spoken reply is captioned in the viewer
     if (voiceInfo) safe(() => viewer.setVoice(voiceInfo));
+    lastVoiceHologram = { segment: seg, conversationId: source.conversationId, turnId: source.turnId };
+    return viewer;
+  }
+
+  /**
+   * Voice Mode with no viewer open: words that are a command for the hologram it showed last
+   * ("expand it", "show the separator") open that hologram again (free) for them; else null.
+   */
+  function reopenForVoice(text) {
+    const last = lastVoiceHologram;
+    const seg = last && last.segment;
+    const spec = seg && seg.status !== 'building' && isObj(seg.spec) && Array.isArray(seg.spec.parts) ? seg.spec : null;
+    if (!spec) return null;
+    const parts = spec.parts.filter(isObj).map((p) => ({ id: p.id, name: p.name, aka: Array.isArray(p.aka) ? p.aka : [] }));
+    const cmd = safe(() => matchHologramCommand(String(text || ''), parts, {}), null);
+    if (!cmd || !REOPEN_ACTIONS.has(cmd.action)) return null;
+    let viewer = null;
+    try {
+      viewer = openHologramViewer({ source: { segment: seg, conversationId: last.conversationId, turnId: last.turnId }, deps: viewerDeps() });
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+      return null;
+    }
+    if (voiceInfo) safe(() => viewer.setVoice(voiceInfo));
     return viewer;
   }
 
   /**
    * Words heard in Voice Mode while a viewer is open: a hologram command acts at once ({ handled:
    * true, command, done? }), anything else is for Jarvis ({ handled: false }). With a blueprint on
-   * top, "close" closes it and another hologram command acts on the hologram under it, shown again.
+   * top, "close", "close the blueprint", "hide the drawing", "back to the hologram" or "go back"
+   * close it (free; never read as a part, never a paid message), and another hologram command acts
+   * on the hologram under it, shown again.
+   *   opts.signal  Stop while a 2D request still looks in the library: nothing is started
+   *   opts.spoken  Voice Mode says the acknowledgement (no toast); opts.later: the hologram is
+   *                still building, so a 2D request waits ({ handled: false, later: true })
    */
-  function voiceCommand(text) {
-    const holo = getHologramViewer();
+  function voiceCommand(text, { signal = null, spoken = true, later = false } = {}) {
+    let holo = getHologramViewer();
     const sheet = getBlueprintViewer();
+    if (!holo && !sheet) holo = reopenForVoice(text); // the viewer was closed: "expand it" opens it again
     if (sheet) {
-      const cmd = safe(() => matchHologramCommand(String(text || ''), [], {}), null);
-      if (cmd && cmd.action === 'close') {
+      const words = String(text || '');
+      const cmd = safe(() => matchHologramCommand(words, [], {}), null);
+      const back = /^(?:go )?back$/.test(safe(() => normalizeCommandText(words), ''));
+      if ((cmd && (cmd.action === 'close' || cmd.action === 'close-blueprint')) || back) {
         safe(() => sheet.close());
-        return { handled: true, command: cmd };
+        return { handled: true, command: cmd && cmd.action === 'close' ? cmd : { action: 'close-blueprint' } };
       }
     }
     if (!holo) return { handled: false };
-    const res = safe(() => holo.command(text, { source: 'voice' }), null);
-    if (!res || !res.handled) return { handled: false };
+    const res = safe(() => holo.command(text, { source: 'voice', signal, spoken, later, confirmBuild: true }), null);
+    if (!res || !res.handled) return res && res.later ? { handled: false, later: true } : { handled: false };
     if (sheet && res.command && res.command.action !== 'blueprint' && res.command.action !== 'close') safe(() => sheet.close());
     return res;
   }
@@ -715,6 +782,7 @@ export async function startApp(rootEl) {
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
+          lastVoiceHologram = null;
           const viewer = getHologramViewer();
           if (viewer) safe(() => viewer.setVoice(null)); // its own mic again
           // The home screen (greeting and core) stays where it was; a conversation shows its end.
@@ -758,11 +826,15 @@ export async function startApp(rootEl) {
     return null;
   }
 
-  /** Send words from a viewer as a chat message. Returns { run } or { error }. */
-  async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null } = {}) {
+  /**
+   * Send words from a viewer as a chat message. Returns { run } or { error }. `signal`: Voice Mode's
+   * Stop for a 2D request; once it is aborted nothing is sent ({ error, stopped: true }).
+   */
+  async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null, signal = null } = {}) {
     const clean = String(text || '').trim();
     if (!clean) return { error: 'Nothing to send.' };
     let conv = await viewerConversation(conversationId);
+    if (signal && signal.aborted) return { error: 'Stopped.', stopped: true };
     // A conversation from before holograms can't take a 2D request: ask in a new one.
     if (blueprintFor && conv && !hasVisualTools(conv, 'draw_blueprint')) {
       setConversation(null);
@@ -771,7 +843,7 @@ export async function startApp(rootEl) {
     // Voice Mode is open under the viewer: the words (or the 2D request) become a Voice Mode turn,
     // so the reply is spoken and captioned, and Voice Mode listens again afterwards.
     if (voiceApi && safe(() => isVoiceModeOpen(), false)) {
-      const res = safe(() => voiceApi.ask(clean, { mode: blueprintFor ? mode : undefined, blueprintFor }), null);
+      const res = safe(() => voiceApi.ask(clean, { mode: blueprintFor ? mode : undefined, blueprintFor, signal }), null);
       if (res && res.run) viewerStartedTurn = true;
       return res && typeof res === 'object' ? res : { error: 'That message couldn’t be sent.' };
     }
@@ -794,27 +866,59 @@ export async function startApp(rootEl) {
     }
   }
 
-  /** The owner asked for a 2D blueprint: open the saved one (free), or build it (a new turn). */
-  async function requestBlueprint({ model, part = null, rebuild = false, conversationId } = {}) {
+  /**
+   * The owner asked for a 2D blueprint: open the saved one (free), or build it (a new turn).
+   * `ask` (Voice Mode, a softer wording): when nothing is saved, build nothing and return
+   * { ask: true, cost } so the owner is asked first. `signal` (Voice Mode's Stop): checked after
+   * each library lookup; once aborted nothing opens and nothing is sent ({ error, stopped: true }).
+   */
+  async function requestBlueprint({ model, part = null, rebuild = false, conversationId, signal = null, ask = false } = {}) {
+    const stopped = () => !!(signal && signal.aborted);
     if (!rebuild) {
       const saved = await Promise.resolve(lib.findPartBlueprint(model, part)).catch(() => null);
       const full = saved && saved.id ? await Promise.resolve(lib.get(saved.id)).catch(() => null) : null;
+      if (stopped()) return { error: 'Stopped.', stopped: true };
       if (full) {
         openLibraryItem(full);
         return { opened: true };
       }
     }
     const hologram = await Promise.resolve(lib.get(model)).catch(() => null);
+    if (stopped()) return { error: 'Stopped.', stopped: true };
     if (!hologram || hologram.kind !== 'hologram') return { error: 'That hologram is no longer in your library.' };
+    const target = conversationId || hologram.conversationId;
+    if (ask) return { ask: true, cost: blueprintCost(target) };
     const text = blueprintRequestText(hologram.spec, part);
-    return sendFromViewer(text, { conversationId: conversationId || hologram.conversationId, mode: 'quick', blueprintFor: { model, part: part || null } });
+    return sendFromViewer(text, { conversationId: target, mode: 'quick', blueprintFor: { model, part: part || null }, signal });
   }
 
-  /** "≈ $0.15": a blueprint is about 6K output tokens (with thinking) on the lead model. */
-  function blueprintCost() {
-    const m = MODELS[getSettings().leadModel] || MODELS['claude-opus-5-5'];
-    const usd = m ? (6000 * m.outPerM + 45000 * m.cacheReadPerM + 4000 * m.inPerM) / 1e6 : 0.15;
-    return `≈ $${usd < 0.1 ? usd.toFixed(2) : (Math.round(usd * 20) / 20).toFixed(2)}`;
+  /** When the conversation's last lead request ended (its cached prefix lives 5 minutes), or 0. */
+  function lastRequestAt(conversationId) {
+    const entry = conversationId ? state.runs.get(conversationId) : null;
+    if (entry) return Date.now(); // a reply is under way: the cache is warm
+    const conv = state.conv && (!conversationId || state.conv.id === conversationId) ? state.conv : null;
+    if (!conv || !hasVisualTools(conv, 'draw_blueprint')) return 0; // unknown, or a new conversation would be used
+    const last = turnsOf(conv).filter((t) => t.role === 'jarvis').pop();
+    return last ? Number(last.endedAt) || Number(last.createdAt) || 0 : 0;
+  }
+
+  /**
+   * "≈ $0.15": a blueprint is about 6K output tokens (with thinking) on the lead model, plus the
+   * conversation so far (about 45K tokens: tools, the hologram's spec). That prefix is a cheap cache
+   * read only while the cache is warm (5 minutes after the last request); later it is written again,
+   * which on Opus 5.5 makes it about $0.35.
+   */
+  function blueprintCost(conversationId) {
+    const last = lastRequestAt(conversationId);
+    const warm = last > 0 && Date.now() - last < 4.5 * 60 * 1000;
+    return costLabel(blueprintCostUsd(getSettings().leadModel, { warm }));
+  }
+
+  /** "Stop building" in a hologram viewer: Voice Mode's Stop when it runs the turn, else the chat's. */
+  function stopBuild({ conversationId } = {}) {
+    if (voiceApi && safe(() => isVoiceModeOpen(), false) && safe(() => voiceApi.stop(), false)) return;
+    const entry = conversationId ? state.runs.get(conversationId) : state.conv && state.runs.get(state.conv.id);
+    if (entry) safe(() => entry.run.abort());
   }
 
   function viewerDeps() {
@@ -822,13 +926,20 @@ export async function startApp(rootEl) {
       library: lib,
       stt,
       getSettings,
-      blueprintCost,
+      blueprintCost: (conversationId) => blueprintCost(conversationId),
       requestBlueprint: (req) => requestBlueprint(req),
       sendMessage: (text, opts) => sendFromViewer(text, opts),
       openBlueprint: (source) => openBlueprintSource(source),
-      openInChat: ({ conversationId, turnId } = {}) => showInChat(conversationId, turnId),
-      // Voice Mode open under the viewer: the mic button is its talk button.
-      voice: { active: () => !!voiceApi && safe(() => isVoiceModeOpen(), false), tap: () => voiceApi && voiceApi.tap() },
+      // Voice Mode covers the chat: "Open in chat" leaves it (as Exit does: a running reply carries
+      // on in the chat), so the reply, details below its --- line included, is what shows.
+      openInChat: ({ conversationId, turnId } = {}) => {
+        if (voiceApi && safe(() => isVoiceModeOpen(), false)) safe(() => voiceApi.close());
+        showInChat(conversationId, turnId);
+      },
+      stopBuild: (opts) => stopBuild(opts),
+      // Voice Mode open under the viewer: the mic button is its talk button (while a hologram it
+      // builds is shown, a tap listens for a command instead of stopping him: Voice Mode decides).
+      voice: { active: () => !!voiceApi && safe(() => isVoiceModeOpen(), false), tap: () => voiceApi && voiceApi.viewerTap() },
       onClose: () => onViewerClosed(),
     };
   }
@@ -2143,7 +2254,9 @@ export async function startApp(rootEl) {
       const conv = await store.get(saved.id).catch(() => null);
       // A slow start: the owner may already have opened or started a chat while this loaded.
       if (state.conv || state.runs.size) return;
-      if (conv && conv.turns && conv.turns.length) {
+      // A chat from before holograms is not reopened (its tools can't show one): the first launch
+      // after the update starts on the home screen, and the old chat waits in History.
+      if (conv && conv.turns && conv.turns.length && (state.demo || hasVisualTools(conv, 'show_hologram'))) {
         setConversation(conv);
         return;
       }

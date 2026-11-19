@@ -760,7 +760,7 @@ const v3 = (description) => ({ type: 'array', items: { type: 'number' }, minItem
 
 export const SHOW_HOLOGRAM_DESCRIPTION = [
   'Show the owner an interactive 3D hologram of a physical object, built from simple shapes with every part labeled. The owner can rotate and zoom it, expand it into an exploded view, tap a part to read about it, and ask for a 2D blueprint later (only built when they ask).',
-  'Use it when the owner asks to see, show, pull up or understand how something physical is built or works, or asks for a diagram or blueprint of an object (the hologram always comes first). Model the specific object (the exact make, model, version or size when given), with real dimensions and real part positions: research them first when you are not sure.',
+  'Use it when the owner asks to see, show, pull up or understand how something physical is built or works, including when they ask for a diagram or blueprint of it: the hologram is the answer, and a 2D sheet comes only if they ask for one after seeing it. Model the specific object (the exact make, model, version or size when given), with real dimensions and real part positions: research them first when you are not sure.',
   'The parts appear one by one while you write the input, so write the large recognizable structure first (a car body and wheels, a battery can) and smaller or inner parts after, and write each part\'s fields in the order listed (shapes last). Then say in a sentence or two what the owner is looking at; the labels and part cards carry the details.',
 ].join('\n\n');
 

@@ -54,7 +54,9 @@ export default [
       const [lead] = t.requests('lead');
       t.assert(lead, 'The app should have sent a lead request');
       const b = lead.body;
-      t.assert(b.model === 'claude-opus-5-5' && b.max_tokens === 16000, 'Lead request: claude-opus-5-5 with max_tokens 16000 (Balanced depth; engine hardening P2c)');
+      // A new conversation can show holograms (lead tools V4): the Balanced lead budget has room for
+      // a vehicle hologram plus thinking (visualLeadMaxTokens, SPEC §16); older ones keep 16000.
+      t.assert(b.model === 'claude-opus-5-5' && b.max_tokens === 32000, `Lead request: claude-opus-5-5 with max_tokens 32000 (Balanced depth in a conversation with the hologram tools; engine hardening P2c); got ${b.model} / ${b.max_tokens}`);
       t.assert(b.stream === true, 'Lead requests stream');
       t.assert(b.thinking?.type === 'adaptive' && b.thinking?.display === 'summarized', 'Lead request: adaptive thinking, display summarized');
       t.assert(b.output_config?.effort === 'medium', 'Lead request: effort medium for the balanced depth');

@@ -83,7 +83,7 @@ export const LIMITS = Object.freeze({
 
 export const DRAW_BLUEPRINT_DESCRIPTION = `Draw a 2D engineering blueprint sheet: blueprint paper with a grid, white linework, numbered callouts tied to a parts list, dimensions, notes, sources and a title block. The app renders it on the owner's screen (zoom, tap a callout, download SVG or PNG) and saves it in their library.
 
-Call it only when the owner asks for a 2D drawing, blueprint or diagram: of an object, of one part of a hologram, or of how something is made ("process" sheet). Every sheet costs the owner money, so never draw one unprompted, and when the Saved list in <turn_context> already has it, call open_saved instead.
+Call it only when the owner asks for a 2D sheet of a hologram already shown: a "Blueprint request" block in <turn_context>, or words asking for a 2D or flat sheet of it or of one of its parts. A sheet may show a part, the whole object or how it is made ("process" sheet). A first request that says "diagram", "blueprint" or "how it's made" gets show_hologram instead. Every sheet costs the owner money, so never draw one unprompted, and when the Saved list in <turn_context> already has it, call open_saved instead.
 
 Work out the real geometry first (research when needed) and draw to one consistent scale so proportions are believable; fewer correct lines beat many vague ones. Follow the field descriptions for layout, line styles, hatching, callouts and dimensions.`;
 

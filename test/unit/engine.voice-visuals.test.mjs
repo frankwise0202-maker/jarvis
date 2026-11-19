@@ -27,6 +27,7 @@ import { createMockFetch } from '../mock/anthropic-mock.mjs';
 import { turnContextOf as mockContextOf } from '../mock/content.mjs';
 import { blueprintRequestOf, loadFixture, savedIdsOf, spokenName, turnContextText } from '../mock/visuals.mjs';
 import { blk, collect, createFakeLibrary, createHarness, segmentsOf } from './engine.support.test.mjs';
+import { BLUEPRINT_STOPPED } from '../../src/engine/lead.js';
 
 const FIXED = new Date('2026-11-19T21:35:00Z');
 const FIXED_NOW = () => FIXED;
@@ -228,4 +229,140 @@ test('mock: spokenName says a title or part the way it sounds after a verb', () 
   assert.equal(spokenName('Steel can (+)'), 'the steel can');
   assert.equal(spokenName('The rotor'), 'the rotor');
   assert.equal(spokenName(''), 'it');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Stop on a 2D request: its "Blueprint request … call draw_blueprint" never outlives the Stop
+
+const userTexts = (body) => body.messages.filter((m) => m.role === 'user').flatMap((m) => m.content.filter((b) => b.type === 'text').map((b) => b.text));
+
+test('Stop on a spoken 2D request before any reply: the request leaves the history (nothing was built on it), so the next question carries no Blueprint request', async () => {
+  const library = createFakeLibrary();
+  const spec = normalizeHologramSpec(fixture('battery')).spec;
+  library.add({ id: 'lib_battery0001', kind: 'hologram', title: spec.title, subject: spec.subtitle, spec, stats: { parts: 9, shapes: 10 } });
+  let h;
+  h = createHarness({
+    library,
+    now: FIXED_NOW,
+    handler: () => (h.api.requests.length === 1 ? { content: [blk.text('Drawing the blueprint of the separator now.')], stop: 'end_turn', delayMs: 200 } : answer('It keeps the zinc and the cathode apart.')),
+  });
+  const conv = h.jarvis.newConversation();
+  const run = h.jarvis.startTurn(conv, { text: 'Blueprint: Separator (AA alkaline battery (LR6))', mode: 'quick', spoken: true, keepOnStop: true, blueprintFor: { model: 'lib_battery0001', part: 'separator' } });
+  // Stopped once its request is on the way (the owner changed their mind).
+  await new Promise((resolve) => {
+    const poll = setInterval(() => {
+      if (h.api.requests.length >= 1) {
+        clearInterval(poll);
+        resolve();
+      }
+    }, 1);
+  });
+  assert.match(contextOf(h.api.requests[0].body), /Blueprint request \(the owner asked for this 2D blueprint\)/, 'the request did carry the block');
+  run.abort();
+  const stopped = await run.done;
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.withdrawn, undefined, 'Voice Mode puts nothing back in a message box');
+  assert.deepEqual(conv.apiMessages, [], 'the 2D request left the history');
+  assert.equal(conv.turns.filter((t) => t.role === 'user').length, 1, 'the transcript keeps it');
+  const next = h.jarvis.startTurn(conv, { text: 'What does the separator do?', mode: 'auto', spoken: true, keepOnStop: true });
+  const { turn } = await collect(next);
+  assert.equal(turn.status, 'done');
+  const body = h.api.requests.at(-1).body;
+  assert.deepEqual(body.messages.map((m) => m.role), ['user']);
+  assert.doesNotMatch(JSON.stringify(body.messages), /Blueprint request/);
+  assert.doesNotMatch(userTexts(body).join('\n'), /call draw_blueprint/i);
+});
+
+test('Stop on a chat 2D request while only its blueprint card is drawing: the request leaves the history, the card ends incomplete, and the next request carries no Blueprint request', async () => {
+  const library = createFakeLibrary();
+  const spec = normalizeHologramSpec(fixture('battery')).spec;
+  library.add({ id: 'lib_battery0001', kind: 'hologram', title: spec.title, subject: spec.subtitle, spec, stats: { parts: 9, shapes: 10 } });
+  let h;
+  h = createHarness({
+    library,
+    liveIntervalMs: 0,
+    now: FIXED_NOW,
+    handler: () => (h.api.requests.length === 1 ? { content: [blk.blueprint('toolu_bp', fixture('battery-cutaway'))], stop: 'tool_use', delayMs: 2 } : answer('It is sunny.')),
+  });
+  const conv = h.jarvis.newConversation();
+  const run = h.jarvis.startTurn(conv, { text: 'Blueprint: Separator (AA alkaline battery (LR6))', mode: 'quick', blueprintFor: { model: 'lib_battery0001', part: 'separator' } });
+  run.on('segment', (e) => {
+    if (e.segment.kind === 'blueprint' && e.segment.stats.shapes >= 10) run.abort();
+  });
+  const stopped = await run.done;
+  assert.equal(stopped.status, 'stopped');
+  const [card] = segmentsOf(stopped, 'blueprint');
+  assert.equal(card.status, 'error', 'the card stays, incomplete');
+  assert.equal(card.libraryId, null, 'nothing saved');
+  assert.deepEqual(conv.apiMessages, [], 'the 2D request left the history');
+  const { turn } = await collect(h.jarvis.startTurn(conv, { text: 'Never mind. What is the weather like?', mode: 'auto' }));
+  assert.equal(turn.status, 'done');
+  const body = h.api.requests.at(-1).body;
+  assert.deepEqual(body.messages.map((m) => m.role), ['user']);
+  assert.doesNotMatch(JSON.stringify(body.messages), /Blueprint request/);
+});
+
+test('Stop on a 2D request after a tool round of it reached the history: an assistant line closes it, so the next request is valid and says it was stopped', async () => {
+  const library = createFakeLibrary();
+  const spec = normalizeHologramSpec(fixture('battery')).spec;
+  library.add({ id: 'lib_battery0001', kind: 'hologram', title: spec.title, subject: spec.subtitle, spec, stats: { parts: 9, shapes: 10 } });
+  let h;
+  h = createHarness({
+    library,
+    now: FIXED_NOW,
+    handler: () => {
+      const n = h.api.requests.length;
+      if (n === 1) return { content: [blk.memory('toolu_mem', 'add', 'The owner is restoring an AA battery collection.')], stop: 'tool_use' };
+      if (n === 2) return { content: [blk.text('Drawing the blueprint of the separator now.')], stop: 'end_turn', delayMs: 200 };
+      return answer('It keeps the zinc and the cathode apart.');
+    },
+  });
+  const conv = h.jarvis.newConversation();
+  const run = h.jarvis.startTurn(conv, { text: 'Blueprint: Separator (AA alkaline battery (LR6))', mode: 'quick', spoken: true, keepOnStop: true, blueprintFor: { model: 'lib_battery0001', part: 'separator' } });
+  await new Promise((resolve) => {
+    const poll = setInterval(() => {
+      if (h.api.requests.length >= 2) {
+        clearInterval(poll);
+        resolve();
+      }
+    }, 1);
+  });
+  run.abort();
+  const stopped = await run.done;
+  assert.equal(stopped.status, 'stopped');
+  assert.deepEqual(conv.apiMessages.map((m) => m.role), ['user', 'assistant', 'user', 'assistant']);
+  assert.deepEqual(conv.apiMessages.at(-1).content, [{ type: 'text', text: BLUEPRINT_STOPPED }]);
+  const { turn } = await collect(h.jarvis.startTurn(conv, { text: 'What does the separator do?', mode: 'auto', spoken: true, keepOnStop: true }));
+  assert.equal(turn.status, 'done');
+  const body = h.api.requests.at(-1).body;
+  assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user', 'assistant', 'user'], 'roles alternate');
+  assert.match(JSON.stringify(body.messages.at(-2)), /stopped this blueprint request before the blueprint was drawn/);
+});
+
+test('a 2D request whose blueprint was drawn keeps its exchange when the closing words are stopped (as before)', async () => {
+  const library = createFakeLibrary();
+  const spec = normalizeHologramSpec(fixture('battery')).spec;
+  library.add({ id: 'lib_battery0001', kind: 'hologram', title: spec.title, subject: spec.subtitle, spec, stats: { parts: 9, shapes: 10 } });
+  let h;
+  h = createHarness({
+    library,
+    now: FIXED_NOW,
+    handler: () => (h.api.requests.length === 1 ? { content: [blk.blueprint('toolu_bp', fixture('battery-cutaway'))], stop: 'tool_use' } : { content: [blk.text('The blueprint of the separator is ready; it is open on your screen.')], stop: 'end_turn', delayMs: 200 }),
+  });
+  const conv = h.jarvis.newConversation();
+  const run = h.jarvis.startTurn(conv, { text: 'Blueprint: Separator (AA alkaline battery (LR6))', mode: 'quick', blueprintFor: { model: 'lib_battery0001', part: 'separator' } });
+  await new Promise((resolve) => {
+    const poll = setInterval(() => {
+      if (h.api.requests.length >= 2) {
+        clearInterval(poll);
+        resolve();
+      }
+    }, 1);
+  });
+  run.abort();
+  const stopped = await run.done;
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(segmentsOf(stopped, 'blueprint')[0].status, 'done', 'the sheet was drawn and saved');
+  assert.deepEqual(conv.apiMessages.map((m) => m.role), ['user', 'assistant', 'user'], 'the drawn request and its result stay');
+  assert.doesNotMatch(JSON.stringify(conv.apiMessages), /stopped this blueprint request/);
 });
