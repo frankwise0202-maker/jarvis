@@ -26,6 +26,8 @@ function setup() {
     persist: async (conv) => structuredClone(conv),
     clientOptions: { maxRetries: 0 },
     retryBaseMs: 20,
+    workerStaggerMs: 5,
+    maxRetryWaitMs: 200,
   });
   return { jarvis, mock: fetch.mock, memory };
 }

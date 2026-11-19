@@ -3,7 +3,7 @@
 // (thinking blocks are bound to the exact prefix), and workers share one prefix so it caches.
 // Never interpolate dates, names or settings into them; per-turn data goes in <turn_context>.
 
-import { DEPTHS } from './models.js';
+import { DEPTHS, MODELS } from './models.js';
 import { singleLine } from './util.js';
 
 export const LEAD_SYSTEM_V1 = `You are Jarvis, a personal AI assistant to one person, the owner. You run in their browser and on their phone. You can answer from your own knowledge, search the web and read pages, remember facts the owner asks you to keep, and deploy a team of research agents that work in parallel.
@@ -202,12 +202,32 @@ export function styleLine(tone, verbosity) {
 /** Server-tool budgets per lead request. Fixed for the life of a conversation (tools are frozen). */
 export const LEAD_WEB_SEARCH_MAX_USES = 10;
 export const LEAD_WEB_FETCH_MAX_USES = 8;
+/** Page text a web_fetch may bring back (tokens): long pages are cut instead of filling the context. */
+export const LEAD_WEB_FETCH_MAX_CONTENT_TOKENS = 12000;
+export const WORKER_WEB_FETCH_MAX_CONTENT_TOKENS = 8000;
 
 /** The lead's tool list, version 1. A fresh deep copy each call; conversations store it frozen. */
 export function leadToolsV1() {
+  return leadTools({ fetchMaxContentTokens: null });
+}
+
+/**
+ * Version 2 (wave B, new conversations): web_fetch brings back at most
+ * LEAD_WEB_FETCH_MAX_CONTENT_TOKENS of page text. Everything else is as in V1.
+ */
+export function leadToolsV2() {
+  return leadTools({ fetchMaxContentTokens: LEAD_WEB_FETCH_MAX_CONTENT_TOKENS });
+}
+
+/** The lead tools new conversations freeze. */
+export const leadToolsLatest = leadToolsV2;
+
+function leadTools({ fetchMaxContentTokens }) {
+  const fetch = { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: LEAD_WEB_FETCH_MAX_USES };
+  if (fetchMaxContentTokens) fetch.max_content_tokens = fetchMaxContentTokens;
   return [
     { type: 'web_search_20260209', name: 'web_search', max_uses: LEAD_WEB_SEARCH_MAX_USES },
-    { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: LEAD_WEB_FETCH_MAX_USES },
+    fetch,
     {
       name: 'deploy_agents',
       description: DEPLOY_AGENTS_DESCRIPTION,
@@ -250,12 +270,22 @@ export function leadToolsV1() {
   ];
 }
 
-/** Worker tools for a depth: constant per depth so every worker request shares the cached prefix. */
-export function workerTools(depthKey) {
+/**
+ * Worker tools for a depth and model: constant per (depth, model) so every worker request shares
+ * the cached prefix. Claude Haiku 5.5 is not listed for the dynamic-filtering tool versions
+ * (web_search_20260209 / web_fetch_20260209), so Haiku agents get the basic versions.
+ */
+export function workerTools(depthKey, model) {
   const depth = DEPTHS[depthKey] || DEPTHS.balanced;
+  const basic = MODELS[model]?.bucket === 'haiku' || /haiku/i.test(String(model || ''));
   return [
-    { type: 'web_search_20260209', name: 'web_search', max_uses: depth.workerSearches },
-    { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: depth.workerFetches },
+    { type: basic ? 'web_search_20250305' : 'web_search_20260209', name: 'web_search', max_uses: depth.workerSearches },
+    {
+      type: basic ? 'web_fetch_20250910' : 'web_fetch_20260209',
+      name: 'web_fetch',
+      max_uses: depth.workerFetches,
+      max_content_tokens: WORKER_WEB_FETCH_MAX_CONTENT_TOKENS,
+    },
   ];
 }
 

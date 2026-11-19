@@ -5,7 +5,7 @@
 import { runAgent } from './worker.js';
 import { emptyUsage } from './stream.js';
 import { validateDeployInput, LIMITS } from './validate.js';
-import { hostnameOf, isPlainObject, parsePartialJson, singleLine, truncate, uid } from './util.js';
+import { hostnameOf, isPlainObject, parsePartialJson, singleLine, sleep, truncate, uid } from './util.js';
 
 export const CODENAMES = Object.freeze([
   'Atlas', 'Nova', 'Echo', 'Vega', 'Orion', 'Lyra', 'Juno', 'Kepler', 'Iris', 'Sable', 'Quill', 'Rook',
@@ -166,15 +166,26 @@ export function startDeploy(ctx, toolUse, { planned, req }) {
   return { mission, done: runMission(ctx, mission, mission.agents) };
 }
 
-/** Runs the given agents of a mission concurrently; never rejects. */
+/**
+ * Runs the given agents of a mission concurrently; never rejects. Their first requests are
+ * staggered (ctx.workerStaggerMs apart) so a wave does not hit the API as one burst.
+ */
 export async function runMission(ctx, mission, agents) {
   mission.status = 'running';
   if (!mission.startedAt) mission.startedAt = ctx.stamp();
   mission.endedAt = null;
   ctx.emit('mission', { turn: ctx.turn, mission });
-  await Promise.all(agents.map((agent) => runAgent(ctx, mission, agent).catch((err) => {
-    console.error('[jarvis] agent runner failed:', err);
-  })));
+  const stagger = Math.max(0, Number(ctx.workerStaggerMs) || 0);
+  await Promise.all(agents.map(async (agent, i) => {
+    if (stagger && i > 0) {
+      agent.activity = 'Lined up to start';
+      ctx.emit('agent', { turn: ctx.turn, mission, agent });
+      await sleep(i * stagger, ctx.signal).catch(() => {}); // on Stop, runAgent marks the agent stopped
+    }
+    return runAgent(ctx, mission, agent).catch((err) => {
+      console.error('[jarvis] agent runner failed:', err);
+    });
+  }));
   mission.endedAt = ctx.stamp();
   mission.status = missionStatus(mission);
   ctx.emit('mission', { turn: ctx.turn, mission });

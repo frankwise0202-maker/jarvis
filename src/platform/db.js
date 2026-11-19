@@ -137,9 +137,19 @@ export function conversationMeta(conv) {
   let lastUser = '';
   let firstUser = '';
   for (const t of turns) {
-    if (isPlainObject(t) && t.role === 'user' && typeof t.text === 'string' && t.text.trim()) {
-      if (!firstUser) firstUser = t.text;
-      lastUser = t.text;
+    if (!isPlainObject(t) || t.role !== 'user') continue;
+    let line = typeof t.text === 'string' ? t.text : '';
+    // Attachment-only messages have no text: describe the files instead so the
+    // history row isn't blank ("Shared a photo: kitchen.jpg").
+    if (!line.trim() && Array.isArray(t.attachments) && t.attachments.length) {
+      const names = t.attachments.map((a) => (isPlainObject(a) && typeof a.name === 'string' ? a.name : '')).filter(Boolean);
+      const allImages = t.attachments.every((a) => isPlainObject(a) && a.kind === 'image');
+      const what = t.attachments.length === 1 ? (allImages ? 'a photo' : 'a file') : `${t.attachments.length} ${allImages ? 'photos' : 'files'}`;
+      line = `Shared ${what}${names.length ? `: ${names.join(', ')}` : ''}`;
+    }
+    if (line.trim()) {
+      if (!firstUser) firstUser = line;
+      lastUser = line;
     }
   }
   const created = finite(conv.createdAt) ?? finite(conv.updatedAt) ?? Date.now();

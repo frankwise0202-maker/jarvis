@@ -14,10 +14,15 @@ import {
   sourceFromCitation,
 } from './stream.js';
 import { classifyError, isAbortError } from './client.js';
-import { abortError, formatLocalTime, hostnameOf, parsePartialJson, sleep, truncate } from './util.js';
+import { RETRY_ATTEMPTS, countdown, retryDelayMs, retryLabel, shouldRetry } from './retry.js';
+import { abortError, formatLocalTime, hostnameOf, parsePartialJson, truncate } from './util.js';
 
-export const WORKER_MAX_TOKENS = 32000;
-export const WORKER_MAX_ATTEMPTS = 3;
+/** Default worker max_tokens (balanced depth); each depth sets its own (models.js DEPTHS.workerMaxTokens). */
+export const WORKER_MAX_TOKENS = 12000;
+/** Attempts for a rate-limited agent (retry.js RETRY_ATTEMPTS has every kind). */
+export const WORKER_MAX_ATTEMPTS = RETRY_ATTEMPTS.rate_limit;
+/** Workers make no SDK retries: every wait is the engine's, and visible on the agent's card. */
+export const WORKER_SDK_MAX_RETRIES = 0;
 export const MAX_CONTINUATIONS = 6;
 export const AGENT_EMIT_INTERVAL_MS = 100; // ≤ 10 agent events per second per agent
 const MAX_SOURCES = 30;
@@ -225,6 +230,13 @@ export function composeReport(contents) {
   return (start > 0 ? texts.slice(start) : texts).join('\n\n');
 }
 
+/** The container's id while it has more than a minute left (no expiry given: assume it is alive). */
+function liveContainerId(container) {
+  if (!container || typeof container.id !== 'string' || !container.id) return null;
+  const expires = Date.parse(container.expires_at || '');
+  return !Number.isFinite(expires) || expires - Date.now() > 60 * 1000 ? container.id : null;
+}
+
 function refusalInfo(message) {
   const category = message?.stop_details?.category;
   return {
@@ -257,10 +269,12 @@ async function runAttempt(ctx, mission, agent, emit) {
     location: ctx.settings.location,
   });
   const messages = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
-  const tools = agent.web ? workerTools(ctx.depthKey) : undefined;
+  const tools = agent.web ? workerTools(ctx.depthKey, agent.model) : undefined;
   const tracker = createSourceTracker();
   const contents = [];
   let continuations = 0;
+  // The code-execution container the web tools ran in; continuations (pause_turn) must name it.
+  let container = null;
 
   for (;;) {
     const view = createAgentView(agent, emit, tracker);
@@ -268,16 +282,24 @@ async function runAttempt(ctx, mission, agent, emit) {
       ctx,
       (features) => buildMessageParams({
         model: agent.model,
-        maxTokens: WORKER_MAX_TOKENS,
+        maxTokens: ctx.maxTokensFor(agent.model, ctx.depth.workerMaxTokens || WORKER_MAX_TOKENS),
         system: WORKER_SYSTEM_V1,
         tools,
         messages: [...messages],
         showThinking: ctx.settings.showThinking,
         effort: ctx.depth.workerEffort,
         features,
+        container: liveContainerId(container),
       }),
       view.onEvent,
+      {
+        requestOptions: { maxRetries: ctx.sdkRetries(WORKER_SDK_MAX_RETRIES) },
+        onContainerRejected: () => {
+          container = null;
+        },
+      },
     );
+    if (message.container && typeof message.container.id === 'string') container = message.container;
     ctx.accountUsage(message, agent.model, { mission, agent });
     const content = echoContent(message.content);
     view.finalize(content);
@@ -325,26 +347,39 @@ export async function runAgent(ctx, mission, agent) {
       } finally {
         release();
       }
-      if (!failure) return;
+      if (!failure) {
+        limiter.succeed(); // a calmer moment: win back a slot after rate limiting
+        return;
+      }
       if (ctx.signal.aborted || isAbortError(failure)) throw failure;
 
       const info = classifyError(failure, { model: agent.model });
-      if (info.kind === 'network') {
-        finishAgent(ctx, agent, 'interrupted', 'Connection lost — waiting to resume', info);
+      if (!shouldRetry(failure, info, agent.attempts)) {
+        if (info.kind === 'network') finishAgent(ctx, agent, 'interrupted', 'Connection lost — waiting to resume', info);
+        else finishAgent(ctx, agent, 'error', info.message, info);
         return;
       }
-      if ((info.kind === 'rate_limit' || info.kind === 'overloaded') && agent.attempts < WORKER_MAX_ATTEMPTS) {
-        const capacity = limiter.reduce();
-        const what = info.kind === 'rate_limit' ? 'Rate limit reached' : 'Claude is overloaded';
-        ctx.missionNotice(mission, `${what} — slowing to ${capacity} agent${capacity === 1 ? '' : 's'} at once`);
-        const waitMs = Math.max(0, ctx.retryBaseMs * agent.attempts);
-        setState(agent, 'queued', `${info.kind === 'rate_limit' ? 'Rate limited' : 'Busy'} — retrying in ${Math.max(1, Math.round(waitMs / 1000))}s`);
-        emit(true);
-        await sleep(waitMs, ctx.signal);
-        continue;
+      if (info.kind === 'rate_limit' || info.kind === 'overloaded') {
+        // Agents rejected together are one episode: the bucket slows down by one slot, once.
+        const { reduced, capacity } = limiter.penalize();
+        if (reduced) {
+          const what = info.kind === 'rate_limit' ? 'Rate limit reached' : 'Claude is overloaded';
+          ctx.missionNotice(mission, `${what} — slowing to ${capacity} agent${capacity === 1 ? '' : 's'} at once`);
+        }
+        if (info.kind === 'rate_limit' && agent.attempts >= 2) ctx.lowLimitsNotice();
       }
-      finishAgent(ctx, agent, 'error', info.message, info);
-      return;
+      // A transient server error (also one that arrives mid-stream) is retried without slowing down.
+      const waitMs = retryDelayMs(failure, agent.attempts, { baseMs: ctx.retryBaseMs, maxWaitMs: ctx.maxRetryWaitMs });
+      const label = retryLabel(info.kind);
+      setState(agent, 'queued', `${label} — retrying in ${Math.max(1, Math.ceil(waitMs / 1000))}s`);
+      emit(true);
+      await countdown(waitMs, ctx.signal, (s) => {
+        const activity = `${label} — retrying in ${s}s`;
+        if (agent.activity !== activity) {
+          agent.activity = activity;
+          emit();
+        }
+      });
     }
   } catch (err) {
     if (ctx.signal.aborted || isAbortError(err)) {

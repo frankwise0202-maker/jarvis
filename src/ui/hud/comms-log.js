@@ -46,10 +46,11 @@ function titleCase(who) {
 }
 
 /**
- * @param {{ variant?: 'sheet'|'panel', open?: boolean }} [opts]
+ * @param {{ variant?: 'sheet'|'panel', open?: boolean, onToggle?: (open: boolean) => void }} [opts]
  */
 export function createCommsLog(opts = {}) {
   const variant = opts.variant === 'sheet' ? 'sheet' : 'panel';
+  const onToggle = typeof opts.onToggle === 'function' ? opts.onToggle : null;
   const id = `hud-comms-${++seq}`;
   let open = typeof opts.open === 'boolean' ? opts.open : openPref[variant] ?? variant === 'panel';
 
@@ -397,21 +398,35 @@ export function createCommsLog(opts = {}) {
   function queueAnnouncements(list) {
     for (const e of list) {
       if (e.replay || (e.kind !== 'done' && e.kind !== 'fail')) continue;
-      announceQueue.push(`${titleCase(e.who)}: ${e.text}.`);
+      announceQueue.push({ kind: e.kind, name: titleCase(e.who), text: e.text });
     }
     if (!announceQueue.length || announceTimer) return;
     const wait = Math.max(600, lastAnnounceAt + ANNOUNCE_MS - Date.now());
     announceTimer = setTimeout(flushAnnouncements, wait);
   }
 
+  // Spoken as sentences: "Nova, Atlas and Echo filed reports. Vega failed: rate limited."
   function flushAnnouncements() {
     announceTimer = 0;
     const items = announceQueue;
     announceQueue = [];
     if (disposed || !open || !el.isConnected || document.hidden || !items.length) return;
     lastAnnounceAt = Date.now();
-    const head = items.slice(0, 3).join(' ');
-    setText(announcer, items.length > 3 ? `${head} And ${items.length - 3} more.` : head);
+    const names = items.filter((i) => i.kind === 'done').map((i) => i.name);
+    const fails = items.filter((i) => i.kind === 'fail');
+    const parts = [];
+    if (names.length) {
+      const who =
+        names.length === 1
+          ? names[0]
+          : names.length <= 3
+            ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+            : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+      parts.push(`${who} ${names.length === 1 ? 'filed a report' : 'filed reports'}.`);
+    }
+    for (const f of fails.slice(0, 2)) parts.push(`${f.name} ${f.text}.`);
+    if (fails.length > 2) parts.push(`${fails.length - 2} more agents failed.`);
+    setText(announcer, parts.join(' '));
   }
 
   // --- public -----------------------------------------------------------------------------------
@@ -431,6 +446,18 @@ export function createCommsLog(opts = {}) {
     } else {
       syncJump();
     }
+    if (onToggle) onToggle(open);
+  }
+
+  // Height of the scrolling screen in px (the host fits it to the room it has; CSS has a default).
+  let screenHeight = '';
+  function setScreenHeight(px) {
+    const value = Number.isFinite(px) && px > 0 ? `${Math.round(px)}px` : '';
+    if (value === screenHeight) return;
+    screenHeight = value;
+    if (value) el.style.setProperty('--hud-comms-h', value);
+    else el.style.removeProperty('--hud-comms-h');
+    if (open && atBottom) scrollSoon();
   }
 
   function update(turn) {
@@ -482,6 +509,10 @@ export function createCommsLog(opts = {}) {
     update,
     setOpen: (v) => setOpen(v, false),
     isOpen: () => open,
+    /** Set the screen (log box) height in px; 0 restores the stylesheet default. */
+    setScreenHeight,
+    /** Viewport y of the screen's top edge (for hosts that fit the screen to their room). */
+    screenTop: () => log.getBoundingClientRect().top,
     dispose,
   };
 }

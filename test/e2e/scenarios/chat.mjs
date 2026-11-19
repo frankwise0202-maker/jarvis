@@ -54,7 +54,7 @@ export default [
       const [lead] = t.requests('lead');
       t.assert(lead, 'The app should have sent a lead request');
       const b = lead.body;
-      t.assert(b.model === 'claude-opus-5-5' && b.max_tokens === 64000, 'Lead request: claude-opus-5-5 with max_tokens 64000 (SPEC §8.2)');
+      t.assert(b.model === 'claude-opus-5-5' && b.max_tokens === 16000, 'Lead request: claude-opus-5-5 with max_tokens 16000 (Balanced depth; engine hardening P2c)');
       t.assert(b.stream === true, 'Lead requests stream');
       t.assert(b.thinking?.type === 'adaptive' && b.thinking?.display === 'summarized', 'Lead request: adaptive thinking, display summarized');
       t.assert(b.output_config?.effort === 'medium', 'Lead request: effort medium for the balanced depth');

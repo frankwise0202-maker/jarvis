@@ -28,14 +28,19 @@ import {
 } from './mission.js';
 import { invalidJsonResult, parseToolJson, validateMemoryInput } from './validate.js';
 import { isAttachmentBlock } from './attachments.js';
-import { MODELS } from './models.js';
+import { PRICES } from './models.js';
+import { countdown, retryDelayMs, retryLabel, shouldRetry } from './retry.js';
 import { abortError, jsonCopy, parsePartialJson, sleep, uid } from './util.js';
 
-export const LEAD_MAX_TOKENS = 64000;
+/** Default lead max_tokens (balanced depth); each depth sets its own (models.js DEPTHS.leadMaxTokens). */
+export const LEAD_MAX_TOKENS = 16000;
 export const MAX_LEAD_REQUESTS = 12;
 export const MAX_CONTINUATIONS = 6;
+/** The SDK makes one quick retry; longer, visible waits are the engine's (retry.js). */
+export const LEAD_SDK_MAX_RETRIES = 1;
 const MAX_JSON_RETRIES = 2;
-const MAX_LEAD_RETRIES = 2;
+/** Waits shorter than this skip the on-screen countdown. */
+const COUNTDOWN_MIN_MS = 1500;
 
 export const STOPPED_BY_OWNER = 'Stopped by the owner.';
 
@@ -58,7 +63,7 @@ function refusalInfo(message) {
   };
 }
 
-const modelName = (id) => MODELS[id]?.label || String(id || 'another model');
+const modelName = (id) => PRICES[id]?.label || String(id || 'another model');
 
 function finalToolInput(raw) {
   try {
@@ -269,7 +274,7 @@ function discardRequest(ctx, req) {
 function leadParams(ctx, features) {
   return buildMessageParams({
     model: ctx.leadModel,
-    maxTokens: LEAD_MAX_TOKENS,
+    maxTokens: ctx.maxTokensFor(ctx.leadModel, ctx.depth.leadMaxTokens || LEAD_MAX_TOKENS),
     system: ctx.conv.system,
     tools: ctx.conv.tools,
     messages: [...ctx.conv.apiMessages, ...ctx.paused],
@@ -277,21 +282,53 @@ function leadParams(ctx, features) {
     effort: ctx.depth.leadEffort,
     features,
     compaction: true,
+    container: ctx.leadContainer(),
+    dropMismatchedThinking: ctx.conv.dropMismatchedThinking === true,
   });
 }
 
 /**
- * One lead request (index `req`), retried in place for a malformed tool-input stream and for
- * retryable API errors the SDK could not retry (e.g. an overloaded error mid-stream).
+ * Waits before a retry. Long waits show a live countdown in the turn (a notice segment that is
+ * removed when the wait ends), so a rate limit never looks like a silent stall.
+ */
+async function waitToRetry(ctx, req, ms, label) {
+  if (ms < COUNTDOWN_MIN_MS) return sleep(ms, ctx.signal);
+  const seg = ctx.addSegment({ id: uid(), kind: 'notice', level: 'warn', text: '', req, transient: true });
+  try {
+    await countdown(ms, ctx.signal, (s) => {
+      const text = `${label} — retrying in ${s}s`;
+      if (seg.text !== text) {
+        seg.text = text;
+        ctx.touchSegment(seg);
+      }
+    });
+  } finally {
+    ctx.removeSegments((x) => x === seg);
+  }
+}
+
+/**
+ * One lead request (index `req`), retried in place for a malformed tool-input stream and, with
+ * visible waits, for rate limits, overload, transient server errors (also mid-stream) and
+ * connection failures before any output (retry.js). The SDK itself retries at most once.
  */
 async function leadRequest(ctx, req) {
   let jsonRetries = 0;
-  let apiRetries = 0;
+  let attempts = 0;
   for (;;) {
     const view = createLeadView(ctx, req);
     try {
-      const result = await requestWithFeatureFallback(ctx, (features) => leadParams(ctx, features), view.onEvent);
+      const result = await requestWithFeatureFallback(ctx, (features) => leadParams(ctx, features), view.onEvent, {
+        requestOptions: { maxRetries: ctx.sdkRetries(LEAD_SDK_MAX_RETRIES) },
+        onContainerRejected: () => {
+          ctx.conv.container = null;
+        },
+        onThinkingMismatch: () => {
+          ctx.conv.dropMismatchedThinking = true; // keep sending drop_block for this conversation
+        },
+      });
       view.finalize(result.message.content);
+      ctx.adoptContainer(result.message.container);
       return { ...result, planning: view.planning };
     } catch (err) {
       if (ctx.stopped || isAbortError(err)) throw err;
@@ -301,16 +338,14 @@ async function leadRequest(ctx, req) {
         continue;
       }
       const info = classifyError(err, { model: ctx.leadModel });
-      if (info.retryable && info.kind !== 'network' && apiRetries < MAX_LEAD_RETRIES) {
-        apiRetries += 1;
-        const waitMs = Math.max(0, ctx.retryBaseMs * apiRetries);
-        discardRequest(ctx, req);
-        const what = info.kind === 'rate_limit' ? 'Rate limit hit' : 'Claude is busy';
-        ctx.notice('warn', `${what} — retrying in ${Math.max(1, Math.round(waitMs / 1000))}s`);
-        await sleep(waitMs, ctx.signal);
-        continue;
-      }
-      throw err;
+      attempts += 1;
+      if (!shouldRetry(err, info, attempts)) throw err;
+      discardRequest(ctx, req);
+      const waitMs = retryDelayMs(err, attempts, { baseMs: ctx.retryBaseMs, maxWaitMs: ctx.maxRetryWaitMs });
+      if (info.kind === 'rate_limit' && attempts >= 2) ctx.lowLimitsNotice();
+      const label = retryLabel(info.kind);
+      ctx.notice('warn', `${label} — retrying in ${Math.max(1, Math.round(waitMs / 1000))}s`);
+      await waitToRetry(ctx, req, waitMs, label);
     }
   }
 }
@@ -580,6 +615,22 @@ function withdrawRejectedAttachments(ctx, info) {
   };
 }
 
+/**
+ * A refused turn leaves the history: everything it appended (the owner's message, assistant
+ * messages and tool results) is removed, so the refused request is never re-sent and cannot make
+ * later turns fail. Removing a trailing run of messages edits no earlier prefix, so the history
+ * check still passes. The transcript keeps the turn with its error.
+ */
+function removeTurnFromHistory(ctx) {
+  const start = ctx.turn.apiStart;
+  const messages = ctx.conv.apiMessages;
+  ctx.round = null;
+  ctx.paused = [];
+  if (!Number.isInteger(start) || start < 0 || start > messages.length) return;
+  messages.length = start;
+  ctx.conv.updatedAt = ctx.stamp();
+}
+
 function failTurn(ctx, info, req) {
   if (ctx.round) closeRound(ctx, `Not completed: ${info.message}`);
   ctx.paused = [];
@@ -617,7 +668,10 @@ export async function runLeadTurn(ctx, { resume = false } = {}) {
       if (err instanceof RoundInterrupted) {
         return interruptTurn(ctx, { kind: 'network', message: ERROR_MESSAGES.network, retryable: true });
       }
-      if (err instanceof Refused) return failTurn(ctx, err.info, err.req);
+      if (err instanceof Refused) {
+        removeTurnFromHistory(ctx);
+        return failTurn(ctx, err.info, err.req);
+      }
       const info = classifyError(err, { model: ctx.leadModel });
       if (info.kind === 'network') return interruptTurn(ctx, info);
       if (info.kind === 'unknown') console.error('[jarvis] lead request failed:', err);

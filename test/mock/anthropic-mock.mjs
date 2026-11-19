@@ -15,7 +15,7 @@
 import { classifyRequest, createBehaviorState, planResponse } from './behavior.mjs';
 import { describeAttachmentBlock, parseDirectives, userTextOf } from './content.mjs';
 import { signThinkingBlocks, validateBody, validateHeaders, mergeTurns } from './validate.mjs';
-import { abortError, canonicalJson, chunkText, estimateTokens, isPlainObject, newMessageId, newRequestId, seededRandom, sha256Hex, sleep } from './util.mjs';
+import { abortError, canonicalJson, chunkText, estimateTokens, isPlainObject, newMessageId, newRequestId, randomId, seededRandom, sha256Hex, sleep } from './util.mjs';
 
 export { parseDirectives } from './content.mjs';
 
@@ -170,6 +170,8 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
 
   const invalid = validateBody(body, hv.betas);
   if (invalid) return fail(invalid.status, invalid.type, invalid.message, { code: invalid.code });
+  const containerProblem = checkContainer(body, mock.state, now().getTime());
+  if (containerProblem) return fail(400, 'invalid_request_error', containerProblem, { code: 'container' });
   const kind = entry.kind;
 
   const decision = planResponse({ body, kind, state: mock.state, now: now() });
@@ -188,6 +190,8 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
   const plan = decision.plan;
   signThinkingBlocks(body, plan.blocks);
   const usage = computeUsage(mock, body, plan.blocks);
+  const ranServerTools = plan.blocks.some((b) => b.type === 'server_tool_use' || b.type === 'web_search_tool_result' || b.type === 'web_fetch_tool_result');
+  const container = ranServerTools ? useContainer(body, plan.blocks, mock.state, now().getTime()) : null;
   const message = {
     id: newMessageId(),
     type: 'message',
@@ -198,9 +202,10 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
     stop_sequence: null,
     stop_details: plan.stop_details ?? null,
     usage,
-    container: null,
+    container,
     context_management: null,
   };
+  if (container) entry.container = container.id;
   entry.status = 200;
   entry.stopReason = plan.stop_reason;
   entry.response = { id: message.id, stop_reason: message.stop_reason, blocks: plan.blocks.map((b) => b.type) };
@@ -222,6 +227,51 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
     headers: { ...baseHeaders, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' },
     sse: { frames: frames.map((f) => f.text), delays, cutAfter: plan.cutAfter, entry },
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Code-execution containers. The 2026 web tools run dynamic filtering in a server container; the
+// response names it (message.container { id, expires_at }) and, like the real API, a later request
+// whose history holds those tool calls must name the same container while it is alive.
+
+const CONTAINER_TTL_MS = 60 * 60 * 1000;
+
+function containerIdOf(value) {
+  if (typeof value === 'string') return value;
+  return isPlainObject(value) && typeof value.id === 'string' ? value.id : null;
+}
+
+/** An error message when body.container is unknown, expired or missing where it is required; else null. */
+function checkContainer(body, state, nowMs) {
+  if (body.container !== undefined && body.container !== null && typeof body.container !== 'string' && !isPlainObject(body.container)) {
+    return 'container: Input should be a valid string or a container object';
+  }
+  const sent = containerIdOf(body.container);
+  if (sent) {
+    const known = state.containers.get(sent);
+    if (!known) return `container: container \`${sent}\` was not found`;
+    if (known.expiresAt <= nowMs) return `container: container \`${sent}\` has expired; send the request without \`container\` to start a new one`;
+  }
+  let expected = null;
+  for (const m of body.messages) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) if (b?.type === 'server_tool_use' && state.containerByToolUse.has(b.id)) expected = state.containerByToolUse.get(b.id);
+  }
+  const live = expected && state.containers.get(expected);
+  if (live && live.expiresAt > nowMs && sent !== expected) {
+    return `container: the server tools in this conversation ran in container \`${expected}\`; container-bound tools need a follow-up request to pass \`container: "${expected}"\``;
+  }
+  return null;
+}
+
+/** The container this response ran its server tools in (the one sent, else a new one); records the tool calls. */
+function useContainer(body, blocks, state, nowMs) {
+  let id = containerIdOf(body.container);
+  if (!id || !state.containers.has(id)) id = randomId('container_011C');
+  const expiresAt = nowMs + CONTAINER_TTL_MS;
+  state.containers.set(id, { expiresAt });
+  for (const b of blocks) if (b.type === 'server_tool_use') state.containerByToolUse.set(b.id, id);
+  return { id, expires_at: new Date(expiresAt).toISOString(), skills: null };
 }
 
 function control(mock, method, path) {
@@ -401,7 +451,7 @@ function buildFrames(message, plan, rng) {
 
   push('message_delta', {
     type: 'message_delta',
-    delta: { stop_reason: message.stop_reason, stop_sequence: null, stop_details: message.stop_details, container: null },
+    delta: { stop_reason: message.stop_reason, stop_sequence: null, stop_details: message.stop_details, container: message.container },
     usage: {
       input_tokens: u.input_tokens,
       cache_creation_input_tokens: u.cache_creation_input_tokens,

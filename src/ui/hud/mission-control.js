@@ -131,13 +131,14 @@ function stableNodes(parent, desired) {
 }
 
 /**
- * Read phase: where the first visible node that will not move sits, if its scroll container
- * (the innermost scrolled one among `candidates`, else the document) is scrolled at all.
+ * Read phase: the first of `nodes` (in document order) still visible at the top of the view, and
+ * where it sits, if its scroll container (the innermost scrolled one among `scrollers`, else the
+ * document) is scrolled at all. Pinning that node keeps whatever the owner is looking at in place:
+ * a node above the change measures no movement, so nothing scrolls.
  */
-function captureAnchor(parent, stay, candidates) {
-  if (!parent.isConnected || !stay.size) return null;
+function captureAnchor(nodes, scrollers) {
   let scroller = null;
-  for (const c of candidates) {
+  for (const c of scrollers) {
     if (c.scrollTop > 0) {
       scroller = c;
       break;
@@ -145,9 +146,10 @@ function captureAnchor(parent, stay, candidates) {
   }
   if (!scroller && !(window.scrollY > 0)) return null;
   const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
-  for (let c = parent.firstChild; c; c = c.nextSibling) {
-    if (!stay.has(c) || c.hidden) continue;
+  for (const c of nodes) {
+    if (!c || c.hidden || !c.isConnected) continue;
     const r = c.getBoundingClientRect();
+    if (!r.height) continue;
     if (r.bottom > viewTop + 1) return { node: c, top: r.top, scroller };
   }
   return null;
@@ -175,8 +177,10 @@ function moveChildren(parent, desired) {
 
 /** Scroll by however far the anchor moved, so the content under the owner's eyes stays put. */
 function restoreAnchor(anchor) {
-  if (!anchor || !anchor.node.isConnected) return;
-  const delta = anchor.node.getBoundingClientRect().top - anchor.top;
+  if (!anchor || !anchor.node.isConnected || anchor.node.hidden) return;
+  const r = anchor.node.getBoundingClientRect();
+  if (!r.height && !r.width) return; // no longer rendered: nothing sensible to hold on to
+  const delta = r.top - anchor.top;
   if (Math.abs(delta) <= 0.5) return;
   if (anchor.scroller) anchor.scroller.scrollTop += delta;
   else window.scrollBy(0, delta);
@@ -207,7 +211,7 @@ export function createMissionControl(opts = {}) {
     h('span', { class: 'hud-mc__summary-head' }, summaryIcon, summaryLead, h('span', { class: 'hud-sr', text: ' · ' })),
     summaryText,
   );
-  const comms = createCommsLog({ variant });
+  const comms = createCommsLog({ variant, onToggle: () => fitCommsSoon() });
 
   const waves = h('div', { class: 'hud-mc__waves', attrs: { role: 'group', 'aria-label': 'Mission waves' }, hidden: true });
 
@@ -240,17 +244,13 @@ export function createMissionControl(opts = {}) {
     const head = h('p', { class: 'hud-mc__group', hidden: true }, h('span', { text: label }), count);
     return { head, count };
   });
+  const headNodes = new Set(groupHeads.map((gh) => gh.head)); // never scroll anchors (they hide)
   const list = h('div', { class: 'hud-mc__list', attrs: { role: 'group', 'aria-label': 'Agents' } });
 
-  const header = h(
-    'header',
-    { class: 'hud-mc__header' },
-    h('div', { class: 'hud-mc__kicker-row' }, kicker, h('span', { class: 'hud-mc__spacer' }), pill),
-    title,
-    subtitle,
-    summary,
-  );
-  const top = h('div', { class: 'hud-mc__top' }, h('div', { class: 'hud-mc__orbit-wrap' }, canvas), header, waves, stats, idle);
+  const kickerRow = h('div', { class: 'hud-mc__kicker-row' }, kicker, h('span', { class: 'hud-mc__spacer' }), pill);
+  const header = h('header', { class: 'hud-mc__header' }, kickerRow, title, subtitle, summary);
+  const orbitWrap = h('div', { class: 'hud-mc__orbit-wrap' }, canvas);
+  const top = h('div', { class: 'hud-mc__top' }, orbitWrap, header, waves, stats, idle);
   const commsWrap = h('div', { class: 'hud-mc__comms', hidden: true }, comms.el);
   const listWrap = h('div', { class: 'hud-mc__list-wrap' }, list);
   const el = h(
@@ -279,6 +279,27 @@ export function createMissionControl(opts = {}) {
   const shown = { kicker: undefined, title: undefined, subtitle: undefined, status: undefined, idle: undefined, coreState: undefined, summary: undefined };
   const seenStatus = new Map(); // mission id → status at the previous render (to spot "just finished")
   let celebrateTimer = 0;
+
+  // Desktop panel: the Comms screen takes the room left below the orbit, header and counters, so
+  // its newest lines are on screen without scrolling the panel (132–320px; the rest scrolls). The
+  // panel and that top block are observed; resizing the screen changes neither, so no RO loop.
+  const COMMS_MIN = 132;
+  const COMMS_MAX = 320;
+  const fitCommsSoon = raf(fitComms);
+  let fitObserver = null;
+  if (variant === 'panel' && typeof ResizeObserver === 'function') {
+    fitObserver = new ResizeObserver(() => fitComms());
+    fitObserver.observe(el);
+    fitObserver.observe(top);
+  }
+  function fitComms() {
+    if (destroyed || !fitObserver || commsWrap.hidden || !comms.isOpen() || !el.isConnected) return;
+    const view = el.clientHeight;
+    if (view < 200) return;
+    const topInContent = comms.screenTop() - el.getBoundingClientRect().top + el.scrollTop;
+    const room = view - topInContent - 20; // screen margin + a little air above the panel's edge
+    comms.setScreenHeight(Math.max(COMMS_MIN, Math.min(COMMS_MAX, Math.floor(room))));
+  }
   const renderNextFrame = raf(render);
   let renderTimer = 0;
   let lastRenderAt = 0;
@@ -319,11 +340,22 @@ export function createMissionControl(opts = {}) {
     lastRenderAt = Date.now();
     const mission = selectedMission();
     const justFinished = observeTurn(mission);
+    // 2. Read phase, before any write: when the agent order changes or the summary strip is about
+    // to appear above the list, note where the content under the owner's eyes is, then put it
+    // back after all writes (Safari has no native scroll anchoring; Chrome's is measured away).
+    const planned = planCards(mission);
+    const sameMission = (mission ? String(mission.id) : null) === cardsFor;
+    const summaryComing = !!mission && summary.hidden && !!SUMMARY_LEAD[str(mission.status)];
+    const anchor =
+      sameMission && list.isConnected && (planned.sig !== orderSig || summaryComing)
+        ? captureAnchor(anchorNodes(planned), getScrollCandidates())
+        : null;
     renderHeader(mission);
     renderWaves();
     renderStats(mission);
     renderComms(mission);
-    renderCards(mission);
+    renderCards(mission, planned);
+    restoreAnchor(anchor);
     const state = coreStateFor(mission, turn);
     if (state !== shown.coreState) {
       shown.coreState = state;
@@ -338,6 +370,7 @@ export function createMissionControl(opts = {}) {
   // mission went from working to done/partial since the previous render (seen live, not restored).
   function observeTurn(mission) {
     let justFinished = false;
+    if (seenStatus.size > 64) seenStatus.clear(); // long sessions: only recent missions matter
     for (const m of missionsOf(turn)) {
       try {
         observeMission(m);
@@ -367,7 +400,10 @@ export function createMissionControl(opts = {}) {
 
   function renderComms(mission) {
     const hide = !mission;
-    if (commsWrap.hidden !== hide) commsWrap.hidden = hide;
+    if (commsWrap.hidden !== hide) {
+      commsWrap.hidden = hide;
+      if (!hide) fitCommsSoon();
+    }
     if (hide) return;
     try {
       comms.update(turn);
@@ -597,15 +633,19 @@ export function createMissionControl(opts = {}) {
     return out;
   }
 
-  function renderCards(mission) {
-    const missionId = mission ? String(mission.id) : null;
-    if (missionId !== cardsFor) {
-      disposeCards();
-      cardsFor = missionId;
-    }
-    const agents = mission && Array.isArray(mission.agents) ? mission.agents : [];
+  // Scroll-anchor candidates in document order: the blocks above the list, then the cards that
+  // keep their place in a re-sort (moving cards and group headers, which hide when their group
+  // empties, would make poor anchors).
+  function anchorNodes(planned) {
+    const out = [orbitWrap, kickerRow, title, subtitle, waves, stats, commsWrap];
+    const stay = stableNodes(list, desiredOrder(planned.plan));
+    for (let c = list.firstChild; c; c = c.nextSibling) if (stay.has(c) && !headNodes.has(c)) out.push(c);
+    return out;
+  }
 
-    // 1. Plan (no DOM access): key and sort group of every agent.
+  // 1. Plan (no DOM access): key and sort group of every agent.
+  function planCards(mission) {
+    const agents = mission && Array.isArray(mission.agents) ? mission.agents : [];
     const plan = [];
     const keys = new Set();
     agents.forEach((a, i) => {
@@ -615,13 +655,19 @@ export function createMissionControl(opts = {}) {
       keys.add(key);
       plan.push({ key, agent: a, group: groupOf(a.status) });
     });
-    const sig = plan.map((p) => `${p.key}:${p.group}`).join('|');
+    return { plan, keys, sig: plan.map((p) => `${p.key}:${p.group}`).join('|') };
+  }
+
+  // 3. Write: update or create cards, drop vanished ones, group headers, order. (Step 2, reading
+  // the scroll anchor before any write, happens in render().)
+  function renderCards(mission, planned) {
+    const missionId = mission ? String(mission.id) : null;
+    if (missionId !== cardsFor) {
+      disposeCards();
+      cardsFor = missionId;
+    }
+    const { plan, keys, sig } = planned;
     const reorder = sig !== orderSig;
-
-    // 2. Read, only when the order changes and before any write: the scroll anchor.
-    const anchor = reorder ? captureAnchor(list, stableNodes(list, desiredOrder(plan)), getScrollCandidates()) : null;
-
-    // 3. Write: update or create cards, drop vanished ones, group headers, order.
     for (const p of plan) {
       const entry = cards.get(p.key);
       if (entry) {
@@ -653,7 +699,6 @@ export function createMissionControl(opts = {}) {
     if (reorder) {
       moveChildren(list, desiredOrder(plan));
       orderSig = sig;
-      restoreAnchor(anchor);
     }
   }
 
@@ -712,6 +757,9 @@ export function createMissionControl(opts = {}) {
     stopTick = null;
     if (celebrateTimer) clearTimeout(celebrateTimer);
     celebrateTimer = 0;
+    fitCommsSoon.cancel();
+    if (fitObserver) fitObserver.disconnect();
+    fitObserver = null;
     disposeCards();
     comms.dispose();
     core.destroy();

@@ -5,8 +5,8 @@
 import { createEmitter } from './emitter.js';
 import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
-import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODES, bucketOf } from './models.js';
-import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsV1 } from './prompts.js';
+import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
+import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest } from './prompts.js';
 import { STOPPED_BY_OWNER, runLeadTurn, toolResultMessage } from './lead.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
 import {
@@ -21,7 +21,22 @@ import { clampInt, formatLocalTime, singleLine, truncate, uid } from './util.js'
 
 const PERSIST_INTERVAL_MS = 1000;
 const DEFAULT_RETRY_BASE_MS = 5000;
+const DEFAULT_MAX_RETRY_WAIT_MS = 60000;
+const DEFAULT_WORKER_STAGGER_MS = 700;
 const TEST_MODEL = 'claude-haiku-5-5';
+/** Containers are reused only while comfortably before their expiry. */
+const CONTAINER_MARGIN_MS = 60 * 1000;
+const CONTAINER_DEFAULT_TTL_MS = 30 * 60 * 1000;
+
+export const LOW_LIMITS_NOTICE = 'Your Anthropic account has low rate limits (common for new accounts) — Jarvis is pacing itself. Limits rise automatically as you use the API (Console → Limits).';
+
+/**
+ * The lead model to run. Claude Haiku 5.5 is not listed for the lead's dynamic-filtering web tools,
+ * so a stored Haiku lead runs on Claude Sonnet 5.5 (Settings no longer offers Haiku for the lead).
+ */
+export function leadModelFor(model) {
+  return MODELS[model]?.bucket === 'haiku' || /haiku/i.test(String(model || '')) ? 'claude-sonnet-5-5' : model;
+}
 
 /** The settings fields the engine reads, validated (SPEC 5 ranges); bad values fall back to defaults. */
 export function normalizeSettings(raw) {
@@ -29,7 +44,7 @@ export function normalizeSettings(raw) {
   const str = (v) => (typeof v === 'string' ? v : '');
   return {
     userName: str(s.userName),
-    leadModel: str(s.leadModel).trim() || DEFAULT_LEAD_MODEL,
+    leadModel: leadModelFor(str(s.leadModel).trim() || DEFAULT_LEAD_MODEL),
     workerModel: str(s.workerModel).trim() || DEFAULT_WORKER_MODEL,
     depth: DEPTHS[s.depth] ? s.depth : 'balanced',
     mode: MODES[s.mode] ? s.mode : 'auto',
@@ -150,10 +165,15 @@ export function createJarvis(deps = {}) {
     clientOptions: deps.clientOptions && typeof deps.clientOptions === 'object' ? deps.clientOptions : undefined,
     retryBaseMs: Number.isFinite(deps.retryBaseMs) && deps.retryBaseMs >= 0 ? deps.retryBaseMs : DEFAULT_RETRY_BASE_MS,
     onFeatureUnsupported: typeof deps.onFeatureUnsupported === 'function' ? deps.onFeatureUnsupported : null,
+    // Longest wait a retry-after header may impose, and the delay between agents' first requests.
+    maxRetryWaitMs: Number.isFinite(deps.maxRetryWaitMs) && deps.maxRetryWaitMs >= 0 ? deps.maxRetryWaitMs : DEFAULT_MAX_RETRY_WAIT_MS,
+    workerStaggerMs: Number.isFinite(deps.workerStaggerMs) && deps.workerStaggerMs >= 0 ? deps.workerStaggerMs : DEFAULT_WORKER_STAGGER_MS,
   };
 
   const runs = new Map(); // conversation id → run context
   const limiters = new Map(); // model bucket → limiter (shared by every run: rate limits are per key)
+  const maxTokenCaps = new Map(); // model → max_tokens cap learned from an output-tokens-per-minute 429
+  let lowLimitsNoticed = false;
 
   const nowDate = () => {
     const value = d.now();
@@ -282,7 +302,7 @@ export function createJarvis(deps = {}) {
       turn,
       settings,
       mode: MODES[turn.mode] ? turn.mode : settings.mode,
-      leadModel: turn.leadModel || settings.leadModel,
+      leadModel: leadModelFor(turn.leadModel || settings.leadModel),
       workerModel: turn.workerModel || settings.workerModel,
       depthKey,
       depth: DEPTHS[depthKey],
@@ -293,6 +313,8 @@ export function createJarvis(deps = {}) {
       controller,
       signal: controller.signal,
       retryBaseMs: d.retryBaseMs,
+      maxRetryWaitMs: d.maxRetryWaitMs,
+      workerStaggerMs: d.workerStaggerMs,
       stopped: false,
       done: false,
       req,
@@ -360,7 +382,7 @@ export function createJarvis(deps = {}) {
     ctx.accountUsage = (message, model, target) => {
       const used = message?.model || model;
       const delta = usageDelta(message?.usage);
-      const cost = responseCost(used, message?.usage);
+      const cost = responseCost(used, message?.usage, model);
       addUsage(turn.usage, delta);
       turn.costUsd = (Number(turn.costUsd) || 0) + cost;
       if (target?.agent) {
@@ -389,6 +411,41 @@ export function createJarvis(deps = {}) {
       ctx.notice('info', name === 'fallbacks'
         ? 'Server-side fallback isn’t available for this API key, so Jarvis switched it off.'
         : 'Automatic conversation compaction isn’t available for this API key, so Jarvis switched it off.');
+    };
+    /** SDK retries for one call: the engine's choice (lead 1, workers 0), never above an explicit client setting. */
+    ctx.sdkRetries = (n) => {
+      const configured = d.clientOptions?.maxRetries;
+      return Number.isFinite(configured) && configured >= 0 ? Math.min(n, configured) : n;
+    };
+    /** max_tokens for `model`, within any cap learned from the account's rate limits this session. */
+    ctx.maxTokensFor = (model, base) => Math.min(base, maxTokenCaps.get(model) ?? Infinity);
+    /** An output-tokens-per-minute 429: cap max_tokens for `model` for the rest of the session. */
+    ctx.capMaxTokens = (model, cap) => {
+      const current = maxTokenCaps.get(model) ?? Infinity;
+      if (cap < current) maxTokenCaps.set(model, cap);
+      ctx.lowLimitsNotice();
+    };
+    /** One clear explanation per session when the account's rate limits make Jarvis slow down. */
+    ctx.lowLimitsNotice = () => {
+      if (lowLimitsNoticed) return;
+      lowLimitsNoticed = true;
+      ctx.notice('warn', LOW_LIMITS_NOTICE);
+    };
+    /** The code-execution container of this conversation's web tools, while it is still alive. */
+    ctx.leadContainer = () => {
+      const c = conv.container;
+      if (!c || typeof c.id !== 'string' || !c.id) return null;
+      if (Number.isFinite(c.expiresAt) && c.expiresAt - CONTAINER_MARGIN_MS <= Date.now()) {
+        conv.container = null;
+        return null;
+      }
+      return c.id;
+    };
+    /** Remember the container a lead response ran in (message.container { id, expires_at }). */
+    ctx.adoptContainer = (container) => {
+      if (!container || typeof container.id !== 'string' || !container.id) return;
+      const expires = Date.parse(container.expires_at);
+      conv.container = { id: container.id, expiresAt: Number.isFinite(expires) ? expires : Date.now() + CONTAINER_DEFAULT_TTL_MS };
     };
     ctx.stop = () => {
       if (ctx.done || ctx.stopped) return;
@@ -485,8 +542,8 @@ export function createJarvis(deps = {}) {
         title: '',
         createdAt: ts,
         updatedAt: ts,
-        system: LEAD_SYSTEM_LATEST, // V2; older conversations keep the prompt they were created with
-        tools: leadToolsV1(),
+        system: LEAD_SYSTEM_LATEST, // V2; older conversations keep the prompt and tools they were created with
+        tools: leadToolsLatest(),
         apiMessages: [],
         turns: [],
         pending: null,
@@ -549,6 +606,8 @@ export function createJarvis(deps = {}) {
         memoryEnabled: settings.memoryEnabled,
         memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
       });
+      // Where this turn's messages start: a refused turn is removed from the history from here on.
+      turn.apiStart = conv.apiMessages.length;
       // SPEC §15.1 order: turn context, attachments, then the owner's text (or the default text).
       conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, ...content] });
       conv.updatedAt = ts;

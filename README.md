@@ -320,6 +320,8 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[waves:2]]` | a second wave of 2 agents after the first results |
 | `[[pause]]` / `[[workerpause]]` | the lead's / each agent's first response ends with `pause_turn` |
 | `[[ratelimit:K]]` | the first K agent requests get 429 (`retry-after: 0`) |
+| `[[ratelimit:K:S]]` | the same, with a realistic `retry-after: S` seconds (Jarvis shows a live countdown) |
+| `[[otpm:N]]` | an output-tokens-per-minute limit of N: requests whose `max_tokens` exceeds it get the real 429 shape, and Jarvis caps `max_tokens` and retries |
 | `[[overloaded]]` | the first lead request gets 529 |
 | `[[refuse]]` | `stop_reason: refusal` with `stop_details` |
 | `[[slow]]` | slow streaming (≈120 ms between lead events, ≈6 s per agent) |

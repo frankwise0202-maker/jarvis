@@ -28,6 +28,7 @@ import {
   DEPLOY_AGENTS_DESCRIPTION,
   UPDATE_MEMORY_DESCRIPTION,
   leadToolsV1,
+  leadToolsV2,
   workerTools,
   buildTurnContext,
   buildWorkerPrompt,
@@ -277,11 +278,20 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
   // Fresh copies, deterministic content (the frozen prefix depends on it).
   assert.notEqual(leadToolsV1(), leadToolsV1());
   assert.equal(JSON.stringify(leadToolsV1()), JSON.stringify(tools));
-  assert.deepEqual(workerTools('deep'), [
+  // Version 2 (new conversations) differs only in web_fetch's page-size cap.
+  const v2 = leadToolsV2();
+  assert.deepEqual(v2[1], { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 8, max_content_tokens: 12000 });
+  assert.deepEqual([v2[0], ...v2.slice(2)], [tools[0], ...tools.slice(2)]);
+  assert.deepEqual(workerTools('deep', 'claude-sonnet-5-5'), [
     { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
-    { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5 },
+    { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5, max_content_tokens: 8000 },
   ]);
-  assert.deepEqual(workerTools('nonsense'), workerTools('balanced'));
+  assert.deepEqual(workerTools('nonsense', 'claude-sonnet-5-5'), workerTools('balanced', 'claude-sonnet-5-5'));
+  // Claude Haiku 5.5 is not listed for the dynamic-filtering versions: its agents get the basic ones.
+  assert.deepEqual(workerTools('fast', 'claude-haiku-5-5'), [
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
+    { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 2, max_content_tokens: 8000 },
+  ]);
 });
 
 test('system prompts are static and cover the required behaviour', () => {
@@ -556,7 +566,7 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   const conv = jarvis.newConversation();
   assert.equal(conv.v, 1);
   assert.equal(conv.system, LEAD_SYSTEM_V2); // new conversations freeze the latest prompt (SPEC §15.1)
-  assert.deepEqual(conv.tools, leadToolsV1());
+  assert.deepEqual(conv.tools, leadToolsV2());
   assert.deepEqual(conv.apiMessages, []);
   assert.deepEqual(conv.turns, []);
   assert.equal(conv.pending, null);

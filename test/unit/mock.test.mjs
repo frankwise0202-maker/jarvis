@@ -132,13 +132,14 @@ async function streamAll(client, params) {
   return { final, events };
 }
 
-/** Run one worker to completion, resuming pause_turn like the engine does. */
+/** Run one worker to completion, resuming pause_turn like the engine does (in the same container). */
 async function runWorker(client, mission, agent, extra) {
   const params = workerParams(workerPrompt({ mission, role: agent.role, task: agent.task }), extra);
   for (let i = 0; i < 7; i++) {
     const { final } = await streamAll(client, params);
     if (final.stop_reason !== 'pause_turn') return final;
     params.messages = [...params.messages, { role: 'assistant', content: clone(final.content) }];
+    if (final.container) params.container = final.container.id;
   }
   throw new Error('worker paused too many times');
 }
@@ -160,6 +161,9 @@ function missionResult(input, wave, outcomes) {
   return parts.join('\n');
 }
 
+/** The code-execution container each test conversation (its messages array) runs in. */
+const containers = new WeakMap();
+
 /**
  * A miniature engine: append the user turn, then loop lead requests, executing deploy_agents
  * (workers in parallel) and update_memory, resuming pause_turn — appending every assistant
@@ -172,7 +176,10 @@ async function runTurn(client, messages, text, { extra, maxRequests = 8 } = {}) 
   let codename = 0;
   let wave = 0;
   for (let r = 0; r < maxRequests; r++) {
-    const { final } = await streamAll(client, leadParams(messages, extra));
+    // Like the SDK's thread helper: keep using the container the conversation's server tools ran in.
+    const container = containers.get(messages);
+    const { final } = await streamAll(client, leadParams(messages, container ? { ...extra, container } : extra));
+    if (final.container) containers.set(messages, final.container.id);
     leadFinals.push(final);
     messages.push({ role: 'assistant', content: clone(final.content) });
     if (final.stop_reason === 'pause_turn') continue;
@@ -448,18 +455,41 @@ describe('mock: directives', () => {
     const pending = paused.content.at(-1);
     assert.equal(pending.type, 'server_tool_use');
     assert.ok(!paused.content.some((b) => b.type === 'web_search_tool_result'));
+    assert.match(paused.container?.id || '', /^container_/, 'the web tool ran in a code-execution container');
     messages.push({ role: 'assistant', content: clone(paused.content) });
-    const { final: resumed } = await streamAll(client, leadParams(messages));
+    // The continuation must name the container the paused tool runs in.
+    await assert.rejects(() => client.beta.messages.stream(leadParams(messages)).finalMessage(), (err) => err.status === 400 && /container-bound tools need a follow-up request to pass `container/.test(err.error.error.message));
+    mock.violations.length = 0;
+    const container = paused.container.id;
+    const { final: resumed } = await streamAll(client, leadParams(messages, { container }));
     assert.equal(resumed.stop_reason, 'end_turn');
+    assert.equal(resumed.container.id, container, 'the same container continues');
     assert.equal(resumed.content[0].type, 'web_search_tool_result');
     assert.equal(resumed.content[0].tool_use_id, pending.id);
     assert.ok(resumed.content.some((b) => b.type === 'thinking'), 'interleaved thinking after the result');
     messages.push({ role: 'assistant', content: clone(resumed.content) });
     // A follow-up turn replays both assistant messages: they must pass the prefix check.
     messages.push(userTurn('Thanks. And the capital of Spain?'));
-    const { final: next } = await streamAll(client, leadParams(messages));
+    const { final: next } = await streamAll(client, leadParams(messages, { container }));
     assert.match(textOf(next), /Madrid/);
     assert.deepEqual(mock.violations, []);
+  });
+
+  it('containers: unknown or expired containers are rejected; an expired one is no longer required', async () => {
+    let clock = Date.parse('2026-11-19T12:00:00Z');
+    const fetch = createMockFetch({ timeScale: 0, now: () => new Date(clock) });
+    const client = new Anthropic({ apiKey: KEY, baseURL: BASE, fetch, maxRetries: 0 });
+    const messages = [userTurn('[[search]] latest heat pump prices')];
+    const { final } = await streamAll(client, leadParams(messages));
+    assert.match(final.container.id, /^container_/);
+    assert.equal(Date.parse(final.container.expires_at) - clock, 60 * 60 * 1000);
+    messages.push({ role: 'assistant', content: clone(final.content) }, userTurn('And in Germany?'));
+    await assert.rejects(() => client.beta.messages.stream(leadParams(messages, { container: 'container_011Cnope' })).finalMessage(), (err) => /container `container_011Cnope` was not found/.test(err.error.error.message));
+    await streamAll(client, leadParams(messages, { container: final.container.id }));
+    clock += 61 * 60 * 1000; // past the expiry
+    await assert.rejects(() => client.beta.messages.stream(leadParams(messages, { container: final.container.id })).finalMessage(), (err) => /has expired/.test(err.error.error.message));
+    await streamAll(client, leadParams(messages)); // a dead container is not required
+    assert.deepEqual(fetch.mock.violations.map((v) => v.code), ['container', 'container']);
   });
 
   it('[[workerpause]] pauses a worker once; the resume finishes the report', async () => {
@@ -469,6 +499,7 @@ describe('mock: directives', () => {
     assert.equal(paused.stop_reason, 'pause_turn');
     assert.equal(paused.content.at(-1).type, 'server_tool_use');
     params.messages = [...params.messages, { role: 'assistant', content: clone(paused.content) }];
+    params.container = paused.container.id; // a continuation runs in the same container
     const { final } = await streamAll(client, params);
     assert.equal(final.stop_reason, 'end_turn');
     assert.equal(final.content[0].tool_use_id, paused.content.at(-1).id);
@@ -667,17 +698,23 @@ describe('mock: conversation history checks', () => {
     const { client, mock } = setup();
     const messages = [userTurn('[[pause]] latest on fusion power')];
     const { final: paused } = await streamAll(client, leadParams(messages));
+    const container = paused.container.id;
     messages.push({ role: 'assistant', content: clone(paused.content) });
-    const { final: resumed } = await streamAll(client, leadParams(messages));
+    const { final: resumed } = await streamAll(client, leadParams(messages, { container }));
     messages.push({ role: 'assistant', content: clone(resumed.content) }, userTurn('next'));
-    await streamAll(client, leadParams(messages));
+    await streamAll(client, leadParams(messages, { container }));
     assert.deepEqual(mock.violations, [], 'unchanged history is accepted');
     const edited = clone(messages);
     edited[1].content[1].text = 'Let me look into that.';
     await assert.rejects(
-      () => client.beta.messages.stream(leadParams(edited)).finalMessage(),
-      (err) => err.status === 400 && /^messages\.2\.content\.1: thinking block prefix mismatch/.test(err.error.error.message),
+      () => client.beta.messages.stream(leadParams(edited, { container })).finalMessage(),
+      (err) => err.status === 400 && /^messages\.2\.content\.1: thinking block prefix mismatch/.test(err.error.error.message) && /prefix_mismatch_behavior/.test(err.error.error.message),
     );
+    // With drop_block (and its beta) the API drops the failing blocks instead of failing.
+    const dropping = leadParams(edited, { container, thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, betas: ['thinking-binding-controls-2026-08-01'] });
+    const { final: kept } = await streamAll(client, dropping);
+    assert.equal(kept.stop_reason, 'end_turn');
+    await assertRejected('binding without beta', leadParams(edited, { container, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } }), { message: /block_binding: Extra inputs are not permitted/ });
   });
 });
 
@@ -857,6 +894,52 @@ describe('mock: request validation (each rule rejects)', () => {
     ...base(),
     messages: [...okMessages(), { role: 'assistant', content: [{ type: 'web_search_tool_result', tool_use_id: 'srvtoolu_01Nope', content: [] }, { type: 'text', text: 'x' }] }, userTurn('next')],
   }, { message: /does not match any preceding/ }));
+});
+
+describe('mock: rate limits, tool versions and page caps (API review)', () => {
+  it('[[ratelimit:K:S]] answers the first K worker requests with 429 and retry-after: S', async () => {
+    const { client, mock } = setup();
+    const params = workerParams(workerPrompt({ mission: 'Paced', role: 'Analyst', task: 'Research Y. [[ratelimit:2:3]]' }));
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(() => client.beta.messages.stream(params).finalMessage(), (err) => err instanceof Anthropic.RateLimitError && err.headers.get('retry-after') === '3');
+    }
+    const { final } = await streamAll(client, params);
+    assert.equal(final.stop_reason, 'end_turn');
+    assert.deepEqual(mock.violations, [], 'scripted 429s are not violations');
+  });
+
+  it('[[otpm:N]] rejects a max_tokens above N with an output-tokens-per-minute 429, lead and workers alike', async () => {
+    const { client, mock } = setup();
+    const lead = leadParams([userTurn('[[otpm:8000]] Compare heat pumps')], { max_tokens: 16000 });
+    await assert.rejects(
+      () => client.beta.messages.stream(lead).finalMessage(),
+      (err) => err.status === 429 && /rate limit of 8000 output tokens per minute \(model: claude-opus-5-5\)/.test(err.error.error.message) && err.headers.get('anthropic-ratelimit-output-tokens-limit') === '8000',
+    );
+    const { final } = await streamAll(client, { ...lead, max_tokens: 7200 });
+    assert.equal(final.stop_reason, 'end_turn');
+    const worker = workerParams(workerPrompt({ mission: 'M', role: 'R', task: 'Research Z. [[otpm:8000]]' }), { max_tokens: 12000 });
+    await assert.rejects(() => client.beta.messages.stream(worker).finalMessage(), (err) => err.status === 429);
+    await streamAll(client, { ...worker, max_tokens: 7200 });
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('accepts web_fetch max_content_tokens; the basic tool versions only with Claude Haiku 5.5', async () => {
+    const { client, mock } = setup();
+    const capped = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3, max_content_tokens: 8000 }];
+    await streamAll(client, workerParams(workerPrompt({ mission: 'M', role: 'R', task: 'Research capped pages.' }), { tools: capped }));
+    const basic = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }, { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 2, max_content_tokens: 8000 }];
+    const { final } = await streamAll(client, workerParams(workerPrompt({ mission: 'M', role: 'R', task: 'Research with Haiku.' }), { model: 'claude-haiku-5-5', tools: basic }));
+    assert.match(textOf(final), /## Key findings/);
+    assert.deepEqual(mock.violations, []);
+  });
+
+  it('rejects dynamic-filtering tools on Haiku, basic tools on other models, and a bad max_content_tokens', async () => {
+    const worker = (extra) => workerParams(workerPrompt({ mission: 'M', role: 'R', task: 'T' }), extra);
+    await assertRejected('haiku dynamic', worker({ model: 'claude-haiku-5-5' }), { message: /web_search_20260209 \(dynamic filtering\) is not supported for claude-haiku-5-5/ });
+    await assertRejected('opus basic', worker({ tools: [{ type: 'web_search_20250305', name: 'web_search' }] }), { message: /basic tool version; use web_search_20260209/ });
+    await assertRejected('max_content_tokens', worker({ tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_content_tokens: 0 }] }), { message: /max_content_tokens: Input should be a positive integer/ });
+    await assertRejected('search page cap', worker({ tools: [{ type: 'web_search_20260209', name: 'web_search', max_content_tokens: 100 }] }), { message: /max_content_tokens: Extra inputs are not permitted/ });
+  });
 });
 
 describe('mock: photos and PDF documents (SPEC §15.1)', () => {

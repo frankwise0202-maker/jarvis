@@ -200,7 +200,8 @@ test('maxAgents: the override survives an interruption and resume', async () => 
   const base = swarmHandler({ deployAgents: 6 });
   const h = createHarness({
     handler: (req) => {
-      if (isLeadBody(req.body) && ++leadCalls === 1) return { networkError: true };
+      // The connection drops mid-stream (a failure before any output would be retried instead).
+      if (isLeadBody(req.body) && ++leadCalls === 1) return { ...base(req), breakAfter: 3 };
       return base(req);
     },
   });

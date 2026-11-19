@@ -889,7 +889,9 @@ export async function startApp(rootEl) {
           const text = join(t);
           composer.setText(text);
           if (text && !currentRunning() && state.online && (state.demo || safe(getApiKey, ''))) {
-            if (send(text, composer.getMode())) composer.setText('');
+            // submit() goes through onSend with the composer's attachments and team size,
+            // and clears the input and attachments only when the send is accepted.
+            composer.submit();
           }
         },
         onEnd: finish,

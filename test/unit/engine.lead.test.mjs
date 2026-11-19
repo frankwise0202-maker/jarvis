@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { costOf } from '../../src/engine/index.js';
-import { LEAD_SYSTEM_V2, leadToolsV1 } from '../../src/engine/prompts.js';
+import { LEAD_SYSTEM_V2, leadToolsV2 } from '../../src/engine/prompts.js';
 import {
   KEY,
   blk,
@@ -83,10 +83,10 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   const { body, headers, url } = h.api.requests[0];
   assert.match(url, /\/v1\/messages$/);
   assert.equal(body.model, 'claude-opus-5-5');
-  assert.equal(body.max_tokens, 64000);
+  assert.equal(body.max_tokens, 16000); // balanced depth (OTPM limits are charged from max_tokens)
   assert.equal(body.stream, true);
   assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V2 }]);
-  assert.deepEqual(body.tools, leadToolsV1());
+  assert.deepEqual(body.tools, leadToolsV2());
   assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' });
   assert.deepEqual(body.output_config, { effort: 'medium' });
   assert.deepEqual(body.cache_control, { type: 'ephemeral' });
@@ -99,20 +99,30 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   assert.equal(headers['anthropic-dangerous-direct-browser-access'], 'true');
   assert.ok(headers['anthropic-version']);
 
-  // Depth, thinking display, Haiku (no fallbacks) and features off.
+  // Depth, thinking display and features off.
   const h2 = createHarness({
     handler: () => answer('ok'),
-    settings: { depth: 'deep', showThinking: false, leadModel: 'claude-haiku-5-5', features: { fallbacks: true, compaction: false } },
+    settings: { depth: 'deep', showThinking: false, features: { fallbacks: false, compaction: false } },
   });
   const conv2 = h2.jarvis.newConversation();
   const { turn } = await runTurn(h2.jarvis, conv2, 'Hello');
   const b2 = h2.api.requests[0].body;
   assert.deepEqual(b2.output_config, { effort: 'high' });
+  assert.equal(b2.max_tokens, 32000); // deep depth
   assert.deepEqual(b2.thinking, { type: 'adaptive', display: 'omitted' });
   assert.equal('fallbacks' in b2, false);
   assert.equal('context_management' in b2, false);
   assert.equal(h2.api.requests[0].headers['anthropic-beta'], undefined);
   assert.equal(segmentsOf(turn, 'thinking').length, 0); // thinking hidden when showThinking is off
+
+  // A stored Haiku lead runs on Sonnet 5.5 (Haiku is not listed for the dynamic-filtering web tools).
+  const h3 = createHarness({ handler: () => answer('ok'), settings: { depth: 'fast', leadModel: 'claude-haiku-5-5' } });
+  const { turn: t3 } = await runTurn(h3.jarvis, h3.jarvis.newConversation(), 'Hello');
+  const b3 = h3.api.requests[0].body;
+  assert.equal(b3.model, 'claude-sonnet-5-5');
+  assert.equal(t3.leadModel, 'claude-sonnet-5-5');
+  assert.equal(b3.max_tokens, 12000); // fast depth
+  assert.equal(b3.fallbacks, 'default');
 });
 
 test('web_search and web_fetch tool segments with results; cited text stays one segment', async () => {
@@ -256,12 +266,17 @@ test('refusal: error segment with category, partial output discarded, conversati
   const err = segmentsOf(turn, 'error')[0];
   assert.equal(err.error.kind, 'refusal');
   assert.equal(err.req, 0);
-  assert.equal(conv.apiMessages.length, 1); // the refused partial output is not part of history
+  // The refused turn leaves the history entirely (the request and its partial output), so it is
+  // never re-sent and cannot make later turns fail; the transcript keeps it with its error.
+  assert.equal(conv.apiMessages.length, 0);
+  assert.equal(turn.apiStart, 0);
+  assert.equal(conv.turns.length, 2);
   assert.equal(conv.pending, null);
 
   const { turn: t2 } = await runTurn(h.jarvis, conv, 'Something else');
   assert.equal(t2.status, 'done');
-  assert.deepEqual(h.api.requests[1].body.messages.map((m) => m.role), ['user', 'user']);
+  assert.deepEqual(h.api.requests[1].body.messages.map((m) => m.role), ['user']);
+  assert.ok(!JSON.stringify(h.api.requests[1].body.messages).includes('Something risky'));
 });
 
 test('auth, billing, not_found and missing-key errors are classified and shown', async () => {
@@ -386,7 +401,7 @@ test('across turns: system and tools identical, history strictly append-only (ex
   assert.deepEqual(r2.messages.slice(0, afterTurn1.length), afterTurn1);
   assert.equal(r2.messages.length, afterTurn1.length + 1);
   assert.equal(conv.system, LEAD_SYSTEM_V2);
-  assert.deepEqual(conv.tools, leadToolsV1());
+  assert.deepEqual(conv.tools, leadToolsV2());
   // The citation-bearing assistant text block went back unchanged.
   assert.deepEqual(r2.messages[1].content[3].citations, [blk.cite('https://www.example.com/a', 'A')]);
 });
@@ -445,9 +460,12 @@ test('a server-side fallback is noted and the pre-boundary blocks the API forbid
   assert.equal(turn.status, 'done');
   assert.deepEqual(conv.apiMessages[1].content, content.slice(1));
   const notice = segmentsOf(turn, 'notice')[0];
-  assert.match(notice.text, /Claude Opus 5\.5 declined part of this request, so claude-opus-5 finished the reply\./);
+  assert.match(notice.text, /Claude Opus 5\.5 declined part of this request, so Claude Opus 5 finished the reply\./);
+  // The reply is priced at the model that produced it (Claude Opus 5: $5 / $25 per million).
+  assert.ok(Math.abs(turn.costUsd - costOf('claude-opus-5', { input_tokens: 100, output_tokens: 50 })) < 1e-12);
+  assert.ok(Math.abs(costOf('claude-opus-5', { input_tokens: 1e6, output_tokens: 1e6 }) - 30) < 1e-9);
   // Unknown model ids are priced as Opus 5.5.
-  assert.ok(Math.abs(turn.costUsd - costOf('claude-opus-5-5', { input_tokens: 100, output_tokens: 50 })) < 1e-12);
+  assert.ok(Math.abs(costOf('claude-unknown-9', { input_tokens: 1e6 }) - 4) < 1e-9);
 });
 
 test('a mid-stream overloaded error is retried by the engine; the failed attempt is discarded', async () => {

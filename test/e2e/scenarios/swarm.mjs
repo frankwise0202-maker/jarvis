@@ -66,7 +66,7 @@ export default [
         const sys = canonicalJson(workers[0].body.system);
         const tools = canonicalJson(workers[0].body.tools);
         t.assert(workers.every((r) => canonicalJson(r.body.system) === sys && canonicalJson(r.body.tools) === tools), 'All workers share one system prompt and tool list (cached prefix)');
-        t.assert(workers.every((r) => r.body.model === 'claude-sonnet-5-5' && r.body.max_tokens === 32000), 'Workers use claude-sonnet-5-5 with max_tokens 32000');
+        t.assert(workers.every((r) => r.body.model === 'claude-sonnet-5-5' && r.body.max_tokens === 12000), 'Workers use claude-sonnet-5-5 with max_tokens 12000 (Balanced depth)');
         const names = workers[0].body.tools.map((x) => `${x.name}:${x.max_uses}`).join(',');
         t.assert(names === 'web_search:5,web_fetch:3', `Balanced-depth worker tools should be web_search(5) + web_fetch(3); got ${names}`);
         const leads = t.requests('lead');

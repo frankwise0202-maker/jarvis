@@ -1116,6 +1116,12 @@
     width: min(100%, 320px);
   }
 }
+/* Laptop-height windows: a slightly smaller orbit leaves the live Comms feed room on screen. */
+@media (max-height: 940px) {
+  .hud-mc--panel .hud-mc__orbit {
+    width: min(100%, 240px);
+  }
+}
 .hud-mc__header {
   margin-top: var(--sp-1);
   text-align: center;
@@ -1792,6 +1798,19 @@
 }
 .hud-comms__jump:focus-visible .hud-comms__jump-pill {
   box-shadow: var(--focus-ring);
+}
+/* Mouse-driven desktop panel: slimmer rows (touch screens keep 44px targets). */
+@media (pointer: fine) {
+  .hud-mc--panel .hud-comms__toggle {
+    min-height: 38px;
+  }
+  .hud-mc--panel .hud-comms__chip {
+    min-height: 34px;
+  }
+  .hud-mc--panel .hud-comms__filters {
+    margin-top: -2px;
+    margin-bottom: 2px;
+  }
 }
 
 /* ---------------------------------------------------------------------------------------------

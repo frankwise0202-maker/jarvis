@@ -4,7 +4,7 @@
 // registers its own self-checks when node --test runs it directly (not when imported).
 //
 // A handler receives each recorded request and returns a reply descriptor:
-//   { content: [blocks], stop: 'end_turn', usage?, model?, stopDetails?, delayMs?, breakAfter?, gate? }
+//   { content: [blocks], stop: 'end_turn', usage?, model?, stopDetails?, container?, delayMs?, breakAfter?, gate? }
 //   { error: { status, type, message, headers?, details? } }       → JSON error response
 //   { sseError: { type, message }, content?: [blocks] }              → stream that fails mid-way
 // Non-streaming requests (testApiKey) get the same content as a JSON message.
@@ -171,7 +171,8 @@ export function messageEvents(reply, model) {
   if (usage.iterations) deltaUsage.iterations = usage.iterations;
   events.push({
     type: 'message_delta',
-    delta: { stop_reason: reply.stop || 'end_turn', stop_sequence: null, stop_details: reply.stopDetails ?? null },
+    // `container` (code-execution container of the web tools) arrives on message_delta, as from the API.
+    delta: { stop_reason: reply.stop || 'end_turn', stop_sequence: null, stop_details: reply.stopDetails ?? null, ...(reply.container ? { container: reply.container } : {}) },
     usage: deltaUsage,
   });
   events.push({ type: 'message_stop' });
@@ -188,6 +189,7 @@ export function finalMessageJson(reply, model) {
     stop_reason: reply.stop || 'end_turn',
     stop_sequence: null,
     stop_details: reply.stopDetails ?? null,
+    container: reply.container ?? null,
     usage: { input_tokens: 10, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, ...(reply.usage || {}) },
   };
 }
@@ -394,6 +396,8 @@ export function createHarness({
   clientOptions = { maxRetries: 0 },
   onFeatureUnsupported,
   apiKey = KEY,
+  workerStaggerMs = 0, // production staggers agents 700 ms apart; tests that check it opt in
+  maxRetryWaitMs = 50, // cap retry-after waits so rate-limit tests stay fast
 } = {}) {
   const api = createFakeApi(handler);
   const persisted = [];
@@ -413,6 +417,8 @@ export function createHarness({
     now,
     clientOptions,
     retryBaseMs,
+    workerStaggerMs,
+    maxRetryWaitMs,
     onFeatureUnsupported: (name) => {
       featureCalls.push(name);
       onFeatureUnsupported?.(name);

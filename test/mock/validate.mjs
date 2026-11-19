@@ -21,7 +21,12 @@ export const BETA_BINDING = 'thinking-binding-controls-2026-08-01';
 export const SERVER_TOOLS = Object.freeze({
   web_search_20260209: 'web_search',
   web_fetch_20260209: 'web_fetch',
+  web_search_20250305: 'web_search',
+  web_fetch_20250910: 'web_fetch',
 });
+/** The basic (no dynamic filtering) versions: the ones Claude Haiku 5.5 takes, and only it here. */
+export const BASIC_SERVER_TOOLS = Object.freeze(['web_search_20250305', 'web_fetch_20250910']);
+export const HAIKU_MODEL = 'claude-haiku-5-5';
 
 // Beta header values the SDK (1.10.0) knows about, plus a few long-standing ones. Anything else is
 // rejected like the real API does for values that do not exist.
@@ -157,7 +162,7 @@ export function validateBody(body, betas = new Set()) {
   if (err) return err;
   err = validateToolChoice(body.tool_choice);
   if (err) return err;
-  err = validateTools(body.tools);
+  err = validateTools(body.tools, body.model);
   if (err) return err;
   err = checkCacheControl(body.cache_control, 'cache_control');
   if (err) return err;
@@ -370,7 +375,7 @@ const CUSTOM_TOOL_KEYS = new Set([
   'input_examples', 'defer_loading', 'allowed_callers',
 ]);
 
-function validateTools(tools) {
+function validateTools(tools, model) {
   if (tools === undefined) return null;
   if (!Array.isArray(tools)) return bad('tools: Input should be a valid list');
   const names = new Set();
@@ -382,14 +387,24 @@ function validateTools(tools) {
     if (t.type !== undefined && t.type !== null && t.type !== 'custom') {
       const expectedName = SERVER_TOOLS[t.type];
       if (!expectedName) {
-        return bad(`${path}: Input tag '${t.type}' found using 'type' does not match any of the expected tags (this API accepts server tools web_search_20260209 and web_fetch_20260209)`);
+        return bad(`${path}: Input tag '${t.type}' found using 'type' does not match any of the expected tags (this API accepts server tools web_search_20260209 and web_fetch_20260209, and the basic web_search_20250305 / web_fetch_20250910 for claude-haiku-5-5)`);
       }
+      // Dynamic filtering (the 2026 versions) is not offered on Claude Haiku 5.5; the basic versions
+      // are accepted here only for Haiku, so a request that mixes them up fails in tests.
+      const basic = BASIC_SERVER_TOOLS.includes(t.type);
+      if (basic && model !== HAIKU_MODEL) return bad(`${path}: ${t.type} is the basic tool version; use ${t.type.startsWith('web_search') ? 'web_search_20260209' : 'web_fetch_20260209'} with ${model}`);
+      if (!basic && model === HAIKU_MODEL) return bad(`${path}: ${t.type} (dynamic filtering) is not supported for ${HAIKU_MODEL}; use ${t.type.startsWith('web_search') ? 'web_search_20250305' : 'web_fetch_20250910'}`);
       if (t.name !== expectedName) return bad(`${path}.${t.type}.name: Input should be '${expectedName}'`);
-      // Exactly { type, name } plus an optional max_uses (cache_control is cache metadata).
-      err = extraKeys(t, new Set(['type', 'name', 'max_uses', 'cache_control']), `${path}.${t.type}`);
+      // Exactly { type, name } plus an optional max_uses (and max_content_tokens for web_fetch);
+      // cache_control is cache metadata.
+      const keys = expectedName === 'web_fetch' ? ['type', 'name', 'max_uses', 'max_content_tokens', 'cache_control'] : ['type', 'name', 'max_uses', 'cache_control'];
+      err = extraKeys(t, new Set(keys), `${path}.${t.type}`);
       if (err) return err;
       if (t.max_uses !== undefined && t.max_uses !== null && (!isInt(t.max_uses) || t.max_uses < 1)) {
         return bad(`${path}.${t.type}.max_uses: Input should be a positive integer`);
+      }
+      if (t.max_content_tokens !== undefined && t.max_content_tokens !== null && (!isInt(t.max_content_tokens) || t.max_content_tokens < 1)) {
+        return bad(`${path}.${t.type}.max_content_tokens: Input should be a positive integer`);
       }
       err = checkCacheControl(t.cache_control, `${path}.${t.type}.cache_control`);
       if (err) return err;
@@ -856,8 +871,13 @@ function validateMessages(body) {
   return verifyThinkingSignatures(body, turns);
 }
 
-/** History-editing check: every replayed thinking block must still match its prefix. */
+/**
+ * History-editing check: every replayed thinking block must still match its prefix. With
+ * thinking.block_binding.prefix_mismatch_behavior "drop_block" (beta thinking-binding-controls)
+ * failing blocks are dropped instead of failing the request, as the real API does.
+ */
 function verifyThinkingSignatures(body, turns) {
+  if (body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block') return null;
   const plain = turns.map(plainTurn);
   for (let ti = 0; ti < turns.length; ti++) {
     const turn = turns[ti];
@@ -873,7 +893,7 @@ function verifyThinkingSignatures(body, turns) {
         thinking: e.block.thinking,
       });
       if (expected !== e.block.signature) {
-        const err = bad(`messages.${e.msg}.content.${e.idx}: thinking block prefix mismatch: earlier history was edited`);
+        const err = bad(`messages.${e.msg}.content.${e.idx}: thinking block prefix mismatch: earlier history was edited. Invalid \`signature\` in \`thinking\` block. The block is bound to a different conversation. Remove the block, or set \`thinking.block_binding.prefix_mismatch_behavior\` to "drop_block". That setting requires the \`${BETA_BINDING}\` value in the \`anthropic-beta\` header.`);
         err.code = 'thinking_prefix_mismatch';
         return err;
       }

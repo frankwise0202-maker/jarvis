@@ -19,6 +19,8 @@ export function createBehaviorState() {
     overloaded: new Set(), // first lead request of a turn already answered with 529
     ratelimit: new Map(), // mission title -> worker requests rejected so far
     dropped: new Set(), // worker identities whose first attempt was already cut
+    containers: new Map(), // code-execution container id -> { expiresAt } (web tools' dynamic filtering)
+    containerByToolUse: new Map(), // server_tool_use id -> the container it ran in
   };
 }
 
@@ -45,16 +47,30 @@ const REFUSAL_DETAILS = Object.freeze({
 
 export const SCRIPTED_ERRORS = {
   overloaded: () => ({ status: 529, type: 'overloaded_error', message: 'Overloaded', headers: { 'x-should-retry': 'true' } }),
-  rateLimited: () => ({
+  rateLimited: (retryAfter = 0) => ({
     status: 429,
     type: 'rate_limit_error',
     message: "This request would exceed your organization's rate limit of 50 requests per minute (model: claude-sonnet-5-5). Please reduce the prompt length or the maximum tokens requested, or try again later.",
     headers: {
-      'retry-after': '0',
+      'retry-after': String(retryAfter),
       'x-should-retry': 'true',
       'anthropic-ratelimit-requests-limit': '50',
       'anthropic-ratelimit-requests-remaining': '0',
       'anthropic-ratelimit-requests-reset': new Date(Date.now() + 1000).toISOString(),
+      'anthropic-ratelimit-output-tokens-limit': '400000',
+    },
+  }),
+  /** Output tokens per minute are charged from max_tokens at the start, so a large max_tokens on a low tier always fails. */
+  outputTokensPerMinute: (limit, model) => ({
+    status: 429,
+    type: 'rate_limit_error',
+    message: `This request would exceed your organization's rate limit of ${limit} output tokens per minute (model: ${model}). For details, refer to: https://docs.claude.com/en/api/rate-limits. You can see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later.`,
+    headers: {
+      'retry-after': '1',
+      'x-should-retry': 'true',
+      'anthropic-ratelimit-output-tokens-limit': String(limit),
+      'anthropic-ratelimit-output-tokens-remaining': '0',
+      'anthropic-ratelimit-output-tokens-reset': new Date(Date.now() + 1000).toISOString(),
     },
   }),
   serverError: () => ({ status: 500, type: 'api_error', message: 'Internal server error', headers: { 'x-should-retry': 'true' } }),
@@ -135,6 +151,8 @@ function planLead(body, state, now) {
   const files = attachmentsOf(userMsg); // photos and PDFs the owner attached to this message
   const env = { body, d, ctx, prompt, rng, pace, now, files };
 
+  // [[otpm:N]]: an output-tokens-per-minute limit of N; a max_tokens above it is rejected (429).
+  if (d.has('otpm') && body.max_tokens > d.int('otpm', 8000, 1, 10_000_000)) return { error: SCRIPTED_ERRORS.outputTokensPerMinute(d.int('otpm', 8000, 1, 10_000_000), body.model) };
   if (last.role === 'assistant') return { plan: leadResume(env, last) };
 
   if (after.length === 0) {
@@ -383,12 +401,15 @@ function planWorker(body, state, now) {
   const pace = d.has('slow') ? 'slow-worker' : 'worker';
 
   if (d.has('workerfail')) return { error: SCRIPTED_ERRORS.serverError() };
+  if (d.has('otpm') && body.max_tokens > d.int('otpm', 8000, 1, 10_000_000)) return { error: SCRIPTED_ERRORS.outputTokensPerMinute(d.int('otpm', 8000, 1, 10_000_000), body.model) };
   if (d.has('ratelimit')) {
+    // [[ratelimit:K]] rejects the mission's first K worker requests; [[ratelimit:K:S]] asks for retry-after S seconds.
     const limit = d.int('ratelimit', 1, 0, 10000);
+    const retryAfter = Math.min(60, Math.max(0, Number(d.arg('ratelimit').split(':')[1]) || 0));
     const seen = state.ratelimit.get(scope) || 0;
     if (seen < limit) {
       state.ratelimit.set(scope, seen + 1);
-      return { error: SCRIPTED_ERRORS.rateLimited() };
+      return { error: SCRIPTED_ERRORS.rateLimited(retryAfter) };
     }
   }
 

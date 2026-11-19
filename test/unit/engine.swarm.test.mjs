@@ -91,8 +91,8 @@ test('deploy_agents: N agents, limiter caps concurrency at maxParallel, one tool
   // Worker request shape (SPEC 8.5).
   const w = h.api.byKind('worker')[0];
   assert.deepEqual(w.body.system, [{ type: 'text', text: WORKER_SYSTEM_V1 }]);
-  assert.deepEqual(w.body.tools, workerTools('balanced'));
-  assert.equal(w.body.max_tokens, 32000);
+  assert.deepEqual(w.body.tools, workerTools('balanced', 'claude-sonnet-5-5'));
+  assert.equal(w.body.max_tokens, 12000); // balanced depth (OTPM limits are charged from max_tokens)
   assert.equal(w.body.model, 'claude-sonnet-5-5');
   assert.deepEqual(w.body.thinking, { type: 'adaptive', display: 'summarized' });
   assert.deepEqual(w.body.output_config, { effort: 'medium' });
@@ -320,7 +320,7 @@ test('rate limit beyond SDK retries: capacity drops, one notice per mission, age
   assert.deepEqual(retryConcurrency, [1, 1, 1]);
 });
 
-test('an agent that stays rate-limited fails after 3 attempts without failing the mission', async () => {
+test('an agent that stays rate-limited fails after 5 attempts without failing the mission', async () => {
   const h = createHarness({
     handler: swarm({
       lead: () => deployReply('toolu_rl2', deployInput(2, 'Stubborn')),
@@ -334,9 +334,9 @@ test('an agent that stays rate-limited fails after 3 attempts without failing th
   assert.equal(mission.status, 'partial');
   const failed = mission.agents[1];
   assert.equal(failed.status, 'error');
-  assert.equal(failed.attempts, 3);
+  assert.equal(failed.attempts, 5);
   assert.equal(failed.error.kind, 'rate_limit');
-  assert.equal(h.api.byKind('worker').filter((r) => workerTaskNo(r.body) === 2).length, 3);
+  assert.equal(h.api.byKind('worker').filter((r) => workerTaskNo(r.body) === 2).length, 5);
 });
 
 test('worker 500: the agent errors, the mission is partial, the lead still gets a result', async () => {

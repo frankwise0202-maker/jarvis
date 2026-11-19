@@ -33,7 +33,7 @@ export function stripDirectives(text) {
 }
 
 // Directives the lead copies into every agent task, and those it copies into exactly one task.
-export const WORKER_DIRECTIVES_ALL = ['slow', 'ratelimit', 'dropworkers', 'workerpause', 'xss'];
+export const WORKER_DIRECTIVES_ALL = ['slow', 'ratelimit', 'dropworkers', 'workerpause', 'xss', 'otpm'];
 export const WORKER_DIRECTIVES_ONE = ['workerfail', 'workerrefuse'];
 
 /** The directive tokens a lead should copy into agent task `index` of `count`. */
@@ -186,7 +186,7 @@ export function attachmentAnswer({ prompt, ctx, blocks }) {
     '',
     asked
       ? `On your question, “${truncate(question, 120)}”: the details above are what I can confirm from the files; ask me to dig into any of them.`
-      : 'Tell me what you would like to know, and I can describe, summarise or research anything in them.',
+      : `Tell me what you would like to know, and I can describe, summarise or research anything in ${files.length === 1 ? 'it' : 'them'}.`,
   ].join('\n');
 }
 
