@@ -91,15 +91,19 @@ export function listConversations() {
   }, []);
 }
 
-/** The full conversation (a fresh copy), or null. */
-export function getConversation(id) {
+/**
+ * The full conversation (a fresh copy), or null. The copy becomes this window's baseline for the
+ * two-window check (see the header); `{ track: false }` reads without that (an export, a
+ * comparison), so a copy this window still has open keeps its own baseline.
+ */
+export function getConversation(id, { track = true } = {}) {
   if (typeof id !== 'string' || !id) return Promise.resolve(null);
   return enqueue(async () => {
     if (deleted.has(id)) return null;
     const mem = memory.get(id);
     if (mem) return snapshot(mem.conv);
     const res = await withDb((db) => readRecords(db, id), 'load a conversation');
-    return res.ok ? assemble(id, res.value) : null;
+    return res.ok ? assemble(id, res.value, track !== false) : null;
   }, null);
 }
 
@@ -296,7 +300,6 @@ async function writeConversation(conv, force = false) {
     reportWarning('Could not index a conversation', err);
     return false;
   }
-  const parts = splitForStorage(conv, apiWritten.get(conv.id));
   const base = knownRev.get(conv.id) ?? 0;
   try {
     const res = await withDb((db) => write(db, (stores, box) => {
@@ -310,11 +313,17 @@ async function writeConversation(conv, force = false) {
           return; // another window saved a newer version: write nothing
         }
         try {
+          // Split right before put() (which clones synchronously): the conversation record (with its
+          // `pending` checkpoint) and the API history are then taken at ONE instant. The engine
+          // changes them together in one synchronous step, so they always match; a split taken
+          // before the transaction could pair an old checkpoint with a newer history (Resume would
+          // then answer a tool round twice).
+          const parts = splitForStorage(conv, apiWritten.get(conv.id));
           parts.main.rev = storedRev + 1;
           putClone(stores[STORE], parts.main);
           if (parts.history) putClone(stores[STORE], parts.history);
           stores[META].put(meta);
-          box.value = { rev: parts.main.rev };
+          box.value = { rev: parts.main.rev, mark: parts.mark };
         } catch (err) {
           box.error = err;
           stores[STORE].transaction.abort();
@@ -330,7 +339,7 @@ async function writeConversation(conv, force = false) {
       // A restore (force) replaced what this window may still hold open: leave its known rev
       // behind, so saving such a stale copy is refused (and reported) rather than undoing it.
       if (!force) knownRev.set(conv.id, res.value.rev);
-      apiWritten.set(conv.id, parts.mark);
+      apiWritten.set(conv.id, res.value.mark);
       memory.delete(conv.id);
       notifyPersistence();
       post({ id: conv.id, updatedAt: finite(conv.updatedAt) ?? 0, rev: res.value.rev });
@@ -376,9 +385,9 @@ function splitForStorage(conv, last) {
 }
 
 /** The conversation from its stored records (see the header), or null. */
-function assemble(id, { main, history } = {}) {
+function assemble(id, { main, history } = {}, track = true) {
   if (!isPlainObject(main) || main.id !== id) return null;
-  knownRev.set(id, Number.isInteger(main.rev) && main.rev > 0 ? main.rev : 0);
+  if (track) knownRev.set(id, Number.isInteger(main.rev) && main.rev > 0 ? main.rev : 0);
   const conv = {};
   for (const key of Object.keys(main)) if (key !== 'apiSplit' && key !== 'rev') conv[key] = main[key];
   if (!isPlainObject(main.apiSplit)) return conv; // stored whole (an earlier version): split on its next save
@@ -386,7 +395,7 @@ function assemble(id, { main, history } = {}) {
     conv.apiMessages = history.apiMessages;
     const messages = conv.apiMessages;
     // Saving this same object again only rewrites the history once it grows.
-    apiWritten.set(id, { count: messages.length, tail: messages.length ? messages[messages.length - 1] : null, rev: history.rev });
+    if (track) apiWritten.set(id, { count: messages.length, tail: messages.length ? messages[messages.length - 1] : null, rev: history.rev });
   } else {
     reportWarning('A saved conversation is missing its message history', id);
     conv.apiMessages = [];

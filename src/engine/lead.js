@@ -509,6 +509,14 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
   await finishRound(ctx, round, missionRuns);
 }
 
+/** Whether the history ends with the assistant message asking for these tools (no results yet). */
+function historyAwaits(conv, toolUses) {
+  const last = conv.apiMessages[conv.apiMessages.length - 1];
+  if (!last || last.role !== 'assistant' || !Array.isArray(last.content)) return false;
+  const ids = new Set(last.content.filter((b) => b?.type === 'tool_use').map((b) => b.id));
+  return toolUses.every((tu) => ids.has(tu?.id));
+}
+
 /** Resumes the tool round saved in conversation.pending: re-runs unfinished agents only. */
 async function resumeToolRound(ctx, pending) {
   const round = {
@@ -622,17 +630,46 @@ function stopTurn(ctx) {
 }
 
 /**
- * A turn stopped before Jarvis appended anything to the history (e.g. Send tapped twice, the
- * second tap landing on Stop) is withdrawn: its user message is the last one and nothing was built
- * on it, so removing it edits no earlier prefix (as in withdrawRejectedAttachments). Otherwise the
- * message - with any photos - would stay in the history, and sending it again would carry it twice.
+ * Whether the owner already saw part of the reply: answer text, a search or page row, a mission
+ * card or a memory chip. Thinking and notices (a retry countdown, a fallback note) are not a reply.
+ */
+export function showedReply(turn) {
+  return (Array.isArray(turn?.segments) ? turn.segments : []).some((s) => {
+    if (!s || typeof s !== 'object' || s.transient) return false;
+    if (s.kind === 'text') return typeof s.text === 'string' && s.text.trim() !== '';
+    return s.kind === 'tool' || s.kind === 'mission' || s.kind === 'memory';
+  });
+}
+
+/**
+ * A turn stopped before Jarvis showed any reply (e.g. Send tapped twice, the second tap landing on
+ * Stop) is withdrawn: its user message is the last one and nothing was built on it, so removing it
+ * edits no earlier prefix (as in withdrawRejectedAttachments). Otherwise the message - with any
+ * photos - would stay in the history, and sending it again would carry it twice.
  * `turn.withdrawn = true` (emitted with the final 'turn' event) tells the UI to put the text and
  * attachments back into the composer; the UserTurn and the JarvisTurn stay in conversation.turns.
+ *
+ * A turn that already showed part of its reply (a stream that is cut off appends nothing, SPEC 8.3),
+ * a resumed turn, or one started with keepOnStop (Voice Mode) keeps its message instead, plus the
+ * reply text the owner saw as a text-only assistant message, so the next message has its context.
+ * That is an append (the next user message follows it), not a prefill.
  */
 function withdrawUnanswered(ctx) {
   const start = ctx.turn.apiStart;
   const messages = ctx.conv.apiMessages;
   if (!Number.isInteger(start) || start < 0 || messages.length !== start + 1 || messages[start]?.role !== 'user') return;
+  if (ctx.resumed || ctx.keepOnStop || showedReply(ctx.turn)) {
+    // Nothing of this turn is in the history yet, so all of its text is what the owner saw.
+    const shown = ctx.turn.segments
+      .filter((s) => s && s.kind === 'text' && typeof s.text === 'string' && s.text.trim())
+      .map((s) => s.text.trim())
+      .join('\n\n');
+    if (shown) {
+      messages.push({ role: 'assistant', content: [{ type: 'text', text: shown }] });
+      ctx.conv.updatedAt = ctx.stamp();
+    }
+    return;
+  }
   messages.pop();
   ctx.turn.withdrawn = true;
   ctx.conv.updatedAt = ctx.stamp();
@@ -689,6 +726,7 @@ function failTurn(ctx, info, req) {
 
 /** Runs (or resumes) the lead turn to completion. Never rejects. */
 export async function runLeadTurn(ctx, { resume = false } = {}) {
+  ctx.resumed = resume === true; // a resumed turn is never withdrawn on Stop
   try {
     if (!ctx.apiKey) {
       const info = { kind: 'auth', message: ERROR_MESSAGES.missingKey, retryable: false };
@@ -700,7 +738,10 @@ export async function runLeadTurn(ctx, { resume = false } = {}) {
     }
     if (resume) {
       const pending = ctx.conv.pending || {};
-      if (Array.isArray(pending.toolUses) && pending.toolUses.length) {
+      // Re-run the saved tool round only while the history still waits for its results: a
+      // checkpoint saved a moment before the round finished must not answer it a second time
+      // (a duplicate tool_result would break the conversation); then the next request is re-issued.
+      if (Array.isArray(pending.toolUses) && pending.toolUses.length && historyAwaits(ctx.conv, pending.toolUses)) {
         await resumeToolRound(ctx, pending);
       } else {
         // Drop what the cut request showed; re-issue it from the current history.

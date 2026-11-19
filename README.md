@@ -132,7 +132,8 @@ it once more (copy it from your password manager).
 - **Show Jarvis a photo or PDF** with the paperclip (or the camera on a phone). Photos are
   resized and their location data removed before they are sent.
 - **Voice Mode**: tap the sound-wave button at the top (or the glowing core on the home screen)
-  and just talk. Jarvis answers out loud and listens again; tap the core to interrupt.
+  and just talk. Jarvis answers out loud and listens again; tap the core to interrupt. **Exit**
+  leaves Voice Mode; a reply or mission that is still running carries on in the chat.
 - **Choose a mode** under the message box:
   - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
   - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).

@@ -192,7 +192,8 @@ export function createMissionCard(mission, opts = {}) {
   }
 
   function timeText(now) {
-    const ms = elapsedMs(m.startedAt || m.createdAt, m.endedAt, now);
+    // From the moment the mission was planned, so the clock never jumps back to 0s at launch.
+    const ms = elapsedMs(m.createdAt || m.startedAt, m.endedAt, now);
     return ms === null ? '—' : fmtDuration(ms);
   }
 

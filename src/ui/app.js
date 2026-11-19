@@ -228,9 +228,14 @@ export async function startApp(rootEl) {
     onOpenMission: (turn, missionId) => openMission(turn, missionId),
     onOpenSettings: (section) => openSettings({ section, focus: section === 'apikey' ? 'apikey-input' : null }),
     onNewChat: () => newChat(),
+    // Like a protocol, a suggestion's mode applies to that run only: the composer keeps the owner's
+    // own mode, so follow-ups never inherit a Swarm (or Quick) they didn't choose. A send that was
+    // refused (offline, no key) leaves the text and its mode waiting in the composer.
     onSuggestion: (text, mode) => {
-      composer.setMode(mode);
-      if (!send(text, mode)) composer.setText(text);
+      if (!send(text, mode)) {
+        composer.setMode(mode);
+        composer.setText(text);
+      }
     },
     // A protocol's mode applies to that run only (the composer keeps its own mode). Returning
     // send()'s boolean keeps the protocol's input row open when the run couldn't start.
@@ -548,6 +553,7 @@ export async function startApp(rootEl) {
     if (attachments.length) input.attachments = attachments;
     const maxAgents = extras ? Number(extras.maxAgents) : NaN;
     if (Number.isFinite(maxAgents) && maxAgents >= 1) input.maxAgents = Math.min(20, Math.round(maxAgents));
+    if (extras && extras.keepOnStop === true) input.keepOnStop = true; // Voice Mode: never withdrawn on Stop
     clearFollowups();
     let run;
     try {
@@ -557,7 +563,12 @@ export async function startApp(rootEl) {
       toast(err && err.message ? err.message : 'Jarvis couldn’t start that request.', { level: 'error' });
       return false;
     }
-    attachRun(conv, run, { text: clean, attachments });
+    // A conversation started by a protocol is titled by its headline ("Morning briefing — Thursday
+    // 19 November"), not by the start of its brief (set before the turn's first save).
+    const protocol = turnsOf(conv).filter((t) => t.role === 'user').length === 1 ? safe(() => parseProtocolPrompt(clean), null) : null;
+    const headline = protocol && typeof protocol.headline === 'string' ? protocol.headline.replace(/\s+/g, ' ').trim() : '';
+    if (headline) conv.title = headline.length > 60 ? `${headline.slice(0, 59).trimEnd()}…` : headline;
+    attachRun(conv, run, { text: clean, attachments, maxAgents: input.maxAgents });
     if (!safe(() => isVoiceModeOpen(), false)) safe(() => sounds.cue('send')); // Voice Mode has its own cues
     if (fresh || state.conv !== conv) setConversation(conv);
     else chat.sync();
@@ -575,7 +586,9 @@ export async function startApp(rootEl) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
     if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
-    if (!send(text, mode)) throw new Error('I couldn’t start that request.');
+    // keepOnStop: a spoken question that is interrupted stays in the conversation (nothing is put
+    // back in the hidden message box), so what the owner says next keeps its context.
+    if (!send(text, mode, { keepOnStop: true })) throw new Error('I couldn’t start that request.');
     const entry = state.conv && state.runs.get(state.conv.id);
     return entry ? entry.run : null;
   }
@@ -600,7 +613,8 @@ export async function startApp(rootEl) {
         activeRun: entry ? entry.run : null,
         mode: () => composer.getMode(),
         onClose: () => {
-          chat.scrollToBottom(false);
+          // The home screen (greeting and core) stays where it was; a conversation shows its end.
+          if (!chat.isEmpty()) chat.scrollToBottom(false);
           updateAll();
         },
       });
@@ -660,9 +674,15 @@ export async function startApp(rootEl) {
   // conversations it is running, so a conversation running elsewhere is never resumed or
   // continued here (that would run the swarm twice), shows "Running in another window"
   // instead, and reloads from storage when that run ends.
+  //
+  // The guard comes down only after the stored conversation has been read again: when the other
+  // window says its run ended, when that window closes (pagehide), or when it has been silent for
+  // REMOTE_RUN_TTL_MS (crashed or frozen; its saves count as signs of life). A message or Resume
+  // here then always starts from what that window saved - never from this window's stale copy,
+  // whose saves would be refused and the paid reply lost.
   const windowId = Math.random().toString(36).slice(2);
-  const remoteRuns = new Map(); // conversation id -> when another window last said it runs it
-  const REMOTE_RUN_TTL_MS = 30000; // a window that vanished without saying so stops counting
+  const remoteRuns = new Map(); // conversation id -> { timer, ending, seenSave } while another window runs it
+  const REMOTE_RUN_TTL_MS = 30000; // a window silent this long (no message, no save) stops counting
   let runChannel = null;
   try {
     runChannel = !state.demo && typeof BroadcastChannel === 'function' ? new BroadcastChannel('jarvis-runs') : null;
@@ -677,13 +697,37 @@ export async function startApp(rootEl) {
     }
   }
   function runningElsewhere(id) {
-    const at = id ? remoteRuns.get(id) : 0;
-    if (!at) return false;
-    if (Date.now() - at > REMOTE_RUN_TTL_MS) {
-      remoteRuns.delete(id);
-      return false;
-    }
-    return true;
+    return !!(id && remoteRuns.has(id));
+  }
+  /** Another window runs `id` (it said so, or it saved it): keep the guard up for another TTL. */
+  function markRemoteRun(id) {
+    const prev = remoteRuns.get(id);
+    if (prev) clearTimeout(prev.timer);
+    const entry = { timer: 0, ending: false, seenSave: !!(prev && !prev.ending && prev.seenSave) };
+    entry.timer = setTimeout(() => releaseRemoteRun(id, entry), REMOTE_RUN_TTL_MS);
+    remoteRuns.set(id, entry);
+    return entry;
+  }
+  /**
+   * That window's run ended, or the window went away: read what it saved, then lift the guard and
+   * show that copy (a turn it never finished settles as interrupted, with Resume).
+   */
+  function releaseRemoteRun(id, entry) {
+    if (!entry || remoteRuns.get(id) !== entry || entry.ending) return;
+    entry.ending = true;
+    clearTimeout(entry.timer);
+    const showing = () => !!(state.conv && state.conv.id === id && !state.runs.has(id));
+    Promise.resolve(showing() ? store.get(id) : null)
+      .catch((err) => {
+        console.error('[jarvis] reloading the conversation failed:', err);
+        return null;
+      })
+      .then((fresh) => {
+        if (remoteRuns.get(id) !== entry) return; // that window spoke up again meanwhile
+        remoteRuns.delete(id);
+        if (showing()) setConversation(fresh || state.conv, { remember: false });
+        scheduleHistoryRefresh();
+      });
   }
   function reloadCurrentFromStore() {
     const id = state.conv && state.conv.id;
@@ -703,11 +747,15 @@ export async function startApp(rootEl) {
         return;
       }
       if (m.type !== 'run' || typeof m.id !== 'string') return;
-      const before = runningElsewhere(m.id);
-      if (m.running) remoteRuns.set(m.id, Date.now());
-      else remoteRuns.delete(m.id);
-      // The open conversation started or finished running elsewhere: show the stored state.
-      if (state.conv && state.conv.id === m.id && before !== !!m.running) {
+      if (!m.running) {
+        releaseRemoteRun(m.id, remoteRuns.get(m.id));
+        return;
+      }
+      const prev = remoteRuns.get(m.id);
+      markRemoteRun(m.id);
+      // The open conversation started running elsewhere: show the stored state (and again on that
+      // window's first save, which carries the new turn - see onRemoteSave).
+      if ((!prev || prev.ending) && state.conv && state.conv.id === m.id) {
         reloadCurrentFromStore();
         scheduleHistoryRefresh();
       }
@@ -716,30 +764,83 @@ export async function startApp(rootEl) {
     setInterval(() => {
       for (const id of state.runs.keys()) broadcastRun(id, true);
     }, 10000);
+    // Closing this window (or freezing it in the back-forward cache) ends its runs: say so now, so
+    // the others offer Resume at once instead of waiting for the guard to time out.
+    window.addEventListener('pagehide', () => {
+      for (const id of state.runs.keys()) broadcastRun(id, false);
+    });
+    window.addEventListener('pageshow', (e) => {
+      if (e && e.persisted) for (const id of state.runs.keys()) broadcastRun(id, true);
+    });
   }
 
   // Storage-level guard (db.js keeps a revision per conversation): another window saved this
   // conversation more recently, so our stale copy was not written. Show the stored version
   // instead of silently keeping changes that only live in this window's memory.
+  const conflictedRecently = new Set(); // conversations whose run was just stopped by a conflict
   if (!state.demo) {
     safe(() =>
       onConversationConflict(({ id } = {}) => {
-        if (!id || !state.conv || state.conv.id !== id || state.runs.has(id)) return;
+        if (!id) return;
+        const entry = state.runs.get(id);
+        if (entry) {
+          // Nothing this run does can be saved any more: stop it now rather than pay for a reply
+          // that would be thrown away (onRunDone shows the stored copy and gives the message back).
+          if (!entry.conflict) {
+            entry.conflict = true;
+            safe(() => entry.run.abort());
+          }
+          return;
+        }
+        if (conflictedRecently.has(id) || !state.conv || state.conv.id !== id) return;
         reloadCurrentFromStore();
-        toast('This conversation was updated in another window — showing the latest.', { level: 'info' });
+        toast('This conversation was changed in another window — showing the latest.', { level: 'info', id: 'conflict' });
       }),
     );
     // Keep an idle open conversation in step with saves made in other windows.
     safe(() =>
       onRemoteSave(({ id } = {}) => {
-        // While that window is still running it, wait for its run-end message (one reload, not one per save).
-        if (id && state.conv && state.conv.id === id && !state.runs.has(id) && !runningElsewhere(id)) reloadCurrentFromStore();
+        const remote = id ? remoteRuns.get(id) : null;
+        if (remote && !remote.ending) {
+          // That window is still running it: each save is a sign of life (a background tab's timers
+          // may be throttled), and its first save carries the new turn to show here. Otherwise wait
+          // for its run-end message (one reload, not one per save).
+          markRemoteRun(id).seenSave = true;
+          if (!remote.seenSave && state.conv && state.conv.id === id) reloadCurrentFromStore();
+        } else if (id && state.conv && state.conv.id === id && !state.runs.has(id)) reloadCurrentFromStore();
         scheduleHistoryRefresh();
       }),
     );
   }
 
-  /** `sent` = { text, attachments } of a new message: given back if the turn is withdrawn. */
+  /**
+   * A run stopped because another window had saved its conversation first (see the conflict
+   * handler): show the stored copy, and give the message back if it never reached storage.
+   */
+  function settleConflictedRun(entry, turn, sent) {
+    const id = entry.conv.id;
+    conflictedRecently.add(id); // its last saves are refused too: no second notice for those
+    setTimeout(() => conflictedRecently.delete(id), 5000);
+    const turns = turnsOf(entry.conv);
+    const at = turn ? turns.indexOf(turn) : -1;
+    const asked = at > 0 && turns[at - 1].role === 'user' ? turns[at - 1] : null;
+    Promise.resolve(store.get(id))
+      .catch(() => null)
+      .then((fresh) => {
+        const kept = !!(fresh && asked && turnsOf(fresh).some((t) => t.id === asked.id));
+        const showing = !!(state.conv && state.conv.id === id && !state.runs.has(id));
+        if (showing && fresh) setConversation(fresh, { remember: false });
+        if (showing && !kept && sent && (sent.text || (sent.attachments && sent.attachments.length))) {
+          safe(() => composer.restoreMessage(sent.text, sent.attachments, sent.maxAgents));
+          toast('This conversation was changed in another window, so Jarvis stopped and your message wasn’t saved. It’s back in the box.', { level: 'warn', id: 'conflict' });
+        } else if (showing) {
+          toast('This conversation was changed in another window — showing the latest.', { level: 'info', id: 'conflict' });
+        }
+        scheduleHistoryRefresh();
+      });
+  }
+
+  /** `sent` = { text, attachments, maxAgents } of a new message: given back if the turn is withdrawn. */
   function attachRun(conv, run, sent = null) {
     const entry = { run, conv, sent, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
     state.runs.set(conv.id, entry);
@@ -808,10 +909,12 @@ export async function startApp(rootEl) {
       mcMarkDirty(turn, null);
     }
     refreshHistory();
-    // Stopped before Jarvis wrote anything, the message was taken back (the engine marks the turn
-    // withdrawn): its text and attachments go back in the box, ready to edit or send again.
-    if (turn && turn.withdrawn === true && entry.sent && isCurrent(entry)) {
-      safe(() => composer.restoreMessage(entry.sent.text, entry.sent.attachments));
+    if (entry.conflict) settleConflictedRun(entry, turn, entry.sent);
+    // Stopped before Jarvis showed any reply, the message was taken back (the engine marks the turn
+    // withdrawn; once part of the reply is on screen it stays in the conversation instead): its
+    // text, attachments and team size go back in the box, ready to edit or send again.
+    else if (turn && turn.withdrawn === true && entry.sent && isCurrent(entry)) {
+      safe(() => composer.restoreMessage(entry.sent.text, entry.sent.attachments, entry.sent.maxAgents));
       toast('Stopped before Jarvis replied. Your message is back in the box.', { level: 'info', id: 'withdrawn' });
     }
     entry.sent = null;

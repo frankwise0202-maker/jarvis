@@ -353,6 +353,44 @@ test('db: the API history is stored apart and rewritten only when it changes', a
   assert.equal(history.messages, 2);
 });
 
+test('db: the conversation record and its history are taken at one instant (a tool round finished during the save never leaves a stale checkpoint)', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const db = window.__mods.db;
+    const c = conv('race', 1000, ['Remember that I prefer metric units']);
+    const ask = { type: 'tool_use', id: 'toolu_mem', name: 'update_memory', input: { action: 'add', fact: 'Prefers metric units' } };
+    c.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'Noting that.' }, ask] });
+    c.pending = { turnId: 'race-j0', toolUses: [{ id: ask.id, name: ask.name, input: ask.input }], results: {}, req: 1 };
+    // The engine finishes the memory round (tool_result appended, checkpoint cleared - one
+    // synchronous step) while this save is under way: here, as the save's transaction begins.
+    const realGet = IDBObjectStore.prototype.get;
+    let finishRound = () => {
+      c.apiMessages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: ask.id, content: 'Saved.' }] });
+      c.pending = { turnId: 'race-j0', toolUses: [], req: 1 };
+    };
+    IDBObjectStore.prototype.get = function (key) {
+      const req = realGet.call(this, key);
+      if (finishRound && this.name === 'conversations' && key === 'race') {
+        const step = finishRound;
+        finishRound = null;
+        step();
+      }
+      return req;
+    };
+    const saved = await db.saveConversation(c);
+    IDBObjectStore.prototype.get = realGet;
+    const raw = await rawRecords();
+    const main = raw.find((x) => x.id === 'race');
+    const history = raw.find((x) => Array.isArray(x.id) && x.id[0] === 'race');
+    return { saved, split: main.apiSplit.count, stored: history.apiMessages.length, pending: main.pending.toolUses.length, last: history.apiMessages.at(-1).content[0].type };
+  });
+  assert.equal(r.saved, true);
+  assert.equal(r.stored, 3);
+  assert.equal(r.last, 'tool_result');
+  assert.equal(r.split, r.stored, 'apiSplit matches the stored history');
+  assert.equal(r.pending, 0, 'the stored checkpoint no longer asks for the answered tool round');
+});
+
 test('db: a conversation stored whole (earlier versions) is read as it is and split on its next save', async () => {
   const page = await newPage();
   const r = await page.evaluate(async () => {
@@ -504,6 +542,41 @@ test('db: two windows on one conversation never overwrite each other silently, a
   });
   assert.deepEqual(inB, { restored: true, saved: false, conflicts: [{ id: 'shared' }] });
   assert.deepEqual(inA, { saved: false, conflicts: [{ id: 'shared' }], title: 'From a backup' });
+});
+
+test('db: exporting a backup does not reset the two-window check (a stale copy still cannot overwrite newer turns)', async () => {
+  const a = await newPage();
+  const b = await a.context().newPage();
+  await b.addInitScript(FACTORY);
+  await b.goto(h.url + '/');
+  await b.waitForFunction(() => window.__ready === true);
+  await a.evaluate(async () => {
+    window.c = conv('exported', 1000, ['First question']);
+    await window.__mods.db.saveConversation(window.c);
+  });
+  // Window B opens it and adds a turn; window A (missing that save, e.g. a frozen tab) keeps its copy.
+  await b.evaluate(async () => {
+    const c = await window.__mods.db.getConversation('exported');
+    c.turns.push({ id: 'exported-u1', role: 'user', text: 'Asked in window B', mode: 'auto', createdAt: 1100 });
+    c.apiMessages.push({ role: 'assistant', content: [{ type: 'text', text: 'Answer' }] }, { role: 'user', content: [{ type: 'text', text: 'Asked in window B' }] });
+    c.updatedAt = 1100;
+    await window.__mods.db.saveConversation(c);
+  });
+  const r = await a.evaluate(async () => {
+    const { db, backup } = window.__mods;
+    window.conflicts = [];
+    db.onConversationConflict((e) => window.conflicts.push(e));
+    const data = JSON.parse(await (await backup.exportBackup()).text()); // reads every conversation, including the newer one
+    window.c.title = 'Renamed in window A';
+    const saved = await db.saveConversation(window.c);
+    const stored = await db.getConversation('exported');
+    return { exported: data.conversations.length, saved, conflicts: window.conflicts, turns: stored.turns.map((t) => t.id), messages: stored.apiMessages.length };
+  });
+  assert.equal(r.exported, 1);
+  assert.equal(r.saved, false, 'the stale copy is refused');
+  assert.deepEqual(r.conflicts, [{ id: 'exported' }]);
+  assert.ok(r.turns.includes('exported-u1'), "window B's turn survived");
+  assert.equal(r.messages, 3);
 });
 
 // ---- backup -----------------------------------------------------------------------------

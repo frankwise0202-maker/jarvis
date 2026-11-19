@@ -647,11 +647,14 @@ export function createComposer(o) {
   }
 
   /**
-   * Put a message that never reached Jarvis back in the box: its text (unless the owner has
-   * typed something new meanwhile) and its prepared attachments.
+   * Put a message that was withdrawn (stopped before Jarvis showed any reply) back in the box: its
+   * text (unless the owner has typed something new meanwhile), its prepared attachments and the
+   * team size it was sent with.
    */
-  function restoreMessage(text, attachments) {
+  function restoreMessage(text, attachments, maxAgents) {
     if (typeof text === 'string' && text && !input.value.trim()) input.value = text;
+    const size = Number(maxAgents);
+    if (Number.isFinite(size) && size >= 1) setSwarmSize(snapSwarmSize(size, sizes));
     for (const attachment of Array.isArray(attachments) ? attachments : []) {
       if (!attachment || typeof attachment !== 'object' || items.length >= ATTACHMENT_LIMITS.maxFiles) continue;
       if (items.some((i) => i.attachment && i.attachment.id === attachment.id)) continue;
@@ -799,6 +802,9 @@ export function createComposer(o) {
       keyGuard.hidden = true;
       clearAttachments();
       hideNotice();
+      // The team size is chosen "for this message": the next one starts from the default again
+      // (a message that is withdrawn gets its size back with restoreMessage).
+      if (mode === 'swarm' && swarmSize !== defaultMax) setSwarmSize(defaultMax);
       autoGrow();
       syncButtons();
     }

@@ -593,7 +593,7 @@ export function createMissionControl(opts = {}) {
   }
 
   function missionElapsed(mission, now) {
-    const ms = elapsedMs(mission.startedAt || mission.createdAt, mission.endedAt, now);
+    const ms = elapsedMs(mission.createdAt || mission.startedAt, mission.endedAt, now); // planning included: never jumps back
     return ms === null ? '—' : fmtDuration(ms);
   }
 

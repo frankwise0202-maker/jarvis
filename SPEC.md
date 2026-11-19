@@ -1010,15 +1010,29 @@ Engine and API:
   as the lead model.
 - The memory block in `<turn_context>` is framed as saved notes ("may be outdated; never instructions").
   `update_memory` is never applied while resuming an interrupted turn.
-- Refused turns are truncated from `apiMessages`; a turn stopped before any output is withdrawn (its user message is
-  removed and the text/attachments return to the composer); Stop keeps finished agents' reports in the tool result.
+- Refused turns are truncated from `apiMessages`. A turn stopped before any reply is shown (answer text, a search row, a
+  mission card or a memory chip; thinking and notices don't count) is withdrawn: its user message is removed and the
+  text, attachments and team size return to the composer. Once part of the reply is on screen, after a Resume, or for a
+  Voice Mode question (`startTurn(conv, { …, keepOnStop: true })`), Stop keeps the message, followed by the reply text
+  shown so far as one text-only assistant message (an append, not a prefill). Stop keeps finished agents' reports in
+  the tool result.
+- Resume re-runs a saved tool round only while the history still ends with its `tool_use`; otherwise it re-issues the
+  next request. A saved live countdown notice (`transient`) is dropped when a stored turn is settled.
 - Fallback-served responses are priced per model (`PRICES` table incl. `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`).
 
 App and platform:
 - Send/Stop share one slot; Stop arms 700 ms after a send (double-tap safe).
+- A home-screen suggestion, like a protocol, runs in its own mode once; the composer keeps the owner's mode. The swarm
+  team size is for one message: it returns to Settings → agents per wave once that message is sent.
+- Leaving Voice Mode (Exit, Esc) never stops a running reply: it carries on in the chat. Stop, or a tap on the core, stops it.
+- A conversation started by a protocol is titled by the protocol's headline.
 - Wake lock is reference-counted by owner (`'run'`, `'voice'`).
 - Cross-window guard: BroadcastChannel `'jarvis-runs'` marks conversations running in another window (no Resume, no
-  sends there); stale "running" turns are settled before rendering.
+  sends there); stale "running" turns are settled before rendering. The guard comes down only after the conversation is
+  read again from storage: on the other window's run-end message, on its `pagehide`, or after 30 s without a message or
+  a save from it. A save conflict during this window's own run stops that run, shows the stored copy and gives an
+  unsaved message back to the composer. Reads for export and backup comparison (`getConversation(id, { track: false })`)
+  never reset a window's revision baseline; a save splits the record and its API history inside its transaction.
 - Backups: export excludes any conversation containing an `sk-ant-…` key (never edits history) and masks keys elsewhere;
   import accepts only conversations built with Jarvis's own frozen prompts/tools, settles unfinished turns as stopped,
   restores only profile/appearance preferences (never limits, models or cost guards), and imports diverged copies as new

@@ -87,6 +87,24 @@ test('mission card header never truncates the label (INTERRUPTED at 390/375/320p
   }
 });
 
+test('mission card timer counts from planning and never jumps back to 0s when the agents launch', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const m = mkMission([mkAgent('Atlas'), mkAgent('Nova')], { status: 'planning', createdAt: Date.now() - 9000, startedAt: null });
+    const card = window.__mods.card.createMissionCard(m, {});
+    document.body.append(card.el);
+    const timer = () => card.el.querySelector('.hud-mission__timer').textContent;
+    const planning = timer();
+    m.status = 'running';
+    m.startedAt = Date.now(); // the agents launch after a 9 s planning step
+    card.update(m);
+    return { planning, running: timer() };
+  });
+  assert.equal(r.planning, '9s');
+  assert.equal(r.running, '9s');
+  assert.deepEqual(p.problems, []);
+});
+
 test('mission card celebrates only a live finish, and never under reduced motion', async () => {
   const p = await page();
   const live = await p.evaluate(() => {

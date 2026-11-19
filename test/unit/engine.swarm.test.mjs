@@ -444,7 +444,7 @@ test('abort mid-mission: everything stops and the pending tool round is closed i
   assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user', 'user']);
 });
 
-test('abort while the lead streams: stopped, nothing appended, the unanswered message is withdrawn', async () => {
+test('abort while the lead streams: stopped; the message stays, with the partial answer the owner saw (not withdrawn)', async () => {
   const h = createHarness({ handler: () => ({ content: [blk.text('This is a slow answer that will be stopped halfway through.')], stop: 'end_turn', delayMs: 30 }) });
   const conv = h.jarvis.newConversation();
   const { turn, events } = await runTurn(h.jarvis, conv, 'Slow please', 'auto', {
@@ -453,15 +453,17 @@ test('abort while the lead streams: stopped, nothing appended, the unanswered me
     }),
   });
   assert.equal(turn.status, 'stopped');
-  // Nothing was appended for this turn, so its own message leaves the history too (trailing
-  // removal: no earlier prefix changes) and the UI gives the text back to the composer.
-  assert.equal(conv.apiMessages.length, 0);
-  assert.equal(turn.withdrawn, true);
-  assert.equal(events.filter((e) => e.type === 'turn').at(-1).turn.withdrawn, true);
-  assert.equal(h.persisted.at(-1).turns.at(-1).withdrawn, true);
-  assert.equal(h.persisted.at(-1).apiMessages.length, 0);
+  // Part of the reply was on screen, so the message is not withdrawn (SPEC 16: only a turn stopped
+  // before any output is): it stays, followed by the text Jarvis had written, as text only.
+  const partial = segmentsOf(turn, 'text')[0].text;
+  assert.ok(partial.length > 10 && partial.length < 59);
+  assert.deepEqual(conv.apiMessages.map((m) => m.role), ['user', 'assistant']);
+  assert.deepEqual(conv.apiMessages[1].content, [{ type: 'text', text: partial.trim() }]);
+  assert.equal(turn.withdrawn, undefined);
+  assert.equal(events.filter((e) => e.type === 'turn').at(-1).turn.withdrawn, undefined);
+  assert.equal(h.persisted.at(-1).turns.at(-1).withdrawn, undefined);
+  assert.equal(h.persisted.at(-1).apiMessages.length, 2);
   assert.equal(conv.pending, null);
-  assert.ok(segmentsOf(turn, 'text')[0].text.length < 59);
 });
 
 test('Send tapped twice (Stop right away): the turn is withdrawn and the photo is not sent twice later', async () => {

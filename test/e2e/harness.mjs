@@ -356,12 +356,16 @@ export class TestContext {
       // A Stop may drop the end of the previous request's history, and only that: the partial
       // assistant messages of a pause_turn continuation, or a message withdrawn before Jarvis
       // replied (one user message, possibly followed by such a chain). What comes next must then
-      // be a new user message (a turn or tool results); everything before stays exactly as sent.
+      // be a new user message (a turn or tool results) - or, for a turn stopped after part of its
+      // reply was shown, one text-only assistant message with that text, then a user message
+      // (SPEC 16). Everything before stays exactly as sent.
       let p = 0;
       while (p < a.messages.length && p < b.messages.length && canonicalJson(a.messages[p]) === canonicalJson(b.messages[p])) p++;
       const dropped = a.messages.slice(p);
       const droppable = dropped.every((m, j) => m.role === 'assistant' || (j === 0 && m.role === 'user'));
-      const nextOk = !dropped.length || !b.messages[p] || b.messages[p].role === 'user';
+      const shown = b.messages[p];
+      const shownText = !!shown && shown.role === 'assistant' && Array.isArray(shown.content) && shown.content.length > 0 && shown.content.every((c) => c.type === 'text');
+      const nextOk = !dropped.length || !shown || shown.role === 'user' || (shownText && (!b.messages[p + 1] || b.messages[p + 1].role === 'user'));
       this.assert(droppable && nextOk, `Lead request ${i + 1} edited history: messages[${p}] differs from the previous request`);
     }
   }

@@ -11,7 +11,8 @@
 // current sentence highlighted) -> listening again when settings.voiceContinuous (default true).
 //
 // Tap the core: listening = stop and send; thinking/working = stop the turn; speaking = stop
-// speaking and listen; otherwise = start listening. Esc or Exit closes (and aborts a running turn).
+// speaking and listen; otherwise = start listening. Esc or Exit closes; a running turn carries on
+// in the chat (Stop, or a tap on the core, is how to stop it).
 //
 // Optional extras beyond SPEC 14.1 (all safe to omit):
 //   saveSettings(patch)   persists the Continuous toggle as settings.voiceContinuous
@@ -367,7 +368,7 @@ function createVoiceMode(opts) {
     const asked = userTextFor(activeRun);
     if (asked) showCaption('quote', `“${asked}”`);
     else showCaption('hint', 'Working on it.');
-    attachRun(activeRun, S.run, false); // the owner started it in the chat: exiting won't stop it
+    attachRun(activeRun, S.run, false); // the owner started it in the chat; exiting never stops a run
   } else if (S.sttOk) {
     startListening({ gesture: true });
   } else {
@@ -1746,10 +1747,12 @@ function createVoiceMode(opts) {
     stopListening();
     cancelSpeech();
     if (S.run) {
+      // Leaving only stops listening and speaking: a running reply or mission carries on in the
+      // chat (the app keeps the screen awake for it and shows Stop), so paid work is never lost
+      // just to look at Mission Control. STOP, or a tap on the core, stops it.
       const R = S.run;
       S.run = null;
       if (R.offs) for (const off of R.offs) callQuietly(off);
-      if (R.run && R.owned) abortQuietly(R.run); // leaving voice mode hangs up: stop its turn
     }
     cancelRunRender();
     if (levelFrame) cancelAnimationFrame(levelFrame);

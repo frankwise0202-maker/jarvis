@@ -98,7 +98,7 @@ export async function exportBackup() {
   const conversations = [];
   const excluded = [];
   for (const row of await listConversations()) {
-    const conv = await getConversation(row.id);
+    const conv = await getConversation(row.id, { track: false }); // a read-only copy: never this window's baseline
     if (!conv) continue;
     // A conversation is never edited (its thinking blocks are bound to the exact history, SPEC
     // §8.3), so one in which the owner pasted an API key is left out of the backup instead.
@@ -239,7 +239,7 @@ async function readBackup(file) {
 
 /** Whether this device's copy of `conv` has turns that the (newer) backup copy lacks. */
 async function divergedFrom(conv) {
-  const local = await getConversation(conv.id);
+  const local = await getConversation(conv.id, { track: false });
   if (!local || !Array.isArray(local.turns)) return false;
   const inBackup = new Set(conv.turns.map((t) => t.id));
   return local.turns.some((t) => isPlainObject(t) && typeof t.id === 'string' && !inBackup.has(t.id));

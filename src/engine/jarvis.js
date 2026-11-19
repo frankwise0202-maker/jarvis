@@ -77,6 +77,11 @@ const FINAL_AGENT = new Set(['done', 'error']);
  */
 function settleUnfinished(turn, status, ts, notify = null) {
   const code = status === 'interrupted' ? 'interrupted' : status === 'stopped' ? 'stopped' : 'incomplete';
+  // A live countdown ("retrying in 8s") saved just before the app was closed is over by now. (A
+  // live run always removes its own; this clears one left in a saved turn.)
+  if (Array.isArray(turn.segments)) {
+    for (let i = turn.segments.length - 1; i >= 0; i--) if (turn.segments[i]?.transient === true) turn.segments.splice(i, 1);
+  }
   for (const seg of turn.segments || []) {
     if (seg.kind === 'tool' && seg.status === 'running') {
       seg.status = 'error';
@@ -513,9 +518,10 @@ export function createJarvis(deps = {}) {
     return Number.isInteger(max) && max >= 1 && max <= 20 ? { ...settings, maxAgents: max } : settings;
   }
 
-  function launch(conv, turn, settings, { resume, req }) {
+  function launch(conv, turn, settings, { resume, req, keepOnStop = false }) {
     const emitter = createEmitter();
     const ctx = createContext(conv, turn, turnSettings(settings, turn), emitter, { req });
+    ctx.keepOnStop = keepOnStop === true; // Stop keeps the message even before any reply (lead.js)
     runs.set(conv.id, ctx);
     let resolveDone;
     const done = new Promise((resolve) => {
@@ -581,10 +587,12 @@ export function createJarvis(deps = {}) {
     /**
      * Starts a turn. `attachments` (SPEC §15.1) become image / PDF document blocks between the
      * turn context and the text; a message may be attachments only. `maxAgents` (1–20) overrides
-     * settings.maxAgents for this turn only. Throws (before anything is appended) when the input
-     * is invalid, e.g. an attachment Claude would reject; the error message is worded for the owner.
+     * settings.maxAgents for this turn only. `keepOnStop: true` (Voice Mode, where nothing can be
+     * handed back to a message box) keeps the message in the history even when the turn is stopped
+     * before any reply. Throws (before anything is appended) when the input is invalid, e.g. an
+     * attachment Claude would reject; the error message is worded for the owner.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
@@ -640,7 +648,7 @@ export function createJarvis(deps = {}) {
       conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: turnContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
-      return launch(conv, turn, settings, { resume: false, req: 0 });
+      return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true });
     },
 
     canResume,

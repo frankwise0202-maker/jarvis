@@ -25,7 +25,7 @@ function lastLeadUserText(t) {
  * window.__voice.queue items one per listen (then reports no speech), and the synthesizer
  * "speaks" each utterance in ~120 ms, recording what was said in window.__voice.said.
  */
-function installFakeSpeech() {
+export function installFakeSpeech() {
   const voice = { queue: ['What is the capital of France?'], said: [], listens: 0 };
   window.__voice = voice;
   class FakeRecognition {
@@ -169,6 +169,9 @@ export default [
         await t.waitForTurn(turn, ['done'], { timeout: 90000 });
         const sent = lastLeadUserText(t);
         t.assert(/Protocol: Deep Research/.test(sent) && /Mode: swarm/.test(sent), 'The lead request carries the protocol brief and Mode: swarm');
+        // History shows the protocol's headline as the title, not the start of its brief.
+        const rowTitle = t.page.locator(tid('history-item')).first().locator('.history-item-title');
+        await t.waitFor(async () => (await t.text(rowTitle)) === 'Deep research: black holes', { timeout: 5000, message: async () => `the History row to be titled "Deep research: black holes" (got "${await t.text(rowTitle).catch(() => '')}")` });
         t.note(`protocols: ${ids.length} tiles, deep-research run`);
       });
 
