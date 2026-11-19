@@ -210,21 +210,16 @@ function headerOf(err, name) {
 }
 
 /**
- * The account's output-tokens-per-minute limit when a 429 says it is the limit that was hit:
- * from "… N output tokens per minute …" in the message, or the
- * anthropic-ratelimit-output-tokens-limit header (CORS exposes every header). Else null.
+ * The account's output-tokens-per-minute limit, read from a 429: "… N output tokens per minute …"
+ * in the message, else the anthropic-ratelimit-output-tokens-limit header (CORS exposes every
+ * header). OTPM is charged from max_tokens when a request starts, so a max_tokens above it fails
+ * every time, whichever limit the 429 names. Null when neither says.
  */
 export function outputTokensLimit(err) {
   if (!(err instanceof APIError) || !(err instanceof RateLimitError || err.status === 429)) return null;
-  const detail = apiErrorDetail(err);
-  const m = /([\d,]+)\s+output tokens per minute/i.exec(detail);
-  if (m) {
-    const limit = Number(m[1].replace(/,/g, ''));
-    return Number.isFinite(limit) && limit > 0 ? limit : null;
-  }
-  if (!/output tokens/i.test(detail)) return null;
-  const header = Number(headerOf(err, 'anthropic-ratelimit-output-tokens-limit'));
-  return Number.isFinite(header) && header > 0 ? header : null;
+  const m = /([\d,]+)\s+output tokens per minute/i.exec(apiErrorDetail(err));
+  const limit = m ? Number(m[1].replace(/,/g, '')) : Number(headerOf(err, 'anthropic-ratelimit-output-tokens-limit'));
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
 }
 
 /** How long the API asked us to wait (retry-after-ms / retry-after seconds or HTTP date), in ms, or null. */
