@@ -163,13 +163,78 @@ export function classifyError(err, { model } = {}) {
 }
 
 /**
- * Which optional request feature a 400 is complaining about, if any: 'fallbacks' or 'compaction'.
- * Only meaningful for errors raised before any output was streamed.
+ * Which optional request feature a 400 rejects, if any: 'fallbacks' or 'compaction'. Decided from
+ * the error's shape, never from a word appearing anywhere in the message (a message can quote the
+ * owner's text): an unknown `anthropic-beta` value naming the feature's beta, or a validation error
+ * on the feature's own request field ("fallbacks: …", "context_management.edits.0: …"). Only
+ * meaningful for errors raised before any output was streamed.
  */
 export function unsupportedFeature(err, params) {
   if (!(err instanceof APIError) || !(err instanceof BadRequestError || err.status === 400)) return null;
   const detail = apiErrorDetail(err);
-  if (params?.fallbacks !== undefined && /fallback/i.test(detail)) return 'fallbacks';
-  if (params?.context_management !== undefined && /compact|context_management/i.test(detail)) return 'compaction';
+  const beta = /Unexpected value\(s\)\s+`([^`]+)`\s+for the\s+`anthropic-beta`\s+header/i.exec(detail);
+  if (beta) {
+    const values = beta[1].split(',').map((v) => v.trim());
+    if (params?.fallbacks !== undefined && values.some((v) => /^server-side-fallback-/i.test(v))) return 'fallbacks';
+    if (params?.context_management !== undefined && values.some((v) => /^compact-/i.test(v))) return 'compaction';
+    return null;
+  }
+  if (params?.fallbacks !== undefined && /^`?fallbacks`?(?:[.:\s\[]|$)/i.test(detail)) return 'fallbacks';
+  if (params?.context_management !== undefined && /^`?context_management`?(?:[.:\s\[]|$)/i.test(detail)) return 'compaction';
   return null;
+}
+
+const isBadRequest = (err) => err instanceof APIError && (err instanceof BadRequestError || err.status === 400);
+
+/** A 400 about the code-execution `container` (unknown or expired): drop it and try again. */
+export function isContainerError(err) {
+  return isBadRequest(err) && /\bcontainer\b/i.test(apiErrorDetail(err));
+}
+
+/** A 400 from the history check: a replayed thinking block no longer matches its conversation. */
+export function isThinkingMismatch(err) {
+  if (!isBadRequest(err)) return false;
+  const detail = apiErrorDetail(err);
+  return /invalid `?signature`? in `?thinking`? block|bound to a different conversation|prefix_mismatch_behavior|thinking block prefix mismatch/i.test(detail);
+}
+
+function headerOf(err, name) {
+  try {
+    const h = err?.headers;
+    if (!h) return null;
+    if (typeof h.get === 'function') return h.get(name);
+    return h[name] ?? h[name.toLowerCase()] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The account's output-tokens-per-minute limit when a 429 says it is the limit that was hit:
+ * from "… N output tokens per minute …" in the message, or the
+ * anthropic-ratelimit-output-tokens-limit header (CORS exposes every header). Else null.
+ */
+export function outputTokensLimit(err) {
+  if (!(err instanceof APIError) || !(err instanceof RateLimitError || err.status === 429)) return null;
+  const detail = apiErrorDetail(err);
+  const m = /([\d,]+)\s+output tokens per minute/i.exec(detail);
+  if (m) {
+    const limit = Number(m[1].replace(/,/g, ''));
+    return Number.isFinite(limit) && limit > 0 ? limit : null;
+  }
+  if (!/output tokens/i.test(detail)) return null;
+  const header = Number(headerOf(err, 'anthropic-ratelimit-output-tokens-limit'));
+  return Number.isFinite(header) && header > 0 ? header : null;
+}
+
+/** How long the API asked us to wait (retry-after-ms / retry-after seconds or HTTP date), in ms, or null. */
+export function retryAfterMs(err, now = Date.now()) {
+  const ms = Number(headerOf(err, 'retry-after-ms'));
+  if (Number.isFinite(ms) && ms >= 0 && headerOf(err, 'retry-after-ms') !== null) return ms;
+  const raw = headerOf(err, 'retry-after');
+  if (raw === null || raw === undefined || raw === '') return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(String(raw));
+  return Number.isFinite(date) ? Math.max(0, date - now) : null;
 }

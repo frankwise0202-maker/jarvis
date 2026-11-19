@@ -9,7 +9,8 @@ and your phone like an app.
 
 There is no Jarvis company or server in the middle. Jarvis runs entirely in your web browser and
 talks directly to Claude, Anthropic's AI, using your own Anthropic account. You pay Anthropic only
-for what you use (usually cents), and your conversations stay on your device.
+for what you use (cents for everyday questions, a dollar or two for a big research mission),
+and your conversations stay on your device.
 
 ---
 
@@ -40,12 +41,20 @@ for what you use (usually cents), and your conversations stay on your device.
   cars for under $50k", "plan a week in Lisbon"), Jarvis sends several research agents out in
   parallel, each with its own angle. You can watch every agent work live in **Mission Control**,
   then Jarvis combines their reports into one answer.
-- **Talk and listen.** Tap the microphone to speak, and have Jarvis read its answers aloud.
+- **One-tap missions ("Protocols").** Morning Briefing, Deep Research, Compare & Decide, Trip
+  Planner, Fact Check, Explain Simply, News Sweep and Gift Finder are ready on the home screen,
+  and you can save your own.
+- **Show Jarvis.** Attach photos (or take one) and PDFs, and ask about them.
+- **Talk and listen.** Tap the microphone to dictate, have Jarvis read its answers aloud, or open
+  **Voice Mode** for a hands-free spoken conversation.
+- **Suggest what to ask next** after each answer, and **share or export** answers and full
+  mission dossiers (every agent's task, report and sources).
 - **Remember things** you ask it to ("remember that I'm vegetarian"). You can see and edit
   everything it remembers in Settings.
 - **Keep your history.** Every conversation is saved on your device, searchable, and you can
   pick up where you left off.
-- **Install like an app** on your computer, iPhone or Android phone.
+- **Install like an app** on your computer, iPhone or Android phone, in the color theme you like,
+  with subtle sounds, and a notification when a long mission finishes while you're away.
 
 ## Step 1: Get your API key (about 5 minutes)
 
@@ -108,10 +117,17 @@ it once more (copy it from your password manager).
 
 - **Ask** by typing, or tap the **microphone** and speak. On a computer, **Enter** sends and
   **Shift+Enter** starts a new line.
+- **Run a Protocol**: tap a tile under the greeting (scroll down on a phone). Tiles that need a
+  topic open a small box for it; **New protocol** saves your own one-tap mission.
+- **Show Jarvis a photo or PDF** with the paperclip (or the camera on a phone). Photos are
+  resized and their location data removed before they are sent.
+- **Voice Mode**: tap the sound-wave button at the top (or the glowing core on the home screen)
+  and just talk. Jarvis answers out loud and listens again; tap the core to interrupt.
 - **Choose a mode** under the message box:
   - **Auto**: Jarvis decides whether to answer directly, search the web, or send agents.
   - **Quick**: a fast answer from Jarvis alone (it may still do a quick web search).
-  - **Swarm**: always send the full agent team, as many as the question supports.
+  - **Swarm**: always send the full agent team. Next to the modes you can pick the team size
+    for that message (3 to 20 agents).
 - **Watch the swarm.** When Jarvis deploys agents you will see a mission card with every agent
   (Atlas, Nova, Echo, …) and what each one is doing right now. Tap it to open
   **Mission Control**: each agent's task, searches, sources, cost and full report. When they
@@ -122,6 +138,11 @@ it once more (copy it from your password manager).
   that already finished are kept.
 - **Hear answers aloud**: tap **Speak** under an answer, or turn on spoken replies in
   Settings → Voice (a short summary, or the full answer).
+- **Ask next**: after an answer, up to three suggested follow-up questions appear; tap one to ask it.
+- **Share** an answer, or a whole mission as a dossier, from the **Share** button under it
+  (on a phone this opens the usual share sheet; elsewhere it copies or downloads Markdown).
+- **Systems**: Settings → API key & spending → **Systems dashboard** (or the Systems row on a
+  computer) shows how many agents, searches and sources Jarvis has used, and the spend.
 - **Memory**: say things like "remember that I prefer metric units" or "forget my old address".
   Jarvis tells you when it saves something; review it in Settings → Memory.
 - **History**: open the history list to search and reopen past conversations, or start a new
@@ -136,17 +157,22 @@ from the credit in your account. Rough examples:
 
 | What you ask | Typical cost |
 |---|---|
-| A quick question | about a cent or less |
-| An answer that needs a web search | a few cents (each web search costs $0.01) |
-| An 8-agent swarm research mission | typically tens of cents |
-| A very deep, many-agent mission | can approach a dollar |
+| A quick question | about 2–6¢ |
+| An answer that needs a web search | about 6–16¢ (each web search is $0.01 of that) |
+| An 8-agent swarm at the Balanced depth | about $1–2.50, typically around $1.70 |
+| A Deep swarm with 20 agents | about $7–15 |
+
+For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
+are Fast), with room left over for everyday questions. Follow-up suggestions use the small Claude Haiku model
+and cost a tiny fraction of a cent. A photo or PDF you attach is re-read with every later message
+in that conversation (at a reduced, cached price), so start a new chat when you change topic.
 
 - Under each answer Jarvis shows an **estimate** of what it cost, and Settings shows your
   estimated spending this month. You can set a **warning threshold** there.
 - Estimates are approximate. Your exact bill is in the Anthropic console under Billing, and the
   **monthly spend limit** you set in Step 1 is the hard stop.
-- To spend less: use **Quick** mode, choose the **Fast** depth, or lower **Max agents** in
-  Settings → AI.
+- To spend less: use **Quick** mode, choose the **Fast** depth, pick a smaller team size in
+  Swarm mode, or lower **Agents per wave** in Settings → AI.
 
 ## Privacy
 
@@ -155,26 +181,37 @@ from the credit in your account. Rough examples:
   Web searches are carried out by Anthropic on Jarvis's behalf.
 - **Your API key stays on your device.** It is stored only in this browser on this device. It is
   never put in a web address, never included in backups, and never shown in full again after
-  you enter it.
+  you enter it. (If you ever paste the key into a chat, that conversation is left out of
+  backups, and Jarvis tells you so.)
 - **Your conversations stay on your device.** History, memory and settings are stored in the
   browser on each device. They are not synced between devices. Clearing the site's data or
   uninstalling the app deletes them, so use **Settings → Data → Export backup** to keep a copy.
 - **What others see.** GitHub sees ordinary visits to the app's files, like any website, but not
   your conversations. Anthropic processes what you send under its own privacy policy and terms.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
+- **Photos** you attach are shrunk and stripped of their location data before they are sent.
+  Like the rest of the conversation, they are kept on this device only (and are included in
+  backups).
 - Anyone who can unlock your device can use your Jarvis, so keep a passcode on your devices.
 
 ## Settings at a glance
 
-- **Profile:** what Jarvis calls you.
-- **AI:** the models used (Claude Opus 5.5 leads, Claude Sonnet 5.5 agents by default), research
-  depth (Fast, Balanced, Deep), default mode, max agents per wave, how many work at once, how
-  many follow-up waves, and whether to show Jarvis's thinking.
-- **Voice:** spoken replies, the voice and its speed, and the language you speak in.
+- **Profile & style:** what Jarvis calls you, **Jarvis's style** (Butler, Friendly, Professional
+  or Playful) and how long its answers are (Concise, Balanced or Detailed).
+- **AI:** the models used (Claude Opus 5.5 leads, Claude Sonnet 5.5 agents by default; Opus or
+  Sonnet can lead, and agents can also use the cheaper Claude Haiku), research depth (Fast,
+  Balanced, Deep), default mode, agents per wave, how many work at once, how many follow-up
+  waves, whether to show Jarvis's thinking, and follow-up suggestions.
+- **Voice:** spoken replies, the voice and its speed, the language you speak in, and whether
+  Voice Mode keeps listening after each reply.
+- **Appearance & sound:** six color themes, sounds and their volume, vibration (Android), and a
+  notification when a mission finishes while Jarvis is in the background.
 - **Location:** optional, for local answers (weather, opening hours, prices).
 - **Memory:** everything Jarvis remembers about you; edit or delete any of it.
-- **API key & spending:** test, replace or remove your key; this month's estimate; warning level.
-- **Data:** export a backup, import one, or reset Jarvis on this device.
+- **API key & spending:** test, replace or remove your key; this month's estimate; warning
+  level; the **Systems dashboard**.
+- **Data:** export a backup (conversations, memory, settings, your own protocols and statistics),
+  import one, or reset Jarvis on this device.
 - **Install:** how to install Jarvis on this device.
 
 ## Updates
@@ -189,10 +226,13 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 |---|---|
 | **"Your API key was rejected"** | Open Settings → API key and paste your key again (it starts with `sk-ant-`). If it was deleted in the console, create a new one. |
 | **"Out of credits"** | Add credit in the Anthropic console under Billing. |
-| **"Rate limit reached, slowing down"** | Nothing to do: Jarvis automatically runs fewer agents at once. If it happens often, lower Max agents or agents-at-once in Settings → AI. New Anthropic accounts start with lower limits that grow with use. |
+| **"Rate limit reached, slowing down"** or a swarm pauses ("Rate limited – retrying in …s") | Nothing to do: Jarvis waits and retries, and runs fewer agents at once. New Anthropic accounts start with low rate limits, so your first swarms may pause like this; the limits rise automatically as you use your account (see Console → Limits). If it happens a lot, lower **Running in parallel** (and **Agents per wave**) in Settings → AI. |
+| **Answers never search the web** | In the Anthropic Console, check your organization's settings and make sure web search and web fetch are allowed. |
 | **"Overloaded" or a server error** | Anthropic is busy. Jarvis retries automatically; if it still fails, try again in a minute. |
 | **A mission says "Interrupted"** | Your phone paused the app or the connection dropped. Open Jarvis and tap **Resume**. |
 | **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
+| **Jarvis doesn't speak on iPhone** | Turn off silent mode and turn the volume up. Speech starts after you have tapped once in the app. |
+| **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
 | **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
 | **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |
 | **A spending warning** | Your estimated spending passed the threshold you set. Change it in Settings → API key & spending. |

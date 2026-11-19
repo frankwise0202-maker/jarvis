@@ -214,12 +214,14 @@ test('backup: export has settings (minus onboarded/features), memory and convers
     secrets.setApiKey(key);
     settings.saveSettings({ userName: 'Tony', onboarded: true, features: { fallbacks: false }, maxAgents: 12 });
     memory.addMemory('Prefers metric units');
+    memory.addMemory(`My key is ${key}`);
     spend.addSpend(3.21);
     await db.saveConversation(conv('one', 1000));
     await db.saveConversation(conv('two', 2000, [`oops, my key is ${key}`]));
     const blob = await backup.exportBackup();
     const text = await blob.text();
-    return { type: blob.type, text, data: JSON.parse(text), name: backup.backupFileName(new Date(2026, 10, 19)) };
+    const stored = await db.getConversation('one');
+    return { type: blob.type, text, data: JSON.parse(text), excluded: blob.excludedConversations, stored, name: backup.backupFileName(new Date(2026, 10, 19)) };
   }, KEY);
   assert.equal(r.type, 'application/json');
   assert.equal(r.data.app, 'jarvis');
@@ -229,8 +231,11 @@ test('backup: export has settings (minus onboarded/features), memory and convers
   assert.equal(r.data.settings.maxAgents, 12);
   assert.equal('onboarded' in r.data.settings, false);
   assert.equal('features' in r.data.settings, false);
-  assert.deepEqual(r.data.memory.map((m) => m.text), ['Prefers metric units']);
-  assert.deepEqual(r.data.conversations.map((c) => c.id).sort(), ['one', 'two']);
+  assert.deepEqual(r.data.memory.map((m) => m.text), ['Prefers metric units', 'My key is [API key removed]']);
+  // A conversation is never edited (frozen history): the one containing the key is left out and reported.
+  assert.deepEqual(r.data.conversations.map((c) => c.id), ['one']);
+  assert.deepEqual(r.excluded, [{ id: 'two' }]);
+  assert.deepEqual(r.data.conversations[0], r.stored, 'exported conversations are byte-for-byte what is stored');
   assert.equal(r.text.includes(KEY), false, 'the API key must never be exported');
   assert.equal(r.text.includes('SECRETSECRET'), false);
   assert.equal(/"apiKey"|"spend"|"totalUsd"|"monthUsd"/.test(r.text), false);

@@ -516,11 +516,12 @@ export function openAttachmentPreview(meta, { returnFocus } = {}) {
       h('span', { class: 'att-preview-meta', text: details }),
       h('span', { class: 'att-preview-note', text: 'Jarvis keeps a small preview on this device; the full image was sent with your message.' }),
     ),
+    closeBtn,
   );
   const dialog = h(
     'dialog',
     { class: 'att-preview', attrs: { 'aria-labelledby': titleId, 'data-testid': 'attachment-preview' } },
-    h('div', { class: 'att-preview-panel' }, closeBtn, figure),
+    h('div', { class: 'att-preview-panel' }, figure),
   );
 
   let closed = false;

@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHarness } from './platform.harness.test.mjs';
-import { normalizeSettings, DEFAULT_SETTINGS } from '../../src/platform/settings.js';
+import { normalizeSettings, DEFAULT_SETTINGS, LEAD_MODEL_IDS } from '../../src/platform/settings.js';
 
 class FakeStorage {
   constructor(entries = {}) {
@@ -172,6 +172,14 @@ test('settings: wave-B keys have the SPEC defaults and validate', () => {
   assert.equal(bad.soundVolume, 1);
   assert.equal(bad.sounds, true);
   assert.equal(bad.haptics, true);
+});
+
+test('settings: Claude Haiku can be an agent but never the lead (a stored Haiku lead becomes Sonnet)', () => {
+  assert.deepEqual([...LEAD_MODEL_IDS].sort(), ['claude-opus-5-5', 'claude-sonnet-5-5']);
+  assert.equal(normalizeSettings({ leadModel: 'claude-haiku-5-5' }).leadModel, 'claude-sonnet-5-5');
+  assert.equal(normalizeSettings({ leadModel: 'claude-sonnet-5-5' }).leadModel, 'claude-sonnet-5-5');
+  assert.equal(normalizeSettings({ leadModel: 'gpt-4' }).leadModel, 'claude-opus-5-5');
+  assert.equal(normalizeSettings({ workerModel: 'claude-haiku-5-5' }).workerModel, 'claude-haiku-5-5');
 });
 
 // ---- backup round trip in Chromium -----------------------------------------------------------

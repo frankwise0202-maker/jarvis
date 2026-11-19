@@ -11,19 +11,33 @@ export const WEB_SEARCH_USD = 0.01; // $10 per 1,000 searches; web fetch has no 
 export const DEFAULT_LEAD_MODEL = 'claude-opus-5-5';
 export const DEFAULT_WORKER_MODEL = 'claude-sonnet-5-5';
 
+// max_tokens per depth. Output-tokens-per-minute rate limits are charged from max_tokens when a
+// request starts, so a huge cap can make every request of a new (low-tier) account fail with 429.
+// These leave ample room for adaptive thinking plus the answer; a max_tokens stop is handled.
 export const DEPTHS = Object.freeze({
-  fast: Object.freeze({ label: 'Fast', leadEffort: 'low', workerEffort: 'low', workerSearches: 3, workerFetches: 2 }),
-  balanced: Object.freeze({ label: 'Balanced', leadEffort: 'medium', workerEffort: 'medium', workerSearches: 5, workerFetches: 3 }),
-  deep: Object.freeze({ label: 'Deep', leadEffort: 'high', workerEffort: 'high', workerSearches: 8, workerFetches: 5 }),
+  fast: Object.freeze({ label: 'Fast', leadEffort: 'low', workerEffort: 'low', workerSearches: 3, workerFetches: 2, leadMaxTokens: 12000, workerMaxTokens: 8000 }),
+  balanced: Object.freeze({ label: 'Balanced', leadEffort: 'medium', workerEffort: 'medium', workerSearches: 5, workerFetches: 3, leadMaxTokens: 16000, workerMaxTokens: 12000 }),
+  deep: Object.freeze({ label: 'Deep', leadEffort: 'high', workerEffort: 'high', workerSearches: 8, workerFetches: 5, leadMaxTokens: 32000, workerMaxTokens: 16000 }),
 });
 
 export const MODES = Object.freeze({ auto: 'Auto', quick: 'Quick', swarm: 'Swarm' });
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
 
+/**
+ * Prices of every model that can bill a response: the selectable MODELS plus the models a
+ * server-side refusal fallback may hand a reply to (never offered in Settings).
+ */
+export const PRICES = Object.freeze({
+  ...MODELS,
+  'claude-opus-5': Object.freeze({ label: 'Claude Opus 5', inPerM: 5.0, outPerM: 25.0, cacheReadPerM: 0.5, cacheWrite5mPerM: 6.25 }),
+  'claude-opus-4-8': Object.freeze({ label: 'Claude Opus 4.8', inPerM: 5.0, outPerM: 25.0, cacheReadPerM: 0.5, cacheWrite5mPerM: 6.25 }),
+  'claude-sonnet-5': Object.freeze({ label: 'Claude Sonnet 5', inPerM: 2.0, outPerM: 10.0, cacheReadPerM: 0.2, cacheWrite5mPerM: 2.5 }),
+});
+
 /** Price card for a model id; unknown models are priced as Claude Opus 5.5. */
 export function priceOf(model) {
-  return MODELS[model] || MODELS[DEFAULT_LEAD_MODEL];
+  return PRICES[model] || MODELS[DEFAULT_LEAD_MODEL];
 }
 
 /** True when the model accepts server-side refusal fallbacks (`fallbacks: 'default'`). */

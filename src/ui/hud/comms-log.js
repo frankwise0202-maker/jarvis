@@ -115,6 +115,7 @@ export function createCommsLog(opts = {}) {
   let filter = null; // agent key or null (all)
   let atBottom = true;
   let jumpUntil = 0; // a smooth "jump to latest" is in flight until this time
+  let userUntil = 0; // scroll events until this time come from the owner's own gesture
   let unseen = 0; // lines added while scrolled up
   let whoCh = 0;
   let disposed = false;
@@ -130,19 +131,32 @@ export function createCommsLog(opts = {}) {
     log.scrollTop = log.scrollHeight;
   });
 
+  // Only the owner's own scrolling pauses the feed. Scroll events also come from our own jumps to
+  // the newest line and from the browser clamping the position when old lines are dropped; those
+  // must never unstick it, so a scroll away from the bottom counts only shortly after a wheel,
+  // touch, pointer or key input on the log (touch momentum keeps scrolling after the finger lifts).
+  const markUser = () => {
+    userUntil = Date.now() + 1500;
+  };
+  for (const type of ['wheel', 'touchstart', 'touchmove', 'pointerdown']) log.addEventListener(type, markUser, { passive: true });
+  log.addEventListener('keydown', markUser);
   log.addEventListener(
     'scroll',
     () => {
       const bottom = log.scrollHeight - log.scrollTop - log.clientHeight <= STICK_PX;
-      // While a smooth jump to the newest line runs, its intermediate positions are not the owner
-      // scrolling away: keep following until it lands (or gives up).
-      if (jumpUntil) {
-        if (!bottom && Date.now() < jumpUntil) return;
+      if (bottom) {
         jumpUntil = 0;
+        if (!atBottom) {
+          atBottom = true;
+          unseen = 0;
+          syncJump();
+        }
+        return;
       }
-      if (bottom === atBottom) return;
-      atBottom = bottom;
-      if (bottom) unseen = 0;
+      const now = Date.now();
+      if (jumpUntil && now < jumpUntil) return; // a smooth jump to the newest line is still running
+      if (now > userUntil || !atBottom) return;
+      atBottom = false;
       syncJump();
     },
     { passive: true },
@@ -220,23 +234,26 @@ export function createCommsLog(opts = {}) {
     }
   }
 
-  // Drop the oldest lines past the cap; if the owner is reading further up, keep their place.
+  // Drop the oldest lines past the cap. If the owner is reading further up, keep their place: one
+  // measurement of the first surviving line before and after (never one per removed line).
   function trim() {
     let excess = lineCount - MAX_LINES;
     if (excess <= 0) return;
-    const keepPlace = open && !atBottom;
-    let removedHeight = 0;
-    while (excess > 0 && log.firstChild) {
+    let stay = log.firstChild;
+    for (let i = 0; i < excess && stay; i++) stay = stay.nextSibling;
+    const keepPlace = open && !atBottom && !!stay;
+    const before = keepPlace ? stay.getBoundingClientRect().top : 0;
+    while (excess > 0 && log.firstChild && log.firstChild !== stay) {
       const first = log.firstChild;
-      if (!first.hidden) {
-        visibleCount--;
-        if (keepPlace) removedHeight += first.offsetHeight;
-      }
+      if (!first.hidden) visibleCount--;
       first.remove();
       lineCount--;
       excess--;
     }
-    if (keepPlace && removedHeight) log.scrollTop = Math.max(0, log.scrollTop - removedHeight);
+    if (keepPlace) {
+      const shift = before - stay.getBoundingClientRect().top;
+      if (shift > 0.5) log.scrollTop = Math.max(0, log.scrollTop - shift);
+    }
   }
 
   function clearLines() {

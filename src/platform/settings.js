@@ -65,6 +65,12 @@ export const VERBOSITIES = Object.freeze(['concise', 'balanced', 'detailed']);
 // Enumerations come from the engine's tables (single source of truth), with the SPEC
 // values as a safety net if a table is ever empty.
 const MODEL_IDS = idsOf(MODELS, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+// Jarvis (the lead) can't run on Claude Haiku 5.5: its frozen web tools use the dynamic-filtering
+// versions, which Haiku doesn't support. Haiku stays available as an agent model.
+const isHaiku = (id) => typeof id === 'string' && ((isPlainObject(MODELS) && MODELS[id] && MODELS[id].bucket === 'haiku') || /haiku/i.test(id));
+/** Models that can lead the conversation (every model except Haiku), for the Settings UI. */
+export const LEAD_MODEL_IDS = Object.freeze(MODEL_IDS.filter((id) => !isHaiku(id)));
+const LEAD_FROM_HAIKU = LEAD_MODEL_IDS.includes('claude-sonnet-5-5') ? 'claude-sonnet-5-5' : DEFAULT_SETTINGS.leadModel;
 const DEPTH_IDS = idsOf(DEPTHS, ['fast', 'balanced', 'deep']);
 const MODE_IDS = idsOf(MODES, ['auto', 'quick', 'swarm']);
 const SPEAK_MODES = ['off', 'summary', 'full'];
@@ -96,6 +102,11 @@ const lang = (v, fb) => {
   const s = v.trim().replace(/_/g, '-');
   return s.length <= 35 && /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/.test(s) ? s : fb;
 };
+// A stored or imported Haiku lead (from before this rule) becomes Sonnet 5.5.
+const leadModel = (v, fb) => {
+  if (MODEL_IDS.includes(v)) return isHaiku(v) ? LEAD_FROM_HAIKU : v;
+  return isHaiku(fb) ? LEAD_FROM_HAIKU : fb;
+};
 const features = (v, fb) => {
   const out = {};
   for (const key of FEATURE_KEYS) out[key] = isPlainObject(v) && typeof v[key] === 'boolean' ? v[key] : fb[key];
@@ -104,7 +115,7 @@ const features = (v, fb) => {
 
 const VALIDATORS = {
   userName: line(SETTINGS_LIMITS.userName),
-  leadModel: oneOf(MODEL_IDS),
+  leadModel,
   workerModel: oneOf(MODEL_IDS),
   depth: oneOf(DEPTH_IDS),
   mode: oneOf(MODE_IDS),

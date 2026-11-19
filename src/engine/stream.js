@@ -2,19 +2,34 @@
 // the optional-feature auto-disable retry, the rules for echoing assistant content back, and
 // helpers for sources and usage. No DOM access here.
 
-import { costOf, supportsFallbacks } from './models.js';
+import { WEB_SEARCH_USD, costOf, supportsFallbacks } from './models.js';
 import { hostnameOf, jsonCopy, singleLine } from './util.js';
-import { unsupportedFeature } from './client.js';
+import { isContainerError, isThinkingMismatch, outputTokensLimit, unsupportedFeature } from './client.js';
 
 export const BETA_FALLBACK = 'server-side-fallback-2026-07-01';
 export const BETA_COMPACT = 'compact-2026-01-12';
+export const BETA_THINKING_BINDING = 'thinking-binding-controls-2026-08-01';
+/** Never cap max_tokens below this when pacing for an output-tokens-per-minute limit. */
+export const MIN_MAX_TOKENS = 1024;
 
 /**
  * Request body per SPEC 8.2. Never sends temperature/top_p/top_k, budget_tokens, disabled thinking,
  * tool_choice or an assistant prefill. `betas` is omitted entirely when empty (an empty list would
  * still produce an empty anthropic-beta header).
  */
-export function buildMessageParams({ model, maxTokens, system, tools, messages, showThinking, effort, features, compaction = false }) {
+export function buildMessageParams({
+  model,
+  maxTokens,
+  system,
+  tools,
+  messages,
+  showThinking,
+  effort,
+  features,
+  compaction = false,
+  container = null,
+  dropMismatchedThinking = false,
+}) {
   const params = {
     model,
     max_tokens: maxTokens,
@@ -25,6 +40,10 @@ export function buildMessageParams({ model, maxTokens, system, tools, messages, 
   params.thinking = { type: 'adaptive', display: showThinking ? 'summarized' : 'omitted' };
   params.output_config = { effort };
   params.cache_control = { type: 'ephemeral' };
+  // The code-execution container the web tools' dynamic filtering ran in: container-bound server
+  // tools reject a follow-up that omits it. A request field outside system/tools/messages, so the
+  // frozen-prefix (history) check is unaffected.
+  if (typeof container === 'string' && container) params.container = container;
   const betas = [];
   if (features?.fallbacks && supportsFallbacks(model)) {
     params.fallbacks = 'default';
@@ -33,6 +52,11 @@ export function buildMessageParams({ model, maxTokens, system, tools, messages, 
   if (compaction && features?.compaction) {
     params.context_management = { edits: [{ type: 'compact_20260112' }] };
     betas.push(BETA_COMPACT);
+  }
+  if (dropMismatchedThinking) {
+    // After a history-check failure: drop thinking blocks that fail the check instead of a 400.
+    params.thinking.block_binding = { prefix_mismatch_behavior: 'drop_block' };
+    betas.push(BETA_THINKING_BINDING);
   }
   if (betas.length) params.betas = betas;
   return params;
@@ -46,11 +70,11 @@ export function buildMessageParams({ model, maxTokens, system, tools, messages, 
  * to the exact streamed input JSON text, for strict validation. `state.started` turns true on the
  * first stream event.
  */
-export async function streamMessage({ client, params, signal, onEvent, state = {} }) {
+export async function streamMessage({ client, params, signal, onEvent, state = {}, requestOptions }) {
   state.started = false;
   const rawByIndex = new Map();
   const idByIndex = new Map();
-  const stream = client.beta.messages.stream(params, { signal });
+  const stream = client.beta.messages.stream(params, { signal, ...(requestOptions || {}) });
   stream.on('streamEvent', (event, snapshot) => {
     state.started = true;
     try {
@@ -67,7 +91,20 @@ export async function streamMessage({ client, params, signal, onEvent, state = {
       console.error('[jarvis] stream event handler failed:', err);
     }
   });
-  const final = await stream.finalMessage();
+  let final;
+  try {
+    final = await stream.finalMessage();
+  } catch (err) {
+    // Callers retry only failures that happened before any output (nothing was shown yet).
+    if (err && typeof err === 'object') {
+      try {
+        err.jarvisStarted = !!state.started;
+      } catch {
+        /* frozen error object */
+      }
+    }
+    throw err;
+  }
   const message = jsonCopy(final);
   if (!Array.isArray(message.content)) message.content = [];
   const rawInputs = new Map();
@@ -79,24 +116,48 @@ export async function streamMessage({ client, params, signal, onEvent, state = {
 }
 
 /**
- * streamMessage with the SPEC 8.2 feature auto-disable path: if the request fails with a 400 before
- * any output and the error names server-side fallbacks or compaction, `ctx.disableFeature(name)` is
- * called (notice + deps.onFeatureUnsupported) and the same request is sent once more without it.
- * `makeParams(features)` builds the body from the current feature flags.
+ * streamMessage with recovery from a rejection that a changed request fixes, decided before any
+ * output arrived. `makeParams(features)` builds the body from the current state each time, so a
+ * retry sees the change:
+ * - an optional feature the account lacks (server-side fallbacks, compaction): switched off via
+ *   ctx.disableFeature (notice + deps.onFeatureUnsupported) — SPEC 8.2;
+ * - a code-execution container the API no longer accepts: `opts.onContainerRejected()` forgets it;
+ * - a thinking block that fails the history check: `opts.onThinkingMismatch()` turns on drop_block;
+ * - an output-tokens-per-minute limit below max_tokens (429): `ctx.capMaxTokens(model, cap)`.
+ * `opts.requestOptions` (e.g. { maxRetries }) go to the SDK call.
  */
-export async function requestWithFeatureFallback(ctx, makeParams, onEvent) {
-  for (let attempt = 0; ; attempt++) {
+export async function requestWithFeatureFallback(ctx, makeParams, onEvent, opts = {}) {
+  for (let recoveries = 0; ; recoveries++) {
     const params = makeParams(ctx.features);
     const state = { started: false };
     try {
-      return await streamMessage({ client: ctx.client, params, signal: ctx.signal, onEvent, state });
+      return await streamMessage({ client: ctx.client, params, signal: ctx.signal, onEvent, state, requestOptions: opts.requestOptions });
     } catch (err) {
-      // `params` carried the feature, so the retry (built from the now-off flag) cannot loop. A
-      // concurrent request may already have switched the flag off; it still gets its one retry.
-      const feature = !state.started && attempt < 2 ? unsupportedFeature(err, params) : null;
-      if (feature) {
-        if (ctx.features[feature]) ctx.disableFeature(feature);
-        continue;
+      // Each recovery changes the request (a flag off, a field gone or capped), so none can loop;
+      // the counter is a backstop. A concurrent request may already have switched a flag off; it
+      // still gets its one retry.
+      if (!state.started && recoveries < 6) {
+        const feature = unsupportedFeature(err, params);
+        if (feature) {
+          if (ctx.features[feature]) ctx.disableFeature(feature);
+          continue;
+        }
+        if (params.container && isContainerError(err)) {
+          opts.onContainerRejected?.();
+          continue;
+        }
+        if (!params.thinking?.block_binding && opts.onThinkingMismatch && isThinkingMismatch(err)) {
+          opts.onThinkingMismatch();
+          continue;
+        }
+        const otpm = outputTokensLimit(err);
+        if (otpm && typeof ctx.capMaxTokens === 'function') {
+          const cap = Math.max(MIN_MAX_TOKENS, Math.floor(otpm * 0.9));
+          if (params.max_tokens > cap) {
+            ctx.capMaxTokens(params.model, cap);
+            continue;
+          }
+        }
       }
       throw err;
     }
@@ -221,30 +282,54 @@ function compactionIterations(usage) {
 }
 
 /**
+ * After a server-side refusal fallback, `usage.iterations` is the per-attempt source of truth and
+ * the top-level usage covers only the attempt that produced the message. Returns the sampling
+ * attempts ('message' and 'fallback_message' entries) in that case, else null.
+ */
+function fallbackAttempts(usage) {
+  const its = Array.isArray(usage?.iterations) ? usage.iterations : [];
+  if (!its.some((it) => it && it.type === 'fallback_message')) return null;
+  return its.filter((it) => it && (it.type === 'message' || it.type === 'fallback_message'));
+}
+
+/**
  * Per-response usage in the engine's shape. Server-side compaction work is reported only in
- * `usage.iterations` (not in the top-level fields), so it is added here.
+ * `usage.iterations` (not in the top-level fields), so it is added here; after a refusal fallback
+ * every attempt's tokens are summed from the iterations.
  */
 export function usageDelta(usage) {
+  const attempts = fallbackAttempts(usage) || [usage];
   const out = {
-    input: n(usage?.input_tokens),
-    output: n(usage?.output_tokens),
-    cacheWrite: n(usage?.cache_creation_input_tokens),
-    cacheRead: n(usage?.cache_read_input_tokens),
+    input: 0,
+    output: 0,
+    cacheWrite: 0,
+    cacheRead: 0,
     searches: n(usage?.server_tool_use?.web_search_requests),
     fetches: n(usage?.server_tool_use?.web_fetch_requests),
   };
-  for (const it of compactionIterations(usage)) {
-    out.input += n(it.input_tokens);
-    out.output += n(it.output_tokens);
-    out.cacheWrite += n(it.cache_creation_input_tokens);
-    out.cacheRead += n(it.cache_read_input_tokens);
+  for (const it of [...attempts, ...compactionIterations(usage)]) {
+    out.input += n(it?.input_tokens);
+    out.output += n(it?.output_tokens);
+    out.cacheWrite += n(it?.cache_creation_input_tokens);
+    out.cacheRead += n(it?.cache_read_input_tokens);
   }
   return out;
 }
 
-/** USD estimate for one response (costOf on the top-level usage plus any compaction iterations). */
-export function responseCost(model, usage) {
-  let cost = costOf(model, usage);
+/**
+ * USD estimate for one response: the top-level usage at the model that produced it, plus any
+ * compaction iterations. After a refusal fallback each attempt is priced at its own model (a
+ * 'message' attempt without a model ran on `requestedModel`), plus the web searches.
+ */
+export function responseCost(model, usage, requestedModel = model) {
+  const attempts = fallbackAttempts(usage);
+  let cost = 0;
+  if (attempts) {
+    for (const it of attempts) cost += costOf(it.model || (it.type === 'fallback_message' ? model : requestedModel), it);
+    cost += n(usage?.server_tool_use?.web_search_requests) * WEB_SEARCH_USD;
+  } else {
+    cost = costOf(model, usage);
+  }
   for (const it of compactionIterations(usage)) cost += costOf(model, it);
   return cost;
 }

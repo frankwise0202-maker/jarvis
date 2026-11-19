@@ -3,6 +3,8 @@
 //   exportBackup()     -> Promise<Blob>  application/json:
 //                         { app: 'jarvis', version: 1, exportedAt, settings, memory, conversations }
 //                         settings exclude onboarded/features; never the API key, never spend.
+//                         Conversations are never edited: one that contains the API key is left
+//                         out and listed in blob.excludedConversations ([{ id }]).
 //   importBackup(file) -> Promise<{ conversations, memory, settings }>
 //                         conversations merged by id (the newer updatedAt wins), memory merged
 //                         (case-insensitive dedupe), settings restored (validated and clamped).
@@ -56,10 +58,17 @@ export async function exportBackup() {
     if (!EXCLUDED_SETTINGS.includes(key)) settings[key] = current[key];
   }
   const memory = listMemory().map(({ id, text, createdAt }) => ({ id, text, createdAt }));
+  const key = getApiKey();
+  const mentionsKey = (value) => !!key && key.length >= 8 && JSON.stringify(value).includes(key);
   const conversations = [];
+  const excluded = [];
   for (const row of await listConversations()) {
     const conv = await getConversation(row.id);
-    if (conv) conversations.push(conv);
+    if (!conv) continue;
+    // A conversation is never edited (its thinking blocks are bound to the exact history, SPEC
+    // §8.3), so one in which the owner pasted their API key is left out of the backup instead.
+    if (mentionsKey(conv)) excluded.push({ id: conv.id });
+    else conversations.push(conv);
   }
   const data = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), settings, memory, conversations };
   for (const [name, part] of parts) {
@@ -71,10 +80,13 @@ export async function exportBackup() {
     }
   }
   let json = JSON.stringify(data);
-  // If the owner ever pasted their key into a chat, it must still never leave in a backup.
-  const key = getApiKey();
+  // The key must never leave in a backup: anywhere else it appears (a remembered fact, a custom
+  // protocol) is plain data, not frozen history, so it is masked there.
   if (key && key.length >= 8 && json.includes(key)) json = json.split(key).join('[API key removed]');
-  return new Blob([json], { type: 'application/json' });
+  const blob = new Blob([json], { type: 'application/json' });
+  // What was left out, so the UI can say so: [{ id }] (no titles: a title may hold the key).
+  Object.defineProperty(blob, 'excludedConversations', { value: excluded, enumerable: false });
+  return blob;
 }
 
 /** Suggested file name for a backup download. */

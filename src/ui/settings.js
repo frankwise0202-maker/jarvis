@@ -5,7 +5,7 @@
 
 import { h, setText, extLink } from './dom.js';
 import { icon } from './icons.js';
-import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
+import { getSettings, saveSettings, onSettingsChange, LEAD_MODEL_IDS } from '../platform/settings.js';
 import { getApiKey, setApiKey, clearApiKey, maskKey, looksLikeApiKey } from '../platform/secrets.js';
 import { listMemory, addMemory, removeMemory, clearMemory, onMemoryChange } from '../platform/memory.js';
 import { getSpend, onSpendChange } from '../platform/spend.js';
@@ -312,6 +312,8 @@ export function createSettingsPanel(o) {
 
   // AI
   const modelOptions = Object.keys(MODELS || {}).map((id) => ({ value: id, label: `${MODELS[id].label}${MODEL_NOTES[id] ? ` — ${MODEL_NOTES[id]}` : ''}` }));
+  // Haiku can't lead (Jarvis's web tools need a model with dynamic filtering); it can still be an agent.
+  const leadOptions = modelOptions.filter((opt) => LEAD_MODEL_IDS.includes(opt.value));
   const depthOptions = Object.keys(DEPTHS || {}).map((id) => {
     const d = DEPTHS[id];
     return { value: id, label: `${d.label} — up to ${d.workerSearches} searches per agent` };
@@ -320,7 +322,7 @@ export function createSettingsPanel(o) {
   const ai = section(
     'ai',
     card(
-      row({ label: 'Jarvis model', help: 'Leads the conversation and writes the final answer.', forId: fieldId('leadModel'), control: selectField('leadModel', modelOptions), stacked: true }),
+      row({ label: 'Jarvis model', help: 'Leads the conversation and writes the final answer.', forId: fieldId('leadModel'), control: selectField('leadModel', leadOptions), stacked: true }),
       row({ label: 'Agent model', help: 'Used by each research agent in a swarm.', forId: fieldId('workerModel'), control: selectField('workerModel', modelOptions), stacked: true }),
       row({ label: 'Research depth', help: 'Deeper means more searches, more thinking and higher cost.', forId: fieldId('depth'), control: selectField('depth', depthOptions), stacked: true }),
       row({ label: 'Default mode', help: 'Auto decides for you; Quick never deploys agents; Swarm always does.', forId: fieldId('mode'), control: selectField('mode', modeOptions), stacked: true }),
@@ -1012,7 +1014,12 @@ export function createSettingsPanel(o) {
         URL.revokeObjectURL(url);
         a.remove();
       }, 4000);
-      o.toast('Backup downloaded. It doesn’t include your API key.', { level: 'success' });
+      const left = Array.isArray(blob.excludedConversations) ? blob.excludedConversations.length : 0;
+      if (left) {
+        o.toast(`Backup downloaded. ${left} conversation${left === 1 ? '' : 's'} containing your API key ${left === 1 ? 'was' : 'were'} left out.`, { level: 'warn', timeout: 9000 });
+      } else {
+        o.toast('Backup downloaded. It doesn’t include your API key.', { level: 'success' });
+      }
     } catch (err) {
       console.error('[jarvis] export failed:', err);
       o.toast('Couldn’t create the backup.', { level: 'error' });
