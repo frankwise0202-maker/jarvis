@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs>
+  <radialGradient id="jbg" cx="50%" cy="46%" r="70%">
+    <stop offset="0" stop-color="#0d2233"/>
+    <stop offset="0.55" stop-color="#071019"/>
+    <stop offset="1" stop-color="#04070c"/>
+  </radialGradient>
+  <radialGradient id="jhalo" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#3ee0ff" stop-opacity="0.55"/>
+    <stop offset="0.45" stop-color="#3ee0ff" stop-opacity="0.22"/>
+    <stop offset="1" stop-color="#3ee0ff" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="jcore" cx="46%" cy="42%" r="62%">
+    <stop offset="0" stop-color="#f4ffff"/>
+    <stop offset="0.38" stop-color="#bff8ff"/>
+    <stop offset="0.78" stop-color="#3ee0ff"/>
+    <stop offset="1" stop-color="#1aa8d6"/>
+  </radialGradient>
+  <linearGradient id="jring" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#8af3ff"/>
+    <stop offset="1" stop-color="#3ee0ff"/>
+  </linearGradient>
+  <linearGradient id="jsweep" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#3ee0ff" stop-opacity="0"/>
+    <stop offset="1" stop-color="#3ee0ff" stop-opacity="0.16"/>
+  </linearGradient>
+  <filter id="jblur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>
+</defs><rect x="8" y="8" width="496" height="496" rx="112" fill="url(#jbg)"/><rect x="9.5" y="9.5" width="493" height="493" rx="110.5" fill="none" stroke="#3ee0ff" stroke-opacity="0.22" stroke-width="3"/><g transform="translate(-20.48 -20.48) scale(1.08)"><circle cx="256" cy="256" r="150" fill="url(#jhalo)"/><path d="M294.67 74.06A186 186 0 0 1 437.94 217.33M437.94 294.67A186 186 0 0 1 294.67 437.94M217.33 437.94A186 186 0 0 1 74.06 294.67M74.06 217.33A186 186 0 0 1 217.33 74.06" fill="none" stroke="url(#jring)" stroke-width="34" stroke-opacity="1" stroke-linecap="butt"/><circle cx="256" cy="256" r="132" fill="none" stroke="#3ee0ff" stroke-width="12" stroke-opacity="0.45"/><circle cx="256" cy="256" r="90" fill="url(#jcore)"/><path d="M248.5 199H296.5M272.5 199V268A31.5 31.5 0 0 1 209.5 268" fill="none" stroke="#03121b" stroke-opacity="0.88" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
