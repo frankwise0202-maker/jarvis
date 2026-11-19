@@ -16,7 +16,7 @@
 
 self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/theme-boot.js","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
 
-const CACHE = 'jarvis-3a1d60ca';
+const CACHE = 'jarvis-3113cc23';
 const BUILD_ID = CACHE.slice('jarvis-'.length);
 const BASE = new URL('./', self.location.href).href;
 const SHELL = new URL('index.html', BASE).href;
