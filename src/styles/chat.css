@@ -1623,6 +1623,54 @@
   padding-bottom: var(--sp-2);
 }
 
+/* A short screen with the on-screen keyboard up (a phone in landscape leaves ~130-180 px): the
+   header steps aside and the composer becomes one row, the message box with Send beside it.
+   Modes, team size and the readout come back when the keyboard goes away. */
+@media (max-height: 500px) {
+  .app[data-keyboard='open'] .header {
+    display: none;
+  }
+
+  .app[data-keyboard='open'] .composer {
+    padding-top: var(--sp-1);
+  }
+
+  .app[data-keyboard='open'] .composer-box {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .app[data-keyboard='open'] .composer-files {
+    flex: 1 0 100%;
+    padding-top: var(--sp-2);
+  }
+
+  .app[data-keyboard='open'] .composer-field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .app[data-keyboard='open'] .composer-bar {
+    padding: 4px 6px 6px 0;
+  }
+
+  .app[data-keyboard='open'] .mode-switch,
+  .app[data-keyboard='open'] .swarm-size,
+  .app[data-keyboard='open'] .composer-meta {
+    display: none;
+  }
+
+  .app[data-keyboard='open'] .composer-file-img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .app[data-keyboard='open'] .composer-file-doc {
+    height: 44px;
+  }
+}
+
 .composer-inner {
   max-width: var(--chat-max);
   margin: 0 auto;
