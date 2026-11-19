@@ -436,7 +436,7 @@ test('db: deleting a conversation removes its history record too', async () => {
 
 // ---- two windows on one conversation ------------------------------------------------------
 
-test('db: two windows on one conversation never overwrite each other silently, and hear each other', async () => {
+test('db: two windows on one conversation never overwrite each other silently, and hear about each other\'s saves', async () => {
   const a = await newPage();
   const b = await a.context().newPage();
   await b.addInitScript(FACTORY);
@@ -445,7 +445,7 @@ test('db: two windows on one conversation never overwrite each other silently, a
   const listen = () => {
     window.heard = [];
     window.conflicts = [];
-    window.__mods.db.onRemoteActivity((m) => window.heard.push(m.type === 'saved' ? `saved ${m.id} rev ${m.rev} at ${m.updatedAt}` : `run ${m.id} ${m.running}`));
+    window.__mods.db.onRemoteSave((m) => window.heard.push(`saved ${m.id} rev ${m.rev} at ${m.updatedAt}`));
     window.__mods.db.onConversationConflict((e) => window.conflicts.push(e));
   };
   await a.evaluate(listen);
@@ -458,14 +458,11 @@ test('db: two windows on one conversation never overwrite each other silently, a
   await b.evaluate(async () => {
     window.c = await window.__mods.db.getConversation('shared');
   });
-  // A runs a turn (announced to the other windows) and saves it.
+  // A runs a turn and saves it.
   await a.evaluate(async () => {
-    const { db } = window.__mods;
-    db.announceRun('shared', true);
     window.c.turns.push({ id: 'shared-u1', role: 'user', text: 'Asked in window A', mode: 'auto', createdAt: 1100 });
     window.c.updatedAt = 1100;
-    await db.saveConversation(window.c);
-    db.announceRun('shared', false);
+    await window.__mods.db.saveConversation(window.c);
   });
   const r = await b.evaluate(async () => {
     const { db } = window.__mods;
@@ -485,7 +482,7 @@ test('db: two windows on one conversation never overwrite each other silently, a
   assert.equal(r.freshSave, true);
   assert.equal(r.title, 'Renamed in window B after reloading');
   assert.ok(r.turns.includes('shared-u1'), "window A's turn survived");
-  assert.deepEqual(r.heard, ['saved shared rev 1 at 1000', 'run shared true', 'saved shared rev 2 at 1100', 'run shared false']);
+  assert.deepEqual(r.heard, ['saved shared rev 1 at 1000', 'saved shared rev 2 at 1100']);
   const heardByA = await a.evaluate(async () => {
     await new Promise((res) => setTimeout(res, 150));
     return { heard: window.heard, conflicts: window.conflicts };
@@ -514,26 +511,30 @@ test('db: two windows on one conversation never overwrite each other silently, a
 const KEY = 'sk-ant-api03-SECRETSECRETSECRETSECRET-abcd';
 // Another Anthropic key (an old one, or a second account's): not the saved key, still a secret.
 const OTHER_KEY = 'sk-ant-api03-OLDKEYOLDKEYOLDKEYOLDKEY-wxyz';
-const KEY_SHAPED = /sk-ant-[A-Za-z0-9_-]{20,}/;
+const KEY_SHAPED = /sk-ant-[A-Za-z0-9_-]{20,}/i;
+// The same, typed with a capital first letter (as phone keyboards like to do).
+const CAPITALIZED_KEY = 'Sk-Ant-api03-CAPSCAPSCAPSCAPSCAPS-1234';
 
 test('backup: export has settings (minus onboarded/features), memory and conversations; never the key or spend', async () => {
   const page = await newPage();
-  const r = await page.evaluate(async ({ key, other }) => {
+  const r = await page.evaluate(async ({ key, other, capitalized }) => {
     const { db, backup, settings, secrets, memory, spend } = window.__mods;
     secrets.setApiKey(key);
     settings.saveSettings({ userName: 'Tony', onboarded: true, features: { fallbacks: false }, maxAgents: 12 });
     memory.addMemory('Prefers metric units');
     memory.addMemory(`My key is ${key}`);
     memory.addMemory(`My old key was ${other}`);
+    memory.addMemory(`Typed on the phone: ${capitalized}`);
     spend.addSpend(3.21);
     await db.saveConversation(conv('one', 1000));
     await db.saveConversation(conv('two', 2000, [`oops, my key is ${key}`]));
     await db.saveConversation(conv('three', 3000, [`is this old key still valid? ${other}`]));
+    await db.saveConversation(conv('four', 4000, [`and this one? ${capitalized}`]));
     const blob = await backup.exportBackup();
     const text = await blob.text();
     const stored = await db.getConversation('one');
     return { type: blob.type, text, data: JSON.parse(text), excluded: blob.excludedConversations, stored, name: backup.backupFileName(new Date(2026, 10, 19)) };
-  }, { key: KEY, other: OTHER_KEY });
+  }, { key: KEY, other: OTHER_KEY, capitalized: CAPITALIZED_KEY });
   assert.equal(r.type, 'application/json');
   assert.equal(r.data.app, 'jarvis');
   assert.equal(r.data.version, 1);
@@ -543,10 +544,11 @@ test('backup: export has settings (minus onboarded/features), memory and convers
   assert.equal('onboarded' in r.data.settings, false);
   assert.equal('features' in r.data.settings, false);
   // Any key - the saved one or anything shaped like one - is masked in plain data such as memory.
-  assert.deepEqual(r.data.memory.map((m) => m.text), ['Prefers metric units', 'My key is [API key removed]', 'My old key was [API key removed]']);
+  assert.deepEqual(r.data.memory.map((m) => m.text), ['Prefers metric units', 'My key is [API key removed]', 'My old key was [API key removed]', 'Typed on the phone: [API key removed]']);
   // A conversation is never edited (frozen history): one containing a key is left out and reported.
   assert.deepEqual(r.data.conversations.map((c) => c.id), ['one']);
-  assert.deepEqual(r.excluded, [{ id: 'three' }, { id: 'two' }]);
+  assert.deepEqual(r.excluded, [{ id: 'four' }, { id: 'three' }, { id: 'two' }]);
+  assert.equal(r.text.includes('CAPSCAPS'), false);
   assert.deepEqual(r.data.conversations[0], r.stored, 'exported conversations are byte-for-byte what is stored');
   assert.equal(r.text.includes(KEY), false, 'the API key must never be exported');
   assert.equal(r.text.includes('SECRETSECRET'), false);

@@ -101,6 +101,23 @@ test('Copy button copies the code, shows "Copied", and does not bubble to delega
   assert.deepEqual(result, { text: 'Copied', state: 'copied', clip: 'npm install && npm start', bubbled: 0 });
 });
 
+test('Copy never puts an Anthropic API key on the clipboard (the block still shows it as written)', async () => {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: h.url });
+  const result = await page.evaluate(async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    host.appendChild(window.__mods.markdown.renderMarkdown('```sh\nexport ANTHROPIC_API_KEY=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX-yz\ncurl -H "x-api-key: SK-ANT-api03-abcdefghijklmnopqrstuvwx" ...\n```'));
+    const btn = host.querySelector('button.md-copy');
+    btn.click();
+    await new Promise((r) => setTimeout(r, 100));
+    const out = { clip: await navigator.clipboard.readText(), shown: host.querySelector('code').textContent };
+    host.remove();
+    return out;
+  });
+  assert.equal(result.clip, 'export ANTHROPIC_API_KEY=[API key removed]\ncurl -H "x-api-key: [API key removed]" ...');
+  assert.match(result.shown, /sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX-yz/);
+});
+
 test('lists: bullets, ordered with start, nesting (incl. 2-space under "1."), tight and loose, tasks', async () => {
   assert.equal(
     await html('- a\n- b\n  - c\n\n3. x\n4. y'),

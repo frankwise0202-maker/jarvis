@@ -63,9 +63,12 @@ export const RESTORED_SETTINGS = Object.freeze([
 
 /** What replaces an API key in exported data. */
 export const KEY_REMOVED = '[API key removed]';
-/** Anything shaped like an Anthropic API key (not only the saved one: an old or second key too). */
-const KEY_LIKE = /sk-ant-[A-Za-z0-9_-]{20,}/;
-const KEY_LIKE_ALL = new RegExp(KEY_LIKE.source, 'g');
+/**
+ * Anything shaped like an Anthropic API key (not only the saved one: an old or second key too),
+ * in any letter case (a key retyped or auto-capitalized by a phone keyboard).
+ */
+const KEY_LIKE = /sk-ant-[A-Za-z0-9_-]{20,}/i;
+const KEY_LIKE_ALL = new RegExp(KEY_LIKE.source, 'gi');
 // Top-level backup fields a part may never use (nor anything that names secrets or spend).
 const RESERVED_PARTS = new Set(['app', 'version', 'exportedAt', 'settings', 'memory', 'conversations', 'apiKey', 'spend']);
 const parts = new Map(); // name -> { exportData, importData }

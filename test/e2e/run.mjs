@@ -20,6 +20,7 @@ import { build, BuildError, ROOT } from '../../scripts/build.mjs';
 import { startTestServer } from '../server.mjs';
 import { devices, E2EError, loadPlaywright, TestContext } from './harness.mjs';
 import onboarding from './scenarios/onboarding.mjs';
+import firstrun from './scenarios/firstrun.mjs';
 import chat from './scenarios/chat.mjs';
 import swarm from './scenarios/swarm.mjs';
 import pwa from './scenarios/pwa.mjs';
@@ -36,7 +37,7 @@ async function optionalScenarios(rel) {
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features, ...attachments, ...security, ...interaction];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...attachments, ...security, ...interaction];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

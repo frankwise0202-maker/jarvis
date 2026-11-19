@@ -1485,6 +1485,9 @@ function renderInline(list, parent, env, inLink) {
 // ---- Copy button ----
 
 const copyTimers = new WeakMap();
+// Anthropic API keys never reach the clipboard from a code block (they would end up pasted
+// somewhere); the block itself still shows the text as written.
+const API_KEY_PATTERN = /sk-ant-[A-Za-z0-9_-]{20,}/gi;
 
 function onCopyClick(event) {
   const btn = event.currentTarget;
@@ -1496,6 +1499,7 @@ function onCopyClick(event) {
     const el = block && block.querySelector('code');
     code = el ? el.textContent : '';
   }
+  code = code.replace(API_KEY_PATTERN, '[API key removed]');
   copyText(code, btn).then(
     (ok) => showCopyState(btn, ok),
     () => showCopyState(btn, false),

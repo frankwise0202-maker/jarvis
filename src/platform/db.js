@@ -32,10 +32,9 @@
 //     (another window saved meanwhile) is refused - saveConversation() resolves false and
 //     onConversationConflict listeners hear { id } - instead of silently dropping the other
 //     window's turns. The check and the write happen in one transaction. Backup restores
-//     (restoreConversation) always win. Windows also tell each other, over
-//     BroadcastChannel('jarvis'), about every save ({ type: 'saved', id, updatedAt, rev }) and,
-//     through announceRun(id, running), about runs ({ type: 'run', id, running });
-//     onRemoteActivity(fn) receives the other windows' messages.
+//     (restoreConversation) always win. Each save is also announced to the other windows over
+//     BroadcastChannel('jarvis-saves'); onRemoteSave(fn) hears them as { id, updatedAt, rev }.
+//     (Runs are announced by the app on its own channel, 'jarvis-runs'.)
 //   - Deletion is final for this session: after deleteConversation(id) (or
 //     deleteAllConversations()), later saves of that id are ignored, so a turn that is still
 //     finishing in the background cannot resurrect a conversation the owner deleted.
@@ -67,7 +66,7 @@ const historyKey = (id) => [id, 'api'];
 const knownRev = new Map(); // id -> the stored rev this window last read or wrote
 const conflictListeners = new Set();
 const remoteListeners = new Set();
-let channel; // BroadcastChannel('jarvis'), null when unavailable (created on first use)
+let channel; // BroadcastChannel('jarvis-saves'), null when unavailable (created on first use)
 const persistenceListeners = new Set();
 let lastWriteProblem = null; // why the latest failed save fell back to memory: 'quota' | 'unavailable'
 let reported = { persistent: true, reason: null }; // the state listeners last heard
@@ -199,22 +198,16 @@ export function onConversationConflict(fn) {
 }
 
 /**
- * fn(message) for what OTHER windows of Jarvis report: { type: 'saved', id, updatedAt, rev } after
- * each of their saves, { type: 'run', id, running } when they start or finish a run.
+ * fn({ id, updatedAt, rev }) after each save made by ANOTHER window of Jarvis (never this one's).
  * Returns an unsubscribe function.
  */
-export function onRemoteActivity(fn) {
+export function onRemoteSave(fn) {
   if (typeof fn !== 'function') return () => {};
   openChannel();
   remoteListeners.add(fn);
   return () => {
     remoteListeners.delete(fn);
   };
-}
-
-/** Tell the other windows that a run of conversation `id` started (true) or ended (false). */
-export function announceRun(id, running) {
-  if (typeof id === 'string' && id) post({ type: 'run', id, running: running === true });
 }
 
 /**
@@ -340,7 +333,7 @@ async function writeConversation(conv, force = false) {
       apiWritten.set(conv.id, parts.mark);
       memory.delete(conv.id);
       notifyPersistence();
-      post({ type: 'saved', id: conv.id, updatedAt: finite(conv.updatedAt) ?? 0, rev: res.value.rev });
+      post({ id: conv.id, updatedAt: finite(conv.updatedAt) ?? 0, rev: res.value.rev });
       return true;
     }
   } catch (err) {
@@ -425,15 +418,11 @@ function openChannel() {
   channel = null;
   try {
     if (typeof globalThis.BroadcastChannel === 'function') {
-      channel = new globalThis.BroadcastChannel('jarvis');
+      channel = new globalThis.BroadcastChannel('jarvis-saves');
       channel.onmessage = (event) => {
         const msg = event && event.data;
-        if (!isPlainObject(msg) || typeof msg.id !== 'string' || !msg.id) return;
-        if (msg.type === 'saved' && Number.isInteger(msg.rev)) {
-          emitTo(remoteListeners, { type: 'saved', id: msg.id, updatedAt: finite(msg.updatedAt) ?? 0, rev: msg.rev }, 'A remote activity listener failed');
-        } else if (msg.type === 'run') {
-          emitTo(remoteListeners, { type: 'run', id: msg.id, running: msg.running === true }, 'A remote activity listener failed');
-        }
+        if (!isPlainObject(msg) || typeof msg.id !== 'string' || !msg.id || !Number.isInteger(msg.rev)) return;
+        emitTo(remoteListeners, { id: msg.id, updatedAt: finite(msg.updatedAt) ?? 0, rev: msg.rev }, 'A remote save listener failed');
       };
     }
   } catch {

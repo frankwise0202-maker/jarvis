@@ -108,10 +108,12 @@ it once more (copy it from your password manager).
 ### iPhone (iOS 16.4 or later)
 
 1. Open **<https://frankwise0202-maker.github.io/jarvis/>** in **Safari**.
-2. Tap the **Share** button (the square with an arrow pointing up).
-3. Scroll down and tap **Add to Home Screen**, then **Add**.
+2. Tap the **Share** button (the square with an arrow pointing up). On newer iOS versions it may be
+   tucked under the **•••** button at the bottom of Safari.
+3. Scroll down and tap **Add to Home Screen** (keep **Open as Web App** on if you see it), then **Add**.
 4. Open Jarvis from its new icon on your Home Screen. It opens full screen, like any app.
-5. Go through the short welcome and paste your key.
+5. Go through the short welcome **there** and paste your key. (Do the setup in the Home Screen app,
+   not in Safari: the installed app keeps its own storage, so a key typed in Safari doesn't carry over.)
 6. The first time you tap the microphone, allow microphone access.
 
 ### Android
