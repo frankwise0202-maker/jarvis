@@ -12,6 +12,12 @@
 //                         the frame it returned (when the turn context says the camera is live)
 //   Watch: a structured request whose system prompt is Jarvis Watch's gets a realistic
 //     { worth_saying, line, summary }: the first frame sets the scene, later ones report a change.
+//   Follow-ups in a conversation with an Optics frame (Optics' chips and words):
+//     "Show me a hologram of the AA battery."  show_hologram with the battery sample (alternator /
+//                         Camry when named), spoken lines in Voice Mode
+//     "Tell me more."     a longer answer about the scene
+//     "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)"  what that object
+//                         is, then pin_labels with that one label, then "I've marked it on the frame."
 
 import { readFileSync } from 'node:fs';
 import { newToolUseId } from './util.mjs';
@@ -135,8 +141,9 @@ export function opticsFollowUpPlan({ think, use, result, resultText, body }) {
   }
   const skipped = /outside the \d+×\d+ frame/.test(resultText) ? ' One label fell outside the frame, so I left it off.' : '';
   const screen = /Frame clock/.test(resultText);
+  const one = /^Pinned 1 label\b/.test(resultText); // "What's this part?": the tapped object, pinned again
   return {
-    blocks: [text(screen ? 'Nothing on it needs your attention.' : `The AA is a standard 1.5-volt alkaline cell, and the pothos would like a little more light.${skipped}`)],
+    blocks: [text(screen ? 'Nothing on it needs your attention.' : one ? "I've marked it on the frame." : `The AA is a standard 1.5-volt alkaline cell, and the pothos would like a little more light.${skipped}`)],
     stop_reason: 'end_turn',
     pace: 'quick',
   };
@@ -164,4 +171,78 @@ export function watchAnswer(body) {
     ? { worth_saying: false, line: '', summary: 'A desk with a coffee mug, an AA battery, a pothos, a notebook and a screwdriver.' }
     : { worth_saying: true, line: 'Your mug has moved next to the pothos, the notebook is gone, and a phone has appeared.', summary: 'The mug is beside the pothos; a phone lies where the notebook was.' };
   return JSON.stringify(answer);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Follow-ups in a conversation that has looked through the camera (Optics' chips and words)
+
+/** The newest Optics frame seen anywhere in the conversation (a Look, or a frame Jarvis took). */
+export function conversationFrameOf(messages) {
+  let found = null;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m?.role !== 'user' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      const texts = b?.type === 'text' ? [b.text] : b?.type === 'tool_result' && Array.isArray(b.content) ? b.content.filter((x) => x?.type === 'text').map((x) => x.text) : [];
+      for (const t of texts) {
+        const f = opticsFrameOf(t);
+        if (f) found = f;
+      }
+    }
+  }
+  return found;
+}
+
+/** "Show me a hologram of the AA battery." -> 'AA battery' ('' for "of this"); null when it is not one. */
+export function hologramSubjectOf(prompt) {
+  const m = /\bhologram of (?:the |a |an )?([^.?!\n]+)/i.exec(String(prompt || ''));
+  if (!m) return null;
+  const subject = m[1].trim();
+  return /^(this|that|it|what you see)$/i.test(subject) ? '' : subject;
+}
+
+/** The hologram fixture for what was seen (the desk scene's battery, unless the words name another sample). */
+export function opticsHologramSample(subject) {
+  const s = String(subject || '').toLowerCase();
+  if (/alternator/.test(s)) return 'alternator';
+  if (/camry|car\b|toyota/.test(s)) return 'camry';
+  return 'battery';
+}
+
+const PART_INFO = {
+  'coffee mug': "That's a ceramic coffee mug, about 350 ml, glazed white with a dark brew still in it.",
+  'aa battery': "That's an AA alkaline cell: 1.5 volts, zinc and manganese dioxide, about 2,500 mAh. The flat end is the negative terminal.",
+  pothos: "That's a golden pothos (Epipremnum aureum), a trailing houseplant. The pale leaves say it wants a little more light.",
+  notebook: "That's a hardback A5 notebook with a pen clipped to its cover.",
+  screwdriver: "That's a flat-head screwdriver with an orange handle, a slotted tip about 5 mm wide.",
+};
+
+/**
+ * "Tell me more." or "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" in a
+ * conversation with an Optics frame: a text answer (the part one pins that object again when the
+ * conversation has pin_labels). Null for anything else.
+ */
+export function opticsFollowUpTextPlan({ think, prompt, frame, pinsTool }) {
+  const words = String(prompt || '').trim();
+  const part = /^What['’]s this part\? \(the (.+?) you pinned(?: on frame (f\d+))?(?:, at (\d+), (\d+))?\)/i.exec(words);
+  if (part) {
+    const name = part[1];
+    const info = PART_INFO[name.toLowerCase()] || `That's the ${name}.`;
+    const blocks = [think(`The owner tapped the pin "${name}" and asks what it is.`), text(info)];
+    if (pinsTool && part[2] && part[3] && part[4]) {
+      blocks.push({ type: 'tool_use', id: newToolUseId(), name: 'pin_labels', input: { frame: part[2], labels: [{ text: name.length > 24 ? name.slice(0, 24) : name.replace(/^./, (c) => c.toUpperCase()), x: Number(part[3]), y: Number(part[4]) }] } });
+      return { blocks, stop_reason: 'tool_use', pace: 'quick', jsonChunk: 18 };
+    }
+    return { blocks, stop_reason: 'end_turn', pace: 'quick' };
+  }
+  if (/^tell me more\b/i.test(words)) {
+    return {
+      blocks: [
+        think(`More about frame ${frame.id}.`),
+        text('A little more, sir: the mug is still warm-looking, so the coffee is fresh; the AA cell is a 1.5-volt alkaline, worth keeping for the remote; and the screwdriver is a flat-head, the right one for that battery cover.'),
+      ],
+      stop_reason: 'end_turn',
+      pace: 'quick',
+    };
+  }
+  return null;
 }

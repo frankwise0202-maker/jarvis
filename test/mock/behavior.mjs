@@ -19,7 +19,10 @@ import {
   HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
   hologramPlan, openSavedPlan, savedIdsOf, turnContextText, visualFollowUpText,
 } from './visuals.mjs';
-import { OPTICS_TOOL_NAMES, cameraIsLive, isWatchRequest, lookThroughCameraPlan, opticsFollowUpPlan, opticsFrameOf, opticsLookPlan, watchAnswer } from './optics.mjs';
+import {
+  OPTICS_TOOL_NAMES, cameraIsLive, conversationFrameOf, hologramSubjectOf, isWatchRequest, lookThroughCameraPlan, opticsFollowUpPlan, opticsFollowUpTextPlan,
+  opticsFrameOf, opticsHologramSample, opticsLookPlan, watchAnswer,
+} from './optics.mjs';
 
 const sentenceCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -270,6 +273,15 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     const opticsFrame = opticsFrameOf(turnContextText(userMsg));
     if (opticsFrame && files.length) return { plan: opticsLookPlan({ think, frame: opticsFrame, d, pinsTool: hasTool(body, 'pin_labels') }) };
     if (d.arg('optics') === 'look' && hasTool(body, 'look_through_camera') && cameraIsLive(turnContextText(userMsg))) return { plan: lookThroughCameraPlan({ think }) };
+    // Optics follow-ups in a conversation that has looked through the camera: a hologram of what
+    // was seen (Hologram of this), "Tell me more", and "What's this part?" for a tapped pin.
+    const seen = conversationFrameOf(msgs);
+    if (seen) {
+      const subject = hologramSubjectOf(stripDirectives(prompt));
+      if (subject !== null && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: opticsHologramSample(subject), spoken }) };
+      const follow = opticsFollowUpTextPlan({ think, prompt: stripDirectives(prompt), frame: seen, pinsTool: hasTool(body, 'pin_labels') });
+      if (follow) return { plan: follow };
+    }
     if (d.has('search')) return { plan: searchPlan(env) };
     if (d.has('xss')) {
       const answer = spoken ? textBlocks(spokenXssAnswer(ctx, d)) : [text(xssAnswer())];

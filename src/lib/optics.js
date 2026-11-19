@@ -378,6 +378,17 @@ export function estimateWatchCost({ model = 'claude-opus-5-5', width = 640, heig
   return { usd: (systemTokens + textTokens + image) * p.input + outputTokens * p.output, imageTokens: image };
 }
 
+/**
+ * About what "Hologram of this" costs (the v6 owner guide says 10–30¢ on Opus 5.5): a hologram
+ * spec, a sentence before and after it and thinking, about 8,000 output tokens; the conversation so
+ * far (tools, the frame) read from the prompt cache. Returns { usd }.
+ */
+export function estimateHologramCost({ model = 'claude-opus-5-5', outputTokens = 8000, prefixTokens = 14000, prefixCached = true, newTokens = 300 } = {}) {
+  const p = perToken(model);
+  const usd = outputTokens * p.output + prefixTokens * (prefixCached ? p.cacheRead : p.cacheWrite) + newTokens * p.cacheWrite;
+  return { usd };
+}
+
 /** "0.6¢", "1.8¢", "12¢", "$1.24": cents below a dollar, one decimal below 10¢. */
 export function formatUsd(usd) {
   const v = Number(usd);

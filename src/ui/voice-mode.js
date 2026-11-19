@@ -60,7 +60,13 @@
 //                           note(text)          a caption in the viewer ("I'll take that once …")
 //                           spoken()            a reply or acknowledgement has been said (the
 //                                               viewer's caption of it can leave)
-// The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
+//   look                  Optics, the camera (app.js): { supported() -> boolean, open() } adds a
+//                           Look button to the dock. open() shows Optics over Voice Mode; while it
+//                           is open, `visuals` routes what is heard to it first ("what am I looking
+//                           at?" is a Look, spoken like any reply), and its mic button is the core.
+// The returned api also has ask(text, { mode, blueprintFor, attachments, optics, signal }) ->
+// { run } | { held } | { error } (attachments and optics: an Optics Look, sent as a Voice Mode turn
+// with its frame). Before Optics: ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
 // viewer's mic button: the core's tap, except that while a hologram of the reply builds it listens
@@ -205,6 +211,7 @@ function createVoiceMode(opts) {
     mode,
     container,
     visuals,
+    look,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -324,6 +331,10 @@ function createVoiceMode(opts) {
   const form = h('form', { class: 'vm-form', hidden: true, attrs: { 'data-testid': 'voice-type-form', autocomplete: 'off' }, on: { submit: onSubmit } }, input, sendBtn);
 
   const typeBtn = dockButton('vm-dock-type', 'voice-type-toggle', 'edit', 'Type', toggleTyping);
+  // Optics: Look opens the camera over Voice Mode (call from this tap: iOS asks for the camera only in a gesture).
+  const lookOk = !!look && typeof look.open === 'function' && probe(() => typeof look.supported !== 'function' || !!look.supported());
+  const lookBtn = lookOk ? dockButton('vm-dock-look', 'voice-look', 'camera', 'Look', onLook) : null;
+  if (lookBtn) lookBtn.btn.setAttribute('aria-label', 'Look: show Jarvis what the camera sees');
   const mainBtn = dockButton('vm-dock-main', 'voice-mic', 'mic', 'Talk', onPrimary);
   const exitBtn = dockButton('vm-dock-exit', 'voice-close', 'close', 'Exit', () => close());
   exitBtn.btn.setAttribute('aria-label', 'Exit voice mode');
@@ -358,7 +369,15 @@ function createVoiceMode(opts) {
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
     h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, capSub, missionEl, readFull),
-    h('div', { class: 'vm-bottom' }, form, h('div', { class: 'vm-dock' }, typeBtn.btn, mainBtn.btn, exitBtn.btn), hints),
+    h(
+      'div',
+      { class: 'vm-bottom' },
+      form,
+      lookBtn
+        ? h('div', { class: 'vm-dock vm-dock--look' }, h('div', { class: 'vm-dock-side' }, lookBtn.btn, typeBtn.btn), mainBtn.btn, exitBtn.btn)
+        : h('div', { class: 'vm-dock' }, typeBtn.btn, mainBtn.btn, exitBtn.btn),
+      hints,
+    ),
     live,
   );
 
@@ -544,6 +563,20 @@ function createVoiceMode(opts) {
       pillIcon.dataset.icon = ic;
       clear(pillIcon).appendChild(icon(ic, { size: 16 }));
     }
+  }
+
+  /** Look: Optics opens over Voice Mode (the camera starts within this tap). */
+  function onLook() {
+    if (S.closed || !lookBtn) return;
+    haptic('light');
+    unlockSpeech();
+    try {
+      look.open();
+    } catch (err) {
+      console.warn('[voice] the camera could not open', err);
+    }
+    updateLevelLoop();
+    syncVisuals();
   }
 
   function onCoreTap() {
@@ -1311,6 +1344,9 @@ function createVoiceMode(opts) {
       if (typeof startTurn !== 'function') throw new Error('Voice mode is not connected to Jarvis yet.');
       const input = { mode: opts && MODES.includes(opts.mode) ? opts.mode : resolveMode() };
       if (opts && opts.blueprintFor) input.blueprintFor = opts.blueprintFor;
+      // An Optics Look heard here: its frame goes with the words.
+      if (opts && Array.isArray(opts.attachments) && opts.attachments.length) input.attachments = opts.attachments;
+      if (opts && opts.optics) input.optics = opts.optics;
       result = startTurn(words, input);
     } catch (err) {
       S.run = null;
@@ -1932,8 +1968,8 @@ function createVoiceMode(opts) {
     if (S.closed) return { error: 'Voice Mode is closed.' };
     const o = options && typeof options === 'object' ? options : {};
     if (o.signal && o.signal.aborted) return { error: 'Stopped.', stopped: true };
-    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" was waiting for this turn
-    return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null });
+    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" (or an Optics Look) was waiting for this turn
+    return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null, attachments: Array.isArray(o.attachments) ? o.attachments : null, optics: o.optics || null });
   }
 
   /**

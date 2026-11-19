@@ -55,6 +55,12 @@ export function devices(playwright) {
     small: phone(375, 667, 'Small phone (375×667)'),
     safaritab: phone(375, 553, 'Small phone, Safari tab (375×553)'),
     desktop: { label: 'Desktop (1440×900)', phone: false, options: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 } },
+    // The owner's setup: Chrome on a Mac (camera names and help follow the platform).
+    mac: {
+      label: 'Mac, Chrome (1440×900)',
+      phone: false,
+      options: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36' },
+    },
   };
 }
 

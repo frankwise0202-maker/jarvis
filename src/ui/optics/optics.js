@@ -9,12 +9,28 @@
 //   Watch   sends a frame only when the scene changes (frame differencing on a 64 px thumbnail):
 //           at most one every 10 s, off after 5 minutes, with a countdown and the cost so far.
 //   Screen  "look at my screen" (computers): one frame of the screen, then the capture stops.
+//   Camera  the picker under the title lists every camera (the MacBook's, a Logitech webcam, an
+//           iPhone's back lenses): the owner's choice is remembered (deps.cameraChoice); a camera
+//           plugged in or out is followed (src/platform/camera.js). Flip: front ↔ back on a phone.
+//           A camera that faces the owner is previewed mirrored; frames are sent as the camera sees
+//           them, and the frozen frame shows exactly what was sent.
+//   Follow-ups on an answer: "Tell me more", "Hologram of this" (the frozen frame turns into a
+//           schematic while Jarvis builds the hologram, which then opens in the hologram viewer:
+//           deps.hologram, deps.openHologram) and, after a tap on a pin, "What's this part?".
+//   Voice   over Voice Mode (deps.voice), what is heard goes to command(text) first: "what am I
+//           looking at?" is a Look, "flip", "close", "tell me more", "hologram of this", "what's
+//           this part?"; the mic button is Voice Mode's.
 //
-//   openOptics(deps) -> { close(), el }   isOpticsOpen()   opticsCameraBridge (engine deps.camera)
+//   openOptics(deps) -> { close(), el, command(text) }   isOpticsOpen()   currentOptics()
+//   opticsCameraBridge (engine deps.camera)
 //   deps: { look({ text, frame }) -> Promise<{ run } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
-//           fallbackPhoto?(), onLiveChange?({ camera, watch }), onClose?(), watchOptions?, review? }
+//           fallbackPhoto?(), onLiveChange?({ camera, watch }), onClose?(), watchOptions?, review?,
+//           cameraChoice?: { get() -> { id, label } | null, set({ id, label }) },
+//           hologram?({ subject, frameId }) -> { run } | { error }, canHologram?() -> boolean,
+//           hologramEstimate?() -> usd, openHologram?(run, segment),
+//           voice?: { tap(), info() -> { listening, heard, busy } } (opened over Voice Mode) }
 //   review: { preview, width, height, source, question, answer, pins, frameId } opens a past Look
 //           (from the chat) frozen, without starting the camera.
 //   start: 'screen' opens straight into "look at my screen" (call from the tap: getDisplayMedia
@@ -41,6 +57,8 @@ import {
   screenLookSupported,
 } from '../../platform/camera.js';
 import { OPTICS_LIMITS, WATCH_DEFAULTS, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
+import { hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
+import { drawSchematic } from './schematic.js';
 
 const INTRO_KEY = 'jarvis.optics.intro.v1';
 const WATCH_DAY_KEY = 'jarvis.optics.watch.v1';
@@ -51,6 +69,11 @@ let current = null;
 
 export function isOpticsOpen() {
   return !!current;
+}
+
+/** The open Optics' api ({ close, command, el, state, overVoice }), or null. */
+export function currentOptics() {
+  return current ? current.api : null;
 }
 
 /** The live camera for the engine's look_through_camera (deps.camera): follows the open Optics. */
@@ -178,10 +201,28 @@ export function openOptics(deps = {}) {
   const leaders = h('svg', { class: 'optics-leaders', attrs: { 'aria-hidden': 'true' } });
   const pinsLayer = h('div', { class: 'optics-pins', attrs: { 'data-testid': 'optics-pins', 'aria-hidden': 'true' } }, leaders);
   const card = h('div', { class: 'optics-card', hidden: true, attrs: { 'data-testid': 'optics-card' } });
-  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, brackets, reticle, scan, pinsLayer, flash, card);
+  // Hologram of this: the frozen frame as a schematic (edges) while the hologram is built.
+  const schematic = h('canvas', { class: 'optics-schematic', attrs: { 'data-testid': 'optics-schematic', 'aria-hidden': 'true' } });
+  const schematicLabel = h('p', { class: 'optics-schematic-label', attrs: { 'data-testid': 'optics-schematic-label', 'aria-hidden': 'true' } });
+  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, schematic, brackets, reticle, scan, pinsLayer, schematicLabel, flash, card);
 
   const title = h('span', { class: 'optics-title', text: 'OPTICS' });
-  const sub = h('span', { class: 'optics-sub', attrs: { 'data-testid': 'optics-sub' } });
+  // The camera's name (shortened with "…" when long) and then its frame size and state, always whole.
+  const subName = h('span', { class: 'optics-sub-name' });
+  const subRest = h('span', { class: 'optics-sub-rest' });
+  const sub = h('span', { class: 'optics-sub', attrs: { 'data-testid': 'optics-sub' } }, subName, subRest);
+  // The camera picker: the line under the title names the camera in use; a tap lists every camera.
+  const camCaret = h('span', { class: 'optics-cam-caret', attrs: { 'aria-hidden': 'true' } }, icon('chevron-down', { size: 14 }));
+  const camBtn = h(
+    'button',
+    { class: 'optics-cam-btn', type: 'button', attrs: { 'data-testid': 'optics-camera', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-label': 'Camera' }, on: { click: () => toggleCameraMenu() } },
+    sub,
+    camCaret,
+  );
+  const camList = h('div', { class: 'optics-cam-list', attrs: { role: 'group', 'aria-label': 'Cameras' } });
+  const camHint = h('p', { class: 'optics-cam-hint' });
+  const camMenu = h('div', { class: 'optics-cam-menu', hidden: true, attrs: { 'data-testid': 'optics-camera-menu' } }, h('p', { class: 'optics-cam-menu-title', text: 'CAMERA' }), camList, camHint);
+  const notice = h('p', { class: 'optics-notice', hidden: true, attrs: { 'data-testid': 'optics-notice', role: 'status' } });
   const pillText = h('span', { class: 'optics-pill-text', text: 'OPTICS' });
   const livePill = h(
     'button',
@@ -195,7 +236,7 @@ export function openOptics(deps = {}) {
     { class: 'optics-close', type: 'button', attrs: { 'data-testid': 'optics-close', 'aria-label': 'Close Optics' }, on: { click: () => close('button') } },
     icon('close', { size: 20 }),
   );
-  const top = h('div', { class: 'optics-top' }, h('div', { class: 'optics-titles' }, title, sub), h('div', { class: 'optics-top-actions' }, livePill, closeBtn));
+  const top = h('div', { class: 'optics-top' }, h('div', { class: 'optics-titles' }, title, camBtn, camMenu), h('div', { class: 'optics-top-actions' }, livePill, closeBtn));
 
   // Watch HUD
   const watchClock = h('span', { class: 'optics-watch-clock', attrs: { 'data-testid': 'optics-watch-clock' } });
@@ -212,6 +253,13 @@ export function openOptics(deps = {}) {
   const liveBtn = h('button', { class: 'btn btn-sm optics-live-btn', type: 'button', attrs: { 'data-testid': 'optics-live' }, on: { click: () => backToLive() } }, icon('camera', { size: 16 }), h('span', { text: 'Live' }));
   const moreBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'optics-ask-more' }, on: { click: () => askInput.focus() } }, h('span', { text: 'Ask more' }));
   const inChat = h('span', { class: 'optics-in-chat', text: 'In chat ✓', hidden: true });
+  // Follow-ups on an answer: a pin the owner tapped first ("What's this part?"), then "Tell me more"
+  // and "Hologram of this" (a conversation that can show holograms).
+  const partBtn = h('button', { class: 'optics-chip optics-chip--part', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-part' }, on: { click: () => askPart() } }, icon('pin', { size: 15 }), h('span', { text: 'What’s this part?' }));
+  const moreChip = h('button', { class: 'optics-chip', type: 'button', attrs: { 'data-testid': 'optics-more' }, on: { click: () => tellMore() } }, h('span', { text: 'Tell me more' }));
+  const holoCost = h('span', { class: 'optics-chip-cost' });
+  const holoChip = h('button', { class: 'optics-chip optics-chip--holo', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-hologram' }, on: { click: () => hologramOfThis() } }, icon('hologram', { size: 15 }), h('span', { text: 'Hologram of this' }), holoCost);
+  const followRow = h('div', { class: 'optics-followups', hidden: true, attrs: { 'data-testid': 'optics-followups' } }, partBtn, moreChip, holoChip);
   const answer = h(
     'section',
     { class: 'optics-answer', hidden: true, attrs: { 'data-testid': 'optics-answer', 'aria-label': 'Jarvis’s answer' } },
@@ -219,6 +267,7 @@ export function openOptics(deps = {}) {
     answerQ,
     answerBody,
     pinList,
+    followRow,
     h('div', { class: 'optics-answer-actions' }, liveBtn, moreBtn, inChat),
   );
   const logList = h('ol', { class: 'optics-log-list' });
@@ -235,7 +284,7 @@ export function openOptics(deps = {}) {
     attrs: { 'data-testid': 'optics-ask', 'aria-label': 'Ask about what you see', maxlength: '500' },
     on: { keydown: (e) => onAskKey(e) },
   });
-  const micBtn = h('button', { class: 'optics-mic', type: 'button', hidden: !deps.sttSupported, attrs: { 'data-testid': 'optics-mic', 'aria-label': 'Ask by voice', 'aria-pressed': 'false' }, on: { click: () => toggleMic() } }, icon('mic', { size: 20 }));
+  const micBtn = h('button', { class: 'optics-mic', type: 'button', hidden: !deps.sttSupported && !deps.voice, attrs: { 'data-testid': 'optics-mic', 'aria-label': 'Ask by voice', 'aria-pressed': 'false' }, on: { click: () => toggleMic() } }, icon('mic', { size: 20 }));
   const flipBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-flip', 'aria-label': 'Switch camera', title: 'Switch camera (F)' }, on: { click: () => flip() } }, icon('refresh', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Flip' }));
   const lookCaption = h('span', { class: 'optics-look-cost', attrs: { 'data-testid': 'optics-look-cost' } });
   const lookBtn = h(
@@ -259,6 +308,7 @@ export function openOptics(deps = {}) {
     main,
     side,
     top,
+    notice,
     watchHud,
     live,
   );
@@ -271,8 +321,35 @@ export function openOptics(deps = {}) {
   let mic = null;
   let closed = false;
   let resumeOnVisible = false;
+  let selectedPin = -1; // the pin the owner tapped (What's this part?)
+  let holo = null; // Hologram of this: { entry, run, opened }
+  let menuOpen = false;
+  let noticeTimer = 0;
+  // "What am I looking at?" said in Voice Mode opened Optics: look as soon as the camera is live.
+  let autoLook = typeof deps.autoLook === 'string' ? deps.autoLook.trim().slice(0, 500) : '';
+  let autoLookResolve = null;
+  const autoLookDone = autoLook ? new Promise((resolve) => (autoLookResolve = resolve)) : null;
+  function settleAutoLook(value) {
+    autoLook = '';
+    if (!autoLookResolve) return;
+    const resolve = autoLookResolve;
+    autoLookResolve = null;
+    resolve(value);
+  }
   const offs = [];
-  const camera = createCamera({ video, onState: onCameraState });
+  const choice = deps.cameraChoice && typeof deps.cameraChoice.get === 'function' ? deps.cameraChoice : null;
+  const camera = createCamera({
+    video,
+    onState: onCameraState,
+    onDevices: () => {
+      if (menuOpen) renderCameraMenu();
+      syncTop();
+    },
+    onSwitch: (e) => onCameraSwitched(e),
+    preferred: () => (choice ? choice.get() : null),
+    // A camera plugged in is switched to by itself only while nothing is under way.
+    allowAutoSwitch: () => !watch && !isBusy() && !holo,
+  });
   const desktopMq = window.matchMedia ? window.matchMedia(DESKTOP_MQ) : null;
 
   function setMode(next) {
@@ -282,7 +359,7 @@ export function openOptics(deps = {}) {
     const liveNow = camera.live;
     deck.dataset.frozen = el.dataset.frozen;
     lookBtn.disabled = !(liveNow && (next === 'live' || next === 'frozen')) || isBusy();
-    flipBtn.disabled = !(liveNow && camera.canFlip) || !!watch;
+    flipBtn.disabled = !(liveNow && camera.canFlip) || !!watch || isBusy();
     watchBtn.disabled = !(liveNow && (next === 'live' || watch));
     if (screenBtn) screenBtn.disabled = isBusy() || !!watch;
     syncTop();
@@ -298,11 +375,24 @@ export function openOptics(deps = {}) {
     setTimeout(() => setText(live, text), 30);
   }
 
+  /** What the line under OPTICS calls the camera: "BACK", "FRONT", "MACBOOK CAMERA", "LOGITECH WEBCAM". */
+  function cameraWord(source, cam) {
+    if (source === 'screen') return SOURCE_LABEL.screen;
+    if (cam && cam.name && (cam.known || !camera.phone)) return cam.name.toUpperCase();
+    return SOURCE_LABEL[source] || 'CAMERA';
+  }
+
   function syncTop() {
     const s = camera.size;
-    const src = frozen && el.dataset.frozen === 'true' ? frozen.source : camera.facing;
-    const dims = frozen && el.dataset.frozen === 'true' ? `${frozen.width}×${frozen.height}` : s.width ? `${s.width}×${s.height}` : '';
-    setText(sub, [SOURCE_LABEL[src] || 'CAMERA', dims, frozen && el.dataset.frozen === 'true' ? 'FROZEN' : ''].filter(Boolean).join(' · '));
+    const isFrozen = !!frozen && el.dataset.frozen === 'true';
+    const word = isFrozen ? frozen.cameraWord || cameraWord(frozen.source, null) : cameraWord(camera.facing, camera.current);
+    const dims = isFrozen ? `${frozen.width}×${frozen.height}` : s.width ? `${s.width}×${s.height}` : '';
+    setText(subName, word);
+    setText(subRest, ['', dims, isFrozen ? 'FROZEN' : ''].filter((x, i) => i === 0 || x).join(' · ').replace(/^ · $/, ''));
+    const many = camera.cameras.length;
+    camCaret.hidden = !many;
+    camBtn.disabled = !many && !camera.live;
+    camBtn.setAttribute('aria-label', `Camera: ${camera.current ? camera.current.name : word.toLowerCase()}. ${many > 1 ? `${many} cameras, choose one` : 'Show cameras'}`);
     const on = camera.live;
     livePill.hidden = !on;
     closeBtn.hidden = on;
@@ -340,6 +430,15 @@ export function openOptics(deps = {}) {
       deps.wakeLock && deps.wakeLock.keepAwake && deps.wakeLock.keepAwake();
       // A frozen Look stays frozen when the camera comes back (after a pause); otherwise live.
       setMode(frozen ? (mode === 'review' ? 'review' : 'frozen') : 'live');
+      if (autoLook && mode === 'live') {
+        const words = autoLook;
+        autoLook = '';
+        // A moment for the exposure to settle, then the Look.
+        setTimeout(() => {
+          if (closed) return settleAutoLook({ error: 'Closed.' });
+          look({ textOverride: words }).then(settleAutoLook, (err) => settleAutoLook({ error: (err && err.message) || 'That look couldn’t be sent.' }));
+        }, 300);
+      }
       return;
     }
     if (state === 'paused') {
@@ -359,6 +458,7 @@ export function openOptics(deps = {}) {
     }
     if (state === 'error') {
       stopWatch('');
+      settleAutoLook({ error: 'The camera couldn’t start.' });
       showError(info && info.error);
       return;
     }
@@ -373,16 +473,123 @@ export function openOptics(deps = {}) {
     }
     setMode(frozen ? mode : 'starting');
     if (!frozen) showCard({ kind: 'starting', title: 'Starting camera…', text: '' });
-    const res = await camera.start({ facing: 'rear' });
+    // The camera chosen last on this device (local settings), else the back camera on a phone and
+    // the built-in one on a computer.
+    const res = await camera.start();
     if (closed) {
       camera.stop('closed');
       return;
     }
     if (res.ok) {
-      announce(`Camera on, ${camera.facing === 'front' ? 'front' : 'rear'} camera.`);
+      announce(`Camera on: ${cameraName()}.`);
       safeCue('tap');
     }
   }
+
+  /** The camera in use, in words: "the back camera", "the MacBook camera", "the Logitech webcam". */
+  function cameraName(cam = camera.current) {
+    const n = cam && cam.name && (cam.known || !camera.phone) ? cam.name : '';
+    if (!n) return camera.facing === 'front' ? 'the front camera' : camera.facing === 'rear' ? 'the back camera' : 'the camera';
+    if (/^(back|front)\b/i.test(n)) return `the ${n.toLowerCase().replace(/ camera$/, '')} camera`;
+    if (/^built-in/i.test(n)) return `the ${n[0].toLowerCase()}${n.slice(1)}`;
+    return `the ${n}`;
+  }
+
+  /** Remember the owner's camera on this device (an explicit choice: the picker or Flip). */
+  function rememberCamera() {
+    if (!choice || typeof choice.set !== 'function' || !camera.deviceId) return;
+    try {
+      choice.set({ id: camera.deviceId, label: camera.current ? camera.current.label : '' });
+    } catch {
+      /* settings unavailable: the choice lasts this session */
+    }
+  }
+
+  function showNotice(text, ms = 5000) {
+    clearTimeout(noticeTimer);
+    setText(notice, text);
+    notice.hidden = !text;
+    if (text) noticeTimer = setTimeout(() => (notice.hidden = true), ms);
+  }
+
+  /** The camera changed by itself: unplugged (back to the built-in one) or the chosen one plugged in. */
+  function onCameraSwitched({ why, from, to } = {}) {
+    if (closed) return;
+    const toName = cameraName(to);
+    const fromName = from && from.name ? from.name : 'The camera';
+    const text = why === 'plugged' ? `${(to && to.name) || 'Your camera'} connected: switched to it.` : `${fromName} was unplugged. Using ${toName}.`;
+    showNotice(text, 6000);
+    announce(text);
+    if (watch && watch.detector) watch.detector.reset(); // a new picture: Watch starts over from it
+    if (menuOpen) renderCameraMenu();
+    setMode(mode);
+  }
+
+  // ---- the camera picker ---------------------------------------------------------------------------
+  function toggleCameraMenu(force) {
+    const open = force === undefined ? !menuOpen : !!force;
+    if (open === menuOpen) return;
+    menuOpen = open;
+    camMenu.hidden = !open;
+    camBtn.setAttribute('aria-expanded', String(open));
+    el.dataset.cameraMenu = open ? 'open' : 'closed';
+    if (open) {
+      renderCameraMenu();
+      camera.refreshDevices().then(() => menuOpen && renderCameraMenu());
+      const first = camList.querySelector('[aria-checked="true"]') || camList.querySelector('button');
+      if (first) {
+        try {
+          first.focus({ preventScroll: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  function renderCameraMenu() {
+    const cams = camera.cameras;
+    const currentId = camera.deviceId;
+    camList.replaceChildren(
+      ...cams.map((c) =>
+        h(
+          'button',
+          {
+            class: 'optics-cam-item',
+            type: 'button',
+            attrs: { role: 'menuitemradio', 'aria-checked': String(c.id === currentId), 'data-testid': 'optics-camera-option', 'data-device-id': c.id, 'data-current': String(c.id === currentId) },
+            on: { click: () => selectCamera(c) },
+          },
+          h('span', { class: 'optics-cam-check', attrs: { 'aria-hidden': 'true' } }, c.id === currentId ? icon('check', { size: 16 }) : null),
+          h('span', { class: 'optics-cam-text' }, h('span', { class: 'optics-cam-name', text: c.name }), c.detail && c.detail !== c.name ? h('span', { class: 'optics-cam-detail', text: c.detail }) : null),
+        ),
+      ),
+    );
+    setText(camHint, camera.phone ? 'Flip switches between front and back.' : cams.length < 2 ? 'Plug in a USB webcam and it appears here.' : 'Jarvis remembers your choice on this device.');
+  }
+
+  async function selectCamera(cam) {
+    toggleCameraMenu(false);
+    if (!cam || !cam.id || (cam.id === camera.deviceId && camera.live)) return;
+    if (watch) stopWatch('Watch stopped: the camera changed.');
+    const res = await camera.select(cam.id);
+    if (closed) return;
+    if (res.ok) {
+      rememberCamera();
+      announce(`Switched to ${cameraName()}.`);
+    } else {
+      showNotice(res.error ? res.error.message : 'That camera could not start.');
+    }
+    setMode(mode);
+  }
+
+  const onMenuOutside = (e) => {
+    if (!menuOpen) return;
+    if (camMenu.contains(e.target) || camBtn.contains(e.target)) return;
+    toggleCameraMenu(false);
+  };
+  document.addEventListener('pointerdown', onMenuOutside, true);
+  offs.push(() => document.removeEventListener('pointerdown', onMenuOutside, true));
 
   function showError(error) {
     const err = error instanceof CameraError ? error : classifyCameraError(error);
@@ -457,12 +664,17 @@ export function openOptics(deps = {}) {
   }
 
   async function flip() {
-    if (!camera.live || watch) return;
+    if (!camera.live || watch || isBusy()) return false;
     flipBtn.disabled = true;
     const res = await camera.flip();
+    if (closed) return false;
     if (!res.ok) announce(res.error ? res.error.message : 'Could not switch cameras.');
-    else announce(`${camera.facing === 'front' ? 'Front' : camera.facing === 'rear' ? 'Rear' : 'Other'} camera.`);
+    else {
+      rememberCamera();
+      announce(`Switched to ${cameraName()}.`);
+    }
     setMode(mode);
+    return !!res.ok;
   }
 
   // ---- LOOK ---------------------------------------------------------------------------------------
@@ -499,7 +711,10 @@ export function openOptics(deps = {}) {
       width: frame.width,
       height: frame.height,
       source: frame.source,
-      mirrored: frame.source === 'front',
+      // The frozen frame is exactly what Jarvis sees (never mirrored, even when the live preview
+      // was): text reads the right way round and "on the left" means the frame's left.
+      mirrored: false,
+      cameraWord: cameraWord(frame.source, frame.source === 'screen' ? null : camera.current),
       preview: frame.preview,
       frameId: null,
       pins: [],
@@ -510,8 +725,9 @@ export function openOptics(deps = {}) {
       unsub: null,
       at: Date.now(),
     };
-    el.dataset.frozenMirror = frozen.mirrored ? 'true' : 'false';
+    el.dataset.frozenMirror = 'false';
     followups = [];
+    selectedPin = -1;
     renderAnswer();
   }
 
@@ -523,12 +739,14 @@ export function openOptics(deps = {}) {
     }
     frozen = null;
     followups = [];
+    selectedPin = -1;
+    endSchematic();
     frozenHost.replaceChildren();
     clearPins();
   }
 
   async function look({ textOverride } = {}) {
-    if (!camera.live || isBusy() || !(mode === 'live' || mode === 'frozen')) return;
+    if (!camera.live || isBusy() || !(mode === 'live' || mode === 'frozen')) return { error: camera.live ? 'Jarvis is still answering.' : 'The camera is off.' };
     if (mode === 'frozen') {
       // A new look straight from a frozen one (the desktop deck stays visible): unfreeze first.
       clearFrozen();
@@ -543,9 +761,9 @@ export function openOptics(deps = {}) {
       frame = await camera.capture({ maxEdge: OPTICS_LIMITS.lookMaxEdge });
     } catch (err) {
       announce(err && err.message ? err.message : 'Could not capture a frame.');
-      return;
+      return { error: (err && err.message) || 'Could not capture a frame.' };
     }
-    await sendFrame(frame, question);
+    return sendFrame(frame, question);
   }
 
   async function lookAtScreen() {
@@ -579,18 +797,19 @@ export function openOptics(deps = {}) {
     } catch (err) {
       res = { error: err && err.message ? err.message : 'That look could not be sent.' };
     }
-    if (!frozen || closed) return;
+    if (!frozen || closed) return res || { error: 'Closed.' };
     if (!res || res.error || !res.run) {
       frozen.status = 'error';
       frozen.text = (res && res.error) || 'That look could not be sent.';
       renderAnswer();
       setMode('frozen');
-      return;
+      return { error: frozen.text };
     }
     inChat.hidden = false;
     if (res.frameId) frozen.frameId = res.frameId;
     follow(res.run, frozen);
     addLogEntry(frozen);
+    return res;
   }
 
   /** Streams a run's answer into `target` ({ text, pins, status, costUsd, frameId }). */
@@ -607,11 +826,17 @@ export function openOptics(deps = {}) {
         } else if (seg.kind === 'pins' && Array.isArray(seg.labels) && seg.labels.length && seg.status !== 'error') {
           // Only labels for the frozen frame (a fresh frame Jarvis took has its own id).
           if (frozen && (!frozen.frameId || seg.frameId === frozen.frameId)) {
-            frozen.pins = seg.labels.map((l) => ({ text: l.text, x: l.x, y: l.y }));
+            const labels = seg.labels.map((l) => ({ text: l.text, x: l.x, y: l.y }));
+            // The Look's own answer sets the labels; a follow-up's ("What's this part?") adds to them.
+            frozen.pins = target === frozen ? labels : mergePins(frozen.pins, labels);
             if (seg.frameId) frozen.frameId = seg.frameId;
             renderPinsSoon();
             renderPinList();
           }
+        } else if (seg.kind === 'hologram' && seg.status !== 'error') {
+          // Hologram of this, or a hologram asked for in words: the viewer opens over Optics.
+          if (typeof target.onHologram === 'function') target.onHologram(seg, run);
+          else openHologramOnce(seg, run);
         } else if (seg.kind === 'error' && seg.error && seg.error.message) {
           target.error = seg.error.message;
         }
@@ -622,6 +847,7 @@ export function openOptics(deps = {}) {
           target.costUsd = Number(t.costUsd) || 0;
           if (['done', 'error', 'stopped', 'interrupted'].includes(t.status)) {
             target.status = t.status === 'done' ? 'done' : 'error';
+            if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
             if (target === frozen && frozen.logEntry) updateLogEntry(frozen);
             if (target.status === 'done') announce(frozen && frozen.pins.length ? `Answer ready. ${frozen.pins.length} labels pinned.` : 'Answer ready.');
@@ -635,27 +861,152 @@ export function openOptics(deps = {}) {
     if (run.turn && run.turn.status && run.turn.status !== 'running') onEvent({ type: 'end', turn: run.turn });
   }
 
-  async function ask(question) {
-    if (!frozen || isBusy()) return;
-    const entry = { question, text: '', status: 'analyzing', costUsd: 0, unsub: null };
+  /**
+   * A follow-up about the frozen frame (the same conversation, so Claude still has the frame).
+   * `display`: what the sheet shows when the words sent say more (the pin's frame and pixel).
+   * `send`: how it is sent (default deps.ask; Hologram of this uses deps.hologram).
+   */
+  async function ask(question, { display = '', send = null, entryExtra = null } = {}) {
+    if (!frozen || isBusy()) return null;
+    const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, ...(entryExtra || {}) };
     followups.push(entry);
     renderAnswer();
     setMode(mode);
     let res;
     try {
-      res = await deps.ask({ text: question });
+      res = await (send ? send() : deps.ask({ text: question }));
     } catch (err) {
       res = { error: err && err.message ? err.message : 'That question could not be sent.' };
     }
-    if (closed) return;
+    if (closed) return null;
     if (!res || res.error || !res.run) {
       entry.status = 'error';
       entry.text = (res && res.error) || 'That question could not be sent.';
+      if (typeof entry.onEnd === 'function') entry.onEnd(null);
       renderAnswer();
       setMode(mode);
-      return;
+      return null;
     }
     follow(res.run, entry);
+    return entry;
+  }
+
+  /** Labels added by a follow-up: a new object gets its pin; one already pinned (same name, nearby) stays put. */
+  function mergePins(pins, more) {
+    const out = pins.slice();
+    for (const p of more) {
+      const near = out.findIndex((q) => q.text.toLowerCase() === p.text.toLowerCase() || Math.hypot(q.x - p.x, q.y - p.y) < 12);
+      if (near < 0 && out.length < OPTICS_LIMITS.maxLabels) out.push(p);
+    }
+    return out;
+  }
+
+  const openedHolograms = new Set();
+  function openHologramOnce(seg, run) {
+    if (!seg || !seg.id || openedHolograms.has(seg.id) || closed) return;
+    openedHolograms.add(seg.id);
+    try {
+      if (typeof deps.openHologram === 'function') deps.openHologram(run, seg);
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+    }
+  }
+
+  // ---- follow-ups: Tell me more, What's this part?, Hologram of this ---------------------------------
+  function tellMore() {
+    return ask('Tell me more.');
+  }
+
+  function selectedPinData() {
+    return frozen && selectedPin >= 0 && frozen.pins[selectedPin] ? frozen.pins[selectedPin] : null;
+  }
+
+  function askPart() {
+    const pin = selectedPinData();
+    if (!pin) return null;
+    return ask(partQuestion(pin, frozen.frameId), { display: `What’s this part? · ${pin.text}` });
+  }
+
+  function selectPin(index) {
+    if (!frozen || !frozen.pins[index]) return;
+    selectedPin = selectedPin === index ? -1 : index;
+    renderPins();
+    renderPinList();
+    renderAnswer();
+    const pin = selectedPinData();
+    if (pin) announce(`${pin.text} selected. Ask what this part is, or make a hologram of it.`);
+  }
+
+  function canHologram() {
+    try {
+      return typeof deps.hologram === 'function' && (typeof deps.canHologram !== 'function' || deps.canHologram() === true);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Hologram of this (scan → schematic, as in the Mark 45 scene): the frozen frame turns into its
+   * edges while Jarvis builds a hologram of the object (the tapped pin's, else the first one named);
+   * the hologram viewer opens as soon as the build starts, over Optics. The frame is already in the
+   * conversation, so Claude sees what it is modelling.
+   */
+  async function hologramOfThis(subjectOverride) {
+    if (!frozen || isBusy() || holo || !canHologram()) return null;
+    const pin = selectedPinData() || (frozen.pins.length ? frozen.pins[0] : null);
+    const subject = subjectOverride !== undefined && subjectOverride !== null ? subjectOverride : pin ? pin.text : '';
+    const text = hologramRequest(subject);
+    startSchematic(subject);
+    const state = { opened: false };
+    holo = state;
+    const entry = await ask(text, {
+      display: subject ? `Hologram of ${theName(subject)}` : 'Hologram of this',
+      send: () => deps.hologram({ text, subject: subject || null, frameId: frozen ? frozen.frameId : null }),
+      entryExtra: {
+        onHologram: (seg, run) => {
+          if (state.opened || closed) return;
+          state.opened = true;
+          announce('Building the hologram.');
+          openHologramOnce(seg, run);
+        },
+        onEnd: (turn) => {
+          if (holo === state) holo = null;
+          endSchematic();
+          if (!state.opened && turn && turn.status === 'done') announce('Jarvis answered without a hologram.');
+          setMode(mode);
+        },
+      },
+    });
+    if (!entry && holo === state) {
+      holo = null;
+      endSchematic();
+    }
+    return entry;
+  }
+
+  let schematicOn = false;
+  function startSchematic(subject) {
+    if (!frozen) return;
+    const source = frozen.canvas && frozen.canvas.width ? frozen.canvas : frozen.node;
+    let ok = null;
+    try {
+      ok = drawSchematic(schematic, source, { width: frozen.width, height: frozen.height });
+    } catch {
+      ok = null;
+    }
+    schematicOn = !!ok;
+    el.dataset.schematic = ok ? 'true' : 'false';
+    setText(schematicLabel, `BUILDING HOLOGRAM${subject ? ` · ${String(subject).toUpperCase()}` : '…'}`);
+    schematicLabel.hidden = !ok;
+    if (ok) playScan();
+  }
+
+  function endSchematic() {
+    if (!schematicOn && el.dataset.schematic !== 'true') return;
+    schematicOn = false;
+    el.dataset.schematic = 'false';
+    schematicLabel.hidden = true;
+    releaseCanvas(schematic);
   }
 
   function onAskKey(e) {
@@ -712,6 +1063,24 @@ export function openOptics(deps = {}) {
     }
     answerBody.replaceChildren(...blocks);
     answerBody.classList.toggle('is-error', frozen.status === 'error');
+    // Follow-ups once Jarvis has answered (one question at a time).
+    const answered = frozen.status === 'done';
+    const pin = selectedPinData();
+    followRow.hidden = !answered;
+    partBtn.hidden = !pin;
+    partBtn.setAttribute('aria-label', pin ? `What’s this part: ${pin.text}?` : 'What’s this part?');
+    holoChip.hidden = !canHologram();
+    if (!holoChip.hidden) {
+      let est = 0;
+      try {
+        est = typeof deps.hologramEstimate === 'function' ? Number(deps.hologramEstimate()) || 0 : 0;
+      } catch {
+        est = 0;
+      }
+      setText(holoCost, est > 0 ? `≈${formatUsd(est)}` : '');
+      holoChip.setAttribute('aria-label', `Hologram of ${pin ? pin.text : frozen.pins.length ? frozen.pins[0].text : 'this'}${est > 0 ? ` (about ${formatUsd(est)})` : ''}`);
+    }
+    for (const b of [partBtn, moreChip, holoChip]) b.disabled = busy || !!holo;
     liveBtn.disabled = false;
     moreBtn.disabled = busy;
     setText(liveBtn.lastChild, camera.live ? 'Live' : 'Camera');
@@ -719,7 +1088,15 @@ export function openOptics(deps = {}) {
 
   function renderPinList() {
     const items = frozen ? frozen.pins : [];
-    pinList.replaceChildren(...items.map((p) => h('li', { class: 'optics-pin-chip', text: p.text })));
+    pinList.replaceChildren(
+      ...items.map((p, i) =>
+        h(
+          'li',
+          null,
+          h('button', { class: 'optics-pin-chip', type: 'button', text: p.text, attrs: { 'aria-pressed': String(i === selectedPin), 'data-testid': 'optics-pin-chip' }, on: { click: () => selectPin(i) } }),
+        ),
+      ),
+    );
     pinList.hidden = !items.length;
   }
 
@@ -774,13 +1151,17 @@ export function openOptics(deps = {}) {
       shown.add(key);
       const delay = fresh && motion ? `${order++ * 60}ms` : '0ms';
       if (l.leader) leaders.append(h('line', { x1: l.leader.x1, y1: l.leader.y1, x2: l.leader.x2, y2: l.leader.y2, class: fresh && motion ? 'is-new' : '', style: { animationDelay: delay } }));
+      const picked = l.index === selectedPin;
       pinsLayer.append(
-        h('span', { class: ['optics-dot', l.clipped && 'is-clipped', fresh && motion && 'is-new'], style: { left: `${l.ax}px`, top: `${l.ay}px`, animationDelay: delay } }),
+        h('span', { class: ['optics-dot', l.clipped && 'is-clipped', fresh && motion && 'is-new', picked && 'is-selected'], style: { left: `${l.ax}px`, top: `${l.ay}px`, animationDelay: delay } }),
         h('span', {
-          class: ['optics-plate', fresh && motion && 'is-new'],
+          class: ['optics-plate', fresh && motion && 'is-new', picked && 'is-selected'],
           text: l.text,
-          attrs: { 'data-testid': 'optics-pin', 'data-x': String(Math.round(l.ax)), 'data-y': String(Math.round(l.ay)), 'data-frame-x': String(frozen.pins[l.index].x), 'data-frame-y': String(frozen.pins[l.index].y) },
+          attrs: { 'data-testid': 'optics-pin', 'data-index': String(l.index), 'data-selected': String(picked), 'data-x': String(Math.round(l.ax)), 'data-y': String(Math.round(l.ay)), 'data-frame-x': String(frozen.pins[l.index].x), 'data-frame-y': String(frozen.pins[l.index].y) },
           style: { left: `${l.plate.x}px`, top: `${l.plate.y}px`, width: `${l.plate.w}px`, animationDelay: delay },
+          // A tap picks the object (What's this part?, Hologram of this). The pin list is the
+          // keyboard and screen-reader way to do the same (this layer is aria-hidden).
+          on: { click: (e) => (e.stopPropagation(), selectPin(l.index)) },
         }),
       );
     }
@@ -931,8 +1312,109 @@ export function openOptics(deps = {}) {
     if (!closed) setMode(mode === 'live' ? 'live' : mode);
   }
 
+  // ---- words: Optics commands (typed, spoken here, or heard by Voice Mode) -----------------------------
+  /**
+   * Words for Optics: { handled: false } when they are for Jarvis as usual, else { handled: true,
+   * command: { action: 'optics', ack, kind }, done? } (done: a Promise of the turn started, { run }
+   * or { error }). Used by the mic here and, over Voice Mode, for everything Voice Mode hears.
+   */
+  function command(text) {
+    if (closed) return { handled: false };
+    const showing = !!frozen && (mode === 'frozen' || mode === 'review');
+    const cmd = matchOpticsCommand(text, { frozen: showing });
+    if (!cmd) return { handled: false };
+    const ack = (kind, line) => ({ handled: true, command: { action: 'optics', kind, ack: line } });
+    // A turn starts on the next tick: Voice Mode first takes note that a command is under way (its
+    // "One moment…"), then the turn it is handed replaces that note.
+    const started = (kind, start) => ({
+      handled: true,
+      command: { action: 'optics', kind, ack: '' },
+      done: new Promise((resolve) => setTimeout(resolve, 0))
+        .then(() => (closed ? { error: 'Closed.' } : start()))
+        .then((r) => r || { error: 'That didn’t work.' }, (err) => ({ error: (err && err.message) || 'That didn’t work.' })),
+    });
+    const asked = (p) => Promise.resolve(p).then((e) => (e ? { run: true } : null));
+    const busy = isBusy() || !!holo;
+    switch (cmd.action) {
+      case 'look':
+        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        if (!camera.live) {
+          if (showing) return started('ask', () => asked(ask(cmd.question)));
+          return ack('no-camera', 'The camera is off. Tap Live to turn it on.');
+        }
+        return started('look', () => look({ textOverride: cmd.question }));
+      case 'ask':
+        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        return started('ask', () => asked(ask(cmd.question)));
+      case 'more':
+        if (!showing) return { handled: false };
+        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        return started('more', () => asked(tellMore()));
+      case 'part':
+        if (!showing) return { handled: false };
+        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        if (!selectedPinData()) return started('ask', () => asked(ask(cmd.question)));
+        return started('part', () => asked(askPart()));
+      case 'hologram':
+        if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+        if (!canHologram()) return ack('no-hologram', 'This chat can’t show holograms. Start a new chat, then ask again.');
+        if (showing) return started('hologram', () => asked(hologramOfThis(cmd.subject)));
+        if (!camera.live) return ack('no-camera', 'The camera is off. Tap Live to turn it on.');
+        // Live: a Look whose question asks for the hologram (the frame goes with it).
+        return started('hologram', () => look({ textOverride: hologramRequest(cmd.subject) }));
+      case 'flip': {
+        if (!camera.live || !camera.canFlip || watch || busy) return ack('flip', camera.canFlip ? 'Not right now.' : 'There’s only one camera.');
+        const want = cmd.side;
+        if (want && camera.phone && camera.facing === want) return ack('flip', `That’s the ${want === 'front' ? 'front' : 'back'} camera already.`);
+        flip();
+        return ack('flip', 'Switching cameras.');
+      }
+      case 'close':
+        setTimeout(() => close('voice'), 0);
+        return ack('close', 'Camera off.');
+      case 'live':
+        if (!showing) return ack('live', 'This is the live view.');
+        backToLive();
+        return ack('live', 'Back to the live view.');
+      case 'watch':
+        if (cmd.on && !watch) {
+          if (!camera.live || showing) return ack('watch', 'Go live first, then say watch.');
+          startWatch();
+          return ack('watch', watch ? 'Watching. I’ll speak up if something changes.' : 'Watch can’t start right now.');
+        }
+        if (!cmd.on && watch) {
+          stopWatch('Watch stopped.');
+          return ack('watch', 'Watch off.');
+        }
+        return ack('watch', cmd.on ? 'I’m already watching.' : 'Watch is already off.');
+      default:
+        return { handled: false };
+    }
+  }
+
+  // Opened over Voice Mode: the mic button is Voice Mode's (a tap is the core's tap), and it shows
+  // whether Voice Mode is listening and what it hears.
+  function setVoice(info) {
+    if (!deps.voice) return;
+    const i = info && typeof info === 'object' ? info : {};
+    micBtn.hidden = false;
+    micBtn.setAttribute('aria-pressed', String(!!i.listening));
+    micBtn.classList.toggle('is-listening', !!i.listening);
+    micBtn.setAttribute('aria-label', i.listening ? 'Listening. Tap to send' : i.busy ? 'Stop Jarvis' : 'Talk to Jarvis');
+    if (i.listening && typeof i.heard === 'string' && !askInput.value.trim()) askInput.placeholder = i.heard || 'Listening…';
+    else askInput.placeholder = 'Ask about what you see…';
+  }
+
   // ---- mic --------------------------------------------------------------------------------------
   function toggleMic() {
+    if (deps.voice && typeof deps.voice.tap === 'function') {
+      try {
+        deps.voice.tap();
+      } catch (err) {
+        console.warn('[jarvis] voice tap failed:', err);
+      }
+      return;
+    }
     if (mic) {
       try {
         mic.stop();
@@ -952,7 +1434,14 @@ export function openOptics(deps = {}) {
       },
       onFinal: (t) => {
         askInput.value = t;
-        // A spoken question goes straight out: a Look when live, a follow-up when frozen.
+        // Spoken words: an Optics command first ("flip", "hologram of this", "tell me more"), else
+        // a question that goes straight out: a Look when live, a follow-up when frozen.
+        const res = command(t);
+        if (res && res.handled) {
+          askInput.value = '';
+          if (res.command && res.command.ack) announce(res.command.ack);
+          return;
+        }
         if (frozen && (mode === 'frozen' || mode === 'review')) {
           askInput.value = '';
           if (t.trim()) ask(t.trim());
@@ -1061,6 +1550,41 @@ export function openOptics(deps = {}) {
   document.addEventListener('visibilitychange', onVisible);
   offs.push(() => document.removeEventListener('visibilitychange', onVisible));
 
+  // Covered by another overlay (the hologram viewer Hologram of this opened): the camera turns off
+  // (it never runs unseen), Watch stops; once Optics shows again the frozen answer is still there,
+  // and the live view comes back by itself on a computer (a tap on iPhone).
+  let covered = false;
+  let coverObserver = null;
+  const onCover = () => {
+    const now = !!el.inert;
+    if (now === covered || closed) return;
+    covered = now;
+    el.dataset.covered = now ? 'true' : 'false';
+    if (now) {
+      toggleCameraMenu(false);
+      stopWatch('');
+      if (camera.live) camera.stop('covered');
+      syncTop();
+      return;
+    }
+    if (frozen) {
+      setMode(mode === 'review' ? 'review' : 'frozen');
+      layoutSoon();
+    } else if (cameraPlatform().autoResume) startCamera();
+    else {
+      setMode('paused');
+      showCard({ kind: 'paused', title: 'Camera paused', text: 'Jarvis turns the camera off while something covers this screen.', primary: { label: 'Resume camera', testid: 'optics-resume', fn: () => startCamera() } });
+    }
+  };
+  try {
+    if (typeof MutationObserver === 'function') {
+      coverObserver = new MutationObserver(onCover);
+      coverObserver.observe(el, { attributes: true, attributeFilter: ['inert'] });
+    }
+  } catch {
+    coverObserver = null;
+  }
+
   // ---- open / close ---------------------------------------------------------------------------------
   function close(reason = 'closed') {
     if (closed) return;
@@ -1079,7 +1603,11 @@ export function openOptics(deps = {}) {
     for (const f of followups) if (f.unsub) f.unsub();
     for (const off of offs.splice(0)) off();
     if (ro) ro.disconnect();
+    if (coverObserver) coverObserver.disconnect();
     clearTimeout(layoutTimer);
+    clearTimeout(noticeTimer);
+    endSchematic();
+    settleAutoLook({ error: 'Closed.' });
     deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
     try {
       deps.onLiveChange && deps.onLiveChange({ camera: false, watch: false });
@@ -1096,7 +1624,24 @@ export function openOptics(deps = {}) {
     }
   }
 
-  const overlay = openOverlay({ el, label: 'Optics, the camera', onEscape: () => close('escape'), initialFocus: () => lookBtn });
+  const overlay = openOverlay({
+    el,
+    label: 'Optics, the camera',
+    // Esc closes the camera list first, then Optics.
+    onEscape: () => {
+      if (menuOpen) {
+        toggleCameraMenu(false);
+        try {
+          camBtn.focus({ preventScroll: true });
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      close('escape');
+    },
+    initialFocus: () => lookBtn,
+  });
   onResize();
   renderLookCost();
   syncTop();
@@ -1104,8 +1649,19 @@ export function openOptics(deps = {}) {
   const api = {
     el,
     close: () => close('api'),
+    /** Words for Optics (see command()): Voice Mode routes what it hears here while Optics is open. */
+    command: (text) => command(text),
+    /** Voice Mode's listening state for the mic button (opened over Voice Mode). */
+    setVoice: (info) => setVoice(info),
+    /** Opened over Voice Mode (its turns are spoken, its mic is Voice Mode's). */
+    overVoice: !!deps.voice,
+    /** deps.autoLook: a Promise of the Look's outcome ({ run, frameId } | { error }), else null. */
+    autoLookDone,
     get state() {
       return mode;
+    },
+    get frozen() {
+      return !!frozen && (mode === 'frozen' || mode === 'review');
     },
   };
   current = {
@@ -1121,7 +1677,7 @@ export function openOptics(deps = {}) {
     const img = h('img', { src: r.preview, alt: '' });
     img.classList.add('optics-frozen-media');
     frozenHost.replaceChildren(img);
-    frozen = { node: img, canvas: null, width: r.width, height: r.height, source: r.source || 'camera', mirrored: r.source === 'front', preview: r.preview, frameId: r.frameId || null, pins: Array.isArray(r.pins) ? r.pins : [], question: r.question || 'What am I looking at?', text: r.answer || '', status: 'done', costUsd: Number(r.costUsd) || 0, unsub: null, at: Date.now() };
+    frozen = { node: img, canvas: null, width: r.width, height: r.height, source: r.source || 'camera', mirrored: false, preview: r.preview, frameId: r.frameId || null, pins: Array.isArray(r.pins) ? r.pins : [], question: r.question || 'What am I looking at?', text: r.answer || '', status: 'done', costUsd: Number(r.costUsd) || 0, unsub: null, at: Date.now() };
     setMode('review');
     renderAnswer();
     renderPinList();

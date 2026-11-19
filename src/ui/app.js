@@ -48,10 +48,12 @@ import * as deviceTts from '../platform/voice/tts.js';
 import { createVoiceRouter } from '../platform/voice/voice-router.js';
 import { createNaturalVoice } from '../platform/voice/natural/setup.js';
 import { markdownToPlainText } from '../lib/markdown.js';
-import { isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
+import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
-import { estimateLookCost } from '../lib/optics.js';
-import { cameraSupported, screenLookSupported } from '../platform/camera.js';
+import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
+import { matchOpticsCommand } from '../lib/optics-commands.js';
+import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
+import { isIOS } from '../platform/env.js';
 import { base64ByteLength } from './attachments.js';
 
 const { sttSupported, startListening } = stt;
@@ -664,7 +666,7 @@ export async function startApp(rootEl) {
   let lastVoiceHologram = null;
   const REOPEN_ACTIONS = new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']);
 
-  function startTurnForVoice(text, { mode, blueprintFor } = {}) {
+  function startTurnForVoice(text, { mode, blueprintFor, attachments, optics } = {}) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
     if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
@@ -674,6 +676,9 @@ export async function startApp(rootEl) {
     // blueprintFor: "blueprint the <part>" from a hologram viewer over Voice Mode.
     const extras = { keepOnStop: true, spoken: true };
     if (blueprintFor) extras.blueprintFor = blueprintFor;
+    // An Optics Look in Voice Mode ("what am I looking at?"): the frame goes with the words.
+    if (Array.isArray(attachments) && attachments.length) extras.attachments = attachments;
+    if (optics) extras.optics = optics;
     // A chat from before holograms (its tools are frozen without show_hologram) can't show one: Voice
     // Mode, whose headline is "show me this car", asks in a new chat instead (the old one stays in History).
     const oldChat = !state.demo && !!state.conv && turnsOf(state.conv).length > 0 && !hasVisualTools(state.conv, 'show_hologram') && !state.runs.has(state.conv.id);
@@ -695,8 +700,16 @@ export async function startApp(rootEl) {
    */
   const voiceVisuals = {
     open: (run, seg) => openVisualForVoice(run, seg),
-    isOpen: () => !!(getHologramViewer() || getBlueprintViewer()),
-    command: (text, opts) => voiceCommand(text, opts),
+    // Optics over Voice Mode counts as a viewer: listening carries on, and what is heard goes to it first.
+    isOpen: () => !!(getHologramViewer() || getBlueprintViewer() || isOpticsOpen()),
+    command: (text, opts) => {
+      const optics = currentOptics();
+      // A hologram or blueprint opened from Optics is on top: its commands first.
+      if (optics && !getHologramViewer() && !getBlueprintViewer()) return safe(() => optics.command(text), null) || { handled: false };
+      const res = voiceCommand(text, opts);
+      if (res && res.handled) return res;
+      return (!optics && voiceLookRequest(text)) || res;
+    },
     note: (text) => {
       const viewer = getHologramViewer();
       if (viewer) safe(() => viewer.note(text));
@@ -709,6 +722,8 @@ export async function startApp(rootEl) {
       voiceInfo = info && typeof info === 'object' ? info : null;
       const viewer = getHologramViewer();
       if (viewer) safe(() => viewer.setVoice(voiceInfo));
+      const optics = currentOptics();
+      if (optics && optics.overVoice) safe(() => optics.setVoice(voiceInfo));
     },
   };
 
@@ -788,6 +803,7 @@ export async function startApp(rootEl) {
 
   /** Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). */
   function openVoice() {
+    refreshCameraPermission();
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     const entry = state.conv && state.runs.get(state.conv.id);
@@ -806,6 +822,8 @@ export async function startApp(rootEl) {
         activeRun: entry ? entry.run : null,
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
+        // Optics: Look in the dock opens the camera over Voice Mode.
+        look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true }) },
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
@@ -857,9 +875,8 @@ export async function startApp(rootEl) {
     return '';
   }
 
-  function lookFromOptics({ text, frame }) {
-    const problem = opticsProblem();
-    if (problem) return { error: problem };
+  /** A Look's frame as a photo attachment (startTurn checks it), and its Optics record. */
+  function opticsAttachment(frame) {
     const at = frame.capturedAt || Date.now();
     const clock = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     const attachment = {
@@ -873,7 +890,14 @@ export async function startApp(rootEl) {
       width: frame.width,
       height: frame.height,
     };
-    if (!send(text, 'quick', { attachments: [attachment], optics: { source: frame.source, capturedAt: at } })) return { error: 'That look couldn’t be sent.' };
+    return { attachment, optics: { source: frame.source, capturedAt: at } };
+  }
+
+  function lookFromOptics({ text, frame }) {
+    const problem = opticsProblem();
+    if (problem) return { error: problem };
+    const { attachment, optics } = opticsAttachment(frame);
+    if (!send(text, 'quick', { attachments: [attachment], optics })) return { error: 'That look couldn’t be sent.' };
     const entry = state.conv && state.runs.get(state.conv.id);
     if (!entry) return { error: 'That look couldn’t be sent.' };
     const user = state.conv.turns[state.conv.turns.length - 2];
@@ -909,12 +933,76 @@ export async function startApp(rootEl) {
     return estimateLookCost({ model: getSettings().leadModel, prefixCached: warm }).usd;
   }
 
+  // ---- Optics over Voice Mode: a Look, a question or a hologram is a Voice Mode turn (spoken) ----
+  function voiceTurnResult(res) {
+    if (!res || res.error) return { error: (res && res.error) || 'That couldn’t be sent.' };
+    if (res.held) return { error: 'I’ll take that once the details are on screen.' };
+    const run = res.run || (state.conv && state.runs.get(state.conv.id) ? state.runs.get(state.conv.id).run : null);
+    return run ? { run } : { error: 'That couldn’t be sent.' };
+  }
+
+  function lookViaVoice({ text, frame }) {
+    if (!voiceApi) return lookFromOptics({ text, frame });
+    const problem = opticsProblem();
+    if (problem) return { error: problem };
+    const { attachment, optics } = opticsAttachment(frame);
+    const out = voiceTurnResult(safe(() => voiceApi.ask(text || 'What am I looking at?', { mode: 'quick', attachments: [attachment], optics }), null));
+    if (out.error) return out;
+    const user = state.conv ? state.conv.turns[state.conv.turns.length - 2] : null;
+    return { run: out.run, frameId: user && user.optics ? user.optics.frameId : null };
+  }
+
+  function askViaVoice({ text }) {
+    if (!voiceApi) return askFromOptics({ text });
+    const problem = opticsProblem();
+    if (problem) return { error: problem };
+    return voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'quick' }), null));
+  }
+
+  // The camera permission, read without asking (Voice Mode may open the camera by voice only once
+  // the owner has allowed it, and never on iPhone, where it needs a tap).
+  let cameraAllowed = 'unknown';
+  function refreshCameraPermission() {
+    cameraPermission()
+      .then((p) => (cameraAllowed = p))
+      .catch(() => {});
+  }
+
+  /**
+   * "What am I looking at?" in Voice Mode with the camera closed: on a computer where the camera is
+   * allowed, Optics opens over Voice Mode and looks at once; otherwise Jarvis asks for a tap on Look.
+   */
+  function voiceLookRequest(text) {
+    if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
+    const cmd = safe(() => matchOpticsCommand(text, {}), null);
+    if (!cmd || cmd.action !== 'look' || !cmd.explicit) return null;
+    if (cameraAllowed !== 'granted' || safe(() => isIOS(), false)) {
+      return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
+    }
+    const optics = openOpticsScreen({ voice: true, autoLook: cmd.question });
+    const done = optics && optics.autoLookDone ? optics.autoLookDone : Promise.resolve({ error: 'The camera couldn’t start.' });
+    return { handled: true, command: { action: 'optics', kind: 'look', ack: '' }, done };
+  }
+
   function opticsDeps(extra = {}) {
     return {
       getSettings,
       lookEstimate,
       look: lookFromOptics,
       ask: askFromOptics,
+      // The camera the owner chose last on this device (deviceId and label; Settings are local).
+      cameraChoice: {
+        get: () => {
+          const st = getSettings();
+          return st.opticsCameraId || st.opticsCameraLabel ? { id: st.opticsCameraId, label: st.opticsCameraLabel } : null;
+        },
+        set: ({ id, label } = {}) => safe(() => saveSettings({ opticsCameraId: String(id || '').slice(0, 256), opticsCameraLabel: String(label || '').slice(0, 120) })),
+      },
+      // Hologram of this: a normal turn of this conversation (it holds the frame), once it can show holograms.
+      canHologram: () => !!(state.demo || !state.conv || hasVisualTools(state.conv, 'show_hologram')),
+      hologram: ({ text }) => askFromOptics({ text }),
+      hologramEstimate: () => estimateHologramCost({ model: getSettings().leadModel }).usd,
+      openHologram: (run, seg) => (run && run.turn ? openVisualSegment(run.turn, seg) : null),
       watchLook: watchFromOptics,
       stt,
       sttSupported: sttOk,
@@ -932,14 +1020,36 @@ export async function startApp(rootEl) {
     };
   }
 
-  /** Opens Optics (call from a tap: iOS asks for the camera only inside a user gesture). */
-  function openOpticsScreen({ start } = {}) {
-    if (isOpticsOpen()) return true;
-    stopSpeakingNow();
+  /**
+   * Opens Optics (call from a tap: iOS asks for the camera only inside a user gesture).
+   * voice: over Voice Mode (its turns are spoken; Voice Mode opens a hologram itself); autoLook: the
+   * words of a Look to take as soon as the camera is live ("what am I looking at?" said in Voice Mode).
+   * Returns the Optics api (truthy), or false.
+   */
+  function openOpticsScreen({ start, voice = false, autoLook = '' } = {}) {
+    if (isOpticsOpen()) return currentOptics() || true;
+    if (!voice) stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
+    const extra = {};
+    if (start === 'screen') extra.start = start;
+    if (autoLook) extra.autoLook = autoLook;
+    if (voice && voiceApi) {
+      Object.assign(extra, {
+        voice: { tap: () => safe(() => voiceApi && voiceApi.tap()) },
+        look: lookViaVoice,
+        ask: askViaVoice,
+        hologram: askViaVoice,
+        openHologram: () => null, // a Voice Mode reply's hologram is opened by Voice Mode (visuals.open)
+        onClose: ({ cameraOff } = {}) => {
+          if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
+          updateAll();
+        },
+      });
+    }
     try {
-      openOptics(opticsDeps(start === 'screen' ? { start } : {}));
-      return true;
+      const api = openOptics(opticsDeps(extra));
+      if (voice && voiceInfo && api && api.setVoice) safe(() => api.setVoice(voiceInfo));
+      return api || true;
     } catch (err) {
       console.error('[jarvis] optics failed:', err);
       toast('The camera couldn’t start in this browser.', { level: 'warn' });

@@ -49,6 +49,7 @@ test('settings: defaults match SPEC and are frozen', async () => {
     followups: true, tone: 'butler', verbosity: 'balanced', theme: 'arc', sounds: true, soundVolume: 0.6, haptics: true,
     notifyOnFinish: true, voiceContinuous: true,
     naturalVoice: false, naturalVoiceId: 'bm_george', // the opt-in natural voice (prototype C)
+    opticsCameraId: '', opticsCameraLabel: '', // Optics: the camera chosen last on this device (v7)
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);
@@ -141,6 +142,28 @@ test('settings: saveSettings validates, clamps, deep-merges features, persists a
   await page2.goto(h.url);
   await page2.waitForFunction(() => window.__ready === true);
   assert.equal(await page2.evaluate(() => window.__mods.settings.getSettings().maxAgents), 2);
+});
+
+test('settings: the Optics camera choice keeps a device id and a one-line label; anything else is refused', async () => {
+  const page = await h.newPage();
+  const r = await page.evaluate(() => {
+    const { saveSettings } = window.__mods.settings;
+    const id = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+    const ok = saveSettings({ opticsCameraId: id, opticsCameraLabel: '  Logitech BRIO\n(046d:085e)  ' });
+    const spaces = saveSettings({ opticsCameraId: 'has spaces in it' });
+    const long = saveSettings({ opticsCameraId: 'x'.repeat(300), opticsCameraLabel: 'L'.repeat(300) });
+    const wrongType = saveSettings({ opticsCameraId: 42, opticsCameraLabel: { label: 'x' } });
+    const cleared = saveSettings({ opticsCameraId: '', opticsCameraLabel: '' });
+    return { ok, spaces, long, wrongType, cleared, id };
+  });
+  assert.equal(r.ok.opticsCameraId, r.id);
+  assert.equal(r.ok.opticsCameraLabel, 'Logitech BRIO (046d:085e)');
+  assert.equal(r.spaces.opticsCameraId, r.id, 'an id with spaces keeps the previous one');
+  assert.equal(r.long.opticsCameraId, r.id, 'an over-long id keeps the previous one');
+  assert.equal(r.long.opticsCameraLabel.length, 120);
+  assert.equal(r.wrongType.opticsCameraId, r.id);
+  assert.equal(r.wrongType.opticsCameraLabel, r.long.opticsCameraLabel);
+  assert.deepEqual([r.cleared.opticsCameraId, r.cleared.opticsCameraLabel], ['', '']);
 });
 
 test('settings: resetSettings restores defaults and notifies; other tabs are followed', async () => {

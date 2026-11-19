@@ -48,6 +48,10 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // and the model is downloaded; the device voice (voiceURI) stays the fallback.
   naturalVoice: false,
   naturalVoiceId: 'bm_george', // a Kokoro voice id (platform/voice/natural/catalog.js)
+  // Optics: the camera the owner chose last on this device (the picker or Flip). Device ids are
+  // per site and per browser; the label is the fallback when the id changes ('' = the default camera).
+  opticsCameraId: '',
+  opticsCameraLabel: '',
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -150,6 +154,8 @@ const VALIDATORS = {
   naturalVoice: bool,
   // Kokoro voice ids look like 'bm_george' (language+gender letter, underscore, name).
   naturalVoiceId: (v, fb) => (typeof v === 'string' && /^[a-z]{2}_[a-z]{2,20}$/.test(v) ? v : fb),
+  opticsCameraId: (v, fb) => (typeof v === 'string' && v.length <= 256 && /^[\x21-\x7e]*$/.test(v) ? v : fb),
+  opticsCameraLabel: line({ maxLength: 120 }),
 };
 
 /**

@@ -842,6 +842,19 @@ html.vm-open body {
   justify-self: start;
 }
 
+/* With Optics: Look sits beside Type, left of the main button (Look · Type · Talk · Exit). */
+.vm-dock-side {
+  grid-column: 1;
+  justify-self: end;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+}
+
+.vm-dock--look {
+  column-gap: var(--sp-6);
+}
+
 .vm-dock-ic {
   position: relative;
   display: grid;

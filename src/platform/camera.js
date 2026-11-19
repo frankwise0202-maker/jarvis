@@ -2,14 +2,23 @@
 //
 //   cameraSupported() / screenLookSupported() -> boolean
 //   cameraPermission() -> Promise<'granted'|'denied'|'prompt'|'unknown'>
-//   createCamera({ video, onState }) -> camera
-//     camera.start({ facing }) -> Promise<{ ok, error?: CameraError }>   call from a tap (iOS)
+//   createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch }) -> camera
+//     camera.start({ facing?, deviceId?, label? }) -> Promise<{ ok, error?: CameraError }>   call from
+//                                                   a tap (iOS); with no arguments: the remembered
+//                                                   camera (preferred()), else the default
 //     camera.flip() -> Promise<{ ok, error? }>      stops the old track first, then the other camera
+//                                                   (front ↔ back on a phone, the next one on a computer)
+//     camera.select(deviceId) -> Promise<{ ok, error? }>   the camera picked in the list
+//     camera.cameras / camera.current               every camera (src/lib/cameras.js), the one in use
+//     hot-plug (devicechange): the list refreshes (onDevices); the camera in use unplugged falls back
+//                                                   to the remembered or built-in one, and the
+//                                                   remembered one plugged in is switched to (onSwitch)
 //     camera.capture({ maxEdge, quality, previewEdge }) -> Promise<Frame>   the full, uncropped frame
 //     camera.grabLuma(out) -> Uint8Array|null       a 64 px grayscale thumbnail for Watch
 //     camera.stop(reason) / camera.destroy()
 //     camera.state: 'off'|'starting'|'live'|'paused'|'error'   camera.facing: 'rear'|'front'|'camera'
-//     camera.canFlip, camera.size { width, height }, camera.mirrored (front camera preview)
+//     camera.canFlip, camera.size { width, height }, camera.mirrored (the preview of a camera that
+//     faces the owner: a phone's front camera or a computer's webcam; captured frames never are)
 //   captureScreenFrame({ maxEdge, quality }) -> Promise<Frame>   asks, grabs one frame, stops at once
 //   Frame = { data /* base64 JPEG */, mediaType, width, height, preview /* data:image/jpeg ≤ 480 px */,
 //             canvas /* the full frame, for the frozen view */, source, capturedAt }
@@ -21,6 +30,7 @@
 // Frames are drawn through a canvas, so they carry no EXIF or location data.
 
 import { fitLongEdge, lumaOf, OPTICS_LIMITS, WATCH_DEFAULTS } from '../lib/optics.js';
+import { isPhoneOs, listCameras, pickCamera, hotplugPlan } from '../lib/cameras.js';
 import { isIOS, isStandalone, parseUserAgent } from './env.js';
 
 export class CameraError extends Error {
@@ -191,11 +201,30 @@ async function frameFrom(source, srcW, srcH, { maxEdge, quality, previewEdge = O
 
 const FACING_MODE = { rear: 'environment', front: 'user' };
 const facingOf = (mode) => (mode === 'user' ? 'front' : mode === 'environment' ? 'rear' : null);
+const MISSING = ['overconstrained', 'no-camera'];
+
+function platformOs() {
+  try {
+    return parseUserAgent(globalThis.navigator?.userAgent || '', globalThis.navigator?.maxTouchPoints || 0).os;
+  } catch {
+    return 'other';
+  }
+}
 
 /**
- * @param {{ video: HTMLVideoElement, onState?: (state: string, info: object) => void }} o
+ * @param {object} o
+ * @param {HTMLVideoElement} o.video
+ * @param {(state: string, info: object) => void} [o.onState]   'starting' | 'live' | 'paused' | 'error' | 'off'
+ * @param {(cameras: object[]) => void} [o.onDevices]          the camera list changed (the picker)
+ * @param {(e: { why: 'unplugged'|'plugged', from, to }) => void} [o.onSwitch]
+ *                                         the camera changed by itself: the one in use was
+ *                                         unplugged (falls back to the remembered or built-in
+ *                                         camera), or the remembered camera was plugged in
+ * @param {() => ({ id, label }|null)} [o.preferred]  the owner's remembered camera (local settings)
+ * @param {() => boolean} [o.allowAutoSwitch]  false while switching would get in the way (Watch)
+ * @param {string} [o.os]                  parseUserAgent's os (tests); phones flip front/back
  */
-export function createCamera({ video, onState } = {}) {
+export function createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch, os } = {}) {
   if (!video) throw new TypeError('createCamera needs a <video>');
   // iOS: inline playback (no full-screen takeover) and muted autoplay.
   video.setAttribute('playsinline', '');
@@ -206,24 +235,39 @@ export function createCamera({ video, onState } = {}) {
   video.playsInline = true;
   video.autoplay = true;
 
+  const osName = os || platformOs();
+  const phone = isPhoneOs(osName);
   let stream = null;
   let state = 'off';
-  let facing = 'rear';
+  let facing = phone ? 'rear' : 'camera';
   let deviceId = '';
-  let devices = [];
+  let cameras = []; // listCameras(): every videoinput, described, in picker order
+  let current = null; // the described camera in use
   let starting = null;
+  let chain = Promise.resolve(); // device changes run one at a time
+  let destroyed = false;
+  let refreshTimer = 0;
   let lumaCanvas = null;
   let lumaCtx = null;
   let lumaBuf = null;
   const listeners = [];
 
+  const call = (fn, ...args) => {
+    try {
+      return typeof fn === 'function' ? fn(...args) : undefined;
+    } catch (err) {
+      console.error('[jarvis] camera callback failed:', err);
+      return undefined;
+    }
+  };
   const emit = (next, info = {}) => {
     state = next;
-    try {
-      onState && onState(next, { facing, ...info });
-    } catch (err) {
-      console.error('[jarvis] camera onState failed:', err);
-    }
+    call(onState, next, { facing, camera: current, ...info });
+  };
+  const serial = (fn) => {
+    const run = chain.then(fn, fn);
+    chain = run.catch(() => {});
+    return run;
   };
 
   function stopTracks() {
@@ -253,25 +297,49 @@ export function createCamera({ video, onState } = {}) {
     if (stream) pause('hidden');
   };
   const listen = (target, type, fn) => {
+    if (!target || typeof target.addEventListener !== 'function') return;
     target.addEventListener(type, fn);
     listeners.push(() => target.removeEventListener(type, fn));
   };
   listen(document, 'visibilitychange', onHidden);
   listen(window, 'pagehide', onPageHide);
   listen(document, 'freeze', onPageHide);
+  // Hot-plug: a camera plugged in or out (bursts of events: refresh once they settle).
+  listen(md(), 'devicechange', () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => serial(() => refresh()), 250);
+  });
 
   function pause(reason) {
     stopTracks();
     emit('paused', { reason });
   }
 
+  /** The camera list (labels once the owner has allowed the camera), described for the picker. */
   async function listDevices() {
+    let raw = [];
     try {
-      devices = (await md().enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      raw = (await md().enumerateDevices()).filter((d) => d && d.kind === 'videoinput');
     } catch {
-      devices = [];
+      raw = [];
     }
-    return devices;
+    const plain = raw.map((d) => {
+      let hint = null;
+      try {
+        const caps = typeof d.getCapabilities === 'function' ? d.getCapabilities() : null;
+        hint = caps && Array.isArray(caps.facingMode) && caps.facingMode.length ? caps.facingMode[0] : null;
+      } catch {
+        hint = null;
+      }
+      return { kind: 'videoinput', deviceId: d.deviceId || '', groupId: d.groupId || '', label: d.label || '', facing: hint };
+    });
+    cameras = listCameras(plain, { os: osName });
+    current = cameras.find((c) => c.id && c.id === deviceId) || current;
+    return cameras;
+  }
+
+  function notifyDevices() {
+    call(onDevices, cameras.slice());
   }
 
   async function open(constraints) {
@@ -291,9 +359,8 @@ export function createCamera({ video, onState } = {}) {
     const track = s.getVideoTracks()[0];
     const settings = track.getSettings ? track.getSettings() : {};
     deviceId = settings.deviceId || '';
-    facing = facingOf(settings.facingMode) || wanted || 'camera';
     track.addEventListener('ended', () => {
-      if (stream === s) pause('ended');
+      if (stream === s) serial(() => trackEnded(s));
     });
     track.addEventListener('mute', () => {
       if (stream === s) emit('live', { interrupted: true });
@@ -317,11 +384,16 @@ export function createCamera({ video, onState } = {}) {
         setTimeout(done, 1500);
       });
     }
+    current = null;
     await listDevices();
+    current = cameras.find((c) => c.id && c.id === deviceId) || null;
+    // Phones say which way a camera faces; a computer's webcam faces the owner but says nothing.
+    facing = facingOf(settings.facingMode) || (current && current.facing) || (phone ? wanted || 'rear' : 'camera');
+    notifyDevices();
     emit('live', { width: video.videoWidth, height: video.videoHeight });
   }
 
-  async function start({ facing: wanted = facing } = {}) {
+  async function start({ facing: wanted, deviceId: wantId = '', label: wantLabel = '' } = {}) {
     if (!cameraSupported()) {
       const error = new CameraError(globalThis.isSecureContext === false ? 'insecure' : 'unsupported', MESSAGES.unsupported);
       emit('error', { error });
@@ -330,63 +402,61 @@ export function createCamera({ video, onState } = {}) {
     if (starting) return starting;
     if (stream) return { ok: true };
     emit('starting');
-    starting = (async () => {
+    starting = serial(async () => {
       try {
-        const mode = FACING_MODE[wanted];
-        let s;
-        try {
-          s = await open(mode ? { facingMode: { ideal: mode } } : {});
-        } catch (err) {
-          if (classifyCameraError(err).code !== 'overconstrained') throw err;
-          s = await open({}); // any camera at all
+        const remembered = wantId || wantLabel ? { id: wantId, label: wantLabel } : call(preferred) || null;
+        let s = null;
+        // 1. The camera chosen last, by its id (ids stay the same for this site once it was allowed).
+        if (remembered && remembered.id && !wanted) {
+          try {
+            s = await open({ deviceId: { exact: remembered.id } });
+          } catch (err) {
+            if (!MISSING.includes(classifyCameraError(err).code)) throw err;
+            s = null;
+          }
         }
-        await attach(s, wanted === 'camera' ? null : wanted);
+        // 2. Else the phone's back camera (or the side asked for), or the computer's default camera.
+        if (!s) {
+          const mode = FACING_MODE[wanted || (phone ? 'rear' : '')];
+          try {
+            s = await open(mode ? { facingMode: { ideal: mode } } : {});
+          } catch (err) {
+            if (classifyCameraError(err).code !== 'overconstrained') throw err;
+            s = await open({}); // any camera at all
+          }
+        }
+        await attach(s, wanted || null);
+        // 3. Its id changed (site data cleared, another browser) but its name did not: switch to it.
+        if (remembered && !wanted && (remembered.id || remembered.label)) {
+          const pick = pickCamera(cameras, remembered, { os: osName });
+          if (pick && pick.by === 'label' && pick.camera.id && pick.camera.id !== deviceId) await switchTo(pick.camera.id);
+        }
         return { ok: true };
       } catch (err) {
         const error = classifyCameraError(err);
         stopTracks();
         emit('error', { error });
         return { ok: false, error };
-      } finally {
-        starting = null;
       }
-    })();
+    }).finally(() => {
+      starting = null;
+    });
     return starting;
   }
 
-  /** The other camera: facingMode first (phones), then the next device (desktops, test rigs). */
-  async function flip() {
-    if (!stream) return { ok: false, error: new CameraError('aborted', MESSAGES.aborted) };
-    if ((devices.length || (await listDevices()).length) < 2) return { ok: false, error: new CameraError('overconstrained', 'This device has only one camera.') };
-    const want = facing === 'front' ? 'rear' : 'front';
+  /** Stops the camera in use, then opens `id` (iOS cannot run two cameras); puts the old one back on failure. */
+  async function switchTo(id, { wanted = null } = {}) {
     const previousId = deviceId;
-    stopTracks(); // iOS cannot open a second camera while one is running
-    emit('starting', { flipping: true });
+    stopTracks();
+    emit('starting', { switching: true });
     try {
-      let s = null;
-      try {
-        s = await open({ facingMode: { exact: FACING_MODE[want] } });
-        const got = s.getVideoTracks()[0]?.getSettings?.().deviceId;
-        if (got && got === previousId) {
-          s.getTracks().forEach((t) => t.stop());
-          s = null;
-        }
-      } catch (err) {
-        if (!['overconstrained', 'no-camera'].includes(classifyCameraError(err).code)) throw err;
-      }
-      if (!s) {
-        const others = devices.filter((d) => d.deviceId && d.deviceId !== previousId);
-        const next = others[0];
-        if (!next) throw new CameraError('overconstrained', 'This device has only one camera.');
-        s = await open({ deviceId: { exact: next.deviceId } });
-      }
-      await attach(s, want);
+      await attach(await open({ deviceId: { exact: id } }), wanted);
       return { ok: true };
     } catch (err) {
       const error = classifyCameraError(err);
-      // Put the previous camera back.
       try {
-        await attach(await open(previousId ? { deviceId: { exact: previousId } } : {}), facing);
+        const back = previousId && previousId !== id && cameras.some((c) => c.id === previousId) ? { deviceId: { exact: previousId } } : {};
+        await attach(await open(back), facing);
       } catch {
         emit('error', { error });
       }
@@ -394,8 +464,108 @@ export function createCamera({ video, onState } = {}) {
     }
   }
 
+  /** The camera the owner picked in the list. When the camera is off or paused, it starts with that one. */
+  function select(id) {
+    if (!id) return Promise.resolve({ ok: false, error: new CameraError('overconstrained', MESSAGES.overconstrained) });
+    if (!stream) return start({ deviceId: id });
+    if (id === deviceId) return Promise.resolve({ ok: true });
+    return serial(() => switchTo(id));
+  }
+
+  /**
+   * The camera in use stopped. Unplugged (it left the list): fall back to the remembered camera if
+   * it is there, else the built-in one, and say so. Taken by the system (iOS: a call, Siri, the app
+   * switcher): pause until the owner taps.
+   */
+  async function trackEnded(s) {
+    if (stream !== s || destroyed) return;
+    const gone = current;
+    const goneId = deviceId;
+    const after = await listDevices();
+    notifyDevices();
+    if (stream !== s || destroyed) return;
+    const pick = goneId && !after.some((c) => c.id === goneId) ? pickCamera(after.filter((c) => c.id !== goneId), call(preferred), { os: osName }) : null;
+    if (!pick) {
+      pause('ended');
+      return;
+    }
+    const res = await switchTo(pick.camera.id);
+    if (res.ok) call(onSwitch, { why: 'unplugged', from: gone, to: current });
+    else pause('ended');
+  }
+
+  /** After a devicechange: refresh the list; follow the hot-plug plan while the camera is on. */
+  async function refresh() {
+    if (destroyed) return;
+    const before = cameras;
+    const after = await listDevices();
+    notifyDevices();
+    if (!stream || destroyed || state !== 'live') return;
+    const plan = hotplugPlan({ before, after, currentId: deviceId, remembered: call(preferred) || null, os: osName });
+    if (plan.action === 'fallback' && plan.to) {
+      const res = await switchTo(plan.to.id);
+      if (res.ok) call(onSwitch, { why: 'unplugged', from: plan.gone, to: current });
+    } else if (plan.action === 'switch' && plan.to && call(allowAutoSwitch) !== false) {
+      const from = current;
+      const res = await switchTo(plan.to.id);
+      if (res.ok) call(onSwitch, { why: 'plugged', from, to: current });
+    }
+  }
+
+  /** The other camera: front ↔ back on a phone; the next camera in the list on a computer. */
+  async function flip() {
+    if (!stream) return { ok: false, error: new CameraError('aborted', MESSAGES.aborted) };
+    if ((cameras.length || (await listDevices()).length) < 2) return { ok: false, error: new CameraError('overconstrained', 'This device has only one camera.') };
+    return serial(async () => {
+      if (!phone) {
+        const i = cameras.findIndex((c) => c.id === deviceId);
+        const next = cameras[(i + 1) % cameras.length];
+        if (!next || next.id === deviceId) return { ok: false, error: new CameraError('overconstrained', 'This device has only one camera.') };
+        return switchTo(next.id);
+      }
+      const want = facing === 'front' ? 'rear' : 'front';
+      const previousId = deviceId;
+      stopTracks(); // iOS cannot open a second camera while one is running
+      emit('starting', { flipping: true });
+      try {
+        let s = null;
+        try {
+          s = await open({ facingMode: { exact: FACING_MODE[want] } });
+          const got = s.getVideoTracks()[0]?.getSettings?.().deviceId;
+          if (got && got === previousId) {
+            s.getTracks().forEach((t) => t.stop());
+            s = null;
+          }
+        } catch (err) {
+          if (!MISSING.includes(classifyCameraError(err).code)) throw err;
+        }
+        if (!s) {
+          // No facing information (some Android browsers, test rigs): a camera on the other side by
+          // its name, else the next one in the list.
+          const side = cameras.filter((c) => c.id && c.id !== previousId && (c.facing === want || !c.facing));
+          const next = side.find((c) => c.facing === want) || side[0];
+          if (!next) throw new CameraError('overconstrained', 'This device has only one camera.');
+          s = await open({ deviceId: { exact: next.id } });
+        }
+        await attach(s, want);
+        return { ok: true };
+      } catch (err) {
+        const error = classifyCameraError(err);
+        // Put the previous camera back.
+        try {
+          await attach(await open(previousId ? { deviceId: { exact: previousId } } : {}), facing);
+        } catch {
+          emit('error', { error });
+        }
+        return { ok: false, error };
+      }
+    });
+  }
+
   async function capture({ maxEdge = OPTICS_LIMITS.lookMaxEdge, quality = OPTICS_LIMITS.jpegQuality, previewEdge } = {}) {
     if (!stream || state !== 'live') throw new CameraError('aborted', MESSAGES.aborted);
+    // Drawn from the video itself, never from the (mirrored) preview: the frame is what the camera
+    // sees, so text in it reads the right way round and left is left.
     return frameFrom(video, video.videoWidth, video.videoHeight, { maxEdge, quality, previewEdge, origin: facing });
   }
 
@@ -430,15 +600,20 @@ export function createCamera({ video, onState } = {}) {
   return {
     start,
     flip,
+    select,
     capture,
     grabLuma,
     setLowPower,
+    /** Lists the cameras again (the picker opening): resolves to the list. */
+    refreshDevices: () => listDevices().then((list) => (notifyDevices(), list)),
     stop(reason = 'closed') {
       const was = !!stream;
       stopTracks();
       if (was || state !== 'off') emit('off', { reason });
     },
     destroy() {
+      destroyed = true;
+      clearTimeout(refreshTimer);
       stopTracks();
       for (const off of listeners.splice(0)) off();
       releaseCanvas(lumaCanvas);
@@ -451,14 +626,33 @@ export function createCamera({ video, onState } = {}) {
     get live() {
       return !!stream && state === 'live';
     },
+    /** 'rear' | 'front' on phones; 'camera' for a computer's webcam (no facing reported). */
     get facing() {
       return facing;
     },
+    /**
+     * The preview is shown mirrored, like a mirror, for a camera that faces the owner: a phone's
+     * front camera, or a computer's webcam. Captured frames are never mirrored.
+     */
     get mirrored() {
-      return facing === 'front';
+      return facing === 'front' || (!phone && facing === 'camera');
     },
     get canFlip() {
-      return devices.length >= 2;
+      return cameras.length >= 2;
+    },
+    /** Every camera this device has (described: { id, name, detail, facing, kind, label }), picker order. */
+    get cameras() {
+      return cameras.slice();
+    },
+    /** The camera in use (described), or null. */
+    get current() {
+      return current;
+    },
+    get deviceId() {
+      return deviceId;
+    },
+    get phone() {
+      return phone;
     },
     get size() {
       return { width: video.videoWidth || 0, height: video.videoHeight || 0 };

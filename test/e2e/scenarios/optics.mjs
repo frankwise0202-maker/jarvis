@@ -33,7 +33,7 @@ function ensureFeed() {
   execFileSync(process.execPath, [path.join(ROOT, 'test', 'e2e', 'optics-scene.mjs')], { stdio: 'inherit' });
 }
 
-const cameraArgs = (feed, { devices = 1, extra = [] } = {}) => () => {
+export const cameraArgs = (feed, { devices = 1, extra = [] } = {}) => () => {
   ensureFeed();
   return [
     devices > 1 ? `--use-fake-device-for-media-stream=device-count=${devices}` : '--use-fake-device-for-media-stream',
@@ -43,14 +43,14 @@ const cameraArgs = (feed, { devices = 1, extra = [] } = {}) => () => {
   ];
 };
 
-async function shot(t, name, page = t.page) {
+export async function shot(t, name, page = t.page) {
   const file = await t.screenshot(name, page);
   await mkdir(SHOTS, { recursive: true });
   await copyFile(file, path.join(SHOTS, `${name}.png`));
 }
 
 /** Records every capture track the page opens, so the tests can check they are released. */
-async function instrument(page, { deny = false, devOptics = null } = {}) {
+export async function instrument(page, { deny = false, devOptics = null } = {}) {
   await page.context().addInitScript(({ deny, devOptics }) => {
     window.__opticsTracks = [];
     if (devOptics) {
@@ -78,24 +78,24 @@ async function instrument(page, { deny = false, devOptics = null } = {}) {
   }, { deny, devOptics });
 }
 
-const liveTracks = (page, api = 'getUserMedia') => page.evaluate((api) => (window.__opticsTracks || []).filter((x) => x.api === api && x.track.readyState === 'live').length, api);
+export const liveTracks = (page, api = 'getUserMedia') => page.evaluate((api) => (window.__opticsTracks || []).filter((x) => x.api === api && x.track.readyState === 'live').length, api);
 
-async function openFromComposer(t) {
+export async function openFromComposer(t) {
   await (await t.visible('composer-camera')).click();
   await t.visible('optics');
 }
 
-async function waitLive(t, page = t.page) {
+export async function waitLive(t, page = t.page) {
   await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-camera')) === 'live', { timeout: 15000, message: 'the camera to be live' });
   await page.waitForTimeout(400); // a few frames in the preview
 }
 
-async function waitAnswer(t, page = t.page) {
+export async function waitAnswer(t, page = t.page) {
   await t.waitFor(async () => (await page.locator(tid('optics-answer')).getAttribute('data-status')) === 'done', { timeout: 30000, message: 'the Look to be answered' });
 }
 
 /** The newest lead request whose last user message carries an image (a Look). */
-function lastLook(t) {
+export function lastLook(t) {
   const reqs = t.requests('lead').filter((r) => r.status === 200);
   for (const r of [...reqs].reverse()) {
     const m = r.body.messages.findLast((x) => x.role === 'user' && Array.isArray(x.content) && x.content.some((b) => b.type === 'image'));
@@ -105,7 +105,7 @@ function lastLook(t) {
 }
 
 /** Checks the pins: exact frame coordinates from the scene, mapped through the frozen view. */
-async function checkPins(t, frame, page = t.page) {
+export async function checkPins(t, frame, page = t.page) {
   const pins = await page.locator(tid('optics-pin')).evaluateAll((els) => els.map((e) => ({ text: e.textContent, x: +e.dataset.x, y: +e.dataset.y, fx: +e.dataset.frameX, fy: +e.dataset.frameY })));
   const expected = sceneLabels(frame);
   t.assert(pins.length === expected.length, `${expected.length} pins expected, got ${pins.length}`);
@@ -304,7 +304,11 @@ export default [
       await t.goto('/?optics=1');
       await t.visible('optics');
       await waitLive(t);
-      t.assert(/^REAR · 1280×720$/.test(await t.text(page.locator(tid('optics-sub')))), 'a 1280×720 frame');
+      // A computer's webcam has no front or back: the line names the camera (Chromium's fake one is
+      // named after its video file) and its frame.
+      const line = await t.text(page.locator(tid('optics-sub')));
+      t.assert(/ · 1280×720$/.test(line) && !/^(REAR|FRONT) /.test(line), `the camera's name and its 1280×720 frame (${line})`);
+      t.assert((await page.locator(tid('optics')).getAttribute('data-mirrored')) === 'true', 'a webcam faces the owner: its preview is mirrored');
       await shot(t, 'desktop-1-live');
       t.assert(await page.locator(tid('optics-flip')).isDisabled(), 'one camera: Flip is off');
       await t.step('Space = Look; the answer streams into the side panel and the Optics log', async () => {
