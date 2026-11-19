@@ -953,3 +953,39 @@ Uses `claude-haiku-5-5` (cheap) via the official SDK (`createClient` from `./cli
 Never throws (returns [] on any error). Unit tests with a fake fetch in `test/unit/followups.test.mjs`.
 UI: the integrator renders chips (`data-testid="followup"`) under the latest finished Jarvis
 turn; tapping one sends it.
+
+## 15. Wave B (after v1): wiring, attachments, personality, HUD extras
+
+Three engineers work in parallel with **disjoint file ownership**:
+
+- **B1 wiring** owns: `src/ui/{app,header,chat,history,settings,onboarding,install-guide,sheet,toasts,demo}.js`,
+  `src/main.js`, `src/styles/{base,chat,app}.css`, `public/index.html`, `src/platform/{settings,backup}.js`,
+  the feature-pack modules `src/ui/{protocols,share,stats}.js` + `src/styles/{protocols,stats}.css`
+  (and `src/ui/{voice-mode,sounds,themes,attention}.js` + `src/styles/{voice-mode,themes}.css` once the lead
+  says their authors are done), `test/e2e/run.mjs`, `test/e2e/harness.mjs`, `test/e2e/scenarios/{onboarding,chat,swarm,pwa,layout,features}.mjs`.
+- **B2 attachments** owns: `src/ui/composer.js`, `src/ui/attachments.js` (new), `src/styles/composer-extras.css` (new),
+  `src/ui/icons.js` (may ADD icons only), `src/engine/**`, `test/unit/engine.*.test.mjs` (+ new engine tests),
+  `test/unit/followups.test.mjs`, `test/mock/**`, `test/unit/mock.test.mjs`, `test/e2e/scenarios/attachments.mjs` (new).
+- **B3 HUD** owns: `src/ui/hud/**`, `src/styles/hud.css`.
+
+### 15.1 Contracts between them
+- Composer → app: `o.onSend(text, mode, extras)` where `extras = { attachments: Attachment[], maxAgents?: number }`
+  (third argument; return `true` when accepted). A send with attachments and empty text is allowed.
+- App → engine: `engine.startTurn(conv, { text, mode, attachments, maxAgents })`.
+- Engine: `attachments` become content blocks in the new user message, in this order:
+  `[turn_context text, ...attachment blocks, user text]` (omit the user text block when empty; the engine then
+  adds the text "Please look at the attached file(s)."). Image: `{ type: 'image', source: { type: 'base64', media_type, data } }`.
+  PDF: `{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data }, title: name }`.
+  `maxAgents` (1–20) overrides `settings.maxAgents` for that turn only (turn_context "Agent limits" line reflects it).
+- `Attachment` (pre-send, from `attachments.js`): `{ id, kind: 'image'|'pdf', name, mediaType, size, data /* base64, no prefix */, thumb /* data:image/jpeg URL ≤ 160px, images only */, width, height }`.
+- Stored on the UserTurn for display (never base64): `turn.attachments = [{ id, kind, name, mediaType, size, thumb, width, height }]`.
+- `attachments.js` exports `createAttachmentStrip(attachments, { size: 'sm'|'md' })` → element (thumbnails + PDF chips,
+  `data-testid="attachment-thumb"` each); chat.js (B1) uses it in user bubbles.
+- New settings keys (B1 adds defaults, validators and Settings UI; B2's engine reads them with these fallbacks):
+  `tone: 'butler'` (`'butler'|'friendly'|'professional'|'playful'`), `verbosity: 'balanced'` (`'concise'|'balanced'|'detailed'`).
+  The engine adds a "Style:" line to `<turn_context>`.
+- New conversations use `LEAD_SYSTEM_V2` (attachments awareness: agents cannot see attachments, so describe what
+  matters in their tasks; style line semantics). Existing conversations keep their frozen V1 prompt.
+- Test ids: `composer-attach` (button), `attach-input` (hidden file input), `composer-camera` (phones),
+  `attachment-chip` (composer preview, with `attachment-remove`), `attachment-thumb` (bubble),
+  `swarm-size` (per-turn agent count control, visible in swarm mode) with options `swarm-size-<n>`.
