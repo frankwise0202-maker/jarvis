@@ -30,7 +30,8 @@ const MISSION_FINAL = new Set(['done', 'partial', 'stopped', 'interrupted']);
 // Activity lines the engine writes when a single search or page read fails (worth a warning line).
 const WARN_ACTIVITY = /\b(unavailable|couldn[’']?t read)\b/i;
 
-const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+// Display text only: strings and numbers; anything else (null, objects from damaged data) renders as ''.
+const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
 const len = (v) => (Array.isArray(v) ? v.length : 0);
 const time = (v) => {
   const n = Number(v);

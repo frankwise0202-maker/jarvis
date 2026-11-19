@@ -21,7 +21,8 @@ const COMPACT_AFTER = 8; // more agents than this → single-line chips
 const CELEBRATE_MS = 2200;
 const NBSP = String.fromCharCode(160); // keeps "3 interrupted" together when the line wraps
 
-const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+// Display text only: strings and numbers; anything else (null, objects from damaged data) renders as ''.
+const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
 
 function prefersReducedMotion() {
   try {

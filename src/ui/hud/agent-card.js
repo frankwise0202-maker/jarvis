@@ -39,7 +39,8 @@ const MAX_SOURCES = 30;
 
 let seq = 0;
 
-const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+// Display text only: strings and numbers; anything else (null, objects from damaged data) renders as ''.
+const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
 
 function countWords(text) {
   const m = str(text).match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu);

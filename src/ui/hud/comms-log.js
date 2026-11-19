@@ -31,7 +31,8 @@ const openPref = { sheet: null, panel: null };
 
 let seq = 0;
 
-const str = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v));
+// Display text only: strings and numbers; anything else (null, objects from damaged data) renders as ''.
+const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
 
 function missionsOf(turn) {
   const ms = turn && turn.missions && typeof turn.missions === 'object' ? Object.values(turn.missions) : [];
