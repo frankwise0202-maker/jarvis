@@ -1582,7 +1582,9 @@ function inlineToText(list, speech) {
         s += inlineToText(n.children, speech);
         break;
       case 'link':
-        s += n.auto && speech ? ' ' + spokenHost(n.href) + ' ' : inlineToText(n.children, speech);
+        if (n.auto && speech) s += ' ' + spokenHost(n.href) + ' ';
+        else if (!speech) s += inlineToText(n.children, speech);
+        else s += spokenLinkText(inlineToText(n.children, speech));
         break;
       case 'image':
         if (!speech) s += inlineToText(n.children, speech);
@@ -1663,14 +1665,70 @@ function spokenHost(url) {
 }
 
 function finishSpeech(s) {
-  return s
-    .replace(URL_IN_TEXT_RE, (u) => spokenHost(trimUrlTail(u)))
-    .replace(EMOJI_RE, '')
-    .replace(/[→⇒➜➔⟶]/g, ' to ')
-    .replace(/≈\s*/g, 'about ')
+  return forTheEar(
+    s
+      .replace(URL_IN_TEXT_RE, (u) => spokenHost(trimUrlTail(u)))
+      .replace(EMOJI_RE, '')
+      .replace(/[→⇒➜➔⟶]/g, ' to ')
+      .replace(/≈\s*/g, 'about '),
+  )
     .replace(/[ \t\u00A0]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/ ([.,!?;:])/g, '$1')
     .replace(/\n{2,}/g, '\n')
     .trim();
+}
+
+// ---- speech mode: text for the ear ----
+// Conservative rewrites: each rule fires only on an unambiguous pattern, so ordinary prose, phone
+// numbers, dates (2026-11-19), times (10:30) and hyphenated words are left alone. No lookbehind
+// (Safari 15).
+
+// Reference markers: [1], [2, 3], [4–6], [^1], [source], [citation needed].
+const REF_MARKER_RE = /[ \t]*\[(?:\^?\d{1,3}(?:\s*[,–-]\s*\d{1,3})*|\^[A-Za-z][\w-]{0,19}|(?:sources?|citations?(?: needed)?|refs?|references?|notes?)(?:\s*\d{1,3})?)\]/gi;
+// The text of a citation link such as [1](https://…): nothing to say.
+const REF_LABEL_RE = /^\s*\[?\^?\d{1,3}\]?\s*$/;
+// A number range with an en dash (spaces allowed) or a hyphen (none): 5–10, 5-10, $5–$10, 50%–60%.
+const RANGE_RE = /(^|[^\w.,:/+\-–])([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(%?)(\s?–\s?|-)([$£€]?)(\d{1,4}(?:,\d{3})*(?:\.\d+)?)(?![\d:/\-–]|[.,]\d)/g;
+
+function spokenLinkText(text) {
+  return REF_LABEL_RE.test(text) ? '' : text;
+}
+
+function forTheEar(s) {
+  return s
+    .replace(REF_MARKER_RE, '')
+    .replace(/\*\*|__|`+/g, '')
+    .replace(/\b([Ee])\.\s?g\.(?=[\s,;:)]|$)/g, (m, e) => (e === 'E' ? 'For example' : 'for example'))
+    .replace(/\b([Ii])\.\s?e\.(?=[\s,;:)]|$)/g, (m, i) => (i === 'I' ? 'That is' : 'that is'))
+    .replace(/\b([Ee])tc\.(?=([^\S\n]*)(.?))/g, (m, e, ws, next) => abbreviation(e === 'E' ? 'Et cetera' : 'et cetera', ws, next))
+    .replace(/\b([Aa])pprox\.(?=([^\S\n]*)(.?))/g, (m, a, ws, next) => abbreviation(a === 'A' ? 'Approximately' : 'approximately', ws, next))
+    .replace(/ vs\.? (?=\S)/g, ' versus ')
+    .replace(/\b24\/7\b/g, 'twenty-four seven')
+    .replace(/(\d)\s?km\/h\b/gi, '$1 kilometres per hour')
+    .replace(/\bkm\/h\b/gi, 'kilometres per hour')
+    .replace(RANGE_RE, spokenRange)
+    .replace(/(^|[^\d~])~\s?(?=[$£€]?\d)/g, '$1about ')
+    .replace(/(\d)\+(?![\d+])/g, '$1 plus')
+    .replace(/\s*×\s*/g, ' times ')
+    .replace(/(\d)\s?%/g, '$1 percent')
+    .replace(/\s?°\s?C\b/g, ' degrees Celsius')
+    .replace(/\s?°\s?F\b/g, ' degrees Fahrenheit')
+    .replace(/(\d)\s?°(?![CF])/g, '$1 degrees')
+    .replace(/([A-Za-z0-9\u00C0-\u024F)'"’”])\s+&\s+(?=[A-Za-z0-9\u00C0-\u024F"'“‘(])/g, '$1 and ')
+    .replace(/\b([a-z]{2,})&([a-z]{2,})\b/g, '$1 and $2');
+}
+
+/** "etc." / "approx." spelled out; the period stays when it also ends the sentence. */
+function abbreviation(word, space, next) {
+  return next === '' || (space && /[A-Z"“‘'(]/.test(next)) ? word + '.' : word;
+}
+
+function spokenRange(m, pre, cur1, a, pct, dash, cur2, b) {
+  if (dash === '-') {
+    if (/^\d{3}$/.test(a) && /^\d{4}$/.test(b)) return m; // 555-1234: a phone number
+    if (/^[12]\d{3}$/.test(a) && /^(?:0[1-9]|1[0-2])$/.test(b)) return m; // 2026-11: a year and month
+    if (/^0\d/.test(a) || /^0\d/.test(b)) return m; // 020-7946, 08-15: codes
+  }
+  return `${pre}${cur1}${a}${pct} to ${cur2}${b}`;
 }

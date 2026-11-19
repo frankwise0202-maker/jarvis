@@ -43,14 +43,14 @@ test('toSpeech summary: first paragraph only, plain text, about 400 characters a
   assert.equal(r.empty, '');
 });
 
-test('toSpeech full: all prose, no code blocks, URLs reduced to host names, no Markdown syntax', async () => {
+test('toSpeech full: all prose, one line per block, no code blocks, URLs reduced to host names, no Markdown syntax', async () => {
   const text = await page.evaluate(() =>
     window.__mods.tts.toSpeech(
       '## Summary\n\nPrices fell **12%** → see https://www.example.com/report?x=1 and [the BBC](https://bbc.co.uk/news).\n\n```python\nprint("never read aloud")\n```\n\n| Model | Price |\n|---|---|\n| Opus | $4 |\n\n> Quote here\n\n1. First step\n2. Second step',
       'full',
     ),
   );
-  assert.equal(text, 'Summary. Prices fell 12% to see example.com and the BBC. Model, Price. Opus, $4. Quote here. First step. Second step.');
+  assert.equal(text, 'Summary.\nPrices fell 12 percent to see example.com and the BBC.\nModel, Price.\nOpus, $4.\nQuote here.\nFirst step.\nSecond step.');
 });
 
 test('splitSentences and chunkText: ≤ 220-character chunks of whole sentences, nothing lost', async () => {
@@ -181,49 +181,50 @@ test('pickDefaultVoice prefers on-device voices: online voices send the spoken t
 // ---- speak() against a fake speechSynthesis ---------------------------------------------
 
 const FAKE_SPEECH = () => {
-  const state = { spoken: [], cancels: 0, overlap: false, dropEndFor: -1, swallow: -1, voicesReady: true, events: [] };
+  // A FIFO engine like the real one: speak() queues; utterances play back to back (about 1 ms per
+  // character); cancel() empties the queue with 'interrupted' / 'canceled' errors.
+  const state = { spoken: [], cancels: 0, maxQueued: 0, dropEndFor: -1, swallow: -1, voicesReady: true };
   const voices = [
     { name: 'Samantha', lang: 'en-US', voiceURI: 'com.apple.samantha', default: true, localService: true },
     { name: 'Daniel', lang: 'en-GB', voiceURI: 'com.apple.daniel', default: false, localService: true },
     { name: 'Moira', lang: 'en-IE', voiceURI: 'com.apple.moira', default: false, localService: true },
   ];
   const synth = new EventTarget();
-  synth.speaking = false;
-  synth.pending = false;
-  synth.current = null;
+  let queue = [];
+  let current = null;
+  Object.defineProperty(synth, 'speaking', { get: () => !!current });
+  Object.defineProperty(synth, 'pending', { get: () => queue.length > 0 });
   synth.getVoices = () => (state.voicesReady ? voices.slice() : []);
-  synth.speak = (u) => {
-    if (synth.current) state.overlap = true;
-    const index = state.spoken.length;
-    state.spoken.push({ text: u.text, voice: u.voice ? u.voice.voiceURI : null, lang: u.lang, rate: u.rate, volume: u.volume });
-    if (state.swallow === index) return; // the engine silently drops this utterance: no events at all
-    synth.current = u;
-    synth.pending = true;
+  const next = () => {
+    if (current || !queue.length) return;
+    const u = queue.shift();
+    current = u;
     setTimeout(() => {
-      if (synth.current !== u) return;
-      synth.pending = false;
-      synth.speaking = true;
+      if (current !== u) return;
       if (u.onstart) u.onstart({});
       if (u.onboundary) u.onboundary({ charIndex: 2, charLength: 4, name: 'word' });
-      if (state.dropEndFor === index) {
-        synth.speaking = false; // the engine silently loses this utterance's 'end' event
-        synth.current = null;
-        return;
-      }
       setTimeout(() => {
-        if (synth.current !== u) return;
-        synth.speaking = false;
-        synth.current = null;
-        if (u.onend) u.onend({});
-      }, 5);
+        if (current !== u) return;
+        current = null;
+        if (state.dropEndFor !== u.index && u.onend) u.onend({}); // a lost 'end': the engine still moves on
+        next();
+      }, 5 + u.text.length);
     }, 5);
+  };
+  synth.speak = (u) => {
+    u.index = state.spoken.length;
+    state.spoken.push({ text: u.text, voice: u.voice ? u.voice.voiceURI : null, lang: u.lang, rate: u.rate, volume: u.volume });
+    if (state.swallow === u.index) return; // the engine silently drops this utterance: no events at all
+    queue.push(u);
+    state.maxQueued = Math.max(state.maxQueued, queue.length + (current ? 1 : 0));
+    next();
   };
   synth.cancel = () => {
     state.cancels++;
-    const u = synth.current;
-    synth.current = null;
-    synth.speaking = synth.pending = false;
-    if (u && u.onerror) setTimeout(() => u.onerror({ error: 'interrupted' }), 0);
+    const victims = (current ? [[current, 'interrupted']] : []).concat(queue.map((u) => [u, 'canceled']));
+    current = null;
+    queue = [];
+    for (const [u, error] of victims) setTimeout(() => u.onerror && u.onerror({ error }), 0);
   };
   Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
   window.SpeechSynthesisUtterance = class {
@@ -241,7 +242,7 @@ const FAKE_SPEECH = () => {
 
 const LONG_TEXT = Array.from({ length: 12 }, (_, i) => `Sentence ${i + 1} tells you a little more about the swarm results and what they mean.`).join(' ');
 
-test('speak: chunks are spoken one at a time with the chosen voice and rate; callbacks fire once', async () => {
+test('speak: chunks are spoken in order with the chosen voice and rate, the next one queued ahead; callbacks fire once', async () => {
   const p = await h.newPage({ init: FAKE_SPEECH });
   const r = await p.evaluate(async (text) => {
     const { speak, isSpeaking } = window.__mods.tts;
@@ -266,17 +267,18 @@ test('speak: chunks are spoken one at a time with the chosen voice and rate; cal
         },
       });
     });
-    return { log, boundaries, duringSpeaking, after: isSpeaking(), spoken: window.__speech.spoken, overlap: window.__speech.overlap };
+    return { log, boundaries, duringSpeaking, after: isSpeaking(), spoken: window.__speech.spoken, maxQueued: window.__speech.maxQueued };
   }, LONG_TEXT);
-  assert.ok(r.spoken.length >= 4, `chunks: ${r.spoken.length}`);
+  assert.ok(r.spoken.length >= 3, `chunks: ${r.spoken.length}`);
+  assert.ok(r.spoken.some((s) => s.text.length > 220), 'an on-device voice gets longer chunks');
   for (const s of r.spoken) {
-    assert.ok(s.text.length <= 220);
+    assert.ok(s.text.length <= 360);
     assert.equal(s.voice, 'com.apple.moira');
     assert.equal(s.lang, 'en-IE');
     assert.equal(s.rate, 1.2);
   }
   assert.equal(r.spoken.map((s) => s.text).join(' '), LONG_TEXT);
-  assert.equal(r.overlap, false);
+  assert.equal(r.maxQueued, 2, 'the next chunk waits in the engine while the current one plays');
   assert.deepEqual(r.log.filter((l) => !l.startsWith('boundary')), ['start', 'end:done']);
   assert.equal(r.boundaries, r.spoken.length);
   assert.ok(r.log.includes(`boundary@${r.spoken[0].text.length + 1 + 2}`), r.log.join());
@@ -313,17 +315,26 @@ test('speak: default voice when voiceURI is empty or unknown; cancel() and a new
   assert.equal(r.speaking, false);
 });
 
-test('speak: a lost "end" event does not leave Jarvis stuck speaking (watchdog moves on)', async () => {
+test('speak: a lost "end" event does not leave Jarvis stuck speaking (the next chunk or the watchdog moves on)', async () => {
   const p = await h.newPage({ init: FAKE_SPEECH });
   const r = await p.evaluate(async () => {
+    const run = (text) =>
+      new Promise((resolve) => {
+        const t = Date.now();
+        const n = window.__speech.spoken.length;
+        window.__mods.tts.speak(text, { onEnd: (i) => resolve({ reason: i.reason, ms: Date.now() - t, chunks: window.__speech.spoken.length - n }) });
+      });
     window.__speech.dropEndFor = 0;
-    const t = Date.now();
-    const reason = await new Promise((resolve) => window.__mods.tts.speak('First chunk is lost. '.repeat(12) + 'Second part arrives.', { onEnd: (i) => resolve(i.reason) }));
-    return { reason, chunks: window.__speech.spoken.length, ms: Date.now() - t };
+    const middle = await run('First chunk is lost. '.repeat(20) + 'Second part arrives.');
+    window.__speech.dropEndFor = window.__speech.spoken.length;
+    const last = await run('The only chunk, and its end is lost.');
+    return { middle, last };
   });
-  assert.equal(r.reason, 'done');
-  assert.ok(r.chunks >= 2);
-  assert.ok(r.ms >= 2500 && r.ms < 8000, `${r.ms} ms`);
+  assert.equal(r.middle.reason, 'done');
+  assert.equal(r.middle.chunks, 2);
+  assert.ok(r.middle.ms < 2000, `the next chunk's start settled the lost one: ${r.middle.ms} ms`);
+  assert.equal(r.last.reason, 'done');
+  assert.ok(r.last.ms >= 2500 && r.last.ms < 8000, `${r.last.ms} ms`);
 });
 
 test('speak: an utterance the engine silently drops before it starts is spoken again, not skipped', async () => {
