@@ -181,6 +181,40 @@ it once more (copy it from your password manager).
 - **Demo**: to show Jarvis to someone without using your account, open
   <https://frankwise0202-maker.github.io/jarvis/?demo=1>, a scripted demonstration that costs nothing.
 
+### The new look: Jarvis at a glance
+
+Jarvis's home screen now tells you what is going on before you ask.
+
+- **The core** in the middle is Jarvis. One word under it says what he is doing: **STANDING
+  BY**, **THINKING**, **WORKING · 3 AGENTS**, **SPEAKING**, **LISTENING** or **OFFLINE** (the same
+  word sits next to the small core at the top). Tap the core to talk (Voice Mode).
+- **What needs you**: under your greeting, one line ("Nothing needs you.", "2 agents still
+  working on 'EV SUVs'."). When a mission finishes while you're in another chat, stops part way
+  or has agents that failed, or your spending passes its warning level, a card appears with one
+  button (**View**, **Resume**, **Retry**, **Review**), and a small amber dot shows on the core
+  and on the small core at the top. Once you have a habit of running your morning or evening
+  briefing, it appears there too when it is due (**Run**).
+- **Quick keys**: **Look** (the camera), **Talk** (Voice Mode) and **Brief me** (the briefing
+  for this time of day, in a new chat). The suggestion cards under them are there for your first
+  few chats; after that your Protocols take their place.
+- **What the rings mean**: press and hold the core (right-click on a computer). **SPEND** is
+  this month's spending against your warning level (amber above it), **AGENTS** how many are
+  working now, **MISSION** a running mission's progress, and two dots show whether the
+  microphone and the camera are off, ready or on. Every number is real; one that isn't known
+  stays dark.
+- **On a computer** the right-hand panel shows the time with a suggested briefing, what needs
+  you, and **Systems** (network, microphone, camera, model and spend; click it for the full
+  dashboard). A running mission takes the panel over. On wide windows a line at the top shows the
+  network, today's spend and the time.
+- **The microphone is never on unseen**: while it listens, a red **MIC** pill appears at the
+  top; tap it to turn the microphone off.
+- **Settings → Appearance → HUD**: **Density** (**Calm**, the default, or **Full**: labels
+  around the core, the line at the top always, and Mission Control's log open), **Motion**
+  (**Full**, **Reduced** or **Still**: still pictures, no movement) and the short start-up
+  animation (once a session, every launch or never, and **Replay now**).
+- Voice Mode and the 3D viewer get the same HUD corners on a computer screen. The display
+  lettering (the Rajdhani font) comes with the app: nothing is loaded from anywhere else.
+
 ### Holograms and blueprints
 
 - **Ask to see something:** "show me a 2024 Toyota Camry Hybrid", "how does a car alternator
@@ -261,6 +295,10 @@ the chat (a running mission shows as Mission Control, a finished one as its repo
 name it: the hologram, the blueprint, Mission Control, the report, the photo, the camera, the
 link ("open the second link in a window"). Live things stay live: a mission keeps moving and an
 answer keeps writing on the other screen. Screen commands happen on your device, free.
+
+You can also just ask in your own words ("could you put that report up on my second monitor?"):
+Jarvis does it and says so in a sentence ("It's on screen 2, sir."). That works in chats started
+after this update; in older chats, use the short commands above.
 
 When you speak a command, Chrome may ask for one tap first: an **Open on screen 2** (or **Float
 it**) button appears; tap it. To skip that tap for windows, allow pop-ups for the Jarvis site
@@ -351,6 +389,11 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   and blueprints (delete those in the Blueprints library); **Reset Jarvis** deletes them. If the
   device's storage is full, new ones last only until you close Jarvis, and the storage notice
   says so.
+- **The core's voice band** follows how loud your voice is while Voice Mode listens. That is
+  measured on your device from the microphone Voice Mode already uses; nothing is recorded or
+  sent, and it stops when Voice Mode stops listening or you switch away (not used on iPhone yet).
+- **What needs you** (finished missions you haven't seen, briefings) and your HUD choices are
+  stored on this device only; the HUD choices are included in backups.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
@@ -405,8 +448,9 @@ Other websites (at other addresses) cannot read it.
   reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
   tip for getting a more natural voice on your device, the language you speak in, and whether
   Voice Mode keeps listening after each reply.
-- **Appearance & sound:** six color themes, sounds and their volume, vibration (Android), and a
-  notification when a mission finishes while Jarvis is in the background.
+- **Appearance & sound:** six color themes, the **HUD** (Calm or Full, motion, the start-up
+  animation), sounds and their volume, vibration (Android), and a notification when a mission
+  finishes while Jarvis is in the background.
 - **Location:** optional, for local answers (weather, opening hours, prices).
 - **Memory:** everything Jarvis remembers about you; edit or delete any of it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
@@ -484,8 +528,8 @@ binding contract for every module.
 public/           static files copied into dist/ (index.html, manifest, service worker, icons)
 src/engine/       conversation engine: lead, agent missions, streaming, prompts, holograms and blueprints (visuals.js) (no DOM)
 src/platform/     settings, API key, IndexedDB history and the saved library, memory, spend, voice, Wikimedia photo search, PWA helpers
-src/lib/          safe streaming Markdown → DOM renderer; hologram and blueprint spec validators and the hologram command matcher (pure)
-src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (core, Mission Control); src/ui/hologram/ the 3D viewer (three.js, loaded on demand); src/ui/blueprint/ the blueprint viewer
+src/lib/          safe streaming Markdown → DOM renderer; hologram and blueprint spec validators and the hologram command matcher; the screen-command matcher, "this" and placement for Screens (pure)
+src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (Living Core, Mission Control); src/ui/presence/ the home screen, state word, Needs-you and awareness rail; src/ui/screens/ Screens (screen mode, floating panels); src/ui/hologram/ the 3D viewer (three.js, loaded on demand); src/ui/blueprint/ the blueprint viewer
 src/styles/       design tokens and styles
 scripts/          build.mjs, serve.mjs, deploy-pages.mjs, make-icons.mjs
 test/unit/        node --test unit tests
@@ -554,6 +598,7 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | *(a `Blueprint request` block in `<turn_context>`)* | `draw_blueprint` once, with the best-matching sample sheet and the requested `for` ids, then a sentence |
 | `[[blueprint:<sample>]]` | `draw_blueprint` with that sample (`alternator-part`, `battery-cutaway`, `battery-process`, `camry-assembly`), no `for` |
 | `[[open-saved]]` | `open_saved` with the first id of the turn context's saved list (an unknown id when it is empty) |
+| `[[screen:<what>:<where>]]` | (v7, new conversations) `open_screen` with that `what` (`this`, `hologram`, `answer`, `mission`, …) and `where` (`other_screen`, `beside`, `window`, `back`), then one short sentence read from the result ("It's on screen 2, sir.") |
 | `[[swarm:N]] [[hologram:x]]` | a Blueprint mission: agents first, then `show_hologram`, then a synthesis with sources |
 | *(Voice Mode turn: `Reply channel: spoken` in `<turn_context>`)* | every final answer is written for the ear: two or three plain sentences, a line `---`, then `## Details` with two list items (`[[long]]` puts its whole guide below the line; `[[xss]]` puts every payload there and one in the spoken part). The text streams a few words at a time, 50–90 ms apart, and a search takes about a second, so speech can start mid-reply. `[[search]]`, `[[pause]]` and `[[swarm:N]]` first say "Let me check the latest on that." Holograms and blueprints are said for the ear too: "Pulling up the AA alkaline battery now." before `show_hologram`, "Here's the AA alkaline battery. Say "expand it", or tap any part." after it; "Drawing the blueprint of the separator now.", then "The blueprint of the separator is ready; it's open on your screen." |
 | `[[nobreak]]` / `[[longspoken]]` | Voice Mode turns only: a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
