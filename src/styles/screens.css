@@ -1,0 +1,1137 @@
+/* Screens (v7): the HUD frame and panels of a screen on another monitor (screen mode), a floating
+   Picture-in-Picture panel, and the prompts in the main window (one-tap button, permission
+   explainer). Presence style: thin lines, corner brackets, a faint grid, light and calm; nothing
+   loops while idle. Same tokens and contrast as the app. The Presence tokens (--grid, --font-hud,
+   --scrim-hud, --dur-mode) are used with fallbacks, so this works before and after Presence lands. */
+
+/* ---- the frame ------------------------------------------------------------------------------- */
+
+.is-screen-mode,
+.is-screen-mode body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.scr {
+  --scr-inset: 10px;
+  --scr-pad-x: 26px;
+  --frame-arm: 34px;
+  --frame-color: rgba(138, 243, 255, 0.78);
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+.scr--compact {
+  --scr-inset: 5px;
+  --scr-pad-x: 14px;
+  --frame-arm: 18px;
+}
+
+.scr__bg {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(110% 60% at 50% -8%, rgba(62, 224, 255, 0.11), transparent 62%),
+    radial-gradient(70% 50% at 100% 110%, rgba(167, 150, 255, 0.07), transparent 70%),
+    var(--bg);
+}
+/* The faint grid, inside the frame only, fading towards the edges. */
+.scr__bg::after {
+  content: '';
+  position: absolute;
+  inset: var(--scr-inset);
+  background-image:
+    linear-gradient(var(--grid, rgba(78, 196, 255, 0.06)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid, rgba(78, 196, 255, 0.06)) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 50% 50%;
+  -webkit-mask-image: radial-gradient(85% 80% at 50% 50%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(85% 80% at 50% 50%, #000 35%, transparent 100%);
+}
+
+/* The thin glowing edge with corner brackets. */
+.scr__edge {
+  position: absolute;
+  inset: var(--scr-inset);
+  z-index: 3;
+  pointer-events: none;
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  box-shadow:
+    0 0 22px rgba(62, 224, 255, 0.1),
+    inset 0 0 28px rgba(62, 224, 255, 0.05);
+}
+.scr__corner {
+  position: absolute;
+  width: var(--frame-arm);
+  height: var(--frame-arm);
+  border: 0 solid var(--frame-color);
+  filter: drop-shadow(0 0 5px rgba(62, 224, 255, 0.55));
+}
+.scr__corner--tl {
+  top: -2px;
+  left: -2px;
+  border-top-width: 2px;
+  border-left-width: 2px;
+}
+.scr__corner--tr {
+  top: -2px;
+  right: -2px;
+  border-top-width: 2px;
+  border-right-width: 2px;
+}
+.scr__corner--bl {
+  bottom: -2px;
+  left: -2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+}
+.scr__corner--br {
+  right: -2px;
+  bottom: -2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+}
+
+/* ---- header ---------------------------------------------------------------------------------- */
+
+.scr__head {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  margin: var(--scr-inset) var(--scr-inset) 0;
+  padding: 16px var(--scr-pad-x) 14px;
+}
+/* A hairline under the header that fades out at both ends, with a short bright segment. */
+.scr__head::after {
+  content: '';
+  position: absolute;
+  left: var(--scr-pad-x);
+  right: var(--scr-pad-x);
+  bottom: 0;
+  height: 1px;
+  background:
+    linear-gradient(90deg, var(--accent-2), var(--accent-2)) 0 0 / 56px 1px no-repeat,
+    linear-gradient(90deg, var(--line-3), var(--line-2) 70%, transparent);
+}
+
+.scr__core {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  color: var(--accent);
+  box-shadow: 0 0 14px rgba(62, 224, 255, 0.14), inset 0 0 10px rgba(62, 224, 255, 0.08);
+}
+.scr-glyph__arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.scr-glyph__arc--dim {
+  opacity: 0.45;
+}
+.scr-glyph__ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  opacity: 0.7;
+}
+.scr-glyph__dot {
+  fill: var(--accent-2);
+}
+.scr[data-live='true'] .scr-glyph__dot {
+  animation: scr-breath 1.6s var(--ease-breath, ease-in-out) infinite alternate;
+}
+
+.scr__titles {
+  min-width: 0;
+}
+.scr__eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--accent);
+}
+.scr__sep {
+  color: var(--text-3);
+}
+.scr__kind {
+  color: var(--text-2);
+}
+.scr__title {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-hud, var(--font-display));
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  text-shadow: 0 0 18px rgba(62, 224, 255, 0.18);
+}
+
+.scr__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.scr__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  margin: 0;
+  padding: 0 11px 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: rgba(11, 23, 36, 0.6);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.scr__status[hidden] {
+  display: none;
+}
+.scr__status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.scr__status[data-tone='live'] {
+  border-color: rgba(62, 224, 255, 0.45);
+  color: var(--accent-2);
+}
+.scr__status[data-tone='live'] .scr__status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: scr-breath 1s var(--ease-breath, ease-in-out) infinite alternate;
+}
+.scr__status[data-tone='done'] {
+  color: var(--ok);
+}
+.scr__status[data-tone='done'] .scr__status-dot {
+  background: var(--ok);
+}
+.scr__status[data-tone='warn'] {
+  color: var(--warn);
+}
+.scr__status[data-tone='warn'] .scr__status-dot {
+  background: var(--warn);
+}
+.scr__status[data-tone='error'] {
+  color: var(--err);
+}
+.scr__status[data-tone='error'] .scr__status-dot {
+  background: var(--err);
+}
+.scr__clock {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.14em;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.scr__actions {
+  display: flex;
+  gap: 8px;
+}
+.scr__btn {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xs);
+  background: rgba(11, 23, 36, 0.66);
+  color: var(--text-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.scr__btn--text {
+  padding: 0 14px 0 12px;
+}
+.scr__btn:focus {
+  outline: none;
+}
+.scr__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .scr__btn:hover {
+    border-color: var(--line-3);
+    background: var(--accent-soft);
+    color: var(--accent-2);
+  }
+}
+
+/* ---- body and control deck --------------------------------------------------------------------- */
+
+.scr__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 0;
+  margin: 0 var(--scr-inset);
+  overflow: hidden;
+}
+.scr__body > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.scr__deck {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 14px;
+  margin: 0 var(--scr-inset) var(--scr-inset);
+  padding: 12px var(--scr-pad-x) 16px;
+}
+.scr__deck[hidden] {
+  display: none;
+}
+.scr__deck::before {
+  content: '';
+  position: absolute;
+  left: var(--scr-pad-x);
+  right: var(--scr-pad-x);
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-2) 25%, var(--line-2) 75%, transparent);
+}
+
+.scr-seg {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: rgba(11, 23, 36, 0.66);
+}
+.scr-seg__btn {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.scr-seg__btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  box-shadow: inset 0 0 0 1px rgba(62, 224, 255, 0.35);
+}
+.scr-tools {
+  display: inline-flex;
+  gap: 8px;
+}
+.scr-tool {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xs);
+  background: rgba(11, 23, 36, 0.66);
+  color: var(--text-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.scr-tool--text {
+  padding: 0 14px 0 12px;
+}
+.scr-tool[aria-pressed='true'] {
+  border-color: rgba(62, 224, 255, 0.45);
+  color: var(--accent-2);
+}
+.scr-seg__btn:focus,
+.scr-tool:focus {
+  outline: none;
+}
+.scr-seg__btn:focus-visible,
+.scr-tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .scr-tool:hover,
+  .scr-seg__btn:hover {
+    color: var(--accent-2);
+  }
+}
+
+/* ---- one scanline and the 300ms assemble (static under reduced motion) --------------------------- */
+
+.scr__scan {
+  position: absolute;
+  left: var(--scr-inset);
+  right: var(--scr-inset);
+  top: var(--scr-inset);
+  z-index: 4;
+  height: 2px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--accent-2) 30%, var(--accent-2) 70%, transparent);
+  box-shadow: 0 0 14px rgba(62, 224, 255, 0.55);
+}
+.scr--scan .scr__scan {
+  animation: scr-scan 640ms var(--ease) 120ms 1 both;
+}
+@keyframes scr-scan {
+  from {
+    opacity: 0.9;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(100vh - 2 * var(--scr-inset)));
+  }
+}
+
+.scr--boot .scr__corner {
+  animation: scr-arm 140ms var(--ease-out) both;
+}
+.scr--boot .scr__edge {
+  animation: scr-fade 200ms var(--ease-out) both;
+}
+.scr--boot .scr__head,
+.scr--boot .scr__body,
+.scr--boot .scr__deck {
+  animation: scr-up 180ms var(--ease-out) 120ms both;
+}
+@keyframes scr-arm {
+  from {
+    width: 0;
+    height: 0;
+    opacity: 0;
+  }
+}
+@keyframes scr-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes scr-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes scr-breath {
+  from {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scr--boot .scr__corner,
+  .scr--boot .scr__edge,
+  .scr--boot .scr__head,
+  .scr--boot .scr__body,
+  .scr--boot .scr__deck,
+  .scr--scan .scr__scan,
+  .scr[data-live='true'] .scr-glyph__dot,
+  .scr__status[data-tone='live'] .scr__status-dot {
+    animation: none !important;
+  }
+}
+:root[data-motion='still'] .scr *,
+:root[data-motion='still'] .scr__scan {
+  animation: none !important;
+}
+
+/* ---- compact (a floating panel: about 420×320 to 640×480) --------------------------------------- */
+
+.scr--compact .scr__head {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 9px var(--scr-pad-x) 8px;
+}
+.scr--compact .scr__core {
+  width: 26px;
+  height: 26px;
+}
+.scr--compact .scr__eyebrow {
+  margin-bottom: 1px;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.18em;
+}
+.scr--compact .scr__title {
+  font-size: 16px; /* the display face is never below 16px (Presence 2.4.15) */
+  letter-spacing: 0.1em;
+}
+/* Compact: the clock and status sit in the eyebrow row's place on the right; buttons are small. */
+.scr--compact .scr__meta {
+  grid-column: 3;
+  grid-row: 1;
+  gap: 8px;
+}
+.scr--compact .scr__clock {
+  font-size: var(--fs-xs);
+}
+.scr--compact .scr__status {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--fs-2xs);
+}
+.scr--compact .scr__actions {
+  display: none;
+}
+.scr--compact .scr__deck {
+  gap: 8px;
+  padding: 8px var(--scr-pad-x) 10px;
+}
+.scr--compact .scr-tool,
+.scr--compact .scr__btn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+}
+.scr--compact .scr-seg__btn {
+  min-height: 30px;
+  padding: 0 10px;
+}
+@media (max-width: 460px) {
+  .scr--compact .scr__status {
+    display: none;
+  }
+}
+
+/* ---- panels: shared ------------------------------------------------------------------------------ */
+
+.scr-msg {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+.scr-msg__main {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+.scr-msg__sub {
+  max-width: 44ch;
+  margin: 0 auto;
+  font-size: var(--fs-md);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* answer / report: a readable column, bigger type for a screen across the desk */
+.scr-answer {
+  --fs-sm: 15px;
+  --fs-md: 18px;
+  --fs-lg: 21px;
+  --fs-xl: 26px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 26px var(--scr-pad-x) 44px;
+  scrollbar-gutter: stable;
+}
+.scr-answer:focus {
+  outline: none;
+}
+.scr-answer:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.scr-answer__col {
+  max-width: 72ch;
+  margin: 0 auto;
+}
+.scr-answer .prose {
+  line-height: 1.62;
+}
+.scr-answer__waiting {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.scr-answer--compact {
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 19px;
+  padding: 12px 16px 20px;
+}
+
+/* hologram */
+.scr-holo {
+  position: relative;
+  min-height: 0;
+}
+.scr-holo__stage {
+  position: absolute;
+  inset: 0;
+}
+.scr-holo__stage .holo {
+  background: transparent;
+}
+.scr-holo__snap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.scr-holo__snap[hidden] {
+  display: none;
+}
+.scr-holo__readout {
+  position: absolute;
+  left: 16px;
+  bottom: 12px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.scr-holo__plate {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  max-width: min(340px, 60%);
+  padding: 10px 14px;
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-xs);
+  background: var(--scrim-hud, rgba(4, 7, 12, 0.72));
+}
+.scr-holo__plate[hidden] {
+  display: none;
+}
+.scr-holo__part-name {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.scr-holo__part-info {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.scr-holo__part-info:empty {
+  display: none;
+}
+.scr--compact .scr-holo__readout {
+  left: 10px;
+  bottom: 8px;
+  font-size: var(--fs-2xs);
+}
+.scr--compact .scr-holo__plate {
+  top: 8px;
+  right: 8px;
+  padding: 6px 10px;
+}
+.scr--compact .scr-holo__part-name {
+  font-size: var(--fs-sm);
+}
+
+/* blueprint */
+.scr-bp {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+.scr-bp > * {
+  flex: 1;
+  min-width: 0;
+}
+/* The screen's header already names the sheet, and a screen is for looking: the drawing gets the
+   viewer's whole height (downloads stay in the app). */
+.scr-bp .bpv__bar {
+  display: none;
+}
+.scr-bp--compact {
+  padding: 6px;
+}
+.scr-bp__sheet {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* mission */
+.scr-mission {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px var(--scr-pad-x) 16px;
+}
+.scr-mission > * {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.scr-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 14px 12px;
+  overflow: auto;
+}
+.scr-mini__top {
+  display: grid;
+  gap: 6px;
+}
+.scr-mini__counts {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.scr-mini__bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+.scr-mini__bar-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-3), var(--accent));
+  box-shadow: 0 0 8px rgba(62, 224, 255, 0.5);
+  transition: width var(--dur-3) var(--ease);
+}
+.scr-mini__list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scr-mini__row {
+  display: grid;
+  grid-template-columns: 8px minmax(64px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+.scr-mini__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.scr-mini__row[data-status='thinking'] .scr-mini__dot {
+  background: var(--violet);
+}
+.scr-mini__row:is([data-status='starting'], [data-status='searching'], [data-status='reading'], [data-status='writing']) .scr-mini__dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.scr-mini__row[data-status='done'] .scr-mini__dot {
+  background: var(--ok);
+}
+.scr-mini__row:is([data-status='error'], [data-status='stopped'], [data-status='interrupted']) .scr-mini__dot {
+  background: var(--warn);
+}
+.scr-mini__name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.scr-mini__act {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.scr-mini__state {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* photo */
+.scr-photo {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  margin: 0;
+  padding: 14px var(--scr-pad-x) 12px;
+}
+.scr-photo__stage {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+}
+.scr-photo__img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--line-2);
+  box-shadow: 0 0 30px rgba(62, 224, 255, 0.08);
+}
+.scr-photo figcaption {
+  padding-top: 10px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* link */
+.scr-link {
+  display: grid;
+  place-items: center;
+  padding: 24px var(--scr-pad-x);
+}
+.scr-link__card::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line-3), var(--line-3)) left top / 14px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left top / 1px 14px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 14px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 1px 14px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 14px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 1px 14px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 14px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 1px 14px no-repeat;
+}
+.scr-link__card {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  width: min(640px, 100%);
+  padding: 26px 28px 24px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: rgba(11, 23, 36, 0.72);
+}
+.scr-link__icon {
+  color: var(--accent);
+}
+.scr-link__host {
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+.scr-link__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.scr-link__url {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+  color: var(--text-3);
+}
+.scr-link__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.scr-link--compact {
+  padding: 10px;
+}
+.scr-link--compact .scr-link__card {
+  padding: 14px 16px;
+}
+.scr-link--compact .scr-link__title {
+  font-size: var(--fs-lg);
+}
+
+.scr-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xs);
+  background: rgba(11, 23, 36, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+.scr-btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.scr-btn:focus {
+  outline: none;
+}
+.scr-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .scr-btn:hover {
+    border-color: var(--line-3);
+  }
+  .scr-btn--primary:hover {
+    background: var(--accent-2);
+  }
+}
+
+/* camera (Optics placeholder) */
+.scr-optics {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.scr-optics__reticle {
+  position: absolute;
+  inset: 18% 24%;
+  pointer-events: none;
+}
+.scr-optics__reticle i {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 0 solid var(--line-3);
+}
+.scr-optics__reticle i:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.scr-optics__reticle i:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.scr-optics__reticle i:nth-child(3) {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+.scr-optics__reticle i:nth-child(4) {
+  right: 0;
+  bottom: 0;
+  border-right-width: 1px;
+  border-bottom-width: 1px;
+}
+
+/* ---- in the app: a full-screen screen (phones) and the floating panel's own document ------------ */
+
+.scr-inapp {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+}
+.scr-inapp .scr {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+.scr-pip-body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ---- prompts in the main window: the one-tap button and the permission explainer ---------------- */
+
+.scr-prompt {
+  position: fixed;
+  right: max(16px, var(--safe-right));
+  bottom: max(16px, var(--safe-bottom));
+  z-index: 120;
+  display: grid;
+  gap: 10px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 16px 16px 14px;
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-2), 0 0 26px rgba(62, 224, 255, 0.14);
+  color: var(--text);
+  animation: scr-up 220ms var(--ease-out) both;
+}
+.scr-prompt::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line-3), var(--line-3)) left top / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left top / 1px 12px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 12px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 1px 12px no-repeat;
+}
+.scr-prompt__label {
+  margin: 0;
+  padding-right: 36px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.scr-prompt__title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.scr-prompt__text {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.scr-prompt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.scr-prompt__actions .scr-btn {
+  font-size: var(--fs-sm);
+}
+.scr-prompt__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.scr-prompt__close:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.scr-prompt__tip {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.scr-prompt__tip b {
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .scr-prompt {
+    animation: none;
+  }
+}
+
+/* A screen shown full screen inside the app keeps its close button, even when compact. */
+.scr-inapp .scr--compact .scr__actions {
+  display: flex;
+}
+.scr-inapp .scr--compact .scr__head {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}

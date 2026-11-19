@@ -1624,3 +1624,47 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   follows the library, "Open in chat" from Voice Mode, reopening the last hologram by voice, no level animation under
   a viewer, and chats from before holograms (not restored; a banner; Voice Mode starts a new chat). Mock:
   `[[slowbuild]]` (with `[[hologram:…]]`) streams the hologram over 8–9 s so a test can speak while it builds.
+
+### 16.x Screens (v7, staged)
+
+- Commands (typed in the composer or a hologram viewer's command box, or heard in Voice Mode) go to the local matcher
+  `src/lib/screen-commands.js` first: a known object ("this", "it", the hologram, blueprint, Mission Control, report,
+  photo, camera, link + ordinal) plus a place ("other / second / external screen", "screen 2", "monitor", "beside me",
+  "float", "pop it out", "on top", "in a window / new tab"), every other word a command word; "bring it back" and
+  "close the other screen / screen 2 / the float" close. Questions and requests for new content ("pull up the weather
+  on my other screen") are not matched and go to Jarvis. Speech slips are folded in ("screen to/too", "flow it",
+  "besides me", "clothes the…", "on mother screen"). No tokens are spent.
+- "This" (`src/lib/screen-targets.js`): the open viewer (photo, blueprint, hologram, the Mission Control sheet, a
+  screen in the app), else what was just put on a screen if nothing newer arrived, else the newest card (in the newest
+  reply: a hologram/blueprint card, then a running mission, then the answer; a newer photo the owner sent).
+- Placement (`src/lib/screen-placement.js`): another monitor through the Window Management API (permission asked once,
+  after an in-app explanation; `screen.isExtended === false` floats instead without asking) → a popup maximized on
+  the chosen screen (screens numbered primary first, then left to right; "screen 2" said on screen 2 means the other);
+  "beside" → Document Picture-in-Picture (sized per kind: hologram/blueprint 640×480, answer 460×540, mission 440×500);
+  "window" → a popup on the right half of the current screen; Safari/Firefox → a window to drag (said so); phones →
+  the app's own full-screen viewers, or the screen frame in an overlay; links → their own window (opened on
+  `about:blank`, opener cut), a tab on phones. A blocked popup or a PiP request without a gesture shows a one-tap
+  button (`screens-tap`), the first time with a tip to allow pop-ups (`screens-tip`, remembered in
+  `jarvis.screens.v1`). An open screen or panel takes new content without a gesture.
+- Screen mode (`?screen=<kind>&…`, `src/ui/screens/screen-page.js`): the HUD frame plus one panel, no chat. Saved items
+  are read from IndexedDB (library, conversations; `getConversation(id, { track: false })`); live content follows over
+  `BroadcastChannel('jarvis-screens')` (`hello` / `content` / `show` / `close` / `back` / `closed` / `who` / `here`).
+  The floating panel is rendered by the main window into the PiP document (stylesheets copied, URLs made absolute; the
+  hologram renderer takes its window from its container, so it draws with the panel's own frames while the app's tab is
+  hidden; when WebGL fails there, a snapshot re-rendered by the app). Moving content out closes the in-app viewer that
+  showed it and any other screen showing it; closing a screen hands it back to the viewer it came from (and Chrome's
+  "back to tab" or "bring it back" always shows it here).
+- The open_screen client tool (`src/engine/screens.js`) is STAGED for the next frozen tools version: `what` (this,
+  hologram, blueprint, mission, answer, photo, camera, link), `where` (other_screen, beside, window, back), optional
+  `screen`, `url` (only links that appear in the conversation), `id` (a saved item). The engine calls
+  `deps.screens.open(input)` (4 s timeout) and returns one sentence per outcome (opened / needs_tap / needs_permission /
+  closed / nothing / error); Resume never reopens a window. `leadToolsWithScreens()` and `LEAD_SYSTEM_WITH_SCREENS`
+  show how it joins V4/V3; nothing freezes them yet.
+- Look: corner brackets and a thin glowing edge, a faint 24px grid, a header "SCREEN 2 · HOLOGRAM" over the title, a
+  clock (hh:mm), a core glyph that breathes only while the content is live, a status chip (BUILDING · n PARTS,
+  WORKING · n AGENTS, WRITING, COMPLETE · n/n), a 300ms assemble and one scanline on open and when the content
+  finishes; static under reduced motion and Still. Text uses the app tokens (AA, checked in E2E).
+- Tests: unit `screens.commands`, `screens.targets`, `screens.placement`, `screens.controller` (Chromium, stubbed
+  Window Management / PiP / popup blocker / gesture), `engine.screens` (the tool round through the fake API); E2E
+  `screens.mjs`: `screens-pages`, `screens-sync`, `screens-pip` (the real Document PiP of headless Chromium),
+  `screens-pip-snapshot`, `screens-monitor`, `screens-fallbacks`, `screens-no-apis`, `screens-phone`.

@@ -1145,6 +1145,11 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       res = { error: (err && err.message) || 'That message couldn’t be sent.' };
     }
     if (disposed) return;
+    if (res && typeof res.notice === 'string') {
+      // The app acted on the words itself (Screens: "put it on screen 2"): no reply to wait for.
+      showCaption({ status: 'done', text: res.notice });
+      return;
+    }
     if (res && res.held) {
       showCaption({ status: 'thinking', text: 'I’ll take that as soon as the details on screen are done.' });
       return;

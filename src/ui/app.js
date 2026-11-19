@@ -29,11 +29,13 @@ import { createPresence } from './presence/presence.js';
 import { exportHud, importHud } from './presence/hud-prefs.js';
 import { partOfDay } from './presence/model.js';
 import { fmtUsd } from './hud/format.js';
-import { openHologramViewer, getHologramViewer } from './hologram/viewer.js';
+import { openHologramViewer, getHologramViewer, renderHologramImage } from './hologram/viewer.js';
 import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
 import { createLibraryView } from './library.js';
 import { createThumbs } from './thumbs.js';
 import { isOverlayOpen } from './overlay.js';
+import { currentPhoto } from './photos.js';
+import { createScreens, screenAck, screenMessage } from './screens/controller.js';
 import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
 import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
@@ -178,6 +180,11 @@ export async function startApp(rootEl) {
     onChange: (fn) => onLibraryChange(fn),
   };
   const thumbs = createThumbs(lib);
+  // Screens (v7): created once the shell exists; the engine's open_screen tool calls it (deps.screens).
+  let screensCtl = null;
+  const screensDep = {
+    open: (input) => (screensCtl ? screensCtl.openFromTool(input) : Promise.resolve({ status: 'error', message: 'Screens are still starting up.' })),
+  };
   let engine;
   let store;
   let demo = null;
@@ -200,6 +207,7 @@ export async function startApp(rootEl) {
       getApiBase: getDevApiBase,
       memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
       library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
+      screens: screensDep,
       // A busy or old device can take seconds to write a big spec to IndexedDB: wait longer than the
       // engine's default before going on without saving (an unsaved hologram can't get blueprints).
       libraryTimeoutMs: 12000,
@@ -340,6 +348,9 @@ export async function startApp(rootEl) {
     micSupported: sttOk,
     getSettings: () => getSettings(),
     onSend: (text, mode, extras) => send(text, mode, extras),
+    // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
+    // also while Jarvis is working ("put mission control on screen 2").
+    onCommand: (text) => !!screenCommand(text, null, 'typed'),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -378,6 +389,125 @@ export async function startApp(rootEl) {
   initSheets({ layer: sheetLayer, shell });
 
   const toast = (msg, opts) => toasts.show(msg, opts);
+
+  // ---- Screens (v7): another monitor, a floating panel, a window ---------------------------------
+  // src/ui/screens/controller.js places things; this part tells it what the app shows and how to
+  // show something here again (a screen that closes hands its content back).
+  function findSegment(segmentId) {
+    if (!segmentId || !state.conv) return null;
+    for (const t of turnsOf(state.conv)) {
+      const seg = segmentsOf(t).find((x) => x.id === segmentId);
+      if (seg) return { turn: t, seg };
+    }
+    return null;
+  }
+
+  /** "This": the viewer on top (photo, blueprint, hologram), the Mission Control sheet, or a screen in the app. */
+  function describeOpenViewer() {
+    const inapp = screensCtl ? safe(() => screensCtl.inappTarget(), null) : null;
+    if (inapp) return inapp;
+    const photo = safe(() => currentPhoto(), null);
+    if (photo && photo.src) return { kind: 'photo', ref: photo, title: photo.title };
+    const bp = getBlueprintViewer();
+    if (bp) {
+      const at = findSegment(bp.segmentId);
+      return {
+        kind: 'blueprint',
+        ref: { libraryId: bp.modelId || null, segmentId: bp.segmentId || null, conversationId: at ? state.conv.id : null, turnId: at ? at.turn.id : null },
+        title: at ? at.seg.title || (at.seg.spec && at.seg.spec.title) || '' : '',
+        live: !!(at && at.seg.status === 'building'),
+      };
+    }
+    const holo = getHologramViewer();
+    if (holo) {
+      const st = safe(() => holo.getState(), null) || {};
+      const at = findSegment(st.segmentId);
+      return {
+        kind: 'hologram',
+        ref: { libraryId: st.libraryId || null, segmentId: st.segmentId || null, conversationId: at ? state.conv.id : null, turnId: at ? at.turn.id : null },
+        title: st.title || '',
+        live: st.status === 'building',
+      };
+    }
+    if (mcSheet && state.mcSel && state.conv) return { kind: 'mission', ref: { conversationId: state.conv.id, turnId: state.mcSel.turnId, missionId: state.mcSel.missionId }, title: '' };
+    return null;
+  }
+
+  /** Moving content out closes the in-app viewer that showed it (one live 3D view at a time). */
+  function closeViewerFor(target) {
+    const r = (target && target.ref) || {};
+    const same = (a, b) => !!a && a === b;
+    if (target.kind === 'hologram') {
+      const v = getHologramViewer();
+      const st = v ? safe(() => v.getState(), null) || {} : null;
+      if (v && (same(st.libraryId, r.libraryId) || same(st.segmentId, r.segmentId))) {
+        safe(() => v.close());
+        return true;
+      }
+    } else if (target.kind === 'blueprint') {
+      const v = getBlueprintViewer();
+      if (v && (same(v.modelId, r.libraryId) || same(v.segmentId, r.segmentId))) {
+        safe(() => v.close());
+        return true;
+      }
+    } else if (target.kind === 'mission' && mcSheet) {
+      safe(() => mcSheet.sheet.close('screens'));
+      return true;
+    }
+    return false;
+  }
+
+  /** Show content in the main window: a screen handed it back, or a phone shows it full screen. */
+  function showScreenInApp(target, { reason } = {}) {
+    const r = (target && target.ref) || {};
+    if (target.kind === 'hologram' || target.kind === 'blueprint') {
+      const at = findSegment(r.segmentId);
+      if (at) openVisualSegment(at.turn, at.seg);
+      else if (r.libraryId) Promise.resolve(lib.get(r.libraryId)).then((item) => item && openLibraryItem(item)).catch(() => {});
+      return;
+    }
+    if (target.kind === 'mission') {
+      const turn = findTurn(r.turnId);
+      if (turn) openMission(turn, r.missionId);
+      else if (r.conversationId) showInChat(r.conversationId, r.turnId);
+      return;
+    }
+    if (target.kind === 'answer' && reason === 'handback' && r.conversationId) showInChat(r.conversationId, r.turnId);
+  }
+
+  screensCtl = safe(
+    () =>
+      createScreens({
+        getConversation: () => state.conv,
+        getLiveTurn: (conversationId, turnId) => {
+          const entry = state.runs.get(conversationId);
+          const turn = entry && entry.run ? entry.run.turn : null;
+          return turn && turn.id === turnId ? turn : null;
+        },
+        describeOpen: () => describeOpenViewer(),
+        closeInApp: (target) => closeViewerFor(target),
+        showInApp: (target, opts) => showScreenInApp(target, opts),
+        getLibraryItem: (id) => lib.get(id),
+        snapshot: (spec, size) => renderHologramImage(spec, { ...size, type: 'image/png' }),
+        toast: (msg, opts) => toast(msg, opts),
+      }),
+    null,
+  );
+
+  /** A screen command typed in the composer or a viewer: acted on here (true), else false. */
+  function screenCommand(text, extras, source) {
+    if (!screensCtl) return false;
+    if (extras && Array.isArray(extras.attachments) && extras.attachments.length) return false;
+    const res = safe(() => screensCtl.command(String(text || ''), { source }), null);
+    if (!res || !res.handled) return false;
+    res.done.then((o) => {
+      const ok = o && (o.status === 'opened' || o.status === 'closed');
+      // A one-tap button or the explainer is on screen already; a phone shows the screen itself.
+      const shown = o && (o.status === 'needs_tap' || o.status === 'needs_permission' || (o.status === 'opened' && o.mode === 'inapp'));
+      if (source !== 'viewer' && !shown) toast(screenMessage(o), { level: ok ? 'success' : 'warn', id: 'screens' });
+    });
+    return res;
+  }
 
   // ---- announcements (throttled aria-live) ------------------------------------------------
   let lastAnnounce = '';
@@ -905,6 +1035,13 @@ export async function startApp(rootEl) {
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
         createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
+        // Screens (v7): spoken "put it on my other screen" acts at once; Jarvis says a short line.
+        screens: {
+          command: (text) => {
+            const res = screensCtl ? safe(() => screensCtl.command(String(text || ''), { source: 'voice' }), null) : null;
+            return res && res.handled ? { handled: true, done: res.done.then((o) => ({ ack: screenAck(o), outcome: o })) } : null;
+          },
+        },
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
@@ -959,6 +1096,11 @@ export async function startApp(rootEl) {
   async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null, signal = null } = {}) {
     const clean = String(text || '').trim();
     if (!clean) return { error: 'Nothing to send.' };
+    // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.
+    if (!blueprintFor) {
+      const sc = screenCommand(clean, null, 'viewer');
+      if (sc) return { notice: screenMessage(await sc.done) };
+    }
     let conv = await viewerConversation(conversationId);
     if (signal && signal.aborted) return { error: 'Stopped.', stopped: true };
     // A conversation from before holograms can't take a 2D request: ask in a new one.
@@ -1403,6 +1545,7 @@ export async function startApp(rootEl) {
 
   function onRunEvent(entry, evt) {
     if (!evt || !evt.type) return;
+    if (screensCtl) safe(() => screensCtl.onRunEvent(entry, evt)); // live content on other screens
     if (evt.type === 'notice') {
       if (evt.message) toast(evt.message, { level: evt.level === 'warn' ? 'warn' : 'info', id: `notice:${evt.message}` });
       return;
@@ -1442,6 +1585,7 @@ export async function startApp(rootEl) {
 
   function onRunDone(entry) {
     if (entry.unsub) safe(() => entry.unsub());
+    if (screensCtl) safe(() => screensCtl.onRunDone(entry));
     broadcastRun(entry.conv.id, false);
     if (state.runs.get(entry.conv.id) === entry) state.runs.delete(entry.conv.id);
     if (!state.runs.size) safe(() => allowSleep('run'));

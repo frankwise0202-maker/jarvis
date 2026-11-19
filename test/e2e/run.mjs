@@ -31,6 +31,7 @@ import interaction from './scenarios/interaction.mjs';
 import regressions from './scenarios/regressions.mjs';
 import holograms from './scenarios/holograms.mjs';
 import voiceSpeech from './scenarios/voice-speech.mjs';
+import screens from './scenarios/screens.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -42,7 +43,7 @@ const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 const presence = await optionalScenarios('./scenarios/presence.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...screens];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

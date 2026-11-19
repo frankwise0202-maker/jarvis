@@ -3,6 +3,7 @@
 
 import './styles/app.css';
 import { startApp } from './ui/app.js';
+import { isScreenMode, startScreenPage } from './ui/screens/screen-page.js';
 
 function showBootError(root, err) {
   console.error('[jarvis] boot failed:', err);
@@ -25,8 +26,10 @@ function showBootError(root, err) {
 }
 
 const root = document.getElementById('app');
+// Screens (v7): ?screen=<kind> is a window on another monitor showing one panel, not the app.
+const start = isScreenMode() ? startScreenPage : startApp;
 try {
-  Promise.resolve(startApp(root)).catch((err) => showBootError(root, err));
+  Promise.resolve(start(root)).catch((err) => showBootError(root, err));
 } catch (err) {
   showBootError(root, err);
 }

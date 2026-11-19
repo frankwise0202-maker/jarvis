@@ -1,6 +1,7 @@
 // The lead turn: stream Jarvis's requests into segments, run client tool rounds (deploy_agents,
 // update_memory, and in version 4 conversations show_hologram, draw_blueprint and open_saved: see
-// visuals.js), follow stop reasons, and handle stop / interruption / resume (SPEC 8.4, 8.6).
+// visuals.js; in the next version open_screen: see screens.js), follow stop reasons, and handle
+// stop / interruption / resume (SPEC 8.4, 8.6).
 //
 // History rules (SPEC 8.3): conversation.apiMessages is append-only and only complete responses are
 // appended. A pause_turn response is held in `ctx.paused` and sent as the trailing assistant
@@ -41,6 +42,7 @@ import {
   updateVisualSegment,
 } from './visuals.js';
 import { isAttachmentBlock } from './attachments.js';
+import { SCREEN_NOT_RESUMED, SCREEN_TOOL, runOpenScreen } from './screens.js';
 import { PRICES } from './models.js';
 import { countdown, retryDelayMs, retryLabel, shouldRetry } from './retry.js';
 import { abortError, jsonCopy, parsePartialJson, sleep, uid } from './util.js';
@@ -557,6 +559,8 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
       round.results[tu.id] = await applyMemory(ctx, tu, req);
     } else if (isVisualTool(ctx, tu.name)) {
       round.results[tu.id] = await runVisualTool(ctx, tu, req);
+    } else if (isScreenTool(ctx, tu.name)) {
+      round.results[tu.id] = await runOpenScreen(ctx, tu);
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
@@ -568,6 +572,11 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
 /** show_hologram / draw_blueprint / open_saved, in a conversation whose frozen tools have it (V4). */
 function isVisualTool(ctx, name) {
   return VISUAL_TOOLS.includes(name) && hasVisualTools(ctx.conv, name);
+}
+
+/** open_screen (Screens, v7), in a conversation whose frozen tools have it (the next version after V4). */
+function isScreenTool(ctx, name) {
+  return name === SCREEN_TOOL && hasVisualTools(ctx.conv, SCREEN_TOOL);
 }
 
 /** Whether the history ends with the assistant message asking for these tools (no results yet). */
@@ -603,6 +612,9 @@ async function resumeToolRound(ctx, pending) {
     } else if (isVisualTool(ctx, tu.name)) {
       // Showing, saving (idempotent per segment) or opening an item again is harmless.
       round.results[tu.id] = await runVisualTool(ctx, tu, Math.max(0, ctx.req - 1));
+    } else if (isScreenTool(ctx, tu.name)) {
+      // Windows never pop up on a Resume: that is one tap on a checkpoint, not the owner asking now.
+      round.results[tu.id] = { content: SCREEN_NOT_RESUMED, is_error: true };
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }

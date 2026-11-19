@@ -19,6 +19,9 @@
 // up to 30 fps), sleeps while the page is hidden, the view is off-screen or covered by an inert
 // overlay; DPR capped at 2. WebGL context loss pauses it with a notice and it recovers on restore
 // (or the owner taps Restart). dispose() frees every geometry, material and the GL context.
+// The container may live in another same-origin document (a Screens floating panel, Document
+// Picture-in-Picture): elements, frames, visibility and observers then come from that document's
+// window, so it keeps rendering while the app's own tab is hidden.
 
 import {
   AdditiveBlending,
@@ -105,10 +108,10 @@ function niceStep(x) {
   return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
 }
 
-function watchMedia(query, fn) {
+function watchMedia(query, fn, win = window) {
   let mq = null;
   try {
-    mq = window.matchMedia ? window.matchMedia(query) : null;
+    mq = win.matchMedia ? win.matchMedia(query) : null;
   } catch {
     mq = null;
   }
@@ -151,8 +154,8 @@ function watchCover(fn) {
   };
 }
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
+function el(tag, className, text, doc = document) {
+  const node = doc.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
@@ -182,23 +185,27 @@ export function createHologram(container, options = {}) {
   };
 
   // ---------------------------------------------------------------------------------------------
-  // DOM
+  // DOM (in the container's document: another window's when the hologram floats in a panel)
 
-  const root = el('div', 'holo');
+  const doc = (container && container.ownerDocument) || document;
+  const win = doc.defaultView || window;
+  const foreign = win !== window; // a time base of its own: frames are timed with this window's clock
+  const mk = (tag, className, text) => el(tag, className, text, doc);
+  const root = mk('div', 'holo');
   // `let`: after a context loss the browser never restores, "Restart 3D view" needs a fresh canvas
   // (a canvas whose context is lost can't give a new one).
-  let canvas = el('canvas', 'holo__canvas');
+  let canvas = mk('canvas', 'holo__canvas');
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', 'Hologram');
-  const svg = document.createElementNS(SVG_NS, 'svg');
+  const svg = doc.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('class', 'holo__leaders');
   svg.setAttribute('aria-hidden', 'true');
-  const labelsEl = el('div', 'holo__labels');
+  const labelsEl = mk('div', 'holo__labels');
   labelsEl.setAttribute('aria-hidden', 'true');
-  const notice = el('div', 'holo__notice');
+  const notice = mk('div', 'holo__notice');
   notice.hidden = true;
-  const noticeText = el('p', 'holo__notice-text');
-  const noticeBtn = el('button', 'holo__notice-btn', 'Restart 3D view');
+  const noticeText = mk('p', 'holo__notice-text');
+  const noticeBtn = mk('button', 'holo__notice-btn', 'Restart 3D view');
   noticeBtn.type = 'button';
   noticeBtn.hidden = true;
   notice.append(noticeText, noticeBtn);
@@ -310,7 +317,7 @@ export function createHologram(container, options = {}) {
     if (reducedMq.matches && !rotateRequested) autoRotateOn = false;
     requestRender();
     emit();
-  });
+  }, win);
   let labelsOn = o.labels !== false;
   // Reduced motion: no automatic rotation (even if the app asks for it at creation); an explicit
   // request from the owner later ("spin it", the Rotate button) is honored.
@@ -807,7 +814,7 @@ export function createHologram(container, options = {}) {
     const rect = root.getBoundingClientRect();
     const w = Math.round(rect.width);
     const h = Math.round(rect.height);
-    const ratio = Math.max(1, Math.min(o.maxDpr || MAX_DPR, Math.max(1, window.devicePixelRatio || 1)) * dprScale);
+    const ratio = Math.max(1, Math.min(o.maxDpr || MAX_DPR, Math.max(1, win.devicePixelRatio || 1)) * dprScale);
     if (w === width && h === height && ratio === dpr) return;
     width = w;
     height = h;
@@ -826,14 +833,14 @@ export function createHologram(container, options = {}) {
   // Labels
 
   function createLabel(rec) {
-    const box = el('div', 'holo-label');
+    const box = mk('div', 'holo-label');
     box.dataset.key = rec.key;
-    const text = el('span', 'holo-label__text');
+    const text = mk('span', 'holo-label__text');
     box.append(text);
     labelsEl.append(box);
-    const line = document.createElementNS(SVG_NS, 'line');
+    const line = doc.createElementNS(SVG_NS, 'line');
     line.setAttribute('class', 'holo-leader');
-    const dot = document.createElementNS(SVG_NS, 'circle');
+    const dot = doc.createElementNS(SVG_NS, 'circle');
     dot.setAttribute('class', 'holo-anchor');
     dot.setAttribute('r', '2.2');
     svg.append(line, dot);
@@ -1314,7 +1321,7 @@ export function createHologram(container, options = {}) {
 
   function requestRender() {
     needsRender = true;
-    if (awake && !rafId && !disposed) rafId = requestAnimationFrame(frame);
+    if (awake && !rafId && !disposed) rafId = win.requestAnimationFrame(frame);
   }
 
   function autoRotating() {
@@ -1328,12 +1335,12 @@ export function createHologram(container, options = {}) {
   // the resume delay after the owner's last touch) wakes it then. Touch has no hover renders.
   let rotateWake = 0;
   function scheduleRotateWake() {
-    clearTimeout(rotateWake);
+    win.clearTimeout(rotateWake);
     rotateWake = 0;
     if (disposed || !autoRotateOn || (reducedMq.matches && !rotateRequested)) return;
     const due = lastInteraction + AUTO_ROTATE_RESUME_MS - performance.now();
     if (!(due > 0) || !Number.isFinite(due)) return; // due now: whatever blocks it requests a render when it ends
-    rotateWake = setTimeout(() => {
+    rotateWake = win.setTimeout(() => {
       rotateWake = 0;
       requestRender();
     }, Math.ceil(due) + 20);
@@ -1453,13 +1460,15 @@ export function createHologram(container, options = {}) {
   }
 
   let frameTimes = [];
-  function frame(nowMs) {
+  function frame(ts) {
     rafId = 0;
+    // Another window's frame timestamps count from that window's time origin: use this one's clock.
+    const nowMs = foreign ? performance.now() : ts;
     if (!awake || disposed || contextLost) return;
     const continuous = autoRotating();
     const busyBefore = camTween || explodeAnim || gesture || needsRender;
     if (!busyBefore && continuous && lastFrame && nowMs - lastFrame < 1000 / IDLE_FPS - 2) {
-      rafId = requestAnimationFrame(frame);
+      rafId = win.requestAnimationFrame(frame);
       return;
     }
     const dt = lastFrame ? Math.min(0.1, (nowMs - lastFrame) / 1000) : 1 / 60;
@@ -1480,7 +1489,7 @@ export function createHologram(container, options = {}) {
     const busy = stepAnimations(dt, nowMs);
     applyHover();
     renderNow();
-    if (busy || needsRender || autoRotating()) rafId = requestAnimationFrame(frame);
+    if (busy || needsRender || autoRotating()) rafId = win.requestAnimationFrame(frame);
     else {
       lastFrame = 0;
       scheduleRotateWake();
@@ -1504,28 +1513,30 @@ export function createHologram(container, options = {}) {
   }
 
   function updateAwake() {
-    const should = !disposed && !contextLost && !document.hidden && inView && width > 0 && height > 0 && root.isConnected && !root.closest('[inert]');
+    const should = !disposed && !contextLost && !doc.hidden && inView && width > 0 && height > 0 && root.isConnected && !root.closest('[inert]');
     if (should === awake) return;
     awake = should;
     if (awake) {
       lastFrame = 0;
       requestRender();
     } else if (rafId) {
-      cancelAnimationFrame(rafId);
+      win.cancelAnimationFrame(rafId);
       rafId = 0;
     }
   }
 
   let ro = null;
-  if (typeof ResizeObserver === 'function') {
-    ro = new ResizeObserver(() => measure());
+  const RO = typeof win.ResizeObserver === 'function' ? win.ResizeObserver : typeof ResizeObserver === 'function' ? ResizeObserver : null;
+  if (RO) {
+    ro = new RO(() => measure());
     ro.observe(root);
   }
   const onWindowResize = () => measure();
-  window.addEventListener('resize', onWindowResize);
+  win.addEventListener('resize', onWindowResize);
   let io = null;
-  if (typeof IntersectionObserver === 'function') {
-    io = new IntersectionObserver(
+  const IO = typeof win.IntersectionObserver === 'function' ? win.IntersectionObserver : typeof IntersectionObserver === 'function' ? IntersectionObserver : null;
+  if (IO) {
+    io = new IO(
       (entries) => {
         inView = entries[entries.length - 1].isIntersecting;
         updateAwake();
@@ -1535,7 +1546,7 @@ export function createHologram(container, options = {}) {
     io.observe(root);
   }
   const onVisibility = () => updateAwake();
-  document.addEventListener('visibilitychange', onVisibility);
+  doc.addEventListener('visibilitychange', onVisibility);
   const unwatchCover = watchCover(() => updateAwake());
 
   // ---------------------------------------------------------------------------------------------
@@ -1581,7 +1592,7 @@ export function createHologram(container, options = {}) {
       /* lost context */
     }
     // On a fresh canvas: the old one's context stays lost when the browser never restores it.
-    const fresh = el('canvas', 'holo__canvas');
+    const fresh = mk('canvas', 'holo__canvas');
     fresh.setAttribute('role', 'img');
     fresh.setAttribute('aria-label', canvas.getAttribute('aria-label') || 'Hologram');
     canvas.removeEventListener('webglcontextlost', onContextLost, false);
@@ -1903,13 +1914,13 @@ export function createHologram(container, options = {}) {
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (rafId) cancelAnimationFrame(rafId);
+      if (rafId) win.cancelAnimationFrame(rafId);
       clearTimeout(restoreTimer);
-      clearTimeout(rotateWake);
+      win.clearTimeout(rotateWake);
       if (ro) ro.disconnect();
       if (io) io.disconnect();
-      window.removeEventListener('resize', onWindowResize);
-      document.removeEventListener('visibilitychange', onVisibility);
+      win.removeEventListener('resize', onWindowResize);
+      doc.removeEventListener('visibilitychange', onVisibility);
       unwatchCover();
       reducedMq.off();
       root.removeEventListener('pointerdown', onPointerDown);

@@ -3,6 +3,7 @@
 //
 //   createPhotoStrip({ search, onOpen, limit }) -> { el, search(query), destroy() }
 //   createPhotoViewer({ photos, index, onClose }) -> { el, show(i), destroy() }
+//   currentPhoto() -> { src, title, credit } of the photo on screen, or null (Screens: "this")
 //
 // Only https://upload.wikimedia.org images are shown (the search drops everything else); credits
 // are plain text; the only links are the Commons page and the license (http/https, new tab).
@@ -103,6 +104,16 @@ export function createPhotoStrip({ search = searchPhotos, onOpen, limit = 12, se
   };
 }
 
+let shownPhoto = null; // { viewer, photo } of the newest open viewer
+
+/** The photo the newest open viewer shows (Screens: "put this photo on my other screen"), or null. */
+export function currentPhoto() {
+  const p = shownPhoto && shownPhoto.photo;
+  if (!p || !shownPhoto.viewer.el.isConnected) return null;
+  const src = /^https:\/\/upload\.wikimedia\.org\//.test(p.fullUrl || '') ? p.fullUrl : p.thumbUrl;
+  return { src, title: p.title || 'Photo', credit: [p.author ? `Photo: ${p.author}` : '', p.license || '', 'Wikimedia Commons'].filter(Boolean).join(' · ') };
+}
+
 /** Full-screen photo viewer with zoom/pan, credits and the Commons page link. */
 export function createPhotoViewer({ photos = [], index = 0, onClose } = {}) {
   let current = -1;
@@ -144,6 +155,7 @@ export function createPhotoViewer({ photos = [], index = 0, onClose } = {}) {
     if (!photos.length) return;
     current = (i + photos.length) % photos.length;
     const p = photos[current];
+    shownPhoto = { viewer: api, photo: p };
     kicker.textContent = `Reference photo · ${current + 1} of ${photos.length}`;
     title.textContent = p.title;
     prev.hidden = next.hidden = photos.length < 2;
@@ -184,14 +196,16 @@ export function createPhotoViewer({ photos = [], index = 0, onClose } = {}) {
     } else pz.setSize({ width: w, height: hgt }, { refit: true });
   }
 
-  show(index);
-  return {
+  const api = {
     el,
     show,
     destroy() {
       if (pz) pz.destroy();
       if (loader) loader.onload = null;
+      if (shownPhoto && shownPhoto.viewer === api) shownPhoto = null;
       el.remove();
     },
   };
+  show(index);
+  return api;
 }

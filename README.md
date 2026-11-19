@@ -242,6 +242,32 @@ it once more (copy it from your password manager).
   chat: a note at the top of the chat offers **Start one**, and Voice Mode starts a new chat by
   itself. Your old chats stay in History.
 
+### Screens: your other monitor, or a panel beside you
+
+Say or type it, in the chat, a hologram's command box or Voice Mode:
+
+- **"Open this on my other screen"**, "put the hologram on screen 2", "put the report on my
+  second monitor": Jarvis opens it on your other monitor, filling it, in his HUD frame. The first
+  time, Chrome asks once whether Jarvis may place windows on your screens (Jarvis explains first).
+- **"Pull it up beside me"**, "float it": a floating panel that stays on top of your other apps,
+  beside whatever you're working on. Move and resize it as you like. With only one monitor
+  connected, "my other screen" floats it here instead.
+- **"Open it in a window"**: its own window on the right half of your screen.
+- **"Bring it back"** closes the other screen and shows it here again; "close the other screen"
+  just closes it.
+
+"This" means what you're looking at: the open hologram or blueprint, otherwise the newest card in
+the chat (a running mission shows as Mission Control, a finished one as its report). You can also
+name it: the hologram, the blueprint, Mission Control, the report, the photo, the camera, the
+link ("open the second link in a window"). Live things stay live: a mission keeps moving and an
+answer keeps writing on the other screen. Screen commands happen on your device, free.
+
+When you speak a command, Chrome may ask for one tap first: an **Open on screen 2** (or **Float
+it**) button appears; tap it. To skip that tap for windows, allow pop-ups for the Jarvis site
+(the blocked pop-up icon at the right of Chrome's address bar → Always allow). Floating panels
+always need one tap. Safari can't choose a screen or float a panel, so Jarvis opens a window you
+can drag across; on an iPhone (one screen) it opens full screen in the app.
+
 ### A more natural voice
 
 Jarvis speaks with the voices your device and browser already have, so it costs nothing extra.

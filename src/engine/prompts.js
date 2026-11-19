@@ -7,6 +7,7 @@ import { DEPTHS, MODELS } from './models.js';
 import { singleLine, truncate } from './util.js';
 import { showHologramTool } from '../lib/hologram-spec.js';
 import { drawBlueprintTool, sheetLabel } from '../lib/blueprint-spec.js';
+import { SCREENS_SECTION, openScreenTool } from './screens.js';
 
 export const LEAD_SYSTEM_V1 = `You are Jarvis, a personal AI assistant to one person, the owner. You run in their browser and on their phone. You can answer from your own knowledge, search the web and read pages, remember facts the owner asks you to keep, and deploy a team of research agents that work in parallel.
 
@@ -291,6 +292,25 @@ export function leadToolsV4() {
 
 /** The lead tools new conversations freeze. */
 export const leadToolsLatest = leadToolsV4;
+
+/**
+ * Screens (v7), STAGED for the next frozen version: V4 plus open_screen, appended so the V4 part is
+ * unchanged. At integration, the next version is built as
+ *   export function leadToolsV5() { return [...leadToolsV4(), ...<Optics tools>, openScreenTool()]; }
+ *   export const LEAD_SYSTEM_V4 = <V3 + Optics section + SCREENS_SECTION before "# Writing the answer">
+ * and both go into LEAD_SYSTEM_VERSIONS / leadToolVersions() (the pinned-hash test gains a line).
+ * Until then nothing freezes this list; tests build conversations with it explicitly.
+ */
+export function leadToolsWithScreens() {
+  return [...leadToolsV4(), openScreenTool()];
+}
+
+/** The V3 prompt with the Screens section, staged like leadToolsWithScreens(). */
+export const LEAD_SYSTEM_WITH_SCREENS = (() => {
+  const anchor = '\n\n# Writing the answer\n';
+  if (LEAD_SYSTEM_V3.split(anchor).length !== 2) throw new Error('prompts: LEAD_SYSTEM_V3 changed');
+  return LEAD_SYSTEM_V3.replace(anchor, `\n\n${SCREENS_SECTION}${anchor}`);
+})();
 
 /** The client tools of version 4 that show something on the owner's screen. */
 export const VISUAL_TOOLS = Object.freeze(['show_hologram', 'draw_blueprint', 'open_saved']);

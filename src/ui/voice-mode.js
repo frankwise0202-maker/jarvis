@@ -60,6 +60,10 @@
 //                           note(text)          a caption in the viewer ("I'll take that once …")
 //                           spoken()            a reply or acknowledgement has been said (the
 //                                               viewer's caption of it can leave)
+//   screens               Screens (v7, app.js): command(text) -> null (not a screen command) or
+//                           { handled: true, done: Promise<{ ack }> }. Checked first for every
+//                           thing heard ("put it on my other screen", "float it", "bring it back"):
+//                           it acts at once (free: no turn) and Jarvis says the short ack.
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -206,6 +210,7 @@ function createVoiceMode(opts) {
     container,
     visuals,
     createMicBands,
+    screens,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -1750,7 +1755,45 @@ function createVoiceMode(opts) {
     return segs.some((s) => s && s.kind === 'hologram' && s.status === 'building' && R.visuals.has(s.id));
   }
 
-  /** What the owner said: a local command while a viewer covers Voice Mode, otherwise a turn. */
+  /**
+   * Screens (v7): "put it on my other screen", "float it", "bring it back" act at once (no turn),
+   * then Jarvis says a short line ("It's on screen 2.", or "Tap Open on screen 2, and it'll
+   * appear." when the browser needs a tap first). True when the words were a screen command.
+   */
+  function screenCommand(text) {
+    if (!screens || typeof screens.command !== 'function') return false;
+    let res = null;
+    try {
+      res = screens.command(text);
+    } catch (err) {
+      console.warn('[voice] the screen command failed', err);
+      res = null;
+    }
+    if (!res || !res.handled) return false;
+    showCaption('quote', `“${text}”`);
+    const marker = { pending: true, viewer: true, screens: true };
+    S.run = marker;
+    setVoiceState('thinking');
+    setStatus('One moment…', 'sparkle');
+    Promise.resolve(res.done).then(
+      (out) => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck(out && typeof out.ack === 'string' ? out.ack : '');
+      },
+      () => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck('I couldn’t open that screen.');
+      },
+    );
+    return true;
+  }
+
+  /**
+   * What the owner said: a screen command, a local command while a viewer covers Voice Mode,
+   * otherwise a turn.
+   */
   function heard(text) {
     // "Shall I draw a blueprint of …?" was asked: yes draws it, no drops it; anything else drops the
     // question and is taken as usual.
@@ -1770,6 +1813,9 @@ function createVoiceMode(opts) {
       heardDuringBuild(text, S.run);
       return;
     }
+    // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
+    // (above) and is taken here once the reply has been said.
+    if (screenCommand(text)) return;
     // A 2D request heard here is cancelled by Stop while its library lookup is still running.
     // With no viewer open, the app may open the hologram shown last for a command about it.
     const ctl = typeof AbortController === 'function' ? new AbortController() : null;

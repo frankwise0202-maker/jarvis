@@ -113,6 +113,8 @@ const carriesFiles = (dt) => !!dt && Array.from(dt.types || []).includes('Files'
  * @param {() => void} o.onStop
  * @param {() => void} o.onMic
  * @param {(code: string) => void} [o.onHintAction]
+ * @param {(text: string) => boolean} [o.onCommand]  a local command the app acts on itself (Screens:
+ *   "float it"); true = handled (the box is cleared). Asked first, even while Jarvis is working.
  * @param {(mode: string) => void} [o.onModeChange]
  * @param {() => object} [o.getSettings]   defaults to the platform settings (maxAgents → team size)
  * @param {string} [o.mode]
@@ -776,6 +778,15 @@ export function createComposer(o) {
 
   /** Sends the text and the ready attachments. Returns true when the app accepted the message. */
   function submit() {
+    // A local command (Screens: "put mission control on my other screen") works while Jarvis is
+    // busy too: it is not a message, so the running turn is not in its way.
+    const typed = input.value.trim();
+    if (typed && !readyAttachments().length && typeof o.onCommand === 'function' && o.onCommand(typed)) {
+      input.value = '';
+      autoGrow();
+      syncButtons();
+      return true;
+    }
     if (running) return false;
     const text = input.value.trim();
     const attachments = readyAttachments();

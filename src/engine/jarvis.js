@@ -171,6 +171,8 @@ export function createJarvis(deps = {}) {
     memory: deps.memory && typeof deps.memory === 'object' ? deps.memory : null,
     // The saved library (holograms and blueprints): { save, get, list, findPartBlueprint }, see visuals.js.
     library: deps.library && typeof deps.library === 'object' ? deps.library : null,
+    // Screens (v7): { open(input) -> outcome } puts things on another monitor, see screens.js.
+    screens: deps.screens && typeof deps.screens === 'object' ? deps.screens : null,
     libraryTimeoutMs: Number.isFinite(deps.libraryTimeoutMs) && deps.libraryTimeoutMs > 0 ? deps.libraryTimeoutMs : LIBRARY_TIMEOUT_MS,
     // How often a live hologram / blueprint segment is updated while its input streams (tests).
     liveIntervalMs: Number.isFinite(deps.liveIntervalMs) && deps.liveIntervalMs >= 0 ? deps.liveIntervalMs : LIVE_INTERVAL_MS,
