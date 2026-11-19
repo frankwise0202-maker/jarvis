@@ -10,7 +10,9 @@
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "e2e": "node test/e2e/run.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "deploy": "node scripts/deploy-pages.mjs"
+    "deploy": "node scripts/deploy-pages.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
+    "test:extension": "node test/extension/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0"
