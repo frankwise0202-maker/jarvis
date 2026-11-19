@@ -851,3 +851,105 @@ E2E seeds storage before the app loads: `localStorage['jarvis.dev.apiBase']` (te
 origin), `localStorage['jarvis.apiKey']` (mock key `sk-ant-test-0123456789abcdefghijklmnop`),
 and `localStorage['jarvis.settings.v1']` (partial settings JSON, e.g. `{"onboarded":true,"userName":"Tony"}`).
 The app must read these through the platform modules at boot.
+
+## 14. Feature pack v1.1 (built as NEW modules; wired in later by an integrator)
+
+Feature engineers create only the new files listed for their pack. They do NOT edit any
+existing file (app.js, chat.js, composer.js, settings.js, engine files, hud files, platform
+files, CSS owned by others). Each pack ends with a precise **wiring checklist** (in the final
+report) telling the integrator exactly which calls to add where. Modules read settings through
+an injected `getSettings()` and must tolerate missing keys (use the defaults below), because
+the new keys are added to `DEFAULT_SETTINGS` later.
+
+New settings keys (defaults): `theme: 'arc'`, `sounds: true`, `soundVolume: 0.6`,
+`haptics: true`, `notifyOnFinish: true`, `followups: true`, `voiceContinuous: true`,
+`customProtocols` lives in its own storage key (below), not in settings.
+
+### 14.1 Voice Mode — `src/ui/voice-mode.js`, `src/styles/voice-mode.css`
+Full-screen hands-free conversation overlay (the "talk to Jarvis" experience).
+```js
+openVoiceMode({
+  getSettings,                 // () => settings
+  startTurn,                   // (text, { mode }) => TurnRun (SPEC 7) — the app's send function
+  createCore,                  // SPEC 10.3 factory (pass through from hud/core.js)
+  stt, tts,                    // the platform modules (SPEC 9.2) as namespace objects
+  markdownToPlainText,         // SPEC 9.1
+  sounds,                      // optional §14.3 module
+  onClose,                     // () => void
+}) => { close() }
+```
+States loop: listening → thinking/working (shows live mission mini-status: agents done/total,
+current activity line) → speaking (captions of what is being spoken) → listening again when
+`voiceContinuous`. Tap the core: while listening = stop listening and send; while
+thinking = abort the turn; while speaking = stop speaking and listen. Big exit button
+(`data-testid="voice-close"`), root `data-testid="voice-mode"` with `data-state`. Speaks the
+answer's summary paragraph (via `tts.toSpeech(md,'summary')`) — a "Read full answer" button
+speaks everything. If STT is unsupported, show a clear message and a text box fallback (the
+iOS keyboard dictation key still works). Focus-trapped dialog, Escape closes, safe areas,
+reduced motion, works at 320px wide. Never uses innerHTML.
+
+### 14.2 Protocols & briefings — `src/ui/protocols.js`, `src/styles/protocols.css`
+One-tap mission presets ("Protocols") plus owner-defined custom protocols.
+```js
+export const PROTOCOLS = [ { id, name, icon, blurb, mode, needsInput, inputLabel, inputPlaceholder, buildPrompt({ input, settings, now }) } ]
+export function listProtocols()            // built-ins + custom
+export function saveCustomProtocol({ id?, name, prompt, mode })  // localStorage 'jarvis.protocols.v1'
+export function deleteCustomProtocol(id)
+export function createProtocolGrid({ getSettings, onRun, compact })  // => { el, refresh() }; onRun(promptText, mode, protocol)
+export function createProtocolEditor({ onSaved, onCancel, protocol? })  // => { el }
+```
+Built-ins (excellent prompts; each tells Jarvis how many agents and which angles):
+Morning Briefing (swarm: weather for the owner's location if shared, top world news, tech news,
+markets, one fascinating thing; ends with a spoken-style summary; uses memory/interests),
+Deep Research (swarm, input topic), Compare & Decide (swarm, input "A vs B…"), Trip Planner
+(swarm, input destination/dates), Fact Check (auto, input claim), Explain Simply (quick,
+input topic), News Sweep (swarm, input topic or "today"), Gift Finder (swarm, input who/budget).
+Tiles show icon, name, blurb; tiles needing input open an inline input row. `data-testid`:
+`protocol-grid`, `protocol-tile` (with `data-id`), `protocol-input`, `protocol-run`,
+`protocol-add`.
+
+### 14.3 Ambience: sounds, haptics, themes, attention — `src/ui/sounds.js`, `src/ui/themes.js`, `src/styles/themes.css`, `src/ui/attention.js`
+```js
+// sounds.js — WebAudio-synthesized (no audio files), subtle, premium HUD sounds
+export function initSounds(getSettings)    // lazily creates AudioContext; unlocks on first gesture
+export function play(name)                 // 'send'|'launch'|'agent-done'|'mission-done'|'reply-done'|'error'|'listen-start'|'listen-stop'|'tap'|'notify'
+export function haptic(kind)               // 'light'|'success'|'error' via navigator.vibrate when supported and settings.haptics
+// themes.js
+export const THEMES = [ { id: 'arc', name: 'Arc Cyan', swatch }, … ]   // ≥ 6 themes: arc, ember, verdant, aurora, solar, mono
+export function applyTheme(id)             // sets <html data-theme>, updates meta theme-color, dispatches window 'jarvis:themechange'
+export function readThemeColors()          // { accent, accent2, accentGlow, ok, warn, err, violet, bg } from computed CSS vars (for canvas)
+export function createThemePicker({ value, onChange })   // => { el, setValue(id) }  data-testid 'theme-picker', swatches 'theme-swatch' data-id
+// attention.js — let the owner know when long missions finish
+export function initAttention(getSettings) // tracks focus/visibility
+export function missionFinished({ title, summary })  // if document hidden & settings.notifyOnFinish: system notification (via service worker registration.showNotification when available, else new Notification) + app badge (navigator.setAppBadge); also returns true if it notified
+export function clearAttention()           // clears badge on focus
+export async function requestNotifyPermission()  // from a user gesture only
+```
+`themes.css` overrides only accent-family tokens (and `--bg` tint subtly) under
+`:root[data-theme="…"]`; `arc` = the default tokens. Contrast must stay WCAG AA for text.
+
+### 14.4 Records: sharing, reports, stats — `src/ui/share.js`, `src/ui/stats.js`, `src/styles/stats.css`
+```js
+// share.js
+export function answerMarkdown(turn)                 // final answer Markdown (text segments joined)
+export function missionReportMarkdown(turn, mission) // full dossier: title, time, final answer, every agent (role, task, report, sources), totals
+export function conversationMarkdown(conversation)   // transcript
+export async function shareText({ title, text })     // Web Share API if available, else clipboard; returns 'shared'|'copied'|'failed'
+export function downloadText(filename, text, mime = 'text/markdown')
+// stats.js — lightweight aggregates kept in localStorage 'jarvis.stats.v1'
+export function recordTurn(turn)                     // call once when a Jarvis turn ends (any status); idempotent by turn.id
+export function getStats()                           // { totals: { turns, missions, agents, searches, sources, costUsd }, byDay: { 'YYYY-MM-DD': {...} }, topRoles: [[role, n]] }
+export function createStatsView({ getSpend, listConversations, estimateStorage })  // => { el, refresh() } — "Systems" dashboard: totals, 14-day bar chart (CSS/SVG, no libs), top agent roles, storage used, est. spend month/all time
+```
+`data-testid`: `stats-view`, `stats-total-agents`.
+
+### 14.5 Follow-up suggestions — `src/engine/followups.js`
+```js
+export async function suggestFollowups({ apiKey, apiBase, fetch, question, answer, signal }) // => string[] (0–3 short follow-up questions, ≤ 70 chars each)
+```
+Uses `claude-haiku-5-5` (cheap) via the official SDK (`createClient` from `./client.js`), non-streaming,
+`max_tokens` ~ 400, `output_config: { effort: 'low', format: { type: 'json_schema', schema } }`
+(verify the exact structured-output shape in the SDK types), no thinking params, no tools.
+Never throws (returns [] on any error). Unit tests with a fake fetch in `test/unit/followups.test.mjs`.
+UI: the integrator renders chips (`data-testid="followup"`) under the latest finished Jarvis
+turn; tapping one sends it.
