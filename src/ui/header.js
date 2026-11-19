@@ -18,7 +18,8 @@ const STATE_TONE = {
 
 /**
  * @param {{ onHistory: () => void, onSettings: () => void, onNewChat: () => void, demo?: boolean,
- *           voice?: boolean, onVoice?: () => void }} o   voice: show the Voice Mode button
+ *           voice?: boolean, onVoice?: () => void, onLibrary?: () => void }} o   voice: show the Voice
+ *           Mode button; onLibrary: show the Blueprints library button (saved holograms and blueprints)
  */
 export function createHeader(o) {
   const canvas = h('canvas', { class: 'header-core-canvas', attrs: { 'data-testid': 'header-core', 'aria-hidden': 'true' } });
@@ -91,13 +92,22 @@ export function createHeader(o) {
     { class: 'icon-btn', type: 'button', attrs: { 'aria-label': 'History', 'data-testid': 'history-button', 'aria-expanded': 'false', title: 'History' }, on: { click: () => o.onHistory() } },
     icon('history', { size: 22 }),
   );
+  // Saved holograms and blueprints (on the narrowest phones it lives in History instead, see
+  // library.css). Not in the demo: it has no saved items, and the DEMO button needs the room.
+  const libraryBtn = o.onLibrary && !o.demo
+    ? h(
+        'button',
+        { class: 'icon-btn header-library', type: 'button', attrs: { 'aria-label': 'Blueprints library', 'data-testid': 'library-button', title: 'Blueprints: saved holograms and blueprints' }, on: { click: () => o.onLibrary() } },
+        icon('blueprint', { size: 22 }),
+      )
+    : null;
   const settingsBtn = h(
     'button',
     { class: 'icon-btn', type: 'button', attrs: { 'aria-label': 'Settings', 'data-testid': 'settings-button', title: 'Settings' }, on: { click: () => o.onSettings() } },
     icon('settings', { size: 22 }),
   );
 
-  const el = h('header', { class: 'header' }, h('div', { class: 'header-inner' }, brand, h('div', { class: 'header-actions' }, newBtn, voiceBtn, historyBtn, settingsBtn)));
+  const el = h('header', { class: 'header' }, h('div', { class: 'header-inner' }, brand, h('div', { class: 'header-actions' }, newBtn, voiceBtn, libraryBtn, historyBtn, settingsBtn)));
 
   let lastState = '';
   return {

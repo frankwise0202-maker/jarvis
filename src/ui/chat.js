@@ -12,6 +12,8 @@ import { createCore } from './hud/core.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { createProtocolGrid, createProtocolBubble } from './protocols.js';
 import { createAttachmentStrip } from './attachments.js';
+import { loadHologramRenderer } from './hologram/viewer.js';
+import { loadBlueprintModule } from './blueprint/open.js';
 import { MODELS } from '../engine/index.js';
 
 const MD_INTERVAL = 125; // ms between Markdown re-renders while streaming (~8/s)
@@ -213,6 +215,9 @@ function pickSuggestions(date = new Date()) {
  * @param {(text: string, mode: string) => void} o.onSuggestion
  * @param {(text: string, mode: string, protocol: object) => boolean} [o.onProtocol]  runs a protocol (SPEC §14.2)
  * @param {(turn: object) => void} [o.onShare]          opens Share & export for a reply (SPEC §14.4)
+ * @param {(turn: object, seg: object) => void} [o.onOpenHologram]  opens the hologram viewer for a hologram card
+ * @param {(turn: object, seg: object) => void} [o.onOpenBlueprint]  opens the blueprint viewer for a blueprint card
+ * @param {{ get, ensure, onChange }} [o.thumbs]        saved-library thumbnails for the cards (src/ui/thumbs.js)
  * @param {(fact: string) => boolean|null} [o.isRemembered]  is a remembered fact still saved (null = unknown)
  * @param {(fact: string) => boolean} [o.onForgetMemory]  undo a remembered fact (shows an Undo button)
  * @param {() => object} [o.getSettings]
@@ -829,7 +834,7 @@ function createJarvisTurnView(turn, ctx) {
   const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, missionBtn, shareBtn);
   const footer = h('div', { class: 'turn-footer', hidden: true }, footerNotice, h('div', { class: 'turn-foot-row' }, actions, stats));
 
-  const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': txt(turn.status) || 'running', 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
+  const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': txt(turn.status) || 'running', 'data-turn-id': txt(turn.id), 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
 
   let copyTimer = 0;
   function doCopy() {
@@ -880,6 +885,13 @@ function createJarvisTurnView(turn, ctx) {
           return false;
         }
       },
+      // Hologram and blueprint cards: open the viewer; thumbnails from the saved library.
+      openVisual: (seg) => {
+        const fn = seg && seg.kind === 'blueprint' ? o.onOpenBlueprint : o.onOpenHologram;
+        if (typeof fn === 'function') fn(turn, seg);
+      },
+      canOpenVisual: () => typeof o.onOpenHologram === 'function',
+      thumbs: o.thumbs || null,
     };
   }
 
@@ -944,6 +956,7 @@ function createJarvisTurnView(turn, ctx) {
       if (isObj(m) && !['planning', 'running'].includes(m.status)) label = 'Synthesizing reports…';
     } else if (last.kind === 'tool' && last.status !== 'running') label = 'Thinking…';
     else if (last.kind === 'memory' || last.kind === 'notice') label = 'Thinking…';
+    else if ((last.kind === 'hologram' || last.kind === 'blueprint') && last.status !== 'building') label = 'Thinking…';
     else if (last.kind === 'thinking' && last.endedAt) label = 'Writing…';
     else if (last.kind === 'error') label = 'Retrying…';
     pending.hidden = !label;
@@ -1082,6 +1095,9 @@ function createSegmentView(seg, sctx) {
       return createNoticeView();
     case 'error':
       return createErrorView(seg, sctx, false);
+    case 'hologram':
+    case 'blueprint':
+      return createVisualCardView(seg.kind, sctx);
     default:
       return { kind: seg.kind, el: h('div', { class: 'seg seg-unknown', hidden: true }), update() {} };
   }
@@ -1420,6 +1436,132 @@ function createFallbackMissionCard(onOpen) {
       chips.replaceChildren(
         ...agents.map((a) => h('span', { class: 'fallback-chip', attrs: { 'data-testid': 'agent-chip', 'data-status': txt(a.status) || 'queued', 'data-codename': txt(a.codename) }, text: `${txt(a.codename) || 'Agent'} · ${txt(a.status)}` })),
       );
+    },
+  };
+}
+
+// ---- hologram and blueprint cards ------------------------------------------------------------
+
+const SHEET_LABELS = { part: 'Part drawing', cutaway: 'Cutaway', exploded: 'Exploded view', process: 'Process sheet', assembly: 'Assembly drawing' };
+
+/**
+ * A card for a `hologram` or `blueprint` segment: live "Hologram · building" with "12 parts…" while
+ * the tool input streams (Open follows the live build; the viewer chunk is warmed up), then a
+ * thumbnail from the saved library (made now when it has none), the title, the part count and
+ * Open. "Saved" when it was reopened from the library (open_saved); an error state when it stopped
+ * before it finished or could not be built (Open still shows what was built, if anything).
+ */
+function createVisualCardView(kind, sctx) {
+  const isBp = kind === 'blueprint';
+  const word = isBp ? 'Blueprint' : 'Hologram';
+  const glyph = h('span', { class: 'vcard-glyph', attrs: { 'aria-hidden': 'true' } }, icon(isBp ? 'blueprint' : 'hologram', { size: 30, strokeWidth: 1.4 }));
+  const thumb = h('div', { class: 'vcard-thumb' }, h('span', { class: 'vcard-scan', attrs: { 'aria-hidden': 'true' } }), glyph);
+  const kicker = h('span', { class: 'vcard-kicker-text' });
+  const saved = h('span', { class: 'vcard-badge', hidden: true, text: 'Saved' });
+  const title = h('div', { class: 'vcard-title' });
+  const sub = h('div', { class: 'vcard-sub' });
+  const meta = h('div', { class: 'vcard-meta' });
+  const openBtn = h(
+    'button',
+    { class: 'btn btn-sm vcard-open', type: 'button', attrs: { 'data-testid': isBp ? 'blueprint-open' : 'hologram-open' }, on: { click: () => seg && sctx.openVisual(seg) } },
+    icon(isBp ? 'blueprint' : 'hologram', { size: 16 }),
+    h('span', { text: 'Open' }),
+  );
+  const body = h(
+    'div',
+    { class: 'vcard-body' },
+    h('div', { class: 'vcard-kicker' }, h('span', { class: 'vcard-dot', attrs: { 'aria-hidden': 'true' } }), kicker, saved),
+    title,
+    sub,
+    h('div', { class: 'vcard-foot' }, meta, openBtn),
+  );
+  const card = h('div', { class: ['vcard', `vcard--${kind}`] }, thumb, body);
+  const el = h('div', { class: ['seg', 'seg-visual'], attrs: { 'data-testid': isBp ? 'blueprint-card' : 'hologram-card' } }, card);
+  let seg = null;
+  let thumbFor = null; // the library id whose thumbnail is shown (or being fetched)
+  let off = null;
+  let warmed = false;
+
+  function showThumb(url) {
+    if (!url) return;
+    let img = thumb.querySelector('img');
+    if (!img) {
+      img = h('img', { alt: '', attrs: { decoding: 'async' } });
+      thumb.appendChild(img);
+    }
+    if (img.getAttribute('src') !== url) img.src = url;
+    thumb.classList.add('has-img');
+  }
+
+  function loadThumb(id, make) {
+    const t = sctx.thumbs;
+    if (!t || !id) return;
+    const want = id;
+    (make ? t.ensure(id) : t.get(id)).then(
+      (url) => {
+        if (seg && seg.libraryId === want) showThumb(url);
+      },
+      () => {},
+    );
+  }
+
+  function render() {
+    if (!seg) return;
+    const status = seg.status === 'building' || seg.status === 'error' ? seg.status : 'done';
+    const spec = isObj(seg.spec) ? seg.spec : {};
+    const stats = isObj(seg.stats) ? seg.stats : {};
+    // A card that stopped early counts only what can be shown (parts that have shapes).
+    const specParts = Array.isArray(spec.parts) ? spec.parts.filter((p) => isObj(p) && (isBp || (Array.isArray(p.shapes) && p.shapes.length))) : [];
+    const parts = status === 'error' ? specParts.length : count(stats.parts) || specParts.length;
+    const steps = isBp && Array.isArray(spec.steps) ? spec.steps.length : 0;
+    el.dataset.status = status;
+    el.dataset.libraryId = txt(seg.libraryId);
+    card.dataset.status = status;
+    const sheet = isBp ? SHEET_LABELS[txt(seg.sheet) || txt(spec.sheet)] || '' : '';
+    if (status === 'building') setText(kicker, `${word} · ${isBp ? 'drawing' : 'building'}`);
+    else if (status === 'error') setText(kicker, `${word} · incomplete`);
+    else setText(kicker, isBp ? `Blueprint${sheet ? ` · ${sheet}` : ''}` : 'Hologram');
+    saved.hidden = !seg.fromLibrary;
+    setText(title, txt(seg.title) || txt(spec.title) || (status === 'building' ? (isBp ? 'Drawing…' : 'Building…') : word));
+    const subtitle = isBp ? txt(seg.subject) || txt(spec.subject) : txt(seg.subtitle) || txt(spec.subtitle);
+    setText(sub, subtitle);
+    sub.hidden = !subtitle;
+    let line = '';
+    if (status === 'error') line = parts || steps ? `Stopped at ${steps ? plural(steps, 'step', 'steps') : plural(parts, 'part', 'parts')}` : 'Couldn’t be built';
+    else if (steps) line = plural(steps, 'step', 'steps');
+    else if (parts || status === 'building') line = plural(parts, 'part', 'parts');
+    setText(meta, status === 'building' ? (parts || steps ? `${line}…` : 'Starting…') : line);
+    openBtn.hidden = !sctx.canOpenVisual() || (status === 'error' && !parts && !steps);
+    openBtn.setAttribute('aria-label', `Open ${isBp ? 'blueprint' : 'hologram'}${title.textContent ? `: ${title.textContent}` : ''}`);
+    // Warm the viewer chunk while the tool input streams, so Open is instant.
+    if (status === 'building' && !warmed) {
+      warmed = true;
+      (isBp ? loadBlueprintModule() : loadHologramRenderer()).catch(() => {});
+    }
+    // Thumbnail: the saved one, or one made now for a finished saved item.
+    const id = txt(seg.libraryId);
+    if (id && status === 'done' && thumbFor !== id) {
+      thumbFor = id;
+      loadThumb(id, true);
+      if (!off && sctx.thumbs && typeof sctx.thumbs.onChange === 'function') {
+        off = sctx.thumbs.onChange((changed) => {
+          if (seg && seg.libraryId && (!changed || changed === seg.libraryId)) loadThumb(seg.libraryId, false);
+        });
+      }
+    }
+  }
+
+  return {
+    kind,
+    el,
+    live: null,
+    update(s) {
+      seg = s;
+      render();
+    },
+    destroy() {
+      if (typeof off === 'function') off();
+      off = null;
     },
   };
 }

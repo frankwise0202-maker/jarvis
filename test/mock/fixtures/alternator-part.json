@@ -1,0 +1,1909 @@
+{
+ "title": "Alternator",
+ "subject": "Compact 12 V claw-pole alternator, 130 A class",
+ "sheet": "part",
+ "scale": "NTS",
+ "canvas": [
+  1000,
+  700
+ ],
+ "views": [
+  {
+   "title": "FRONT VIEW",
+   "at": [
+    205,
+    340
+   ],
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      -140,
+      0
+     ],
+     "to": [
+      140,
+      0
+     ],
+     "style": "center"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 119
+    },
+    {
+     "type": "path",
+     "d": "M -24.5 -108.5 L -24.5 -147 A 24.5 24.5 0 0 1 24.5 -147 L 24.5 -108.5"
+    },
+    {
+     "type": "path",
+     "d": "M -24.5 108.5 L -24.5 147 A 24.5 24.5 0 0 0 24.5 147 L 24.5 108.5"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      -147
+     ],
+     "r": 9.2,
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      147
+     ],
+     "r": 9.2,
+     "style": "thick"
+    },
+    {
+     "type": "line",
+     "from": [
+      -15.7,
+      -147
+     ],
+     "to": [
+      15.8,
+      -147
+     ],
+     "style": "center"
+    },
+    {
+     "type": "line",
+     "from": [
+      -15.7,
+      147
+     ],
+     "to": [
+      15.8,
+      147
+     ],
+     "style": "center"
+    },
+    {
+     "type": "circle",
+     "at": [
+      89.1,
+      89.1
+     ],
+     "r": 13.1,
+     "repeat": {
+      "count": 4,
+      "around": [
+       0,
+       0
+      ],
+      "step": 90
+     }
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       97.1,
+       89.1
+      ],
+      [
+       93.1,
+       96.1
+      ],
+      [
+       85.1,
+       96.1
+      ],
+      [
+       81.1,
+       89.1
+      ],
+      [
+       85.1,
+       82.1
+      ],
+      [
+       93.1,
+       82.1
+      ]
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 4,
+      "around": [
+       0,
+       0
+      ],
+      "step": 90
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 108.5,
+     "style": "thin"
+    },
+    {
+     "type": "path",
+     "d": "M 96.9 14.5 A 98 98 0 0 1 78.8 58.3 L 49.2 36.4 A 61.3 61.3 0 0 0 60.6 9.1 Z",
+     "style": "thin",
+     "repeat": {
+      "count": 8,
+      "around": [
+       0,
+       0
+      ],
+      "step": 45
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 54.3,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 49
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 45.5,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 22.8,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 26.3,
+     "style": "hidden"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       24.3,
+       0
+      ],
+      [
+       12.1,
+       21
+      ],
+      [
+       -12.1,
+       21
+      ],
+      [
+       -24.3,
+       0
+      ],
+      [
+       -12.1,
+       -21
+      ],
+      [
+       12.1,
+       -21
+      ]
+     ]
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 13.1,
+     "style": "thin"
+    },
+    {
+     "type": "cutline",
+     "from": [
+      0,
+      -189
+     ],
+     "to": [
+      0,
+      189
+     ],
+     "label": "A",
+     "look": "left"
+    }
+   ],
+   "callouts": [
+    {
+     "n": 1,
+     "at": [
+      26.3,
+      26.3
+     ]
+    },
+    {
+     "n": 2,
+     "at": [
+      -12.2,
+      -8.7
+     ]
+    },
+    {
+     "n": 3,
+     "at": [
+      -106.7,
+      -28
+     ]
+    },
+    {
+     "n": 17,
+     "at": [
+      89.1,
+      89.1
+     ]
+    }
+   ],
+   "dimensions": [
+    {
+     "from": [
+      0,
+      -147
+     ],
+     "to": [
+      0,
+      147
+     ],
+     "text": "168",
+     "offset": 175
+    }
+   ]
+  },
+  {
+   "title": "SECTION A-A",
+   "at": [
+    545,
+    340
+   ],
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      -28,
+      0
+     ],
+     "to": [
+      318.5,
+      0
+     ],
+     "style": "center"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       0,
+       -13.1
+      ],
+      [
+       52.5,
+       -13.1
+      ],
+      [
+       52.5,
+       -14.9
+      ],
+      [
+       224,
+       -14.9
+      ],
+      [
+       224,
+       -13.1
+      ],
+      [
+       267.8,
+       -13.1
+      ],
+      [
+       267.8,
+       13.1
+      ],
+      [
+       224,
+       13.1
+      ],
+      [
+       224,
+       14.9
+      ],
+      [
+       52.5,
+       14.9
+      ],
+      [
+       52.5,
+       13.1
+      ],
+      [
+       0,
+       13.1
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      -17.5,
+      -21
+     ],
+     "size": [
+      17.5,
+      42
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      -21.9,
+      -11.4
+     ],
+     "size": [
+      4.4,
+      22.8
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       0,
+       -13.1
+      ],
+      [
+       0,
+       -42.9
+      ],
+      [
+       1.8,
+       -44.1
+      ],
+      [
+       3.5,
+       -44.1
+      ],
+      [
+       6.6,
+       -49
+      ],
+      [
+       9.7,
+       -44.1
+      ],
+      [
+       12.8,
+       -49
+      ],
+      [
+       16,
+       -44.1
+      ],
+      [
+       19.1,
+       -49
+      ],
+      [
+       22.2,
+       -44.1
+      ],
+      [
+       25.3,
+       -49
+      ],
+      [
+       28.4,
+       -44.1
+      ],
+      [
+       31.5,
+       -49
+      ],
+      [
+       34.7,
+       -44.1
+      ],
+      [
+       37.8,
+       -49
+      ],
+      [
+       40.9,
+       -44.1
+      ],
+      [
+       43.8,
+       -44.1
+      ],
+      [
+       45.5,
+       -42.9
+      ],
+      [
+       45.5,
+       -13.1
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       0,
+       13.1
+      ],
+      [
+       0,
+       42.9
+      ],
+      [
+       1.8,
+       44.1
+      ],
+      [
+       3.5,
+       44.1
+      ],
+      [
+       6.6,
+       49
+      ],
+      [
+       9.7,
+       44.1
+      ],
+      [
+       12.8,
+       49
+      ],
+      [
+       16,
+       44.1
+      ],
+      [
+       19.1,
+       49
+      ],
+      [
+       22.2,
+       44.1
+      ],
+      [
+       25.3,
+       49
+      ],
+      [
+       28.4,
+       44.1
+      ],
+      [
+       31.5,
+       49
+      ],
+      [
+       34.7,
+       44.1
+      ],
+      [
+       37.8,
+       49
+      ],
+      [
+       40.9,
+       44.1
+      ],
+      [
+       43.8,
+       44.1
+      ],
+      [
+       45.5,
+       42.9
+      ],
+      [
+       45.5,
+       13.1
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       47.3,
+       -52.5
+      ],
+      [
+       70,
+       -52.5
+      ],
+      [
+       70,
+       -106.7
+      ],
+      [
+       82.3,
+       -119
+      ],
+      [
+       126,
+       -119
+      ],
+      [
+       126,
+       -112
+      ],
+      [
+       87.5,
+       -112
+      ],
+      [
+       77,
+       -101.5
+      ],
+      [
+       77,
+       -36.7
+      ],
+      [
+       73.5,
+       -36.7
+      ],
+      [
+       73.5,
+       -41.1
+      ],
+      [
+       47.3,
+       -41.1
+      ]
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       47.3,
+       52.5
+      ],
+      [
+       70,
+       52.5
+      ],
+      [
+       70,
+       106.8
+      ],
+      [
+       82.3,
+       119
+      ],
+      [
+       126,
+       119
+      ],
+      [
+       126,
+       112
+      ],
+      [
+       87.5,
+       112
+      ],
+      [
+       77,
+       101.5
+      ],
+      [
+       77,
+       36.8
+      ],
+      [
+       73.5,
+       36.8
+      ],
+      [
+       73.5,
+       41.1
+      ],
+      [
+       47.3,
+       41.1
+      ]
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      91,
+      -171.5
+     ],
+     "size": [
+      26.3,
+      15.3
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      91,
+      -137.8
+     ],
+     "size": [
+      26.3,
+      18.8
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      91,
+      119
+     ],
+     "size": [
+      26.3,
+      18.8
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      91,
+      156.2
+     ],
+     "size": [
+      26.3,
+      15.3
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      49,
+      -41.1
+     ],
+     "size": [
+      24.5,
+      6.1
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      49,
+      -21
+     ],
+     "size": [
+      24.5,
+      6.1
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      61.3,
+      -28
+     ],
+     "r": 7,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      49,
+      35
+     ],
+     "size": [
+      24.5,
+      6.1
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      49,
+      14.9
+     ],
+     "size": [
+      24.5,
+      6.1
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      61.3,
+      28
+     ],
+     "r": 7,
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       119,
+       -38.5
+      ],
+      [
+       122.5,
+       -38.5
+      ],
+      [
+       122.5,
+       -82.2
+      ],
+      [
+       105,
+       -82.2
+      ],
+      [
+       105,
+       -77
+      ],
+      [
+       119,
+       -77
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       119,
+       38.5
+      ],
+      [
+       122.5,
+       38.5
+      ],
+      [
+       122.5,
+       82.3
+      ],
+      [
+       105,
+       82.3
+      ],
+      [
+       105,
+       77
+      ],
+      [
+       119,
+       77
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       185.5,
+       -38.5
+      ],
+      [
+       189,
+       -38.5
+      ],
+      [
+       189,
+       -77
+      ],
+      [
+       203,
+       -77
+      ],
+      [
+       203,
+       -82.2
+      ],
+      [
+       185.5,
+       -82.2
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       185.5,
+       38.5
+      ],
+      [
+       189,
+       38.5
+      ],
+      [
+       189,
+       77
+      ],
+      [
+       203,
+       77
+      ],
+      [
+       203,
+       82.3
+      ],
+      [
+       185.5,
+       82.3
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       122.5,
+       -14.9
+      ],
+      [
+       122.5,
+       -87.5
+      ],
+      [
+       180.3,
+       -87.5
+      ],
+      [
+       180.3,
+       -79.6
+      ],
+      [
+       136.5,
+       -72.6
+      ],
+      [
+       136.5,
+       -29.7
+      ],
+      [
+       154,
+       -29.7
+      ],
+      [
+       154,
+       -14.9
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       154,
+       -14.9
+      ],
+      [
+       154,
+       -29.7
+      ],
+      [
+       171.5,
+       -29.7
+      ],
+      [
+       171.5,
+       -66.5
+      ],
+      [
+       185.5,
+       -66.5
+      ],
+      [
+       185.5,
+       -14.9
+      ]
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       185.5,
+       14.9
+      ],
+      [
+       185.5,
+       87.5
+      ],
+      [
+       127.8,
+       87.5
+      ],
+      [
+       127.8,
+       79.6
+      ],
+      [
+       171.5,
+       72.6
+      ],
+      [
+       171.5,
+       29.8
+      ],
+      [
+       154,
+       29.8
+      ],
+      [
+       154,
+       14.9
+      ]
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       122.5,
+       14.9
+      ],
+      [
+       122.5,
+       66.5
+      ],
+      [
+       136.5,
+       66.5
+      ],
+      [
+       136.5,
+       29.8
+      ],
+      [
+       154,
+       29.8
+      ],
+      [
+       154,
+       14.9
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      138.3,
+      -68.2
+     ],
+     "size": [
+      31.5,
+      36.8
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      138.3,
+      31.5
+     ],
+     "size": [
+      31.5,
+      36.8
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      126,
+      -119
+     ],
+     "size": [
+      56,
+      29.8
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 6
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      126,
+      89.3
+     ],
+     "size": [
+      56,
+      29.8
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 6
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      105.9,
+      -110.2
+     ],
+     "size": [
+      19.3,
+      19.3
+     ],
+     "r": 5.3,
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      105.9,
+      91
+     ],
+     "size": [
+      19.3,
+      19.3
+     ],
+     "r": 5.3,
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      182.9,
+      -110.2
+     ],
+     "size": [
+      19.3,
+      19.3
+     ],
+     "r": 5.3,
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      182.9,
+      91
+     ],
+     "size": [
+      19.3,
+      19.3
+     ],
+     "r": 5.3,
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       182,
+       -119
+      ],
+      [
+       217,
+       -119
+      ],
+      [
+       222.3,
+       -113.7
+      ],
+      [
+       222.3,
+       -39.4
+      ],
+      [
+       246.8,
+       -39.4
+      ],
+      [
+       246.8,
+       -30.6
+      ],
+      [
+       225.8,
+       -30.6
+      ],
+      [
+       225.8,
+       -26.2
+      ],
+      [
+       213.5,
+       -26.2
+      ],
+      [
+       213.5,
+       -105
+      ],
+      [
+       206.5,
+       -112
+      ],
+      [
+       182,
+       -112
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       182,
+       119
+      ],
+      [
+       217,
+       119
+      ],
+      [
+       222.3,
+       113.8
+      ],
+      [
+       222.3,
+       39.4
+      ],
+      [
+       246.8,
+       39.4
+      ],
+      [
+       246.8,
+       30.6
+      ],
+      [
+       225.8,
+       30.6
+      ],
+      [
+       225.8,
+       26.3
+      ],
+      [
+       213.5,
+       26.3
+      ],
+      [
+       213.5,
+       105
+      ],
+      [
+       206.5,
+       112
+      ],
+      [
+       182,
+       112
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      182,
+      119
+     ],
+     "size": [
+      26.3,
+      18.8
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      182,
+      156.2
+     ],
+     "size": [
+      26.3,
+      15.3
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "line",
+     "from": [
+      84,
+      -147
+     ],
+     "to": [
+      124.3,
+      -147
+     ],
+     "style": "center"
+    },
+    {
+     "type": "line",
+     "from": [
+      84,
+      147
+     ],
+     "to": [
+      215.3,
+      147
+     ],
+     "style": "center"
+    },
+    {
+     "type": "rect",
+     "at": [
+      225.8,
+      -30.6
+     ],
+     "size": [
+      19.3,
+      4.4
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      225.8,
+      -17.5
+     ],
+     "size": [
+      19.3,
+      4.4
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      235.4,
+      -21.9
+     ],
+     "r": 4.6,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      225.8,
+      26.3
+     ],
+     "size": [
+      19.3,
+      4.4
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      225.8,
+      13.1
+     ],
+     "size": [
+      19.3,
+      4.4
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      235.4,
+      21.9
+     ],
+     "r": 4.6,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      248.5,
+      -16.6
+     ],
+     "size": [
+      5.3,
+      3.5
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      259,
+      -16.6
+     ],
+     "size": [
+      5.3,
+      3.5
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      248.5,
+      13.1
+     ],
+     "size": [
+      5.3,
+      3.5
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      259,
+      13.1
+     ],
+     "size": [
+      5.3,
+      3.5
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      249,
+      -33.2
+     ],
+     "size": [
+      4.2,
+      16.6
+     ],
+     "hatch": {
+      "angle": 45,
+      "spacing": 3
+     },
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      259.5,
+      -33.2
+     ],
+     "size": [
+      4.2,
+      16.6
+     ],
+     "hatch": {
+      "angle": 45,
+      "spacing": 3
+     },
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      243.3,
+      -64.7
+     ],
+     "size": [
+      29.8,
+      31.5
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 4
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      246.8,
+      -101.5
+     ],
+     "size": [
+      8.8,
+      31.5
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      246.8,
+      45.5
+     ],
+     "size": [
+      8.8,
+      56
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "rect",
+     "at": [
+      255.5,
+      -91
+     ],
+     "size": [
+      8.8,
+      10.5
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      255.5,
+      80.5
+     ],
+     "size": [
+      8.8,
+      10.5
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      255.5,
+      56
+     ],
+     "size": [
+      8.8,
+      10.5
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       246.8,
+       -112
+      ],
+      [
+       290.5,
+       -112
+      ],
+      [
+       294,
+       -108.5
+      ],
+      [
+       294,
+       108.5
+      ],
+      [
+       290.5,
+       112
+      ],
+      [
+       246.8,
+       112
+      ],
+      [
+       246.8,
+       106.8
+      ],
+      [
+       288.8,
+       106.8
+      ],
+      [
+       288.8,
+       -106.7
+      ],
+      [
+       246.8,
+       -106.7
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      273,
+      -57.7
+     ],
+     "size": [
+      35,
+      5.3
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      294,
+      -61.2
+     ],
+     "size": [
+      7,
+      12.3
+     ],
+     "style": "thin"
+    }
+   ],
+   "callouts": [
+    {
+     "n": 1,
+     "at": [
+      22.8,
+      -29.7
+     ]
+    },
+    {
+     "n": 2,
+     "at": [
+      -8.7,
+      -14
+     ]
+    },
+    {
+     "n": 3,
+     "at": [
+      73.5,
+      -78.7
+     ]
+    },
+    {
+     "n": 4,
+     "at": [
+      61.3,
+      -28
+     ]
+    },
+    {
+     "n": 5,
+     "at": [
+      112,
+      -79.6
+     ]
+    },
+    {
+     "n": 6,
+     "at": [
+      129.5,
+      -52.5
+     ]
+    },
+    {
+     "n": 7,
+     "at": [
+      154,
+      49
+     ]
+    },
+    {
+     "n": 8,
+     "at": [
+      154,
+      -105
+     ]
+    },
+    {
+     "n": 9,
+     "at": [
+      115.5,
+      100.6
+     ]
+    },
+    {
+     "n": 10,
+     "at": [
+      196,
+      -7
+     ]
+    },
+    {
+     "n": 11,
+     "at": [
+      217.9,
+      -70
+     ]
+    },
+    {
+     "n": 12,
+     "at": [
+      235.4,
+      21.9
+     ]
+    },
+    {
+     "n": 13,
+     "at": [
+      261.6,
+      14.9
+     ]
+    },
+    {
+     "n": 14,
+     "at": [
+      258.1,
+      -52.5
+     ]
+    },
+    {
+     "n": 15,
+     "at": [
+      251.1,
+      78.8
+     ]
+    },
+    {
+     "n": 16,
+     "at": [
+      291.4,
+      52.5
+     ]
+    },
+    {
+     "n": 18,
+     "at": [
+      304.5,
+      -55.1
+     ]
+    }
+   ],
+   "dimensions": [
+    {
+     "from": [
+      -21.9,
+      11.4
+     ],
+     "to": [
+      294,
+      108.5
+     ],
+     "text": "180.5",
+     "axis": "x",
+     "offset": -92
+    },
+    {
+     "from": [
+      0,
+      -49
+     ],
+     "to": [
+      0,
+      49
+     ],
+     "text": "Ø56",
+     "offset": -46
+    },
+    {
+     "from": [
+      217,
+      -119
+     ],
+     "to": [
+      217,
+      119
+     ],
+     "text": "Ø136",
+     "offset": 112
+    }
+   ]
+  }
+ ],
+ "parts": [
+  {
+   "n": 1,
+   "name": "Pulley",
+   "material": "Steel, zinc plated",
+   "note": "6-rib poly-V (6PK), Ø56"
+  },
+  {
+   "n": 2,
+   "name": "Pulley nut",
+   "material": "Steel, M16 × 1.5",
+   "note": "Self-locking; torque to spec"
+  },
+  {
+   "n": 3,
+   "name": "Front housing (drive end)",
+   "material": "Aluminium die casting",
+   "note": "Air windows, adjusting and pivot ears"
+  },
+  {
+   "n": 4,
+   "name": "Front bearing",
+   "material": "6303-2RS ball bearing",
+   "note": "17 × 47 × 14, sealed"
+  },
+  {
+   "n": 5,
+   "name": "Cooling fans",
+   "material": "Pressed steel",
+   "note": "Welded to both claw poles",
+   "qty": 2
+  },
+  {
+   "n": 6,
+   "name": "Claw-pole rotor",
+   "material": "Low-carbon steel forgings",
+   "note": "12 interleaved poles (6 pairs)"
+  },
+  {
+   "n": 7,
+   "name": "Field coil",
+   "material": "Enamelled copper on bobbin",
+   "note": "About 2-3 Ω; makes the rotor field"
+  },
+  {
+   "n": 8,
+   "name": "Stator core",
+   "material": "Laminated silicon steel",
+   "note": "36 slots"
+  },
+  {
+   "n": 9,
+   "name": "Stator winding",
+   "material": "Enamelled copper",
+   "note": "Three-phase, star connected"
+  },
+  {
+   "n": 10,
+   "name": "Shaft",
+   "material": "Alloy steel, ground",
+   "note": "Ø17 front, Ø15 rear"
+  },
+  {
+   "n": 11,
+   "name": "Rear housing (slip-ring end)",
+   "material": "Aluminium die casting",
+   "note": "Carries rectifier and regulator"
+  },
+  {
+   "n": 12,
+   "name": "Rear bearing",
+   "material": "6202-2RS ball bearing",
+   "note": "15 × 35 × 11, sealed"
+  },
+  {
+   "n": 13,
+   "name": "Slip rings",
+   "material": "Copper on insulated sleeve",
+   "note": "Feed current to the field coil",
+   "qty": 2
+  },
+  {
+   "n": 14,
+   "name": "Brush holder + IC regulator",
+   "material": "Carbon brushes, resin holder",
+   "note": "Holds output near 14.4 V"
+  },
+  {
+   "n": 15,
+   "name": "Rectifier",
+   "material": "6 silicon diodes, Al heat sinks",
+   "note": "Three-phase bridge: AC to DC"
+  },
+  {
+   "n": 16,
+   "name": "Rear cover",
+   "material": "Glass-filled polyamide",
+   "note": "Shields rectifier and brushes"
+  },
+  {
+   "n": 17,
+   "name": "Through-bolts",
+   "material": "Steel, M5",
+   "note": "Clamp both housings to the stator",
+   "qty": 4
+  },
+  {
+   "n": 18,
+   "name": "B+ output terminal",
+   "material": "Steel stud, M6",
+   "note": "Battery cable connection"
+  }
+ ],
+ "notes": [
+  "Representative compact alternator (Denso SC-type layout); proportions typical, not one part number.",
+  "Section A-A is cut through the ears. The claw poles interleave, so the cut meets a front pole above the axis and a rear pole below.",
+  "Shaft, nut, bolts and stud are shown unsectioned (drafting convention).",
+  "A Camry Hybrid has no alternator: a DC-DC converter in its power control unit charges the 12 V battery."
+ ],
+ "sources": [
+  {
+   "title": "Alternator (automotive)",
+   "url": "https://en.wikipedia.org/wiki/Alternator_(automotive)"
+  },
+  {
+   "title": "Diode bridge",
+   "url": "https://en.wikipedia.org/wiki/Diode_bridge"
+  }
+ ]
+}

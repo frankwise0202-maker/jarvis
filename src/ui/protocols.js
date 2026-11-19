@@ -390,6 +390,27 @@ function giftFinder(args) {
   ]);
 }
 
+function blueprintMission(args) {
+  const c = promptContext(args);
+  if (!c.input) return '';
+  const angles = [
+    `Anatomy and materials — the main components of "${c.input}", what each is made of and how they fit together, with real dimensions (mm) and positions where known.`,
+    'How it works — the operating principle step by step: what each major part does and how energy, force, fluid or signals flow through it.',
+    "How it's made — the manufacturing process from raw materials to final assembly and testing: the key steps, machines and where it is typically made.",
+    'The exact model — the specification of this exact make, model, version or size: dimensions, weights, ratings, and what sets it apart from similar ones.',
+  ];
+  return assemble(`Blueprint: ${c.input}`, 'Blueprint', [
+    `Deliverable: an accurate, labeled 3D hologram of "${c.input}" that I can rotate and take apart part by part, then a short explanation of how it works and how it's made. Model the specific object: if I named a make, model, year or size, use exactly that one.${c.location ? ` I'm in ${c.location}: where versions differ by market, use the one sold there.` : ''} Today is ${c.fullDate}.`,
+    `${teamPlan(c, angles)}\nAsk every agent for exact figures (dimensions, materials, part names) with sources: the hologram is built from their findings.${followUpWave(c)}`,
+    'Then call show_hologram once, built from the research: believable proportions and part positions, the big recognizable structure first, every part labeled with what it does and what it is made of, sensible groups and exploded-view offsets. Do not draw any 2D blueprint: I will ask for one if I want it.',
+    formatSection([
+      `First paragraph: what I'm looking at, ${SPOKEN}.`,
+      "Then: How it works (4–6 short numbered steps) · How it's made (4–6 short numbered steps, raw material to final test) · Key specs (a compact table).",
+      "Keep it tight: the hologram's labels and part cards carry the details. Cite inline and end with Sources.",
+    ]),
+  ]);
+}
+
 function builtIn(def) {
   return Object.freeze({ custom: false, inputOptional: false, ...def, examples: Object.freeze([...(def.examples || [])]) });
 }
@@ -420,6 +441,20 @@ export const PROTOCOLS = Object.freeze([
     inputHint: 'Add a topic first.',
     examples: ['Solid-state batteries', 'Long-term effects of GLP-1 drugs', 'The economics of vertical farming'],
     buildPrompt: deepResearch,
+  }),
+  builtIn({
+    id: 'blueprint',
+    name: 'Blueprint',
+    icon: 'blueprint',
+    blurb: 'Research it, see it as a labeled 3D hologram',
+    mode: 'swarm',
+    agents: 4,
+    needsInput: true,
+    inputLabel: 'What should I blueprint?',
+    inputPlaceholder: 'e.g. a 2024 Camry Hybrid',
+    inputHint: 'Say what to blueprint first.',
+    examples: ['A 2024 Toyota Camry Hybrid', 'An AA alkaline battery', 'A car alternator'],
+    buildPrompt: blueprintMission,
   }),
   builtIn({
     id: 'compare-decide',

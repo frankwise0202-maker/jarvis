@@ -126,7 +126,7 @@ async function storeRaw(t, conv) {
   await t.page.evaluate(
     async ({ conv, meta }) => {
       const db = await new Promise((resolve, reject) => {
-        const req = indexedDB.open('jarvis', 1);
+        const req = indexedDB.open('jarvis'); // the current version (2 since the saved library); a fresh database is created as v1 and upgraded by the app
         req.onupgradeneeded = () => {
           for (const name of ['conversations', 'meta']) if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name, { keyPath: 'id' });
         };

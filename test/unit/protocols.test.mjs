@@ -20,6 +20,7 @@ const NOW = new Date(2026, 10, 19, 8, 15); // Thursday 19 November 2026, 08:15 l
 const SETTINGS = Object.freeze({ userName: 'Tony', location: 'Austin, Texas, US', maxAgents: 8, maxWaves: 3 });
 const INPUTS = Object.freeze({
   'deep-research': 'solid-state batteries',
+  blueprint: 'a 2024 Toyota Camry Hybrid',
   'compare-decide': 'Kindle Paperwhite vs Kobo Clara',
   'trip-planner': 'Lisbon, 12–16 March, two people',
   'fact-check': 'The Great Wall is visible from space',
@@ -27,7 +28,7 @@ const INPUTS = Object.freeze({
   'news-sweep': 'the AI chip race',
   'gift-finder': 'my dad, 65, loves jazz, under $150',
 });
-const BUILT_IN_IDS = ['morning-briefing', 'deep-research', 'compare-decide', 'trip-planner', 'fact-check', 'explain-simply', 'news-sweep', 'gift-finder'];
+const BUILT_IN_IDS = ['morning-briefing', 'deep-research', 'blueprint', 'compare-decide', 'trip-planner', 'fact-check', 'explain-simply', 'news-sweep', 'gift-finder'];
 
 // ---- fake storage ------------------------------------------------------------------------
 
@@ -73,7 +74,7 @@ const quietWarnings = (t) => t.mock.method(console, 'warn', () => {});
 
 // ---- built-in protocols -------------------------------------------------------------------
 
-test('there are eight well-formed built-in protocols with unique ids', () => {
+test('there are nine well-formed built-in protocols with unique ids', () => {
   assert.deepEqual(PROTOCOLS.map((p) => p.id), BUILT_IN_IDS);
   assert.ok(Object.isFrozen(PROTOCOLS));
   for (const p of PROTOCOLS) {
@@ -99,6 +100,7 @@ test('modes follow SPEC 14.2', () => {
   assert.deepEqual(modes, {
     'morning-briefing': 'swarm',
     'deep-research': 'swarm',
+    blueprint: 'swarm',
     'compare-decide': 'swarm',
     'trip-planner': 'swarm',
     'fact-check': 'auto',
@@ -239,7 +241,7 @@ test('custom protocols: save, list, update, delete (localStorage jarvis.protocol
   const store = fakeStorage();
   installStorage(store);
   const m = await freshModule();
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
 
   const saved = m.saveCustomProtocol({ name: '  Lakers   Update ', prompt: 'Latest Lakers news, injuries and the next game.', mode: 'swarm', icon: 'target' });
   assert.equal(saved.ok, true);
@@ -256,8 +258,8 @@ test('custom protocols: save, list, update, delete (localStorage jarvis.protocol
   assert.equal(stored[0].icon, 'target');
 
   const all = m.listProtocols();
-  assert.equal(all.length, 9);
-  assert.equal(all[8].id, saved.protocol.id, 'custom protocols come after the built-ins');
+  assert.equal(all.length, BUILT_IN_IDS.length + 1);
+  assert.equal(all[BUILT_IN_IDS.length].id, saved.protocol.id, 'custom protocols come after the built-ins');
   assert.equal(m.getProtocol(saved.protocol.id).name, 'Lakers Update');
   assert.equal(m.getProtocol('morning-briefing').name, 'Morning Briefing');
   assert.equal(m.getProtocol('nope'), null);
@@ -277,7 +279,7 @@ test('custom protocols: save, list, update, delete (localStorage jarvis.protocol
   assert.equal(m.deleteCustomProtocol(saved.protocol.id), false);
   assert.equal(m.deleteCustomProtocol('morning-briefing'), false, 'built-ins cannot be deleted');
   assert.deepEqual(JSON.parse(store.getItem(KEY)), []);
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
 });
 
 test('custom protocols: validation', async () => {
@@ -314,7 +316,7 @@ test('custom protocols: at most 24, and ids never collide with built-ins', async
   const over = m.saveCustomProtocol({ name: 'P25', prompt: 'A perfectly reasonable mission brief.' });
   assert.equal(over.ok, false);
   assert.match(over.errors.form, /up to 24/);
-  assert.equal(m.listProtocols().length, 32);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length + 24);
   const ids = m.listProtocols().map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length, 'unique ids');
 });
@@ -324,7 +326,7 @@ test('custom protocols: corrupt or hostile stored data is ignored', async () => 
   installStorage(store);
   store.setItem(KEY, '{not json');
   let m = await freshModule();
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
 
   store.setItem(
     KEY,
@@ -347,7 +349,7 @@ test('custom protocols: corrupt or hostile stored data is ignored', async () => 
 
   store.setItem(KEY, JSON.stringify({ not: 'an array' }));
   m = await freshModule();
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
 });
 
 test('custom protocols: in-memory fallback when storage is full or blocked', async (t) => {
@@ -370,19 +372,19 @@ test('custom protocols: in-memory fallback when storage is full or blocked', asy
   // Accessing localStorage throws (blocked site data): still fully usable in memory.
   installStorage(null, { throwOnAccess: true });
   m = await freshModule();
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
   const res3 = m.saveCustomProtocol({ name: 'Blocked', prompt: 'A perfectly reasonable mission brief.' });
   assert.equal(res3.ok, true);
   assert.equal(res3.persisted, false);
   assert.ok(m.getProtocol(res3.protocol.id));
   assert.equal(m.deleteCustomProtocol(res3.protocol.id), true);
-  assert.equal(m.listProtocols().length, 8);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length);
 
   // No localStorage at all.
   installStorage(undefined);
   m = await freshModule();
   assert.equal(m.saveCustomProtocol({ name: 'Nothing', prompt: 'A perfectly reasonable mission brief.' }).ok, true);
-  assert.equal(m.listProtocols().length, 9);
+  assert.equal(m.listProtocols().length, BUILT_IN_IDS.length + 1);
 });
 
 test('custom protocols: change notifications', async () => {

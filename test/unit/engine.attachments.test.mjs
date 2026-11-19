@@ -11,7 +11,7 @@ import {
   normalizeAttachments,
   sniffImageType,
 } from '../../src/engine/attachments.js';
-import { LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LENGTH_STYLES, TONE_STYLES, buildTurnContext, styleLine } from '../../src/engine/prompts.js';
+import { LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsV1, leadToolsV3, styleLine } from '../../src/engine/prompts.js';
 import { createJarvis } from '../../src/engine/index.js';
 import {
   DEFAULT_TEST_SETTINGS,
@@ -241,20 +241,28 @@ test('style line: tone and verbosity from settings, with butler/balanced fallbac
   }
 });
 
-test('system prompt: new conversations freeze V2; a conversation created with V1 keeps it', async () => {
+test('system prompt: new conversations freeze the latest (V3); conversations created with V1 or V2 keep theirs', async () => {
   const h = createHarness({ handler: () => answer('ok') });
   const fresh = h.jarvis.newConversation();
-  assert.equal(fresh.system, LEAD_SYSTEM_V2);
+  assert.equal(fresh.system, LEAD_SYSTEM_V3);
   await runTurn(h.jarvis, fresh, 'Hello');
-  assert.deepEqual(h.api.requests[0].body.system, [{ type: 'text', text: LEAD_SYSTEM_V2 }]);
+  assert.deepEqual(h.api.requests[0].body.system, [{ type: 'text', text: LEAD_SYSTEM_V3 }]);
 
-  const old = h.jarvis.newConversation();
-  old.system = LEAD_SYSTEM_V1; // as saved by version 1 of the app
-  await runTurn(h.jarvis, old, 'Hello again');
-  await runTurn(h.jarvis, old, 'And a photo', 'auto');
-  await h.jarvis.startTurn(old, { text: 'With a file', attachments: [image()] }).done;
-  for (const r of h.api.requests.slice(1)) assert.deepEqual(r.body.system, [{ type: 'text', text: LEAD_SYSTEM_V1 }]);
-  assert.equal(old.system, LEAD_SYSTEM_V1);
+  for (const [system, tools] of [[LEAD_SYSTEM_V1, leadToolsV1()], [LEAD_SYSTEM_V2, leadToolsV3()]]) {
+    const before = h.api.requests.length;
+    const old = h.jarvis.newConversation();
+    old.system = system; // as saved by an earlier version of the app
+    old.tools = tools;
+    await runTurn(h.jarvis, old, 'Hello again');
+    await runTurn(h.jarvis, old, 'And a photo', 'auto');
+    await h.jarvis.startTurn(old, { text: 'With a file', attachments: [image()] }).done;
+    assert.equal(h.api.requests.length, before + 3);
+    for (const r of h.api.requests.slice(before)) {
+      assert.deepEqual(r.body.system, [{ type: 'text', text: system }]);
+      assert.deepEqual(r.body.tools, tools);
+    }
+    assert.equal(old.system, system);
+  }
 
   // V2 = V1's guidance plus attachments and style.
   for (const heading of ['# Character', '# <turn_context>', '# Choosing how to work', '# Deploying agents', '# Writing the answer', '# Memory', '# Safety and honesty']) {
@@ -372,7 +380,7 @@ test('engine ↔ strict mock: photos and PDFs are accepted, acknowledged and rep
   assert.equal((await jarvis.startTurn(conv, { text: 'Thanks, and a plain follow-up' }).done).status, 'done');
   const leads = fetch.mock.requests.filter((r) => r.kind === 'lead');
   const last = leads.at(-1).body;
-  assert.equal(last.system[0].text, LEAD_SYSTEM_V2);
+  assert.equal(last.system[0].text, LEAD_SYSTEM_V3); // a new conversation: the latest prompt (V2's attachment guidance included)
   assert.equal(last.messages.filter((m) => m.role === 'user' && m.content.some((b) => b.type === 'image')).length, 2, 'both photos are replayed');
   assert.match(last.messages.at(-1).content[0].text, /^Style: professional tone .+; detailed length /m);
   assert.deepEqual(fetch.mock.violations, []);

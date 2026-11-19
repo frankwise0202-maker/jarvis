@@ -52,6 +52,7 @@ export function importSummary(res) {
   const c = count(r.conversations);
   const m = count(r.memory);
   const p = count(r.protocols);
+  const lib = count(r.library); // saved holograms and blueprints (platform/library.js)
   const skipped = count(r.skipped);
   const copies = count(r.copies);
   const prefs = r.settings === true || count(r.settingsChanged) > 0 || (Array.isArray(r.settings) && r.settings.length > 0);
@@ -59,6 +60,7 @@ export function importSummary(res) {
   if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
   if (m) parts.push(`${m} memor${m === 1 ? 'y' : 'ies'}`);
   if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
+  if (lib) parts.push(`${lib} saved ${lib === 1 ? 'hologram or blueprint' : 'holograms and blueprints'}`);
   if (prefs) parts.push('your preferences');
   let message = parts.length
     ? `Restored ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]}.`

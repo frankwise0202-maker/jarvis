@@ -1,0 +1,201 @@
+{
+  "_fixture": "Synthetic, written from the documented MediaWiki API shape (action=query, generator=search, prop=imageinfo, formatversion=2). The sandbox cannot reach Wikimedia, so titles, users and hashes are made up; entries 6-8 are deliberately unsafe or unsupported and must be dropped.",
+  "batchcomplete": true,
+  "continue": { "gsroffset": 9, "continue": "gsroffset||" },
+  "query": {
+    "pages": [
+      {
+        "pageid": 51234567,
+        "ns": 6,
+        "title": "File:Car alternator, 14 V 90 A.jpg",
+        "index": 2,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "size": 2381042,
+            "width": 3264,
+            "height": 2448,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Car_alternator%2C_14_V_90_A.jpg/500px-Car_alternator%2C_14_V_90_A.jpg",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/4/4e/Car_alternator%2C_14_V_90_A.jpg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Car_alternator,_14_V_90_A.jpg",
+            "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=51234567",
+            "mime": "image/jpeg",
+            "extmetadata": {
+              "ImageDescription": { "value": "A 14&nbsp;V, 90&nbsp;A <a href=\"https://en.wikipedia.org/wiki/Alternator_(automotive)\" class=\"extiw\" title=\"w:Alternator (automotive)\">automotive alternator</a> removed from a car, showing the pulley and cooling vents.", "source": "commons-desc-page" },
+              "Credit": { "value": "<span class=\"int-own-work\" lang=\"en\">Own work</span>", "source": "commons-desc-page", "hidden": "" },
+              "Artist": { "value": "<a href=\"//commons.wikimedia.org/wiki/User:Gearhead_Ana\" title=\"User:Gearhead Ana\">Gearhead Ana</a>", "source": "commons-desc-page" },
+              "LicenseShortName": { "value": "CC BY-SA 4.0", "source": "commons-desc-page", "hidden": "" },
+              "LicenseUrl": { "value": "https://creativecommons.org/licenses/by-sa/4.0", "source": "commons-desc-page", "hidden": "" }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 3456789,
+        "ns": 6,
+        "title": "File:Alternator cutaway.jpg",
+        "index": 1,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "size": 812004,
+            "width": 1600,
+            "height": 1200,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Alternator_cutaway.jpg/500px-Alternator_cutaway.jpg",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Alternator_cutaway.jpg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Alternator_cutaway.jpg",
+            "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=3456789",
+            "mime": "image/jpeg",
+            "extmetadata": {
+              "ImageDescription": { "value": "<p>Sectioned alternator on a training stand: <b>rotor</b>, <b>stator</b>, slip rings &amp; brushes.</p>\n<script>alert(1)</script>", "source": "commons-desc-page" },
+              "Credit": { "value": "Transferred from <a href=\"//de.wikipedia.org\">de.wikipedia</a>", "source": "commons-desc-page" },
+              "Artist": { "value": "<bdi><a href=\"https://www.wikidata.org/wiki/Q99999999\" class=\"extiw\" title=\"d:Q99999999\" data-note=\"a > b\">Jos&eacute; M&uuml;ller</a></bdi>", "source": "commons-desc-page" },
+              "LicenseShortName": { "value": "CC BY 3.0", "source": "commons-desc-page", "hidden": "" },
+              "LicenseUrl": { "value": "https://creativecommons.org/licenses/by/3.0", "source": "commons-desc-page", "hidden": "" }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 7788990,
+        "ns": 6,
+        "title": "File:Alternator rotor (claw poles).png",
+        "index": 3,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "size": 401233,
+            "width": 960,
+            "height": 720,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Alternator_rotor_%28claw_poles%29.png/500px-Alternator_rotor_%28claw_poles%29.png",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/c/c7/Alternator_rotor_%28claw_poles%29.png",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Alternator_rotor_(claw_poles).png",
+            "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=7788990",
+            "mime": "image/png",
+            "extmetadata": {
+              "ImageDescription": { "value": "Rotor of a claw-pole alternator", "source": "commons-desc-page" },
+              "Artist": { "value": "<i>Unknown author</i>", "source": "commons-desc-page" },
+              "LicenseShortName": { "value": "Public domain", "source": "commons-desc-page", "hidden": "" }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 1122334,
+        "ns": 6,
+        "title": "File:Alternator schematic.svg",
+        "index": 4,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "size": 23110,
+            "width": 512,
+            "height": 384,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Alternator_schematic.svg/500px-Alternator_schematic.svg.png",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Alternator_schematic.svg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Alternator_schematic.svg",
+            "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=1122334",
+            "mime": "image/svg+xml",
+            "extmetadata": {
+              "ImageDescription": { "value": "Three-phase alternator with diode rectifier &#8212; schematic", "source": "commons-desc-page" },
+              "Artist": { "value": "<a href=\"//commons.wikimedia.org/wiki/User:Circuit_Sam\" title=\"User:Circuit Sam\">Circuit Sam</a> (<a href=\"//commons.wikimedia.org/wiki/User_talk:Circuit_Sam\">talk</a>)", "source": "commons-desc-page" },
+              "LicenseShortName": { "value": "CC0", "source": "commons-desc-page", "hidden": "" }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 9988776,
+        "ns": 6,
+        "title": "File:Lichtmaschine Scan.tif",
+        "index": 5,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "size": 48120334,
+            "width": 4800,
+            "height": 3600,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Lichtmaschine_Scan.tif/lossy-page1-500px-Lichtmaschine_Scan.tif.jpg",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/1/1d/Lichtmaschine_Scan.tif",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Lichtmaschine_Scan.tif",
+            "descriptionshorturl": "https://commons.wikimedia.org/w/index.php?curid=9988776",
+            "mime": "image/tiff",
+            "extmetadata": {
+              "ImageDescription": { "value": "Lichtmaschine (alternator), museum scan", "source": "commons-desc-page" },
+              "Artist": { "value": "Deutsches Technikmuseum", "source": "commons-desc-page" },
+              "LicenseShortName": { "value": "CC BY-SA 3.0 de", "source": "commons-desc-page", "hidden": "" },
+              "LicenseUrl": { "value": "javascript:alert(1)", "source": "commons-desc-page", "hidden": "" }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 6660001,
+        "ns": 6,
+        "title": "File:Hotlinked elsewhere.jpg",
+        "index": 6,
+        "imagerepository": "shared",
+        "imageinfo": [
+          {
+            "width": 800,
+            "height": 600,
+            "thumburl": "https://evil.example/thumb/500px-x.jpg",
+            "thumbwidth": 500,
+            "thumbheight": 375,
+            "url": "http://upload.wikimedia.org/wikipedia/commons/x/xx/Hotlinked.jpg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Hotlinked_elsewhere.jpg",
+            "mime": "image/jpeg",
+            "extmetadata": { "Artist": { "value": "Someone" } }
+          }
+        ]
+      },
+      {
+        "pageid": 6660002,
+        "ns": 6,
+        "title": "File:Alternator manual.pdf",
+        "index": 7,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "width": 1275,
+            "height": 1650,
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Alternator_manual.pdf/page1-500px-Alternator_manual.pdf.jpg",
+            "thumbwidth": 500,
+            "thumbheight": 647,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/e/e1/Alternator_manual.pdf",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Alternator_manual.pdf",
+            "mime": "application/pdf",
+            "extmetadata": { "Artist": { "value": "Workshop" } }
+          }
+        ]
+      },
+      {
+        "pageid": 6660003,
+        "ns": 6,
+        "title": "File:Data URL trick.png",
+        "index": 8,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "width": 400,
+            "height": 300,
+            "thumburl": "data:image/png;base64,iVBORw0KGgo=",
+            "url": "https://upload.wikimedia.org.evil.example/a.png",
+            "descriptionurl": "javascript:alert(1)",
+            "mime": "image/png"
+          }
+        ]
+      }
+    ]
+  }
+}

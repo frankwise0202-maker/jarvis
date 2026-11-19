@@ -2,10 +2,13 @@
 // (page errors, console errors, CSP violations, unexpected dialogs, third-party requests,
 // unexpected mock violations) and small helpers built on the SPEC §13 data-testids only.
 
+import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { deflateSync } from 'node:zlib';
 import { canonicalJson } from '../mock/util.mjs';
 import { startTestServer, MOCK_API_KEY } from '../server.mjs';
 
@@ -58,6 +61,55 @@ export const tid = (name, attrs = {}) =>
   `[data-testid="${name}"]${Object.entries(attrs).map(([k, v]) => `[${k}="${String(v).replace(/"/g, '\\"')}"]`).join('')}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- a fake Wikimedia Commons (reference photos) ---------------------------------------------
+// Scenarios with `fakeWikimedia: true` answer the photo search (commons.wikimedia.org) with the
+// unit-test fixture and every image (upload.wikimedia.org) with a small generated picture, through
+// context.route(): nothing reaches the network, and those two origins are not third-party
+// requests for the guard. t.wikimedia counts what was asked: { searches: [url], images: n }.
+export const WIKIMEDIA_ORIGINS = Object.freeze(['https://commons.wikimedia.org', 'https://upload.wikimedia.org']);
+const COMMONS_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'unit', 'fixtures', 'commons-search.json');
+
+function crc32(buf) {
+  let c = ~0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1;
+  }
+  return ~c >>> 0;
+}
+
+/** A small PNG (a dim blue gradient with a bright disc): a visible stand-in photo. */
+function placeholderPng(w = 96, h = 72) {
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    raw[y * (w * 4 + 1)] = 0;
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 4 + 1) + 1 + x * 4;
+      const d = Math.hypot(x - w * 0.5, y - h * 0.48) / (h * 0.32);
+      const disc = d < 1 ? 1 - d * 0.6 : 0;
+      raw[o] = Math.round(20 + 40 * (y / h) + 120 * disc);
+      raw[o + 1] = Math.round(40 + 60 * (x / w) + 160 * disc);
+      raw[o + 2] = Math.round(70 + 80 * (y / h) + 170 * disc);
+      raw[o + 3] = 255;
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+let placeholder = null;
 
 /**
  * One scenario run. Owns its browser context(s); collects issues from the guards.
@@ -183,11 +235,27 @@ export class TestContext {
         }
       });
     });
+    const faked = this.scenario.fakeWikimedia ? WIKIMEDIA_ORIGINS : [];
+    if (faked.length) {
+      if (!this.wikimedia) this.wikimedia = { searches: [], images: 0 };
+      if (!placeholder) placeholder = placeholderPng();
+      const body = readFileSync(COMMONS_FIXTURE, 'utf8');
+      const cors = { 'access-control-allow-origin': '*' };
+      await context.route('https://commons.wikimedia.org/**', (route) => {
+        this.wikimedia.searches.push(route.request().url());
+        return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body });
+      });
+      await context.route('https://upload.wikimedia.org/**', (route) => {
+        this.wikimedia.images += 1;
+        return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: placeholder });
+      });
+    }
     context.on('request', (req) => {
       const url = req.url();
       if (!/^https?:/i.test(url)) return;
       try {
-        if (new URL(url).origin !== origin) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
+        const from = new URL(url).origin;
+        if (from !== origin && !faked.includes(from)) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
       } catch {
         /* ignore */
       }

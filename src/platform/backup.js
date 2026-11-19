@@ -1,14 +1,16 @@
 // Backup, restore and reset (SPEC §5).
 //
 //   exportBackup()     -> Promise<Blob>  application/json:
-//                         { app: 'jarvis', version: 1, exportedAt, settings, memory, conversations }
+//                         { app: 'jarvis', version: 1, exportedAt, settings, memory, conversations,
+//                           library: { version: 1, items } }  (saved holograms and blueprints,
+//                           thumbnails included; see library.js)
 //                         settings exclude onboarded/features; never the API key, never spend.
 //                         Conversations are never edited: one that contains the saved API key, or
 //                         anything shaped like an Anthropic key (sk-ant-…), is left out and listed
 //                         in blob.excludedConversations ([{ id }]); everywhere else (memory,
 //                         protocols, …) such text is replaced by "[API key removed]".
 //   importBackup(file) -> Promise<{ conversations, copies, replaced, memory, settings,
-//                         settingsChanged, skipped }>
+//                         settingsChanged, skipped, library? }>
 //                         conversations merged by id (the newer updatedAt wins; `replaced` lists
 //                         the ids of local conversations overwritten). A newer backup copy never
 //                         deletes local turns: when this device's copy has turns the backup's lacks
@@ -21,9 +23,14 @@
 //                         vetted and rebuilt from known fields (see cleanConversation): only ones
 //                         Jarvis made are accepted, nothing imported can be resumed; `skipped`
 //                         counts the ones left out. Throws an Error with a user-facing message
-//                         for files that are not a usable Jarvis backup.
+//                         for files that are not a usable Jarvis backup. Library items are
+//                         vetted the same way (ids, kinds, references, every spec re-validated,
+//                         thumbnails only when safe; newer updatedAt wins): `library` (present when
+//                         the backup has one) counts the items added or updated. Hologram and
+//                         blueprint chat cards are rebuilt
+//                         with their specs re-validated too.
 //   resetApp()         -> Promise<{ ok, failed }>  clears settings, API key, memory, spend, all
-//                         conversations and other jarvis.* local data (custom protocols, stats,
+//                         conversations, the saved library and other jarvis.* local data (custom protocols, stats,
 //                         UI preferences), unregisters this app's
 //                         service worker and deletes its caches. Never throws. Reload afterwards.
 //   backupFileName()   -> 'jarvis-backup-YYYY-MM-DD.json' (local date)
@@ -40,10 +47,13 @@ import { listMemory, mergeMemory, clearMemory } from './memory.js';
 import { getApiKey, clearApiKey } from './secrets.js';
 import { resetSpend } from './spend.js';
 import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
+import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems } from './library.js';
 import { removeItemsWithPrefix } from './storage.js';
 import { isPlainObject, reportWarning } from './util.js';
 import { DEPTHS, MODES } from '../engine/models.js';
 import { isKnownLeadSetup } from '../engine/prompts.js';
+import { normalizeHologramSpec } from '../lib/hologram-spec.js';
+import { normalizeBlueprintSpec, summarizeBlueprint } from '../lib/blueprint-spec.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -70,7 +80,7 @@ export const KEY_REMOVED = '[API key removed]';
 const KEY_LIKE = /sk-ant-[A-Za-z0-9_-]{20,}/i;
 const KEY_LIKE_ALL = new RegExp(KEY_LIKE.source, 'gi');
 // Top-level backup fields a part may never use (nor anything that names secrets or spend).
-const RESERVED_PARTS = new Set(['app', 'version', 'exportedAt', 'settings', 'memory', 'conversations', 'apiKey', 'spend']);
+const RESERVED_PARTS = new Set(['app', 'version', 'exportedAt', 'settings', 'memory', 'conversations', 'library', 'apiKey', 'spend']);
 const parts = new Map(); // name -> { exportData, importData }
 
 /** Add a feature module's data to backups (see the header). Returns an unregister function. */
@@ -106,6 +116,11 @@ export async function exportBackup() {
     else conversations.push(conv);
   }
   const data = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), settings, memory, conversations };
+  try {
+    data.library = await exportLibraryItems();
+  } catch (err) {
+    reportWarning('Backup: could not export the saved library', err);
+  }
   for (const [name, part] of parts) {
     try {
       const value = await part.exportData();
@@ -178,6 +193,15 @@ export async function importBackup(file) {
     }
   }
   const result = { conversations, copies, replaced, memory, settings: settingsChanged.length > 0, settingsChanged, skipped };
+  // Like the registered parts: reported only when the backup has a library (older ones do not).
+  if (data.library !== undefined && data.library !== null) {
+    try {
+      result.library = await importLibraryItems(data.library);
+    } catch (err) {
+      reportWarning('Backup: could not import the saved library', err);
+      result.library = 0;
+    }
+  }
   for (const [name, part] of parts) {
     if (data[name] === undefined) continue;
     try {
@@ -206,6 +230,7 @@ export async function resetApp() {
   await step('memory', clearMemory);
   await step('spend', resetSpend);
   await step('conversations', deleteAllConversations);
+  await step('saved library', deleteAllLibraryItems);
   // Other jarvis.* keys: custom protocols (jarvis.protocols.v1), usage statistics
   // (jarvis.stats.v1) and UI preferences. Test-only jarvis.dev.* overrides are left alone.
   await step('local data', () => removeItemsWithPrefix('jarvis.', (key) => !key.startsWith('jarvis.dev.')));
@@ -234,6 +259,7 @@ async function readBackup(file) {
   if (data.version > BACKUP_VERSION) throw new Error('This backup was made by a newer version of Jarvis. Update Jarvis, then try again.');
   if (data.conversations !== undefined && !Array.isArray(data.conversations)) throw new Error('This Jarvis backup is damaged (conversations).');
   if (data.memory !== undefined && !Array.isArray(data.memory)) throw new Error('This Jarvis backup is damaged (memory).');
+  if (data.library !== undefined && data.library !== null && !isPlainObject(data.library) && !Array.isArray(data.library)) throw new Error('This Jarvis backup is damaged (library).');
   return data;
 }
 
@@ -361,10 +387,59 @@ function segment(s, settled) {
     case 'error':
       seg.error = errorInfo(s.error) || { kind: 'unknown', message: 'Something went wrong.', retryable: false };
       break;
+    case 'hologram':
+    case 'blueprint':
+      Object.assign(seg, visualSegment(s));
+      break;
     default:
       break;
   }
   return seg;
+}
+
+const LIB_ID = /^lib_[a-z0-9]{6,16}$/;
+const PART_ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+const line = (v, max) => text(v).replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/** { model, part } with valid ids, or null. */
+function partRef(v) {
+  if (!isPlainObject(v) || typeof v.model !== 'string' || !LIB_ID.test(v.model)) return null;
+  const part = v.part === undefined || v.part === null || v.part === '' ? null : v.part;
+  if (part !== null && (typeof part !== 'string' || !PART_ID.test(part))) return null;
+  return { model: v.model, part };
+}
+
+/**
+ * A hologram or blueprint chat card rebuilt from known fields, its spec re-validated (a finished
+ * card needs a showable spec; one that never finished keeps what was built). Nothing imported is
+ * still building.
+ */
+function visualSegment(s) {
+  const done = s.status === 'done';
+  const out = { toolUseId: typeof s.toolUseId === 'string' ? s.toolUseId : '', status: done ? 'done' : 'error' };
+  let spec = null;
+  if (s.kind === 'hologram') {
+    const res = isPlainObject(s.spec) ? normalizeHologramSpec(s.spec, { partial: !done, stable: false }) : null;
+    if (res && res.spec && (!done || res.ok)) spec = res.spec;
+    out.title = spec ? spec.title : line(s.title, 80);
+    out.subtitle = spec ? spec.subtitle : line(s.subtitle, 120);
+    out.spec = spec;
+    out.stats = spec ? { parts: spec.parts.length, shapes: spec.parts.reduce((n, p) => n + p.shapes.length, 0) } : { parts: 0, shapes: 0 };
+  } else {
+    const res = isPlainObject(s.spec) ? normalizeBlueprintSpec(s.spec, { partial: !done }) : null;
+    spec = res && res.spec ? res.spec : null;
+    out.title = spec ? spec.title : line(s.title, 80);
+    out.subject = spec ? spec.subject : line(s.subject, 80);
+    out.sheet = spec ? spec.sheet : 'part';
+    out.spec = spec;
+    out.stats = spec ? summarizeBlueprint(spec) : { views: 0, shapes: 0, primitives: 0, callouts: 0, parts: 0, dimensions: 0, steps: 0 };
+    out.for = partRef(s.for);
+  }
+  if (done && !spec) out.status = 'error';
+  out.warnings = (Array.isArray(s.warnings) ? s.warnings : []).filter((w) => typeof w === 'string').slice(0, 40).map((w) => line(w, 300));
+  out.libraryId = typeof s.libraryId === 'string' && LIB_ID.test(s.libraryId) ? s.libraryId : null;
+  out.fromLibrary = s.fromLibrary === true;
+  return out;
 }
 
 function agent(a, i, settled) {
@@ -462,6 +537,8 @@ function turnOf(t, fallbackTime) {
   };
   const maxAgents = int(t.maxAgents, 1, 20);
   if (maxAgents !== null) turn.maxAgents = maxAgents;
+  const blueprintFor = partRef(t.blueprintFor);
+  if (blueprintFor) turn.blueprintFor = blueprintFor;
   const apiStart = int(t.apiStart, 0, 1e9);
   if (apiStart !== null) turn.apiStart = apiStart;
   return turn;

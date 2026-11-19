@@ -225,9 +225,10 @@ test('backup: registered parts travel in the backup and merge on import; reset c
     result.after = { protocols: localStorage.getItem('jarvis.protocols.v1'), stats: localStorage.getItem('jarvis.stats.v1') };
     return result;
   }, file);
-  // Settings are the defaults on both sides, so none changed (only changes are reported).
-  assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 1, stats: true });
-  assert.deepEqual(r.second, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, protocols: 0, stats: false });
+  // Settings are the defaults on both sides, so none changed (only changes are reported). The
+  // exported backup also carries the (here empty) saved library, which the result reports.
+  assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, library: 0, protocols: 1, stats: true });
+  assert.deepEqual(r.second, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, library: 0, protocols: 0, stats: false });
   assert.deepEqual(r.names, ['Weekend Planner']);
   assert.equal(r.agents, 1);
   assert.deepEqual(r.after, { protocols: null, stats: null });
@@ -238,7 +239,7 @@ test('backup: part names are validated and a failing part never breaks a backup'
   const r = await page.evaluate(async () => {
     const { backup } = window.__mods;
     const errors = [];
-    for (const name of ['settings', 'conversations', 'apiKey', 'Bad Name', '', 42]) {
+    for (const name of ['settings', 'conversations', 'library', 'apiKey', 'Bad Name', '', 42]) {
       try {
         backup.registerBackupPart(name, { exportData: () => 1, importData: () => 1 });
         errors.push('accepted');
@@ -253,8 +254,8 @@ test('backup: part names are validated and a failing part never breaks a backup'
     const keysAfter = Object.keys(JSON.parse(await (await backup.exportBackup()).text())).sort();
     return { errors, hasBroken: 'broken' in data, imported, keysAfter };
   });
-  assert.deepEqual(r.errors, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
+  assert.deepEqual(r.errors, ['TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError', 'TypeError']);
   assert.equal(r.hasBroken, false);
   assert.deepEqual(r.imported, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, broken: 0 });
-  assert.deepEqual(r.keysAfter, ['app', 'conversations', 'exportedAt', 'memory', 'settings', 'version']);
+  assert.deepEqual(r.keysAfter, ['app', 'conversations', 'exportedAt', 'library', 'memory', 'settings', 'version']);
 });

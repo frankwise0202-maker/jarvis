@@ -11,6 +11,7 @@ import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { MODELS, DEPTHS, MODES } from '../engine/models.js';
+import { isVisualSegment, visualExportLine } from '../engine/visuals.js';
 
 // ---------------------------------------------------------------------------------------------
 // Small, defensive accessors
@@ -568,6 +569,13 @@ function joinText(segments) {
   let prevReq;
   for (const seg of segments) {
     if (!isObj(seg)) continue;
+    if (isVisualSegment(seg)) {
+      // A hologram or blueprint: one line ("[Hologram: … · 43 parts]"), never its spec.
+      const line = visualExportLine(seg);
+      if (line) groups.push(escapeInline(line));
+      current = null;
+      continue;
+    }
     if (seg.kind !== 'text') {
       current = null;
       continue;

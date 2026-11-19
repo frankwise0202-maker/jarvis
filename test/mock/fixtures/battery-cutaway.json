@@ -1,0 +1,1007 @@
+{
+ "title": "AA alkaline cell (LR6)",
+ "subject": "Bobbin-type zinc / manganese dioxide cell, 1.5 V",
+ "sheet": "cutaway",
+ "scale": "3:1",
+ "canvas": [
+  1000,
+  700
+ ],
+ "views": [
+  {
+   "title": "CUTAWAY",
+   "at": [
+    400,
+    345
+   ],
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      0,
+      -299.2
+     ],
+     "to": [
+      0,
+      292.6
+     ],
+     "style": "center"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -55,
+       -260.7
+      ],
+      [
+       -55,
+       -264
+      ],
+      [
+       -30.2,
+       -264
+      ],
+      [
+       -30.2,
+       -275
+      ],
+      [
+       -26.4,
+       -277.7
+      ],
+      [
+       26.4,
+       -277.7
+      ],
+      [
+       30.3,
+       -275
+      ],
+      [
+       30.3,
+       -264
+      ],
+      [
+       55,
+       -264
+      ],
+      [
+       55,
+       -260.7
+      ],
+      [
+       27,
+       -260.7
+      ],
+      [
+       27,
+       -271.7
+      ],
+      [
+       24.2,
+       -274.4
+      ],
+      [
+       -24.2,
+       -274.4
+      ],
+      [
+       -26.9,
+       -271.7
+      ],
+      [
+       -26.9,
+       -260.7
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -70.4,
+       265.7
+      ],
+      [
+       -78.1,
+       258
+      ],
+      [
+       -78.1,
+       -255.2
+      ],
+      [
+       -72.6,
+       -260.7
+      ],
+      [
+       72.6,
+       -260.7
+      ],
+      [
+       78.1,
+       -255.2
+      ],
+      [
+       78.1,
+       258
+      ],
+      [
+       70.4,
+       265.7
+      ],
+      [
+       68.2,
+       262.9
+      ],
+      [
+       75.4,
+       256.3
+      ],
+      [
+       75.4,
+       -253.5
+      ],
+      [
+       71.5,
+       -257.9
+      ],
+      [
+       -71.5,
+       -257.9
+      ],
+      [
+       -75.3,
+       -253.5
+      ],
+      [
+       -75.3,
+       256.3
+      ],
+      [
+       -68.2,
+       262.9
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       50.6,
+       -255.2
+      ],
+      [
+       75.4,
+       -255.2
+      ],
+      [
+       75.4,
+       214.5
+      ],
+      [
+       50.6,
+       214.5
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -50.6,
+       -255.2
+      ],
+      [
+       -75.3,
+       -255.2
+      ],
+      [
+       -75.3,
+       214.5
+      ],
+      [
+       -50.6,
+       214.5
+      ]
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "line",
+     "from": [
+      -75.3,
+      -97.9
+     ],
+     "to": [
+      -50.6,
+      -97.9
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      -75.3,
+      58.3
+     ],
+     "to": [
+      -50.6,
+      58.3
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      50.6,
+      -97.9
+     ],
+     "to": [
+      75.4,
+      -97.9
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      50.6,
+      58.3
+     ],
+     "to": [
+      75.4,
+      58.3
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -50.6,
+       218.9
+      ],
+      [
+       -50.6,
+       -251.3
+      ],
+      [
+       50.6,
+       -251.3
+      ],
+      [
+       50.6,
+       218.9
+      ],
+      [
+       46.2,
+       218.9
+      ],
+      [
+       46.2,
+       -246.9
+      ],
+      [
+       -46.2,
+       -246.9
+      ],
+      [
+       -46.2,
+       218.9
+      ]
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -46.2,
+       -246.9
+      ],
+      [
+       46.2,
+       -246.9
+      ],
+      [
+       46.2,
+       210.1
+      ],
+      [
+       20.9,
+       210.1
+      ],
+      [
+       20.9,
+       215.6
+      ],
+      [
+       -20.9,
+       215.6
+      ],
+      [
+       -20.9,
+       210.1
+      ],
+      [
+       -46.2,
+       210.1
+      ]
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -7.1,
+       257.4
+      ],
+      [
+       -7.1,
+       -52.8
+      ],
+      [
+       0,
+       -61.6
+      ],
+      [
+       7.2,
+       -52.8
+      ],
+      [
+       7.2,
+       257.4
+      ]
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "rect",
+     "at": [
+      -14.3,
+      254.1
+     ],
+     "size": [
+      28.6,
+      3.3
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       7.2,
+       215.6
+      ],
+      [
+       20.9,
+       215.6
+      ],
+      [
+       20.9,
+       225.5
+      ],
+      [
+       58.3,
+       225.5
+      ],
+      [
+       58.3,
+       215.6
+      ],
+      [
+       75.4,
+       215.6
+      ],
+      [
+       75.4,
+       254.1
+      ],
+      [
+       71.5,
+       257.4
+      ],
+      [
+       61.6,
+       257.4
+      ],
+      [
+       61.6,
+       232.1
+      ],
+      [
+       20.9,
+       232.1
+      ],
+      [
+       20.9,
+       257.4
+      ],
+      [
+       7.2,
+       257.4
+      ]
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 4
+     }
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -7.1,
+       215.6
+      ],
+      [
+       -20.9,
+       215.6
+      ],
+      [
+       -20.9,
+       225.5
+      ],
+      [
+       -58.3,
+       225.5
+      ],
+      [
+       -58.3,
+       215.6
+      ],
+      [
+       -75.3,
+       215.6
+      ],
+      [
+       -75.3,
+       254.1
+      ],
+      [
+       -71.5,
+       257.4
+      ],
+      [
+       -61.6,
+       257.4
+      ],
+      [
+       -61.6,
+       232.1
+      ],
+      [
+       -20.9,
+       232.1
+      ],
+      [
+       -20.9,
+       257.4
+      ],
+      [
+       -7.1,
+       257.4
+      ]
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 4
+     }
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       -67.1,
+       257.4
+      ],
+      [
+       67.1,
+       257.4
+      ],
+      [
+       67.1,
+       260.7
+      ],
+      [
+       41.8,
+       260.7
+      ],
+      [
+       36.3,
+       272.3
+      ],
+      [
+       -36.3,
+       272.3
+      ],
+      [
+       -41.8,
+       260.7
+      ],
+      [
+       -67.1,
+       260.7
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      46.2,
+      265.7
+     ],
+     "size": [
+      24.2,
+      2.8
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      -70.4,
+      265.7
+     ],
+     "size": [
+      24.2,
+      2.8
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       63.8,
+       -263.8
+      ],
+      [
+       77.6,
+       -263.8
+      ],
+      [
+       81.4,
+       -260.1
+      ],
+      [
+       81.4,
+       259.6
+      ],
+      [
+       73.2,
+       269.5
+      ],
+      [
+       58.3,
+       269.5
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       -63.8,
+       -263.8
+      ],
+      [
+       -77.5,
+       -263.8
+      ],
+      [
+       -81.4,
+       -260.1
+      ],
+      [
+       -81.4,
+       259.6
+      ],
+      [
+       -73.1,
+       269.5
+      ],
+      [
+       -58.3,
+       269.5
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "cutline",
+     "from": [
+      -101.2,
+      0
+     ],
+     "to": [
+      101.2,
+      0
+     ],
+     "label": "B",
+     "look": "down"
+    }
+   ],
+   "callouts": [
+    {
+     "n": 1,
+     "at": [
+      -13.2,
+      -276.1
+     ]
+    },
+    {
+     "n": 2,
+     "at": [
+      81.4,
+      -154
+     ]
+    },
+    {
+     "n": 3,
+     "at": [
+      -76.8,
+      -187
+     ]
+    },
+    {
+     "n": 4,
+     "at": [
+      -62.7,
+      -165
+     ]
+    },
+    {
+     "n": 5,
+     "at": [
+      -48.4,
+      132
+     ]
+    },
+    {
+     "n": 6,
+     "at": [
+      -28.6,
+      88
+     ]
+    },
+    {
+     "n": 7,
+     "at": [
+      0,
+      143
+     ]
+    },
+    {
+     "n": 8,
+     "at": [
+      39.6,
+      228.8
+     ]
+    },
+    {
+     "n": 9,
+     "at": [
+      -22,
+      267.3
+     ]
+    },
+    {
+     "n": 10,
+     "at": [
+      58.3,
+      267
+     ]
+    }
+   ],
+   "dimensions": [
+    {
+     "from": [
+      -26.4,
+      -277.7
+     ],
+     "to": [
+      -67.1,
+      272.3
+     ],
+     "text": "50.0",
+     "axis": "y",
+     "offset": -70.4
+    }
+   ]
+  },
+  {
+   "title": "SECTION B-B",
+   "scale": "4:1",
+   "at": [
+    835,
+    205
+   ],
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      -133.3,
+      0
+     ],
+     "to": [
+      133.3,
+      0
+     ],
+     "style": "center"
+    },
+    {
+     "type": "line",
+     "from": [
+      0,
+      -133.3
+     ],
+     "to": [
+      0,
+      133.3
+     ],
+     "style": "center"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 114.7,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 110.1,
+     "r2": 106.2,
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 106.2,
+     "r2": 71.3,
+     "hatch": 45
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 71.3,
+     "r2": 65.1,
+     "style": "fill"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 65.1,
+     "r2": 10.1,
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      0,
+      0
+     ],
+     "r": 10.1,
+     "style": "fill"
+    }
+   ],
+   "dimensions": [
+    {
+     "from": [
+      -112.8,
+      0
+     ],
+     "to": [
+      112.8,
+      0
+     ],
+     "text": "Ø14.5",
+     "offset": 138
+    }
+   ]
+  },
+  {
+   "title": "CELL REACTION",
+   "at": [
+    835,
+    560
+   ],
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      -150,
+      -84
+     ],
+     "size": [
+      300,
+      168
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      -62
+     ],
+     "text": "ANODE (−)",
+     "size": 11,
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      -42
+     ],
+     "text": "Zn + 2OH⁻ → ZnO + H₂O + 2e⁻",
+     "size": 13
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      -14
+     ],
+     "text": "CATHODE (+)",
+     "size": 11,
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      6
+     ],
+     "text": "2MnO₂ + H₂O + 2e⁻ → Mn₂O₃ + 2OH⁻",
+     "size": 13
+    },
+    {
+     "type": "line",
+     "from": [
+      -136,
+      26
+     ],
+     "to": [
+      136,
+      26
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      46
+     ],
+     "text": "Nominal 1.5 V · open circuit about 1.6 V",
+     "size": 12
+    },
+    {
+     "type": "text",
+     "at": [
+      -136,
+      66
+     ],
+     "text": "Electrolyte: KOH, about 35-40 % in water",
+     "size": 12
+    }
+   ]
+  }
+ ],
+ "parts": [
+  {
+   "n": 1,
+   "name": "Positive cap",
+   "material": "Nickel-plated steel",
+   "note": "Welded to the can; the + terminal"
+  },
+  {
+   "n": 2,
+   "name": "Label sleeve",
+   "material": "PVC or PET shrink film",
+   "note": "Printed; insulates the can"
+  },
+  {
+   "n": 3,
+   "name": "Steel can",
+   "material": "Nickel-plated steel, about 0.25 mm",
+   "note": "Cathode current collector, graphite-coated inside"
+  },
+  {
+   "n": 4,
+   "name": "Cathode (MnO₂ + graphite)",
+   "material": "EMD with graphite and KOH",
+   "note": "Pressed rings against the can wall"
+  },
+  {
+   "n": 5,
+   "name": "Separator",
+   "material": "Non-woven cellulose / PVA",
+   "note": "Passes ions, blocks electrons and zinc"
+  },
+  {
+   "n": 6,
+   "name": "Anode gel (zinc)",
+   "material": "Zinc powder in KOH gel",
+   "note": "Polyacrylate gelling agent; mercury-free"
+  },
+  {
+   "n": 7,
+   "name": "Current collector",
+   "material": "Brass nail",
+   "note": "Carries anode current to the negative cap"
+  },
+  {
+   "n": 8,
+   "name": "Seal with vent",
+   "material": "Nylon 6,6",
+   "note": "Thin web ruptures if gas pressure builds"
+  },
+  {
+   "n": 9,
+   "name": "Negative cap",
+   "material": "Nickel-plated steel",
+   "note": "Welded to the nail; the − terminal"
+  },
+  {
+   "n": 10,
+   "name": "Insulating washer",
+   "material": "Paper or plastic ring",
+   "note": "Keeps the cap from touching the can"
+  }
+ ],
+ "notes": [
+  "Dimensions per IEC 60086-2 LR6: Ø13.5-14.5 mm, height 49.2-50.5 mm.",
+  "Layer thicknesses are exaggerated slightly so thin parts stay visible.",
+  "The electrolyte (KOH) soaks the cathode, separator and gel; it is not a separate layer."
+ ],
+ "sources": [
+  {
+   "title": "Alkaline battery",
+   "url": "https://en.wikipedia.org/wiki/Alkaline_battery"
+  },
+  {
+   "title": "AA battery",
+   "url": "https://en.wikipedia.org/wiki/AA_battery"
+  },
+  {
+   "title": "Energizer E91 product datasheet",
+   "url": "https://data.energizer.com/pdfs/e91.pdf"
+  }
+ ]
+}

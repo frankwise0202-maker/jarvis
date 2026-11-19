@@ -66,6 +66,9 @@ export const blk = {
   }),
   deploy: (id, input, rawJson) => ({ type: 'tool_use', id, name: 'deploy_agents', input, ...(rawJson ? { rawJson } : {}) }),
   memory: (id, action, fact) => ({ type: 'tool_use', id, name: 'update_memory', input: { action, fact } }),
+  hologram: (id, input, rawJson) => ({ type: 'tool_use', id, name: 'show_hologram', input, ...(rawJson ? { rawJson } : {}) }),
+  blueprint: (id, input, rawJson) => ({ type: 'tool_use', id, name: 'draw_blueprint', input, ...(rawJson ? { rawJson } : {}) }),
+  openSaved: (id, libraryId) => ({ type: 'tool_use', id, name: 'open_saved', input: { id: libraryId } }),
 };
 
 /** deploy_agents input with `n` agents whose tasks name themselves (task "Task k ..."). */
@@ -387,10 +390,68 @@ export function createMemory(initial = []) {
   };
 }
 
+/**
+ * An in-memory saved library with the engine's dependency shape ({ save, get, list,
+ * findPartBlueprint }) and library.js's semantics: ids 'lib_' + 10 base36, newest first, one item
+ * per segment. `calls` records every call; `fail` / `hang` make the next calls reject / never answer.
+ */
+export function createFakeLibrary(initial = []) {
+  const items = [];
+  const calls = [];
+  let seq = 0;
+  const lib = {
+    items,
+    calls,
+    fail: null, // e.g. 'save': that call rejects
+    hang: null, // e.g. 'get': that call never answers
+    add(item) {
+      const full = { createdAt: 1000 + items.length, parent: null, stats: {}, ...item };
+      items.unshift(full);
+      return full;
+    },
+    save(record) {
+      calls.push(['save', structuredClone(record)]);
+      if (lib.hang === 'save') return new Promise(() => {});
+      if (lib.fail === 'save') return Promise.reject(new Error('disk full'));
+      const existing = items.find((i) => record.segmentId && i.segmentId === record.segmentId);
+      if (existing) return Promise.resolve({ id: existing.id });
+      const id = `lib_${String(++seq).padStart(10, '0')}`;
+      items.unshift({ ...structuredClone(record), id, createdAt: Date.now() + seq, sheet: record.kind === 'blueprint' ? record.spec.sheet : null });
+      return Promise.resolve({ id, persisted: true });
+    },
+    get(id) {
+      calls.push(['get', id]);
+      if (lib.hang === 'get') return new Promise(() => {});
+      if (lib.fail === 'get') return Promise.reject(new Error('unavailable'));
+      const item = items.find((i) => i.id === id);
+      return Promise.resolve(item ? structuredClone(item) : null);
+    },
+    list({ kind, limit } = {}) {
+      calls.push(['list', { kind, limit }]);
+      if (lib.hang === 'list') return new Promise(() => {});
+      if (lib.fail === 'list') return Promise.reject(new Error('unavailable'));
+      const rows = items.filter((i) => !kind || i.kind === kind).map(({ spec, ...row }) => structuredClone(row));
+      return Promise.resolve(Number.isInteger(limit) ? rows.slice(0, limit) : rows);
+    },
+    findPartBlueprint(model, part) {
+      calls.push(['findPartBlueprint', model, part]);
+      const hit = items.find((i) => i.kind === 'blueprint' && i.parent && i.parent.model === model && (i.parent.part ?? null) === (part ?? null));
+      if (!hit) return Promise.resolve(null);
+      const { spec, ...row } = hit;
+      return Promise.resolve(structuredClone(row));
+    },
+  };
+  for (const item of initial) lib.add(item);
+  return lib;
+}
+
 export function createHarness({
   handler,
   settings = {},
   memory = createMemory(),
+  library,
+  liveIntervalMs,
+  libraryTimeoutMs,
   now,
   retryBaseMs = 5,
   clientOptions = { maxRetries: 0 },
@@ -409,6 +470,9 @@ export function createHarness({
     getApiKey: () => apiKey,
     getApiBase: () => '',
     memory,
+    library,
+    liveIntervalMs,
+    libraryTimeoutMs,
     persist: async (conv) => {
       persisted.push(structuredClone(conv)); // also proves the conversation is structured-clone safe
     },
@@ -441,8 +505,8 @@ export function createHarness({
 }
 
 /** Starts a turn, records every event ('*'), and resolves with { turn, events, run } at the end. */
-export async function runTurn(jarvis, conv, text, mode = 'auto', { onRun } = {}) {
-  const run = jarvis.startTurn(conv, { text, mode });
+export async function runTurn(jarvis, conv, text, mode = 'auto', { onRun, ...input } = {}) {
+  const run = jarvis.startTurn(conv, { text, mode, ...input });
   return collect(run, onRun);
 }
 

@@ -1,5 +1,6 @@
 // The lead turn: stream Jarvis's requests into segments, run client tool rounds (deploy_agents,
-// update_memory), follow stop reasons, and handle stop / interruption / resume (SPEC 8.4, 8.6).
+// update_memory, and in version 4 conversations show_hologram, draw_blueprint and open_saved: see
+// visuals.js), follow stop reasons, and handle stop / interruption / resume (SPEC 8.4, 8.6).
 //
 // History rules (SPEC 8.3): conversation.apiMessages is append-only and only complete responses are
 // appended. A pause_turn response is held in `ctx.paused` and sent as the trailing assistant
@@ -28,6 +29,17 @@ import {
   updatePlanning,
 } from './mission.js';
 import { invalidJsonResult, parseToolJson, validateMemoryInput } from './validate.js';
+import { VISUAL_TOOLS } from './prompts.js';
+import {
+  dropVisualSegment,
+  failVisualSegment,
+  hasVisualTools,
+  isLiveVisualTool,
+  isVisualSegment,
+  runVisualTool,
+  startVisualSegment,
+  updateVisualSegment,
+} from './visuals.js';
 import { isAttachmentBlock } from './attachments.js';
 import { PRICES } from './models.js';
 import { countdown, retryDelayMs, retryLabel, shouldRetry } from './retry.js';
@@ -86,6 +98,7 @@ function finalToolInput(raw) {
 function createLeadView(ctx, req) {
   const blocks = new Map();
   const planning = new Map(); // tool_use id → planning mission created by this request
+  const visuals = new Map(); // tool_use id → live hologram / blueprint segment created by this request
   const showThinking = ctx.settings.showThinking;
 
   function appendThinking(st, text) {
@@ -176,7 +189,7 @@ function createLeadView(ctx, req) {
     switch (event.type) {
       case 'content_block_start': {
         const b = event.content_block || {};
-        const st = { type: b.type, raw: '', startedAt: ctx.stamp(), seg: null, mission: null };
+        const st = { type: b.type, raw: '', startedAt: ctx.stamp(), seg: null, mission: null, visual: null };
         blocks.set(event.index, st);
         if (b.type === 'thinking') {
           appendThinking(st, b.thinking);
@@ -194,6 +207,10 @@ function createLeadView(ctx, req) {
           if (b.name === 'deploy_agents' && canPlanDeploy(ctx)) {
             st.mission = planMission(ctx, b.id, req);
             planning.set(b.id, st.mission);
+          } else if (isLiveVisualTool(ctx, b.name)) {
+            // Live build: the card and the hologram grow while the input streams (like planning).
+            st.visual = startVisualSegment(ctx, b, req);
+            visuals.set(b.id, st.visual);
           }
         } else if (b.type === 'fallback') {
           ctx.addSegment({
@@ -219,6 +236,8 @@ function createLeadView(ctx, req) {
             if (applyToolInput(st.seg, parsePartialJson(st.raw))) ctx.touchSegment(st.seg);
           } else if (st.mission) {
             updatePlanning(ctx, st.mission, st.raw);
+          } else if (st.visual) {
+            updateVisualSegment(ctx, st.visual, st.raw);
           }
         }
         break;
@@ -233,6 +252,8 @@ function createLeadView(ctx, req) {
           if (applyToolInput(st.seg, finalToolInput(st.raw))) ctx.touchSegment(st.seg);
         } else if (st.mission) {
           updatePlanning(ctx, st.mission, st.raw);
+        } else if (st.visual) {
+          updateVisualSegment(ctx, st.visual, st.raw, { final: true });
         }
         const block = snapshot?.content?.[event.index];
         if (block && (block.type === 'web_search_tool_result' || block.type === 'web_fetch_tool_result')) applyResult(block);
@@ -261,7 +282,15 @@ function createLeadView(ctx, req) {
     }
   }
 
-  return { onEvent, finalize, planning };
+  /**
+   * The request failed mid-stream: bring each live card up to everything that arrived (the
+   * throttle may have held back the last updates), so a cut card shows all that was built.
+   */
+  function flushLive() {
+    for (const st of blocks.values()) if (st.visual) updateVisualSegment(ctx, st.visual, st.raw, { final: true });
+  }
+
+  return { onEvent, finalize, flushLive, planning, visuals };
 }
 
 /** Drops everything a failed attempt of request `req` (or later) showed, before a retry/resume. */
@@ -273,6 +302,8 @@ function discardRequest(ctx, req) {
       if (mission && !mission.startedAt) delete ctx.turn.missions[seg.missionId];
     } else if (seg.kind === 'tool' && seg.toolUseId) {
       ctx.toolSegments.delete(seg.toolUseId);
+    } else if (isVisualSegment(seg) && seg.toolUseId) {
+      ctx.visualSegments.delete(seg.toolUseId);
     }
   }
 }
@@ -335,9 +366,10 @@ async function leadRequest(ctx, req) {
       });
       view.finalize(result.message.content);
       ctx.adoptContainer(result.message.container);
-      return { ...result, planning: view.planning };
+      return { ...result, planning: view.planning, visuals: view.visuals };
     } catch (err) {
       accountPartialUsage(ctx, err, ctx.leadModel, null);
+      view.flushLive();
       if (ctx.stopped || isAbortError(err)) throw err;
       if (isToolInputParseError(err) && jsonRetries < MAX_JSON_RETRIES) {
         jsonRetries += 1;
@@ -490,6 +522,7 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
   for (const tu of parsed) {
     if (tu.badJson !== null) {
       dropMission(ctx, planning.get(tu.id));
+      failVisualSegment(ctx, tu.id, 'The input was not valid JSON.');
       round.results[tu.id] = invalidJsonResult(tu.badJson);
     } else if (tu.name === 'deploy_agents') {
       const outcome = startDeploy(ctx, tu, { planned: planning.get(tu.id) || findMissionByToolUse(ctx.turn, tu.id), req });
@@ -501,12 +534,19 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
       }
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = await applyMemory(ctx, tu, req);
+    } else if (isVisualTool(ctx, tu.name)) {
+      round.results[tu.id] = await runVisualTool(ctx, tu, req);
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
   }
   ctx.persistSoon();
   await finishRound(ctx, round, missionRuns);
+}
+
+/** show_hologram / draw_blueprint / open_saved, in a conversation whose frozen tools have it (V4). */
+function isVisualTool(ctx, name) {
+  return VISUAL_TOOLS.includes(name) && hasVisualTools(ctx.conv, name);
 }
 
 /** Whether the history ends with the assistant message asking for these tools (no results yet). */
@@ -539,6 +579,9 @@ async function resumeToolRound(ctx, pending) {
       missionRuns.push(resumeMission(ctx, mission).then(() => missionDone(ctx, round, tu, mission)));
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = { content: MEMORY_NOT_RESUMED, is_error: true };
+    } else if (isVisualTool(ctx, tu.name)) {
+      // Showing, saving (idempotent per segment) or opening an item again is harmless.
+      round.results[tu.id] = await runVisualTool(ctx, tu, Math.max(0, ctx.req - 1));
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
@@ -559,7 +602,7 @@ async function leadLoop(ctx) {
     const req = ctx.req;
     ctx.currentReq = req;
     setCheckpoint(ctx, { toolUses: [], req, ...(ctx.paused.length ? { paused: jsonCopy(ctx.paused) } : {}) });
-    const { message, rawInputs, planning } = await leadRequest(ctx, req);
+    const { message, rawInputs, planning, visuals } = await leadRequest(ctx, req);
     ctx.req = req + 1;
     ctx.accountUsage(message, ctx.leadModel, null);
     ctx.emitTurn();
@@ -583,6 +626,7 @@ async function leadLoop(ctx) {
       // Partial output of a refused response is discarded, never appended (nor its paused chain).
       ctx.paused = [];
       for (const mission of planning.values()) dropMission(ctx, mission);
+      for (const id of visuals.keys()) failVisualSegment(ctx, id);
       throw new Refused(refusalInfo(message), req);
     }
 
@@ -590,6 +634,7 @@ async function leadLoop(ctx) {
     const toolUses = content.filter((b) => b.type === 'tool_use');
     // A deploy_agents call that is not part of the appended turn (e.g. left out after a fallback) never runs.
     for (const [id, mission] of planning) if (!toolUses.some((b) => b.id === id)) dropMission(ctx, mission);
+    for (const id of visuals.keys()) if (!toolUses.some((b) => b.id === id)) dropVisualSegment(ctx, id);
     commitAssistant(ctx, content);
 
     if (stop === 'tool_use' && toolUses.length) {
@@ -598,7 +643,10 @@ async function leadLoop(ctx) {
     }
     if (toolUses.length) {
       // Never run a tool call cut off by a limit; answer it so the history stays valid.
-      for (const b of toolUses) dropMission(ctx, planning.get(b.id));
+      for (const b of toolUses) {
+        dropMission(ctx, planning.get(b.id));
+        failVisualSegment(ctx, b.id, 'The reply ended before this was complete.');
+      }
       answerUnrun(ctx, toolUses, 'Not run: the reply ended before this tool call was complete.');
     }
     if (stop === 'max_tokens') {
@@ -631,13 +679,14 @@ function stopTurn(ctx) {
 
 /**
  * Whether the owner already saw part of the reply: answer text, a search or page row, a mission
- * card or a memory chip. Thinking and notices (a retry countdown, a fallback note) are not a reply.
+ * card, a memory chip, or a hologram or blueprint card (even one still building). Thinking and
+ * notices (a retry countdown, a fallback note) are not a reply.
  */
 export function showedReply(turn) {
   return (Array.isArray(turn?.segments) ? turn.segments : []).some((s) => {
     if (!s || typeof s !== 'object' || s.transient) return false;
     if (s.kind === 'text') return typeof s.text === 'string' && s.text.trim() !== '';
-    return s.kind === 'tool' || s.kind === 'mission' || s.kind === 'memory';
+    return s.kind === 'tool' || s.kind === 'mission' || s.kind === 'memory' || s.kind === 'hologram' || s.kind === 'blueprint';
   });
 }
 

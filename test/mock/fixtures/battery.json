@@ -1,0 +1,131 @@
+{
+  "title": "AA alkaline battery (LR6)",
+  "subtitle": "1.5 V alkaline cell · 14.2 mm × 50.3 mm · bobbin construction",
+  "units": "mm",
+  "view": "front-left",
+  "groups": [
+    { "id": "casing", "name": "Casing and terminals" },
+    { "id": "chemistry", "name": "Electrochemistry" },
+    { "id": "closure", "name": "Negative-end closure" }
+  ],
+  "parts": [
+    {
+      "id": "can",
+      "name": "Steel can (+)",
+      "group": "casing",
+      "tone": "secondary",
+      "info": "Deep-drawn steel can that holds the cell and is its positive current collector: the cathode is pressed against its inside wall. Its open bottom is crimped over the nylon seal.",
+      "material": "Nickel-plated steel, about 0.25 mm wall, graphite-coated inside",
+      "explode": [0, 4, 30],
+      "anchor": [0, 46, 6.95],
+      "shapes": [
+        { "type": "lathe", "profile": [[6.1, 0.6], [6.95, 1.0], [6.95, 48.55], [6.6, 48.95], [0, 48.95]] }
+      ]
+    },
+    {
+      "id": "label",
+      "name": "Label sleeve",
+      "group": "casing",
+      "tone": "secondary",
+      "info": "Printed shrink-film sleeve that insulates the can, so only the two terminals are live, and carries the branding and warnings.",
+      "material": "PVC or PET shrink film, about 0.08 mm",
+      "explode": [0, 4, 56],
+      "anchor": [0, 30, 7.12],
+      "shapes": [
+        { "type": "lathe", "profile": [[6.6, 0.25], [7.12, 0.6], [7.12, 48.5], [6.7, 48.95]] }
+      ]
+    },
+    {
+      "id": "pos-terminal",
+      "name": "Positive terminal (+)",
+      "group": "casing",
+      "tone": "accent",
+      "info": "The raised button at the top. It is part of, or welded to, the can, so it is connected to the cathode.",
+      "material": "Nickel-plated steel",
+      "explode": [0, 16, 30],
+      "shapes": [
+        { "type": "lathe", "profile": [[0, 50.3], [2.55, 50.3], [2.75, 50.0], [2.8, 49.25], [3.9, 49.1], [4.05, 48.95]] }
+      ]
+    },
+    {
+      "id": "cathode",
+      "name": "Cathode rings (MnO2)",
+      "aka": ["manganese dioxide", "cathode"],
+      "group": "chemistry",
+      "tone": "primary",
+      "info": "Four pressed rings of manganese dioxide mixed with graphite for conductivity. During discharge the MnO2 is reduced, taking up the electrons that return through the can.",
+      "material": "Electrolytic manganese dioxide, graphite, KOH electrolyte",
+      "explode": [0, 0, 0],
+      "shapes": [
+        { "type": "cylinder", "at": [0, 7.85, 0], "r": 6.68, "h": 10.4, "hole": 4.55, "repeat": { "count": 4, "along": [0, 10.6, 0] } }
+      ]
+    },
+    {
+      "id": "separator",
+      "name": "Separator",
+      "group": "chemistry",
+      "tone": "accent",
+      "info": "A porous paper and polymer tube with a closed bottom, soaked in electrolyte. Hydroxide ions pass through it, but it stops the zinc and the manganese dioxide from touching and short-circuiting.",
+      "material": "Non-woven cellulose and PVA fibres",
+      "explode": [0, 2, -22],
+      "shapes": [
+        { "type": "lathe", "profile": [[0, 3.1], [4.52, 3.1], [4.52, 45.4]] }
+      ]
+    },
+    {
+      "id": "anode",
+      "name": "Zinc anode gel",
+      "aka": ["zinc", "anode"],
+      "group": "chemistry",
+      "tone": "primary",
+      "info": "Zinc powder suspended in a potassium hydroxide gel fills the core. The zinc oxidizes as the cell discharges, releasing the electrons that leave through the negative end.",
+      "material": "Zinc powder, KOH electrolyte, gelling agent",
+      "explode": [0, 2, -42],
+      "shapes": [
+        { "type": "cylinder", "at": [0, 23.6, 0], "r": 4.4, "h": 40.5 }
+      ]
+    },
+    {
+      "id": "collector",
+      "name": "Brass collector nail",
+      "aka": ["current collector", "nail"],
+      "group": "closure",
+      "tone": "accent",
+      "info": "A brass nail pushed up into the zinc gel. It carries electrons from the anode to the negative end cap it is welded to.",
+      "material": "Tin- or indium-plated brass",
+      "explode": [0, 14, -62],
+      "shapes": [
+        { "type": "cylinder", "at": [0, 18.0, 0], "r": 0.65, "h": 33.0 },
+        { "type": "cylinder", "at": [0, 1.3, 0], "r": 1.4, "h": 0.4 }
+      ]
+    },
+    {
+      "id": "seal",
+      "name": "Nylon seal and vent",
+      "group": "closure",
+      "tone": "primary",
+      "info": "Plastic plug that closes the bottom of the can and insulates the negative cap from it. A thin section works as a safety vent that ruptures if gas pressure builds up.",
+      "material": "Nylon 6,6",
+      "explode": [0, -4, -62],
+      "shapes": [
+        { "type": "lathe", "profile": [[1.35, 1.0], [6.65, 1.0], [6.65, 3.4], [6.25, 3.4], [6.25, 2.1], [2.0, 2.6], [2.0, 5.0], [1.35, 5.0], [1.35, 1.0]] }
+      ]
+    },
+    {
+      "id": "neg-cap",
+      "name": "Negative end cap (−)",
+      "group": "closure",
+      "tone": "accent",
+      "info": "The flat negative terminal. Welded to the collector nail and held in place, insulated from the can, by the crimped seal.",
+      "material": "Nickel-plated steel",
+      "explode": [0, -14, -62],
+      "shapes": [
+        { "type": "lathe", "profile": [[0, 0.05], [4.4, 0.05], [5.3, 0.45], [5.75, 0.95]] }
+      ]
+    }
+  ],
+  "notes": [
+    "Typical bobbin construction; the exact layout varies by manufacturer.",
+    "IEC 60086 limits for LR6: at most 14.5 mm diameter and 50.5 mm height."
+  ]
+}

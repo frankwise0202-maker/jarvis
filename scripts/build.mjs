@@ -5,7 +5,8 @@
 //
 // 1. clean dist/
 // 2. bundle src/main.js -> dist/assets/app.js (+ app.css from the CSS it imports, or from
-//    src/styles/app.css), ESM, minified, with source maps, target es2020 + safari15
+//    src/styles/app.css), ESM, minified, with source maps, target es2020 + safari15; code
+//    splitting puts dynamically imported modules (the 3D viewer) in dist/assets/chunks/
 // 3. copy public/ -> dist/
 // 4. BUILD_ID = first 8 hex chars of sha256 over every output file (path + content)
 // 5. fill placeholders: __BUILD_ID__ (index.html, sw.js), __APP_VERSION__ (index.html) and
@@ -32,12 +33,12 @@ export class BuildError extends Error {}
  * Build the app. Resolves to { buildId, version, outDir, files: [{ path, bytes, gzipBytes }] }.
  * Throws BuildError with a readable message when something required is missing or esbuild fails.
  */
-export async function build({ root = ROOT, minify = true, quiet = false } = {}) {
+export async function build({ root = ROOT, minify = true, quiet = false, outDir: outOverride = null } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
   const srcEntry = path.join(root, 'src', 'main.js');
   const cssEntry = path.join(root, 'src', 'styles', 'app.css');
   const publicDir = path.join(root, 'public');
-  const outDir = path.join(root, 'dist');
+  const outDir = outOverride ? path.resolve(outOverride) : path.join(root, 'dist'); // outDir: a scratch build elsewhere
   const assetsDir = path.join(outDir, 'assets');
 
   if (!existsSync(srcEntry)) {
@@ -75,7 +76,11 @@ export async function build({ root = ROOT, minify = true, quiet = false } = {}) 
     absWorkingDir: root,
   };
   try {
-    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } });
+    // Code splitting: modules loaded with import() (the 3D hologram viewer and three.js) become
+    // their own chunks under assets/chunks/, fetched only when first used; code they share with
+    // the main bundle goes to a shared chunk. Chunk names carry a content hash, and every chunk is
+    // in the service worker's precache list (below), so they work offline like app.js.
+    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { 'process.env.NODE_ENV': '"production"' } });
     if (!existsSync(path.join(assetsDir, 'app.css'))) {
       // main.js did not import the styles: bundle the stylesheet entry on its own.
       if (existsSync(cssEntry)) {

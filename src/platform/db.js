@@ -1,11 +1,17 @@
 // Conversation history in IndexedDB (SPEC §5, §6).
 //
-// Database `jarvis` (version 1) with two object stores, both keyPath 'id':
+// Database `jarvis` (version 2) with three object stores, all keyPath 'id':
 //   conversations  full Conversation objects (structured clones of what the engine passes in)
 //   meta           one small row per conversation for the history list:
 //                  { id, title, createdAt, updatedAt, preview, turnCount }
 //                  preview = last user message (one line, ≤ 120 chars); turnCount = turns.length
+//   library        saved holograms and blueprints (version 2; see library.js, which owns its
+//                  records and reaches the store through libraryTransaction() below), with
+//                  indexes byCreated (createdAt), byPart (partKey) and bySegment (segmentId)
 // A save writes both rows in one transaction, so the list never disagrees with the data.
+// The version 1 -> 2 upgrade only adds the library store: every conversation stays untouched. An
+// older app version (still cached) opening the version 2 database gets a VersionError and uses it
+// as it is (openExisting); it simply ignores the library.
 //
 // The API history (conversation.apiMessages: append-only, and it carries every photo and PDF as
 // base64) is kept in its own record of the conversations store, keyed [id, 'api'], and rewritten
@@ -44,9 +50,11 @@
 import { cleanLine, isPlainObject, newId, reportWarning, truncate } from './util.js';
 
 export const DB_NAME = 'jarvis';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 const STORE = 'conversations';
 const META = 'meta';
+/** The saved library's store (version 2). Internal: library.js owns its records. */
+export const LIBRARY_STORE = 'library';
 const OPEN_TIMEOUT_MS = 6000;
 const PREVIEW_CHARS = 120;
 
@@ -69,6 +77,8 @@ const remoteListeners = new Set();
 let channel; // BroadcastChannel('jarvis-saves'), null when unavailable (created on first use)
 const persistenceListeners = new Set();
 let lastWriteProblem = null; // why the latest failed save fell back to memory: 'quota' | 'unavailable'
+// Saved library items library.js could only keep in memory, and why (they count as not persistent).
+let libraryFallback = { count: 0, reason: null };
 let reported = { persistent: true, reason: null }; // the state listeners last heard
 
 // ---------------------------------------------------------------------------------------
@@ -157,22 +167,73 @@ export function deleteAllConversations() {
 
 /**
  * False when IndexedDB is unavailable (private mode, blocked) or a save could not reach it,
- * i.e. some history only lives in memory. Accurate after the first awaited db call.
+ * i.e. some history (or a saved library item) only lives in memory. Accurate after the first
+ * awaited db call.
  */
 export function isPersistent() {
-  return !openFailed && hasIndexedDB() && memory.size === 0;
+  return !openFailed && hasIndexedDB() && memory.size === 0 && libraryFallback.count === 0;
 }
 
 /**
- * Whether history is reaching the device's storage, and if not why:
+ * Whether history and the saved library are reaching the device's storage, and if not why:
  * { persistent: true, reason: null } | { persistent: false, reason: 'quota' | 'unavailable' }.
  * 'quota': the device is out of storage space; 'unavailable': IndexedDB is blocked, missing (e.g.
  * private browsing) or failing. Same facts as isPersistent(); accurate after the first db call.
  */
 export function getPersistence() {
   if (openFailed || !hasIndexedDB()) return { persistent: false, reason: 'unavailable' };
-  if (memory.size > 0) return { persistent: false, reason: lastWriteProblem || 'unavailable' };
+  const reasons = [];
+  if (memory.size > 0) reasons.push(lastWriteProblem || 'unavailable');
+  if (libraryFallback.count > 0) reasons.push(libraryFallback.reason || 'unavailable');
+  if (reasons.length) return { persistent: false, reason: reasons.includes('quota') ? 'quota' : 'unavailable' };
   return { persistent: true, reason: null };
+}
+
+/**
+ * Internal (library.js): how many saved library items are kept only in memory, and why
+ * ('quota' | 'unavailable'); 0 when all reached the disk. Feeds getPersistence() and its listeners,
+ * so the app's "storage is full" banner covers the library too.
+ */
+export function setLibraryFallback(count, reason) {
+  const n = Number.isInteger(count) && count > 0 ? count : 0;
+  libraryFallback = { count: n, reason: n ? (reason === 'quota' ? 'quota' : 'unavailable') : null };
+  notifyPersistence();
+}
+
+/**
+ * Internal (library.js): runs `body(store, box)` in ONE transaction on the library store, on the
+ * same serial queue and connection as the conversations (so writes never interleave), retrying once
+ * on a lost connection. Set box.value to resolve with it. Never rejects:
+ * { ok: true, value } | { ok: false, reason: 'quota' | 'unavailable', error? }.
+ */
+export function libraryTransaction(mode, body) {
+  const unavailable = { ok: false, reason: 'unavailable' };
+  return enqueue(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const db = await openDb();
+      if (!db || !db.objectStoreNames.contains(LIBRARY_STORE)) return unavailable;
+      try {
+        const value = await transaction(db, [LIBRARY_STORE], mode, (stores, box) => body(stores[LIBRARY_STORE], box));
+        return { ok: true, value };
+      } catch (err) {
+        if (attempt === 0 && isConnectionError(err)) {
+          try {
+            db.close();
+          } catch {
+            /* ignore */
+          }
+          dbPromise = null;
+          continue;
+        }
+        return { ok: false, reason: isQuotaError(err) ? 'quota' : 'unavailable', error: err };
+      }
+    }
+    return unavailable;
+  }, unavailable);
+}
+
+function isQuotaError(err) {
+  return !!err && (err.name === 'QuotaExceededError' || /quota/i.test(String(err.message || '')));
 }
 
 /**
@@ -346,7 +407,7 @@ async function writeConversation(conv, force = false) {
       return true;
     }
   } catch (err) {
-    const full = !!err && (err.name === 'QuotaExceededError' || /quota/i.test(String(err.message)));
+    const full = isQuotaError(err);
     lastWriteProblem = full ? 'quota' : 'unavailable';
     if (!warnedWrite) {
       warnedWrite = true;
@@ -520,6 +581,18 @@ function openDb() {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'id' });
+      // Version 2: the saved library. Purely additive: version 1 data is left exactly as it was.
+      if (!db.objectStoreNames.contains(LIBRARY_STORE)) {
+        const library = db.createObjectStore(LIBRARY_STORE, { keyPath: 'id' });
+        library.createIndex('byCreated', 'createdAt');
+        library.createIndex('byPart', 'partKey');
+        library.createIndex('bySegment', 'segmentId');
+      }
+    };
+    req.onblocked = () => {
+      // Another window still holds the old version open and did not step aside (Jarvis's own
+      // windows do, see adopt()); the open timeout below reports it if it never finishes.
+      reportWarning('Waiting for other Jarvis windows to close before updating local storage.');
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -537,7 +610,6 @@ function openDb() {
         openExisting(idb).then((db) => finish(db, err));
       } else finish(null, err);
     };
-    // onblocked: another tab holds an older version open; the timeout covers a stuck upgrade.
   });
   return dbPromise;
 }

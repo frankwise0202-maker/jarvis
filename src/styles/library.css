@@ -1,0 +1,587 @@
+/* Holograms and blueprints outside their viewers: the chat cards (.vcard), the Blueprints library
+   sheet (.lib-*) and the full-screen blueprint overlay (.bpo). Tokens only. */
+
+/* ---- chat cards ------------------------------------------------------------------------------ */
+
+.seg-visual {
+  margin: var(--sp-1) 0;
+}
+
+.vcard {
+  container-type: inline-size;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  padding: var(--sp-2);
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--accent-soft), transparent 55%),
+    linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-1);
+  color: var(--text);
+}
+
+.vcard--blueprint {
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(58, 120, 255, 0.14), transparent 55%),
+    linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+.vcard-thumb {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 136px;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background:
+    radial-gradient(70% 60% at 50% 55%, rgba(62, 224, 255, 0.16), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(62, 224, 255, 0.06) 0 1px, transparent 1px 12px),
+    repeating-linear-gradient(90deg, rgba(62, 224, 255, 0.06) 0 1px, transparent 1px 12px),
+    #02060b;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--accent);
+}
+
+.vcard--blueprint .vcard-thumb {
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 10px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 10px),
+    #0b3a7a;
+  color: #e9f3ff;
+}
+
+.vcard-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: fade-in var(--dur-3) var(--ease) both;
+}
+
+.vcard-thumb.has-img .vcard-glyph,
+.vcard-thumb.has-img .vcard-scan {
+  display: none;
+}
+
+.vcard-glyph {
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 0 10px var(--accent-glow));
+}
+
+.vcard--blueprint .vcard-glyph {
+  filter: none;
+}
+
+/* Building: a scan band sweeps the placeholder */
+.vcard-scan {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(62, 224, 255, 0.28) 48%, rgba(138, 243, 255, 0.5) 50%, transparent 52%);
+  background-size: 100% 220%;
+}
+
+.vcard[data-status='building'] .vcard-scan {
+  opacity: 1;
+  animation: vcard-scan 1.8s linear infinite;
+}
+
+.vcard[data-status='building'] .vcard-glyph {
+  animation: vcard-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vcard-scan {
+  from {
+    background-position: 0 100%;
+  }
+  to {
+    background-position: 0 -120%;
+  }
+}
+
+@keyframes vcard-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.vcard-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 0 0;
+}
+
+.vcard-kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.vcard-kicker-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcard-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.vcard[data-status='building'] .vcard-dot {
+  animation: pulse-dot 1.4s var(--ease) infinite;
+}
+
+.vcard[data-status='error'] .vcard-kicker {
+  color: var(--warn);
+}
+
+.vcard[data-status='error'] .vcard-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+
+.vcard-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--ok-soft);
+  box-shadow: inset 0 0 0 1px rgba(61, 255, 176, 0.32);
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 1.7;
+  letter-spacing: 0.12em;
+}
+
+.vcard-title {
+  margin-top: 4px;
+  font: 600 var(--fs-md) / var(--lh-tight) var(--font-display);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vcard-sub {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: auto;
+  padding-top: var(--sp-2);
+}
+
+.vcard-meta {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-4);
+  font: 500 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcard-open {
+  flex: none;
+  border-color: var(--line-3);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.vcard-open:hover {
+  box-shadow: 0 0 16px var(--accent-soft);
+}
+
+@container (min-width: 560px) {
+  .vcard-thumb {
+    width: 168px;
+  }
+}
+
+@container (max-width: 400px) {
+  .vcard-thumb {
+    width: 112px;
+  }
+}
+
+@container (max-width: 320px) {
+  .vcard-thumb {
+    width: 92px;
+  }
+}
+
+/* ---- the Blueprints library sheet -------------------------------------------------------------- */
+
+.lib {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-3) max(var(--sp-4), var(--safe-right)) calc(var(--sp-6) + var(--safe-bottom)) max(var(--sp-4), var(--safe-left));
+}
+
+.lib-intro {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.lib-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lib-filter {
+  position: relative;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lib-filter::after {
+  content: '';
+  position: absolute;
+  inset: -4px -2px;
+}
+
+.lib-filter[aria-pressed='true'] {
+  border-color: var(--line-3);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.lib-list {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.lib-item {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-areas:
+    'thumb body'
+    'thumb actions';
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.lib-item.is-removing {
+  opacity: 0.4;
+}
+
+.lib-thumb {
+  grid-area: thumb;
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 112px;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background:
+    radial-gradient(70% 60% at 50% 55%, rgba(62, 224, 255, 0.14), transparent 70%),
+    #02060b;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--accent);
+}
+
+.lib-thumb--blueprint {
+  background: #0b3a7a;
+  color: #e9f3ff;
+}
+
+.lib-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lib-body {
+  grid-area: body;
+  min-width: 0;
+}
+
+.lib-kind {
+  margin: 0;
+  color: var(--accent);
+  font: 600 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.lib-item--blueprint .lib-kind {
+  color: #8db8ff;
+}
+
+.lib-title {
+  margin: 2px 0 0;
+  font: 600 var(--fs-md) / var(--lh-tight) var(--font-display);
+  overflow-wrap: anywhere;
+}
+
+.lib-subject {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-meta {
+  margin: 4px 0 0;
+  color: var(--text-4);
+  font: 500 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lib-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lib-open {
+  margin-right: auto;
+}
+
+.lib-del.icon-btn {
+  color: var(--text-3);
+}
+
+.lib-item.is-confirming .lib-del {
+  width: auto;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.lib-del-text {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.lib-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-6) 0;
+  padding: 0 var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.lib-empty p {
+  margin: 0;
+  max-width: 420px;
+}
+
+.lib-empty .icon {
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.lib-empty-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.lib-foot {
+  margin: 0;
+  color: var(--text-4);
+  font: 500 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+@media (min-width: 640px) {
+  .lib-list {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+}
+
+/* History: the way into the library */
+.history-library {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-library:hover {
+  border-color: var(--line-2);
+  color: var(--text);
+}
+
+.history-library .icon {
+  color: var(--accent);
+}
+
+.history-library-count {
+  margin-left: auto;
+  color: var(--text-4);
+  font: 500 var(--fs-2xs) / 1 var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
+/* The header button (room permitting; on the narrowest phones it lives in History) */
+@media (max-width: 379px) {
+  .header-library {
+    display: none;
+  }
+}
+
+/* ---- the blueprint viewer overlay ------------------------------------------------------------ */
+
+.bpo {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  outline: none;
+  animation: fade-in var(--dur-2) var(--ease) both;
+}
+
+.bpo [hidden] {
+  display: none !important;
+}
+
+.bpo__host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bpo__host > .bpv {
+  flex: 1;
+}
+
+.bpo__loading {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  transform: translate(-50%, -50%);
+  color: var(--text-3);
+  font: 600 var(--fs-2xs) / 1.5 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.bpo__close {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  right: calc(var(--safe-right) + 12px);
+}
+
+.bpo__live {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--safe-top) + 84px);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  background: rgba(4, 12, 20, 0.9);
+  box-shadow: inset 0 0 0 1px var(--line-2), 0 10px 30px rgba(0, 0, 0, 0.5);
+  color: var(--accent-2);
+  font: 600 var(--fs-2xs) / 1.4 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.bpo__live[data-state='error'] {
+  color: var(--warn);
+}
+
+.bpo__live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+  animation: pulse-dot 1.4s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vcard[data-status='building'] .vcard-scan,
+  .vcard[data-status='building'] .vcard-glyph,
+  .bpo__live-dot {
+    animation: none;
+  }
+}

@@ -1,0 +1,1355 @@
+{
+ "title": "How an AA alkaline battery is made",
+ "subject": "LR6 bobbin cell, high-speed assembly line",
+ "sheet": "process",
+ "scale": "NTS",
+ "canvas": [
+  1000,
+  700
+ ],
+ "steps": [
+  {
+   "title": "Draw the steel can",
+   "phase": "CAN LINE",
+   "detail": "Nickel-plated steel strip about 0.25 mm thick is cupped and deep-drawn through several dies into seamless cans; the inside is sprayed with conductive graphite.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      36,
+      50
+     ],
+     "size": [
+      26,
+      22
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      98,
+      50
+     ],
+     "size": [
+      26,
+      22
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       64,
+       40
+      ],
+      [
+       64,
+       92
+      ],
+      [
+       96,
+       92
+      ],
+      [
+       96,
+       40
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      68,
+      4
+     ],
+     "size": [
+      24,
+      82
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      22,
+      8
+     ],
+     "to": [
+      22,
+      40
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      80,
+      20
+     ],
+     "text": "PUNCH",
+     "size": 9,
+     "anchor": "middle"
+    }
+   ]
+  },
+  {
+   "title": "Mix the cathode",
+   "phase": "CATHODE",
+   "detail": "Electrolytic manganese dioxide (about 90 %) is blended with graphite for conductivity, wetted with KOH and a binder, then compacted and granulated.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 40 22 L 40 66 Q 40 88 62 88 L 98 88 Q 120 88 120 66 L 120 22"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       42,
+       46
+      ],
+      [
+       118,
+       46
+      ],
+      [
+       118,
+       66
+      ],
+      [
+       100,
+       86
+      ],
+      [
+       60,
+       86
+      ],
+      [
+       42,
+       66
+      ]
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      70,
+      2
+     ],
+     "size": [
+      20,
+      10
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "line",
+     "from": [
+      80,
+      12
+     ],
+     "to": [
+      80,
+      70
+     ]
+    },
+    {
+     "type": "line",
+     "from": [
+      64,
+      70
+     ],
+     "to": [
+      96,
+      70
+     ]
+    },
+    {
+     "type": "arrow",
+     "from": [
+      10,
+      26
+     ],
+     "to": [
+      36,
+      40
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      150,
+      26
+     ],
+     "to": [
+      124,
+      40
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      6,
+      14
+     ],
+     "text": "MnO₂",
+     "size": 11,
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      154,
+      14
+     ],
+     "text": "C",
+     "size": 11,
+     "anchor": "end",
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Press cathode rings",
+   "phase": "CATHODE",
+   "detail": "The granules are pressed into hollow rings (or impact-moulded straight into the can); an AA cell takes three or four rings.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      52,
+      30
+     ],
+     "size": [
+      56,
+      18
+     ],
+     "repeat": {
+      "count": 3,
+      "along": [
+       0,
+       22
+      ]
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      52,
+      30
+     ],
+     "size": [
+      14,
+      18
+     ],
+     "hatch": 45,
+     "style": "thin",
+     "repeat": {
+      "count": 3,
+      "along": [
+       0,
+       22
+      ]
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      94,
+      30
+     ],
+     "size": [
+      14,
+      18
+     ],
+     "hatch": 45,
+     "style": "thin",
+     "repeat": {
+      "count": 3,
+      "along": [
+       0,
+       22
+      ]
+     }
+    },
+    {
+     "type": "line",
+     "from": [
+      80,
+      26
+     ],
+     "to": [
+      80,
+      98
+     ],
+     "style": "center"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      80,
+      2
+     ],
+     "to": [
+      80,
+      24
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Insert and re-compact",
+   "phase": "CATHODE",
+   "detail": "Rings are pushed into the can and re-pressed so they bond to the wall, which becomes the positive current collector.",
+   "shapes": [
+    {
+     "type": "polyline",
+     "points": [
+      [
+       56,
+       22
+      ],
+      [
+       56,
+       92
+      ],
+      [
+       104,
+       92
+      ],
+      [
+       104,
+       22
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      90,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      58,
+      52
+     ],
+     "to": [
+      70,
+      52
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       0,
+       19
+      ]
+     }
+    },
+    {
+     "type": "line",
+     "from": [
+      90,
+      52
+     ],
+     "to": [
+      102,
+      52
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       0,
+       19
+      ]
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      72,
+      2
+     ],
+     "size": [
+      16,
+      30
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      30,
+      6
+     ],
+     "to": [
+      30,
+      44
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Fit the separator",
+   "phase": "SEPARATOR",
+   "detail": "Non-woven cellulose/PVA paper is rolled into a tube with a bottom cup and pushed into the cathode bore. It passes ions but keeps the electrodes apart.",
+   "shapes": [
+    {
+     "type": "polyline",
+     "points": [
+      [
+       56,
+       22
+      ],
+      [
+       56,
+       92
+      ],
+      [
+       104,
+       92
+      ],
+      [
+       104,
+       22
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      90,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       72,
+       12
+      ],
+      [
+       72,
+       88
+      ],
+      [
+       88,
+       88
+      ],
+      [
+       88,
+       12
+      ]
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      80,
+      0
+     ],
+     "to": [
+      80,
+      14
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Dose the electrolyte",
+   "phase": "ELECTROLYTE",
+   "detail": "A metered shot of potassium hydroxide solution (about 35-40 % KOH) wets the separator and soaks into the cathode before the anode goes in.",
+   "shapes": [
+    {
+     "type": "polyline",
+     "points": [
+      [
+       56,
+       22
+      ],
+      [
+       56,
+       92
+      ],
+      [
+       104,
+       92
+      ],
+      [
+       104,
+       22
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      90,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       72,
+       30
+      ],
+      [
+       72,
+       88
+      ],
+      [
+       88,
+       88
+      ],
+      [
+       88,
+       30
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       70,
+       0
+      ],
+      [
+       90,
+       0
+      ],
+      [
+       85,
+       12
+      ],
+      [
+       75,
+       12
+      ]
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "circle",
+     "at": [
+      80,
+      22
+     ],
+     "r": 2.6,
+     "style": "accent",
+     "repeat": {
+      "count": 3,
+      "along": [
+       0,
+       11
+      ]
+     }
+    },
+    {
+     "type": "path",
+     "d": "M 72 74 Q 76 70 80 74 T 88 74",
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Inject the anode gel",
+   "phase": "ANODE",
+   "detail": "Zinc powder (bismuth and indium alloyed, mercury-free) is mixed with KOH and a polyacrylate gelling agent; a few grams of gel are injected into the separator.",
+   "shapes": [
+    {
+     "type": "polyline",
+     "points": [
+      [
+       56,
+       22
+      ],
+      [
+       56,
+       92
+      ],
+      [
+       104,
+       92
+      ],
+      [
+       104,
+       22
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      90,
+      34
+     ],
+     "size": [
+      12,
+      56
+     ],
+     "hatch": 45,
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       72,
+       30
+      ],
+      [
+       72,
+       88
+      ],
+      [
+       88,
+       88
+      ],
+      [
+       88,
+       30
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      72,
+      44
+     ],
+     "size": [
+      16,
+      44
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      76,
+      0
+     ],
+     "size": [
+      8,
+      42
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "text",
+     "at": [
+      112,
+      14
+     ],
+     "text": "Zn GEL",
+     "size": 10,
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Build the closure",
+   "phase": "CLOSURE",
+   "detail": "A brass nail is welded to the nickel-plated negative cap and pushed through the nylon seal, whose thin web acts as a safety vent.",
+   "shapes": [
+    {
+     "type": "polygon",
+     "points": [
+      [
+       78.5,
+       84
+      ],
+      [
+       78.5,
+       22
+      ],
+      [
+       80,
+       14
+      ],
+      [
+       81.5,
+       22
+      ],
+      [
+       81.5,
+       84
+      ]
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       56,
+       62
+      ],
+      [
+       104,
+       62
+      ],
+      [
+       104,
+       74
+      ],
+      [
+       56,
+       74
+      ]
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 4
+     }
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       52,
+       84
+      ],
+      [
+       108,
+       84
+      ],
+      [
+       108,
+       88
+      ],
+      [
+       98,
+       88
+      ],
+      [
+       94,
+       96
+      ],
+      [
+       66,
+       96
+      ],
+      [
+       62,
+       88
+      ],
+      [
+       52,
+       88
+      ]
+     ],
+     "hatch": "solid",
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      72,
+      80
+     ],
+     "to": [
+      66,
+      76
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "line",
+     "from": [
+      88,
+      80
+     ],
+     "to": [
+      94,
+      76
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "line",
+     "from": [
+      80,
+      79
+     ],
+     "to": [
+      80,
+      77
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      112,
+      44
+     ],
+     "text": "NAIL",
+     "size": 9
+    },
+    {
+     "type": "text",
+     "at": [
+      112,
+      68
+     ],
+     "text": "SEAL",
+     "size": 9
+    },
+    {
+     "type": "text",
+     "at": [
+      114,
+      92
+     ],
+     "text": "CAP",
+     "size": 9
+    }
+   ]
+  },
+  {
+   "title": "Close and crimp",
+   "phase": "CLOSURE",
+   "detail": "The closure is pressed into the can mouth so the nail sinks into the gel, then the can edge is beaded and crimped over the seal for a leak-tight joint.",
+   "shapes": [
+    {
+     "type": "polyline",
+     "points": [
+      [
+       56,
+       98
+      ],
+      [
+       56,
+       34
+      ],
+      [
+       62,
+       26
+      ],
+      [
+       70,
+       26
+      ]
+     ]
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       104,
+       98
+      ],
+      [
+       104,
+       34
+      ],
+      [
+       98,
+       26
+      ],
+      [
+       90,
+       26
+      ]
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      32
+     ],
+     "size": [
+      44,
+      9
+     ],
+     "hatch": {
+      "pattern": "cross",
+      "spacing": 4
+     },
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      58,
+      44
+     ],
+     "size": [
+      44,
+      54
+     ],
+     "hatch": "dots",
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      80,
+      32
+     ],
+     "to": [
+      80,
+      92
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      38,
+      30
+     ],
+     "r": 9,
+     "style": "fill"
+    },
+    {
+     "type": "circle",
+     "at": [
+      122,
+      30
+     ],
+     "r": 9,
+     "style": "fill"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      10,
+      30
+     ],
+     "to": [
+      26,
+      30
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      150,
+      30
+     ],
+     "to": [
+      134,
+      30
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Label and finish",
+   "phase": "FINISH",
+   "detail": "A positive cap is welded on where the design uses one; an insulating washer and a printed shrink-film label are applied and heat-shrunk.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      36,
+      30
+     ],
+     "size": [
+      84,
+      40
+     ],
+     "r": 4
+    },
+    {
+     "type": "rect",
+     "at": [
+      120,
+      42
+     ],
+     "size": [
+      7,
+      16
+     ]
+    },
+    {
+     "type": "rect",
+     "at": [
+      33,
+      26
+     ],
+     "size": [
+      90,
+      48
+     ],
+     "r": 6,
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      78,
+      50
+     ],
+     "text": "LR6 · 1.5 V",
+     "size": 11,
+     "anchor": "middle"
+    },
+    {
+     "type": "path",
+     "d": "M 44 92 Q 48 84 52 92 T 60 92",
+     "style": "accent",
+     "repeat": {
+      "count": 4,
+      "along": [
+       22,
+       0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "title": "Age and test",
+   "phase": "QUALITY",
+   "detail": "Cells are stored, often for weeks, then checked for open-circuit voltage (about 1.6 V), load voltage, leaks and dimensions; rejects are scrapped.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      14,
+      36
+     ],
+     "size": [
+      72,
+      30
+     ],
+     "r": 4
+    },
+    {
+     "type": "rect",
+     "at": [
+      86,
+      45
+     ],
+     "size": [
+      6,
+      12
+     ]
+    },
+    {
+     "type": "circle",
+     "at": [
+      126,
+      48
+     ],
+     "r": 24
+    },
+    {
+     "type": "arc",
+     "at": [
+      126,
+      48
+     ],
+     "r": 17,
+     "from": 200,
+     "to": 340,
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      126,
+      48
+     ],
+     "to": [
+      137,
+      35
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      126,
+      62
+     ],
+     "text": "1.6 V",
+     "size": 10,
+     "anchor": "middle",
+     "style": "accent"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       92,
+       51
+      ],
+      [
+       102,
+       51
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       14,
+       51
+      ],
+      [
+       6,
+       51
+      ],
+      [
+       6,
+       94
+      ],
+      [
+       126,
+       94
+      ],
+      [
+       126,
+       72
+      ]
+     ],
+     "style": "thin"
+    }
+   ]
+  },
+  {
+   "title": "Pack and ship",
+   "phase": "FINISH",
+   "detail": "Good cells are counted into blister cards or boxes, coded with a best-before date and palletised for shipping.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      30,
+      6
+     ],
+     "size": [
+      100,
+      88
+     ],
+     "r": 6
+    },
+    {
+     "type": "ellipse",
+     "at": [
+      80,
+      16
+     ],
+     "rx": 9,
+     "ry": 3.5,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      41,
+      34
+     ],
+     "size": [
+      16,
+      52
+     ],
+     "r": 3,
+     "style": "fill",
+     "repeat": {
+      "count": 4,
+      "along": [
+       21,
+       0
+      ]
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      45,
+      30
+     ],
+     "size": [
+      8,
+      4
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 4,
+      "along": [
+       21,
+       0
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "parts": [
+  {
+   "n": 1,
+   "name": "Manganese dioxide (EMD)",
+   "material": "Electrolytic MnO₂",
+   "note": "Cathode active material"
+  },
+  {
+   "n": 2,
+   "name": "Graphite",
+   "material": "Synthetic or natural, fine powder",
+   "note": "Makes the cathode conductive"
+  },
+  {
+   "n": 3,
+   "name": "Potassium hydroxide",
+   "material": "KOH solution, about 35-40 %",
+   "note": "Electrolyte"
+  },
+  {
+   "n": 4,
+   "name": "Zinc powder",
+   "material": "Zn with Bi and In, mercury-free",
+   "note": "Anode active material"
+  },
+  {
+   "n": 5,
+   "name": "Gelling agent",
+   "material": "Sodium polyacrylate",
+   "note": "Keeps the zinc suspended"
+  },
+  {
+   "n": 6,
+   "name": "Steel strip",
+   "material": "Nickel-plated cold-rolled steel",
+   "note": "Can and end caps"
+  },
+  {
+   "n": 7,
+   "name": "Separator paper",
+   "material": "Non-woven cellulose / PVA",
+   "note": "Ion-permeable barrier"
+  },
+  {
+   "n": 8,
+   "name": "Brass wire",
+   "material": "CuZn, often tin plated",
+   "note": "Anode current collector nail"
+  },
+  {
+   "n": 9,
+   "name": "Seal",
+   "material": "Nylon 6,6 moulding",
+   "note": "Closure and safety vent"
+  },
+  {
+   "n": 10,
+   "name": "Label",
+   "material": "PVC or PET shrink film",
+   "note": "Printed sleeve, insulation"
+  }
+ ],
+ "notes": [
+  "Steps 2-9 run on high-speed lines that assemble hundreds of cells a minute.",
+  "Exact formulations, ring counts and fill weights are proprietary and vary by maker."
+ ],
+ "sources": [
+  {
+   "title": "Alkaline battery",
+   "url": "https://en.wikipedia.org/wiki/Alkaline_battery"
+  },
+  {
+   "title": "Energizer E91 product datasheet",
+   "url": "https://data.energizer.com/pdfs/e91.pdf"
+  }
+ ]
+}

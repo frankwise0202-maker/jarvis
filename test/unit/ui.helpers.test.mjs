@@ -76,6 +76,8 @@ test('importSummary says what a backup import restored, copied and skipped', () 
   assert.deepEqual(importSummary({ conversations: 1 }), ok('Restored 1 conversation.'));
   assert.deepEqual(importSummary({ conversations: 0, memory: 1, protocols: 2 }), ok('Restored 1 memory and 2 protocols.'));
   assert.deepEqual(importSummary({ settings: false, settingsChanged: ['theme'] }), ok('Restored your preferences.'));
+  assert.deepEqual(importSummary({ conversations: 1, library: 2 }), ok('Restored 1 conversation and 2 saved holograms and blueprints.'));
+  assert.deepEqual(importSummary({ library: 1 }), ok('Restored 1 saved hologram or blueprint.'));
   const nothing = ok('Nothing new to restore: this device already has everything in that backup.');
   assert.deepEqual(importSummary({}), nothing);
   assert.deepEqual(importSummary(null), nothing);

@@ -50,6 +50,7 @@ function whenLabel(t, group, now) {
  * @param {(id: string) => Promise<void>|void} o.onDelete
  * @param {(id: string) => boolean} [o.isRunning]
  * @param {() => void} [o.onCollapse]   desktop sidebar collapse
+ * @param {() => void} [o.onLibrary]    opens the Blueprints library (saved holograms and blueprints)
  */
 export function createHistory(o) {
   let items = [];
@@ -97,12 +98,22 @@ export function createHistory(o) {
   });
   const list = h('div', { class: 'history-list' });
   const foot = h('div', { class: 'history-foot' });
+  const libraryCount = h('span', { class: 'history-library-count' });
+  const libraryBtn = o.onLibrary
+    ? h(
+        'button',
+        { class: 'history-library', type: 'button', attrs: { 'data-testid': 'history-library', title: 'Saved holograms and blueprints' }, on: { click: () => o.onLibrary() } },
+        icon('blueprint', { size: 18 }),
+        h('span', { text: 'Blueprints' }),
+        libraryCount,
+      )
+    : null;
 
   const el = h(
     'div',
     { class: 'history', attrs: { 'data-testid': 'history-drawer', role: 'navigation', 'aria-label': 'Conversation history' } },
     h('div', { class: 'history-head' }, h('span', { class: 'label-caps history-title', text: 'History' }), collapseBtn),
-    h('div', { class: 'history-tools' }, newBtn, h('label', { class: 'history-search' }, icon('search', { size: 16, class: 'history-search-icon' }), search)),
+    h('div', { class: 'history-tools' }, newBtn, h('label', { class: 'history-search' }, icon('search', { size: 16, class: 'history-search-icon' }), search), libraryBtn),
     list,
     foot,
   );
@@ -274,6 +285,12 @@ export function createHistory(o) {
     },
     setCollapsible(value) {
       collapseBtn.hidden = !value;
+    },
+    /** How many holograms and blueprints are saved (shown on the Blueprints row). */
+    setLibraryCount(n) {
+      const count = Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+      setText(libraryCount, count ? String(count) : '');
+      if (libraryBtn) libraryBtn.setAttribute('aria-label', count ? `Blueprints: ${count} saved` : 'Blueprints');
     },
   };
 }

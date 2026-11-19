@@ -10,6 +10,9 @@
 @import './hud.css';
 @import './stats.css';
 @import './voice-mode.css';
+@import './hologram.css';
+@import './blueprint.css';
+@import './library.css';
 @import './themes.css';
 
 /* ---- shell ---------------------------------------------------------------------------- */

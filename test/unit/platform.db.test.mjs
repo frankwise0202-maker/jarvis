@@ -170,7 +170,8 @@ test('db: save, list (newest first, with previews), get, delete, delete all', as
     return { ids, layout, after: await window.__mods.db.listConversations() };
   });
   assert.deepEqual(r2.ids, ['c', 'a']);
-  assert.deepEqual(r2.layout, { version: 1, stores: ['conversations', 'meta'], keyPaths: ['id', 'id'] });
+  // Version 2 (holograms) adds the saved library's store; conversations and meta are as they were.
+  assert.deepEqual(r2.layout, { version: 2, stores: ['conversations', 'library', 'meta'], keyPaths: ['id', 'id'] });
   assert.deepEqual(r2.after, []);
 });
 
@@ -426,7 +427,8 @@ test('db: a conversation stored whole (earlier versions) is read as it is and sp
   assert.equal(r.readAsIs, true);
   assert.deepEqual(r.raw.sort((a, b) => String(a.id).localeCompare(String(b.id))), [{ id: 'legacy', inline: false, split: true }, { id: ['legacy', 'api'], inline: false, split: false }]);
   assert.equal(r.same, true);
-  assert.equal(r.version, 1, 'no schema change');
+  // The split API history needed no schema change of its own; version 2 only adds the library store.
+  assert.equal(r.version, 2, 'upgraded to version 2 (the library store) with the legacy record intact');
 });
 
 test('db: a save that fails half-way changes nothing on disk (both records are written in one transaction)', async () => {
@@ -628,7 +630,8 @@ test('backup: export has settings (minus onboarded/features), memory and convers
   assert.equal(r.text.includes('OLDKEYOLDKEY'), false, 'no other key either');
   assert.doesNotMatch(r.text, KEY_SHAPED);
   assert.equal(/"apiKey"|"spend"|"totalUsd"|"monthUsd"/.test(r.text), false);
-  assert.deepEqual(Object.keys(r.data).sort(), ['app', 'conversations', 'exportedAt', 'memory', 'settings', 'version']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['app', 'conversations', 'exportedAt', 'library', 'memory', 'settings', 'version']);
+  assert.deepEqual(r.data.library, { version: 1, items: [] }); // the saved library (empty here)
   assert.equal(r.name, 'jarvis-backup-2026-11-19.json');
 });
 
@@ -671,8 +674,9 @@ test('backup: import merges conversations (newer wins), memory and profile setti
       key: secrets.getApiKey(),
     };
   }, file);
-  // 4 records are not usable conversations ('', no dates, null, 'junk'): skipped and counted.
-  assert.deepEqual(r.result, { conversations: 3, copies: 0, replaced: ['replace'], memory: 1, settings: true, settingsChanged: ['userName'], skipped: 4 });
+  // 4 records are not usable conversations ('', no dates, null, 'junk'): skipped and counted. The
+  // exported backup has a (here empty) saved library, so the result reports it.
+  assert.deepEqual(r.result, { conversations: 3, copies: 0, replaced: ['replace'], memory: 1, settings: true, settingsChanged: ['userName'], skipped: 4, library: 0 });
   assert.deepEqual(r.ids, ['replace', 'keep-local', 'new', 'turns-bad']);
   assert.equal(r.keep, 'local is newer');
   assert.equal(r.replaced, 'newer in backup');
@@ -687,7 +691,7 @@ test('backup: import merges conversations (newer wins), memory and profile setti
 
   // Importing the same file again changes nothing.
   const again = await page.evaluate((json) => window.__mods.backup.importBackup(json), file);
-  assert.deepEqual(again, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 4 });
+  assert.deepEqual(again, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 4, library: 0 });
 });
 
 test('backup: import restores only profile, voice and appearance settings - never limits, models or spending', async () => {
@@ -771,7 +775,7 @@ test('backup: a conversation Jarvis made round-trips exactly; nothing imported c
     const jarvis = engine.createJarvis({ getSettings: () => ({}), getApiKey: () => '' });
     return { result, rich, original: richConv('rich', 5000), cut, canResume: jarvis.canResume(structuredClone(cut)), canResumeRich: jarvis.canResume(structuredClone(rich)) };
   }, file);
-  assert.deepEqual(r.result, { conversations: 2, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0 });
+  assert.deepEqual(r.result, { conversations: 2, copies: 0, replaced: [], memory: 0, settings: false, settingsChanged: [], skipped: 0, library: 0 });
   assert.deepEqual(r.rich, r.original, 'a finished conversation comes back exactly as Jarvis stored it');
   // The cut conversation keeps its history and transcript, but nothing in it is live any more.
   assert.equal(r.cut.pending, null);

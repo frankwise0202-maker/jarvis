@@ -1,0 +1,2053 @@
+{
+ "title": "How a 2024 Toyota Camry Hybrid is built",
+ "subject": "Camry Hybrid (XV70) at Toyota Motor Manufacturing Kentucky",
+ "sheet": "process",
+ "scale": "NTS",
+ "canvas": [
+  1200,
+  760
+ ],
+ "views": [
+  {
+   "title": "PLANT FLOW · TMMK, GEORGETOWN, KENTUCKY",
+   "at": [
+    142,
+    34
+   ],
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      0,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4
+    },
+    {
+     "type": "text",
+     "at": [
+      65,
+      50
+     ],
+     "text": "STAMPING",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      65,
+      68
+     ],
+     "text": "Press lines",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      164,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4
+    },
+    {
+     "type": "text",
+     "at": [
+      229,
+      50
+     ],
+     "text": "BODY WELD",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      229,
+      68
+     ],
+     "text": "Robotic welding",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      328,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4
+    },
+    {
+     "type": "text",
+     "at": [
+      393,
+      50
+     ],
+     "text": "PAINT",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      393,
+      68
+     ],
+     "text": "E-coat, primer, top",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      492,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4,
+     "style": "accent"
+    },
+    {
+     "type": "text",
+     "at": [
+      557,
+      50
+     ],
+     "text": "ASSEMBLY",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      557,
+      68
+     ],
+     "text": "Trim · chassis · final",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      656,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4
+    },
+    {
+     "type": "text",
+     "at": [
+      721,
+      50
+     ],
+     "text": "INSPECTION",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      721,
+      68
+     ],
+     "text": "Test and audit",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      820,
+      30
+     ],
+     "size": [
+      130,
+      54
+     ],
+     "r": 4
+    },
+    {
+     "type": "text",
+     "at": [
+      885,
+      50
+     ],
+     "text": "SHIP",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      885,
+      68
+     ],
+     "text": "Rail and truck",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      133,
+      57
+     ],
+     "to": [
+      161,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      297,
+      57
+     ],
+     "to": [
+      325,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      461,
+      57
+     ],
+     "to": [
+      489,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      625,
+      57
+     ],
+     "to": [
+      653,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      789,
+      57
+     ],
+     "to": [
+      817,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "rect",
+     "at": [
+      328,
+      150
+     ],
+     "size": [
+      130,
+      46
+     ],
+     "r": 4,
+     "style": "thin"
+    },
+    {
+     "type": "text",
+     "at": [
+      393,
+      170
+     ],
+     "text": "PLASTICS",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      393,
+      188
+     ],
+     "text": "Bumpers, trim",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      492,
+      150
+     ],
+     "size": [
+      130,
+      46
+     ],
+     "r": 4,
+     "style": "thin"
+    },
+    {
+     "type": "text",
+     "at": [
+      557,
+      170
+     ],
+     "text": "ENGINE PLANT",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      557,
+      188
+     ],
+     "text": "2.5 L engines",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "rect",
+     "at": [
+      656,
+      150
+     ],
+     "size": [
+      130,
+      46
+     ],
+     "r": 4,
+     "style": "thin"
+    },
+    {
+     "type": "text",
+     "at": [
+      721,
+      170
+     ],
+     "text": "SUPPLIERS",
+     "size": 12.5,
+     "anchor": "middle",
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      721,
+      188
+     ],
+     "text": "Just in time",
+     "size": 10,
+     "anchor": "middle"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      393,
+      147
+     ],
+     "to": [
+      530,
+      87
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      557,
+      147
+     ],
+     "to": [
+      557,
+      87
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      721,
+      147
+     ],
+     "to": [
+      584,
+      87
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      -38,
+      57
+     ],
+     "r": 21
+    },
+    {
+     "type": "circle",
+     "at": [
+      -38,
+      57
+     ],
+     "r": 8,
+     "style": "thin"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      -14,
+      57
+     ],
+     "to": [
+      -3,
+      57
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      -38,
+      94
+     ],
+     "text": "STEEL COIL",
+     "size": 9.5,
+     "anchor": "middle"
+    }
+   ]
+  },
+  {
+   "title": "SIDE ELEVATION · MAJOR MODULES",
+   "scale": "1:35",
+   "at": [
+    318,
+    600
+   ],
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      -26,
+      0
+     ],
+     "to": [
+      600,
+      0
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      -22,
+      0
+     ],
+     "to": [
+      -28,
+      7
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 45,
+      "along": [
+       14,
+       0
+      ]
+     }
+    },
+    {
+     "type": "path",
+     "d": "M 6.9 -21.8 C 2.3 -26.4 0 -43.7 0.6 -54 C 1.2 -71.3 4.6 -82.8 12.7 -88.5 C 46 -98.9 115 -109.2 179.4 -116.1 C 212.8 -132.2 247.3 -158.7 278.3 -164.5 C 322 -167.9 362.3 -166.7 391 -161 C 431.3 -149.5 465.8 -132.2 494.5 -124.8 L 550.9 -121.3 C 556.6 -120.7 560.6 -118.4 561.2 -113.8 C 562.4 -97.7 562.4 -64.4 558.9 -48.3 C 556.6 -37.9 549.7 -32.2 542.8 -31 L 481.9 -31 A 46 46 0 1 0 391 -31 L 157 -31 A 46 46 0 1 0 66.1 -31 L 29.9 -27.6 C 18.4 -25.3 10.4 -23 6.9 -21.8 Z"
+    },
+    {
+     "type": "path",
+     "d": "M 197.8 -121.9 C 224.3 -139.1 253 -156.4 281.8 -159.3 L 379.5 -157 C 408.3 -150.1 437 -136.3 458.9 -124.2 Z",
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      305.3,
+      -157.8
+     ],
+     "size": [
+      8.1,
+      34.5
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "line",
+     "from": [
+      397.9,
+      -124.2
+     ],
+     "to": [
+      394.5,
+      -73.6
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      185.2,
+      -119
+     ],
+     "to": [
+      188.6,
+      -34.5
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      309.4,
+      -123.3
+     ],
+     "to": [
+      309.4,
+      -33.3
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      280.6,
+      -103.5
+     ],
+     "size": [
+      17.3,
+      3.7
+     ],
+     "style": "thin",
+     "r": 1.5
+    },
+    {
+     "type": "rect",
+     "at": [
+      373.8,
+      -103.5
+     ],
+     "size": [
+      17.3,
+      3.7
+     ],
+     "style": "thin",
+     "r": 1.5
+    },
+    {
+     "type": "path",
+     "d": "M 13.8 -88 L 49.5 -95.4 L 46 -84.5 L 11.5 -80.5 Z",
+     "style": "thin"
+    },
+    {
+     "type": "path",
+     "d": "M 539.4 -120.7 L 561 -115 L 561.7 -104.1 L 534.8 -108.7 Z",
+     "style": "thin"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       188.6,
+       -122.5
+      ],
+      [
+       202.4,
+       -123.6
+      ],
+      [
+       201.3,
+       -113.3
+      ],
+      [
+       190.9,
+       -113.8
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      111.6,
+      -38.4
+     ],
+     "r": 38.4
+    },
+    {
+     "type": "circle",
+     "at": [
+      111.6,
+      -38.4
+     ],
+     "r": 26.5,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      111.6,
+      -38.4
+     ],
+     "r": 8.1,
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      111.6,
+      -47.6
+     ],
+     "to": [
+      111.6,
+      -63.9
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 5,
+      "around": [
+       111.6,
+       -38.4
+      ],
+      "step": 72
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      436.4,
+      -38.4
+     ],
+     "r": 38.4
+    },
+    {
+     "type": "circle",
+     "at": [
+      436.4,
+      -38.4
+     ],
+     "r": 26.5,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      436.4,
+      -38.4
+     ],
+     "r": 8.1,
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      436.4,
+      -47.6
+     ],
+     "to": [
+      436.4,
+      -63.9
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 5,
+      "around": [
+       436.4,
+       -38.4
+      ],
+      "step": 72
+     }
+    },
+    {
+     "type": "rect",
+     "at": [
+      38,
+      -103.5
+     ],
+     "size": [
+      63.3,
+      50.6
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "rect",
+     "at": [
+      112.7,
+      -80.5
+     ],
+     "size": [
+      32.2,
+      36.8
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "rect",
+     "at": [
+      116.2,
+      -101.2
+     ],
+     "size": [
+      33.4,
+      13.8
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "rect",
+     "at": [
+      103.5,
+      -92
+     ],
+     "size": [
+      4.6,
+      23
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "line",
+     "from": [
+      111.6,
+      -38.4
+     ],
+     "to": [
+      105.8,
+      -69
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "rect",
+     "at": [
+      423.2,
+      -80.5
+     ],
+     "size": [
+      4.6,
+      15
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "line",
+     "from": [
+      436.4,
+      -38.4
+     ],
+     "to": [
+      425.5,
+      -65.5
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "rect",
+     "at": [
+      333.5,
+      -64.4
+     ],
+     "size": [
+      69,
+      25.3
+     ],
+     "style": "accent",
+     "hatch": {
+      "angle": 45,
+      "spacing": 5
+     }
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       333.5,
+       -48.3
+      ],
+      [
+       195.5,
+       -37.9
+      ],
+      [
+       143.8,
+       -41.4
+      ],
+      [
+       132.3,
+       -87.4
+      ]
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       184,
+       -115
+      ],
+      [
+       225.4,
+       -113.3
+      ],
+      [
+       225.4,
+       -98.9
+      ],
+      [
+       189.8,
+       -94.3
+      ]
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       225.4,
+       -59.8
+      ],
+      [
+       271.4,
+       -62.1
+      ],
+      [
+       274.9,
+       -69
+      ],
+      [
+       265.7,
+       -132.2
+      ],
+      [
+       257.6,
+       -133.4
+      ],
+      [
+       255.3,
+       -71.3
+      ],
+      [
+       225.4,
+       -69
+      ]
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       340.4,
+       -66.7
+      ],
+      [
+       391,
+       -69
+      ],
+      [
+       396.8,
+       -75.9
+      ],
+      [
+       393.3,
+       -126.5
+      ],
+      [
+       385.3,
+       -127.6
+      ],
+      [
+       381.8,
+       -78.2
+      ],
+      [
+       340.4,
+       -75.9
+      ]
+     ],
+     "style": "hidden"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       80.5,
+       -49.4
+      ],
+      [
+       149.5,
+       -31
+      ],
+      [
+       494.5,
+       -32.8
+      ],
+      [
+       535.9,
+       -37.9
+      ]
+     ],
+     "style": "hidden"
+    }
+   ],
+   "callouts": [
+    {
+     "n": 1,
+     "at": [
+      477.3,
+      -92
+     ]
+    },
+    {
+     "n": 2,
+     "at": [
+      64.4,
+      -74.7
+     ]
+    },
+    {
+     "n": 3,
+     "at": [
+      132.3,
+      -77
+     ]
+    },
+    {
+     "n": 4,
+     "at": [
+      132.3,
+      -94.3
+     ]
+    },
+    {
+     "n": 5,
+     "at": [
+      368,
+      -51.7
+     ]
+    },
+    {
+     "n": 6,
+     "at": [
+      105.8,
+      -82.8
+     ]
+    },
+    {
+     "n": 7,
+     "at": [
+      425.5,
+      -73.6
+     ]
+    },
+    {
+     "n": 8,
+     "at": [
+      464,
+      -21.2
+     ]
+    },
+    {
+     "n": 9,
+     "at": [
+      263.4,
+      -97.7
+     ]
+    },
+    {
+     "n": 10,
+     "at": [
+      202.4,
+      -106.9
+     ]
+    },
+    {
+     "n": 11,
+     "at": [
+      218.5,
+      -55.2
+     ]
+    },
+    {
+     "n": 12,
+     "at": [
+      8.1,
+      -43.7
+     ]
+    }
+   ],
+   "dimensions": [
+    {
+     "from": [
+      0.6,
+      -54
+     ],
+     "to": [
+      561.8,
+      -80.5
+     ],
+     "text": "4,885",
+     "axis": "x",
+     "offset": 110
+    },
+    {
+     "from": [
+      111.6,
+      -38.4
+     ],
+     "to": [
+      436.4,
+      -38.4
+     ],
+     "text": "2,825 wheelbase",
+     "axis": "x",
+     "offset": -62
+    },
+    {
+     "from": [
+      316.3,
+      -166.2
+     ],
+     "to": [
+      561.8,
+      0
+     ],
+     "text": "1,445",
+     "axis": "y",
+     "offset": 30
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "title": "Press the panels",
+   "phase": "STAMPING",
+   "detail": "Steel coils, including high-strength grades, are blanked and pressed into hundreds of body panels on tandem and transfer press lines; die changes take minutes.",
+   "shapes": [
+    {
+     "type": "circle",
+     "at": [
+      22,
+      72
+     ],
+     "r": 16
+    },
+    {
+     "type": "circle",
+     "at": [
+      22,
+      72
+     ],
+     "r": 6,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      54,
+      6
+     ],
+     "size": [
+      84,
+      26
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      54,
+      70
+     ],
+     "size": [
+      84,
+      22
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "path",
+     "d": "M 58 62 C 76 46 116 46 134 62",
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      96,
+      34
+     ],
+     "to": [
+      96,
+      52
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "line",
+     "from": [
+      38,
+      72
+     ],
+     "to": [
+      54,
+      64
+     ],
+     "style": "thin"
+    }
+   ]
+  },
+  {
+   "title": "Weld the body",
+   "phase": "BODY SHOP",
+   "detail": "Robots join the panels into the body-in-white with thousands of spot welds, plus laser screw welding and structural adhesive on the TNGA-K structure.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 24 84 C 26 72 38 66 52 64 L 66 50 C 74 44 100 44 112 50 L 126 62 C 136 64 144 70 146 84 Z",
+     "style": "thick"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       150,
+       96
+      ],
+      [
+       150,
+       62
+      ],
+      [
+       126,
+       30
+      ],
+      [
+       100,
+       22
+      ]
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      150,
+      62
+     ],
+     "r": 4,
+     "style": "fill"
+    },
+    {
+     "type": "circle",
+     "at": [
+      126,
+      30
+     ],
+     "r": 4,
+     "style": "fill"
+    },
+    {
+     "type": "line",
+     "from": [
+      100,
+      22
+     ],
+     "to": [
+      92,
+      36
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "line",
+     "from": [
+      92,
+      40
+     ],
+     "to": [
+      84,
+      34
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "line",
+     "from": [
+      92,
+      40
+     ],
+     "to": [
+      88,
+      48
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "line",
+     "from": [
+      92,
+      40
+     ],
+     "to": [
+      100,
+      46
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Pretreat and e-coat",
+   "phase": "PAINT",
+   "detail": "The body is cleaned, phosphated and dipped whole in an electro-deposition primer bath, then baked at about 170-180 °C for corrosion protection.",
+   "shapes": [
+    {
+     "type": "line",
+     "from": [
+      4,
+      8
+     ],
+     "to": [
+      156,
+      8
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "line",
+     "from": [
+      56,
+      8
+     ],
+     "to": [
+      56,
+      30
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      106,
+      8
+     ],
+     "to": [
+      106,
+      30
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "path",
+     "d": "M 20 56 C 22 44 34 38 48 36 L 62 22 C 70 16 96 16 108 22 L 122 34 C 132 36 140 42 142 56 Z",
+     "style": "thick"
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       14,
+       46
+      ],
+      [
+       14,
+       96
+      ],
+      [
+       148,
+       96
+      ],
+      [
+       148,
+       46
+      ]
+     ]
+    },
+    {
+     "type": "path",
+     "d": "M 14 56 Q 22 52 30 56 T 46 56 T 62 56 T 78 56 T 94 56 T 110 56 T 126 56 T 142 56 L 148 56",
+     "style": "accent"
+    },
+    {
+     "type": "hatch",
+     "points": [
+      [
+       16,
+       58
+      ],
+      [
+       146,
+       58
+      ],
+      [
+       146,
+       94
+      ],
+      [
+       16,
+       94
+      ]
+     ],
+     "pattern": "dots"
+    }
+   ]
+  },
+  {
+   "title": "Seal, prime and topcoat",
+   "phase": "PAINT",
+   "detail": "Seams are sealed, then robots spray primer, the colour base coat and clear coat; ovens cure each layer before the body is inspected under bright lights.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 20 82 C 22 70 34 64 48 62 L 62 48 C 70 42 96 42 108 48 L 122 60 C 132 62 140 68 142 82 Z",
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      46,
+      82
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      118,
+      82
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      70,
+      2
+     ],
+     "size": [
+      20,
+      12
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       76,
+       14
+      ],
+      [
+       84,
+       14
+      ],
+      [
+       104,
+       42
+      ],
+      [
+       56,
+       42
+      ]
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "circle",
+     "at": [
+      70,
+      30
+     ],
+     "r": 1.5,
+     "style": "accent",
+     "repeat": {
+      "count": 4,
+      "along": [
+       7,
+       0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "title": "Mould the plastics",
+   "phase": "PLASTICS",
+   "detail": "Bumper fascias and large interior parts are injection-moulded and painted in the plant’s plastics shop, then delivered to the line in build order.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      70,
+      14
+     ],
+     "size": [
+      26,
+      72
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      100,
+      14
+     ],
+     "size": [
+      26,
+      72
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "path",
+     "d": "M 96 24 C 108 34 108 66 96 76",
+     "style": "accent"
+    },
+    {
+     "type": "rect",
+     "at": [
+      6,
+      40
+     ],
+     "size": [
+      60,
+      20
+     ]
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       12,
+       50
+      ],
+      [
+       18,
+       42
+      ],
+      [
+       24,
+       58
+      ],
+      [
+       30,
+       42
+      ],
+      [
+       36,
+       58
+      ],
+      [
+       42,
+       42
+      ],
+      [
+       48,
+       58
+      ],
+      [
+       54,
+       50
+      ]
+     ],
+     "style": "thin"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      134,
+      50
+     ],
+     "to": [
+      156,
+      50
+     ],
+     "style": "thick"
+    }
+   ]
+  },
+  {
+   "title": "Trim line",
+   "phase": "ASSEMBLY",
+   "detail": "Doors come off for their own sub-line; wiring harness, insulation, the instrument-panel module, headliner and glass go into the painted body.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 16 76 C 18 64 30 58 44 56 L 58 42 C 66 36 92 36 104 42 L 118 54 C 128 56 136 62 138 76 Z",
+     "style": "thick"
+    },
+    {
+     "type": "line",
+     "from": [
+      4,
+      92
+     ],
+     "to": [
+      156,
+      92
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "rect",
+     "at": [
+      104,
+      18
+     ],
+     "size": [
+      36,
+      28
+     ],
+     "r": 3,
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      100,
+      54
+     ],
+     "to": [
+      116,
+      50
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "circle",
+     "at": [
+      20,
+      92
+     ],
+     "r": 3,
+     "style": "thin",
+     "repeat": {
+      "count": 6,
+      "along": [
+       24,
+       0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "title": "Engine and hybrid units",
+   "phase": "POWERTRAIN",
+   "detail": "The 2.5 L four-cylinder comes from the site’s engine plant and is joined to the hybrid transaxle; the power control unit and battery arrive as tested sub-assemblies.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      14,
+      30
+     ],
+     "size": [
+      70,
+      52
+     ],
+     "r": 3
+    },
+    {
+     "type": "rect",
+     "at": [
+      20,
+      16
+     ],
+     "size": [
+      12,
+      14
+     ],
+     "style": "thin",
+     "repeat": {
+      "count": 4,
+      "along": [
+       16,
+       0
+      ]
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      112,
+      58
+     ],
+     "r": 26,
+     "style": "accent"
+    },
+    {
+     "type": "circle",
+     "at": [
+      112,
+      58
+     ],
+     "r": 10,
+     "style": "thin"
+    },
+    {
+     "type": "line",
+     "from": [
+      84,
+      58
+     ],
+     "to": [
+      86,
+      58
+     ],
+     "style": "thick"
+    },
+    {
+     "type": "text",
+     "at": [
+      49,
+      58
+     ],
+     "text": "2.5 L",
+     "size": 11,
+     "anchor": "middle"
+    }
+   ]
+  },
+  {
+   "title": "Marriage",
+   "phase": "ASSEMBLY",
+   "detail": "Engine, transaxle and the front and rear suspension modules are raised on a carrier and bolted to the body from below in one station.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 20 60 C 22 48 34 42 48 40 L 62 26 C 70 20 96 20 108 26 L 122 38 C 132 40 140 46 142 60 Z",
+     "style": "thick"
+    },
+    {
+     "type": "rect",
+     "at": [
+      30,
+      72
+     ],
+     "size": [
+      36,
+      18
+     ],
+     "hatch": 45
+    },
+    {
+     "type": "rect",
+     "at": [
+      96,
+      72
+     ],
+     "size": [
+      36,
+      18
+     ],
+     "hatch": 135
+    },
+    {
+     "type": "arrow",
+     "from": [
+      48,
+      98
+     ],
+     "to": [
+      48,
+      66
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "arrow",
+     "from": [
+      114,
+      98
+     ],
+     "to": [
+      114,
+      66
+     ],
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Hybrid and final line",
+   "phase": "ASSEMBLY",
+   "detail": "The traction battery goes under the rear seat and orange high-voltage cables are connected; seats, wheels, bumpers and doors are fitted and fluids filled.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 20 78 C 22 66 34 60 48 58 L 62 44 C 70 38 96 38 108 44 L 122 56 C 132 58 140 64 142 78 Z",
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      46,
+      78
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      118,
+      78
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "rect",
+     "at": [
+      86,
+      52
+     ],
+     "size": [
+      26,
+      12
+     ],
+     "style": "accent",
+     "hatch": {
+      "angle": 45,
+      "spacing": 4
+     }
+    },
+    {
+     "type": "polyline",
+     "points": [
+      [
+       86,
+       60
+      ],
+      [
+       50,
+       62
+      ],
+      [
+       42,
+       54
+      ]
+     ],
+     "style": "accent"
+    },
+    {
+     "type": "polygon",
+     "points": [
+      [
+       134,
+       6
+      ],
+      [
+       146,
+       6
+      ],
+      [
+       142,
+       24
+      ],
+      [
+       138,
+       24
+      ]
+     ],
+     "style": "fill"
+    },
+    {
+     "type": "circle",
+     "at": [
+      140,
+      32
+     ],
+     "r": 2,
+     "style": "accent"
+    }
+   ]
+  },
+  {
+   "title": "Inspect and test",
+   "phase": "QUALITY",
+   "detail": "Every car gets alignment and headlamp checks, a roller test of the hybrid system and brakes, a water-leak shower, a squeak-and-rattle drive and a final audit.",
+   "shapes": [
+    {
+     "type": "path",
+     "d": "M 20 70 C 22 58 34 52 48 50 L 62 36 C 70 30 96 30 108 36 L 122 48 C 132 50 140 56 142 70 Z",
+     "style": "thick"
+    },
+    {
+     "type": "circle",
+     "at": [
+      46,
+      70
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      118,
+      70
+     ],
+     "r": 9,
+     "style": "thin"
+    },
+    {
+     "type": "circle",
+     "at": [
+      40,
+      86
+     ],
+     "r": 6,
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       12,
+       0
+      ]
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      112,
+      86
+     ],
+     "r": 6,
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       12,
+       0
+      ]
+     }
+    },
+    {
+     "type": "line",
+     "from": [
+      40,
+      4
+     ],
+     "to": [
+      34,
+      18
+     ],
+     "style": "accent",
+     "repeat": {
+      "count": 6,
+      "along": [
+       16,
+       0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "title": "Load out",
+   "phase": "SHIPPING",
+   "detail": "Finished cars are driven to the yard and leave by rail and truck for dealers across North America.",
+   "shapes": [
+    {
+     "type": "rect",
+     "at": [
+      6,
+      52
+     ],
+     "size": [
+      148,
+      30
+     ],
+     "r": 2
+    },
+    {
+     "type": "circle",
+     "at": [
+      24,
+      88
+     ],
+     "r": 6,
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       16,
+       0
+      ]
+     }
+    },
+    {
+     "type": "circle",
+     "at": [
+      120,
+      88
+     ],
+     "r": 6,
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       16,
+       0
+      ]
+     }
+    },
+    {
+     "type": "path",
+     "d": "M 12 50 C 13 44 19 41 26 40 L 33 33 C 37 30 50 30 56 33 L 63 39 C 68 40 72 43 73 50 Z",
+     "style": "thin",
+     "repeat": {
+      "count": 2,
+      "along": [
+       72,
+       0
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "parts": [
+  {
+   "n": 1,
+   "name": "Body-in-white",
+   "material": "Steel, incl. high-strength grades",
+   "note": "Stamped and welded in the plant"
+  },
+  {
+   "n": 2,
+   "name": "2.5 L engine (A25A-FXS)",
+   "material": "Aluminium block, Atkinson cycle",
+   "note": "From the on-site engine plant"
+  },
+  {
+   "n": 3,
+   "name": "Hybrid transaxle",
+   "material": "eCVT with two motor-generators",
+   "note": "Arrives as a tested unit"
+  },
+  {
+   "n": 4,
+   "name": "Power control unit",
+   "material": "Inverter, boost and DC-DC converter",
+   "note": "Charges the 12 V system: no alternator"
+  },
+  {
+   "n": 5,
+   "name": "Traction battery",
+   "material": "Lithium-ion or NiMH, by trim",
+   "note": "Under the rear seat"
+  },
+  {
+   "n": 6,
+   "name": "Front suspension",
+   "material": "MacPherson struts on a subframe",
+   "note": "Fitted at the marriage"
+  },
+  {
+   "n": 7,
+   "name": "Rear suspension",
+   "material": "Double-wishbone module",
+   "note": "Fitted at the marriage"
+  },
+  {
+   "n": 8,
+   "name": "Wheels and tyres",
+   "material": "16-18 in alloy, by trim",
+   "note": "Mounted and balanced by a supplier"
+  },
+  {
+   "n": 9,
+   "name": "Seats",
+   "material": "Steel frames, foam, trim",
+   "note": "Delivered in build sequence"
+  },
+  {
+   "n": 10,
+   "name": "Instrument panel module",
+   "material": "Cockpit with HVAC and harness",
+   "note": "Supplier module, in sequence"
+  },
+  {
+   "n": 11,
+   "name": "Doors",
+   "material": "Stamped steel",
+   "note": "Removed after paint, refitted at final"
+  },
+  {
+   "n": 12,
+   "name": "Bumper fascias",
+   "material": "Moulded and painted polypropylene",
+   "note": "From the plant’s plastics shop"
+  }
+ ],
+ "notes": [
+  "Toyota Production System: parts arrive just in time and in build sequence; any team member can pull the andon cord to stop the line.",
+  "Dimensions in mm, rounded from published 2024 Camry Hybrid specifications.",
+  "Simplified: cycle times, robot counts and supplier sourcing change by model year; verify with Toyota."
+ ],
+ "sources": [
+  {
+   "title": "Toyota Motor Manufacturing Kentucky",
+   "url": "https://en.wikipedia.org/wiki/Toyota_Motor_Manufacturing_Kentucky"
+  },
+  {
+   "title": "Toyota Camry (XV70)",
+   "url": "https://en.wikipedia.org/wiki/Toyota_Camry_(XV70)"
+  },
+  {
+   "title": "Toyota Production System",
+   "url": "https://global.toyota/en/company/vision-and-philosophy/production-system/"
+  }
+ ]
+}

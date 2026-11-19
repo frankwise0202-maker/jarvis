@@ -1,8 +1,10 @@
 // Scripted behavior of the mock Claude API: classifies a validated request (lead, worker, key test)
 // and decides the response from [[directives]] in the latest user text plus the conversation so
 // far. The lead's progress through a turn is derived from the request history itself (stateless);
-// only directives that count attempts ([[overloaded]], [[ratelimit:K]], [[dropworkers]]) keep
-// state, in the `state` object owned by the mock instance.
+// only directives that count attempts ([[overloaded]], [[ratelimit:K]], [[dropworkers]],
+// [[droplead]]) keep state, in the `state` object owned by the mock instance. Holograms,
+// blueprints and the saved library (lead tools version 4) are in visuals.mjs; every directive is
+// documented in README.md.
 
 import {
   attachmentAnswer, attachmentTaskNote, attachmentsOf, defaultAnswer, directivesForAgent, fetchResultBlock,
@@ -11,6 +13,10 @@ import {
   valueFromSchema, workerReportSegments, xssAnswer,
 } from './content.mjs';
 import { canonicalJson, newServerToolUseId, newToolUseId, seededRandom, sha256Hex, truncate } from './util.mjs';
+import {
+  HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
+  hologramPlan, openSavedPlan, savedIdsOf, turnContextText, visualFollowUpText,
+} from './visuals.mjs';
 
 const sentenceCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -19,6 +25,7 @@ export function createBehaviorState() {
     overloaded: new Set(), // first lead request of a turn already answered with 529
     ratelimit: new Map(), // mission title -> worker requests rejected so far
     dropped: new Set(), // worker identities whose first attempt was already cut
+    droppedLead: new Set(), // lead requests ([[droplead]]) whose first response was already cut
     containers: new Map(), // code-execution container id -> { expiresAt } (web tools' dynamic filtering)
     containerByToolUse: new Map(), // server_tool_use id -> the container it ran in
   };
@@ -154,6 +161,23 @@ function planLead(body, state, now) {
   // [[otpm:N]]: an output-tokens-per-minute limit of N; a max_tokens above it is rejected (429).
   if (d.has('otpm') && body.max_tokens > d.int('otpm', 8000, 1, 10_000_000)) return { error: SCRIPTED_ERRORS.outputTokensPerMinute(d.int('otpm', 8000, 1, 10_000_000), body.model) };
   if (last.role === 'assistant') return { plan: leadResume(env, last) };
+  const planned = planLeadTurn(env, { msgs, u, last, after, state });
+  // [[droplead]] / [[droplead:N]]: the first response to each request is cut after N frames (a
+  // dropped connection mid-stream); the same request succeeds when it is sent again (Resume).
+  if (planned.plan && d.has('droplead')) {
+    const key = sha256Hex(canonicalJson({ system: body.system, messages: msgs }));
+    if (!state.droppedLead.has(key)) {
+      state.droppedLead.add(key);
+      planned.plan.cutAfter = d.int('droplead', 60, 4, 100000);
+    }
+  }
+  return planned;
+}
+
+function planLeadTurn(env, { msgs, u, last, after, state }) {
+  const { body, d, ctx, prompt, rng, pace, files } = env;
+  const userMsg = msgs[u];
+  const think = (t) => thinkingBlock(body, t);
 
   if (after.length === 0) {
     if (d.has('overloaded')) {
@@ -213,7 +237,20 @@ function planLead(body, state, now) {
         },
       };
     }
+    // A 2D request from the hologram viewer: one draw_blueprint call for that target.
+    const request = hasTool(body, 'draw_blueprint') ? blueprintRequestOf(turnContextText(userMsg)) : null;
+    if (request) {
+      const sample = chooseBlueprintSample({ part: request.part, partName: request.partName, title: request.title, prompt: stripDirectives(prompt) });
+      return { plan: blueprintPlan({ think, sample, forIds: request.model ? { model: request.model, part: request.part } : null, partName: request.partName }) };
+    }
     if (d.has('swarm') || d.has('waves')) return { plan: deployPlan(env, { wave: 1, count: d.int('swarm', 3, 1, 20) }) };
+    if (d.has('hologram') && hasTool(body, 'show_hologram')) return { plan: hologramPlan({ think, sample: hologramSample(d) }) };
+    if (d.has('blueprint') && hasTool(body, 'draw_blueprint')) {
+      const named = d.arg('blueprint');
+      const sample = BLUEPRINT_SAMPLES.includes(named) ? named : chooseBlueprintSample({ prompt: stripDirectives(prompt) });
+      return { plan: blueprintPlan({ think, sample, forIds: null }) };
+    }
+    if (d.has('open-saved') && hasTool(body, 'open_saved')) return { plan: openSavedPlan({ think, ids: savedIdsOf(turnContextText(userMsg)) }) };
     if (d.has('search')) return { plan: searchPlan(env) };
     if (d.has('xss')) {
       return { plan: { blocks: [thinkingBlock(body, 'The owner wants raw markup echoed back as text.'), text(xssAnswer())], stop_reason: 'end_turn', pace } };
@@ -263,7 +300,23 @@ function planLead(body, state, now) {
       return { plan: deployPlan(env, { wave: successful.length + 1, count: d.int('swarm', 3, 1, 20), retry: true }) };
     }
     if (successful.length < d.int('waves', 1, 1, 4)) return { plan: deployPlan(env, { wave: successful.length + 1, count: 2, followUp: true }) };
+    // A Blueprint mission: research first, then the hologram (the synthesis follows its result).
+    if (d.has('hologram') && hasTool(body, 'show_hologram')) {
+      return { plan: hologramPlan({ think, sample: hologramSample(d), intro: 'With the research in, here is the hologram, built from what the team found.' }) };
+    }
     return { plan: synthesisPlan(env, successful) };
+  }
+  const visualUse = uses.find((b) => VISUAL_TOOL_NAMES.includes(b.name));
+  if (visualUse) {
+    const result = results.get(visualUse.id);
+    const line = visualFollowUpText(visualUse, result, toolResultText(result?.content));
+    const research = deploysInTurn(after).filter((x) => x.result && !x.result.is_error);
+    if (research.length && !result?.is_error) {
+      // The mission's write-up: what the hologram shows first, then how it works and how it is made.
+      const reports = research.flatMap((x) => parseAgentReports(x.result.content).reports);
+      return { plan: { blocks: [think('The hologram is up; now the explanation, with sources.'), text(`${line}\n\n${synthesisAnswer({ prompt, ctx, reports })}`)], stop_reason: 'end_turn', pace } };
+    }
+    return { plan: { blocks: [text(line)], stop_reason: 'end_turn', pace } };
   }
   if (memoryUse) {
     const result = results.get(memoryUse.id);
@@ -273,6 +326,12 @@ function planLead(body, state, now) {
     return { plan: { blocks: [text(msg)], stop_reason: 'end_turn', pace } };
   }
   return { plan: { blocks: [text('Done. Is there anything else you need?')], stop_reason: 'end_turn', pace } };
+}
+
+/** [[hologram:battery|alternator|camry|broken|huge]] (default camry). */
+function hologramSample(d) {
+  const named = d.arg('hologram').toLowerCase();
+  return HOLOGRAM_SAMPLES.includes(named) || named === 'broken' || named === 'huge' ? named : 'camry';
 }
 
 /** deploy_agents tool uses in this turn, each with its tool_result (if answered). */

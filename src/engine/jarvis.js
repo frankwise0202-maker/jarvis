@@ -10,6 +10,7 @@ import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TON
 import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
 import { WORKER_MAX_TOKENS } from './worker.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
+import { LIBRARY_TIMEOUT_MS, LIVE_INTERVAL_MS, cleanBlueprintFor, hasVisualTools, isVisualSegment, prepareVisualTurn } from './visuals.js';
 import {
   ATTACHMENT_ONLY_TEXT,
   assertRequestFits,
@@ -90,6 +91,10 @@ function settleUnfinished(turn, status, ts, notify = null) {
     } else if (seg.kind === 'thinking' && !seg.endedAt) {
       seg.endedAt = ts;
       notify?.segment(seg);
+    } else if (isVisualSegment(seg) && seg.status === 'building') {
+      // A hologram or blueprint whose input never finished keeps what was built, and is not saved.
+      seg.status = 'error';
+      notify?.segment(seg);
     }
   }
   const target = status === 'interrupted' ? 'interrupted' : 'stopped';
@@ -164,6 +169,11 @@ export function createJarvis(deps = {}) {
     getApiKey: deps.getApiKey,
     getApiBase: typeof deps.getApiBase === 'function' ? deps.getApiBase : () => '',
     memory: deps.memory && typeof deps.memory === 'object' ? deps.memory : null,
+    // The saved library (holograms and blueprints): { save, get, list, findPartBlueprint }, see visuals.js.
+    library: deps.library && typeof deps.library === 'object' ? deps.library : null,
+    libraryTimeoutMs: Number.isFinite(deps.libraryTimeoutMs) && deps.libraryTimeoutMs > 0 ? deps.libraryTimeoutMs : LIBRARY_TIMEOUT_MS,
+    // How often a live hologram / blueprint segment is updated while its input streams (tests).
+    liveIntervalMs: Number.isFinite(deps.liveIntervalMs) && deps.liveIntervalMs >= 0 ? deps.liveIntervalMs : LIVE_INTERVAL_MS,
     persist: typeof deps.persist === 'function' ? deps.persist : null,
     onSpend: typeof deps.onSpend === 'function' ? deps.onSpend : null,
     fetch: typeof deps.fetch === 'function' ? deps.fetch : undefined,
@@ -306,6 +316,8 @@ export function createJarvis(deps = {}) {
     const noticedMissions = new Set();
     const toolSegments = new Map();
     for (const seg of turn.segments || []) if (seg.kind === 'tool' && seg.toolUseId) toolSegments.set(seg.toolUseId, seg);
+    const visualSegments = new Map(); // tool_use id → hologram / blueprint segment
+    for (const seg of turn.segments || []) if (isVisualSegment(seg) && seg.toolUseId) visualSegments.set(seg.toolUseId, seg);
 
     const ctx = {
       deps: d,
@@ -334,6 +346,10 @@ export function createJarvis(deps = {}) {
       continuations: 0,
       round: null,
       toolSegments,
+      visualSegments,
+      libraryTimeoutMs: d.libraryTimeoutMs,
+      liveIntervalMs: d.liveIntervalMs,
+      libraryCostCounted: 0,
       runStartedAt: Date.now(),
       durationBase: Number(turn.stats?.durationMs) || 0,
       now: nowDate,
@@ -529,8 +545,12 @@ export function createJarvis(deps = {}) {
     });
     // Start on a microtask so the caller can subscribe with run.on() before the first event.
     Promise.resolve()
-      .then(() => {
+      .then(async () => {
         ctx.emitTurn();
+        // Version 4 conversations: the saved-items and "Blueprint request" blocks are added to the
+        // turn context before its first request (the library is asynchronous). Never on resume:
+        // that message may already have been sent.
+        if (!resume) await prepareVisualTurn(ctx);
         return runLeadTurn(ctx, { resume });
       })
       .catch((err) => {
@@ -589,15 +609,23 @@ export function createJarvis(deps = {}) {
      * turn context and the text; a message may be attachments only. `maxAgents` (1–20) overrides
      * settings.maxAgents for this turn only. `keepOnStop: true` (Voice Mode, where nothing can be
      * handed back to a message box) keeps the message in the history even when the turn is stopped
-     * before any reply. Throws (before anything is appended) when the input is invalid, e.g. an
-     * attachment Claude would reject; the error message is worded for the owner.
+     * before any reply. `blueprintFor: { model: 'lib_…', part: '<part id>'|null }` asks for the 2D
+     * blueprint of one part (or, with part null, the whole object) of a saved hologram: the turn
+     * context gets a "Blueprint request" block and the blueprint is linked to that part (only in
+     * conversations with the version 4 tools). Throws (before anything is appended) when the input
+     * is invalid, e.g. an attachment Claude would reject; the error message is worded for the owner.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, blueprintFor } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
       if (!body && !files.length) throw new TypeError('startTurn: text is required');
       if (runs.has(conv.id)) throw new Error('A turn is already running for this conversation.');
+      const target = blueprintFor === undefined || blueprintFor === null ? null : cleanBlueprintFor(blueprintFor);
+      if (blueprintFor !== undefined && blueprintFor !== null && !target) throw new TypeError('startTurn: blueprintFor must be { model: "lib_…", part: "<part id>" | null }');
+      if (target && !hasVisualTools(conv, 'draw_blueprint')) {
+        throw new Error('This conversation was started before Jarvis could draw blueprints. Start a new conversation and ask again.');
+      }
       const override = maxAgents === undefined || maxAgents === null || maxAgents === '' ? null : clampInt(maxAgents, 1, 20, null);
       const content = [...files.map(attachmentBlock), { type: 'text', text: body || ATTACHMENT_ONLY_TEXT }];
       if (files.length) assertRequestFits(conv.apiMessages, { role: 'user', content }, { system: conv.system, tools: conv.tools });
@@ -628,6 +656,7 @@ export function createJarvis(deps = {}) {
         error: null,
       };
       if (override !== null) turn.maxAgents = override; // survives a resume (launch applies it)
+      if (target) turn.blueprintFor = target; // the 2D request this turn answers (links the saved blueprint)
       if (isFirst || !conv.title) conv.title = truncate(singleLine(body || attachmentsTitle(files)), 60);
       conv.turns.push(userTurn, turn);
       const turnContext = buildTurnContext({

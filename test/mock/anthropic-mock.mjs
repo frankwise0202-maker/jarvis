@@ -474,6 +474,9 @@ const PACES = {
   worker: { total: [700, 1500] },
   'slow-lead': { perFrame: 120 },
   'slow-worker': { total: [5600, 6400] },
+  // A show_hologram / draw_blueprint call: ~1,000 small input deltas over a few seconds, so the
+  // live build is visible (the real API takes a minute or two for a large model).
+  hologram: { total: [2400, 3600] },
 };
 
 function computeDelays(frames, pace, rng, timeScale) {

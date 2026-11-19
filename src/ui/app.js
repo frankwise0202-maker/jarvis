@@ -25,7 +25,12 @@ import { recordTurn, createStatsView, createStatsLauncher, exportStats, importSt
 import { createShareOptions, redactSecrets } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
 import { fmtUsd } from './hud/format.js';
-import { createJarvis, MODELS, DEPTHS } from '../engine/index.js';
+import { openHologramViewer, getHologramViewer } from './hologram/viewer.js';
+import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
+import { createLibraryView } from './library.js';
+import { createThumbs } from './thumbs.js';
+import { isOverlayOpen } from './overlay.js';
+import { createJarvis, MODELS, DEPTHS, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
@@ -33,6 +38,7 @@ import { listMemory, addMemory, removeMemory, onMemoryChange } from '../platform
 import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
+import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
 import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
@@ -153,6 +159,17 @@ export async function startApp(rootEl) {
   const sttOk = safe(() => sttSupported(), false);
 
   // ---- engine & store ---------------------------------------------------------------------
+  // The saved library of holograms and blueprints (IndexedDB, src/platform/library.js).
+  const lib = {
+    save: (record) => saveLibraryItem(record),
+    get: (id) => getLibraryItem(id),
+    list: (opts) => listLibraryItems(opts),
+    findPartBlueprint: (modelId, partId) => findPartBlueprint(modelId, partId),
+    setThumbnail: (id, dataUrl) => setLibraryThumbnail(id, dataUrl),
+    remove: (id) => deleteLibraryItem(id),
+    onChange: (fn) => onLibraryChange(fn),
+  };
+  const thumbs = createThumbs(lib);
   let engine;
   let store;
   let demo = null;
@@ -174,6 +191,10 @@ export async function startApp(rootEl) {
       getApiKey,
       getApiBase: getDevApiBase,
       memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
+      library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
+      // A busy or old device can take seconds to write a big spec to IndexedDB: wait longer than the
+      // engine's default before going on without saving (an unsaved hologram can't get blueprints).
+      libraryTimeoutMs: 12000,
       persist: async (conv) => {
         await saveConversation(conv);
         scheduleHistoryRefresh();
@@ -205,6 +226,7 @@ export async function startApp(rootEl) {
     voice: sttOk || ttsOk,
     onVoice: () => openVoice(),
     onHistory: () => openHistory(),
+    onLibrary: () => openLibrary(),
     onSettings: () => openSettings(),
     onNewChat: () => newChat(),
   });
@@ -220,6 +242,10 @@ export async function startApp(rootEl) {
     onRetry: (turn) => retry(turn),
     onCopy: (turn) => copyTurn(turn),
     onShare: (turn) => openShare(turn),
+    // Hologram and blueprint cards (live while building; thumbnails from the saved library).
+    onOpenHologram: (turn, seg) => openVisualSegment(turn, seg),
+    onOpenBlueprint: (turn, seg) => openVisualSegment(turn, seg),
+    thumbs,
     // Memory chips: "Undo" removes a fact Jarvis just saved (the demo has no real memory).
     isRemembered: (fact) => (state.demo ? null : isRemembered(fact)),
     onForgetMemory: state.demo ? null : (fact) => forgetMemory(fact),
@@ -264,6 +290,7 @@ export async function startApp(rootEl) {
   const history = createHistory({
     onSelect: (id) => openConversation(id),
     onNew: () => newChat(),
+    onLibrary: () => openLibrary(),
     onDelete: (id) => removeConversation(id),
     isRunning: (id) => state.runs.has(id),
     onCollapse: () => setSidebar(false),
@@ -554,6 +581,7 @@ export async function startApp(rootEl) {
     const maxAgents = extras ? Number(extras.maxAgents) : NaN;
     if (Number.isFinite(maxAgents) && maxAgents >= 1) input.maxAgents = Math.min(20, Math.round(maxAgents));
     if (extras && extras.keepOnStop === true) input.keepOnStop = true; // Voice Mode: never withdrawn on Stop
+    if (extras && extras.blueprintFor) input.blueprintFor = extras.blueprintFor; // a 2D request from the hologram viewer
     clearFollowups();
     let run;
     try {
@@ -623,6 +651,199 @@ export async function startApp(rootEl) {
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
     }
   }
+
+  // ---- holograms, blueprints and the saved library ------------------------------------------
+  // Viewers are full-screen overlays above the app (src/ui/overlay.js). Words typed or spoken in
+  // the hologram viewer that are not a local command go to Jarvis as a message in the hologram's
+  // conversation; a 2D request opens a saved blueprint, or starts the paid build as a new turn.
+
+  /** Why a message from a viewer can't be sent right now (shown in the viewer), or ''. */
+  function viewerSendProblem(conv) {
+    if (!state.demo && !safe(getApiKey, '')) return 'Add your Anthropic API key first: close this view, then open Settings → API key.';
+    if (!state.online) return 'You’re offline. Reconnect and try again.';
+    if (conv && state.runs.has(conv.id)) return 'Jarvis is still working on the current reply. Try again when it finishes.';
+    if (conv && runningElsewhere(conv.id)) return 'Jarvis is busy with this conversation in another window.';
+    return '';
+  }
+
+  /** The conversation a viewer belongs to, shown behind the overlay (a new one if it was deleted). */
+  async function viewerConversation(conversationId) {
+    if (state.conv && (!conversationId || state.conv.id === conversationId)) return state.conv;
+    if (conversationId) {
+      const entry = state.runs.get(conversationId);
+      let conv = entry ? entry.conv : null;
+      if (!conv) conv = await Promise.resolve(store.get(conversationId)).catch(() => null);
+      if (conv) {
+        if (state.conv !== conv) setConversation(conv);
+        return conv;
+      }
+    }
+    if (state.conv) setConversation(null);
+    return null;
+  }
+
+  /** Send words from a viewer as a chat message. Returns { run } or { error }. */
+  async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null } = {}) {
+    const clean = String(text || '').trim();
+    if (!clean) return { error: 'Nothing to send.' };
+    let conv = await viewerConversation(conversationId);
+    // A conversation from before holograms can't take a 2D request: ask in a new one.
+    if (blueprintFor && conv && !hasVisualTools(conv, 'draw_blueprint')) {
+      setConversation(null);
+      conv = null;
+    }
+    const problem = viewerSendProblem(conv);
+    if (problem) return { error: problem };
+    const extras = blueprintFor ? { blueprintFor } : undefined;
+    if (!send(clean, mode, extras)) return { error: 'That message couldn’t be sent.' };
+    const entry = state.conv && state.runs.get(state.conv.id);
+    if (entry) viewerStartedTurn = true;
+    return entry ? { run: entry.run } : { error: 'That message couldn’t be sent.' };
+  }
+
+  // A turn started from a viewer: when the last viewer closes, the chat shows its end (the reply).
+  let viewerStartedTurn = false;
+  function onViewerClosed() {
+    updateAll();
+    if (viewerStartedTurn && !isOverlayOpen()) {
+      viewerStartedTurn = false;
+      if (!chat.isEmpty()) chat.scrollToBottom(false);
+    }
+  }
+
+  /** The owner asked for a 2D blueprint: open the saved one (free), or build it (a new turn). */
+  async function requestBlueprint({ model, part = null, rebuild = false, conversationId } = {}) {
+    if (!rebuild) {
+      const saved = await Promise.resolve(lib.findPartBlueprint(model, part)).catch(() => null);
+      const full = saved && saved.id ? await Promise.resolve(lib.get(saved.id)).catch(() => null) : null;
+      if (full) {
+        openLibraryItem(full);
+        return { opened: true };
+      }
+    }
+    const hologram = await Promise.resolve(lib.get(model)).catch(() => null);
+    if (!hologram || hologram.kind !== 'hologram') return { error: 'That hologram is no longer in your library.' };
+    const text = blueprintRequestText(hologram.spec, part);
+    return sendFromViewer(text, { conversationId: conversationId || hologram.conversationId, mode: 'quick', blueprintFor: { model, part: part || null } });
+  }
+
+  /** "≈ $0.15": a blueprint is about 6K output tokens (with thinking) on the lead model. */
+  function blueprintCost() {
+    const m = MODELS[getSettings().leadModel] || MODELS['claude-opus-5-5'];
+    const usd = m ? (6000 * m.outPerM + 45000 * m.cacheReadPerM + 4000 * m.inPerM) / 1e6 : 0.15;
+    return `≈ $${usd < 0.1 ? usd.toFixed(2) : (Math.round(usd * 20) / 20).toFixed(2)}`;
+  }
+
+  function viewerDeps() {
+    return {
+      library: lib,
+      stt,
+      getSettings,
+      blueprintCost,
+      requestBlueprint: (req) => requestBlueprint(req),
+      sendMessage: (text, opts) => sendFromViewer(text, opts),
+      openBlueprint: (source) => openBlueprintSource(source),
+      openInChat: ({ conversationId, turnId } = {}) => showInChat(conversationId, turnId),
+      onClose: () => onViewerClosed(),
+    };
+  }
+
+  function showInChat(conversationId, turnId) {
+    viewerStartedTurn = false;
+    if (conversationId && (!state.conv || state.conv.id !== conversationId)) openConversation(conversationId);
+    if (librarySheet) librarySheet.close('navigate');
+    closePhoneSheets();
+    requestAnimationFrame(() => {
+      const el = turnId ? document.querySelector(`[data-testid="turn-jarvis"][data-turn-id="${turnId}"]`) : null;
+      if (el) el.scrollIntoView({ block: 'start' });
+      else chat.scrollToBottom(false);
+    });
+  }
+
+  function openBlueprintSource(source) {
+    try {
+      return openBlueprintViewer({ source, deps: { library: lib, onClose: () => onViewerClosed() } });
+    } catch (err) {
+      console.error('[jarvis] blueprint viewer failed:', err);
+      toast('The blueprint viewer couldn’t open.', { level: 'error' });
+      return null;
+    }
+  }
+
+  /** A card's Open: the viewer for that segment (following the live build while it streams). */
+  function openVisualSegment(turn, seg) {
+    if (!turn || !isVisualSegment(seg)) return;
+    const conv = state.conv;
+    const entry = conv && state.runs.get(conv.id);
+    const run = entry && entry.run && entry.run.turn === turn ? entry.run : null;
+    const source = { segment: seg, conversationId: conv ? conv.id : null, turnId: turn.id, run };
+    if (seg.kind === 'blueprint') {
+      openBlueprintSource(source);
+      return;
+    }
+    try {
+      openHologramViewer({ source, deps: viewerDeps() });
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+      toast('The hologram viewer couldn’t open.', { level: 'error' });
+    }
+  }
+
+  /** Open a saved item (with its spec) from the library or a part card. */
+  function openLibraryItem(item) {
+    if (!item || !item.spec) return;
+    if (item.kind === 'blueprint') {
+      openBlueprintSource({ item });
+      return;
+    }
+    try {
+      openHologramViewer({ source: { item }, deps: viewerDeps() });
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+      toast('The hologram viewer couldn’t open.', { level: 'error' });
+    }
+  }
+
+  let librarySheet = null;
+  /** The Blueprints library sheet (header button, History). Viewers open above it. */
+  function openLibrary() {
+    if (librarySheet) return;
+    closePhoneSheets();
+    let view;
+    try {
+      view = createLibraryView({ lib, thumbs, onOpen: (item) => openLibraryItem(item), toast });
+    } catch (err) {
+      console.error('[jarvis] library failed:', err);
+      toast('The library couldn’t open.', { level: 'error' });
+      return;
+    }
+    const sheet = createSheet({
+      kind: 'full',
+      title: 'Blueprints',
+      testid: 'library-sheet',
+      className: 'sheet--library',
+      onClose: () => {
+        safe(() => view.destroy());
+        if (librarySheet === sheet) librarySheet = null;
+      },
+    });
+    sheet.body.appendChild(view.el);
+    librarySheet = sheet;
+    sheet.open();
+  }
+
+  /** History shows how many items the library holds. */
+  let libraryCountTimer = 0;
+  function refreshLibraryCount() {
+    clearTimeout(libraryCountTimer);
+    libraryCountTimer = setTimeout(() => {
+      Promise.resolve(lib.list({ limit: 500 }))
+        .then((rows) => safe(() => history.setLibraryCount(Array.isArray(rows) ? rows.length : 0)))
+        .catch(() => {});
+    }, 200);
+  }
+  safe(() => lib.onChange(() => refreshLibraryCount()));
+  refreshLibraryCount();
 
   // ---- follow-up suggestions (SPEC §14.5) ----------------------------------------------------
   // Chips under the latest finished reply; a new send, another conversation or New chat
@@ -1058,7 +1279,9 @@ export async function startApp(rootEl) {
 
   async function copyTurn(turn) {
     // Copied text leaves the app like a share does: never with the API key in it.
-    const text = redactSecrets(plainText(answerText(turn) || turnText(turn, false)), state.demo ? '' : safe(getApiKey, ''));
+    const visuals = segmentsOf(turn).filter((seg) => isVisualSegment(seg)).map((seg) => safe(() => visualExportLine(seg), '')).filter(Boolean);
+    const body = plainText(answerText(turn) || turnText(turn, false));
+    const text = redactSecrets([...visuals, body].filter(Boolean).join('\n\n'), state.demo ? '' : safe(getApiKey, ''));
     const ok = await copyText(text);
     toast(ok ? 'Copied to clipboard.' : 'Couldn’t copy. Select the text instead.', { level: ok ? 'success' : 'warn', id: 'copy' });
   }
@@ -1656,7 +1879,7 @@ export async function startApp(rootEl) {
       composer.focus();
       return;
     }
-    if (e.key === '/' && !mod && !e.altKey && !anySheetOpen() && !isVoiceModeOpen()) {
+    if (e.key === '/' && !mod && !e.altKey && !anySheetOpen() && !isVoiceModeOpen() && !isOverlayOpen()) {
       const t = e.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault();
@@ -1840,5 +2063,12 @@ export async function startApp(rootEl) {
     openInstallGuide,
     openOnboarding,
     newChat,
+    openLibrary,
+    openLibraryItem,
+    // Voice Mode hooks (see src/ui/hologram/viewer.js): open a hologram card's viewer, and the open
+    // viewers (command(text, { source: 'voice' }), submit(text), close()).
+    openHologram: (turn, seg) => openVisualSegment(turn, seg),
+    getHologramViewer,
+    getBlueprintViewer,
   };
 }
