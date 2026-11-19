@@ -144,6 +144,14 @@ export function isFinishedStatus(status) {
   return FINISHED.has(status);
 }
 
+/**
+ * True while a queued agent waits out a retry ("Rate limited — retrying in 12s": the engine counts
+ * the seconds down in agent.activity).
+ */
+export function isRetrying(agent) {
+  return !!agent && agent.status === 'queued' && /\bretrying in \d+\s*s\b/i.test(String(agent.activity || ''));
+}
+
 /** "example.com" for "https://www.example.com/a?b" ('' when the URL cannot be parsed). */
 export function hostname(url) {
   if (typeof url !== 'string' || !url) return '';

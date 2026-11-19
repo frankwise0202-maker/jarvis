@@ -50,7 +50,9 @@ function activityFor(a, words) {
   if (status === 'error') return (a.error && str(a.error.message)) || 'This agent failed.';
   if (status === 'stopped') return 'Stopped before finishing.';
   if (status === 'interrupted') return 'Connection lost — resume the turn to continue.';
-  if (status === 'queued') return 'Waiting for a free slot…';
+  // The engine says why an agent waits: "Being briefed", "Lined up to start", "Waiting for a free
+  // slot", "Rate limited — retrying in 12s" (counting down).
+  if (status === 'queued') return str(a.activity).trim() || 'Waiting for a free slot…';
   if (status === 'done') return words > 0 ? `Report ready · ${fmtCount(words)} words` : 'Finished.';
   const activity = str(a.activity).trim();
   if (activity) return activity;
