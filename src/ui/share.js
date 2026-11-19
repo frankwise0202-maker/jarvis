@@ -7,6 +7,8 @@
 // is treated as untrusted text: link targets must be absolute http(s) URLs, link text is
 // escaped, and no HTML is ever produced.
 
+import { h, setText } from './dom.js';
+import { icon } from './icons.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { MODELS, DEPTHS, MODES } from '../engine/models.js';
 
@@ -975,4 +977,169 @@ export function downloadText(filename, text, mime = 'text/markdown') {
   } finally {
     if (url) setTimeout(() => URLApi.revokeObjectURL(url), 4000);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Share & export" options (UI): mount `el` in a bottom sheet. Styles: src/styles/stats.css (rec-).
+
+/** First paragraph of an answer as plain text, for the preview line. */
+function summaryLine(md) {
+  const para = tidy(md).split(/\n\s*\n/).find((b) => b.trim() && !/^\s{0,3}(#|```|~~~|\||>|[-*+] |\d+[.)] )/.test(b)) || '';
+  return oneLine(
+    para
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`~]+/g, '')
+      .replace(/<(https?:[^>]+)>/g, '$1'),
+  );
+}
+
+/**
+ * createShareOptions({ turn, conversation, mission, onDone, toast }) → { el, destroy() }
+ * Rows: share (or copy) the answer; share (or copy) the mission dossier; download the dossier
+ * as .md; download the conversation transcript as .md. Rows that do not apply are left out.
+ * Each row confirms inline ("Copied", "Saved", "Shared"), then calls onDone(action, result) so
+ * the host can close its sheet. A dismissed share sheet is not an error and changes nothing.
+ * `mission` (object or id) picks the wave for the dossier; omitted = every wave of the turn.
+ * `toast(message, { level })` is optional and only used for failures.
+ */
+export function createShareOptions(opts = {}) {
+  const o = isObj(opts) ? opts : {};
+  const turn = isObj(o.turn) ? o.turn : {};
+  const conv = isObj(o.conversation) ? o.conversation : null;
+  const native = canShareNatively();
+  const timers = new Set();
+  let busy = false;
+  let destroyed = false;
+
+  const question = questionFor(turn, { conversation: conv });
+  const title = (conv && oneLine(conv.title)) || shortTitle(question, 60) || 'Jarvis';
+  const answer = answerMarkdown(turn, { sources: true });
+  const missions = missionsOf(turn).filter((m) => agentsOf(m).length);
+  const metrics = turnMetrics(turn);
+  const scopeMission = isObj(o.mission) || (typeof o.mission === 'string' && o.mission) ? o.mission : null;
+  const dossierTitle = (isObj(scopeMission) && oneLine(scopeMission.title)) || (missions[0] && oneLine(missions[0].title)) || title;
+  const exchanges = conv ? arr(conv.turns).filter((t) => isObj(t) && t.role === 'user').length : 0;
+
+  const metaParts = [fmtWhen(turn.createdAt, {}, 'stamp')];
+  if (metrics.agents) metaParts.push(plural(metrics.agents, 'agent'));
+  if (metrics.sources) metaParts.push(plural(metrics.sources, 'source'));
+  const live = h('p', { class: 'rec-sr', attrs: { role: 'status', 'aria-live': 'polite' } });
+  const preview = h(
+    'div',
+    { class: 'rec-preview' },
+    h('p', { class: 'rec-preview-title', text: title }),
+    summaryLine(answer) ? h('p', { class: 'rec-preview-text', text: summaryLine(answer) }) : null,
+    h('p', { class: 'rec-preview-meta', text: metaParts.filter(Boolean).map((p) => p.replace(/ /g, '\u00a0')).join(' · ') }),
+  );
+
+  const dossier = () => missionReportMarkdown(turn, scopeMission, { conversation: conv });
+  const actions = [];
+  if (answer) {
+    actions.push({
+      key: 'answer',
+      icon: native ? 'share' : 'copy',
+      label: native ? 'Share answer' : 'Copy answer',
+      desc: native ? 'Send it to Messages, Mail, Notes…' : 'Markdown with sources, ready to paste',
+      run: () => shareText({ title, text: answer }),
+    });
+  }
+  if (missions.length) {
+    actions.push({
+      key: 'dossier',
+      icon: native ? 'share' : 'copy',
+      label: native ? 'Share mission dossier' : 'Copy mission dossier',
+      desc: 'Every agent’s task, report and sources',
+      run: () => (native ? shareText({ title: `Mission dossier: ${dossierTitle}`, text: dossier() }) : copyText(dossier()).then((ok) => (ok ? 'copied' : 'failed'))),
+    });
+    const agentCount = missions.reduce((acc, m) => acc + agentsOf(m).filter(isDeployed).length, 0);
+    actions.push({
+      key: 'dossier-download',
+      icon: 'download',
+      label: 'Download dossier',
+      desc: `${plural(agentCount, 'agent')}${missions.length > 1 ? ` · ${missions.length} waves` : ''} · Markdown file`,
+      run: () => (downloadText(reportFilename('mission', dossierTitle, new Date(num(turn.createdAt) || Date.now())), dossier()) ? 'saved' : 'failed'),
+    });
+  }
+  if (conv && arr(conv.turns).length) {
+    actions.push({
+      key: 'conversation-download',
+      icon: 'layers',
+      label: 'Download conversation',
+      desc: `${plural(exchanges, 'exchange')} · full transcript · Markdown file`,
+      run: () => (downloadText(reportFilename('conversation', title, new Date(num(conv.createdAt) || Date.now())), conversationMarkdown(conv)) ? 'saved' : 'failed'),
+    });
+  }
+
+  const DONE = { shared: 'Shared', copied: 'Copied', saved: 'Saved' };
+  const rows = actions.map((a) => {
+    const state = h('span', { class: 'rec-option-state' }, icon('chevron-right', { size: 18 }));
+    const btn = h(
+      'button',
+      { class: 'rec-option', type: 'button', attrs: { 'data-testid': 'share-option', 'data-action': a.key }, on: { click: () => trigger(a, btn, state) } },
+      h('span', { class: 'rec-option-icon', attrs: { 'aria-hidden': 'true' } }, icon(a.icon, { size: 20 })),
+      h('span', { class: 'rec-option-text' }, h('span', { class: 'rec-option-title', text: a.label }), h('span', { class: 'rec-option-desc', text: a.desc })),
+      state,
+    );
+    return btn;
+  });
+
+  async function trigger(action, btn, state) {
+    if (busy || destroyed) return;
+    busy = true;
+    el.setAttribute('aria-busy', 'true');
+    let result = 'failed';
+    try {
+      result = await action.run();
+    } catch (err) {
+      console.warn('[jarvis] share action failed:', err);
+      result = 'failed';
+    }
+    busy = false;
+    el.removeAttribute('aria-busy');
+    if (destroyed) return;
+    const label = DONE[result];
+    if (!label) {
+      // A dismissed native share sheet needs no message; a failed copy or download does.
+      if (!(native && (action.key === 'answer' || action.key === 'dossier'))) {
+        flash(btn, state, 'is-error', 'Failed', 'alert');
+        setText(live, `${action.label} failed`);
+        if (typeof o.toast === 'function') o.toast(action.key.endsWith('download') ? 'Couldn’t save the file.' : 'Couldn’t copy. Try Download instead.', { level: 'warn' });
+      }
+      return;
+    }
+    flash(btn, state, 'is-done', label, 'check');
+    setText(live, `${action.label}: ${label.toLowerCase()}`);
+    if (typeof o.onDone === 'function') {
+      const t = setTimeout(() => {
+        timers.delete(t);
+        if (!destroyed) o.onDone(action.key, result);
+      }, 900);
+      timers.add(t);
+    }
+  }
+
+  function flash(btn, state, cls, text, iconName) {
+    btn.classList.remove('is-done', 'is-error');
+    btn.classList.add(cls);
+    state.replaceChildren(h('span', { class: 'rec-option-state-text', text }), icon(iconName, { size: 16 }));
+    const t = setTimeout(() => {
+      timers.delete(t);
+      btn.classList.remove(cls);
+      state.replaceChildren(icon('chevron-right', { size: 18 }));
+    }, 2400);
+    timers.add(t);
+  }
+
+  const list = h('div', { class: 'rec-options', attrs: { role: 'group', 'aria-label': 'Share and export' } }, rows);
+  const empty = rows.length ? null : h('p', { class: 'rec-empty', text: 'Nothing to share yet: this reply has no text.' });
+  const el = h('div', { class: 'rec-share', attrs: { 'data-testid': 'share-options' } }, preview, list, empty, live);
+
+  return {
+    el,
+    destroy() {
+      destroyed = true;
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+    },
+  };
 }

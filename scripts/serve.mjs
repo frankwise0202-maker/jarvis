@@ -206,7 +206,8 @@ export async function serve({ port = DEFAULT_PORT, host = '0.0.0.0', rebuild = f
 }
 
 function parseArgs(argv) {
-  const opts = { port: Number(process.env.PORT) || DEFAULT_PORT, host: process.env.HOST || '0.0.0.0', rebuild: false };
+  const envPort = process.env.PORT;
+  const opts = { port: envPort !== undefined && envPort.trim() !== '' ? Number(envPort) : DEFAULT_PORT, host: process.env.HOST || '0.0.0.0', rebuild: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--port' || a === '-p') opts.port = Number(argv[++i]);

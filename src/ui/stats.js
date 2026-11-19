@@ -497,11 +497,13 @@ let viewSeq = 0;
 let rememberedMetric = 'agents';
 
 /**
- * createStatsView({ getSpend, listConversations, estimateStorage, getSettings }) → { el, refresh(), destroy() }
+ * createStatsView({ getSpend, listConversations, estimateStorage, getSettings, compact }) → { el, refresh(), destroy() }
  *   getSpend()           → { month, monthUsd, totalUsd } (SPEC 5; may return a Promise)
  *   listConversations()  → Promise<[{ id, … }]>          (SPEC 5; for the conversation count)
  *   estimateStorage()    → Promise<{ usage, quota } | null>  (defaults to this module's estimateStorage)
  *   getSettings()        → settings (optional; shows progress toward spendWarnUsd)
+ *   compact              → true inside a host that already shows a "Systems" title (a titled
+ *                          sheet): the big title is visually hidden (still announced)
  * All dependencies are optional and failures are contained. Create once and reuse; call
  * refresh() whenever the view is shown. It also refreshes itself when stats change.
  */
@@ -688,7 +690,7 @@ export function createStatsView(opts = {}) {
 
   const foot = h('p', { class: 'sys-foot', text: 'Kept only on this device. Spend figures are estimates from token counts.' });
   const inner = h('div', { class: 'sys-inner' }, head, empty, hero, tiles, spend, activity, roles, device, foot);
-  const el = h('section', { class: 'sys', attrs: { 'data-testid': 'stats-view', 'aria-labelledby': ids.title } }, inner);
+  const el = h('section', { class: ['sys', deps.compact && 'sys--compact'], attrs: { 'data-testid': 'stats-view', 'aria-labelledby': ids.title } }, inner);
 
   // ------------------------------------------------------------------------------------------
   // Numbers

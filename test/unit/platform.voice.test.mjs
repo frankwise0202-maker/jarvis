@@ -132,7 +132,7 @@ test('pickDefaultVoice prefers a British male voice, then en-GB, en-US, default,
 // ---- speak() against a fake speechSynthesis ---------------------------------------------
 
 const FAKE_SPEECH = () => {
-  const state = { spoken: [], cancels: 0, overlap: false, dropEndFor: -1, voicesReady: true, events: [] };
+  const state = { spoken: [], cancels: 0, overlap: false, dropEndFor: -1, swallow: -1, voicesReady: true, events: [] };
   const voices = [
     { name: 'Samantha', lang: 'en-US', voiceURI: 'com.apple.samantha', default: true, localService: true },
     { name: 'Daniel', lang: 'en-GB', voiceURI: 'com.apple.daniel', default: false, localService: true },
@@ -147,6 +147,7 @@ const FAKE_SPEECH = () => {
     if (synth.current) state.overlap = true;
     const index = state.spoken.length;
     state.spoken.push({ text: u.text, voice: u.voice ? u.voice.voiceURI : null, lang: u.lang, rate: u.rate, volume: u.volume });
+    if (state.swallow === index) return; // the engine silently drops this utterance: no events at all
     synth.current = u;
     synth.pending = true;
     setTimeout(() => {
@@ -274,6 +275,18 @@ test('speak: a lost "end" event does not leave Jarvis stuck speaking (watchdog m
   assert.equal(r.reason, 'done');
   assert.ok(r.chunks >= 2);
   assert.ok(r.ms >= 2500 && r.ms < 8000, `${r.ms} ms`);
+});
+
+test('speak: an utterance the engine silently drops before it starts is spoken again, not skipped', async () => {
+  const p = await h.newPage({ init: FAKE_SPEECH });
+  const r = await p.evaluate(async () => {
+    window.__speech.swallow = 0; // like Chrome dropping a speak() issued right after cancel()
+    const reason = await new Promise((resolve) => window.__mods.tts.speak('Opening line. '.repeat(10) + 'Closing line.', { onEnd: (i) => resolve(i.reason) }));
+    return { reason, texts: window.__speech.spoken.map((s) => s.text) };
+  });
+  assert.equal(r.reason, 'done');
+  assert.equal(r.texts[0], r.texts[1], 'the dropped first chunk was re-spoken');
+  assert.ok(r.texts[r.texts.length - 1].endsWith('Closing line.'));
 });
 
 test('voices load late (voiceschanged); unlockSpeech speaks one silent empty utterance', async () => {

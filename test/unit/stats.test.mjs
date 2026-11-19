@@ -261,7 +261,12 @@ describe('recordTurn / getStats', () => {
     const s = getStats({ now: NOW });
     assert.equal(s.topRoles.length, 20);
     for (let i = 1; i < s.topRoles.length; i++) assert.ok(s.topRoles[i - 1][1] >= s.topRoles[i][1], 'sorted by count');
-    assert.deepEqual(s.topRoles[0], ['Specialist 29', 5].map((v, k) => (k === 0 ? s.topRoles[0][0] : v)), 'top count is 5');
+    assert.deepEqual(
+      s.topRoles.slice(0, 6).map(([, c]) => c),
+      [5, 5, 5, 5, 5, 5],
+      'the six roles deployed five times lead',
+    );
+    assert.deepEqual(s.topRoles.slice(0, 2), [['Specialist 14', 5], ['Specialist 19', 5]], 'ties break deterministically');
     assert.ok(s.topRoles.some(([r]) => r === 'Market analyst'), 'strong early role survives candidate pruning');
 
     // Many one-off roles cannot evict a strong role.

@@ -149,7 +149,8 @@ export function createComposer(o) {
     'div',
     { class: 'composer-box' },
     input,
-    h('div', { class: 'composer-bar' }, modeSwitch, meta, h('div', { class: 'composer-actions' }, micBtn, sendBtn, stopBtn)),
+    // The mic only exists where speech recognition does (SPEC 13: "only if STT supported").
+    h('div', { class: 'composer-bar' }, modeSwitch, meta, h('div', { class: 'composer-actions' }, o.micSupported ? micBtn : null, sendBtn, stopBtn)),
   );
   const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, hint, box));
 
@@ -257,6 +258,9 @@ export function createComposer(o) {
     },
     setMicSupported(supported) {
       micBtn.hidden = !supported;
+      const actions = sendBtn.parentNode;
+      if (supported && !micBtn.isConnected && actions) actions.insertBefore(micBtn, sendBtn);
+      else if (!supported && micBtn.isConnected) micBtn.remove();
     },
     setText(text) {
       input.value = text;

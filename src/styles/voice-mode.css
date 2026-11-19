@@ -51,6 +51,16 @@ html.vm-open body {
   }
 }
 
+/* A mission on screen: the orbit labels the agents, so the core can give the strip some room. */
+.vm[data-mission='true'] {
+  --vm-core: min(64vw, 30vh, 380px);
+}
+@supports (height: 1svh) {
+  .vm[data-mission='true'] {
+    --vm-core: min(64vw, 30svh, 380px);
+  }
+}
+
 /* Long captions (a spoken answer, a long request): the core steps back to make room. */
 .vm[data-caplen='medium'],
 .vm[data-caplen='long'] {
@@ -267,6 +277,7 @@ html.vm-open body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  justify-content: safe center; /* if it ever overflows, never push the core under the top bar */
   gap: var(--sp-3);
   padding: var(--sp-2) var(--gutter);
   text-align: center;
@@ -289,11 +300,16 @@ html.vm-open body {
 }
 
 .vm-core-canvas {
+  /* Wider than the core so orbit labels at 3 and 9 o'clock are never clipped; the core sizes
+     its rings from the shorter side, so the rings themselves keep the button's size. */
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: -16%;
   display: block;
-  width: 100%;
+  width: 132%;
   height: 100%;
+  max-width: none;
+  aspect-ratio: auto;
 }
 
 .vm-core-halo {
@@ -925,9 +941,11 @@ html.vm-open body {
 
 .vm-sr {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
-  margin: -1px;
+  margin: 0;
   padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
@@ -1002,6 +1020,10 @@ html.vm-open body {
 @media (max-height: 620px) {
   .vm-stage {
     gap: var(--sp-2);
+  }
+  /* Short screens: while agents work, the strip (and the orbit) matter more than the echo of the request. */
+  .vm[data-mission='true'] .vm-captions[data-kind='quote'] {
+    display: none;
   }
   .vm-captions {
     font-size: var(--fs-lg);

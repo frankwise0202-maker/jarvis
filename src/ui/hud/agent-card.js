@@ -9,7 +9,7 @@
 // Markdown report, thinking text and sources list) are only rendered while visible, and the report
 // re-renders at most 4×/s while it streams.
 
-import { h, setText, extLink, clear } from '../dom.js';
+import { h, setText, safeUrl, clear } from '../dom.js';
 import { icon } from '../icons.js';
 import { renderMarkdown } from '../../lib/markdown.js';
 import {
@@ -324,12 +324,14 @@ export function createAgentCard(agent, opts = {}) {
       const title = str(src.title).trim() || host || src.url;
       const meta = [host, str(src.pageAge).trim()].filter(Boolean).join(' · ');
       if (!row || row.title !== title || row.meta !== meta) {
-        const li = h(
-          'li',
-          { class: 'hud-src' },
-          extLink(src.url, title, { class: 'hud-src__link' }),
-          meta ? h('span', { class: 'hud-src__meta', text: meta }) : null,
-        );
+        // The whole row is the link (a comfortable tap target). URLs that are not http(s)/mailto
+        // are shown as plain text, never as links.
+        const href = safeUrl(src.url);
+        const parts = [h('span', { class: 'hud-src__title', text: title }), meta ? h('span', { class: 'hud-src__meta', text: meta }) : null];
+        const inner = href
+          ? h('a', { class: 'hud-src__link', href, attrs: { target: '_blank', rel: 'noopener noreferrer' } }, parts)
+          : h('span', { class: 'hud-src__link is-plain' }, parts);
+        const li = h('li', { class: 'hud-src' }, inner);
         if (row) row.li.replaceWith(li);
         row = { li, title, meta };
         sourceRows.set(src.url, row);

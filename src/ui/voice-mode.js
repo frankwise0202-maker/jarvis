@@ -304,6 +304,7 @@ function createVoiceMode(opts) {
         'data-state': 'idle',
         'data-stt': S.sttOk ? 'ok' : 'unsupported',
         'data-typing': 'false',
+        'data-mission': 'false',
       },
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
@@ -667,10 +668,9 @@ function createVoiceMode(opts) {
     switch (reason) {
       case 'answered':
         setStatus('Ready', 'dot');
-        if (S.answer && !S.karaoke) {
-          renderSpoken(S.answer.summary, 'answer');
-          finishKaraoke();
-        }
+        if (S.answer && !S.karaoke) renderSpoken(S.answer.summary, 'answer');
+        if (captions.dataset.kind === 'context') captions.dataset.kind = 'jarvis';
+        finishKaraoke();
         setSub(S.sttOk && !S.typing ? 'Tap the core to reply.' : '');
         break;
       case 'stopped':
@@ -695,7 +695,10 @@ function createVoiceMode(opts) {
         break;
       default:
         setStatus(S.sttOk ? 'Ready' : 'Type to talk', S.sttOk ? 'dot' : 'edit');
-        if (reason !== 'keep') showCaption('hint', S.sttOk ? 'Tap the core to talk.' : 'Type your request below.');
+        if (reason !== 'keep') {
+          if (S.typing) showCaption('hint', 'Type your request below.', S.sttOk ? 'Or tap the core to talk.' : '');
+          else showCaption('hint', S.sttOk ? 'Tap the core to talk.' : 'Type your request below.');
+        }
         announce('Ready');
     }
     if (offline) {
@@ -713,11 +716,11 @@ function createVoiceMode(opts) {
   function onVisibility() {
     if (S.closed) return;
     if (document.hidden) {
+      // Pause listening (including a listen that was about to start again).
+      const wasListening = !!S.listen || !!S.retryTimer;
       clearRetry();
-      if (S.listen) {
-        stopListening();
-        goIdle('paused');
-      }
+      stopListening();
+      if (wasListening && !S.run && !S.speech) goIdle('paused');
     }
     updateLevelLoop();
   }
@@ -735,6 +738,17 @@ function createVoiceMode(opts) {
     if (text) captions.appendChild(h('p', { class: `vm-cap vm-cap--${kind}`, text }));
     captions.scrollTop = 0;
     setSub(sub);
+    fadeIn(captions);
+  }
+
+  /** A soft entrance when the captions change to something new (never per partial word). */
+  function fadeIn(el) {
+    if (reducedMotion || typeof el.animate !== 'function') return;
+    try {
+      el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+    } catch {
+      /* ignore */
+    }
   }
 
   /** 'short' | 'medium' | 'long': sets the caption type size, and the core shrinks to make room. */
@@ -816,13 +830,25 @@ function createVoiceMode(opts) {
     for (const el of S.karaoke.els) el.className = 'vm-s';
   }
 
+  /** Scroll as little as possible so the sentence being spoken is fully in view. */
   function scrollCaptionTo(el) {
     if (!el || captions.scrollHeight <= captions.clientHeight + 2) return;
-    const top = Math.max(0, el.offsetTop - captions.clientHeight * 0.3);
+    const box = captions.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const pad = 14; // stay clear of the faded edges
+    const top = r.top - box.top + captions.scrollTop;
+    const bottom = r.bottom - box.top + captions.scrollTop;
+    const viewTop = captions.scrollTop + pad;
+    const viewBottom = captions.scrollTop + captions.clientHeight - pad;
+    let target;
+    if (bottom - top > captions.clientHeight - pad * 2 || top < viewTop) target = top - pad;
+    else if (bottom > viewBottom) target = bottom - captions.clientHeight + pad;
+    else return;
+    target = Math.max(0, Math.round(target));
     try {
-      captions.scrollTo({ top, behavior: reducedMotion ? 'auto' : 'smooth' });
+      captions.scrollTo({ top: target, behavior: reducedMotion ? 'auto' : 'smooth' });
     } catch {
-      captions.scrollTop = top;
+      captions.scrollTop = target;
     }
   }
 
@@ -948,7 +974,9 @@ function createVoiceMode(opts) {
       setStatus('Listening again…', 'mic');
       S.retryTimer = setTimeout(() => {
         S.retryTimer = 0;
-        if (!S.closed && !S.listen && !S.run && !S.speech) startListening({ retry: true });
+        if (S.closed || S.listen || S.run || S.speech) return;
+        if (document.hidden) goIdle('paused');
+        else startListening({ retry: true });
       }, RETRY_DELAY_MS);
       renderControls();
       return;
@@ -1181,9 +1209,11 @@ function createVoiceMode(opts) {
       if (active.status === 'planning') {
         return { text: n ? `${wave}Deploying ${n} agent${n === 1 ? '' : 's'}…` : `${wave}Planning a mission…`, icon: 'agents' };
       }
+      // k/N counts successful reports, like the core's readout; failures are named in the strip.
       const finished = agents.filter((a) => AGENT_FINISHED.has(a.status)).length;
+      const done = agents.filter((a) => a.status === 'done').length;
       if (!finished) return { text: `${wave}${n} agent${n === 1 ? '' : 's'} in the field`, icon: 'agents' };
-      return { text: `${wave}${finished}/${n} agents reporting`, icon: 'agents' };
+      return { text: `${wave}${done}/${n} agents reporting`, icon: 'agents' };
     }
     const segs = Array.isArray(turn.segments) ? turn.segments : [];
     const seg = segs[segs.length - 1];
@@ -1201,23 +1231,30 @@ function createVoiceMode(opts) {
     return { text: 'Thinking…', icon: 'sparkle' };
   }
 
+  function showMission(show) {
+    missionEl.hidden = !show;
+    root.dataset.mission = String(show);
+  }
+
   function renderMission(latest, active, R) {
     const agents = latest && Array.isArray(latest.agents) ? latest.agents : [];
     const show = agents.length > 0;
-    missionEl.hidden = !show;
+    showMission(show);
     if (!show) {
       for (const chip of agentChips.values()) chip.li.remove();
       agentChips.clear();
       return;
     }
     const finished = agents.filter((a) => AGENT_FINISHED.has(a.status)).length;
+    const done = agents.filter((a) => a.status === 'done').length;
+    const failed = agents.filter((a) => a.status === 'error').length;
     setText(mWave, `Wave ${latest.wave || 1}`);
     setText(mTitle, latest.title || 'Mission');
-    setText(mCount, `${finished}/${agents.length}`);
-    mFill.style.setProperty('--p', String(agents.length ? finished / agents.length : 0));
+    setText(mCount, `${done}/${agents.length}`);
+    mFill.style.setProperty('--p', String(agents.length ? done / agents.length : 0));
     missionEl.dataset.status = latest.status || '';
     missionEl.dataset.compact = agents.length > 8 ? 'true' : 'false';
-    missionEl.setAttribute('aria-label', `Mission: ${finished} of ${agents.length} agents reported`);
+    missionEl.setAttribute('aria-label', `Mission: ${done} of ${agents.length} agents reported${failed ? `, ${failed} failed` : ''}`);
 
     const seen = new Set();
     agents.forEach((a, index) => {
@@ -1256,7 +1293,7 @@ function createVoiceMode(opts) {
     let line = '';
     const a = R.lastAgent;
     if (active && a && AGENT_ACTIVE.has(a.status) && a.activity) line = `${a.codename} · ${singleLine(a.activity)}`;
-    else if (!active && finished === agents.length) line = 'All agents have reported.';
+    else if (!active && finished === agents.length) line = failed || done < finished ? `${done} reported · ${finished - done} ${failed === finished - done ? 'failed' : 'did not finish'}` : 'All agents have reported.';
     setText(mActivity, line);
     mActivity.hidden = !line;
   }
@@ -1278,7 +1315,7 @@ function createVoiceMode(opts) {
     S.run = null;
     for (const off of R.offs) callQuietly(off);
     cancelRunRender();
-    missionEl.hidden = true;
+    showMission(false);
     if (S.closed) return;
     const status = turn && turn.status;
     if (status === 'done') deliverAnswer(turn);
@@ -1300,7 +1337,7 @@ function createVoiceMode(opts) {
     if (R.offs) for (const off of R.offs) callQuietly(off);
     cancelRunRender();
     if (R.run) abortQuietly(R.run);
-    missionEl.hidden = true;
+    showMission(false);
     syncCoreAgents(null);
     haptic('light');
     goIdle('stopped');
@@ -1334,7 +1371,7 @@ function createVoiceMode(opts) {
       fail('Can’t help with that', `I’m afraid I can’t help with that one, ${name}.`);
       return;
     }
-    const message = clip(singleLine((err && err.message) || 'Something went wrong on my end.'), 220);
+    const message = asSentence(clip(singleLine((err && err.message) || 'Something went wrong on my end.'), 220));
     fail('Something went wrong', `My apologies, ${name}. ${message}`);
   }
 
@@ -1344,7 +1381,7 @@ function createVoiceMode(opts) {
   }
 
   function sendFailed(err) {
-    fail('Couldn’t send', `My apologies, ${ownerName()}. ${clip(singleLine(errorText(err) || 'I couldn’t start that request.'), 220)}`);
+    fail('Couldn’t send', `My apologies, ${ownerName()}. ${asSentence(clip(singleLine(errorText(err) || 'I couldn’t start that request.'), 220))}`);
   }
 
   /** Show (and say) a short apology, then wait for a tap. */

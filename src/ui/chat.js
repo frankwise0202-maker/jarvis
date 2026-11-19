@@ -255,6 +255,9 @@ export function createChat(o) {
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(() => onGrow());
     ro.observe(content);
+    // The visible area changed (rotation, keyboard, banners): re-fit the empty-state hero.
+    const roScroller = new ResizeObserver(() => fitHero());
+    roScroller.observe(scroller);
   }
 
   // ---- empty state ----------------------------------------------------------------
@@ -294,7 +297,34 @@ export function createChat(o) {
       console.error('[jarvis] hero core failed:', err);
       heroCore = null;
     }
+    fitHero(true);
   }
+  // Size the hero core so the whole empty state fits without scrolling: measure the
+  // overflow with the hero at full size, shrink it by that much, hide it below 88px.
+  const HERO_MAX = 220;
+  const HERO_MIN = 88;
+  let fitKey = '';
+  function fitHero(force) {
+    if (!emptyEl) return;
+    const core = emptyEl.querySelector('.hero-core');
+    const hero = emptyEl.querySelector('.hero');
+    if (!core || !hero) return;
+    const key = `${scroller.clientWidth}x${scroller.clientHeight}`;
+    if (!force && key === fitKey) return;
+    fitKey = key;
+    hero.hidden = false;
+    core.style.setProperty('--hero-size', `${HERO_MAX}px`);
+    const overflow = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const size = Math.floor(HERO_MAX - overflow);
+    if (size < HERO_MIN) {
+      core.style.setProperty('--hero-size', `${HERO_MIN}px`);
+      hero.hidden = scroller.scrollHeight > scroller.clientHeight;
+    } else {
+      core.style.setProperty('--hero-size', `${size}px`);
+    }
+    scroller.scrollTop = 0;
+  }
+
   function destroyEmpty() {
     if (heroCore) {
       try {
@@ -309,9 +339,9 @@ export function createChat(o) {
   }
   function updateEmpty() {
     const empty = !conv || !conv.turns || conv.turns.length === 0;
+    el.classList.toggle('is-empty', empty); // before rendering: it changes the paddings fitHero measures
     if (empty && !emptyEl) renderEmpty();
     else if (!empty && emptyEl) destroyEmpty();
-    el.classList.toggle('is-empty', empty);
   }
 
   // ---- dirty tracking ---------------------------------------------------------------
@@ -681,19 +711,25 @@ function createJarvisTurnView(turn, ctx) {
     setText(pendingTime, duration(Date.now() - started));
   }
 
+  let noticeKey = '';
   function updateFooter(segs, running) {
     const finished = !running;
     footer.hidden = !finished;
     if (!finished) return;
-    footerNotice.replaceChildren();
 
     const status = turn.status;
     const hasErrorSeg = segs.some((s) => s.kind === 'error');
-    if (status === 'error' && turn.error && !hasErrorSeg) {
-      footerNotice.appendChild(createErrorView({ id: 'turn-error', kind: 'error', error: turn.error }, segCtx(), true).el);
+    const showError = status === 'error' && !!turn.error && !hasErrorSeg;
+    const showResume = (status === 'interrupted' || isStale()) && ctx.isLastTurn(turn.id);
+    const canResume = showResume && ctx.canResume();
+    // Rebuild the notices only when what they show changes (keeps focus on Resume).
+    const key = [showError && `${turn.error.kind}|${turn.error.message}`, showResume, canResume].join('|');
+    if (key !== noticeKey) {
+      noticeKey = key;
+      footerNotice.replaceChildren();
+      if (showError) footerNotice.appendChild(createErrorView({ id: 'turn-error', kind: 'error', error: turn.error }, segCtx(), true).el);
     }
-    if ((status === 'interrupted' || isStale()) && ctx.isLastTurn(turn.id)) {
-      const canResume = ctx.canResume();
+    if (showResume && !footerNotice.querySelector('.resume-card')) {
       footerNotice.appendChild(
         h(
           'div',

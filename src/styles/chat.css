@@ -55,7 +55,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--sp-4) 0 var(--sp-2);
+  padding: var(--sp-5) 0 var(--sp-2);
   text-align: center;
   animation: fade-up var(--dur-3) var(--ease-out) both;
 }
@@ -77,8 +77,8 @@
 
 .hero-core {
   position: relative;
-  /* Scale with the visible height so the whole hero fits on short phones. */
-  --hero-size: clamp(112px, calc(var(--vvh, 100dvh) * 0.26), 220px);
+  /* First-paint estimate; chat.js fits the exact size to the available height. */
+  --hero-size: clamp(96px, calc(var(--vvh, 100dvh) * 0.22), 220px);
   width: var(--hero-size);
   height: var(--hero-size);
 }
@@ -242,6 +242,14 @@
 }
 
 @media (max-height: 740px) {
+  .chat-wrap.is-empty .chat-content {
+    padding-top: var(--sp-2);
+  }
+
+  .empty-state {
+    padding-top: var(--sp-2);
+  }
+
   .greeting {
     margin-top: var(--sp-4);
     font-size: var(--fs-xl);
@@ -263,13 +271,13 @@
 }
 
 @media (max-height: 560px) {
-  .hero {
-    display: none;
-  }
-
   .greeting {
     margin-top: 0;
   }
+}
+
+.hero[hidden] + .greeting {
+  margin-top: 0;
 }
 
 /* ---- turns ----------------------------------------------------------------------------- */

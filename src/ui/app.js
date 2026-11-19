@@ -1217,7 +1217,7 @@ export async function startApp(rootEl) {
 
   if (!state.demo && !getSettings().onboarded) openOnboarding();
 
-  if (!state.demo) {
+  {
     try {
       Promise.resolve(
         registerServiceWorker({

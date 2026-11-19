@@ -709,34 +709,44 @@
 }
 .hud-src {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 7px 0 7px 30px;
   counter-increment: hud-src;
 }
 .hud-src::before {
   content: counter(hud-src, decimal-leading-zero);
   position: absolute;
-  top: 9px;
+  top: 12px;
   left: 0;
   color: var(--text-4);
   font: 600 var(--fs-2xs) / 1 var(--font-mono);
+  pointer-events: none;
 }
 .hud-src__link {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-height: var(--tap);
+  padding: 6px 0 6px 30px;
+  border-radius: var(--r-xs);
   color: var(--accent);
-  font-size: var(--fs-sm);
-  line-height: 1.35;
   text-decoration: none;
   overflow-wrap: anywhere;
 }
-.hud-src__link:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.hud-src__link.is-plain {
+  color: var(--text-2);
+}
+.hud-src__title {
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+@media (hover: hover) {
+  a.hud-src__link:hover .hud-src__title {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 }
 .hud-src__link:focus-visible {
   outline: none;
-  border-radius: var(--r-xs);
   box-shadow: var(--focus-ring);
 }
 .hud-src__meta {
@@ -1109,10 +1119,11 @@
   line-height: var(--lh);
 }
 
+/* Safe-area insets are the host's job (the shell's sheet and panel pad for them). */
 .hud-mc__list-wrap {
   flex: 1;
   min-height: 0;
-  padding: var(--sp-1) var(--sp-4) calc(var(--sp-4) + var(--safe-bottom));
+  padding: var(--sp-1) var(--sp-4) var(--sp-4);
   overflow-y: auto;
   overscroll-behavior: contain;
 }

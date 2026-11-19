@@ -12,7 +12,6 @@ import { reportWarning } from './util.js';
 const overlay = new Map(); // key -> string | null (null = removed in this session, not persisted)
 const watchers = new Map(); // key -> Set<fn(newValue: string|null)>
 let warned = false;
-let lastWriteFailed = false;
 let listening = false;
 
 function getStore() {
@@ -25,7 +24,6 @@ function getStore() {
 }
 
 function warnOnce(err) {
-  lastWriteFailed = true;
   if (warned) return;
   warned = true;
   reportWarning('Browser storage is unavailable; changes will only last for this session.', err && err.name ? err.name : undefined);
@@ -51,7 +49,6 @@ export function writeItem(key, value) {
     try {
       s.setItem(key, str);
       overlay.delete(key);
-      lastWriteFailed = false;
       return true;
     } catch (err) {
       overlay.set(key, str);
@@ -103,9 +100,9 @@ export function removeItemsWithPrefix(prefix, filter) {
   return keys.size;
 }
 
-/** False when storage is missing or the most recent write could not be persisted. */
+/** False when storage is missing or some value written this session only lives in memory. */
 export function isStoragePersistent() {
-  return !!getStore() && !lastWriteFailed;
+  return !!getStore() && overlay.size === 0;
 }
 
 /**

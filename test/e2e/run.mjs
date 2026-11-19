@@ -23,9 +23,10 @@ import chat from './scenarios/chat.mjs';
 import swarm from './scenarios/swarm.mjs';
 import pwa from './scenarios/pwa.mjs';
 import layout from './scenarios/layout.mjs';
+import features from './scenarios/features.mjs';
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout];
+export const SCENARIOS = [...onboarding, ...chat, ...swarm, ...pwa, ...layout, ...features];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };
@@ -100,10 +101,18 @@ async function main() {
     }
   }
 
+  let playwright;
+  let browser;
+  try {
+    playwright = await loadPlaywright();
+    browser = await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0 });
+  } catch (err) {
+    console.error(`Could not start Chromium through Playwright: ${(err.message || String(err)).split('\n')[0]}`);
+    if (opts.headed) console.error('--headed needs a display (on a headless Linux box, run without --headed or use xvfb-run).');
+    return 1;
+  }
   const timeScale = Number.isFinite(opts.mockSpeed) ? opts.mockSpeed : undefined;
   const server = await startTestServer({ build: opts.build ? 'never' : 'if-missing', mock: { timeScale } });
-  const playwright = await loadPlaywright();
-  const browser = await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0 });
   const deviceMap = devices(playwright);
   await cleanArtifacts(selected, SCENARIOS);
 

@@ -184,7 +184,21 @@ function clampRate(rate) {
 
 export function speak(text, options) {
   const opts = options || {};
-  const s = { opts, chunks: [], offsets: [], index: 0, voice: null, rate: clampRate(opts.rate), utterance: null, started: false, ended: false, idle: 0, timer: 0 };
+  const s = {
+    opts,
+    chunks: [],
+    offsets: [],
+    index: 0,
+    voice: null,
+    rate: clampRate(opts.rate),
+    utterance: null,
+    started: false, // onStart has been called
+    chunkStarted: false, // the current chunk produced a 'start' event
+    retried: false, // the current chunk was already re-spoken once
+    ended: false,
+    idle: 0,
+    timer: 0,
+  };
   const handle = { cancel: () => cancelSession(s) };
   if (!ttsSupported()) {
     s.ended = true;
@@ -192,6 +206,7 @@ export function speak(text, options) {
     return handle;
   }
   stopSpeaking();
+  if (session) cancelSession(session); // an onEnd callback above started speech re-entrantly: this call wins
   s.chunks = chunkText(text);
   if (!s.chunks.length) {
     s.ended = true;
@@ -219,8 +234,10 @@ export function speak(text, options) {
   return handle;
 }
 
-function next(s) {
+function next(s, retry = false) {
   if (s.ended || session !== s) return;
+  s.chunkStarted = false;
+  if (!retry) s.retried = false;
   if (s.index >= s.chunks.length) {
     end(s, 'done');
     return;
@@ -242,6 +259,7 @@ function next(s) {
   u.onstart = () => {
     if (stale()) return;
     s.idle = 0;
+    s.chunkStarted = true;
     if (!s.started) {
       s.started = true;
       call(s.opts.onStart);
@@ -298,8 +316,15 @@ function watchdog(s) {
     return;
   }
   if (++s.idle >= STALL_TICKS) {
-    s.index++;
-    next(s);
+    s.idle = 0;
+    if (!s.chunkStarted && !s.retried) {
+      // Never started (e.g. Chrome dropped an utterance queued right after cancel()): say it again.
+      s.retried = true;
+      next(s, true);
+    } else {
+      s.index++; // started but its 'end' never came: move on
+      next(s);
+    }
   }
 }
 

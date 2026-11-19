@@ -123,7 +123,7 @@ export function markdownToPlainText(md, options) {
 
 // Bidi embedding/override/isolate controls can visually reorder text (link-text spoofing);
 // they are never needed in Markdown, so they are removed. (LRM/RLM marks are kept.)
-const BIDI_CONTROL_RE = /[‪-‮⁦-⁩]/g;
+const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069]/g;
 
 function normalizeSource(md) {
   let s = typeof md === 'string' ? md : md === null || md === undefined ? '' : String(md);
@@ -662,8 +662,8 @@ function safeRegExp(source, flags, fallback) {
 }
 
 const ENTITIES = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ensp: ' ', emsp: ' ',
-  thinsp: ' ', shy: '­', zwj: '‍', zwnj: '‌', copy: '©', reg: '®', trade: '™',
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00A0', ensp: '\u2002', emsp: '\u2003',
+  thinsp: '\u2009', shy: '\u00AD', zwj: '\u200D', zwnj: '\u200C', copy: '©', reg: '®', trade: '™',
   hellip: '…', mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’', sbquo: '‚', ldquo: '“', rdquo: '”',
   bdquo: '„', laquo: '«', raquo: '»', lsaquo: '‹', rsaquo: '›', bull: '•', middot: '·', times: '×',
   divide: '÷', deg: '°', plusmn: '±', micro: 'µ', para: '¶', sect: '§', euro: '€', pound: '£',
@@ -720,7 +720,7 @@ function safeHref(raw) {
   if (typeof raw !== 'string') return null;
   // Control characters (and the invisible bidi controls) are never legitimate in a URL;
   // dropping them first means "java\nscript:" and friends are judged by what a browser would see.
-  const s = raw.replace(/[\u0000-\u001F\u007F​-‏‪-‮⁠-⁩﻿]/g, '').trim();
+  const s = raw.replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim();
   if (!s || s.length > MAX_URL_LENGTH) return null;
   let url;
   try {
@@ -1664,7 +1664,7 @@ function finishSpeech(s) {
     .replace(EMOJI_RE, '')
     .replace(/[→⇒➜➔⟶]/g, ' to ')
     .replace(/≈\s*/g, 'about ')
-    .replace(/[ \t ]+/g, ' ')
+    .replace(/[ \t\u00A0]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/ ([.,!?;:])/g, '$1')
     .replace(/\n{2,}/g, '\n')

@@ -16,7 +16,7 @@ async function waitAllAgents(t, card, status, { timeout = 60000 } = {}) {
   await t.waitFor(async () => {
     const s = await chipStatuses(card);
     return s.length > 0 && s.every((x) => x === status);
-  }, { timeout, message: `every agent chip to reach data-status="${status}" (now: ${(await chipStatuses(card).catch(() => [])).join(', ')})` });
+  }, { timeout, message: async () => `every agent chip to reach data-status="${status}" (now: ${(await chipStatuses(card).catch(() => [])).join(', ') || 'no chips'})` });
 }
 
 async function waitSomeActive(t, card, { timeout = 30000 } = {}) {

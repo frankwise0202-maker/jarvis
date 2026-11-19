@@ -99,6 +99,7 @@ export async function promptInstall() {
 }
 
 let applying = false;
+let watchingForUpdates = false;
 
 /** Register ./sw.js. Resolves the registration, or null when unsupported or it failed. */
 export async function registerServiceWorker({ onUpdateReady } = {}) {
@@ -139,15 +140,18 @@ export async function registerServiceWorker({ onUpdateReady } = {}) {
   });
 
   // Installed apps can stay open for days: look for a new version when brought to the front.
-  let lastCheck = Date.now();
-  try {
-    globalThis.document.addEventListener('visibilitychange', () => {
-      if (globalThis.document.visibilityState !== 'visible' || Date.now() - lastCheck < UPDATE_CHECK_MS) return;
-      lastCheck = Date.now();
-      reg.update().catch(() => {});
-    });
-  } catch {
-    /* ignore */
+  if (!watchingForUpdates) {
+    watchingForUpdates = true;
+    let lastCheck = Date.now();
+    try {
+      globalThis.document.addEventListener('visibilitychange', () => {
+        if (globalThis.document.visibilityState !== 'visible' || Date.now() - lastCheck < UPDATE_CHECK_MS) return;
+        lastCheck = Date.now();
+        reg.update().catch(() => {});
+      });
+    } catch {
+      /* ignore */
+    }
   }
   return reg;
 }

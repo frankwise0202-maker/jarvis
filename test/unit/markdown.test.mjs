@@ -209,7 +209,7 @@ const XSS_VECTORS = [
   '[newline](java\nscript:window.__xss=1)',
   '[ctrl](\u0001javascript:window.__xss=1)',
   '[nul](java\u0000script:window.__xss=1)',
-  '[zero width](java​script:window.__xss=1)',
+  '[zero width](java\u200Bscript:window.__xss=1)',
   '[pct](java%0ascript:window.__xss=1)',
   '[escaped](javascript\\:window.__xss=1)',
   '[data](data:text/html;base64,PHNjcmlwdD53aW5kb3cuX194c3M9MTwvc2NyaXB0Pg==)',
@@ -294,7 +294,7 @@ test('XSS: specific vectors render as the expected safe text', async () => {
     '<p class="md-p"><a class="md-link" href="https://ok.example/" target="_blank" rel="noopener noreferrer" title="a&quot; onmouseover=&quot;alert(1)">t</a></p>',
   );
   // Bidi override characters (link-text spoofing) are removed.
-  assert.equal(await html('[‮gnp.exe](https://ok.example)'), '<p class="md-p">' + A('https://ok.example/', 'gnp.exe') + '</p>');
+  assert.equal(await html('[\u202Egnp.exe](https://ok.example)'), '<p class="md-p">' + A('https://ok.example/', 'gnp.exe') + '</p>');
 });
 
 // ---- streaming --------------------------------------------------------------------------

@@ -211,6 +211,16 @@ function inGesture() {
   }
 }
 
+/** Has the owner interacted with the page yet (sticky activation)? */
+function wasActivated() {
+  try {
+    const ua = typeof navigator !== 'undefined' ? navigator.userActivation : null;
+    return ua ? ua.hasBeenActive === true : gestureSeen;
+  } catch {
+    return gestureSeen;
+  }
+}
+
 // WebKit (every iOS browser, and Safari) may refuse resume() outside a user gesture, so
 // there we never suspend the context ourselves while the page is visible.
 function strictAutoplay() {
@@ -232,15 +242,22 @@ function arm() {
 }
 
 function onGesture() {
-  gestureSeen = true;
   try {
-    if (ctx && ctx.state === 'running') return;
+    // Only events that really activate the page count (Escape, modifier keys and touch
+    // pointerdown don't; the pointerup/touchend/click that follows does).
+    const ua = typeof navigator !== 'undefined' ? navigator.userActivation : null;
+    if (ua && !ua.isActive) return;
+    gestureSeen = true;
     if (!readSettings().sounds) return;
+    // Running already, or idle-suspended by us where play() can resume it on demand: a tap
+    // must not wake the audio device for nothing.
+    if (ctx && (ctx.state === 'running' || (suspendedByUs && !strictAutoplay()))) return;
     const c = ensureContext(true);
     if (c && c.state !== 'running') {
       tryResume(c);
       primeSilence(c);
     }
+    scheduleIdleSuspend(0);
   } catch (err) {
     warnOnce('audio unlock failed', err);
   }
@@ -271,9 +288,7 @@ function ensureContext(fromGesture) {
   if (typeof window === 'undefined') return null;
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return null;
-  const nav = typeof navigator !== 'undefined' ? navigator : null;
-  const activated = fromGesture || gestureSeen || !!(nav && nav.userActivation && nav.userActivation.hasBeenActive);
-  if (!activated) return null; // creating it earlier only earns an autoplay warning
+  if (!fromGesture && !wasActivated()) return null; // creating it earlier only earns an autoplay warning
   try {
     ctx = new AC({ latencyHint: 'interactive' });
   } catch {
@@ -294,6 +309,9 @@ function ensureContext(fromGesture) {
 function tryResume(c) {
   if (c.state === 'closed') return false;
   const plausible = inGesture() || (suspendedByUs && !strictAutoplay()) || c.state === 'running';
+  // Without a plausible path Chromium only logs an autoplay warning; WebKit may still lift an
+  // interruption (e.g. after a call), so it gets the attempt but no sound is scheduled.
+  if (!plausible && !strictAutoplay()) return false;
   try {
     const p = c.resume();
     if (p && typeof p.then === 'function') p.then(() => (suspendedByUs = false), () => {});

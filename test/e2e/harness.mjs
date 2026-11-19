@@ -95,11 +95,19 @@ export class TestContext {
     if (!condition) throw new E2EError(message);
   }
 
+  /** Label a part of the scenario; a failure inside it is reported with the label. */
   async step(name, fn) {
+    const previous = this.currentStep;
     this.currentStep = name;
-    return fn();
+    const result = await fn();
+    this.currentStep = previous;
+    return result;
   }
 
+  /**
+   * Poll `fn` until it returns something truthy. `message` may be a (possibly async) function,
+   * evaluated only on timeout so it can describe the final state.
+   */
   async waitFor(fn, { timeout = 15000, interval = 100, message = 'condition' } = {}) {
     const end = Date.now() + timeout;
     let lastError;
@@ -111,7 +119,8 @@ export class TestContext {
         lastError = err;
       }
       if (Date.now() > end) {
-        throw new E2EError(`Timed out after ${Math.round(timeout / 1000)} s waiting for ${message}${lastError ? ` (last error: ${lastError.message.split('\n')[0]})` : ''}`);
+        const what = typeof message === 'function' ? await Promise.resolve().then(message).catch(() => 'condition') : message;
+        throw new E2EError(`Timed out after ${Math.round(timeout / 1000)} s waiting for ${what}${lastError ? ` (last error: ${lastError.message.split('\n')[0]})` : ''}`);
       }
       await sleep(interval);
     }

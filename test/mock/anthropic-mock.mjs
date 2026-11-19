@@ -54,7 +54,16 @@ export function createMock(options = {}) {
     unexpectedViolations(allowed = []) {
       return this.violations.filter((v) => !allowed.some((a) => matchesViolation(v, a)));
     },
-    dispatch: (req) => dispatch(mock, req, { now, verbose }),
+    dispatch: (req) =>
+      dispatch(mock, req, { now, verbose }).catch((err) => {
+        // A bug in the mock itself: answer like an API outage, loudly, instead of hanging.
+        console.error('[mock] internal error:', err);
+        return {
+          status: 500,
+          headers: { 'content-type': 'application/json', 'x-should-retry': 'false', ...CORS_HEADERS },
+          json: { type: 'error', error: { type: 'api_error', message: `Mock internal error: ${err?.message || err}` } },
+        };
+      }),
   };
   return mock;
 }
@@ -440,6 +449,15 @@ async function writeFrames(sse, sink, signal) {
 export function createMockHandler(options = {}) {
   const mock = options.mock ?? createMock(options);
   async function handler(req, res, next) {
+    try {
+      await handle(req, res, next);
+    } catch (err) {
+      console.error('[mock] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Mock handler error' } }));
+      else res.destroy();
+    }
+  }
+  async function handle(req, res, next) {
     const url = new URL(req.url || '/', 'http://localhost');
     if (!isMockPath(url.pathname)) {
       if (typeof next === 'function') return next();
@@ -561,7 +579,12 @@ export function createMockFetch(options = {}) {
             // consumer has read what was already "sent" (erroring discards queued chunks).
             cut: () => {
               const fail = () => finish(() => controller.error(new TypeError('terminated', { cause: new Error('other side closed') })));
-              const whenDrained = () => (settled ? undefined : controller.desiredSize > 0 ? fail() : setTimeout(whenDrained, 2));
+              const giveUpAt = Date.now() + 5000;
+              const whenDrained = () => {
+                if (settled) return;
+                if (controller.desiredSize > 0 || Date.now() > giveUpAt) fail();
+                else setTimeout(whenDrained, 2);
+              };
               setTimeout(whenDrained, 0);
             },
             end: () => finish(() => controller.close()),
@@ -569,6 +592,8 @@ export function createMockFetch(options = {}) {
           }, ac.signal);
         },
         cancel() {
+          settled = true;
+          signal?.removeEventListener('abort', onAbort);
           ac.abort();
         },
       });
