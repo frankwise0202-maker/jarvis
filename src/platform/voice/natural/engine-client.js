@@ -1,8 +1,10 @@
 // The page's handle on the natural-voice worker (kokoro-worker.js).
 //
-//   const engine = createNaturalEngine({ workerUrl, source, dtype, device, voice });
+//   const engine = createNaturalEngine({ workerUrl, source, plans, voice });
 //   engine.start()            Promise: spawn the worker and load the model (downloads it the
 //                             first time, then from Cache Storage). Resolves when ready.
+//   engine.planInfo()         Promise<{ device, dtype, weights }>: what start() will run (the
+//                             Settings card shows its download size before the download starts)
 //   engine.synth(text, { voice, speed }) -> { id, promise }   promise -> { pcm, sampleRate, synthMs }
 //   engine.cancel(ids)        drop queued jobs (array of ids, or 'all')
 //   engine.noteTiming(synthMs, audioSeconds, { underrun })   real-time-factor bookkeeping
@@ -17,6 +19,18 @@
 // WebAssembly or the download fails. The router (voice-router.js) uses the natural voice only in
 // 'ready'; everything else speaks with the device voice.
 //
+// Plans (catalog.js ENGINE_PLANS): `plans` lists the ways to run the voice, best first, e.g.
+// [{ device: 'webgpu', dtype: 'fp32', weights, available }, { device: 'wasm', dtype: 'q8', weights }]
+// (`available`: a boolean, a Promise of one, or a function returning either: does the browser
+// offer a real WebGPU adapter?). The ladder, by the measured speed:
+//   1. WebGPU: when it fails to load, or its warm-up or its speech is slower than real time, the
+//      verdict is kept for 30 days ('jarvis.voice.natural.webgpu') and the WASM plan loads instead
+//      (status.fallback: 'webgpu-failed' | 'webgpu-slow').
+//   2. WASM: when it is too slow, state 'slow' (verdict 'jarvis.voice.natural.verdict'): the
+//      built-in voice speaks.
+// A page that died while the GPU model was being set up (iOS ends a tab that takes too much memory)
+// leaves 'jarvis.voice.natural.attempt' behind: the next start skips WebGPU.
+//
 // CSP (measured in headless Chromium 157, tools/csp-probe/probe.mjs): a same-origin module
 // Worker takes its policy from its OWN response headers, not from the page's <meta> CSP. On
 // GitHub Pages (no headers) the worker may compile WebAssembly while the page itself may not, so
@@ -29,7 +43,9 @@ const SLOW_RTF = 1.0;
 // The warm-up is the engine's first inference (kernel set-up included), so it is judged leniently.
 const WARMUP_SLOW_RTF = 1.6;
 const WARMUP_FAST_RTF = 0.8;
-const VERDICT_KEY = 'jarvis.voice.natural.verdict'; // { slow: true, rtf, at }: kept across reloads
+const VERDICT_KEY = 'jarvis.voice.natural.verdict'; // { slow: true, rtf, at }: kept across reloads (WASM)
+const WEBGPU_KEY = 'jarvis.voice.natural.webgpu'; // { failed|slow: true, rtf, code, at }: WebGPU ruled out for now
+const ATTEMPT_KEY = 'jarvis.voice.natural.attempt'; // { device: 'webgpu', at } while the GPU model is set up
 const VERDICT_DAYS = 30;
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
@@ -76,7 +92,10 @@ export function createNaturalEngine({
   store = localStore(scope),
   idleStopMs = IDLE_STOP_MS,
   hiddenStopMs = HIDDEN_STOP_MS,
+  plans = null,
 } = {}) {
+  const planList = (Array.isArray(plans) && plans.length ? plans : [{ device, dtype, weights }]).map((p) => ({ ...p, weights: p.weights || weights }));
+  let current = null; // the plan the worker runs
   let worker = null;
   let startPromise = null;
   let nextId = 1;
@@ -85,7 +104,7 @@ export function createNaturalEngine({
   const timings = [];
   let idleTimer = 0;
   let hiddenTimer = 0;
-  let st = { state: 'off', stage: '', loaded: 0, total: 0, file: '', device, dtype, error: null, rtf: null, underruns: 0, loadMs: null, warmupMs: null, downloadedBytes: 0, threads: 1 };
+  let st = { state: 'off', stage: '', loaded: 0, total: 0, file: '', device: planList[0].device, dtype: planList[0].dtype, plan: '', fallback: '', error: null, rtf: null, underruns: 0, loadMs: null, warmupMs: null, downloadedBytes: 0, threads: 1 };
 
   function set(patch) {
     st = { ...st, ...patch };
@@ -107,14 +126,24 @@ export function createNaturalEngine({
           set({ voiceLoaded: msg.loaded || 0, voiceTotal: msg.total || 0 }); // a new speaker's file; still ready
           break;
         }
+        // The download is done and the GPU model is being set up: if the page dies now, the next
+        // start knows (iOS ends tabs that use too much memory).
+        if (msg.stage === 'load' && current && current.device === 'webgpu') writeJson(ATTEMPT_KEY, { device: 'webgpu', at: Date.now() });
         set({ state: msg.stage === 'download' ? 'downloading' : msg.stage === 'warmup' ? 'warming' : 'loading', stage: msg.stage, loaded: msg.loaded || 0, total: msg.total || 0, file: msg.file || '' });
         break;
       case 'ready': {
+        removeKey(ATTEMPT_KEY);
         // A first speed reading from the warm-up: a device far slower than real time never gets
         // to start a reply in the natural voice only to switch to the device voice mid-sentence.
         const warmRtf = msg.warmupMs > 0 && msg.warmupAudioS > 0 ? msg.warmupMs / 1000 / msg.warmupAudioS : null;
         const warmSlow = warmRtf !== null && warmRtf > WARMUP_SLOW_RTF;
-        const saved = savedVerdict();
+        if (current && current.device === 'webgpu' && warmSlow && nextPlan()) {
+          // The graphics chip is slower than real time: try the processor (WASM) instead.
+          saveWebgpuVerdict({ slow: true, rtf: Math.round(warmRtf * 100) / 100 });
+          fallBack('webgpu-slow');
+          break;
+        }
+        const saved = current && current.device === 'webgpu' ? null : savedVerdict();
         // A clearly fast warm-up overrules an old verdict (it was taken on a busy day, say).
         if (saved && warmRtf !== null && warmRtf < WARMUP_FAST_RTF) forgetVerdict();
         const bySaved = !!saved && !(warmRtf !== null && warmRtf < WARMUP_FAST_RTF);
@@ -142,6 +171,14 @@ export function createNaturalEngine({
             p.reject(Object.assign(new Error(msg.message || 'Synthesis failed'), { code: msg.code || 'synth' }));
           }
           return;
+        }
+        removeKey(ATTEMPT_KEY);
+        if (current && current.device === 'webgpu' && nextPlan()) {
+          // WebGPU could not load the model (no adapter in the worker, a kernel it lacks, memory):
+          // the processor (WASM) instead.
+          saveWebgpuVerdict({ failed: true, code: msg.code || 'webgpu' });
+          fallBack('webgpu-failed');
+          break;
         }
         fail({ code: msg.code || 'init', message: msg.message || 'The natural voice could not start.' });
         break;
@@ -177,6 +214,84 @@ export function createNaturalEngine({
     pending.clear();
   }
 
+  // ---- plans: WebGPU first when the browser offers it, else WASM -------------------------------
+  function readJson(key) {
+    try {
+      return JSON.parse(store.get(key) || 'null');
+    } catch {
+      return null;
+    }
+  }
+  function writeJson(key, value) {
+    try {
+      store.set(key, JSON.stringify(value));
+    } catch {
+      /* storage unavailable: it lasts this session */
+    }
+  }
+  function removeKey(key) {
+    try {
+      store.remove(key);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** WebGPU ruled out for now: a failure or a slow verdict from the last 30 days. */
+  function webgpuVerdict() {
+    const v = readJson(WEBGPU_KEY);
+    return v && (v.failed || v.slow) && Date.now() - v.at < VERDICT_DAYS * 86400000 ? v : null;
+  }
+  function saveWebgpuVerdict(v) {
+    writeJson(WEBGPU_KEY, { ...v, at: Date.now() });
+  }
+
+  /** A page that died while setting up the GPU model (the attempt marker is still there). */
+  function crashedOnGpu() {
+    const a = readJson(ATTEMPT_KEY);
+    if (!a || a.device !== 'webgpu') return false;
+    removeKey(ATTEMPT_KEY);
+    saveWebgpuVerdict({ failed: true, code: 'crashed' });
+    return true;
+  }
+
+  function ruledOut(plan) {
+    return plan.device === 'webgpu' && !!webgpuVerdict();
+  }
+
+  let gpuAnswer = null; // the last answer of a plan's `available` check (true | false | null: not asked yet)
+
+  /** The plan after the one in use (the fallback), or null. */
+  function nextPlan() {
+    const i = planList.indexOf(current);
+    return planList.slice(i + 1).find((p) => !ruledOut(p)) || null;
+  }
+
+  /** The plan start() runs: a Promise, or the plan itself when no browser check is needed. */
+  function resolvePlan() {
+    if (planList.some((p) => p.device === 'webgpu')) crashedOnGpu();
+    const viable = planList.filter((p) => !ruledOut(p));
+    const list = viable.length ? viable : [planList[planList.length - 1]];
+    const check = (p) => {
+      const a = typeof p.available === 'function' ? p.available() : p.available;
+      return a === undefined ? true : a;
+    };
+    const first = list[0];
+    const ok = check(first);
+    if (ok === true || list.length === 1) return first;
+    if (ok === false) return list[1];
+    return Promise.resolve(ok).then(
+      (yes) => {
+        gpuAnswer = !!yes;
+        return yes ? first : list[1];
+      },
+      () => {
+        gpuAnswer = false;
+        return list[1];
+      },
+    );
+  }
+
   function start() {
     if (startPromise) return startPromise.promise;
     let resolve;
@@ -185,23 +300,72 @@ export function createNaturalEngine({
       resolve = res;
       reject = rej;
     });
-    startPromise = { promise, resolve, reject };
+    const sp = { promise, resolve, reject };
+    startPromise = sp;
     promise.catch(() => {}); // callers that don't wait still see the state
-    set({ state: 'starting', stage: '', error: null, loaded: 0, total: 0 });
+    set({ state: 'starting', stage: '', error: null, loaded: 0, total: 0, fallback: '' });
+    const plan = resolvePlan();
+    if (plan && typeof plan.then === 'function') plan.then((p) => startPromise === sp && spawn(p));
+    else spawn(plan);
+    watchVisibility();
+    return promise;
+  }
+
+  function spawn(plan) {
+    current = plan;
+    // Told with the next change ('downloading', 'ready', …): no extra 'starting' notice.
+    st = { ...st, plan: plan.device, device: plan.device, dtype: plan.dtype };
     try {
       worker = createWorker(workerUrl);
     } catch (err) {
       fail({ code: 'worker', message: `The voice worker could not start: ${String((err && err.message) || err)}` });
-      return promise;
+      return;
     }
+    const w = worker;
     worker.onmessage = onMessage;
     worker.onerror = (e) => {
       if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      if (worker !== w) return;
+      // The GPU set-up can take the worker down: the processor plan, if there is one.
+      if (current && current.device === 'webgpu' && st.state !== 'ready' && nextPlan()) {
+        removeKey(ATTEMPT_KEY);
+        saveWebgpuVerdict({ failed: true, code: 'worker' });
+        fallBack('webgpu-failed');
+        return;
+      }
       fail({ code: 'worker', message: (e && e.message) || 'The voice worker failed to load.' });
     };
-    worker.postMessage({ type: 'init', config: { modelId, source, dtype, device, voice, weights, runtime, voiceFiles, warmup: true } });
-    watchVisibility();
-    return promise;
+    worker.postMessage({
+      type: 'init',
+      config: { modelId, source, dtype: plan.dtype, device: plan.device, voice, weights: plan.weights, runtime, voiceFiles, warmup: true, warmupRuns: plan.device === 'webgpu' ? 2 : 1 },
+    });
+  }
+
+  /** WebGPU failed or was slow while starting: the next plan loads in a new worker (start() still waits). */
+  function fallBack(reason) {
+    const next = nextPlan();
+    if (worker) {
+      try {
+        worker.terminate();
+      } catch {
+        /* ignore */
+      }
+    }
+    worker = null;
+    for (const [, p] of pending) p.reject(Object.assign(new Error('The voice engine changed.'), { code: 'stopped' }));
+    pending.clear();
+    timings.length = 0;
+    if (!next) {
+      fail({ code: 'webgpu', message: 'The graphics chip could not run the voice.' });
+      return;
+    }
+    set({ state: 'starting', stage: '', loaded: 0, total: 0, fallback: reason, rtf: null, plan: next.device, device: next.device, dtype: next.dtype });
+    spawn(next);
+  }
+
+  /** What start() will run: { device, dtype, weights } (the Settings card shows its download size). */
+  function planInfo() {
+    return Promise.resolve(resolvePlan()).then((p) => ({ device: p.device, dtype: p.dtype, weights: p.weights }));
   }
 
   function synth(text, { voice: v = voice, speed = 1 } = {}) {
@@ -239,6 +403,19 @@ export function createNaturalEngine({
     const rtf = timings.reduce((n, t) => n + t.synthMs, 0) / audioMs;
     const underruns = st.underruns + (underrun ? 1 : 0);
     const slow = audioMs >= MIN_AUDIO_FOR_VERDICT * 1000 && rtf > SLOW_RTF;
+    if (slow && current && current.device === 'webgpu' && st.state === 'ready' && nextPlan()) {
+      // The graphics chip turned out slower than real time: this reply hands over to the device
+      // voice ('slow'), and the processor (WASM) engine loads for the next ones.
+      saveWebgpuVerdict({ slow: true, rtf: Math.round(rtf * 100) / 100 });
+      set({ rtf: Math.round(rtf * 1000) / 1000, underruns, state: 'slow' });
+      setTimeout(() => {
+        if (st.state !== 'slow' || !current || current.device !== 'webgpu') return;
+        stop();
+        start();
+        set({ fallback: 'webgpu-slow' });
+      }, 0);
+      return;
+    }
     set({ rtf: Math.round(rtf * 1000) / 1000, underruns, state: slow && st.state === 'ready' ? 'slow' : st.state });
     if (slow) saveVerdict();
   }
@@ -253,8 +430,14 @@ export function createNaturalEngine({
     }
   }
 
+  /**
+   * Too slow here, by a verdict from the last 30 days: the processor (WASM) was slower than real
+   * time and the graphics chip cannot take over (no WebGPU plan, ruled out, or no adapter).
+   */
   function knownSlow() {
-    return !!savedVerdict();
+    if (!savedVerdict()) return false;
+    const gpu = planList.find((p) => p.device === 'webgpu');
+    return !gpu || ruledOut(gpu) || gpuAnswer === false;
   }
 
   function forgetVerdict() {
@@ -274,10 +457,12 @@ export function createNaturalEngine({
     }
   }
 
-  /** The owner chose to try again (Settings): forget the slow verdict. */
+  /** The owner chose to try again (Settings): forget the slow verdicts (WebGPU's too). */
   function resetVerdict() {
     timings.length = 0;
     forgetVerdict();
+    removeKey(WEBGPU_KEY);
+    removeKey(ATTEMPT_KEY);
     set({ rtf: null, underruns: 0, state: st.state === 'slow' ? 'ready' : st.state });
   }
 
@@ -333,6 +518,7 @@ export function createNaturalEngine({
 
   return {
     start,
+    planInfo,
     synth,
     cancel,
     noteTiming,
@@ -343,6 +529,8 @@ export function createNaturalEngine({
     status: () => st,
     ready: () => st.state === 'ready',
     knownSlow,
+    /** The kept "too slow" verdict of the processor engine ({ slow, rtf, at }), or null. */
+    verdict: () => savedVerdict(),
     setVoice(v) {
       voice = v;
     },

@@ -5,13 +5,37 @@
 //   const natural = createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId });
 //   natural.engine / natural.audio      for createVoiceRouter({ natural })
 //   natural.support                     { ok, reason } (naturalSupport)
-//   natural.plan                        { files, bytes } what the first use downloads
-//   natural.isDownloaded()              Promise<boolean>: the model is in Cache Storage
+//   natural.plan                        { files, bytes } what the processor (WASM) engine downloads
+//   natural.planFor(device)             the same for 'webgpu' (fp32, about 350 MB) or 'wasm' (q8, about 117 MB)
+//   natural.choosePlan()                Promise<'webgpu'|'wasm'>: what turning it on will download
+//   natural.isDownloaded()              Promise<boolean>: a model is in Cache Storage
 //   natural.persistStorage()            ask the browser not to evict the download (best effort)
+//
+// WebGPU: when navigator.gpu gives a real adapter (not a software one), the engine runs the fp32
+// model on the graphics chip (kokoro-js's recommendation for WebGPU); it falls back to the q8 model
+// on WASM, then to the built-in voice, by the measured speed (engine-client.js).
 
 import { createNaturalEngine, naturalSupport } from './engine-client.js';
 import { createAudioOut } from './audio-out.js';
-import { MODEL, RUNTIME, VOICES, DEFAULT_DTYPE, DEFAULT_VOICE, sourceConfig, downloadPlan } from './catalog.js';
+import { MODEL, RUNTIME, VOICES, DEFAULT_DTYPE, DEFAULT_VOICE, ENGINE_PLANS, planFor as enginePlan, sourceConfig, downloadPlan } from './catalog.js';
+
+/**
+ * Whether this browser offers a real WebGPU adapter (not a software fallback one). Asked once per
+ * page; never throws. The worker checks again when it loads the model (and falls back on failure).
+ */
+export async function webgpuAvailable(scope = globalThis) {
+  try {
+    const gpu = scope.navigator && scope.navigator.gpu;
+    if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
+    const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) return false;
+    const info = adapter.info || null;
+    if (adapter.isFallbackAdapter === true || (info && info.isFallbackAdapter === true)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Where the model comes from: 'self' (GitHub Pages, recommended) or 'hf' (huggingface.co). */
 export const SOURCE_MODE = 'self';
@@ -51,17 +75,22 @@ function buildId() {
   }
 }
 
-export function createNaturalVoice({ scope = globalThis, base = globalThis.document ? document.baseURI : 'http://localhost/', getVoice = () => DEFAULT_VOICE, mode = devSource(scope) || SOURCE_MODE } = {}) {
+export function createNaturalVoice({ scope = globalThis, base = globalThis.document ? document.baseURI : 'http://localhost/', getVoice = () => DEFAULT_VOICE, mode = devSource(scope) || SOURCE_MODE, gpu = null } = {}) {
   const support = naturalSupport(scope);
   const source = sourceConfig(mode, { base });
-  const weights = devStandin(scope) ? { path: MODEL.weights[DEFAULT_DTYPE].path } : MODEL.weights[DEFAULT_DTYPE];
+  // The stand-in model (tests) has no pinned size or hash and is never split.
+  const standin = devStandin(scope);
+  const weightsOf = (dtype) => (standin ? { path: MODEL.weights[dtype].path } : MODEL.weights[dtype]);
+  const weights = weightsOf(DEFAULT_DTYPE);
   const build = buildId();
   const runtimeUrl = new URL(`voice/ort/${RUNTIME.wasm}`, base).href;
+  let gpuCheck = null;
+  const gpuAvailable = () => (gpuCheck = gpuCheck || Promise.resolve(gpu ? gpu() : webgpuAvailable(scope)).catch(() => false));
+  const plans = ENGINE_PLANS.map((p) => ({ device: p.device, dtype: p.dtype, weights: weightsOf(p.dtype), ...(p.device === 'webgpu' ? { available: gpuAvailable } : {}) }));
   const engine = createNaturalEngine({
     workerUrl: new URL(`voice/kokoro-worker.js${build ? `?v=${build}` : ''}`, base).href,
     source,
-    dtype: DEFAULT_DTYPE,
-    device: 'wasm',
+    plans,
     voice: getVoice(),
     weights,
     runtime: { url: runtimeUrl, bytes: RUNTIME.bytes, label: 'runtime' },
@@ -70,7 +99,8 @@ export function createNaturalVoice({ scope = globalThis, base = globalThis.docum
     scope,
   });
   const audio = createAudioOut({ scope });
-  const weightsUrl = `${source.remoteHost}${source.pathTemplate.replace('{model}', MODEL.id)}${weights.path}`;
+  const urlOf = (w) => `${source.remoteHost}${source.pathTemplate.replace('{model}', MODEL.id)}${w.path}`;
+  const weightsUrl = urlOf(weights);
   // Start the engine with the voice the owner picked (the warm-up uses it).
   const start = engine.start;
   engine.start = () => {
@@ -78,14 +108,22 @@ export function createNaturalVoice({ scope = globalThis, base = globalThis.docum
     return start();
   };
 
-  async function isDownloaded() {
+  /** A model is in Cache Storage (either engine's; `device` asks about one). */
+  async function isDownloaded(device = null) {
     try {
       const cache = await scope.caches.open('transformers-cache');
-      return !!(await cache.match(weightsUrl));
+      for (const p of plans) {
+        if (device && p.device !== device) continue;
+        if (await cache.match(urlOf(p.weights))) return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
+
+  const planFor = (device) => downloadPlan({ dtype: enginePlan(device).dtype, voices: [getVoice()] });
+  const choosePlan = () => engine.planInfo().then((p) => p.device, () => 'wasm');
 
   async function persistStorage() {
     try {
@@ -97,5 +135,5 @@ export function createNaturalVoice({ scope = globalThis, base = globalThis.docum
     return false;
   }
 
-  return { engine, audio, support, source, plan: downloadPlan({ dtype: DEFAULT_DTYPE, voices: [getVoice()] }), isDownloaded, persistStorage, weightsUrl };
+  return { engine, audio, support, source, plan: downloadPlan({ dtype: DEFAULT_DTYPE, voices: [getVoice()] }), planFor, choosePlan, isDownloaded, persistStorage, weightsUrl };
 }

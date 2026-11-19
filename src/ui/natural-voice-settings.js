@@ -1,5 +1,7 @@
 // Settings → Voice → "Natural voice": opt in to the free Kokoro voice, pick it (British first),
-// test it, follow the one-time download, and see why Jarvis falls back to the device voice.
+// test it, follow the one-time download, and see why Jarvis falls back to the built-in voice.
+// The download size shown before the switch is turned on is that of the engine this device will
+// run: about 350 MB on the graphics chip (WebGPU), about 117 MB on the processor (WASM).
 //
 //   const card = createNaturalVoiceCard({ natural, tts, getSettings, commit, toast });
 //   section.append(card.el); … card.destroy();
@@ -17,8 +19,8 @@ import { icon } from './icons.js';
 import { VOICES, RUNTIME, voiceLabel, formatMegabytes } from '../platform/voice/natural/catalog.js';
 
 const ERROR_TEXT = {
-  wasm: 'This browser blocked the voice engine (WebAssembly), so Jarvis uses the device voice.',
-  webgpu: 'The graphics engine failed; Jarvis uses the device voice.',
+  wasm: 'This browser blocked the voice engine (WebAssembly), so Jarvis uses the built-in voice.',
+  webgpu: 'The graphics chip could not run the voice; Jarvis uses the built-in voice.',
   network: 'The download stopped. Check the connection, then try again.',
   integrity: 'The download was damaged or changed on the way, so it was not used. Try again.',
   'blocked-host': 'The voice tried to reach a server it is not allowed to use, so it was stopped.',
@@ -36,8 +38,11 @@ const UNSUPPORTED_TEXT = {
 };
 
 export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toast = () => {} }) {
-  const plan = natural.plan;
-  const size = formatMegabytes(plan.bytes);
+  // The engine this device will run decides the download: shown before anything is downloaded.
+  let device = null; // 'webgpu' | 'wasm', once known
+  const planOf = (d) => (typeof natural.planFor === 'function' ? natural.planFor(d) : natural.plan);
+  let plan = natural.plan;
+  let size = formatMegabytes(plan.bytes);
   const supported = !!(natural.support && natural.support.ok);
   let downloaded = false;
   let testing = null;
@@ -84,9 +89,13 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
   const retryBtn = h('button', { class: 'btn btn-sm', type: 'button', hidden: true, attrs: { 'data-testid': 'natural-voice-retry' }, on: { click: retry } }, icon('refresh', { size: 16 }), h('span', { text: 'Try again' }));
   const removeBtn = h('button', { class: 'btn btn-sm', type: 'button', hidden: true, attrs: { 'data-testid': 'natural-voice-remove' }, on: { click: remove } }, icon('trash', { size: 16 }), h('span', { text: `Remove download` }));
 
-  const help = supported
-    ? `A neural British voice that runs on this device (Kokoro, open source, free). What it says never leaves the device. It downloads about ${size} once and keeps it for offline use. If this device is too slow, Jarvis uses the device voice instead.`
-    : UNSUPPORTED_TEXT[natural.support.reason] || UNSUPPORTED_TEXT.error;
+  const helpText = () =>
+    supported
+      ? `A neural British voice that runs on this device${device === 'webgpu' ? '’s graphics chip (WebGPU), for speed' : ''} (Kokoro, open source, free). What it says never leaves the device. It downloads about ${size} once and keeps it for offline use. If it’s too slow, Jarvis uses the built-in voice.`
+      : UNSUPPORTED_TEXT[natural.support.reason] || UNSUPPORTED_TEXT.error;
+  const labelText = () => (supported && !device ? 'Natural voice (free download)' : `Natural voice (free, downloads about ${size})`);
+  const labelEl = h('label', { class: 'set-label', attrs: { for: 'set-naturalVoice', 'data-testid': 'natural-voice-label' }, text: labelText() });
+  const helpEl = h('p', { class: 'set-help', id: 'set-naturalVoice-help', text: helpText() });
 
   const el = h(
     'div',
@@ -94,7 +103,7 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     h(
       'div',
       { class: 'set-row' },
-      h('div', { class: 'set-row-text' }, h('label', { class: 'set-label', attrs: { for: 'set-naturalVoice' }, text: `Natural voice (free, downloads about ${size})` }), h('p', { class: 'set-help', id: 'set-naturalVoice-help', text: help })),
+      h('div', { class: 'set-row-text' }, labelEl, helpEl),
       h('div', { class: 'set-row-control' }, sw),
       status,
     ),
@@ -107,8 +116,20 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     ),
   );
 
+  /** The engine in use changed (WebGPU fell back to WASM): the label and help follow it. */
+  function useEngine(d) {
+    if (!d || d === device) return;
+    device = d;
+    plan = planOf(device);
+    size = formatMegabytes(plan.bytes);
+    setText(labelEl, labelText());
+    setText(helpEl, helpText());
+    el.dataset.engine = device;
+  }
+
   function render(st = natural.engine.status()) {
     const on = !!getSettings().naturalVoice;
+    if (st.plan && (st.fallback || st.state === 'ready' || st.state === 'slow')) useEngine(st.plan);
     let text = '';
     let showProgress = false;
     retryBtn.hidden = true;
@@ -119,12 +140,13 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         break;
       case 'downloading': {
         // The worker's own script (already loaded by now) counts too, so it adds up to the label.
-        const total = (st.total || plan.bytes) + RUNTIME.workerBytes;
+        const total = (st.total || planOf(st.plan || device || 'wasm').bytes) + RUNTIME.workerBytes;
         const loaded = Math.min(total, st.loaded + RUNTIME.workerBytes);
         showProgress = true;
         progress.max = total;
         progress.value = loaded;
-        text = `Downloading ${formatMegabytes(loaded)} of ${formatMegabytes(total)}…`;
+        const why = st.fallback === 'webgpu-slow' ? 'The graphics chip was too slow, so the standard engine is coming: ' : st.fallback === 'webgpu-failed' ? 'The graphics chip couldn’t run it, so the standard engine is coming: ' : '';
+        text = `${why}Downloading ${formatMegabytes(loaded)} of ${formatMegabytes(total)}…`;
         break;
       }
       case 'loading':
@@ -134,12 +156,14 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         text = 'Almost ready…';
         break;
       case 'ready': {
-        const speed = st.rtf ? ` · ${(1 / st.rtf).toFixed(1)}× faster than real time` : '';
-        text = on ? `Ready. Replies use the natural voice${speed}.` : `Downloaded (${size}). Turn it on to use it.`;
+        const r = st.rtf || st.warmupRtf;
+        const speed = r ? ` · ${(1 / r).toFixed(1)}× faster than real time` : '';
+        const where = st.plan === 'webgpu' ? ' on the graphics chip' : st.fallback ? ' on the processor (the graphics chip ' + (st.fallback === 'webgpu-slow' ? 'was too slow)' : 'couldn’t run it)') : '';
+        text = on ? `Ready${where}. Replies use the natural voice${speed}.` : `Downloaded (${size}). Turn it on to use it.`;
         break;
       }
       case 'slow':
-        text = `This device makes the voice slower than it speaks (${st.rtf ? st.rtf.toFixed(1) : '>1'}× real time), so Jarvis uses the device voice.`;
+        text = `Too slow on this device (${st.rtf ? st.rtf.toFixed(1) : '>1'}× real time), so Jarvis uses the built-in voice.`;
         retryBtn.hidden = false;
         break;
       case 'error':
@@ -147,6 +171,14 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         retryBtn.hidden = false;
         break;
       default:
+        if (supported && on && typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow()) {
+          // Measured before (kept 30 days): the built-in voice speaks, and the engine is not even started.
+          const kept = typeof natural.engine.verdict === 'function' ? natural.engine.verdict() : null;
+          const v = kept && Number.isFinite(kept.rtf) ? kept.rtf : null;
+          text = `Too slow on this device${v ? ` (${v.toFixed(1)}× real time)` : ''}, so Jarvis uses the built-in voice.`;
+          retryBtn.hidden = false;
+          break;
+        }
         text = !supported ? '' : downloaded ? (on ? 'Downloaded. It starts when Jarvis next speaks.' : `Downloaded (${size}). Turn it on to use it.`) : on ? 'Not downloaded yet.' : '';
     }
     setText(statusText, text);
@@ -236,6 +268,12 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     downloaded = yes;
     render();
   });
+  if (supported && typeof natural.choosePlan === 'function') {
+    natural.choosePlan().then((d) => {
+      useEngine(d === 'webgpu' ? 'webgpu' : 'wasm');
+      render();
+    });
+  } else device = 'wasm';
   render();
 
   return {

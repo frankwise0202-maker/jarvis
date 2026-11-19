@@ -61,6 +61,9 @@ const { sttSupported, startListening } = stt;
 // is on and ready; the router has tts.js's API, so Voice Mode and the chat use it unchanged.
 const naturalVoice = safeInit(() => createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId }));
 const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, getSettings });
+// With the natural voice on, ask once which engine this device runs (a WebGPU adapter or not), so a
+// device already measured too slow speaks with the built-in voice at once (engine knownSlow()).
+if (naturalVoice && safeInit(() => getSettings().naturalVoice)) naturalVoice.choosePlan().catch(() => {});
 const { ttsSupported, unlockSpeech, speak, stopSpeaking, toSpeech } = tts;
 
 function safeInit(fn) {

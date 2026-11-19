@@ -27,7 +27,13 @@
 //     the page's CSP does not govern this worker on GitHub Pages (no response headers), so the
 //     worker polices its own network access;
 //   - streams the big files (model weights, runtime) with progress and checks their SHA-256
-//     before anything is cached or compiled.
+//     before anything is cached or compiled;
+//   - joins a self-hosted file that was split into parts (<file>.part0, .part1, …: GitHub Pages
+//     keeps every file under 100 MB) back into the one file transformers.js asked for, then checks
+//     the whole file's size and SHA-256.
+//
+// WebGPU (config.device 'webgpu', dtype 'fp32'): the same flow; the first inference compiles the
+// GPU kernels, so the warm-up runs twice (config.warmupRuns) and the speed is read from the last.
 
 const HF_MAIN_VOICES = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/';
 const RUNTIME_CACHE = 'voice-runtime-v1'; // not 'jarvis-…': the service worker deletes those on every update
@@ -78,6 +84,9 @@ export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
     const isVoice = url.href.startsWith(HF_MAIN_VOICES);
     if (isVoice && cfg.voiceBase) url = new URL(url.href.slice(HF_MAIN_VOICES.length), cfg.voiceBase);
     if (!allowed(url, false)) throw new EngineError('blocked-host', `The voice engine may not fetch from ${url.host}.`);
+    const spec = (cfg.tracked || []).find((t) => url.pathname.endsWith(t.suffix));
+    // A split self-hosted file: only its parts exist on the server.
+    if (spec && spec.parts > 1) return joinParts(url, spec, init);
     const res = await baseFetch(url.href, init);
     // kokoro-js reads (and caches!) a voice response without checking it: never hand it a 404 page.
     if (isVoice && !res.ok) throw new EngineError('network', `The voice file ${url.pathname.split('/').pop()} could not be downloaded (HTTP ${res.status}).`);
@@ -90,7 +99,6 @@ export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
       }
       if (final && final.href !== url.href && !allowed(final, true)) throw new EngineError('blocked-host', `The voice engine was redirected to ${final.host}, which it may not use.`);
     }
-    const spec = (cfg.tracked || []).find((t) => url.pathname.endsWith(t.suffix));
     if (!spec || !res.ok || !res.body) return res;
     // A big file: stream it with progress, then check its hash before anyone caches or uses it.
     const total = Number(res.headers.get('content-length')) || spec.bytes || 0;
@@ -119,6 +127,36 @@ export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
     if (hooks.onDownloaded) hooks.onDownloaded(loaded);
     return new Response(buf, { status: 200, statusText: 'OK', headers: { 'content-type': res.headers.get('content-type') || 'application/octet-stream', 'content-length': String(loaded) } });
   };
+
+  /** <url>.part0 … part(n-1) into one buffer of the pinned size, with progress, then the hashes. */
+  async function joinParts(url, spec, init) {
+    const total = Number(spec.bytes) || 0;
+    if (!(total > 0)) throw new EngineError('integrity', `${spec.label || spec.suffix}: a split file needs its pinned size.`);
+    const buf = new Uint8Array(total);
+    let loaded = 0;
+    for (let i = 0; i < spec.parts; i++) {
+      const part = new URL(`${url.pathname}.part${i}`, url);
+      if (!allowed(part, false)) throw new EngineError('blocked-host', `The voice engine may not fetch from ${part.host}.`);
+      const res = await baseFetch(part.href, init);
+      if (!res || !res.ok || !res.body) throw new EngineError('network', `${spec.label || spec.suffix}: part ${i + 1} of ${spec.parts} could not be downloaded (HTTP ${res ? res.status : 0}).`);
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (loaded + value.byteLength > total) throw new EngineError('integrity', `${spec.label || spec.suffix}: the parts are bigger than the pinned ${total} bytes.`);
+        buf.set(value, loaded);
+        loaded += value.byteLength;
+        if (hooks.onProgress) hooks.onProgress({ file: spec.label || spec.suffix, loaded, total });
+      }
+    }
+    if (loaded !== total) throw new EngineError('integrity', `${spec.label || spec.suffix}: expected ${total} bytes, got ${loaded}.`);
+    if (spec.sha256) {
+      const hex = await sha256Hex(subtle, buf.buffer);
+      if (hex !== spec.sha256) throw new EngineError('integrity', `${spec.label || spec.suffix}: the download is damaged or was changed (SHA-256 mismatch).`);
+    }
+    if (hooks.onDownloaded) hooks.onDownloaded(loaded);
+    return new Response(buf, { status: 200, statusText: 'OK', headers: { 'content-type': 'application/octet-stream', 'content-length': String(loaded) } });
+  }
 }
 
 /**
@@ -191,7 +229,8 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
           allowOrigins: src.allowOrigins,
           allowHostSuffixes: src.allowHostSuffixes,
           tracked: [
-            { suffix: `/${weights.path}`, bytes: weights.bytes, sha256: weights.sha256, label: weights.path },
+            // Self-hosted big files come in parts; Hugging Face serves them whole.
+            { suffix: `/${weights.path}`, bytes: weights.bytes, sha256: weights.sha256, label: weights.path, parts: src.mode === 'self' && weights.parts > 1 ? weights.parts : 1 },
             // Every voice the owner may pick: small, but checked like the model.
             ...(config.voiceFiles || []).map((v) => ({ suffix: `/voices/${v.id}.bin`, bytes: v.bytes, sha256: v.sha256, label: `voices/${v.id}.bin` })),
           ],
@@ -233,10 +272,14 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
       let warmupAudioS = 0;
       if (config.warmup !== false) {
         send({ type: 'progress', stage: 'warmup', loaded: 0, total: 1 });
-        const w0 = now();
-        const out = await model.generate(WARMUP_TEXT, { voice: config.voice, speed: 1 });
-        warmupMs = Math.round(now() - w0);
-        warmupAudioS = out && out.audio ? out.audio.length / (out.sampling_rate || 24000) : 0;
+        // WebGPU compiles its kernels on the first run: the speed is read from the last run.
+        const runs = Math.max(1, Math.min(3, Number(config.warmupRuns) || 1));
+        for (let i = 0; i < runs; i++) {
+          const w0 = now();
+          const out = await model.generate(WARMUP_TEXT, { voice: config.voice, speed: 1 });
+          warmupMs = Math.round(now() - w0);
+          warmupAudioS = out && out.audio ? out.audio.length / (out.sampling_rate || 24000) : 0;
+        }
       }
       info = { device: config.device, dtype: config.dtype, loadMs, warmupMs, warmupAudioS, downloadedBytes: downloaded, threads };
       send({ type: 'ready', ...info, cached: downloaded === 0 });

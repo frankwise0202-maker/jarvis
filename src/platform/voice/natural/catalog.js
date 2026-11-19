@@ -7,6 +7,10 @@
 //   DEFAULT_VOICE         'bm_george'
 //   voiceById(id), isVoiceId(id)
 //   downloadPlan({ dtype, voices })   -> { files: [{ path, bytes, sha256?, kind }], bytes }
+//   ENGINE_PLANS / planFor(device)    the two ways to run it: 'webgpu' (fp32, the graphics chip)
+//                                     and 'wasm' (q8, the processor)
+//   PART_BYTES / partsOf(bytes)       self-hosted files are split into parts under GitHub's
+//                                     limits (100 MB per file; it warns above 50 MB)
 //   formatMegabytes(bytes)            -> "115 MB"
 //   sourceConfig(mode, { origin, base })  where the files come from: 'self' (GitHub Pages, the
 //                         recommendation) or 'hf' (huggingface.co, pinned revision)
@@ -28,11 +32,12 @@ export const MODEL = Object.freeze({
   ]),
   // transformers.js dtype -> ONNX file. q8 is the default (WASM); fp32 is what kokoro-js
   // recommends for WebGPU (the q8 graph's integer MatMul/Conv ops are not WebGPU kernels).
+  // `parts`: how many files it is split into when self-hosted (partsOf(bytes)).
   weights: Object.freeze({
-    q8: Object.freeze({ path: 'onnx/model_quantized.onnx', bytes: 92361116, sha256: 'fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478' }),
-    q8f16: Object.freeze({ path: 'onnx/model_q8f16.onnx', bytes: 86033585, sha256: '04c658aec1b6008857c2ad10f8c589d4180d0ec427e7e6118ceb487e215c3cd0' }),
-    fp16: Object.freeze({ path: 'onnx/model_fp16.onnx', bytes: 163234740, sha256: 'ba4527a874b42b21e35f468c10d326fdff3c7fc8cac1f85e9eb6c0dfc35c334a' }),
-    fp32: Object.freeze({ path: 'onnx/model.onnx', bytes: 325532232, sha256: '8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb' }),
+    q8: Object.freeze({ path: 'onnx/model_quantized.onnx', bytes: 92361116, sha256: 'fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478', parts: 2 }),
+    q8f16: Object.freeze({ path: 'onnx/model_q8f16.onnx', bytes: 86033585, sha256: '04c658aec1b6008857c2ad10f8c589d4180d0ec427e7e6118ceb487e215c3cd0', parts: 2 }),
+    fp16: Object.freeze({ path: 'onnx/model_fp16.onnx', bytes: 163234740, sha256: 'ba4527a874b42b21e35f468c10d326fdff3c7fc8cac1f85e9eb6c0dfc35c334a', parts: 4 }),
+    fp32: Object.freeze({ path: 'onnx/model.onnx', bytes: 325532232, sha256: '8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb', parts: 7 }),
   }),
   voiceBytes: 522240, // 510 × 256 float32 style vectors per voice
 });
@@ -68,6 +73,35 @@ export const VOICES = Object.freeze(
 export const DEFAULT_VOICE = 'bm_george';
 export const DEFAULT_DTYPE = 'q8';
 
+/**
+ * Self-hosted files bigger than this are split into numbered parts (<file>.part0, .part1, …):
+ * GitHub refuses files over 100 MB and warns above 50 MB. 48 MiB keeps every part under both.
+ * The worker joins the parts and checks the whole file's size and SHA-256 (kokoro-engine.js).
+ */
+export const PART_BYTES = 48 * 1024 * 1024;
+
+/** How many parts a self-hosted file of `bytes` is split into (1 = not split). */
+export function partsOf(bytes) {
+  const n = Number(bytes) || 0;
+  return n > PART_BYTES ? Math.ceil(n / PART_BYTES) : 1;
+}
+
+/**
+ * The two ways to run the voice, best first. 'webgpu' runs the fp32 model on the graphics chip
+ * (kokoro-js recommends fp32 there; the owner's Mac in Chrome has WebGPU, recent iPhones likely
+ * do too); 'wasm' runs the q8 model on the processor. Jarvis tries WebGPU when the browser offers
+ * a real adapter, falls back to WASM when it fails or is too slow, and to the built-in voice when
+ * WASM is too slow as well (engine-client.js).
+ */
+export const ENGINE_PLANS = Object.freeze([
+  Object.freeze({ device: 'webgpu', dtype: 'fp32' }),
+  Object.freeze({ device: 'wasm', dtype: 'q8' }),
+]);
+
+export function planFor(device) {
+  return ENGINE_PLANS.find((p) => p.device === device) || ENGINE_PLANS[1];
+}
+
 export function voiceById(id) {
   return VOICES.find((v) => v.id === id) || null;
 }
@@ -86,7 +120,7 @@ export function voiceLabel(v) {
  * fetched only when that voice is first used): model files, voices and the runtime.
  */
 export function downloadPlan({ dtype = DEFAULT_DTYPE, voices = [DEFAULT_VOICE], runtime = true } = {}) {
-  const weights = MODEL.weights[dtype] || MODEL.weights[DEFAULT_DTYPE];
+  const weights = { ...(MODEL.weights[dtype] || MODEL.weights[DEFAULT_DTYPE]) };
   const files = [
     ...MODEL.common.map((f) => ({ ...f, kind: 'model' })),
     { ...weights, kind: 'model' },
