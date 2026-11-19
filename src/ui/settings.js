@@ -44,7 +44,7 @@ const LIMITS = {
  * The toast after a backup import, from importBackup()'s result { conversations, memory,
  * settings, settingsChanged, skipped, protocols? }: what was restored, e.g. "Restored 3
  * conversations, 5 memories and your preferences.", plus a warning when conversations were
- * left out. Returns { message, level }.
+ * skipped (not made by Jarvis, or damaged). Returns { message, level }.
  */
 export function importSummary(res) {
   const r = res && typeof res === 'object' ? res : {};
@@ -61,8 +61,10 @@ export function importSummary(res) {
   if (prefs) parts.push('your preferences');
   let message = parts.length
     ? `Restored ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]}.`
-    : 'Nothing new to restore: this device already has everything in that backup.';
-  if (skipped) message += ` ${skipped} conversation${skipped === 1 ? ' was' : 's were'} left out (damaged or not made by Jarvis).`;
+    : skipped
+      ? 'Nothing was restored.'
+      : 'Nothing new to restore: this device already has everything in that backup.';
+  if (skipped) message += ` ${skipped} conversation${skipped === 1 ? ' wasn’t' : 's weren’t'} made by Jarvis (or ${skipped === 1 ? 'was' : 'were'} damaged) and ${skipped === 1 ? 'was' : 'were'} skipped.`;
   return { message, level: skipped ? 'warn' : 'success' };
 }
 
@@ -1052,7 +1054,7 @@ export function createSettingsPanel(o) {
       }, 4000);
       const left = Array.isArray(blob.excludedConversations) ? blob.excludedConversations.length : 0;
       if (left) {
-        o.toast(`Backup downloaded. ${left} conversation${left === 1 ? '' : 's'} containing your API key ${left === 1 ? 'was' : 'were'} left out.`, { level: 'warn', timeout: 9000 });
+        o.toast(`Backup downloaded. ${left} conversation${left === 1 ? '' : 's'} containing an API key ${left === 1 ? 'was' : 'were'} left out.`, { level: 'warn', timeout: 9000 });
       } else {
         o.toast('Backup downloaded. It doesn’t include your API key.', { level: 'success' });
       }

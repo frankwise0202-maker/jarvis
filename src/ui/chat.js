@@ -1449,6 +1449,7 @@ function createNoticeView() {
         iconWrap.replaceChildren(icon(lv === 'warn' ? 'alert' : 'info', { size: 15 }));
       }
       setText(text, txt(s.text));
+      el.hidden = !txt(s.text).trim(); // nothing to say (a damaged record): no empty box
     },
   };
 }

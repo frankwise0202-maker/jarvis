@@ -157,7 +157,10 @@ export function createCommsLog(opts = {}) {
   log.addEventListener(
     'scroll',
     () => {
-      if (!pointerDown && !jumpUntil && Date.now() > userUntil) return; // ours, or the browser's
+      const now = Date.now();
+      const byOwner = pointerDown || now <= userUntil;
+      const jumping = now < jumpUntil; // a smooth jump to the newest line is still running
+      if (!byOwner && !jumping) return; // ours, or the browser's: nothing to learn
       const bottom = log.scrollHeight - log.scrollTop - log.clientHeight <= STICK_PX;
       if (bottom) {
         jumpUntil = 0;
@@ -168,9 +171,7 @@ export function createCommsLog(opts = {}) {
         }
         return;
       }
-      const now = Date.now();
-      if (jumpUntil && now < jumpUntil) return; // a smooth jump to the newest line is still running
-      if (now > userUntil || !atBottom) return;
+      if (jumping || !byOwner || !atBottom) return;
       atBottom = false;
       syncJump();
     },

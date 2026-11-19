@@ -230,6 +230,20 @@ address can read them:
 
 Other websites (at other addresses) cannot read it.
 
+### Backups
+
+- **Export backup** (Settings → Data) saves your conversations, memory, preferences, your own
+  protocols and statistics in a file. It never contains your API key: a conversation that
+  contains an API key (yours or any other) is left out, and Jarvis tells you how many were.
+- **Import backup** adds the backup's conversations and memory notes (nothing is deleted) and
+  restores your preferences: name, style, voice, theme and sounds. It never changes your models,
+  agent limits or spending warning. Only conversations that Jarvis itself made are imported (any
+  others are skipped, and Jarvis says so), and a reply that was still running or interrupted
+  comes back as stopped: it can't be resumed.
+- **Only import your own backups.** Never import a backup someone else gave you: its
+  conversations and memory notes would become part of what Jarvis knows about you, and could be
+  written to steer it.
+
 ## Settings at a glance
 
 - **Profile & style:** what Jarvis calls you, **Jarvis's style** (Butler, Friendly, Professional
@@ -247,7 +261,7 @@ Other websites (at other addresses) cannot read it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
   level; the **Systems dashboard**.
 - **Data:** export a backup (conversations, memory, settings, your own protocols and statistics),
-  import one, or reset Jarvis on this device.
+  import one of your own (see [Backups](#backups)), or reset Jarvis on this device.
 - **Install:** how to install Jarvis on this device.
 
 ## Updates

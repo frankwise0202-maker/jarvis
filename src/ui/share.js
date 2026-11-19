@@ -481,9 +481,11 @@ export function turnStatsLine(turn, opts = {}) {
 // ---------------------------------------------------------------------------------------------
 // Dates and labels
 
+const MAX_DATE_MS = 8.64e15; // the last moment a JavaScript Date can hold
+
 function fmtWhen(ms, opts, style) {
   const t = num(ms);
-  if (!t) return '';
+  if (!t || t > MAX_DATE_MS) return ''; // a damaged record's timestamp must not break the export
   const fields =
     style === 'time'
       ? { hour: '2-digit', minute: '2-digit' }
