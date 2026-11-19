@@ -1484,8 +1484,13 @@ function createVoiceMode(opts) {
 
   function onSpeechEnd(sp, info) {
     if (sp.token !== S.speechToken) return;
-    // Someone else took over the speaker: do not open the microphone on top of them.
-    if (info && info.reason === 'interrupted') sp.interrupted = true;
+    // Our own cancels are filtered out by the token, so 'cancelled' / 'interrupted' here means
+    // someone else stopped or replaced this speech: finish now and don't open the mic over them.
+    if (info && (info.reason === 'interrupted' || info.reason === 'cancelled')) {
+      sp.interrupted = true;
+      speechDone(sp);
+      return;
+    }
     // Engines that speak in chunks may report each chunk's end: finish only when nothing is left.
     sp.timers.push(
       setTimeout(() => {

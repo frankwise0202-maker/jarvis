@@ -93,6 +93,26 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Ambience (SPEC 14.3): tapping a "mission finished" notification focuses Jarvis (or opens it).
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const scope = self.registration.scope;
+  const data = event.notification.data;
+  let target = scope;
+  try {
+    // Only ever open a page of this app.
+    if (data && typeof data.url === 'string' && new URL(data.url, scope).href.startsWith(scope)) target = new URL(data.url, scope).href;
+  } catch {
+    target = scope;
+  }
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) if (client.url.startsWith(scope) && 'focus' in client) return client.focus();
+      return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
+    }),
+  );
+});
+
 self.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || typeof data !== 'object') return;

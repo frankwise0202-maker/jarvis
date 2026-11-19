@@ -176,6 +176,79 @@ export function onStatsChange(fn) {
   };
 }
 
+/** The raw statistics as plain data, for backups (undefined when nothing was recorded yet). */
+export function exportStats() {
+  const state = load();
+  if (!state.totals.turns && !state.seen.length) return undefined;
+  return JSON.parse(JSON.stringify(state));
+}
+
+/**
+ * Merge statistics from a backup. Every counter keeps the larger of the two values (totals,
+ * each day, each role), and the recorded-turn lists are united, so restoring onto a new
+ * device brings the history along while importing the same backup twice, or onto the device
+ * it came from, never double counts. Returns true when anything changed.
+ */
+export function importStats(raw) {
+  if (!isObj(raw)) return false;
+  const incoming = normalize(raw);
+  if (!incoming.totals.turns && !incoming.seen.length) return false;
+  const state = load();
+  let changed = false;
+  const takeMax = (target, source, keys) => {
+    for (const k of keys) {
+      const v = Math.max(target[k] || 0, source[k] || 0);
+      if (v !== target[k]) {
+        target[k] = v;
+        changed = true;
+      }
+    }
+  };
+  takeMax(state.totals, incoming.totals, Object.keys(state.totals));
+  const cutoff = dayKey(shiftDays(Date.now(), -(DAYS_KEPT - 1)));
+  for (const key of Object.keys(incoming.byDay)) {
+    if (key < cutoff) continue;
+    if (!state.byDay[key]) state.byDay[key] = zeroDay();
+    takeMax(state.byDay[key], incoming.byDay[key], Object.keys(state.byDay[key]));
+  }
+  for (const role of incoming.roles) {
+    const hit = state.roles.find((r) => r[0] === role[0]);
+    if (!hit) {
+      state.roles.push(role.slice());
+      changed = true;
+    } else {
+      if (role[2] > hit[2]) {
+        hit[2] = role[2];
+        changed = true;
+      }
+      hit[3] = Math.max(hit[3], role[3]);
+      if (!hasAcronym(hit[1]) && hasAcronym(role[1])) hit[1] = role[1];
+    }
+  }
+  if (state.roles.length > ROLE_CANDIDATES) state.roles = rankRoles(state.roles).slice(0, ROLE_KEEP);
+  const older = [];
+  for (const entry of incoming.seen) {
+    const mine = state.seen.find((e) => e[0] === entry[0]);
+    if (mine) {
+      for (let i = 1; i < mine.length; i++) mine[i] = Math.max(mine[i], entry[i]);
+    } else {
+      older.push(entry.slice());
+      changed = true;
+    }
+  }
+  // Entries only the backup knows go first, so this device's own (newer) turns survive the cap.
+  if (older.length) state.seen = [...older, ...state.seen].slice(-SEEN_MAX);
+  if (incoming.since && (!state.since || incoming.since < state.since)) {
+    state.since = incoming.since;
+    changed = true;
+  }
+  if (!changed) return false;
+  state.updatedAt = Math.max(state.updatedAt, incoming.updatedAt, Date.now());
+  save(state);
+  notify();
+  return true;
+}
+
 /** Forget every statistic (for "Reset app" / "Clear data"). */
 export function resetStats() {
   memory = null;

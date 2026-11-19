@@ -9,9 +9,17 @@
 //                         Throws an Error with a user-facing message for files that are not a
 //                         usable Jarvis backup.
 //   resetApp()         -> Promise<{ ok, failed }>  clears settings, API key, memory, spend, all
-//                         conversations and other jarvis.* local data, unregisters this app's
+//                         conversations and other jarvis.* local data (custom protocols, stats,
+//                         UI preferences), unregisters this app's
 //                         service worker and deletes its caches. Never throws. Reload afterwards.
 //   backupFileName()   -> 'jarvis-backup-YYYY-MM-DD.json' (local date)
+//   registerBackupPart(name, { exportData, importData }) -> unregister()
+//                         lets a feature module add its own data (the app registers the owner's
+//                         custom protocols and usage statistics), so this platform module never
+//                         imports UI code. exportData() returns JSON-safe data (or undefined to
+//                         leave it out) stored at backup[name]; importData(value) merges it and
+//                         returns a count or boolean reported as result[name]. Parts are
+//                         optional in a backup: older backups simply don't have them.
 
 import { DEFAULT_SETTINGS, getSettings, saveSettings, resetSettings } from './settings.js';
 import { listMemory, mergeMemory, clearMemory } from './memory.js';
@@ -26,6 +34,19 @@ export const BACKUP_VERSION = 1;
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 const EXCLUDED_SETTINGS = ['onboarded', 'features'];
 const TURN_STATUSES = ['running', 'done', 'stopped', 'error', 'interrupted'];
+// Top-level backup fields a part may never use (nor anything that names secrets or spend).
+const RESERVED_PARTS = new Set(['app', 'version', 'exportedAt', 'settings', 'memory', 'conversations', 'apiKey', 'spend']);
+const parts = new Map(); // name -> { exportData, importData }
+
+/** Add a feature module's data to backups (see the header). Returns an unregister function. */
+export function registerBackupPart(name, part) {
+  if (typeof name !== 'string' || !/^[a-z][A-Za-z0-9]{0,31}$/.test(name) || RESERVED_PARTS.has(name)) throw new TypeError(`registerBackupPart: invalid name "${name}"`);
+  if (!part || typeof part.exportData !== 'function' || typeof part.importData !== 'function') throw new TypeError('registerBackupPart: exportData and importData are required');
+  parts.set(name, part);
+  return () => {
+    if (parts.get(name) === part) parts.delete(name);
+  };
+}
 
 /** Everything worth keeping, as a JSON Blob. The API key and spend are never included. */
 export async function exportBackup() {
@@ -41,6 +62,14 @@ export async function exportBackup() {
     if (conv) conversations.push(conv);
   }
   const data = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), settings, memory, conversations };
+  for (const [name, part] of parts) {
+    try {
+      const value = await part.exportData();
+      if (value !== undefined && value !== null) data[name] = JSON.parse(JSON.stringify(value));
+    } catch (err) {
+      reportWarning(`Backup: could not export ${name}`, err);
+    }
+  }
   let json = JSON.stringify(data);
   // If the owner ever pasted their key into a chat, it must still never leave in a backup.
   const key = getApiKey();
@@ -88,7 +117,17 @@ export async function importBackup(file) {
       conversations++;
     }
   }
-  return { conversations, memory, settings };
+  const result = { conversations, memory, settings };
+  for (const [name, part] of parts) {
+    if (data[name] === undefined) continue;
+    try {
+      result[name] = await part.importData(data[name]);
+    } catch (err) {
+      reportWarning(`Backup: could not import ${name}`, err);
+      result[name] = 0;
+    }
+  }
+  return result;
 }
 
 /** Wipe everything Jarvis stored on this device. Reload the page afterwards. */
@@ -107,7 +146,8 @@ export async function resetApp() {
   await step('memory', clearMemory);
   await step('spend', resetSpend);
   await step('conversations', deleteAllConversations);
-  // Other jarvis.* keys (UI preferences). Test-only jarvis.dev.* overrides are left alone.
+  // Other jarvis.* keys: custom protocols (jarvis.protocols.v1), usage statistics
+  // (jarvis.stats.v1) and UI preferences. Test-only jarvis.dev.* overrides are left alone.
   await step('local data', () => removeItemsWithPrefix('jarvis.', (key) => !key.startsWith('jarvis.dev.')));
   await step('service worker', unregisterServiceWorkers);
   await step('offline cache', clearCaches);

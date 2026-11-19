@@ -15,11 +15,15 @@ import { isStandalone } from '../platform/env.js';
 import { ttsSupported, getVoices, pickDefaultVoice, speak, stopSpeaking } from '../platform/voice/tts.js';
 import { sttSupported } from '../platform/voice/stt.js';
 import { MODELS, DEPTHS, MODES } from '../engine/index.js';
+import { createThemePicker, applyTheme } from './themes.js';
+import * as sounds from './sounds.js';
+import { notifyPermission, requestNotifyPermission, explainNotifyPermission } from './attention.js';
 
 export const SETTINGS_SECTIONS = [
-  { id: 'profile', label: 'Profile', icon: 'user' },
+  { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
   { id: 'ai', label: 'AI', icon: 'chip' },
   { id: 'voice', label: 'Voice', icon: 'wave' },
+  { id: 'appearance', label: 'Appearance & sound', short: 'Appearance', icon: 'sparkle' },
   { id: 'location', label: 'Location', icon: 'pin' },
   { id: 'memory', label: 'Memory', icon: 'memory' },
   { id: 'apikey', label: 'API key & spending', short: 'API key', icon: 'key' },
@@ -41,6 +45,19 @@ const MODEL_NOTES = {
   'claude-sonnet-5-5': 'fast and capable',
   'claude-haiku-5-5': 'fastest, lowest cost',
 };
+
+// Jarvis's personality (SPEC §15.1): the engine adds a "Style:" line to each turn's context.
+const TONE_OPTIONS = [
+  { value: 'butler', label: 'Butler (polished, dry wit)' },
+  { value: 'friendly', label: 'Friendly' },
+  { value: 'professional', label: 'Professional' },
+  { value: 'playful', label: 'Playful' },
+];
+const VERBOSITY_OPTIONS = [
+  { value: 'concise', label: 'Concise' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'detailed', label: 'Detailed' },
+];
 
 const LANGS = [
   ['en-US', 'English (US)'],
@@ -92,6 +109,7 @@ function metaContent(name) {
  * @param {(key: string) => Promise<{ok: boolean, error?: object}>} o.testApiKey
  * @param {() => void} o.onKeyChanged
  * @param {() => void} o.openInstallGuide
+ * @param {() => void} [o.openSystems]   opens the Systems dashboard (SPEC §14.4)
  * @param {() => Promise<void>} o.deleteAllConversations
  * @param {() => Promise<void>} o.resetApp
  * @param {() => void} o.refreshHistory
@@ -274,6 +292,22 @@ export function createSettingsPanel(o) {
         stacked: true,
       }),
     ),
+    card(
+      row({
+        label: 'Jarvis’s style',
+        help: 'How Jarvis sounds when it talks to you. Takes effect from your next message.',
+        forId: fieldId('tone'),
+        control: selectField('tone', TONE_OPTIONS),
+        stacked: true,
+      }),
+      row({
+        label: 'Answer length',
+        help: 'Concise keeps replies short; Detailed adds depth, context and examples.',
+        forId: fieldId('verbosity'),
+        control: selectField('verbosity', VERBOSITY_OPTIONS),
+        stacked: true,
+      }),
+    ),
   );
 
   // AI
@@ -298,6 +332,12 @@ export function createSettingsPanel(o) {
     ),
     card(
       row({ label: 'Show thinking', help: 'Show a summary of Jarvis’s reasoning above each answer.', forId: fieldId('showThinking'), control: switchField('showThinking', { label: 'Show thinking' }) }),
+      row({
+        label: 'Suggest follow-up questions',
+        help: 'After each answer, Claude Haiku suggests up to three next questions (a tiny fraction of a cent).',
+        forId: fieldId('followups'),
+        control: switchField('followups', { label: 'Suggest follow-up questions' }),
+      }),
       row({
         label: 'Model fallbacks',
         help: 'Let Anthropic retry with a fallback model when needed. Turned off automatically if unsupported.',
@@ -445,6 +485,97 @@ export function createSettingsPanel(o) {
         control: selectField('listenLang', langOptions),
         stacked: true,
       }),
+    ),
+  );
+
+  // Appearance & sound (SPEC §14.3)
+  const themePicker = createThemePicker({
+    value: s.theme,
+    onChange: (id) => {
+      safeCall(() => applyTheme(id)); // instant preview; app.js re-applies on the settings change too
+      commit({ theme: id });
+      sounds.play('tap');
+    },
+  });
+  controls.set('theme', { set: (v) => themePicker.setValue(v) });
+
+  const soundsOk = safeCall(() => sounds.soundsSupported(), false);
+  const pct = (v) => `${Math.round(Number(v) * 100)}%`;
+  const volOut = h('output', { class: 'range-out', attrs: { for: fieldId('soundVolume') } });
+  const vol = h('input', {
+    class: 'range',
+    type: 'range',
+    id: fieldId('soundVolume'),
+    min: 0,
+    max: 1,
+    step: 0.05,
+    value: String(s.soundVolume),
+    disabled: !s.sounds || !soundsOk,
+    attrs: { 'data-testid': 'setting-soundVolume' },
+    on: {
+      input: () => setText(volOut, pct(vol.value)),
+      change: () => {
+        const next = commit({ soundVolume: Number(vol.value) });
+        vol.value = String(next.soundVolume);
+        setText(volOut, pct(next.soundVolume));
+        sounds.play('notify', { volume: next.soundVolume }); // hear the new level
+      },
+    },
+  });
+  setText(volOut, pct(s.soundVolume));
+  const testSoundBtn = h(
+    'button',
+    { class: 'btn btn-sm', type: 'button', disabled: !s.sounds || !soundsOk, attrs: { 'data-testid': 'test-sound' }, on: { click: () => sounds.play('launch') } },
+    icon('speaker', { size: 16 }),
+    h('span', { text: 'Test sound' }),
+  );
+  controls.set('soundVolume', {
+    set(v, st) {
+      vol.value = String(v);
+      vol.disabled = !st.sounds || !soundsOk;
+      testSoundBtn.disabled = !st.sounds || !soundsOk;
+      setText(volOut, pct(v));
+    },
+  });
+
+  const notifySwitch = h('input', {
+    class: 'switch',
+    type: 'checkbox',
+    id: fieldId('notifyOnFinish'),
+    checked: s.notifyOnFinish,
+    attrs: { role: 'switch', 'data-testid': 'setting-notifyOnFinish' },
+    on: {
+      change: async () => {
+        commit({ notifyOnFinish: notifySwitch.checked });
+        // The switch's change event is a user gesture: the only safe moment to ask.
+        const permission = notifySwitch.checked && notifyPermission() === 'default' ? await requestNotifyPermission() : notifyPermission();
+        setText(notifyHelp, explainNotifyPermission(permission));
+      },
+    },
+  });
+  controls.set('notifyOnFinish', { set: (v) => (notifySwitch.checked = !!v) });
+  const notifyRow = row({ label: 'Notify when finished', help: safeCall(() => explainNotifyPermission(), ''), forId: fieldId('notifyOnFinish'), control: notifySwitch });
+  const notifyHelp = notifyRow.querySelector('.set-help');
+  const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+
+  const appearance = section(
+    'appearance',
+    card(row({ label: 'Theme', help: 'Accent colors for the whole interface.', control: themePicker.el, stacked: true })),
+    card(
+      row({
+        label: 'Sounds',
+        help: soundsOk ? 'Subtle tones when you send, agents report and missions finish.' : 'Sounds aren’t supported in this browser.',
+        forId: fieldId('sounds'),
+        control: switchField('sounds', { label: 'Sounds' }),
+      }),
+      row({ label: 'Volume', forId: fieldId('soundVolume'), control: h('div', { class: 'range-wrap' }, vol, volOut), stacked: true, extra: h('div', { class: 'set-row-actions' }, testSoundBtn) }),
+      row({
+        label: 'Haptics',
+        help: canVibrate ? 'A light buzz for launches, results and errors.' : 'This device doesn’t offer vibration to web apps (iPhone), so there is nothing to feel here.',
+        forId: fieldId('haptics'),
+        control: switchField('haptics', { label: 'Haptics' }),
+      }),
+      notifyRow,
     ),
   );
 
@@ -754,6 +885,13 @@ export function createSettingsPanel(o) {
       spendTotal,
       row({ label: 'Warn me above', help: 'Monthly estimate that shows a warning banner. 0 turns it off.', forId: fieldId('spendWarnUsd'), control: h('div', { class: 'money-wrap' }, h('span', { class: 'money-prefix', text: '$' }), warnInput) }),
       h('p', { class: 'set-help', text: 'Costs are estimates from token counts. For a hard cap, set a monthly spend limit in the Anthropic Console.' }),
+      typeof o.openSystems === 'function'
+        ? h(
+            'div',
+            { class: 'set-row-actions set-row-actions--start' },
+            h('button', { class: 'btn', type: 'button', attrs: { 'data-testid': 'open-systems' }, on: { click: () => o.openSystems() } }, icon('chip', { size: 16 }), h('span', { text: 'Systems dashboard' })),
+          )
+        : null,
     ),
   );
 
@@ -787,7 +925,10 @@ export function createSettingsPanel(o) {
                   const res = await importBackup(file);
                   const c = (res && res.conversations) || 0;
                   const m = (res && res.memory) || 0;
-                  o.toast(`Imported ${c} conversation${c === 1 ? '' : 's'} and ${m} memor${m === 1 ? 'y' : 'ies'}.`, { level: 'success' });
+                  const p = (res && Number(res.protocols)) || 0;
+                  const parts = [`${c} conversation${c === 1 ? '' : 's'}`, `${m} memor${m === 1 ? 'y' : 'ies'}`];
+                  if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
+                  o.toast(`Imported ${parts.length > 2 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join(' and ')}.`, { level: 'success' });
                   o.refreshHistory();
                   renderMemory();
                 } catch (err) {
@@ -870,7 +1011,7 @@ export function createSettingsPanel(o) {
   const data = section(
     'data',
     card(
-      h('p', { class: 'set-help', text: 'Everything lives on this device. Back it up to move it to another device; the backup never includes your API key or spending.' }),
+      h('p', { class: 'set-help', text: 'Everything lives on this device. A backup carries your conversations, memory, settings, custom protocols and statistics to another device; it never includes your API key or spending.' }),
       h(
         'div',
         { class: 'set-row-actions set-row-actions--start' },
@@ -882,7 +1023,7 @@ export function createSettingsPanel(o) {
       persistent ? null : h('p', { class: 'set-help set-help--warn' }, icon('alert', { size: 14 }), h('span', { text: 'This browser isn’t saving history (private browsing or storage blocked). Conversations will be lost when you close it.' })),
     ),
     card(
-      h('div', { class: 'danger-zone' }, h('div', { class: 'set-row-text' }, h('span', { class: 'set-label', text: 'Danger zone' }), h('p', { class: 'set-help', text: 'Reset erases your key, settings, memory and all conversations on this device.' })), h('div', { class: 'set-row-actions set-row-actions--start' }, delAll.el, resetBtn.el)),
+      h('div', { class: 'danger-zone' }, h('div', { class: 'set-row-text' }, h('span', { class: 'set-label', text: 'Danger zone' }), h('p', { class: 'set-help', text: 'Reset erases your key, settings, memory, protocols, statistics and all conversations on this device.' })), h('div', { class: 'set-row-actions set-row-actions--start' }, delAll.el, resetBtn.el)),
     ),
   );
 
@@ -928,7 +1069,7 @@ export function createSettingsPanel(o) {
     ),
   );
   const nav = h('nav', { class: 'set-nav', attrs: { 'aria-label': 'Settings sections' } }, navButtons);
-  const main = h('div', { class: 'set-main' }, profile, ai, voice, location, memory, apikey, data, install, about);
+  const main = h('div', { class: 'set-main' }, profile, ai, voice, appearance, location, memory, apikey, data, install, about);
   const el = h('div', { class: 'settings', attrs: { 'data-testid': 'settings-content' } }, nav, main);
 
   function markNav(id) {

@@ -60,6 +60,33 @@
   animation: fade-up var(--dur-3) var(--ease-out) both;
 }
 
+/* The first screen: hero, greeting and suggestions. chat.js sets its min-height so it fills
+   the visible area with the Protocols heading peeking in below. */
+.empty-fold {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.empty-state.has-protocols {
+  justify-content: flex-start;
+}
+
+/* Short phones: two suggestions (quick + swarm) so the core keeps its presence; the
+   Protocols grid right below covers research. Set by chat.js when space is tight. */
+.empty-state.is-tight .suggestion-item:nth-child(2) {
+  display: none;
+}
+
+.empty-protocols {
+  width: 100%;
+  margin-top: var(--sp-6);
+  padding-bottom: var(--sp-4);
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -305,6 +332,19 @@
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Photos and PDFs sent with a message sit above its bubble, right-aligned. */
+.turn-attachments {
+  display: flex;
+  justify-content: flex-end;
+  max-width: min(86%, 560px);
+  min-width: 0;
+}
+
+.bubble--protocol {
+  width: min(86%, 560px);
+  white-space: normal;
 }
 
 .turn-mode {
@@ -1068,6 +1108,23 @@
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
+}
+
+/* Cells wrap between words only (.prose breaks anywhere, which split words mid-cell);
+   .md-table-wrap scrolls sideways when a table is wider than the column. */
+.prose .md-table :is(th, td) {
+  min-width: 6.5em;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: manual;
+}
+
+.prose .md-table :is(th, td):first-child {
+  min-width: 7.5em;
+}
+
+.prose .md-table td :is(a, code) {
+  overflow-wrap: anywhere; /* long URLs and identifiers may still break */
 }
 
 .prose th {

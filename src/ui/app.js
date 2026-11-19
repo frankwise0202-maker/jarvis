@@ -10,20 +10,27 @@ import { createChat, plainText } from './chat.js';
 import { createComposer } from './composer.js';
 import { createHistory } from './history.js';
 import { createSettingsPanel } from './settings.js';
+import * as sounds from './sounds.js';
+import { applyTheme } from './themes.js';
+import { initAttention, missionFinished, describeFinishedTurn } from './attention.js';
 import { createOnboarding } from './onboarding.js';
 import { createInstallGuide } from './install-guide.js';
 import { initSheets, createSheet, anySheetOpen } from './sheet.js';
 import { createToasts } from './toasts.js';
 import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
+import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats } from './stats.js';
+import { createShareOptions } from './share.js';
+import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols } from './protocols.js';
 import { fmtUsd } from './hud/format.js';
 import { createJarvis, MODELS, DEPTHS } from '../engine/index.js';
+import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
 import { listMemory, addMemory, removeMemory } from '../platform/memory.js';
 import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent } from '../platform/db.js';
-import { resetApp } from '../platform/backup.js';
+import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { isOnline, onOnlineChange } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
@@ -123,6 +130,14 @@ export async function startApp(rootEl) {
     bootDone: false,
   };
 
+  // Ambience (SPEC §14.3): theme first (before anything paints), then sounds and attention.
+  safe(() => applyTheme(state.lastSettings.theme));
+  safe(() => sounds.initSounds(getSettings));
+  safe(() => initAttention(getSettings));
+  // Backups also carry the owner's custom protocols and usage statistics (merged on import).
+  safe(() => registerBackupPart('protocols', { exportData: () => exportCustomProtocols(), importData: (list) => importCustomProtocols(list) }));
+  safe(() => registerBackupPart('stats', { exportData: () => exportStats(), importData: (data) => importStats(data) }));
+
   const ttsOk = safe(() => ttsSupported(), false);
   const sttOk = safe(() => sttSupported(), false);
 
@@ -190,6 +205,7 @@ export async function startApp(rootEl) {
     onResume: () => resume(),
     onRetry: (turn) => retry(turn),
     onCopy: (turn) => copyTurn(turn),
+    onShare: (turn) => openShare(turn),
     onSpeak: (turn) => toggleSpeakTurn(turn),
     isSpeaking: (turnId) => !!(state.speaking && state.speaking.turnId === turnId),
     onOpenMission: (turn, missionId) => openMission(turn, missionId),
@@ -199,6 +215,11 @@ export async function startApp(rootEl) {
       composer.setMode(mode);
       if (!send(text, mode)) composer.setText(text);
     },
+    // A protocol's mode applies to that run only (the composer keeps its own mode). Returning
+    // send()'s boolean keeps the protocol's input row open when the run couldn't start.
+    onProtocol: (text, mode) => send(text, mode),
+    getSettings: () => getSettings(),
+    sounds,
     getGreeting: () => greeting(),
     ttsSupported: ttsOk,
   });
@@ -206,7 +227,8 @@ export async function startApp(rootEl) {
   const composer = createComposer({
     mode: state.lastSettings.mode,
     micSupported: sttOk,
-    onSend: (text, mode) => send(text, mode),
+    getSettings: () => getSettings(),
+    onSend: (text, mode, extras) => send(text, mode, extras),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -228,7 +250,8 @@ export async function startApp(rootEl) {
   const sidebarScrim = h('div', { class: 'sidebar-scrim', attrs: { 'aria-hidden': 'true' }, on: { click: () => setSidebar(false) } });
   const panelMcHost = h('div', { class: 'panel-mc' });
   const panelStats = h('div', { class: 'panel-stats', attrs: { 'aria-label': 'Session' } });
-  const panel = h('aside', { class: 'panel', attrs: { 'aria-label': 'Mission Control' } }, panelMcHost, panelStats);
+  const statsLauncher = createStatsLauncher({ onOpen: () => openSystems() });
+  const panel = h('aside', { class: 'panel', attrs: { 'aria-label': 'Mission Control' } }, panelMcHost, panelStats, statsLauncher.el);
   const main = h('main', { class: 'main' }, banners, chat.el, composer.el);
   const body = h('div', { class: 'body' }, sidebar, sidebarScrim, main, panel);
   const shell = h('div', { class: 'shell' }, header.el, body);
@@ -396,6 +419,7 @@ export async function startApp(rootEl) {
   }
 
   function setConversation(conv, { remember = true } = {}) {
+    clearFollowups();
     state.conv = conv || null;
     chat.setConversation(state.conv);
     history.setActive(state.conv ? state.conv.id : null);
@@ -406,6 +430,7 @@ export async function startApp(rootEl) {
 
   function newChat() {
     closePhoneSheets();
+    clearFollowups();
     if (!state.conv || !state.conv.turns || !state.conv.turns.length) {
       if (state.layout === 'desktop') composer.focus();
       return;
@@ -451,9 +476,14 @@ export async function startApp(rootEl) {
   }
 
   // ---- runs -----------------------------------------------------------------------------------
-  function send(text, mode) {
+  /**
+   * Start a turn. extras (SPEC §15.1, from the composer): { attachments: Attachment[], maxAgents? }.
+   * A message may be attachments only (empty text). Returns true when the turn started.
+   */
+  function send(text, mode, extras) {
     const clean = String(text || '').trim();
-    if (!clean) return false;
+    const attachments = extras && Array.isArray(extras.attachments) ? extras.attachments.filter((a) => a && typeof a === 'object') : [];
+    if (!clean && !attachments.length) return false;
     if (!state.demo && !safe(getApiKey, '')) {
       toast('Add your API key first.', { level: 'info' });
       openSettings({ section: 'apikey', focus: 'apikey-input' });
@@ -468,15 +498,21 @@ export async function startApp(rootEl) {
     let conv = state.conv;
     const fresh = !conv;
     if (!conv) conv = engine.newConversation();
+    const input = { text: clean, mode: mode || composer.getMode() };
+    if (attachments.length) input.attachments = attachments;
+    const maxAgents = extras ? Number(extras.maxAgents) : NaN;
+    if (Number.isFinite(maxAgents) && maxAgents >= 1) input.maxAgents = Math.min(20, Math.round(maxAgents));
+    clearFollowups();
     let run;
     try {
-      run = engine.startTurn(conv, { text: clean, mode: mode || composer.getMode() });
+      run = engine.startTurn(conv, input);
     } catch (err) {
       console.error('[jarvis] startTurn failed:', err);
       toast(err && err.message ? err.message : 'Jarvis couldn’t start that request.', { level: 'error' });
       return false;
     }
     attachRun(conv, run);
+    safe(() => sounds.cue('send'));
     if (fresh || state.conv !== conv) setConversation(conv);
     else chat.sync();
     chat.scrollToBottom(false);
@@ -486,8 +522,49 @@ export async function startApp(rootEl) {
     return true;
   }
 
+  // ---- follow-up suggestions (SPEC §14.5) ----------------------------------------------------
+  // Chips under the latest finished reply; a new send, another conversation or New chat
+  // removes them (and aborts a pending suggestion request).
+  let followup = null; // { controller, chips }
+  function clearFollowups() {
+    if (!followup) return;
+    const { controller, chips } = followup;
+    followup = null;
+    safe(() => controller.abort());
+    chips.el.remove();
+  }
+
+  function offerFollowups(conv, turn) {
+    const s = getSettings();
+    const key = safe(getApiKey, '');
+    if (s.followups === false || state.demo || !state.online || !key || !turn) return;
+    const answer = (turnText(turn, true) || turnText(turn, false)).trim();
+    if (!answer) return;
+    const turns = (conv && conv.turns) || [];
+    const user = turns.slice(0, Math.max(0, turns.indexOf(turn))).reverse().find((t) => t.role === 'user');
+    const parsed = user ? safe(() => parseProtocolPrompt(user.text), null) : null;
+    const question = user ? (parsed ? parsed.headline : user.text || '') : '';
+    clearFollowups();
+    const controller = new AbortController();
+    const chips = createFollowupChips({
+      onPick: (q) => {
+        clearFollowups();
+        if (!send(q, composer.getMode())) composer.setText(q);
+      },
+    });
+    if (!chat.showFollowups(turn.id, chips.el)) return;
+    const current = { controller, chips };
+    followup = current;
+    chips.setLoading(true);
+    suggestFollowups({ apiKey: key, apiBase: safe(getDevApiBase, ''), question, answer, signal: controller.signal, onSpend: (usd) => safe(() => addSpend(usd)) })
+      .catch(() => [])
+      .then((qs) => {
+        if (followup === current) chips.set(qs);
+      });
+  }
+
   function attachRun(conv, run) {
-    const entry = { run, conv, unsub: null, missions: new Set(), started: new Set(), ended: new Set() };
+    const entry = { run, conv, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
     state.runs.set(conv.id, entry);
     entry.unsub = run.on('*', (evt) => onRunEvent(entry, evt));
     Promise.resolve(run.done)
@@ -523,13 +600,19 @@ export async function startApp(rootEl) {
         entry.started.add(m.id);
         const n = (m.agents || []).length;
         announce(`Mission launched: ${n} agent${n === 1 ? '' : 's'} deployed`);
+        safe(() => sounds.cue('launch'));
       } else if ((m.status === 'done' || m.status === 'partial') && !entry.ended.has(m.id)) {
         entry.ended.add(m.id);
         announce(m.status === 'done' ? 'Mission complete' : 'Mission finished with some agents failing');
+        safe(() => sounds.cue('mission-done'));
       }
       if (current) mcMarkDirty(evt.turn, m);
     } else if (evt.type === 'agent' && evt.mission && current) {
       mcMarkDirty(evt.turn, evt.mission);
+    }
+    if (evt.type === 'agent' && evt.agent && evt.agent.status === 'done' && !entry.agentsDone.has(evt.agent.id)) {
+      entry.agentsDone.add(evt.agent.id);
+      safe(() => sounds.play('agent-done'));
     }
     if (evt.type === 'turn' || evt.type === 'mission' || evt.type === 'agent' || evt.type === 'end') updateCore();
     if (evt.type === 'usage' && current) renderPanelStatsSoon();
@@ -540,6 +623,7 @@ export async function startApp(rootEl) {
     if (state.runs.get(entry.conv.id) === entry) state.runs.delete(entry.conv.id);
     if (!state.runs.size) safe(() => allowSleep());
     const turn = entry.run.turn;
+    if (turn && !state.demo) safe(() => recordTurn(turn));
     if (isCurrent(entry)) {
       chat.refresh();
       mcMarkDirty(turn, null);
@@ -556,7 +640,14 @@ export async function startApp(rootEl) {
       state.errorUntil = Date.now() + 2500;
       setTimeout(updateCore, 2600);
     }
-    if (status === 'done' && isCurrent(entry)) autoSpeak(turn);
+    if (status === 'done') safe(() => sounds.play('reply-done'));
+    else if (status === 'error') safe(() => sounds.cue('error'));
+    const finished = safe(() => describeFinishedTurn(turn, entry.conv), null);
+    if (finished) safe(() => missionFinished(finished));
+    if (status === 'done' && isCurrent(entry)) {
+      autoSpeak(turn);
+      offerFollowups(entry.conv, turn);
+    }
     updateAll();
     if (!state.runs.size && state.pendingUpdate) {
       const apply = state.pendingUpdate;
@@ -614,6 +705,14 @@ export async function startApp(rootEl) {
       }
     }
     if (!user) return;
+    // Attachments are stored without their data (SPEC §15.1), so they can't be re-sent:
+    // hand the text back to the composer and ask for the files again.
+    if (Array.isArray(user.attachments) && user.attachments.length) {
+      composer.setText(user.text || '');
+      toast('Attach the file again to retry this request.', { level: 'info', id: 'retry-attachments' });
+      if (state.layout === 'desktop') composer.focus();
+      return;
+    }
     send(user.text, user.mode || composer.getMode());
   }
 
@@ -711,6 +810,7 @@ export async function startApp(rootEl) {
     let handle = null;
     let ended = false; // the STT module may end (or fail) synchronously inside startListening()
     const finish = () => {
+      if (!ended) safe(() => sounds.play('listen-stop'));
       ended = true;
       if (state.listening === handle) state.listening = null;
       composer.setListening(false);
@@ -757,6 +857,7 @@ export async function startApp(rootEl) {
     }
     if (ended || !handle) return;
     state.listening = handle;
+    safe(() => sounds.play('listen-start'));
     composer.setListening(true);
     updateCore();
   }
@@ -849,11 +950,22 @@ export async function startApp(rootEl) {
       safe(() => mcSheet.mc.show(turn, id));
       return;
     }
+    const missionShare = h(
+      'button',
+      {
+        class: 'icon-btn',
+        type: 'button',
+        attrs: { 'aria-label': 'Share or export this mission', 'data-testid': 'mission-share', title: 'Share or export' },
+        on: { click: () => state.mcSel && openShare(findTurn(state.mcSel.turnId), state.mcSel.missionId) },
+      },
+      icon('share', { size: 20 }),
+    );
     const sheet = createSheet({
       kind: 'bottom',
       tall: true,
       title: 'Mission Control',
       className: 'sheet--mission',
+      headerExtra: [missionShare],
       onClose: () => {
         if (mcSheet && mcSheet.sheet === sheet) {
           safe(() => mcSheet.mc.destroy && mcSheet.mc.destroy());
@@ -965,6 +1077,7 @@ export async function startApp(rootEl) {
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),
+      openSystems: () => openSystems(),
       deleteAllConversations: async () => {
         await stopAllRuns();
         await store.removeAll();
@@ -1009,6 +1122,68 @@ export async function startApp(rootEl) {
     sheet.open();
     if (opts.section) requestAnimationFrame(() => panelCtl.scrollToSection(opts.section, false));
     if (opts.focus) setTimeout(() => panelCtl.focus(opts.focus), 380);
+  }
+
+  // ---- records (SPEC §14.4): share & export, Systems dashboard ----------------------------
+  let shareSheet = null;
+  function openShare(turn, missionId) {
+    if (shareSheet || !turn) return;
+    let options;
+    try {
+      options = createShareOptions({
+        turn,
+        conversation: state.conv,
+        mission: missionId,
+        onDone: () => {
+          if (shareSheet) shareSheet.close('done');
+        },
+        toast,
+      });
+    } catch (err) {
+      console.error('[jarvis] share options failed:', err);
+      toast('Sharing isn’t available for this reply.', { level: 'warn' });
+      return;
+    }
+    const sheet = createSheet({
+      kind: 'bottom',
+      title: 'Share & export',
+      testid: 'share-sheet',
+      className: 'sheet--share',
+      onClose: () => {
+        safe(() => options.destroy());
+        if (shareSheet === sheet) shareSheet = null;
+      },
+    });
+    sheet.body.appendChild(options.el);
+    shareSheet = sheet;
+    sheet.open();
+  }
+
+  let systemsSheet = null;
+  function openSystems() {
+    if (systemsSheet) return;
+    let view;
+    try {
+      view = createStatsView({ getSpend: () => (state.demo ? null : getSpend()), listConversations: () => store.list(), getSettings, compact: true });
+    } catch (err) {
+      console.error('[jarvis] Systems dashboard failed:', err);
+      toast('The Systems dashboard couldn’t open.', { level: 'error' });
+      return;
+    }
+    const sheet = createSheet({
+      kind: 'full',
+      title: 'Systems',
+      testid: 'stats-sheet',
+      className: 'sheet--stats',
+      onClose: () => {
+        safe(() => view.destroy());
+        if (systemsSheet === sheet) systemsSheet = null;
+      },
+    });
+    sheet.body.appendChild(view.el);
+    systemsSheet = sheet;
+    sheet.open();
+    safe(() => view.refresh());
   }
 
   function openInstallGuide() {
@@ -1132,6 +1307,8 @@ export async function startApp(rootEl) {
       e.preventDefault();
       if (settingsSheet) settingsSheet.close('shortcut');
       if (installSheet) installSheet.close('shortcut');
+      if (shareSheet) shareSheet.close('shortcut');
+      if (systemsSheet) systemsSheet.close('shortcut');
       newChat();
       composer.focus();
       return;
@@ -1171,6 +1348,8 @@ export async function startApp(rootEl) {
       const prev = state.lastSettings || {};
       state.lastSettings = s;
       if (s.mode !== prev.mode) composer.setMode(s.mode);
+      if (s.theme !== prev.theme) safe(() => applyTheme(s.theme));
+      if (s.followups === false && prev.followups !== false) clearFollowups();
       if (s.userName !== prev.userName || s.leadModel !== prev.leadModel || s.depth !== prev.depth || s.maxAgents !== prev.maxAgents) chat.refreshEmpty();
       if (s.speakReplies === 'off' && prev.speakReplies !== 'off' && state.speaking) stopSpeakingNow();
       updateAll();

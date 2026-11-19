@@ -6,6 +6,8 @@
 //   saveCustomProtocol({ id?, name, prompt, mode, icon? })
 //                                          -> { ok: true, protocol, persisted } | { ok: false, errors }
 //   deleteCustomProtocol(id)               -> boolean
+//   exportCustomProtocols()                -> plain copies of the custom protocols (for backups)
+//   importCustomProtocols(list)            -> number added or updated (merge by id; newer wins)
 //   validateCustomProtocol(input)          -> { ok, value, errors }   (pure; used by the editor)
 //   onProtocolsChange(fn)                  -> unsubscribe; fn() after any custom-protocol change (any tab)
 //   parseProtocolPrompt(text)              -> { headline, name, brief } | null
@@ -744,6 +746,41 @@ export function deleteCustomProtocol(id) {
   if (next.length === items.length) return false;
   writeItems(next);
   return true;
+}
+
+/** The owner's custom protocols as plain data, for backups (built-ins are never included). */
+export function exportCustomProtocols() {
+  return readItems().map((item) => ({ ...item }));
+}
+
+/**
+ * Merge custom protocols from a backup. A new id is added; an id that exists here is replaced
+ * only when the backup's copy is newer (updatedAt); an entry whose name matches a different
+ * protocol here is skipped (names stay unique); invalid entries are ignored; the 24-protocol
+ * limit holds. Importing the same backup twice changes nothing. Returns how many were added
+ * or updated.
+ */
+export function importCustomProtocols(list) {
+  if (!Array.isArray(list)) return 0;
+  const items = readItems();
+  let changed = 0;
+  for (const raw of list) {
+    const item = sanitizeItem(raw);
+    if (!item) continue;
+    const index = items.findIndex((it) => it.id === item.id);
+    const nameKey = item.name.toLocaleLowerCase();
+    if (items.some((it, i) => i !== index && it.name.toLocaleLowerCase() === nameKey)) continue;
+    if (index >= 0) {
+      if (!(item.updatedAt > items[index].updatedAt)) continue;
+      items[index] = item;
+    } else {
+      if (items.length >= CUSTOM_PROTOCOL_LIMITS.count) continue;
+      items.push(item);
+    }
+    changed++;
+  }
+  if (changed) writeItems(items);
+  return changed;
 }
 
 /**

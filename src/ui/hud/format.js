@@ -181,6 +181,53 @@ export function plural(n, one, many = `${one}s`) {
   return `${fmtCount(n)} ${Number(n) === 1 ? one : many}`;
 }
 
+/** Local wall-clock time, 24-hour: "06:41:12" ('' for a missing or invalid timestamp). */
+export function fmtClock(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const d = new Date(n);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/** Compact offset into a run: "0:07", "1:05", "12:40", "1:02:03" ('' when unknown or negative). */
+export function fmtOffset(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '';
+  const total = Math.floor(n / 1000);
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const hr = Math.floor(total / 3600);
+  return hr ? `${hr}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+}
+
+const ERROR_PHRASES = {
+  rate_limit: 'rate limited',
+  overloaded: 'Claude overloaded',
+  network: 'connection lost',
+  auth: 'API key rejected',
+  billing: 'out of credits',
+  refusal: 'request declined',
+  server: 'server error',
+  context: 'too much context',
+  bad_request: 'bad request',
+  not_found: 'model unavailable',
+  aborted: 'stopped',
+};
+
+/** Short lower-case phrase for an ErrorInfo (SPEC §6): "rate limited", "connection lost", … */
+export function errorPhrase(error) {
+  if (!error || typeof error !== 'object') return 'unknown error';
+  const phrase = ERROR_PHRASES[error.kind];
+  if (phrase) return phrase;
+  const msg = String(error.message || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!]+$/, '');
+  if (!msg) return 'unknown error';
+  const short = msg.length > 60 ? `${msg.slice(0, 59).trimEnd()}…` : msg;
+  return short.charAt(0).toLowerCase() + short.slice(1);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Shared 1-second ticker. Subscribers run on whole-second boundaries so every visible timer
 // flips together. The underlying timer only exists while someone is subscribed.

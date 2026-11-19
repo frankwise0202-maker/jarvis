@@ -10,6 +10,8 @@ import { renderMarkdown, markdownToPlainText } from '../lib/markdown.js';
 import { createMissionCard } from './hud/mission-card.js';
 import { createCore } from './hud/core.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
+import { createProtocolGrid, createProtocolBubble } from './protocols.js';
+import { createAttachmentStrip } from './attachments.js';
 import { MODELS } from '../engine/index.js';
 
 const MD_INTERVAL = 125; // ms between Markdown re-renders while streaming (~8/s)
@@ -28,6 +30,7 @@ function safeHost(url) {
 
 function duration(ms) {
   const v = Math.max(0, Number(ms) || 0);
+  if (v < 1000) return '<1s'; // a sub-second turn is not "0s"
   try {
     return fmtDuration(v);
   } catch {
@@ -70,6 +73,28 @@ function chipLabel(item) {
   const m = t.match(/^(.{3,})\s+[—–|·-]\s+[^—–|·]{2,40}$/);
   if (m) t = m[1].trim();
   return t || item.host || item.href;
+}
+
+/**
+ * Give prose columns of rendered Markdown tables room to breathe: a column whose longest cell
+ * is long text gets a wider minimum (up to ~16em, about two lines for a short note) instead of
+ * being squeezed into a tall, narrow strip; short columns (numbers, names) stay compact. The
+ * table's wrapper scrolls sideways when the total is wider than the column.
+ */
+function sizeTables(root) {
+  for (const table of root.querySelectorAll('table.md-table')) {
+    const rows = table.rows;
+    if (!rows || !rows.length) continue;
+    const first = rows[0].cells;
+    const longest = new Array(first.length).fill(0);
+    for (const row of rows) {
+      for (let i = 0; i < row.cells.length && i < longest.length; i++) longest[i] = Math.max(longest[i], (row.cells[i].textContent || '').trim().length);
+    }
+    longest.forEach((chars, i) => {
+      const em = Math.min(16, Math.round(chars * 0.48 * 2) / 2);
+      if (em > 7.5 && first[i]) first[i].style.minWidth = `${em}em`;
+    });
+  }
 }
 
 /** Put a blinking caret at the end of the last text block of a rendered Markdown body. */
@@ -174,6 +199,10 @@ function pickSuggestions(date = new Date()) {
  * @param {(section: string) => void} o.onOpenSettings
  * @param {() => void} o.onNewChat
  * @param {(text: string, mode: string) => void} o.onSuggestion
+ * @param {(text: string, mode: string, protocol: object) => boolean} [o.onProtocol]  runs a protocol (SPEC §14.2)
+ * @param {(turn: object) => void} [o.onShare]          opens Share & export for a reply (SPEC §14.4)
+ * @param {() => object} [o.getSettings]
+ * @param {{ play: Function, haptic: Function }} [o.sounds]   optional feedback (SPEC §14.3)
  * @param {() => { title: string, subtitle: string, meta: string }} o.getGreeting
  * @param {boolean} o.ttsSupported
  */
@@ -261,7 +290,26 @@ export function createChat(o) {
   }
 
   // ---- empty state ----------------------------------------------------------------
+  // Layout: the "fold" (hero core, greeting, suggestions) fills the first screen, and the
+  // Protocols grid follows below it, its heading peeking in at the bottom as a cue to scroll.
   let emptyEl = null;
+  let greetEls = null; // { title, sub, meta }
+  let protocolGrid = null;
+  function mountProtocols() {
+    if (typeof o.onProtocol !== 'function') return null;
+    try {
+      protocolGrid = createProtocolGrid({
+        getSettings: o.getSettings,
+        onRun: (text, mode, p) => o.onProtocol(text, mode, p),
+        sounds: o.sounds || null,
+      });
+      return h('div', { class: 'empty-protocols' }, protocolGrid.el);
+    } catch (err) {
+      console.error('[jarvis] protocol grid failed:', err);
+      protocolGrid = null;
+      return null;
+    }
+  }
   function renderEmpty() {
     destroyEmpty();
     const g = o.getGreeting();
@@ -280,15 +328,22 @@ export function createChat(o) {
         icon('chevron-right', { size: 16, class: 'suggestion-go' }),
       ),
     );
-    emptyEl = h(
+    greetEls = {
+      title: h('h1', { class: 'greeting', text: g.title }),
+      sub: h('p', { class: 'greeting-sub', text: g.subtitle }),
+      meta: h('p', { class: 'greeting-meta', text: g.meta || '', hidden: !g.meta }),
+    };
+    const fold = h(
       'div',
-      { class: 'empty-state', attrs: { 'data-testid': 'empty-state' } },
+      { class: 'empty-fold' },
       h('div', { class: 'hero' }, h('div', { class: 'hero-core' }, canvas, h('div', { class: 'hero-reticle', attrs: { 'aria-hidden': 'true' } }))),
-      h('h1', { class: 'greeting', text: g.title }),
-      h('p', { class: 'greeting-sub', text: g.subtitle }),
-      g.meta ? h('p', { class: 'greeting-meta', text: g.meta }) : null,
+      greetEls.title,
+      greetEls.sub,
+      greetEls.meta,
       h('div', { class: 'suggestions', attrs: { role: 'list', 'aria-label': 'Suggestions' } }, suggestions.map((b) => h('div', { class: 'suggestion-item', attrs: { role: 'listitem' } }, b))),
     );
+    const protocols = mountProtocols();
+    emptyEl = h('div', { class: ['empty-state', protocols && 'has-protocols'], attrs: { 'data-testid': 'empty-state' } }, fold, protocols);
     emptyHost.appendChild(emptyEl);
     try {
       heroCore = createCore(canvas, { size: 220, mode: 'hero' });
@@ -299,30 +354,70 @@ export function createChat(o) {
     }
     fitHero(true);
   }
-  // Size the hero core so the whole empty state fits without scrolling: measure the
-  // overflow with the hero at full size, shrink it by that much, hide it below 88px.
+
+  /** Update the greeting in place (time of day, name, model): keeps the core and the grid. */
+  function updateGreeting() {
+    if (!emptyEl || !greetEls) return;
+    const g = o.getGreeting();
+    setText(greetEls.title, g.title);
+    setText(greetEls.sub, g.subtitle);
+    setText(greetEls.meta, g.meta || '');
+    greetEls.meta.hidden = !g.meta;
+  }
+
+  // Size the hero core so the fold fits the visible area (with the Protocols heading peeking
+  // in below it): measure the fold with the hero at full size, shrink the hero by the
+  // overflow, hide it below 88px. Without protocols the whole empty state must fit.
   const HERO_MAX = 220;
   const HERO_MIN = 88;
+  const HERO_COMFY = 132; // below this, a one-column phone drops a suggestion to keep the core
   let fitKey = '';
   function fitHero(force) {
     if (!emptyEl) return;
     const core = emptyEl.querySelector('.hero-core');
     const hero = emptyEl.querySelector('.hero');
-    if (!core || !hero) return;
+    const fold = emptyEl.querySelector('.empty-fold');
+    if (!core || !hero || !fold) return;
     const key = `${scroller.clientWidth}x${scroller.clientHeight}`;
     if (!force && key === fitKey) return;
+    // While the owner types in the empty state (a protocol's input row), the on-screen
+    // keyboard shrinks the view: keep everything still rather than refit under their finger.
+    const active = document.activeElement;
+    if (!force && active && emptyEl.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
     fitKey = key;
+    const more = emptyEl.classList.contains('has-protocols');
+    // Leave the Protocols heading and the top of its tiles visible under the fold.
+    const peek = Math.round(Math.min(76, Math.max(52, scroller.clientHeight * 0.115)));
     hero.hidden = false;
+    fold.style.minHeight = '';
+    emptyEl.classList.remove('is-tight');
     core.style.setProperty('--hero-size', `${HERO_MAX}px`);
-    const overflow = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    let overflow = 0;
+    let avail = 0;
+    const measure = () => {
+      if (more) {
+        const top = fold.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        avail = Math.floor(scroller.clientHeight - top - peek);
+        overflow = Math.max(0, fold.offsetHeight - avail);
+      } else {
+        overflow = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      }
+    };
+    measure();
+    if (more && HERO_MAX - overflow < HERO_COMFY && oneColumn()) {
+      emptyEl.classList.add('is-tight'); // the grid below covers research anyway
+      measure();
+    }
     const size = Math.floor(HERO_MAX - overflow);
     if (size < HERO_MIN) {
       core.style.setProperty('--hero-size', `${HERO_MIN}px`);
-      hero.hidden = scroller.scrollHeight > scroller.clientHeight;
+      hero.hidden = more ? fold.offsetHeight > avail : scroller.scrollHeight > scroller.clientHeight;
     } else {
       core.style.setProperty('--hero-size', `${size}px`);
     }
-    scroller.scrollTop = 0;
+    // Center the fold in the first screen; the grid starts just below it.
+    if (more && avail > 0) fold.style.minHeight = `${avail}px`;
+    if (force) scroller.scrollTop = 0;
   }
 
   function destroyEmpty() {
@@ -334,8 +429,17 @@ export function createChat(o) {
       }
       heroCore = null;
     }
+    if (protocolGrid) {
+      try {
+        protocolGrid.destroy();
+      } catch {
+        /* ignore */
+      }
+      protocolGrid = null;
+    }
     if (emptyEl) emptyEl.remove();
     emptyEl = null;
+    greetEls = null;
   }
   function updateEmpty() {
     const empty = !conv || !conv.turns || conv.turns.length === 0;
@@ -522,11 +626,18 @@ export function createChat(o) {
         }
       }
     },
-    /** Re-render the greeting (name or time of day changed). */
+    /** Refresh the greeting (name, time of day or model changed). */
     refreshEmpty() {
-      if (emptyEl) renderEmpty();
+      updateGreeting();
     },
     isEmpty: () => !conv || !conv.turns || conv.turns.length === 0,
+    /** Place follow-up chips (SPEC §14.5) under a turn. Returns false if the turn isn't shown. */
+    showFollowups(turnId, chipsEl) {
+      const view = turnViews.get(turnId);
+      if (!view || !chipsEl) return false;
+      view.el.appendChild(chipsEl);
+      return true;
+    },
   };
 }
 
@@ -538,16 +649,39 @@ function reducedMotion() {
   }
 }
 
+/** Suggestions stack in one column (phones); matches the breakpoint in chat.css. */
+function oneColumn() {
+  try {
+    return window.matchMedia('(max-width: 639px)').matches;
+  } catch {
+    return true;
+  }
+}
+
 // ---- user turn ----------------------------------------------------------------------
 
 function createUserTurnView(turn) {
   const tag = turn.mode && turn.mode !== 'auto' ? h('span', { class: ['turn-mode', `turn-mode--${turn.mode}`], text: turn.mode === 'swarm' ? 'Swarm' : 'Quick' }) : null;
-  const el = h(
-    'div',
-    { class: 'turn turn--user', attrs: { 'data-testid': 'turn-user' } },
-    tag,
-    h('div', { class: 'bubble', text: turn.text || '' }),
-  );
+  // Photos and PDFs sent with the message (SPEC §15.1: metadata and thumbnails only).
+  let strip = null;
+  if (Array.isArray(turn.attachments) && turn.attachments.length) {
+    try {
+      strip = h('div', { class: 'turn-attachments' }, createAttachmentStrip(turn.attachments, { size: 'md' }));
+    } catch (err) {
+      console.error('[jarvis] attachment strip failed:', err);
+      strip = null;
+    }
+  }
+  const text = typeof turn.text === 'string' ? turn.text : '';
+  // A protocol run shows its headline with the full brief tucked behind a disclosure.
+  let protocol = null;
+  try {
+    protocol = text ? createProtocolBubble(text) : null;
+  } catch {
+    protocol = null;
+  }
+  const bubble = text.trim() || !strip ? h('div', { class: ['bubble', protocol && 'bubble--protocol'] }, protocol || text) : null;
+  const el = h('div', { class: 'turn turn--user', attrs: { 'data-testid': 'turn-user' } }, tag, strip, bubble);
   return { el, kind: 'user' };
 }
 
@@ -597,8 +731,17 @@ function createJarvisTurnView(turn, ctx) {
     icon('target', { size: 16 }),
     h('span', { text: 'Mission' }),
   );
+  const shareBtn =
+    typeof o.onShare === 'function'
+      ? h(
+          'button',
+          { class: 'foot-btn', type: 'button', hidden: true, attrs: { 'data-testid': 'turn-share', 'aria-label': 'Share or export reply' }, on: { click: () => o.onShare(turn) } },
+          icon('share', { size: 16 }),
+          h('span', { text: 'Share' }),
+        )
+      : null;
   const stats = h('div', { class: 'turn-stats', attrs: { 'data-testid': 'turn-stats' } });
-  const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, missionBtn);
+  const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, missionBtn, shareBtn);
   const footer = h('div', { class: 'turn-footer', hidden: true }, footerNotice, h('div', { class: 'turn-foot-row' }, actions, stats));
 
   const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': turn.status || 'running', 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
@@ -753,6 +896,7 @@ function createJarvisTurnView(turn, ctx) {
     copyBtn.hidden = !hasText;
     if (speakBtn) speakBtn.hidden = !hasText;
     missionBtn.hidden = !Object.keys(turn.missions || {}).length;
+    if (shareBtn) shareBtn.hidden = !hasText && missionBtn.hidden;
     syncSpeak();
 
     const st = turn.stats || {};
@@ -906,6 +1050,7 @@ function createTextView() {
     lastAt = performance.now();
     const text = (seg && seg.text) || '';
     body.replaceChildren(md(text, streaming));
+    sizeTables(body);
     if (streaming) appendCaret(body);
     renderedText = text;
     renderedStreaming = streaming;
@@ -949,7 +1094,8 @@ function createTextView() {
             },
           })
         : null;
-    sources.replaceChildren(h('span', { class: 'src-label', text: 'Sources' }), ...chips, more);
+    // (Native replaceChildren() would render a null `more` as the text "null".)
+    sources.replaceChildren(...[h('span', { class: 'src-label', text: 'Sources' }), ...chips, more].filter(Boolean));
   }
 
   return {
