@@ -58,6 +58,10 @@ and your conversations are stored only on your device.
   and tap. A **2D blueprint** of a part (or the whole thing) is drawn only when you ask for one,
   everything is kept in your **Blueprints** library to reopen for free, and **Photos** shows real
   pictures of any part. It all works by voice too.
+- **Put it on another screen.** "Open this on my other screen" or "float it beside me": a
+  hologram, a blueprint, Mission Control or a report opens on your second monitor, or in a
+  floating panel that stays on top of your other apps, in Jarvis's HUD frame; "bring it back"
+  returns it. See [Screens](#screens-your-other-monitor-or-a-panel-beside-you).
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
