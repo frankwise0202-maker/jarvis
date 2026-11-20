@@ -1488,7 +1488,8 @@ function createVoiceMode(opts) {
     setText(reviewText, text);
     reviewText.setAttribute('aria-label', `Fix what I heard: ${clip(singleLine(text), 300)}`);
     reviewEl.dataset.length = text.length > 90 ? 'long' : 'short';
-    root.dataset.caplen = text.length > 90 ? 'medium' : 'short';
+    // The check is taller than a caption (the words, Send now, the hint): the core steps back.
+    root.dataset.caplen = text.length > 90 ? 'long' : 'medium';
     syncVisuals();
   }
 

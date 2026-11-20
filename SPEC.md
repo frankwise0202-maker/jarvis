@@ -2443,5 +2443,7 @@ wait, fillers, more words, `applyCorrection`, `pickHeard`, `listenPhrases`); `pl
 trailing "and" waits, tap to fix, "no, I said Boston", "cancel"), `voice-listen-settings` (the three Voice settings, a
 tap on the core sends at once, Send right away with Short), `voice-listen-alternatives` (camera words by an alternative,
 biasing phrases with the hologram's part names, "the separate her" → the separator for free, a question sent with the
-part's name after the check shown in the viewer), `chat-mic-check` (the countdown in the message box; a tap on the box
-keeps the words).
+part's name after the check shown in the viewer), `voice-listen-small` (on a 320×568 phone and in landscape the words,
+Send now and Cancel stay clear of the status line and the dock, also while the words are fixed: the core steps back,
+the words scroll, the hint gives way on short screens), `chat-mic-check` (the countdown in the message box; a tap on
+the box keeps the words).

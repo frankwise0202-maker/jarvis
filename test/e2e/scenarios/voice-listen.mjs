@@ -311,6 +311,63 @@ export default [
   },
 
   {
+    name: 'voice-listen-small',
+    title: 'The 2-second check fits small screens: on a 320×568 phone and in landscape (844×390) the words, Send now and Cancel stay clear of the dock and the status line, with no sideways scroll, also while the words are being fixed',
+    device: 'small',
+    timeout: 90000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 30000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['Remind me to call the dentist tomorrow morning and book a cleaning for next week'];
+      });
+      await t.page.setViewportSize({ width: 320, height: 568 });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await checkShows(t, 'Remind me to call the dentist tomorrow morning and book a cleaning for next week');
+      await t.page.locator(tid('voice-review-text')).click(); // fixing the words: nothing is sent meanwhile
+      await t.visible('voice-review-input');
+      await t.page.locator(tid('voice-review-input')).press('Escape'); // keep them, waiting
+      await t.waitFor(async () => (await t.page.locator(tid('voice-review')).getAttribute('data-state')) === 'paused', { timeout: 3000, message: 'the check to wait' });
+      const layout = () =>
+        t.page.evaluate(() => {
+          const box = (sel) => {
+            const el = document.querySelector(sel);
+            if (!el || el.hidden || !el.getClientRects().length) return null;
+            const b = el.getBoundingClientRect();
+            return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right) };
+          };
+          return {
+            status: box('.vm-status'),
+            text: box('[data-testid="voice-review-text"]'),
+            input: box('[data-testid="voice-review-input"]'),
+            now: box('[data-testid="voice-review-now"]'),
+            cancel: box('[data-testid="voice-review-cancel"]'),
+            dock: box('.vm-dock'),
+            vw: innerWidth,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+      for (const [w, h, editing] of [[320, 568, false], [844, 390, false], [844, 390, true], [320, 568, true]]) {
+        await t.page.setViewportSize({ width: w, height: h });
+        const state = await t.page.locator(tid('voice-review')).getAttribute('data-state');
+        if (editing && state !== 'editing') await t.page.locator(tid('voice-review-text')).click();
+        if (!editing && state === 'editing') await t.page.locator(tid('voice-review-input')).press('Escape');
+        await t.page.waitForTimeout(400);
+        const m = await layout();
+        const words = editing ? m.input : m.text;
+        const where = `${w}×${h}${editing ? ', fixing the words' : ''}: ${JSON.stringify(m)}`;
+        t.assert(words && m.cancel && m.dock && m.status, `${where}: everything is there`);
+        t.assert(!m.overflow && words.right <= m.vw && m.cancel.right <= m.vw, `${where}: no sideways scroll`);
+        t.assert(words.top >= m.status.bottom, `${where}: the words are below the status line`);
+        t.assert(m.cancel.bottom <= m.dock.top, `${where}: Cancel (and Send now) end above the dock`);
+        if (m.now) t.assert(m.now.bottom <= m.dock.top, `${where}: Send now ends above the dock`);
+        await t.screenshot(`${w}x${h}${editing ? '-fix' : ''}`);
+      }
+    },
+  },
+
+  {
     name: 'chat-mic-check',
     title: 'The chat\'s microphone: the words wait 2 seconds in the message box with a countdown, then go; a tap on the box stops that and keeps them',
     device: 'iphone13',

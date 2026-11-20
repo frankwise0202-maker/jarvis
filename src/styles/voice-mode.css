@@ -533,8 +533,10 @@ html.vm-open body {
 /* ------------------------------------------------------------ the 2-second check (v7.2) */
 
 /* What was heard, big, before it is sent: tap the words to fix them; Send now carries the ring. */
+/* It shrinks before anything overlaps the dock: the words scroll, Send now and Cancel stay. */
 .vm-review {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -544,10 +546,18 @@ html.vm-open body {
   --vm-review-p: 0;
 }
 
+.vm-review > * {
+  flex: none;
+}
+
 .vm-review-text {
   display: block;
-  max-width: 100%;
+  flex: 0 1 auto;
   min-height: var(--tap);
+  max-width: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid transparent;
@@ -674,6 +684,16 @@ html.vm-open body {
   }
   .vm-review[data-length='long'] .vm-review-text {
     font-size: var(--fs-lg);
+  }
+}
+
+/* Short screens: the hint gives way (the voice commands still work; Settings and README say them). */
+@media (max-height: 620px) {
+  .vm-review {
+    gap: var(--sp-2);
+  }
+  .vm-review-hint {
+    display: none;
   }
 }
 
@@ -1343,6 +1363,7 @@ html.vm-open body {
     grid-column: 2;
     grid-row: 3;
     align-items: flex-start;
+    min-height: auto; /* a grid row holds all of it (min-height 0 let the row collapse under the status) */
   }
   .vm-review-text {
     font-size: var(--fs-lg);
