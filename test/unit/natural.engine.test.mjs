@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
-import { createGuardedFetch, createKokoroEngine, classifyError, EngineError } from '../../src/platform/voice/natural/kokoro-engine.js';
+import { createGuardedFetch, createKokoroEngine, classifyError, EngineError, runtimeKey } from '../../src/platform/voice/natural/kokoro-engine.js';
 import { createNaturalEngine, naturalSupport } from '../../src/platform/voice/natural/engine-client.js';
 import { MODEL, sourceConfig } from '../../src/platform/voice/natural/catalog.js';
 import { createFakeWorker, installClock } from './natural.fakes.mjs';
@@ -49,6 +49,12 @@ function fakeCaches() {
         },
         async put(key, res) {
           m.set(String(key), new Uint8Array(await res.arrayBuffer()));
+        },
+        async delete(key) {
+          return m.delete(typeof key === 'string' ? key : String(key && key.url));
+        },
+        async keys() {
+          return [...m.keys()].map((url) => ({ url }));
         },
       };
     },
@@ -369,4 +375,42 @@ test('client: a warm-up far slower than real time marks the device slow at once,
   w3.emit({ type: 'ready', device: 'wasm', dtype: 'q8', loadMs: 900, warmupMs: 700, warmupAudioS: 1.5, threads: 1 });
   await p3;
   assert.equal(engine3.status().state, 'ready');
+});
+
+test('v7.1: the ONNX Runtime binary is checked like the model: cached under its SHA-256, a damaged or another build\'s copy is never used, a bad download is refused', async () => {
+  const keysOf = async (scope) => (await (await scope.caches.open('voice-runtime-v1')).keys()).map((r) => r.url);
+  // A runtime with a pinned size and hash (the build's binary).
+  const h = engineHarness();
+  const rt = { ...h.config.runtime, sha256: sha(h.wasm) };
+  const key = runtimeKey(rt);
+  assert.equal(key, `${h.runtimeUrl}?sha256=${sha(h.wasm)}`, 'the key carries the hash');
+  const cache = await h.scope.caches.open('voice-runtime-v1');
+  // A copy cached by an older build (under the bare URL) and a damaged copy under this build's key.
+  await cache.put(h.runtimeUrl, new Response(bytes(1234, 5)));
+  await cache.put(key, new Response(bytes(1234, 9)));
+  h.engine.handle({ type: 'init', config: { ...h.config, runtime: rt } });
+  await settle(h, 'ready');
+  const wasm = new Uint8Array(h.tfEnv.backends.onnx.wasm.wasmBinary);
+  assert.equal(wasm.length, h.wasm.length, 'the runtime handed to ONNX Runtime is the real one, not the 1,234-byte copy');
+  assert.equal(sha(wasm), sha(h.wasm));
+  assert.equal(h.fetch.calls.filter((u) => u === h.runtimeUrl).length, 1, 'downloaded again once');
+  assert.deepEqual(await keysOf(h.scope), [key], 'cached under the key; the other copies are gone');
+  assert.equal(sha(new Uint8Array(await (await cache.match(key)).arrayBuffer())), sha(h.wasm));
+
+  // The next start uses the cached copy (offline), with no download.
+  const again = engineHarness();
+  const rt2 = { ...again.config.runtime, sha256: sha(again.wasm) };
+  await (await again.scope.caches.open('voice-runtime-v1')).put(runtimeKey(rt2), new Response(again.wasm));
+  again.engine.handle({ type: 'init', config: { ...again.config, runtime: rt2 } });
+  await settle(again, 'ready');
+  assert.equal(again.fetch.calls.filter((u) => u === again.runtimeUrl).length, 0, 'from the cache');
+
+  // A download that does not match its hash is refused (code integrity) and never cached.
+  const bad = engineHarness();
+  bad.engine.handle({ type: 'init', config: { ...bad.config, runtime: { ...bad.config.runtime, sha256: '0'.repeat(64) } } });
+  await settle(bad, 'error');
+  const err = bad.posted.find((p) => p.msg.type === 'error').msg;
+  assert.equal(err.code, 'integrity');
+  assert.equal(bad.tfEnv.backends.onnx.wasm.wasmBinary, undefined, 'nothing handed to ONNX Runtime');
+  assert.deepEqual(await keysOf(bad.scope), [], 'nothing cached');
 });

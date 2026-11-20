@@ -93,7 +93,7 @@ export function createNaturalVoice({ scope = globalThis, base = globalThis.docum
     plans,
     voice: getVoice(),
     weights,
-    runtime: { url: runtimeUrl, bytes: RUNTIME.bytes, label: 'runtime' },
+    runtime: { url: runtimeUrl, bytes: RUNTIME.bytes, sha256: RUNTIME.sha256, label: 'runtime' },
     voiceFiles: VOICES.map((v) => ({ id: v.id, bytes: MODEL.voiceBytes, sha256: v.sha256 })),
     modelId: MODEL.id,
     scope,

@@ -6,6 +6,13 @@ import assert from 'node:assert/strict';
 import { createAudioOut, bandBins, bandEdges, bandsFromDb, levelFromSamples, BAND_COUNT } from '../../src/platform/voice/natural/audio-out.js';
 import { trimSilence, estimateWords, speedFor } from '../../src/platform/voice/natural/natural-stream.js';
 import { MODEL, RUNTIME, VOICES, DEFAULT_VOICE, downloadPlan, formatMegabytes, voiceById, voiceLabel, sourceConfig } from '../../src/platform/voice/natural/catalog.js';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function fakeContextClass(log) {
   return class FakeAudioContext {
@@ -151,6 +158,21 @@ test('stream helpers: silence is trimmed to 20 ms before and 50 ms after the voi
   assert.equal(speedFor(0.7), 0.7);
   assert.equal(speedFor(9), 2);
   assert.equal(speedFor(undefined), 1);
+});
+
+test('catalog: the ONNX Runtime binary the build copies has the pinned size and SHA-256 (the worker checks both, v7.1)', () => {
+  // Resolved as scripts/build.mjs does: the onnxruntime-web that transformers.js uses.
+  const require = createRequire(path.join(ROOT, 'node_modules', '@huggingface', 'transformers', 'package.json'));
+  let file = null;
+  try {
+    file = path.join(path.dirname(require.resolve('onnxruntime-web')), RUNTIME.wasm);
+  } catch {
+    file = null;
+  }
+  if (!file || !existsSync(file)) return; // no node_modules (the build would fail anyway)
+  const bin = readFileSync(file);
+  assert.equal(bin.length, RUNTIME.bytes, `${file}: update RUNTIME.bytes with onnxruntime-web`);
+  assert.equal(createHash('sha256').update(bin).digest('hex'), RUNTIME.sha256, `${file}: update RUNTIME.sha256 with onnxruntime-web`);
 });
 
 test('catalog: pinned model, British voices first, download sizes', () => {

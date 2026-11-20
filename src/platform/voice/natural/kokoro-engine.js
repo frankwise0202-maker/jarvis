@@ -44,6 +44,23 @@ const RUNTIME_CACHE = 'voice-runtime-v1'; // not 'jarvis-…': the service worke
 const KNOWN_CACHES = NATURAL_CACHES; // transformers-cache (the model), kokoro-voices, RUNTIME_CACHE
 const WARMUP_TEXT = 'All systems are ready.'; // ~1.5 s of audio: long enough for a first speed reading
 
+/** The runtime's cache key: its URL, tied to the pinned SHA-256 of this build's binary (v7.1). */
+export function runtimeKey(rt) {
+  if (!rt || !rt.url) return '';
+  if (!rt.sha256) return rt.url;
+  const u = new URL(rt.url, 'https://localhost/');
+  u.searchParams.set('sha256', rt.sha256);
+  return /^[a-z]+:/i.test(rt.url) ? u.href : `${u.pathname}${u.search}`;
+}
+
+function selfOriginOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return 'https://localhost';
+  }
+}
+
 export class EngineError extends Error {
   constructor(code, message) {
     super(message);
@@ -206,7 +223,7 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
       const modelUrl = `${src.remoteHost}${src.pathTemplate.replace('{model}', config.modelId)}${weights.path}`;
       const voiceFile = (config.voiceFiles || []).find((v) => v.id === config.voice);
       let expected = 0;
-      if (rt && rt.url && !(await inCache(RUNTIME_CACHE, rt.url))) expected += rt.bytes || 0;
+      if (rt && rt.url && !(await inCache(RUNTIME_CACHE, runtimeKey(rt)))) expected += rt.bytes || 0;
       if (!(await inCache('transformers-cache', modelUrl))) expected += weights.bytes || 0;
       if (voiceFile && !(await inCache('kokoro-voices', `${HF_MAIN_VOICES}${voiceFile.id}.bin`))) expected += voiceFile.bytes || 0;
       const progressState = { files: new Map() };
@@ -263,7 +280,7 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
         // the page's CSP does not cover). With { wasm } it uses the bundled glue and our binary.
         onnx.wasm.wasmPaths = { wasm: (rt && rt.url) || `${src.wasmBase}ort-wasm-simd-threaded.jsep.wasm` };
         if (rt && rt.url) {
-          const bin = await cachedBinary(rt.url, rt.bytes, (l, t) => report(rt.label || 'runtime', l, t), (n) => (downloaded += n));
+          const bin = await cachedBinary(rt, (l, t) => report(rt.label || 'runtime', l, t), (n) => (downloaded += n));
           if (bin) onnx.wasm.wasmBinary = bin;
         }
       }
@@ -314,12 +331,26 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
     }
   }
 
-  async function cachedBinary(url, bytes, onProgress, onDownloaded) {
+  /**
+   * The ONNX Runtime binary (about 21.6 MB): our own cache first (offline), else a download with
+   * progress. v7.1: like the model, it is checked. The cache key carries its pinned SHA-256
+   * (runtimeKey), so a copy cached for another build of ONNX Runtime is never used; a cached copy of
+   * the wrong size (damaged) is dropped and downloaded again; a download is checked (size, SHA-256)
+   * before it is cached or compiled, and the copies cached for other builds are deleted.
+   */
+  async function cachedBinary(rt, onProgress, onDownloaded) {
+    const url = rt.url;
+    const bytes = rt.bytes;
+    const key = runtimeKey(rt);
     let cache = null;
     try {
       cache = await scope.caches.open(RUNTIME_CACHE);
-      const hit = await cache.match(url);
-      if (hit) return await hit.arrayBuffer();
+      const hit = await cache.match(key);
+      if (hit) {
+        const buf = await hit.arrayBuffer();
+        if (!bytes || buf.byteLength === bytes) return buf;
+        if (typeof cache.delete === 'function') await cache.delete(key);
+      }
     } catch {
       cache = null;
     }
@@ -342,10 +373,17 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
       buf.set(p, at);
       at += p.byteLength;
     }
+    if (bytes && loaded !== bytes) throw new EngineError('integrity', `The voice runtime arrived with ${loaded} bytes instead of ${bytes}.`);
+    if (rt.sha256 && (await sha256Hex(scope.crypto.subtle, buf.buffer)) !== rt.sha256) throw new EngineError('integrity', 'The voice runtime did not match its SHA-256 (damaged or changed on the way).');
     onDownloaded(loaded);
     if (cache) {
       try {
-        await cache.put(url, new Response(buf, { headers: { 'content-type': 'application/wasm', 'content-length': String(loaded) } }));
+        await cache.put(key, new Response(buf, { headers: { 'content-type': 'application/wasm', 'content-length': String(loaded) } }));
+        // Copies cached for other builds (or before v7.1, under the bare URL) go.
+        if (typeof cache.keys === 'function' && typeof cache.delete === 'function') {
+          const keep = new URL(key, selfOriginOf(url)).href;
+          for (const req of await cache.keys()) if (req && req.url && req.url !== keep) await cache.delete(req);
+        }
       } catch {
         /* storage full: it is fetched again next time */
       }

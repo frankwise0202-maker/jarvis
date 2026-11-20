@@ -2182,6 +2182,13 @@ takes its CSP from its own response headers and Pages sends none).
 - The worker's fetch guard joins the parts of a split file into one buffer of the pinned size, with progress over the
   whole, and checks its SHA-256 before transformers.js sees it. A missing part is a `network` error; wrong bytes are an
   `integrity` error.
+- The ONNX Runtime binary is checked too (v7.1): `RUNTIME.bytes` and `RUNTIME.sha256` in catalog.js (pinned to the
+  file the build copies, onnxruntime-web 1.22.0-dev.20250409; unit `natural.audio` fails when they drift). The worker
+  caches it in `voice-runtime-v1` under `<url>?sha256=<hash>` (`runtimeKey`), so a copy cached for another build is
+  never used; a cached copy of the wrong size is dropped and downloaded again; a download of the wrong size or hash is
+  an `integrity` error and is never cached or compiled; after a good download the other copies in that cache are
+  deleted. (Before, any cached file under the unversioned URL went straight to ONNX Runtime, and a damaged one failed
+  every start with `wasm` until Remove download.)
 - `npm run deploy` warns when `dist/models/` has no model.
 - `jarvis.dev.voiceSource = 'hf'` (localhost) uses huggingface.co at the pinned revision instead, whole files.
 

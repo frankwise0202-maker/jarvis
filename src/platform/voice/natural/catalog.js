@@ -52,7 +52,11 @@ export const NATURAL_CACHES = Object.freeze(['transformers-cache', 'kokoro-voice
 /** The ONNX Runtime build the worker loads (from node_modules, copied to dist/voice/ort/). */
 export const RUNTIME = Object.freeze({
   wasm: 'ort-wasm-simd-threaded.jsep.wasm', // WASM + WebGPU (JSEP) build used by transformers.js 3.8
+  // onnxruntime-web 1.22.0-dev.20250409-89f8206ba4 (the copy transformers.js resolves). The worker
+  // checks the binary against these, and caches it under a key with the hash (v7.1). The unit test
+  // natural.audio pins both to the file the build copies: update them with onnxruntime-web.
   bytes: 21596019,
+  sha256: 'c46655e8a94afc45338d4cb2b840475f88e5012d524509916e505079c00bfa39',
   gzipBytes: 5016261,
   worker: 'kokoro-worker.js', // dist/voice/: kokoro-js + transformers.js + ONNX Runtime + eSpeak NG (as JS)
   workerBytes: 2_223_513, // minified build of 2026-11-19 (900 kB gzipped)
