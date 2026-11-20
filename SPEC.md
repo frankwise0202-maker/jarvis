@@ -1184,7 +1184,7 @@ selected/most recent mission (or an idle core with session stats when none).
 | `sheet-close` | close button of any sheet | |
 | `hologram-card` / `blueprint-card` (v6) | chat cards | `data-status`, `data-library-id` |
 | `hologram-open` / `blueprint-open` | a card's Open | |
-| `hologram-viewer` | hologram viewer root | `data-state` (building\|ready\|loading\|incomplete\|error\|nogl), `data-gl`, `data-parts`, `data-exploded`, `data-labels`, `data-rotate`, `data-selected`, `data-isolated`, `data-view`, `data-panel`, `data-model`, `data-segment`, `data-layout`, `data-last-command`, `data-last-source`, `data-voice` (Voice Mode's state while it drives the mic) |
+| `hologram-viewer` | hologram viewer root | `data-state` (building\|ready\|loading\|incomplete\|error\|nogl), `data-gl`, `data-parts`, `data-exploded`, `data-labels`, `data-rotate`, `data-selected`, `data-isolated`, `data-view`, `data-panel`, `data-model`, `data-segment`, `data-layout`, `data-last-command`, `data-last-source`, `data-voice` (Voice Mode's state while it drives the mic), `data-meshing` (pending\|settled: hull bodies and panels still meshing, v7.3), `data-mesher` (worker\|main) |
 | `hologram-stage`, `hologram-close`, `hologram-explode`, `hologram-assemble`, `hologram-explode-slider`, `hologram-labels`, `hologram-rotate`, `hologram-view`, `hologram-parts-button`, `hologram-2d`, `hologram-photos-button`, `hologram-reset` | viewer bar and tools | |
 | `hologram-command`, `hologram-command-send`, `hologram-mic`, `hologram-stop` | command field, send, mic, Stop building (only while it builds) | `hologram-mic`: `aria-pressed`, `data-voice` (listening\|busy\|idle under Voice Mode), `data-icon`; `hologram-2d`: `data-armed` while a second tap would build |
 | `hologram-part-card`, `hologram-build-blueprint` (`data-saved`), `hologram-rebuild-blueprint`, `hologram-part-photos`, `hologram-isolate`, `hologram-focus` | part card | |
@@ -1603,6 +1603,34 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   `textContent`. Live previews use only what is certainly complete (`stablePrefix`, `blueprintStablePrefix`), so a
   drawn shape never changes. Tests pin by sha256 the V1–V4 tools, the V1–V3 prompts and whole request bodies of older
   conversations (also with a full library): changing any of them needs a new version.
+- Realistic holograms (v7.3: format v2, lead tools V7; the owner asked for holograms "less boxy and more realistic").
+  New conversations freeze `leadToolsV7()` = `leadToolsV6()` with `show_hologram` replaced at the same index by
+  version 2 (`showHologramToolV2()`, `SHOW_HOLOGRAM_TOOL_V2` in `src/lib/hologram-spec.js`, deeply frozen, pinned
+  e24cf1b5382a…; V7 694c85d59f3b…); the system prompt stays `LEAD_SYSTEM_V5`; older conversations keep version 1 byte
+  for byte (its enum is `SHAPE_TYPES_V1`; `engine.holograms-v7` pins v7.2 request bodies), and backups of V5 + V7 are
+  accepted (`isKnownLeadSetup`). One validator serves both versions and adds: `hull` (a solid from `side` [x, y],
+  `top` [x, z] and `front` [z, y] outlines, or a `revolve` profile [[radius, along]] about `axis`; an outline that
+  ends on the centerline is a half, mirrored (a left half is flipped, points within 2% of it snap); edge radius `r`
+  (alias `fillet`; a `round` above 1 is taken as r); ≤ 12 box/cylinder/sphere `cut`s, wheel `arches` [[x, y, r]]
+  among them as z cylinders; views that disagree by ≤ 10% are stretched to the master view with a note, more keeps a
+  warning, disjoint views are an error), `panel` (lies on an earlier part's hull: `on`, `face`
+  right|left|sides|front|back|top|bottom, `outline` in that view, `mirror`, `wrap`, `lift`; an outline mostly
+  outside the hull's view gets a coordinate warning; a host without a hull drops it), `loft` (2–32 `sections` along
+  x|y|z with w/h/d or [min, max] ranges, `round` 0–1, `top`, `twist`, `pts` ≤ 48; `cap`, `arches`), `box.round` 0–1
+  (a superellipsoid; aliases superellipsoid, rounded-box, pod, blob, squircle), `lathe.smooth`, `extrude.smooth` and
+  `tube.r2` (a taper); ≤ 16 hulls and ≤ 40 panels per hologram (more are dropped with warnings), ≤ 96 points per
+  view. Renderer: lofts and soft shapes are built at once (`smooth.js`); hulls and panels are meshed in a worker
+  (`hull-mesh.js`, `hull-service.js`; `dist/assets/hull-worker.js`, a classic script in the precache under the same
+  CSP), a coarse mesh then the fine one (cached by spec hash, 20 entries / 24 MB), on the main thread when Worker is
+  missing or the script fails. Detail follows a triangle budget: smooth shapes get coarser past 300k and 600k
+  triangles and when small in the model (under 12% / 4% of its diagonal, from the spec so far in half octaves, so a
+  live build ends exactly like a reopen); past 600k hulls and panels stay coarse; edge lines carry a weight (`aW`:
+  contour rings faint). `settled(ms)` resolves once every mesh has landed: thumbnails wait for it (≤ 4 s); viewer
+  hooks `data-meshing` (pending|settled) and `data-mesher` (worker|main). Format v1 holograms validate and render
+  byte for byte as in v7.2. Mock `[[hologram:v2/camry|v2/f150|v2/alternator|v2/turbofan|v2/model3|v2/cessna]]`;
+  unit `hologram.hull`, `hologram.loft`, `hologram.v2tool`, `hologram.render`, `hologram.build`,
+  `hologram.v1-parity`, `engine.holograms-v7`; E2E `holograms-real.mjs` (`holograms-real`, `holograms-real-phone`,
+  `holograms-real-offline`, `holograms-real-noworker`).
 - Lead turn (§8.4): live cards from the streamed input; the tool round validates, saves and answers ("Hologram shown to
   the owner: "T" with N labeled parts (S shapes). … Saved to the owner's library as lib_… (reopen it later with
   open_saved)." or "It could not be saved to the owner's library this time."); `for`: the turn's `blueprintFor` wins,
@@ -1677,7 +1705,8 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
 ### 17.1 Lead versions (new conversations since v7)
 
 - New conversations freeze `LEAD_SYSTEM_V4` and `leadToolsV5` (`LEAD_SYSTEM_LATEST`, `leadToolsLatest`; since Apple
-  Music, §20, `LEAD_SYSTEM_V5` and `leadToolsV6`, which keep all of this unchanged); every older
+  Music, §20, `LEAD_SYSTEM_V5` and `leadToolsV6`, and since v7.3 `leadToolsV7` (§16: show_hologram version 2), which
+  keep all of this unchanged); every older
   conversation keeps the prompt and tools it froze, byte for byte, and both lists stay in `LEAD_SYSTEM_VERSIONS` /
   `leadToolVersions()` so imports of any version are accepted (`isKnownLeadSetup`).
 - `LEAD_SYSTEM_V4` = V3 plus one section before "# Writing the answer" (`CAMERA_AND_SCREENS_SECTION`, 999 characters):

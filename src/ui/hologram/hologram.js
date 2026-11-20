@@ -54,7 +54,7 @@ import {
 } from 'three';
 import { normalizeHologramSpec, specBounds, DEFAULT_VIEW } from '../../lib/hologram-spec.js';
 import { budgetLevel, buildShapeChunk, detailFor, hasDetailLevels, mergeChunks, sizeLevel } from './geometry.js';
-import { hullJobsPending, hullStats, onHullGeometry, quantizeScale, setHullWorkerUrl } from './hull-service.js';
+import { hullJobsPending, hullStats, hullWorkerActive, onHullGeometry, quantizeScale, setHullWorkerUrl } from './hull-service.js';
 import { layoutLabels } from './label-layout.js';
 import { BG_FS, BG_VS, FILL_FS, FILL_VS, FLOOR_FS, FLOOR_VS, LINE_FS, LINE_VS } from './shaders.js';
 
@@ -496,6 +496,7 @@ export function createHologram(container, options = {}) {
   /** Hull or panel meshes got better (coarse, then fine): rebuild the chunks that use them. */
   function onHullMesh(keys) {
     if (disposed) return;
+    const wasPending = asyncPending();
     let changed = false;
     let hadGeometry = false;
     for (const rec of records.values()) if (rec.box) hadGeometry = true;
@@ -554,7 +555,7 @@ export function createHologram(container, options = {}) {
       else if (records.size && (fitMode === 'auto' || fitMode === 'part')) refit(true);
       requestRender();
       emit();
-    }
+    } else if (wasPending && !asyncPending()) emit();
     if (!asyncPending()) resolveSettled();
   }
   const offHull = onHullGeometry(onHullLanded);
@@ -938,14 +939,15 @@ export function createHologram(container, options = {}) {
   }
 
   function refit(animate) {
-    const f = currentFitGoal();
+    // a view change still under way keeps turning to its angles, framed for where it ends
+    const to = camTween && camTween.to ? camTween.to : null;
+    const theta = to && to.theta !== undefined ? to.theta : orbit.theta;
+    const phi = to && to.phi !== undefined ? to.phi : orbit.phi;
+    const f = currentFitGoal(autoRotating() ? 'orbit' : 'view', theta, phi);
     if (!f) return;
     const goal = { target: f.target, radius: f.radius };
-    // a view change still under way keeps turning to its angles
-    if (camTween && camTween.to) {
-      if (camTween.to.theta !== undefined) goal.theta = camTween.to.theta;
-      if (camTween.to.phi !== undefined) goal.phi = camTween.to.phi;
-    }
+    if (to && to.theta !== undefined) goal.theta = to.theta;
+    if (to && to.phi !== undefined) goal.phi = to.phi;
     tweenCamera(goal, animate);
   }
 
@@ -1051,8 +1053,10 @@ export function createHologram(container, options = {}) {
     labelsEl.append(box);
     const line = doc.createElementNS(SVG_NS, 'line');
     line.setAttribute('class', 'holo-leader');
+    line.setAttribute('data-key', rec.key);
     const dot = doc.createElementNS(SVG_NS, 'circle');
     dot.setAttribute('class', 'holo-anchor');
+    dot.setAttribute('data-key', rec.key); // (tests: where a labeled part's anchor is on screen)
     dot.setAttribute('r', '2.2');
     svg.append(line, dot);
     rec.label = { el: box, text, line, dot, w: 0, h: 0, name: null, shown: false, state: '' };
@@ -1859,6 +1863,9 @@ export function createHologram(container, options = {}) {
       selected: selectedKey ? records.get(selectedKey).part.id : null,
       isolated: isolatedKey ? records.get(isolatedKey).part.id : null,
       contextLost,
+      // hull bodies and panels still being meshed (and where: 'worker' or 'main' thread)
+      meshing: asyncPending(),
+      mesher: hullWorkerActive() ? 'worker' : 'main',
     };
   }
 

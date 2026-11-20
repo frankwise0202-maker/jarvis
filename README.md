@@ -291,6 +291,11 @@ Jarvis's home screen now tells you what is going on before you ask.
   work?", "what's inside an AA battery?". Jarvis builds a glowing 3D hologram of that exact thing,
   part by part while you watch, with every part labeled. A card appears in the chat: tap **Open**
   to see it full screen (in Voice Mode it opens by itself).
+- **Smooth, lifelike shapes:** in new chats, Jarvis draws a car's body from its side, top and front
+  outlines (wheel arches included) with the doors, hood and lights lying on it, gives fan blades
+  their twist, and rounds off what used to be boxes. Smooth bodies take shape in the background:
+  the hologram appears at once and sharpens a moment later, offline too. Holograms you saved
+  before look exactly as they did, and older chats keep the old style.
 - **Look around:** drag to turn it, pinch or scroll to zoom, and drag with two fingers to move it.
   **Exploded** (or the slider) takes it apart so you can see inside; **Assembled** puts it back
   together. **Labels**, **Rotate**, **View** (front, side, top…), **Parts** (a list of every part)

@@ -32,9 +32,10 @@
 // Test hooks: the root ([data-testid="hologram-viewer"]) mirrors the model and renderer state in
 // data-state (building while the input streams, then ready; loading|incomplete|error|nogl),
 // data-gl (loading|ready|none|error: the 3D view), data-parts, data-exploded (0..1), data-labels
-// (on|off), data-selected (part id), data-isolated, data-view, data-rotate, data-panel and
-// data-model (library id), so tests never depend on raycasting pixels. Text from specs and replies is only
-// ever set with textContent.
+// (on|off), data-selected (part id), data-isolated, data-view, data-rotate, data-panel,
+// data-model (library id), data-meshing (pending|settled: hull bodies and panels still meshing) and
+// data-mesher (worker|main: where they were meshed), so tests never depend on raycasting pixels.
+// Text from specs and replies is only ever set with textContent.
 
 import { h, setText, clear } from '../dom.js';
 import { icon } from '../icons.js';
@@ -572,6 +573,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     ds.view = state.view || '';
     ds.panel = panel || '';
     ds.model = model.libraryId || '';
+    ds.meshing = state.meshing ? 'pending' : 'settled';
+    ds.mesher = state.mesher || '';
     if (panel === 'parts') markSelectedRow();
     ds.segment = model.segmentId || '';
     loading.hidden = !!(holo && holoReady && (state.ready || !building)) || ds.state === 'nogl';
@@ -1325,6 +1328,10 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     try {
       const item = typeof deps.library.get === 'function' ? await deps.library.get(id) : null;
       if (!item || item.thumbnail || item.thumb || disposed) return;
+      // hull bodies and panels are meshed off the main thread: the picture waits for their fine
+      // meshes (at most 4 s), so it shows the finished model
+      if (holo && holo.settled) await holo.settled(4000);
+      if (disposed || !holo) return;
       const url = holo.snapshot({ width: 320, height: 240, type: 'image/jpeg', quality: 0.82, view: (model.spec && model.spec.view) || null });
       if (url && url.length <= 60000) await deps.library.setThumbnail(id, url);
     } catch (err) {

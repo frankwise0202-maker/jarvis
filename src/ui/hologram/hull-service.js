@@ -12,6 +12,7 @@
 //                                       only the fine one (re-meshing while an older mesh still shows)
 //   onHullGeometry(fn)                  -> unsubscribe; fn(key, level) when a better mesh is ready
 //   hullJobsPending()                   -> jobs queued or running
+//   hullWorkerActive()                  -> meshing runs in the worker (not on the main thread)
 //   setHullWorkerUrl(url | null)        -> where the worker script is (null: never start one; default
 //                                          assets/hull-worker.js?v=<build> next to the page)
 
@@ -56,6 +57,11 @@ export function onHullGeometry(fn) {
 
 export function hullJobsPending() {
   return queued.size;
+}
+
+/** Whether meshing runs in the worker now (false before the first job, or on the fallback). */
+export function hullWorkerActive() {
+  return !!worker && !workerBroken;
 }
 
 // compute time per kind and level (worker time when it runs there), for measurements
