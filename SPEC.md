@@ -1691,7 +1691,8 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   `aria-label` is Awareness or Mission Control): the chronometer (`rail-chronometer`, Rajdhani 44 px, no seconds) with
   a suggested briefing, Needs you (`rail-needs`), the Systems glance (`rail-systems`: network, Jarvis Core "not
   paired", mic, optics, model, spend today and this month with a bar against the alert; opens Systems). A mission
-  takes the rail.
+  takes the rail. "Standing by" is only ever the state word: the Systems launcher under Mission Control says
+  "Nothing logged yet" until the first turn is logged (the first mission runs before that).
 - **HUD preferences** (`src/ui/presence/hud-prefs.js`, `jarvis.hud.v1`, its own backup part `hud`): density Calm
   (default) or Full (gauge labels `core-readouts` around the hero, the tape always, Mission Control's comms log open),
   motion Full / Reduced / Still (`data-motion`), boot once a session / every launch / never, and Replay now

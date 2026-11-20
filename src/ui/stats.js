@@ -1201,7 +1201,9 @@ export function createStatsLauncher(opts = {}) {
   );
   const update = () => {
     const t = getStats().totals;
-    setText(readout, t.turns ? [plural(t.agents, 'agent'), plural(t.missions, 'mission')].map(nb).join(' · ') : 'Standing by');
+    // Not "Standing by": that is the core's state word (v7), and the first mission runs before
+    // anything is logged.
+    setText(readout, t.turns ? [plural(t.agents, 'agent'), plural(t.missions, 'mission')].map(nb).join(' · ') : 'Nothing logged yet');
   };
   update();
   const off = onStatsChange(raf(update));
