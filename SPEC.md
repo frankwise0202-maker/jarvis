@@ -1738,7 +1738,8 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
   `.hud-readout`, `.hud-leader`, `.hud-live`, `.hud-tape`, `.hud-scan`, `.hud-viewport` (Optics' frame),
   `.hud-grid`, `.hud-assemble`. Bracket colors come from the theme (`--line-3` by default; the viewport's and the
   full-screen ones are `--accent-2` mixed with transparent), never a fixed cyan.
-- **Full-screen modes**: Voice Mode's wordmark is the header's (Rajdhani 700, 17 px, .24em); on screens at least
+- **Full-screen modes**: Voice Mode's wordmark is the header's (Rajdhani 700, 17 px, .24em; below 360 px wide 15 px,
+  .16em, so the Continuous switch never covers "VOICE": v7.1, E2E `voice-mode-narrow` at 320, 360 and 375 px); on screens at least
   700 px wide, Voice Mode and the hologram viewer get the screen windows' corner brackets (34 px arms, 2 px, the
   theme's `--accent-2` at 60% with a faint glow; static; `pointer-events: none`; above the viewer's top bar and deck,
   under its part card, panels and toasts). Phones skip them (rounded display corners).

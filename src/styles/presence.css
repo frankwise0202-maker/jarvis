@@ -1026,6 +1026,13 @@ svg.turn-glyph {
   letter-spacing: 0.24em;
   line-height: 1;
 }
+/* A 320 px phone (v7.1): the wordmark tightens, so the Continuous switch never covers "VOICE". */
+@media (max-width: 359px) {
+  .vm-brand-name {
+    font-size: 15px;
+    letter-spacing: 0.16em;
+  }
+}
 
 @media (min-width: 700px) {
   .vm::after,

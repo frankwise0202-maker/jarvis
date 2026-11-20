@@ -683,6 +683,43 @@ export default [
   },
 
   {
+    name: 'voice-mode-narrow',
+    title: 'Voice Mode\'s header on narrow phones (320, 360 and 375 px wide): the Continuous switch never covers the JARVIS · VOICE wordmark',
+    device: 'small',
+    timeout: 60000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      for (const [w, h] of [[320, 568], [360, 640], [375, 667]]) {
+        await t.page.setViewportSize({ width: w, height: h });
+        await t.page.waitForTimeout(300);
+        const m = await t.page.evaluate(() => {
+          const sw = document.querySelector('[data-testid="voice-continuous"]').getBoundingClientRect();
+          const words = [...document.querySelectorAll('.vm-brand-name, .vm-brand-tag')].map((e) => {
+            const r = document.createRange();
+            r.selectNodeContents(e);
+            const b = r.getBoundingClientRect();
+            return { text: e.textContent.trim(), left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), bottom: Math.round(b.bottom) };
+          });
+          return { switchLeft: Math.round(sw.left), switchRight: Math.round(sw.right), vw: innerWidth, words };
+        });
+        t.note(`${w}×${h}: ${m.words.map((x) => `${x.text} ${x.left}-${x.right}`).join(', ')}; switch ${m.switchLeft}-${m.switchRight}`);
+        t.assert(m.words.length >= 1 && m.words.every((x) => x.right > x.left && x.left >= 0), `${w}: the wordmark is there (${JSON.stringify(m)})`);
+        for (const x of m.words) t.assert(x.right <= m.switchLeft - 4, `${w}: "${x.text}" ends at ${x.right}, clear of the Continuous switch at ${m.switchLeft} (${JSON.stringify(m)})`);
+        t.assert(m.switchRight <= m.vw, `${w}: the switch is on screen`);
+        if (w === 320) await t.screenshot('320-header');
+      }
+      await t.checkNoHorizontalOverflow('Voice Mode at 375 px');
+    },
+  },
+
+  {
     name: 'settings-voice',
     title: 'Settings → Voice: Speak replies labels, voices ranked best first with quality and "online" labels, the iPhone voice tip, Test voice uses the chosen voice',
     device: 'iphone13',
