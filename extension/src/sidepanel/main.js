@@ -1,11 +1,13 @@
-// The Jarvis side panel: setup (API key, model, budget), then a chat of task cards. Each card
-// shows Jarvis's live step list with tiny thumbnails, any question for the owner (site
-// permission, approvals, limits), the final answer, the cost and a Retry button. The service
-// worker does the work; this page only renders its state and sends the owner's choices.
+// The Jarvis side panel: first-run setup (a Chrome profile of its own, then the API key, model and
+// budget), then a chat of task cards. Each card shows Jarvis's live step list with tiny
+// thumbnails, any question for the owner (site permission, approvals, limits), the final answer,
+// the cost and a Retry button. The service worker does the work; this page only renders its state
+// and sends the owner's choices.
 
 import { h, append, clear, replaceChildren, setText } from './dom.js';
 import { icon, emblem } from './icons.js';
 import { renderMarkdown } from './markdown.js';
+import { PROFILE_CONFIRM, PROFILE_TITLE, PROFILE_WHY, profileElsewhere, profileNote, profileSteps } from './profile.js';
 import { FINAL_STATUSES, PORT_NAME } from '../shared/protocol.js';
 import { createStore, maskKey, validateApiKey } from '../shared/storage.js';
 import { DEFAULT_MODEL, MODELS, MODEL_IDS } from '../background/models.js';
@@ -19,6 +21,7 @@ const STOP_KEYS = IS_MAC ? '⌘⇧.' : 'Ctrl+Shift+.';
 
 const ui = {
   view: 'loading',
+  profileOk: false, // the owner confirmed this Chrome profile is just for Jarvis (jarvis.profile)
   hasKey: false,
   masked: '',
   settings: null,
@@ -133,11 +136,14 @@ async function boot() {
   } catch {
     ui.windowId = undefined;
   }
-  const [key, settings] = await Promise.all([store.getApiKey(), store.getSettings()]);
+  const [key, settings, profile] = await Promise.all([store.getApiKey(), store.getSettings(), store.getProfile()]);
+  ui.profileOk = !!profile;
   ui.hasKey = !!key;
   ui.masked = maskKey(key);
   ui.settings = settings;
-  if (ui.hasKey) renderMain();
+  // The profile screen comes first, also when a key is already saved (by an older version).
+  if (!ui.profileOk) renderProfileGate();
+  else if (ui.hasKey) renderMain();
   else renderSetup();
   connect();
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -167,6 +173,66 @@ async function boot() {
   setInterval(() => {
     for (const card of ui.cards.values()) card.tick();
   }, 1000);
+}
+
+// ---------------------------------------------------------------------------------------------
+// First run: a Chrome profile of its own. The API key can't be saved before the owner ticks the
+// box (the store refuses it too), and the confirmation is kept in chrome.storage.local.
+
+function hudCore(cls = '') {
+  return h(
+    'div',
+    { class: ['hud-core', cls] },
+    h('span', { class: 'hud-core__ring hud-core__ring--1' }),
+    h('span', { class: 'hud-core__ring hud-core__ring--2' }),
+    h('span', { class: 'hud-core__ring hud-core__ring--3' }),
+    h('span', { class: 'hud-core__orb' }),
+  );
+}
+
+function renderProfileGate() {
+  ui.view = 'profile';
+  const check = h('input', { type: 'checkbox', attrs: { 'data-testid': 'profile-check' } });
+  const next = h('button', { class: 'btn btn--primary btn--wide', type: 'button', disabled: true, attrs: { 'data-testid': 'profile-continue' } }, 'Continue', icon('chevron-right', { size: 16 }));
+  const error = h('p', { class: 'field__error', attrs: { role: 'alert' } });
+  check.addEventListener('change', () => {
+    next.disabled = !check.checked;
+    setText(error, '');
+  });
+  next.addEventListener('click', async () => {
+    if (!check.checked) return;
+    next.disabled = true;
+    try {
+      await store.confirmProfile();
+      ui.profileOk = true;
+      // A key saved before (by an older version, or in another window's panel) is kept.
+      const key = await store.getApiKey();
+      ui.hasKey = !!key;
+      ui.masked = maskKey(key);
+      if (ui.hasKey) renderMain();
+      else renderSetup();
+    } catch (err) {
+      next.disabled = !check.checked;
+      setText(error, `Jarvis couldn’t save that. Try again. (${err?.message || err})`);
+    }
+  });
+
+  replaceChildren(
+    app,
+    h(
+      'main',
+      { class: 'setup setup--profile', attrs: { 'data-testid': 'profile-gate' } },
+      h('div', { class: 'setup__hero' }, hudCore('hud-core--hero hud-core--small')),
+      h('h1', { class: 'setup__title' }, h('span', { class: 'wordmark', text: 'JARVIS' }), h('span', { class: 'setup__for', text: 'for Chrome' })),
+      h('h2', { class: 'profile__title', text: PROFILE_TITLE }),
+      h('p', { class: 'setup__lead', attrs: { 'data-testid': 'profile-why' }, text: PROFILE_WHY }),
+      h('section', { class: 'panel' }, h('div', { class: 'label' }, icon('shield', { size: 14 }), 'Set up the Jarvis profile'), profileSteps(), profileElsewhere()),
+      h('label', { class: 'confirm', attrs: { 'data-testid': 'profile-confirm' } }, check, h('span', { text: PROFILE_CONFIRM })),
+      error,
+      next,
+      ui.hasKey ? null : h('p', { class: 'hint hint--center', attrs: { 'data-testid': 'profile-next' }, text: 'Next: your Anthropic API key.' }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -224,6 +290,16 @@ function renderSetup() {
     }
     save.disabled = true;
     const res = await store.setApiKey(check.key);
+    if (!res.ok) {
+      save.disabled = false;
+      // Only after the profile screen (another window's panel may have shown it first).
+      if (res.needsProfile) {
+        ui.profileOk = false;
+        return renderProfileGate();
+      }
+      setText(error, res.error);
+      return;
+    }
     ui.settings = await store.setSettings({ model, budgetUsd: budget.value, maxSteps: steps.value });
     ui.hasKey = true;
     ui.masked = res.masked;
@@ -239,9 +315,10 @@ function renderSetup() {
     h(
       'main',
       { class: 'setup', attrs: { 'data-testid': 'setup' } },
-      h('div', { class: 'setup__hero' }, h('div', { class: 'hud-core hud-core--hero' }, h('span', { class: 'hud-core__ring hud-core__ring--1' }), h('span', { class: 'hud-core__ring hud-core__ring--2' }), h('span', { class: 'hud-core__ring hud-core__ring--3' }), h('span', { class: 'hud-core__orb' }))),
+      h('div', { class: 'setup__hero' }, hudCore('hud-core--hero')),
       h('h1', { class: 'setup__title' }, h('span', { class: 'wordmark', text: 'JARVIS' }), h('span', { class: 'setup__for', text: 'for Chrome' })),
       h('p', { class: 'setup__lead', text: 'Your assistant, working in your own tabs. Tell Jarvis what you need; it clicks, types and reads pages for you, and asks before anything that matters.' }),
+      profileNote(),
       h(
         'section',
         { class: 'panel' },
@@ -338,7 +415,7 @@ function emptyState() {
   return h(
     'div',
     { class: 'empty', attrs: { 'data-testid': 'empty' } },
-    h('div', { class: 'hud-core' }, h('span', { class: 'hud-core__ring hud-core__ring--1' }), h('span', { class: 'hud-core__ring hud-core__ring--2' }), h('span', { class: 'hud-core__ring hud-core__ring--3' }), h('span', { class: 'hud-core__orb' })),
+    hudCore(),
     h('h2', { class: 'empty__title', text: 'What should I do in your browser?' }),
     h('p', { class: 'empty__lead', text: 'I work in your tabs while you watch, and I ask before anything that matters.' }),
     h(
@@ -826,6 +903,7 @@ async function renderSettings() {
     h(
       'div',
       { class: 'sheet__body' },
+      profileNote(),
       h('section', { class: 'panel' }, h('div', { class: 'label' }, icon('key', { size: 14 }), 'API key'), keyRow, h('div', { class: 'row-btns' }, replace, remove), h('p', { class: 'hint', text: 'Stored only on this computer (Chrome’s extension storage). Sent only to api.anthropic.com, never synced or logged.' })),
       h('section', { class: 'panel' }, h('div', { class: 'label' }, icon('sparkle', { size: 14 }), 'Model'), modelPicker(s.model, (id) => save({ model: id }), 'settings-model')),
       h(

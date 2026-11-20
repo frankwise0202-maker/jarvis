@@ -423,6 +423,7 @@ test('RT3-09: a confirm() is answered Cancel at once (the page is never held); t
 async function controllerSetup() {
   const fb = createFakeBrowser();
   const store = createStore(fb.chrome);
+  await store.confirmProfile();
   await store.setApiKey(TEST_API_KEY);
   const mock = createClaudeMock();
   const controller = new Controller({ chrome: fb.chrome, store, pageSource: '/* agent */', createClient: ({ apiKey }) => createClient({ apiKey, baseURL: 'http://mock.local', fetch: mock.fetch }), encoder: fakeEncoder, platform: 'mac' });

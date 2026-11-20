@@ -22,8 +22,9 @@ import { RT2_SCENARIOS } from './scenarios-rt2.mjs';
 import { RT3_SCENARIOS } from './scenarios-rt3.mjs';
 import { RT4_SCENARIOS } from './scenarios-rt4.mjs';
 import { RT5_SCENARIOS } from './scenarios-rt5.mjs';
+import { PROFILE_SCENARIOS } from './scenarios-profile.mjs';
 
-const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS];
+const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS, ...RT4_SCENARIOS, ...RT5_SCENARIOS, ...PROFILE_SCENARIOS];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(HERE, '..', 'artifacts');

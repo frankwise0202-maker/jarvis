@@ -9,28 +9,84 @@ a page; on sites you trust you can let everyday steps, like searching, go withou
 It uses your own Anthropic API key, so you pay Anthropic directly for what it uses (usually a few
 cents per task; see [Costs](#costs)).
 
+Jarvis for Chrome is for a Chrome profile of its own, with no saved passwords or cards. The
+[Install](#install-on-a-mac) steps set one up.
+
 ---
 
 ## Install (on a Mac)
 
-1. Download **jarvis-for-chrome.zip** from the Jarvis site.
-2. Double-click it to unzip. You get a folder called **jarvis-for-chrome**.
-3. In Chrome, open `chrome://extensions` (type it in the address bar). Turn on **Developer mode**
-   (top right), then click **Load unpacked**.
-4. Choose the unzipped **jarvis-for-chrome** folder.
-5. Pin the Jarvis icon: click the puzzle piece next to the address bar, then the pin next to
-   **Jarvis for Chrome**.
-6. Click the Jarvis icon to open the side panel, then paste your key.
+You make a Chrome profile just for Jarvis, add Jarvis to it, and sign in there only to the sites
+you want Jarvis to use. It takes about five minutes, once.
+([Why a separate profile](#why-a-separate-profile))
 
-You need Chrome 120 or newer. Keep the unzipped folder where it is: Chrome loads Jarvis from it.
+### 1. Make a Chrome profile just for Jarvis
+
+1. Click your **profile picture** (or the person icon) at the top right of Chrome, then **Add**
+   (or **Add Chrome profile**). The **Profiles** menu in the Mac menu bar, at the top of the
+   screen, has the same choice.
+2. Choose **Continue without an account**.
+3. Name the profile **Jarvis**, pick a color, then click **Done**. A new Chrome window opens in the
+   Jarvis profile; its color tells it apart from your usual windows.
+4. In that window, don't turn on sync and don't import anything (if Chrome offers either, say no).
+5. Still in that window, open **Settings** (in the **⋮** menu at the top right) →
+   **Autofill and passwords**, and turn off saving passwords, payment methods and addresses:
+   **Google Password Manager** → **Settings** → **Offer to save passwords**, **Payment
+   methods** → **Save and fill payment methods**, and **Addresses and more** → **Save and fill
+   addresses**. (The names can differ a little between Chrome versions.)
+
+### 2. Add Jarvis to that profile
+
+Do this in the Jarvis window:
+
+1. Download **jarvis-for-chrome.zip** from the Jarvis site, then double-click it to unzip. You get
+   a folder called **jarvis-for-chrome**.
+2. Open `chrome://extensions` (type it in the address bar). Turn on **Developer mode** (top right),
+   then click **Load unpacked**.
+3. Choose the unzipped **jarvis-for-chrome** folder.
+4. Pin the Jarvis icon: click the puzzle piece next to the address bar, then the pin next to
+   **Jarvis for Chrome**.
+5. Click the Jarvis icon to open the side panel and follow the setup: tick **This is a separate
+   Chrome profile just for Jarvis, with no saved passwords or cards**, press **Continue**, then
+   paste your key (see [Your API key](#your-api-key)).
+
+You need Chrome 120 or newer. Keep the unzipped folder where it is: Chrome loads Jarvis from it. If
+you added Jarvis to your usual profile before, remove it there: `chrome://extensions` → **Remove**
+on Jarvis for Chrome.
+
+### 3. Sign in to the sites Jarvis should use
+
+In the Jarvis window only, sign in to the sites you want Jarvis to work on, for example a shopping
+site. Never your email or your bank: those stay in your usual profile.
+
+### Next time
+
+Open the Jarvis window first: click your **profile picture** → **Jarvis** (or choose **Jarvis** in
+the **Profiles** menu). Jarvis is only in that profile; your usual windows don't have it.
+
+### Why a separate profile
+
+A Chrome profile is like a second Chrome on your Mac, with its own windows, sign-ins, saved
+passwords and cards. An extension works only in the profile it was added to, so Jarvis can reach
+only what is in the Jarvis profile.
+
+Web pages are made by strangers, and a page can be built to trick an AI assistant into doing
+something you didn't ask for (see [Known limits](#known-limits)). If a web page ever tricks Jarvis,
+the Jarvis profile holds only the few sites you signed in to there: your main accounts, your email,
+your saved passwords and your cards are in your usual profile, out of its reach. That is why Jarvis
+asks you, the first time you open it, to confirm that it is in a profile of its own (it doesn't take
+your key before that), and why Settings always says **For use in your Jarvis profile only**, with
+these steps behind it.
 
 ### Your API key
 
 Create a key at [console.anthropic.com](https://console.anthropic.com/settings/keys) (API keys,
-then Create key). Paste it into Jarvis's setup screen and press **Start Jarvis**.
+then Create key). Paste it into Jarvis's setup screen, after the profile screen, and press **Start
+Jarvis**.
 
-- The key is stored only on this Mac, in Chrome's storage for this extension. It is never synced to
-  your Google account, never written to any log, and only ever sent to `api.anthropic.com`.
+- The key is stored only on this Mac, in Chrome's storage for this extension in the Jarvis profile.
+  It is never synced to your Google account, never written to any log, and only ever sent to
+  `api.anthropic.com`.
 - On the same screen you choose the model (Claude Sonnet 5.5 is the default) and the budget and
   step limit for each task. You can change them later in **Settings**.
 
@@ -38,9 +94,9 @@ then Create key). Paste it into Jarvis's setup screen and press **Start Jarvis**
 
 ## Using Jarvis
 
-Open the side panel (click the Jarvis icon, or press **⌥⇧J**), type a task and press Return. You
-can also click the microphone to dictate. The first time, Chrome opens a tab that asks for the
-microphone.
+In the Jarvis window, open the side panel (click the Jarvis icon, or press **⌥⇧J**), type a task
+and press Return. You can also click the microphone to dictate. The first time, Chrome opens a tab
+that asks for the microphone.
 
 While Jarvis works:
 
@@ -236,9 +292,10 @@ Jarvis follows these rules whatever a web page says.
    your task. A page that tricks Claude could try to get Jarvis to pass what it read on one site to
    another; Jarvis asks you before it acts on a site after reading another one, and shows you every
    address with text in it that it would open there (see
-   [Moving between sites](#moving-between-sites)). Your task history is kept only in this browser.
-   You can clear it any time (History → Clear history), or turn on **Incognito: no history** in
-   Settings so nothing is kept. Links in Jarvis's answers show where they really go.
+   [Moving between sites](#moving-between-sites)). Your task history is kept only in the Jarvis
+   profile on this Mac. You can clear it any time (History → Clear history), or turn on
+   **Incognito: no history** in Settings so nothing is kept. Links in Jarvis's answers show where
+   they really go.
 8. **It respects your budget.** Each task has a budget (default $1.00) and a step limit (default
    40). Jarvis asks before going past either one; **Continue** gives it one more budget (or step
    limit) on top of what it has used.
@@ -247,6 +304,12 @@ Jarvis is careful, but it can still make mistakes. Watch what it does on sites w
 matter, and use Take over or Stop if something looks wrong.
 
 ### Known limits
+
+Five rounds of testers have attacked Jarvis for Chrome on purpose, most of them with web pages
+built to trick it, and about 90 problems they found are fixed. Each round still found a few new
+tricks, and there are likely more. That is why it lives in a Chrome profile of its own (see
+[Why a separate profile](#why-a-separate-profile)) and asks before every step that changes
+anything. These are the limits we know about:
 
 - **Read each card before you approve.** Jarvis marks a step as a purchase, a message, a deletion
   and so on by its wording. A button that does something serious under a harmless name (a "Next"
@@ -339,13 +402,18 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
 ## Updating and removing
 
 - **Update:** download **jarvis-for-chrome.zip** again, unzip it, and replace your old
-  **jarvis-for-chrome** folder with the new one (same place). Then open `chrome://extensions` and
-  click the **Reload** arrow on Jarvis for Chrome. Your key and settings are kept.
-- **Remove:** open `chrome://extensions` and click **Remove** on Jarvis for Chrome. This deletes
-  your key, settings and task history from Chrome. You can then delete the folder.
+  **jarvis-for-chrome** folder with the new one (same place). Then, in the Jarvis window, open
+  `chrome://extensions` and click the **Reload** arrow on Jarvis for Chrome. Your key and settings
+  are kept.
+- **Remove:** in the Jarvis window, open `chrome://extensions` and click **Remove** on Jarvis for
+  Chrome. This deletes your key, settings and task history from Chrome. You can then delete the
+  folder. To delete the Jarvis profile too, with the sign-ins in it: click your **profile
+  picture** → **Manage Chrome profiles**, then **⋮** on the Jarvis profile → **Delete**.
 
 ### If something doesn't work
 
+- **There's no Jarvis icon:** you are probably in one of your usual windows. Open the Jarvis window
+  (**profile picture** → **Jarvis**): Jarvis is only in that profile.
 - **The ⌘⇧. or ⌥⇧J shortcut does nothing:** another app or extension may use it. Change it at
   `chrome://extensions/shortcuts` (or in Jarvis's Settings → Shortcuts).
 - **"Your API key was rejected":** paste the key again in Settings → API key, or create a new
@@ -358,10 +426,11 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
 ## For developers
 
 Source lives in `extension/src/`. The build is `npm run build:extension`, which writes
-`dist-extension/` and `dist-extension.zip`. The tests are `npm run test:extension`, unit tests and
-end-to-end, with Playwright Chromium running the real unpacked extension against a mock Claude API
-and local test sites (`test/extension/sites.mjs`, and `sites-review.mjs`, `sites-rt2.mjs`,
-`sites-rt3.mjs`, `sites-rt4.mjs` and `sites-rt5.mjs` for the pages that attack the safety checks).
+`dist-extension/` and `dist-extension.zip` (build output, not kept in git). The tests are
+`npm run test:extension`, unit tests and end-to-end, with Playwright Chromium running the real
+unpacked extension against a mock Claude API and local test sites (`test/extension/sites.mjs`, and
+`sites-review.mjs`, `sites-rt2.mjs`, `sites-rt3.mjs`, `sites-rt4.mjs` and `sites-rt5.mjs` for the
+pages that attack the safety checks).
 
 - `background/`: the service worker.
   - `controller.js`: tasks, prompts, Stop and Take over, history.
@@ -387,7 +456,10 @@ and local test sites (`test/extension/sites.mjs`, and `sites-review.mjs`, `sites
   from the same site: anything but the one step the owner approved is cancelled. Its control bar's
   host is a plain `<div>` (with `data-jarvis-control`): a page can't take it over by defining a
   custom element of the same name.
-- `sidepanel/`: the side panel UI, in the app's HUD style.
+- `sidepanel/`: the side panel UI, in the app's HUD style. `profile.js` holds the first-run screen
+  ("Use Jarvis in its own Chrome profile") and its steps, which Settings shows again; the store
+  (`shared/storage.js`) refuses the API key until the owner has confirmed it (`jarvis.profile`),
+  and the service worker starts no task without it.
 - `build/`: the manifest, the icon renderer and the zip writer used by `scripts/build-extension.mjs`.
 
 Development builds (`node scripts/build-extension.mjs --dev --out <dir>`) can point the API client

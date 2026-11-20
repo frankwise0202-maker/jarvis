@@ -561,6 +561,10 @@ const ui = {
   start: { seed: false, deviceScaleFactor: 2, panelSize: { width: 380, height: 840 } },
   async run(run) {
     const { mock } = run.server;
+    await run.panel.locator(tid('profile-gate')).waitFor();
+    await run.panel.waitForTimeout(300);
+    await run.shot('0-profile');
+    await run.passProfileGate();
     await run.panel.locator(tid('setup')).waitFor();
     await run.shot('1-setup');
     await run.panel.fill(tid('setup-key'), 'sk-ant-test-0123456789abcdefghijklmnopqrstuvwxyz');

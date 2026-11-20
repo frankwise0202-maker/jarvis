@@ -203,6 +203,7 @@ test('RT4C-01: a page load still waiting for the decision is failed before the d
 async function controllerSetup() {
   const fb = createFakeBrowser();
   const store = createStore(fb.chrome);
+  await store.confirmProfile();
   await store.setApiKey(TEST_API_KEY);
   const mock = createClaudeMock();
   const controller = new Controller({ chrome: fb.chrome, store, pageSource: '/* agent */', createClient: ({ apiKey }) => createClient({ apiKey, baseURL: 'http://mock.local', fetch: mock.fetch }), encoder: fakeEncoder, platform: 'mac' });

@@ -765,6 +765,7 @@ const budgetField = {
   title: 'F13: clearing the budget field in setup keeps the $1.00 default (not the $0.05 minimum)',
   start: { seed: false },
   async run(run) {
+    await run.passProfileGate();
     await run.panel.locator(tid('setup')).waitFor();
     await run.panel.fill(tid('setup-key'), 'sk-ant-test-0123456789abcdefghijklmnopqrstuvwxyz');
     await run.panel.fill(tid('setup-budget'), '');

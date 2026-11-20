@@ -251,9 +251,16 @@ export class Controller {
     }
     const settings = await this.store.getSettings();
     const apiKey = await this.store.getApiKey();
+    // Jarvis for Chrome is for a Chrome profile of its own: no task before the owner confirmed it
+    // on the panel's first-run screen (a key saved by an older version doesn't count).
+    const profile = await this.store.getProfile();
     const task = this.newTask(clean, { model: settings.model, retryOf, contextReset, resumed: resume });
     this.tasks.push(task);
     this.thumbs.set(task.id, new Map());
+    if (!profile) {
+      this.finishTask(task, 'error', { error: 'Finish the setup in the side panel first: confirm that this Chrome profile is just for Jarvis.' });
+      return;
+    }
     if (!apiKey) {
       this.finishTask(task, 'error', { error: 'Add your Anthropic API key first (Settings → API key).' });
       return;

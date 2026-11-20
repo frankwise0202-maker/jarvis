@@ -1,6 +1,9 @@
 // Everything Jarvis for Chrome keeps, in chrome.storage.local (this computer only; nothing uses
 // chrome.storage.sync, so nothing follows the owner's Google account to other computers).
 //
+//   jarvis.profile    { separate: true, at } the owner's confirmation, on the first-run screen,
+//                     that this Chrome profile is just for Jarvis, with no saved passwords or cards.
+//                     The API key can't be saved before it, and no task starts without it.
 //   jarvis.apiKey     the owner's Anthropic API key. Read only by the service worker to call the
 //                     Claude API; never logged, never sent anywhere but the API.
 //   jarvis.settings   { model, budgetUsd, maxSteps, incognito }
@@ -17,6 +20,7 @@ import { DEFAULT_BUDGET_USD, DEFAULT_MAX_STEPS, normalizeBudget, normalizeSteps 
 import { isListedPublicSuffix } from '../background/sites.js';
 
 export const KEYS = Object.freeze({
+  profile: 'jarvis.profile',
   apiKey: 'jarvis.apiKey',
   settings: 'jarvis.settings',
   sites: 'jarvis.sites',
@@ -43,6 +47,16 @@ export function validateApiKey(input) {
   return { ok: true, key };
 }
 
+/** What setApiKey answers before the owner has confirmed the separate profile. */
+export const PROFILE_REQUIRED = 'First confirm that this is a separate Chrome profile just for Jarvis.';
+
+/** The stored confirmation if it is one ({ separate: true, at }), else null. */
+export function normalizeProfile(raw) {
+  if (!raw || typeof raw !== 'object' || raw.separate !== true) return null;
+  const at = Number(raw.at);
+  return { separate: true, at: Number.isFinite(at) && at > 0 ? at : 0 };
+}
+
 /** "sk-ant-…a1B2": enough to recognise a key, never enough to use it. */
 export function maskKey(key) {
   const k = String(key ?? '');
@@ -67,11 +81,26 @@ export function createStore(chromeLike = globalThis.chrome) {
   const set = (key, value) => local.set({ [key]: value });
 
   return {
+    /**
+     * The owner's confirmation that this Chrome profile is just for Jarvis, with no saved
+     * passwords or cards ({ separate: true, at }), or null before the first-run screen.
+     */
+    async getProfile() {
+      return normalizeProfile(await get(KEYS.profile));
+    },
+    async confirmProfile(at = Date.now()) {
+      const value = { separate: true, at };
+      await set(KEYS.profile, value);
+      return value;
+    },
+
     async getApiKey() {
       const v = await get(KEYS.apiKey);
       return typeof v === 'string' && v ? v : null;
     },
+    /** Saves the key: only after the profile confirmation ({ ok: false, needsProfile } before it). */
     async setApiKey(input) {
+      if (!(await this.getProfile())) return { ok: false, needsProfile: true, error: PROFILE_REQUIRED };
       const check = validateApiKey(input);
       if (!check.ok) return check;
       await set(KEYS.apiKey, check.key);

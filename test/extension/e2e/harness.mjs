@@ -86,9 +86,12 @@ export class Run {
    * `approveSteps` (default on): the owner approves every ordinary step Jarvis asks about (deny
    * by default asks before each click, typing and key), so a scenario answers only the prompts
    * it is about: site prompts and consequential steps. `everyday`: sites whose "everyday steps"
-   * switch is on. `downloads`: Chrome's own download handling, into this folder.
+   * switch is on. `downloads`: Chrome's own download handling, into this folder. `seed` (default
+   * on): a saved key and settings, and (`profile`, default on) the owner's confirmation on the
+   * first-run screen that this Chrome profile is just for Jarvis; without `seed` the panel starts
+   * at that screen.
    */
-  async start({ settings = {}, seed = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null, approveSteps = true, everyday = [], always = [], downloads = null, launch = {} } = {}) {
+  async start({ settings = {}, seed = true, profile = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null, approveSteps = true, everyday = [], always = [], downloads = null, launch = {} } = {}) {
     this.profile = await mkdtemp(path.join(os.tmpdir(), 'jarvis-ext-e2e-'));
     this.downloads = downloads;
     if (downloads) {
@@ -112,15 +115,16 @@ export class Run {
     if (seed) {
       const port = this.server.port;
       await this.sw.evaluate(
-        ({ key, base, settings, everyday, always }) =>
+        ({ key, base, settings, everyday, always, profile }) =>
           chrome.storage.local.set({
+            ...(profile ? { 'jarvis.profile': { separate: true, at: Date.now() } } : {}),
             'jarvis.apiKey': key,
             'jarvis.dev.apiBase': base,
             'jarvis.settings': { model: 'claude-sonnet-5-5', budgetUsd: 1, maxSteps: 40, incognito: false, ...settings },
             'jarvis.everyday': Object.fromEntries(everyday.map((s) => [s, true])),
             'jarvis.sites': Object.fromEntries(always.map((s) => [s, 'always'])),
           }),
-        { key: TEST_API_KEY, base: this.server.apiBase, settings, everyday, always },
+        { key: TEST_API_KEY, base: this.server.apiBase, settings, everyday, always, profile },
       );
       void port;
     } else {
@@ -189,6 +193,14 @@ export class Run {
   }
 
   // ---- panel helpers -----------------------------------------------------------------------
+
+  /** First run: ticks "This is a separate Chrome profile just for Jarvis…" and continues. */
+  async passProfileGate() {
+    await this.panel.locator(tid('profile-gate')).waitFor();
+    await this.panel.check(tid('profile-check'));
+    await this.panel.click(tid('profile-continue'));
+    await this.panel.locator(tid('profile-gate')).waitFor({ state: 'detached' });
+  }
 
   async send(text) {
     await this.panel.fill(tid('composer'), text);

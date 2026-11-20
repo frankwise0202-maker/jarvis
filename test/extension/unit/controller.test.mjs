@@ -20,9 +20,10 @@ const PAGE = {
   ],
 };
 
-async function setup({ key = TEST_API_KEY } = {}) {
+async function setup({ key = TEST_API_KEY, profile = true } = {}) {
   const fb = createFakeBrowser();
   const store = createStore(fb.chrome);
+  if (profile) await store.confirmProfile(); // the panel's first-run screen
   if (key) await store.setApiKey(key);
   const mock = createClaudeMock();
   const controller = new Controller({

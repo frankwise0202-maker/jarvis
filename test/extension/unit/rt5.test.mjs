@@ -35,6 +35,7 @@ const CODE = '482913';
 async function rig({ url = 'https://notes.example/notes', page, owner = () => 'approve', always = [siteOf(url)] } = {}) {
   const fb = createFakeBrowser();
   const store = createStore(fb.chrome);
+  await store.confirmProfile();
   await store.setApiKey(TEST_API_KEY);
   for (const s of always) await store.allowSiteAlways(s);
   const mock = createClaudeMock();

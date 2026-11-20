@@ -29,10 +29,11 @@ test('the key is stored only in chrome.storage.local, never synced and never log
     console[level] = (...a) => logged.push(a.map(String).join(' '));
   }
   try {
+    await store.confirmProfile(); // the first-run screen comes before the key
     const res = await store.setApiKey(KEY);
     assert.deepEqual(res, { ok: true, masked: 'sk-ant-…GHIJ' });
     assert.equal(await store.getApiKey(), KEY);
-    assert.deepEqual(Object.keys(fb.chrome.storage.local.data), ['jarvis.apiKey']);
+    assert.deepEqual(Object.keys(fb.chrome.storage.local.data).sort(), ['jarvis.apiKey', 'jarvis.profile']);
     assert.deepEqual(fb.chrome.storage.sync.data, {}, 'nothing in sync storage');
     assert.deepEqual(fb.chrome.storage.session.data, {});
     const bad = await store.setApiKey('nope');
