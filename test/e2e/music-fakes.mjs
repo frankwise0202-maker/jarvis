@@ -40,8 +40,10 @@ const KNOWN = {
   'come away with me norah jones': () => [album({ id: 1440787218, title: 'Come Away With Me', artist: 'Norah Jones', artistId: 1527036, year: 2002, tracks: 14 })],
 };
 
+// Like the real lookup, the first song is another artist's recording where AC/DC is only featured.
 const ACDC_TOP = () => [
   { wrapperType: 'artist', artistType: 'Artist', artistName: 'AC/DC', artistId: 5040714 },
+  song({ id: 574099001, title: 'Rock the House (feat. AC/DC)', artist: 'The Test Guests', artistId: 990001, album: 'Guests', collectionId: 574099000, year: 2015, ms: 201000, genre: 'Hard Rock' }),
   song({ id: 574050602, title: 'Back In Black', artist: 'AC/DC', artistId: 5040714, album: 'Back In Black', collectionId: 574050396, year: 1980, ms: 256000, genre: 'Hard Rock' }),
   song({ id: 574043989, title: 'Thunderstruck', artist: 'AC/DC', artistId: 5040714, album: 'The Razors Edge', collectionId: 574043881, year: 1990, ms: 292000, genre: 'Hard Rock' }),
   song({ id: 574044055, title: 'Highway to Hell', artist: 'AC/DC', artistId: 5040714, album: 'Highway to Hell', collectionId: 574043912, year: 1979, ms: 208000, genre: 'Hard Rock' }),

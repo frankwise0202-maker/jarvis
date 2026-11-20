@@ -7,14 +7,15 @@
 //      | { ok: false, error: 'empty' | 'offline' | 'timeout' | 'aborted' | 'network' | 'bad_response', message }
 //   topSongs(artistId, { limit, country, fetch, signal }) -> the same shape (kind 'artist')
 //
-// kind 'artist' finds the artist, then their top songs (lookup?id=…&entity=song). kind 'playlist'
+// kind 'artist' finds the artist, then their top songs (lookup?id=…&entity=song&limit=25: their own
+// recordings first, not the ones where they are only featured; each title once). kind 'playlist'
 // is searched as albums, then songs: Apple Music has no free playlist search. Privacy: the words
 // searched go to Apple (itunes.apple.com), with no cookies and no referrer; nothing else does.
 //
 // CSP (public/index.html): connect-src https://itunes.apple.com; img-src https://*.mzstatic.com;
 // media-src https://audio-ssl.itunes.apple.com.
 
-import { MAX_MUSIC_ITEMS, artistFromResults, cleanQuery, parseItunesResults, rankItems } from '../lib/music.js';
+import { MAX_MUSIC_ITEMS, artistFromResults, artistSongsFirst, cleanQuery, parseItunesResults, rankItems } from '../lib/music.js';
 
 export const ITUNES_SEARCH_URL = 'https://itunes.apple.com/search';
 export const ITUNES_LOOKUP_URL = 'https://itunes.apple.com/lookup';
@@ -23,6 +24,9 @@ const CACHE_MS = 10 * 60 * 1000;
 const CACHE_MAX = 60;
 const DEFAULT_COUNTRY = 'us';
 const ENTITY = { song: 'song', album: 'album', artist: 'musicArtist' };
+// An artist's lookup asks for this many songs: Apple's first few are often other artists' recordings
+// where this one is only featured, so the artist's own are picked from more (artistSongsFirst).
+const TOP_SONGS_LOOKUP = 25;
 
 const cache = new Map(); // key -> { at, value }
 
@@ -135,7 +139,7 @@ function failure(err) {
   return { ok: false, error: 'network', message: 'Apple Music could not be reached.' };
 }
 
-/** The top songs of an artist (iTunes lookup). */
+/** The top songs of an artist (iTunes lookup): their own recordings first, each title once. */
 export async function topSongs(artistId, { limit = 5, country, fetch: fetchFn, signal, timeoutMs = MUSIC_TIMEOUT_MS, artist = '' } = {}) {
   const id = typeof artistId === 'number' ? String(artistId) : String(artistId || '').trim();
   if (!/^\d{1,20}$/.test(id)) return { ok: false, error: 'empty', message: 'No artist to look up.' };
@@ -145,10 +149,12 @@ export async function topSongs(artistId, { limit = 5, country, fetch: fetchFn, s
   const cached = cacheGet(key);
   if (cached) return cached;
   try {
-    const p = new URLSearchParams({ id, entity: 'song', limit: String(n), country: cc });
+    const p = new URLSearchParams({ id, entity: 'song', limit: String(TOP_SONGS_LOOKUP), country: cc });
     const json = await getJson(`${ITUNES_LOOKUP_URL}?${p.toString()}`, { fetch: fetchFn, signal, timeoutMs });
-    const items = parseItunesResults(json, { max: n }).filter((i) => i.type === 'song');
-    const named = artist || (artistFromResults(json) || {}).name || (items[0] && items[0].artist) || '';
+    const songs = parseItunesResults(json, { max: TOP_SONGS_LOOKUP }).filter((i) => i.type === 'song');
+    const found = (artistFromResults(json) || {}).name || '';
+    const items = artistSongsFirst(songs, { artistId: id, artist: artist || found, max: n });
+    const named = artist || found || (items[0] && items[0].artist) || '';
     const value = { ok: true, items, kind: 'artist', country: cc, query: named, artist: named };
     cachePut(key, value);
     return value;

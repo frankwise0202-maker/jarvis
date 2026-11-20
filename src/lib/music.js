@@ -236,6 +236,34 @@ export function rankItems(items, { title = '', artist = '' } = {}) {
     .map((x) => x.item);
 }
 
+/**
+ * An artist's top songs from an iTunes lookup, in the order shown: Apple's order is not by
+ * popularity and mixes in other artists' recordings where this one is only featured ("Somebody to
+ * Love" by George Michael & Queen, "Two Is Better Than One (feat. Taylor Swift)" by Boys Like Girls).
+ * The artist's own songs come first (their id, and their name alone before "Queen & Adam Lambert"),
+ * then the rest; each title once ("Bohemian Rhapsody (Live …)" after "Bohemian Rhapsody" is
+ * dropped); at most `max`.
+ */
+export function artistSongsFirst(items, { artistId = '', artist = '', max = MAX_MUSIC_ITEMS } = {}) {
+  const id = String(artistId || '');
+  const name = fold(artist);
+  const tier = (item) => (id && item.artistId === id ? (name && fold(item.artist) === name ? 0 : 1) : 2);
+  const baseTitle = (title) => fold(String(title || '').replace(/\s*[([].*$/, '').replace(/\s+-\s+.*$/, '')) || fold(title);
+  const seen = new Set();
+  const out = [];
+  const ranked = (Array.isArray(items) ? items : [])
+    .map((item, i) => ({ item, i, t: tier(item) }))
+    .sort((x, y) => x.t - y.t || x.i - y.i);
+  for (const { item } of ranked) {
+    const key = baseTitle(item.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** "Back In Black by AC/DC", "the album Back In Black by AC/DC". */
 export function describeItem(item, { album = true } = {}) {
   if (!isObj(item)) return '';

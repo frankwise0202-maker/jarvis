@@ -104,6 +104,16 @@ export default [
         t.assert(lead.tools.at(-1).name === 'find_music' && lead.system[0].text.includes('# Music\n'), 'a new conversation has the V6 tools (find_music) and the V5 prompt');
         t.assert(!JSON.stringify(lead.messages).includes('Back In Black'), 'the local exchange is not sent to Claude');
       });
+
+      await t.step('"play some AC/DC": the artist\'s own songs, not one where AC/DC is only featured', async () => {
+        await t.send('play some AC/DC');
+        const top = await waitCard(t);
+        t.assert((await t.text(top.locator(tid('music-artist')))) === 'AC/DC' && (await t.text(top.locator(tid('music-title')))) === 'Back In Black', `the first song: ${await t.text(top.locator(tid('music-title')))} by ${await t.text(top.locator(tid('music-artist')))}`);
+        const lookup = t.music.searches.find((u) => u.startsWith('https://itunes.apple.com/lookup?'));
+        t.assert(lookup && /[?&]limit=25(?:&|$)/.test(lookup), `the lookup asks for 25 songs: ${lookup}`);
+        const alts = await top.locator(tid('music-alt')).allTextContents();
+        t.assert(alts.length === 3 && /The Test Guests/.test(alts[2]), `AC/DC's own songs, then the featured one: ${JSON.stringify(alts)}`);
+      });
     },
   },
 
