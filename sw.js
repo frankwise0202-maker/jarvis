@@ -20,7 +20,7 @@
 
 self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-7TFBJGWZ.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/chunk-QIGXMQTC.js","./assets/chunks/hologram-3RXRFO26.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-UUBP7EUB.js","./assets/theme-boot.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
 
-const CACHE = 'jarvis-4950bfed';
+const CACHE = 'jarvis-bb0de23b';
 const BUILD_ID = CACHE.slice('jarvis-'.length);
 const BASE = new URL('./', self.location.href).href;
 const SHELL = new URL('index.html', BASE).href;
