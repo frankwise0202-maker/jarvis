@@ -14,9 +14,11 @@
 //   - Frames from other sites run in their own processes: Target auto-attach gives a session per
 //     frame (frames nested in those too), used to learn which site each frame really shows and
 //     which frame is at a point or has the keyboard focus.
-//   - While Jarvis acts, the tab's own page loads go through Fetch interception: a page that tries
-//     to load a site the owner denied (a link, a script, a redirect) is stopped before the request
-//     leaves, and a site not asked about yet is asked first (see onNavigationRequest).
+//   - While Jarvis acts, the tab's own page loads go through Fetch interception, its frames' too: a
+//     page that tries to load a site the owner denied (a link, a script, a redirect, a form posted
+//     into a frame) is stopped before the request leaves, and the controller decides about the rest
+//     (see onNavigationRequest: a site not asked about yet, a form sent or an address that acts
+//     with no approved step behind it, an address an approved step already opened).
 
 import { abortError, sleep, untilAborted, withTimeout } from '../shared/util.js';
 import { sanitizeTitle, sanitizeUrl, siteOf } from './sites.js';
@@ -68,11 +70,15 @@ export class Driver {
     this.windowId = null;
     this.changes = []; // tab_opened state changes not yet reported
     this.dialogs = []; // dialogs handled since the last report
+    this.dialogSeq = 0;
     this.mode = 'hidden';
     this.detaching = new Set();
     this.heartbeat = 0;
     this.suppressEscUntil = 0; // Jarvis itself is pressing Escape until then
     this.onTamper = () => {}; // the page keeps hiding or covering the control bar
+    this.onPopup = () => {}; // a page Jarvis works in opened a new window (toolId, url)
+    this.popups = []; // windows pages opened lately: { url, from, at } (to recognise their tabs)
+    this.blockedLoads = []; // page loads the controller stopped since the last report: { toolId, url, main, sending }
     this.onUnstyled = () => {}; // the control bar's styles could not be applied on a page
     // Debugger sessions may only be (re)attached while a task is acting: after Stop or Take over
     // an action still in flight fails instead of quietly taking control again.
@@ -120,6 +126,9 @@ export class Driver {
       unloadBlocked: false, // the page asked before leaving (beforeunload) and Jarvis said no
       docOpenSeq: 0, // times the page rewrote its document with document.open()
       postEntries: new Set(), // history entry ids that are the result of a submitted form
+      actionEntries: new Set(), // history entry ids an approved step opened by its address (a GET "Buy now")
+      approvedUntil: 0, // an approved step's input is in flight on this tab until then (see markApproved)
+      blockedFrames: new Map(), // frame id -> the address its load was stopped at (it shows an error page)
       openedByJarvis: false, // a tab Jarvis (or a page it works in) opened, not the owner's own
     });
     this.byChrome.set(tab.id, toolId);
@@ -204,17 +213,63 @@ export class Driver {
     return out;
   }
 
-  drainDialogs() {
-    const out = this.dialogs;
-    this.dialogs = [];
+  /** The dialogs handled since the last report. `keepDeferred`: leave the page questions the owner is still to be asked about. */
+  /** The page loads stopped since the last report (see onRequestPaused). */
+  drainBlockedLoads() {
+    const out = this.blockedLoads;
+    this.blockedLoads = [];
     return out;
+  }
+
+  drainDialogs({ keepDeferred = false } = {}) {
+    const out = keepDeferred ? this.dialogs.filter((d) => !d.deferred) : this.dialogs;
+    this.dialogs = keepDeferred ? this.dialogs.filter((d) => d.deferred) : [];
+    return out;
+  }
+
+  /** A mark for "dialogs from now on" (see takeDeferredDialogs). */
+  dialogMark() {
+    return this.dialogSeq;
+  }
+
+  /** The page questions answered Cancel at once and left for the owner (each has a `seq`). */
+  takeDeferredDialogs() {
+    const out = this.dialogs.filter((d) => d.deferred);
+    this.dialogs = this.dialogs.filter((d) => !d.deferred);
+    return out;
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Approved steps: a page load or a form sent while one is in flight is the owner's
+
+  /** An approved step's input goes out on `t` now: its page loads and forms count as approved for `ms`. */
+  markApproved(t, ms = 20000) {
+    if (t) t.approvedUntil = Date.now() + ms;
+  }
+
+  /** A new step begins on `t`: loads from now on are not an earlier approved step's. */
+  clearApproved(t) {
+    if (t) t.approvedUntil = 0;
+  }
+
+  /** Whether an approved step's input is in flight on the tab `toolId`. */
+  approvedInput(toolId) {
+    const t = this.tabs.get(String(toolId));
+    return !!t && t.approvedUntil > Date.now();
   }
 
   // -------------------------------------------------------------------------------------------
   // Chrome tab events (wired by the service worker)
 
   onTabCreated(tab) {
-    if (tab.openerTabId !== undefined && this.byChrome.has(tab.openerTabId)) {
+    // A tab a page Jarvis works in opened: by its opener, or (a window opened with noopener, such
+    // as a form with target=_blank) by the address the page asked for a moment ago.
+    const url = String(tab.pendingUrl || tab.url || '');
+    const now = Date.now();
+    this.popups = this.popups.filter((p) => now - p.at < 5000);
+    const hint = this.popups.findIndex((p) => p.url && url && p.url === url);
+    if ((tab.openerTabId !== undefined && this.byChrome.has(tab.openerTabId)) || hint >= 0) {
+      if (hint >= 0) this.popups.splice(hint, 1);
       const id = this.register(tab, { opened: true });
       if (tab.active) this.activeToolId = id;
     }
@@ -444,6 +499,8 @@ export class Driver {
         if (mainFrame(params.frameId) && (!params.disposition || params.disposition === 'currentTab')) t.navSeq++;
         break;
       case 'Page.frameNavigated':
+        // A frame that loaded a page after one was stopped shows that page now.
+        if (params.frame?.parentId && !params.frame.unreachableUrl) t.blockedFrames.delete(params.frame.id);
         if (!params.frame?.parentId) {
           t.frameId = params.frame.id;
           t.docSeq++;
@@ -463,6 +520,16 @@ export class Driver {
         if (!params.frame?.parentId) {
           t.docOpenSeq += 1;
           if (t.ctx && t.ctxDoc === t.docSeq) this.callIn(t, t.ctx, 'heal', {}).catch(() => {});
+        }
+        break;
+      case 'Page.windowOpen':
+        // The page opened a new window (a link or form with a target, window.open): Chrome sends
+        // its first request from the new tab, where this tab's checks do not reach.
+        this.popups.push({ url: String(params.url || ''), from: id, at: Date.now() });
+        try {
+          this.onPopup(id, String(params.url || ''));
+        } catch {
+          /* the controller's business */
         }
         break;
       case 'Page.navigatedWithinDocument':
@@ -486,12 +553,17 @@ export class Driver {
         } catch {
           decision = false;
         }
-        const answer = (accept, asked = false) => {
+        const answer = (accept, asked = false, deferred = false) => {
           // "Leave site? Changes you made may not be saved": Jarvis stays (the owner's unsaved work).
           if (params.type === 'beforeunload' && !accept) t.unloadBlocked = true;
-          this.dialogs.push({ ...dialog, accepted: accept, toolId: id, asked });
+          this.dialogs.push({ ...dialog, accepted: accept, toolId: id, asked, deferred, seq: ++this.dialogSeq });
           Promise.resolve(this.chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept })).catch(() => {});
         };
+        // { accept, asked?, deferred? }: answered now; deferred: the owner is asked afterwards.
+        if (decision && typeof decision === 'object' && typeof decision.then !== 'function') {
+          answer(!!decision.accept, !!decision.asked, !!decision.deferred);
+          break;
+        }
         if (decision && typeof decision.then === 'function') {
           // The owner decides (the page waits): input that opened it keeps waiting meanwhile.
           t.dialogPending += 1;
@@ -692,25 +764,31 @@ export class Driver {
   // -------------------------------------------------------------------------------------------
   // Page loads while Jarvis acts (Fetch interception of the tab's own documents)
 
-  /** A paused document request: the main frame's loads are checked, everything else continues. */
+  /**
+   * A paused document request of the tab (its own page, or a frame in it): the controller decides
+   * (onNavigationRequest with the request's method and whether it is the main frame).
+   */
   onRequestPaused(t, tabId, params) {
     const send = (method, extra = {}) => Promise.resolve(this.chrome.debugger.sendCommand({ tabId }, method, { requestId: params.requestId, ...extra })).catch(() => {});
     const url = String(params.request?.url || '');
     const main = !params.frameId || !t.frameId || params.frameId === t.frameId;
-    if (!main || !this.onNavigationRequest || !/^https?:/i.test(url)) {
+    if (!this.onNavigationRequest || !/^https?:/i.test(url)) {
       send('Fetch.continueRequest');
       return;
     }
     let decision;
     try {
-      decision = Promise.resolve(this.onNavigationRequest(t.toolId, url));
+      decision = Promise.resolve(this.onNavigationRequest(t.toolId, url, { method: String(params.request?.method || 'GET').toUpperCase(), main }));
     } catch {
       decision = Promise.resolve(false);
     }
-    decision.then(
-      (ok) => (ok ? send('Fetch.continueRequest') : send('Fetch.failRequest', { errorReason: 'BlockedByClient' })),
-      () => send('Fetch.failRequest', { errorReason: 'BlockedByClient' }),
-    );
+    const stop = () => {
+      this.blockedLoads.push({ toolId: t.toolId, url, main, sending: !/^(GET|HEAD)$/i.test(String(params.request?.method || 'GET')) });
+      // The frame shows an error page now; acting in it still means that site (see frameChainAt).
+      if (!main && params.frameId) t.blockedFrames.set(params.frameId, url);
+      return send('Fetch.failRequest', { errorReason: 'BlockedByClient' });
+    };
+    decision.then((ok) => (ok ? send('Fetch.continueRequest') : stop()), stop);
   }
 
   /** Forget every tab (a new conversation starts its tab ids again at tab-1). */
@@ -876,7 +954,29 @@ export class Driver {
   async isFormResult(t) {
     const h = await this.recordHistory(t);
     const cur = h?.entries?.[h.currentIndex];
-    return !!cur && t.postEntries.has(cur.id);
+    if (!cur) return '';
+    if (t.postEntries.has(cur.id)) return 'form';
+    return t.actionEntries.has(cur.id) ? 'action' : '';
+  }
+
+  /** Whether a history entry is a form's result or what an approved step opened ({ category } or null). */
+  isResultEntry(t, entry) {
+    if (!entry) return null;
+    if (t.postEntries.has(entry.id) || entry.transitionType === 'form_submit') return { form: true };
+    return t.actionEntries.has(entry.id) ? { category: 'change' } : null;
+  }
+
+  /**
+   * The entry the tab shows now, remembered as what an approved step opened (going back to it,
+   * forward to it or reloading it repeats that step). { id, url, kind: 'form' | 'action' } or null.
+   */
+  async noteActionEntry(t) {
+    const h = await this.recordHistory(t);
+    const cur = h?.entries?.[h.currentIndex];
+    if (!cur) return null;
+    if (cur.transitionType === 'form_submit' || t.postEntries.has(cur.id)) return { id: cur.id, url: cur.url, kind: 'form' };
+    t.actionEntries.add(cur.id);
+    return { id: cur.id, url: cur.url, kind: 'action' };
   }
 
   /** The history entry "back" or "forward" would open ({ id, url }), or null. */
@@ -1018,8 +1118,20 @@ export class Driver {
     for (let hop = 0; hop < 6; hop++) {
       const hit = await this.inSession(t, session, 'DOM.getNodeForLocation', { x: Math.round(px), y: Math.round(py), includeUserAgentShadowDOM: false });
       if (!hit?.backendNodeId) return chain;
+      // A point in the error page of a frame whose load Jarvis stopped (it renders in this process).
+      const inStopped = !session && hit.frameId && hit.frameId !== t.frameId ? this.stoppedFrame(t, { frameId: hit.frameId }) : null;
+      if (inStopped) {
+        chain.push(inStopped);
+        return chain;
+      }
       const { node } = await this.inSession(t, session, 'DOM.describeNode', { backendNodeId: hit.backendNodeId });
-      if (!node || !/^i?frame$/i.test(node.nodeName || '') || node.contentDocument || !node.frameId) return chain;
+      if (!node || !/^i?frame$/i.test(node.nodeName || '') || !node.frameId) return chain;
+      const stopped = this.stoppedFrame(t, node);
+      if (stopped) {
+        chain.push(stopped);
+        return chain;
+      }
+      if (node.contentDocument) return chain;
       const f = t.frames.get(node.frameId);
       if (!f) return { error: 'unknown frame' };
       const url = await this.frameUrl(t, node.frameId);
@@ -1054,7 +1166,13 @@ export class Driver {
         const objectId = ae?.result?.objectId;
         if (!objectId) return chain;
         const { node } = await this.inSession(t, session, 'DOM.describeNode', { objectId });
-        if (!node || !/^i?frame$/i.test(node.nodeName || '') || node.contentDocument || !node.frameId) return chain;
+        if (!node || !/^i?frame$/i.test(node.nodeName || '') || !node.frameId) return chain;
+        const stopped = this.stoppedFrame(t, node);
+        if (stopped) {
+          chain.push(stopped);
+          return chain;
+        }
+        if (node.contentDocument) return chain;
         const f = t.frames.get(node.frameId);
         if (!f) return { error: 'unknown frame' };
         const url = await this.frameUrl(t, node.frameId);
@@ -1066,6 +1184,17 @@ export class Driver {
     } finally {
       this.cdp(t, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
     }
+  }
+
+  /**
+   * A frame whose load Jarvis stopped (a denied site, a declined address) and that has loaded
+   * nothing since: it stands for that address (its site is what acting in it needs), as a chain
+   * entry; null otherwise.
+   */
+  stoppedFrame(t, node) {
+    const url = t.blockedFrames?.get(node.frameId);
+    if (!url || t.frames.has(node.frameId)) return null;
+    return { frameId: node.frameId, sessionId: null, url, site: siteOf(url), navSeq: 0, stopped: true };
   }
 
   /**
@@ -1089,6 +1218,42 @@ export class Driver {
     } finally {
       this.cdp(t, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
     }
+  }
+
+  /**
+   * How many closed shadow roots the page has (the page agent cannot open them; a selection made
+   * in one is invisible to it). Through the debugger's DOM view of the whole document, its
+   * same-process frames included; -1 when that fails (Jarvis then treats it as unknown).
+   */
+  async closedShadowRoots(t) {
+    let doc;
+    try {
+      doc = await this.cdp(t, 'DOM.getDocument', { depth: -1, pierce: true });
+    } finally {
+      // getDocument starts DOM change events for this session: Jarvis needs none of them.
+      this.cdp(t, 'DOM.disable', {}).catch(() => {});
+    }
+    let closed = 0;
+    let ours = 0;
+    let seen = 0;
+    const stack = doc?.root ? [doc.root] : [];
+    while (stack.length && seen < 200000) {
+      const n = stack.pop();
+      seen += 1;
+      for (const r of n.shadowRoots || []) {
+        if (r.shadowRootType === 'closed') {
+          closed += 1;
+          if (String(n.localName || n.nodeName || '').toLowerCase() === 'jarvis-control-overlay') ours += 1;
+        }
+        stack.push(r);
+      }
+      for (const c of n.children || []) stack.push(c);
+      if (n.contentDocument) stack.push(n.contentDocument);
+    }
+    if (!doc?.root) return -1;
+    // Jarvis's own control bar is one (at most one counts as ours: a page that adds a look-alike
+    // still counts).
+    return closed - Math.min(ours, this.mode === 'hidden' ? 0 : 1);
   }
 
   /** Lets synthesized mouse events pass through the control bar while Jarvis clicks. */

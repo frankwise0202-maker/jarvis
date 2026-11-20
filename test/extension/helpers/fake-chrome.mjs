@@ -129,6 +129,15 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       fb.emit(tab, 'Page.javascriptDialogOpening', { type, message, url: tab.url });
       return tab.dialogAnswer === true;
     },
+    /** A link the page follows (a click): a new history entry, then the navigation's CDP events. */
+    async follow(tab, url, { transition = 'link' } = {}) {
+      tab.history = tab.history.slice(0, tab.index + 1).concat(url);
+      tab.transitions = [...(tab.transitions || []).slice(0, tab.index + 1)];
+      tab.transitions[tab.history.length - 1] = transition;
+      tab.index = tab.history.length - 1;
+      fb.loads = [...(fb.loads || []), url];
+      await fb.navigateTab(tab, url);
+    },
     /** Simulates a page navigation with the CDP events Chrome sends. */
     async navigateTab(tab, url, { title } = {}) {
       const spec = fb.routes[url] || { title: title || url };
@@ -267,7 +276,8 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         if (el.desc?.looksSecret) return { error: 'secret' };
         if (el.desc?.options) {
           const opt = el.desc.options.find((o) => o.toLowerCase().includes(String(args.value).toLowerCase()));
-          if (!opt) return { error: `Error: ${args.ref} has no option "${args.value}".` };
+          // (As the page agent: the option texts, page content, come separately.)
+          if (!opt) return { error: `Error: ${args.ref} has no option "${args.value}".`, options: el.desc.options.slice(0, 15) };
           el.value = opt;
           el.onChange?.(page, fb, tab, opt);
           return { text: `Selected "${opt}" in ${args.ref}.` };
@@ -303,6 +313,10 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         }
         return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0, intact: true };
       }
+      case 'scrollKey':
+        // Jarvis scrolls the page itself for a scrolling key (no key event reaches the page).
+        fb.scrolled = [...(fb.scrolled || []), { key: args.key, repeat: args.repeat }];
+        return { ok: true, moved: true, x: 0, y: 40 };
       case 'scrollToRef': {
         const el = page.refs.get(args.ref);
         if (!el) return { error: `Error: ${args.ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
@@ -352,7 +366,16 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       case 'Runtime.addBinding':
       case 'Runtime.releaseObjectGroup':
       case 'Fetch.enable':
+      case 'DOM.disable':
         return {};
+      case 'DOM.getDocument': {
+        // The whole document as the debugger sees it: closed shadow roots included
+        // (page.closedShadows of them, plus Jarvis's own control bar when it is shown).
+        const hosts = [];
+        for (let i = 0; i < (page.closedShadows || 0); i++) hosts.push({ nodeName: 'X-WIDGET', localName: 'x-widget', shadowRoots: [{ shadowRootType: 'closed', children: [] }] });
+        if (tab.mode && tab.mode !== 'hidden') hosts.push({ nodeName: 'JARVIS-CONTROL-OVERLAY', localName: 'jarvis-control-overlay', shadowRoots: [{ shadowRootType: 'closed', children: [] }] });
+        return { root: { nodeName: '#document', children: [{ nodeName: 'HTML', localName: 'html', children: [{ nodeName: 'BODY', localName: 'body', children: hosts }] }] } };
+      }
       case 'DOM.getBoxModel': {
         const el = [...OBJECTS.values()].find((e) => e && 1000 + targetIdOf(e) === params.backendNodeId);
         if (!el) throw new Error('No node with given id found');

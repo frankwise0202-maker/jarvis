@@ -72,18 +72,22 @@ You are always in charge:
 ### Approving steps
 
 Jarvis looks at pages, reads them, scrolls, opens pages on sites you allowed and follows ordinary
-links within them without asking. **Every other step waits for you**: a click on a button,
-typing, a key press, picking from a list, ticking a box, dragging, answering a page's "Are you
-sure?", saving a download. The side panel shows a card with **Approve** and **Cancel**. It names
-the element and its visible text, the item it belongs to (for example the product and price in the
-same row) or how many items are selected, the site, where a click leads, and, for anything with
-consequences, what kind of action it is (a purchase, sending, deleting…).
+links within them without asking. A link or an address whose words say it does something (like
+`/orders/7/cancel`, `?add-to-cart=42` or `/act/delete`, also when the letters are disguised as
+`%64elete`) is not ordinary: it asks first, showing the address. **Every other step waits for
+you**: a click on a button, typing, a key press, picking from a list, ticking a box, dragging,
+answering a page's "Are you sure?", saving a download. The side panel shows a card with
+**Approve** and **Cancel**. It names the element and its visible text, the item it belongs to
+(for example the product and price in the same row) or how many items are selected, the site,
+where a click leads, and, for anything with consequences, what kind of action it is (a purchase,
+sending, deleting…).
 
 - One **Approve** covers that one step, on that one element, once. If the page changes while you
   decide (another product behind the button, a different selection, another page), Jarvis
   doesn't do it.
 - **Cancel** means it won't happen: Jarvis stops that step and everything it had lined up after
-  it, doesn't try another way, and isn't allowed that element or that address again in the task.
+  it, doesn't try another way, and isn't allowed that element or that address again in the task
+  (however the address is written, and also by opening it directly).
   For purchases, sending, posting, deleting, account changes, accepting terms, downloads, keyboard
   shortcuts and boxes from other sites, Cancel also covers every other such step on that site for
   the rest of the task.
@@ -93,8 +97,9 @@ Jarvis may always use**, each site you chose **Always for this site** for has a 
 default: *Let Jarvis act on <site> without asking for everyday steps*. When it is on, these go
 without asking on that site: typing in a search box and searching, pages of results ("Next", "2",
 "Show more"), filters and sorting. Nothing else does: adding to a cart, buying, paying, sending,
-posting, deleting, account or security changes, downloads and anything Jarvis can't clearly tell
-still ask, every time.
+posting, deleting, account or security changes, downloads, a "Show more" link whose address does
+something, a search sent to another window, and anything Jarvis can't clearly tell still ask,
+every time.
 
 ### What Jarvis can do
 
@@ -121,10 +126,13 @@ Jarvis follows these rules whatever a web page says.
    panel asks: **Allow once** (this task only), **Always for this site**, or **Deny**. You can
    remove "always" sites in Settings. This also covers going back to an earlier page, a link to
    another site (asked before the click), and boxes on a page that come from another site, also
-   boxes inside boxes. While Jarvis works in a tab, the page can't load a site you denied there:
-   links, scripts and redirects that would open it in the tab are stopped before anything is sent
-   to it. Sites follow the Public Suffix List, so on hosting services where everyone gets an
-   address (like `you.ngrok.io` or `you.duckdns.org`), each address is its own site.
+   boxes inside boxes, and where a form goes when Jarvis presses Enter in it (asked before the
+   key). While Jarvis works in a tab, the page can't load a site you denied there, in the tab or
+   in a box on it: links, scripts, redirects and forms that would open it are stopped before
+   anything is sent to it. A page that sends a form, or opens an address that does something, by
+   itself (with no step you approved behind it, such as a "processing" page that places an order)
+   asks you first. Sites follow the Public Suffix List, so on hosting services where everyone gets
+   an address (like `you.ngrok.io` or `you.duckdns.org`), each address is its own site.
 3. **It asks before every step that changes something.** Nothing Jarvis does to a page goes
    ahead without your **Approve** (see [Approving steps](#approving-steps)), except reading,
    scrolling, opening pages on sites you allowed, following ordinary links within them, and the
@@ -134,15 +142,23 @@ Jarvis follows these rules whatever a web page says.
    - Steps with consequences are marked on the card: buying or paying, placing an order, sending a
      message, posting, deleting, changing account or security settings, accepting terms, and
      downloading files.
-   - An "Are you sure?" pop-up from a site is always shown to you with its exact text. Approve
-     answers OK; Cancel, or no answer within 90 seconds, answers Cancel. Jarvis never answers one
-     itself. Simple notices ("Saved.") are acknowledged; pop-ups that ask for text are dismissed.
+   - An "Are you sure?" pop-up from a site is always shown to you with its exact text. So that the
+     page never freezes waiting for you (which would also freeze the bar's Stop and Esc), Jarvis
+     answers Cancel at once and asks you right after the step: Approve has Jarvis do that same
+     step again and answer OK this time; Cancel leaves it there. Jarvis never answers OK by itself.
+     Simple notices ("Saved.") are acknowledged; pop-ups that ask for text are dismissed.
    - **Downloads**: while a task runs, a file a page starts to download waits for you (its name,
      size and site); Cancel, Stop or the end of the task cancels it, so nothing is saved. Your own
      downloads, outside a task or during Take over, are not touched.
-   - Jarvis never reloads a page that was the result of a sent form (that could send it
-     twice), never chooses from a list or a set of options with arrow or letter keys (it picks the
-     option, and asks), and never pastes, copies or cuts with your clipboard.
+   - Jarvis never reloads, or goes back or forward to, a page that was the result of a sent form
+     or of a step you approved (a one-click "Buy now" link), and never opens that address again
+     itself: that could do it twice. It never chooses from a list or a set of options with arrow or
+     letter keys (it picks the option, and asks), and never pastes, copies or cuts with your
+     clipboard.
+   - Arrow, Page Up/Down, Home and End keys pressed while nothing on the page has the focus only
+     scroll the page: Jarvis scrolls it itself and the page never gets the key (some pages act on
+     arrow keys, like a dating app's "like"). On a button, a list or anything else they ask like any
+     other key; in a text box they just move the cursor.
 4. **It never types or shows your secrets.** Jarvis refuses to type into password, card number,
    security code, PIN, one-time code and ID number fields, also ones tucked inside page components,
    and doesn't type into boxes embedded from another site at all. What is in such fields is never
@@ -179,8 +195,22 @@ matter, and use Take over or Stop if something looks wrong.
   may look like an ordinary step. The card always shows what Jarvis can see: the element, its
   text, the item it belongs to and where it leads.
 - **An approved step does what the site makes it do.** Approve covers that click on that element;
-  what the site does when it is clicked (and anything its own pages do afterwards) is up to the
-  site. Its own "Are you sure?" pop-ups still come to you.
+  what the site does when it is clicked (and what its pages do in the next few seconds) is up to
+  the site. Its own "Are you sure?" pop-ups still come to you.
+- **Links are judged by their address and wording.** A link whose address or label says it does
+  something asks; a site whose plain-looking addresses act when opened (say, `/item/42` deleting
+  the item) is not recognised, so such a link opens without asking on a site you allowed.
+- **New windows.** A window a page opens sends its first request from the new tab, where Jarvis
+  can't hold it. Jarvis checks the address and its site before the click or key that opens one
+  (and asks), and closes at once a new window that goes to a site you denied, but a page's own
+  script can still open a window to a site you haven't been asked about.
+- **What is selected.** Jarvis sees ticked boxes and selected rows in the page, its components and
+  its frames from the same site. When part of a page is hidden from Jarvis (a closed component, a
+  box from another site), it can't know what is selected there: an approval of a toolbar button
+  on such a page is asked again at the click.
+- **"Are you sure?" answers.** Jarvis answers a page's pop-up with Cancel at once and asks you
+  afterwards. A site whose Cancel itself does something (a rare trick) does that before you are
+  asked.
 - Parts of a page built as closed components, and buttons drawn on a canvas, can't be read: Jarvis
   doesn't see their text, so clicks there ask you, named as well as Jarvis can.
 - Boxes embedded from another site (videos, maps, chat or payment widgets) are opaque to Jarvis:
@@ -192,6 +222,9 @@ matter, and use Take over or Stop if something looks wrong.
   keeps hiding the bar; **⌘⇧.** and the side panel's **Stop** always work, whatever the page does.
 - Esc may not stop Jarvis on a page that was already open when it started and swallows the key,
   or inside a box embedded from another site: use ⌘⇧. or the side panel.
+- Jarvis turns scrolling keys into scrolling only when nothing on the page has the focus. A page
+  that acts on such keys while one of its own controls has the focus is asked about, but its card
+  looks like an ordinary key press: read where it lands.
 - The everyday-steps switch trusts the page's own labels for what is a search box, a filter or a
   page of results. Leave it off for sites where that matters.
 
@@ -259,6 +292,7 @@ the pages that attack the safety checks).
   - Safety modules: `actions.js` (deny by default: which steps may go without asking, and the
     everyday-steps allowlist), `guard.js` (what a step means: purchases, sending, deleting,
     account changes, dialogs, secret fields, and the per-task approvals bound to one element),
+    `address.js` (addresses decoded and normalised, and whether one says it acts),
     `injection.js`, `sites.js` (sites by the Public Suffix List: a vendored snapshot in
     `extension/vendor/`, compiled into `psl-data.js` by `node extension/build/psl.mjs`) and
     `limits.js`.

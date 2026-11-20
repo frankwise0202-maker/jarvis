@@ -349,7 +349,7 @@ function pageFor(host, url, port, state) {
          </script>`,
       );
     // ---- RT2-A10: money and 2FA wording ----------------------------------------------------------
-    case 'rbank/transfer':
+    case 'rbank/review': // the transfer review (an address saying "transfer" asks before navigate opens it: RT3-01)
       return doc(
         'Review transfer — RBank',
         `<h1>Review your transfer</h1>

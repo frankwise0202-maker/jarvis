@@ -168,7 +168,7 @@ const otherButtons = {
     const prompts = watchPrompts(run);
     const seen = {};
     mock.script([
-      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/buy-link') } }, read] }),
+      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/plan-link') } }, read] }),
       (ctx) => ({ calls: [{ name: 'right_click', input: { target: ref(ctx, /link "Buy now"/) } }] }),
       (ctx) => {
         seen.right = ctx.results[0];
@@ -187,7 +187,8 @@ const otherButtons = {
     assert(/Right-click "Buy now"/.test(body) && /purchase/.test(body), body);
     assert(seen.right.isError && /^Blocked/.test(seen.right.text), seen.right.text);
     // The purchase was declined: the middle click (the same address in a new tab) is blocked too.
-    assert(seen.middle.isError && /^Blocked: the owner already declined/.test(seen.middle.text), seen.middle.text);
+    // (Refused by the declined address the right click would have opened, or by the declined kind.)
+    assert(seen.middle.isError && /^Blocked: the owner (already declined|declined a step that opens this address)/.test(seen.middle.text), seen.middle.text);
     assert(prompts.confirms().length === 1, 'no second prompt after Cancel');
     assert(events(run, '/api/order').length === 0 && sites.state.orders.length === 0, 'nothing bought');
     assert((await run.attachedTabs()).length <= 1, 'no new tab');
@@ -377,7 +378,7 @@ const dialogs = {
     const q2 = await run.decide('confirm', 'cancel'); // the page: "Permanently delete your account …?"
     await run.waitStatus('done');
     assert(/^The page safe\.localhost\/pro-confirm asks: “Place your order for the Pro plan/.test(q1), q1);
-    assert(/^The page safe\.localhost\/profile asks: “Permanently delete your account/.test(q2) && /as Jarvis is clicking "Remove"/.test(q2), q2);
+    assert(/^The page safe\.localhost\/profile asks: “Permanently delete your account/.test(q2) && /as Jarvis (is|was) clicking "Remove"/.test(q2), q2);
     assert(/the owner answered OK/.test(seen.buy.text), seen.buy.text);
     assert(/the owner answered Cancel/.test(seen.remove.text), seen.remove.text);
     assert(events(run, '/api/delete-account').length === 0, 'the account was not deleted');
@@ -489,7 +490,7 @@ const swaps = {
     const { mock } = run.server;
     const seen = {};
     mock.script([
-      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/aria-buy') } }, read] }),
+      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/aria-plan') } }, read] }),
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Add to wishlist"/) } }] }),
       () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/swap') } }, read] }),
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Save for later"/) } }] }),

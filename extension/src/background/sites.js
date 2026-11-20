@@ -2,6 +2,7 @@
 // that site permissions are keyed by. Pure functions, no chrome.* access.
 
 import PSL_RULES from './psl-data.js';
+import { decodeDeep } from './address.js';
 
 // Sites follow the Public Suffix List, as Chrome does (a dated snapshot, both its ICANN and its
 // private sections: see extension/build/psl.mjs). Hosting and tunnel services where strangers get
@@ -173,6 +174,24 @@ export function sanitizeTitle(title) {
     .replace(/\s+/g, ' ')
     .trim();
   return s.length > 300 ? `${s.slice(0, 299)}…` : s;
+}
+
+/**
+ * An address for the owner's prompt with its query (which often says what it does:
+ * "shop.example/product/42?add-to-cart=42"), decoded as the server reads it ("%64elete" shows
+ * "delete"), without the scheme or #fragment, invisible and direction-changing characters
+ * removed, shortened.
+ */
+export function showUrl(url, max = 90) {
+  try {
+    const u = new URL(url);
+    const path = u.pathname === '/' && !u.search ? '' : decodeDeep(u.pathname);
+    const query = u.search ? decodeDeep(u.search.replace(/\+/g, ' ')) : '';
+    const s = `${u.hostname.replace(/^www\./, '')}${path}${query}`.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '');
+    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+  } catch {
+    return String(url ?? '').slice(0, max);
+  }
 }
 
 /** A short, friendly form of a URL for step labels: "bestbuy.com/site/monitors". */

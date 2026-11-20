@@ -82,7 +82,7 @@ test('the everyday switch covers searching, pages of results, filters and sortin
   assert.equal(isSearchField({ tag: 'input', type: 'password', field: { type: 'password' }, role: 'textbox', form: { isSearch: true } }), false);
 });
 
-test('RT2-A04: keys that would change a select, a radio or a slider are refused; scrolling keys elsewhere need nothing', () => {
+test('RT2-A04: keys that would change a select, a radio or a slider are refused; scrolling keys with nothing focused or in a text field need nothing (elsewhere they ask, RT3-06)', () => {
   const select = { tag: 'select', role: 'combobox', name: 'Actions' };
   const radio = { tag: 'input', type: 'radio', role: 'radio', name: 'Disable two-factor authentication', isToggle: true };
   for (const k of ['d', 'End', 'Home', 'PageDown', 'ArrowDown', 'ArrowUp', 'shift+ArrowDown']) assert.equal(assessKey({ chord: chord(k), focus: select }).verdict, 'refuse', `select: ${k}`);
@@ -90,9 +90,15 @@ test('RT2-A04: keys that would change a select, a radio or a slider are refused;
   assert.match(assessKey({ chord: chord('ArrowDown'), focus: select }).text, /use form_input/);
   assert.equal(assessKey({ chord: chord('ArrowDown'), focus: { tag: 'input', type: 'range', role: 'slider' } }).verdict, 'refuse');
   assert.equal(assessKey({ chord: chord('ArrowDown'), focus: { tag: 'div', role: 'listbox' } }).verdict, 'refuse');
-  // Scrolling keys on the page, a link, a button or in a text field (the caret) need nothing.
-  for (const focus of [null, link('/x'), button('Help'), { tag: 'textarea', role: 'textbox', multiline: true }]) {
+  // Scrolling keys with nothing focused (Jarvis scrolls the page itself, sending no key) and in a
+  // text field (the caret) need nothing; on a focused link or button they ask like any key (RT3-06:
+  // pages bind arrows to actions).
+  for (const focus of [null, { tag: 'textarea', role: 'textbox', multiline: true }]) {
     for (const k of ['ArrowDown', 'PageDown', 'End', 'Home']) assert.equal(assessKey({ chord: chord(k), focus }).verdict, 'allow', `${k} on ${focus?.tag || 'the page'}`);
+  }
+  for (const k of ['ArrowDown', 'PageDown', 'End', 'Home']) assert.equal(assessKey({ chord: chord(k), focus: null }).scroll, true, `${k} on the page is scrolled, not sent`);
+  for (const focus of [link('/x'), button('Help')]) {
+    for (const k of ['ArrowDown', 'PageDown', 'End', 'Home']) assert.equal(assessKey({ chord: chord(k), focus }).verdict, 'ask', `${k} on ${focus.tag}`);
   }
   // In lists, menus and tabs, arrows move a selection: they ask like any other key.
   assert.equal(assessKey({ chord: chord('ArrowDown'), focus: { tag: 'li', role: 'option', name: 'Tax return.pdf' } }).verdict, 'ask');

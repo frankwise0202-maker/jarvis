@@ -162,7 +162,7 @@ test('finished tasks go to history (unless incognito)', async () => {
   assert.equal((await store.getHistory()).length, 1);
 });
 
-test('JS dialogs: alerts are accepted, prompt() and "Leave site?" never; every confirm() asks the owner (RT2-A07)', async () => {
+test('JS dialogs: alerts are accepted, prompt() and "Leave site?" never; every confirm() is answered Cancel at once and put to the owner (RT2-A07, RT3-09)', async () => {
   const { controller, mock, store, lastTask, waitFor } = await setup();
   await store.allowSiteAlways('shop.example');
   assert.equal(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Are you sure?' }), false, 'no task: dismissed');
@@ -178,24 +178,33 @@ test('JS dialogs: alerts are accepted, prompt() and "Leave site?" never; every c
   const t = controller.driver.get('tab-1');
   run.approvals.grant({ category: 'post', site: 'shop.example', tabId: 'tab-1', url: t.url, doc: t.docSeq, targetId: 5, ctx: '', selection: '0|', text: 'Post the status' });
   const ask = async (message, choice) => {
+    // The page is never held waiting for the owner (its own dialog would freeze Jarvis's bar and
+    // Esc): Cancel at once, and the owner is asked once the step is done (the executor).
     const answer = controller.dialogPolicy('tab-1', { type: 'confirm', message });
-    assert.equal(typeof answer?.then, 'function', 'the dialog waits for the owner');
+    assert.deepEqual(answer, { accept: false, deferred: true }, 'answered Cancel at once, left for the owner');
+    const asked = controller.askDialog(run, { toolId: 'tab-1', message }, { doing: 'Clicking "Remove"', rerun: true });
     const p = await waitFor(() => lastTask()?.prompt);
     controller.decide(p.id, choice);
-    return { ok: await answer, p };
+    return { ok: await asked, p };
   };
   const a = await ask('Are you sure?', 'cancel');
   assert.equal(a.ok, false, 'Cancel answers Cancel');
   assert.equal(a.p.kind, 'confirm');
-  assert.match(a.p.body, /^The page shop\.example asks: “Are you sure\?”/);
+  assert.match(a.p.body, /^The page shop\.example asks: “Are you sure\?” \(as Jarvis was clicking "Remove"\)/);
   assert.equal(run.approvals.live().length, 1, 'the approval was not used up');
   const b = await ask('Place your order for $279.99?', 'approve');
   assert.equal(b.ok, true, 'Approve answers OK');
   assert.equal(b.p.category, 'purchase');
+  // The owner's OK stands for that same question on that tab, once (Jarvis does the step again).
+  controller.policy(run).preApproveDialog({ toolId: 'tab-1', message: 'Place your order for $279.99?' });
+  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $9,999?' }), { accept: false, deferred: true }, 'another question is not covered');
+  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: true, asked: true });
+  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: false, deferred: true }, 'once');
   // Declined kinds are refused without asking again.
   const c = await ask('Delete this file?', 'cancel');
   assert.equal(c.ok, false);
   assert.equal(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Delete everything?' }), false, 'declined: no second question');
+  assert.equal(run.approvals.live().length, 1, 'the approval was never used up');
   await controller.stop('panel');
   await running;
 });

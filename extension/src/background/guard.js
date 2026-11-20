@@ -20,6 +20,8 @@
 //
 // The descriptors come from the page agent (extension/src/page/agent.js, describe()).
 
+import { addressKey } from './address.js';
+
 export const CATEGORIES = Object.freeze({
   purchase: 'a purchase or payment',
   send: 'sending a message or email',
@@ -583,19 +585,30 @@ export function pageKey(url) {
 }
 
 /**
+ * A selection key that cannot be trusted: the page has parts Jarvis cannot read (a closed shadow
+ * root, a frame from another site) where items could be selected. Such a key never matches.
+ */
+export const UNKNOWN_SELECTION = '?';
+export const isUnknownSelection = (key) => String(key || '').startsWith(UNKNOWN_SELECTION);
+
+/**
  * Per-task approvals and refusals.
  *
  * An approval (from request_confirmation) is bound to one element: the same element (by identity,
  * in the same document, tab and page it was asked on), with the same item around it (its row, card
  * or form: the product's name and price, the message's subject) and the same items selected on the
- * page, once, within a minute. Anything else asks the owner again. The guard's own Approve covers
- * only the step it was shown for and is never stored here.
+ * page, once, within a minute. Anything else asks the owner again; so does a page where Jarvis
+ * cannot see everything that could be selected (an unknown selection never matches). The guard's
+ * own Approve covers only the step it was shown for and is never stored here.
  *
  * A refusal of a consequential kind of action (a purchase, sending, posting, deleting, an account
  * change, accepting terms, a download, a box from another site) blocks that kind on that site for
  * the rest of the task without asking again (one made while no site was open blocks it
  * everywhere: that direction fails safe). A refusal of any other step blocks that element, and the
- * address a link of it opens.
+ * address it would open (any site, this one included), in every spelling of it (addressKey).
+ *
+ * The addresses that approved consequential steps opened are remembered too: opening one again
+ * (reload, back, forward, navigate, the page itself) would repeat what the owner approved once.
  */
 export class Approvals {
   constructor(now = () => Date.now()) {
@@ -604,6 +617,7 @@ export class Approvals {
     this.declined = new Set();
     this.declinedElements = new Set();
     this.declinedHrefs = new Set();
+    this.actionResults = new Map(); // addressKey -> what the approved step was ({ category, label })
   }
 
   /**
@@ -628,18 +642,39 @@ export class Approvals {
    */
   consume({ site, tabId, url, doc, targetId, ctx = '', selection = '' } = {}) {
     if (!site || targetId === undefined || targetId === null) return null;
-    const match = this.live().find((a) => a.site === site && a.tabId === String(tabId || '') && a.page === pageKey(url) && a.doc === doc && a.targetId === String(targetId) && a.ctx === String(ctx || '') && a.selection === String(selection || ''));
+    // What is selected must be known, now and when the owner approved (fail closed).
+    if (isUnknownSelection(selection)) return null;
+    const match = this.live().find((a) => a.site === site && a.tabId === String(tabId || '') && a.page === pageKey(url) && a.doc === doc && a.targetId === String(targetId) && a.ctx === String(ctx || '') && a.selection === String(selection || '') && !isUnknownSelection(a.selection));
     if (!match) return null;
     match.uses -= 1;
     return match;
+  }
+
+  /** Whether a live approval is bound to this element (Jarvis then checks the selection closely). */
+  hasBinding({ tabId, doc, targetId } = {}) {
+    return this.live().some((a) => a.tabId === String(tabId || '') && a.doc === doc && a.targetId === String(targetId));
   }
 
   /** Records a refusal: the kind of action on the site (consequential kinds), the element, the address. */
   decline(category, site, { element = '', href = '' } = {}) {
     if (STICKY_DECLINES.has(category)) this.declined.add(`${category}|${site || '*'}`);
     if (element) this.declinedElements.add(String(element));
-    const key = href ? pageKey(href) : '';
-    if (key) this.declinedHrefs.add(key);
+    for (const h of [].concat(href || [])) {
+      const key = addressKey(h);
+      if (key) this.declinedHrefs.add(key);
+    }
+  }
+
+  /** An approved consequential step opened `url`: opening it again would repeat that step. */
+  noteActionResult(url, { category = 'change', label = '' } = {}) {
+    const key = addressKey(url);
+    if (key) this.actionResults.set(key, { category, label: String(label || '').slice(0, 80) });
+  }
+
+  /** What approved step opened `url` before ({ category, label }), or null. */
+  actionResult(url) {
+    const key = addressKey(url);
+    return (key && this.actionResults.get(key)) || null;
   }
 
   isDeclined(category, site) {
@@ -650,9 +685,9 @@ export class Approvals {
     return !!key && this.declinedElements.has(String(key));
   }
 
-  /** Whether the owner declined a step that would have opened this address (navigate must not open it either). */
+  /** Whether the owner declined a step that would have opened this address, however it is written (navigate must not open it either). */
   isDeclinedHref(url) {
-    const key = pageKey(url);
+    const key = addressKey(url);
     return !!key && this.declinedHrefs.has(key);
   }
 }

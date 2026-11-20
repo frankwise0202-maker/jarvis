@@ -19,8 +19,9 @@ import { startExtensionTestServer } from '../server.mjs';
 import { Run, loadPlaywright } from './harness.mjs';
 import { SCENARIOS } from './scenarios.mjs';
 import { RT2_SCENARIOS } from './scenarios-rt2.mjs';
+import { RT3_SCENARIOS } from './scenarios-rt3.mjs';
 
-const ALL = [...SCENARIOS, ...RT2_SCENARIOS];
+const ALL = [...SCENARIOS, ...RT2_SCENARIOS, ...RT3_SCENARIOS];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(HERE, '..', 'artifacts');

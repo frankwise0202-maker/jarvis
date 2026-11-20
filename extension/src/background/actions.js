@@ -2,22 +2,27 @@
 // exact step. Pure functions (no chrome.* access); the executor asks them before every input.
 //
 //   read      looking (screenshot, zoom, read_page, find, get_page_text), scrolling (the scroll
-//             member, and bare scrolling keys anywhere but in lists, radios, sliders and other
-//             controls those keys change), moving the pointer, waiting, the tab list, a blank new
-//             tab: never asks.
+//             member; arrow, Page Up/Down, Home and End keys pressed while nothing has the
+//             focus, which Jarvis turns into scrolling without sending the key to the page),
+//             moving the caret in a text field, moving the pointer, waiting, the tab list, a blank
+//             new tab: never asks.
 //   allow     plain navigation within sites the owner allowed: navigate to an address on an
-//             allowed site, or one plain click on an ordinary link to another page of the same
-//             site (http(s); no download, no new window, no script link, no action words).
+//             allowed site whose decoded words don't say it acts, or one plain click on an
+//             ordinary link to another page of the same site (http(s); no download, no new
+//             window, no script link, no action words in its decoded address or its label, no
+//             markup that makes it an action such as data-method or an add-to-cart class).
 //   ask       everything else that can change a page or the owner's accounts: every other click,
-//             typing, every other key, drags and mouse presses, form_input, choosing options,
-//             ticking boxes, the page's own "Are you sure?" questions, downloads, new windows,
-//             closing the owner's tabs. The owner approves that exact step in the side panel, once.
+//             typing, every other key (arrows on a focused control too), drags and mouse presses,
+//             form_input, choosing options, ticking boxes, the page's own "Are you sure?"
+//             questions, downloads, new windows, closing the owner's tabs, and opening an address
+//             that says it acts. The owner approves that exact step in the side panel, once.
 //   everyday  per site, the owner may let Jarvis skip asking for a short list of everyday steps
 //             (off unless turned on in Settings): typing into a search box and submitting the
 //             search, pages of results ("Next", "2", "Load more"), and filter and sort controls.
 //             Anything the guard recognises as consequential (payments, sending, posting,
-//             deleting, account or security changes, downloads, accepting terms), and anything
-//             that does not fit that list exactly, still asks.
+//             deleting, account or security changes, downloads, accepting terms), any link the
+//             plain-link test turned down, a form that opens in another window or frame, and
+//             anything that does not fit that list exactly, still asks.
 
 import {
   FILE_LIKE, RISKY_FILE, SETTINGS_PATH,
@@ -26,12 +31,35 @@ import {
 } from './guard.js';
 import { isClipboardChord, isModifierChord, isScrollChord } from './keys.js';
 import { siteOf } from './sites.js';
+import { classifyAddress } from './address.js';
+import { inlineUntrusted } from './injection.js';
 
 const lower = (v) => String(v ?? '').toLowerCase();
 
-// A link whose address or wording says it does something (an old-style GET action link).
-const ACTION_URL = /(^|[/?&=._-])(delete|remove|destroy|unsubscribe|cancel|confirm|approve|accept|decline|reject|logout|log-?out|sign-?out|signout|buy|purchase|checkout|order|pay|payment|transfer|withdraw|send|post|publish|share|install|download|vote|like|follow|subscribe|act|action|do|exec|execute|token|nonce|csrf)([/?&=._-]|$)/i;
-const ACTION_WORDS = /\b(delete|remove|archive|trash|unsubscribe|cancel|confirm|approve|accept|decline|reject|sign out|log out|logout|buy|purchase|checkout|check out|order|pay|send|post|publish|share|install|download|vote|like|follow|subscribe|transfer|withdraw|book|reserve|apply|join|leave|block|report|mute|mark as|empty)\b/;
+// A link whose wording says it does something. (Its address is read by classifyAddress: decoded,
+// word by word, in the path and the query.)
+const ACTION_WORDS = /\b(delete|remove|destroy|erase|clear|archive|trash|unsubscribe|cancel|confirm|approve|accept|decline|reject|sign out|log out|logout|buy|purchase|checkout|check out|order|pay|send|post|publish|share|install|download|vote|upvote|downvote|like|unlike|follow|unfollow|subscribe|transfer|withdraw|donate|bid|redeem|claim|book|reserve|apply|join|leave|block|ban|kick|report|flag|mute|unmute|mark as|empty|add|add to cart|add to bag|add to basket|save|update|restore|revoke|enable|disable|activate|deactivate|retweet|repost|rsvp|rate)\b/;
+// Markup that turns a link into an action: Rails/Turbo links that send DELETE or POST and ask "Are
+// you sure?", and shop themes' add-to-cart links (WooCommerce "add_to_cart_button").
+const ACTION_CLASS = /(^|[\s_-])(add[_-]?to[_-]?cart|ajax[_-]add[_-]to[_-]cart|add[_-]?to[_-]?bag|buy[_-]?now|delete|remove|destroy)([\s_-]|$)/i;
+
+/** A javascript: address that runs code (javascript:void(0) and friends do nothing: like "#"). */
+function scriptHref(href) {
+  const h = String(href ?? '').trim();
+  if (!/^javascript:/i.test(h)) return false;
+  const code = h.replace(/^javascript:/i, '').replace(/\s+/g, '');
+  return !/^(void\(?0\)?;?|;|undefined;?|false;?|null;?|)$/i.test(code);
+}
+
+/** Why a link's markup makes it an action, or '' (data-method, data-confirm, an add-to-cart class, ping). */
+function linkMarkupAction(d) {
+  const method = lower(d?.linkMethod);
+  if (method && method !== 'get') return `it sends a ${method.toUpperCase()} request`;
+  if (d?.linkConfirm) return 'the page asks "Are you sure?" before it';
+  if (ACTION_CLASS.test(String(d?.linkClass || ''))) return 'the page marks it as an action';
+  if (d?.ping) return 'it reports the click to another address';
+  return '';
+}
 
 const PAGINATION = /^(next|next page|previous|previous page|prev|page \d{1,4}|\d{1,4}|first|first page|last|last page|older|newer|older posts|newer posts|more results|show more results)$/;
 const MORE = /^(show more|load more|see more|view more|more results|show more results|load more results)$/;
@@ -44,9 +72,6 @@ const SORT_FILTER_FIELD = /\b(sort|sort by|sorted by|order by|filter|filters|ref
 // click says exactly what is chosen, and asks).
 const CHOICE_ROLES = new Set(['listbox', 'radio', 'radiogroup', 'menuitemradio', 'slider', 'spinbutton']);
 const ARROW_INPUT_TYPES = new Set(['radio', 'checkbox', 'range', 'number', 'date', 'datetime-local', 'month', 'week', 'time', 'color']);
-// Lists, menus, tabs and grids, where arrows move a selection (an app's own navigation): there
-// those keys are steps like any other (they ask), not scrolling.
-const NAV_ROLES = new Set(['option', 'menuitem', 'menuitemcheckbox', 'menu', 'menubar', 'tab', 'tablist', 'grid', 'gridcell', 'treegrid', 'tree', 'treeitem', 'row', 'scrollbar', 'switch', 'checkbox']);
 
 /** A control whose chosen value arrow keys and typed letters change (see CHOICE_ROLES). */
 export function arrowsChangeChoice(d) {
@@ -60,11 +85,6 @@ export function arrowsChangeChoice(d) {
   if (tag === 'input') return role === 'slider' || role === 'spinbutton';
   if (role === 'combobox') return true; // not a text input: a custom select
   return CHOICE_ROLES.has(role);
-}
-
-/** A list, menu, tab or grid item: arrow keys move its selection (they don't scroll). */
-function arrowsMoveSelection(d) {
-  return !!d && typeof d === 'object' && NAV_ROLES.has(lower(d.role)) && lower(d.tag) !== 'input';
 }
 
 /** A field for searching the site (never a secret, never in a payment or sign-in form). */
@@ -84,7 +104,10 @@ export function isSearchField(d) {
 /** Submitting the search the field belongs to is plain navigation: a GET search form, or none. */
 function searchSubmitIsPlain(d) {
   if (!d.form) return true;
-  return !!d.form.isSearch && lower(d.form.method || 'get') !== 'post' && !d.form.hasCardField && !d.form.hasPasswordField;
+  // (The default button's formmethod and formtarget count too: a search sent in another window or
+  // frame, or by POST, is not plain navigation.)
+  const s = formSubmission(d);
+  return !!d.form.isSearch && lower(s?.method || d.form.method || 'get') !== 'post' && !targetElsewhere(s?.target) && !d.form.hasCardField && !d.form.hasPasswordField;
 }
 
 const labelOf = (d) => normalizeLabel(d?.name || d?.text || d?.value || '');
@@ -127,8 +150,28 @@ export function destinationOf(d, pageUrl) {
 }
 
 /**
+ * Whether opening `url` itself (navigate, a page load) looks like more than reading a page: an
+ * address whose words say it acts (classifyAddress), an installer or a file. Returns
+ * { category, word, reason, file? } or null. The same address rules as a plain link's.
+ */
+export function addressAction(url) {
+  let path = '';
+  try {
+    path = new URL(String(url)).pathname;
+  } catch {
+    return null;
+  }
+  if (RISKY_FILE.test(path)) return { category: 'download', word: path.split('/').pop() || 'a file', reason: 'downloading a file (an app or installer)', file: true };
+  const a = classifyAddress(url);
+  if (a) return { category: a.category, word: a.word, reason: a.category === 'change' ? `its address says it does something ("${a.word}")` : `its address says "${a.word}"` };
+  if (FILE_LIKE.test(path)) return { category: 'change', word: path.split('/').pop() || 'a file', reason: 'opening a file (it may download)', file: true };
+  return null;
+}
+
+/**
  * An ordinary link whose click only opens another page (a GET), for "allow": its destination, or
- * '' when the click may do more (a download, a new window, a script link, action words).
+ * '' when the click may do more (a download, a new window, a script link, a file, an address or
+ * wording that says it acts, markup that makes it an action).
  */
 export function plainLinkDestination(d, pageUrl) {
   if (!d || typeof d !== 'object') return '';
@@ -136,18 +179,37 @@ export function plainLinkDestination(d, pageUrl) {
   if (tag !== 'a' && tag !== 'area') return '';
   if (lower(d.role) && lower(d.role) !== 'link') return '';
   if (d.download || d.targetBlank || isNonNavigatingLink(d)) return '';
+  if (linkMarkupAction(d)) return '';
   const dest = destinationOf(d, pageUrl);
   if (!dest) return '';
-  const u = new URL(dest);
-  if (RISKY_FILE.test(u.pathname) || FILE_LIKE.test(u.pathname)) return '';
-  if (ACTION_URL.test(u.pathname) || ACTION_URL.test(u.search)) return '';
+  if (addressAction(dest)) return '';
   if (ACTION_WORDS.test(normalizeLabel(`${d.text || ''} ${d.name || ''}`))) return '';
   return dest;
 }
 
+/**
+ * A link the "everyday steps" switch may judge by its label ("Next", "Load more"): never one whose
+ * address or markup failed the plain-link test (an action address, a download, a new window, code
+ * in a javascript: address, an action marked up). A link that goes nowhere ("#", javascript:void(0))
+ * is run by the page's script, like a button.
+ */
+function everydayLinkOk(d) {
+  if (!isLink(d)) return true;
+  if (d.download || d.targetBlank || scriptHref(d.href) || linkMarkupAction(d)) return false;
+  return isNonNavigatingLink(d);
+}
+
 const ask = (extra = {}) => ({ verdict: 'ask', ...extra });
 const allow = (why, extra = {}) => ({ verdict: 'allow', why, ...extra });
-const refuse = (text) => ({ verdict: 'refuse', text });
+const refuse = (text, extra = {}) => ({ verdict: 'refuse', text, ...extra });
+
+/** A page label inside Jarvis's own sentence: marked as page content (the executor scans `quoted`). */
+const pageLabel = (name) => inlineUntrusted(String(name).slice(0, 60)).text;
+
+/** A text field, where arrows, Home/End and Page Up/Down only move the caret. */
+function isCaretField(d) {
+  return !!d && isEditableFocus(d) && lower(d.tag) !== 'select' && !arrowsChangeChoice(d);
+}
 
 /**
  * A click (or a press) on element `d`: { verdict: 'allow' | 'ask', why?, guard (what the guard
@@ -164,12 +226,67 @@ export function assessClick({ desc, button = 'left', count = 1, modifiers = 0, p
   if (plain) {
     const link = plainLinkDestination(d, pageUrl);
     if (link && siteOf(link) === siteOf(pageUrl)) return allow('a link to a page on this site', { guard: null, dest: link });
-    if (everyday && !link) {
+    // Everyday steps go by a control's label: never for a link the plain-link test turned down.
+    if (everyday && !link && everydayLinkOk(d) && !submitsElsewhere(d)) {
       const why = isSearchField(d) ? 'a search box' : everydayTarget(d, pageUrl);
       if (why) return allow(why, { guard: null, dest, everyday: true });
     }
   }
   return ask({ guard: null, dest });
+}
+
+/** A submit button whose form opens in a new window or a frame (Jarvis cannot follow that load). */
+function submitsElsewhere(d) {
+  return !!(d?.isSubmit && d.form && targetElsewhere(d.formTarget || d.form.target));
+}
+
+/** A link or form target other than this tab's own page: a new window or a named frame. */
+export function targetElsewhere(target) {
+  const t = lower(target).trim();
+  return !!t && t !== '_self' && t !== '_top' && t !== '_parent';
+}
+
+/**
+ * What submitting the form `focus` (a field, or a submit button) belongs to would open:
+ * { url, method, target } from its default (or that) button's formaction/formmethod/formtarget and
+ * the form's action, method and target; null when it has no form.
+ */
+export function formSubmission(focus, pageUrl = '') {
+  const f = focus?.form;
+  if (!f || typeof f !== 'object') return null;
+  const own = focus.isSubmit ? { action: focus.formAction, method: focus.formMethod, target: focus.formTarget } : { action: f.submitAction, method: f.submitMethod, target: f.submitTarget };
+  const raw = own.action || f.actionUrl || f.action || pageUrl || focus.pageUrl || '';
+  let url = '';
+  try {
+    const u = new URL(String(raw), pageUrl || focus.pageUrl || undefined);
+    url = /^https?:$/.test(u.protocol) ? u.href : '';
+  } catch {
+    url = '';
+  }
+  return { url, method: lower(own.method || f.method || 'get') || 'get', target: String(own.target || f.target || '') };
+}
+
+/**
+ * Where a key would send the browser: Enter on a link opens its address; Enter or Space on a
+ * submit button, and Enter in a form's field (or a line break typed into a one-line field),
+ * submit its form. { url, method, target, via: 'link' | 'form' } or null.
+ */
+export function keyDestination(chord, focus, pageUrl = '') {
+  if (!chord || !focus || typeof focus !== 'object') return null;
+  const k = chord.key?.key;
+  if (k !== 'Enter' && k !== ' ') return null;
+  if (isLink(focus) && !isNonNavigatingLink(focus)) {
+    if (k !== 'Enter') return null;
+    const url = destinationOf(focus, pageUrl);
+    return url ? { url, method: 'get', target: focus.targetBlank ? '_blank' : '', via: 'link' } : null;
+  }
+  // (Enter or Space on an ordinary button runs the page's script for it, like a click: no form.)
+  if (!focus.isSubmit && isButtonLike(focus)) return null;
+  if (focus.isSubmit || (k === 'Enter' && focus.form && !focus.multiline && !focus.isContentEditable && lower(focus.tag) !== 'textarea')) {
+    const s = formSubmission(focus, pageUrl);
+    return s && s.url ? { ...s, via: 'form' } : null;
+  }
+  return null;
 }
 
 /** Whether a key is part of typing into a search box (letters, deleting, moving, select all, Escape). */
@@ -187,19 +304,26 @@ function searchEditingChord(chord) {
  * null for the page itself): { verdict: 'allow' | 'ask' | 'refuse', why?, guard?, text? }.
  * Clipboard chords are refused before this (the executor), and so are keys into secret fields.
  */
-export function assessKey({ chord, focus = null, everyday = false, pageUrl = '' } = {}) {
+export function assessKey({ chord, focus = null, everyday = false } = {}) {
   if (!chord) return refuse('Error: no key.');
   if (isClipboardChord(chord)) return refuse("Refused: Jarvis never pastes, copies or cuts with the owner's clipboard (it may hold a password, a code or other private data). Use type with the exact text instead.");
   if (isModifierChord(chord)) return allow('a modifier key alone');
   const k = chord.key.key;
+  const quoted = focus?.name ? [String(focus.name)] : [];
+  const where = focus?.name ? pageLabel(focus.name) : 'this control';
   if (isScrollChord(chord)) {
     if (focus && arrowsChangeChoice(focus)) {
-      return refuse(`Error: ${k} in ${focus.name ? `"${String(focus.name).slice(0, 60)}"` : 'this control'} would change what is chosen there, not scroll. To choose an option or a radio button use form_input, or click it (the owner is asked first when it matters); arrow keys and letters are not used there.`);
+      return refuse(`Error: ${k} in ${where} would change what is chosen there, not scroll. To choose an option or a radio button use form_input, or click it (the owner is asked first when it matters); arrow keys and letters are not used there.`, { quoted });
     }
-    if (!focus || !arrowsMoveSelection(focus)) return allow('a scrolling key');
+    // In a text field these keys only move the caret.
+    if (focus && isCaretField(focus)) return allow('moving the caret');
+    // With nothing focused Jarvis scrolls the page itself: no key reaches the page (pages bind
+    // arrow keys to actions: a like on a swipe app, nudging the selected object in an editor).
+    if (!focus) return allow('a scrolling key', { scroll: true });
+    // On anything else (a button, a link, a list, a canvas, a game) it is a step like any other key.
   }
   if (focus && arrowsChangeChoice(focus) && typeof chord.key.text === 'string' && k !== 'Enter' && k !== ' ' && !(chord.mods || []).some((m) => m === 'ctrl' || m === 'meta' || m === 'alt')) {
-    return refuse(`Error: typing "${k}" in ${focus.name ? `"${String(focus.name).slice(0, 60)}"` : 'this control'} would jump to another option. To choose an option use form_input (the owner is asked first when it matters).`);
+    return refuse(`Error: typing "${k}" in ${where} would jump to another option. To choose an option use form_input (the owner is asked first when it matters).`, { quoted });
   }
   const modified = (chord.mods || []).includes('ctrl') || (chord.mods || []).includes('meta');
   const commandLike = (chord.mods || []).some((m) => m === 'ctrl' || m === 'meta' || m === 'alt');

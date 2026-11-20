@@ -16,6 +16,7 @@
 // it again on the current document, and then calls globalThis.__jarvis.call(op, args).
 
 import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from '../background/guard.js';
+import { addressKey } from '../background/address.js';
 
 (() => {
   const VERSION = 5;
@@ -1123,17 +1124,44 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     } catch {
       actionUrl = '';
     }
+    // The default button (Enter in a field submits through it): the form's first submit button,
+    // wherever it sits (form="id" included). Its formaction, formmethod and formtarget win.
+    const def = defaultButton(form);
+    const own = (b, attr) => (b && b.hasAttribute(attr) ? b.getAttribute(attr) || '' : '');
+    let submitAction = '';
+    try {
+      submitAction = def && def.hasAttribute('formaction') ? def.formAction : '';
+    } catch {
+      submitAction = '';
+    }
     return {
       isSearch: !!searchy,
       hasPasswordField: infos.some((i) => i.type === 'password'),
       hasCardField: cardish || frames,
       hasMessageField: fields.some((f) => f.localName === 'textarea'),
-      submitLabel: submit ? nameOf(submit) || 'Submit' : '',
+      submitLabel: submit ? nameOf(submit) || 'Submit' : def ? nameOf(def) || 'Submit' : '',
       text: cut(form.innerText || '', 300),
       action: cut(action, 120),
-      actionUrl: cut(actionUrl, 300),
+      actionUrl: cut(actionUrl, 600),
       method: (form.getAttribute('method') || 'get').toLowerCase(),
+      target: cut(form.getAttribute('target') || '', 60),
+      submitAction: cut(submitAction, 600),
+      submitMethod: own(def, 'formmethod').toLowerCase(),
+      submitTarget: cut(own(def, 'formtarget'), 60),
     };
+  }
+
+  /** A form's default button: its first submit button in tree order (form-associated ones too). */
+  function defaultButton(form) {
+    try {
+      for (const e of form.elements) {
+        if (e.localName === 'button' && String(e.type || 'submit').toLowerCase() === 'submit') return e;
+        if (e.localName === 'input' && /^(submit|image)$/i.test(String(e.type || ''))) return e;
+      }
+    } catch {
+      /* not a form */
+    }
+    return null;
   }
 
   const SENDISH = /\b(send|post|publish|submit|reply|comment|tweet|share|respond)\b/i;
@@ -1252,25 +1280,58 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     return cut(`${nameOf(el)} | ${itemContext(el)}`, 420);
   }
 
-  const SELECTED = 'input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"], [role="row"][aria-selected="true"], [role="option"][aria-selected="true"], [role="gridcell"][aria-selected="true"], [role="treeitem"][aria-selected="true"], [role="listitem"][aria-selected="true"], tr[aria-selected="true"], li[aria-selected="true"]';
+  const SELECTED = 'input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"], [role="menuitemcheckbox"][aria-checked="true"], [role="row"][aria-selected="true"], [role="option"][aria-selected="true"], [role="gridcell"][aria-selected="true"], [role="treeitem"][aria-selected="true"], [role="listitem"][aria-selected="true"], tr[aria-selected="true"], li[aria-selected="true"]';
   const LISTISH = 'li, tr, [role="row"], [role="option"], [role="listitem"], [role="treeitem"], [role="gridcell"], [role="grid"], [role="listbox"], table, ul, ol';
+  // Boxes from other sites big enough to hold a list (payment fields are not lists).
+  const BLIND_FRAME_MIN = { w: 100, h: 60 };
+  const PAYMENT_BOX = /stripe|braintree|adyen|checkout\.com|paypal|applepay|apple-pay|googlepay|google-pay|pay\.google|shop-pay|klarna|affirm|afterpay|card|payment|cvv|cvc|securefield|secure-field|hosted-field|hostedfield|recurly|squareup|spreedly|3ds|captcha|recaptcha|hcaptcha|turnstile/i;
 
   /**
-   * What is selected on the page now (ticked boxes, selected rows): a toolbar's "Delete" or
-   * "Archive" acts on these. `key` changes whenever the selection does; `names` are the selected
-   * list items, for the owner's prompt.
+   * What is selected on the page now (ticked boxes, selected rows), everywhere read_page looks:
+   * the page, its open shadow roots (web components) and its frames of this site. A toolbar's
+   * "Delete" or "Archive" acts on these. `key` changes whenever the selection does; `names` are
+   * the selected list items, for the owner's prompt. `unknown`: part of the page could hold a
+   * selection Jarvis cannot read (a box from another site); the service worker adds closed shadow
+   * roots, which only the debugger sees. An approval is never bound to an unknown selection.
    */
   function selectionSnapshot() {
     const all = [];
     const listed = [];
-    for (const c of document.querySelectorAll(SELECTED)) {
-      if (all.length >= 200) break;
-      const row = c.closest('li, tr, [role="row"], [role="option"], [role="listitem"], [role="treeitem"]');
-      const name = cut(nameOf(c) || collapse(row?.innerText || ''), 50);
-      all.push(name);
-      if (c.closest(LISTISH)) listed.push(name);
-    }
-    return { key: `${all.length}|${all.join('|')}`, count: listed.length, names: listed.slice(0, 4) };
+    const blind = [];
+    const visit = (root, depth) => {
+      if (depth > 8 || all.length >= 200) return;
+      for (const c of root.querySelectorAll(SELECTED)) {
+        if (all.length >= 200) break;
+        const row = c.closest('li, tr, [role="row"], [role="option"], [role="listitem"], [role="treeitem"]');
+        const name = cut(nameOf(c) || collapse(row?.innerText || ''), 50);
+        all.push(name);
+        if (c.closest(LISTISH)) listed.push(name);
+      }
+      let n = 0;
+      for (const el of root.querySelectorAll('*')) {
+        if (++n > 20000) break;
+        if (el.shadowRoot && el !== state.host) visit(el.shadowRoot, depth + 1);
+        if (el.localName !== 'iframe' && el.localName !== 'frame') continue;
+        let doc = null;
+        try {
+          doc = el.contentDocument;
+        } catch {
+          doc = null;
+        }
+        if (doc) {
+          if (doc.documentElement) visit(doc, depth + 1);
+          continue;
+        }
+        // A frame from another site (or origin): nothing in it can be read from here.
+        const r = el.getBoundingClientRect();
+        if (r.width < BLIND_FRAME_MIN.w || r.height < BLIND_FRAME_MIN.h || !visible(el)) continue;
+        if (PAYMENT_BOX.test(`${el.src || ''} ${el.name || ''} ${el.title || ''} ${el.id || ''}`)) continue;
+        blind.push('a box from another site');
+      }
+    };
+    visit(document, 0);
+    const key = `${all.length}|${all.join('|')}`;
+    return { key: blind.length ? `?${key}` : key, count: listed.length, names: listed.slice(0, 4), unknown: blind.length > 0 };
   }
 
   /** What the guard needs to know about an element. */
@@ -1310,6 +1371,14 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
       disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
       targetBlank: (tag === 'a' || tag === 'area') && !/^(|_self|_top|_parent)$/i.test(el.getAttribute('target') || ''),
       formAction: (tag === 'button' || tag === 'input') && typeof el.formAction === 'string' && el.hasAttribute('formaction') ? el.formAction : '',
+      formMethod: (tag === 'button' || tag === 'input') && el.hasAttribute('formmethod') ? (el.getAttribute('formmethod') || '').toLowerCase() : '',
+      formTarget: (tag === 'button' || tag === 'input') && el.hasAttribute('formtarget') ? cut(el.getAttribute('formtarget') || '', 60) : '',
+      // Markup that makes a link an action (Rails/Turbo data-method and data-confirm, a shop theme's
+      // add-to-cart class, a ping to another address).
+      linkMethod: tag === 'a' || tag === 'area' ? (el.getAttribute('data-method') || el.getAttribute('data-turbo-method') || '').toLowerCase().slice(0, 12) : '',
+      linkConfirm: (tag === 'a' || tag === 'area') && (el.hasAttribute('data-confirm') || el.hasAttribute('data-turbo-confirm')),
+      linkClass: tag === 'a' || tag === 'area' ? String(typeof el.className === 'string' ? el.className : el.getAttribute('class') || '').slice(0, 200) : '',
+      ping: (tag === 'a' || tag === 'area') && !!el.getAttribute('ping'),
       inPagination: !!closestAcross(el, PAGINATION_BOX),
       inFilters: inFilters(el),
       inSearch: !!closestAcross(el, '[role="search"], search'),
@@ -1535,7 +1604,8 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     if (tag === 'select') {
       const opts = [...el.options];
       const opt = pickOption(el, value);
-      if (!opt) return { error: `Error: ${ref} has no option "${cut(String(value), 60)}". Options: ${opts.slice(0, 15).map((o) => `"${cut(o.textContent, 40)}"`).join(', ')}.` };
+      // (The option texts are page content: the service worker marks them so and scans them.)
+      if (!opt) return { error: `Error: ${ref} has no option "${cut(String(value), 60)}".`, options: opts.slice(0, 15).map((o) => cut(o.textContent, 40)) };
       el.focus();
       setNativeValue(el, opt.value);
       fire(el, 'input');
@@ -1584,6 +1654,50 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     return { links };
   }
 
+  /** Whether `el` scrolls along `axis` ('x' or 'y') by itself (overflow auto/scroll with room to move). */
+  function scrollsAlong(el, axis) {
+    if (!el || el.nodeType !== 1) return false;
+    const cs = getComputedStyle(el);
+    const overflow = axis === 'y' ? cs.overflowY : cs.overflowX;
+    if (!/(auto|scroll|overlay)/.test(overflow)) return false;
+    return axis === 'y' ? el.scrollHeight > el.clientHeight + 1 : el.scrollWidth > el.clientWidth + 1;
+  }
+
+  /**
+   * Scrolls as a scrolling key would (arrows 40 px, Page Up/Down a screenful, Home/End to the
+   * ends), without sending the key to the page: pages bind these keys to actions (a like on a
+   * swipe app, nudging a selected object). Scrolls the box under the middle of the viewport that
+   * can move that way, else the page.
+   */
+  function scrollKey({ key, repeat = 1 } = {}) {
+    const n = Math.max(1, Math.min(100, Number(repeat) || 1));
+    const page = Math.max(innerHeight * 0.875, innerHeight - 40);
+    const steps = { ArrowDown: [0, 40], ArrowUp: [0, -40], ArrowRight: [40, 0], ArrowLeft: [-40, 0], PageDown: [0, page], PageUp: [0, -page] };
+    const axis = key === 'ArrowLeft' || key === 'ArrowRight' ? 'x' : 'y';
+    let target = null;
+    for (let el = deepElementFromPoint(innerWidth / 2, innerHeight / 2), i = 0; el && i < 40; i++) {
+      if (el === document.body || el === document.documentElement) break;
+      if (scrollsAlong(el, axis)) {
+        target = el;
+        break;
+      }
+      el = el.parentElement || el.getRootNode()?.host || null;
+    }
+    const scroller = target || document.scrollingElement || document.documentElement;
+    const before = target ? [target.scrollLeft, target.scrollTop] : [scrollX, scrollY];
+    if (key === 'Home' || key === 'End') {
+      const top = key === 'Home' ? 0 : scroller.scrollHeight;
+      if (target) target.scrollTo({ top, behavior: 'instant' });
+      else window.scrollTo({ top, behavior: 'instant' });
+    } else {
+      const [dx, dy] = steps[key] || [0, 0];
+      if (target) target.scrollBy({ left: dx * n, top: dy * n, behavior: 'instant' });
+      else window.scrollBy({ left: dx * n, top: dy * n, behavior: 'instant' });
+    }
+    const after = target ? [target.scrollLeft, target.scrollTop] : [scrollX, scrollY];
+    return { ok: true, moved: after[0] !== before[0] || after[1] !== before[1], x: Math.round(after[0]), y: Math.round(after[1]), inBox: !!target };
+  }
+
   function scrollToRef({ ref } = {}) {
     const el = lookup(ref);
     if (!el) return { error: `Error: ${ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
@@ -1620,11 +1734,9 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
   const POINTER_EVENTS = new Set(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'drop']);
   const KEY_EVENTS = new Set(['keydown', 'keypress', 'keyup']);
   const FORM_EVENTS = new Set(['input', 'change']);
-  const ACTIVATION_EVENTS = [...POINTER_EVENTS, ...KEY_EVENTS, 'beforeinput', ...FORM_EVENTS];
+  const ACTIVATION_EVENTS = [...POINTER_EVENTS, ...KEY_EVENTS, 'beforeinput', ...FORM_EVENTS, 'submit'];
   const EDITABLE_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'number', 'password', 'date', 'datetime-local', 'month', 'week', 'time']);
   const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'AltGraph', 'Fn', 'OS']);
-  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
-  const ARROW_ROLES = new Set(['listbox', 'option', 'radio', 'radiogroup', 'menuitemradio', 'menuitemcheckbox', 'menu', 'menubar', 'menuitem', 'tab', 'tablist', 'slider', 'spinbutton', 'grid', 'gridcell', 'treegrid', 'tree', 'treeitem', 'row', 'scrollbar', 'switch', 'checkbox', 'combobox']);
   const ARROW_INPUTS = new Set(['radio', 'checkbox', 'range', 'number', 'date', 'datetime-local', 'month', 'week', 'time', 'color']);
 
   function isTextEl(el) {
@@ -1633,15 +1745,6 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     const tag = el.localName;
     if (tag === 'textarea') return true;
     return tag === 'input' && EDITABLE_TYPES.has(String(el.type || 'text').toLowerCase()) && !ARROW_INPUTS.has(String(el.type || '').toLowerCase());
-  }
-
-  /** Arrow keys, Home/End and Page Up/Down change what is chosen here (a select, radios, a slider, a list). */
-  function arrowsChange(el) {
-    if (!el || el.nodeType !== 1) return false;
-    if (el.localName === 'select') return true;
-    if (el.localName === 'input' && ARROW_INPUTS.has(String(el.type || '').toLowerCase())) return true;
-    if (isTextEl(el)) return false;
-    return ARROW_ROLES.has(roleOf(el) || '');
   }
 
   const keyMods = (e) => ['alt', 'ctrl', 'meta', 'shift'].filter((m) => e[`${m}Key`]).join('+');
@@ -1681,6 +1784,43 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     return null;
   }
 
+  /** A link or form target other than this tab's page: a new window or a named frame. */
+  const elsewhere = (target) => {
+    const t = String(target || '').trim().toLowerCase();
+    return !!t && t !== '_self' && t !== '_top' && t !== '_parent';
+  };
+
+  /**
+   * Why opening `url` in `target` is not what Jarvis checked before the step (the address the
+   * owner's site permission and approval covered), or ''. A page can change a link's href or a
+   * form's action and target right before it is used.
+   */
+  function destMismatch(p, url, target) {
+    if (!p.dest) return '';
+    const key = addressKey(url);
+    if (!key || key !== p.dest.key) return 'its address changed after Jarvis checked it';
+    if (elsewhere(target) && !elsewhere(p.dest.target)) return 'it would now open in another window or frame';
+    return '';
+  }
+
+  function checkSubmit(a, e) {
+    const form = e.target;
+    if (!form || form.localName !== 'form') return true;
+    const submitter = e.submitter || null;
+    const own = (attr, prop, fallback) => (submitter && submitter.hasAttribute?.(attr) ? submitter[prop] : fallback);
+    const url = own('formaction', 'formAction', form.action);
+    const target = own('formtarget', 'formTarget', form.getAttribute('target') || '');
+    const pinned = a.approved.find((p) => p.dest && p.dest.via === 'form');
+    if (pinned) {
+      const why = destMismatch(pinned, url, target);
+      return why ? blockedInfo(submitter || form, `sending the form: ${why}`) : true;
+    }
+    // A submission the step was not checked for: never into another window or frame (the
+    // service worker checks this tab's own loads, not those).
+    if (elsewhere(target)) return blockedInfo(submitter || form, 'it would send a form into another window or frame, which Jarvis did not check');
+    return true;
+  }
+
   function checkPointer(a, e, first) {
     if (!first) return true;
     const el = actionableAncestor(first);
@@ -1703,6 +1843,14 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     if (!hit) return blockedInfo(el, 'not what the owner approved');
     if (hit.changed) return blockedInfo(el, 'the item it belongs to changed');
     const p = hit.entry;
+    if ((e.type === 'click' || e.type === 'auxclick') && p.dest && p.dest.via === 'link') {
+      // The link must still go where Jarvis checked (the page may have swapped its href or target).
+      const link = closestAcross(first, 'a[href], area[href]');
+      if (link) {
+        const why = destMismatch(p, link.href, link.getAttribute('target') || '');
+        if (why) return blockedInfo(el, why);
+      }
+    }
     if (e.type === 'click' || e.type === 'auxclick' || e.type === 'contextmenu') {
       p.used = (p.used || 0) + (e.type === 'contextmenu' ? 0 : 1);
       if (p.used > (p.clicks || 1)) return blockedInfo(el, 'it was already activated once');
@@ -1751,7 +1899,7 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
       }
       return true;
     }
-    if (a.scrollOnly && SCROLL_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !arrowsChange(target)) return true;
+    // (Jarvis scrolls without key events: a scrolling key is a key like any other here.)
     a.blockedCodes.add(code);
     return blockedInfo(target === document.body ? null : target, `the key ${e.key}${mods ? ` with ${mods}` : ''} there was not approved`);
   }
@@ -1831,6 +1979,7 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     else if (KEY_EVENTS.has(e.type)) verdict = checkKey(a, e, first);
     else if (e.type === 'beforeinput') verdict = checkInput(a, e, first);
     else if (FORM_EVENTS.has(e.type)) verdict = checkChange(a, e, first);
+    else if (e.type === 'submit') verdict = checkSubmit(a, e);
     else verdict = true;
     if (verdict !== true) stopEvent(a, e, verdict);
   }
@@ -1877,8 +2026,9 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
   /**
    * Arms the check for the step Jarvis is about to send. `approved`: [{ targetId, ctx?, kind:
    * 'pointer' | 'key' | 'type' | 'change', clicks?, keys?: [{ key, mods }], presses?, hold? }] (the
-   * owner's step, or a step that needs no approval such as a plain link); `scrollOnly`: only
-   * scrolling keys may land (and not where they change a choice). Everything else is stopped.
+   * owner's step, or a step that needs no approval such as a plain link; `dest`: where a link or
+   * form of it may go, { url, target, via }); `scrollOnly`: the scroll member's wheel, which no
+   * key or click may ride along with. Everything else is stopped.
    */
   function arm({ approved = [], scrollOnly = false, ms = 15000 } = {}) {
     ensureListeners();
@@ -1891,6 +2041,8 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
       keys: Array.isArray(p.keys) ? p.keys.map((k) => ({ key: String(k.key || ''), mods: String(k.mods || '') })) : [],
       presses: Math.max(1, Math.min(100, Number(p.presses) || 1)),
       hold: !!p.hold,
+      // Where the step opens, as Jarvis checked it (a link's address, a form's action and target).
+      dest: p.dest && typeof p.dest.url === 'string' ? { key: addressKey(p.dest.url), target: String(p.dest.target || ''), via: p.dest.via === 'form' ? 'form' : 'link' } : null,
     }));
     const missing = list.filter((p) => !p.el).length;
     const token = { hit: false };
@@ -2078,6 +2230,7 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
     previewOption,
     linksTo,
     scrollToRef,
+    scrollKey,
     viewport,
     arm,
     disarm,

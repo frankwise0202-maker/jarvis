@@ -446,7 +446,8 @@ async function confirmation(env, tu) {
     env.emit.update(stepId, { status: 'done', label: `You approved: ${truncate(action, 200)}` });
     return { approved: true, result: customResult(tu.id, `Approved by the owner: ${action}. Go ahead now with exactly this one step on the element you named (one click, or one key with it focused). The approval covers only that element, once, while it shows the same item (${CATEGORIES[category]}); anything else asks the owner again.`) };
   }
-  env.approvals.decline(category, facts.site || scope.site, { element: facts.element || '' });
+  // The element, and the address it would open (this site's too), stay declined.
+  env.approvals.decline(category, facts.site || scope.site, { element: facts.element || '', href: [facts.opens, facts.dest].filter(Boolean) });
   env.emit.update(stepId, { status: 'blocked', label: `You declined: ${truncate(action, 200)}` });
   return { approved: false, result: customResult(tu.id, `Declined by the owner: ${action}. Do not do this or anything equivalent. Tell the owner what you did so far and finish.`) };
 }

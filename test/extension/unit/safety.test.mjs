@@ -349,7 +349,8 @@ test('S11: an element swapped in under the pointer (on hover or on mousedown) is
   await a.call('read_page', {});
   const r = await a.call('left_click', { target: { type: 'ref', ref: 'ref_1' } });
   assert.equal(r.result.is_error, true);
-  assert.match(r.result.content, /put "Place order — \$999" \(a purchase or payment\) under the pointer, so Jarvis did not press/);
+  // (The page's label is page content: marked as such, RT3-08.)
+  assert.match(r.result.content, /put <untrusted_page_content kind="element_name">Place order — \$999<\/untrusted_page_content> \(a purchase or payment\) under the pointer, so Jarvis did not press/);
   assert.equal(a.presses().length, 0, 'stopped before the press');
   assert.deepEqual(a.fb.orders || [], []);
   assert.equal(a.notices.length, 1, 'the owner is told');
@@ -375,7 +376,7 @@ test('S11: an element swapped in under the pointer (on hover or on mousedown) is
   await b.call('read_page', {});
   const r2 = await b.call('left_click', { target: { type: 'ref', ref: 'ref_1' } });
   assert.equal(r2.result.is_error, true);
-  assert.match(r2.result.content, /reached "Delete my account".*stopped it/);
+  assert.match(r2.result.content, /reached <untrusted_page_content kind="element_name">Delete my account<\/untrusted_page_content>.*stopped it/);
   assert.equal(b.fb.deleted, undefined);
   assert.deepEqual(b.fb.blocked.map((x) => x.name), ['Delete my account']);
 });

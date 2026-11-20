@@ -9,13 +9,14 @@ import { abortError, displayText, isAbort, jsonCopy, singleLine, sleep, truncate
 import { Conversation } from './history.js';
 import { Driver } from './driver.js';
 import { Executor, TOOLSET_NAME, memberResult } from './executor.js';
-import { Approvals, CATEGORY_CHIPS, GUARD_CATEGORIES, SECRET_NAMES, classifyDialogText } from './guard.js';
+import { Approvals, CATEGORIES, CATEGORY_CHIPS, GUARD_CATEGORIES, SECRET_NAMES, classifyDialogText } from './guard.js';
+import { addressAction } from './actions.js';
 import { inlineUntrusted } from './injection.js';
 import { Limits } from './limits.js';
 import { MODELS, addUsage } from './models.js';
 import { systemPrompt, taskMessage, tools } from './prompts.js';
 import { STOPPED_TEXT, runTask } from './agent.js';
-import { blockedReason, isActionableUrl, shortUrl, siteOf } from './sites.js';
+import { blockedReason, isActionableUrl, shortUrl, showUrl, siteOf } from './sites.js';
 
 const SESSION_KEY = 'jarvis.session';
 // Errors that a second try usually fixes: Retry then continues the same conversation.
@@ -24,8 +25,9 @@ const BADGE = { running: ['•', '#3ee0ff'], waiting: ['!', '#ffc457'], paused: 
 
 export const RETRY_NOTE = '[Jarvis: the last request failed with a temporary error and the owner pressed Retry. The pages may have changed since: look again (read_page or screenshot) before you act.]';
 
-// How long a page's own "Are you sure?" question waits for the owner before Jarvis answers Cancel.
-export const DIALOG_ANSWER_MS = 90 * 1000;
+// How long the owner's OK to a page's "Are you sure?" question stands for the same question when
+// Jarvis does the step again (the page got Cancel at once; see dialogPolicy).
+export const DIALOG_REPEAT_MS = 30 * 1000;
 // A download the owner approved a moment ago (the link to it, the address of it) is not asked again.
 const DOWNLOAD_ALLOWANCE_MS = 30 * 1000;
 
@@ -63,9 +65,10 @@ export class Controller {
       onStopRequest: ({ via }) => this.stop(via === 'esc' ? 'esc' : 'bar'),
       onDialog: (toolId, dialog) => this.dialogPolicy(toolId, dialog),
       onDetach: (toolId, reason) => this.onDebuggerDetached(toolId, reason),
-      onNavigationRequest: (toolId, url) => this.navigationPolicy(toolId, url),
+      onNavigationRequest: (toolId, url, req) => this.navigationPolicy(toolId, url, req),
     });
     this.driver.onTamper = (toolId) => this.onTamper(toolId);
+    this.driver.onPopup = (toolId, url) => this.popupPolicy(toolId, url);
     this.driver.onUnstyled = (toolId) => this.onUnstyled(toolId);
     this.sendQueue = 0;
     this.retryDelaysMs = undefined; // tests shorten the agent loop's waits between retries
@@ -200,6 +203,7 @@ export class Controller {
       downloadSeq: 0,
       downloadsReported: 0,
       downloadAllowances: [],
+      dialogApprovals: [], // the owner's OK to a page question, for doing its step again: { toolId, message, until }
       settings,
       windowId,
     };
@@ -515,9 +519,10 @@ export class Controller {
     const sel = c.selection?.count ? ` with ${c.selection.count} item${c.selection.count === 1 ? '' : 's'} selected (${c.selection.names.map((n) => q(n, 32)).join('; ')}${c.selection.count > c.selection.names.length ? '; …' : ''})` : '';
     const detail = c.detail ? ` ${c.detail}` : '';
     const where = c.url && /^https?:/i.test(c.url) ? shortUrl(c.url, 60) : c.site || 'this page';
-    const dest = c.dest ? ` It opens ${shortUrl(c.dest, 70)}.` : '';
+    const dest = c.dest ? ` It opens ${showUrl(c.dest, 90)}${c.target ? ` ${c.target}` : ''}.` : c.target ? ` It opens ${c.target}.` : '';
+    const blind = c.selectionUnknown ? " Jarvis can't see everything that is selected on this page (part of it is hidden from Jarvis)." : '';
     const what = c.consequential ? ` This looks like ${c.reason || GUARD_CATEGORIES[c.category]}.` : !c.label && c.unlabelled ? " Jarvis can't tell what it does." : '';
-    return `${c.verb}${shown}${alias}${role}${hidden}${item}${sel}${detail} on ${where}.${dest}${what}`;
+    return `${c.verb}${shown}${alias}${role}${hidden}${item}${sel}${detail} on ${where}.${dest}${blind}${what}`;
   }
 
   policy(run) {
@@ -584,7 +589,7 @@ export class Controller {
         if (c.consequential && run.approvals.isDeclined(c.category, site)) {
           return `Blocked: the owner already declined ${what} on ${site || 'this page'} in this task. It was not done. Don't try again or find another way; tell the owner and finish.`;
         }
-        if (run.approvals.isDeclinedElement(c.element) || (c.dest && run.approvals.isDeclinedHref(c.dest))) {
+        if (run.approvals.isDeclinedElement(c.element) || (c.opens && run.approvals.isDeclinedHref(c.opens)) || (c.dest && run.approvals.isDeclinedHref(c.dest))) {
           return `Blocked: the owner already declined this step (${c.verb}${quoted}) in this task. It was not done. Don't try again or find another way; tell the owner and finish.`;
         }
         // Covered by the owner's request_confirmation approval of exactly this element, in this
@@ -592,7 +597,8 @@ export class Controller {
         if (c.bind && run.approvals.consume({ ...c.bind, site, tabId: c.toolId, url: c.url })) return null;
         const ok = await this.confirm(run, { action: this.describeStep(c), category: c.category, source: 'guard', site, consequential: !!c.consequential });
         if (ok) return null;
-        run.approvals.decline(c.category, site, { element: c.element, href: c.dest });
+        // The address it would have opened stays declined too, on any site (this one included).
+        run.approvals.decline(c.category, site, { element: c.element, href: [c.opens, c.dest].filter(Boolean) });
         const shown = c.label ? ` "${truncate(singleLine(c.label), 60)}"` : '';
         run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `You cancelled: ${c.verb}${shown}. Jarvis did not do it.`, status: 'done' });
         return `Blocked: the owner declined this step (${c.verb}${quoted}${c.consequential ? `: ${c.reason || what}` : ''}). It was not done. Don't try it again or find another way to do it; tell the owner and finish.`;
@@ -601,10 +607,15 @@ export class Controller {
       isAllowed: (site) => !!site && (run.sitesAllowed.has(site) || run.always?.[site] === 'always') && !run.sitesDenied.has(site),
       isDeclinedHref: (url) => run.approvals.isDeclinedHref(url),
       isDeclinedElement: (key) => run.approvals.isDeclinedElement(key),
+      hasBinding: ({ toolId, doc, targetId }) => run.approvals.hasBinding({ tabId: toolId, doc, targetId }),
+      noteActionResult: (url, what) => run.approvals.noteActionResult(url, what),
+      actionResult: (url) => run.approvals.actionResult(url),
+      askDialog: (q, opts) => this.askDialog(run, q, opts),
+      preApproveDialog: (q) => run.dialogApprovals.push({ toolId: q.toolId, message: String(q.message || ''), until: this.now() + DIALOG_REPEAT_MS }),
       allowDownload: ({ url, site }) => run.downloadAllowances.push({ url, site, until: this.now() + DOWNLOAD_ALLOWANCE_MS }),
       awaitDownload: (url, opts) => this.awaitDownload(run, url, opts),
       drainDownloads: () => {
-        const out = run.downloads.filter((d) => d.seq > run.downloadsReported).map((d) => ({ name: d.name, site: d.site, verdict: d.verdict }));
+        const out = run.downloads.filter((d) => d.seq > run.downloadsReported).map((d) => ({ name: d.name, site: d.site, url: d.url, verdict: d.verdict }));
         run.downloadsReported = run.downloadSeq;
         return out;
       },
@@ -625,9 +636,12 @@ export class Controller {
    * Whether to accept a JavaScript dialog the page opened. Alerts are just acknowledged. "Leave
    * site?" (beforeunload) is refused: the owner's unsaved work stays. A prompt() is dismissed
    * (Jarvis types nothing into it). A confirm() ("Are you sure?") is the page asking a question:
-   * Jarvis never answers it for the owner. It is held open and shown to the owner with its text
-   * and what Jarvis just did; only their Approve answers OK (and no answer within
-   * DIALOG_ANSWER_MS answers Cancel). Returns a boolean, or a promise of one.
+   * Jarvis never answers OK for the owner, and never holds the page waiting for them either (a page
+   * held by its own dialog cannot show Jarvis's bar or hear Esc). So it is answered Cancel at once
+   * and left for the owner (deferred): once the step that raised it is done, the executor asks
+   * them, and on their OK does the step again, when this same question is answered OK (the
+   * owner's OK stands for DIALOG_REPEAT_MS, for that tab and that text, once). Returns a boolean or
+   * { accept, asked, deferred }.
    */
   dialogPolicy(toolId, dialog) {
     const run = this.run;
@@ -638,42 +652,136 @@ export class Controller {
     if (!site) return false;
     const category = classifyDialogText(dialog.message);
     if (category && run.approvals.isDeclined(category, site)) return false;
-    const step = [...run.task.steps].reverse().find((s) => s.kind === 'action');
-    const doing = step ? singleLine(step.label).replace(/…$/, '') : '';
-    const when = doing ? ` (as Jarvis is ${doing.charAt(0).toLowerCase()}${doing.slice(1)})` : '';
-    const quoted = truncate(singleLine(dialog.message), 300);
-    const action = `The page ${shortUrl(t.url, 60)} asks: “${quoted || '(no text)'}”${when}. Approve answers OK; Cancel answers Cancel.`;
-    return this.confirm(run, { action, category: category || 'dialog', source: 'guard', site, consequential: true, title: 'The page asks you', timeoutMs: DIALOG_ANSWER_MS }).then(
-      (ok) => {
-        if (!ok && category) run.approvals.decline(category, site);
-        return ok;
-      },
-      () => false,
-    );
+    const now = this.now();
+    run.dialogApprovals = run.dialogApprovals.filter((a) => a.until > now);
+    const i = run.dialogApprovals.findIndex((a) => a.toolId === toolId && a.message === String(dialog.message || ''));
+    if (i >= 0) {
+      run.dialogApprovals.splice(i, 1);
+      return { accept: true, asked: true };
+    }
+    return { accept: false, deferred: true };
   }
 
   /**
-   * A page Jarvis works in wants to load `url` in the tab (a link, a script, a redirect) while
-   * Jarvis acts: a denied site (or an address the owner declined) never loads; a site not asked
-   * about yet is asked first. The owner's own page loads during Take over are not checked.
+   * The owner's answer to a page question Jarvis answered Cancel at once (see dialogPolicy), asked
+   * once the step that raised it is done. `doing`: that step; `rerun`: whether Jarvis can do it
+   * again by itself. Resolves true for OK.
    */
-  async navigationPolicy(toolId, url) {
+  async askDialog(run, q, { doing = '', rerun = false } = {}) {
+    if (this.run !== run || run.abort.signal.aborted) return false;
+    const t = q.toolId ? this.driver.get(q.toolId) : null;
+    const site = t ? siteOf(t.url) : '';
+    const category = classifyDialogText(q.message);
+    if (category && run.approvals.isDeclined(category, site)) return false;
+    const when = doing ? ` (as Jarvis was ${singleLine(doing).replace(/…$/, '').replace(/^./, (c) => c.toLowerCase())})` : '';
+    const quoted = truncate(singleLine(q.message), 300);
+    const then = rerun ? 'Approve: Jarvis does that step again and answers OK.' : 'Approve: Jarvis is told to do that step again, and answers OK then.';
+    const action = `The page ${t ? shortUrl(t.url, 60) : site || 'Jarvis is working in'} asks: “${quoted || '(no text)'}”${when}. Jarvis answered Cancel for now, so what it asks has not happened. ${then} Cancel: nothing more happens.`;
+    let ok = false;
+    try {
+      ok = await this.confirm(run, { action, category: category || 'dialog', source: 'guard', site, consequential: true, title: 'The page asks you' });
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      ok = false;
+    }
+    if (!ok && category) run.approvals.decline(category, site);
+    return ok;
+  }
+
+  /**
+   * A page Jarvis works in opened a new window. Its first request leaves from the new tab, where
+   * Jarvis's checks of this tab's loads do not reach: when it goes to a site the owner denied, an
+   * address they declined, or one an approved step already opened, the new tab is closed at once
+   * and the owner told. (Other windows are left alone: acting in them asks for their site as any
+   * tab does.)
+   */
+  async popupPolicy(toolId, url) {
+    const run = this.run;
+    if (!run || run.takeover || run.stopping || run.abort.signal.aborted || !/^https?:/i.test(String(url || ''))) return;
+    const site = siteOf(url);
+    const why = run.sitesDenied.has(site) ? `${site} (which you denied)` : run.approvals.isDeclinedHref(url) ? `${showUrl(url, 60)} (which you declined)` : run.approvals.actionResult(url) ? `${showUrl(url, 60)} again (that repeats a step you approved once)` : '';
+    if (!why) return;
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `A page opened ${why} in a new window; Jarvis closed it.`, status: 'done' });
+    this.emitTask(run.task);
+    for (let i = 0; i < 20; i++) {
+      try {
+        const tabs = await this.chrome.tabs.query({});
+        const hit = tabs.find((tab) => String(tab.pendingUrl || tab.url || '') === url && !this.driver.byChrome.has(tab.id)) || tabs.find((tab) => String(tab.pendingUrl || tab.url || '') === url && this.driver.get(this.driver.byChrome.get(tab.id))?.openedByJarvis);
+        if (hit) {
+          await this.chrome.tabs.remove(hit.id);
+          return;
+        }
+      } catch {
+        /* keep looking */
+      }
+      await sleep(100);
+    }
+  }
+
+  /**
+   * A page Jarvis works in wants to load `url` in the tab or in a frame of it (a link, a script, a
+   * redirect, a form) while Jarvis acts: { method, main }. Never: a denied site, an address the
+   * owner declined, an address an approved step already opened (unless that step is what loads
+   * it now: repeating it). Asked first: a site not asked about yet (the tab's own page, and forms
+   * sent into a frame); and, when no step the owner approved is behind it, a form sent (POST) and
+   * an address that says it acts ("/act/delete"), so a page that posts an order by itself, or
+   * sends Jarvis on to an action address, cannot act unasked. The owner's own page loads during
+   * Take over are not checked; frames' ordinary page loads are not asked about.
+   */
+  async navigationPolicy(toolId, url, { method = 'GET', main = true } = {}) {
     const run = this.run;
     if (!run || run.takeover || run.stopping || run.abort.signal.aborted) return true;
-    if (blockedReason(url)) return false;
+    if (blockedReason(url)) return !main;
     const site = siteOf(url);
     if (!site) return true;
-    if (run.approvals.isDeclinedHref(url)) {
-      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `Jarvis stopped the page from opening ${shortUrl(url, 60)}, which you declined.`, status: 'done' });
+    const warn = (label) => {
+      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label, status: 'done' });
       this.emitTask(run.task);
+    };
+    if (run.approvals.isDeclinedHref(url)) {
+      warn(`Jarvis stopped the page from opening ${showUrl(url, 60)}, which you declined.`);
       return false;
     }
     if (run.sitesDenied.has(site)) {
-      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `Jarvis stopped the page from opening ${site}, which you denied.`, status: 'done' });
-      this.emitTask(run.task);
+      warn(`Jarvis stopped the page from opening ${site}, which you denied.`);
       return false;
     }
-    if (run.sitesAllowed.has(site)) return true;
+    const approved = this.driver.approvedInput(toolId);
+    const prior = run.approvals.actionResult(url);
+    if (prior && !approved) {
+      warn(`Jarvis stopped the page from opening ${showUrl(url, 60)} again: that would repeat a step you approved once (${CATEGORIES[prior.category] || 'a step that does something'}).`);
+      return false;
+    }
+    const sending = !/^(GET|HEAD)$/i.test(String(method || 'GET'));
+    const acts = !sending && main ? addressAction(url) : null;
+    if (!approved && (sending || (acts && !acts.file))) {
+      // Nothing the owner approved led here: the page itself is sending a form, or opening an
+      // address that acts. The owner decides.
+      const t = this.driver.get(toolId);
+      const from = t && /^https?:/i.test(t.url || '') ? shortUrl(t.url, 60) : site;
+      const consequential = !!(acts && CATEGORIES[acts.category]);
+      const what = sending ? `send a form to ${showUrl(url, 90)}${main ? '' : ' (into a frame)'}` : `open ${showUrl(url, 90)} (${acts.reason})`;
+      const ok = await this.confirm(run, {
+        action: `The page ${from} wants to ${what}. No step you approved asked for this: a page can place an order, pay, send or delete this way. Approve lets it go ahead; Cancel stops it.`,
+        category: consequential ? acts.category : 'change',
+        source: 'guard',
+        site,
+        consequential: true,
+        title: 'Approve this page load?',
+      }).catch(() => false);
+      if (!ok) {
+        // A declined action address stays declined; a form's action does not (the owner may
+        // approve sending that form themselves later, with a click).
+        run.approvals.decline(consequential ? acts.category : 'change', site, { href: sending ? '' : url });
+        warn(`Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${showUrl(url, 60)}.`);
+        return false;
+      }
+    }
+    if (!main) {
+      // A frame's own page loads (ads, videos, widgets) go ahead; a form sent into a frame goes to
+      // a site only with the owner's permission.
+      if (!sending || run.sitesAllowed.has(site)) return true;
+    } else if (run.sitesAllowed.has(site)) return true;
     try {
       return !(await run.policy.checkSite(url));
     } catch {

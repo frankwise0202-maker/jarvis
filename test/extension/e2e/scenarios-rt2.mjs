@@ -588,7 +588,7 @@ const dialogApproval = {
     await task(run, 'Post my status');
     await finish(run, o);
     const q = o.confirms().find((p) => p.title === 'The page asks you');
-    assert(q && /asks: “Are you sure\?”/.test(q.body) && /as Jarvis is clicking "Remove"/.test(q.body), o.confirms().map((p) => `${p.title}: ${p.body}`).join(' | '));
+    assert(q && /asks: “Are you sure\?”/.test(q.body) && /as Jarvis (is|was) clicking "Remove"/.test(q.body), o.confirms().map((p) => `${p.title}: ${p.body}`).join(' | '));
     assert(/the owner answered Cancel/.test(seen.remove.text), seen.remove.text);
     assert(o.confirms().some((p) => /^Click "Remove".*deleting something \("Danger zone"\)/.test(p.body)), 'Remove in a danger zone is named a deletion');
     assert(!seen.post.isError, seen.post.text);
@@ -640,7 +640,7 @@ const labels = {
     const o = owner(run, policyOf());
     const seen = {};
     mock.script([
-      () => ({ calls: [{ name: 'navigate', input: { url: U(run, 'rbank', '/transfer') } }, read] }),
+      () => ({ calls: [{ name: 'navigate', input: { url: U(run, 'rbank', '/review') } }, read] }),
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Confirm transfer"/) } }] }),
       (ctx) => {
         seen.transfer = ctx.results[0];
@@ -798,7 +798,8 @@ const downloads = {
       assert(bodies.some((b) => /^Save this download\?: Save the file “JarvisHelper\.dmg”/.test(b)), bodies.join(' | '));
       assert(bodies.some((b) => /^Save this download\?: Save the file “Invoice-2025\.pdf\.command”/.test(b)), bodies.join(' | '));
       assert(seen.nav.isError && /^Blocked/.test(seen.nav.text) && !/may be unavailable/.test(seen.nav.text), seen.nav.text);
-      assert(/A download started: "JarvisHelper\.dmg".*the owner declined it/.test(seen.link.text), seen.link.text);
+      // (The file name is the server's: page content, RT3-08.)
+      assert(/A download started: <untrusted_page_content kind="file_name">JarvisHelper\.dmg<\/untrusted_page_content>.*the owner declined it/.test(seen.link.text), seen.link.text);
       // Approved: saved once, with no second question for the same file.
       approve = true;
       mock.script([
@@ -909,7 +910,7 @@ const framedSwap = {
     ]);
     await task(run, 'Save it for later');
     await finish(run, o);
-    for (const k of ['framed', 'top']) assert(seen[k].isError && /the input reached "Place order — \$2,499"/.test(seen[k].text), `${k}: ${seen[k].text}`);
+    for (const k of ['framed', 'top']) assert(seen[k].isError && /the input reached <untrusted_page_content kind="element_name">Place order — \$2,499<\/untrusted_page_content>/.test(seen[k].text), `${k}: ${seen[k].text}`);
     assert(ev(run, /^\/api\/order$/).length === 0, JSON.stringify(ev(run, /\/api\//)));
   },
 };
