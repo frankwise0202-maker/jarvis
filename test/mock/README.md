@@ -99,3 +99,24 @@ directive behaves as above.
 | a `Blueprint request` block | "Drawing the blueprint of the separator now." before `draw_blueprint`, then "The blueprint of the separator is ready; it's open on your screen. Tap a numbered callout to see that part." |
 | `[[open-saved]]` | "Here's your saved hologram of the 2024 Toyota Camry Hybrid; no need to build it again." |
 | `[[swarm:N]] [[hologram:<sample>]]` | the hologram line, then a spoken synthesis with its details and sources below `---` |
+
+### Optics (lead tools version 5: `pin_labels`, `look_through_camera`) and Watch
+
+In `optics.mjs`. A Look is detected from the request itself: the newest user message carries an
+image and its `<turn_context>` has an `Optics frame fN: … W×H pixels` line. The labels are the
+synthetic desk scene's objects (`fixtures/optics-scene.json`, written by
+`test/e2e/optics-scene.mjs` from the 3D scene the fake camera plays), scaled to the frame, portrait
+or landscape, so a correct crop mapping puts every pin on its object. Screen frames get two
+screen-style labels. Only tools the request defines are called.
+
+| Directive / trigger | What the mock does |
+| --- | --- |
+| an Optics frame line + an image (a Look) | a sentence naming the objects, then `pin_labels` on that frame (input streamed in small chunks), then a closing sentence after the result; a plain answer when the conversation has no `pin_labels` (V4 or older) |
+| `[[optics:nolabels]]` | a Look answered in words only |
+| `[[optics:badframe]]` | `pin_labels` on frame `f99` first; after Jarvis's `is_error` (it names the newest frame) the same labels on the right frame |
+| `[[optics:offframe]]` | three labels plus one far outside the frame (Jarvis skips it and says so) |
+| `[[optics:look]]` | while the turn context says `Optics: the camera is live`: "Let me take a look.", `look_through_camera`, then `pin_labels` on the frame its result announces |
+| *(a conversation with an Optics frame)* "Show me a hologram of the AA battery." | `show_hologram` with the battery sample (the alternator or Camry when named), spoken lines in Voice Mode: Optics' **Hologram of this** |
+| *(the same)* "Tell me more." | a longer answer about the scene |
+| *(the same)* "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" | what it is, then `pin_labels` with that one label at that pixel, then "I've marked it on the frame." (Optics' **What's this part?** for a tapped pin) |
+| a structured request whose system prompt starts `You are Jarvis Watch` | `{ worth_saying, line, summary }`: the first frame (no previous summary) sets the scene; later ones report that the mug moved and the notebook is gone |

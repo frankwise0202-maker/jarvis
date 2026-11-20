@@ -18,6 +18,7 @@
 // test/server.mjs).
 
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -33,7 +34,7 @@ export class BuildError extends Error {}
  * Build the app. Resolves to { buildId, version, outDir, files: [{ path, bytes, gzipBytes }] }.
  * Throws BuildError with a readable message when something required is missing or esbuild fails.
  */
-export async function build({ root = ROOT, minify = true, quiet = false, outDir: outOverride = null } = {}) {
+export async function build({ root = ROOT, minify = true, quiet = false, outDir: outOverride = null, plugins = [] } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
   const srcEntry = path.join(root, 'src', 'main.js');
   const cssEntry = path.join(root, 'src', 'styles', 'app.css');
@@ -83,7 +84,8 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     // their own chunks under assets/chunks/, fetched only when first used; code they share with
     // the main bundle goes to a shared chunk. Chunk names carry a content hash, and every chunk is
     // in the service worker's precache list (below), so they work offline like app.js.
-    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { 'process.env.NODE_ENV': '"production"' } });
+    // `plugins`: test builds only (test/e2e/run.mjs); the product build passes none.
+    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { 'process.env.NODE_ENV': '"production"' }, plugins });
     if (!existsSync(path.join(assetsDir, 'app.css'))) {
       // main.js did not import the styles: bundle the stylesheet entry on its own.
       if (existsSync(cssEntry)) {
@@ -99,6 +101,28 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     throw new BuildError(`esbuild failed${details ? `:\n${details}` : `: ${err.message}`}`);
   }
 
+  // Natural voice (opt-in, platform/voice/natural/): its own module Worker bundle and the ONNX
+  // Runtime binary under voice/, and the self-hosted model under models/ when
+  // scripts/fetch-voice-model.mjs has put it in vendor/kokoro/. None of it is precached (about
+  // 115 MB): the worker downloads and caches it only when the owner turns the natural voice on.
+  const voiceWorker = path.join(root, 'src', 'platform', 'voice', 'natural', 'kokoro-worker.js');
+  if (existsSync(voiceWorker)) {
+    try {
+      await esbuild.build({ ...common, entryPoints: { 'kokoro-worker': voiceWorker }, outdir: path.join(outDir, 'voice'), format: 'esm', splitting: false, define: { 'process.env.NODE_ENV': '"production"' } });
+    } catch (err) {
+      const details = (err.errors || []).map((e) => `  ${e.location ? `${e.location.file}:${e.location.line}: ` : ''}${e.text}`).join('\n');
+      throw new BuildError(`esbuild failed on the voice worker${details ? `:\n${details}` : `: ${err.message}`}`);
+    }
+    // The binary that matches the ONNX Runtime bundled into the worker (the copy that
+    // transformers.js resolves; its package.json is not exported, so find the main file's folder).
+    const ortMain = createRequire(path.join(root, 'node_modules', '@huggingface', 'transformers', 'package.json')).resolve('onnxruntime-web');
+    const ortWasm = path.join(path.dirname(ortMain), 'ort-wasm-simd-threaded.jsep.wasm');
+    await mkdir(path.join(outDir, 'voice', 'ort'), { recursive: true });
+    await cp(ortWasm, path.join(outDir, 'voice', 'ort', 'ort-wasm-simd-threaded.jsep.wasm'));
+  }
+  const vendoredModel = path.join(root, 'vendor', 'kokoro');
+  if (existsSync(vendoredModel)) await cp(vendoredModel, path.join(outDir, 'models'), { recursive: true });
+
   await cp(publicDir, outDir, { recursive: true, filter: (src) => !/(^|[/\\])\.DS_Store$/.test(src) });
 
   const files = await listFiles(outDir);
@@ -112,6 +136,7 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
 
   const precache = files
     .filter((rel) => !rel.endsWith('.map') && rel !== 'sw.js' && !rel.split('/').some((seg) => seg.startsWith('.')))
+    .filter((rel) => !rel.startsWith('voice/') && !rel.startsWith('models/')) // the opt-in natural voice
     .map((rel) => `./${rel}`);
 
   const warnings = [];

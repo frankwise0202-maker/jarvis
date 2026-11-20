@@ -44,6 +44,12 @@
 //   activeRun             a TurnRun already in progress: watch it here and speak its answer
 //   mode                  'auto' | 'quick' | 'swarm', or a function returning one (default settings.mode)
 //   container             where to mount the overlay (default document.body)
+//   look                  Optics, the camera (app.js): { supported() -> boolean, open() } adds a
+//                           Look button to the dock. open() shows Optics over Voice Mode; while it
+//                           is open, `visuals` routes what is heard to it first ("what am I looking
+//                           at?" is a Look, spoken like any reply), and its mic button is the core.
+//                           ask(text, { …, attachments, optics }) sends a Look as a Voice Mode turn
+//                           with its frame (the Optics frame record goes to startTurn).
 //   visuals               the hologram and blueprint viewers (app.js):
 //                           open(run, segment)  show a hologram or blueprint of a Voice Mode reply
 //                           isOpen()            a viewer covers Voice Mode
@@ -206,6 +212,7 @@ function createVoiceMode(opts) {
     saveSettings,
     wakeLock,
     activeRun,
+    look,
     mode,
     container,
     visuals,
@@ -330,6 +337,10 @@ function createVoiceMode(opts) {
   const form = h('form', { class: 'vm-form', hidden: true, attrs: { 'data-testid': 'voice-type-form', autocomplete: 'off' }, on: { submit: onSubmit } }, input, sendBtn);
 
   const typeBtn = dockButton('vm-dock-type', 'voice-type-toggle', 'edit', 'Type', toggleTyping);
+  // Optics: Look opens the camera over Voice Mode (call from this tap: iOS asks for the camera only in a gesture).
+  const lookOk = !!look && typeof look.open === 'function' && probe(() => typeof look.supported !== 'function' || !!look.supported());
+  const lookBtn = lookOk ? dockButton('vm-dock-look', 'voice-look', 'camera', 'Look', onLook) : null;
+  if (lookBtn) lookBtn.btn.setAttribute('aria-label', 'Look: show Jarvis what the camera sees');
   const mainBtn = dockButton('vm-dock-main', 'voice-mic', 'mic', 'Talk', onPrimary);
   const exitBtn = dockButton('vm-dock-exit', 'voice-close', 'close', 'Exit', () => close());
   exitBtn.btn.setAttribute('aria-label', 'Exit voice mode');
@@ -364,7 +375,15 @@ function createVoiceMode(opts) {
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
     h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, capSub, missionEl, readFull),
-    h('div', { class: 'vm-bottom' }, form, h('div', { class: 'vm-dock' }, typeBtn.btn, mainBtn.btn, exitBtn.btn), hints),
+    h(
+      'div',
+      { class: 'vm-bottom' },
+      form,
+      lookBtn
+        ? h('div', { class: 'vm-dock vm-dock--look' }, h('div', { class: 'vm-dock-side' }, lookBtn.btn, typeBtn.btn), mainBtn.btn, exitBtn.btn)
+        : h('div', { class: 'vm-dock' }, typeBtn.btn, mainBtn.btn, exitBtn.btn),
+      hints,
+    ),
     live,
   );
 
@@ -572,6 +591,20 @@ function createVoiceMode(opts) {
       pillIcon.dataset.icon = ic;
       clear(pillIcon).appendChild(icon(ic, { size: 16 }));
     }
+  }
+
+  /** Look: Optics opens over Voice Mode (the camera starts within this tap). */
+  function onLook() {
+    if (S.closed || !lookBtn) return;
+    haptic('light');
+    unlockSpeech();
+    try {
+      look.open();
+    } catch (err) {
+      console.warn('[voice] the camera could not open', err);
+    }
+    updateLevelLoop();
+    syncVisuals();
   }
 
   function onCoreTap() {
@@ -1343,6 +1376,9 @@ function createVoiceMode(opts) {
       if (typeof startTurn !== 'function') throw new Error('Voice mode is not connected to Jarvis yet.');
       const input = { mode: opts && MODES.includes(opts.mode) ? opts.mode : resolveMode() };
       if (opts && opts.blueprintFor) input.blueprintFor = opts.blueprintFor;
+      // An Optics Look heard here: its frame goes with the words.
+      if (opts && Array.isArray(opts.attachments) && opts.attachments.length) input.attachments = opts.attachments;
+      if (opts && opts.optics) input.optics = opts.optics;
       result = startTurn(words, input);
     } catch (err) {
       S.run = null;
@@ -2005,8 +2041,8 @@ function createVoiceMode(opts) {
     if (S.closed) return { error: 'Voice Mode is closed.' };
     const o = options && typeof options === 'object' ? options : {};
     if (o.signal && o.signal.aborted) return { error: 'Stopped.', stopped: true };
-    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" was waiting for this turn
-    return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null });
+    if (S.run && S.run.viewer) S.run = null; // "blueprint the …" (or an Optics Look) was waiting for this turn
+    return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null, attachments: Array.isArray(o.attachments) ? o.attachments : null, optics: o.optics || null });
   }
 
   /**
@@ -2590,6 +2626,19 @@ function createVoiceMode(opts) {
     levelTarget = Math.max(levelTarget, Math.min(1, v));
   }
 
+  /** 0..1 from the speech engine's output analyser (the natural voice), or null (device voice). */
+  function outputLevel() {
+    try {
+      if (tts && typeof tts.getOutputLevel === 'function') {
+        const v = tts.getOutputLevel();
+        return typeof v === 'number' && Number.isFinite(v) ? v : null;
+      }
+    } catch {
+      /* no level */
+    }
+    return null;
+  }
+
   function updateLevelLoop() {
     // Not while a hologram or blueprint viewer covers Voice Mode (inert): nobody sees the core then.
     const want = !reducedMotion && !document.hidden && !S.closed && !root.inert && (S.state === 'listening' || S.state === 'speaking');
@@ -2610,12 +2659,19 @@ function createVoiceMode(opts) {
     levelFrame = 0;
     const dt = levelLast ? Math.min(100, ts - levelLast) : 16;
     levelLast = ts;
-    if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
-      // No word events from this voice: a soft synthetic envelope keeps the core "talking".
-      const t = ts / 1000;
-      bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
+    const real = outputLevel();
+    if (real !== null) {
+      // The natural voice plays through Web Audio: the core follows its real loudness, eased. The
+      // target is set, not raised, so the word bumps (estimated for this voice) never add to it.
+      levelTarget = Math.min(1, Math.max(0, real));
+    } else {
+      if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
+        // No word events from this voice: a soft synthetic envelope keeps the core "talking".
+        const t = ts / 1000;
+        bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
+      }
+      levelTarget *= Math.exp(-dt / 240);
     }
-    levelTarget *= Math.exp(-dt / 240);
     levelValue += (levelTarget - levelValue) * (1 - Math.exp(-dt / 70));
     pushLevel(levelValue);
     levelFrame = requestAnimationFrame(levelTick);

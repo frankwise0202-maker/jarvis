@@ -55,6 +55,12 @@ export function devices(playwright) {
     small: phone(375, 667, 'Small phone (375×667)'),
     safaritab: phone(375, 553, 'Small phone, Safari tab (375×553)'),
     desktop: { label: 'Desktop (1440×900)', phone: false, options: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 } },
+    // The owner's setup: Chrome on a Mac (camera names and help follow the platform).
+    mac: {
+      label: 'Mac, Chrome (1440×900)',
+      phone: false,
+      options: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36' },
+    },
   };
 }
 
@@ -186,11 +192,12 @@ export class TestContext {
    * seed: 'default' (mock key, onboarded, userName Tony), 'fresh' (only the dev API base),
    * 'empty' (nothing at all), or an object { apiKey, settings, apiBase }.
    */
-  async newPage({ device = this.scenario.device || 'iphone13', seed = this.scenario.seed || 'default', settings = this.scenario.settings || {}, serverUrl = this.url } = {}) {
+  async newPage({ device = this.scenario.device || 'iphone13', seed = this.scenario.seed || 'default', settings = this.scenario.settings || {}, serverUrl = this.url, scale = this.scenario.scale } = {}) {
     const d = this.devices[device];
     if (!d) throw new E2EError(`Unknown device "${device}"`);
     const context = await this.browser.newContext({
       ...d.options,
+      ...(scale ? { deviceScaleFactor: scale } : {}), // sharper screenshots for a deliverable (Optics)
       serviceWorkers: 'allow',
       locale: 'en-US',
       timezoneId: 'America/New_York',

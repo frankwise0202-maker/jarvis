@@ -16,6 +16,7 @@ import { ttsSupported, getVoices, pickDefaultVoice, rankVoices, voiceQuality, sp
 import { sttSupported } from '../platform/voice/stt.js';
 import { MODELS, DEPTHS, MODES } from '../engine/index.js';
 import { createThemePicker, applyTheme } from './themes.js';
+import { createNaturalVoiceCard } from './natural-voice-settings.js';
 import * as sounds from './sounds.js';
 import { notifyPermission, requestNotifyPermission, explainNotifyPermission } from './attention.js';
 import { getHud, saveHud, onHudChange } from './presence/hud-prefs.js';
@@ -564,6 +565,8 @@ export function createSettingsPanel(o) {
           const st = getSettings();
           const hour = new Date().getHours();
           const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+          // The natural voice may be playing a sample: never two voices at once.
+          if (o.naturalVoice && o.naturalVoice.tts) safeCall(() => o.naturalVoice.tts.stopSpeaking());
           try {
             testing = speak(`Good ${part}, ${st.userName || 'sir'}. All systems are operational.`, {
               voiceURI: st.voiceURI,
@@ -590,6 +593,19 @@ export function createSettingsPanel(o) {
         h('div', { class: 'set-row-text' }, h('span', { class: 'set-label', text: 'Get a more natural voice' }), h('p', { class: 'set-help', text: tip.text })),
       )
     : null;
+  // The natural voice (free Kokoro voice, opt-in download) when the app provides it.
+  let naturalCard = null;
+  if (o.naturalVoice && o.naturalVoice.natural) {
+    try {
+      naturalCard = createNaturalVoiceCard({ natural: o.naturalVoice.natural, tts: o.naturalVoice.tts, getSettings, commit, toast: o.toast });
+      cleanups.push(() => naturalCard.destroy());
+      controls.set('naturalVoice', { set: (_v, st) => naturalCard.sync(st) });
+      controls.set('naturalVoiceId', { set: (_v, st) => naturalCard.sync(st) });
+    } catch (err) {
+      console.error('[jarvis] natural voice settings failed:', err);
+      naturalCard = null;
+    }
+  }
   const voice = section(
     'voice',
     card(
@@ -616,6 +632,7 @@ export function createSettingsPanel(o) {
       row({ label: 'Speaking speed', forId: fieldId('voiceRate'), control: h('div', { class: 'range-wrap' }, rate, rateOut), stacked: true, extra: h('div', { class: 'set-row-actions' }, testVoiceBtn) }),
       voiceTip,
     ),
+    naturalCard ? naturalCard.el : null,
     card(
       row({
         label: 'Listening language',

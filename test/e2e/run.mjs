@@ -29,6 +29,10 @@ import features from './scenarios/features.mjs';
 import security from './scenarios/security.mjs';
 import interaction from './scenarios/interaction.mjs';
 import regressions from './scenarios/regressions.mjs';
+import optics from './scenarios/optics.mjs';
+import opticsCamera from './scenarios/optics-camera.mjs';
+import naturalVoice from './scenarios/natural-voice.mjs';
+import { opticsToolsShim } from './optics-tools-shim.mjs'; // v7 split, temporary (see the file)
 import holograms from './scenarios/holograms.mjs';
 import voiceSpeech from './scenarios/voice-speech.mjs';
 import screens from './scenarios/screens.mjs';
@@ -44,6 +48,9 @@ const presence = await optionalScenarios('./scenarios/presence.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...screens];
+
+// v7 senses: Optics (the camera) and the natural voice, after every other scenario.
+SCENARIOS.push(...optics, ...opticsCamera, ...naturalVoice);
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };
@@ -108,7 +115,7 @@ async function main() {
   if (opts.build) {
     process.stdout.write('Building the app… ');
     try {
-      const { buildId, warnings } = await build({ quiet: true });
+      const { buildId, warnings } = await build({ quiet: true, plugins: [opticsToolsShim(ROOT)] });
       console.log(`build ${buildId}`);
       for (const w of warnings) console.log(`  warning: ${w}`);
     } catch (err) {
@@ -120,6 +127,20 @@ async function main() {
 
   let playwright;
   let browser;
+  // Scenarios may need their own Chromium flags (Optics: a fake camera playing a test scene). At
+  // most one such browser is open at a time (memory): it closes when a scenario needs other flags.
+  let extra = null; // { key, browser }
+  const browserFor = async (scenario) => {
+    const args = typeof scenario.browserArgs === 'function' ? await scenario.browserArgs() : scenario.browserArgs || [];
+    const key = args.join(' ');
+    if (extra && extra.key !== key) {
+      await extra.browser.close().catch(() => {});
+      extra = null;
+    }
+    if (!args.length) return browser;
+    if (!extra) extra = { key, browser: await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0, args }) };
+    return extra.browser;
+  };
   try {
     playwright = await loadPlaywright();
     browser = await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0 });
@@ -138,7 +159,7 @@ async function main() {
   const startedAll = Date.now();
   for (const scenario of selected) {
     server.mock.reset();
-    const t = new TestContext({ scenario, browser, playwright, server, artifactsDir: ARTIFACTS, devices: deviceMap });
+    const t = new TestContext({ scenario, browser: await browserFor(scenario), playwright, server, artifactsDir: ARTIFACTS, devices: deviceMap });
     const started = Date.now();
     let error = null;
     const run = Promise.resolve().then(() => scenario.run(t));
@@ -164,6 +185,7 @@ async function main() {
   }
 
   await browser.close().catch(() => {});
+  if (extra) await extra.browser.close().catch(() => {});
   await server.close();
 
   // Summary table.

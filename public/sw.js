@@ -8,6 +8,10 @@
  *     (> 4 s) or answered with an error, the cached index.html of this build is served.
  *   - Same-origin GETs of precached files: cache first. A versioned URL from a different build
  *     (?v=<other id>) is left to the network, so old and new files are never mixed.
+ *   - The opt-in natural voice's worker script (voice/*.js, not precached): cache first in this
+ *     build's cache, filled the first time it loads, so the voice also works offline. Its big
+ *     files (model, runtime) are cached by the worker itself (Cache Storage 'transformers-cache',
+ *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them).
  *   - Everything else (any other same-origin GET) is not intercepted at all.
  *   - On activate, caches of older builds (jarvis-*) are deleted.
  *   - { type: 'SKIP_WAITING' } activates a waiting update; { type: 'GET_VERSION' } replies
@@ -145,8 +149,12 @@ self.addEventListener('fetch', (event) => {
   const version = url.searchParams.get('v');
   if (version && version !== BUILD_ID) return; // another build's file: let the network answer
   const key = url.origin + url.pathname;
-  if (!isPrecached(key)) return;
-  event.respondWith(cacheFirst(request, key));
+  if (isPrecached(key)) {
+    event.respondWith(cacheFirst(request, key));
+    return;
+  }
+  const rel = url.href.startsWith(BASE) ? url.pathname.slice(new URL(BASE).pathname.length) : '';
+  if (/^voice\/[\w.-]+\.js$/.test(rel)) event.respondWith(cacheFirst(request, key));
 });
 
 async function cacheFirst(request, key) {

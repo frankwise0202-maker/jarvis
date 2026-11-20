@@ -842,6 +842,22 @@ html.vm-open body {
   justify-self: start;
 }
 
+/* With Optics: Look sits beside Type, left of the main button (Look · Type · Talk · Exit). */
+.vm-dock-side {
+  grid-column: 1;
+  justify-self: end;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+/* Equal side columns keep the main button centered under the core with two buttons on its left;
+   the pair may reach into the gutter on the narrowest phones (sizes below). */
+.vm-dock--look {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: var(--sp-4);
+}
+
 .vm-dock-ic {
   position: relative;
   display: grid;
@@ -1014,12 +1030,26 @@ html.vm-open body {
   .vm-dock {
     column-gap: var(--sp-6);
   }
+  .vm-dock--look {
+    column-gap: var(--sp-3);
+  }
+  .vm-dock--look .vm-dock-side {
+    gap: var(--sp-2);
+  }
   .vm-captions {
     font-size: var(--fs-lg);
   }
   .vm-switch {
     gap: var(--sp-2);
     padding-left: var(--sp-3);
+  }
+}
+
+/* 320 px phones: the four dock buttons a little smaller (still over the 44 px tap size), so Look
+   and Type stay clear of the screen edge while Talk stays centered. */
+@media (max-width: 340px) {
+  .vm-dock--look {
+    --vm-btn: 48px;
   }
 }
 

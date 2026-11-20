@@ -101,6 +101,11 @@ export async function deploy({ push = false, doBuild = true, keepWorktree = fals
     buildId = (await readBuildIdFromDist(dist)) || 'manual';
   }
   log(`Build ${buildId} ready.`);
+  // The opt-in natural voice is self-hosted: without its model files the voice can't download.
+  if (!existsSync(path.join(dist, 'models', 'onnx-community', 'Kokoro-82M-v1.0-ONNX', 'tokenizer.json'))) {
+    log('Warning: dist/models/ has no natural-voice model, so "Natural voice" in Settings will fail to download.');
+    log('         Run "node scripts/fetch-voice-model.mjs" (once; about 418 MB from huggingface.co), then deploy again.');
+  }
 
   const origin = git(['remote', 'get-url', 'origin'], { cwd: repoTop, allowFail: true });
   const hasOrigin = origin.code === 0 && !!origin.stdout;

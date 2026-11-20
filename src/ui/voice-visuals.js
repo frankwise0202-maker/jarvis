@@ -67,6 +67,9 @@ export function commandAck(command) {
   const part = spokenPart(cmd.partName);
   if (Object.prototype.hasOwnProperty.call(SIMPLE, cmd.action)) return SIMPLE[cmd.action];
   switch (cmd.action) {
+    case 'optics':
+      // Optics over Voice Mode says its own short line ("Switching cameras.", "Camera off.").
+      return typeof cmd.ack === 'string' ? cmd.ack.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
     case 'view':
       return VIEW_WORDS[cmd.view] || 'Changing the view.';
     case 'select':

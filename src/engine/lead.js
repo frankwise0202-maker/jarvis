@@ -41,6 +41,7 @@ import {
   startVisualSegment,
   updateVisualSegment,
 } from './visuals.js';
+import { dropPinsSegment, failPinsSegment, isLivePinsTool, isOpticsTool, runOpticsTool, startPinsSegment, updatePinsSegment } from './optics.js';
 import { isAttachmentBlock } from './attachments.js';
 import { SCREEN_NOT_RESUMED, SCREEN_TOOL, runOpenScreen } from './screens.js';
 import { PRICES } from './models.js';
@@ -112,6 +113,7 @@ function createLeadView(ctx, req) {
   const blocks = new Map();
   const planning = new Map(); // tool_use id → planning mission created by this request
   const visuals = new Map(); // tool_use id → live hologram / blueprint segment created by this request
+  const pins = new Map(); // tool_use id → live pins segment (pin_labels, version 5) created by this request
   const showThinking = ctx.settings.showThinking;
 
   function appendThinking(st, text) {
@@ -202,7 +204,7 @@ function createLeadView(ctx, req) {
     switch (event.type) {
       case 'content_block_start': {
         const b = event.content_block || {};
-        const st = { type: b.type, raw: '', startedAt: ctx.stamp(), seg: null, mission: null, visual: null };
+        const st = { type: b.type, raw: '', startedAt: ctx.stamp(), seg: null, mission: null, visual: null, pins: null };
         blocks.set(event.index, st);
         if (b.type === 'thinking') {
           appendThinking(st, b.thinking);
@@ -224,6 +226,10 @@ function createLeadView(ctx, req) {
             // Live build: the card and the hologram grow while the input streams (like planning).
             st.visual = startVisualSegment(ctx, b, req);
             visuals.set(b.id, st.visual);
+          } else if (isLivePinsTool(ctx, b.name)) {
+            // Optics: labels appear on the frame one by one while the input streams.
+            st.pins = startPinsSegment(ctx, b, req);
+            pins.set(b.id, st.pins);
           }
         } else if (b.type === 'fallback') {
           ctx.addSegment({
@@ -251,6 +257,8 @@ function createLeadView(ctx, req) {
             updatePlanning(ctx, st.mission, st.raw);
           } else if (st.visual) {
             updateVisualSegment(ctx, st.visual, st.raw);
+          } else if (st.pins) {
+            updatePinsSegment(ctx, st.pins, st.raw);
           }
         }
         break;
@@ -267,6 +275,8 @@ function createLeadView(ctx, req) {
           updatePlanning(ctx, st.mission, st.raw);
         } else if (st.visual) {
           updateVisualSegment(ctx, st.visual, st.raw, { final: true });
+        } else if (st.pins) {
+          updatePinsSegment(ctx, st.pins, st.raw, { final: true });
         }
         const block = snapshot?.content?.[event.index];
         if (block && (block.type === 'web_search_tool_result' || block.type === 'web_fetch_tool_result')) applyResult(block);
@@ -300,10 +310,13 @@ function createLeadView(ctx, req) {
    * throttle may have held back the last updates), so a cut card shows all that was built.
    */
   function flushLive() {
-    for (const st of blocks.values()) if (st.visual) updateVisualSegment(ctx, st.visual, st.raw, { final: true });
+    for (const st of blocks.values()) {
+      if (st.visual) updateVisualSegment(ctx, st.visual, st.raw, { final: true });
+      if (st.pins) updatePinsSegment(ctx, st.pins, st.raw, { final: true });
+    }
   }
 
-  return { onEvent, finalize, flushLive, planning, visuals };
+  return { onEvent, finalize, flushLive, planning, visuals, pins };
 }
 
 /** Drops everything a failed attempt of request `req` (or later) showed, before a retry/resume. */
@@ -389,7 +402,7 @@ async function leadRequest(ctx, req) {
       });
       view.finalize(result.message.content);
       ctx.adoptContainer(result.message.container);
-      return { ...result, planning: view.planning, visuals: view.visuals };
+      return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
@@ -429,7 +442,9 @@ function commitAssistant(ctx, content) {
 }
 
 function toolResultBlock(id, result) {
-  const block = { type: 'tool_result', tool_use_id: id, content: String(result?.content ?? '') };
+  // A result is text, or (look_through_camera) an array of text and image blocks.
+  const content = Array.isArray(result?.content) ? result.content : String(result?.content ?? '');
+  const block = { type: 'tool_result', tool_use_id: id, content };
   if (result?.is_error) block.is_error = true;
   return block;
 }
@@ -546,6 +561,7 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
     if (tu.badJson !== null) {
       dropMission(ctx, planning.get(tu.id));
       failVisualSegment(ctx, tu.id, 'The input was not valid JSON.');
+      failPinsSegment(ctx, tu.id, 'The input was not valid JSON.');
       round.results[tu.id] = invalidJsonResult(tu.badJson);
     } else if (tu.name === 'deploy_agents') {
       const outcome = startDeploy(ctx, tu, { planned: planning.get(tu.id) || findMissionByToolUse(ctx.turn, tu.id), req });
@@ -557,6 +573,8 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
       }
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = await applyMemory(ctx, tu, req);
+    } else if (isOpticsTool(ctx, tu.name)) {
+      round.results[tu.id] = await runOpticsTool(ctx, tu, req);
     } else if (isVisualTool(ctx, tu.name)) {
       round.results[tu.id] = await runVisualTool(ctx, tu, req);
     } else if (isScreenTool(ctx, tu.name)) {
@@ -609,6 +627,9 @@ async function resumeToolRound(ctx, pending) {
       missionRuns.push(resumeMission(ctx, mission).then(() => missionDone(ctx, round, tu, mission)));
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = { content: MEMORY_NOT_RESUMED, is_error: true };
+    } else if (isOpticsTool(ctx, tu.name)) {
+      // Pinning again is harmless; a camera frame is taken only if the camera is still live.
+      round.results[tu.id] = await runOpticsTool(ctx, tu, Math.max(0, ctx.req - 1));
     } else if (isVisualTool(ctx, tu.name)) {
       // Showing, saving (idempotent per segment) or opening an item again is harmless.
       round.results[tu.id] = await runVisualTool(ctx, tu, Math.max(0, ctx.req - 1));
@@ -635,7 +656,7 @@ async function leadLoop(ctx) {
     const req = ctx.req;
     ctx.currentReq = req;
     setCheckpoint(ctx, { toolUses: [], req, ...(ctx.paused.length ? { paused: jsonCopy(ctx.paused) } : {}) });
-    const { message, rawInputs, planning, visuals } = await leadRequest(ctx, req);
+    const { message, rawInputs, planning, visuals, pins } = await leadRequest(ctx, req);
     ctx.req = req + 1;
     ctx.accountUsage(message, ctx.leadModel, null);
     ctx.emitTurn();
@@ -660,6 +681,7 @@ async function leadLoop(ctx) {
       ctx.paused = [];
       for (const mission of planning.values()) dropMission(ctx, mission);
       for (const id of visuals.keys()) failVisualSegment(ctx, id);
+      for (const id of pins.keys()) failPinsSegment(ctx, id);
       throw new Refused(refusalInfo(message), req);
     }
 
@@ -668,6 +690,7 @@ async function leadLoop(ctx) {
     // A deploy_agents call that is not part of the appended turn (e.g. left out after a fallback) never runs.
     for (const [id, mission] of planning) if (!toolUses.some((b) => b.id === id)) dropMission(ctx, mission);
     for (const id of visuals.keys()) if (!toolUses.some((b) => b.id === id)) dropVisualSegment(ctx, id);
+    for (const id of pins.keys()) if (!toolUses.some((b) => b.id === id)) dropPinsSegment(ctx, id);
     commitAssistant(ctx, content);
 
     if (stop === 'tool_use' && toolUses.length) {
@@ -680,6 +703,7 @@ async function leadLoop(ctx) {
       for (const b of toolUses) {
         dropMission(ctx, planning.get(b.id));
         failVisualSegment(ctx, b.id, 'The reply ended before this was complete.');
+        failPinsSegment(ctx, b.id, 'The reply ended before these labels were complete.');
       }
       // A hologram or blueprint cut off by max_tokens can't be continued: answer it with how to
       // make it fit and build it again once, smaller (a same-size try would only fail again).

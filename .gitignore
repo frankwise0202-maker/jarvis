@@ -22,3 +22,6 @@ Thumbs.db
 
 # Stray tool downloads (never part of Jarvis)
 *.whl
+
+# The natural voice's model files (scripts/fetch-voice-model.mjs puts them here at deploy time)
+vendor/

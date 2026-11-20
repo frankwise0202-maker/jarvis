@@ -1,0 +1,476 @@
+/* Optics: the camera screen (src/ui/optics/optics.js). Phone first: the live camera fills the
+   screen; after LOOK the frozen frame sits between the top bar and the answer sheet (contain, so
+   every pinned label is visible). Desktop (≥ 900 px): a 16:9 viewport and its deck on the left,
+   the answer and the Optics log on the right. One blurred layer at a time (the deck, or the
+   sheet on phones). New tokens fall back to their values from the redesign spec (§2.4.16). */
+
+.optics {
+  --scrim: var(--scrim-hud, rgba(4, 7, 12, 0.72));
+  --live-c: var(--live, #ff5c72);
+  --live-bg: var(--live-soft, rgba(255, 92, 114, 0.16));
+  --hud-font: var(--font-hud, var(--font-display));
+  --top-h: calc(var(--safe-top) + 52px);
+  --deck-h: calc(var(--safe-bottom) + 148px);
+  --deck-ask-h: calc(var(--safe-bottom) + 68px);
+  --sheet-h: min(40vh, 360px);
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #000;
+  color: var(--text);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---- stage --------------------------------------------------------------------------------- */
+.optics-main { position: absolute; inset: 0; }
+.optics-stage { position: absolute; inset: 0; overflow: hidden; background: #000; transition: top var(--dur-2) var(--ease-out), bottom var(--dur-2) var(--ease-out); }
+.optics-video,
+.optics-frozen,
+.optics-frozen-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.optics-frozen { display: none; }
+.optics[data-mirrored='true'] .optics-video { transform: scaleX(-1); }
+.optics[data-frozen-mirror='true'] .optics-frozen-media { transform: scaleX(-1); }
+.optics[data-frozen='true'] .optics-stage { top: var(--top-h); bottom: calc(var(--deck-ask-h) + var(--sheet-h)); }
+.optics[data-frozen='true'] .optics-frozen { display: block; }
+.optics[data-frozen='true'] .optics-frozen-media { object-fit: contain; }
+.optics[data-frozen='true'] .optics-video { visibility: hidden; }
+.optics[data-state='review'] .optics-video { visibility: hidden; }
+
+/* Static HUD overlay: corner brackets and a center reticle (never animated). */
+.optics-brackets { position: absolute; inset: 16px; pointer-events: none; }
+.optics-brackets i { position: absolute; width: 28px; height: 28px; border-color: var(--accent-2); border-style: solid; border-width: 0; opacity: 0.7; }
+.optics-brackets i:nth-child(1) { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; }
+.optics-brackets i:nth-child(2) { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; }
+.optics-brackets i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; }
+.optics-brackets i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; }
+.optics-stage .optics-brackets { top: calc(var(--top-h) + 4px); bottom: calc(var(--deck-h) + 12px); }
+.optics[data-frozen='true'] .optics-stage .optics-brackets { top: 10px; bottom: 10px; inset-inline: 10px; }
+.optics-reticle { position: absolute; left: 50%; top: calc((var(--top-h) + 100% - var(--deck-h)) / 2); width: 72px; height: 72px; margin: -36px 0 0 -36px; color: var(--accent-2); opacity: 0.55; pointer-events: none; }
+.optics[data-frozen='true'] .optics-reticle,
+.optics[data-camera='off'] .optics-reticle,
+.optics[data-camera='paused'] .optics-reticle { display: none; }
+.optics[data-camera='off']:not([data-frozen='true']) .optics-brackets { opacity: 0.35; }
+
+/* Alpha events: a 12% white flash (once, 120 ms) and one scanline (600 ms). */
+.optics-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.optics-flash.is-on { animation: optics-flash 120ms linear 1; }
+@keyframes optics-flash { 0% { opacity: 0.12; } 100% { opacity: 0; } }
+.optics-scan { position: absolute; left: 0; right: 0; top: 0; height: 2px; opacity: 0; pointer-events: none; background: linear-gradient(90deg, transparent, var(--accent-2), transparent); box-shadow: 0 0 18px var(--accent-glow); }
+.optics-scan.is-on { animation: optics-scan 600ms var(--ease) 1; }
+@keyframes optics-scan { 0% { opacity: 0.9; transform: translateY(0); } 100% { opacity: 0.2; transform: translateY(var(--scan-h, 400px)); } }
+.optics[data-state='frozen'] .optics-stage { --scan-h: calc(100vh - var(--top-h) - var(--deck-ask-h) - var(--sheet-h)); }
+
+/* ---- pins: EDITH plates with a dot on the object and a 1 px leader ---------------------------- */
+.optics-pins { position: absolute; inset: 0; pointer-events: none; }
+.optics-plate { pointer-events: auto; cursor: pointer; }
+.optics-plate.is-selected { border-color: var(--accent-2); color: var(--text); box-shadow: 0 0 0 1px var(--accent-2), 0 0 14px var(--accent-glow); }
+.optics-dot.is-selected { width: 12px; height: 12px; margin: -6px 0 0 -6px; }
+.optics-leaders { position: absolute; left: 0; top: 0; overflow: visible; }
+.optics-leaders line { stroke: var(--line-3); stroke-width: 1; }
+.optics-dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 0 1.5px rgba(4, 7, 12, 0.85), 0 0 10px var(--accent-glow); }
+.optics-dot.is-clipped { background: transparent; box-shadow: 0 0 0 1.5px var(--accent-2); }
+.optics-plate {
+  position: absolute;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: var(--scrim);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  font: 500 13px/24px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.optics-plate.is-new,
+.optics-dot.is-new,
+.optics-leaders line.is-new { animation: optics-pin-in var(--dur-2) var(--ease-out) both; }
+@keyframes optics-pin-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* ---- top bar ----------------------------------------------------------------------------------- */
+.optics-top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--top-h);
+  padding: var(--safe-top) calc(var(--safe-right) + 12px) 0 calc(var(--safe-left) + 16px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* Nearly solid behind the text (the 10 px sub-label keeps 4.5:1 over a white scene), fading out below it. */
+  background: linear-gradient(rgba(4, 7, 12, 0.9), rgba(4, 7, 12, 0.88) calc(100% - 10px), rgba(4, 7, 12, 0));
+  pointer-events: none;
+}
+.optics[data-frozen='true'] .optics-top { background: #000; }
+.optics-top > * { pointer-events: auto; }
+.optics-titles { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+/* The camera picker: the line under OPTICS names the camera; a tap lists them all. */
+.optics-cam-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 24px; margin: -4px 0 -6px; padding: 4px 6px 4px 0; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.optics-cam-btn:hover:not(:disabled) .optics-sub,
+.optics-cam-btn[aria-expanded='true'] .optics-sub { color: var(--text-2); }
+.optics-cam-btn:disabled { cursor: default; }
+.optics-cam-btn:focus-visible { outline: none; box-shadow: 0 2px 0 0 var(--accent); }
+.optics-cam-caret { display: grid; place-items: center; color: var(--text-3); }
+.optics-cam-btn[aria-expanded='true'] .optics-cam-caret { transform: rotate(180deg); color: var(--accent-2); }
+.optics-cam-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: -6px;
+  z-index: 4;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(340px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 10px 8px 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-2);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-2);
+}
+.optics-cam-menu-title { margin: 0 8px 6px; font: 600 10px/1 var(--font-mono); letter-spacing: 0.18em; color: var(--text-3); }
+.optics-cam-list { display: flex; flex-direction: column; gap: 2px; }
+.optics-cam-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 6px 10px 6px 6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.optics-cam-item:hover,
+.optics-cam-item:focus-visible { background: var(--accent-soft); border-color: var(--line-2); outline: none; }
+.optics-cam-item[aria-checked='true'] { border-color: color-mix(in srgb, var(--accent-2) 45%, transparent); }
+.optics-cam-check { width: 20px; flex: none; display: grid; place-items: center; color: var(--accent-2); }
+.optics-cam-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.optics-cam-name { font-size: 15px; line-height: 1.25; }
+.optics-cam-detail { font: 500 11px/1.3 var(--font-mono); color: var(--text-3); letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.optics-cam-hint { margin: 6px 8px 2px; font-size: 12px; line-height: 1.4; color: var(--text-3); }
+/* A short notice under the top bar: a camera plugged in or unplugged. */
+.optics-notice {
+  position: absolute;
+  top: calc(var(--top-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: rgba(4, 7, 12, 0.92);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: center;
+}
+.optics-title { font: 600 18px/1 var(--hud-font); letter-spacing: 0.2em; color: var(--text); }
+.optics-sub { display: inline-flex; min-width: 0; font: 500 10px/1.2 var(--font-mono); letter-spacing: 0.08em; color: var(--text-3); text-transform: uppercase; white-space: nowrap; }
+.optics-sub-name { min-width: 0; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
+.optics-sub-rest { flex: none; white-space: pre; } /* keeps the space before its first "·" */
+.optics-top-actions { display: flex; align-items: center; gap: 8px; }
+.optics-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  min-width: 44px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--live-c) 55%, transparent);
+  background: linear-gradient(var(--live-bg), var(--live-bg)), rgba(4, 7, 12, 0.94); /* LIVE keeps 4.5:1 over any scene */
+  color: var(--text);
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  position: relative;
+}
+.optics-pill::before { content: ''; position: absolute; inset: -8px -4px; } /* a 44 px target */
+.optics-pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live-c); animation: optics-breathe 1s ease-in-out infinite alternate; }
+.optics-pill-live { color: var(--live-c); }
+@keyframes optics-breathe { from { opacity: 1; } to { opacity: 0.45; } }
+.optics-close {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(4, 7, 12, 0.55);
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* ---- Watch HUD ------------------------------------------------------------------------------- */
+.optics-watch {
+  position: absolute;
+  left: calc(var(--safe-left) + 16px);
+  right: calc(var(--safe-right) + 16px);
+  top: calc(var(--top-h) + 8px);
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--scrim);
+  border: 1px solid var(--line-2);
+}
+.optics-watch-row { display: flex; align-items: center; gap: 8px; font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.08em; }
+.optics-watch-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live-c); }
+.optics[data-watching='true'] .optics-watch-dot { animation: optics-breathe 1s ease-in-out infinite alternate; }
+.optics[data-watching='false'] .optics-watch-dot { background: var(--text-3); }
+.optics-watch-clock { color: var(--text); font-variant-numeric: tabular-nums; }
+.optics-watch-stats { margin-left: auto; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.optics-watch-note { margin: 6px 0 0; font-size: 14px; line-height: 1.4; color: var(--text); }
+.optics-watch-note[data-kind='alert'] { color: var(--accent-2); }
+
+/* ---- control deck (the one blurred layer while live) -------------------------------------------- */
+.optics-deck {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: var(--deck-h);
+  padding: 10px calc(var(--safe-right) + 16px) calc(var(--safe-bottom) + 10px) calc(var(--safe-left) + 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 86% so its smallest text keeps 4.5:1 even over a white scene (blur alone is not enough). */
+  background: rgba(4, 7, 12, 0.86);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border-top: 1px solid var(--line);
+}
+.optics-deck[data-frozen='true'] { min-height: var(--deck-ask-h); background: #05090f; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.optics-deck[data-frozen='true'] .optics-keys { display: none; }
+.optics-ask-row { display: flex; gap: 8px; align-items: center; }
+.optics-ask {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-2);
+  background: rgba(15, 31, 48, 0.86);
+  color: var(--text);
+  font: 400 var(--fs-input) / 1 var(--font-ui);
+}
+.optics-ask::placeholder { color: var(--text-3); }
+.optics-ask:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.optics-mic { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(15, 31, 48, 0.86); color: var(--text); cursor: pointer; }
+.optics-mic.is-listening { border-color: var(--live-c); color: var(--live-c); background: var(--live-bg); }
+.optics-keys { display: flex; align-items: center; justify-content: center; gap: 28px; }
+.optics-key {
+  width: 56px;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.optics-key .icon { width: 22px; height: 22px; padding: 6px; box-sizing: content-box; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(15, 31, 48, 0.7); }
+.optics-key[aria-pressed='true'] .icon { border-color: var(--live-c); background: var(--live-bg); color: var(--live-c); }
+.optics-key-label { font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); }
+.optics-key:disabled { opacity: 0.4; cursor: default; }
+.optics-shutter-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.optics-shutter {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.optics-shutter-ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--accent-2); }
+.optics-shutter-ring::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 22px var(--accent-glow); }
+.optics-shutter-label { position: relative; font: 700 13px/1 var(--hud-font); letter-spacing: 0.16em; }
+.optics-shutter:active .optics-shutter-ring::after { transform: scale(0.94); }
+.optics-shutter:disabled { opacity: 0.45; cursor: default; }
+.optics-look-cost { font: 500 10px/1 var(--font-mono); color: var(--text-3); letter-spacing: 0.04em; }
+.optics-shutter:focus-visible,
+.optics-key:focus-visible,
+.optics-pill:focus-visible,
+.optics-close:focus-visible,
+.optics-mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- answer sheet (phone) / side column (desktop) ----------------------------------------------- */
+.optics-side { position: absolute; left: 0; right: 0; bottom: var(--deck-ask-h); height: var(--sheet-h); pointer-events: none; }
+.optics-answer {
+  pointer-events: auto;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px calc(var(--safe-right) + 16px) 8px calc(var(--safe-left) + 16px);
+  background: var(--surface-solid);
+  border-top: 1px solid var(--line-2);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.optics-answer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 11px/1 var(--font-mono); letter-spacing: 0.14em; }
+.optics-answer-state { color: var(--accent); }
+.optics-answer[data-status='analyzing'] .optics-answer-state { color: var(--violet); }
+.optics-answer[data-status='error'] .optics-answer-state { color: var(--warn); }
+.optics-answer-cost { color: var(--text-3); letter-spacing: 0.04em; font-weight: 500; }
+.optics-answer-q { margin: 8px 0 0; font-size: 13px; color: var(--text-3); }
+.optics-answer-q::before { content: '› '; color: var(--accent); }
+.optics-answer-q--follow { margin-top: 12px; }
+.optics-answer-body { flex: 1; min-height: 0; overflow-y: auto; margin-top: 6px; padding-bottom: 12px; font-size: 15px; line-height: 1.55; color: var(--text); overscroll-behavior: contain; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); }
+.optics-answer-body p { margin: 0 0 8px; }
+.optics-answer-wait { color: var(--text-3); }
+.optics-answer-body.is-error { color: var(--text-2); }
+.optics-pin-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.optics-pin-chip { padding: 3px 8px; border-radius: var(--r-pill); border: 1px solid var(--line-2); background: transparent; font: 500 11px/1.3 var(--font-mono); color: var(--text-2); cursor: pointer; }
+.optics-pin-chip[aria-pressed='true'] { border-color: var(--accent-2); color: var(--text); background: var(--accent-soft); }
+.optics-pin-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Follow-ups on an answer. */
+/* Phones: one row that scrolls sideways (the answer keeps its room); desktop: they wrap. */
+.optics-followups { display: flex; flex-wrap: nowrap; gap: 8px; padding-top: 8px; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.optics-followups::-webkit-scrollbar { display: none; }
+.optics-chip { flex: none; }
+.optics-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--line-2); background: rgba(15, 31, 48, 0.86); color: var(--text); font: 600 13px/1 var(--font-ui); cursor: pointer; }
+.optics-chip:disabled { opacity: 0.45; cursor: default; }
+.optics-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.optics-chip--holo { border-color: color-mix(in srgb, var(--accent-2) 55%, transparent); }
+.optics-chip--holo .icon,
+.optics-chip--part .icon { color: var(--accent-2); }
+.optics-chip-cost { font: 500 11px/1 var(--font-mono); color: var(--text-3); letter-spacing: 0.02em; }
+/* Hologram of this: the schematic (the frame's edges) while the hologram is built. */
+.optics-schematic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; pointer-events: none; }
+.optics[data-frozen='true'][data-schematic='true'] .optics-schematic { display: block; }
+.optics[data-schematic='true'] .optics-pins { opacity: 0.35; }
+.optics-schematic-label { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); margin: 0; padding: 6px 12px; border-radius: var(--r-pill); background: rgba(4, 7, 12, 0.88); border: 1px solid var(--line-2); font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.14em; color: var(--accent-2); white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; display: none; }
+.optics[data-frozen='true'][data-schematic='true'] .optics-schematic-label { display: block; }
+.optics-answer-actions { display: flex; align-items: center; gap: 8px; padding-top: 8px; }
+.optics-answer-actions .btn { min-height: 44px; }
+.optics-in-chat { margin-left: auto; font: 500 11px/1 var(--font-mono); color: var(--ok); letter-spacing: 0.06em; }
+.optics-log { display: none; }
+
+/* ---- state cards (intro, starting, paused, blocked) ---------------------------------------------- */
+.optics-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(360px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface-solid);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-2);
+}
+.optics-card-title { margin: 0; font: 600 var(--fs-xl) / 1.25 var(--font-display); color: var(--text); }
+.optics-card-text { margin: 8px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-2); }
+.optics-card-cost { margin: 10px 0 0; font: 500 12px/1.4 var(--font-mono); color: var(--text-3); }
+.optics-card-steps { margin: 12px 0 0; padding-left: 20px; font-size: 14px; line-height: 1.5; color: var(--text); }
+.optics-card-steps li + li { margin-top: 4px; }
+.optics-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.optics-card-actions .btn { min-height: 44px; flex: 1 1 auto; }
+.optics-card[data-kind='starting'] { text-align: center; width: auto; padding: 16px 20px; background: rgba(4, 7, 12, 0.72); }
+.optics-card[data-kind='starting'] .optics-card-title { font-size: 15px; font-family: var(--font-mono); letter-spacing: 0.08em; color: var(--text-2); }
+.optics-card-spinner { display: block; width: 18px; height: 18px; margin: 10px auto 0; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); animation: optics-spin 0.9s linear infinite; }
+@keyframes optics-spin { to { transform: rotate(360deg); } }
+
+/* ---- desktop: viewport + deck on the left, answer + Optics log on the right ----------------------- */
+@media (min-width: 900px) {
+  .optics { --top-h: 76px; --deck-h: 0px; --deck-ask-h: 0px; --sheet-h: 0px; background: radial-gradient(ellipse at 40% 30%, #0a1420, #03060a 70%); }
+  .optics-main { position: absolute; left: 32px; right: calc(clamp(360px, 28vw, 420px) + 48px); top: var(--top-h); bottom: 24px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+  .optics-stage { position: relative; inset: auto; width: min(100%, 960px, calc((100vh - var(--top-h) - 200px) * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--r-md); border: 1px solid var(--line-2); }
+  .optics[data-frozen='true'] .optics-stage { top: auto; bottom: auto; }
+  .optics-video,
+  .optics-frozen-media { object-fit: contain; }
+  .optics-stage .optics-brackets { inset: 12px; }
+  .optics-reticle { top: 50%; }
+  .optics-deck { position: relative; inset: auto; min-height: 0; width: min(100%, 960px); margin: 0 auto; box-sizing: border-box; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-md); flex-direction: row; align-items: center; gap: 16px; }
+  .optics-deck[data-frozen='true'] { min-height: 0; }
+  .optics-deck[data-frozen='true'] .optics-keys { display: flex; }
+  .optics-ask-row { flex: 1; }
+  .optics-keys { gap: 14px; }
+  .optics-top { background: none; padding: 0 24px 0 32px; }
+  .optics[data-frozen='true'] .optics-top { background: none; }
+  /* On a computer the camera line is a visible control (a pill): the owner's Logitech is one click away. */
+  .optics-titles { gap: 6px; }
+  .optics-cam-btn { margin: 0; min-height: 30px; padding: 4px 10px 4px 12px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: rgba(7, 13, 21, 0.72); }
+  .optics-cam-btn:hover:not(:disabled),
+  .optics-cam-btn[aria-expanded='true'] { border-color: color-mix(in srgb, var(--accent-2) 55%, transparent); }
+  .optics-cam-btn:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .optics-cam-btn:disabled { padding-left: 0; border-color: transparent; background: transparent; }
+  .optics-sub { font-size: 11px; color: var(--text-2); }
+  .optics-cam-menu { top: calc(100% + 8px); }
+  .optics-side { position: absolute; left: auto; right: 24px; top: var(--top-h); bottom: 24px; width: clamp(360px, 28vw, 420px); height: auto; display: flex; flex-direction: column; gap: 14px; pointer-events: auto; }
+  .optics-answer { flex: 0 1 auto; max-height: 62%; height: auto; border-radius: var(--r-md); border: 1px solid var(--line-2); padding: 14px 16px; }
+  .optics-followups { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+  .optics-log { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; padding: 14px 16px; border-radius: var(--r-md); border: 1px solid var(--line); background: rgba(7, 13, 21, 0.7); }
+  .optics-log-title { margin: 0 0 8px; font: 600 11px/1 var(--font-mono); letter-spacing: 0.18em; color: var(--text-3); }
+  .optics-log-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .optics-log-list:empty::after { content: 'Each Look appears here.'; font-size: 13px; color: var(--text-3); }
+  .optics-log-item { width: 100%; display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: var(--r-sm); border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+  .optics-log-item:hover { border-color: var(--line-2); background: var(--accent-soft); }
+  .optics-log-thumb { width: 64px; height: 36px; flex: none; object-fit: cover; border-radius: 4px; background: #000; }
+  .optics-log-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .optics-log-line { font-size: 13px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .optics-log-meta { font: 500 10px/1 var(--font-mono); color: var(--text-3); letter-spacing: 0.06em; }
+  /* Watch lives at the top of the rail on desktop; the answer and the log move down under it. */
+  .optics-watch { left: auto; right: 24px; width: clamp(360px, 28vw, 420px); box-sizing: border-box; top: var(--top-h); min-height: 84px; }
+  .optics[data-watch-hud='true'] .optics-side { top: calc(var(--top-h) + 98px); }
+  .optics-card { position: absolute; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .optics-stage { transition: none; }
+  .optics-pill-dot,
+  .optics[data-watching='true'] .optics-watch-dot { animation: none; }
+  .optics-flash.is-on,
+  .optics-scan.is-on,
+  .optics-plate.is-new,
+  .optics-dot.is-new,
+  .optics-leaders line.is-new { animation: none; }
+  .optics-card-spinner { animation-duration: 3s; }
+}
+
+/* ---- in the chat: the Look's frame card, the pins row and a camera frame Jarvis took ------------ */
+.optics-turn { margin: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.optics-turn-card {
+  position: relative;
+  width: min(280px, 72vw);
+  aspect-ratio: var(--optics-ratio, 1.78);
+  max-height: 320px;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: #000;
+  overflow: hidden;
+  cursor: pointer;
+}
+.optics-turn-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.optics-turn-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.optics-turn-empty { display: grid; place-items: center; width: 100%; height: 100%; color: var(--text-3); }
+.optics-turn-brackets { position: absolute; inset: 6px; pointer-events: none; }
+.optics-turn-brackets i { position: absolute; width: 14px; height: 14px; border: 0 solid var(--accent-2); opacity: 0.8; }
+.optics-turn-brackets i:nth-child(1) { top: 0; left: 0; border-top-width: 1.5px; border-left-width: 1.5px; }
+.optics-turn-brackets i:nth-child(2) { top: 0; right: 0; border-top-width: 1.5px; border-right-width: 1.5px; }
+.optics-turn-brackets i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+.optics-turn-brackets i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+.optics-turn-caption { font: 500 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-3); }
+
+.seg-pins { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 8px 6px 10px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--accent-soft); }
+.pins-seg-icon { color: var(--accent); display: grid; place-items: center; }
+.pins-seg-text { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; min-width: 0; flex: 1; }
+.pins-seg-label { font: 600 11px/1.3 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.pins-seg-names { font-size: 13px; color: var(--text-2); }
+.pins-seg-view { min-height: 36px; min-width: 44px; padding: 0 12px; border-radius: var(--r-pill); border: 1px solid var(--line-2); background: transparent; color: var(--text); font: 600 12px/1 var(--font-ui); cursor: pointer; }
+.pins-seg-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.seg-pins[data-status='live'] .pins-seg-label { color: var(--violet); }
+.seg-pins[data-status='error'] { background: var(--warn-soft); }
+.seg-frame { display: flex; align-items: center; gap: 10px; margin: 6px 0; font: 500 11px/1.3 var(--font-mono); color: var(--text-3); letter-spacing: 0.06em; }
+.frame-seg-thumb img { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line-2); display: block; }
+
+/* Phones: the plates already show the labels; the list stays for screen readers. */
+@media (max-width: 899px) {
+  .optics-pin-list { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; margin: -1px; }
+}
