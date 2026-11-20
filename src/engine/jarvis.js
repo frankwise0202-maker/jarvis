@@ -75,7 +75,8 @@ const FINAL_AGENT = new Set(['done', 'error']);
 
 /**
  * Settles everything still marked as in progress when a turn ends: running tool rows, open thinking,
- * planning/running missions and their unfinished agents. `status` is the turn's final status.
+ * holograms and blueprints still building, live pins (Optics), planning/running missions and their
+ * unfinished agents. `status` is the turn's final status.
  */
 function settleUnfinished(turn, status, ts, notify = null) {
   const code = status === 'interrupted' ? 'interrupted' : status === 'stopped' ? 'stopped' : 'incomplete';
@@ -95,6 +96,14 @@ function settleUnfinished(turn, status, ts, notify = null) {
     } else if (isVisualSegment(seg) && seg.status === 'building') {
       // A hologram or blueprint whose input never finished keeps what was built, and is not saved.
       seg.status = 'error';
+      notify?.segment(seg);
+    } else if (isPinsSegment(seg) && seg.status === 'live') {
+      // pin_labels cut off (Stop, a dropped connection): the labels shown so far stay (each one was
+      // whole and checked against the frame); with none, the row says the labels were not pinned.
+      // Never "Pinning…" forever. (Resume replaces it: its request is discarded and asked again.)
+      const labels = Array.isArray(seg.labels) ? seg.labels : [];
+      seg.status = labels.length ? 'done' : 'error';
+      seg.warnings = [...(Array.isArray(seg.warnings) ? seg.warnings : []), 'The reply ended before these labels were complete.'];
       notify?.segment(seg);
     }
   }

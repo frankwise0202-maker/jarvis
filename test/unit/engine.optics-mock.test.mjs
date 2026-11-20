@@ -200,3 +200,41 @@ test('Watch: one structured request per frame (no tools, no history), the answer
   assert.equal((await runWatchLook({ apiKey: KEY, fetch, frame: { data: 'xx' } })).ok, false);
   assert.deepEqual(mock.violations, []);
 });
+
+test('a Look stopped, or cut off, while pin_labels streams: the pins row never stays "Pinning…" (the labels shown so far stay)', async () => {
+  // Stop once some labels are live.
+  for (const want of [1, 3]) {
+    const { jarvis, mock } = setup();
+    const conv = jarvis.newConversation();
+    let stopped = false;
+    const turn = await look(jarvis, conv, 'What is on my desk? [[slow]]', {
+      onRun: (run) =>
+        run.on('segment', (e) => {
+          if (!stopped && e.segment.kind === 'pins' && e.segment.labels.length >= want) {
+            stopped = true;
+            run.abort();
+          }
+        }),
+    });
+    assert.ok(stopped, 'labels went live before the stop');
+    assert.equal(turn.status, 'stopped');
+    const pins = pinsOf(turn);
+    assert.equal(pins.length, 1);
+    assert.equal(pins[0].status, 'done', `labels kept: ${JSON.stringify(pins[0])}`);
+    assert.ok(pins[0].labels.length >= want && pins[0].frameId === 'f1');
+    assert.match(pins[0].warnings.at(-1), /ended before these labels were complete/);
+    assert.deepEqual(mock.unexpectedViolations([]), []);
+  }
+  // A connection dropped mid pin_labels (the turn is interrupted): settled too, wherever it was cut.
+  let settled = 0;
+  for (const n of [6, 12, 24, 40]) {
+    const { jarvis } = setup();
+    const conv = jarvis.newConversation();
+    const turn = await look(jarvis, conv, `What is on my desk? [[droplead:${n}]]`);
+    for (const p of pinsOf(turn)) {
+      assert.notEqual(p.status, 'live', `cut at ${n}: ${JSON.stringify(p)}`);
+      settled += 1;
+    }
+  }
+  assert.ok(settled >= 1, 'at least one cut landed inside pin_labels');
+});

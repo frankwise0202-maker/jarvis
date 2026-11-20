@@ -1844,7 +1844,9 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
     `Optics: the camera is live (<side>); look_through_camera can take a fresh frame if you need one.`
   - A Look's text defaults to "What am I looking at?".
 - `pin_labels({ frame, labels: [{ text, x, y }] })` (1–8 labels, eager input streaming): live `pins` segments while the
-  input streams.
+  input streams. A turn that ends while one is still live (Stop, a dropped connection) settles it like a building
+  hologram: `done` with the labels shown so far (each was whole and checked), else `error`, plus the warning "The
+  reply ended before these labels were complete." (never "Pinning…" forever; Resume replaces it).
   - Checked against the conversation's frames: a point within 2% of the edge is pulled onto it, a point further out is
     skipped and reported, text is cut to 24 characters with control and bidi characters removed, duplicates are dropped.
   - A wrong frame id is answered `is_error`, naming the newest frame.
@@ -2006,6 +2008,7 @@ about 16¢.
     inside the brackets, sampled on a grid);
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
+  - unit `engine.optics-mock` also stops a Look, and cuts its connection, while pin_labels streams (the pins settle);
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
     shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
     while a start or a switch is still under way);
