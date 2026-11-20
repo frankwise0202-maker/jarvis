@@ -6,7 +6,8 @@
 //                                               also after a run of "no", "oh", "wait" ("no no, cancel")
 //                                     'correct' "no, I said …", "I said …", "I meant …", "no, <words>"
 //                                               or the sentence said again (text: the fix)
-//                                     'send'    "send it", "yes", "go ahead", "that's right"
+//                                     'send'    "send it", "yes", "go ahead", "that's right", "that's
+//                                               fine", also after "no" ("no, that's fine")
 //                                     'wait'    "wait", "hold on", "no", "no no" (the countdown stops)
 //                                     'filler'  only "um", "uh", "hmm" (nothing changes)
 //                                     'more'    anything else: the sentence goes on (text: appended)
@@ -49,7 +50,7 @@ function core(text) {
 }
 
 const CANCEL = /^(?:(?:no|oh|actually|wait|sorry)\s+)?(?:cancel(?:\s+(?:that|it|this|please))?|never\s?mind(?:\s+(?:that|it))?|forget\s+(?:it|that|about\s+it)|scratch\s+that|don'?t\s+send(?:\s+(?:it|that|this))?|do\s+not\s+send(?:\s+(?:it|that|this))?|stop(?:\s+(?:it|that))?|abort)$/;
-const SEND = /^(?:yes|yeah|yep|yup|send|send\s+it|send\s+that|send\s+now|send\s+it\s+now|go|go\s+ahead|that'?s\s+(?:right|correct|it)|correct|perfect|do\s+it|yes\s+send\s+it)$/;
+const SEND = /^(?:yes|yeah|yep|yup|send|send\s+it|send\s+that|send\s+now|send\s+it\s+now|go|go\s+ahead|that'?s\s+(?:right|correct|it|fine|good)|(?:it'?s|looks|sounds)\s+(?:fine|good|right)|fine|correct|perfect|do\s+it|yes\s+send\s+it)$/;
 const WAIT = /^(?:wait|wait\s+a\s+(?:sec|second|moment)|hold\s+on|hang\s+on|one\s+(?:sec|second|moment)|just\s+a\s+(?:sec|second|moment)|no|nope|not\s+quite|wrong|that'?s\s+(?:wrong|not\s+(?:it|right)))$/;
 const FILLERS = new Set(['um', 'umm', 'uh', 'uhh', 'er', 'erm', 'hmm', 'mm', 'mmm', 'ah', 'oh', 'ok', 'okay']);
 // "no, I said …", "I said …", "I meant …", "no, I mean …" (original wording kept for the new text)

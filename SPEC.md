@@ -2421,7 +2421,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   extension for an unfinished last word) and 1 s more after the last words heard. Otherwise `reviewReply` decides: "cancel", "never mind", "forget it", "scratch that", "don't send
   it", "stop", also after any run of "no", "oh", "wait" ("No no, cancel") → nothing is sent ("Okay, not sent.");
   "no, I said …", "I said …", "I meant …" (after any run of "no"), "no, <words>" ("No, Boston"), or the sentence said
-  again (same first two words) → corrected; "send it", "yes", "go ahead" (also "no, send it") → sent now; "wait",
+  again (same first two words) → corrected; "send it", "yes", "go ahead", "that's fine", "looks good" (also after
+  "no": "no, that's fine") → sent now; "wait",
   "hold on", "no", "no no", "no, wait" → the countdown stops (the microphone listens 30 s more for a correction);
   fillers change nothing; anything else is added to the words and the countdown starts again.
   A correction (`planCorrection(heard, fix)` → `{ text, sure }`; `applyCorrection` is its text): a fix the sentence

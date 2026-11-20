@@ -68,6 +68,7 @@ test('reviewReply: "no, <a few words>" corrects them; "no no" and "no, wait" sto
   assert.deepEqual(reviewReply("No, what's the weather in Boston", "What's the weather in Austin"), { kind: 'correct', text: "what's the weather in Boston" });
   for (const s of ['no no', 'No, no, no.', 'no, wait', 'No, hold on', 'no um']) assert.deepEqual(reviewReply(s, 'x y'), { kind: 'wait' }, s);
   assert.deepEqual(reviewReply('No, send it', 'x y'), { kind: 'send' });
+  for (const s of ["No, that's fine", "That's fine.", 'Looks good', "it's fine"]) assert.deepEqual(reviewReply(s, 'x y'), { kind: 'send' }, s);
 });
 
 test('planCorrection: a multi-word fix is anchored on the words it shares with the sentence; only that span changes', () => {
