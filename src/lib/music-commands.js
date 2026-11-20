@@ -17,9 +17,12 @@
 //   matchMusicCommand('play something relaxing')           -> null (Jarvis picks the songs: find_music)
 //
 // Deliberately strict: it needs a music verb at the start ("play", "put on", "let me hear", or
-// "open"/"find"/"show me" with Apple Music or "the song/album" named), a concrete title or artist,
-// and none of the idioms where "play" is not about music. Speech-to-text slips are folded first
-// ("play list", "apple muse ick", "a c d c", "played back in black").
+// "open"/"find"/"show me" with Apple Music, "the song", "the album" or "the playlist" named), a
+// concrete title or artist, and none of the idioms where "play" is not about music. Research and
+// wishes go to Jarvis: "find the record low for Chicago", "find the single best laptop", "find the
+// song lyrics to …", "play a song for a rainy Sunday", "play the new Taylor Swift song".
+// Speech-to-text slips are folded first ("play list", "apple muse ick", "a c d c", "played back
+// in black").
 
 const MAX_WORDS = 16;
 
@@ -57,7 +60,7 @@ const VERBS = [
   [/^(?:play|start playing) /, 'play', false],
   [/^(?:put on|throw on|queue up|queue|spin|blast|crank up|crank) /, 'play', 'loose'],
   [/^(?:let me hear|let s hear|lets hear|i want to hear|i d like to hear|id like to hear|i would like to hear|can i hear|i want to listen to|i d like to listen to|let s listen to|lets listen to|can we listen to|listen to) /, 'play', false],
-  [/^(?:open|find|show me|show|pull up|bring up|look up|search for|search|get me|get|find me) /, 'open', true],
+  [/^(?:open|find me|find|show me|show|pull up|bring up|look up|search for|search|get me|get) /, 'open', true],
 ];
 
 // Stop (the preview): "stop the music", "pause the preview", "music off".
@@ -74,11 +77,12 @@ const IDIOM_START = new RegExp(
     'into', 'havoc', 'a trick', 'tricks', 'a joke', 'a prank', 'a hand', 'a card', 'my cards', 'your cards', 'host', 'doctor', 'detective', 'the hero', 'the villain', 'politics', 'to win', 'to lose',
     'up', 'down', 'off', 'around', 'well', 'tag', 'house', 'the fool', 'second fiddle', 'the blame game', 'the numbers', 'by the rules', 'the system', 'the game',
     'the news', 'news', 'the weather', 'weather', 'the forecast', 'traffic', 'the headlines', 'a sound', 'sounds', 'an alarm', 'the alarm', 'a beep', 'a chime', 'the chime', 'a ringtone', 'a timer',
+    'by play', 'a quick game', 'a quick round', 'ball', 'to your strengths', 'to my strengths', 'to our strengths', 'to their strengths',
   ].join('|')})(?: |$)`,
 );
 // Things that are Jarvis's own (play back the answer) or not music at all.
 const NOT_MUSIC = /^(?:back (?:the|that|this|your|my|it|what)\b|(?:it|that|this|them|those|these)(?: (?:again|back|one|one again|song|track|tune|for me))?$|(?:the |your |my |that |this |a )?(?:last )?(?:answer|reply|response|message|recording|voicemail|voice memo|voice note|briefing|morning briefing|summary|report|hologram|blueprint|video|movie|film|trailer|episode|podcast|audiobook|audio book|show|tv show|youtube video)s?(?: again| back)?$)/;
-const NOT_MUSIC_ANYWHERE = /\b(?:on (?:the |my )?(?:tv|television|homepod|speaker|speakers|sonos|alexa|echo|chromecast|airplay|apple tv|youtube|spotify|netflix|pandora|tidal|soundcloud|amazon music|youtube music)|spotify|youtube|netflix|podcast|podcasts|audiobook|episode|movie|video game|videogame|voicemail|voicemails|voice memo|voice message|voice note|recording|recordings|messages|about)\b/;
+const NOT_MUSIC_ANYWHERE = /\b(?:on (?:the |my )?(?:tv|television|homepod|speaker|speakers|sonos|alexa|echo|chromecast|airplay|apple tv|youtube|spotify|netflix|pandora|tidal|soundcloud|amazon music|youtube music)|spotify|youtube|netflix|podcast|podcasts|audiobook|episode|movie|video game|videogame|voicemail|voicemails|voice memo|voice message|voice note|recording|recordings|messages|about|holograms?|blueprints?|animations?|videos?|photos?|pictures?|screenshots?|scenarios?)\b/;
 // What follows "play" / "let me hear" / "listen to" when it is not a title: thoughts, more about,
 // the pros and cons, my draft, something for a mood (Jarvis picks music himself: find_music).
 const NOT_TITLE_START = /^(?:your|my|our|his|her|their|its|more|what|how|why|when|where|who|whom|which|this|that|these|those|it|them|me|us|him|both|all|everything|anything|something|nothing|someone|somebody|whatever|a bit|a little|the rest|the pros|the cons|the latest|the news|the full|the whole|the details|the summary|the answer|the reply|the report|the plan|an update|an explanation|a summary|a recap|a joke|a story|a word|a few words|any|each|every|no|some music|some songs|music|songs)\b/;
@@ -93,6 +97,26 @@ const GENERIC = new Set(
     'your his her their our any one ones it this that them next previous last first same other another different louder quieter loud quiet playlist playlists'
   ).split(' '),
 );
+// Decades are moods too ("play some 80s rock", "play 90s hits"): Jarvis picks.
+const DECADE = /^(?:\d0s|\d{3}0s|fifties|sixties|seventies|eighties|nineties)$/;
+// "open/find/show/get/search …" is music only with Apple Music named or these words ("find the song
+// Yesterday", "show me the album Rumours"); never "the record low", "the single best laptop", "the
+// track record of a fund", "the LP partners", "the EP of the startup".
+const OPEN_MUSIC_WORDS = /^the (?:song|album|playlist) /;
+// What follows "find the song / the album / the playlist" when it is not a title: "the song lyrics
+// to …", "the album I shared yesterday", "the album cover", "the album sales of …".
+const OPEN_NOT_TITLE = /^(?:of|for|from|to|in|on|with|and|that|which|who|i|my|your|our|lyrics|cover|covers|art|artwork|release|sales|list|record|player|store|company|partners|low|high|best|most|feature|settings)\b/;
+// After "play a song / the track / a tune …": a wish, not a title ("a song for a rainy Sunday", "a
+// song to cheer me up", "a song like Back in Black", "a song I would like", "the song from Titanic").
+// "The song called …" is always a title.
+const SONG_WISH = /^(?:for|to|like|similar|about|that|which|i|you|we|from|of)\b/;
+// Superlatives, charts and news are Jarvis's to pick (find_music): "the best song of 1985", "the
+// number one song right now", "the new Taylor Swift song", "the latest Drake album", "the Top Gun
+// soundtrack". A title with them is taken when it names its artist ("New Rules by Dua Lipa"),
+// unless the title is a music word too ("the best song by Queen").
+const PICK_WORDS = /(?:^|\s)(?:best|top|number one|no 1|#1|greatest|new|newest|latest|most popular|soundtracks?)(?=\s|$)/;
+const ARTIST_PICK_WORDS = /(?:^|\s)(?:latest|newest|most popular|number one|soundtracks?)(?=\s|$)/;
+const MUSIC_NOUN = /(?:^|\s)(?:songs?|tracks?|tunes?|albums?|records?|singles?|hits?|soundtracks?)(?=\s|$)/;
 // "Put on some coffee": things one puts on that are not music.
 const HOUSEHOLD = /^(?:coffee|tea|water|sunscreen|sun screen|lotion|cream|clothes|pants|shoes|socks|a jacket|jacket|a coat|weight|makeup|make up|perfume|the kettle|a pot|a timer|an alarm|the lights|lights|the heating|heat|the heat|the ac|the air|the fan|the tv|tv|a movie|a show|the news|the game|pressure|gloves|a hat|a mask|glasses|a smile)$/;
 const PRONOUN_ARTIST = new Set(['me', 'you', 'us', 'him', 'her', 'them', 'it', 'myself', 'yourself', 'my side', 'the way', 'the sea', 'the river', 'the bay', 'the water', 'the window', 'the door', 'the light']);
@@ -137,7 +161,7 @@ function stripTail(s) {
   return out;
 }
 
-const isGeneric = (phrase) => phrase.split(' ').every((w) => GENERIC.has(w));
+const isGeneric = (phrase) => phrase.split(' ').every((w) => GENERIC.has(w) || DECADE.test(w));
 
 /**
  * The music command in `text`, or null.
@@ -163,6 +187,7 @@ export function matchMusicCommand(text) {
   let action = null;
   let rest = '';
   let loose = false; // "put on X": only with music words ("some X", "the album X", "X by Y")
+  let openWords = false; // "find the song / the album / the playlist X" (no Apple Music named)
   if (searchApple) {
     apple = true;
     action = /play/.test(searchApple[0]) ? 'play' : 'open';
@@ -172,7 +197,10 @@ export function matchMusicCommand(text) {
       const m = re.exec(s);
       if (!m) continue;
       rest = s.slice(m[0].length);
-      if (needsMusic === true && !apple && !/^(?:the |a |that |this )?(?:song|track|single|album|record|lp|ep|playlist)\b/.test(rest)) return null;
+      if (needsMusic === true && !apple) {
+        if (!OPEN_MUSIC_WORDS.test(rest)) return null;
+        openWords = true;
+      }
       loose = needsMusic === 'loose';
       action = act;
       break;
@@ -186,13 +214,22 @@ export function matchMusicCommand(text) {
   // The kind, from the words around the title.
   let kind = 'song';
   let m;
-  if ((m = /^(?:the |a |that |this )?(?:album|record|lp|ep|full album)(?: called| named| titled)? (.+)$/.exec(rest))) {
+  let named = false; // "the song called X": X is a title whatever its first word
+  let songWord = false; // "a song / the track / a tune" came first
+  if ((m = /^(?:the |a |that |this )?(?:album|record|lp|ep|full album)( called| named| titled)? (.+)$/.exec(rest))) {
     kind = 'album';
-    rest = m[1];
-  } else if ((m = /^(?:the |a |that |this )?(?:song|track|single|tune)(?: called| named| titled)? (.+)$/.exec(rest))) {
+    named = !!m[1];
+    rest = m[2];
+  } else if ((m = /^(?:the |a |an |that |this )?(?:song|track|single|tune)( called| named| titled)? (?!by )(.+)$/.exec(rest))) {
     kind = 'song';
-    rest = m[1];
-  } else if ((m = /^(?:the |a |my |our )?playlist(?: called| named| titled)? (.+)$/.exec(rest)) || (m = /^(?:my |our |the |a |some )?(.+?) playlist$/.exec(rest))) {
+    named = !!m[1];
+    songWord = true;
+    rest = m[2];
+  } else if ((m = /^(?:the |a |my |our )?playlist( called| named| titled)? (.+)$/.exec(rest))) {
+    kind = 'playlist';
+    named = !!m[1];
+    rest = m[2];
+  } else if ((m = /^(?:my |our |the |a |some )?(.+?) playlist$/.exec(rest))) {
     kind = 'playlist';
     rest = m[1];
   } else if ((m = /^(?:the |a |that )?(.+?) (?:album|record|lp)$/.exec(rest))) {
@@ -211,6 +248,12 @@ export function matchMusicCommand(text) {
     rest = m[1];
   }
   rest = rest.replace(/^(?:the song |the track |the album )/, '').trim();
+  if (!named) {
+    // "Play a song for a rainy Sunday", "a song like Back in Black": Jarvis picks (find_music).
+    if (songWord && SONG_WISH.test(rest)) return null;
+    // "Find the song lyrics to …", "open the album I shared yesterday", "show me the album cover".
+    if (openWords && OPEN_NOT_TITLE.test(rest)) return null;
+  }
   // ("Your Song by Elton John" names its artist, so it is a title after all.)
   if (kind !== 'playlist' && NOT_TITLE_START.test(rest) && !/ by \S/.test(rest)) return null;
   // A playlist may be named by a mood ("my workout playlist"): Apple Music has no free playlist
@@ -235,6 +278,8 @@ export function matchMusicCommand(text) {
     }
   }
   if (kind !== 'artist' && kind !== 'playlist' && (!title || (isGeneric(title) && !artist))) return null;
+  // "The best song of 1985", "the new Taylor Swift song", "songs from the Top Gun soundtrack".
+  if (kind === 'artist' ? ARTIST_PICK_WORDS.test(artist) : kind !== 'playlist' && PICK_WORDS.test(title) && (!artist || MUSIC_NOUN.test(title))) return null;
   if (loose && !apple && kind === 'song' && !artist && !/^(?:the |a |that |this )?(?:song|track|single|tune)\b/.test(norm.slice(norm.indexOf(' ') + 1))) return null;
   if (kind === 'artist' && HOUSEHOLD.test(artist)) return null;
   const query = [title, artist].filter(Boolean).join(' ');

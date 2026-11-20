@@ -181,11 +181,58 @@ test('searchMusic: an artist is their top songs (lookup); a playlist is searched
   assert.equal(top.kind, 'artist');
   assert.equal(top.artist, 'AC/DC');
   assert.deepEqual(top.items.map((i) => i.title), ['Back In Black']);
-  assert.match(fetch.calls[1].url, /^https:\/\/itunes\.apple\.com\/lookup\?id=5040714&entity=song&limit=5&country=us$/);
+  assert.match(fetch.calls[1].url, /^https:\/\/itunes\.apple\.com\/lookup\?id=5040714&entity=song&limit=25&country=us$/);
   const list = await searchMusic('workout', { kind: 'playlist', country: 'us', fetch });
   assert.equal(list.kind, 'playlist');
   assert.equal(list.items.length, 2, 'no albums: songs instead');
   assert.deepEqual((await topSongs('not-an-id', { fetch })).error, 'empty');
+});
+
+test('an artist\'s top songs are their own: featured appearances on other artists\' songs go last, each title once (live Queen order)', async () => {
+  clearMusicCache();
+  // Apple's own order for Queen (US store, lookup?id=3296287&entity=song): other artists' recordings
+  // where Queen is only featured come first, and titles repeat.
+  const QUEEN = 3296287;
+  const track = (id, title, artist, artistId) => ({ ...clone(SAMPLE.results[0]), trackId: id, trackName: title, artistName: artist, artistId, trackViewUrl: `https://music.apple.com/us/album/x/1?i=${id}` });
+  const lookup = {
+    results: [
+      { wrapperType: 'artist', artistType: 'Artist', artistName: 'Queen', artistId: QUEEN },
+      track(11, 'Somebody to Love', 'George Michael & Queen', 894337),
+      track(12, 'Flash\'s Theme', 'Queen', QUEEN),
+      track(13, 'Under Pressure', 'David Bowie & Queen', 551695),
+      track(14, 'We Will Rock You (Radio Edit)', 'Five & Queen', 504133),
+      track(15, 'Who Wants to Live Forever (Live at the Isle of Wight Festival, UK, 2016)', 'Queen & Adam Lambert', QUEEN),
+      track(16, 'Bohemian Rhapsody (Muppets Version)', 'The Muppets & Queen', 1472991310),
+      track(17, 'We Will Rock You', 'Queen', QUEEN),
+      track(18, 'Bohemian Rhapsody', 'Queen', QUEEN),
+      track(19, 'Another One Bites The Dust', 'Queen', QUEEN),
+      track(20, 'Bohemian Rhapsody', 'Queen', QUEEN), // the same song on another album
+      track(21, 'Under Pressure (feat. David Bowie)', 'Queen', QUEEN),
+    ],
+  };
+  const fetch = fakeFetch((url) => {
+    const u = new URL(url);
+    if (u.pathname === '/lookup') return { body: lookup };
+    return { body: { results: [{ wrapperType: 'artist', artistId: QUEEN, artistName: 'Queen' }] } };
+  });
+  const top = await searchMusic('queen', { kind: 'artist', limit: 5, country: 'us', fetch });
+  assert.equal(top.ok, true);
+  assert.equal(new URL(fetch.calls[1].url).searchParams.get('limit'), '25', 'asks for more songs than it shows');
+  assert.deepEqual(top.items.map((i) => `${i.title} · ${i.artist}`), [
+    'Flash\'s Theme · Queen',
+    'We Will Rock You · Queen',
+    'Bohemian Rhapsody · Queen',
+    'Another One Bites The Dust · Queen',
+    'Under Pressure (feat. David Bowie) · Queen',
+  ]);
+  assert.equal(musicLine(top), 'Here are Queen’s top songs. Tap Open in Apple Music to play one.');
+  // Queen with a guest after Queen alone, other artists' recordings last, each title once (Five's
+  // "We Will Rock You (Radio Edit)", the Muppets' "Bohemian Rhapsody" and the second album's copy go).
+  const all = await topSongs(QUEEN, { limit: 8, country: 'gb', fetch, artist: 'Queen' });
+  assert.deepEqual(all.items.map((i) => i.id), ['12', '17', '18', '19', '21', '15', '11']);
+  // An artist who is only ever featured still gets those songs.
+  const featured = await topSongs(999, { limit: 3, country: 'ca', fetch: fakeFetch({ body: { results: [track(31, 'Two Is Better Than One (feat. Someone)', 'Boys Like Girls', 5), track(32, 'Both of Us (feat. Someone)', 'B.o.B', 6)] } }) });
+  assert.deepEqual(featured.items.map((i) => i.id), ['31', '32']);
 });
 
 test('searchMusic: timeouts, Stop, HTTP errors, bad JSON and offline are answers, never throws', async () => {
@@ -277,6 +324,56 @@ test('never steals ordinary words: questions, play as a verb, Jarvis\'s own repl
   ]) {
     assert.equal(matchMusicCommand(s), null, s);
   }
+});
+
+test('research with "find / show / get … the single / record / track / album" goes to Jarvis: Apple Music, "the song", "the album" or "the playlist" must be named, and a title must follow', () => {
+  for (const s of [
+    'Find the best noise cancelling headphones', 'Find the single best noise-cancelling headphones under $300', 'Find me a good Italian restaurant nearby',
+    'Find the cheapest flight to Lisbon in March', 'Find a single-family home under $800k in Austin', 'Find the record low for Chicago in January',
+    'Find the track record of Cathie Wood’s ARK fund', 'Find the album sales of Adele’s 30', 'Find the singles bars in Austin', 'Find the record of my bank transfer to John Smith',
+    'Show me the single biggest expense on my Amex statement', 'Show me the track for the Tour de France stage tomorrow', 'Show me the record for most home runs in a season',
+    'Look up the track record of this contractor', 'Search for the single most cited paper on transformers', 'Get me the track list for tomorrow’s meeting',
+    'Find the songs in the new Wicked movie', 'Find the song lyrics to Bohemian Rhapsody', 'Find the album that Hotel California is on', 'Open the album I shared yesterday',
+    'Find a track for my morning run', 'Find the single source of truth doc for the project', 'Show me the record player I saved', 'Find the record store closest to me',
+    'Find the track and field results from the Olympics', 'Get the single most important news today', 'Find the EP of the startup', 'Find the LP partners of Sequoia',
+    'Find the record company that signed the Beatles', 'Show me the album cover', 'Find the track of the storm', 'Search for the playlist feature in Spotify settings',
+    'Find the single best laptop under $1000', 'Find the track record of Berkshire Hathaway', 'show me the song lyrics for Hey Jude', 'find the album cover of Abbey Road',
+    'Find the song from the Super Bowl halftime show', 'Open the album photos from my trip', 'find the album of photos from Paris', 'Open the playlist I made',
+    'Find the Song of Solomon in the Bible', 'find the song of the year 2024 winner', 'show me the single most important thing to do today', 'find a song for my wedding',
+    'Play the hologram of the jet engine', 'play the engine hologram', 'Play the video I saved yesterday', 'play the animation of the engine', 'Play the scenario forward five years',
+    'play by play of the game last night', 'Play to your strengths when you write the summary', 'play a quick game of 20 questions', 'Play Ball! What does that mean?',
+  ]) {
+    assert.equal(matchMusicCommand(s), null, s);
+  }
+  // Still music: Apple Music named, or the song / the album / the playlist and a title.
+  assert.deepEqual(m('find the song Yesterday'), { action: 'open', kind: 'song', query: 'yesterday', artist: '' });
+  assert.deepEqual(m('find me the album Rumours by Fleetwood Mac'), { action: 'open', kind: 'album', query: 'rumours fleetwood mac', artist: 'fleetwood mac' });
+  assert.deepEqual(m('show me the album Thriller'), { action: 'open', kind: 'album', query: 'thriller', artist: '' });
+  assert.deepEqual(m('open the playlist Chill Vibes'), { action: 'open', kind: 'playlist', query: 'chill vibes', artist: '' });
+  assert.deepEqual(m('find the song called In the End'), { action: 'open', kind: 'song', query: 'in the end', artist: '' });
+  assert.deepEqual(m('look up Thriller by Michael Jackson in iTunes'), { action: 'open', kind: 'song', query: 'thriller michael jackson', artist: 'michael jackson' });
+  assert.deepEqual(m('find I Will Always Love You in Apple Music'), { action: 'open', kind: 'song', query: 'i will always love you', artist: '' });
+});
+
+test('wishes and charts after "play a song / the track …" go to Jarvis (find_music), never searched as titles', () => {
+  for (const s of [
+    'play a song for a rainy Sunday', 'play me a song for a rainy day', 'play a song to cheer me up', 'play a song like Back in Black', 'play a song similar to Thriller',
+    'play a song I would like', 'play the song from Titanic', 'play a track for my run', 'play a tune for the kids', 'play the best song of 1985',
+    'play the number one song right now', 'play the top song this week', 'play the most popular Queen song', 'play Queen’s best song', 'play the new Taylor Swift song',
+    'play the latest Drake album', 'play Taylor Swift’s new album', 'play the new album by Coldplay', 'play the best song by Queen', 'play songs from the Top Gun soundtrack',
+    'play the Top Gun soundtrack', 'play the Barbie soundtrack', 'play some 80s rock', 'play 80s hits', 'play some 90s hip hop', 'play the greatest song ever',
+  ]) {
+    assert.equal(matchMusicCommand(s), null, s);
+  }
+  // Titles with those words are still taken when they name their artist, or say "the song called".
+  assert.deepEqual(m('play New Rules by Dua Lipa'), { action: 'play', kind: 'song', query: 'new rules dua lipa', artist: 'dua lipa' });
+  assert.deepEqual(m('play Top of the World by the Carpenters'), { action: 'play', kind: 'song', query: 'top of the world the carpenters', artist: 'the carpenters' });
+  assert.deepEqual(m('play the song called For Your Love'), { action: 'play', kind: 'song', query: 'for your love', artist: '' });
+  assert.deepEqual(m('play the best of Queen'), { action: 'play', kind: 'artist', query: 'queen', artist: 'queen' });
+  assert.deepEqual(m('play a song by Queen'), { action: 'play', kind: 'artist', query: 'queen', artist: 'queen' });
+  assert.deepEqual(m('play some New Order'), { action: 'play', kind: 'artist', query: 'new order', artist: 'new order' });
+  assert.deepEqual(m('play the song Back in Black'), { action: 'play', kind: 'song', query: 'back in black', artist: '' });
+  assert.deepEqual(m('play In the End'), { action: 'play', kind: 'song', query: 'in the end', artist: '' });
 });
 
 // ---------------------------------------------------------------------------------------------
