@@ -72,3 +72,38 @@ test('a retry countdown saved mid-wait does not stay in the transcript when the 
   assert.equal(old.status, 'stopped');
   assert.equal(old.segments.some((s) => s.transient || /retrying in/.test(s.text || '')), false);
 });
+
+test('v7.1: a turn cut off mid-mission (the page closed) is settled as of its last sign of life, the same on every launch', () => {
+  const h = createHarness({ handler: () => ({ content: [blk.text('Hello again.')], stop: 'end_turn' }) });
+  const T0 = Date.now() - 46 * 60 * 1000; // asked 46 minutes ago; the page closed 6 s later
+  const saved = {
+    ...h.jarvis.newConversation(),
+    createdAt: T0,
+    updatedAt: T0,
+  };
+  saved.apiMessages = [{ role: 'user', content: [{ type: 'text', text: 'Compare robot vacuums' }] }];
+  saved.turns = [
+    { id: 'u1', role: 'user', text: 'Compare robot vacuums', mode: 'swarm', createdAt: T0 },
+    {
+      id: 'j1', role: 'jarvis', status: 'running', createdAt: T0 + 50, endedAt: null, mode: 'swarm', segments: [{ id: 's1', kind: 'thinking', text: 'Planning', req: 0, startedAt: T0 + 100, endedAt: T0 + 2000 }, { id: 's2', kind: 'mission', missionId: 'm1', req: 0 }],
+      missions: { m1: { id: 'm1', status: 'planning', createdAt: T0 + 2500, startedAt: null, endedAt: null, agents: [{ id: 'a1', status: 'searching', startedAt: T0 + 5000, endedAt: null }, { id: 'a2', status: 'starting', startedAt: null, endedAt: null }] } },
+      usage: {}, costUsd: 0, stats: {}, error: null,
+    },
+  ];
+  saved.pending = null;
+  const settle = () => {
+    const conv = structuredClone(saved);
+    h.jarvis.canResume(conv); // settles it, as the app does when it shows the conversation
+    return conv.turns[1];
+  };
+  const first = settle();
+  const m = first.missions.m1;
+  assert.equal(first.status, 'interrupted');
+  assert.equal(m.status, 'interrupted');
+  assert.equal(m.endedAt, T0 + 5000, 'the mission ends at its last sign of life (an agent started at +5 s), not now');
+  assert.equal(first.endedAt, T0 + 5000);
+  assert.equal(m.agents[0].endedAt, T0 + 5000);
+  assert.ok(m.endedAt - m.createdAt < 10000, `its clock reads seconds, not 46 minutes (${m.endedAt - m.createdAt} ms)`);
+  const later = settle();
+  assert.equal(later.missions.m1.endedAt, m.endedAt, 'the same on the next launch');
+});

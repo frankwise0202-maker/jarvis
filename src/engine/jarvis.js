@@ -124,6 +124,37 @@ function settleUnfinished(turn, status, ts, notify = null) {
   }
 }
 
+/**
+ * When a turn that was cut off was last seen alive: the newest time stamped in it (the turn, its
+ * missions and agents, its thinking, the conversation's last save), never later than `now`.
+ */
+function lastSignOfLife(conv, turn, now) {
+  let t = 0;
+  const seen = (v) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > t && n <= now) t = n;
+  };
+  seen(conv && conv.updatedAt);
+  seen(turn.createdAt);
+  for (const mission of Object.values(turn.missions || {})) {
+    if (!mission || typeof mission !== 'object') continue;
+    seen(mission.createdAt);
+    seen(mission.startedAt);
+    seen(mission.endedAt);
+    for (const agent of Array.isArray(mission.agents) ? mission.agents : []) {
+      if (!agent || typeof agent !== 'object') continue;
+      seen(agent.startedAt);
+      seen(agent.endedAt);
+    }
+  }
+  for (const seg of Array.isArray(turn.segments) ? turn.segments : []) {
+    if (!seg || typeof seg !== 'object') continue;
+    seen(seg.startedAt);
+    seen(seg.endedAt);
+  }
+  return t || now;
+}
+
 /** Live stats from the turn's data (SPEC 6 `stats`). */
 function computeStats(turn, durationMs) {
   const urls = new Set();
@@ -241,12 +272,17 @@ export function createJarvis(deps = {}) {
     }
   }
 
-  /** A turn persisted as 'running' with no live run here was cut off (tab killed or suspended). */
+  /**
+   * A turn persisted as 'running' with no live run here was cut off (tab killed or suspended). It is
+   * settled as of its last sign of life (v7.1), not now: the clocks of its missions and agents then
+   * show how long they really ran, the same on every launch (before, each launch ended them "now",
+   * so a mission cut off after 6 s read 1m 05s, then 46m 20s).
+   */
   function repairStale(conv) {
     if (!conv || runs.has(conv.id)) return;
     const turn = lastJarvisTurn(conv);
     if (!turn || turn.status !== 'running') return;
-    const ts = stamp();
+    const ts = lastSignOfLife(conv, turn, stamp());
     settleUnfinished(turn, 'interrupted', ts);
     turn.status = 'interrupted';
     turn.endedAt = turn.endedAt || ts;

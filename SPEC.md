@@ -688,6 +688,11 @@ tool round is pending, append a user message with `tool_result` blocks for every
 Likewise, before starting a new turn on a conversation whose last turn is `interrupted`,
 first close any pending tool round the same way (so `apiMessages` never ends with an
 unanswered `tool_use`).
+A turn saved as `running` with no live run (the page was closed or killed mid-reply) is settled as `interrupted` when
+the conversation is shown (`canResume`, `repairStale`) as of its last sign of life (v7.1: the newest time stamped in
+the turn, its missions, agents and thinking, or the conversation's last save; never later than now), so its mission
+and agent clocks show how long they really ran, the same on every launch. (Before, they ended at the moment of each
+launch: a mission cut off after 6 s read "46m 20s" the next day.)
 
 ### 8.7 Prompts (`prompts.js`)
 
