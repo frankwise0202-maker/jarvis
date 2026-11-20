@@ -62,7 +62,9 @@ import { drawSchematic } from './schematic.js';
 
 const INTRO_KEY = 'jarvis.optics.intro.v1';
 const WATCH_DAY_KEY = 'jarvis.optics.watch.v1';
-const SOURCE_LABEL = { rear: 'REAR', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
+// On screen a phone's cameras are BACK and FRONT, like the iPhone's own names (the frame's source
+// stays 'rear' for Claude: "the owner's rear camera").
+const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
 const DESKTOP_MQ = '(min-width: 900px)';
 
 let current = null;

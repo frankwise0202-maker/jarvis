@@ -2,7 +2,7 @@
 // (src/ui/optics/schematic.js) and the Hologram-of-this estimate: pure functions.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hologramRequest, isCameraRequest, matchOpticsCommand, normalizeOpticsText, partQuestion, theName } from '../../src/lib/optics-commands.js';
+import { hologramRequest, isCameraRequest, matchOpticsCommand, normalizeOpticsText, partQuestion, theName, voiceCameraRequest } from '../../src/lib/optics-commands.js';
 import { edgeThreshold, sobelEdges } from '../../src/ui/optics/schematic.js';
 import { estimateHologramCost, formatUsd } from '../../src/lib/optics.js';
 import { commandAck } from '../../src/ui/voice-visuals.js';
@@ -165,4 +165,20 @@ test('with the camera closed, only words plainly about seeing ask for it; "what\
   ]) {
     assert.equal(isCameraRequest(words), false, words);
   }
+});
+
+test('Voice Mode with the camera closed: a Mac where it is allowed looks; iPhone or no permission asks for a tap; a hologram on screen keeps "what is this?" for Jarvis', () => {
+  const mac = { cameraAllowed: 'granted', ios: false };
+  assert.equal(voiceCameraRequest('Jarvis, what am I looking at?', mac), 'look');
+  assert.equal(voiceCameraRequest('What is this?', mac), 'look');
+  for (const allowed of ['prompt', 'denied', 'unknown']) assert.equal(voiceCameraRequest('What is this?', { cameraAllowed: allowed, ios: false }), 'need-tap', allowed);
+  assert.equal(voiceCameraRequest('What am I looking at?', { cameraAllowed: 'granted', ios: true }), 'need-tap', 'iOS asks inside a tap every time');
+  // A hologram or blueprint covers Voice Mode: the words are about it, whatever the camera can do.
+  for (const words of ['What is this?', 'What am I looking at?', 'Look at this.', 'What are these?']) {
+    assert.equal(voiceCameraRequest(words, { ...mac, viewerOpen: true }), null, words);
+    assert.equal(voiceCameraRequest(words, { cameraAllowed: 'prompt', ios: true, viewerOpen: true }), null, words);
+  }
+  // Not about seeing: Jarvis takes it as usual.
+  for (const words of ["What's that?", 'What is it?', 'Tell me more.', 'How does the separator work?', '']) assert.equal(voiceCameraRequest(words, mac), null, words);
+  assert.equal(voiceCameraRequest('What is this?'), 'need-tap', 'defaults: permission unknown');
 });

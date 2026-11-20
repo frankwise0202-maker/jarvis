@@ -1707,8 +1707,9 @@ section 17. Where this section and an earlier one differ, this one wins.
 
 **The screen.**
 - **The camera line.** The line under OPTICS (`optics-sub`, inside the `optics-camera` button) names the camera in use:
-  its friendly name in capitals, the back/front word on phones when the name is unknown, then the frame size and
-  FROZEN.
+  its friendly name in capitals, BACK or FRONT on phones when the name is unknown (the frame's `source` stays `rear` /
+  `front`), then the frame size and FROZEN. On a computer the button is a pill with a border, so the picker is easy to
+  find. The chat's Look card says the same: "OPTICS · 21:47 · BACK".
   - A tap opens the list (`optics-camera-menu`, items `optics-camera-option` with `data-device-id`, `data-current`).
   - Esc closes the list first, then Optics.
   - A notice (`optics-notice`) says when a camera was connected or unplugged.
@@ -1751,7 +1752,9 @@ null: it goes to Jarvis as usual.
   at this", "what is this?" on its own, "what brand is this?") in Voice Mode on a computer where the camera permission
   is `granted` open Optics over Voice Mode and look once it is live (`deps.autoLook`, `api.autoLookDone`). On iPhone,
   or without the permission, Jarvis says "Tap Look, and show me." Everything else, "what's that?" and "what is it?"
-  included, goes to Jarvis as usual: in a conversation those are about something Jarvis said.
+  included, goes to Jarvis as usual: in a conversation those are about something Jarvis said. While a hologram or
+  blueprint is open over Voice Mode the camera is never asked for: "what is this?" is then about what is on screen
+  (`voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })` decides: null, `need-tap` or `look`).
 - **A hologram** asked for over Voice Mode is opened by Voice Mode itself (`visuals.open`), over Optics.
 
 **Unchanged from the prototype.** The intro card, the blocked-camera steps, the LIVE pill, auto-off on
@@ -1764,9 +1767,11 @@ about 16¢.
 
 **Tests.**
 - Unit:
-  - `optics` (geometry, layout, Watch, costs, tools, validation);
+  - `optics` (geometry, layout, Watch, costs, tools, validation; the JSON of `pinLabelsTool()` and
+    `lookThroughCameraTool()` pinned by sha256 to the prototype's, the same pins as the shell half's `engine.v7`);
   - `optics.cameras` (names, order, remembered camera, hot-plug);
-  - `optics.commands` (words, messages, schematic edges, hologram estimate, acks);
+  - `optics.commands` (words, messages, schematic edges, hologram estimate, acks, `isCameraRequest` and
+    `voiceCameraRequest`);
   - `optics.camera`, `engine.optics-mock` (the strict mock tool round), `platform.optics-backup`,
     `platform.storage` (the camera settings).
 - E2E:
@@ -1781,7 +1786,9 @@ about 16¢.
   - `optics-followups` (a tapped pin → "What's this part?"; Tell me more; Hologram of this → the schematic, the viewer
     over Optics, the camera off underneath, back to the answer);
   - `optics-voice` (Voice Mode: Look; "what am I looking at?" spoken and pinned; "tell me more" spoken; "close the
-    camera"; with the camera closed on a Mac, the words alone open it and look).
+    camera"; with the camera closed, "what's that?" is a spoken question without a frame, and on a Mac "what am I
+    looking at?" alone opens the camera and looks; Hologram of this over Optics, then "Open in chat" closes Voice Mode
+    and the Optics it opened).
   - `test/e2e/camera-rig.mjs` turns Chromium's one fake camera into several labelled cameras with facing modes and
     hot-plug. The harness has a `mac` device (Chrome on macOS).
 

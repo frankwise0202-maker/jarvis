@@ -51,7 +51,7 @@ import { markdownToPlainText } from '../lib/markdown.js';
 import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
-import { isCameraRequest } from '../lib/optics-commands.js';
+import { voiceCameraRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { isIOS } from '../platform/env.js';
 import { base64ByteLength } from './attachments.js';
@@ -981,11 +981,12 @@ export async function startApp(rootEl) {
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
     // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
-    // something Jarvis said, and goes to Jarvis as usual.
-    if (!safe(() => isCameraRequest(text), false)) return null;
-    if (cameraAllowed !== 'granted' || safe(() => isIOS(), false)) {
-      return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
-    }
+    // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
+    // blueprint is on screen: it is about that.
+    const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
+    const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
+    if (!kind) return null;
+    if (kind === 'need-tap') return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
     const optics = openOpticsScreen({ voice: true, autoLook: String(text).trim() });
     const done = optics && optics.autoLookDone ? optics.autoLookDone : Promise.resolve({ error: 'The camera couldn’t start.' });
     return { handled: true, command: { action: 'optics', kind: 'look', ack: '' }, done };

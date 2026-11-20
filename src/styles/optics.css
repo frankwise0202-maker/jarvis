@@ -378,7 +378,7 @@
 
 /* ---- desktop: viewport + deck on the left, answer + Optics log on the right ----------------------- */
 @media (min-width: 900px) {
-  .optics { --top-h: 64px; --deck-h: 0px; --deck-ask-h: 0px; --sheet-h: 0px; background: radial-gradient(ellipse at 40% 30%, #0a1420, #03060a 70%); }
+  .optics { --top-h: 76px; --deck-h: 0px; --deck-ask-h: 0px; --sheet-h: 0px; background: radial-gradient(ellipse at 40% 30%, #0a1420, #03060a 70%); }
   .optics-main { position: absolute; left: 32px; right: calc(clamp(360px, 28vw, 420px) + 48px); top: var(--top-h); bottom: 24px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
   .optics-stage { position: relative; inset: auto; width: min(100%, 960px, calc((100vh - var(--top-h) - 200px) * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--r-md); border: 1px solid var(--line-2); }
   .optics[data-frozen='true'] .optics-stage { top: auto; bottom: auto; }
@@ -393,6 +393,15 @@
   .optics-keys { gap: 14px; }
   .optics-top { background: none; padding: 0 24px 0 32px; }
   .optics[data-frozen='true'] .optics-top { background: none; }
+  /* On a computer the camera line is a visible control (a pill): the owner's Logitech is one click away. */
+  .optics-titles { gap: 6px; }
+  .optics-cam-btn { margin: 0; min-height: 30px; padding: 4px 10px 4px 12px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: rgba(7, 13, 21, 0.72); }
+  .optics-cam-btn:hover:not(:disabled),
+  .optics-cam-btn[aria-expanded='true'] { border-color: color-mix(in srgb, var(--accent-2) 55%, transparent); }
+  .optics-cam-btn:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .optics-cam-btn:disabled { padding-left: 0; border-color: transparent; background: transparent; }
+  .optics-sub { font-size: 11px; color: var(--text-2); }
+  .optics-cam-menu { top: calc(100% + 8px); }
   .optics-side { position: absolute; left: auto; right: 24px; top: var(--top-h); bottom: 24px; width: clamp(360px, 28vw, 420px); height: auto; display: flex; flex-direction: column; gap: 14px; pointer-events: auto; }
   .optics-answer { flex: 0 1 auto; max-height: 62%; height: auto; border-radius: var(--r-md); border: 1px solid var(--line-2); padding: 14px 16px; }
   .optics-followups { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }

@@ -1,6 +1,6 @@
 // Optics in the chat transcript (report §2.4.5):
 //   createOpticsTurnCard(turn, { onOpen })  the owner's Look: the frame as a bracketed 16:9 card
-//                                           with the caption "OPTICS · 21:47 · REAR"; tap reopens
+//                                           with the caption "OPTICS · 21:47 · BACK"; tap reopens
 //                                           the frozen frame with Jarvis's labels in Optics
 //   createPinsSegmentView(sctx)             a pins segment: "PINNED · Coffee mug · AA battery …"
 //   createFrameSegmentView(sctx)            a look_through_camera frame: "Jarvis looked · 21:48"
@@ -10,7 +10,7 @@ import { h, setText } from '../dom.js';
 import { icon } from '../icons.js';
 import { safeThumb } from '../attachments.js';
 
-const SOURCE = { rear: 'REAR', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
+const SOURCE = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const hhmm = (ms) => {
@@ -23,7 +23,7 @@ const hhmm = (ms) => {
   }
 };
 
-/** The caption under an Optics frame: "OPTICS · 21:47 · REAR". */
+/** The caption under an Optics frame: "OPTICS · 21:47 · BACK". */
 export function opticsCaption(optics, createdAt) {
   const o = isObj(optics) ? optics : {};
   return ['OPTICS', hhmm(o.capturedAt || createdAt), SOURCE[o.source] || 'CAMERA'].filter(Boolean).join(' · ');

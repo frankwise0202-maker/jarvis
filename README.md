@@ -267,8 +267,8 @@ browser asks for permission.
   a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
   hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**
   You can also type a question about the same picture; no new picture is taken.
-- **Which camera.** The line under **OPTICS** names the camera in use; tap it to see every
-  camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
+- **Which camera.** The button under **OPTICS** names the camera in use; click or tap it to see
+  every camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
   Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and
   **Front**. Jarvis remembers your choice on each device.
   - **Plugging in.** Plug in your webcam while Optics is open and it appears in the list; if it's
@@ -286,7 +286,8 @@ browser asks for permission.
 - **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
-  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first.
+  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first. (While a hologram
+  is on screen, "what is this?" is about the hologram, not the camera.)
 - **Off means off.** The camera runs only while Optics is open and on screen: the red **LIVE**
   pill shows it (tap it to turn the camera off), and it turns off by itself when you switch apps,
   lock the phone, or when a hologram covers Optics.

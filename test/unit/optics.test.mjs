@@ -285,6 +285,20 @@ test('pin_labels and look_through_camera definitions: valid schemas, static text
   for (const d of [pin.description, look.description]) assert.doesNotMatch(d, /\d{4}-\d{2}|\$\{/);
 });
 
+test('the Optics tool definitions are pinned: byte-identical to the prototype, one source for lead tools V5', async () => {
+  // Lead tools V5 (src/engine/prompts.js, the other half of v7) is built from src/lib/optics-tools.js;
+  // src/lib/optics.js re-exports the same functions. Once frozen into a conversation they must never
+  // change, so their JSON is pinned to the Optics prototype's (optics-v5-on-ad07674.patch).
+  const { createHash } = await import('node:crypto');
+  const tools = await import('../../src/lib/optics-tools.js');
+  const sha = (o) => createHash('sha256').update(JSON.stringify(o)).digest('hex');
+  assert.equal(sha(tools.pinLabelsTool()), '1820c2137b061989ea69087ff6a0ae788175b9bbab52ade113fb0127d2940f48');
+  assert.equal(sha(tools.lookThroughCameraTool()), 'f46a0912016b60a655ca577b783a3408cedec70e4d5adeaaad2e0a574bbc0678');
+  assert.equal(tools.pinLabelsTool, pinLabelsTool, 'src/lib/optics.js re-exports the same definition');
+  assert.equal(tools.lookThroughCameraTool, lookThroughCameraTool);
+  assert.deepEqual(tools.OPTICS_TOOLS, ['pin_labels', 'look_through_camera']);
+});
+
 const FRAMES = [{ id: 'f1', width: 1280, height: 720, source: 'rear' }, { id: 'f2', width: 720, height: 1280, source: 'rear' }];
 
 test('normalizePinLabels: valid labels are cleaned, capped and checked against the frame', () => {

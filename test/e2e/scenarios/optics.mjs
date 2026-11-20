@@ -152,7 +152,7 @@ export default [
         await page.locator(tid('optics-allow')).click();
         await waitLive(t);
         t.assert(await page.locator(tid('optics-live-pill')).isVisible(), 'the LIVE pill shows while the camera is on');
-        t.assert(/^REAR · 720×1280$/.test(await t.text(page.locator(tid('optics-sub')))), 'the native portrait frame (no browser crop)');
+        t.assert(/^BACK · 720×1280$/.test(await t.text(page.locator(tid('optics-sub')))), 'the native portrait frame (no browser crop)');
         await shot(t, 'iphone13-2-live');
       });
       await t.step('LOOK: frozen frame, streamed answer, pins', async () => {
@@ -199,7 +199,7 @@ export default [
         const card = await t.visible('optics-turn');
         t.assert(card, 'the Look is a turn in the chat');
         const caption = await t.text(page.locator('.optics-turn-caption'));
-        t.assert(/^OPTICS · \d\d:\d\d · REAR$/.test(caption), `caption: ${caption}`);
+        t.assert(/^OPTICS · \d\d:\d\d · BACK$/.test(caption), `caption: ${caption}`);
         const pinsRow = await t.text(page.locator(tid('segment-pins')).first());
         t.assert(/Pinned on f1/.test(pinsRow) && /Coffee mug · AA battery · Pothos · Notebook · Screwdriver/.test(pinsRow), `pins row: ${pinsRow}`);
         await page.locator(tid('optics-turn')).scrollIntoViewIfNeeded();
@@ -307,7 +307,7 @@ export default [
       // A computer's webcam has no front or back: the line names the camera (Chromium's fake one is
       // named after its video file) and its frame.
       const line = await t.text(page.locator(tid('optics-sub')));
-      t.assert(/ · 1280×720$/.test(line) && !/^(REAR|FRONT) /.test(line), `the camera's name and its 1280×720 frame (${line})`);
+      t.assert(/ · 1280×720$/.test(line) && !/^(BACK|FRONT) /.test(line), `the camera's name and its 1280×720 frame (${line})`);
       t.assert((await page.locator(tid('optics')).getAttribute('data-mirrored')) === 'true', 'a webcam faces the owner: its preview is mirrored');
       await shot(t, 'desktop-1-live');
       t.assert(await page.locator(tid('optics-flip')).isDisabled(), 'one camera: Flip is off');

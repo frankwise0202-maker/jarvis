@@ -21,6 +21,12 @@
 //                                     this", "what is this?" on its own): Voice Mode opens the camera
 //                                     for them while it is closed. Not "what's that?" or "what is
 //                                     it?", which in a conversation are about something Jarvis said.
+//   voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })
+//                                     what Voice Mode does with such words while Optics is closed:
+//                                     null (Jarvis takes them as usual: not about seeing, or a
+//                                     hologram or blueprint is on screen, so "what is this?" is about
+//                                     it), 'need-tap' (iPhone, or the camera not allowed yet: "Tap
+//                                     Look") or 'look' (open the camera and look)
 //
 //   hologramRequest(subject)          "Show me a hologram of the AA battery." (the chip's message)
 //   partQuestion(pin, frameId)        "What's this part? (the AA battery you pinned on frame f1, at 316, 844)"
@@ -100,6 +106,16 @@ const CAMERA_REQUEST = [
 export function isCameraRequest(text) {
   const n = normalizeOpticsText(text);
   return !!n && n.length <= 200 && CAMERA_REQUEST.some((re) => re.test(n));
+}
+
+/**
+ * Voice Mode, Optics closed (see the header). `cameraAllowed`: the camera permission ('granted',
+ * 'prompt', 'denied' or 'unknown'); the camera opens by voice alone only where the browser allows
+ * it without a tap: a computer where it was already allowed (iOS asks inside a tap every time).
+ */
+export function voiceCameraRequest(text, { viewerOpen = false, cameraAllowed = 'unknown', ios = false } = {}) {
+  if (viewerOpen || !isCameraRequest(text)) return null;
+  return cameraAllowed === 'granted' && !ios ? 'look' : 'need-tap';
 }
 
 /**
