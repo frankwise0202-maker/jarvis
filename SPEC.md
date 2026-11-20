@@ -2174,9 +2174,16 @@ Where this section differs from §17 or §18, it wins.
     `--live`, `--scrim-hud`).
 - **Screens × Optics: the camera on a screen** (`src/ui/optics/screen-camera.js`, the `camera` panel of
   `src/ui/screens/panels.js`).
-  - "Put the camera on my other screen", "float the camera", or "this" while Optics is open (`describeOpenViewer`
-    reports Optics as the camera) shows the live camera in the screen's HUD frame: on another monitor, in the floating
-    panel, or in a window. Typed or said in Optics itself (its ask field, its mic) the words go to Screens first
+  - "Put the camera on my other screen", "float the camera", or "this" while Optics shows the live view
+    (`describeOpenViewer` reports Optics as the camera) shows the live camera in the screen's HUD frame: on another
+    monitor, in the floating panel, or in a window.
+  - **A Look on a screen** (kind `look`): "this" while Optics shows a frozen Look (a fresh one, or one reopened from the
+    chat; `api.frozenLook()`) is that Look: `?screen=look&c=<conversation>&id=<frame>` shows the frame (the kept
+    480 px preview), its labels as EDITH plates on it, the question and the answer (`lookSnapshot(conv, frameId)` in
+    `src/lib/screen-targets.js`, read from IndexedDB by a screen window, live from the main window while it streams),
+    header `SCREEN 2 · LOOK`, status `N LABELS` or ANALYZING. Optics closes here (camera off); **Bring it back**
+    reopens the Look frozen in Optics, camera off. "The camera" still means the live camera. On a phone Optics already
+    shows it. Typed or said in Optics itself (its ask field, its mic) the words go to Screens first
     (`deps.screenCommand`); in Voice Mode they always do.
   - Moving the camera out closes Optics in the main window (one view holds the camera; `closeViewerFor('camera')`).
     **Bring it back** opens Optics here again; closing the camera screen leaves the camera off. On a phone the camera
@@ -2212,7 +2219,8 @@ Where this section differs from §17 or §18, it wins.
   again), `optics-picker` (the home's Look key opens Optics on the remembered webcam; a Mac's home has Screen),
   `optics-screen` (on a Mac; the Screen key opens Optics straight into one screen frame, the webcam off),
   `optics-screen-cancel` (the picker cancelled: no getUserMedia call, No screen shared, Try again, Use the camera
-  through the first-use card), `optics-tool-camera` / `optics-tool-camera-float` (Jarvis's open_screen never turns
+  through the first-use card), `optics-look-screen` (two monitors: a labeled Look on screen goes to screen 2 as a Look,
+  not the live camera; Bring it back reopens it frozen), `optics-tool-camera` / `optics-tool-camera-float` (Jarvis's open_screen never turns
   the camera on; Turn on camera does), `optics-float-camera-off` (a floating camera turned off: no OPTICS LIVE or
   pill in the main window), `screens-pages` (a camera
   screen in a browser without a camera says NO CAMERA and offers Try again).

@@ -30,14 +30,14 @@ import { applyTheme } from '../themes.js';
 import { getSettings } from '../../platform/settings.js';
 import { getConversation } from '../../platform/db.js';
 import { getLibraryItem } from '../../platform/library.js';
-import { answerMarkdownOf, missionSnapshot } from '../../lib/screen-targets.js';
+import { answerMarkdownOf, lookSnapshot, missionSnapshot } from '../../lib/screen-targets.js';
 import { createScreenFrame } from './frame.js';
 import { createScreenPanel, isSafeLink, isSafePhotoSrc } from './panels.js';
 import { loadHologramRenderer } from '../hologram/viewer.js';
 import { loadBlueprintModule } from '../blueprint/open.js';
 
 export const SCREEN_CHANNEL = 'jarvis-screens';
-const KINDS = new Set(['hologram', 'blueprint', 'mission', 'answer', 'photo', 'link', 'camera']);
+const KINDS = new Set(['hologram', 'blueprint', 'mission', 'answer', 'photo', 'link', 'camera', 'look']);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const txt = (v) => (typeof v === 'string' ? v : '');
 
@@ -64,6 +64,7 @@ export function parseScreenParams(search) {
     ref: {
       libraryId: /^lib_[a-z0-9]{6,16}$/.test(p.get('id') || '') ? p.get('id') : null,
       missionId: kind === 'mission' ? (p.get('id') || '').slice(0, 80) || null : null,
+      frameId: kind === 'look' && /^f[1-9]\d{0,3}$/.test(p.get('id') || '') ? p.get('id') : null,
       conversationId: (p.get('c') || '').slice(0, 80) || null,
       turnId: (p.get('t') || '').slice(0, 80) || null,
       segmentId: (p.get('seg') || '').slice(0, 80) || null,
@@ -116,6 +117,11 @@ export async function loadScreenContent(kind, ref) {
   if (kind === 'photo') return ref.src ? { data: { src: ref.src, title: ref.title, credit: '' }, title: ref.title || 'Photo' } : null;
   if (kind === 'link') return ref.url ? { data: { url: ref.url, title: ref.title }, title: ref.title } : null;
   if (kind === 'camera') return { data: {}, title: 'Optics' };
+  if (kind === 'look') {
+    if (!ref.conversationId || !ref.frameId) return null;
+    const conv = await getConversation(ref.conversationId, { track: false }).catch(() => null);
+    return conv ? lookSnapshot(conv, ref.frameId) : null;
+  }
   return null;
 }
 

@@ -1911,6 +1911,11 @@ export function openOptics(deps = {}) {
     get frozen() {
       return !!frozen && (mode === 'frozen' || mode === 'review');
     },
+    /** The Look on screen (frozen, with its frame id), for Screens' "this": { frameId, question, analyzing } | null. */
+    frozenLook() {
+      if (!frozen || !(mode === 'frozen' || mode === 'review') || !frozen.frameId) return null;
+      return { frameId: frozen.frameId, question: frozen.question || '', analyzing: isBusy() };
+    },
   };
   current = {
     api,

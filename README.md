@@ -417,7 +417,9 @@ browser asks for permission.
   so and offers **Try again** or **Use the camera**.
 - **On another screen.** "Put the camera on my other screen" or "float the camera" shows the live
   camera on your other monitor or in a floating panel (see Screens above). It's a view: Look,
-  Watch and the labels stay here in Optics.
+  Watch and the labels stay here in Optics. With a Look on screen (the frozen picture and its
+  labels), "put this on my other screen" sends that Look there, picture, labels and answer;
+  "bring it back" shows it here again.
 - **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,

@@ -47,7 +47,7 @@ import { icon } from '../icons.js';
 import { openOverlay } from '../overlay.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
 import { detectScreenEnv, planPlacement, placementNote, rightHalf, screenWindowFeatures } from '../../lib/screen-placement.js';
-import { answerMarkdownOf, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
+import { answerMarkdownOf, lookSnapshot, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
 import { createScreenFrame } from './frame.js';
 import { createScreenPanel } from './panels.js';
 import { SCREEN_CHANNEL, loadScreenContent, panelDeps, screenLabel } from './screen-page.js';
@@ -62,7 +62,7 @@ const safe = (fn, fallback) => {
     return fallback;
   }
 };
-const PUSH_GAP = { hologram: 120, blueprint: 250, answer: 160, mission: 300 };
+const PUSH_GAP = { hologram: 120, blueprint: 250, answer: 160, mission: 300, look: 200 };
 const CAMERA_ON = new Set(['live', 'starting']);
 const PROMPT_MS = 60000;
 const PREFS_KEY = 'jarvis.screens.v1';
@@ -246,6 +246,12 @@ export function createScreens(deps = {}) {
     if (kind === 'photo') return ref.src ? { data: { src: ref.src, title: ref.title || entry.title, credit: ref.credit || '' }, title: entry.title, ref: { title: ref.title } } : null;
     if (kind === 'link') return ref.url ? { data: { url: ref.url, title: ref.title || entry.title }, title: entry.title, ref } : null;
     if (kind === 'camera') return { data: {}, title: 'Optics', ref };
+    if (kind === 'look') {
+      // A Look (Optics' frozen frame, its labels and its answer), from the conversation in memory.
+      const conv = safe(() => deps.getConversation(), null);
+      const snap = conv && conv.id === ref.conversationId ? lookSnapshot(conv, ref.frameId) : null;
+      return snap ? { data: snap.data, title: snap.title || entry.title, ref } : null;
+    }
     return null;
   }
 
@@ -315,6 +321,9 @@ export function createScreens(deps = {}) {
       if (r.conversationId) p.set('c', r.conversationId);
       if (r.turnId) p.set('t', r.turnId);
       if (target.kind === 'mission' && r.missionId) p.set('id', r.missionId);
+    } else if (target.kind === 'look') {
+      if (r.conversationId) p.set('c', r.conversationId);
+      if (r.frameId) p.set('id', r.frameId);
     } else if (target.kind === 'photo' && /^https:\/\/upload\.wikimedia\.org\//.test(r.src || '')) {
       p.set('src', r.src);
     } else if (target.kind === 'link' && r.url) {
@@ -335,6 +344,7 @@ export function createScreens(deps = {}) {
     if (entry.kind === 'answer') return same(a.turnId, b.turnId);
     if (entry.kind === 'photo') return same(a.src, b.src);
     if (entry.kind === 'link') return same(a.url, b.url);
+    if (entry.kind === 'look') return same(a.frameId, b.frameId) && same(a.conversationId, b.conversationId);
     return entry.kind === 'camera';
   }
 
@@ -592,7 +602,7 @@ export function createScreens(deps = {}) {
     if (plan.mode === 'inapp') {
       // The app's own full-screen viewers where it has them (the camera: Optics); the screen frame
       // for the rest.
-      if (target.kind === 'hologram' || target.kind === 'blueprint' || target.kind === 'mission' || target.kind === 'camera') {
+      if (target.kind === 'hologram' || target.kind === 'blueprint' || target.kind === 'mission' || target.kind === 'camera' || target.kind === 'look') {
         safe(() => deps.showInApp(target, { reason: 'inapp' }));
         return outcome('opened', target, { mode: 'inapp', label: 'SCREEN', note: plan.note });
       }
@@ -883,11 +893,12 @@ export function createScreens(deps = {}) {
       const turnId = evt.turn && evt.turn.id;
       for (const s of screens.values()) {
         const r = s.ref || {};
-        if (r.conversationId !== convId || (turnId && r.turnId !== turnId)) continue;
+        if (r.conversationId !== convId || (turnId && r.turnId && r.turnId !== turnId)) continue;
         if (s.kind === 'hologram' || s.kind === 'blueprint') {
           if (evt.type !== 'segment' && evt.type !== 'end') continue;
           if (evt.type === 'segment' && (!evt.segment || evt.segment.id !== r.segmentId)) continue;
-        } else if (s.kind === 'answer') {
+        } else if (s.kind === 'answer' || s.kind === 'look') {
+          // A Look follows its answer and its labels as they stream (any turn of its conversation).
           if (evt.type !== 'segment' && evt.type !== 'turn' && evt.type !== 'end') continue;
         } else if (s.kind === 'mission') {
           if (evt.type !== 'mission' && evt.type !== 'agent' && evt.type !== 'turn' && evt.type !== 'end') continue;

@@ -19,6 +19,8 @@
 //                      each follow-up's answer is in view
 //   optics-voice-iphone  iPhone Voice Mode: "what am I looking at?" asks for the tap; Look then
 //                      looks at once with those words
+//   optics-look-screen  Mac, two monitors: "put this on my other screen" with a labeled Look on
+//                      screen puts that Look on screen 2 (frame, labels, answer), not the live camera
 //   optics-tool-camera(-float)  Jarvis's open_screen for the camera never turns it on: the owner's
 //                      Turn on camera does (iPhone: Optics; Mac: the open floating panel); a live
 //                      camera may be moved back to Optics
@@ -562,6 +564,49 @@ export default [
       await t.waitFor(async () => (await t.count('optics-pin')) >= 1, { timeout: 15000, message: 'the labels on the frame' });
       await page.locator(tid('optics-live-pill')).click();
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+    },
+  },
+  {
+    name: 'optics-look-screen',
+    title: 'Mac, two monitors: with a labeled Look on screen, "put this on my other screen" puts that Look (frame, labels, answer) on screen 2, not the live camera; "bring it back" reopens it frozen, camera off',
+    device: 'mac',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.context().addInitScript(installCameraRig, { devices: MAC_CAMERAS.slice(0, 2) });
+      await instrument(page);
+      await page.addInitScript(installScreenStubs, { monitors: 2, perm: 'granted' });
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/?optics=1');
+      await t.visible('optics');
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.waitForTimeout(500);
+      t.assert((await t.count('optics-pin')) === 5, 'a labeled Look on screen');
+      const screen = await opensPage(t, async () => {
+        const ask = page.locator(tid('optics-ask'));
+        await ask.fill('put this on my other screen');
+        await ask.press('Enter');
+      });
+      const u = new URL(screen.url());
+      t.assert(u.searchParams.get('screen') === 'look' && u.searchParams.get('id') === 'f1', `the Look goes to screen 2 (${screen.url()})`);
+      await screen.setViewportSize({ width: 1600, height: 900 });
+      await waitAttr(t, screen, 'screen-look', 'state', 'ready', { timeout: 20000, label: 'the Look on screen 2' });
+      await t.waitFor(async () => (await screen.locator(tid('screen-look-pin')).count()) === 5, { timeout: 10000, message: 'its five labels on screen 2' });
+      t.assert(/That's your desk, sir/.test(await t.text(screen.locator(tid('screen-look')))), 'with the answer');
+      t.assert((await t.count('screen-camera', undefined, screen)) === 0 && (await liveTracks(screen)) === 0, 'no live camera on screen 2');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close here (the Look moved out)' });
+      t.assert((await liveTracks(page)) === 0, 'and the camera is off');
+      await screen.waitForTimeout(400);
+      await t.screenshot('screen2-look', screen);
+      await typeCommand(t, 'bring it back');
+      await t.waitFor(() => screen.isClosed(), { timeout: 8000, message: 'screen 2 to close' });
+      await t.visible('optics', { message: 'the Look back in Optics' });
+      t.assert((await page.locator(tid('optics')).getAttribute('data-state')) === 'review', 'frozen, as a reviewed Look');
+      await t.waitFor(async () => (await t.count('optics-pin')) === 5, { timeout: 5000, message: 'with its labels' });
+      t.assert((await liveTracks(page)) === 0, 'the camera stays off');
     },
   },
   {

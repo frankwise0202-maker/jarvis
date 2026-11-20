@@ -29,7 +29,7 @@ const segmentsOf = (turn) => (turn && Array.isArray(turn.segments) ? turn.segmen
 const ACTIONS = new Set(['tool', 'mission', 'hologram', 'blueprint']);
 const LIBRARY_ID = /^lib_[a-z0-9]{6,16}$/;
 
-export const SCREEN_KINDS = Object.freeze(['hologram', 'blueprint', 'mission', 'answer', 'photo', 'camera', 'link']);
+export const SCREEN_KINDS = Object.freeze(['hologram', 'blueprint', 'mission', 'answer', 'photo', 'camera', 'link', 'look']);
 
 export function screenKindLabel(kind, { report = false } = {}) {
   switch (kind) {
@@ -47,6 +47,8 @@ export function screenKindLabel(kind, { report = false } = {}) {
       return 'OPTICS';
     case 'link':
       return 'LINK';
+    case 'look':
+      return 'LOOK';
     default:
       return 'SCREEN';
   }
@@ -61,6 +63,8 @@ export function screenKindName(kind, { report = false } = {}) {
       return report ? 'the report' : 'the answer';
     case 'camera':
       return 'the camera';
+    case 'look':
+      return 'the Look';
     default:
       return `the ${kind || 'screen'}`;
   }
@@ -339,4 +343,67 @@ export function missionSnapshot(turn, missionId) {
     missions: { [pick.id]: pick },
     segments: segmentsOf(turn).filter((s) => s.kind === 'mission' && s.missionId === pick.id),
   };
+}
+
+const LOOK_SRC = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
+const FRAME_ID = /^f[1-9]\d{0,3}$/;
+
+/**
+ * A Look on a screen (Screens × Optics): the frame's picture, its pinned labels and the answer, read
+ * from the conversation. The frame is the owner's Look (a user turn with that Optics frame and its
+ * attachment's preview) or one Jarvis took itself (a reply's frame segment). -> { data: { src, width,
+ * height, frameId, pins: [{ text, x, y }], question, markdown, status }, title } | null
+ */
+export function lookSnapshot(conv, frameId) {
+  if (typeof frameId !== 'string' || !FRAME_ID.test(frameId)) return null;
+  const turns = turnsOf(conv);
+  let src = '';
+  let width = 0;
+  let height = 0;
+  let question = '';
+  let after = null; // { turn, seg }: where the answer starts
+  const u = turns.findIndex((t) => t.role === 'user' && isObj(t.optics) && t.optics.frameId === frameId);
+  if (u >= 0) {
+    const user = turns[u];
+    const meta = Array.isArray(user.attachments) && isObj(user.attachments[0]) ? user.attachments[0] : {};
+    src = txt(meta.thumb);
+    width = Number(user.optics.width) || Number(meta.width) || 0;
+    height = Number(user.optics.height) || Number(meta.height) || 0;
+    question = txt(user.text) || 'What am I looking at?';
+    after = { turn: u + 1, seg: 0 };
+  } else {
+    for (let i = 0; i < turns.length && !after; i++) {
+      const t = turns[i];
+      if (t.role !== 'jarvis' || !Array.isArray(t.segments)) continue;
+      const j = t.segments.findIndex((x) => isObj(x) && x.kind === 'frame' && x.frameId === frameId);
+      if (j < 0) continue;
+      const f = t.segments[j];
+      src = txt(f.thumb);
+      width = Number(f.width) || 0;
+      height = Number(f.height) || 0;
+      const prev = turns[i - 1];
+      question = (prev && prev.role === 'user' ? txt(prev.text) : '') || 'Jarvis took a look';
+      after = { turn: i, seg: j + 1 };
+    }
+  }
+  if (!after || !LOOK_SRC.test(src) || !(width > 0) || !(height > 0)) return null;
+  let pins = [];
+  const parts = [];
+  let status = 'done';
+  for (let i = after.turn; i < turns.length; i++) {
+    const t = turns[i];
+    if (t.role !== 'jarvis') continue;
+    const segs = Array.isArray(t.segments) ? t.segments : [];
+    for (let j = 0; j < segs.length; j++) {
+      const x = segs[j];
+      if (!isObj(x)) continue;
+      // The newest labels on this frame (a follow-up's "What's this part?" pins it again).
+      if (x.kind === 'pins' && x.frameId === frameId && x.status !== 'error' && Array.isArray(x.labels) && x.labels.length) {
+        pins = x.labels.filter((l) => isObj(l) && typeof l.text === 'string' && Number.isFinite(l.x) && Number.isFinite(l.y)).map((l) => ({ text: l.text.slice(0, 40), x: l.x, y: l.y }));
+      }
+      if (i === after.turn && j >= after.seg && x.kind === 'text') parts.push(txt(x.text));
+    }
+    if (i === after.turn) status = txt(t.status) || 'done';
+  }
+  return { data: { src, width, height, frameId, pins, question: oneLine(question, 200), markdown: parts.filter(Boolean).join('\n\n'), status }, title: oneLine(question, 120) };
 }

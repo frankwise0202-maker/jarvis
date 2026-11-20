@@ -14,6 +14,8 @@
 //   link       data { url, title }      a web page can't live inside Jarvis: a card that opens it
 //   camera     data {}                  the live camera (src/ui/optics/screen-camera.js): the camera
 //              chosen last in Optics, LIVE while it runs, off when its window is hidden
+//   look       data { src, width, height, pins, question, markdown, status }   a Look: the frozen
+//              frame with its pinned labels (EDITH plates, as in Optics) and the answer
 //
 // `win` is the window the panel lives in (a floating panel is another window): frames, timers and
 // window.open come from it. deps (all optional): loadHologram() -> the renderer module,
@@ -26,6 +28,7 @@ import { renderMarkdown } from '../../lib/markdown.js';
 import { createMissionControl } from '../hud/mission-control.js';
 import { hostOf } from '../../lib/screen-targets.js';
 import { createCameraScreenPanel } from '../optics/screen-camera.js';
+import { fitTransform, frameToView, layoutPins } from '../../lib/optics.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const txt = (v) => (typeof v === 'string' ? v : '');
@@ -582,6 +585,96 @@ function linkPanel({ win, frame, compact }) {
   };
 }
 
+// ---- look (Screens × Optics: "put this on my other screen" while a Look is on screen) ----------------
+
+const LOOK_SRC = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+=*$/;
+
+function lookPanel({ win, frame, compact }) {
+  const doc = win.document;
+  const img = h('img', { class: 'scr-look__img', alt: '', attrs: { decoding: 'async', 'data-testid': 'screen-look-img' } });
+  const leaders = h('svg', { class: 'scr-look__leaders', attrs: { 'aria-hidden': 'true' } });
+  const pinsLayer = h('div', { class: 'scr-look__pins', attrs: { 'aria-hidden': 'true' } }, leaders);
+  const stage = h('div', { class: 'scr-look__stage' }, img, pinsLayer);
+  const question = h('p', { class: 'scr-look__q' });
+  const prose = h('div', { class: 'prose scr-look__prose' });
+  const names = h('p', { class: 'scr-look__names', attrs: { 'data-testid': 'screen-look-labels' } });
+  const text = h('div', { class: 'scr-look__answer', attrs: { tabindex: '0', role: 'region', 'aria-label': 'Answer' } }, question, names, prose);
+  const el = h('div', { class: ['scr-look', compact && 'scr-look--compact'], attrs: { 'data-testid': 'screen-look' } }, stage, text);
+  let data = null;
+  let lastMd = null;
+  let measureCtx = null;
+  const measure = (t) => {
+    try {
+      if (!measureCtx) measureCtx = doc.createElement('canvas').getContext('2d');
+      measureCtx.font = '500 13px system-ui, sans-serif';
+      return Math.ceil(measureCtx.measureText(t).width) + 1;
+    } catch {
+      return t.length * 8;
+    }
+  };
+  const layout = perFrame(win, () => {
+    for (const n of Array.from(pinsLayer.children)) if (n !== leaders) n.remove();
+    leaders.replaceChildren();
+    if (!data || !data.pins.length) return;
+    const box = stage.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const t = fitTransform(data.width, data.height, { x: 0, y: 0, w: box.width, h: box.height }, 'contain');
+    leaders.setAttribute('viewBox', `0 0 ${Math.max(1, box.width)} ${Math.max(1, box.height)}`);
+    leaders.setAttribute('width', String(box.width));
+    leaders.setAttribute('height', String(box.height));
+    const pins = data.pins.map((p) => ({ text: p.text, ...frameToView(t, p.x, p.y) }));
+    const safe = { x: 4, y: 4, w: Math.max(1, box.width - 8), h: Math.max(1, box.height - 8) };
+    for (const l of layoutPins(pins, { safe, measure, plateH: 26, padX: 9, gap: 22, maxPlateW: Math.min(220, safe.w) })) {
+      if (l.leader) leaders.append(h('line', { x1: l.leader.x1, y1: l.leader.y1, x2: l.leader.x2, y2: l.leader.y2 }));
+      pinsLayer.append(
+        h('span', { class: 'scr-look__dot', style: { left: `${l.ax}px`, top: `${l.ay}px` } }),
+        h('span', { class: 'scr-look__plate', text: l.text, attrs: { 'data-testid': 'screen-look-pin' }, style: { left: `${l.plate.x}px`, top: `${l.plate.y}px`, width: `${l.plate.w}px` } }),
+      );
+    }
+  });
+  let ro = null;
+  try {
+    if (typeof win.ResizeObserver === 'function') {
+      ro = new win.ResizeObserver(() => layout(1));
+      ro.observe(stage);
+    }
+  } catch {
+    ro = null;
+  }
+  img.addEventListener('load', () => layout(1));
+  return {
+    el,
+    update(d) {
+      if (!isObj(d) || !LOOK_SRC.test(txt(d.src)) || !(d.width > 0) || !(d.height > 0)) {
+        el.dataset.state = 'missing';
+        return;
+      }
+      data = { src: d.src, width: d.width, height: d.height, pins: Array.isArray(d.pins) ? d.pins.filter((p) => isObj(p) && typeof p.text === 'string') : [] };
+      if (img.getAttribute('src') !== d.src) img.src = d.src;
+      img.alt = txt(d.question) || 'The frame Jarvis looked at';
+      setText(question, txt(d.question));
+      setText(names, data.pins.map((p) => p.text).join(' · '));
+      names.hidden = !data.pins.length;
+      const status = txt(d.status) || 'done';
+      const md = txt(d.markdown);
+      if (md !== lastMd) {
+        prose.replaceChildren(renderMarkdown(md, { streaming: status === 'running' }));
+        lastMd = md;
+      }
+      el.dataset.state = 'ready';
+      el.dataset.status = status;
+      el.dataset.pins = String(data.pins.length);
+      frame.setStatus(status === 'running' ? 'ANALYZING' : status === 'error' ? 'NO ANSWER' : data.pins.length ? `${data.pins.length} LABELS` : '', status === 'running' ? 'live' : status === 'error' ? 'warn' : 'idle');
+      layout(1);
+    },
+    getState: () => ({ pins: data ? data.pins.length : 0 }),
+    destroy() {
+      layout.cancel();
+      if (ro) ro.disconnect();
+    },
+  };
+}
+
 /** The panel for `kind` (see the header). ctx: { win, frame, compact, deps }. */
 export function createScreenPanel(kind, ctx) {
   const c = { win: window, compact: false, deps: {}, ...ctx };
@@ -608,6 +701,8 @@ export function createScreenPanel(kind, ctx) {
       return linkPanel(c);
     case 'camera':
       return createCameraScreenPanel(c);
+    case 'look':
+      return lookPanel(c);
     default: {
       const el = message('Nothing to show here.');
       return { el, update() {}, getState: () => ({}), destroy() {} };

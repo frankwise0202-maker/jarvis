@@ -473,8 +473,13 @@ export async function startApp(rootEl) {
         live: st.status === 'building',
       };
     }
-    // Optics (under a hologram it opened, above everything else): the live camera.
-    if (isOpticsOpen()) return { kind: 'camera', ref: {}, title: 'Optics', live: true };
+    // Optics (under a hologram it opened, above everything else): a Look on screen (frozen, with its
+    // labels and answer) is "this"; otherwise the live camera.
+    if (isOpticsOpen()) {
+      const look = safe(() => currentOptics().frozenLook(), null);
+      if (look && state.conv) return { kind: 'look', ref: { conversationId: state.conv.id, frameId: look.frameId }, title: look.question, live: !!look.analyzing };
+      return { kind: 'camera', ref: {}, title: 'Optics', live: true };
+    }
     if (mcSheet && state.mcSel && state.conv) return { kind: 'mission', ref: { conversationId: state.conv.id, turnId: state.mcSel.turnId, missionId: state.mcSel.missionId }, title: '' };
     return null;
   }
@@ -499,7 +504,7 @@ export async function startApp(rootEl) {
     } else if (target.kind === 'mission' && mcSheet) {
       safe(() => mcSheet.sheet.close('screens'));
       return true;
-    } else if (target.kind === 'camera' && isOpticsOpen()) {
+    } else if ((target.kind === 'camera' || target.kind === 'look') && isOpticsOpen()) {
       // The camera moves to the other screen: Optics closes here, so one view holds the camera.
       safe(() => currentOptics().close());
       return true;
@@ -510,6 +515,12 @@ export async function startApp(rootEl) {
   /** Show content in the main window: a screen handed it back, or a phone shows it full screen. */
   function showScreenInApp(target, { reason, back = false } = {}) {
     const r = (target && target.ref) || {};
+    if (target.kind === 'look') {
+      // The Look again, frozen in Optics with its labels (camera off): "bring it back", a screen that
+      // hands it back, or a phone (where Optics already shows it).
+      if (state.conv && state.conv.id === r.conversationId && r.frameId && !isOpticsOpen()) reviewOptics({ optics: { frameId: r.frameId } }, null);
+      return;
+    }
     if (target.kind === 'camera') {
       // Optics again, on "bring it back" or on a phone; a camera screen that is just closed leaves the
       // camera off (closing it is how the owner turns that camera off).

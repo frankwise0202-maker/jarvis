@@ -2,7 +2,7 @@
 // in the chat; the content kinds; links of an answer; the tool's url and id rules; snapshots.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { answerMarkdownOf, conversationLinks, linksOf, missionSnapshot, resolveScreenTarget, screenKindLabel } from '../../src/lib/screen-targets.js';
+import { answerMarkdownOf, conversationLinks, linksOf, lookSnapshot, missionSnapshot, resolveScreenTarget, screenKindLabel, screenKindName } from '../../src/lib/screen-targets.js';
 
 const spec = (title, n = 3) => ({ title, parts: Array.from({ length: n }, (_, i) => ({ id: `p${i}`, name: `Part ${i}` })) });
 const user = (id, text, extra = {}) => ({ id, role: 'user', text, ...extra });
@@ -143,4 +143,33 @@ test('"it" after a move: what was just put on a screen, until something newer ar
   // An open viewer always wins; a named kind ignores it.
   assert.equal(resolveScreenTarget({ what: 'this', recent: { ...moved, at: 999 }, open: { kind: 'blueprint', ref: {}, title: 'x' }, conv: c }).kind, 'blueprint');
   assert.equal(resolveScreenTarget({ what: 'answer', recent: { ...moved, at: 999 }, conv: c }).ref.turnId, 'j3');
+});
+
+test('a Look on a screen: "this" while Optics shows a frozen Look is that Look (frame, labels, answer), from the conversation; the camera stays "the camera"', () => {
+  const thumb = 'data:image/jpeg;base64,/9j/AAAA';
+  const pins = (frameId, labels, status = 'done') => ({ id: `p_${frameId}`, kind: 'pins', status, frameId, labels, req: 0 });
+  const c = conv([
+    user('u1', 'What is on my desk?', { optics: { frameId: 'f1', width: 1280, height: 720, source: 'camera' }, attachments: [{ kind: 'image', thumb, width: 480, height: 270 }] }),
+    jarvis('j1', [text("That's your desk, sir."), pins('f1', [{ text: 'Coffee mug', x: 498, y: 303 }, { text: 'Pothos', x: 886, y: 180 }]), text('The pothos wants light.')]),
+    user('u2', "What's this part? (the pothos you pinned on frame f1, at 886, 180)"),
+    jarvis('j2', [text('A pothos.'), pins('f1', [{ text: 'Pothos', x: 886, y: 180 }])]),
+    user('u3', 'Can you see it now?'),
+    jarvis('j3', [text('Let me take a look.'), { id: 'fr2', kind: 'frame', frameId: 'f2', width: 1280, height: 720, source: 'camera', thumb, reason: 'a fresh look' }, text("Here's what I see now."), pins('f2', [{ text: 'Notebook', x: 362, y: 493 }])], { status: 'running' }),
+  ]);
+  const open = { kind: 'look', ref: { conversationId: 'c1', frameId: 'f1' }, title: 'What is on my desk?' };
+  const t = resolveScreenTarget({ what: 'this', open, conv: c });
+  assert.deepEqual([t.kind, t.ref.frameId, t.fromViewer], ['look', 'f1', true]);
+  assert.equal(resolveScreenTarget({ what: 'camera', open, conv: c }).kind, 'camera', '"the camera" is still the live camera');
+  assert.equal(screenKindLabel('look'), 'LOOK');
+  assert.equal(screenKindName('look'), 'the Look');
+  const f1 = lookSnapshot(c, 'f1');
+  assert.deepEqual({ ...f1.data, markdown: undefined }, { src: thumb, width: 1280, height: 720, frameId: 'f1', pins: [{ text: 'Pothos', x: 886, y: 180 }], question: 'What is on my desk?', markdown: undefined, status: 'done' }, 'the newest labels on f1 (the follow-up pinned it again)');
+  assert.equal(f1.data.markdown, "That's your desk, sir.\n\nThe pothos wants light.", "the Look's own answer");
+  assert.equal(f1.title, 'What is on my desk?');
+  const f2 = lookSnapshot(c, 'f2');
+  assert.deepEqual([f2.data.src, f2.data.question, f2.data.markdown, f2.data.status, f2.data.pins.length], [thumb, 'Can you see it now?', "Here's what I see now.", 'running', 1], 'a frame Jarvis took: the text after it; still running');
+  assert.equal(lookSnapshot(c, 'f9'), null);
+  assert.equal(lookSnapshot(c, 'javascript:alert(1)'), null);
+  const noThumb = conv([user('u1', 'x', { optics: { frameId: 'f1', width: 10, height: 10 }, attachments: [{ kind: 'image', thumb: 'https://evil.example/x.png' }] })]);
+  assert.equal(lookSnapshot(noThumb, 'f1'), null, 'only a kept data: picture');
 });
