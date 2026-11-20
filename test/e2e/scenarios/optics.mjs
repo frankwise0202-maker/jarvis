@@ -21,6 +21,8 @@
 //                    can be tapped at its centre; Turn on camera starts it, Take a photo instead works
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
+//   optics-keys      Mac keyboard: a question typed straight away goes to the ask field; Space presses
+//                    the focused control and scrolls the answer, never a new Look; Option-F, Option-W
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
 //                    minimum interval, the countdown and cost, the alert line, auto-off
 //   optics-screen    "look at my screen": one frame, capture stopped at once, sent as a screen frame
@@ -37,7 +39,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tid } from '../harness.mjs';
 import { imageSizeOf } from '../../../src/lib/optics.js';
-import { sceneLabels } from '../../mock/optics.mjs';
+import { isWatchRequest, sceneLabels } from '../../mock/optics.mjs';
 import { LEAD_SYSTEM_V3, leadToolsV4 } from '../../../src/engine/prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -832,7 +834,7 @@ export default [
       await waitLive(t);
       const first = await page.evaluate(() => window.__opticsTracks.at(-1).label);
       t.assert(await page.locator(tid('optics-flip')).isEnabled(), 'two cameras: Flip is on');
-      await page.keyboard.press('f');
+      await page.keyboard.press('Alt+KeyF'); // Option-F on a Mac
       await t.waitFor(async () => (await page.evaluate(() => window.__opticsTracks.at(-1).label)) !== first, { timeout: 8000, message: 'the other camera' });
       await waitLive(t);
       t.assert((await liveTracks(page)) === 1, 'one camera open at a time');
@@ -841,6 +843,94 @@ export default [
       await waitLive(t);
       t.assert((await liveTracks(page)) === 1, 'still one camera');
       t.note(`flipped ${first} → other → ${first}`);
+    },
+  },
+  {
+    name: 'optics-keys',
+    title: 'Optics keys on a Mac: a question typed straight away goes to the ask field; Space presses the focused control (Watch, a camera in the list, Tell me more) and scrolls the answer, never a new Look; Option-F flips, Option-W watches',
+    device: 'mac',
+    timeout: 120000,
+    // Two fake cameras (Chromium's own pattern: a capture file gives only one).
+    browserArgs: () => ['--use-fake-device-for-media-stream=device-count=2', '--use-fake-ui-for-media-stream'],
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/?optics=1');
+      await waitLive(t);
+      const looks = () => t.requests('lead').filter((r) => r.status === 200 && Array.isArray(r.body.messages.at(-1).content) && r.body.messages.at(-1).content.some((b) => b.type === 'image')).length;
+      const watchFrames = () => t.requests().filter((r) => r.body && isWatchRequest(r.body)).length;
+      const focused = () => page.evaluate(() => document.activeElement?.dataset?.testid || document.activeElement?.tagName || '');
+      const watchOn = async () => (await page.locator(tid('optics-watch-toggle')).getAttribute('aria-pressed')) === 'true';
+      const camLabel = () => page.evaluate(() => (window.__opticsTracks || []).filter((x) => x.api === 'getUserMedia').at(-1)?.label || '');
+      /** Tab (the keyboard) until the focused element has `testid` (and matches `extra`). */
+      const tabTo = async (testid, extra = '') => {
+        for (let i = 0; i < 40; i++) {
+          if (await page.evaluate(([id, extra]) => document.activeElement?.dataset?.testid === id && (!extra || document.activeElement.matches(extra)), [testid, extra])) return;
+          await page.keyboard.press('Tab');
+        }
+        throw new Error(`could not Tab to ${testid}${extra}`);
+      };
+      await t.step('a question typed right after Optics opens lands in the ask field (not Watch, not a Look)', async () => {
+        await page.keyboard.type('What is this?', { delay: 40 });
+        await page.waitForTimeout(1500);
+        t.assert((await page.locator(tid('optics-ask')).inputValue()) === 'What is this?', `the ask field has the question ("${await page.locator(tid('optics-ask')).inputValue()}", focus on ${await focused()})`);
+        t.assert(!(await watchOn()) && watchFrames() === 0, 'Watch stays off, no Watch frame');
+        t.assert(looks() === 0, `no Look (${looks()})`);
+        await page.locator(tid('optics-ask')).fill('');
+        await page.locator(tid('optics-ask')).blur();
+      });
+      await t.step('Option-F switches cameras; Space on the Watch key starts Watch (no Look); Option-W stops it', async () => {
+        const first = await camLabel();
+        await page.keyboard.press('Alt+KeyF');
+        await t.waitFor(async () => (await camLabel()) !== first, { timeout: 8000, message: 'the other camera' });
+        await waitLive(t);
+        await tabTo('optics-watch-toggle');
+        await page.keyboard.press('Space');
+        await t.waitFor(watchOn, { timeout: 5000, message: 'Watch on' });
+        await page.waitForTimeout(800);
+        t.assert(looks() === 0, `Space on Watch sends no Look (${looks()})`);
+        await page.keyboard.press('Alt+KeyW');
+        await t.waitFor(async () => !(await watchOn()), { timeout: 5000, message: 'Option-W to stop Watch' });
+        t.assert((await page.locator(tid('optics-ask')).inputValue()) === '', 'Option-W types nothing ("∑")');
+      });
+      await t.step('Space on another camera in the list switches to it (no Look)', async () => {
+        const before = await camLabel();
+        await tabTo('optics-camera');
+        await page.keyboard.press('Enter');
+        await t.visible('optics-camera-menu');
+        await tabTo('optics-camera-option', '[data-current="false"]');
+        await page.keyboard.press('Space');
+        await t.waitFor(async () => (await camLabel()) !== before, { timeout: 8000, message: 'Space to pick the other camera' });
+        await waitLive(t);
+        t.assert(looks() === 0, `no Look (${looks()})`);
+      });
+      await t.step('after an answer, Space on Tell me more asks it (no new frame); a click in the answer and Space scroll it (no Look)', async () => {
+        await page.locator(tid('optics-look')).click();
+        await waitAnswer(t);
+        t.assert(looks() === 1, 'one Look');
+        const leads = t.requests('lead').length;
+        await tabTo('optics-more');
+        await page.keyboard.press('Space');
+        await t.waitFor(() => t.requests('lead').length > leads, { timeout: 8000, message: 'the follow-up to be asked' });
+        await t.waitFor(async () => (await page.locator(tid('optics-answer')).getAttribute('data-busy')) === 'false', { timeout: 30000, message: 'the follow-up to finish' });
+        const follow = t.requests('lead').at(-1).body.messages.at(-1);
+        const words = (Array.isArray(follow.content) ? follow.content : []).filter((b) => b.type === 'text').map((b) => b.text).join(' ');
+        t.assert(/Tell me more/.test(words), `the follow-up is "Tell me more" (${words.slice(-80)})`);
+        t.assert(looks() === 1 && (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', 'no new Look; the answer stays');
+        const body = page.locator(tid('optics-answer-text'));
+        await body.evaluate((b) => (b.scrollTop = 0));
+        const d0 = await body.evaluate((b) => ({ sh: b.scrollHeight, ch: b.clientHeight }));
+        await body.click({ position: { x: 40, y: 12 } });
+        t.assert((await focused()) === 'optics-answer-text', `a click in the answer puts the keyboard there (${await focused()})`);
+        await page.keyboard.press('Space');
+        await page.waitForTimeout(1200);
+        t.assert(looks() === 1, `Space in the answer sends no Look (${looks()})`);
+        t.assert((await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', 'the answer is still on screen');
+        const top = await body.evaluate((b) => b.scrollTop);
+        t.note(`answer ${d0.sh}/${d0.ch} px; Space scrolled it to ${top}`);
+        if (d0.sh > d0.ch + 20) t.assert(top > 0, `Space scrolls a long answer (${top})`);
+      });
     },
   },
   {

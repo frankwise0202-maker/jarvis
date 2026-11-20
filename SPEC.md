@@ -2012,8 +2012,22 @@ again, as after any hide. The same holds for a switch (picker, Flip, hot-plug) s
 
 **Unchanged from the prototype.** The intro card, the blocked-camera steps, the LIVE pill, auto-off on
 hide/pagehide/freeze, Watch (64 × 36 differencing, more than 6% changed, still for 1 s, at most one frame per 10 s, 5
-minutes, 60 a day), the screen look, the Optics log, the keys (Space, F, W, Esc, Ctrl/⌘ Shift L), `?optics=1`, and
-`jarvis.dev.optics` (Watch timing, localhost tests).
+minutes, 60 a day), the screen look, the Optics log, Esc and Ctrl/⌘ Shift L, `?optics=1`, and `jarvis.dev.optics`
+(Watch timing, localhost tests).
+
+**Keys** (v7.1; `onKey` in optics.js, on window).
+- **Space** looks (live, or frozen with the camera still live) only when focus is on nothing in particular: the page
+  body, the Optics root, the picture or the Look key. With focus on a button (Watch, a camera in the list, Tell me
+  more, Live, a card's button, a pin chip), a link, a menu item, in the camera list, in the answer or in the Optics log,
+  Space is left to that control (pressed, or the answer scrolls). The answer's text (`optics-answer-text`) is
+  focusable (`tabindex="0"`), and a click anywhere else in the answer sheet focuses it, so Space and the arrows scroll
+  it. Fields (input, textarea, select, contenteditable), IME composition and keys from a window over Optics never
+  reach Optics' keys.
+- **Option/Alt-F** flips and **Option/Alt-W** starts or stops Watch, read by `e.code` (`KeyF`, `KeyW`: Option-W types
+  "∑" on a Mac) and `preventDefault`ed. (Before: bare F and W, so typing "What is this?" without clicking the field
+  started Watch, and Space on Watch or Tell me more sent a new Look instead of pressing the control.)
+- **Any other character** typed while no field has focus (and the camera list is not focused) moves focus to the ask
+  field in `keydown`, so the character lands there: a question typed straight away is a question.
 
 **Costs** (`src/lib/optics.js`): a Look about 2.6¢ on Opus 5.5 (7.8¢ cold); a Watch frame about 0.57¢; Hologram of this
 about 16¢.
@@ -2055,6 +2069,10 @@ about 16¢.
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
   - unit `engine.optics-mock` also stops a Look, and cuts its connection, while pin_labels streams (the pins settle);
+  - `optics-keys` (Mac, two cameras: "What is this?" typed right after opening lands in `optics-ask`, Watch off, no
+    Look; Option-F switches cameras; Space on Watch starts it with no Look, Option-W stops it and types nothing; Space
+    on another camera in the list picks it; Space on Tell me more asks it with no new frame; a click in the answer
+    focuses it and Space scrolls it with no Look); `optics-flip` presses Option-F;
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
     shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
     while a start or a switch is still under way);

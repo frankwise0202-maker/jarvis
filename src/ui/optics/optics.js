@@ -260,7 +260,9 @@ export function openOptics(deps = {}) {
   const answerState = h('span', { class: 'optics-answer-state', attrs: { 'data-testid': 'optics-answer-status' } });
   const answerCost = h('span', { class: 'optics-answer-cost', attrs: { 'data-testid': 'optics-answer-cost' } });
   const answerQ = h('p', { class: 'optics-answer-q' });
-  const answerBody = h('div', { class: 'optics-answer-body prose', attrs: { 'data-testid': 'optics-answer-text', 'aria-live': 'polite' } });
+  // Focusable (tabindex 0): a click in the answer puts the keyboard there, so Space and the arrow keys
+  // scroll it (and never send a new Look).
+  const answerBody = h('div', { class: 'optics-answer-body prose', attrs: { 'data-testid': 'optics-answer-text', 'aria-live': 'polite', tabindex: '0' } });
   const pinList = h('ul', { class: 'optics-pin-list', attrs: { 'data-testid': 'optics-pin-list', 'aria-label': 'Pinned labels' } });
   // Back to the live camera: in the answer's actions on a computer; on a phone in the deck's ask row,
   // beside the field it would otherwise focus (onResize moves it), so the sheet keeps its room for
@@ -289,6 +291,18 @@ export function openOptics(deps = {}) {
     followRow,
     answerActions,
   );
+  // A click anywhere else in the answer sheet (its heading, the question line) also puts the keyboard
+  // in the answer, not on the picture behind it.
+  answer.addEventListener('click', (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const own = t && t.closest('button, a[href], input, textarea, select, [tabindex]');
+    if (!t || (own && answer.contains(own)) || answer.hidden) return;
+    try {
+      answerBody.focus({ preventScroll: true });
+    } catch {
+      /* not focusable */
+    }
+  });
   const logList = h('ol', { class: 'optics-log-list' });
   const log = h('section', { class: 'optics-log', attrs: { 'data-testid': 'optics-log', 'aria-label': 'Optics log' } }, h('h2', { class: 'optics-log-title', text: 'OPTICS LOG' }), logList);
   const side = h('div', { class: 'optics-side' }, answer, log);
@@ -304,7 +318,7 @@ export function openOptics(deps = {}) {
     on: { keydown: (e) => onAskKey(e) },
   });
   const micBtn = h('button', { class: 'optics-mic', type: 'button', hidden: !deps.sttSupported && !deps.voice, attrs: { 'data-testid': 'optics-mic', 'aria-label': 'Ask by voice', 'aria-pressed': 'false' }, on: { click: () => toggleMic() } }, icon('mic', { size: 20 }));
-  const flipBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-flip', 'aria-label': 'Switch camera', title: 'Switch camera (F)' }, on: { click: () => flip() } }, icon('refresh', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Flip' }));
+  const flipBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-flip', 'aria-label': 'Switch camera', title: 'Switch camera (Option/Alt-F)' }, on: { click: () => flip() } }, icon('refresh', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Flip' }));
   const lookCaption = h('span', { class: 'optics-look-cost', attrs: { 'data-testid': 'optics-look-cost' } });
   const lookBtn = h(
     'button',
@@ -312,7 +326,7 @@ export function openOptics(deps = {}) {
     h('span', { class: 'optics-shutter-ring', attrs: { 'aria-hidden': 'true' } }),
     h('span', { class: 'optics-shutter-label', text: 'LOOK' }),
   );
-  const watchBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-watch-toggle', 'aria-label': 'Watch: look again when the scene changes', 'aria-pressed': 'false', title: 'Watch (W)' }, on: { click: () => toggleWatch() } }, icon('eye', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Watch' }));
+  const watchBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-watch-toggle', 'aria-label': 'Watch: look again when the scene changes', 'aria-pressed': 'false', title: 'Watch (Option/Alt-W)' }, on: { click: () => toggleWatch() } }, icon('eye', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Watch' }));
   const screenBtn = screenLookSupported()
     ? h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-screen', 'aria-label': 'Look at my screen', title: 'Look at my screen (one frame)' }, on: { click: () => lookAtScreen() } }, icon('laptop', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Screen' }))
     : null;
@@ -1724,17 +1738,49 @@ export function openOptics(deps = {}) {
   }
 
   // ---- keys, resize, visibility ----------------------------------------------------------------------
+  // Space looks only while nothing else wants it: never from a field, a button (Space presses the
+  // focused control: Watch, a camera in the list, Tell me more), the camera list, the answer (Space
+  // scrolls it) or the Optics log; the Look key itself, the picture or nothing focused still look.
+  // Flip and Watch are Option/Alt-F and Option/Alt-W, read by e.code (Option-W types "∑" on a Mac).
+  // Any other character typed while no field has focus goes to the ask field, so a question typed
+  // straight away is a question. (v7.1: before, Space on Watch or Tell me more sent a new Look, and
+  // typing "What is this?" without clicking the field first started Watch and sent two Looks.)
+  const NOT_FOR_LOOK = 'button, a[href], [role^="menuitem"], .optics-answer, .optics-cam-menu, .optics-log';
   const onKey = (e) => {
-    if (closed || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-    const typing = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-    if (typing) return;
+    if (closed || covered || el.inert || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+    // A key for a window over Optics (or outside it) is not Optics'.
+    if (target && target !== document.body && target !== document.documentElement && !el.contains(target)) return;
+    if (e.altKey) {
+      if (e.shiftKey) return;
+      if (e.code === 'KeyF') {
+        e.preventDefault();
+        flip();
+      } else if (e.code === 'KeyW') {
+        e.preventDefault();
+        toggleWatch();
+      }
+      return;
+    }
+    const onControl = !!target && target !== lookBtn && !!target.closest(NOT_FOR_LOOK);
     if (e.key === ' ' || e.code === 'Space') {
+      if (onControl) return; // the focused control's own Space, or the answer scrolls
       if (mode === 'live' || (mode === 'frozen' && camera.live)) {
         e.preventDefault();
         look();
       }
-    } else if (e.key === 'f' || e.key === 'F') flip();
-    else if (e.key === 'w' || e.key === 'W') toggleWatch();
+      return;
+    }
+    // A character typed with no field focused starts a question: the ask field takes it (focus moved
+    // in keydown, so the character lands there). Not from the camera list, which is still open.
+    if (typeof e.key === 'string' && e.key.length === 1 && !(target && target.closest('.optics-cam-menu')) && !askInput.disabled && askInput.getClientRects().length) {
+      try {
+        askInput.focus({ preventScroll: true });
+      } catch {
+        /* not focusable */
+      }
+    }
   };
   window.addEventListener('keydown', onKey);
   offs.push(() => window.removeEventListener('keydown', onKey));

@@ -383,7 +383,7 @@ says never leaves the device.
 **Look** in Voice Mode. The first time, a short card explains how the camera is used before your
 browser asks for permission.
 
-- **Look.** Point the camera and tap **LOOK** (or press **Space**), with a question in the box
+- **Look.** Point the camera and tap **LOOK** (or press **Space** on a computer), with a question in the box
   or without one ("What am I looking at?"). The picture between the corner brackets is exactly
   what Jarvis gets, nothing more (on a phone held sideways the buttons move to the right). The picture freezes, Jarvis answers below it, and
   labels appear on the things it names, each with a line to the object. Jarvis identifies what
@@ -414,6 +414,10 @@ browser asks for permission.
 - **Watch** (the eye key) keeps an eye on the scene for up to 5 minutes: Jarvis looks again only
   when something changes (at most every 10 seconds) and tells you if it's worth saying. The
   countdown and the cost so far are on screen.
+- **Keys on a computer.** **Space** looks, unless a button or the answer has the keyboard: then
+  Space presses that button (Watch, a camera in the list, **Tell me more**) or scrolls the answer.
+  **Option-F** (Alt-F on Windows) switches cameras and **Option-W** starts or stops Watch. Just
+  start typing to ask a question: the letters go into the question box. **Esc** closes.
 - **Look at my screen** (computers): one picture of a screen or window you choose, then the
   sharing stops at once. On a Mac the home's **Screen** key does it in one tap, and the camera
   stays off. If you cancel Chrome's "Choose what to share" (or the Mac hasn't allowed Chrome to
