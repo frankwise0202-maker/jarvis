@@ -152,10 +152,11 @@
   transform: rotate(180deg);
 }
 
+/* 0.96, not less: the phone chip (46 px tall) stays a 44 px target even while it scales in. */
 @keyframes swarm-chip-in {
   from {
     opacity: 0;
-    transform: scale(0.92);
+    transform: scale(0.96);
   }
 }
 
