@@ -1887,6 +1887,12 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
   - the remembered camera plugged in is switched to (`why: 'plugged'`), unless `allowAutoSwitch()` says no (Watch, a
     Look being answered, Hologram of this);
   - a track that ends while its camera is still listed (iOS: a call, Siri) pauses as before.
+- **The viewfinder shows what is sent.** On phones the live picture is letterboxed (`object-fit: contain`) in the
+  room between the top bar and the deck, measured by optics.js (`fitLive()`: CSS `--live-*`); held sideways (at
+  most 500 px tall) the deck is a column on the right (keys, then the ask row), so the picture keeps the height.
+  The brackets and the reticle sit on that frame's edges (`--frame-*`, `data-framed`), so everything a Look sends is
+  on screen and inside the brackets; the first-use card says the picture between the brackets is exactly what is
+  sent. (Before, the preview filled the screen under the top bar and the deck: 35–61% of the sent frame showed.)
 - **Mirroring.** The preview is mirrored for a camera that faces the owner: `facing === 'front'`, or a computer's camera
   with no facing (a webcam). Captured frames are drawn from the video itself and are never mirrored, and the frozen
   frame shows exactly the frame that was sent. `source` is `rear` / `front` on phones and `camera` on computers.
@@ -1996,6 +2002,8 @@ about 16¢.
     chip whole on screen with a pin tapped);
   - `optics-old-chat` (a Look in a v6 chat reopened at launch goes to a new chat with the V5 tools: five labels, the
     notice, the old chat kept);
+  - `optics-viewfinder` (iPhone 13 portrait, a Safari tab and held sideways: 100% of the sent frame on screen and
+    inside the brackets, sampled on a grid);
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;

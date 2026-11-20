@@ -11,6 +11,8 @@
 //                    the background; shown again on a computer, it comes back by itself
 //   optics-landscape an iPhone held sideways: the frozen frame and a readable answer side by side
 //   optics-old-chat  a Look in a chat from before the camera goes to a new chat, with labels
+//   optics-viewfinder  phones: the live viewfinder shows the whole frame a Look sends, bracketed
+//                    (portrait, a Safari tab, held sideways)
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
@@ -173,6 +175,43 @@ export async function checkFollowUpInView(t, label, page = t.page) {
   t.assert(v.questionShown, `${label}: its question line is in view (${JSON.stringify(v)})`);
   t.assert(v.answerShownPx >= Math.min(v.answerHeight, 40), `${label}: its answer is in view (${JSON.stringify(v)})`);
   return v;
+}
+
+/**
+ * The live viewfinder against the frame a Look sends (the camera's whole frame): the share of that
+ * frame the owner can see (drawn inside the video element, not under the top bar or the deck) and the
+ * share inside the brackets, by sampling a 24 × 24 grid over the frame as displayed.
+ */
+export function viewfinder(page) {
+  return page.evaluate(() => {
+    const v = document.querySelector('[data-testid="optics-video"]');
+    const vb = v.getBoundingClientRect();
+    const fit = getComputedStyle(v).objectFit;
+    const fw = v.videoWidth;
+    const fh = v.videoHeight;
+    const s = fit === 'cover' ? Math.max(vb.width / fw, vb.height / fh) : Math.min(vb.width / fw, vb.height / fh);
+    const dw = fw * s;
+    const dh = fh * s;
+    const ox = vb.x + (vb.width - dw) / 2;
+    const oy = vb.y + (vb.height - dh) / 2;
+    const rect = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const top = rect('.optics-top');
+    const deck = rect('.optics-deck');
+    const br = rect('.optics-stage .optics-brackets');
+    const inside = (r, x, y) => x >= r.left - 0.5 && x <= r.right + 0.5 && y >= r.top - 0.5 && y <= r.bottom + 0.5;
+    let seen = 0;
+    let bracketed = 0;
+    const n = 24;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const x = ox + ((i + 0.5) / n) * dw;
+        const y = oy + ((j + 0.5) / n) * dh;
+        if (inside(vb, x, y) && x >= 0 && x <= innerWidth && y >= 0 && y <= innerHeight && !inside(top, x, y) && !inside(deck, x, y)) seen++;
+        if (inside(br, x, y)) bracketed++;
+      }
+    }
+    return { frame: `${fw}×${fh}`, shown: `${Math.round(dw)}×${Math.round(dh)}`, visible: +(seen / (n * n)).toFixed(3), insideBrackets: +(bracketed / (n * n)).toFixed(3) };
+  });
 }
 
 /** Checks the pins: exact frame coordinates from the scene, mapped through the frozen view. */
@@ -474,6 +513,39 @@ export default [
         return all.filter((x) => typeof x.id === 'string' && x.system).map((x) => x.id);
       });
       t.assert(ids.includes(oldId) && ids.length === 2, `the old chat is kept, beside the new one (${ids.length} conversations)`);
+    },
+  },
+  {
+    name: 'optics-viewfinder',
+    title: 'Phones: the live viewfinder shows the whole frame a Look sends (letterboxed between the top bar and the deck; sideways, beside the deck), with the brackets on its edges',
+    device: 'iphone13',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await openFromComposer(t);
+      await waitLive(t);
+      const check = async (label) => {
+        await page.waitForTimeout(300);
+        const v = await viewfinder(page);
+        t.note(`${label}: ${v.visible * 100}% of the ${v.frame} frame visible, ${v.insideBrackets * 100}% inside the brackets (shown ${v.shown})`);
+        t.assert(v.visible >= 0.99, `${label}: the whole frame a Look sends is visible (${JSON.stringify(v)})`);
+        t.assert(v.insideBrackets >= 0.99, `${label}: and inside the brackets (${JSON.stringify(v)})`);
+        return v;
+      };
+      await check('iPhone 13 portrait');
+      await page.setViewportSize({ width: 390, height: 664 }); // the Safari tab
+      await check('Safari tab');
+      await shot(t, 'iphone13-viewfinder-safari-tab');
+      await page.setViewportSize({ width: 844, height: 390 }); // held sideways
+      const side = await check('sideways');
+      t.assert(parseInt(side.shown.split('×')[1], 10) >= 300, `sideways, the picture keeps its height (${side.shown})`);
+      t.assert(!(await page.locator(tid('optics-look')).isDisabled()), 'LOOK is reachable');
+      await shot(t, 'iphone13-viewfinder-sideways');
+      await t.checkNoHorizontalOverflow('the sideways viewfinder');
     },
   },
   {

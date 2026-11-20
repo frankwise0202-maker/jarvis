@@ -387,7 +387,45 @@ export function openOptics(deps = {}) {
     if (screenBtn) screenBtn.disabled = isBusy() || !!watch;
     syncTop();
     renderLookCost();
+    fitLive();
   }
+
+  /**
+   * Phones: the live picture is letterboxed in the room between the top bar and the deck (a column on
+   * the right when the phone is held sideways), so what the viewfinder shows is the whole frame a Look
+   * sends; the brackets and the reticle sit on that frame (CSS --live-*, --frame-*, data-framed).
+   */
+  function fitLive() {
+    if (el.dataset.layout !== 'phone') {
+      el.dataset.framed = 'false';
+      return;
+    }
+    const sb = stage.getBoundingClientRect();
+    if (!sb.width || !sb.height) return;
+    const tb = top.getBoundingClientRect();
+    const db = deck.getBoundingClientRect();
+    const column = db.left > sb.left + sb.width / 2 && db.top < sb.top + sb.height / 2; // the deck on the right
+    const room = { l: 0, t: Math.max(0, tb.bottom - sb.top), r: column ? Math.max(0, sb.right - db.left) : 0, b: column ? 6 : Math.max(0, sb.bottom - db.top) };
+    for (const k of ['l', 't', 'r', 'b']) el.style.setProperty(`--live-${k}`, `${Math.round(room[k])}px`);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const W = sb.width - room.l - room.r;
+    const H = sb.height - room.t - room.b;
+    if (!vw || !vh || W <= 0 || H <= 0) {
+      el.dataset.framed = 'false';
+      return;
+    }
+    const scale = Math.min(W / vw, H / vh);
+    const fw = vw * scale;
+    const fh = vh * scale;
+    el.style.setProperty('--frame-l', `${(room.l + (W - fw) / 2).toFixed(1)}px`);
+    el.style.setProperty('--frame-t', `${(room.t + (H - fh) / 2).toFixed(1)}px`);
+    el.style.setProperty('--frame-w', `${fw.toFixed(1)}px`);
+    el.style.setProperty('--frame-h', `${fh.toFixed(1)}px`);
+    el.dataset.framed = 'true';
+  }
+  video.addEventListener('loadedmetadata', () => fitLive());
+  video.addEventListener('resize', () => fitLive());
 
   function isBusy() {
     return !!(frozen && frozen.status === 'analyzing') || followups.some((f) => f.status === 'analyzing');
@@ -1663,6 +1701,7 @@ export function openOptics(deps = {}) {
     if (liveBtn.parentNode !== home) home.prepend(liveBtn);
     layoutSoon();
     keepFollowUpInView();
+    fitLive();
   };
   window.addEventListener('resize', onResize);
   offs.push(() => window.removeEventListener('resize', onResize));
@@ -1730,7 +1769,7 @@ export function openOptics(deps = {}) {
     showCard({
       kind: 'intro',
       title: 'Let Jarvis see',
-      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch is on, which you start and which turns itself off).',
+      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch is on, which you start and which turns itself off), and it is exactly the picture you see between the brackets.',
       extra: h('p', {
         class: 'optics-card-cost',
         text: `About ${formatUsd(estimateLookCost({ model: leadModel() }).usd)} a look with ${leadModel() === 'claude-opus-5-5' ? 'Opus 5.5' : 'your model'}; the first in a new chat about ${formatUsd(estimateLookCost({ model: leadModel(), prefixCached: false }).usd)}.`,

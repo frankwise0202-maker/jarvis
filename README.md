@@ -380,7 +380,8 @@ says never leaves the device.
 browser asks for permission.
 
 - **Look.** Point the camera and tap **LOOK** (or press **Space**), with a question in the box
-  or without one ("What am I looking at?"). The picture freezes, Jarvis answers below it, and
+  or without one ("What am I looking at?"). The picture between the corner brackets is exactly
+  what Jarvis gets, nothing more (on a phone held sideways the buttons move to the right). The picture freezes, Jarvis answers below it, and
   labels appear on the things it names, each with a line to the object. Jarvis identifies what
   it can: objects, the brand or model when it's visible, text it can read, the parts of a machine.
   Each Look is part of your current conversation, so the chat keeps it too (tap it there to see

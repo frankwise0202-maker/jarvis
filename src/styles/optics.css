@@ -33,6 +33,10 @@
 .optics-frozen,
 .optics-frozen-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .optics-frozen { display: none; }
+/* Phones: the live picture is letterboxed in the room the top bar and the deck leave (contain, measured
+   by optics.js: --live-*), so the viewfinder shows the whole frame a Look sends; the brackets sit on
+   that frame's edges (--frame-*). */
+.optics[data-layout='phone'] .optics-video { inset: auto; top: var(--live-t, var(--top-h)); left: var(--live-l, 0px); width: calc(100% - var(--live-l, 0px) - var(--live-r, 0px)); height: calc(100% - var(--live-t, var(--top-h)) - var(--live-b, var(--deck-h))); object-fit: contain; }
 .optics[data-mirrored='true'] .optics-video { transform: scaleX(-1); }
 .optics[data-frozen-mirror='true'] .optics-frozen-media { transform: scaleX(-1); }
 .optics[data-frozen='true'] .optics-stage { top: var(--top-h); bottom: calc(var(--deck-ask-h) + var(--sheet-h)); }
@@ -51,6 +55,8 @@
 .optics[data-camera='off'] .optics-reticle,
 .optics[data-camera='paused'] .optics-reticle { display: none; }
 .optics[data-camera='off']:not([data-frozen='true']) .optics-brackets { opacity: 0.35; }
+.optics[data-framed='true']:not([data-frozen='true']) .optics-stage .optics-brackets { inset: auto; left: var(--frame-l); top: var(--frame-t); width: var(--frame-w); height: var(--frame-h); }
+.optics[data-framed='true'] .optics-reticle { left: calc(var(--frame-l) + var(--frame-w) / 2); top: calc(var(--frame-t) + var(--frame-h) / 2); }
 
 /* Alpha events: a 12% white flash (once, 120 ms) and one scanline (600 ms). */
 .optics-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
@@ -429,7 +435,11 @@
 /* ---- a phone held sideways (short and wide): after a Look, the frozen frame on the left and the
    answer in a column on the right, the ask row under it; the live view keeps the phone layout. -- */
 @media (orientation: landscape) and (max-height: 500px) {
-  .optics { --side-w: min(46vw, 420px); }
+  .optics { --side-w: min(46vw, 420px); --live-col: min(40vw, 300px); }
+  /* Live: the deck is a column on the right (keys, then the ask row), so the picture keeps the height. */
+  .optics-deck:not([data-frozen='true']) { left: auto; top: var(--top-h); width: calc(var(--live-col) + var(--safe-right)); min-height: 0; justify-content: center; padding-left: 16px; border-top: 0; border-left: 1px solid var(--line); }
+  .optics-deck:not([data-frozen='true']) .optics-keys { order: -1; gap: 14px; }
+  .optics:not([data-frozen='true']) .optics-watch { right: calc(var(--live-col) + var(--safe-right) + 16px); }
   .optics[data-frozen='true'] .optics-stage { top: var(--top-h); bottom: 0; right: calc(var(--side-w) + var(--safe-right)); }
   .optics[data-state='frozen'] .optics-stage { --scan-h: calc(100vh - var(--top-h)); }
   .optics[data-frozen='true'] .optics-side { left: auto; right: 0; top: var(--top-h); bottom: var(--deck-ask-h); width: calc(var(--side-w) + var(--safe-right)); height: auto; }
