@@ -414,3 +414,31 @@ test('v7.1: the ONNX Runtime binary is checked like the model: cached under its 
   assert.equal(bad.tfEnv.backends.onnx.wasm.wasmBinary, undefined, 'nothing handed to ONNX Runtime');
   assert.deepEqual(await keysOf(bad.scope), [], 'nothing cached');
 });
+
+test('v7.1: a speaker whose file cannot be downloaded is in the status (voiceError) until it works again; the engine stays ready', async (t) => {
+  const clock = installClock();
+  t.after(() => clock.restore());
+  const w = createFakeWorker();
+  const engine = createNaturalEngine({ workerUrl: './voice/kokoro-worker.js', source: sourceConfig('self', { base: APP }), createWorker: () => w, scope: {} });
+  const started = engine.start();
+  w.emit({ type: 'ready', device: 'wasm', dtype: 'q8', loadMs: 10, warmupMs: 10, downloadedBytes: 0, threads: 1 });
+  await started;
+  assert.equal(engine.status().voiceError ?? null, null);
+  const emma = engine.synth('Good morning.', { voice: 'bf_emma' });
+  w.emit({ type: 'error', id: emma.id, code: 'network', message: 'The voice file bf_emma.bin could not be downloaded (HTTP 404).' });
+  await assert.rejects(emma.promise, (e) => e.code === 'network');
+  assert.equal(engine.status().state, 'ready', 'the engine itself is fine (George still speaks)');
+  assert.deepEqual(engine.status().voiceError, { voice: 'bf_emma', code: 'network', message: 'The voice file bf_emma.bin could not be downloaded (HTTP 404).' });
+  const george = engine.synth('Hello.', { voice: 'bm_george' });
+  w.emit({ type: 'audio', id: george.id, pcm: new Float32Array(8), sampleRate: 24000, synthMs: 2 });
+  await george.promise;
+  assert.equal(engine.status().voiceError.voice, 'bf_emma', 'another speaker working says nothing about Emma');
+  const other = engine.synth('Hm.', { voice: 'bf_emma' });
+  w.emit({ type: 'error', id: other.id, code: 'synth', message: 'Something else.' });
+  await assert.rejects(other.promise);
+  assert.equal(engine.status().voiceError.code, 'network', 'a synthesis failure that is not a download leaves it as it was');
+  const again = engine.synth('Good morning.', { voice: 'bf_emma' });
+  w.emit({ type: 'audio', id: again.id, pcm: new Float32Array(8), sampleRate: 24000, synthMs: 2 });
+  await again.promise;
+  assert.equal(engine.status().voiceError, null, 'Emma works again: cleared');
+});

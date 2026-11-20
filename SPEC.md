@@ -2179,11 +2179,19 @@ others stay selectable). A backup import restores `naturalVoiceId` (v7.1: in `RE
   run it)."), the download of a fallback, and "Too slow on this device (N× real time), so Jarvis uses the built-in
   voice." with Try again, also before the engine starts.
 - After a fallback the label follows the engine in use.
-- **Test natural voice** (`natural-voice-test`) always plays the natural voice, never the built-in one in its place.
-  Ready: the greeting is spoken the way replies are (the router). Starting, downloading or getting ready, stopped
-  after a while idle (`off`), or kept as too slow: the test waits for the engine (starting it if needed; the status
-  adds "The test plays as soon as the natural voice is ready.", `data-test="waiting"`, and the button reads Cancel
-  test), then the natural voice makes the whole sample and plays it. After an error a toast says why (Try again).
+- **Test natural voice** (`natural-voice-test`) always plays the natural voice, never the built-in one in its place:
+  the natural voice makes the whole sample, then plays it (v7.1: also when ready; before, a ready test went through
+  the router, which handed it to the built-in voice when the speaker's file could not be had). Starting,
+  downloading or getting ready, stopped after a while idle (`off`), or kept as too slow: the test waits for the
+  engine first (starting it if needed; the status adds "The test plays as soon as the natural voice is ready.",
+  `data-test="waiting"`, and the button reads Cancel test). After an error a toast says why (Try again); a speaker
+  whose file could not be downloaded says "Couldn't download Emma's voice. Check the connection, then try again."
+- **A speaker that can't be downloaded** (v7.1; a new speaker's file comes on first use: offline, say). A synthesis
+  error with code `network`, `integrity` or `blocked-host` sets `status.voiceError` `{ voice, code, message }` (the
+  engine stays `ready`; that speaker's next good synthesis clears it). While it names the chosen speaker the card
+  says "Couldn't download Emma's voice, so replies use the built-in voice for now. Check the connection; the next
+  reply tries again." (`natural-voice-status` `data-speaker="missing"`), not "Ready. Replies use the natural voice";
+  replies still fall back to the device voice, as before.
 
 **Model hosting** (self-hosted on GitHub Pages; same origin; no page CSP change, because a same-origin module Worker
 takes its CSP from its own response headers and Pages sends none).
@@ -2218,8 +2226,10 @@ takes its CSP from its own response headers and Pages sends none).
   - `natural-voice-webgpu` (a stubbed adapter: 350 MB offered; the fp32 stand-in fails to load; WASM takes over by
     itself; next time 117 MB);
   - `natural-voice-slow` (a kept verdict: the card says so; Voice Mode speaks with the built-in voice);
-  - `natural-voice-test` (Test tapped during the download waits, then plays the natural voice; kept as too slow, it
-    plays a natural sample; never the built-in voice);
+  - `natural-voice-test` (Test tapped during the download waits, then plays the natural voice; a speaker whose
+    file 404s: no built-in voice, no audio, the toast and the card say Emma's voice couldn't be downloaded, and once
+    it can be, Test plays Emma and the card says Ready; kept as too slow, it plays a natural sample; never the
+    built-in voice);
   - `natural-voice-gpu-guard` (the main window's marker and lock: a screen window and a second tab rule nothing out;
     once the lock is let go with the marker left behind, the next page rules WebGPU out).
 

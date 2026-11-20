@@ -16,7 +16,11 @@
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
-import { VOICES, RUNTIME, voiceLabel, formatMegabytes } from '../platform/voice/natural/catalog.js';
+import { VOICES, RUNTIME, voiceById, voiceLabel, formatMegabytes } from '../platform/voice/natural/catalog.js';
+
+// A speaker's file that could not be had (the engine's synthesis error codes for a download).
+const SPEAKER_DOWNLOAD = new Set(['network', 'integrity', 'blocked-host']);
+const speakerName = (id) => (voiceById(id) || {}).name || 'that speaker';
 
 const ERROR_TEXT = {
   wasm: 'This browser blocked the voice engine (WebAssembly), so Jarvis uses the built-in voice.',
@@ -68,6 +72,7 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
       on: {
         change: () => {
           commit({ naturalVoiceId: select.value });
+          render(); // the status follows the speaker (one whose file failed says so)
         },
       },
     },
@@ -130,6 +135,7 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
 
   function render(st = natural.engine.status()) {
     const on = !!getSettings().naturalVoice;
+    const missing = st.voiceError && st.voiceError.voice === getSettings().naturalVoiceId ? st.voiceError.voice : '';
     if (st.plan && (st.fallback || st.state === 'ready' || st.state === 'slow')) useEngine(st.plan);
     let text = '';
     let showProgress = false;
@@ -160,7 +166,10 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         const r = st.rtf || st.warmupRtf;
         const speed = r ? ` · ${(1 / r).toFixed(1)}× faster than real time` : '';
         const where = st.plan === 'webgpu' ? ' on the graphics chip' : st.fallback ? ' on the processor (the graphics chip ' + (st.fallback === 'webgpu-slow' ? 'was too slow)' : 'couldn’t run it)') : '';
-        text = on ? `Ready${where}. Replies use the natural voice${speed}.` : `Downloaded (${size}). Turn it on to use it.`;
+        // The chosen speaker's file could not be downloaded: replies fall back to the built-in voice
+        // until it can (v7.1: before, this still said Ready).
+        if (on && missing) text = `Couldn’t download ${speakerName(missing)}’s voice, so replies use the built-in voice for now. Check the connection; the next reply tries again.`;
+        else text = on ? `Ready${where}. Replies use the natural voice${speed}.` : `Downloaded (${size}). Turn it on to use it.`;
         break;
       }
       case 'slow':
@@ -190,6 +199,7 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     progress.hidden = !showProgress;
     status.hidden = !text;
     status.dataset.state = st.state;
+    status.dataset.speaker = missing ? 'missing' : '';
     status.dataset.test = testing ? (testing.waiting ? 'waiting' : 'playing') : '';
     setText(testLabel, testing && testing.waiting ? 'Cancel test' : 'Test natural voice');
     testBtn.setAttribute('aria-pressed', testing ? 'true' : 'false');
@@ -224,11 +234,12 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
   }
 
   /**
-   * Test natural voice: always the natural voice, never the built-in one in its place. Ready: the
-   * sentence is spoken the way replies are. Not ready yet (starting, downloading, getting ready),
-   * stopped after a while idle, or measured too slow here: the natural voice makes the whole sample
-   * as soon as it can, then plays it (the status line says the test is waiting; a second tap cancels).
-   * After an error it says why instead.
+   * Test natural voice: always the natural voice, never the built-in one in its place. The natural
+   * voice makes the whole sample (ready: at once; not ready yet, stopped after a while idle, or
+   * measured too slow here: as soon as it can), then plays it (the status line says the test is
+   * waiting; a second tap cancels). After an error it says why instead, a speaker whose file can't
+   * be downloaded included (v7.1: when ready, the test went through the router, which handed it to
+   * the built-in voice).
    */
   function test() {
     if (testing) {
@@ -249,18 +260,6 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     const st = natural.engine.status();
     if (st.state === 'error') {
       toast(`${(st.error && ERROR_TEXT[st.error.code]) || ERROR_TEXT.init} Tap Try again to hear it.`, { level: 'warn' });
-      return;
-    }
-    if (st.state === 'ready') {
-      testing = tts.speak(line, {
-        voiceURI: s.voiceURI,
-        rate: s.voiceRate,
-        onEnd: () => {
-          testing = null;
-          render();
-        },
-      });
-      render();
       return;
     }
     sample(line, s);
@@ -301,9 +300,10 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
           const played = natural.audio.play(pcm, sampleRate, natural.audio.now() + 0.05);
           setTimeout(() => !cancelled && finish(), Math.ceil(played.duration * 1000) + 100);
         },
-        () => {
+        (err) => {
           if (cancelled) return;
-          toast('The natural voice couldn’t make the sample. Try again.', { level: 'warn' });
+          const code = err && err.code;
+          toast(SPEAKER_DOWNLOAD.has(code) ? `Couldn’t download ${speakerName(s.naturalVoiceId)}’s voice. Check the connection, then try again.` : 'The natural voice couldn’t make the sample. Try again.', { level: 'warn' });
           finish();
         },
       );

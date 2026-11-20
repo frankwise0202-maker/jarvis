@@ -364,7 +364,9 @@ says never leaves the device.
 - **George** (British) speaks by default; **Lewis**, **Fable** and other voices are in the
   **Speaker** list. **Test natural voice** plays a short greeting, always in the natural voice:
   tapped while it's still downloading or getting ready, it waits and plays once it's ready (tap
-  again to cancel); on a device where it's too slow it still lets you hear it.
+  again to cancel); on a device where it's too slow it still lets you hear it. A new speaker
+  downloads its voice (about half a megabyte) the first time it's used: if that can't happen
+  (you're offline, say), Test and the card say so, and replies use the built-in voice until it can.
 - **A one-time download.** The card says how much before anything downloads: about **350 MB**
   on a computer whose graphics chip the browser can use (WebGPU: Chrome on a Mac has it, and
   recent iPhones probably do), about **117 MB** otherwise. It's kept for offline use; **Remove

@@ -8,7 +8,9 @@
 //   engine.synth(text, { voice, speed }) -> { id, promise }   promise -> { pcm, sampleRate, synthMs }
 //   engine.cancel(ids)        drop queued jobs (array of ids, or 'all')
 //   engine.noteTiming(synthMs, audioSeconds, { underrun })   real-time-factor bookkeeping
-//   engine.status()           { state, stage, loaded, total, device, dtype, error, rtf, loadMs, … }
+//   engine.status()           { state, stage, loaded, total, device, dtype, error, rtf, loadMs,
+//                             voiceError: { voice, code, message } | null (a speaker whose file could
+//                             not be downloaded; cleared by its next good synthesis), … }
 //   engine.subscribe(fn)      fn(status) on every change; returns unsubscribe
 //   engine.stop()             terminate the worker to free memory (start() reloads from cache)
 //   engine.clear()            delete the downloaded files and stop
@@ -61,6 +63,7 @@ const HEARTBEAT_MS = 2000; // the marker's `at` is refreshed this often while th
 const ATTEMPT_STALE_MS = 20000; // without Web Locks: a marker not refreshed for this long is a dead page's
 const VERDICT_DAYS = 30;
 // Engine errors that are about the download, not the graphics chip: never a WebGPU verdict (v7.1).
+// The same codes on a synthesis mean the speaker's own file could not be had (status.voiceError).
 const NOT_THE_GPU = new Set(['network', 'integrity', 'blocked-host']);
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
@@ -189,6 +192,8 @@ export function createNaturalEngine({
         const p = pending.get(msg.id);
         if (!p) return;
         pending.delete(msg.id);
+        // That speaker works again (the connection is back): the card no longer says otherwise.
+        if (st.voiceError && st.voiceError.voice === p.voice) set({ voiceError: null });
         p.resolve({ pcm: msg.pcm, sampleRate: msg.sampleRate, synthMs: msg.synthMs });
         armIdle();
         break;
@@ -198,6 +203,10 @@ export function createNaturalEngine({
           const p = pending.get(msg.id);
           if (p) {
             pending.delete(msg.id);
+            // The speaker's file could not be downloaded (offline when a new speaker is picked): the
+            // router hands that reply to the built-in voice; the status says so (v7.1: before, the
+            // card still said "Ready. Replies use the natural voice").
+            if (NOT_THE_GPU.has(msg.code)) set({ voiceError: { voice: p.voice, code: msg.code, message: msg.message || '' } });
             p.reject(Object.assign(new Error(msg.message || 'Synthesis failed'), { code: msg.code || 'synth' }));
           }
           return;
@@ -505,7 +514,7 @@ export function createNaturalEngine({
         reject(Object.assign(new Error('The natural voice is not ready.'), { code: 'not-ready' }));
         return;
       }
-      pending.set(id, { resolve, reject });
+      pending.set(id, { resolve, reject, voice: v });
       worker.postMessage({ type: 'synth', id, text, voice: v, speed });
     });
     return { id, promise };
@@ -637,7 +646,7 @@ export function createNaturalEngine({
       }
     }
     timings.length = 0;
-    set({ state: 'off', stage: '', loaded: 0, total: 0, error: null, rtf: null, underruns: 0 });
+    set({ state: 'off', stage: '', loaded: 0, total: 0, error: null, rtf: null, underruns: 0, voiceError: null });
   }
 
   function subscribe(fn) {

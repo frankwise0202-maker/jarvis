@@ -9,7 +9,9 @@
 //                           (about 350 MB); its model fails to load -> the processor engine (WASM)
 //                           takes over by itself; next time the card offers that one (about 117 MB)
 //   natural-voice-test      Test never plays the built-in voice in its place: during the download it
-//                           waits, then plays the natural voice; kept as too slow, a natural sample
+//                           waits, then plays the natural voice; a speaker whose file can't be
+//                           downloaded is said so (toast, status), not replaced by the built-in voice;
+//                           kept as too slow, a natural sample
 //   natural-voice-gpu-guard while the main window sets the voice up on the graphics chip, a screen
 //                           window or a second tab rules nothing out; a page that died mid-set-up
 //                           (lock let go, marker left) still does
@@ -83,6 +85,7 @@ const label = (t) => t.text(t.page.locator(tid('natural-voice-label')));
 const status = (t) => t.page.locator(tid('natural-voice-status'));
 const audio = (t) => t.page.evaluate(() => window.__naturalAudio.length);
 const said = (t) => t.page.evaluate(() => window.__voice.said.slice());
+const toastAll = async (t) => (await t.page.locator('.toast-text').allTextContents()).join(' | ');
 
 async function waitStatus(t, states, timeout = 90000) {
   await t.waitFor(async () => states.includes(await status(t).getAttribute('data-state')), { timeout, message: async () => `the natural voice to be ${states.join(' or ')} (it is ${await status(t).getAttribute('data-state')}: ${await t.text(status(t))})` });
@@ -271,6 +274,33 @@ export default [
         await t.waitFor(async () => (await audio(t)) > 0, { timeout: 30000, message: 'the natural voice to play the test' });
         t.assert(!(await said(t)).some((x) => /All systems are operational/.test(x)), 'never the built-in voice');
         await t.waitFor(async () => (await t.text(t.page.locator(tid('natural-voice-test')))) === 'Test natural voice', { timeout: 15000, message: 'the button back to Test' });
+      });
+      await t.step('a speaker whose file can\'t be downloaded (Emma, offline): Test never plays the built-in voice, it says why, and the card no longer says Ready', async () => {
+        // v7.1: before, Test went through the router when ready, which handed it to the built-in voice,
+        // and the card kept saying "Ready. Replies use the natural voice".
+        const testBtn = t.page.locator(tid('natural-voice-test'));
+        // The George sample has finished (a tap while it plays would stop it instead).
+        await t.waitFor(async () => (await testBtn.getAttribute('aria-pressed')) === 'false', { timeout: 15000, message: 'the previous test to end' });
+        await t.page.context().route(/voices\/bf_emma\.bin/, (route) => route.fulfill({ status: 404, body: 'gone' }));
+        await t.page.locator(tid('setting-naturalVoiceId')).selectOption('bf_emma');
+        const before = await audio(t);
+        const saidBefore = (await said(t)).length;
+        await t.page.locator(tid('natural-voice-test')).click();
+        await t.waitFor(async () => /Couldn’t download Emma’s voice/.test(await toastAll(t)), { timeout: 20000, message: async () => `a toast that says Emma's voice couldn't be downloaded (${await toastAll(t)})` });
+        t.assert((await said(t)).length === saidBefore, `the built-in voice said nothing (${JSON.stringify(await said(t))})`);
+        t.assert((await audio(t)) === before, 'no natural audio either: there is no Emma to play');
+        await t.waitFor(async () => (await status(t).getAttribute('data-speaker')) === 'missing', { timeout: 5000, message: 'the status to say the speaker is missing' });
+        const text = await t.text(status(t));
+        t.assert(/^Couldn’t download Emma’s voice, so replies use the built-in voice for now\./.test(text), `status: ${text}`);
+        await t.screenshot('speaker-missing');
+        // Back online: the next Test plays Emma and the card says Ready again.
+        await t.page.context().unroute(/voices\/bf_emma\.bin/);
+        await t.waitFor(async () => (await testBtn.getAttribute('aria-pressed')) === 'false', { timeout: 15000, message: 'the failed test to end' });
+        await testBtn.click();
+        await t.waitFor(async () => (await audio(t)) > before, { timeout: 30000, message: 'Emma to play once her file downloads' });
+        await t.waitFor(async () => /^Ready/.test(await t.text(status(t))), { timeout: 5000, message: async () => `Ready again (${await t.text(status(t))})` });
+        await t.waitFor(async () => (await testBtn.getAttribute('aria-pressed')) === 'false', { timeout: 15000, message: 'the test to end' });
+        await t.page.locator(tid('setting-naturalVoiceId')).selectOption('bm_george');
       });
       await t.step('a device kept as too slow: Test makes a natural sample and plays it (replies stay on the built-in voice)', async () => {
         await t.page.evaluate(() => localStorage.setItem('jarvis.voice.natural.verdict', JSON.stringify({ slow: true, rtf: 1.4, at: Date.now() })));
