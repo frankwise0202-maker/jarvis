@@ -213,12 +213,12 @@ you off.
   a ring that fills for 2 seconds, then sends it. Meanwhile you can:
   - **tap the words** to fix them: a text field opens and the countdown stops; tap **Send** when
     it's right;
-  - say **"no, I said …"** (or just "no, Boston"), for example "no, I said Boston": Jarvis
+  - say **"no, I said …"**, for example "no, I said Boston" (or just "no, Boston"): Jarvis
     replaces the word that sounds most like it, or only the words next to the ones you repeat
     ("no, I said for four" changes "for two"; "no, I said oat milk" adds "oat"), or the whole
     sentence if you say it all again, and counts again. When it can only guess which word you
-    mean (nothing sounds like it, or there are two numbers), it shows its guess and waits: say
-    **"yes"** or tap **Send**, or tap the words to fix them;
+    mean (nothing sounds like it, or there are two numbers), it shows its guess and asks "Is that
+    right?": say **"yes"** or tap **Send**, or tap the words to fix them;
   - say **"cancel"** or **"never mind"** (also "no, no, cancel"): nothing is sent;
   - say **"wait"** to stop the countdown, or just keep talking: your words are added;
   - tap **Send now** (or the core) to send it straight away, or **Cancel**.
