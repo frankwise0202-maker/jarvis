@@ -6,3 +6,5 @@ export { MODELS, DEPTHS, MODES, DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, costOf
 // Holograms and blueprints (lead tools version 4): text-export one-liner, the visible text of a 2D
 // request, and which conversations can show them.
 export { blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from './visuals.js';
+// Apple Music (lead tools version 6): the music segment of a local "play X" turn, and the card check.
+export { appendMusicTurn, isMusicSegment, musicSegment } from './music.js';

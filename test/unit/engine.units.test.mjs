@@ -26,6 +26,7 @@ import {
   LEAD_SYSTEM_V2,
   LEAD_SYSTEM_V3,
   LEAD_SYSTEM_V4,
+  LEAD_SYSTEM_V5,
   WORKER_SYSTEM_V1,
   DEPLOY_AGENTS_DESCRIPTION,
   UPDATE_MEMORY_DESCRIPTION,
@@ -37,6 +38,7 @@ import {
   leadToolsV3,
   leadToolsV4,
   leadToolsV5,
+  leadToolsV6,
   leadToolVersions,
   workerTools,
   buildTurnContext,
@@ -305,7 +307,11 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
   const v5 = leadToolsV5();
   assert.deepEqual(v5.slice(0, v4.length), v4);
   assert.deepEqual(v5.slice(v4.length).map((t) => [t.name, t.eager_input_streaming]), [['pin_labels', true], ['look_through_camera', undefined], ['open_screen', undefined]]);
-  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4, v5]);
+  // Version 6 (Apple Music) appends find_music to V5, unchanged.
+  const v6 = leadToolsV6();
+  assert.deepEqual(v6.slice(0, v5.length), v5);
+  assert.deepEqual(v6.slice(v5.length).map((t) => [t.name, t.eager_input_streaming]), [['find_music', undefined]]);
+  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4, v5, v6]);
   assert.deepEqual(workerTools('deep', 'claude-sonnet-5-5'), [
     { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
     { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5, max_content_tokens: 8000 },
@@ -628,8 +634,8 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   const jarvis = createJarvis({ getSettings: () => ({}), getApiKey: () => '', now: () => new Date('2026-11-19T12:00:00Z') });
   const conv = jarvis.newConversation();
   assert.equal(conv.v, 1);
-  assert.equal(conv.system, LEAD_SYSTEM_V4); // new conversations freeze the latest prompt (SPEC §15.1, holograms §2, v7)
-  assert.deepEqual(conv.tools, leadToolsV5()); // and the latest tools
+  assert.equal(conv.system, LEAD_SYSTEM_V5); // new conversations freeze the latest prompt (SPEC §15.1, holograms §2, v7, Apple Music)
+  assert.deepEqual(conv.tools, leadToolsV6()); // and the latest tools
   assert.equal(isKnownLeadSetup(conv.system, conv.tools), true);
   assert.deepEqual(conv.apiMessages, []);
   assert.deepEqual(conv.turns, []);

@@ -15,6 +15,7 @@ import {
   valueFromSchema, workerReportSegments, xssAnswer,
 } from './content.mjs';
 import { SCREEN_TOOL_NAME, openScreenPlan, screenFollowUpText, screenInputOf } from './screens.mjs';
+import { MUSIC_TOOL_NAME, findMusicPlan, musicFollowUpText, musicInputsOf } from './music.mjs';
 import { canonicalJson, newServerToolUseId, newToolUseId, seededRandom, sha256Hex, truncate } from './util.mjs';
 import {
   HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
@@ -286,6 +287,8 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
     if (d.has('search')) return { plan: searchPlan(env) };
     // Screens (lead tools version 5): [[screen:<what>:<where>]] calls open_screen.
     if (d.has('screen') && hasTool(body, SCREEN_TOOL_NAME)) return { plan: openScreenPlan({ think, input: screenInputOf(d.arg('screen'), stripDirectives(prompt)) }) };
+    // Apple Music (lead tools version 6): [[music]] calls find_music.
+    if (d.has('music') && hasTool(body, MUSIC_TOOL_NAME)) return { plan: findMusicPlan({ think, inputs: musicInputsOf(d.arg('music'), stripDirectives(prompt)), spoken }) };
     if (d.has('xss')) {
       const answer = spoken ? textBlocks(spokenXssAnswer(ctx, d)) : [text(xssAnswer())];
       return { plan: { blocks: [thinkingBlock(body, 'The owner wants raw markup echoed back as text.'), ...answer], stop_reason: 'end_turn', pace } };
@@ -363,6 +366,14 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
       return { plan: { blocks: [think('The hologram is up; now the explanation, with sources.'), text(`${line}\n\n${synthesisAnswer({ prompt, ctx, reports })}`)], stop_reason: 'end_turn', pace } };
     }
     return { plan: { blocks: [text(line)], stop_reason: 'end_turn', pace } };
+  }
+  const musicUses = uses.filter((b) => b.name === MUSIC_TOOL_NAME);
+  if (musicUses.length) {
+    const answered = musicUses.map((u) => {
+      const result = results.get(u.id);
+      return { is_error: !!result?.is_error, text: toolResultText(result?.content) };
+    });
+    return { plan: { blocks: [text(musicFollowUpText(answered, { spoken }))], stop_reason: 'end_turn', pace } };
   }
   const screenUse = uses.find((b) => b.name === SCREEN_TOOL_NAME);
   if (screenUse) {

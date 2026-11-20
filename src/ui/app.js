@@ -61,6 +61,12 @@ import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
 import { voiceCameraRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
+import { matchMusicCommand } from '../lib/music-commands.js';
+import { musicLine } from '../lib/music.js';
+import { searchMusic } from '../platform/music.js';
+import { appendMusicTurn, musicSegment } from '../engine/music.js';
+import { createMusicPlayer } from './music/player.js';
+import { createMusicCardView, isMacDevice } from './music/card.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -237,6 +243,8 @@ export async function startApp(rootEl) {
       memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
       library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
       screens: screensDep,
+      // Apple Music (lead tools V6): find_music searches on this device, free (src/platform/music.js).
+      music: { search: (input, { signal } = {}) => searchMusic(input.query, { kind: input.kind, limit: input.limit, signal }) },
       // A busy or old device can take seconds to write a big spec to IndexedDB: wait longer than the
       // engine's default before going on without saving (an unsaved hologram can't get blueprints).
       libraryTimeoutMs: 12000,
@@ -333,7 +341,21 @@ export async function startApp(rootEl) {
     onNewChat: () => newChat(),
   });
 
+  // Apple Music: one preview player for every Music card. A preview never starts while a microphone
+  // listens (dictation or Voice Mode), and it stops Jarvis's own speech first.
+  const musicPlayer = createMusicPlayer({
+    canStart: () => (state.listening || (voiceApi && safe(() => voiceApi.isListening(), false)) ? 'listening' : true),
+    onStart: () => {
+      stopSpeakingNow();
+      if (voiceApi) safe(() => voiceApi.hush());
+    },
+  });
+  const onMac = safe(() => isMacDevice(), false);
+
   const chat = createChat({
+    musicPlayer,
+    isMac: onMac,
+    notify: (msg) => toast(msg, { level: 'info', id: 'music' }),
     isTurnActive: (turnId) => {
       for (const entry of state.runs.values()) if (entry.run.turn && entry.run.turn.id === turnId) return true;
       return false;
@@ -394,7 +416,8 @@ export async function startApp(rootEl) {
     onSend: (text, mode, extras) => send(text, mode, extras),
     // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
     // also while Jarvis is working ("put mission control on screen 2").
-    onCommand: (text) => !!screenCommand(text, null, 'typed'),
+    // Apple Music: "play Back in Black" is found here, free (no Claude request): a Music card.
+    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -578,6 +601,70 @@ export async function startApp(rootEl) {
       if (source !== 'viewer' && !shown) toast(screenMessage(o), { level: ok ? 'success' : 'warn', id: 'screens' });
     });
     return res;
+  }
+
+  // ---- Apple Music (find & open, free) --------------------------------------------------------
+  /**
+   * "Play Back in Black" (typed in the composer or a viewer, or said or typed in Voice Mode):
+   * searched in Apple Music on this device, with no Claude request. The chat gets a local exchange
+   * (the owner's words, Jarvis's line and the Music card; src/engine/music.js appendMusicTurn), in
+   * the open conversation or a new one. "Stop the music" stops a preview. Returns null (not a music
+   * command, or this chat is busy: the words wait like any message) or { handled: true, done }
+   * (done: Promise<{ ack, segment }>).
+   */
+  function musicCommand(text, { source = 'typed', spoken = false } = {}) {
+    const words = String(text || '').trim();
+    const cmd = safe(() => matchMusicCommand(words), null);
+    if (!cmd) return null;
+    if (cmd.action === 'stop') {
+      const was = musicPlayer.isPlaying();
+      musicPlayer.stop();
+      if (!spoken) toast(was ? 'Preview stopped.' : 'Nothing is playing.', { level: 'info', id: 'music' });
+      return { handled: true, stop: true, done: Promise.resolve({ ack: was ? 'Stopped.' : 'Nothing is playing.' }) };
+    }
+    let conv = state.conv;
+    // One turn at a time in a chat: while Jarvis is answering in it, the words wait.
+    if (conv && (state.runs.has(conv.id) || runningElsewhere(conv.id))) return null;
+    const fresh = !conv;
+    if (!conv) conv = engine.newConversation();
+    const seg = musicSegment({ ok: true, items: [] }, { query: cmd.query, kind: cmd.kind, local: true });
+    seg.status = 'searching';
+    let added;
+    try {
+      added = appendMusicTurn(conv, { text: words, line: '', segment: seg, spoken, mode: composer.getMode() });
+    } catch (err) {
+      console.error('[jarvis] the music turn failed:', err);
+      return null;
+    }
+    const { turn, textSegment } = added;
+    if (fresh || state.conv !== conv) setConversation(conv);
+    else chat.sync();
+    chat.scrollToBottom(false);
+    if (!safe(() => isVoiceModeOpen(), false)) safe(() => sounds.cue('send'));
+    if (state.layout === 'phone' && source === 'typed') composer.blur();
+    const done = searchMusic(cmd.query, { kind: cmd.kind, limit: 5, title: cmd.title, artist: cmd.artist })
+      .catch(() => ({ ok: false, error: 'network', message: 'Apple Music could not be reached.' }))
+      .then((outcome) => {
+        const filled = musicSegment(outcome, { query: cmd.query, kind: cmd.kind, local: true });
+        Object.assign(seg, { ...filled, id: seg.id });
+        const line = musicLine(outcome, { action: cmd.action, query: cmd.query, voice: spoken });
+        textSegment.text = line;
+        turn.endedAt = Date.now();
+        conv.updatedAt = turn.endedAt;
+        if (state.conv === conv) {
+          chat.refresh(turn.id);
+          chat.scrollToBottom(false);
+        }
+        Promise.resolve(store.save(conv))
+          .then(() => scheduleHistoryRefresh())
+          .catch((err) => console.error('[jarvis] saving the music turn failed:', err));
+        // "Play a preview of …" typed: the preview starts (never while a mic listens).
+        const top = seg.items[0];
+        if (cmd.action === 'preview' && !spoken && top && top.previewUrl) musicPlayer.play(top);
+        return { ack: line, segment: seg, outcome };
+      });
+    updateAll();
+    return { handled: true, done };
   }
 
   // ---- announcements (throttled aria-live) ------------------------------------------------
@@ -1175,6 +1262,16 @@ export async function startApp(rootEl) {
             return res && res.handled ? { handled: true, done: res.done.then((o) => ({ ack: screenAck(o), outcome: o })) } : null;
           },
         },
+        // Apple Music: "play Back in Black" said here is found at once (free) and shown as a Music card.
+        music: {
+          command: (text) => musicCommand(text, { source: 'voice', spoken: true }),
+          card: (seg) => {
+            const view = createMusicCardView({ player: musicPlayer, isMac: onMac, notify: (m) => voiceApi && safe(() => voiceApi.note(m)), testid: 'voice-music-card' });
+            view.update(seg);
+            return view;
+          },
+          onListen: () => musicPlayer.pauseForMic(),
+        },
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
@@ -1564,6 +1661,12 @@ export async function startApp(rootEl) {
     if (!blueprintFor) {
       const sc = screenCommand(clean, null, 'viewer');
       if (sc) return { notice: screenMessage(await sc.done) };
+      // "Play Back in Black": found in Apple Music, free; the card is in the chat behind the viewer.
+      const mc = !voiceApi ? musicCommand(clean, { source: 'viewer' }) : null;
+      if (mc) {
+        const out = await mc.done;
+        return { notice: mc.stop ? out.ack : `${out.ack}${out.segment && out.segment.items.length ? ' It’s in the chat.' : ''}` };
+      }
     }
     let conv = await viewerConversation(conversationId);
     if (signal && signal.aborted) return { error: 'Stopped.', stopped: true };
@@ -2324,6 +2427,7 @@ export async function startApp(rootEl) {
     }
     if (!sttOk) return;
     stopSpeakingNow();
+    musicPlayer.pauseForMic(); // a preview playing would be heard as speech
     safe(() => unlockSpeech());
     const prefix = composer.getText().trim();
     const join = (t) => [prefix, String(t || '').trim()].filter(Boolean).join(' ');

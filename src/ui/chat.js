@@ -13,6 +13,7 @@ import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { createProtocolGrid, createProtocolBubble } from './protocols.js';
 import { createAttachmentStrip } from './attachments.js';
 import { createFrameSegmentView, createOpticsTurnCard, createPinsSegmentView } from './optics/chat-views.js';
+import { createMusicCardView } from './music/card.js';
 import { loadHologramRenderer } from './hologram/viewer.js';
 import { loadBlueprintModule } from './blueprint/open.js';
 import { MODELS } from '../engine/index.js';
@@ -221,6 +222,9 @@ function pickSuggestions(date = new Date()) {
  * @param {{ get, ensure, onChange }} [o.thumbs]        saved-library thumbnails for the cards (src/ui/thumbs.js)
  * @param {(fact: string) => boolean|null} [o.isRemembered]  is a remembered fact still saved (null = unknown)
  * @param {(fact: string) => boolean} [o.onForgetMemory]  undo a remembered fact (shows an Undo button)
+ * @param {object} [o.musicPlayer]  Apple Music: the shared preview player of the Music cards (src/ui/music/player.js)
+ * @param {boolean} [o.isMac]       Apple Music: a Mac also gets "Open in Music app" (music://)
+ * @param {(msg: string) => void} [o.notify]  a short note (a toast), e.g. why a preview did not start
  * @param {() => object} [o.getSettings]
  * @param {{ play: Function, haptic: Function }} [o.sounds]   optional feedback (SPEC §14.3)
  * @param {() => { title: string, subtitle: string, meta: string }} o.getGreeting
@@ -916,7 +920,8 @@ function createJarvisTurnView(turn, ctx) {
   const o = ctx.o;
   const segViews = new Map();
   const segsEl = h('div', { class: 'segments' });
-  const modelShort = (MODELS && MODELS[turn.leadModel] && MODELS[turn.leadModel].short) || '';
+  // A local Apple Music reply ("play X", free) used no model.
+  const modelShort = turn.local ? '' : (MODELS && MODELS[turn.leadModel] && MODELS[turn.leadModel].short) || '';
 
   const head = h(
     'div',
@@ -1031,6 +1036,10 @@ function createJarvisTurnView(turn, ctx) {
       openOptics: typeof o.onOpenOptics === 'function' ? (seg) => o.onOpenOptics(turn, seg) : null,
       // View only where the picture is kept (a Look, or a frame Jarvis took with its preview).
       canReviewOptics: typeof o.canReviewOptics === 'function' ? (seg) => o.canReviewOptics(turn, seg) : null,
+      // Apple Music cards: the shared preview player, the Mac's Music app link, short notes.
+      musicPlayer: o.musicPlayer || null,
+      isMac: !!o.isMac,
+      notify: typeof o.notify === 'function' ? o.notify : null,
     };
   }
 
@@ -1165,6 +1174,11 @@ function createJarvisTurnView(turn, ctx) {
     if (shareBtn) shareBtn.hidden = !hasText && missionBtn.hidden;
     syncSpeak();
 
+    if (turn.local) {
+      setText(stats, 'Free · Apple Music');
+      stats.title = 'Searched Apple Music on this device: no Claude request, no cost';
+      return;
+    }
     const st = isObj(turn.stats) ? turn.stats : {};
     const parts = [];
     if (status === 'stopped') parts.push('Stopped');
@@ -1241,6 +1255,8 @@ function createSegmentView(seg, sctx) {
       return createPinsSegmentView(sctx);
     case 'frame':
       return createFrameSegmentView(sctx);
+    case 'music':
+      return createMusicCardView({ player: sctx.musicPlayer, isMac: sctx.isMac, notify: sctx.notify });
     default:
       return { kind: seg.kind, el: h('div', { class: 'seg seg-unknown', hidden: true }), update() {} };
   }

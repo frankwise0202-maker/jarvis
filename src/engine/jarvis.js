@@ -216,6 +216,8 @@ export function createJarvis(deps = {}) {
     library: deps.library && typeof deps.library === 'object' ? deps.library : null,
     // Screens (v7): { open(input) -> outcome } puts things on another monitor, see screens.js.
     screens: deps.screens && typeof deps.screens === 'object' ? deps.screens : null,
+    // Apple Music (lead tools V6): { search({ query, kind, limit }, { signal }) -> outcome }, see music.js.
+    music: deps.music && typeof deps.music === 'object' ? deps.music : null,
     libraryTimeoutMs: Number.isFinite(deps.libraryTimeoutMs) && deps.libraryTimeoutMs > 0 ? deps.libraryTimeoutMs : LIBRARY_TIMEOUT_MS,
     // How often a live hologram / blueprint segment is updated while its input streams (tests).
     liveIntervalMs: Number.isFinite(deps.liveIntervalMs) && deps.liveIntervalMs >= 0 ? deps.liveIntervalMs : LIVE_INTERVAL_MS,

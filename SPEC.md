@@ -61,7 +61,7 @@ UI-independent (no DOM access inside `src/engine/`) so it can be reused there.
   favicons fetched from other sites.
 - Content Security Policy (meta tag in `index.html`, exact; v6 added exactly `https://upload.wikimedia.org` to
   img-src and `https://commons.wikimedia.org` to connect-src):
-  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org; worker-src 'self'; manifest-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'`
+  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org https://*.mzstatic.com; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org https://itunes.apple.com; worker-src 'self'; manifest-src 'self'; media-src 'self' blob: https://audio-ssl.itunes.apple.com; object-src 'none'; base-uri 'none'; form-action 'none'`
 - **Never** use `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`document.write` with any text that
   came from the model, the web, the user, or storage. Model text is rendered only through
   `src/lib/markdown.js`, which builds DOM nodes. Static, hard-coded SVG icon markup is the only

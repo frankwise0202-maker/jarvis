@@ -70,6 +70,14 @@
 //                           { handled: true, done: Promise<{ ack }> }. Checked first for every
 //                           thing heard ("put it on my other screen", "float it", "bring it back"):
 //                           it acts at once (free: no turn) and Jarvis says the short ack.
+//   music                 Apple Music (app.js): command(text) -> null (not a music command) or
+//                           { handled: true, done: Promise<{ ack, segment? }> }: "play Back in Black"
+//                           searches (free: no turn), shows the Music card here and Jarvis says one
+//                           short line. card(segment) -> { el, update, destroy } (a Music card, also
+//                           for a reply's find_music results); onListen() before the mic opens (a
+//                           playing preview pauses: previews never play while Jarvis listens). After a
+//                           card is shown Jarvis waits for a tap instead of listening again, so the
+//                           owner can tap Preview.
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -141,7 +149,7 @@ export function isVoiceModeOpen() {
 }
 
 // Segments that are a tool call: the answer is the text written after the last of them.
-const ACTIONS = new Set(['tool', 'mission', 'hologram', 'blueprint']);
+const ACTIONS = new Set(['tool', 'mission', 'hologram', 'blueprint', 'music']);
 
 /**
  * The Markdown of a turn's final answer: the text written after the last tool call, mission,
@@ -218,6 +226,7 @@ function createVoiceMode(opts) {
     visuals,
     createMicBands,
     screens,
+    music,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -251,6 +260,7 @@ function createVoiceMode(opts) {
     confirm: null, // { proceed, cmd, at }: "Shall I draw a blueprint of …?" waits for yes or no
     heldWords: '', // said while a hologram built and not a viewer command: handled once the reply is said
     canListen: false, // last value sent to the viewer's mic (a hologram of this reply is building)
+    noRelisten: false, // a Music card was just shown: wait for a tap (Preview) instead of listening again
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -301,6 +311,9 @@ function createVoiceMode(opts) {
   const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText);
 
   const captions = h('div', { class: 'vm-captions', attrs: { 'data-testid': 'voice-captions', 'data-kind': 'hint' } });
+  // Apple Music: the Music card of a "play …" (or of a reply's find_music) sits under the captions.
+  const musicEl = h('div', { class: 'vm-music', hidden: true, attrs: { 'data-testid': 'voice-music' } });
+  let musicView = null; // { segId, view }
   const capSub = h('p', { class: 'vm-cap-sub', hidden: true });
 
   const mWave = h('span', { class: 'vm-mission-wave' });
@@ -378,7 +391,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, capSub, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, capSub, musicEl, missionEl, readFull),
     h(
       'div',
       { class: 'vm-bottom' },
@@ -482,6 +495,19 @@ function createVoiceMode(opts) {
     note: (text) => {
       if (!S.closed && typeof text === 'string') setSub(text);
     },
+    /**
+     * Apple Music: a preview is starting, so Jarvis stops talking (a short line or an answer that
+     * was being read) and waits for a tap instead of listening. True when he was speaking.
+     */
+    hush: () => {
+      if (S.closed || !S.speech || S.run) return false;
+      cancelSpeech();
+      S.noRelisten = false;
+      goIdle('music');
+      return true;
+    },
+    /** Whether the microphone is open (previews never start then). */
+    isListening: () => !S.closed && !!S.listen,
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -724,6 +750,8 @@ function createVoiceMode(opts) {
     if (S.run) return;
     unlockSpeech();
     input.value = '';
+    // Apple Music: "play Back in Black" typed here is found at once too (free: no turn).
+    if (musicCommand(text)) return;
     send(text);
   }
 
@@ -843,6 +871,13 @@ function createVoiceMode(opts) {
         if (captions.dataset.kind === 'context') captions.dataset.kind = 'jarvis';
         finishKaraoke();
         setSub(S.sttOk && !S.typing ? 'Tap the core to reply.' : '');
+        break;
+      case 'music':
+        // A Music card was shown: no listening now, so a tap on Preview can play (never over the mic).
+        setStatus('Ready', 'dot');
+        finishKaraoke();
+        if (captions.dataset.kind === 'context') captions.dataset.kind = 'jarvis';
+        setSub(S.sttOk && !S.typing ? 'Tap Preview to hear it, or the core to talk.' : '');
         break;
       case 'stopped':
         setStatus('Stopped', 'stop');
@@ -1121,6 +1156,13 @@ function createVoiceMode(opts) {
     }
     const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild };
     S.listen = L;
+    S.noRelisten = false;
+    // A preview playing now would be heard as speech: it pauses before the mic opens.
+    try {
+      if (music && typeof music.onListen === 'function') music.onListen();
+    } catch {
+      /* decoration */
+    }
     syncCoreAgents(null);
     setVoiceState('listening');
     setStatus(retry ? 'Listening again…' : 'Listening…', 'mic');
@@ -1361,6 +1403,7 @@ function createVoiceMode(opts) {
     S.answer = null;
     S.showFull = false;
     S.silentTries = 0;
+    clearMusicCard(); // a new question: the last Music card goes (it stays in the chat)
     syncCoreAgents(null);
     if (!isOnline()) {
       // Keep their words so nothing is lost.
@@ -1452,6 +1495,7 @@ function createVoiceMode(opts) {
         return;
       }
       if (kind === 'segment' && event && event.segment) {
+        if (event.segment.kind === 'music' && (R.owned || (R.run.turn && R.run.turn.spoken === true))) showMusicCard(event.segment);
         showVisual(R, event.segment);
         // The viewer's mic listens while this reply's hologram builds, and stops him again after.
         if (event.segment.kind === 'hologram' && S.canListen !== (!S.listen && S.sttOk && buildingVisual(R))) syncVisuals();
@@ -1830,6 +1874,75 @@ function createVoiceMode(opts) {
     return true;
   }
 
+  /** Show a Music card under the captions (a new one replaces the last; the same one updates). */
+  function showMusicCard(seg) {
+    if (!music || typeof music.card !== 'function' || !seg || typeof seg.id !== 'string' || S.closed) return;
+    try {
+      if (musicView && musicView.segId === seg.id) {
+        musicView.view.update(seg);
+      } else {
+        clearMusicCard();
+        const view = music.card(seg);
+        if (!view || !view.el) return;
+        musicView = { segId: seg.id, view };
+        musicEl.replaceChildren(view.el);
+      }
+      musicEl.hidden = false;
+      if (seg.status === 'done' && Array.isArray(seg.items) && seg.items.length) S.noRelisten = true;
+    } catch (err) {
+      console.warn('[voice] the Music card could not be shown', err);
+    }
+  }
+
+  function clearMusicCard() {
+    if (musicView && musicView.view && typeof musicView.view.destroy === 'function') {
+      try {
+        musicView.view.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    musicView = null;
+    musicEl.replaceChildren();
+    musicEl.hidden = true;
+  }
+
+  /**
+   * Apple Music (free, no turn): "play Back in Black" finds it and shows the Music card here; Jarvis
+   * says one short line ("Here's Back in Black by AC/DC. Tap Open in Apple Music to play it.") and
+   * then waits for a tap. "Stop the music" stops a preview. True when the words were a music command.
+   */
+  function musicCommand(text) {
+    if (!music || typeof music.command !== 'function') return false;
+    let res = null;
+    try {
+      res = music.command(text);
+    } catch (err) {
+      console.warn('[voice] the music command failed', err);
+      res = null;
+    }
+    if (!res || !res.handled) return false;
+    showCaption('quote', `“${text}”`);
+    const marker = { pending: true, viewer: true, music: true };
+    S.run = marker;
+    setVoiceState('thinking');
+    setStatus('Searching Apple Music…', 'search');
+    Promise.resolve(res.done).then(
+      (out) => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        if (out && out.segment) showMusicCard(out.segment);
+        speakAck(out && typeof out.ack === 'string' ? out.ack : '');
+      },
+      () => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck('I couldn’t reach Apple Music just now.');
+      },
+    );
+    return true;
+  }
+
   /**
    * What the owner said: a screen command, a local command while a viewer covers Voice Mode,
    * otherwise a turn.
@@ -1856,6 +1969,8 @@ function createVoiceMode(opts) {
     // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
     // (above) and is taken here once the reply has been said.
     if (screenCommand(text)) return;
+    // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
+    if (musicCommand(text)) return;
     // A 2D request heard here is cancelled by Stop while its library lookup is still running.
     // With no viewer open, the app may open the hologram shown last for a command about it.
     const ctl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -2530,6 +2645,12 @@ function createVoiceMode(opts) {
       /* decoration */
     }
     if (takeHeld()) return; // what the owner said while the hologram built comes first
+    if (S.noRelisten) {
+      // A Music card is up: the owner's next move is probably Preview or Open in Apple Music.
+      S.noRelisten = false;
+      goIdle('music');
+      return;
+    }
     if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
       // Hands-free: listen again once the speaker has gone quiet.
       setStatus('Your turn', 'mic');
@@ -2756,6 +2877,7 @@ function createVoiceMode(opts) {
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
     S.confirm = null;
     S.heldWords = '';
+    callQuietly(() => clearMusicCard()); // a preview playing carries on (its card is in the chat too)
     if (micBands) callQuietly(() => micBands.destroy());
     for (const off of offs) callQuietly(off);
     try {

@@ -1,6 +1,7 @@
 // The lead turn: stream Jarvis's requests into segments, run client tool rounds (deploy_agents,
 // update_memory, and in version 4 conversations show_hologram, draw_blueprint and open_saved: see
-// visuals.js; in the next version open_screen: see screens.js), follow stop reasons, and handle
+// visuals.js; in the next version open_screen: see screens.js; then find_music: see music.js),
+// follow stop reasons, and handle
 // stop / interruption / resume (SPEC 8.4, 8.6).
 //
 // History rules (SPEC 8.3): conversation.apiMessages is append-only and only complete responses are
@@ -44,6 +45,7 @@ import {
 import { dropPinsSegment, failPinsSegment, isLivePinsTool, isOpticsTool, runOpticsTool, startPinsSegment, updatePinsSegment } from './optics.js';
 import { isAttachmentBlock } from './attachments.js';
 import { SCREEN_NOT_RESUMED, SCREEN_TOOL, runOpenScreen } from './screens.js';
+import { MUSIC_TOOL, runFindMusic } from './music.js';
 import { PRICES } from './models.js';
 import { countdown, retryDelayMs, retryLabel, shouldRetry } from './retry.js';
 import { abortError, jsonCopy, parsePartialJson, sleep, uid } from './util.js';
@@ -579,6 +581,8 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
       round.results[tu.id] = await runVisualTool(ctx, tu, req);
     } else if (isScreenTool(ctx, tu.name)) {
       round.results[tu.id] = await runOpenScreen(ctx, tu);
+    } else if (isMusicTool(ctx, tu.name)) {
+      round.results[tu.id] = await runFindMusic(ctx, tu, req);
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
@@ -595,6 +599,11 @@ function isVisualTool(ctx, name) {
 /** open_screen (Screens, v7), in a conversation whose frozen tools have it (the next version after V4). */
 function isScreenTool(ctx, name) {
   return name === SCREEN_TOOL && hasVisualTools(ctx.conv, SCREEN_TOOL);
+}
+
+/** find_music (Apple Music), in a conversation whose frozen tools have it (lead tools V6). */
+function isMusicTool(ctx, name) {
+  return name === MUSIC_TOOL && hasVisualTools(ctx.conv, MUSIC_TOOL);
 }
 
 /** Whether the history ends with the assistant message asking for these tools (no results yet). */
@@ -636,6 +645,9 @@ async function resumeToolRound(ctx, pending) {
     } else if (isScreenTool(ctx, tu.name)) {
       // Windows never pop up on a Resume: that is one tap on a checkpoint, not the owner asking now.
       round.results[tu.id] = { content: SCREEN_NOT_RESUMED, is_error: true };
+    } else if (isMusicTool(ctx, tu.name)) {
+      // Searching again is free and harmless; nothing plays by itself.
+      round.results[tu.id] = await runFindMusic(ctx, tu, Math.max(0, ctx.req - 1));
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
