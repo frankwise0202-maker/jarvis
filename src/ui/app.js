@@ -62,7 +62,7 @@ import { voiceCameraRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
 import { matchMusicCommand } from '../lib/music-commands.js';
-import { musicLine } from '../lib/music.js';
+import { describeItem, musicExportItem, musicLine } from '../lib/music.js';
 import { searchMusic } from '../platform/music.js';
 import { appendMusicTurn, musicSegment } from '../engine/music.js';
 import { createMusicPlayer } from './music/player.js';
@@ -2333,7 +2333,9 @@ export async function startApp(rootEl) {
     // Copied text leaves the app like a share does: never with the API key in it.
     const visuals = segmentsOf(turn).filter((seg) => isVisualSegment(seg)).map((seg) => safe(() => visualExportLine(seg), '')).filter(Boolean);
     const body = plainText(answerText(turn) || turnText(turn, false));
-    const text = redactSecrets([...visuals, body].filter(Boolean).join('\n\n'), state.demo ? '' : safe(getApiKey, ''));
+    // Apple Music cards: the song or album and its link ("Apple Music: Back In Black by AC/DC — https://…").
+    const songs = segmentsOf(turn).map((seg) => safe(() => musicExportItem(seg), null)).filter(Boolean).map((item) => `Apple Music: ${describeItem(item)} — ${item.url}`);
+    const text = redactSecrets([...visuals, body, ...songs].filter(Boolean).join('\n\n'), state.demo ? '' : safe(getApiKey, ''));
     const ok = await copyText(text);
     toast(ok ? 'Copied to clipboard.' : 'Couldn’t copy. Select the text instead.', { level: ok ? 'success' : 'warn', id: 'copy' });
   }

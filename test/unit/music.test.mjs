@@ -273,3 +273,74 @@ test('never steals ordinary words: questions, play as a verb, Jarvis\'s own repl
     assert.equal(matchMusicCommand(s), null, s);
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// The preview player (src/ui/music/player.js) with a fake <audio>
+
+import { createMusicPlayer } from '../../src/ui/music/player.js';
+
+function fakeAudio() {
+  const listeners = new Map();
+  const a = {
+    paused: true, ended: false, currentTime: 0, duration: 30, src: '', volume: 1, preload: '', plays: 0,
+    setAttribute() {},
+    addEventListener(type, fn) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(fn);
+    },
+    fire(type) {
+      for (const fn of listeners.get(type) || []) fn({ type });
+    },
+    async play() {
+      a.plays += 1;
+      a.paused = false;
+      a.fire('play');
+    },
+    pause() {
+      a.paused = true;
+      a.fire('pause');
+    },
+  };
+  return a;
+}
+
+test('previews: never while the mic listens, Jarvis stops talking first, Apple\'s host only, pause for the mic', async () => {
+  const [song] = parseItunesResults(SAMPLE);
+  let listening = false;
+  let hushed = 0;
+  const audio = fakeAudio();
+  const player = createMusicPlayer({ canStart: () => (listening ? 'listening' : true), onStart: () => hushed++, createAudio: () => audio });
+  const states = [];
+  player.subscribe((s) => states.push(s));
+  listening = true;
+  assert.deepEqual(await player.toggle(song), { ok: false, reason: 'listening' });
+  assert.equal(audio.plays, 0, 'nothing played while the mic listens');
+  assert.equal(hushed, 0);
+  listening = false;
+  assert.deepEqual(await player.toggle(song), { ok: true });
+  assert.equal(audio.src, song.previewUrl);
+  assert.equal(hushed, 1, 'Jarvis\'s own speech stopped first');
+  assert.equal(player.state().playing, true);
+  assert.equal(player.state().id, 'song:574050602');
+  player.pauseForMic();
+  assert.equal(audio.paused, true, 'paused before the mic opens');
+  assert.deepEqual(await player.toggle(song), { ok: true });
+  assert.deepEqual(await player.toggle(song), { ok: true, paused: true }, 'a second tap pauses');
+  assert.deepEqual(await player.play({ ...song, previewUrl: 'https://evil.com/a.m4a' }), { ok: false, reason: 'no-preview' });
+  assert.deepEqual(await player.play({ ...song, type: 'album', previewUrl: null }), { ok: false, reason: 'no-preview' });
+  assert.ok(states.length > 0);
+});
+
+test('a Music card is shared and copied as its song or album with the Apple Music link', async () => {
+  const { answerMarkdown } = await import('../../src/ui/share.js');
+  const [song] = parseItunesResults(SAMPLE);
+  const turn = {
+    id: 't1', role: 'jarvis', status: 'done', local: 'music', segments: [
+      { id: 's1', kind: 'text', text: 'Here’s Back In Black by AC/DC. Tap Open in Apple Music to play it.', req: 0, citations: [] },
+      { id: 's2', kind: 'music', req: 0, status: 'done', items: [song, { ...song, id: '9', url: 'https://evil.com/x' }] },
+      { id: 's3', kind: 'music', req: 0, status: 'searching', items: [song] },
+    ],
+  };
+  const md = answerMarkdown(turn);
+  assert.match(md, /^Here’s Back In Black by AC\/DC\. Tap Open in Apple Music to play it\.\n\n\[Apple Music: Back In Black by AC\/DC\]\(https:\/\/music\.apple\.com\/us\/album\/back-in-black\/574050396\?i=574050602\)$/);
+});

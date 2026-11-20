@@ -12,6 +12,7 @@ import { icon } from './icons.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { MODELS, DEPTHS, MODES } from '../engine/models.js';
 import { isVisualSegment, visualExportLine } from '../engine/visuals.js';
+import { describeItem, musicExportItem } from '../lib/music.js';
 
 // ---------------------------------------------------------------------------------------------
 // Small, defensive accessors
@@ -573,6 +574,13 @@ function joinText(segments) {
       // A hologram or blueprint: one line ("[Hologram: … · 43 parts]"), never its spec.
       const line = visualExportLine(seg);
       if (line) groups.push(escapeInline(line));
+      current = null;
+      continue;
+    }
+    if (seg.kind === 'music') {
+      // A Music card: its song or album as a link ("Apple Music: Back In Black by AC/DC").
+      const item = musicExportItem(seg);
+      if (item) groups.push(mdLink(`Apple Music: ${describeItem(item)}`, item.url));
       current = null;
       continue;
     }

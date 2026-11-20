@@ -328,3 +328,12 @@ export function musicToolResult(outcome, input = {}) {
     content: `${head}, shown to the owner as a Music card (artwork, a 30-second Preview and Open in Apple Music):${note}\n${lines.join('\n')}\nYou cannot play the full song: the owner taps Open in Apple Music. Mention what you found in a sentence.`,
   };
 }
+
+/**
+ * The song or album a Music card shows first, for copies and shares ("Apple Music: Back In Black
+ * by AC/DC" and its link), or null (still searching, nothing found, an error, or no valid link).
+ */
+export function musicExportItem(segment) {
+  if (!isObj(segment) || segment.kind !== 'music' || segment.status !== 'done') return null;
+  return cleanMusicItems(segment.items)[0] || null;
+}

@@ -1888,6 +1888,7 @@ function createVoiceMode(opts) {
         musicEl.replaceChildren(view.el);
       }
       musicEl.hidden = false;
+      root.classList.add('vm--music'); // a smaller core makes room for the card
       if (seg.status === 'done' && Array.isArray(seg.items) && seg.items.length) S.noRelisten = true;
     } catch (err) {
       console.warn('[voice] the Music card could not be shown', err);
@@ -1905,6 +1906,7 @@ function createVoiceMode(opts) {
     musicView = null;
     musicEl.replaceChildren();
     musicEl.hidden = true;
+    root.classList.remove('vm--music');
   }
 
   /**
@@ -1926,7 +1928,7 @@ function createVoiceMode(opts) {
     const marker = { pending: true, viewer: true, music: true };
     S.run = marker;
     setVoiceState('thinking');
-    setStatus('Searching Apple Music…', 'search');
+    setStatus(res.stop ? 'One moment…' : 'Searching Apple Music…', res.stop ? 'sparkle' : 'search');
     Promise.resolve(res.done).then(
       (out) => {
         if (S.closed || S.run !== marker) return;

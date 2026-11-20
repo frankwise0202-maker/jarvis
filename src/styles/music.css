@@ -281,7 +281,10 @@
   }
 }
 
-/* Voice Mode: the card sits under the captions, above the dock. */
+/* Voice Mode: the card sits under the captions, above the dock; the core gets smaller meanwhile. */
+.vm.vm--music {
+  --vm-core: min(44vw, 22vh, 240px);
+}
 .vm-music {
   width: min(560px, calc(100% - 2 * var(--sp-4)));
   max-height: 46vh;

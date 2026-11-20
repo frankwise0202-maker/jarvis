@@ -117,6 +117,7 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
     try {
       await a.play();
       loading = false;
+      error = null; // a preview that was blocked before (no gesture yet) plays now
       emit();
       return { ok: true };
     } catch (err) {
