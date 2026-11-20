@@ -440,7 +440,10 @@ browser asks for permission.
 - **Off means off.** The camera runs only while Optics (or a camera view you put on another
   screen) is open and on screen: the red **LIVE** pill shows it (tap it to turn the camera off),
   and it turns off by itself when you switch apps, lock the phone, minimize that window, or when a
-  hologram covers Optics.
+  hologram covers Optics. A camera window on your other screen starts the camera only when you
+  just asked for it: if Chrome brings that window back after a restart or a crash, or you reload
+  it or open it from your history, it waits with **Turn on camera** and captures nothing until you
+  tap it.
 
 ## What it costs
 

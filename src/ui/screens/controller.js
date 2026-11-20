@@ -50,7 +50,7 @@ import { detectScreenEnv, planPlacement, placementNote, rightHalf, screenWindowF
 import { answerMarkdownOf, lookSnapshot, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
 import { createScreenFrame } from './frame.js';
 import { createScreenPanel } from './panels.js';
-import { SCREEN_CHANNEL, loadScreenContent, panelDeps, screenLabel } from './screen-page.js';
+import { SCREEN_CHANNEL, armCameraGo, loadScreenContent, panelDeps, screenLabel } from './screen-page.js';
 import { currentPipWindow, openPipWindow, pipSupported } from './pip.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -379,7 +379,9 @@ export function createScreens(deps = {}) {
     entry.takenFrom = takenFrom ? 'viewer' : entry.takenFrom && entry.kind === target.kind ? entry.takenFrom : null;
     if (entry.mode === 'pip') mountPip(entry);
     else if (entry.mode === 'inapp') mountInapp(entry);
-    else post({ t: 'show', screen: entry.id, kind: entry.kind, ref: entry.kind === 'photo' ? { title: entry.ref.title } : entry.ref, title: entry.title, report: entry.report });
+    // start: the camera turns on there at once (every showIn is the owner's request, or Jarvis moving a
+    // camera that is on); a camera screen that is reloaded or restored waits for a tap (screen-page.js).
+    else post({ t: 'show', screen: entry.id, kind: entry.kind, ref: entry.kind === 'photo' ? { title: entry.ref.title } : entry.ref, title: entry.title, report: entry.report, start: entry.kind === 'camera' });
     schedulePush(entry, true);
     changed();
   }
@@ -397,7 +399,13 @@ export function createScreens(deps = {}) {
       return outcome('opened', target, { mode: plan.mode, label: existing.label, note: plan.note, screenName: plan.screenName, internal: plan.internal, reused: true });
     }
     const id = newId();
-    const url = screenUrl(target, { id, where, number: plan.number });
+    let url = screenUrl(target, { id, where, number: plan.number });
+    // A camera window turns the camera on by itself only on this first load (a one-time nonce): a
+    // reload, or Chrome restoring the window later, shows "Turn on camera" instead.
+    if (target.kind === 'camera') {
+      const go = armCameraGo(id);
+      if (go) url = `${url}#go=${go}`;
+    }
     const w = safe(() => window.open(url, `jarvis-${id}`, plan.features), null);
     if (!w) return needsTap(target, plan, cmd);
     dismissPrompt();
@@ -456,10 +464,13 @@ export function createScreens(deps = {}) {
       onClose: () => safe(() => pipWin.close()),
     });
     pipWin.document.body.replaceChildren(frame.el);
+    // Mounted inside the owner's request (a command, a tap, or a camera that is on moving here): a
+    // camera turns on at once.
     const panel = createScreenPanel(entry.kind, {
       win: pipWin,
       frame,
       compact: true,
+      autoStart: true,
       deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st) },
     });
     frame.body.append(panel.el);
@@ -474,7 +485,7 @@ export function createScreens(deps = {}) {
     }
     const compact = window.innerWidth < 700;
     const frame = createScreenFrame({ win: window, label: 'SCREEN', kind: entry.kind, report: entry.report, title: entry.title, where: 'inapp', compact, setDocumentTitle: false, onClose: () => closeEntry(entry) });
-    const panel = createScreenPanel(entry.kind, { win: window, frame, compact, deps: { ...panelDeps, onCameraState: (st) => setCameraState(entry, st) } });
+    const panel = createScreenPanel(entry.kind, { win: window, frame, compact, autoStart: true, deps: { ...panelDeps, onCameraState: (st) => setCameraState(entry, st) } });
     frame.body.append(panel.el);
     if (!entry.overlay) {
       const host = h('div', { class: 'scr-inapp', attrs: { 'data-testid': 'screen-inapp' } });

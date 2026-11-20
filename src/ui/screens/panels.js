@@ -13,7 +13,8 @@
 //   photo      data { src, title, credit }
 //   link       data { url, title }      a web page can't live inside Jarvis: a card that opens it
 //   camera     data {}                  the live camera (src/ui/optics/screen-camera.js): the camera
-//              chosen last in Optics, LIVE while it runs, off when its window is hidden
+//              chosen last in Optics, LIVE while it runs, off when its window is hidden; it turns
+//              on by itself only with ctx.autoStart (the owner just asked for it here)
 //   look       data { src, width, height, pins, question, markdown, status }   a Look: the frozen
 //              frame with its pinned labels (EDITH plates, as in Optics) and the answer
 //
@@ -675,7 +676,7 @@ function lookPanel({ win, frame, compact }) {
   };
 }
 
-/** The panel for `kind` (see the header). ctx: { win, frame, compact, deps }. */
+/** The panel for `kind` (see the header). ctx: { win, frame, compact, deps, autoStart }. */
 export function createScreenPanel(kind, ctx) {
   const c = { win: window, compact: false, deps: {}, ...ctx };
   if (registry.has(kind)) {

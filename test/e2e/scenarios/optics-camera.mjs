@@ -27,6 +27,8 @@
 //                      camera may be moved back to Optics
 //   optics-float-camera-off  a floating camera turned off with its own button: the main window's
 //                      OPTICS LIVE and OPTICS pill go (and come back when it is on again)
+//   optics-screen-camera-load  a camera screen loaded on its own, or reloaded after Jarvis opened
+//                      it, waits on Camera off (no getUserMedia) until Turn on camera
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
@@ -40,6 +42,8 @@ import { installCameraRig } from '../camera-rig.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { cameraArgs, checkFollowUpInView, checkPins, instrument, lastLook, liveTracks, openFromComposer, shot, waitAnswer, waitLive } from './optics.mjs';
 import { installScreenStubs, opensPage, toastText, typeCommand, waitAttr } from './screens.mjs';
+
+const screenAttrOf = (page, testid, name) => page.locator(tid(testid)).first().getAttribute(`data-${name}`);
 
 /** The newest lead request's last user text block (the owner's words). */
 async function lastUserQuestion(t) {
@@ -743,6 +747,60 @@ export default [
       await t.waitFor(async () => (await main()).pills.includes('optics:OPTICS'), { timeout: 5000, message: async () => `the OPTICS pill again (${JSON.stringify(await main())})` });
       await pip.close();
       await t.waitFor(async () => !(await main()).pills.includes('optics:OPTICS'), { timeout: 8000, message: 'the pill to go when the panel closes' });
+    },
+  },
+  {
+    name: 'optics-screen-camera-load',
+    title: 'A camera screen window turns the camera on by itself only when Jarvis has just opened it for the owner: loaded directly (history, a bookmark) or reloaded, it waits on "Turn on camera" with nothing captured',
+    device: 'mac',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const tracksOf = (p) => p.evaluate(() => (window.__opticsTracks || []).filter((x) => x.api === 'getUserMedia').map((x) => x.track.readyState));
+      await t.step('the camera screen URL loaded on its own (no main window, no tap): Camera off, getUserMedia never called', async () => {
+        const direct = await t.newPage();
+        await instrument(direct);
+        await direct.context().grantPermissions(['camera']);
+        await direct.goto(`${t.url}/?screen=camera&s=s1abc&w=other&n=2`, { waitUntil: 'domcontentloaded' });
+        await waitAttr(t, direct, 'screen-camera', 'state', 'off', { timeout: 10000, label: 'the camera screen loaded directly' });
+        await direct.waitForTimeout(1500);
+        t.assert((await screenAttrOf(direct, 'screen-camera', 'state')) === 'off', 'still off');
+        t.assert((await tracksOf(direct)).length === 0, `no camera was opened (${await tracksOf(direct)})`);
+        t.assert((await t.text(direct.locator(tid('screen-status')))) === 'OFF', 'the header says OFF, not LIVE');
+        await direct.locator(tid('screen-camera-start')).click();
+        await waitAttr(t, direct, 'screen-camera', 'state', 'live', { timeout: 15000, label: 'Turn on camera' });
+        t.assert((await liveTracks(direct)) === 1, 'the owner\'s tap turns it on');
+        await direct.context().close();
+      });
+      await t.step('opened by "put the camera on my other screen": live at once; reloaded: Camera off until the tap', async () => {
+        const page = await t.newPage();
+        t.page = page;
+        await page.context().addInitScript(installCameraRig, { devices: MAC_CAMERAS.slice(0, 1) });
+        await instrument(page);
+        await page.addInitScript(installScreenStubs, { monitors: 2, perm: 'granted' });
+        await page.context().grantPermissions(['camera']);
+        await t.goto('/?optics=1', { page });
+        await waitLive(t, page);
+        const screen = await opensPage(t, async () => {
+          const ask = page.locator(tid('optics-ask'));
+          await ask.fill('put the camera on my other screen');
+          await ask.press('Enter');
+        });
+        await waitAttr(t, screen, 'screen-camera', 'state', 'live', { timeout: 20000, label: 'the camera on screen 2' });
+        t.assert(!new URL(screen.url()).hash, `the one-time nonce is dropped from the address (${screen.url()})`);
+        const pill = page.locator(`${tid('live-pill')}[data-kind="optics"]`);
+        await pill.waitFor({ state: 'visible', timeout: 5000 });
+        await screen.reload({ waitUntil: 'domcontentloaded' });
+        await waitAttr(t, screen, 'screen-camera', 'state', 'off', { timeout: 10000, label: 'the reloaded camera screen' });
+        await screen.waitForTimeout(1500);
+        t.assert((await tracksOf(screen)).length === 0, `the reload opened no camera (${await tracksOf(screen)})`);
+        await pill.waitFor({ state: 'hidden', timeout: 5000 });
+        await screen.locator(tid('screen-camera-start')).click();
+        await waitAttr(t, screen, 'screen-camera', 'state', 'live', { timeout: 15000, label: 'Turn on camera after the reload' });
+        await pill.waitFor({ state: 'visible', timeout: 5000 });
+        await pill.click();
+        await t.waitFor(() => screen.isClosed(), { timeout: 8000, message: 'the OPTICS pill closes the camera screen' });
+      });
     },
   },
   {

@@ -2243,6 +2243,18 @@ Where this section differs from §17 or §18, it wins.
     `PAUSED`, `OFF` or `NO CAMERA` (warn, with the reason and **Try again**); the deck's **Camera off / Camera on**
     (`screen-camera-toggle`; icon only in a floating panel). Test hooks: `screen-camera` `data-state` (starting | live
     | paused | off | error) and `data-mirrored`.
+  - **It turns on by itself only when the owner just asked for it** (v7.1; `createCameraScreenPanel({ autoStart })`,
+    default false). The floating panel and the in-app screen are mounted inside that request (`autoStart: true`). A
+    screen window does so only on the load the main window just made for the owner: `openWindow` arms a one-time
+    nonce (`armCameraGo`: localStorage `jarvis.screens.camgo` = `{ s: <screen id>, n, at }`, and `#go=<n>` on the
+    URL), and the page starts the camera only when `takeCameraGo` finds a fresh navigation (`navigate`), an opener,
+    and this screen's nonce, under 30 s old; the key is removed and the hash dropped either way. A `show` message
+    turns it on only with `start: true` (every `showIn` is the owner's request, or Jarvis moving a camera that is
+    on). So a window that is reloaded (`reload`), restored by Chrome after "Relaunch to update", a crash or "Continue
+    where you left off" (`back_forward`, no opener), reopened with ⌘⇧T, or opened from history or a bookmark (no
+    opener, no nonce) opens on **Camera off · Turn on camera** (`OFF`) with nothing captured. (Before, any load of
+    `?screen=camera` turned the webcam on with no tap, and Chrome restored such a popup LIVE after a relaunch.) After
+    `hello` (and `here`) a camera screen repeats its camera state, so a main window adopting it never guesses "on".
   - Privacy as in Optics: the camera runs only while the panel's own window is visible. `createCamera({ win })` listens
     to that window's `visibilitychange`, `pagehide` and `freeze`, so a floating panel keeps its camera while the app's
     tab is hidden behind it, and releases it when the panel itself is hidden; on a computer it comes back when shown
@@ -2271,5 +2283,11 @@ Where this section differs from §17 or §18, it wins.
   through the first-use card), `optics-look-screen` (two monitors: a labeled Look on screen goes to screen 2 as a Look,
   not the live camera; Bring it back reopens it frozen), `optics-tool-camera` / `optics-tool-camera-float` (Jarvis's open_screen never turns
   the camera on; Turn on camera does), `optics-float-camera-off` (a floating camera turned off: no OPTICS LIVE or
-  pill in the main window), `screens-pages` (a camera
-  screen in a browser without a camera says NO CAMERA and offers Try again).
+  pill in the main window), `screens-pages` (a camera screen loaded on its own waits on OFF; its Turn on camera in
+  a browser without a camera says NO CAMERA and offers Try again), `optics-screen-camera-load` (v7.1, Mac: the URL
+  loaded on its own is OFF with no getUserMedia call until Turn on camera; a camera screen opened by "put the camera
+  on my other screen" is LIVE at once with the nonce gone from its address, and reloaded it is OFF with no capture,
+  the main window's OPTICS pill goes, and Turn on camera brings it back); unit `screens.camera-go` (the nonce: fresh
+  navigation, opener, this screen, under 30 s, one use; reload, restore, history, another screen, stale, missing or
+  no storage all wait) and `screens.camera` (`autoStart` false: OFF, no getUserMedia, "off" reported, the tap turns
+  it on).

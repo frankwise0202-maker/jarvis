@@ -46,19 +46,22 @@ async function newPage({ init } = {}) {
   return page;
 }
 
-/** Mounts a camera screen (frame + panel) in `where` ('main' or a same-origin popup) as window.__scr. */
-function mount(page, where = 'main') {
-  return page.evaluate((where) => {
+/**
+ * Mounts a camera screen (frame + panel) in `where` ('main' or a same-origin popup) as window.__scr.
+ * autoStart: the owner just asked for it (the camera turns on at once); otherwise it waits for a tap.
+ */
+function mount(page, where = 'main', { autoStart = true } = {}) {
+  return page.evaluate(({ where, autoStart }) => {
     const { frame: F, cam: C } = window.__mods;
     const win = where === 'popup' ? window.open('', 'camera-screen', 'popup,width=640,height=480') : window;
     if (!win) throw new Error('no popup');
     const frame = F.createScreenFrame({ win, label: 'SCREEN 2', kind: 'camera', title: 'Optics', where: 'other' });
     win.document.body.append(frame.el);
-    const panel = C.createCameraScreenPanel({ win, frame });
+    const panel = C.createCameraScreenPanel({ win, frame, autoStart });
     frame.body.append(panel.el);
     window.__scr = { win, frame, panel };
     return true;
-  }, where);
+  }, { where, autoStart });
 }
 
 /** What the screen shows: state, status word and tone, detail, the preview's live track. */
@@ -148,6 +151,44 @@ test('a camera screen: live, LIVE in the privacy color with the camera name, a w
     window.__scr.frame.destroy();
   });
   assert.equal(await track.evaluate((t) => t.readyState), 'ended', 'closing the screen releases the camera');
+  assert.deepEqual(page.problems, []);
+});
+
+test('v7.1: a camera screen nobody just asked for (a reloaded or restored window) waits: Camera off, no capture, until Turn on camera', async () => {
+  const page = await newPage({
+    init: () => {
+      window.__gum = 0;
+      const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = (c) => {
+        window.__gum += 1;
+        return gum(c);
+      };
+    },
+  });
+  await page.evaluate(() => {
+    window.__states = [];
+  });
+  await page.evaluate(() => {
+    const { frame: F, cam: C } = window.__mods;
+    const frame = F.createScreenFrame({ win: window, label: 'SCREEN 2', kind: 'camera', title: 'Optics', where: 'other' });
+    document.body.append(frame.el);
+    const panel = C.createCameraScreenPanel({ win: window, frame, deps: { onCameraState: (s) => window.__states.push(s) } });
+    frame.body.append(panel.el);
+    window.__scr = { win: window, frame, panel };
+  });
+  await page.waitForTimeout(1200);
+  let r = await read(page);
+  assert.equal(r.state, 'off', 'off, not starting');
+  assert.equal(r.status, 'OFF');
+  assert.equal(r.track, null);
+  assert.match(r.card, /Camera off/);
+  assert.equal(await page.evaluate(() => window.__gum), 0, 'getUserMedia was never called');
+  assert.deepEqual(await page.evaluate(() => window.__states), ['off'], 'the main window hears "off" (no OPTICS LIVE)');
+  assert.match(await page.textContent('[data-testid="screen-camera-start"]'), /Turn on camera/);
+  await page.click('[data-testid="screen-camera-start"]');
+  await waitState(page, 'live', 'the owner\'s tap turns it on');
+  r = await read(page);
+  assert.equal(r.track.state, 'live');
   assert.deepEqual(page.problems, []);
 });
 

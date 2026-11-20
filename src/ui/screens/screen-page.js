@@ -11,6 +11,14 @@
 //   ?screen=camera
 //   plus s=<screen id>, w=other|window|beside, n=<monitor number> (the header says "SCREEN 2")
 //
+// A camera screen turns the camera on by itself only when the main window has just opened it for the
+// owner (v7.1): the controller arms a one-time nonce (armCameraGo: localStorage plus #go=<nonce>), and
+// the page starts the camera only for a fresh navigation ('navigate'), with an opener, whose nonce
+// matches and is under 30 s old (takeCameraGo; the key is removed and the hash dropped either way).
+// A reload ('reload'), Chrome restoring the window after a relaunch or a crash ('back_forward', no
+// opener) or a load from history opens on "Camera off · Turn on camera". A 'show' message turns it on
+// only with start: true (the owner's own command, or a camera that was on moving here).
+//
 // Saved things come from IndexedDB (library and conversations), so the window works on its own and
 // after a reload. Live things (a running mission, a streaming answer, a hologram's live build) follow
 // the main window over BroadcastChannel('jarvis-screens'):
@@ -37,9 +45,19 @@ import { loadHologramRenderer } from '../hologram/viewer.js';
 import { loadBlueprintModule } from '../blueprint/open.js';
 
 export const SCREEN_CHANNEL = 'jarvis-screens';
+export const CAMERA_GO_KEY = 'jarvis.screens.camgo';
+export const CAMERA_GO_MS = 30000;
 const KINDS = new Set(['hologram', 'blueprint', 'mission', 'answer', 'photo', 'link', 'camera', 'look']);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const txt = (v) => (typeof v === 'string' ? v : '');
+
+function safeOpener() {
+  try {
+    return window.opener || null;
+  } catch {
+    return null;
+  }
+}
 
 /** True when this page load is a screen (the URL has ?screen=<kind>). */
 export function isScreenMode(loc = globalThis.location) {
@@ -73,6 +91,64 @@ export function parseScreenParams(search) {
       title: (p.get('title') || '').slice(0, 160),
     },
   };
+}
+
+/**
+ * The main window, about to open a camera screen for the owner: a one-time nonce for that screen,
+ * stored for the new window to check (see takeCameraGo). Returns the nonce, or '' without storage.
+ */
+export function armCameraGo(screenId, { storage = globalThis.localStorage, now = Date.now(), nonce = makeNonce() } = {}) {
+  if (!/^[a-z0-9]{8,40}$/.test(nonce)) return '';
+  try {
+    storage.setItem(CAMERA_GO_KEY, JSON.stringify({ s: screenId, n: nonce, at: now }));
+    return nonce;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A camera screen page, as it loads: may it turn the camera on by itself? Only when the main window
+ * has just opened it (armCameraGo): a fresh navigation, an opener, and this screen's nonce in the
+ * hash, under CAMERA_GO_MS old. The stored nonce is removed either way (one use).
+ */
+export function takeCameraGo({ screenId, hash = '', opener = null, navigationType = '', storage = globalThis.localStorage, now = Date.now() } = {}) {
+  let stored = null;
+  try {
+    stored = JSON.parse(storage.getItem(CAMERA_GO_KEY) || 'null');
+  } catch {
+    stored = null;
+  }
+  try {
+    storage.removeItem(CAMERA_GO_KEY);
+  } catch {
+    /* storage blocked */
+  }
+  const m = /(?:^#|[#&])go=([a-z0-9]{8,40})(?:&|$)/.exec(String(hash || ''));
+  if (!m || !isObj(stored) || stored.s !== screenId || stored.n !== m[1]) return false;
+  const age = now - Number(stored.at);
+  return Number.isFinite(age) && age >= 0 && age < CAMERA_GO_MS && !!opener && navigationType === 'navigate';
+}
+
+/** 24 random characters [0-9a-z] (crypto when there is one). */
+function makeNonce() {
+  const words = new Uint32Array(4);
+  try {
+    globalThis.crypto.getRandomValues(words);
+  } catch {
+    for (let i = 0; i < words.length; i++) words[i] = Math.floor(Math.random() * 2 ** 32);
+  }
+  return Array.from(words, (n) => n.toString(36).padStart(7, '0')).join('').slice(0, 24);
+}
+
+/** How this page was loaded: 'navigate' | 'reload' | 'back_forward' | 'prerender' | '' (unknown). */
+function navigationType() {
+  try {
+    const nav = performance.getEntriesByType('navigation')[0];
+    return nav && typeof nav.type === 'string' ? nav.type : '';
+  } catch {
+    return '';
+  }
 }
 
 export function screenLabel(where, number) {
@@ -147,6 +223,17 @@ export async function startScreenPage(root, { search = location.search } = {}) {
 
   let kind = params.kind || 'answer';
   let ref = params.ref;
+  // Opened just now by the main window for the owner (see the header): only then does a camera
+  // screen turn the camera on by itself. The nonce is used up, and the hash dropped from the URL, so
+  // a reload or a restored window never counts.
+  const fresh = takeCameraGo({ screenId: params.screenId, hash: location.hash, opener: safeOpener(), navigationType: navigationType() });
+  if (location.hash) {
+    try {
+      history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+    } catch {
+      /* not allowed */
+    }
+  }
   let channel = null;
   let closing = false;
   let panel = null;
@@ -158,6 +245,14 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     } catch {
       /* closed */
     }
+  };
+  // A camera screen's state again after hello/here: the main window adopts a screen it did not know
+  // (it was reloaded, restored, or the main window restarted) only on those, so a state said before
+  // them (a camera that waits, 'off') would be lost and the OPTICS indicator would guess "on".
+  const sayCamera = () => {
+    if (kind !== 'camera' || !panel) return;
+    const state = viewState().camera;
+    if (typeof state === 'string' && state) post({ t: 'camera', state });
   };
   const viewState = () => {
     try {
@@ -212,7 +307,7 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     }, 300);
   }
 
-  function mount(nextKind, nextRef, { title = '', report = false } = {}) {
+  function mount(nextKind, nextRef, { title = '', report = false, autoStart = false } = {}) {
     if (panel) panel.destroy();
     panel = null;
     kind = nextKind;
@@ -227,7 +322,7 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     frame.setStatus('', 'idle');
     frame.setState('loading');
     // A camera screen tells the main window whether its camera runs (the OPTICS indicator there).
-    panel = createScreenPanel(kind, { win: window, frame, compact: false, deps: kind === 'camera' ? { ...panelDeps, onCameraState: (state) => post({ t: 'camera', state }) } : panelDeps });
+    panel = createScreenPanel(kind, { win: window, frame, compact: false, autoStart, deps: kind === 'camera' ? { ...panelDeps, onCameraState: (state) => post({ t: 'camera', state }) } : panelDeps });
     frame.body.append(panel.el);
     frame.scan();
   }
@@ -279,14 +374,16 @@ export async function startScreenPage(root, { search = location.search } = {}) {
       if (!isObj(m)) return;
       if (m.t === 'who') {
         post({ t: 'here', kind, ref, where: params.where, label: screenLabel(params.where, params.number) });
+        sayCamera();
         return;
       }
       if (m.screen !== params.screenId && m.screen !== '*') return;
       if (m.t === 'close') closeSelf();
       else if (m.t === 'show' && typeof m.kind === 'string' && KINDS.has(m.kind)) {
-        mount(m.kind, isObj(m.ref) ? m.ref : {}, { title: txt(m.title), report: !!m.report });
+        mount(m.kind, isObj(m.ref) ? m.ref : {}, { title: txt(m.title), report: !!m.report, autoStart: m.start === true });
         load();
         post({ t: 'hello', kind, ref });
+        sayCamera();
       } else if (m.t === 'content' && m.kind === kind && isObj(m.data)) {
         gotLive = true;
         if (m.title) frame.setTitle(txt(m.title));
@@ -305,8 +402,9 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && document.fullscreenEnabled && !/^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')) toggleFullscreen();
   });
 
-  mount(kind, ref, { title: ref.title });
+  mount(kind, ref, { title: ref.title, autoStart: fresh });
   post({ t: 'hello', kind, ref });
+  sayCamera();
   await load();
   root.dataset.ready = 'true';
   return {

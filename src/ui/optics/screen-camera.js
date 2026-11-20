@@ -3,11 +3,17 @@
 // another monitor, in a floating panel beside the owner's work, or in its own window. It is a view:
 // Look, Watch and the pinned labels stay in Optics on the main screen.
 //
-//   createCameraScreenPanel({ win, frame, compact, deps }) -> { el, update, getState, destroy }
+//   createCameraScreenPanel({ win, frame, compact, deps, autoStart }) -> { el, update, getState, destroy }
 //   deps.onCameraState(state): the camera's state as it changes (live | starting | paused | off |
 //   error), so the main window's OPTICS indicator says LIVE only while it runs
 //   (src/ui/screens/panels.js uses it for the 'camera' kind, in a screen window and in the floating
 //   panel alike; phones show Optics itself instead.)
+//   autoStart (default false): turn the camera on at once. Only for a camera the owner just asked to
+//   see here (a command, the Turn on camera tap, or moving a camera that is on): a floating panel or
+//   the in-app screen is always made inside that request; a screen window only when the main window
+//   has just opened it (screen-page.js `takeCameraGo`). Otherwise it opens on "Camera off · Turn on
+//   camera": a screen window that is reloaded, restored by Chrome after a relaunch or a crash, or
+//   opened from history never turns the camera on by itself (v7.1).
 //
 // The camera is the one the owner chose last in Optics on this device (settings opticsCameraId /
 // opticsCameraLabel), else the default one; a camera that faces the owner is previewed mirrored, as in
@@ -41,7 +47,7 @@ function cameraWord(camera) {
   return camera.facing === 'front' ? 'FRONT' : camera.facing === 'rear' ? 'BACK' : 'CAMERA';
 }
 
-export function createCameraScreenPanel({ win = window, frame, compact = false, deps = {} } = {}) {
+export function createCameraScreenPanel({ win = window, frame, compact = false, deps = {}, autoStart = false } = {}) {
   const report = deps && typeof deps.onCameraState === 'function' ? deps.onCameraState : null;
   const video = h('video', { class: 'scr-camera__video', attrs: { 'data-testid': 'screen-camera-video', 'aria-hidden': 'true' } });
   const cardTitle = h('p', { class: 'scr-msg__main' });
@@ -155,8 +161,10 @@ export function createCameraScreenPanel({ win = window, frame, compact = false, 
   };
   doc.addEventListener('visibilitychange', onVisible);
 
-  render('starting', {});
-  start();
+  if (autoStart) {
+    render('starting', {});
+    start();
+  } else render('off', {});
 
   return {
     el,

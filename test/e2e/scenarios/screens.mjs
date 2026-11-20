@@ -337,8 +337,12 @@ export default [
         await t.screenshot('link', page);
         await checkFrameContrast(t, page, 'link screen');
         await open('screen=camera&w=other&n=2&s=pages7');
-        // This browser has no camera (the fake camera is the Optics scenarios'): the panel says so and
-        // offers Try again. The live camera on a screen is optics-screens.
+        // Loaded on its own (not just opened by the main window for the owner): the camera waits for
+        // a tap (v7.1). This browser has no camera (the fake camera is the Optics scenarios'): the
+        // tap is answered NO CAMERA with Try again. The live camera on a screen is optics-screens.
+        await waitAttr(t, page, 'screen-camera', 'state', 'off', { timeout: 10000, label: 'the camera screen loaded on its own' });
+        t.assert((await t.text(page.locator(tid('screen-status')))) === 'OFF', 'the status says OFF');
+        await page.locator(tid('screen-camera-start')).click();
         await waitAttr(t, page, 'screen-camera', 'state', 'error', { timeout: 10000, label: 'the camera screen without a camera' });
         t.assert((await t.text(page.locator(tid('screen-status')))) === 'NO CAMERA', 'the status says so');
         t.assert(await page.locator(tid('screen-camera-start')).isVisible(), 'Try again');
