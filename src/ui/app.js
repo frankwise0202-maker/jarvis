@@ -627,6 +627,7 @@ export async function startApp(rootEl) {
     if (conv && (state.runs.has(conv.id) || runningElsewhere(conv.id))) return null;
     const fresh = !conv;
     if (!conv) conv = engine.newConversation();
+    clearFollowups(); // the suggestions under the last reply are moot now
     const seg = musicSegment({ ok: true, items: [] }, { query: cmd.query, kind: cmd.kind, local: true });
     seg.status = 'searching';
     let added;

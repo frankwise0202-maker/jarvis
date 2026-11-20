@@ -57,10 +57,13 @@ UI-independent (no DOM access inside `src/engine/`) so it can be reused there.
 - No third-party network requests at runtime except `https://api.anthropic.com` and, since v6, the reference-photo
   search: an anonymous GET to `https://commons.wikimedia.org/w/api.php` (`origin=*`, credentials omitted, no custom
   headers, no referrer), sent only when the owner opens Photos in a hologram, and images from
-  `https://upload.wikimedia.org` only (no other image URL is ever rendered). No CDNs, no web fonts, no analytics, no
-  favicons fetched from other sites.
+  `https://upload.wikimedia.org` only (no other image URL is ever rendered), and, since Apple Music (§20), the music
+  search: an anonymous GET to `https://itunes.apple.com/search` or `/lookup` (credentials omitted, no referrer), sent
+  only when the owner asks for music, with artwork from `https://isN-ssl.mzstatic.com` and 30-second previews from
+  `https://audio-ssl.itunes.apple.com` only. No CDNs, no web fonts, no analytics, no favicons fetched from other sites.
 - Content Security Policy (meta tag in `index.html`, exact; v6 added exactly `https://upload.wikimedia.org` to
-  img-src and `https://commons.wikimedia.org` to connect-src):
+  img-src and `https://commons.wikimedia.org` to connect-src; Apple Music added exactly `https://*.mzstatic.com` to
+  img-src, `https://itunes.apple.com` to connect-src and `https://audio-ssl.itunes.apple.com` to media-src):
   `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org https://*.mzstatic.com; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org https://itunes.apple.com; worker-src 'self'; manifest-src 'self'; media-src 'self' blob: https://audio-ssl.itunes.apple.com; object-src 'none'; base-uri 'none'; form-action 'none'`
 - **Never** use `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`document.write` with any text that
   came from the model, the web, the user, or storage. Model text is rendered only through
@@ -1664,7 +1667,8 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
 
 ### 17.1 Lead versions (new conversations since v7)
 
-- New conversations freeze `LEAD_SYSTEM_V4` and `leadToolsV5` (`LEAD_SYSTEM_LATEST`, `leadToolsLatest`); every older
+- New conversations freeze `LEAD_SYSTEM_V4` and `leadToolsV5` (`LEAD_SYSTEM_LATEST`, `leadToolsLatest`; since Apple
+  Music, §20, `LEAD_SYSTEM_V5` and `leadToolsV6`, which keep all of this unchanged); every older
   conversation keeps the prompt and tools it froze, byte for byte, and both lists stay in `LEAD_SYSTEM_VERSIONS` /
   `leadToolVersions()` so imports of any version are accepted (`isKnownLeadSetup`).
 - `LEAD_SYSTEM_V4` = V3 plus one section before "# Writing the answer" (`CAMERA_AND_SCREENS_SECTION`, 999 characters):
@@ -2340,3 +2344,85 @@ Where this section differs from §17 or §18, it wins.
   navigation, opener, this screen, under 30 s, one use; reload, restore, history, another screen, stale, missing or
   no storage all wait) and `screens.camera` (`autoStart` false: OFF, no getUserMedia, "off" reported, the tap turns
   it on).
+
+## 20. Apple Music: find & open (free)
+
+The owner asked for Apple Music and chose the free option: Jarvis finds a song, album or artist in Apple Music and
+opens it in the Music app with one tap, and plays Apple's 30-second previews inside Jarvis. No account, no cost.
+Apple Music has no free API for playback or playlists: Jarvis never plays full songs or controls the Music app.
+
+- **Search** (`src/platform/music.js`, pure parts in `src/lib/music.js`). The iTunes Search API, called from the
+  browser (`Access-Control-Allow-Origin: *`): `GET https://itunes.apple.com/search?term&media=music&entity=song|album|
+  musicArtist&limit&country`, and `/lookup?id=<artist>&entity=song` for an artist's top songs. `searchMusic(query,
+  { kind: 'song'|'album'|'artist'|'playlist', limit, country, fetch, signal, timeoutMs, title, artist })` and
+  `topSongs(artistId, …)` return `{ ok: true, items, kind, country, query, artist? }` or `{ ok: false, error:
+  'empty'|'offline'|'timeout'|'aborted'|'network'|'bad_response', message }`, never throw; 8 s timeout; credentials
+  omitted, no referrer; the country from the device locale (`en-GB` → `gb`, else `us`); a 10-minute in-memory cache
+  (60 entries). `artist` finds the artist then its top songs; `playlist` is searched as albums, then songs.
+  "X by Y" ranks results (the named artist first, then the exact title, then iTunes' order; karaoke and tributes sink).
+- **Strict parsing and the host whitelist** (`src/lib/music.js`). `parseItunesResults` throws on a wrong shape and
+  keeps only songs (`wrapperType: 'track', kind: 'song'`) and albums (`collection`), deduplicated:
+  `MusicItem = { type: 'song'|'album', id, title, artist, album, year, genre, durationMs, url, previewUrl, artwork,
+  explicit, artistId, trackCount }`. Links only `https://music.apple.com/…` (the `uo` parameter dropped), previews
+  only `https://audio-ssl.itunes.apple.com/…`, artwork only `https://isN-ssl.mzstatic.com/…` (resized to 300 px):
+  exact hosts, https, no credentials or port; anything else is dropped, and an item without a link is dropped whole.
+  Text is one line, control and bidi characters removed, capped. `cleanMusicItem(s)` re-checks stored items (the
+  card, backups). `musicAppLink(url)` is the `music://` form of a link (the Music app on a Mac).
+- **Local commands, free** (`src/lib/music-commands.js`, `matchMusicCommand(text)` → `{ action: 'play'|'open'|
+  'preview'|'stop', kind, query, title, artist, apple }` or null): "play X", "play X by Y", "put on some <artist>",
+  "play the album X", "play my X playlist", "open X in Apple Music", "play a preview of X", "stop the music". Strict:
+  a music verb first (after fillers), a concrete title or artist ("play something relaxing", "play some jazz" go to
+  Jarvis, who picks with find_music), never a question ("what role does X play"), never an idiom ("play devil's
+  advocate", "play chess", "play it safe"), never Jarvis's own replies ("play it again", "play back the answer"),
+  never another app ("… on Spotify", "… on the TV"); "put on" only with music words ("put on some Miles Davis", not
+  "put on a jacket"). Speech-to-text slips folded ("play list", "a c d c", "apple muse ick", "played …").
+  Taken in the composer (`onCommand`, after screen commands), Voice Mode (said or typed) and a viewer's command box.
+  The search runs at once and the chat gets a local exchange (`appendMusicTurn` in `src/engine/music.js`): the
+  owner's words and a Jarvis turn `{ local: 'music', status: 'done', costUsd: 0, segments: [text, music] }` (no model
+  label; footer "Free · Apple Music"), in the open conversation or a new one (not while a reply runs in it: the words
+  wait like any message). `apiMessages` is never touched, so Claude never sees it and the next request is exactly
+  what it would have been. Persisted with the conversation; backups keep `local` and re-check the music segment.
+- **The Music card** (`src/ui/music/card.js`, `src/styles/music.css`; segment `{ kind: 'music', status:
+  'searching'|'done'|'error', query, searchKind, items, artist, error, toolUseId, local? }`): artwork (shown once
+  loaded), "APPLE MUSIC · SONG|ALBUM", title, artist, "album · year · m:ss", **Preview** with a mini player
+  (play/pause, progress, time; songs with a preview only), **Open in Apple Music** (the https link, new tab, noopener:
+  the Music app on an iPhone, the web player elsewhere), on a Mac **Open in Music app** (`music://`, same tab), and up
+  to four alternatives ("Also found") that swap in. Presence look (tokens, `.hud-frame` brackets, `.hud-label`), text
+  AA on the card, every control ≥ 44 px, fits 320 px. Test hooks: `music-card` (`data-status` searching | done |
+  empty | error), `music-title`, `music-artist`, `music-sub`, `music-preview` (`aria-pressed`), `music-player`
+  (`data-state` idle | loading | playing | paused | error), `music-progress`, `music-time`, `music-open`,
+  `music-open-app`, `music-alts`, `music-alt`, `music-status`; in Voice Mode `voice-music` holding `voice-music-card`.
+- **Previews** (`src/ui/music/player.js`): one shared `<audio>` for every card, one preview at a time. Starting one
+  stops Jarvis's own speech (`stopSpeakingNow`, Voice Mode's `hush()`) and pauses other media on the page. A preview
+  never starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation or Voice Mode), and a
+  playing one pauses before the mic opens (`pauseForMic`: dictation start, Voice Mode's `onListen`). "Stop the music"
+  fades it out in 160 ms. "Play a preview of X" typed starts it after the search (where the browser allows).
+- **Voice Mode** (`music` option of `openVoiceMode`): what is heard (or typed) goes to music commands after screen
+  commands. "Play Back in Black" → status "Searching Apple Music…", the card under the captions, and one short line
+  ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then Jarvis waits (Ready, "Tap Preview to
+  hear it, or the core to talk.") instead of listening again, so a tap on Preview can play. A Voice Mode reply's
+  find_music cards show there too; a new question clears the card (it stays in the chat).
+- **Lead versions** (new conversations only). `LEAD_SYSTEM_V5` = V4 plus `MUSIC_SECTION` (596 characters) before
+  "# Writing the answer"; `leadToolsV6()` = `[...leadToolsV5(), findMusicTool()]` (appended: the V5 prefix and its
+  cache are unchanged). Both lists keep every older version (`isKnownLeadSetup`). Pinned (sha256): V5 31a77e44bcde…,
+  V6 4f6c6740a4d9…, find_music 5c267f60526a…; `engine.music` pins the request bodies of a v7 conversation (V4 + V5:
+  a hologram request, "Play Back in Black by AC/DC" and a spoken recommendation request) computed with the v7.1
+  engine as released (9c4ffda), and checks V1/V3-era conversations send their own prompt and tools.
+- **find_music** (`src/engine/music.js`; input `{ query (≤ 120), kind: song|album|artist, limit 1–5 (default 3) }`):
+  the engine asks the app (`deps.music.search(input, { signal })`, 12 s at most; Stop aborts at once), adds a
+  `music` segment (the card) and answers a compact, link-free list ("1. Song "Back In Black" by AC/DC (album "Back In
+  Black", 1980, 4:16, Hard Rock, preview)") that reminds Claude he cannot play the full song. Errors (offline,
+  timeout, no app) are `is_error` results; a conversation without find_music answers "Unknown tool". Resume searches
+  again (free, harmless).
+- **Mock** (`test/mock/music.mjs`): `[[music]]` (the owner's words), `[[music:<query>]]`, `[[music:album:<query>]]`
+  and `[[music:recommend]]` (two picks in one response) make the lead call find_music when the request defines it;
+  after the results, one sentence read from them.
+- **Tests.** Unit `music` (the real "back in black" answer parsed, the whitelist against look-alikes, strict
+  parsing, ranking, lines and tool results; the search URL, cache, country, artist and playlist flows, timeout, Stop,
+  HTTP and JSON errors; the matcher with slips and the sentences it must never take) and `engine.music` (versions
+  pinned, v7 conversations byte-identical, the find_music round, failures, Stop, the strict mock's directives, the
+  local exchange never reaching Claude). E2E (`fakeMusic: true`: `test/e2e/music-fakes.mjs` answers the iTunes API,
+  artwork and a short WAV preview with route()): `music-chat` (Mac: the card, links, preview play/pause,
+  alternatives, "stop the music", kept after a reload, a question with "play" still goes to Jarvis), `music-voice`
+  (the line, the card, no re-listen, Preview, the core's tap pauses it), `music-tool` (two find_music cards, compact
+  link-free results), `music-phone` (320 px, 44 px targets, AA contrast).
