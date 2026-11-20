@@ -353,3 +353,28 @@ test('Jarvis\'s open_screen never turns the camera on: off, the owner gets "Turn
   assert.deepEqual((await p.evaluate(() => window.__app.shownInApp)).at(-1), { kind: 'camera', reason: 'handback', back: true }, 'a camera that runs comes back to Optics');
   assert.deepEqual(p.problems, []);
 });
+
+test('the OPTICS indicator follows a camera screen\'s own camera: live or starting (or not heard from yet) counts; off, paused or error does not', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    window.__open = { kind: 'camera', ref: {}, title: 'Optics', live: true };
+  });
+  const o = await p.evaluate(() => window.say('put this on my other screen', { gesture: true }));
+  assert.deepEqual([o.status, o.kind], ['opened', 'camera']);
+  assert.equal(await p.evaluate(() => window.ctl.cameraOn()), true, 'a screen window still loading: LIVE (the safe side)');
+  const say = (state) =>
+    p.evaluate(async (state) => {
+      const id = window.ctl.list().find((s) => s.kind === 'camera').id;
+      const before = window.__app.changes;
+      new BroadcastChannel('jarvis-screens').postMessage({ t: 'camera', screen: id, state });
+      for (let i = 0; i < 50 && window.__app.changes === before; i++) await new Promise((r) => setTimeout(r, 20));
+      return window.ctl.cameraOn();
+    }, state);
+  assert.equal(await say('live'), true);
+  assert.equal(await say('off'), false, 'Camera off on that screen');
+  assert.equal(await say('starting'), true);
+  assert.equal(await say('paused'), false, 'its window hidden');
+  assert.equal(await say('error'), false, 'NO CAMERA');
+  assert.equal(await p.evaluate(() => window.ctl.closeKind('camera')), 1);
+  assert.equal(await p.evaluate(() => window.ctl.cameraOn()), false, 'closed');
+});

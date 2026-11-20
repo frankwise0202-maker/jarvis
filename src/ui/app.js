@@ -649,9 +649,13 @@ export async function startApp(rootEl) {
     return ['idle', 'Online'];
   }
 
-  /** A screen opened from here shows the live camera (another monitor, a floating panel, a window). */
+  /**
+   * A screen opened from here runs the camera (another monitor, a floating panel, a window): its
+   * camera is live or starting (or has not said yet). One turned off with its own Camera off, paused
+   * while its window is hidden, or in error does not light the indicator.
+   */
   function cameraOnScreen() {
-    return !!(screensCtl && safe(() => screensCtl.list().some((x) => x.kind === 'camera'), false));
+    return !!(screensCtl && safe(() => screensCtl.cameraOn(), false));
   }
 
   // Presence's state words ANALYZING and WATCHING are the cores' thinking and optics.

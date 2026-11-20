@@ -19,6 +19,8 @@
 //   optics-tool-camera(-float)  Jarvis's open_screen for the camera never turns it on: the owner's
 //                      Turn on camera does (iPhone: Optics; Mac: the open floating panel); a live
 //                      camera may be moved back to Optics
+//   optics-float-camera-off  a floating camera turned off with its own button: the main window's
+//                      OPTICS LIVE and OPTICS pill go (and come back when it is on again)
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
@@ -595,6 +597,47 @@ export default [
       await page.keyboard.press('Escape');
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
       t.assert((await liveTracks(page)) === 0, 'released');
+    },
+  },
+  {
+    name: 'optics-float-camera-off',
+    title: "The indicator tells the truth: a floating camera turned off with its own Camera off leaves OPTICS LIVE and the OPTICS pill; turned on again, they come back",
+    device: 'mac',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.addInitScript(installScreenStubs, { monitors: 1, perm: 'granted' });
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/?optics=1');
+      await t.visible('optics');
+      await waitLive(t);
+      const pip = await opensPage(t, async () => {
+        const ask = page.locator(tid('optics-ask'));
+        await ask.fill('float the camera');
+        await ask.press('Enter');
+      });
+      await waitAttr(t, pip, 'screen-camera', 'state', 'live', { timeout: 20000, label: 'the floating camera' });
+      const main = () =>
+        page.evaluate(() => ({
+          word: (document.querySelector('[data-testid="state-word"]') || {}).textContent || '',
+          pills: [...document.querySelectorAll('[data-testid="live-pill"]')].map((p) => `${p.dataset.kind}:${p.textContent.trim()}`),
+          core: document.querySelector('[data-testid="app"]').dataset.core,
+        }));
+      await t.waitFor(async () => (await main()).pills.includes('optics:OPTICS'), { timeout: 5000, message: async () => `the OPTICS pill while the floating camera runs (${JSON.stringify(await main())})` });
+      await pip.locator(tid('screen-camera-toggle')).click();
+      await waitAttr(t, pip, 'screen-camera', 'state', 'off', { timeout: 10000, label: 'the floating camera off' });
+      t.assert((await liveTracks(page)) === 0, 'no camera runs');
+      await t.waitFor(async () => {
+        const m = await main();
+        return !m.pills.includes('optics:OPTICS') && m.word !== 'OPTICS LIVE' && m.core !== 'optics';
+      }, { timeout: 5000, message: async () => `the camera is off, so no OPTICS LIVE and no OPTICS pill (${JSON.stringify(await main())})` });
+      await pip.locator(tid('screen-camera-toggle')).click();
+      await waitAttr(t, pip, 'screen-camera', 'state', 'live', { timeout: 20000, label: 'the floating camera on again' });
+      await t.waitFor(async () => (await main()).pills.includes('optics:OPTICS'), { timeout: 5000, message: async () => `the OPTICS pill again (${JSON.stringify(await main())})` });
+      await pip.close();
+      await t.waitFor(async () => !(await main()).pills.includes('optics:OPTICS'), { timeout: 8000, message: 'the pill to go when the panel closes' });
     },
   },
   {

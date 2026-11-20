@@ -2129,7 +2129,10 @@ Where this section differs from §17 or §18, it wins.
     to that window's `visibilitychange`, `pagehide` and `freeze`, so a floating panel keeps its camera while the app's
     tab is hidden behind it, and releases it when the panel itself is hidden; on a computer it comes back when shown
     again (iPhone: a tap). Closing the screen releases it. The controller's `onChange` lets the main window light
-    the OPTICS pill while a camera screen is open, and `closeKind('camera')` is how the pill turns it off.
+    the OPTICS pill, the OPTICS LIVE word and the optics core while a camera screen's camera runs
+    (`screensCtl.cameraOn()`: its reported state is `live` or `starting`, or it has not reported yet; one turned off
+    with Camera off, paused while its window is hidden, or in error does not count), and `closeKind('camera')` is
+    how the pill turns it off.
 - **Voice Mode × the natural voice.** While the natural voice speaks, Voice Mode's Living Core follows its real
   output: the level from `tts.getOutputLevel()` and the voice band's 8 segments from `tts.getOutputBands()` (the same
   100 Hz–4 kHz log bands as the mic's, `core.setBands`); when it stops, the band goes back to the level (or to the
@@ -2147,5 +2150,7 @@ Where this section differs from §17 or §18, it wins.
   again), `optics-picker` (the home's Look key opens Optics on the remembered webcam; a Mac's home has Screen),
   `optics-screen` (on a Mac; the Screen key opens Optics straight into one screen frame, the webcam off),
   `optics-screen-cancel` (the picker cancelled: no getUserMedia call, No screen shared, Try again, Use the camera
-  through the first-use card), `screens-pages` (a camera
+  through the first-use card), `optics-tool-camera` / `optics-tool-camera-float` (Jarvis's open_screen never turns
+  the camera on; Turn on camera does), `optics-float-camera-off` (a floating camera turned off: no OPTICS LIVE or
+  pill in the main window), `screens-pages` (a camera
   screen in a browser without a camera says NO CAMERA and offers Try again).
