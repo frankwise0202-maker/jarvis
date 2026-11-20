@@ -4,8 +4,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import Anthropic from '@anthropic-ai/sdk';
 import { createMockFetch } from '../mock/anthropic-mock.mjs';
-import { blueprintRequestOf, chooseBlueprintSample, loadFixture, savedIdsOf, turnContextText } from '../mock/visuals.mjs';
-import { LEAD_SYSTEM_V3, leadToolsV3, leadToolsV4, buildBlueprintRequestBlock, buildSavedItemsBlock } from '../../src/engine/prompts.js';
+import { HOLOGRAM_SAMPLES_V2, blueprintRequestOf, chooseBlueprintSample, loadFixture, savedIdsOf, turnContextText } from '../mock/visuals.mjs';
+import { LEAD_SYSTEM_V3, leadToolsV3, leadToolsV4, leadToolsV7, buildBlueprintRequestBlock, buildSavedItemsBlock } from '../../src/engine/prompts.js';
+import { normalizeHologramSpec } from '../../src/lib/hologram-spec.js';
 
 const KEY = 'sk-ant-test-0123456789abcdefghijklmnop';
 const CTX = (extra = '') => [
@@ -65,6 +66,24 @@ describe('mock: holograms, blueprints and the saved library', () => {
     assert.equal(next.message.stop_reason, 'end_turn');
     assert.match(next.message.content.map((b) => b.text || '').join(''), /There it is: “AA alkaline battery \(LR6\)”, with 9 labeled parts\./);
     assert.deepEqual(mock.violations, []);
+  });
+
+  it('[[hologram:v2/camry]] streams show_hologram (version 2) with the format v2 sample; every v2 sample validates cleanly', async () => {
+    const { client, mock } = setup(0.05);
+    const { message, events } = await stream(client, params([user('Show me a 2024 Camry, less boxy please [[hologram:v2/camry]]')], leadToolsV7()));
+    assert.equal(message.stop_reason, 'tool_use');
+    const use = message.content.find((b) => b.type === 'tool_use');
+    assert.equal(use.name, 'show_hologram');
+    assert.deepEqual(use.input, loadFixture('v2/camry'));
+    assert.ok(use.input.parts[0].shapes[0].type === 'hull' && use.input.parts.some((p) => p.shapes.some((sh) => sh.type === 'panel')));
+    const deltas = events.filter(({ e }) => e.type === 'content_block_delta' && e.delta.type === 'input_json_delta');
+    assert.ok(deltas.length >= 300, `${deltas.length} input deltas: a visible live build`);
+    assert.deepEqual(mock.violations, []);
+    assert.deepEqual(HOLOGRAM_SAMPLES_V2, ['v2/camry', 'v2/f150', 'v2/alternator', 'v2/turbofan', 'v2/model3', 'v2/cessna']);
+    for (const name of HOLOGRAM_SAMPLES_V2) assert.deepEqual(normalizeHologramSpec(loadFixture(name)).warnings, [], name);
+    // an unknown sample name falls back to the default (the V1 Camry)
+    const other = await stream(client, params([user('Show me something [[hologram:v2/nothing]]')], leadToolsV7()));
+    assert.deepEqual(other.message.content.find((b) => b.type === 'tool_use').input, loadFixture('camry'));
   });
 
   it('only tools the request defines are called; a missing tool_result for the new tools is a violation', async () => {

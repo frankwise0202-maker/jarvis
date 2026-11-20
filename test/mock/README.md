@@ -53,6 +53,7 @@ visible; the answer after the `tool_result` is one or two sentences.
 | Directive / trigger | What the mock does |
 | --- | --- |
 | `[[hologram:battery]]` / `[[hologram:alternator]]` / `[[hologram:camry]]` | a sentence, then `show_hologram` with `fixtures/battery.json` (AA LR6, 9 parts), `alternator.json` (19 parts) or `camry.json` (2024 Camry Hybrid, 43 parts; default) |
+| `[[hologram:v2/camry]]` / `v2/f150` / `v2/alternator` / `v2/turbofan` / `v2/model3` / `v2/cessna` | the same with a format v2 sample from `fixtures/v2/`, what `show_hologram` version 2 (lead tools V7) writes: the Camry (43 parts: a hull body with 16 panels, real seats), the F-150 (39), the alternator with cut revolve housings (19), the turbofan with twisted loft fan blades (20), a hand-written Tesla Model 3 (14) and Cessna 172 (10) |
 | `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 12–13 s × `timeScale` (time to speak to the viewer while it builds) |
 | `[[hologram:broken]]` | `show_hologram` whose every shape is invalid: Jarvis answers `is_error`, the mock says it couldn't build it |
 | `[[hologram:huge]]` | `show_hologram` far beyond every limit (95 parts x 6 shapes, over-long text, an invalid tone on every part; about 140 kB): Jarvis caps and warns, and later requests carry the large input |

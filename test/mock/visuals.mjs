@@ -1,6 +1,9 @@
 // Mock behavior for the lead tools version 4 (holograms, blueprints, the saved library). See
 // test/mock/README.md for the directives:
 //   [[hologram:battery|alternator|camry]]  stream a show_hologram call with that prototype sample
+//   [[hologram:v2/camry|v2/f150|v2/alternator|v2/turbofan|v2/model3|v2/cessna]]
+//                                          the same with a format v2 sample (hull bodies and panels,
+//                                          lofts: fixtures/v2/, what show_hologram version 2 writes)
 //   [[hologram:broken]]                    stream a show_hologram call nothing of which can be shown
 //   [[hologram:huge]]                      stream a show_hologram call far beyond every limit (~140 kB)
 //   a "Blueprint request" block in the turn context: stream draw_blueprint with the best-matching
@@ -18,6 +21,8 @@ import { readFileSync } from 'node:fs';
 import { newToolUseId, truncate } from './util.mjs';
 
 export const HOLOGRAM_SAMPLES = Object.freeze(['battery', 'alternator', 'camry']);
+/** Format v2 samples (fixtures/v2/): realistic hull bodies with panels, and lofts. */
+export const HOLOGRAM_SAMPLES_V2 = Object.freeze(['v2/camry', 'v2/f150', 'v2/alternator', 'v2/turbofan', 'v2/model3', 'v2/cessna']);
 export const BLUEPRINT_SAMPLES = Object.freeze(['alternator-part', 'battery-cutaway', 'battery-process', 'camry-assembly']);
 export const VISUAL_TOOL_NAMES = Object.freeze(['show_hologram', 'draw_blueprint', 'open_saved']);
 

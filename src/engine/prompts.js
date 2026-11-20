@@ -5,7 +5,7 @@
 
 import { DEPTHS, MODELS } from './models.js';
 import { singleLine, truncate } from './util.js';
-import { showHologramTool } from '../lib/hologram-spec.js';
+import { showHologramTool, showHologramToolV2 } from '../lib/hologram-spec.js';
 import { drawBlueprintTool, sheetLabel } from '../lib/blueprint-spec.js';
 import { lookThroughCameraTool, pinLabelsTool } from '../lib/optics-tools.js';
 import { openScreenTool } from './screens.js';
@@ -351,8 +351,19 @@ export function leadToolsV6() {
   return [...leadToolsV5(), findMusicTool()];
 }
 
+/**
+ * Version 7 (realistic holograms, new conversations): V6 with show_hologram replaced, at the same
+ * index, by version 2 of its definition (src/lib/hologram-spec.js: hull bodies from side, top and
+ * front views with panels on them, lofts with twist, soft boxes, smooth lathes, tapered tubes).
+ * Nothing else changes, and no system prompt change goes with it: frozen with LEAD_SYSTEM_V5.
+ * Older conversations keep their show_hologram; the renderer draws the new shapes for any of them.
+ */
+export function leadToolsV7() {
+  return leadToolsV6().map((t) => (t.name === 'show_hologram' ? showHologramToolV2() : t));
+}
+
 /** The lead tools new conversations freeze. */
-export const leadToolsLatest = leadToolsV6;
+export const leadToolsLatest = leadToolsV7;
 
 /** The client tools of version 4 that show something on the owner's screen. */
 export const VISUAL_TOOLS = Object.freeze(['show_hologram', 'draw_blueprint', 'open_saved']);
@@ -362,7 +373,7 @@ export const LEAD_SYSTEM_VERSIONS = Object.freeze([LEAD_SYSTEM_V1, LEAD_SYSTEM_V
 
 /** Every lead tool list Jarvis has frozen into a conversation (fresh copies, oldest first). */
 export function leadToolVersions() {
-  return [leadToolsV1(), leadToolsV2(), leadToolsV3(), leadToolsV4(), leadToolsV5(), leadToolsV6()];
+  return [leadToolsV1(), leadToolsV2(), leadToolsV3(), leadToolsV4(), leadToolsV5(), leadToolsV6(), leadToolsV7()];
 }
 
 /**

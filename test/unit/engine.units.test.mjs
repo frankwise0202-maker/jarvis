@@ -39,6 +39,7 @@ import {
   leadToolsV4,
   leadToolsV5,
   leadToolsV6,
+  leadToolsV7,
   leadToolVersions,
   workerTools,
   buildTurnContext,
@@ -311,7 +312,12 @@ test('lead tools v1: exact server tools and client tool schemas, eager input str
   const v6 = leadToolsV6();
   assert.deepEqual(v6.slice(0, v5.length), v5);
   assert.deepEqual(v6.slice(v5.length).map((t) => [t.name, t.eager_input_streaming]), [['find_music', undefined]]);
-  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4, v5, v6]);
+  // Version 7 (realistic holograms) is V6 with show_hologram's version 2 at the same index.
+  const v7 = leadToolsV7();
+  assert.deepEqual(v7.map((t) => t.name), v6.map((t) => t.name));
+  assert.deepEqual(v7.filter((t) => t.name !== 'show_hologram'), v6.filter((t) => t.name !== 'show_hologram'));
+  assert.equal(v7.find((t) => t.name === 'show_hologram').eager_input_streaming, true);
+  assert.deepEqual(leadToolVersions(), [leadToolsV1(), v2, v3, v4, v5, v6, v7]);
   assert.deepEqual(workerTools('deep', 'claude-sonnet-5-5'), [
     { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
     { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5, max_content_tokens: 8000 },
@@ -635,7 +641,7 @@ test('createJarvis requires its core dependencies and builds frozen conversation
   const conv = jarvis.newConversation();
   assert.equal(conv.v, 1);
   assert.equal(conv.system, LEAD_SYSTEM_V5); // new conversations freeze the latest prompt (SPEC §15.1, holograms §2, v7, Apple Music)
-  assert.deepEqual(conv.tools, leadToolsV6()); // and the latest tools
+  assert.deepEqual(conv.tools, leadToolsV7()); // and the latest tools
   assert.equal(isKnownLeadSetup(conv.system, conv.tools), true);
   assert.deepEqual(conv.apiMessages, []);
   assert.deepEqual(conv.turns, []);

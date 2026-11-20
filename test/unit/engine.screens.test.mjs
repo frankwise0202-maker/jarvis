@@ -33,12 +33,12 @@ function harness(handler, { screens, camera } = {}) {
 
 /**
  * A v7 conversation (LEAD_SYSTEM_V4 and leadToolsV5, which has open_screen). New conversations
- * freeze the next versions (V5 + V6, Apple Music), which keep open_screen unchanged.
+ * freeze the next versions (V5 + V7 since realistic holograms), which keep open_screen unchanged.
  */
 function screensConversation(jarvis) {
   const conv = jarvis.newConversation();
   assert.ok(conv.tools.some((t) => t.name === 'open_screen'));
-  assert.deepEqual(conv.tools.slice(0, leadToolsV5().length), leadToolsV5());
+  assert.deepEqual(conv.tools.find((t) => t.name === 'open_screen'), leadToolsV5().find((t) => t.name === 'open_screen'));
   conv.system = LEAD_SYSTEM_V4;
   conv.tools = leadToolsV5();
   return conv;
@@ -56,7 +56,7 @@ test('the tool definition: appended after V4 (and the Optics tools) in V5, with 
   assert.deepEqual(openScreenTool(), t, 'a fresh copy each call');
   assert.notEqual(openScreenTool(), openScreenTool());
   // Only version 5 has it; versions 1-4 (older conversations) never change.
-  assert.deepEqual(leadToolVersions().map((v) => v.some((x) => x.name === 'open_screen')), [false, false, false, false, true, true]);
+  assert.deepEqual(leadToolVersions().map((v) => v.some((x) => x.name === 'open_screen')), [false, false, false, false, true, true, true]);
   assert.ok(LEAD_SYSTEM_V4.includes(`${CAMERA_AND_SCREENS_SECTION}\n\n# Writing the answer\n`));
   assert.equal(LEAD_SYSTEM_V4.replace(`\n\n${CAMERA_AND_SCREENS_SECTION}`, ''), LEAD_SYSTEM_V3, 'V3 plus the section, nothing else');
   for (const needle of ['open_screen', 'only when the owner asks', 'one short sentence', 'tap a button first']) assert.ok(CAMERA_AND_SCREENS_SECTION.includes(needle), needle);

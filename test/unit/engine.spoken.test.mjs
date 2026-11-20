@@ -18,6 +18,7 @@ import {
   leadToolsLatest,
   leadToolsV5,
   leadToolsV6,
+  leadToolsV7,
 } from '../../src/engine/prompts.js';
 import { formatLocalTime } from '../../src/engine/util.js';
 import { turnContextOf } from '../mock/content.mjs';
@@ -121,9 +122,12 @@ test('frozen prompts and tools are untouched by the spoken channel', () => {
     '6e4ad0baac92331bf81f51695c54564a2c9dcd436dab8254a25f444b770cf616',
     // Apple Music: the V6 tools (find_music); the V5 prompt (Music); see engine.music.test.mjs.
     '4f6c6740a4d923c898efb49c00e8ac7f9b8f8b6765b6b13461222f814d0b99ed',
+    // Realistic holograms: the V7 tools (V6 with show_hologram version 2); see engine.holograms-v7.test.mjs.
+    '694c85d59f3b9b85a9094a58dcd549d904595c56120e42724784240b82d0bbc4',
   ]);
   assert.equal(sha256(LEAD_SYSTEM_V5), '31a77e44bcde6fff28cfe4dedfe14c757159ab8a22be65b0cac3eecb193f1692');
-  assert.deepEqual(leadToolsLatest(), leadToolsV6());
+  assert.deepEqual(leadToolsLatest(), leadToolsV7());
+  assert.equal(leadToolsV6().length, leadToolsV7().length);
   const frozen = [LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, LEAD_SYSTEM_V5, WORKER_SYSTEM_V1, ...leadToolVersions().map((t) => JSON.stringify(t))];
   for (const text of frozen) assert.ok(!text.includes('Reply channel'), 'the channel lives only in <turn_context>');
 });
@@ -148,9 +152,9 @@ test('startTurn({ spoken: true }): the channel is in the new user message\'s fir
   assert.equal(count(context, SPOKEN_REPLY_CHANNEL), 1);
   assert.match(context, new RegExp(`^Mode: auto — .+\\n${EXPECTED_CHANNEL.split('\n')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
   // The conversation's frozen prefix is the same as for any other turn (new conversations: the
-  // V4 prompt and V5 tools since v7; V5 and V6 since Apple Music).
+  // V4 prompt and V5 tools since v7; V5 and V6 since Apple Music; V5 and V7 since realistic holograms).
   assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V5 }]);
-  assert.deepEqual(body.tools, leadToolsV6());
+  assert.deepEqual(body.tools, leadToolsV7());
   assert.equal(conv.system, LEAD_SYSTEM_V5);
   // Persisted with the turn (exports and the UI can tell a spoken reply).
   assert.equal(h.persisted.at(-1).turns.at(-1).spoken, true);

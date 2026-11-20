@@ -50,10 +50,12 @@ test('the Optics tools: fresh copies with the names the engine dispatches, never
   assert.equal('eager_input_streaming' in lookThroughCameraTool(), false);
   // V1–V4 never had them, so older conversations answer a Look without pins (tested below).
   for (const tools of leadToolVersions().slice(0, 4)) assert.ok(!tools.some((t) => OPTICS_TOOLS.includes(t.name)));
-  // V5, the latest: appended, so V4's tools stay in front unchanged (their cached prefix too).
+  // V5: appended, so V4's tools stay in front unchanged (their cached prefix too); the latest (V7)
+  // keeps them, with only show_hologram replaced by its version 2.
   const v4 = leadToolsV4();
   const latest = leadToolsLatest();
-  assert.deepEqual(latest.slice(0, v4.length), v4);
+  assert.deepEqual(latest.slice(0, v4.length).map((t) => t.name), v4.map((t) => t.name));
+  assert.deepEqual(latest.slice(0, v4.length).filter((t) => t.name !== 'show_hologram'), v4.filter((t) => t.name !== 'show_hologram'));
   assert.deepEqual(latest.filter((t) => OPTICS_TOOLS.includes(t.name)), [pinLabelsTool(), lookThroughCameraTool()]);
   // A new conversation freezes them (the tests below use one as it comes).
   const { jarvis } = setup();

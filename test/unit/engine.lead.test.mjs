@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { costOf } from '../../src/engine/index.js';
-import { LEAD_SYSTEM_V2, LEAD_SYSTEM_V5, leadToolsV3, leadToolsV6 } from '../../src/engine/prompts.js';
+import { LEAD_SYSTEM_V2, LEAD_SYSTEM_V5, leadToolsV3, leadToolsV7 } from '../../src/engine/prompts.js';
 import {
   KEY,
   blk,
@@ -88,7 +88,7 @@ test('lead request parameters and headers follow SPEC 8.2', async () => {
   assert.equal(body.max_tokens, 32000);
   assert.equal(body.stream, true);
   assert.deepEqual(body.system, [{ type: 'text', text: LEAD_SYSTEM_V5 }]);
-  assert.deepEqual(body.tools, leadToolsV6());
+  assert.deepEqual(body.tools, leadToolsV7());
   assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' });
   assert.deepEqual(body.output_config, { effort: 'medium' });
   assert.deepEqual(body.cache_control, { type: 'ephemeral' });
@@ -416,7 +416,7 @@ test('across turns: system and tools identical, history strictly append-only (ex
   assert.deepEqual(r2.messages.slice(0, afterTurn1.length), afterTurn1);
   assert.equal(r2.messages.length, afterTurn1.length + 1);
   assert.equal(conv.system, LEAD_SYSTEM_V5);
-  assert.deepEqual(conv.tools, leadToolsV6());
+  assert.deepEqual(conv.tools, leadToolsV7());
   // The citation-bearing assistant text block went back unchanged.
   assert.deepEqual(r2.messages[1].content[3].citations, [blk.cite('https://www.example.com/a', 'A')]);
 });

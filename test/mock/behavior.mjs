@@ -18,7 +18,7 @@ import { SCREEN_TOOL_NAME, openScreenPlan, screenFollowUpText, screenInputOf } f
 import { MUSIC_TOOL_NAME, findMusicPlan, musicFollowUpText, musicInputsOf } from './music.mjs';
 import { canonicalJson, newServerToolUseId, newToolUseId, seededRandom, sha256Hex, truncate } from './util.mjs';
 import {
-  HOLOGRAM_SAMPLES, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
+  HOLOGRAM_SAMPLES, HOLOGRAM_SAMPLES_V2, BLUEPRINT_SAMPLES, VISUAL_TOOL_NAMES, blueprintPlan, blueprintRequestOf, chooseBlueprintSample, hasTool,
   hologramPlan, openSavedPlan, savedIdsOf, turnContextText, visualFollowUpText,
 } from './visuals.mjs';
 import {
@@ -394,10 +394,10 @@ function planLeadTurn(env, { msgs, u, last, after, state }) {
   return { plan: { blocks: [text('Done. Is there anything else you need?')], stop_reason: 'end_turn', pace } };
 }
 
-/** [[hologram:battery|alternator|camry|broken|huge]] (default camry). */
+/** [[hologram:battery|alternator|camry|broken|huge]] or a format v2 sample ([[hologram:v2/camry]]; default camry). */
 function hologramSample(d) {
-  const named = d.arg('hologram').toLowerCase();
-  return HOLOGRAM_SAMPLES.includes(named) || named === 'broken' || named === 'huge' ? named : 'camry';
+  const named = d.arg('hologram').toLowerCase().replace(/\s+/g, '');
+  return HOLOGRAM_SAMPLES.includes(named) || HOLOGRAM_SAMPLES_V2.includes(named) || named === 'broken' || named === 'huge' ? named : 'camry';
 }
 
 /** deploy_agents tool uses in this turn, each with its tool_result (if answered). */

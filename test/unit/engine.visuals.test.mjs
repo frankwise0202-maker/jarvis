@@ -659,13 +659,16 @@ test('older conversations send byte-identical requests (pinned), even with a ful
   assert.equal(sha(JSON.stringify(leadToolsV3())), 'c837163eb2264fda141d92eb1f74285bf33d5f242dd357af45d864afdf6e1af0');
 });
 
-test('V3 + V4 (v6): the V3 section is V2 plus the holograms section, nothing else; new conversations freeze V5 + V6 (Apple Music), which keep both', () => {
+test('V3 + V4 (v6): the V3 section is V2 plus the holograms section, nothing else; new conversations freeze V5 + V7 (realistic holograms), which keep both', () => {
   const h = createHarness({ handler: () => null });
   const conv = h.jarvis.newConversation();
   assert.equal(conv.system, LEAD_SYSTEM_LATEST);
   assert.deepEqual(conv.tools, leadToolsLatest());
   assert.ok(LEAD_SYSTEM_LATEST.startsWith(LEAD_SYSTEM_V4.slice(0, LEAD_SYSTEM_V4.indexOf('\n\n# Writing the answer'))), 'the latest builds on V4');
-  assert.deepEqual(leadToolsLatest().slice(0, leadToolsV5().length), leadToolsV5(), 'the latest builds on V5');
+  // the latest builds on V5: the same tools in the same order, show_hologram in its version 2 (V7)
+  const onV5 = leadToolsLatest().slice(0, leadToolsV5().length);
+  assert.deepEqual(onV5.map((t) => t.name), leadToolsV5().map((t) => t.name), 'the latest builds on V5');
+  assert.deepEqual(onV5.filter((t) => t.name !== 'show_hologram'), leadToolsV5().filter((t) => t.name !== 'show_hologram'));
   assert.ok(LEAD_SYSTEM_V4.startsWith(LEAD_SYSTEM_V3.slice(0, LEAD_SYSTEM_V3.indexOf('\n\n# Writing the answer'))), 'V4 builds on V3');
   assert.deepEqual(leadToolsV5().slice(0, leadToolsV4().length), leadToolsV4(), 'V5 builds on V4');
   const section = LEAD_SYSTEM_V3.slice(LEAD_SYSTEM_V3.indexOf('# Holograms and blueprints'), LEAD_SYSTEM_V3.indexOf('\n\n# Writing the answer'));

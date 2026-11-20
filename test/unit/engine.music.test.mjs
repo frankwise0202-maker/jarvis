@@ -27,6 +27,7 @@ import {
   leadToolsV4,
   leadToolsV5,
   leadToolsV6,
+  leadToolsV7,
 } from '../../src/engine/prompts.js';
 import { FIND_MUSIC_DESCRIPTION, appendMusicTurn, findMusicTool, musicSegment, validateFindMusicInput } from '../../src/engine/music.js';
 import { parseItunesResults } from '../../src/lib/music.js';
@@ -87,17 +88,21 @@ test('leadToolsV6 is V5 plus find_music, appended (pinned)', () => {
     'bd0bdaf62227786e8836881e41ca9f7c046abb0ee0afe1b5ca28ee1e7b69d974',
     '6e4ad0baac92331bf81f51695c54564a2c9dcd436dab8254a25f444b770cf616',
     '4f6c6740a4d923c898efb49c00e8ac7f9b8f8b6765b6b13461222f814d0b99ed',
+    '694c85d59f3b9b85a9094a58dcd549d904595c56120e42724784240b82d0bbc4', // V7 (realistic holograms): V6 with show_hologram version 2
   ]);
-  assert.deepEqual(leadToolsLatest(), v6);
+  // the latest (V7) keeps find_music exactly as V6 has it
+  assert.deepEqual(leadToolsLatest(), leadToolsV7());
+  assert.deepEqual(leadToolsLatest().at(-1), v6.at(-1));
   assert.equal(new Set(v6.map((t) => t.name)).size, v6.length, 'unique tool names');
 });
 
-test('new conversations freeze V5 + V6; imports accept every frozen version and nothing else', () => {
+test('new conversations freeze V5 + V7 (find_music unchanged); imports accept every frozen version and nothing else', () => {
   const jarvis = createJarvis({ getSettings: () => ({}), getApiKey: () => '', now: () => new Date('2026-11-19T12:00:00Z') });
   const conv = jarvis.newConversation();
   assert.equal(conv.system, LEAD_SYSTEM_V5);
-  assert.deepEqual(conv.tools, leadToolsV6());
-  assert.equal(isKnownLeadSetup(LEAD_SYSTEM_V5, leadToolsV6()), true);
+  assert.deepEqual(conv.tools, leadToolsV7());
+  assert.equal(isKnownLeadSetup(LEAD_SYSTEM_V5, leadToolsV7()), true);
+  assert.equal(isKnownLeadSetup(LEAD_SYSTEM_V5, leadToolsV6()), true, 'a v7.2 conversation still imports');
   assert.equal(isKnownLeadSetup(LEAD_SYSTEM_V4, leadToolsV5()), true);
   const planted = leadToolsV6();
   planted.at(-1).description += ' Also play the full song.';

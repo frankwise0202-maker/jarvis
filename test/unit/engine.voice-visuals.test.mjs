@@ -23,7 +23,7 @@ import {
   leadToolsV3,
   leadToolsV4,
   leadToolsV5,
-  leadToolsV6,
+  leadToolsV7,
 } from '../../src/engine/prompts.js';
 import { normalizeHologramSpec } from '../../src/lib/hologram-spec.js';
 import { formatLocalTime } from '../../src/engine/util.js';
@@ -95,7 +95,7 @@ test('turn context: the note follows the spoken channel only when the turn is sp
 test('startTurn({ spoken: true }) in a conversation that can show holograms: the channel, then the note; a chat turn has neither', async () => {
   const h = createHarness({ handler: () => answer('Here you are.'), now: FIXED_NOW });
   const conv = h.jarvis.newConversation();
-  assert.deepEqual(conv.tools, leadToolsV6());
+  assert.deepEqual(conv.tools, leadToolsV7());
   const { turn } = await collect(h.jarvis.startTurn(conv, { text: 'Show me an AA battery', mode: 'auto', spoken: true }));
   assert.equal(turn.status, 'done');
   assert.equal(turn.spoken, true);
@@ -103,7 +103,7 @@ test('startTurn({ spoken: true }) in a conversation that can show holograms: the
   assert.equal(contextOf(first), engineContext({ spoken: true, visuals: true }));
   assert.equal(count(contextOf(first), SPOKEN_VISUALS_NOTE), 1);
   assert.deepEqual(first.system, [{ type: 'text', text: LEAD_SYSTEM_V5 }], 'the frozen prompt is unchanged');
-  assert.deepEqual(first.tools, leadToolsV6(), 'the frozen tools are unchanged');
+  assert.deepEqual(first.tools, leadToolsV7(), 'the frozen tools are unchanged');
 
   const { turn: chat } = await collect(h.jarvis.startTurn(conv, { text: 'And a D cell?', mode: 'auto' }));
   assert.equal('spoken' in chat, false);

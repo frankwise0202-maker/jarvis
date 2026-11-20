@@ -88,8 +88,12 @@ test('leadToolsV5 is V4 plus pin_labels, look_through_camera and open_screen, ap
     'bd0bdaf62227786e8836881e41ca9f7c046abb0ee0afe1b5ca28ee1e7b69d974',
     '6e4ad0baac92331bf81f51695c54564a2c9dcd436dab8254a25f444b770cf616',
     '4f6c6740a4d923c898efb49c00e8ac7f9b8f8b6765b6b13461222f814d0b99ed', // V6 (Apple Music): V5 + find_music
+    '694c85d59f3b9b85a9094a58dcd549d904595c56120e42724784240b82d0bbc4', // V7 (realistic holograms): V6, show_hologram version 2
   ]);
-  assert.deepEqual(leadToolsLatest().slice(0, v5.length), v5, 'the latest tools start with V5, unchanged');
+  // the latest keeps every V5 tool but show_hologram (version 2 since V7) unchanged, in order
+  const latest = leadToolsLatest().slice(0, v5.length);
+  assert.deepEqual(latest.map((t) => t.name), v5.map((t) => t.name));
+  assert.deepEqual(latest.filter((t) => t.name !== 'show_hologram'), v5.filter((t) => t.name !== 'show_hologram'), 'the latest keeps the V5 tools');
   const names = new Set();
   for (const t of v5) {
     assert.ok(!names.has(t.name), `unique tool name ${t.name}`);
@@ -97,7 +101,7 @@ test('leadToolsV5 is V4 plus pin_labels, look_through_camera and open_screen, ap
   }
 });
 
-test('new conversations freeze the latest (V5 + V6 since Apple Music); imports accept every frozen version and nothing else', () => {
+test('new conversations freeze the latest (V5 + V7 since realistic holograms); imports accept every frozen version and nothing else', () => {
   const jarvis = createJarvis({ getSettings: () => ({}), getApiKey: () => '', now: () => new Date('2026-11-19T12:00:00Z') });
   const conv = jarvis.newConversation();
   assert.equal(conv.system, LEAD_SYSTEM_LATEST);
