@@ -166,6 +166,15 @@ export default [
         t.assert(first && first.index === 1 && first.how === 'deviceId', `the first camera opened was the Logitech, by its id (${JSON.stringify(first)})`);
         t.assert((await liveTracks(page)) === 1, 'one live camera');
       });
+      await t.step("the hook the v7 home's Look key calls (window.__jarvisOptics) opens Optics the same way", async () => {
+        await page.locator(tid('optics-live-pill')).click();
+        await t.waitFor(async () => (await t.count('optics')) === 0 && (await liveTracks(page)) === 0, { timeout: 3000, message: 'Optics to close and the camera to stop' });
+        t.assert(await page.evaluate(() => typeof window.__jarvisOptics === 'function'), 'the hook is set where the camera can run');
+        await page.evaluate(() => window.__jarvisOptics());
+        await t.visible('optics');
+        await waitLive(t);
+        await waitSub(t, /^LOGITECH WEBCAM · /, 'the remembered webcam');
+      });
     },
   },
   {

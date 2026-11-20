@@ -2555,6 +2555,10 @@ export async function startApp(rootEl) {
   root.setAttribute('aria-busy', 'false');
   // ?optics=1 opens Optics at start (a bookmark on the Mac; tests). Phones open it from a tap.
   if (!state.demo && params.get('optics') === '1' && safe(() => cameraSupported(), false)) setTimeout(() => openOpticsScreen(), 0);
+  // The v7 home's Look key (the shell half's Presence look()) opens Optics through this hook when
+  // the build has it. Not set without a live camera (demo, no camera API): the key then uses the
+  // system camera, as before.
+  if (!state.demo && safe(() => cameraSupported(), false)) window.__jarvisOptics = () => openOpticsScreen();
 
   async function restoreLast() {
     let saved = null;

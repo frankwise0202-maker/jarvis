@@ -1730,7 +1730,9 @@ section 17. Where this section and an earlier one differ, this one wins.
   again, a frozen answer stays frozen; otherwise the camera restarts on a computer, or iPhone shows "Resume camera".
 - **Status hook.** `deps.onLiveChange({ camera, watch, watchEndsAt })` fires when the camera goes live or off and when
   Watch starts or ends (`watchEndsAt`: ms since the epoch, or null), for the app's status line and sensor beads.
-  `app.openOptics({ start })` (and app.js's `openOpticsScreen`) opens Optics from a tap.
+  `app.openOptics({ start })` (and app.js's `openOpticsScreen`) opens Optics from a tap. At boot, when the camera can
+  run (not the demo, a camera API), app.js sets `window.__jarvisOptics = () => openOpticsScreen()`: the hook the shell
+  half's Presence **Look** key calls (without it, that key takes a photo with the system camera).
 
 **Optics words** (`matchOpticsCommand(text, { frozen })`, no tokens). `look` (explicit: "what am I looking at?", "what
 is this?", "what do you see?", "look at this", "identify this", "what am I holding?", "can you read this?", "what about
