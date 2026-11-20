@@ -537,6 +537,31 @@ browser asks for permission.
   it or open it from your history, it waits with **Turn on camera** and captures nothing until you
   tap it.
 
+### Jarvis for Chrome (beta): Jarvis clicks around for you
+
+**Jarvis for Chrome** is a separate Chrome extension for your Mac: Jarvis works in Chrome tabs for
+you. He reads pages, scrolls and follows ordinary links, and **asks you before every step that
+changes anything** (a click on a button, typing, a form): "find me a 4K monitor under $300 on Best
+Buy and add it to the cart".
+
+- **It lives in its own Chrome profile.** You make a Chrome profile just for Jarvis, with no saved
+  passwords or cards, and sign in there only to the sites you want Jarvis to use (never your email
+  or your bank). If a web page ever tricks Jarvis, your main accounts are out of its reach. Jarvis
+  asks you to confirm this before it takes your key.
+- **Install (about 5 minutes, once):** make the Jarvis profile, then in its window download
+  **<https://frankwise0202-maker.github.io/jarvis/jarvis-for-chrome.zip>**, unzip it, open
+  `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the
+  unzipped `jarvis-for-chrome` folder. The step-by-step guide, with the profile steps, is in
+  [extension/README.md](extension/README.md#install-on-a-mac).
+- **Safety:** Jarvis asks before every step that changes a page, always asks before paying,
+  sending, posting or deleting, never types passwords or card numbers (he hands those to you),
+  treats what web pages say as information, never as orders, and shows a glowing border with a
+  **Stop** button while he works. Each new site needs your permission once.
+- **Honest limits:** five rounds of testers attacked it on purpose and about 90 problems were
+  fixed, but pages built specially to fool an AI assistant can still find tricks. That is why it
+  lives in its own profile and asks before anything that changes a page.
+- **Costs:** you set a budget per task (default $1); a task stops and asks before going over it.
+
 ## What it costs
 
 Jarvis itself is free. You pay Anthropic for what Jarvis uses, at Anthropic's normal prices,

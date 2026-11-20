@@ -159,6 +159,14 @@ export async function deploy({ push = false, doBuild = true, keepWorktree = fals
     await emptyExceptGit(worktree);
     await cp(dist, worktree, { recursive: true });
     if (!existsSync(path.join(worktree, '.nojekyll'))) await writeFile(path.join(worktree, '.nojekyll'), '');
+    // Jarvis for Chrome: publish the extension's zip next to the app (./jarvis-for-chrome.zip). It is
+    // copied after the app build, so it never enters the app's precache.
+    if (existsSync(path.join(ROOT, 'extension', 'build', 'manifest.mjs'))) {
+      const { buildExtension } = await import('./build-extension.mjs');
+      const ext = await buildExtension({ quiet: true });
+      await cp(ext.zipPath, path.join(worktree, 'jarvis-for-chrome.zip'));
+      log(`Jarvis for Chrome ${ext.version} → jarvis-for-chrome.zip`);
+    }
 
     git(['add', '--all', '.'], { cwd: worktree });
     const unchanged = ok(['diff', '--cached', '--quiet'], { cwd: worktree }) && ok(['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd: worktree });
