@@ -248,6 +248,9 @@ test('music commands: play, play X by Y, put on, the album, some <artist>, a pla
   assert.deepEqual(m('I want to hear Hotel California'), { action: 'play', kind: 'song', query: 'hotel california', artist: '' });
   assert.deepEqual(m('play P!nk'), { action: 'play', kind: 'song', query: 'p!nk', artist: '' });
   for (const s of ['stop the music', 'Stop the preview.', 'pause the music', 'turn off the music', 'stop playing', 'music off']) assert.equal(m(s)?.action, 'stop', s);
+  // A title that starts like an ordinary phrase is taken when it names its artist.
+  assert.deepEqual(m('play Your Song by Elton John'), { action: 'play', kind: 'song', query: 'your song elton john', artist: 'elton john' });
+  assert.deepEqual(m('play Moonlight Sonata by Beethoven'), { action: 'play', kind: 'song', query: 'moonlight sonata beethoven', artist: 'beethoven' });
 });
 
 test('Voice Mode slips are folded: "play list", "a c d c", "apple muse ick", "played", quotes and fillers', () => {
@@ -269,6 +272,8 @@ test('never steals ordinary words: questions, play as a verb, Jarvis\'s own repl
     'play Hello by Adele on Spotify', 'play Purple Rain on the TV', 'play the latest episode', 'play a podcast', 'play the hologram', 'play the video',
     'put on a jacket', 'put on some coffee', 'put on Thriller', 'open my calendar', 'find restaurants near me', 'show me the report', 'stop', 'play', 'pause', 'stop talking',
     'I like to play tennis', 'Could you explain how kids learn through play?', 'Tell me about the play Hamlet', 'Compare Spotify and Apple Music',
+    'Play something upbeat for my run', 'play the voicemail from Mom', 'let me hear your thoughts on this', 'I want to hear more about solar panels',
+    'let me hear the pros and cons', 'listen to this: my boss said', 'listen to me carefully', 'preview my email draft', 'play my messages',
   ]) {
     assert.equal(matchMusicCommand(s), null, s);
   }

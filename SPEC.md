@@ -2373,7 +2373,9 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   "play the album X", "play my X playlist", "open X in Apple Music", "play a preview of X", "stop the music". Strict:
   a music verb first (after fillers), a concrete title or artist ("play something relaxing", "play some jazz" go to
   Jarvis, who picks with find_music), never a question ("what role does X play"), never an idiom ("play devil's
-  advocate", "play chess", "play it safe"), never Jarvis's own replies ("play it again", "play back the answer"),
+  advocate", "play chess", "play it safe"), never Jarvis's own replies ("play it again", "play back the answer",
+  "play my voicemail"), never words that are not a title ("let me hear your thoughts", "listen to me", "play something
+  upbeat for my run"; a title that starts that way is taken when it names its artist: "play Your Song by Elton John"),
   never another app ("… on Spotify", "… on the TV"); "put on" only with music words ("put on some Miles Davis", not
   "put on a jacket"). Speech-to-text slips folded ("play list", "a c d c", "apple muse ick", "played …").
   Taken in the composer (`onCommand`, after screen commands), Voice Mode (said or typed) and a viewer's command box.

@@ -78,7 +78,10 @@ const IDIOM_START = new RegExp(
 );
 // Things that are Jarvis's own (play back the answer) or not music at all.
 const NOT_MUSIC = /^(?:back (?:the|that|this|your|my|it|what)\b|(?:it|that|this|them|those|these)(?: (?:again|back|one|one again|song|track|tune|for me))?$|(?:the |your |my |that |this |a )?(?:last )?(?:answer|reply|response|message|recording|voicemail|voice memo|voice note|briefing|morning briefing|summary|report|hologram|blueprint|video|movie|film|trailer|episode|podcast|audiobook|audio book|show|tv show|youtube video)s?(?: again| back)?$)/;
-const NOT_MUSIC_ANYWHERE = /\b(?:on (?:the )?(?:tv|television|homepod|speaker|speakers|sonos|alexa|echo|chromecast|airplay|apple tv|youtube|spotify|netflix|pandora|tidal|soundcloud|amazon music|youtube music)|spotify|youtube|netflix|podcast|podcasts|audiobook|episode|movie|video game|videogame)\b/;
+const NOT_MUSIC_ANYWHERE = /\b(?:on (?:the |my )?(?:tv|television|homepod|speaker|speakers|sonos|alexa|echo|chromecast|airplay|apple tv|youtube|spotify|netflix|pandora|tidal|soundcloud|amazon music|youtube music)|spotify|youtube|netflix|podcast|podcasts|audiobook|episode|movie|video game|videogame|voicemail|voicemails|voice memo|voice message|voice note|recording|recordings|messages|about)\b/;
+// What follows "play" / "let me hear" / "listen to" when it is not a title: thoughts, more about,
+// the pros and cons, my draft, something for a mood (Jarvis picks music himself: find_music).
+const NOT_TITLE_START = /^(?:your|my|our|his|her|their|its|more|what|how|why|when|where|who|whom|which|this|that|these|those|it|them|me|us|him|both|all|everything|anything|something|nothing|someone|somebody|whatever|a bit|a little|the rest|the pros|the cons|the latest|the news|the full|the whole|the details|the summary|the answer|the reply|the report|the plan|an update|an explanation|a summary|a recap|a joke|a story|a word|a few words|any|each|every|no|some music|some songs|music|songs)\b/;
 // Generic or mood words: no concrete title or artist, so Jarvis chooses (find_music).
 const GENERIC = new Set(
   (
@@ -208,6 +211,8 @@ export function matchMusicCommand(text) {
     rest = m[1];
   }
   rest = rest.replace(/^(?:the song |the track |the album )/, '').trim();
+  // ("Your Song by Elton John" names its artist, so it is a title after all.)
+  if (kind !== 'playlist' && NOT_TITLE_START.test(rest) && !/ by \S/.test(rest)) return null;
   // A playlist may be named by a mood ("my workout playlist"): Apple Music has no free playlist
   // search, so it is searched as albums and songs; it needs one word beyond "my" or "the".
   const generic = kind === 'playlist' ? !rest.split(' ').some((w) => !['my', 'our', 'the', 'a', 'an', 'some', 'me', 'us', 'playlist', 'playlists', 'music', 'songs'].includes(w)) : isGeneric(rest);
@@ -229,7 +234,7 @@ export function matchMusicCommand(text) {
       }
     }
   }
-  if (kind !== 'artist' && kind !== 'playlist' && (!title || isGeneric(title))) return null;
+  if (kind !== 'artist' && kind !== 'playlist' && (!title || (isGeneric(title) && !artist))) return null;
   if (loose && !apple && kind === 'song' && !artist && !/^(?:the |a |that |this )?(?:song|track|single|tune)\b/.test(norm.slice(norm.indexOf(' ') + 1))) return null;
   if (kind === 'artist' && HOUSEHOLD.test(artist)) return null;
   const query = [title, artist].filter(Boolean).join(' ');
