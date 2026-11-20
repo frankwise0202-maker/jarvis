@@ -4,6 +4,9 @@
 //   stablePrefix(draft)                        -> the part of a streamed draft that is certainly complete
 //   SHOW_HOLOGRAM_TOOL                         -> { name, description, input_schema, eager_input_streaming }
 //                                                 (deeply frozen: it is frozen into conversations)
+//   SHOW_HOLOGRAM_TOOL_V2                      -> version 2 (hull, panel, loft, soft boxes, smooth lathes,
+//                                                 tapered tubes); frozen by lead tools V7, never mixed with V1
+//   hullBox(shape) / isHalfOutline(points, i)  -> a hull's extents; is an outline half of a symmetric one
 //   hologramToolResult(result, { libraryId })  -> { content, is_error } for the tool_result block
 //   hologramSummary(spec)                      -> 'Hologram · <title> · 46 parts'
 //   partBounds(part) / specBounds(spec)        -> approximate assembled bounds { min, max, size }
@@ -14,6 +17,15 @@
 // Coordinates: +y is up, +x is the object's front, +z its right side; units are given by `units`
 // (labels only, nothing is converted). Every shape is positioned in the assembled state; `explode`
 // moves a whole part in the exploded view.
+//
+// Realistic shapes (format v2, accepted in every spec so saved holograms reopen anywhere; only the
+// V2 tool tells Claude about them): a `hull` is a solid carved from the object's blueprint views
+// (side [x, y], top [x, z], front [z, y], or a revolve profile) with rounded edges, cuts and wheel
+// arches; a `panel` is a part lying on an earlier part's hull (glass, doors, lights), drawn as an
+// outline on one face of it; a `loft` is a smooth skin through cross-sections (fuselages, blades
+// with twist). Boxes can be soft (`round` 0-1), lathes and extrudes `smooth`, tubes tapered (`r2`).
+// The renderer meshes hulls and panels in a worker (src/ui/hologram/hull-*.js) and lofts at once
+// (src/ui/hologram/smooth.js).
 //
 // Validation is strict but forgiving: unknown fields are ignored, an invalid shape or part is
 // dropped with a warning (collected for the tool_result so Claude can learn from it), text is
@@ -42,10 +54,27 @@ export const HOLOGRAM_LIMITS = Object.freeze({
   profilePoints: 64,
   outlinePoints: 96,
   pathPoints: 64,
+  // format v2
+  hulls: 16, // hull shapes in one hologram (each is meshed in the worker)
+  panels: 40, // panel shapes in one hologram
+  viewPoints: 96, // hull side/top/front/revolve outlines and panel outlines
+  cuts: 12, // per hull, wheel arches included
+  arches: 8, // wheel openings of one hull or loft
+  sections: 32, // loft cross-sections
+  sectionPoints: 48, // points of a custom loft section outline
   warnings: 30,
 });
 
-export const SHAPE_TYPES = Object.freeze(['box', 'cylinder', 'cone', 'sphere', 'torus', 'capsule', 'lathe', 'extrude', 'tube', 'line']);
+/** The shape types of the first show_hologram tool (lead tools V4 to V6): the V1 schema enum. */
+export const SHAPE_TYPES_V1 = Object.freeze(['box', 'cylinder', 'cone', 'sphere', 'torus', 'capsule', 'lathe', 'extrude', 'tube', 'line']);
+/** Every shape type the validator and renderer accept: V1 plus the realistic shapes of format v2. */
+export const SHAPE_TYPES = Object.freeze([...SHAPE_TYPES_V1, 'hull', 'panel', 'loft']);
+/** Panel faces: which side of its hull a panel's outline is drawn on (and projected from). */
+export const PANEL_FACES = Object.freeze(['right', 'left', 'sides', 'front', 'back', 'top', 'bottom']);
+export const LOFT_AXES = Object.freeze(['x', 'y', 'z']);
+// The two coordinates of a loft section, by loft axis (the plane across it, as an extrude outline).
+const SECTION_KEYS = Object.freeze({ x: ['z', 'y'], y: ['x', 'z'], z: ['x', 'y'] });
+const CUT_TYPES = ['box', 'cylinder', 'sphere'];
 export const TONES = Object.freeze(['primary', 'secondary', 'accent', 'warning']);
 export const UNITS = Object.freeze(['mm', 'cm', 'm', 'in']);
 export const VIEWS = Object.freeze(['front', 'back', 'left', 'right', 'top', 'bottom', 'front-left', 'front-right', 'back-left', 'back-right']);
@@ -63,8 +92,19 @@ const TYPE_ALIASES = {
   pill: 'capsule',
   revolve: 'lathe', revolution: 'lathe',
   extrusion: 'extrude', profile: 'extrude', plate: 'extrude',
-  pipe: 'tube', hose: 'tube', cable: 'tube', wire: 'tube',
+  pipe: 'tube', hose: 'tube', cable: 'tube', wire: 'tube', sweep: 'tube',
   polyline: 'line', path: 'line',
+  // format v2
+  silhouette: 'hull', blueprint: 'hull', 'visual-hull': 'hull', visual_hull: 'hull', body: 'hull',
+  decal: 'panel', patch: 'panel',
+  sections: 'loft',
+  superellipsoid: 'box', 'rounded-box': 'box', roundbox: 'box', pod: 'box', blob: 'box', squircle: 'box',
+};
+// Aliases that mean a soft box: `round` defaults to 0.5 for them.
+const SOFT_BOX_ALIASES = new Set(['superellipsoid', 'rounded-box', 'roundbox', 'pod', 'blob', 'squircle']);
+const PANEL_FACE_ALIASES = {
+  side: 'sides', both: 'sides', 'both-sides': 'sides', 'left-right': 'sides', rear: 'back', above: 'top', under: 'bottom', below: 'bottom', underside: 'bottom',
+  '+z': 'right', '-z': 'left', '+x': 'front', '-x': 'back', '+y': 'top', '-y': 'bottom',
 };
 const KEY_ALIASES = { position: 'at', pos: 'at', center: 'at', rotation: 'rot', rotate: 'rot', radius: 'r', height: 'h', length: 'h', points: null };
 const UNIT_ALIASES = {
@@ -203,7 +243,7 @@ function resolveAliases(raw, type) {
     if (alias === undefined) s[key] = raw[key];
     else if (alias === null) {
       // "points": the polygon/profile/path, whichever this type uses
-      const target = type === 'lathe' ? 'profile' : type === 'extrude' ? 'outline' : type === 'tube' || type === 'line' ? 'path' : null;
+      const target = type === 'lathe' ? 'profile' : type === 'extrude' || type === 'panel' ? 'outline' : type === 'tube' || type === 'line' ? 'path' : null;
       if (target && s[target] === undefined) s[target] = raw[key];
     } else if (s[alias] === undefined && raw[alias] === undefined) s[alias] = raw[key];
   }
@@ -216,10 +256,14 @@ function resolveAliases(raw, type) {
 /**
  * Validate one shape. Returns { shape, notes: [soft problems] } or { error } (shape dropped).
  * The normalized shape always has: type, at; optional axis, rot, repeat; plus the type's fields.
+ * ctx (optional, from normalizeHologramSpec): { hulls: Map(part id -> [its normalized hull shapes]),
+ * partIds: Set(ids of the earlier parts) } so a panel can be checked against the hull it lies on;
+ * { cut: true } while normalizing a hull's cuts.
  */
-export function normalizeShape(raw) {
+export function normalizeShape(raw, ctx = null) {
   if (!isObj(raw)) return { error: 'not an object' };
   let type = typeof raw.type === 'string' ? raw.type.toLowerCase().trim() : '';
+  const softBox = SOFT_BOX_ALIASES.has(type);
   if (TYPE_ALIASES[type]) type = TYPE_ALIASES[type];
   if (!SHAPE_TYPES.includes(type)) return { error: type ? `unknown type "${cleanText(type, 20)}"` : 'missing type' };
   const s = resolveAliases(raw, type);
@@ -237,7 +281,15 @@ export function normalizeShape(raw) {
     const r = rot.map(wrapDeg);
     if (r.some((d) => d !== 0)) out.rot = r;
   }
-  if (type !== 'box' && type !== 'sphere' && type !== 'tube' && type !== 'line') {
+  if (type === 'panel') {
+    // a panel lies on its hull: it has no position of its own
+    if (out.at.some((v) => v !== 0)) notes.push('at ignored (a panel lies on the hull it names)');
+    if (out.rot) notes.push('rot ignored (a panel lies on the hull it names)');
+    out.at = [0, 0, 0];
+    delete out.rot;
+  }
+  // a loft runs along its own x, y or z; a hull's axis is the axis of its revolve profile
+  if (type !== 'box' && type !== 'sphere' && type !== 'tube' && type !== 'line' && type !== 'loft' && type !== 'hull' && type !== 'panel') {
     const { axis, bad } = normAxis(s.axis);
     if (bad) notes.push(`axis "${cleanText(String(s.axis), 8)}" is not one of x, y, z, -x, -y, -z (used ${type === 'extrude' ? 'z' : 'y'})`);
     if (axis && axis !== (type === 'extrude' ? 'z' : 'y')) out.axis = axis;
@@ -251,6 +303,14 @@ export function normalizeShape(raw) {
       error = need(size, 'box needs size [x, y, z] with every value > 0');
       if (error) break;
       out.size = size;
+      // round (0-1): a superellipsoid (soft block); r then only matters without it
+      const rnd = s.round !== undefined ? num(s.round) : softBox ? 0.5 : NaN;
+      if (s.round !== undefined && !(rnd >= 0 && rnd <= 1)) notes.push('round ignored (must be 0–1: 1 = ellipsoid, 0.5 = soft box, 0.2 = slightly rounded box)');
+      if (rnd > 0 && rnd <= 1) {
+        out.round = round(rnd);
+        if (s.r !== undefined) notes.push('r ignored (round is set)');
+        break;
+      }
       if (s.r !== undefined) {
         const r = nonNegative(s.r);
         if (Number.isFinite(r) && r > 0) out.r = round(Math.min(r, Math.min(...size) * 0.49));
@@ -341,6 +401,7 @@ export function normalizeShape(raw) {
       error = need(span > 0, 'lathe profile needs a point with radius > 0');
       if (error) break;
       out.profile = fixed;
+      if (s.smooth === true) out.smooth = true;
       break;
     }
     case 'extrude': {
@@ -353,6 +414,7 @@ export function normalizeShape(raw) {
       if (error) break;
       out.outline = outline;
       out.depth = round(depth);
+      if (s.smooth === true) out.smooth = true;
       if (s.bevel !== undefined) {
         const bevel = nonNegative(s.bevel);
         if (Number.isFinite(bevel) && bevel > 0) out.bevel = round(Math.min(bevel, depth * 0.45, extent2(outline) * 0.3));
@@ -367,6 +429,13 @@ export function normalizeShape(raw) {
       if (error) break;
       out.path = path;
       out.r = round(r);
+      if (s.r2 !== undefined) {
+        // a taper: radius r at the start of the path, r2 at its end
+        const r2 = positive(s.r2);
+        if (Number.isFinite(r2)) {
+          if (r2 !== r) out.r2 = round(r2);
+        } else notes.push('r2 ignored (must be a number > 0)');
+      }
       break;
     }
     case 'line': {
@@ -376,15 +445,536 @@ export function normalizeShape(raw) {
       out.path = path;
       break;
     }
+    case 'loft': {
+      const res = normalizeLoft(s, notes);
+      if (res.error) error = res.error;
+      else Object.assign(out, res.loft);
+      break;
+    }
+    case 'hull': {
+      error = need(!(ctx && ctx.cut), 'a hull cannot be a cut');
+      if (error) break;
+      error = normalizeHull(s, out, notes);
+      break;
+    }
+    case 'panel': {
+      error = need(!(ctx && ctx.cut), 'a panel cannot be a cut');
+      if (error) break;
+      error = normalizePanel(s, out, notes, ctx);
+      break;
+    }
   }
   if (error) return { error };
 
-  if (s.repeat !== undefined && s.repeat !== null) {
+  if (s.repeat !== undefined && s.repeat !== null && type === 'panel') notes.push('repeat ignored (a panel lies on its hull)');
+  else if (s.repeat !== undefined && s.repeat !== null) {
     const rep = normalizeRepeat(s.repeat);
     if (rep.repeat) out.repeat = rep.repeat;
     else notes.push(`repeat ignored (${rep.error})`);
   }
   return { shape: out, notes };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Loft: a smooth skin through cross-sections (src/ui/hologram/smooth.js)
+
+/**
+ * A loft: a smooth skin through cross-sections along x, y or z. Each section is
+ * { <axis>: station, <u>/<v>: its center (default 0), w, h (or d), round, top, twist } or a custom
+ * outline { <axis>, pts: [[u, v], …] } (offset by the center when one is given). The normalized
+ * loft mirrors its input (sections keep their axis-named keys), so it validates again unchanged.
+ */
+function normalizeLoft(s, notes) {
+  let axis = 'x';
+  if (s.axis !== undefined && s.axis !== null && s.axis !== '') {
+    const a = String(s.axis).toLowerCase().replace(/\s+/g, '').replace(/^[+-]/, '').replace(/axis$/, '');
+    if (LOFT_AXES.includes(a)) axis = a;
+    else notes.push(`axis "${cleanText(String(s.axis), 8)}" is not x, y or z (used x)`);
+  }
+  const [uKey, vKey] = SECTION_KEYS[axis];
+  if (!Array.isArray(s.sections) || s.sections.length < 2) return { error: `loft needs sections: 2 or more cross-sections, each { ${axis}: position along the loft, w, h }` };
+  if (s.sections.length > L.sections) notes.push(`sections cut to ${L.sections}`);
+  const list = [];
+  for (const [i, raw] of s.sections.slice(0, L.sections).entries()) {
+    const res = normalizeSection(raw, axis, uKey, vKey);
+    if (res.error) {
+      notes.push(`sections[${i}] dropped (${res.error})`);
+      continue;
+    }
+    if (res.note) notes.push(`sections[${i}]: ${res.note}`);
+    list.push(res.section);
+  }
+  if (list.length < 2) return { error: 'loft needs at least 2 valid sections' };
+  // sections run along the axis: written front to back is fine (reversed); otherwise sorted
+  const st = list.map((sec) => sec[axis]);
+  const increasing = st.every((v, i) => i === 0 || v >= st[i - 1]);
+  const decreasing = st.every((v, i) => i === 0 || v <= st[i - 1]);
+  let reversed = false;
+  if (!increasing && decreasing) {
+    list.reverse();
+    reversed = true;
+  } else if (!increasing) {
+    list.sort((a, b) => a[axis] - b[axis]);
+    notes.push(`sections sorted by ${axis} (give them in order along the loft)`);
+  }
+  const span = list[list.length - 1][axis] - list[0][axis];
+  if (!(span > 0)) return { error: `loft sections must be at different ${axis} positions` };
+  const sections = [list[0]];
+  for (const sec of list.slice(1)) {
+    if (sec[axis] - sections[sections.length - 1][axis] <= span * 1e-6) {
+      notes.push(`a section at ${axis} = ${sec[axis]} repeats a position; dropped`);
+      continue;
+    }
+    sections.push(sec);
+  }
+  if (sections.length < 2) return { error: 'loft needs at least 2 sections at different positions' };
+  const loft = { axis, sections };
+  if (s.cap !== undefined && s.cap !== null) {
+    const c = s.cap === true ? 'both' : s.cap === false ? 'none' : String(s.cap).toLowerCase().trim();
+    const cap = { both: 'both', none: 'none', start: 'start', end: 'end', true: 'both', false: 'none' }[c];
+    if (!cap) notes.push('cap ignored (true, false, "start" or "end")');
+    // start and end are the first and last section as written; the normalized loft runs from
+    // its lowest station, so a reversed list swaps them
+    else if (cap !== 'both') loft.cap = reversed && cap === 'start' ? 'end' : reversed && cap === 'end' ? 'start' : cap;
+  }
+  if (s.arches !== undefined && s.arches !== null) {
+    const arches = points(s.arches, 3, 1, L.arches);
+    if (!arches || arches.some((a) => !(a[2] > 0))) notes.push(`arches ignored (a list of [${axis}, ${vKey}, radius] wheel-arch circles)`);
+    else {
+      if (s.arches.length > L.arches) notes.push(`arches cut to ${L.arches}`);
+      loft.arches = arches;
+    }
+  }
+  return { loft };
+}
+
+function normalizeSection(raw, axis, uKey, vKey) {
+  if (!isObj(raw)) return { error: 'not an object' };
+  const stRaw = raw[axis] !== undefined ? raw[axis] : raw.at !== undefined && !Array.isArray(raw.at) ? raw.at : raw.s;
+  const station = coord(stRaw);
+  if (!Number.isFinite(station)) return { error: `needs ${axis}: its position along the loft` };
+  const sec = { [axis]: round(station) };
+  const notes = [];
+  // the two coordinates across: a number is the section's center, [min, max] its extent
+  const span = {};
+  for (const [key, sizeKey] of [
+    [uKey, 'w'],
+    [vKey, 'h'],
+  ]) {
+    const val = raw[key];
+    if (val === undefined || val === null) continue;
+    let center;
+    if (Array.isArray(val)) {
+      const a = coord(val[0]);
+      const b = coord(val[1]);
+      if (val.length !== 2 || !Number.isFinite(a) || !Number.isFinite(b) || a === b) return { error: `${key} must be a number (the center) or [min, max] (the extent)` };
+      center = (a + b) / 2;
+      span[sizeKey] = Math.abs(b - a);
+    } else {
+      center = coord(val);
+      if (!Number.isFinite(center)) return { error: `${key} must be a number (the center) or [min, max] (the extent)` };
+    }
+    if (center !== 0) sec[key] = round(center);
+  }
+  if (raw.pts !== undefined || raw.points !== undefined || raw.outline !== undefined) {
+    const pts = points(raw.pts ?? raw.points ?? raw.outline, 2, 3, L.sectionPoints);
+    if (!pts) return { error: 'pts must be [[u, v], …] with 3 or more points' };
+    if (Math.abs(polygonArea(pts)) <= 1e-9) return { error: 'pts outline has no area' };
+    sec.pts = pts;
+  } else {
+    const d = positive(raw.d ?? raw.diameter);
+    const rr = raw.r !== undefined ? positive(raw.r) : NaN;
+    const size = (key, given) => {
+      if (span[key] !== undefined) {
+        if (Number.isFinite(given) && Math.abs(given - span[key]) > span[key] * 1e-3) notes.push(`${key} ignored (the ${key === 'w' ? uKey : vKey} range sets it)`);
+        return span[key];
+      }
+      if (Number.isFinite(given)) return given;
+      if (Number.isFinite(d)) return d;
+      if (Number.isFinite(rr)) return 2 * rr;
+      return NaN;
+    };
+    const w = size('w', positive(raw.w ?? raw.width));
+    const h = size('h', positive(raw.h ?? raw.height));
+    if (!(w > 0) || !(h > 0)) return { error: `needs its size: w and h (or d), or ${uKey} and ${vKey} as [min, max]` };
+    sec.w = round(w);
+    sec.h = round(h);
+    if (raw.top !== undefined) {
+      const top = positive(raw.top);
+      if (Number.isFinite(top) && top <= 3 * w) {
+        if (top !== w) sec.top = round(top);
+      } else notes.push('top ignored (the width at the top, > 0 and at most 3 × w)');
+    }
+  }
+  if (raw.round !== undefined) {
+    const r = num(raw.round);
+    if (r >= 0 && r <= 1) {
+      if (r !== 1) sec.round = round(r);
+    } else notes.push('round ignored (0–1: 1 = ellipse, 0.5 = soft box, 0.2 = box with small rounded corners)');
+  }
+  if (raw.twist !== undefined) {
+    const t = num(raw.twist);
+    if (Number.isFinite(t)) {
+      const tw = wrapDeg(t);
+      if (tw !== 0) sec.twist = tw;
+    } else notes.push('twist ignored (degrees)');
+  }
+  return { section: sec, note: notes.join('; ') || null };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hull: a solid carved from blueprint views (side [x, y], top [x, z], front [z, y], or a revolve
+// profile); see src/ui/hologram/hull-mesh.js. A top or front outline drawn on one side of z = 0 is
+// half of a left-right symmetric object and is mirrored.
+
+const HULL_VIEWS = [
+  // key, [u axis, v axis] in model coordinates, index of z in a point (-1: none)
+  ['side', ['x', 'y'], -1],
+  ['top', ['x', 'z'], 1],
+  ['front', ['z', 'y'], 0],
+];
+// The view that sets each extent when two views disagree a little (the other one is stretched to
+// it); a revolve profile sets the extent along its own axis.
+const EXTENT_MASTERS = { x: ['side', 'top'], y: ['side', 'front'], z: ['top', 'front'] };
+const HULL_ROUND_NOTE = "a hull's edge radius is r; round is the 0–1 softness of boxes and loft sections";
+const AXIS_K = { x: 0, y: 1, z: 2 };
+
+/**
+ * 'right' when a top or front outline (z at zIndex) is the right half of a left-right symmetric
+ * object: every z ≥ -0.5% of its z span and its nearest z within 10% of its farthest; 'left' for
+ * the mirror image (every z ≤ 0); otherwise false.
+ */
+function halfSide(pts, zIndex) {
+  if (!Array.isArray(pts) || pts.length < 2 || !(zIndex >= 0)) return false;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const p of pts) {
+    min = Math.min(min, p[zIndex]);
+    max = Math.max(max, p[zIndex]);
+  }
+  const span = max - min;
+  if (!(span > 0)) return false;
+  const tol = span * 0.005;
+  if (min >= -tol && max > 0 && min <= max * 0.1) return 'right';
+  if (max <= tol && min < 0 && max >= min * 0.1) return 'left';
+  return false;
+}
+
+/** Is this top [x, z] (zIndex 1) or front [z, y] (zIndex 0) outline half of a symmetric object? */
+export function isHalfOutline(pts, zIndex) {
+  return !!halfSide(pts, zIndex);
+}
+
+/**
+ * A half outline the way the mesher reads it: the right half (a left half is flipped), its points
+ * near the centerline on it (within 2% of the half width; the first and last point within 10%), and
+ * starting or ending there. Returns { pts, changed }.
+ */
+function normalizeHalfOutline(pts, zIndex) {
+  const side = halfSide(pts, zIndex);
+  if (!side) return { pts, changed: false };
+  let changed = side === 'left';
+  const out = pts.map((p) => {
+    const q = p.slice();
+    if (side === 'left') q[zIndex] = -q[zIndex] || 0;
+    return q;
+  });
+  let max = 0;
+  for (const p of out) max = Math.max(max, p[zIndex]);
+  const snap = (p) => {
+    if (p[zIndex] !== 0) {
+      p[zIndex] = 0;
+      changed = true;
+    }
+  };
+  out.forEach((p, i) => {
+    if (p[zIndex] <= max * (i === 0 || i === out.length - 1 ? 0.1 : 0.02)) snap(p);
+  });
+  // a half outline reaches the centerline: when only points in between come near it, they do
+  if (!out.some((p) => p[zIndex] === 0)) for (const p of out) if (p[zIndex] <= max * 0.1) snap(p);
+  // the mirror image is joined along the centerline: the outline closes there (last point to first)
+  const on = out.map((p) => p[zIndex] === 0);
+  if (!(on[0] && on[on.length - 1])) {
+    let k = on.indexOf(true);
+    while (k + 1 < on.length && on[k + 1]) k++;
+    if (k > 0) {
+      out.push(...out.splice(0, k));
+      changed = true;
+    }
+  }
+  return { pts: out, changed };
+}
+
+/** The [lo, hi] range of one axis of a view's outline (z mirrored for a half outline). */
+function viewRange(pts, index, zIndex) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of pts) {
+    lo = Math.min(lo, p[index]);
+    hi = Math.max(hi, p[index]);
+  }
+  if (index === zIndex && halfSide(pts, zIndex)) {
+    const m = Math.max(Math.abs(lo), Math.abs(hi));
+    return [-m, m];
+  }
+  return [lo, hi];
+}
+
+/** Each view's range on each axis: { x: [[view, [lo, hi]], …], y, z }, the revolve's included. */
+function hullRanges(shape) {
+  const ranges = { x: [], y: [], z: [] };
+  for (const [key, axes, zi] of HULL_VIEWS) {
+    const pts = shape[key];
+    if (!Array.isArray(pts) || !pts.length) continue;
+    axes.forEach((axis, i) => ranges[axis].push([key, viewRange(pts, i, zi)]));
+  }
+  if (Array.isArray(shape.revolve) && shape.revolve.length >= 2) {
+    const ax = String(shape.axis || 'y');
+    const letter = ax.replace('-', '');
+    const rmax = Math.max(...shape.revolve.map((p) => p[0]));
+    let [a0, a1] = viewRange(shape.revolve, 1, -1);
+    if (ax.startsWith('-')) [a0, a1] = [-a1, -a0];
+    for (const axis of ['x', 'y', 'z']) ranges[axis].push(['revolve', axis === letter ? [a0, a1] : [-rmax, rmax]]);
+  }
+  return ranges;
+}
+
+/** The box a hull's views can enclose: { x: [lo, hi], y, z, ranges } or null when they do not overlap. */
+export function hullBox(shape) {
+  const ranges = hullRanges(shape);
+  const box = { ranges };
+  for (const axis of ['x', 'y', 'z']) {
+    if (!ranges[axis].length) return null;
+    const lo = Math.max(...ranges[axis].map((r) => r[1][0]));
+    const hi = Math.min(...ranges[axis].map((r) => r[1][1]));
+    if (!(hi > lo)) return null;
+    box[axis] = [lo, hi];
+  }
+  if (shape.mirror && !(box.z[0] < 0 && box.z[1] > 0)) {
+    // an off-center mirrored hull (a pair of door mirrors) stands on both sides
+    const m = Math.max(Math.abs(box.z[0]), Math.abs(box.z[1]));
+    box.z = [-m, m];
+  }
+  return box;
+}
+
+const fmtRange = (r) => `${round(r[0])}…${round(r[1])}`;
+
+/** Why a hull's views enclose nothing: the first pair of views that do not overlap. */
+function overlapError(out) {
+  const ranges = hullRanges(out);
+  for (const axis of ['x', 'y', 'z']) {
+    const rs = ranges[axis];
+    for (let a = 0; a < rs.length; a++) {
+      for (let b = a + 1; b < rs.length; b++) {
+        const [ka, ra] = rs[a];
+        const [kb, rb] = rs[b];
+        if (!(Math.min(ra[1], rb[1]) > Math.max(ra[0], rb[0]))) {
+          return `hull views do not overlap: ${ka} spans ${axis} ${fmtRange(ra)} but ${kb} spans ${fmtRange(rb)} (all views use the same model coordinates)`;
+        }
+      }
+    }
+  }
+  return 'hull views do not overlap (all views use the same model coordinates)';
+}
+
+/**
+ * Views that disagree a little on an extent (at most 10% of the span at either end) are stretched
+ * to the master view's range; a bigger disagreement keeps the overlap only, with a warning.
+ */
+function fitExtents(out, notes) {
+  const ranges = hullRanges(out);
+  const revolveAxis = out.revolve ? String(out.axis || 'y').replace('-', '') : null;
+  for (const axis of ['x', 'y', 'z']) {
+    const rs = ranges[axis];
+    if (rs.length < 2) continue;
+    const masterKey = axis === revolveAxis ? 'revolve' : EXTENT_MASTERS[axis].find((k) => rs.some((r) => r[0] === k));
+    const master = rs.find((r) => r[0] === masterKey);
+    if (!master) continue;
+    const [m0, m1] = master[1];
+    for (const [key, [e0, e1]] of rs) {
+      if (key === masterKey) continue;
+      const span = Math.max(m1 - m0, e1 - e0);
+      const d0 = Math.abs(e0 - m0);
+      const d1 = Math.abs(e1 - m1);
+      if (d0 > span * 0.1 || d1 > span * 0.1) {
+        notes.push(`${masterKey} spans ${axis} ${fmtRange(master[1])} but ${key} spans ${fmtRange([e0, e1])}: only the overlap is solid`);
+      } else if ((d0 > span * 0.002 || d1 > span * 0.002) && key !== 'revolve') {
+        // (a revolve cannot be stretched one way only: a small mismatch just keeps the overlap)
+        const [, axes, zi] = HULL_VIEWS.find((v) => v[0] === key);
+        const i = axes.indexOf(axis);
+        const half = i === zi && halfSide(out[key], zi);
+        const k = half ? Math.max(Math.abs(m0), Math.abs(m1)) / e1 : (m1 - m0) / (e1 - e0);
+        out[key] = out[key].map((p) => {
+          const q = p.slice();
+          q[i] = round(half ? p[i] * k : m0 + (p[i] - e0) * k);
+          return q;
+        });
+        notes.push(`${key} ${axis} stretched to the ${masterKey}'s ${fmtRange(master[1])} (was ${fmtRange([e0, e1])})`);
+      }
+    }
+  }
+}
+
+/** Where wheel arches cut a hull: its +z side (mirrored when the hull is), or both of its sides. */
+function archSides(out, box) {
+  const [z0, z1] = box.z;
+  if (out.mirror) return [z1];
+  if (z0 < 0 && z1 > 0) return [z1, z0];
+  return [z1 > 0 ? z1 : z0];
+}
+
+function normalizeHull(s, out, notes) {
+  let given = 0;
+  for (const [key, axes, zi] of HULL_VIEWS) {
+    if (s[key] === undefined || s[key] === null) continue;
+    const pts = points(s[key], 2, 3, L.viewPoints);
+    if (!pts) return `hull ${key} must be [[${axes[0]}, ${axes[1]}], …] with at least 3 points`;
+    if (Array.isArray(s[key]) && s[key].length > L.viewPoints) notes.push(`${key} cut to ${L.viewPoints} points`);
+    if (!(Math.abs(polygonArea(pts)) > 1e-9)) return `hull ${key} outline has no area`;
+    if (zi >= 0) {
+      const half = normalizeHalfOutline(pts, zi);
+      if (half.changed) notes.push(`${key}: taken as a half outline and mirrored`);
+      out[key] = half.pts;
+    } else out[key] = pts;
+    given++;
+  }
+  if (s.revolve !== undefined && s.revolve !== null) {
+    // a lathe-style profile [[radius, along], …] turned around `axis` (a solid of revolution)
+    const pts = points(s.revolve, 2, 2, L.viewPoints);
+    if (!pts) return 'hull revolve must be [[radius, along], …] with at least 2 points';
+    const fixed = pts.map(([r, a]) => [Math.max(0, r), a]);
+    if (!fixed.some((p) => p[0] > 0)) return 'hull revolve needs a point with radius > 0';
+    if (Array.isArray(s.revolve) && s.revolve.length > L.viewPoints) notes.push(`revolve cut to ${L.viewPoints} points`);
+    out.revolve = fixed;
+    const { axis, bad } = normAxis(s.axis);
+    if (bad) notes.push(`axis "${cleanText(String(s.axis), 8)}" is not one of x, y, z, -x, -y, -z (used y)`);
+    if (axis && axis !== 'y') out.axis = axis;
+    given += 2;
+  }
+  if (given < 2) return 'hull needs at least two of side [[x, y], …], top [[x, z], …] and front [[z, y], …] (or a revolve profile)';
+  const half = (out.top && isHalfOutline(out.top, 1)) || (out.front && isHalfOutline(out.front, 0));
+  if (s.mirror === true || half) out.mirror = true;
+  else if (s.mirror !== undefined && s.mirror !== false) notes.push('mirror ignored (true or false)');
+  if (!hullBox(out)) return overlapError(out);
+  fitExtents(out, notes);
+  const box = hullBox(out);
+  if (!box) return overlapError(out);
+
+  // the edge radius where the views meet: r (fillet); round is the 0-1 softness of other shapes
+  let r = s.r !== undefined && s.r !== null ? s.r : s.fillet;
+  if (s.round !== undefined && s.round !== null) {
+    const v = num(s.round);
+    const shown = Number.isFinite(v) ? round(v) : `"${cleanText(String(s.round), 12)}"`;
+    if (v > 1 && (r === undefined || r === null)) {
+      r = v;
+      notes.push(`round taken as r (${shown}): ${HULL_ROUND_NOTE}`);
+    } else notes.push(`round ignored (${shown}): ${HULL_ROUND_NOTE}`);
+  }
+  if (r !== undefined && r !== null) {
+    const v = nonNegative(r);
+    if (Number.isFinite(v)) out.r = round(v);
+    else notes.push('r ignored (the edge radius in model units, a number ≥ 0)');
+  }
+
+  const cuts = [];
+  if (s.cut !== undefined && s.cut !== null) {
+    const list = Array.isArray(s.cut) ? s.cut : isObj(s.cut) ? [s.cut] : null;
+    if (!list) notes.push('cut ignored (an array of box, cylinder or sphere shapes)');
+    else {
+      if (list.length > L.cuts) notes.push(`only the first ${L.cuts} cuts are used`);
+      list.slice(0, L.cuts).forEach((c, i) => {
+        const res = normalizeShape(c, { cut: true });
+        if (res.error) notes.push(`cut[${i}] dropped: ${res.error}`);
+        else if (!CUT_TYPES.includes(res.shape.type)) notes.push(`cut[${i}] dropped: only box, cylinder and sphere can cut a hull`);
+        else {
+          for (const n of res.notes) notes.push(`cut[${i}]: ${n}`);
+          cuts.push(res.shape);
+        }
+      });
+    }
+  }
+  // wheel arches: z cylinders through the body's side (the mirror image cuts the other side),
+  // as deep as the wheel well; they count towards the cuts
+  if (s.arches !== undefined && s.arches !== null) {
+    const arches = points(s.arches, 3, 1, L.arches);
+    if (!out.top && !out.front) notes.push('arches ignored: needs a top or front view');
+    else if (!arches || arches.some((a) => !(a[2] > 0))) notes.push('arches ignored (a list of [x, y, r] wheel openings: the wheel center and the opening radius)');
+    else {
+      if (s.arches.length > L.arches) notes.push(`arches cut to ${L.arches}`);
+      const sides = archSides(out, box);
+      const fit = Math.min(arches.length, Math.floor((L.cuts - cuts.length) / sides.length));
+      if (fit < arches.length) notes.push(`only ${fit} of the arches fit: a hull has at most ${L.cuts} cuts, wheel arches included`);
+      for (const [x, y, ar] of arches.slice(0, Math.max(0, fit))) {
+        for (const z of sides) {
+          const res = normalizeShape({ type: 'cylinder', axis: 'z', at: [x, y, z], r: ar, h: 2 * Math.max(0.4 * Math.abs(z), 0.6 * ar) }, { cut: true });
+          if (res.shape) cuts.push(res.shape);
+        }
+      }
+    }
+  }
+  if (cuts.length) out.cut = cuts;
+  return null;
+}
+
+// Panel: the part of a hull's surface inside an outline drawn on one of its faces (a window, a
+// door, a headlight on a car body). face -> the outline's plane and the axis across it.
+const PANEL_PLANES = { right: ['x', 'y'], left: ['x', 'y'], sides: ['x', 'y'], front: ['z', 'y'], back: ['z', 'y'], top: ['x', 'z'], bottom: ['x', 'z'] };
+const PANEL_DEPTH_AXIS = { right: 'z', left: 'z', sides: 'z', front: 'x', back: 'x', top: 'y', bottom: 'y' };
+
+function normalizePanel(s, out, notes, ctx) {
+  const on = normalizeId(s.on);
+  if (!on) return 'panel needs on: the id of an earlier part that has a hull';
+  const hulls = ctx && ctx.hulls ? ctx.hulls.get(on) : undefined;
+  if (ctx && ctx.hulls && !hulls) {
+    if (ctx.partIds && ctx.partIds.has(on)) return `panel on "${on}": that part has no hull (panels lie on hulls only)`;
+    return `panel on "${on}": no earlier part with that id has a hull`;
+  }
+  out.on = on;
+  const rawFace = s.face !== undefined ? s.face : s.view; // "view" is accepted for the face
+  let face = typeof rawFace === 'string' ? rawFace.toLowerCase().trim().replace(/[\s_]+/g, '-') : '';
+  if (PANEL_FACE_ALIASES[face]) face = PANEL_FACE_ALIASES[face];
+  if (!PANEL_FACES.includes(face)) return `panel needs face: one of ${PANEL_FACES.join(', ')}`;
+  out.face = face;
+  const plane = PANEL_PLANES[face];
+  const outline = points(s.outline, 2, 3, L.viewPoints);
+  if (!outline) return `panel needs outline [[${plane[0]}, ${plane[1]}], …] with at least 3 points`;
+  if (Array.isArray(s.outline) && s.outline.length > L.viewPoints) notes.push(`outline cut to ${L.viewPoints} points`);
+  if (!(Math.abs(polygonArea(outline)) > 1e-9)) return 'panel outline has no area';
+  out.outline = outline;
+  if (s.mirror === true) {
+    if (face === 'sides' || face === 'left' || face === 'right') notes.push('mirror ignored (use face "sides" for both sides)');
+    else out.mirror = true;
+  }
+  if (s.wrap === true) out.wrap = true;
+  if (s.lift !== undefined && s.lift !== null) {
+    const lift = nonNegative(s.lift);
+    if (Number.isFinite(lift)) out.lift = round(lift);
+    else notes.push('lift ignored (a number ≥ 0)');
+  }
+  const b = hulls && hulls.length ? boundsOfShapes(hulls) : null;
+  if (b) {
+    // the face the panel lies on, across its plane (for bounds and labels)
+    const k = AXIS_K[PANEL_DEPTH_AXIS[face]];
+    if (face === 'right' || face === 'front' || face === 'top') out.span = [b.max[k], b.max[k]];
+    else if (face === 'left' || face === 'back' || face === 'bottom') out.span = [b.min[k], b.min[k]];
+    else out.span = [b.min[k], b.max[k]];
+    // an outline mostly outside the hull in its plane was written in another face's coordinates
+    const iu = AXIS_K[plane[0]];
+    const iv = AXIS_K[plane[1]];
+    const us = outline.map((p) => p[0]);
+    const vs = outline.map((p) => p[1]);
+    const u = [Math.min(...us), Math.max(...us)];
+    const v = [Math.min(...vs), Math.max(...vs)];
+    const ou = Math.max(0, Math.min(u[1], b.max[iu]) - Math.max(u[0], b.min[iu]));
+    const ov = Math.max(0, Math.min(v[1], b.max[iv]) - Math.max(v[0], b.min[iv]));
+    if (ou * ov < (u[1] - u[0]) * (v[1] - v[0]) * 0.5) {
+      notes.push(
+        `panel outline lies outside the ${face === 'sides' ? 'side' : face} view of ${on} (${plane[0]} ${fmtRange(u)}, ${plane[1]} ${fmtRange(v)}; the hull spans ${plane[0]} ${fmtRange([b.min[iu], b.max[iu]])}, ${plane[1]} ${fmtRange([b.min[iv], b.max[iv]])}): check its coordinates`,
+      );
+    }
+  }
+  return null;
 }
 
 function normalizeRepeat(raw) {
@@ -547,8 +1137,12 @@ export function normalizeHologramSpec(input, { partial = false, stable = true } 
 
   // Parts
   const used = new Set();
+  const hulls = new Map(); // part id -> its hull shapes (a later panel lies on one of them)
+  const ctx = { hulls, partIds: used };
   let shapeCount = 0;
   let instanceCount = 0;
+  let hullCount = 0;
+  let panelCount = 0;
   let shapeCapWarned = false;
   let instanceCapWarned = false;
   const rawParts = src.parts;
@@ -630,13 +1224,21 @@ export function normalizeHologramSpec(input, { partial = false, stable = true } 
         dropped++;
         break;
       }
-      const { shape, notes, error } = normalizeShape(shapeList[j]);
+      const { shape, notes, error } = normalizeShape(shapeList[j], ctx);
       const where = `${label} shapes[${j}]${shape || isObj(shapeList[j]) ? ` (${(shape && shape.type) || cleanText(String(shapeList[j].type ?? '?'), 12)})` : ''}`;
       if (error) {
         warn(`${where}: dropped: ${error}.`);
         dropped++;
         continue;
       }
+      // hulls are meshed in a worker and panels on them: a hologram has a budget of each
+      if ((shape.type === 'hull' && hullCount >= L.hulls) || (shape.type === 'panel' && panelCount >= L.panels)) {
+        warn(`${where}: dropped: more than ${shape.type === 'hull' ? `${L.hulls} hulls` : `${L.panels} panels`} in one hologram.`);
+        dropped++;
+        continue;
+      }
+      if (shape.type === 'hull') hullCount++;
+      if (shape.type === 'panel') panelCount++;
       for (const n of notes) warn(`${where}: ${n}.`);
       let copies = shape.repeat ? shape.repeat.count : 1;
       if (instanceCount + copies > L.instances) {
@@ -664,6 +1266,8 @@ export function normalizeHologramSpec(input, { partial = false, stable = true } 
       continue;
     }
     used.add(id);
+    const partHulls = shapes.filter((sh) => sh.type === 'hull');
+    if (partHulls.length) hulls.set(id, partHulls);
     const part = {
       key: `p${index}`,
       index,
@@ -822,7 +1426,7 @@ export const HOLOGRAM_INPUT_SCHEMA = {
               properties: {
                 type: {
                   type: 'string',
-                  enum: [...SHAPE_TYPES],
+                  enum: [...SHAPE_TYPES_V1],
                   description:
                     'box: size, optional r (rounded corners). cylinder: r, h, optional r2 (radius at the +axis end), hole (inner radius: rings, cans, bearings), sides (6 = hex nut). cone: r, h, apex towards +axis. sphere: r, or size for an ellipsoid. torus: r (axis to tube center), tube (tube radius), optional arc. capsule: r, h (total length). lathe: profile revolved around the axis (cans, pulleys, tyres, bottles, stepped shafts). extrude: outline polygon pushed depth along the axis, optional bevel (car body side profiles, brackets, plates, blades). tube: path with radius r (hoses, cables, pipes). line: path drawn as a thin glowing line (seams, wires).',
                 },
@@ -912,6 +1516,112 @@ export function showHologramTool() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Version 2 of the tool (frozen by lead tools V7; version 1 above never changes): realistic shapes.
+// The same input as version 1 (every V1 spec is a valid V2 spec) plus hull (a body carved from its
+// side, top and front views, with arches and cuts) and panel (a part lying on a hull), loft (a skin
+// through cross-sections, with twist), soft boxes, smooth lathes and extrudes, and tapered tubes.
+// Same name, so a conversation has one or the other, never both. Built from the V1 schema.
+
+const V2L = { hulls: L.hulls, panels: L.panels, viewPoints: L.viewPoints, cuts: L.cuts, arches: L.arches, sections: L.sections, sectionPoints: L.sectionPoints };
+const pts2 = (description) => ({ type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, description });
+const coordOrRange = (a) => ({
+  anyOf: [{ type: 'number' }, { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }],
+  description: `The section's ${a}: its station when the loft runs along ${a}; otherwise its center, or [min, max] to give its extent directly (then w or h is not needed).`,
+});
+
+export const SHOW_HOLOGRAM_DESCRIPTION_V2 = [
+  'Show the owner an interactive 3D hologram of a physical object with every part labeled. The owner can rotate and zoom it, expand it into an exploded view, tap a part to read about it, and ask for a 2D blueprint later (only built when they ask).',
+  SHOW_HOLOGRAM_DESCRIPTION.split('\n\n')[1],
+  'Make it look like the real thing, not like blocks: give each part the shape it is really made with. hull: a body you would draw in side, top and front views (car, truck and van bodies, cabs, appliance and device cases, seats, dashboards, castings and housings); the windows, doors, hood, lids, lights, grilles and bumpers on it are panel parts. loft: a form made by its cross-sections along its length (fuselages, boat hulls, wings, fan and propeller blades with twist, handles, oval bottles, organic forms). lathe with smooth: turned and spun parts (tyres, wheels, pulleys, spinners, nacelles, domes, nozzles). box with round: soft blocks (cushions, tanks, battery packs, pods). Keep plain boxes, cylinders, tubes and the other primitives for parts that really have those shapes: shafts, pipes, brackets, fasteners and small inner parts.',
+  "The parts appear one by one while you write the input, so write the large recognizable structure first (a car's body hull, then the panels on it and the wheels; an engine's nacelle and fan) and smaller or inner parts after, and write each part's fields in the order listed (shapes last). Then say in a sentence or two what the owner is looking at; the labels and part cards carry the details.",
+].join('\n\n');
+
+function schemaV2() {
+  const s = JSON.parse(JSON.stringify(HOLOGRAM_INPUT_SCHEMA));
+  const parts = s.properties.parts;
+  parts.description =
+    "The components, each a real, separately nameable part. Aim for 8–20 parts for a simple object, 20–40 for a machine, 35–60 for a vehicle or building (max 80). Coordinates: +y is up, +x is the object's front (a car's nose, an engine's intake), +z is its right side. Put the object on y = 0 or centered on the origin. Use real dimensions and keep parts where they really are relative to each other: believable proportions matter more than detail. A car or truck: one body part with a hull (side, top and front outlines, r about 60, arches at the wheels), then panel parts on it (windows, doors, hood, trunk lid or tailgate, bumpers, grille, lights), then wheels as smooth lathes, then the inner parts. An engine, motor or turbine: smooth lathes for casings, cowls and spinner, and each blade row written once with repeat around the shaft (a loft with twist for fan and propeller blades).";
+  const props = parts.items.properties;
+  props.explode = v3('Offset [dx, dy, dz] of the whole part in the exploded view, in model units, along its natural removal direction (a lid or hood lifts up, a door or wheel moves outward, a shaft slides out along its axis; an engine, motor or gearbox comes apart along its shaft, module by module, with its casings lifted off). Give every part except the central or base one an offset, move neighbours apart so no two parts overlap when exploded, and keep the exploded model within about 2–3 times the assembled size.');
+  props.anchor = v3("Optional point the label's leader line points at (assembled state). Default: the center of the part. Set it for shells and large parts whose center is inside other parts, and for parts made of a left and a right piece (headlights, mirrors, brakes), whose center lies between them.");
+  const shapes = props.shapes;
+  shapes.description = `1–${L.shapesPerPart} shapes (max ${L.shapes} in the whole hologram, of which at most ${V2L.hulls} hulls and ${V2L.panels} panels), positioned in the assembled state. A few accurate shapes beat many sloppy ones; use repeat for evenly spaced copies (blades, fins, bolts, spokes, cells).`;
+  const p = shapes.items.properties;
+  p.type = {
+    type: 'string',
+    enum: [...SHAPE_TYPES],
+    description:
+      'hull: a smooth solid carved from blueprint views (side, top, front, or a revolve profile), its edges rounded by r; cut and arches take material out. panel: a part lying on an earlier part\'s hull (on, face, outline). loft: a smooth skin through cross-sections (sections; optional cap, arches). box: size; round (0–1) makes it a soft block, r only rounds its edges. cylinder: r, h, optional r2 (radius at the +axis end), hole (inner radius: rings, cans, bearings), sides (6 = hex nut). cone: r, h, apex towards +axis. sphere: r, or size for an ellipsoid. torus: r (axis to tube center), tube (tube radius), optional arc. capsule: r, h (total length). lathe: profile revolved around the axis; smooth: true curves it. extrude: outline pushed depth along the axis, optional bevel and smooth (plates, brackets, gears). tube: path with radius r, optional r2 at its end (hoses, cables, exhausts). line: path drawn as a thin glowing line (seams, panel gaps, wires).',
+  };
+  p.at = v3('Center of the shape; for lathe, extrude, tube and line the origin of their profile, outline or path coordinates; for hull and loft an offset added to their outlines and sections (normally left out: write those in model coordinates); a panel has none. Default [0, 0, 0].');
+  p.axis = {
+    type: 'string',
+    enum: [...AXES],
+    description:
+      'cylinder, cone, capsule, torus and lathe: their main axis (default y); a minus sign flips it (cone apex, lathe profile direction). extrude: the push direction: z (default) takes the outline as [x, y] (a side profile), y as [x, z] (a plan outline), x as [z, y] (a front outline). loft: the direction it runs, x (default), y or z. hull: the axis of its revolve profile (default y).',
+  };
+  p.r = { type: 'number', description: "Radius (cylinder, cone, sphere, capsule, tube), torus ring radius, box edge radius, or a hull's edge radius where its views meet (about 60 on a car body, 2–3 on a 150 mm housing)." };
+  p.r2 = { type: 'number', description: 'cylinder: radius at the +axis end. tube: radius at the end of its path (tapers).' };
+  p.round = { type: 'number', minimum: 0, maximum: 1, description: 'box: how soft the block is: 1 = ellipsoid, 0.6 = cushion, 0.4 = soft box (tanks, housings), 0.2 = slightly rounded, 0 = sharp.' };
+  p.smooth = { type: 'boolean', description: 'lathe or extrude: true curves the profile or outline smoothly through its points; sharp turns stay corners, so steps, grooves and chamfers keep their edges.' };
+  p.outline.description = `extrude: closed polygon of up to ${L.outlinePoints} points (do not repeat the first point), in the plane chosen by axis. panel: its outline on the face, in model coordinates: [[x, y], …] on right, left or sides; [[z, y], …] on front or back; [[x, z], …] on top or bottom.`;
+  p.bevel.description = 'extrude: rounding of the edges (e.g. 3 on a 60 mm bracket).';
+  Object.assign(p, {
+    side: pts2(`hull: closed outline of the whole object seen from its right side, [[x, y], …] (up to ${V2L.viewPoints} points), e.g. a car's bumper, hood, windshield, roof, rear window, trunk, tail and underside (leave the wheel openings to arches). Put a point at every corner and enough points along curves: gentle bends become smooth curves, sharp turns stay corners.`),
+    top: pts2('hull: outline seen from above, [[x, z], …] (+z is the right side). For a left-right symmetric object give only the right half, from the centerline (z = 0) round to the centerline, e.g. a sedan [[2390, 0], [2250, 700], [1450, 918], [-1600, 920], [-2497, 0]]; it is mirrored.'),
+    front: pts2('hull: outline seen from the front, [[z, y], …]: the widest cross-section, e.g. a car body with its greenhouse tapering in to the roof (no mirrors or wheels). Right half only (z ≥ 0, starting and ending on z = 0) for a symmetric object. Every view must span the same length, height and width as the others: the solid is only where all of them overlap.'),
+    revolve: pts2('hull: instead of side and top, a profile [[radius, along], …] turned around axis like a lathe, for round housings and covers that need cuts (vent windows, bores, slots). Start or end it on the axis for a solid; a profile that never touches the axis is hollow. Without cuts, use a smooth lathe instead.'),
+    cut: { type: 'array', maxItems: V2L.cuts, items: { type: 'object' }, description: `hull: up to ${V2L.cuts} box, cylinder or sphere shapes (their usual fields, repeat allowed) taken out of the solid with rounded edges: a truck bed (box), vent slots (box with repeat), a bore (cylinder). A symmetric hull mirrors its cuts.` },
+    arches: { type: 'array', maxItems: V2L.arches, items: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, description: 'hull, or loft along x: wheel openings [[x, y, r], …]: the wheel center x and height y (its tyre radius above the ground) and r = tyre radius + about 40. Both sides are cut.' },
+    mirror: { type: 'boolean', description: 'hull: true adds its mirror image across z = 0 (one hull for a pair of door mirrors or seats); automatic for a hull whose top or front is a right half. panel: true also draws the outline mirrored across z = 0 (a pair of headlights) on front, back, top or bottom.' },
+    on: { type: 'string', description: "panel: id of an earlier part that has a hull (normally the body): the panel follows that hull's surface and moves with its own part's explode offset." },
+    face: { type: 'string', enum: [...PANEL_FACES], description: 'panel: the face of that hull the outline is drawn on: right or left ([[x, y], …]), sides (both sides at once), front or back ([[z, y], …]), top or bottom ([[x, z], …]). Doors and side windows on sides, right or left; windshield, rear window, hood and trunk lid on top; headlights and grille on front; taillights on back.' },
+    wrap: { type: 'boolean', description: 'panel: true takes all of the surface inside the outline whichever way it faces, e.g. a bumper drawn on the sides that wraps round the corners.' },
+    sections: {
+      type: 'array',
+      minItems: 2,
+      maxItems: V2L.sections,
+      description: `loft: 2–${V2L.sections} cross-sections in order along the loft (either direction). axis x (default; fuselages, boat hulls, nacelles): each section is { x, y, z, w, h }: x its station, y and z its center (default 0), w its width along z, h its height along y. axis y (blades, posts, bottles standing up): { y, x, z, w, h }: w along x, h along z. axis z (wings, cross beams, lamps): { z, x, y, w, h }: w along x, h along y. A center can be [min, max] instead, giving the extent directly (then w or h is not needed), e.g. "y": [180, 840]. Each section is a superellipse: round 1 (default) = ellipse, 0.5 = soft box, 0.2 = box with rounded corners, 0 = rectangle. The skin passes smoothly through every section and never bulges beyond them, so add a section wherever the shape changes. Typical: 6–14 sections for a fuselage or boat hull, 3–5 for a blade.`,
+      items: {
+        type: 'object',
+        properties: {
+          x: coordOrRange('x'),
+          y: coordOrRange('y'),
+          z: coordOrRange('z'),
+          w: { type: 'number', description: 'Width (along z for axis x, along x for axes y and z).' },
+          h: { type: 'number', description: 'Height (along y for axes x and z, along z for axis y).' },
+          d: { type: 'number', description: 'Diameter: sets w and h of a round section.' },
+          round: { type: 'number', minimum: 0, maximum: 1, description: 'Squareness: 1 = ellipse (default), 0.5 = soft box, 0.2 = rounded box, 0 = rectangle.' },
+          top: { type: 'number', description: 'Optional width at the top of the section: narrower than w for a cabin leaning in, wider for a boat hull flaring out.' },
+          twist: { type: 'number', description: 'Optional rotation in degrees about the loft axis (blades and propellers: more at the tip than at the root).' },
+          pts: { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, description: `Optional custom outline instead of w and h: up to ${V2L.sectionPoints} [u, v] points in the section's plane (u, v as w, h), offset by its center.` },
+        },
+      },
+    },
+    cap: { anyOf: [{ type: 'boolean' }, { type: 'string', enum: ['start', 'end'] }], description: 'loft: close both ends (true, default), neither (false: a duct or shell), or only the first ("start") or last ("end") section as written.' },
+  });
+  return s;
+}
+
+export const HOLOGRAM_INPUT_SCHEMA_V2 = schemaV2();
+
+/**
+ * The show_hologram tool definition, version 2 (realistic shapes), deeply frozen like version 1.
+ * Frozen into new conversations by lead tools V7 (src/engine/prompts.js): never edit it.
+ */
+export const SHOW_HOLOGRAM_TOOL_V2 = deepFreeze({
+  name: 'show_hologram',
+  description: SHOW_HOLOGRAM_DESCRIPTION_V2,
+  input_schema: HOLOGRAM_INPUT_SCHEMA_V2,
+  eager_input_streaming: true,
+});
+
+/** A fresh, mutable deep copy of the version 2 tool definition (for a tools list). */
+export function showHologramToolV2() {
+  return JSON.parse(JSON.stringify(SHOW_HOLOGRAM_TOOL_V2));
+}
+
+// ---------------------------------------------------------------------------------------------
 // Approximate bounds (assembled state), from the normalized shapes: used to describe a part's size
 // in words (e.g. the engine's "Blueprint request" block). Mirrors the renderer's placement: round
 // shapes along +y and extrusions along +z before `axis`, then `rot` (Euler XYZ, degrees), then `at`,
@@ -970,16 +1680,77 @@ function localBox(s) {
       return [[Math.min(...us), Math.min(...vs), -s.depth / 2], [Math.max(...us), Math.max(...vs), s.depth / 2]];
     }
     case 'tube':
-      return ofPoints(s.path, s.r);
+      return ofPoints(s.path, Math.max(s.r, s.r2 ?? s.r));
     case 'line':
       return ofPoints(s.path);
+    case 'loft':
+      return loftBox(s);
+    case 'hull': {
+      const b = hullBox(s);
+      return b ? [[b.x[0], b.y[0], b.z[0]], [b.x[1], b.y[1], b.z[1]]] : null;
+    }
+    case 'panel': {
+      // the outline's extent in its plane; across it, the face of the hull it lies on (span)
+      const plane = PANEL_PLANES[s.face] || ['x', 'y'];
+      const depth = PANEL_DEPTH_AXIS[s.face] || 'z';
+      const lo = { x: 0, y: 0, z: 0 };
+      const hi = { x: 0, y: 0, z: 0 };
+      plane.forEach((axis, i) => {
+        lo[axis] = Math.min(...s.outline.map((p) => p[i]));
+        hi[axis] = Math.max(...s.outline.map((p) => p[i]));
+        if (axis === 'z' && s.mirror) {
+          const m = Math.max(Math.abs(lo.z), Math.abs(hi.z));
+          lo.z = -m;
+          hi.z = m;
+        }
+      });
+      if (Array.isArray(s.span)) {
+        lo[depth] = s.span[0];
+        hi[depth] = s.span[1];
+      }
+      return [[lo.x, lo.y, lo.z], [hi.x, hi.y, hi.z]];
+    }
     default:
       return null;
   }
 }
 
+/** A loft's box: each section's extent across the axis (twisted sections by their circle). */
+function loftBox(s) {
+  const axis = s.axis || 'x';
+  const [uKey, vKey] = SECTION_KEYS[axis];
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  const put = (k, a, b) => {
+    lo[k] = Math.min(lo[k], a);
+    hi[k] = Math.max(hi[k], b);
+  };
+  for (const sec of s.sections) {
+    const cu = sec[uKey] || 0;
+    const cv = sec[vKey] || 0;
+    let u0, u1, v0, v1;
+    if (sec.pts) {
+      const us = sec.pts.map((p) => p[0]);
+      const vs = sec.pts.map((p) => p[1]);
+      [u0, u1, v0, v1] = [Math.min(...us), Math.max(...us), Math.min(...vs), Math.max(...vs)];
+    } else {
+      const hw = Math.max(sec.w, sec.top ?? 0) / 2;
+      [u0, u1, v0, v1] = [-hw, hw, -sec.h / 2, sec.h / 2];
+    }
+    if (sec.twist) {
+      const rr = Math.max(Math.hypot(u0, v0), Math.hypot(u0, v1), Math.hypot(u1, v0), Math.hypot(u1, v1));
+      [u0, u1, v0, v1] = [-rr, rr, -rr, rr];
+    }
+    put(AXIS_K[axis], sec[axis], sec[axis]);
+    put(AXIS_K[uKey], cu + u0, cu + u1);
+    put(AXIS_K[vKey], cv + v0, cv + v1);
+  }
+  return [lo, hi];
+}
+
 function shapeTurn(s) {
-  let m = s.type === 'extrude' ? EXTRUDE_TURN[(s.axis || 'z').replace('-', '')] || IDENTITY : AXIS_TURN[s.axis || 'y'] || IDENTITY;
+  // lofts, hulls and panels are built in place (a hull's axis belongs to its revolve profile)
+  let m = s.type === 'loft' || s.type === 'hull' || s.type === 'panel' ? IDENTITY : s.type === 'extrude' ? EXTRUDE_TURN[(s.axis || 'z').replace('-', '')] || IDENTITY : AXIS_TURN[s.axis || 'y'] || IDENTITY;
   if (Array.isArray(s.rot)) m = mul3(mul3(mul3(rotX(s.rot[0] * RAD), rotY(s.rot[1] * RAD)), rotZ(s.rot[2] * RAD)), m);
   return m;
 }

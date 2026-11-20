@@ -1,0 +1,152 @@
+{
+  "title": "2024 Tesla Model 3 (Highland)",
+  "subtitle": "Dual-motor AWD · 4,720 mm long · 2,875 mm wheelbase",
+  "units": "mm",
+  "view": "front-left",
+  "parts": [
+    {
+      "id": "body",
+      "name": "Body shell",
+      "tone": "secondary",
+      "info": "Steel and aluminium unibody with large single-piece castings front and rear.",
+      "explode": [0, 1400, 0],
+      "anchor": [-300, 1420, 0],
+      "shapes": [
+        {"type": "hull", "side": [[2277, 420], [2265, 560], [2220, 660], [2120, 730], [1800, 800], [1400, 860], [1000, 960], [600, 1180], [150, 1395], [-250, 1441], [-800, 1405], [-1400, 1270], [-1900, 1140], [-2180, 1085], [-2380, 1060], [-2442, 980], [-2440, 700], [-2400, 460], [-2300, 330], [-1900, 260], [-1100, 145], [1100, 140], [1900, 230], [2200, 300], [2262, 360]], "top": [[2277, 0], [2260, 300], [2200, 560], [2080, 760], [1850, 890], [1500, 925], [-1700, 925], [-2100, 905], [-2330, 840], [-2420, 600], [-2442, 0]], "front": [[0, 140], [800, 150], [890, 260], [925, 600], [920, 820], [880, 990], [760, 1200], [620, 1390], [400, 1438], [0, 1441]], "r": 60, "arches": [[1437, 335, 375], [-1437, 335, 375]]}
+      ]
+    },
+    {
+      "id": "glass",
+      "name": "Glass roof and windows",
+      "tone": "accent",
+      "info": "One-piece glass roof flowing into the windshield and rear glass, with frameless side windows.",
+      "explode": [0, 2200, 0],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "sides", "outline": [[1000, 1000], [600, 1190], [180, 1375], [-500, 1385], [-1100, 1300], [-1500, 1120], [-1450, 1040], [-500, 1025], [400, 1010]]},
+        {"type": "panel", "on": "body", "face": "top", "outline": [[1000, -700], [1000, 700], [150, 640], [-1900, 620], [-1900, -620], [150, -640]]}
+      ]
+    },
+    {
+      "id": "door-fl",
+      "name": "Front door (L)",
+      "tone": "secondary",
+      "info": "Frameless door with an electronic release button instead of a handle latch.",
+      "explode": [0, 0, -800],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "left", "outline": [[1000, 250], [1000, 995], [-60, 1018], [-60, 250]]}
+      ]
+    },
+    {
+      "id": "door-rl",
+      "name": "Rear door (L)",
+      "tone": "secondary",
+      "info": "Rear door; its trailing edge runs round the rear wheel arch.",
+      "explode": [0, 0, -800],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "left", "outline": [[-80, 250], [-80, 1020], [-1050, 1040], [-1150, 800], [-1080, 480], [-900, 250]]}
+      ]
+    },
+    {
+      "id": "door-fr",
+      "name": "Front door (R)",
+      "tone": "secondary",
+      "info": "Frameless front passenger door.",
+      "explode": [0, 0, 800],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "right", "outline": [[1000, 250], [1000, 995], [-60, 1018], [-60, 250]]}
+      ]
+    },
+    {
+      "id": "door-rr",
+      "name": "Rear door (R)",
+      "tone": "secondary",
+      "info": "Rear passenger door.",
+      "explode": [0, 0, 800],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "right", "outline": [[-80, 250], [-80, 1020], [-1050, 1040], [-1150, 800], [-1080, 480], [-900, 250]]}
+      ]
+    },
+    {
+      "id": "frunk-lid",
+      "name": "Frunk lid",
+      "tone": "secondary",
+      "info": "Front trunk lid over an 88-litre storage tub; there is no engine up front.",
+      "explode": [400, 1500, 0],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "top", "outline": [[2150, -620], [2150, 620], [1900, 820], [1020, 880], [1020, -880], [1900, -820]]}
+      ]
+    },
+    {
+      "id": "headlights",
+      "name": "Headlights",
+      "tone": "accent",
+      "info": "Slim matrix LED headlights.",
+      "explode": [700, 300, 0],
+      "anchor": [2230, 700, -650],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "front", "mirror": true, "outline": [[420, 700], [700, 735], [860, 720], [880, 690], [700, 690], [440, 675]]}
+      ]
+    },
+    {
+      "id": "taillights",
+      "name": "Taillights",
+      "tone": "accent",
+      "info": "C-shaped LED taillights across the rear corners.",
+      "explode": [-700, 300, 0],
+      "anchor": [-2420, 1000, -650],
+      "shapes": [
+        {"type": "panel", "on": "body", "face": "back", "mirror": true, "outline": [[300, 1000], [820, 1010], [880, 960], [860, 930], [320, 955]]}
+      ]
+    },
+    {
+      "id": "wheel-fl",
+      "name": "Wheel and tyre (FL)",
+      "info": "19-inch wheel on a 235/40R19 tyre.",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "z", "at": [1437, 335, -790], "profile": [[240, -105], [300, -117], [325, -110], [334, -90], [337, 0], [334, 90], [325, 110], [300, 117], [240, 105]]},
+        {"type": "box", "at": [1437, 440, -860], "size": [40, 170, 20], "repeat": {"count": 5, "around": "z", "center": [1437, 335, -790]}}
+      ]
+    },
+    {
+      "id": "wheel-fr",
+      "name": "Wheel and tyre (FR)",
+      "info": "19-inch wheel on a 235/40R19 tyre.",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "z", "at": [1437, 335, 790], "profile": [[240, -105], [300, -117], [325, -110], [334, -90], [337, 0], [334, 90], [325, 110], [300, 117], [240, 105]]},
+        {"type": "box", "at": [1437, 440, 860], "size": [40, 170, 20], "repeat": {"count": 5, "around": "z", "center": [1437, 335, 790]}}
+      ]
+    },
+    {
+      "id": "wheel-rl",
+      "name": "Wheel and tyre (RL)",
+      "info": "19-inch wheel on a 235/40R19 tyre.",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "z", "at": [-1437, 335, -795], "profile": [[240, -105], [300, -117], [325, -110], [334, -90], [337, 0], [334, 90], [325, 110], [300, 117], [240, 105]]},
+        {"type": "box", "at": [-1437, 440, -865], "size": [40, 170, 20], "repeat": {"count": 5, "around": "z", "center": [-1437, 335, -795]}}
+      ]
+    },
+    {
+      "id": "wheel-rr",
+      "name": "Wheel and tyre (RR)",
+      "info": "19-inch wheel on a 235/40R19 tyre.",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "z", "at": [-1437, 335, 795], "profile": [[240, -105], [300, -117], [325, -110], [334, -90], [337, 0], [334, 90], [325, 110], [300, 117], [240, 105]]},
+        {"type": "box", "at": [-1437, 440, 865], "size": [40, 170, 20], "repeat": {"count": 5, "around": "z", "center": [-1437, 335, 795]}}
+      ]
+    },
+    {
+      "id": "battery",
+      "name": "Battery pack",
+      "tone": "warning",
+      "info": "Floor-mounted lithium-ion pack (about 75 kWh) between the axles.",
+      "explode": [0, -600, 0],
+      "shapes": [
+        {"type": "box", "at": [0, 250, 0], "size": [2100, 130, 1500], "r": 30}
+      ]
+    }
+  ]
+}

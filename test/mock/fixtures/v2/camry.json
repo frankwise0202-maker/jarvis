@@ -1,0 +1,610 @@
+{
+  "title": "2024 Toyota Camry Hybrid (XV70)",
+  "subtitle": "Front-wheel drive · 2.5 L hybrid, 208 hp · 4,885 mm long",
+  "units": "mm",
+  "view": "front-left",
+  "groups": [
+    {"id": "body", "name": "Body"},
+    {"id": "wheels", "name": "Wheels and brakes"},
+    {"id": "chassis", "name": "Chassis and steering"},
+    {"id": "hybrid", "name": "Hybrid powertrain"},
+    {"id": "engine-bay", "name": "Engine bay"},
+    {"id": "interior", "name": "Interior"}
+  ],
+  "parts": [
+    {
+      "id": "body-shell",
+      "name": "Body shell",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Unibody of the TNGA-K platform: floor, sides, fenders and pillars form one welded steel structure, with ultra-high-strength steel in the crash load paths.",
+      "material": "Steel, ultra-high-strength steel, aluminium hood",
+      "explode": [0, 1500, 0],
+      "anchor": [-300, 1440, 0],
+      "shapes": [
+        {"type": "hull", "side": [[2387, 470], [2378, 560], [2350, 650], [2300, 730], [2230, 785], [1900, 858], [1500, 925], [1150, 972], [1050, 992], [700, 1190], [290, 1405], [0, 1438], [-200, 1445], [-550, 1435], [-800, 1398], [-1100, 1290], [-1400, 1170], [-1680, 1070], [-2100, 1075], [-2370, 1082], [-2410, 1078], [-2450, 1050], [-2488, 960], [-2497, 800], [-2488, 600], [-2450, 420], [-2380, 305], [-2220, 268], [-1850, 232], [-1100, 172], [1100, 166], [1800, 200], [2200, 226], [2330, 300], [2376, 382]], "top": [[2387, 0], [2370, 330], [2320, 560], [2250, 700], [2160, 800], [2020, 868], [1800, 906], [1450, 918], [800, 920], [-1600, 920], [-1900, 906], [-2150, 862], [-2320, 782], [-2440, 610], [-2488, 320], [-2497, 0]], "front": [[0, 1445], [560, 1415.2558], [650, 1368.6566], [705, 1291.3217], [760, 1182.2597], [812, 1083.1124], [852, 1035.5217], [892, 993.8798], [913, 934.3915], [920, 805.5], [920, 656.7791], [915, 488.2287], [900, 339.5078], [870, 242.3434], [820, 187.8124], [700, 170.9574], [0, 166]], "r": 60, "arches": [[1412.5, 334, 382], [-1412.5, 334, 382]]}
+      ]
+    },
+    {
+      "id": "glass",
+      "name": "Windows",
+      "group": "body",
+      "tone": "accent",
+      "info": "Laminated acoustic windshield, tempered side glass and the steeply raked rear window that gives this generation its coupe-like roofline.",
+      "material": "Laminated and tempered glass",
+      "explode": [0, 2300, 0],
+      "anchor": [650, 1200, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "sides", "outline": [[985, 1012], [870, 1082], [600, 1242], [330, 1376], [0, 1399], [-400, 1396], [-760, 1370], [-1000, 1300], [-1250, 1182], [-1480, 1086], [-1420, 1073], [-900, 1058], [-300, 1046], [400, 1031]]},
+        {"type": "panel", "on": "body-shell", "face": "top", "outline": [[1030, -690], [1030, 690], [880, 702], [320, 612], [320, -612], [880, -702]]},
+        {"type": "panel", "on": "body-shell", "face": "top", "outline": [[-830, -590], [-830, 590], [-1620, 682], [-1620, -682]]}
+      ]
+    },
+    {
+      "id": "door-fl",
+      "name": "Front door (L)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Driver's door: a steel skin over a side-impact beam, with the window regulator and speaker inside.",
+      "material": "Steel, glass",
+      "explode": [0, 0, -800],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "left", "outline": [[1015, 236], [1015, 1006], [700, 1022], [-70, 1040], [-70, 236]]}
+      ]
+    },
+    {
+      "id": "door-rl",
+      "name": "Rear door (L)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Rear door; its trailing edge follows the rear wheel arch.",
+      "material": "Steel",
+      "explode": [0, 0, -800],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "left", "outline": [[-90, 236], [-90, 1042], [-1030, 1060], [-1150, 930], [-1112, 640], [-1010, 470], [-905, 236]]}
+      ]
+    },
+    {
+      "id": "door-fr",
+      "name": "Front door (R)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Front passenger door.",
+      "material": "Steel, glass",
+      "explode": [0, 0, 800],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "right", "outline": [[1015, 236], [1015, 1006], [700, 1022], [-70, 1040], [-70, 236]]}
+      ]
+    },
+    {
+      "id": "door-rr",
+      "name": "Rear door (R)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Rear passenger door.",
+      "material": "Steel",
+      "explode": [0, 0, 800],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "right", "outline": [[-90, 236], [-90, 1042], [-1030, 1060], [-1150, 930], [-1112, 640], [-1010, 470], [-905, 236]]}
+      ]
+    },
+    {
+      "id": "hood",
+      "name": "Hood",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Aluminium hood: light, and it deforms to protect pedestrians in a collision.",
+      "material": "Aluminium",
+      "explode": [450, 1700, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "top", "outline": [[2240, -560], [2240, 560], [2120, 742], [1072, 772], [1072, -772], [2120, -742]]}
+      ]
+    },
+    {
+      "id": "trunk-lid",
+      "name": "Trunk lid",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Trunk lid with an integrated lip spoiler; 15.1 cubic feet of space below it.",
+      "material": "Steel",
+      "explode": [-450, 1700, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "top", "outline": [[-1700, -622], [-1700, 622], [-2390, 702], [-2432, 452], [-2432, -452], [-2390, -702]]}
+      ]
+    },
+    {
+      "id": "front-bumper",
+      "name": "Front bumper and grille",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Plastic bumper cover over a foam absorber and steel beam, with the wide lower grille that feeds the radiators.",
+      "material": "Polypropylene, steel beam",
+      "explode": [750, 0, 0],
+      "anchor": [2380, 420, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "sides", "wrap": true, "outline": [[2150, 150], [2150, 760], [2430, 760], [2430, 150]]},
+        {"type": "panel", "on": "body-shell", "face": "front", "outline": [[-640, 255], [640, 255], [598, 556], [-598, 556]]}
+      ]
+    },
+    {
+      "id": "rear-bumper",
+      "name": "Rear bumper",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Rear bumper cover with the reflectors and the exhaust cut-outs.",
+      "material": "Polypropylene, steel beam",
+      "explode": [-750, 0, 0],
+      "anchor": [-2490, 450, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "sides", "wrap": true, "outline": [[-2530, 200], [-2530, 700], [-2160, 700], [-2160, 200]]}
+      ]
+    },
+    {
+      "id": "headlights",
+      "name": "Headlights",
+      "group": "body",
+      "tone": "accent",
+      "info": "Slim LED headlights that sweep back into the fenders, with LED daytime running lights.",
+      "material": "Polycarbonate lens, LED modules",
+      "explode": [700, 300, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "front", "mirror": true, "outline": [[420, 736], [700, 756], [852, 792], [886, 760], [760, 714], [450, 700]]},
+        {"type": "panel", "on": "body-shell", "face": "sides", "outline": [[2060, 830], [2290, 772], [2340, 712], [2200, 760], [2040, 806]]}
+      ]
+    },
+    {
+      "id": "taillights",
+      "name": "Taillights",
+      "group": "body",
+      "tone": "accent",
+      "info": "LED combination lamps that wrap from the trunk lid around the rear corners.",
+      "material": "Polycarbonate lens, LEDs",
+      "explode": [-700, 300, 0],
+      "shapes": [
+        {"type": "panel", "on": "body-shell", "face": "back", "mirror": true, "outline": [[300, 902], [800, 926], [892, 880], [882, 800], [600, 812], [322, 852]]},
+        {"type": "panel", "on": "body-shell", "face": "sides", "outline": [[-2200, 1000], [-2440, 990], [-2480, 900], [-2300, 905], [-2180, 950]]}
+      ]
+    },
+    {
+      "id": "mirrors",
+      "name": "Door mirrors",
+      "group": "body",
+      "tone": "primary",
+      "info": "Heated, power-folding door mirrors with the blind-spot warning lights.",
+      "material": "Plastic housing, glass",
+      "explode": [0, 300, 0],
+      "shapes": [
+        {"type": "hull", "mirror": true, "side": [[1150, 1012], [1142, 1082], [1092, 1132], [950, 1142], [900, 1100], [902, 1022], [960, 992]], "top": [[1139.7541, 845], [1150, 952], [1111.0656, 1062], [1018.8525, 1102], [916.3934, 1086], [900, 952], [926.6393, 846]], "front": [[845, 1001.8684], [999.5865, 992], [1088.4737, 1003.8421], [1102, 1063.0526], [1088.4737, 1132.1316], [999.5865, 1142], [845, 1120.2895]]}
+      ]
+    },
+    {
+      "id": "wheel-fl",
+      "name": "Wheel and tyre (FL)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Front left: an 18-inch alloy wheel with a 235/45R18 tyre (XLE). The LE uses 16-inch wheels with taller 205/65R16 tyres for a softer ride and better economy.",
+      "material": "235/45R18 tyre, 18-inch aluminium alloy wheel",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [1412, 334, -795], "profile": [[229, -100], [292, -117], [318, -113], [331, -96], [336, -50], [337, 0], [336, 50], [331, 96], [318, 113], [292, 117], [229, 100]]},
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, -795], "r": 228, "hole": 214, "h": 200},
+        {"type": "box", "at": [1412, 462, -870], "size": [34, 175, 22], "repeat": {"count": 10, "around": "z", "center": [1412, 334, -795]}},
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, -875], "r": 62, "h": 30},
+        {"type": "cylinder", "axis": "z", "at": [1412, 391, -887], "r": 11, "h": 22, "sides": 6, "repeat": {"count": 5, "around": "z", "center": [1412, 334, -795]}}
+      ]
+    },
+    {
+      "id": "wheel-fr",
+      "name": "Wheel and tyre (FR)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Front right driven wheel. The front wheels both steer and drive this front-wheel-drive car.",
+      "material": "235/45R18 tyre, 18-inch aluminium alloy wheel",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [1412, 334, 795], "profile": [[229, -100], [292, -117], [318, -113], [331, -96], [336, -50], [337, 0], [336, 50], [331, 96], [318, 113], [292, 117], [229, 100]]},
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, 795], "r": 228, "hole": 214, "h": 200},
+        {"type": "box", "at": [1412, 462, 870], "size": [34, 175, 22], "repeat": {"count": 10, "around": "z", "center": [1412, 334, 795]}},
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, 875], "r": 62, "h": 30},
+        {"type": "cylinder", "axis": "z", "at": [1412, 391, 887], "r": 11, "h": 22, "sides": 6, "repeat": {"count": 5, "around": "z", "center": [1412, 334, 795]}}
+      ]
+    },
+    {
+      "id": "wheel-rl",
+      "name": "Wheel and tyre (RL)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Rear left wheel; the rear track is slightly wider than the front.",
+      "material": "235/45R18 tyre, 18-inch aluminium alloy wheel",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [-1412, 334, -800], "profile": [[229, -100], [292, -117], [318, -113], [331, -96], [336, -50], [337, 0], [336, 50], [331, 96], [318, 113], [292, 117], [229, 100]]},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, -800], "r": 228, "hole": 214, "h": 200},
+        {"type": "box", "at": [-1412, 462, -875], "size": [34, 175, 22], "repeat": {"count": 10, "around": "z", "center": [-1412, 334, -800]}},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, -880], "r": 62, "h": 30},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 391, -892], "r": 11, "h": 22, "sides": 6, "repeat": {"count": 5, "around": "z", "center": [-1412, 334, -800]}}
+      ]
+    },
+    {
+      "id": "wheel-rr",
+      "name": "Wheel and tyre (RR)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Rear right wheel; its brake disc is solid rather than ventilated.",
+      "material": "235/45R18 tyre, 18-inch aluminium alloy wheel",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [-1412, 334, 800], "profile": [[229, -100], [292, -117], [318, -113], [331, -96], [336, -50], [337, 0], [336, 50], [331, 96], [318, 113], [292, 117], [229, 100]]},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, 800], "r": 228, "hole": 214, "h": 200},
+        {"type": "box", "at": [-1412, 462, 875], "size": [34, 175, 22], "repeat": {"count": 10, "around": "z", "center": [-1412, 334, 800]}},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, 880], "r": 62, "h": 30},
+        {"type": "cylinder", "axis": "z", "at": [-1412, 391, 892], "r": 11, "h": 22, "sides": 6, "repeat": {"count": 5, "around": "z", "center": [-1412, 334, 800]}}
+      ]
+    },
+    {
+      "id": "brake-fl",
+      "name": "Front brake (L)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Ventilated 305 mm front disc with a single-piston sliding caliper. Most everyday stops are made by regenerative braking: the motor slows the car and recharges the battery, so the pads last a long time.",
+      "material": "Cast-iron disc, cast-iron caliper, organic pads",
+      "explode": [0, 0, -420],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, -715], "r": 152, "hole": 70, "h": 28},
+        {"type": "box", "at": [1292.5, 403, -715], "size": [150, 70, 100], "r": 10, "rot": [0, 0, 60]}
+      ]
+    },
+    {
+      "id": "brake-fr",
+      "name": "Front brake (R)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Ventilated 305 mm front disc with a single-piston sliding caliper. Most everyday stops are made by regenerative braking: the motor slows the car and recharges the battery, so the pads last a long time.",
+      "material": "Cast-iron disc, cast-iron caliper, organic pads",
+      "explode": [0, 0, 420],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [1412, 334, 715], "r": 152, "hole": 70, "h": 28},
+        {"type": "box", "at": [1292.5, 403, 715], "size": [150, 70, 100], "r": 10, "rot": [0, 0, 60]}
+      ]
+    },
+    {
+      "id": "brake-rl",
+      "name": "Rear brake (L)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Solid 281 mm rear disc and caliper; the electric parking brake works on the rear calipers. Friction brakes blend in only when regenerative braking is not enough.",
+      "material": "Cast-iron disc, cast-iron caliper, organic pads",
+      "explode": [0, 0, -420],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, -725], "r": 140, "hole": 62, "h": 12},
+        {"type": "box", "at": [-1302.9, 397, -725], "size": [120, 60, 80], "r": 10, "rot": [0, 0, -60]}
+      ]
+    },
+    {
+      "id": "brake-rr",
+      "name": "Rear brake (R)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Solid 281 mm rear disc and caliper; the electric parking brake works on the rear calipers. Friction brakes blend in only when regenerative braking is not enough.",
+      "material": "Cast-iron disc, cast-iron caliper, organic pads",
+      "explode": [0, 0, 420],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [-1412, 334, 725], "r": 140, "hole": 62, "h": 12},
+        {"type": "box", "at": [-1302.9, 397, 725], "size": [120, 60, 80], "r": 10, "rot": [0, 0, -60]}
+      ]
+    },
+    {
+      "id": "engine",
+      "name": "2.5 L engine (A25A-FXS)",
+      "group": "hybrid",
+      "tone": "primary",
+      "info": "Atkinson-cycle 2.5 L four-cylinder, about 41% thermal efficiency. There is no accessory belt: the water pump, A/C compressor and steering are electric, and a motor-generator starts it.",
+      "material": "Aluminium block and head",
+      "explode": [0, 520, 300],
+      "shapes": [
+        {"type": "box", "at": [1720, 500, 170], "size": [460, 340, 560], "r": 20},
+        {"type": "box", "at": [1710, 730, 170], "size": [400, 120, 540], "r": 15},
+        {"type": "box", "at": [1710, 815, 170], "size": [330, 60, 500], "r": 25},
+        {"type": "box", "at": [1730, 290, 170], "size": [380, 100, 460], "r": 25},
+        {"type": "cylinder", "axis": "z", "at": [1980, 680, 170], "r": 65, "h": 480},
+        {"type": "tube", "path": [[1960, 660, 5], [1915, 760, 5], [1870, 770, 5]], "r": 22, "repeat": {"count": 4, "along": [0, 0, 110]}}
+      ]
+    },
+    {
+      "id": "transaxle",
+      "name": "Hybrid transaxle (eCVT)",
+      "group": "hybrid",
+      "tone": "primary",
+      "info": "Toyota's P710 hybrid transaxle: two motor-generators and a planetary gear set that blend engine and electric power with no conventional gears. MG2 (88 kW) drives the wheels; MG1 starts the engine and charges.",
+      "material": "Aluminium case, copper windings, steel gears",
+      "explode": [0, 300, -380],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [1640, 480, -290], "r": 205, "h": 360},
+        {"type": "cylinder", "axis": "z", "at": [1640, 480, -530], "r": 160, "h": 140},
+        {"type": "cylinder", "axis": "z", "at": [1440, 330, -250], "r": 150, "h": 280}
+      ]
+    },
+    {
+      "id": "pcu",
+      "name": "Power control unit",
+      "group": "hybrid",
+      "tone": "warning",
+      "info": "The inverter assembly on top of the transaxle: it boosts the battery's roughly 250 V up to 650 V and converts it to three-phase AC for the motor-generators, and back again when regenerating.",
+      "material": "Aluminium case, SiC and IGBT power modules, liquid cooled",
+      "explode": [0, 620, -420],
+      "shapes": [
+        {"type": "box", "at": [1640, 780, -300], "size": [400, 170, 480], "r": 20},
+        {"type": "box", "at": [1430, 760, -250], "size": [80, 60, 120], "r": 8}
+      ]
+    },
+    {
+      "id": "dcdc-converter",
+      "name": "DC-DC converter",
+      "aka": ["alternator", "DC converter", "converter"],
+      "group": "hybrid",
+      "tone": "accent",
+      "info": "The Camry Hybrid has no alternator. This DC-DC converter, built into the power control unit, steps the hybrid battery's ~250 V down to about 14 V to run the 12 V system and keep the 12 V battery charged.",
+      "material": "Power electronics in the inverter housing",
+      "explode": [260, 760, -620],
+      "shapes": [
+        {"type": "box", "at": [1700, 760, -430], "size": [170, 70, 200], "r": 10}
+      ]
+    },
+    {
+      "id": "hybrid-battery",
+      "name": "Hybrid battery",
+      "group": "hybrid",
+      "tone": "warning",
+      "info": "High-voltage traction battery under the rear seat cushion: lithium-ion on the LE, nickel-metal hydride on other trims, at about 245 to 260 V. A small fan cools it with cabin air.",
+      "material": "Li-ion or NiMH cells, steel case",
+      "explode": [0, 150, -950],
+      "shapes": [
+        {"type": "box", "at": [-760, 395, 0], "size": [460, 180, 1080], "r": 20},
+        {"type": "line", "path": [[-950, 486, -520], [-950, 486, 520]], "repeat": {"count": 6, "along": [76, 0, 0]}}
+      ]
+    },
+    {
+      "id": "hv-cables",
+      "name": "High-voltage cables",
+      "group": "hybrid",
+      "tone": "warning",
+      "info": "Orange cables run under the floor from the hybrid battery to the power control unit. Orange always means high voltage: never cut or touch them.",
+      "material": "Shielded copper cable, orange insulation",
+      "explode": [0, 60, -250],
+      "shapes": [
+        {"type": "tube", "path": [[-560, 360, -430], [-400, 260, -560], [300, 250, -560], [1000, 260, -480], [1350, 450, -360], [1450, 720, -320]], "r": 14, "repeat": {"count": 2, "along": [0, 0, 36]}}
+      ]
+    },
+    {
+      "id": "battery-12v",
+      "name": "12 V battery",
+      "group": "engine-bay",
+      "tone": "primary",
+      "info": "The 12 V auxiliary battery in the engine bay powers the computers, lights and accessories, and wakes the hybrid system. The DC-DC converter keeps it charged.",
+      "material": "Lead-acid (AGM), polypropylene case",
+      "explode": [450, 450, -450],
+      "shapes": [
+        {"type": "box", "at": [2040, 650, -560], "size": [175, 190, 240], "r": 8},
+        {"type": "cylinder", "at": [2090, 755, -500], "r": 9, "h": 22, "repeat": {"count": 2, "along": [0, 0, -120]}}
+      ]
+    },
+    {
+      "id": "radiators",
+      "name": "Radiators and fans",
+      "group": "engine-bay",
+      "tone": "primary",
+      "info": "Engine radiator with the A/C condenser in front and two electric fans behind. The power control unit has its own separate low-temperature coolant loop.",
+      "material": "Aluminium cores, plastic tanks and fan shroud",
+      "explode": [550, 150, 0],
+      "shapes": [
+        {"type": "box", "at": [2240, 520, 0], "size": [36, 440, 740]},
+        {"type": "box", "at": [2290, 520, 0], "size": [18, 400, 720]},
+        {"type": "cylinder", "axis": "x", "at": [2190, 520, -190], "r": 165, "hole": 50, "h": 50, "repeat": {"count": 2, "along": [0, 0, 380]}},
+        {"type": "cylinder", "axis": "x", "at": [2190, 520, -190], "r": 45, "h": 60, "repeat": {"count": 2, "along": [0, 0, 380]}}
+      ]
+    },
+    {
+      "id": "ac-compressor",
+      "name": "Electric A/C compressor",
+      "group": "engine-bay",
+      "tone": "primary",
+      "info": "Driven by its own electric motor from the high-voltage system rather than an engine belt, so the A/C keeps running with the engine off.",
+      "material": "Aluminium housing, scroll compressor",
+      "explode": [350, 250, 450],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [2060, 380, 330], "r": 70, "h": 240},
+        {"type": "box", "at": [2060, 470, 330], "size": [120, 60, 160], "r": 8}
+      ]
+    },
+    {
+      "id": "exhaust",
+      "name": "Exhaust system",
+      "group": "hybrid",
+      "tone": "primary",
+      "info": "Manifold, close-coupled catalytic converter, centre resonator and rear muffler. The catalyst sits right behind the engine so it heats up quickly in a car whose engine often switches off.",
+      "material": "Stainless steel, ceramic catalyst substrate",
+      "explode": [0, -320, 380],
+      "shapes": [
+        {"type": "tube", "path": [[1500, 640, 0], [1470, 610, 170], [1440, 580, 330]], "r": 30},
+        {"type": "capsule", "at": [1420, 450, 340], "r": 70, "h": 280},
+        {"type": "tube", "path": [[1420, 310, 340], [1300, 210, 250], [800, 190, 30], [0, 190, 0], [-300, 195, 120], [-900, 210, 330], [-1600, 280, 330], [-1850, 300, 330]], "r": 28},
+        {"type": "capsule", "axis": "x", "at": [350, 190, 12], "r": 60, "h": 420},
+        {"type": "capsule", "axis": "z", "at": [-2030, 300, 150], "r": 115, "h": 620}
+      ]
+    },
+    {
+      "id": "fuel-tank",
+      "name": "Fuel tank",
+      "group": "hybrid",
+      "tone": "primary",
+      "info": "About 50 L (13.2 US gal) under the rear floor, enough for roughly 600 miles at the EPA rating.",
+      "material": "Multilayer plastic (HDPE)",
+      "explode": [0, -250, -250],
+      "shapes": [
+        {"type": "box", "at": [-600, 225, -40], "size": [500, 170, 600], "r": 40}
+      ]
+    },
+    {
+      "id": "front-suspension",
+      "name": "Front suspension",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "MacPherson struts: each coil spring sits around a damper that also locates the wheel, with an L-shaped lower arm and an anti-roll bar.",
+      "material": "Steel springs and arms, gas dampers",
+      "explode": [0, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "at": [1430, 660, -690], "r": 30, "h": 560, "rot": [8, 0, 0]},
+        {"type": "cylinder", "at": [1430, 660, 690], "r": 30, "h": 560, "rot": [-8, 0, 0]},
+        {"type": "torus", "at": [1430, 600, -680], "r": 70, "tube": 9, "repeat": {"count": 6, "along": [0, 42, 0]}},
+        {"type": "torus", "at": [1430, 600, 680], "r": 70, "tube": 9, "repeat": {"count": 6, "along": [0, 42, 0]}},
+        {"type": "extrude", "axis": "y", "at": [0, 240, 0], "outline": [[1250, 300], [1560, 300], [1440, 700]], "depth": 30},
+        {"type": "extrude", "axis": "y", "at": [0, 240, 0], "outline": [[1250, -300], [1560, -300], [1440, -700]], "depth": 30},
+        {"type": "tube", "path": [[1500, 300, -650], [1280, 330, -520], [1260, 330, 0], [1280, 330, 520], [1500, 300, 650]], "r": 11}
+      ]
+    },
+    {
+      "id": "rear-suspension",
+      "name": "Rear suspension",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Double-wishbone (multi-link) rear suspension with separate coil springs and dampers, mounted on a rear subframe.",
+      "material": "Steel arms and springs, gas dampers",
+      "explode": [-150, 0, 0],
+      "shapes": [
+        {"type": "torus", "at": [-1390, 420, -560], "r": 70, "tube": 9, "repeat": {"count": 5, "along": [0, 40, 0]}},
+        {"type": "torus", "at": [-1390, 420, 560], "r": 70, "tube": 9, "repeat": {"count": 5, "along": [0, 40, 0]}},
+        {"type": "cylinder", "at": [-1520, 560, -650], "r": 25, "h": 480, "rot": [6, 0, 0]},
+        {"type": "cylinder", "at": [-1520, 560, 650], "r": 25, "h": 480, "rot": [-6, 0, 0]},
+        {"type": "box", "at": [-1420, 700, -500], "size": [60, 30, 420], "repeat": {"count": 2, "along": [0, 0, 1000]}},
+        {"type": "box", "at": [-1430, 250, -520], "size": [80, 30, 520], "repeat": {"count": 2, "along": [0, 0, 1040]}},
+        {"type": "box", "at": [-1150, 280, -680], "size": [520, 40, 50], "repeat": {"count": 2, "along": [0, 0, 1360]}},
+        {"type": "box", "at": [-1420, 330, 0], "size": [160, 80, 1100]}
+      ]
+    },
+    {
+      "id": "front-subframe",
+      "name": "Front subframe",
+      "group": "chassis",
+      "tone": "secondary",
+      "info": "Steel cradle bolted under the engine bay that carries the lower arms, steering rack and powertrain mounts.",
+      "material": "Steel",
+      "explode": [0, -380, 0],
+      "shapes": [
+        {"type": "box", "at": [1500, 230, -420], "size": [900, 70, 70], "repeat": {"count": 2, "along": [0, 0, 840]}},
+        {"type": "box", "at": [1150, 230, 0], "size": [80, 70, 900]},
+        {"type": "box", "at": [1900, 230, 0], "size": [80, 70, 900]}
+      ]
+    },
+    {
+      "id": "drive-shafts",
+      "name": "Drive shafts",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Two half-shafts with constant-velocity joints carry torque from the transaxle's differential to the front wheels.",
+      "material": "Steel shafts, rubber CV boots",
+      "explode": [0, -180, 0],
+      "shapes": [
+        {"type": "tube", "path": [[1440, 330, -300], [1418, 334, -690]], "r": 22},
+        {"type": "tube", "path": [[1440, 330, -60], [1430, 332, 200], [1418, 334, 690]], "r": 22},
+        {"type": "sphere", "at": [1418, 334, -650], "r": 48},
+        {"type": "sphere", "at": [1418, 334, 650], "r": 48},
+        {"type": "sphere", "at": [1440, 330, -330], "r": 50},
+        {"type": "sphere", "at": [1440, 330, -60], "r": 50}
+      ]
+    },
+    {
+      "id": "steering-rack",
+      "name": "Steering rack (EPS)",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Rack-and-pinion steering with an electric assist motor (EPS), so there is no hydraulic pump. The column links it to the steering wheel.",
+      "material": "Aluminium housing, steel rack and column",
+      "explode": [-200, -120, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [1280, 360, 0], "r": 32, "h": 760},
+        {"type": "cylinder", "axis": "x", "at": [1320, 360, -250], "r": 55, "h": 160},
+        {"type": "tube", "path": [[1280, 360, -380], [1300, 362, -660]], "r": 10},
+        {"type": "tube", "path": [[1280, 360, 380], [1300, 362, 660]], "r": 10},
+        {"type": "tube", "path": [[1280, 400, -330], [1050, 620, -360], [880, 820, -370], [640, 930, -370]], "r": 22}
+      ]
+    },
+    {
+      "id": "steering-wheel",
+      "name": "Steering wheel",
+      "group": "interior",
+      "tone": "accent",
+      "info": "Leather-wrapped wheel with the driver's airbag and the cruise, audio and Toyota Safety Sense controls.",
+      "material": "Magnesium frame, leather or urethane rim",
+      "explode": [120, 330, 0],
+      "shapes": [
+        {"type": "torus", "axis": "x", "at": [630, 950, -370], "r": 185, "tube": 16, "rot": [0, 0, -24.6]},
+        {"type": "cylinder", "axis": "x", "at": [650, 942, -370], "r": 62, "h": 70, "rot": [0, 0, -24.6]},
+        {"type": "box", "at": [630, 950, -370], "size": [20, 30, 340], "rot": [0, 0, -24.6]}
+      ]
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "group": "interior",
+      "tone": "secondary",
+      "info": "Instrument panel with the 7-inch driver display, the centre touchscreen and climate controls; the passenger airbag is inside its top.",
+      "material": "Steel cross-car beam, soft-touch plastics",
+      "explode": [250, 260, 0],
+      "shapes": [
+        {"type": "hull", "side": [[1010, 760], [1035, 975], [930, 1040], [760, 1062], [640, 1030], [575, 900], [470, 860], [470, 760]], "top": [[1035, 0], [1035, 760], [697.9825, 780], [559.2105, 700], [559.2105, 160], [470, 120], [470, 0]], "front": [[0, 1062], [600, 1062], [740, 1040], [780, 900], [760, 760], [0, 760]], "r": 30}
+      ]
+    },
+    {
+      "id": "seat-fl",
+      "name": "Driver's seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "Driver's seat with power adjustment; the US car is left-hand drive.",
+      "material": "Steel frame, foam, fabric or leather trim",
+      "explode": [80, 150, -260],
+      "shapes": [
+        {"type": "hull", "side": [[560, 420], [565, 520], [520, 560], [120, 540], [30, 600], [-60, 1150], [-90, 1250], [-80, 1360], [-170, 1370], [-200, 1250], [-170, 1150], [-120, 900], [-60, 560], [-30, 330], [480, 330]], "top": [[565, -625], [565, -115], [-200, -110], [-200, -630]], "front": [[-625.0943, 330], [-114.9057, 330], [-110, 600], [-134.5283, 1150], [-232.6415, 1180], [-232.6415, 1370], [-507.3585, 1370], [-507.3585, 1180], [-605.4717, 1150], [-630, 600]], "r": 45}
+      ]
+    },
+    {
+      "id": "seat-fr",
+      "name": "Front passenger seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "Front passenger seat with a weight sensor that decides whether the airbag deploys.",
+      "material": "Steel frame, foam, fabric or leather trim",
+      "explode": [80, 150, 260],
+      "shapes": [
+        {"type": "hull", "side": [[560, 420], [565, 520], [520, 560], [120, 540], [30, 600], [-60, 1150], [-90, 1250], [-80, 1360], [-170, 1370], [-200, 1250], [-170, 1150], [-120, 900], [-60, 560], [-30, 330], [480, 330]], "top": [[565, 115], [565, 625], [-200, 630], [-200, 110]], "front": [[114.9057, 330], [625.0943, 330], [630, 600], [605.4717, 1150], [507.3585, 1180], [507.3585, 1370], [232.6415, 1370], [232.6415, 1180], [134.5283, 1150], [110, 600]], "r": 45}
+      ]
+    },
+    {
+      "id": "rear-seat",
+      "name": "Rear seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "Three-seat bench with a 60/40 split-folding back; the hybrid battery sits under the cushion.",
+      "material": "Steel frame, foam, fabric or leather trim",
+      "explode": [-150, 220, 0],
+      "shapes": [
+        {"type": "hull", "side": [[-560, 440], [-570, 540], [-620, 575], [-940, 560], [-1020, 620], [-1130, 1150], [-1140, 1230], [-1220, 1220], [-1230, 1120], [-1150, 600], [-1080, 470], [-640, 430]], "top": [[-560, 0], [-560, 690], [-1230, 700], [-1230, 0]], "front": [[0, 430], [685.1064, 430], [700, 598.9441], [685.1064, 1145.528], [595.7447, 1230], [0, 1230]], "r": 45}
+      ]
+    },
+    {
+      "id": "center-console",
+      "name": "Centre console",
+      "group": "interior",
+      "tone": "secondary",
+      "info": "Shift lever, wireless charger, cup holders and a storage box under the armrest.",
+      "material": "Plastic, padded vinyl lid",
+      "explode": [0, 160, 0],
+      "shapes": [
+        {"type": "hull", "side": [[700, 760], [660, 820], [380, 720], [-60, 720], [-160, 700], [-180, 330], [640, 330]], "top": [[700, 0], [700, 120], [-180, 110], [-180, 0]], "front": [[0, 820], [100, 820], [120, 330], [0, 330]], "r": 25}
+      ]
+    }
+  ],
+  "notes": [
+    "SE/XLE trim on 18-inch wheels; dimensions from Toyota's published specifications.",
+    "The body is carved from its side, top and front views; doors, glass, lights and bumpers lie on its surface."
+  ]
+}

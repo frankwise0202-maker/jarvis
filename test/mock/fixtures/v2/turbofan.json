@@ -1,0 +1,297 @@
+{
+  "title": "CFM56-7B turbofan (Boeing 737NG)",
+  "subtitle": "High-bypass two-spool turbofan · 1,549 mm fan · 24,000–27,300 lbf thrust",
+  "units": "mm",
+  "view": "front-left",
+  "groups": [
+    {"id": "nacelle", "name": "Nacelle"},
+    {"id": "fan", "name": "Fan and booster"},
+    {"id": "core", "name": "Core"},
+    {"id": "exhaust", "name": "Exhaust"},
+    {"id": "systems", "name": "Mounts and systems"}
+  ],
+  "parts": [
+    {
+      "id": "inlet",
+      "name": "Inlet cowl",
+      "group": "nacelle",
+      "tone": "secondary",
+      "info": "Smooth aluminium lip and acoustic inner barrel that slow and straighten the air before the fan; hot bleed air keeps the lip free of ice.",
+      "material": "Aluminium lip, composite acoustic liner",
+      "explode": [850, 0, 0],
+      "anchor": [900, 900, -400],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[1025, 650], [1015, 900], [985, 1030], [940, 1090], [900, 1105], [865, 1095], [835, 1065], [810, 1000], [800, 850], [800, 650]]}
+      ]
+    },
+    {
+      "id": "fan-cowl",
+      "name": "Fan cowl",
+      "group": "nacelle",
+      "tone": "secondary",
+      "info": "Two hinged doors around the fan case that open for maintenance access to the gearbox and accessories.",
+      "material": "Carbon-fibre composite",
+      "explode": [0, 1500, 0],
+      "anchor": [100, 1000, -300],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[1025, 650], [1031, 400], [1026, 100], [1012, -200], [992, -400]]}
+      ]
+    },
+    {
+      "id": "thrust-reverser",
+      "name": "Thrust reverser",
+      "group": "nacelle",
+      "tone": "secondary",
+      "info": "Translating sleeve that slides aft on landing to uncover cascade vanes, turning the fan's bypass air forward to help stop the aircraft.",
+      "material": "Composite sleeve, aluminium cascades",
+      "explode": [-600, 1500, 0],
+      "anchor": [-900, 920, -300],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[990, -400], [965, -800], [910, -1200], [868, -1490], [858, -1500], [828, -1200], [808, -800], [798, -400]]},
+        {"type": "box", "at": [-650, 900, 0], "size": [380, 50, 190], "repeat": {"count": 20, "around": "x"}}
+      ]
+    },
+    {
+      "id": "spinner",
+      "name": "Spinner",
+      "group": "fan",
+      "tone": "accent",
+      "info": "Rotating nose cone that guides air smoothly into the blade roots; its rubber tip helps shed ice.",
+      "material": "Composite, rubber tip",
+      "explode": [1150, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[0, 330], [80, 300], [160, 230], [215, 140], [245, 40], [255, -40]]}
+      ]
+    },
+    {
+      "id": "fan",
+      "name": "Fan (24 blades)",
+      "group": "fan",
+      "tone": "accent",
+      "info": "24 wide-chord titanium blades, 1,549 mm across. The fan makes about 80% of the thrust: most of its air bypasses the core (bypass ratio about 5.1:1).",
+      "material": "Titanium alloy blades, titanium disk",
+      "explode": [450, 0, 0],
+      "anchor": [-50, 700, -150],
+      "shapes": [
+        {"type": "loft", "axis": "y", "repeat": {"count": 24, "around": "x"}, "sections": [{"y": 250, "x": -60, "w": 250, "h": 34, "twist": 25}, {"y": 450, "x": -55, "w": 300, "h": 22, "twist": 40}, {"y": 620, "x": -50, "w": 330, "h": 14, "twist": 52}, {"y": 772, "x": -45, "w": 340, "h": 8, "twist": 60}]},
+        {"type": "cylinder", "axis": "x", "at": [-80, 0, 0], "r": 262, "h": 250}
+      ]
+    },
+    {
+      "id": "fan-case",
+      "name": "Fan case",
+      "group": "fan",
+      "tone": "primary",
+      "info": "Containment ring around the fan: strong enough to hold a released blade inside the engine.",
+      "material": "Aluminium with steel containment ring",
+      "explode": [0, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[800, 650], [792, 300], [786, 0], [790, -350], [815, -380], [815, 620]]},
+        {"type": "torus", "axis": "x", "at": [-60, 0, 0], "r": 818, "tube": 14},
+        {"type": "torus", "axis": "x", "at": [200, 0, 0], "r": 815, "tube": 10}
+      ]
+    },
+    {
+      "id": "booster",
+      "name": "Booster (3-stage LPC)",
+      "group": "fan",
+      "tone": "primary",
+      "info": "Three-stage low-pressure compressor on the fan shaft: it supercharges the air entering the core.",
+      "material": "Titanium",
+      "explode": [450, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[265, -170], [300, -230], [318, -330], [322, -470]]},
+        {"type": "box", "at": [-230, 380, 0], "size": [45, 120, 6], "rot": [0, 30, 0], "repeat": {"count": 36, "around": "x"}},
+        {"type": "box", "at": [-320, 385, 0], "size": [40, 110, 6], "rot": [0, 30, 0], "repeat": {"count": 36, "around": "x"}},
+        {"type": "box", "at": [-410, 388, 0], "size": [36, 100, 6], "rot": [0, 30, 0], "repeat": {"count": 36, "around": "x"}},
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[440, -150], [470, -160], [470, -470], [455, -480]]}
+      ]
+    },
+    {
+      "id": "ogv",
+      "name": "Outlet guide vanes",
+      "group": "fan",
+      "tone": "primary",
+      "info": "Fixed vanes behind the fan that take the swirl out of the bypass air, turning it into straight thrust.",
+      "material": "Aluminium or composite",
+      "explode": [0, 0, 0],
+      "shapes": [
+        {"type": "box", "at": [-470, 630, 0], "size": [130, 300, 6], "rot": [0, 12, 0], "repeat": {"count": 60, "around": "x"}}
+      ]
+    },
+    {
+      "id": "hpc",
+      "name": "High-pressure compressor",
+      "aka": ["HPC", "compressor"],
+      "group": "core",
+      "tone": "primary",
+      "info": "Nine-stage compressor on the high-pressure spool, spinning at about 15,000 rpm; with the booster the overall pressure ratio is about 32:1.",
+      "material": "Titanium front stages, nickel alloy rear stages",
+      "explode": [-300, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[150, -540], [195, -560], [215, -800], [222, -1140], [160, -1160]]},
+        {"type": "box", "at": [-580, 275, 0], "size": [34, 120, 5], "rot": [0, 35, 0], "repeat": {"count": 36, "around": "x"}},
+        {"type": "box", "at": [-645, 270, 0], "size": [32, 105, 5], "rot": [0, 35, 0], "repeat": {"count": 36, "around": "x"}},
+        {"type": "box", "at": [-710, 265, 0], "size": [30, 92, 5], "rot": [0, 35, 0], "repeat": {"count": 40, "around": "x"}},
+        {"type": "box", "at": [-775, 262, 0], "size": [28, 80, 5], "rot": [0, 35, 0], "repeat": {"count": 40, "around": "x"}},
+        {"type": "box", "at": [-840, 258, 0], "size": [26, 70, 5], "rot": [0, 35, 0], "repeat": {"count": 44, "around": "x"}},
+        {"type": "box", "at": [-905, 255, 0], "size": [24, 62, 5], "rot": [0, 35, 0], "repeat": {"count": 44, "around": "x"}},
+        {"type": "box", "at": [-970, 252, 0], "size": [22, 55, 5], "rot": [0, 35, 0], "repeat": {"count": 48, "around": "x"}},
+        {"type": "box", "at": [-1035, 250, 0], "size": [20, 50, 5], "rot": [0, 35, 0], "repeat": {"count": 48, "around": "x"}},
+        {"type": "box", "at": [-1100, 248, 0], "size": [20, 46, 5], "rot": [0, 35, 0], "repeat": {"count": 48, "around": "x"}}
+      ]
+    },
+    {
+      "id": "combustor",
+      "name": "Annular combustor",
+      "aka": ["burner", "combustion chamber"],
+      "group": "core",
+      "tone": "warning",
+      "info": "Single annular combustion chamber with 20 fuel nozzles; gas leaves it at about 1,400 °C.",
+      "material": "Nickel superalloy liners with cooling holes",
+      "explode": [-700, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[300, -1150], [390, -1160], [415, -1250], [410, -1380], [380, -1450], [290, -1450], [265, -1300], [280, -1170]]},
+        {"type": "tube", "path": [[-1120, 470, 0], [-1160, 420, 0], [-1185, 360, 0]], "r": 11, "repeat": {"count": 20, "around": "x"}}
+      ]
+    },
+    {
+      "id": "hpt",
+      "name": "HP turbine",
+      "group": "core",
+      "tone": "warning",
+      "info": "Single-stage high-pressure turbine that drives the compressor; its air-cooled single-crystal blades run in gas hotter than their melting point.",
+      "material": "Single-crystal nickel superalloy",
+      "explode": [-1000, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-1510, 0, 0], "r": 290, "h": 60},
+        {"type": "box", "at": [-1510, 335, 0], "size": [48, 80, 8], "rot": [0, -35, 0], "repeat": {"count": 60, "around": "x"}}
+      ]
+    },
+    {
+      "id": "lpt",
+      "name": "LP turbine (4 stages)",
+      "group": "core",
+      "tone": "primary",
+      "info": "Four-stage low-pressure turbine that drives the fan and booster through the long inner shaft at about 5,200 rpm.",
+      "material": "Nickel superalloy",
+      "explode": [-1300, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[200, -1580], [250, -1600], [270, -1750], [280, -1950], [220, -1980]]},
+        {"type": "box", "at": [-1620, 380, 0], "size": [44, 100, 6], "rot": [0, -30, 0], "repeat": {"count": 60, "around": "x"}},
+        {"type": "box", "at": [-1720, 395, 0], "size": [46, 125, 6], "rot": [0, -30, 0], "repeat": {"count": 60, "around": "x"}},
+        {"type": "box", "at": [-1820, 410, 0], "size": [48, 150, 6], "rot": [0, -30, 0], "repeat": {"count": 60, "around": "x"}},
+        {"type": "box", "at": [-1920, 425, 0], "size": [50, 175, 6], "rot": [0, -30, 0], "repeat": {"count": 60, "around": "x"}}
+      ]
+    },
+    {
+      "id": "core-case",
+      "name": "Core casing",
+      "group": "core",
+      "tone": "secondary",
+      "info": "Casing around the compressor, combustor and turbines; it carries the stator vanes and the bleed-air ports.",
+      "material": "Steel, nickel and titanium alloys",
+      "explode": [-300, -1300, 0],
+      "anchor": [-1300, 420, -200],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[480, -150], [470, -400], [420, -600], [345, -900], [340, -1120], [430, -1280], [435, -1520], [480, -1720], [515, -1980], [495, -2120]]}
+      ]
+    },
+    {
+      "id": "core-cowl",
+      "name": "Core cowl",
+      "group": "nacelle",
+      "tone": "secondary",
+      "info": "Smooth fairing around the core that forms the inner wall of the bypass duct.",
+      "material": "Composite and titanium",
+      "explode": [-300, -2500, 0],
+      "anchor": [-1700, 560, -200],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[600, -420], [618, -700], [600, -1100], [565, -1500], [525, -1850], [480, -2150]]}
+      ]
+    },
+    {
+      "id": "core-nozzle",
+      "name": "Core exhaust nozzle",
+      "group": "exhaust",
+      "tone": "primary",
+      "info": "Nozzle where the hot core flow leaves the engine, behind and inside the cooler bypass stream.",
+      "material": "Titanium, nickel alloy",
+      "explode": [-1800, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[480, -2150], [462, -2300], [440, -2460]]}
+      ]
+    },
+    {
+      "id": "plug",
+      "name": "Exhaust plug",
+      "group": "exhaust",
+      "tone": "primary",
+      "info": "Centre body that shapes the core exhaust flow and covers the rear of the turbine.",
+      "material": "Inconel",
+      "explode": [-2300, 0, 0],
+      "shapes": [
+        {"type": "lathe", "smooth": true, "axis": "x", "profile": [[290, -2050], [285, -2250], [215, -2520], [100, -2730], [0, -2820]]}
+      ]
+    },
+    {
+      "id": "shafts",
+      "name": "LP and HP shafts",
+      "aka": ["spools"],
+      "group": "core",
+      "tone": "accent",
+      "info": "Two concentric spools: the inner low-pressure shaft links the LP turbine to the fan and booster, the outer high-pressure shaft links the HP turbine to the compressor.",
+      "material": "High-strength steel, nickel alloy",
+      "explode": [0, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-1050, 0, 0], "r": 55, "h": 2100},
+        {"type": "cylinder", "axis": "x", "at": [-1030, 0, 0], "r": 120, "hole": 75, "h": 960}
+      ]
+    },
+    {
+      "id": "gearbox",
+      "name": "Accessory gearbox",
+      "group": "systems",
+      "tone": "primary",
+      "info": "Driven from the HP spool by a radial shaft; it powers the fuel pump, oil pumps, hydraulic pump and the generator, and the starter turns the engine through it.",
+      "material": "Aluminium housing",
+      "explode": [0, -900, 0],
+      "shapes": [
+        {"type": "box", "at": [-120, -885, 0], "size": [560, 150, 320], "round": 0.35},
+        {"type": "cylinder", "at": [-300, -985, -90], "r": 55, "h": 90},
+        {"type": "cylinder", "at": [60, -985, 80], "r": 70, "h": 100}
+      ]
+    },
+    {
+      "id": "fadec",
+      "name": "FADEC computer",
+      "aka": ["engine control"],
+      "group": "systems",
+      "tone": "accent",
+      "info": "Dual-channel Full Authority Digital Engine Control on the fan case: it meters fuel and schedules the variable vanes from the thrust lever position.",
+      "material": "Aluminium box, electronics",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "box", "at": [80, 260, 870], "size": [320, 230, 90], "round": 0.3}
+      ]
+    },
+    {
+      "id": "pylon",
+      "name": "Pylon and mounts",
+      "group": "systems",
+      "tone": "secondary",
+      "info": "Strut that hangs the engine ahead of and below the wing; the front mount carries thrust at the fan frame, the aft mount at the turbine frame.",
+      "material": "Titanium and steel",
+      "explode": [0, 2900, 0],
+      "shapes": [
+        {"type": "loft", "axis": "x", "sections": [{"x": 500, "y": [1020, 1160], "w": 160, "round": 0.4}, {"x": -200, "y": [1010, 1500], "w": 320, "round": 0.35}, {"x": -1500, "y": [900, 1500], "w": 320, "round": 0.35}, {"x": -2250, "y": [560, 1500], "w": 260, "round": 0.4}, {"x": -2700, "y": [640, 1440], "w": 120, "round": 0.5}]},
+        {"type": "box", "at": [-450, 870, 0], "size": [200, 140, 240], "round": 0.3},
+        {"type": "box", "at": [-2000, 560, 0], "size": [200, 120, 260], "round": 0.3}
+      ]
+    }
+  ],
+  "notes": [
+    "CFM56-7B as fitted to the 737NG: 2,507 mm long without the nacelle, 1,549 mm fan diameter.",
+    "Blade counts in the compressor and turbine stages are reduced for clarity; flanges, pipes and harnesses are left out."
+  ]
+}

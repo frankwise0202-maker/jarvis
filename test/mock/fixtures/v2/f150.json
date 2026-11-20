@@ -1,0 +1,547 @@
+{
+  "title": "2024 Ford F-150 XLT SuperCrew (4x4, 5.5 ft box)",
+  "subtitle": "3.5 L EcoBoost V6 · 10-speed · 5,885 mm long, 3,693 mm wheelbase",
+  "units": "mm",
+  "view": "front-left",
+  "groups": [
+    {"id": "body", "name": "Body"},
+    {"id": "box", "name": "Cargo box"},
+    {"id": "wheels", "name": "Wheels and brakes"},
+    {"id": "chassis", "name": "Frame and suspension"},
+    {"id": "powertrain", "name": "Powertrain"},
+    {"id": "interior", "name": "Interior"}
+  ],
+  "parts": [
+    {
+      "id": "cab",
+      "name": "Cab and front end",
+      "group": "body",
+      "tone": "secondary",
+      "info": "SuperCrew cab with four full-size doors on a high-strength military-grade aluminium-alloy body; the front end carries the hood, fenders and grille.",
+      "material": "Aluminium alloy body, steel cab structure",
+      "explode": [0, 1500, 0],
+      "anchor": [-300, 1960, 0],
+      "shapes": [
+        {"type": "hull", "side": [[2780, 560], [2790, 1240], [2765, 1302], [2600, 1332], [2000, 1362], [1400, 1396], [1250, 1416], [800, 1712], [520, 1926], [350, 1955], [-300, 1961], [-1100, 1955], [-1200, 1925], [-1228, 1850], [-1240, 600], [-1150, 540], [1300, 540], [2600, 556]], "top": [[2790, 0], [2792, 600], [2780, 860], [2742, 958], [2650, 1004], [2450, 1014], [1300, 1014], [-1000, 1006], [-1240, 1000], [-1240, 0]], "front": [[0, 1961], [600, 1955], [740, 1935], [790, 1870], [850, 1700], [905, 1520], [960, 1462], [1004, 1422], [1014, 1340], [1014, 700], [1005, 600], [960, 545], [0, 540]], "r": 45, "arches": [[1846.5, 407, 470]]}
+      ]
+    },
+    {
+      "id": "cargo-box",
+      "name": "Cargo box (5.5 ft)",
+      "group": "box",
+      "tone": "secondary",
+      "info": "The 5.5-foot aluminium box: 67.1 in long and 65.2 in wide inside, 50.6 in between the wheelhouses, 21.4 in deep.",
+      "material": "Aluminium alloy",
+      "explode": [-900, 900, 0],
+      "anchor": [-2200, 1470, 900],
+      "shapes": [
+        {"type": "hull", "side": [[-1265, 600], [-1265, 1470], [-3060, 1470], [-3089, 1445], [-3089, 640], [-3060, 600]], "top": [[-1265, 0], [-1265, 1000], [-3089, 1000], [-3089, 0]], "front": [[0, 1470], [985, 1470], [1000, 1452], [1000, 640], [985, 600], [0, 600]], "r": 30, "cut": [{"type": "box", "at": [-2165, 1265, 0], "size": [1730, 680, 1286]}, {"type": "box", "at": [-2690, 1265, 736], "size": [680, 680, 186]}, {"type": "box", "at": [-1825, 1378, 736], "size": [1050, 455, 186]}], "arches": [[-1846.5, 407, 470]]}
+      ]
+    },
+    {
+      "id": "glass",
+      "name": "Windows",
+      "group": "body",
+      "tone": "accent",
+      "info": "Acoustic laminated windshield, four door windows and the power-sliding rear window.",
+      "material": "Laminated and tempered glass",
+      "explode": [0, 2300, 0],
+      "anchor": [800, 1700, 0],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "sides", "outline": [[1150, 1480], [870, 1680], [560, 1890], [300, 1912], [-120, 1915], [-120, 1488]]},
+        {"type": "panel", "on": "cab", "face": "sides", "outline": [[-180, 1488], [-180, 1915], [-1080, 1910], [-1120, 1860], [-1120, 1492]]},
+        {"type": "panel", "on": "cab", "face": "top", "outline": [[1255, -840], [1255, 840], [540, 760], [540, -760]]},
+        {"type": "panel", "on": "cab", "face": "back", "outline": [[-640, 1500], [640, 1500], [620, 1880], [-620, 1880]]}
+      ]
+    },
+    {
+      "id": "grille",
+      "name": "Grille",
+      "group": "body",
+      "tone": "primary",
+      "info": "The tall front grille; active shutters behind it close at speed to cut drag.",
+      "material": "Painted or chrome plastic",
+      "explode": [700, 0, 0],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "front", "outline": [[-760, 700], [760, 700], [760, 1236], [-760, 1236]]}
+      ]
+    },
+    {
+      "id": "headlights",
+      "name": "Headlights",
+      "group": "body",
+      "tone": "accent",
+      "info": "C-clamp LED headlights with the signature daytime running lights framing the grille.",
+      "material": "Polycarbonate lens, LEDs",
+      "explode": [700, 300, 0],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "front", "mirror": true, "outline": [[772, 1010], [985, 1010], [1000, 1250], [772, 1250]]}
+      ]
+    },
+    {
+      "id": "hood",
+      "name": "Hood",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Aluminium hood with a raised power dome.",
+      "material": "Aluminium alloy",
+      "explode": [400, 1600, 0],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "top", "outline": [[2732, -960], [2732, 960], [1300, 990], [1300, -990]]}
+      ]
+    },
+    {
+      "id": "door-fl",
+      "name": "Front door (L)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Driver's door, aluminium outer skin over a steel intrusion beam.",
+      "material": "Aluminium, steel beam",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "left", "outline": [[1300, 600], [1300, 1440], [1150, 1480], [-120, 1488], [-120, 600]]}
+      ]
+    },
+    {
+      "id": "door-rl",
+      "name": "Rear door (L)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Full-size rear door of the SuperCrew cab.",
+      "material": "Aluminium",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "left", "outline": [[-180, 600], [-180, 1488], [-1120, 1492], [-1150, 1420], [-1150, 600]]}
+      ]
+    },
+    {
+      "id": "door-fr",
+      "name": "Front door (R)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Front passenger door.",
+      "material": "Aluminium, steel beam",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "right", "outline": [[1300, 600], [1300, 1440], [1150, 1480], [-120, 1488], [-120, 600]]}
+      ]
+    },
+    {
+      "id": "door-rr",
+      "name": "Rear door (R)",
+      "group": "body",
+      "tone": "secondary",
+      "info": "Rear passenger door.",
+      "material": "Aluminium",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "panel", "on": "cab", "face": "right", "outline": [[-180, 600], [-180, 1488], [-1120, 1492], [-1150, 1420], [-1150, 600]]}
+      ]
+    },
+    {
+      "id": "tailgate",
+      "name": "Tailgate",
+      "group": "box",
+      "tone": "secondary",
+      "info": "Damped, lockable tailgate; Pro Access versions add a side-hinged door within it.",
+      "material": "Aluminium",
+      "explode": [-700, 0, 0],
+      "shapes": [
+        {"type": "panel", "on": "cargo-box", "face": "back", "outline": [[-880, 650], [880, 650], [880, 1440], [-880, 1440]]}
+      ]
+    },
+    {
+      "id": "taillights",
+      "name": "Taillights",
+      "group": "box",
+      "tone": "accent",
+      "info": "Vertical LED taillamps at the rear corners of the box.",
+      "material": "Polycarbonate lens, LEDs",
+      "explode": [-700, 300, 0],
+      "shapes": [
+        {"type": "panel", "on": "cargo-box", "face": "back", "mirror": true, "outline": [[892, 1040], [998, 1040], [998, 1440], [892, 1440]]}
+      ]
+    },
+    {
+      "id": "front-bumper",
+      "name": "Front bumper",
+      "group": "body",
+      "tone": "primary",
+      "info": "Steel front bumper with the tow hooks and the lower air dam.",
+      "material": "Steel, chrome or painted",
+      "explode": [700, -100, 0],
+      "shapes": [
+        {"type": "hull", "side": [[2740, 300], [2860, 330], [2870, 620], [2780, 640], [2740, 560]], "top": [[2870, 0], [2868, 760], [2820, 940], [2740, 1000], [2740, 0]], "front": [[0, 640], [990, 630], [1002, 540], [960, 330], [0, 300]], "r": 25}
+      ]
+    },
+    {
+      "id": "rear-bumper",
+      "name": "Rear bumper",
+      "group": "box",
+      "tone": "primary",
+      "info": "Steel rear bumper with corner steps and the hitch receiver below it.",
+      "material": "Steel",
+      "explode": [-700, -100, 0],
+      "shapes": [
+        {"type": "hull", "side": [[-3080, 420], [-3180, 440], [-3186, 640], [-3080, 652]], "top": [[-3080, 0], [-3080, 1000], [-3150, 990], [-3186, 900], [-3186, 0]], "front": [[0, 652], [1000, 652], [1000, 420], [0, 420]], "r": 25}
+      ]
+    },
+    {
+      "id": "mirrors",
+      "name": "Door mirrors",
+      "group": "body",
+      "tone": "primary",
+      "info": "Power-folding, heated trailer-tow capable mirrors with integrated turn signals and spotlights.",
+      "material": "Plastic housing, glass",
+      "explode": [0, 300, 0],
+      "shapes": [
+        {"type": "hull", "mirror": true, "side": [[1450, 1460], [1452, 1700], [1400, 1742], [1180, 1742], [1150, 1600], [1180, 1468]], "top": [[1439.1489, 980], [1452, 1080], [1374.8936, 1252], [1182.1277, 1272], [1150, 1150], [1182.1277, 985]], "front": [[980, 1479.1186], [1256.2162, 1460], [1272, 1603.3898], [1256.2162, 1739.1322], [980, 1742]]}
+      ]
+    },
+    {
+      "id": "running-boards",
+      "name": "Running boards",
+      "group": "body",
+      "tone": "primary",
+      "info": "Six-inch step bars bolted to the frame along both sides of the cab.",
+      "material": "Aluminium",
+      "explode": [0, -200, 0],
+      "shapes": [
+        {"type": "box", "at": [-60, 460, 1050], "size": [2450, 45, 150], "r": 15},
+        {"type": "box", "at": [-60, 460, -1050], "size": [2450, 45, 150], "r": 15}
+      ]
+    },
+    {
+      "id": "wheel-fl",
+      "name": "Wheel and tyre (FL)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "The front left wheel: an 18-inch aluminium wheel with a 275/65R18 all-terrain tyre, six lug nuts on a 135 mm circle.",
+      "material": "275/65R18 tyre, 18-inch aluminium wheel",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [1846.5, 407, -864], "profile": [[240, -128], [352, -138], [390, -131], [404, -112], [409, -60], [410, 0], [409, 60], [404, 112], [390, 131], [352, 138], [240, 128]], "smooth": true},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, -864], "r": 229, "hole": 212, "h": 230},
+        {"type": "box", "at": [1846.5, 532, -964], "size": [55, 190, 26], "repeat": {"count": 6, "around": "z", "center": [1846.5, 407, -864]}},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, -974], "r": 70, "h": 40},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 474, -989], "r": 12, "h": 24, "sides": 6, "repeat": {"count": 6, "around": "z", "center": [1846.5, 407, -864]}}
+      ]
+    },
+    {
+      "id": "wheel-fr",
+      "name": "Wheel and tyre (FR)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "The front right wheel: an 18-inch aluminium wheel with a 275/65R18 all-terrain tyre, six lug nuts on a 135 mm circle.",
+      "material": "275/65R18 tyre, 18-inch aluminium wheel",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [1846.5, 407, 864], "profile": [[240, -128], [352, -138], [390, -131], [404, -112], [409, -60], [410, 0], [409, 60], [404, 112], [390, 131], [352, 138], [240, 128]], "smooth": true},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, 864], "r": 229, "hole": 212, "h": 230},
+        {"type": "box", "at": [1846.5, 532, 964], "size": [55, 190, 26], "repeat": {"count": 6, "around": "z", "center": [1846.5, 407, 864]}},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, 974], "r": 70, "h": 40},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 474, 989], "r": 12, "h": 24, "sides": 6, "repeat": {"count": 6, "around": "z", "center": [1846.5, 407, 864]}}
+      ]
+    },
+    {
+      "id": "wheel-rl",
+      "name": "Wheel and tyre (RL)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "The rear left wheel: an 18-inch aluminium wheel with a 275/65R18 all-terrain tyre, six lug nuts on a 135 mm circle.",
+      "material": "275/65R18 tyre, 18-inch aluminium wheel",
+      "explode": [0, 0, -900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [-1846.5, 407, -864], "profile": [[240, -128], [352, -138], [390, -131], [404, -112], [409, -60], [410, 0], [409, 60], [404, 112], [390, 131], [352, 138], [240, 128]], "smooth": true},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, -864], "r": 229, "hole": 212, "h": 230},
+        {"type": "box", "at": [-1846.5, 532, -964], "size": [55, 190, 26], "repeat": {"count": 6, "around": "z", "center": [-1846.5, 407, -864]}},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, -974], "r": 70, "h": 40},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 474, -989], "r": 12, "h": 24, "sides": 6, "repeat": {"count": 6, "around": "z", "center": [-1846.5, 407, -864]}}
+      ]
+    },
+    {
+      "id": "wheel-rr",
+      "name": "Wheel and tyre (RR)",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "The rear right wheel: an 18-inch aluminium wheel with a 275/65R18 all-terrain tyre, six lug nuts on a 135 mm circle.",
+      "material": "275/65R18 tyre, 18-inch aluminium wheel",
+      "explode": [0, 0, 900],
+      "shapes": [
+        {"type": "lathe", "axis": "z", "at": [-1846.5, 407, 864], "profile": [[240, -128], [352, -138], [390, -131], [404, -112], [409, -60], [410, 0], [409, 60], [404, 112], [390, 131], [352, 138], [240, 128]], "smooth": true},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, 864], "r": 229, "hole": 212, "h": 230},
+        {"type": "box", "at": [-1846.5, 532, 964], "size": [55, 190, 26], "repeat": {"count": 6, "around": "z", "center": [-1846.5, 407, 864]}},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, 974], "r": 70, "h": 40},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 474, 989], "r": 12, "h": 24, "sides": 6, "repeat": {"count": 6, "around": "z", "center": [-1846.5, 407, 864]}}
+      ]
+    },
+    {
+      "id": "brakes",
+      "name": "Disc brakes",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Four-wheel disc brakes: 350 mm vented front rotors with twin-piston calipers, 336 mm rear rotors with an integrated parking brake.",
+      "material": "Cast-iron rotors and calipers",
+      "explode": [0, -250, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, 760], "r": 175, "hole": 80, "h": 32},
+        {"type": "cylinder", "axis": "z", "at": [1846.5, 407, -760], "r": 175, "hole": 80, "h": 32},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, 760], "r": 168, "hole": 80, "h": 28},
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, -760], "r": 168, "hole": 80, "h": 28},
+        {"type": "box", "at": [1696.5, 497, 760], "size": [120, 160, 110], "r": 15, "rot": [0, 0, 30]},
+        {"type": "box", "at": [1696.5, 497, -760], "size": [120, 160, 110], "r": 15, "rot": [0, 0, 30]}
+      ]
+    },
+    {
+      "id": "frame",
+      "name": "Frame (ladder)",
+      "group": "chassis",
+      "tone": "secondary",
+      "info": "Fully boxed high-strength steel ladder frame; the cab and the box are bolted on top of it, as on every F-Series.",
+      "material": "High-strength steel",
+      "explode": [0, -700, 0],
+      "anchor": [0, 600, 560],
+      "shapes": [
+        {"type": "box", "at": [1500, 600, 560], "size": [2300, 200, 80], "r": 10},
+        {"type": "box", "at": [-600, 560, 560], "size": [1600, 230, 80], "r": 10},
+        {"type": "box", "at": [-1700, 700, 560], "size": [800, 200, 80], "r": 10, "rot": [0, 0, -12]},
+        {"type": "box", "at": [-2600, 780, 560], "size": [1050, 190, 80], "r": 10},
+        {"type": "box", "at": [1500, 600, -560], "size": [2300, 200, 80], "r": 10},
+        {"type": "box", "at": [-600, 560, -560], "size": [1600, 230, 80], "r": 10},
+        {"type": "box", "at": [-1700, 700, -560], "size": [800, 200, 80], "r": 10, "rot": [0, 0, -12]},
+        {"type": "box", "at": [-2600, 780, -560], "size": [1050, 190, 80], "r": 10},
+        {"type": "box", "at": [2550, 600, 0], "size": [80, 160, 1120], "repeat": {"count": 6, "along": [-1050, 30, 0]}}
+      ]
+    },
+    {
+      "id": "engine",
+      "name": "3.5 L EcoBoost V6",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "Twin-turbocharged 3.5 L V6 with port and direct injection: 400 hp and 500 lb-ft, the F-150's most popular engine.",
+      "material": "Aluminium heads, compacted-graphite iron block",
+      "explode": [0, 650, 0],
+      "shapes": [
+        {"type": "box", "at": [2050, 900, 0], "size": [560, 380, 420], "r": 30},
+        {"type": "box", "at": [2050, 1080, 230], "size": [520, 120, 220], "r": 25, "rot": [-32, 0, 0]},
+        {"type": "box", "at": [2050, 1080, -230], "size": [520, 120, 220], "r": 25, "rot": [32, 0, 0]},
+        {"type": "box", "at": [2050, 1190, 0], "size": [480, 90, 300], "r": 30},
+        {"type": "sphere", "at": [1900, 900, 380], "size": [190, 190, 160]},
+        {"type": "sphere", "at": [1900, 900, -380], "size": [190, 190, 160]},
+        {"type": "cylinder", "axis": "x", "at": [2380, 760, 0], "r": 110, "h": 40}
+      ]
+    },
+    {
+      "id": "transmission",
+      "name": "10-speed automatic",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "The 10R80 ten-speed automatic, co-developed with GM; its wide ratio spread keeps the engine near its best efficiency.",
+      "material": "Aluminium case",
+      "explode": [0, -450, 0],
+      "shapes": [
+        {"type": "lathe", "axis": "-x", "at": [1750, 760, 0], "profile": [[0, 0], [250, 0], [255, 120], [215, 380], [175, 760], [120, 900], [0, 900]], "smooth": true}
+      ]
+    },
+    {
+      "id": "transfer-case",
+      "name": "Transfer case (4x4)",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "Electronic shift-on-the-fly transfer case: 2H, 4A, 4H and 4L, splitting torque to the front axle.",
+      "material": "Aluminium case, chain drive",
+      "explode": [0, -600, -300],
+      "shapes": [
+        {"type": "box", "at": [700, 640, -40], "size": [260, 300, 360], "r": 40}
+      ]
+    },
+    {
+      "id": "driveshaft",
+      "name": "Driveshafts",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "A two-piece rear driveshaft with a centre bearing, and a short front shaft to the front differential.",
+      "material": "Steel and aluminium tubes, universal joints",
+      "explode": [0, -800, 0],
+      "shapes": [
+        {"type": "tube", "path": [[600, 600, -40], [-400, 520, 0], [-1700, 470, 0]], "r": 45},
+        {"type": "tube", "path": [[760, 560, -100], [1500, 450, -120], [1760, 420, -120]], "r": 35}
+      ]
+    },
+    {
+      "id": "rear-axle",
+      "name": "Rear axle",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Solid 9.75-inch rear axle with an electronic locking differential, hung on leaf springs.",
+      "material": "Cast-iron centre, steel tubes",
+      "explode": [-200, -500, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "z", "at": [-1846.5, 407, 0], "r": 55, "h": 1560},
+        {"type": "lathe", "axis": "x", "at": [-1846.5, 407, 0], "profile": [[0, -170], [150, -150], [190, -40], [180, 70], [120, 160], [0, 180]], "smooth": true}
+      ]
+    },
+    {
+      "id": "leaf-springs",
+      "name": "Leaf springs",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Multi-leaf rear springs, about 1.5 m long, that carry the payload and locate the axle.",
+      "material": "Spring steel",
+      "explode": [0, -350, 0],
+      "shapes": [
+        {"type": "tube", "path": [[-1096.5, 600, 560], [-1546.5, 470, 560], [-1846.5, 450, 560], [-2146.5, 470, 560], [-2596.5, 640, 560]], "r": 30},
+        {"type": "tube", "path": [[-1096.5, 600, -560], [-1546.5, 470, -560], [-1846.5, 450, -560], [-2146.5, 470, -560], [-2596.5, 640, -560]], "r": 30}
+      ]
+    },
+    {
+      "id": "front-suspension",
+      "name": "Front suspension",
+      "group": "chassis",
+      "tone": "primary",
+      "info": "Independent double-wishbone front suspension with coil-over dampers, and an open front differential for 4x4.",
+      "material": "Forged and stamped steel arms, gas dampers",
+      "explode": [0, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "at": [1846.5, 820, 600], "r": 45, "h": 520, "rot": [-10, 0, 0]},
+        {"type": "torus", "at": [1846.5, 700, 600], "r": 85, "tube": 11, "repeat": {"count": 6, "along": [0, 45, 0]}},
+        {"type": "extrude", "axis": "y", "at": [0, 450, 0], "outline": [[1596.5, 300], [2096.5, 300], [1846.5, 760]], "depth": 40},
+        {"type": "extrude", "axis": "y", "at": [0, 860, 0], "outline": [[1666.5, 380], [2026.5, 380], [1846.5, 720]], "depth": 35},
+        {"type": "cylinder", "at": [1846.5, 820, -600], "r": 45, "h": 520, "rot": [10, 0, 0]},
+        {"type": "torus", "at": [1846.5, 700, -600], "r": 85, "tube": 11, "repeat": {"count": 6, "along": [0, 45, 0]}},
+        {"type": "extrude", "axis": "y", "at": [0, 450, 0], "outline": [[1596.5, -300], [2096.5, -300], [1846.5, -760]], "depth": 40},
+        {"type": "extrude", "axis": "y", "at": [0, 860, 0], "outline": [[1666.5, -380], [2026.5, -380], [1846.5, -720]], "depth": 35},
+        {"type": "lathe", "axis": "x", "at": [1846.5, 430, 0], "profile": [[0, -140], [120, -130], [140, 0], [120, 120], [0, 140]], "smooth": true},
+        {"type": "tube", "path": [[1846.5, 430, 100], [1846.5, 410, 450], [1846.5, 407, 760]], "r": 30},
+        {"type": "tube", "path": [[1846.5, 430, -100], [1846.5, 410, -450], [1846.5, 407, -760]], "r": 30}
+      ]
+    },
+    {
+      "id": "radiator",
+      "name": "Radiator and fan",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "Engine radiator with the turbo intercooler and A/C condenser stacked in front, behind active grille shutters.",
+      "material": "Aluminium cores",
+      "explode": [600, 0, 0],
+      "shapes": [
+        {"type": "box", "at": [2620, 960, 0], "size": [60, 640, 1300], "r": 10},
+        {"type": "cylinder", "axis": "x", "at": [2540, 960, 0], "r": 300, "h": 60}
+      ]
+    },
+    {
+      "id": "fuel-tank",
+      "name": "Fuel tank",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "26-gallon plastic fuel tank between the frame rails, behind the cab (36 gallons optional).",
+      "material": "HDPE plastic",
+      "explode": [0, -500, 0],
+      "shapes": [
+        {"type": "box", "at": [-950, 520, 0], "size": [700, 300, 900], "r": 60}
+      ]
+    },
+    {
+      "id": "exhaust",
+      "name": "Exhaust system",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "Turbo down-pipes, catalytic converters and a single rear muffler exiting ahead of the right rear wheel.",
+      "material": "Stainless steel",
+      "explode": [0, -900, 300],
+      "shapes": [
+        {"type": "tube", "path": [[1800, 760, 380], [1500, 520, 420], [900, 470, 420], [0, 470, 420], [-900, 470, 420], [-1300, 500, 600]], "r": 40},
+        {"type": "capsule", "axis": "x", "at": [-400, 470, 420], "r": 120, "h": 700}
+      ]
+    },
+    {
+      "id": "battery-12v",
+      "name": "12 V battery",
+      "group": "powertrain",
+      "tone": "primary",
+      "info": "Absorbent-glass-mat 12 V battery for the auto start-stop system.",
+      "material": "AGM lead-acid",
+      "explode": [300, 500, 600],
+      "shapes": [
+        {"type": "box", "at": [2300, 1050, 700], "size": [280, 200, 180], "r": 10}
+      ]
+    },
+    {
+      "id": "spare-tyre",
+      "name": "Spare tyre",
+      "group": "wheels",
+      "tone": "primary",
+      "info": "Full-size spare carried under the rear of the box on a winch.",
+      "material": "Steel wheel, tyre",
+      "explode": [-500, -600, 0],
+      "shapes": [
+        {"type": "lathe", "axis": "y", "at": [-2650, 330, 0], "profile": [[240, -128], [352, -138], [390, -131], [404, -112], [409, -60], [410, 0], [409, 60], [404, 112], [390, 131], [352, 138], [240, 128]], "smooth": true}
+      ]
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "group": "interior",
+      "tone": "secondary",
+      "info": "Instrument panel with a 12-inch digital cluster and 12-inch SYNC 4 touchscreen; the column shifter folds flat.",
+      "material": "Steel cross-car beam, soft-touch plastics",
+      "explode": [300, 300, 0],
+      "shapes": [
+        {"type": "hull", "side": [[1250, 1150], [1270, 1430], [1160, 1520], [950, 1545], [830, 1500], [760, 1300], [700, 1250], [700, 1150]], "top": [[1270, 0], [1270, 960], [900, 980], [740, 900], [740, 200], [700, 180], [700, 0]], "front": [[0, 1545], [816.6667, 1545], [949.375, 1520], [980, 1360], [959.5833, 1150], [0, 1150]], "r": 35}
+      ]
+    },
+    {
+      "id": "steering-wheel",
+      "name": "Steering wheel",
+      "group": "interior",
+      "tone": "accent",
+      "info": "Heated leather steering wheel with the driver's airbag and BlueCruise hands-free controls.",
+      "material": "Magnesium frame, leather rim",
+      "explode": [200, 300, 0],
+      "shapes": [
+        {"type": "torus", "axis": "x", "at": [820, 1420, -430], "r": 200, "tube": 18, "rot": [0, 0, -22]},
+        {"type": "cylinder", "axis": "x", "at": [840, 1410, -430], "r": 70, "h": 80, "rot": [0, 0, -22]}
+      ]
+    },
+    {
+      "id": "seat-fl",
+      "name": "Driver's seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "10-way power driver's seat; the F-150 can have a fold-flat Max Recline option.",
+      "material": "Steel frame, foam, cloth or leather",
+      "explode": [100, 200, -350],
+      "shapes": [
+        {"type": "hull", "side": [[720, 980], [725, 1090], [680, 1130], [250, 1110], [160, 1170], [70, 1700], [40, 1810], [50, 1900], [-40, 1910], [-70, 1810], [-40, 1700], [10, 1450], [70, 1130], [100, 880], [640, 880]], "top": [[725, -720], [725, -160], [-70, -155], [-70, -725]], "front": [[-720.0862, 880], [-159.9138, 880], [-155, 1170], [-179.569, 1700], [-292.5862, 1730], [-292.5862, 1910], [-587.4138, 1910], [-587.4138, 1730], [-700.431, 1700], [-725, 1170]], "r": 45}
+      ]
+    },
+    {
+      "id": "seat-fr",
+      "name": "Front passenger seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "Front passenger seat; with the column shifter the centre console can be a fold-down work surface.",
+      "material": "Steel frame, foam, cloth or leather",
+      "explode": [100, 200, 350],
+      "shapes": [
+        {"type": "hull", "side": [[720, 980], [725, 1090], [680, 1130], [250, 1110], [160, 1170], [70, 1700], [40, 1810], [50, 1900], [-40, 1910], [-70, 1810], [-40, 1700], [10, 1450], [70, 1130], [100, 880], [640, 880]], "top": [[725, 160], [725, 720], [-70, 725], [-70, 155]], "front": [[159.9138, 880], [720.0862, 880], [725, 1170], [700.431, 1700], [587.4138, 1730], [587.4138, 1910], [292.5862, 1910], [292.5862, 1730], [179.569, 1700], [155, 1170]], "r": 45}
+      ]
+    },
+    {
+      "id": "rear-seat",
+      "name": "Rear seat",
+      "group": "interior",
+      "tone": "primary",
+      "info": "60/40 split rear bench whose cushions flip up for in-cab storage; SuperCrew has 43.6 in of rear legroom.",
+      "material": "Steel frame, foam, cloth or leather",
+      "explode": [-200, 300, 0],
+      "shapes": [
+        {"type": "hull", "side": [[-500, 960], [-505, 1080], [-560, 1120], [-900, 1100], [-980, 1160], [-1080, 1720], [-1090, 1800], [-1170, 1800], [-1180, 1700], [-1100, 1150], [-1040, 900], [-560, 900]], "top": [[-500, 0], [-500, 800], [-1180, 810], [-1180, 0]], "front": [[0, 900], [795.092, 900], [810, 1150], [795.092, 1720], [695.7055, 1800], [0, 1800]], "r": 45}
+      ]
+    }
+  ],
+  "notes": [
+    "XLT trim with 18-inch wheels; dimensions from Ford's 2024 specifications (231.7 in long, 79.9 in wide, 77.2 in tall).",
+    "The cab and box are carved from their side, top and front views; doors, glass, lights and grille lie on their surfaces."
+  ]
+}

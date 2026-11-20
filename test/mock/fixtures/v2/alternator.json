@@ -1,0 +1,276 @@
+{
+  "title": "Car alternator (12 V, 150 A claw-pole)",
+  "subtitle": "Typical automotive alternator · about 200 mm long, 135 mm across",
+  "units": "mm",
+  "view": "front-left",
+  "groups": [
+    {"id": "drive", "name": "Drive end"},
+    {"id": "rotor", "name": "Rotor assembly"},
+    {"id": "stator", "name": "Stator"},
+    {"id": "frame", "name": "Housings and fasteners"},
+    {"id": "electrics", "name": "Rectifier and regulation"}
+  ],
+  "parts": [
+    {
+      "id": "front-housing",
+      "name": "Front housing",
+      "group": "frame",
+      "tone": "secondary",
+      "info": "Aluminium drive-end frame. It holds the front bearing, carries the mounting ears that bolt the alternator to the engine, and is open between the spokes so the fan can pull air through.",
+      "material": "Die-cast aluminium alloy",
+      "explode": [58, 0, 0],
+      "anchor": [30, 60, -30],
+      "shapes": [
+        {"type": "hull", "axis": "x", "r": 2.5, "revolve": [[24, 54], [24, 45], [30, 44], [62, 36], [67, 26], [67, 16], [64, 16], [64, 25], [59, 33], [28, 40], [20, 41], [20, 54]], "cut": [{"type": "box", "at": [38, 47, 0], "size": [24, 22, 24], "r": 4, "repeat": {"count": 6, "around": "x", "start": 30}}]},
+        {"type": "hull", "r": 2, "side": [[17, -60], [43, -60], [43, -76], [39, -85], [21, -85], [17, -76]], "front": [[-14, -60], [14, -60], [12, -74.8148], [0, -85], [-12, -74.8148]], "cut": [{"type": "cylinder", "axis": "x", "at": [30, -76, 0], "r": 5.5, "h": 80}]},
+        {"type": "hull", "r": 2, "side": [[29, 60], [43, 60], [43, 75], [39, 84], [33, 84], [29, 75]], "front": [[-11, 60], [11, 60], [9, 73.8462], [0, 84], [-9, 73.8462]], "cut": [{"type": "cylinder", "axis": "x", "at": [36, 75, 0], "r": 4.5, "h": 80}]}
+      ]
+    },
+    {
+      "id": "stator-core",
+      "name": "Stator core",
+      "group": "stator",
+      "tone": "primary",
+      "info": "A stack of thin, insulated steel laminations with 36 slots that hold the three-phase winding. Laminating the core cuts eddy-current losses.",
+      "material": "Silicon-steel laminations",
+      "explode": [0, 0, 0],
+      "anchor": [0, 58, -30],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "r": 64, "hole": 46.8, "h": 32},
+        {"type": "line", "path": [[-16, 47.5, 0], [16, 47.5, 0]], "repeat": {"count": 36, "around": "x"}}
+      ]
+    },
+    {
+      "id": "stator-winding",
+      "name": "Stator windings",
+      "group": "stator",
+      "tone": "primary",
+      "info": "Three-phase copper winding laid in the core slots; the end turns stick out on both sides. The rotor's spinning magnetic field induces alternating current in it.",
+      "material": "Enamelled copper wire",
+      "explode": [0, -128, 0],
+      "shapes": [
+        {"type": "torus", "axis": "x", "at": [21, 0, 0], "r": 54, "tube": 6},
+        {"type": "torus", "axis": "x", "at": [-21, 0, 0], "r": 54, "tube": 6},
+        {"type": "tube", "path": [[-24, 50, 12], [-40, 49, 16], [-58, 45, 18]], "r": 1.6, "repeat": {"count": 3, "around": "x", "step": 110, "start": 95}}
+      ]
+    },
+    {
+      "id": "rotor",
+      "name": "Rotor (claw poles)",
+      "group": "rotor",
+      "tone": "accent",
+      "info": "Two interleaved steel claw-pole halves around the field coil. With current in the coil the six claws on each side become alternating north and south poles that sweep past the stator.",
+      "material": "Low-carbon steel",
+      "explode": [0, 130, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [31.5, 0, 0], "r": 45.6, "h": 7},
+        {"type": "cylinder", "axis": "x", "at": [-31.5, 0, 0], "r": 45.6, "h": 7},
+        {"type": "extrude", "axis": "y", "at": [0, 43, 0], "outline": [[34, -13], [34, 13], [-26, 5], [-26, -5]], "depth": 6, "repeat": {"count": 6, "around": "x"}},
+        {"type": "extrude", "axis": "y", "at": [0, 43, 0], "outline": [[-34, -13], [-34, 13], [26, 5], [26, -5]], "depth": 6, "repeat": {"count": 6, "around": "x", "start": 30}}
+      ]
+    },
+    {
+      "id": "field-coil",
+      "name": "Field coil",
+      "group": "rotor",
+      "tone": "primary",
+      "info": "Copper winding inside the claw poles. The regulator varies its current (a few amps, fed through the brushes and slip rings) to set the output voltage.",
+      "material": "Enamelled copper wire on a plastic bobbin",
+      "explode": [0, 230, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "r": 36, "hole": 22, "h": 44}
+      ]
+    },
+    {
+      "id": "shaft",
+      "name": "Rotor shaft",
+      "group": "rotor",
+      "tone": "primary",
+      "info": "Steel shaft carrying the rotor, slip rings, fan and pulley. It spins on two ball bearings at up to about 18,000 rpm.",
+      "material": "Hardened steel",
+      "explode": [0, 130, 0],
+      "anchor": [80, 0, 0],
+      "shapes": [
+        {"type": "lathe", "axis": "x", "profile": [[0, -86], [6, -86], [6, -36], [8.5, -36], [8.5, 109], [0, 109]], "smooth": true}
+      ]
+    },
+    {
+      "id": "slip-rings",
+      "name": "Slip rings",
+      "group": "rotor",
+      "tone": "accent",
+      "info": "Two copper rings on an insulating sleeve at the rear of the shaft. The brushes ride on them to carry field current into the spinning rotor.",
+      "material": "Copper rings, moulded insulator",
+      "explode": [-22, 130, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-59.5, 0, 0], "r": 6.6, "h": 16},
+        {"type": "cylinder", "axis": "x", "at": [-56, 0, 0], "r": 7.4, "h": 4, "repeat": {"count": 2, "along": [-7, 0, 0]}}
+      ]
+    },
+    {
+      "id": "front-bearing",
+      "name": "Front bearing",
+      "group": "drive",
+      "tone": "primary",
+      "info": "Sealed ball bearing in the front housing. It takes the belt's side load, so it is the bearing that usually wears out first.",
+      "material": "Bearing steel, rubber seals",
+      "explode": [88, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [46, 0, 0], "r": 20, "hole": 16.2, "h": 12},
+        {"type": "cylinder", "axis": "x", "at": [46, 0, 0], "r": 12.6, "hole": 8.5, "h": 12},
+        {"type": "sphere", "at": [46, 14.4, 0], "r": 3.6, "repeat": {"count": 8, "around": "x"}}
+      ]
+    },
+    {
+      "id": "fan",
+      "name": "Cooling fan",
+      "group": "drive",
+      "tone": "primary",
+      "info": "Pulls air through the housings to cool the stator, diodes and regulator. An alternator's output drops as it heats up, so cooling matters.",
+      "material": "Pressed steel",
+      "explode": [108, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [59, 0, 0], "r": 22, "hole": 8.5, "h": 3},
+        {"type": "cylinder", "axis": "x", "at": [57.6, 0, 0], "r": 50, "hole": 22, "h": 1.4},
+        {"type": "box", "at": [62.5, 37, 0], "size": [9, 28, 1.6], "rot": [0, 28, 0], "r": 0.6, "repeat": {"count": 12, "around": "x"}}
+      ]
+    },
+    {
+      "id": "pulley",
+      "name": "Pulley",
+      "group": "drive",
+      "tone": "accent",
+      "info": "Six-groove pulley driven by the engine's serpentine belt, turning the alternator about 2.5 to 3 times faster than the crankshaft. Many newer cars use a one-way clutch pulley here.",
+      "material": "Steel",
+      "explode": [140, 0, 0],
+      "shapes": [
+        {"type": "lathe", "axis": "x", "profile": [[9, 68], [28, 68], [28, 70.5], [25.8, 72.3], [28, 74.1], [25.8, 75.8], [28, 77.6], [25.8, 79.4], [28, 81.2], [25.8, 83], [28, 84.7], [25.8, 86.5], [28, 88.3], [25.8, 90.1], [28, 91.9], [28, 94], [9, 94], [9, 68]], "smooth": true}
+      ]
+    },
+    {
+      "id": "pulley-nut",
+      "name": "Pulley nut",
+      "group": "drive",
+      "tone": "primary",
+      "info": "Clamps the pulley, fan and spacer to the shaft.",
+      "material": "Steel",
+      "explode": [168, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [100.5, 0, 0], "r": 13.9, "hole": 8.5, "h": 13, "sides": 6}
+      ]
+    },
+    {
+      "id": "rear-housing",
+      "name": "Rear housing",
+      "group": "frame",
+      "tone": "secondary",
+      "info": "Aluminium slip-ring end frame. It holds the rear bearing and carries the rectifier, regulator and brush holder.",
+      "material": "Die-cast aluminium alloy",
+      "explode": [-58, 0, 0],
+      "anchor": [-30, 60, -30],
+      "shapes": [
+        {"type": "hull", "axis": "x", "r": 2.5, "revolve": [[67, -16], [67, -28], [61, -38], [26, -46], [21, -47], [21, -52], [16.5, -52], [16.5, -44], [24, -42], [58, -35], [64, -27], [64, -16]], "cut": [{"type": "box", "at": [-38, 47, 0], "size": [22, 20, 22], "r": 4, "repeat": {"count": 6, "around": "x", "start": 0}}]},
+        {"type": "hull", "r": 2, "side": [[-43, -60], [-17, -60], [-17, -76], [-21, -85], [-39, -85], [-43, -76]], "front": [[-14, -60], [14, -60], [12, -74.8148], [0, -85], [-12, -74.8148]], "cut": [{"type": "cylinder", "axis": "x", "at": [-30, -76, 0], "r": 5.5, "h": 80}]}
+      ]
+    },
+    {
+      "id": "rear-bearing",
+      "name": "Rear bearing",
+      "group": "frame",
+      "tone": "primary",
+      "info": "Smaller ball bearing that supports the shaft at the slip-ring end.",
+      "material": "Bearing steel",
+      "explode": [-82, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-45, 0, 0], "r": 16, "hole": 13, "h": 10},
+        {"type": "cylinder", "axis": "x", "at": [-45, 0, 0], "r": 9.2, "hole": 6, "h": 10},
+        {"type": "sphere", "at": [-45, 11.1, 0], "r": 2.9, "repeat": {"count": 7, "around": "x"}}
+      ]
+    },
+    {
+      "id": "rectifier",
+      "name": "Rectifier (diodes)",
+      "group": "electrics",
+      "tone": "primary",
+      "info": "Six diodes pressed into horseshoe-shaped heat-sink plates. They turn the stator's three-phase AC into the DC that charges the battery and runs the car.",
+      "material": "Silicon diodes, aluminium heat sinks",
+      "explode": [-100, -10, 0],
+      "shapes": [
+        {"type": "extrude", "axis": "x", "at": [-61, 0, 0], "depth": 4, "outline": [[48.5, 28], [54.1, 14.5], [56, 0], [54.1, -14.5], [48.5, -28], [39.6, -39.6], [28, -48.5], [14.5, -54.1], [0, -56], [-14.5, -54.1], [-28, -48.5], [-39.6, -39.6], [-48.5, -28], [-54.1, -14.5], [-56, 0], [-54.1, 14.5], [-48.5, 28], [-26.8, 15.5], [-29.9, 8], [-31, 0], [-29.9, -8], [-26.8, -15.5], [-21.9, -21.9], [-15.5, -26.8], [-8, -29.9], [0, -31], [8, -29.9], [15.5, -26.8], [21.9, -21.9], [26.8, -15.5], [29.9, -8], [31, 0], [29.9, 8], [26.8, 15.5]], "smooth": true},
+        {"type": "cylinder", "axis": "x", "at": [-65, -44, 0], "r": 4, "h": 6, "repeat": {"count": 6, "around": "x", "step": 40, "start": -100}}
+      ]
+    },
+    {
+      "id": "regulator",
+      "name": "Voltage regulator",
+      "group": "electrics",
+      "tone": "accent",
+      "info": "Electronic regulator with the brush holder built in. It switches the field current on and off to hold the output at about 14 V whatever the engine speed and electrical load.",
+      "material": "Silicon IC, aluminium heat sink, plastic housing",
+      "explode": [-104, 72, 0],
+      "shapes": [
+        {"type": "box", "at": [-60, 30, 0], "size": [24, 20, 30], "r": 2},
+        {"type": "box", "at": [-60, 43, -12], "size": [16, 6, 1.2], "repeat": {"count": 7, "along": [0, 0, 4]}},
+        {"type": "box", "at": [-76, 34, 12], "size": [8, 10, 10]}
+      ]
+    },
+    {
+      "id": "brushes",
+      "name": "Carbon brushes",
+      "group": "electrics",
+      "tone": "primary",
+      "info": "Two spring-loaded carbon blocks that press on the slip rings to feed the field coil. They wear slowly and are a common repair item.",
+      "material": "Carbon-graphite, copper braid, steel springs",
+      "explode": [-92, 112, 0],
+      "shapes": [
+        {"type": "box", "at": [-56, 13.5, 0], "size": [3.6, 10, 5], "repeat": {"count": 2, "along": [-7, 0, 0]}},
+        {"type": "cylinder", "at": [-56, 22, 0], "r": 1.8, "h": 7, "repeat": {"count": 2, "along": [-7, 0, 0]}}
+      ]
+    },
+    {
+      "id": "rear-cover",
+      "name": "Rear cover",
+      "group": "frame",
+      "tone": "secondary",
+      "info": "Plastic cap that protects the rectifier, regulator and brushes, with vents for the cooling air.",
+      "material": "Glass-filled nylon",
+      "explode": [-140, 0, 0],
+      "anchor": [-80, 40, -30],
+      "shapes": [
+        {"type": "hull", "axis": "x", "r": 1.5, "revolve": [[62, -52], [62, -74], [56, -84], [40, -90], [14, -92], [14, -89], [38, -87], [53, -81], [59, -73], [59, -52]], "cut": [{"type": "box", "at": [-89, 27, 0], "size": [12, 20, 5], "r": 1.5, "repeat": {"count": 12, "around": "x"}}, {"type": "box", "at": [-80, 50, 0], "size": [8, 5, 14], "r": 1.5, "repeat": {"count": 16, "around": "x"}}]}
+      ]
+    },
+    {
+      "id": "b-terminal",
+      "name": "B+ output terminal",
+      "group": "electrics",
+      "tone": "warning",
+      "info": "The main output stud, wired straight to the battery's positive terminal. It is always live, even with the engine off, so disconnect the battery before working on it.",
+      "material": "Steel stud, copper strap, nylon insulator",
+      "explode": [-176, 46, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-98, 28, -24], "r": 3, "h": 26},
+        {"type": "cylinder", "axis": "x", "at": [-90.5, 28, -24], "r": 6.5, "h": 5},
+        {"type": "cylinder", "axis": "x", "at": [-103, 28, -24], "r": 5.8, "h": 5, "sides": 6}
+      ]
+    },
+    {
+      "id": "through-bolts",
+      "name": "Through-bolts (4)",
+      "group": "frame",
+      "tone": "primary",
+      "info": "Four long bolts that clamp the front and rear housings together around the stator.",
+      "material": "Steel",
+      "explode": [-250, 0, 0],
+      "shapes": [
+        {"type": "cylinder", "axis": "x", "at": [-2, 70, 0], "r": 2.5, "h": 96, "repeat": {"count": 4, "around": "x", "start": 45}},
+        {"type": "cylinder", "axis": "x", "at": [-52, 70, 0], "r": 4.5, "h": 4, "sides": 6, "repeat": {"count": 4, "around": "x", "start": 45}}
+      ]
+    }
+  ],
+  "notes": [
+    "Generic compact design with an external fan; many newer units have internal fans and a clutch pulley.",
+    "Dimensions typical of 120–150 A units; layouts differ by maker.",
+    "Housings and cover are cast solids of revolution with their vent windows and mounting ears."
+  ]
+}
