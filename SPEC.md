@@ -2409,13 +2409,28 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   2-second countdown ring on **Send now** and **Cancel**, then sent. The listen's recognizer keeps listening
   (`keepListening`, handed over without a restart): words heard pause the countdown (`data-state="listening"`, shown in
   `voice-review-heard`); then `reviewReply` decides: "cancel", "never mind", "forget it", "scratch that", "don't send
-  it", "stop" → nothing is sent ("Okay, not sent."); "no, I said …", "I said …", "I meant …", or the sentence said
-  again (same first two words) → corrected (`applyCorrection`: a restatement of four or more words, or most of the
-  sentence, replaces it; a short fix replaces the word or words that sound most like it, by spelling or rhyme, or the one
-  number for a number; one it already says changes nothing; nothing close: it replaces it all) and the countdown starts
-  again; "send it", "yes", "go ahead" → sent now; "wait", "hold on", "no" → the countdown stops (the microphone listens
-  30 s more for a correction); fillers change nothing; anything else is added to the words and the countdown starts
-  again. A tap on the words opens a field (`voice-review-input`, the keyboard in the same tap; the countdown and the
+  it", "stop", also after any run of "no", "oh", "wait" ("No no, cancel") → nothing is sent ("Okay, not sent.");
+  "no, I said …", "I said …", "I meant …" (after any run of "no"), "no, <words>" ("No, Boston"), or the sentence said
+  again (same first two words) → corrected; "send it", "yes", "go ahead" (also "no, send it") → sent now; "wait",
+  "hold on", "no", "no no", "no, wait" → the countdown stops (the microphone listens 30 s more for a correction);
+  fillers change nothing; anything else is added to the words and the countdown starts again.
+  A correction (`planCorrection(heard, fix)` → `{ text, sure }`; `applyCorrection` is its text): a fix the sentence
+  already holds changes nothing; a restatement replaces it all (as long as the sentence; or four words or more, at
+  least 60% of it, sharing no word but small ones with it: then a guess); a fix that shares words with the sentence
+  replaces only the stretch it lines up with, word by word (the same word, one that sounds alike, a number for a
+  number, a name for a name; an unlike word replaces the one right after the same small word, "in Paris" for "in
+  Austin", or right before the same word, "almond milk" for "oat milk", and otherwise is added next to it: "oat milk"
+  for "buy milk" → "buy oat milk", "Nice, France" for "in Nice"; "for four" for "for two at seven" → "for four at
+  seven"); a number for a number replaces the one number in the sentence; otherwise the word or words that sound most
+  like it, by spelling or rhyme ("Boston" for "Austin"). Sure → the corrected words and the countdown starts again.
+  Not sure (a guess: nothing in the sentence sounds like a fix of up to three words, so a name replaces a name, a
+  number a number, else the word that sounds most like it and the later the likelier, never a small word or a request
+  verb; or there are several numbers for a number; or two places fit as well; or the fit adds or drops words away
+  from a shared word) → the guess is shown, the countdown waits (`data-state="paused"`, status "Is that right?", the
+  words said in `voice-review-heard`, the hint "Is that right? Say “yes” or tap Send, or tap the words to fix them."):
+  "yes" or Send sends it, a tap on the words fixes it, and another correction applies to the words as they were before
+  the guess. A short fix never replaces the whole sentence; a longer one with nothing in common changes nothing (a
+  guess the owner fixes). A tap on the words opens a field (`voice-review-input`, the keyboard in the same tap; the countdown and the
   microphone stop); its Send (or Enter) sends the fixed words, Escape keeps them and waits. The core, the dock's Send
   and Send now send at once; Type moves the words to the text box; Exit discards them; a hidden page pauses the check
   and closes its microphone. Sent words go through the local commands again (a correction can make one), then as a
@@ -2445,7 +2460,8 @@ ignored, revisions (and the held shrink), the 60 s cap, `stop()` and `abort()`, 
 backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines (and a late final or an
 iOS rewrite of the turn that ended, with fewer or more words, then "cancel"; `continuation`), device language;
 `platform.voice` (Chromium: the continuous recognizer and its release); `ui.voice.heard` (cancel, correction, send,
-wait, fillers, more words, `applyCorrection`, `pickHeard`, `listenPhrases`); `platform.storage` and `platform.db`
+wait, fillers, more words, "no no, cancel", "no, Boston", `applyCorrection`, `planCorrection`: anchored multi-word
+fixes, guesses that wait for the owner, the sure cases, `pickHeard`, `listenPhrases`); `platform.storage` and `platform.db`
 (the new settings, the one-time migration, backups). E2E `voice-listen.mjs` (iPhone 13; the fake recognizer of
 `installFakeSpeech` is a speaker plus sessions, Chrome-like by default and iOS-like with `recognizer: 'ios'`):
 `voice-listen-iphone` (a 1.2 s mid-sentence pause not cut, the device language, the countdown and its timing, a

@@ -22,8 +22,9 @@
 // Then, with "Show what I said for 2 seconds, then send" (the default), what was heard is shown big
 // with a 2-second countdown ring and "Send now" before it is sent: tap the words to fix them (the
 // countdown stops and a field opens), or say "cancel" / "never mind" (nothing is sent), "no, I said
-// …" (the words are corrected and the countdown starts again), "wait", or simply go on talking (the
-// words are added). The microphone keeps listening during those 2 seconds (the same recognizer).
+// …" (the words are corrected and the countdown starts again; when Jarvis can only guess where the
+// fix goes, the guess is shown and waits for "yes", Send or a tap), "wait", or simply go on talking
+// (the words are added). The microphone keeps listening during those 2 seconds (the same recognizer).
 // Local commands (Screens, the hologram viewer, Optics) act at once without the check, and the
 // recognizer's alternatives are tried for them too.
 //
@@ -96,7 +97,7 @@ import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
-import { REVIEW_MS, reviewReply, applyCorrection, pickHeard, listenPhrases } from './voice-heard.js';
+import { REVIEW_MS, reviewReply, planCorrection, pickHeard, listenPhrases } from './voice-heard.js';
 
 export { splitSentences };
 
@@ -1462,7 +1463,8 @@ function createVoiceMode(opts) {
     const mic = S.mic && S.mic.handle ? S.mic : null;
     S.mic = null;
     if (S.review) endReview();
-    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0 };
+    // guess: a correction Jarvis wasn't sure how to apply, shown for the owner to confirm ({ from, said })
+    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, guess: null };
     S.review = R;
     S.karaoke = null;
     S.userEl = null;
@@ -1472,13 +1474,19 @@ function createVoiceMode(opts) {
     reviewText.hidden = false;
     reviewEl.hidden = false;
     setReviewText(text);
-    setText(reviewHint, mic ? 'Tap the words to fix them, or say “no, I said …” or “cancel”.' : 'Tap the words to fix them.');
+    setText(reviewHint, reviewHintText(R));
     setSub('');
     setVoiceState(mic ? 'listening' : 'idle');
     announce(`I heard: ${clip(singleLine(text), 200)}. Sending in 2 seconds.`);
     fadeIn(reviewEl);
     reviewNote(`“${clip(singleLine(text), 120)}” · sending in 2 s (say “cancel” or “no, I said …”)`);
     reviewCount(REVIEW_MS);
+  }
+
+  /** The line under the check: what the owner can do now. */
+  function reviewHintText(R) {
+    if (R.guess) return R.L ? 'Is that right? Say “yes” or tap Send, or tap the words to fix them.' : 'Is that right? Tap Send, or tap the words to fix them.';
+    return R.L ? 'Tap the words to fix them, or say “no, I said …” or “cancel”.' : 'Tap the words to fix them.';
   }
 
   function setReviewText(text) {
@@ -1502,7 +1510,7 @@ function createVoiceMode(opts) {
     const [status, ic] = {
       counting: ['Sending…', 'send'],
       listening: ['Listening…', 'mic'],
-      paused: ['Ready when you are', 'pause'],
+      paused: R.guess ? ['Is that right?', 'info'] : ['Ready when you are', 'pause'],
       editing: ['Fix what I heard', 'edit'],
     }[R.mode] || ['Sending…', 'send'];
     setStatus(status, ic);
@@ -1556,6 +1564,7 @@ function createVoiceMode(opts) {
       R.L = null;
       abortHandle(L.handle);
       reviewHeard.hidden = true;
+      setText(reviewHint, reviewHintText(R)); // nothing more is heard: no "say …"
     }
     // A paused check still hears a correction for a while; then its microphone closes (Send stays).
     clearTimeout(R.micTimer);
@@ -1604,14 +1613,35 @@ function createVoiceMode(opts) {
         if (R.paused) reviewPause('paused');
         else reviewCount(REVIEW_MS);
         return;
-      case 'correct':
-        setReviewText(applyCorrection(R.text, reply.text));
-        announce(`Corrected: ${clip(singleLine(R.text), 200)}`);
-        reviewNote(`Got it: “${clip(singleLine(R.text), 140)}”.`);
-        reviewCount(REVIEW_MS);
+      case 'correct': {
+        // A fix while a guess is shown corrects the words as they were before the guess.
+        const from = R.guess ? R.guess.from : R.text;
+        const plan = planCorrection(from, reply.text);
+        if (plan.sure) {
+          R.guess = null;
+          setReviewText(plan.text);
+          setText(reviewHint, reviewHintText(R));
+          announce(`Corrected: ${clip(singleLine(R.text), 200)}`);
+          reviewNote(`Got it: “${clip(singleLine(R.text), 140)}”.`);
+          reviewCount(REVIEW_MS);
+          return;
+        }
+        // Jarvis isn't sure where the fix goes (nothing sounds like it, or there are two numbers):
+        // the guess is shown and the countdown waits for the owner ("yes", Send, or a tap to fix it).
+        R.guess = { from, said };
+        setReviewText(plan.text);
+        setText(reviewHeard, `“${clip(singleLine(said), 140)}”`);
+        reviewHeard.hidden = false;
+        setText(reviewHint, reviewHintText(R));
+        reviewPause('paused');
+        announce(`Is that right: ${clip(singleLine(R.text), 200)}? Say yes, or tap the words to fix them.`);
+        reviewNote(`Is that right? “${clip(singleLine(R.text), 140)}”`);
         return;
+      }
       default:
+        R.guess = null;
         setReviewText(addWords(R.text, reply.text));
+        setText(reviewHint, reviewHintText(R));
         reviewCount(REVIEW_MS);
     }
   }
@@ -1622,7 +1652,7 @@ function createVoiceMode(opts) {
     if (!R || R.L !== L) return;
     R.L = null;
     reviewHeard.hidden = true;
-    setText(reviewHint, 'Tap the words to fix them.');
+    setText(reviewHint, reviewHintText(R));
     if (R.mode === 'listening') {
       if (R.paused) reviewPause('paused');
       else reviewCount(REVIEW_MS);
@@ -1659,6 +1689,7 @@ function createVoiceMode(opts) {
     const R = S.review;
     if (!R || S.closed || R.mode === 'editing') return;
     haptic('light');
+    R.guess = null; // the owner fixes the words themselves
     reviewPause('editing', { closeMic: true });
     reviewInput.value = R.text;
     reviewText.hidden = true;
