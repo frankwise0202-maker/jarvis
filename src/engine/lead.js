@@ -571,10 +571,10 @@ async function runToolRound(ctx, blocks, rawInputs, planning) {
       }
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = await applyMemory(ctx, tu, req);
-    } else if (isVisualTool(ctx, tu.name)) {
-      round.results[tu.id] = await runVisualTool(ctx, tu, req);
     } else if (isOpticsTool(ctx, tu.name)) {
       round.results[tu.id] = await runOpticsTool(ctx, tu, req);
+    } else if (isVisualTool(ctx, tu.name)) {
+      round.results[tu.id] = await runVisualTool(ctx, tu, req);
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }
@@ -618,12 +618,12 @@ async function resumeToolRound(ctx, pending) {
       missionRuns.push(resumeMission(ctx, mission).then(() => missionDone(ctx, round, tu, mission)));
     } else if (tu.name === 'update_memory') {
       round.results[tu.id] = { content: MEMORY_NOT_RESUMED, is_error: true };
-    } else if (isVisualTool(ctx, tu.name)) {
-      // Showing, saving (idempotent per segment) or opening an item again is harmless.
-      round.results[tu.id] = await runVisualTool(ctx, tu, Math.max(0, ctx.req - 1));
     } else if (isOpticsTool(ctx, tu.name)) {
       // Pinning again is harmless; a camera frame is taken only if the camera is still live.
       round.results[tu.id] = await runOpticsTool(ctx, tu, Math.max(0, ctx.req - 1));
+    } else if (isVisualTool(ctx, tu.name)) {
+      // Showing, saving (idempotent per segment) or opening an item again is harmless.
+      round.results[tu.id] = await runVisualTool(ctx, tu, Math.max(0, ctx.req - 1));
     } else {
       round.results[tu.id] = { content: `Unknown tool "${tu.name}". Use only the tools you were given.`, is_error: true };
     }

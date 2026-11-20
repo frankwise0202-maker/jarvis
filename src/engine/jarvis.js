@@ -169,11 +169,11 @@ export function createJarvis(deps = {}) {
     getSettings: deps.getSettings,
     getApiKey: deps.getApiKey,
     getApiBase: typeof deps.getApiBase === 'function' ? deps.getApiBase : () => '',
+    // The live camera (Optics): { isLive(), source(), grab({ reason }) }, see optics.js.
+    camera: deps.camera && typeof deps.camera === 'object' ? deps.camera : null,
     memory: deps.memory && typeof deps.memory === 'object' ? deps.memory : null,
     // The saved library (holograms and blueprints): { save, get, list, findPartBlueprint }, see visuals.js.
     library: deps.library && typeof deps.library === 'object' ? deps.library : null,
-    // The live camera (Optics): { isLive(), source(), grab({ reason }) }, see optics.js.
-    camera: deps.camera && typeof deps.camera === 'object' ? deps.camera : null,
     libraryTimeoutMs: Number.isFinite(deps.libraryTimeoutMs) && deps.libraryTimeoutMs > 0 ? deps.libraryTimeoutMs : LIBRARY_TIMEOUT_MS,
     // How often a live hologram / blueprint segment is updated while its input streams (tests).
     liveIntervalMs: Number.isFinite(deps.liveIntervalMs) && deps.liveIntervalMs >= 0 ? deps.liveIntervalMs : LIVE_INTERVAL_MS,

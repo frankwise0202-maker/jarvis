@@ -44,6 +44,12 @@
 //   activeRun             a TurnRun already in progress: watch it here and speak its answer
 //   mode                  'auto' | 'quick' | 'swarm', or a function returning one (default settings.mode)
 //   container             where to mount the overlay (default document.body)
+//   look                  Optics, the camera (app.js): { supported() -> boolean, open() } adds a
+//                           Look button to the dock. open() shows Optics over Voice Mode; while it
+//                           is open, `visuals` routes what is heard to it first ("what am I looking
+//                           at?" is a Look, spoken like any reply), and its mic button is the core.
+//                           ask(text, { …, attachments, optics }) sends a Look as a Voice Mode turn
+//                           with its frame (the Optics frame record goes to startTurn).
 //   visuals               the hologram and blueprint viewers (app.js):
 //                           open(run, segment)  show a hologram or blueprint of a Voice Mode reply
 //                           isOpen()            a viewer covers Voice Mode
@@ -60,13 +66,7 @@
 //                           note(text)          a caption in the viewer ("I'll take that once …")
 //                           spoken()            a reply or acknowledgement has been said (the
 //                                               viewer's caption of it can leave)
-//   look                  Optics, the camera (app.js): { supported() -> boolean, open() } adds a
-//                           Look button to the dock. open() shows Optics over Voice Mode; while it
-//                           is open, `visuals` routes what is heard to it first ("what am I looking
-//                           at?" is a Look, spoken like any reply), and its mic button is the core.
-// The returned api also has ask(text, { mode, blueprintFor, attachments, optics, signal }) ->
-// { run } | { held } | { error } (attachments and optics: an Optics Look, sent as a Voice Mode turn
-// with its frame). Before Optics: ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
+// The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
 // viewer's mic button: the core's tap, except that while a hologram of the reply builds it listens
@@ -208,10 +208,10 @@ function createVoiceMode(opts) {
     saveSettings,
     wakeLock,
     activeRun,
+    look,
     mode,
     container,
     visuals,
-    look,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -2375,7 +2375,7 @@ function createVoiceMode(opts) {
       const len = event.name === 'sentence' ? 0 : Number(event.charLength);
       setKaraokeWord(displayIndex(sp, ci), Number.isFinite(len) && len > 0 ? len : 0);
     }
-    if (outputLevel() === null) bumpLevel(0.55 + Math.random() * 0.35); // a real level needs no bumps
+    bumpLevel(0.55 + Math.random() * 0.35);
   }
 
   function displayIndex(sp, spokenIndex) {
@@ -2586,14 +2586,17 @@ function createVoiceMode(opts) {
     levelLast = ts;
     const real = outputLevel();
     if (real !== null) {
-      // The natural voice plays through Web Audio: follow its real loudness.
-      bumpLevel(real);
-    } else if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
-      // No word events from this voice: a soft synthetic envelope keeps the core "talking".
-      const t = ts / 1000;
-      bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
+      // The natural voice plays through Web Audio: the core follows its real loudness, eased. The
+      // target is set, not raised, so the word bumps (estimated for this voice) never add to it.
+      levelTarget = Math.min(1, Math.max(0, real));
+    } else {
+      if (S.state === 'speaking' && S.speech && S.speech.started && !S.speech.boundary && !S.speech.idle) {
+        // No word events from this voice: a soft synthetic envelope keeps the core "talking".
+        const t = ts / 1000;
+        bumpLevel(0.3 + 0.28 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 1.7 + 0.6)));
+      }
+      levelTarget *= Math.exp(-dt / 240);
     }
-    levelTarget *= Math.exp(-dt / 240);
     levelValue += (levelTarget - levelValue) * (1 - Math.exp(-dt / 70));
     pushLevel(levelValue);
     levelFrame = requestAnimationFrame(levelTick);
