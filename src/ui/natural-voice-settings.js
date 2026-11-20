@@ -85,7 +85,8 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
   const progress = h('progress', { class: 'nv-progress', max: 1, value: 0, attrs: { 'data-testid': 'natural-voice-progress', 'aria-label': 'Natural voice download' } });
   const status = h('div', { class: 'nv-status', id: 'set-naturalVoice-status', attrs: { role: 'status', 'aria-live': 'polite', 'data-testid': 'natural-voice-status' } }, statusText, progress);
 
-  const testBtn = h('button', { class: 'btn btn-sm', type: 'button', disabled: !supported, attrs: { 'data-testid': 'natural-voice-test' }, on: { click: test } }, icon('speaker', { size: 16 }), h('span', { text: 'Test natural voice' }));
+  const testLabel = h('span', { text: 'Test natural voice' });
+  const testBtn = h('button', { class: 'btn btn-sm', type: 'button', disabled: !supported, attrs: { 'data-testid': 'natural-voice-test' }, on: { click: test } }, icon('speaker', { size: 16 }), testLabel);
   const retryBtn = h('button', { class: 'btn btn-sm', type: 'button', hidden: true, attrs: { 'data-testid': 'natural-voice-retry' }, on: { click: retry } }, icon('refresh', { size: 16 }), h('span', { text: 'Try again' }));
   const removeBtn = h('button', { class: 'btn btn-sm', type: 'button', hidden: true, attrs: { 'data-testid': 'natural-voice-remove' }, on: { click: remove } }, icon('trash', { size: 16 }), h('span', { text: `Remove download` }));
 
@@ -181,10 +182,17 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         }
         text = !supported ? '' : downloaded ? (on ? 'Downloaded. It starts when Jarvis next speaks.' : `Downloaded (${size}). Turn it on to use it.`) : on ? 'Not downloaded yet.' : '';
     }
+    // A test waiting for the engine, or making its sample: the owner hears the natural voice, never
+    // the built-in one in its place.
+    if (testing && testing.waiting) text = `${text ? `${text} ` : ''}The test plays as soon as the natural voice is ready.`;
+    else if (testing && testing.cancel && st.state === 'slow') text = `${text} Making a sample with the natural voice…`;
     setText(statusText, text);
     progress.hidden = !showProgress;
     status.hidden = !text;
     status.dataset.state = st.state;
+    status.dataset.test = testing ? (testing.waiting ? 'waiting' : 'playing') : '';
+    setText(testLabel, testing && testing.waiting ? 'Cancel test' : 'Test natural voice');
+    testBtn.setAttribute('aria-pressed', testing ? 'true' : 'false');
   }
 
   function toggle(on) {
@@ -215,10 +223,18 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     render();
   }
 
+  /**
+   * Test natural voice: always the natural voice, never the built-in one in its place. Ready: the
+   * sentence is spoken the way replies are. Not ready yet (starting, downloading, getting ready),
+   * stopped after a while idle, or measured too slow here: the natural voice makes the whole sample
+   * as soon as it can, then plays it (the status line says the test is waiting; a second tap cancels).
+   * After an error it says why instead.
+   */
   function test() {
     if (testing) {
       testing.cancel();
       testing = null;
+      render();
       return;
     }
     const s = getSettings();
@@ -230,37 +246,83 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
     const hour = new Date().getHours();
     const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
     const line = `Good ${part}, ${s.userName || 'sir'}. All systems are operational.`;
-    if (natural.engine.status().state === 'slow') {
-      // Replies use the device voice here, but the owner should still hear what the natural voice
-      // sounds like: make the whole sample first, then play it.
-      setText(statusText, 'Making a sample with the natural voice (slow on this device)…');
-      let cancelled = false;
-      const job = natural.engine.synth(line, { voice: s.naturalVoiceId, speed: s.voiceRate });
-      testing = { cancel: () => ((cancelled = true), natural.engine.cancel([job.id]), natural.audio.stopAll()) };
-      job.promise.then(
-        ({ pcm, sampleRate }) => {
-          if (cancelled) return;
-          const h2 = natural.audio.play(pcm, sampleRate, natural.audio.now() + 0.05);
-          setTimeout(() => {
-            testing = null;
-            render();
-          }, Math.ceil(h2.duration * 1000) + 100);
-        },
-        () => {
+    const st = natural.engine.status();
+    if (st.state === 'error') {
+      toast(`${(st.error && ERROR_TEXT[st.error.code]) || ERROR_TEXT.init} Tap Try again to hear it.`, { level: 'warn' });
+      return;
+    }
+    if (st.state === 'ready') {
+      testing = tts.speak(line, {
+        voiceURI: s.voiceURI,
+        rate: s.voiceRate,
+        onEnd: () => {
           testing = null;
           render();
         },
-      );
+      });
+      render();
       return;
     }
-    testing = tts.speak(line, {
-      voiceURI: s.voiceURI,
-      rate: s.voiceRate,
-      onEnd: () => {
-        testing = null;
-        render();
+    sample(line, s);
+  }
+
+  /** The whole sample made by the natural voice, then played (waits for the engine when needed). */
+  function sample(line, s) {
+    let cancelled = false;
+    let job = null;
+    let unsub = null;
+    const me = {
+      waiting: true,
+      cancel: () => {
+        cancelled = true;
+        if (unsub) unsub();
+        unsub = null;
+        if (job) natural.engine.cancel([job.id]);
+        natural.audio.stopAll();
       },
+    };
+    testing = me;
+    const finish = () => {
+      if (unsub) unsub();
+      unsub = null;
+      if (testing === me) testing = null;
+      render();
+    };
+    const go = () => {
+      if (cancelled || job) return;
+      me.waiting = false;
+      if (unsub) unsub();
+      unsub = null;
+      render();
+      job = natural.engine.synth(line, { voice: s.naturalVoiceId, speed: s.voiceRate });
+      job.promise.then(
+        ({ pcm, sampleRate }) => {
+          if (cancelled) return;
+          const played = natural.audio.play(pcm, sampleRate, natural.audio.now() + 0.05);
+          setTimeout(() => !cancelled && finish(), Math.ceil(played.duration * 1000) + 100);
+        },
+        () => {
+          if (cancelled) return;
+          toast('The natural voice couldn’t make the sample. Try again.', { level: 'warn' });
+          finish();
+        },
+      );
+    };
+    const now = natural.engine.status();
+    if (now.state === 'ready' || now.state === 'slow') {
+      go();
+      return;
+    }
+    unsub = natural.engine.subscribe((n) => {
+      if (n.state === 'ready' || n.state === 'slow') go();
+      else if (n.state === 'error' && !cancelled) {
+        cancelled = true;
+        toast(`${(n.error && ERROR_TEXT[n.error.code]) || ERROR_TEXT.init}`, { level: 'warn' });
+        finish();
+      }
     });
+    if (now.state === 'off') natural.engine.start().catch(() => {});
+    render();
   }
 
   offs.push(natural.engine.subscribe((st) => render(st)));

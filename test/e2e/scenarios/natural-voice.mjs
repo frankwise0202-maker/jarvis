@@ -8,6 +8,8 @@
 //   natural-voice-webgpu    Mac: a WebGPU adapter -> the card offers the graphics-chip engine
 //                           (about 350 MB); its model fails to load -> the processor engine (WASM)
 //                           takes over by itself; next time the card offers that one (about 117 MB)
+//   natural-voice-test      Test never plays the built-in voice in its place: during the download it
+//                           waits, then plays the natural voice; kept as too slow, a natural sample
 //   natural-voice-gpu-guard while the main window sets the voice up on the graphics chip, a screen
 //                           window or a second tab rules nothing out; a page that died mid-set-up
 //                           (lock let go, marker left) still does
@@ -52,9 +54,9 @@ function fakeWebGpu() {
   }
 }
 
-async function setup(t, { gpu = false, brokenFp32 = false, init = null } = {}) {
+async function setup(t, { gpu = false, brokenFp32 = false, init = null, page = null } = {}) {
   writeVoiceStandin(MODELS, { brokenFp32 });
-  await t.newPage();
+  if (!page) await t.newPage();
   await t.page.addInitScript(() => {
     try {
       localStorage.setItem('jarvis.dev.voiceStandin', '1');
@@ -222,6 +224,49 @@ export default [
         t.assert(v && v.failed === true && v.code === 'crashed', `a crash verdict (${JSON.stringify(v)})`);
         t.assert(!(await marker()), 'the marker is gone');
         await next.close();
+      });
+    },
+  },
+  {
+    name: 'natural-voice-test',
+    title: 'Test natural voice never plays the built-in voice in its place: tapped during the download it waits and then plays the natural voice; on a device kept as too slow it makes a natural sample and plays that',
+    device: 'iphone13',
+    timeout: 180000,
+    async run(t) {
+      // The model download is held for 6 s (a slow connection): Test is tapped meanwhile.
+      await t.newPage();
+      await t.page.context().route(/model_quantized\.onnx/, async (route) => {
+        await new Promise((r) => setTimeout(r, 6000));
+        await route.continue().catch(() => {});
+      });
+      await setup(t, { page: t.page });
+      await openVoiceSettings(t);
+      await t.step('during the download: Test waits (the status says so) and the built-in voice says nothing', async () => {
+        await t.page.locator(tid('setting-naturalVoice')).click();
+        await waitStatus(t, ['downloading', 'starting', 'loading'], 15000);
+        await t.page.locator(tid('natural-voice-test')).click();
+        await t.page.waitForTimeout(1500);
+        t.assert(!(await said(t)).some((x) => /All systems are operational/.test(x)), `not the built-in voice (${JSON.stringify(await said(t))})`);
+        t.assert((await audio(t)) === 0, 'nothing played yet');
+        t.assert(/The test plays as soon as the natural voice is ready\.$/.test(await t.text(status(t))), `the status says the test waits (${await t.text(status(t))})`);
+        t.assert((await t.text(t.page.locator(tid('natural-voice-test')))) === 'Cancel test', 'a second tap cancels it');
+        await t.screenshot('test-waiting');
+      });
+      await t.step('ready: the waiting test plays in the natural voice', async () => {
+        await waitStatus(t, ['ready']);
+        await t.waitFor(async () => (await audio(t)) > 0, { timeout: 30000, message: 'the natural voice to play the test' });
+        t.assert(!(await said(t)).some((x) => /All systems are operational/.test(x)), 'never the built-in voice');
+        await t.waitFor(async () => (await t.text(t.page.locator(tid('natural-voice-test')))) === 'Test natural voice', { timeout: 15000, message: 'the button back to Test' });
+      });
+      await t.step('a device kept as too slow: Test makes a natural sample and plays it (replies stay on the built-in voice)', async () => {
+        await t.page.evaluate(() => localStorage.setItem('jarvis.voice.natural.verdict', JSON.stringify({ slow: true, rtf: 1.4, at: Date.now() })));
+        await t.reload();
+        await openVoiceSettings(t);
+        await t.waitFor(async () => /^Too slow on this device \(1\.4× real time\)/.test(await t.text(status(t))), { timeout: 10000, message: async () => `the slow text (${await t.text(status(t))})` });
+        const before = await audio(t);
+        await t.page.locator(tid('natural-voice-test')).click();
+        await t.waitFor(async () => (await audio(t)) > before, { timeout: 60000, message: 'the natural sample to play' });
+        t.assert(!(await said(t)).some((x) => /All systems are operational/.test(x)), `not the built-in voice (${JSON.stringify(await said(t))})`);
       });
     },
   },

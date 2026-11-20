@@ -2057,6 +2057,11 @@ others stay selectable).
   run it)."), the download of a fallback, and "Too slow on this device (N× real time), so Jarvis uses the built-in
   voice." with Try again, also before the engine starts.
 - After a fallback the label follows the engine in use.
+- **Test natural voice** (`natural-voice-test`) always plays the natural voice, never the built-in one in its place.
+  Ready: the greeting is spoken the way replies are (the router). Starting, downloading or getting ready, stopped
+  after a while idle (`off`), or kept as too slow: the test waits for the engine (starting it if needed; the status
+  adds "The test plays as soon as the natural voice is ready.", `data-test="waiting"`, and the button reads Cancel
+  test), then the natural voice makes the whole sample and plays it. After an error a toast says why (Try again).
 
 **Model hosting** (self-hosted on GitHub Pages; same origin; no page CSP change, because a same-origin module Worker
 takes its CSP from its own response headers and Pages sends none).
@@ -2084,6 +2089,8 @@ takes its CSP from its own response headers and Pages sends none).
   - `natural-voice-webgpu` (a stubbed adapter: 350 MB offered; the fp32 stand-in fails to load; WASM takes over by
     itself; next time 117 MB);
   - `natural-voice-slow` (a kept verdict: the card says so; Voice Mode speaks with the built-in voice);
+  - `natural-voice-test` (Test tapped during the download waits, then plays the natural voice; kept as too slow, it
+    plays a natural sample; never the built-in voice);
   - `natural-voice-gpu-guard` (the main window's marker and lock: a screen window and a second tab rule nothing out;
     once the lock is let go with the marker left behind, the next page rules WebGPU out).
 

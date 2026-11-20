@@ -358,7 +358,9 @@ It is Kokoro, an open-source neural voice that runs on your own device: it's fre
 says never leaves the device.
 
 - **George** (British) speaks by default; **Lewis**, **Fable** and other voices are in the
-  **Speaker** list. **Test natural voice** plays a short greeting.
+  **Speaker** list. **Test natural voice** plays a short greeting, always in the natural voice:
+  tapped while it's still downloading or getting ready, it waits and plays once it's ready (tap
+  again to cancel); on a device where it's too slow it still lets you hear it.
 - **A one-time download.** The card says how much before anything downloads: about **350 MB**
   on a computer whose graphics chip the browser can use (WebGPU: Chrome on a Mac has it, and
   recent iPhones probably do), about **117 MB** otherwise. It's kept for offline use; **Remove
