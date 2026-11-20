@@ -3,7 +3,9 @@
 // another monitor, in a floating panel beside the owner's work, or in its own window. It is a view:
 // Look, Watch and the pinned labels stay in Optics on the main screen.
 //
-//   createCameraScreenPanel({ win, frame, compact }) -> { el, update, getState, destroy }
+//   createCameraScreenPanel({ win, frame, compact, deps }) -> { el, update, getState, destroy }
+//   deps.onCameraState(state): the camera's state as it changes (live | starting | paused | off |
+//   error), so the main window's OPTICS indicator says LIVE only while it runs
 //   (src/ui/screens/panels.js uses it for the 'camera' kind, in a screen window and in the floating
 //   panel alike; phones show Optics itself instead.)
 //
@@ -39,7 +41,8 @@ function cameraWord(camera) {
   return camera.facing === 'front' ? 'FRONT' : camera.facing === 'rear' ? 'BACK' : 'CAMERA';
 }
 
-export function createCameraScreenPanel({ win = window, frame, compact = false } = {}) {
+export function createCameraScreenPanel({ win = window, frame, compact = false, deps = {} } = {}) {
+  const report = deps && typeof deps.onCameraState === 'function' ? deps.onCameraState : null;
   const video = h('video', { class: 'scr-camera__video', attrs: { 'data-testid': 'screen-camera-video', 'aria-hidden': 'true' } });
   const cardTitle = h('p', { class: 'scr-msg__main' });
   const cardText = h('p', { class: 'scr-msg__sub' });
@@ -90,6 +93,13 @@ export function createCameraScreenPanel({ win = window, frame, compact = false }
   function render(state, info) {
     if (destroyed) return;
     el.dataset.state = state;
+    if (report) {
+      try {
+        report(state);
+      } catch {
+        /* the indicator is optional */
+      }
+    }
     el.dataset.mirrored = camera.mirrored ? 'true' : 'false';
     const on = state === 'live' || state === 'starting';
     setText(toggleText, on ? 'Camera off' : 'Camera on');

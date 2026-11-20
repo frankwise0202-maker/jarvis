@@ -132,11 +132,16 @@ export function screenToolResult(outcome) {
       return { content: `Opened ${name}.${note}` };
     }
     case 'needs_tap':
+      // The camera is off: a tool call never turns it on (src/ui/screens/controller.js).
+      if (o.note === 'camera-off') return { content: `The camera is off, and only the owner can turn it on: they now see a "${oneLine(o.button || 'Turn on camera', 40)}" button. Tell them to tap it if they want to see the camera there. Do not call open_screen or look_through_camera again for this request.` };
       return { content: `The browser needs one tap from the owner before it can open the window: they now see a "${oneLine(o.button || 'Open', 40)}" button for ${name}. Tell them to tap it. Do not call open_screen again for this request.` };
     case 'needs_permission':
       return { content: `To use the owner's other monitor, the browser will ask them once to allow window management: they now see a short explanation with an "Allow" button. Tell them to tap it. Do not call open_screen again for this request.` };
     case 'closed':
-      return o.count === 0 ? { content: 'Nothing was open on another screen.' } : { content: `Closed ${label} and brought ${name} back to the owner's main window.` };
+      if (o.count === 0) return { content: 'Nothing was open on another screen.' };
+      // A camera screen whose camera was off closes without turning the camera on in the main window.
+      if (o.kind === 'camera' && o.back === false) return { content: `Closed the camera view on ${label}; the camera is off now.` };
+      return { content: `Closed ${label} and brought ${name} back to the owner's main window.` };
     case 'nothing':
       return { content: oneLine(o.message, 300) || 'There is nothing to show on a screen yet.', is_error: true };
     default:

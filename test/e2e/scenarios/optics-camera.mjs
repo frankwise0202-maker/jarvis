@@ -16,6 +16,9 @@
 //                      new question and its answer scroll into view in the sheet
 //   optics-followups-small  the same on a 375×667 phone: the chips wrap (none off the edge) and
 //                      each follow-up's answer is in view
+//   optics-tool-camera(-float)  Jarvis's open_screen for the camera never turns it on: the owner's
+//                      Turn on camera does (iPhone: Optics; Mac: the open floating panel); a live
+//                      camera may be moved back to Optics
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
@@ -516,6 +519,82 @@ export default [
         t.assert(await last.isVisible(), 'the chat shows the reply');
         t.assertAppendOnly();
       });
+    },
+  },
+  {
+    name: 'optics-tool-camera',
+    title: "iPhone: Jarvis's own open_screen for the camera (no tap) never turns it on: the reply asks, Turn on camera waits; the owner's tap opens Optics live",
+    device: 'iphone13',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await page.context().addInitScript(() => {
+        try {
+          localStorage.setItem('jarvis.optics.intro.v1', '1'); // the owner has used Optics before
+        } catch {
+          /* ignore */
+        }
+      });
+      await t.goto('/');
+      const turn = await t.send('Tell me a joke [[screen:camera:beside]]');
+      await t.waitForTurn(turn, ['done'], { timeout: 45000 });
+      const results = t.requests('lead').filter((r) => r.status === 200).flatMap((r) => r.body.messages.at(-1).content || []).filter((b) => b && b.type === 'tool_result');
+      const text = results.map((b) => (typeof b.content === 'string' ? b.content : JSON.stringify(b.content))).join(' | ');
+      t.assert(/The camera is off, and only the owner can turn it on/.test(text), `the tool_result says the camera is off (${text})`);
+      await page.waitForTimeout(1500);
+      t.assert((await t.count('optics')) === 0 && (await liveTracks(page)) === 0, `a tool call alone never turns the camera on (Optics open: ${await t.count('optics')}, live tracks: ${await liveTracks(page)})`);
+      await t.visible('screens-camera-tap', { message: 'the owner sees Turn on camera' });
+      await shot(t, 'iphone13-tool-camera-tap');
+      await page.locator(tid('screens-camera-on')).click();
+      await t.visible('optics');
+      await waitLive(t);
+      t.assert((await liveTracks(page)) === 1, 'the owner tapped: the camera is on in Optics');
+      await page.locator(tid('optics-live-pill')).click();
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      t.assert((await liveTracks(page)) === 0, 'released');
+    },
+  },
+  {
+    name: 'optics-tool-camera-float',
+    title: "Mac: with a floating panel open, Jarvis's open_screen for the camera never swaps it to a live camera by itself; after the owner's Turn on camera it does, and Jarvis may bring that live camera back to Optics",
+    device: 'mac',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.addInitScript(installScreenStubs, { monitors: 1, perm: 'granted' });
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      const first = await t.send('What is a good name for a robot butler?');
+      await t.waitForTurn(first, ['done'], { timeout: 45000 });
+      const pip = await opensPage(t, async () => {
+        const input = await t.visible('composer-input');
+        await input.fill('float the answer'); // the owner floats the answer (one gesture)
+        await page.locator(tid('composer-send')).click();
+      });
+      await waitAttr(t, pip, 'screen', 'kind', 'answer', { timeout: 15000, label: 'the floating answer' });
+      const second = await t.send('Thanks. [[screen:camera:beside]]');
+      await t.waitForTurn(second, ['done'], { timeout: 45000 });
+      await page.waitForTimeout(1500);
+      const kind = await pip.evaluate(() => (document.querySelector('[data-testid="screen"]') || {}).dataset?.kind || null);
+      t.assert(kind === 'answer' && (await liveTracks(page)) === 0, `the floating panel still shows the answer, no camera (${kind}, ${await liveTracks(page)} live tracks)`);
+      await t.visible('screens-camera-tap', { message: 'Turn on camera waits for the owner' });
+      await page.locator(tid('screens-camera-on')).click();
+      await waitAttr(t, pip, 'screen-camera', 'state', 'live', { timeout: 20000, label: 'the floating camera after the tap' });
+      t.assert((await liveTracks(page)) === 1, 'one camera, in the panel');
+      // The camera is on: Jarvis may bring it back to Optics ("back"), where it stays on.
+      const third = await t.send('Bring that back please [[screen:camera:back]]');
+      await t.waitForTurn(third, ['done'], { timeout: 45000 });
+      await t.waitFor(() => pip.isClosed(), { timeout: 8000, message: 'the floating panel to close' });
+      await t.visible('optics', { message: 'a live camera handed back opens Optics' });
+      await waitLive(t);
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      t.assert((await liveTracks(page)) === 0, 'released');
     },
   },
   {

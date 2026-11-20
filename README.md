@@ -482,7 +482,9 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   lock the phone, close it or minimize its window. A camera view on another screen sends nothing
   anywhere. A picture goes to Anthropic only when you tap **Look** (or say "what am I looking
   at?"), when Jarvis takes one fresh look you asked for while the camera is live, or while
-  **Watch** is on (you start it, it shows a countdown and stops after 5 minutes). Pictures are made fresh from
+  **Watch** is on (you start it, it shows a countdown and stops after 5 minutes). Jarvis never
+  turns the camera on by himself: if he offers to show it on another screen while it's off, you
+  get a **Turn on camera** button, and nothing happens until you tap it. Pictures are made fresh from
   the camera, so they carry no location data. Each Look is kept in the conversation on this device
   (and in backups), like a photo you attach. Jarvis never names people from their faces. Which
   camera you chose last is remembered in this browser's settings.

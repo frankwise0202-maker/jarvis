@@ -544,6 +544,8 @@ export async function startApp(rootEl) {
         toast: (msg, opts) => toast(msg, opts),
         // A camera on another screen lights the OPTICS pill here (one tap turns it off).
         onChange: () => updateCore(),
+        // Jarvis's open_screen may move a camera that is on, never turn one on (controller.js).
+        cameraLive: () => opticsCameraBridge.isLive(),
       }),
     null,
   );

@@ -7,7 +7,7 @@ import { createLimiter } from './limiter.js';
 import { ERROR_MESSAGES, classifyError, createClient } from './client.js';
 import { DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, DEPTHS, MODELS, MODES, bucketOf } from './models.js';
 import { DEFAULT_TONE, DEFAULT_VERBOSITY, LEAD_SYSTEM_LATEST, LENGTH_STYLES, TONE_STYLES, buildTurnContext, leadToolsLatest, withTurnContextBlocks } from './prompts.js';
-import { OPTICS_DEFAULT_TEXT, isPinsSegment, opticsContextLines, prepareOpticsFrame } from './optics.js';
+import { OPTICS_DEFAULT_TEXT, cameraIsLive, isPinsSegment, opticsContextLines, prepareOpticsFrame } from './optics.js';
 import { STOPPED_BY_OWNER, runLeadTurn, stoppedRoundResults, toolResultMessage } from './lead.js';
 import { WORKER_MAX_TOKENS } from './worker.js';
 import { addUsage, emptyUsage, responseCost, usageDelta } from './stream.js';
@@ -358,6 +358,8 @@ export function createJarvis(deps = {}) {
       libraryTimeoutMs: d.libraryTimeoutMs,
       liveIntervalMs: d.liveIntervalMs,
       libraryCostCounted: 0,
+      // look_through_camera takes a frame only from a camera that was on when this run started.
+      cameraLiveAtStart: cameraIsLive(d),
       runStartedAt: Date.now(),
       durationBase: Number(turn.stats?.durationMs) || 0,
       now: nowDate,

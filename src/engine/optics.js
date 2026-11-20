@@ -103,7 +103,8 @@ export function opticsContextLines(conv, frame, deps) {
   return lines.filter(Boolean);
 }
 
-function cameraIsLive(deps) {
+/** The app's camera is on now (deps.camera.isLive()). A run records it when it starts (jarvis.js). */
+export function cameraIsLive(deps) {
   try {
     return !!(deps?.camera && typeof deps.camera.isLive === 'function' && deps.camera.isLive() === true);
   } catch {
@@ -235,10 +236,14 @@ function settleWithin(value, ms, signal) {
 }
 
 const CAMERA_OFF = "The camera is off, so nothing was captured. Ask the owner to open Optics (the camera key) and tap Look, or to describe what they see.";
+const CAMERA_OFF_AT_START = "The camera was off when the owner asked, so nothing was captured: only the owner turns the camera on, and a frame is taken only while it was already on. Ask them to open Optics and tap Look.";
 
 async function runLookThroughCamera(ctx, toolUse, req) {
   const camera = ctx.deps.camera;
   if (!camera || typeof camera.grab !== 'function' || !cameraIsLive(ctx.deps)) return { content: CAMERA_OFF, is_error: true };
+  // Only a camera that was already on when this run started (the turn context said so): one turned
+  // on during the turn (say, by a screen the same reply opened) is not the owner's request.
+  if (ctx.cameraLiveAtStart === false) return { content: CAMERA_OFF_AT_START, is_error: true };
   const reason = truncate(singleLine(typeof toolUse.input?.reason === 'string' ? toolUse.input.reason : ''), 120);
   let shot = null;
   try {

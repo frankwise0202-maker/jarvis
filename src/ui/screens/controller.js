@@ -31,7 +31,16 @@
 //   getLibraryItem(id)                 a saved hologram or blueprint
 //   snapshot(spec, { width, height })  a hologram image (the floating panel's WebGL fallback)
 //   toast(message, opts)               optional
-//   onChange()                         optional: a screen opened, closed or shows something else
+//   onChange()                         optional: a screen opened, closed, shows something else, or
+//                                      its camera went on or off
+//   cameraLive() -> boolean            optional: Optics' camera is on in this window
+//
+// The camera and Jarvis's tool: a tool call never turns a camera on. open_screen may move the
+// camera to a screen while it is on (in Optics, or on a camera screen); with the camera off the owner
+// gets a "Turn on camera" button instead (needs_tap, note 'camera-off'), and "back" from the tool
+// hands a camera screen back to Optics only while its camera is on. Camera screens report their
+// camera's state (live | starting | paused | off | error): a floating panel directly, a screen window
+// over the channel ({ t: 'camera', state }); cameraOn() says whether one may be running.
 
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
@@ -54,6 +63,7 @@ const safe = (fn, fallback) => {
   }
 };
 const PUSH_GAP = { hologram: 120, blueprint: 250, answer: 160, mission: 300 };
+const CAMERA_ON = new Set(['live', 'starting']);
 const PROMPT_MS = 60000;
 const PREFS_KEY = 'jarvis.screens.v1';
 
@@ -350,6 +360,7 @@ export function createScreens(deps = {}) {
   }
 
   function showIn(entry, target, takenFrom) {
+    if (entry.kind !== target.kind) entry.cameraState = undefined; // the new panel reports its own
     entry.kind = target.kind;
     entry.ref = { ...(target.ref || {}) };
     entry.title = target.title || '';
@@ -439,7 +450,7 @@ export function createScreens(deps = {}) {
       win: pipWin,
       frame,
       compact: true,
-      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null },
+      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st) },
     });
     frame.body.append(panel.el);
     entry.view = { frame, panel };
@@ -453,7 +464,7 @@ export function createScreens(deps = {}) {
     }
     const compact = window.innerWidth < 700;
     const frame = createScreenFrame({ win: window, label: 'SCREEN', kind: entry.kind, report: entry.report, title: entry.title, where: 'inapp', compact, setDocumentTitle: false, onClose: () => closeEntry(entry) });
-    const panel = createScreenPanel(entry.kind, { win: window, frame, compact, deps: panelDeps });
+    const panel = createScreenPanel(entry.kind, { win: window, frame, compact, deps: { ...panelDeps, onCameraState: (st) => setCameraState(entry, st) } });
     frame.body.append(panel.el);
     if (!entry.overlay) {
       const host = h('div', { class: 'scr-inapp', attrs: { 'data-testid': 'screen-inapp' } });
@@ -511,6 +522,58 @@ export function createScreens(deps = {}) {
     );
     schedulePush(entry, true);
     return outcome('opened', target, { mode: 'pip', label: 'FLOAT', note: plan.note });
+  }
+
+  // ---- the camera on screens ---------------------------------------------------------------------
+
+  function setCameraState(entry, st) {
+    const next = typeof st === 'string' ? st : undefined;
+    if (entry.cameraState === next) return;
+    entry.cameraState = next;
+    if (screens.has(entry.id)) changed();
+  }
+
+  /**
+   * A camera screen whose camera runs or is starting. `unknownIsOn`: also one that has not said yet
+   * (a screen window still loading): the indicator errs on the side of LIVE; a tool call does not.
+   */
+  function cameraScreenOn({ unknownIsOn = false } = {}) {
+    return [...screens.values()].some((s) => s.kind === 'camera' && (CAMERA_ON.has(s.cameraState) || (unknownIsOn && s.cameraState === undefined)));
+  }
+
+  /** Is a camera on right now: Optics' in this window, or a camera screen's? */
+  function cameraIsOn() {
+    return safe(() => typeof deps.cameraLive === 'function' && deps.cameraLive() === true, false) || cameraScreenOn();
+  }
+
+  /**
+   * Jarvis's open_screen asked for the camera while it is off. A tool call never turns a camera on:
+   * the owner gets "Turn on camera" (the tap is also the gesture a window or a floating panel needs).
+   */
+  function cameraTap(target, cmd) {
+    const go = h(
+      'button',
+      {
+        class: 'scr-btn scr-btn--primary',
+        type: 'button',
+        attrs: { 'data-testid': 'screens-camera-on' },
+        on: {
+          click: () => {
+            dismissPrompt();
+            Promise.resolve(place(target, cmd, { gesture: true }))
+              .then((o) => {
+                if (o && o.status !== 'opened') toast(screenMessage(o), { level: 'warn', id: 'screens' });
+              })
+              .catch((err) => console.error('[jarvis] screen failed:', err));
+          },
+        },
+      },
+      icon('camera', { size: 18 }),
+      h('span', { text: 'Turn on camera' }),
+    );
+    const no = h('button', { class: 'scr-btn', type: 'button', attrs: { 'data-testid': 'screens-camera-not-now' }, on: { click: () => dismissPrompt() } }, h('span', { text: 'Not now' }));
+    showPrompt({ testid: 'screens-camera-tap', label: 'Screens · camera', title: 'Turn on the camera?', text: 'Jarvis asked to show your camera. It stays off until you turn it on.', actions: [go, no] });
+    return outcome('needs_tap', target, { button: 'Turn on camera', note: 'camera-off' });
   }
 
   // ---- placement --------------------------------------------------------------------------------
@@ -716,12 +779,16 @@ export function createScreens(deps = {}) {
     closeEntry(entry, { back: true });
   }
 
-  function closeScreens({ where = null, screen = null, back = false } = {}) {
+  function closeScreens({ where = null, screen = null, back = false, tool = false } = {}) {
     let list = [...screens.values()];
     if (where === 'beside') list = list.filter((s) => s.mode === 'pip');
     if (screen) list = list.filter((s) => s.number === screen || s.label === `SCREEN ${screen}`);
     const last = list[list.length - 1] || null;
-    for (const s of list) closeEntry(s, { back: back && s === last });
+    // Handed back to the main window: the newest one. From Jarvis's tool, a camera only while it is
+    // on (Optics would turn it on again): a camera screen whose camera is off just closes.
+    const handBack = (s) => back && s === last && !(tool && s.kind === 'camera' && !CAMERA_ON.has(s.cameraState));
+    const backLast = !!last && handBack(last);
+    for (const s of list) closeEntry(s, { back: handBack(s) });
     // A floating panel opened before a reload (no entry here).
     if (!list.length && (where === 'beside' || !screen)) {
       const stray = currentPipWindow();
@@ -731,7 +798,7 @@ export function createScreens(deps = {}) {
       }
     }
     if (!list.length && !screen) post({ t: 'close', screen: '*' });
-    return { status: 'closed', count: list.length, label: last ? last.label : '', kind: last ? last.kind : null, title: last ? last.title : '', report: !!(last && last.report), back: back && !!last };
+    return { status: 'closed', count: list.length, label: last ? last.label : '', kind: last ? last.kind : null, title: last ? last.title : '', report: !!(last && last.report), back: backLast };
   }
 
   // ---- channel: screens saying hello, closing, handing back ------------------------------------------
@@ -754,7 +821,8 @@ export function createScreens(deps = {}) {
         return;
       }
       if (!entry) return;
-      if (m.t === 'back') gone(entry, { back: true });
+      if (m.t === 'camera') setCameraState(entry, txt(m.state) || undefined);
+      else if (m.t === 'back') gone(entry, { back: true });
       else if (m.t === 'closed') gone(entry, { back: false });
     };
     post({ t: 'who' });
@@ -765,11 +833,18 @@ export function createScreens(deps = {}) {
   async function run(cmd, { source = 'typed', gesture } = {}) {
     if (cmd.action === 'back') {
       if (!screens.size && !currentPipWindow()) return { status: 'closed', count: 0 };
-      return closeScreens({ back: true });
+      return closeScreens({ back: true, tool: source === 'tool' });
     }
     if (cmd.action === 'close') return closeScreens({ where: cmd.where, screen: cmd.screen });
     const target = await resolve(cmd);
     if (!target || target.error) return { status: 'nothing', message: (target && target.message) || 'There’s nothing to put on a screen yet.', kind: cmd.what };
+    // A tool call never turns the camera on: it may move a camera that is on, else the owner taps.
+    if (source === 'tool' && target.kind === 'camera' && !cameraIsOn()) {
+      const { fromViewer, ...rest } = target;
+      void fromViewer;
+      recent = { target: rest, at: Date.now() };
+      return cameraTap(target, cmd);
+    }
     const o = await place(target, cmd, { gesture: gesture === undefined ? hasGesture(source) : gesture });
     if (o && (o.status === 'opened' || o.status === 'needs_tap' || o.status === 'needs_permission')) {
       const { fromViewer, ...rest } = target;
@@ -831,6 +906,8 @@ export function createScreens(deps = {}) {
       return e ? { kind: e.kind, ref: e.ref, title: e.title } : null;
     },
     isOpen: () => screens.size > 0,
+    /** A camera screen whose camera may be running (one still loading counts): the OPTICS indicator. */
+    cameraOn: () => cameraScreenOn({ unknownIsOn: true }),
     closeAll: () => closeScreens({}),
     /** Closes every screen showing that kind (the OPTICS pill stops a camera on another screen). */
     closeKind(kind) {

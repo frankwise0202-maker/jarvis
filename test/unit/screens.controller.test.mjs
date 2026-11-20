@@ -101,6 +101,7 @@ async function page(opts = {}) {
       getLibraryItem: async () => null,
       toast: (m) => window.__app.toasts.push(m),
       onChange: () => (window.__app.changes += 1),
+      cameraLive: () => window.__cameraLive === true, // Optics' camera in this window
     });
     // Run a command "inside a click" (gesture) or not (voice): resolves to the outcome.
     window.say = async (text, { gesture = false, source = 'typed' } = {}) => {
@@ -307,4 +308,48 @@ test('a phone: the camera is Optics itself, shown by the app (never a screen fra
   assert.deepEqual(await p.evaluate(() => window.__app.shownInApp), [{ kind: 'camera', reason: 'inapp', back: false }]);
   assert.deepEqual(await p.evaluate(() => window.ctl.list()), [], 'no screen of its own in the app');
   assert.equal(await p.evaluate(() => window.__opens.length), 0, 'no window');
+});
+
+test('Jarvis\'s open_screen never turns the camera on: off, the owner gets "Turn on camera"; on, it moves; "back" hands back only a camera that is on', async () => {
+  const p = await page();
+  const tool = (input) => p.evaluate(async (input) => {
+    const r = await window.ctl.openFromTool(input);
+    return { status: r.status, note: r.note || null, button: r.button || null, kind: r.kind || null, mode: r.mode || null, back: r.back, count: r.count };
+  }, input);
+  // The camera is off (Optics closed): nothing opens, the owner gets a button.
+  let o = await tool({ what: 'camera', where: 'window' });
+  assert.deepEqual([o.status, o.note, o.button, o.kind], ['needs_tap', 'camera-off', 'Turn on camera', 'camera']);
+  assert.deepEqual(await p.evaluate(() => window.ctl.list()), [], 'no camera screen');
+  assert.equal(await p.evaluate(() => window.__opens.length), 0, 'no window');
+  assert.match(await p.textContent('[data-testid="screens-camera-tap"]'), /Turn on the camera\?.*stays off until you turn it on/s);
+  // The owner taps Turn on camera: now the camera window opens (that tap is the gesture).
+  await p.evaluate(() => {
+    window.__gesture = true;
+  });
+  await p.click('[data-testid="screens-camera-on"]');
+  await p.waitForFunction(() => window.ctl.list().some((s) => s.kind === 'camera'));
+  assert.equal(new URL(await p.evaluate(() => window.__opens.at(-1).url)).searchParams.get('screen'), 'camera');
+  // "back" from the tool while that screen has not said its camera runs: it closes, Optics stays shut.
+  o = await tool({ what: 'camera', where: 'back' });
+  assert.deepEqual([o.status, o.count, o.back, o.kind], ['closed', 1, false, 'camera']);
+  assert.ok(!(await p.evaluate(() => window.__app.shownInApp)).some((x) => x.kind === 'camera'), 'not handed back on');
+
+  // Optics' camera is on here: the tool may move it (no button).
+  await p.evaluate(() => {
+    window.__cameraLive = true;
+  });
+  o = await tool({ what: 'camera', where: 'window' });
+  assert.deepEqual([o.status, o.mode, o.kind], ['opened', 'window', 'camera']);
+  // The screen says its camera runs (over the channel, as a screen window does): "back" hands it back.
+  await p.evaluate(() => {
+    window.__cameraLive = false; // Optics closed here when the camera moved out
+    const id = window.ctl.list().find((s) => s.kind === 'camera').id;
+    new BroadcastChannel('jarvis-screens').postMessage({ t: 'camera', screen: id, state: 'live' });
+  });
+  await p.waitForFunction(() => window.__app.changes > 0);
+  await p.waitForTimeout(100);
+  o = await tool({ what: 'camera', where: 'back' });
+  assert.deepEqual([o.status, o.back], ['closed', true]);
+  assert.deepEqual((await p.evaluate(() => window.__app.shownInApp)).at(-1), { kind: 'camera', reason: 'handback', back: true }, 'a camera that runs comes back to Optics');
+  assert.deepEqual(p.problems, []);
 });

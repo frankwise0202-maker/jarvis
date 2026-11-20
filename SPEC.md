@@ -1777,6 +1777,14 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
   for the last two); titles are one line with their double quotes made single. Resume never reopens a window
   (`SCREEN_NOT_RESUMED`). Conversations frozen before V5 answer a stray call with "Unknown tool" and the app is never
   asked. The local matcher runs first for typed and spoken words in every conversation, old ones included.
+  - **The camera and the tool.** A tool call never turns a camera on. `open_screen` may move the camera only while it
+    is on (Optics' camera, `deps.cameraLive()`, or a camera screen whose camera reports `live`/`starting`); with the
+    camera off, nothing opens: the owner sees **Turn on camera** (`screens-camera-tap`, button `screens-camera-on`,
+    or Not now) and the tool gets `needs_tap` with note `camera-off` ("The camera is off, and only the owner can turn
+    it on…"). That tap opens it where Jarvis asked (on a phone, Optics). `where: 'back'` from the tool hands a camera
+    screen back to Optics only while its camera is on; otherwise it just closes ("the camera is off now"). Camera
+    screens report their camera's state to the main window (a floating panel directly, a screen window over the
+    channel: `{ t: 'camera', state }`).
 - Look: corner brackets and a thin glowing edge, a faint 24px grid, a header "SCREEN 2 · HOLOGRAM · 43 PARTS" over
   the title (a hologram's part count sits in the header, never on the stage where the renderer places its labels), a
   clock (hh:mm), a core glyph that breathes only while the content is live, a status chip (BUILDING,
@@ -1840,8 +1848,10 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
   - Checked against the conversation's frames: a point within 2% of the edge is pulled onto it, a point further out is
     skipped and reported, text is cut to 24 characters with control and bidi characters removed, duplicates are dropped.
   - A wrong frame id is answered `is_error`, naming the newest frame.
-- `look_through_camera({ reason })` works only while the camera is live (`deps.camera`, `opticsCameraBridge`). It never
-  turns the camera on, and returns the frame as an image inside the `tool_result` (a `frame` segment).
+- `look_through_camera({ reason })` works only while the camera is live (`deps.camera`, `opticsCameraBridge`), and only
+  when it was already live when the run started (`ctx.cameraLiveAtStart`, the same moment the turn context gets its
+  "camera is live" line): a camera turned on during the turn is not the owner's request. It never turns the camera
+  on, and returns the frame as an image inside the `tool_result` (a `frame` segment).
 - **Dispatch is by name.** `pin_labels` and `look_through_camera` run when the conversation's frozen tools contain them
   (`isOpticsTool`); otherwise they are "Unknown tool". Older conversations answer a Look in words.
 - **Tool versions** are §17.1. The definitions are `pinLabelsTool()` and `lookThroughCameraTool()` in

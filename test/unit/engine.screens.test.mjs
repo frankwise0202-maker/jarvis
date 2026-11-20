@@ -8,10 +8,11 @@ import { createJarvis } from '../../src/engine/index.js';
 import { CAMERA_AND_SCREENS_SECTION, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, leadToolsV4, leadToolsV5, leadToolVersions } from '../../src/engine/prompts.js';
 import { OPEN_SCREEN_DESCRIPTION, SCREEN_NOT_RESUMED, openScreenTool, runOpenScreen, screenToolResult, validateOpenScreenInput } from '../../src/engine/screens.js';
 import { DEFAULT_TEST_SETTINGS, KEY, blk, collect, createFakeApi, trailingToolResults } from './engine.support.test.mjs';
+import { fakeJpeg } from './optics.support.mjs';
 
 const screenUse = (id, input) => ({ type: 'tool_use', id, name: 'open_screen', input });
 
-function harness(handler, { screens } = {}) {
+function harness(handler, { screens, camera } = {}) {
   const api = createFakeApi(handler);
   const persisted = [];
   const jarvis = createJarvis({
@@ -25,6 +26,7 @@ function harness(handler, { screens } = {}) {
     workerStaggerMs: 0,
     maxRetryWaitMs: 50,
     screens,
+    camera,
   });
   return { api, jarvis, persisted };
 }
@@ -84,6 +86,10 @@ test('tool_result text for every outcome', () => {
     [{ status: 'needs_permission', kind: 'answer' }, /allow window management.*"Allow" button/],
     [{ status: 'closed', count: 1, kind: 'hologram', title: 'Camry', label: 'SCREEN 2' }, /^Closed screen 2 and brought the hologram "Camry" back/],
     [{ status: 'closed', count: 0 }, /^Nothing was open on another screen\.$/],
+    // The camera: a tool call never turns it on (the owner gets a button), and a camera screen whose
+    // camera was off is closed without being handed back on.
+    [{ status: 'needs_tap', kind: 'camera', button: 'Turn on camera', note: 'camera-off' }, /^The camera is off, and only the owner can turn it on: they now see a "Turn on camera" button\..*Do not call open_screen or look_through_camera again/],
+    [{ status: 'closed', count: 1, kind: 'camera', label: 'FLOAT', back: false }, /^Closed the camera view on float; the camera is off now\.$/],
   ];
   for (const [o, re] of cases) {
     const r = screenToolResult(o);
@@ -179,4 +185,41 @@ test('Resume never reopens a window', async () => {
   assert.equal(asked, 1, 'not asked again');
   const [result] = trailingToolResults(h.api.requests.at(-1).body);
   assert.deepEqual(result, { type: 'tool_result', tool_use_id: 'toolu_s4', content: SCREEN_NOT_RESUMED, is_error: true });
+});
+
+test('one reply cannot turn the camera on and look through it: look_through_camera needs a camera that was on when the turn started', async () => {
+  // The camera is off when the owner asks something unrelated; Jarvis calls open_screen(camera)
+  // (were the app to turn the camera on for it), then look_through_camera in the same turn.
+  let live = false;
+  let grabs = 0;
+  const camera = { isLive: () => live, source: () => 'rear', grab: async () => (grabs++, { data: fakeJpeg(1280, 720), thumb: null, source: 'rear' }) };
+  const screens = { open: async (input) => ((live = input.what === 'camera'), { status: 'opened', kind: 'camera', mode: 'inapp', label: 'SCREEN' }) };
+  let h;
+  h = harness(() => {
+    const n = h.api.requests.length;
+    if (n === 1) return { content: [screenUse('toolu_c1', { what: 'camera', where: 'beside' })], stop: 'tool_use' };
+    if (n === 2) return { content: [{ type: 'tool_use', id: 'toolu_c2', name: 'look_through_camera', input: { reason: 'checking the room' } }], stop: 'tool_use' };
+    return { content: [blk.text('Done.')], stop: 'end_turn' };
+  }, { screens, camera });
+  const conv = screensConversation(h.jarvis);
+  const { turn } = await collect(h.jarvis.startTurn(conv, { text: 'Summarize this article for me.', mode: 'quick' }));
+  assert.equal(turn.status, 'done');
+  assert.doesNotMatch(h.api.requests[0].body.messages.at(-1).content[0].text, /Optics: the camera is live/, 'the turn context said nothing about a camera');
+  assert.equal(live, true, 'the camera was on by the time of the second call');
+  const [result] = trailingToolResults(h.api.requests[2].body);
+  assert.equal(result.tool_use_id, 'toolu_c2');
+  assert.equal(result.is_error, true);
+  assert.equal(typeof result.content, 'string', 'no image in the result');
+  assert.match(result.content, /camera was off when the owner asked/);
+  assert.equal(grabs, 0, 'no frame was taken');
+  assert.ok(!turn.segments.some((s) => s.kind === 'frame'), 'no frame in the chat');
+
+  // A camera that was on when the turn started still works.
+  live = true;
+  h = harness(() => (h.api.requests.length === 1 ? { content: [{ type: 'tool_use', id: 'toolu_c3', name: 'look_through_camera', input: { reason: 'a fresh look' } }], stop: 'tool_use' } : { content: [blk.text('Got it.')], stop: 'end_turn' }), { camera });
+  const conv2 = screensConversation(h.jarvis);
+  await collect(h.jarvis.startTurn(conv2, { text: 'Can you see it now?', mode: 'quick' }));
+  const [ok] = trailingToolResults(h.api.requests[1].body);
+  assert.ok(Array.isArray(ok.content) && ok.content.some((c) => c.type === 'image'), 'the frame goes back as an image');
+  assert.equal(grabs, 1);
 });

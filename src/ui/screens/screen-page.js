@@ -220,7 +220,8 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     frame.setDetail('');
     frame.setStatus('', 'idle');
     frame.setState('loading');
-    panel = createScreenPanel(kind, { win: window, frame, compact: false, deps: panelDeps });
+    // A camera screen tells the main window whether its camera runs (the OPTICS indicator there).
+    panel = createScreenPanel(kind, { win: window, frame, compact: false, deps: kind === 'camera' ? { ...panelDeps, onCameraState: (state) => post({ t: 'camera', state }) } : panelDeps });
     frame.body.append(panel.el);
     frame.scan();
   }
