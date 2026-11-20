@@ -30,7 +30,12 @@
 //      built-in voice speaks.
 // A page that died while the GPU model was being set up (iOS ends a tab that takes too much memory)
 // leaves 'jarvis.voice.natural.attempt' behind: the next start skips WebGPU (not when it died while
-// the model was still downloading).
+// the model was still downloading). The marker names the page that set it ({ owner }) and that page
+// refreshes it every 2 s and holds a Web Lock meanwhile; a page that goes away normally (a reload,
+// closing the tab) removes it on pagehide. So it counts as a crash only once per page (the first
+// start or planInfo), never for this page's own set-up, and never while the page that set it is
+// alive: its lock is held (or, without Web Locks, its heartbeat is under 20 s old). Opening
+// Settings, a screen window or a second Jarvis tab mid-set-up rules nothing out.
 //
 // CSP (measured in headless Chromium 157, tools/csp-probe/probe.mjs): a same-origin module
 // Worker takes its policy from its OWN response headers, not from the page's <meta> CSP. On
@@ -46,7 +51,10 @@ const WARMUP_SLOW_RTF = 1.6;
 const WARMUP_FAST_RTF = 0.8;
 const VERDICT_KEY = 'jarvis.voice.natural.verdict'; // { slow: true, rtf, at }: kept across reloads (WASM)
 const WEBGPU_KEY = 'jarvis.voice.natural.webgpu'; // { failed|slow: true, rtf, code, at }: WebGPU ruled out for now
-const ATTEMPT_KEY = 'jarvis.voice.natural.attempt'; // { device: 'webgpu', phase, at } while the GPU model is set up
+const ATTEMPT_KEY = 'jarvis.voice.natural.attempt'; // { device: 'webgpu', phase, at, owner } while a page sets the GPU model up
+const ATTEMPT_LOCK = 'jarvis-voice-gpu-setup'; // a Web Lock that page holds meanwhile (a page that died lets go)
+const HEARTBEAT_MS = 2000; // the marker's `at` is refreshed this often while the set-up runs
+const ATTEMPT_STALE_MS = 20000; // without Web Locks: a marker not refreshed for this long is a dead page's
 const VERDICT_DAYS = 30;
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
@@ -68,6 +76,19 @@ export function naturalSupport(scope = globalThis) {
   } catch {
     return { ok: false, reason: 'error' };
   }
+}
+
+/** An id for this page's GPU set-up marker (unique enough: a time and random bits). */
+function newPageId(scope) {
+  try {
+    const c = scope.crypto || globalThis.crypto;
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+    if (c && typeof c.getRandomValues === 'function') return Array.from(c.getRandomValues(new Uint32Array(4)), (n) => n.toString(36)).join('');
+  } catch {
+    /* fall through */
+  }
+  newPageId.n = (newPageId.n || 0) + 1;
+  return `${Date.now().toString(36)}-${newPageId.n}`;
 }
 
 function localStore(scope) {
@@ -96,6 +117,7 @@ export function createNaturalEngine({
   plans = null,
 } = {}) {
   const planList = (Array.isArray(plans) && plans.length ? plans : [{ device, dtype, weights }]).map((p) => ({ ...p, weights: p.weights || weights }));
+  const pageId = newPageId(scope); // names this page's GPU set-up marker
   let current = null; // the plan the worker runs
   let worker = null;
   let startPromise = null;
@@ -203,6 +225,7 @@ export function createNaturalEngine({
   function teardown() {
     clearTimeout(idleTimer);
     clearTimeout(hiddenTimer);
+    if (gpuPhase) clearGpuAttempt(); // stopped mid-set-up: not a crash
     if (worker) {
       try {
         worker.terminate();
@@ -249,6 +272,9 @@ export function createNaturalEngine({
   }
 
   let gpuPhase = ''; // '' | 'load' | 'download' | 'compile' | 'warmup': where the GPU attempt is
+  let heartbeat = 0;
+  let releaseLock = null;
+  const writeAttempt = () => writeJson(ATTEMPT_KEY, { device: 'webgpu', phase: gpuPhase, at: Date.now(), owner: pageId });
   function noteGpuPhase(msg) {
     let next = gpuPhase;
     if (msg.stage === 'load') next = 'load';
@@ -260,21 +286,82 @@ export function createNaturalEngine({
     else if (msg.stage === 'warmup') next = 'warmup';
     if (next === gpuPhase) return;
     gpuPhase = next;
-    writeJson(ATTEMPT_KEY, { device: 'webgpu', phase: next, at: Date.now() });
+    writeAttempt();
+    // Alive while it sets up: a heartbeat on the marker, and a Web Lock the browser lets go of if
+    // the page dies.
+    if (!heartbeat) {
+      heartbeat = setInterval(() => gpuPhase && writeAttempt(), HEARTBEAT_MS);
+      if (heartbeat && typeof heartbeat.unref === 'function') heartbeat.unref();
+    }
+    holdLock();
   }
+  function holdLock() {
+    if (releaseLock) return;
+    try {
+      const locks = scope.navigator && scope.navigator.locks;
+      if (!locks || typeof locks.request !== 'function') return;
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      releaseLock = release;
+      Promise.resolve(locks.request(ATTEMPT_LOCK, { mode: 'shared' }, () => held)).catch(() => {});
+    } catch {
+      releaseLock = null;
+    }
+  }
+  /** The set-up is over (ready, failed, stopped) or the page is going away normally: not a crash. */
   function clearGpuAttempt() {
     gpuPhase = '';
-    removeKey(ATTEMPT_KEY);
+    clearInterval(heartbeat);
+    heartbeat = 0;
+    if (releaseLock) releaseLock();
+    releaseLock = null;
+    const a = readJson(ATTEMPT_KEY);
+    if (a && (!a.owner || a.owner === pageId)) removeKey(ATTEMPT_KEY); // another page's stays
+  }
+  try {
+    if (typeof scope.addEventListener === 'function') scope.addEventListener('pagehide', () => gpuPhase && clearGpuAttempt());
+  } catch {
+    /* no window here (tests) */
   }
 
-  /** A page that died while setting up the GPU model (the attempt marker is still there, not mid-download). */
-  function crashedOnGpu() {
+  // Once per page (the first start or planInfo): did a page die while setting up the GPU model?
+  let crashCheck = null;
+  function checkCrashOnce() {
+    if (crashCheck === null) crashCheck = judgeAttempt();
+    return crashCheck;
+  }
+  /** true when a page died mid-set-up (WebGPU ruled out); false; or a Promise of either. */
+  function judgeAttempt() {
+    if (!planList.some((p) => p.device === 'webgpu')) return false;
     const a = readJson(ATTEMPT_KEY);
-    if (!a || a.device !== 'webgpu') return false;
-    removeKey(ATTEMPT_KEY);
-    if (a.phase === 'download') return false;
-    saveWebgpuVerdict({ failed: true, code: 'crashed' });
-    return true;
+    if (!a || a.device !== 'webgpu' || (a.owner && a.owner === pageId)) return false;
+    const decide = (alive) => {
+      if (alive) return false; // another page (a second tab) is setting it up right now
+      const still = readJson(ATTEMPT_KEY);
+      if (!still || still.owner !== a.owner || still.phase !== a.phase) return false; // done or moved on meanwhile
+      removeKey(ATTEMPT_KEY);
+      if (a.phase === 'download') return false; // died mid-download: that says nothing about the graphics chip
+      saveWebgpuVerdict({ failed: true, code: 'crashed' });
+      return true;
+    };
+    const alive = ownerAlive(a);
+    return alive && typeof alive.then === 'function' ? alive.then(decide, () => decide(false)) : decide(alive);
+  }
+  /** Is the page that set the marker still alive? Its Web Lock; without Web Locks, a fresh heartbeat. */
+  function ownerAlive(a) {
+    const fresh = Number.isFinite(a.at) && Date.now() - a.at < ATTEMPT_STALE_MS;
+    try {
+      const locks = scope.navigator && scope.navigator.locks;
+      if (locks && typeof locks.query === 'function') {
+        return Promise.resolve(locks.query()).then(
+          (q) => !!(q && Array.isArray(q.held) && q.held.some((l) => l && l.name === ATTEMPT_LOCK)),
+          () => fresh,
+        );
+      }
+    } catch {
+      /* fall back to the heartbeat */
+    }
+    return fresh;
   }
 
   function ruledOut(plan) {
@@ -291,7 +378,12 @@ export function createNaturalEngine({
 
   /** The plan start() runs: a Promise, or the plan itself when no browser check is needed. */
   function resolvePlan() {
-    if (planList.some((p) => p.device === 'webgpu')) crashedOnGpu();
+    const crash = checkCrashOnce();
+    if (crash && typeof crash.then === 'function') return crash.then(() => pickPlan());
+    return pickPlan();
+  }
+
+  function pickPlan() {
     const viable = planList.filter((p) => !ruledOut(p));
     const list = viable.length ? viable : [planList[planList.length - 1]];
     const check = (p) => {

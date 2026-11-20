@@ -23,12 +23,12 @@ function memoryStore() {
 }
 
 /** A client with two plans; `gpu`: what the WebGPU check answers (a value or a Promise). */
-function twoPlans({ gpu = true, store = memoryStore() } = {}) {
+function twoPlans({ gpu = true, store = memoryStore(), scope = {} } = {}) {
   const workers = [];
   const engine = createNaturalEngine({
     workerUrl: 'voice/kokoro-worker.js',
     source: {},
-    scope: {},
+    scope,
     store,
     createWorker: () => {
       const w = createFakeWorker();
@@ -223,6 +223,124 @@ test('crash guard: a page that died while setting up the GPU model starts on WAS
   const n = twoPlans({ gpu: Promise.resolve(false), store: fresh });
   await n.engine.planInfo();
   assert.equal(n.engine.knownSlow(), true, 'no graphics chip: the WASM verdict stands');
+});
+
+// ---- the crash guard never mistakes a set-up still under way for a crash (review V7E-4) -------------
+
+/** The origin's Web Lock manager, shared by the pages (engines) of one test: request() and query(). */
+function fakeLocks() {
+  const held = [];
+  return {
+    held,
+    request(name, opts, cb) {
+      const entry = { name, mode: (opts && opts.mode) || 'exclusive' };
+      held.push(entry);
+      return Promise.resolve(cb()).finally(() => held.splice(held.indexOf(entry), 1));
+    },
+    query: async () => ({ held: held.map((l) => ({ ...l })), pending: [] }),
+  };
+}
+
+/** A page: its own event target (pagehide) and the origin's locks. */
+function fakePage(locks) {
+  const handlers = new Map();
+  return {
+    navigator: locks ? { locks } : {},
+    addEventListener: (type, fn) => handlers.set(type, [...(handlers.get(type) || []), fn]),
+    fire: (type) => (handlers.get(type) || []).forEach((fn) => fn({ type })),
+  };
+}
+
+const attemptOf = (store) => JSON.parse(store.saved.get('jarvis.voice.natural.attempt') || 'null');
+
+test('crash guard: Settings opened (planInfo) while this page sets the GPU model up rules nothing out; nor does the restart after the idle stop', async (t) => {
+  const clock = installClock();
+  t.after(() => clock.restore());
+  const locks = fakeLocks();
+  const store = memoryStore();
+  const page = fakePage(locks);
+  const a = twoPlans({ gpu: true, store, scope: page });
+  const started = a.engine.start();
+  const w = a.workers[0];
+  assert.equal(w.posted[0].config.device, 'webgpu');
+  w.emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+  w.emit({ type: 'progress', stage: 'compile', file: 'onnx/model.onnx', loaded: 0, total: 1 });
+  assert.equal(attemptOf(store).phase, 'compile');
+  assert.ok(attemptOf(store).owner, 'the marker names this page');
+  await flush();
+  assert.deepEqual(locks.held.map((l) => l.name), ['jarvis-voice-gpu-setup'], 'and this page holds the set-up lock');
+  // The Settings card asks which engine (choosePlan -> planInfo) in the middle of the set-up.
+  assert.equal((await a.engine.planInfo()).device, 'webgpu', 'planInfo still says WebGPU');
+  assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false, 'no "crashed" verdict');
+  assert.ok(store.saved.has('jarvis.voice.natural.attempt'), 'the marker stays while the set-up runs');
+  // The heartbeat keeps the marker fresh.
+  const at = attemptOf(store).at;
+  clock.advance(4100);
+  assert.ok(attemptOf(store).at > at, 'refreshed every 2 s');
+  w.emit({ type: 'ready', device: 'webgpu', dtype: 'fp32', loadMs: 4000, warmupMs: 200, warmupAudioS: 1.5, threads: 1 });
+  await started;
+  assert.deepEqual([a.engine.status().state, a.engine.status().plan], ['ready', 'webgpu']);
+  assert.equal(store.saved.has('jarvis.voice.natural.attempt'), false, 'gone once ready');
+  await flush();
+  assert.deepEqual(locks.held, [], 'the lock is let go');
+  const at2 = Date.now();
+  clock.advance(10_000);
+  assert.equal(store.saved.has('jarvis.voice.natural.attempt'), false, 'no heartbeat after the set-up');
+  assert.ok(Date.now() > at2);
+  // The idle stop, then the next reply: WebGPU again, on this page and on the next.
+  a.engine.stop();
+  a.engine.start();
+  await flush();
+  assert.deepEqual([a.workers.at(-1).posted[0].config.device, a.workers.at(-1).posted[0].config.dtype], ['webgpu', 'fp32']);
+  assert.equal((await twoPlans({ gpu: true, store, scope: fakePage(locks) }).engine.planInfo()).device, 'webgpu');
+});
+
+test('crash guard: a second page (a screen window, another tab) opened mid-set-up, or a reload during the warm-up, rules nothing out; a page that died does', async (t) => {
+  const clock = installClock();
+  t.after(() => clock.restore());
+  const locks = fakeLocks();
+  const store = memoryStore();
+  const main = fakePage(locks);
+  const a = twoPlans({ gpu: true, store, scope: main });
+  a.engine.start();
+  a.workers[0].emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+  a.workers[0].emit({ type: 'progress', stage: 'warmup', loaded: 0, total: 1 });
+  await flush();
+  // Another page of the same app (a screen window, a second tab) asks which engine.
+  const other = twoPlans({ gpu: true, store, scope: fakePage(locks) });
+  assert.equal((await other.engine.planInfo()).device, 'webgpu');
+  assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false, 'the main window is alive (its lock is held): no verdict');
+  assert.equal(attemptOf(store).phase, 'warmup', "and the main window's marker stays");
+  // An ordinary reload during the warm-up: pagehide takes the marker away; the next page tries WebGPU.
+  main.fire('pagehide');
+  assert.equal(store.saved.has('jarvis.voice.natural.attempt'), false);
+  await flush();
+  assert.deepEqual(locks.held, []);
+  const reloaded = twoPlans({ gpu: true, store, scope: fakePage(locks) });
+  assert.equal((await reloaded.engine.planInfo()).device, 'webgpu');
+  assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false);
+  // A page that died mid-set-up (iOS ended it: no pagehide, and the browser let go of its lock).
+  store.set('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', phase: 'compile', at: Date.now(), owner: 'a-page-that-died' }));
+  const next = twoPlans({ gpu: true, store, scope: fakePage(locks) });
+  assert.equal((await next.engine.planInfo()).device, 'wasm', 'its marker without a lock is a crash, however fresh');
+  assert.equal(JSON.parse(store.saved.get('jarvis.voice.natural.webgpu')).code, 'crashed');
+  assert.equal(store.saved.has('jarvis.voice.natural.attempt'), false);
+});
+
+test('crash guard without Web Locks: a marker refreshed in the last 20 s is a live page; an older one is a page that died', async (t) => {
+  const clock = installClock();
+  t.after(() => clock.restore());
+  const store = memoryStore();
+  const a = twoPlans({ gpu: true, store, scope: fakePage(null) });
+  a.engine.start();
+  a.workers[0].emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+  a.workers[0].emit({ type: 'progress', stage: 'compile', loaded: 0, total: 1 });
+  clock.advance(30_000); // a long set-up: the heartbeat keeps it fresh
+  assert.equal((await twoPlans({ gpu: true, store, scope: fakePage(null) }).engine.planInfo()).device, 'webgpu');
+  assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false);
+  store.set('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', phase: 'compile', at: Date.now() - 25_000, owner: 'gone' }));
+  assert.equal((await twoPlans({ gpu: true, store, scope: fakePage(null) }).engine.planInfo()).device, 'wasm');
+  assert.equal(JSON.parse(store.saved.get('jarvis.voice.natural.webgpu')).code, 'crashed');
 });
 
 // ---- self-hosted files in parts (the worker joins them) -----------------------------------------

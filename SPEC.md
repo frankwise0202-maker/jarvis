@@ -2029,13 +2029,19 @@ others stay selectable).
   - WebGPU turning slower than real time while it speaks marks the engine `slow`, so the reply in progress hands over
     to the device voice; the WASM plan then loads for the next replies.
   - WASM too slow is the prototype's `slow` verdict (`jarvis.voice.natural.verdict`): the built-in voice speaks.
-- **Crash guard.** `jarvis.voice.natural.attempt` (`{ device: 'webgpu', phase, at }`) follows the GPU attempt from the
-  `load` stage (`load`, `download`, `compile`, `warmup`) and is cleared on ready or error. The worker sends a `compile`
-  progress message once the model file is downloaded and its SHA-256 checked (the download's total also counts the
-  speaker's file, which only comes with the first synthesis, so it never shows 100% on a first run); the Settings
-  card then says "Getting the voice ready…".
-  If a page finds it at start, WebGPU is ruled out (`code: 'crashed'`), unless the page died mid-download (a reload
-  then says nothing about the graphics chip).
+- **Crash guard.** `jarvis.voice.natural.attempt` (`{ device: 'webgpu', phase, at, owner }`) follows the GPU attempt
+  from the `load` stage (`load`, `download`, `compile`, `warmup`) and is cleared on ready, error, stop, or `pagehide`
+  (a reload or closing the tab is not a crash). The worker sends a `compile` progress message once the model file is
+  downloaded and its SHA-256 checked (the download's total also counts the speaker's file, which only comes with the
+  first synthesis, so it never shows 100% on a first run); the Settings card then says "Getting the voice ready…".
+  - While it sets up, the page refreshes the marker's `at` every 2 s and holds the Web Lock `jarvis-voice-gpu-setup`
+    (shared); `owner` is a per-page id.
+  - Each page judges a marker once (its first `start()` or `planInfo()`, never again): its own marker is never a
+    crash; another page's counts only when that page is gone (its lock is not held; without Web Locks, its heartbeat
+    is more than 20 s old). Then WebGPU is ruled out (`code: 'crashed'`), unless it died mid-download (that says
+    nothing about the graphics chip). So opening Settings, a screen window or a second tab mid-set-up rules nothing
+    out, nor does the restart after the idle stop.
+  - Screen windows (`?screen=…`) create no natural voice at all (app.js).
 - `knownSlow()` is true only when the WASM verdict stands and the graphics chip cannot take over.
 - **Try again** forgets every verdict.
 - `planInfo()` / `choosePlan()` say which plan `start()` will run. app.js asks once at boot when the voice is on.
@@ -2077,7 +2083,9 @@ takes its CSP from its own response headers and Pages sends none).
     the device voice);
   - `natural-voice-webgpu` (a stubbed adapter: 350 MB offered; the fp32 stand-in fails to load; WASM takes over by
     itself; next time 117 MB);
-  - `natural-voice-slow` (a kept verdict: the card says so; Voice Mode speaks with the built-in voice).
+  - `natural-voice-slow` (a kept verdict: the card says so; Voice Mode speaks with the built-in voice);
+  - `natural-voice-gpu-guard` (the main window's marker and lock: a screen window and a second tab rule nothing out;
+    once the lock is let go with the marker left behind, the next page rules WebGPU out).
 
 ## 19. v7: how the look, Screens, Optics and the natural voice connect
 

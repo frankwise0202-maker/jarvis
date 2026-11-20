@@ -8,6 +8,9 @@
 //   natural-voice-webgpu    Mac: a WebGPU adapter -> the card offers the graphics-chip engine
 //                           (about 350 MB); its model fails to load -> the processor engine (WASM)
 //                           takes over by itself; next time the card offers that one (about 117 MB)
+//   natural-voice-gpu-guard while the main window sets the voice up on the graphics chip, a screen
+//                           window or a second tab rules nothing out; a page that died mid-set-up
+//                           (lock let go, marker left) still does
 //   natural-voice-slow      a device measured too slow: the card says so (Try again), and Voice
 //                           Mode's reply is spoken by the built-in voice
 
@@ -171,6 +174,54 @@ export default [
         await t.reload();
         await openVoiceSettings(t);
         await t.waitFor(async () => /^Natural voice \(free, downloads about 117 MB\)$/.test(await label(t)), { timeout: 10000, message: async () => `the WASM size (${await label(t)})` });
+      });
+    },
+  },
+  {
+    name: 'natural-voice-gpu-guard',
+    title: 'Natural voice crash guard (Mac): while the main window sets the voice up on the graphics chip, a screen window or a second Jarvis tab rules nothing out; a page that died mid-set-up still does',
+    device: 'mac',
+    timeout: 120000,
+    settings: { naturalVoice: true },
+    async run(t) {
+      await setup(t, { gpu: true });
+      const page = t.page;
+      const verdict = () => page.evaluate(() => localStorage.getItem('jarvis.voice.natural.webgpu'));
+      const marker = () => page.evaluate(() => localStorage.getItem('jarvis.voice.natural.attempt'));
+      // The main window is setting the natural voice up on the graphics chip right now: its marker
+      // (refreshed while it runs) and the set-up lock it holds meanwhile.
+      await page.evaluate(() => {
+        localStorage.setItem('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', phase: 'compile', at: Date.now(), owner: 'the-main-window' }));
+        navigator.locks.request('jarvis-voice-gpu-setup', { mode: 'shared' }, () => new Promise((resolve) => (window.__releaseGpu = resolve)));
+      });
+      const open = async (url) => {
+        const p = await page.context().newPage();
+        t.attachPageGuards(p);
+        await p.goto(new URL(url, `${t.url}/`).href, { waitUntil: 'domcontentloaded' });
+        await p.waitForTimeout(2500);
+        return p;
+      };
+      await t.step('a screen window ("put the answer on my other screen") opens meanwhile: no verdict', async () => {
+        const screen = await open('/?screen=answer&w=other&n=2&s=sx1');
+        t.assert(!(await verdict()), `no WebGPU verdict (${await verdict()})`);
+        t.assert(JSON.parse(await marker()).owner === 'the-main-window', "the main window's marker stays");
+        await screen.close();
+      });
+      await t.step('a second Jarvis tab with the natural voice on asks which engine: no verdict', async () => {
+        const tab = await open('/');
+        t.assert(!(await verdict()), `no WebGPU verdict (${await verdict()})`);
+        t.assert(!!(await marker()), 'the marker stays');
+        await tab.close();
+      });
+      // (The Settings card opened on the page that is setting up is unit-tested in natural.webgpu: a
+      // click here would start this page's own engine.)
+      await t.step('the main window dies mid-set-up (its lock let go, its marker left behind): the next page rules WebGPU out', async () => {
+        await page.evaluate(() => window.__releaseGpu());
+        const next = await open('/');
+        const v = JSON.parse((await verdict()) || 'null');
+        t.assert(v && v.failed === true && v.code === 'crashed', `a crash verdict (${JSON.stringify(v)})`);
+        t.assert(!(await marker()), 'the marker is gone');
+        await next.close();
       });
     },
   },

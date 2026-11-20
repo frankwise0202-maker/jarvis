@@ -36,6 +36,7 @@ import { createThumbs } from './thumbs.js';
 import { isOverlayOpen } from './overlay.js';
 import { currentPhoto } from './photos.js';
 import { createScreens, screenAck, screenMessage } from './screens/controller.js';
+import { isScreenMode } from './screens/screen-page.js';
 import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
 import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
@@ -64,7 +65,9 @@ import { base64ByteLength } from './attachments.js';
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
 // is on and ready; the router has tts.js's API, so Voice Mode and the chat use it unchanged.
-const naturalVoice = safeInit(() => createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId }));
+// Not in a screen window (?screen=…, src/main.js starts the screen page there, which never speaks):
+// it would only ask about the voice engine while the main window may be setting it up.
+const naturalVoice = isScreenMode() ? null : safeInit(() => createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId }));
 const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, getSettings });
 // With the natural voice on, ask once which engine this device runs (a WebGPU adapter or not), so a
 // device already measured too slow speaks with the built-in voice at once (engine knownSlow()).
