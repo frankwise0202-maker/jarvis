@@ -2436,7 +2436,7 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   number a number, else the word that sounds most like it and the later the likelier, never a small word or a request
   verb; or there are several numbers for a number; or two places fit as well; or the fit adds or drops words away
   from a shared word) → the guess is shown, the countdown waits (`data-state="paused"`, status "Is that right?", the
-  words said in `voice-review-heard`, the hint "Is that right? Say “yes” or tap Send, or tap the words to fix them."):
+  words said in `voice-review-heard`, the hint "Say “yes” or tap Send, or tap the words to fix them."):
   "yes" or Send sends it, a tap on the words fixes it, and another correction applies to the words as they were before
   the guess. A short fix never replaces the whole sentence; a longer one with nothing in common changes nothing (a
   guess the owner fixes). A tap on the words opens a field (`voice-review-input`, the keyboard in the same tap; the countdown and the
@@ -2485,4 +2485,9 @@ biasing phrases with the hologram's part names, "the separate her" → the separ
 part's name after the check shown in the viewer), `voice-listen-small` (on a 320×568 phone and in landscape the words,
 Send now and Cancel stay clear of the status line and the dock, also while the words are fixed: the core steps back,
 the words scroll, the hint gives way on short screens), `chat-mic-check` (the countdown in the message box; a tap on
-the box keeps the words).
+the box keeps the words), `voice-listen-late-final` (Mac, Short: Chrome's final rewrites the sentence after the turn
+ended, then "cancel" / "never mind" during the check: nothing sent), `voice-listen-check-noise` (Mac: "uh" taken back
+during the check: the question is still sent), `voice-listen-noise-now` (Mac, Send right away: "uh" taken back is
+never sent, the question after it is), `voice-listen-restate` (iOS, Send right away: the sentence said again from
+the top after a pause is sent whole), `voice-listen-corrections` (iOS: "No no, cancel"; "No, I said Paris" → the
+guess waits for "yes"; "No, I said for four" → "Book a table for four at seven").

@@ -4,7 +4,9 @@
 // Voice Mode, the Home Screen app, Safari's speech recognition). The fake recognizer behaves like
 // iOS Safari here (features.mjs installFakeSpeech, recognizer 'ios'): one growing result per session,
 // final only at its end, a session that ends by itself 0.7 s after the last words, and a restarted
-// session that only hears what is said after it started.
+// session that only hears what is said after it started. The last five scenarios cover what a review
+// found: a late final that rewrites the turn that ended, words the recognizer takes back, a sentence
+// said again after a pause, and spoken corrections that can only be guessed.
 
 import { tid } from '../harness.mjs';
 import { installFakeSpeech } from './features.mjs';
@@ -57,6 +59,28 @@ async function checkShows(t, words, { timeout = 15000 } = {}) {
     message: async () => `the 2-second check to show "${words}" (it shows "${norm(await t.text(t.page.locator(tid('voice-review-text'))).catch(() => ''))}", visible ${await review.isVisible()})`,
   });
   return review;
+}
+
+/** Open Voice Mode and wait until it listens. */
+async function openListening(t) {
+  await (await t.visible('voice-open')).click();
+  const vm = await t.visible('voice-mode');
+  await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 8000, message: 'Voice Mode to listen' });
+  return vm;
+}
+
+/** A tap on the core when Voice Mode is idle: it listens again. */
+async function tapToListen(t) {
+  await t.page.locator(tid('voice-core')).click();
+  await t.waitFor(async () => (await t.page.locator(tid('voice-mode')).getAttribute('data-state')) === 'listening', { timeout: 8000, message: 'Voice Mode to listen again' });
+}
+
+/** Voice Mode said the words were dropped ("Okay, not sent."). */
+async function notSent(t, what) {
+  await t.waitFor(async () => /Okay, not sent\./.test(await t.text(t.page.locator(tid('voice-captions')))), {
+    timeout: 8000,
+    message: async () => `${what} to drop the words (captions "${norm(await t.text(t.page.locator(tid('voice-captions'))))}", sent ${JSON.stringify(sentTexts(t))})`,
+  });
 }
 
 export default [
@@ -411,6 +435,169 @@ export default [
         await box.fill('And what about Germany, what is its capital?');
         await t.page.locator(tid('composer-send')).click();
         await t.waitFor(async () => (await t.count('turn-user')) === 2, { timeout: 5000, message: 'the fixed message to be sent' });
+        await t.waitForTurn(t.page.locator(tid('turn-jarvis')).nth(1), ['done']);
+      });
+    },
+  },
+
+  // ---- the fixes after the review of the listening work (F1-F4) -----------------------------------
+
+  {
+    name: 'voice-listen-late-final',
+    title:
+      'Chrome, Short wait: the recognizer rewrites the sentence after the turn ended ("twenty five" → "25", the last word dropped) while the 2-second check listens: "cancel" and "never mind" said during the check are heard whole, and nothing is sent',
+    device: 'mac',
+    settings: { listenWait: 'short' },
+    timeout: 90000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await openListening(t);
+      const cases = [
+        ['set a timer for twenty five minutes', 'set a timer for 25 minutes', 'cancel'],
+        ["what's the weather like in Boston today", "what's the weather like in Boston", 'never mind'],
+      ];
+      for (const [i, [heard, rewritten, said]] of cases.entries()) {
+        await t.step(`"${said}" after the late final "${rewritten}"`, async () => {
+          if (i > 0) await tapToListen(t);
+          // The turn ends 1 s after the words (Short); Chrome's final rewrites them 0.15 s later, and
+          // the owner speaks 0.4 s into the check.
+          await say(t, { parts: [{ at: 100, text: heard }, { at: 1250, revise: rewritten }, { at: 1500, text: said }] });
+          await notSent(t, `"${said}"`);
+          await t.page.waitForTimeout(2500);
+          t.assert(sentTexts(t).length === 0, `Nothing was sent (${JSON.stringify(sentTexts(t))})`);
+        });
+      }
+      t.assert((await t.count('turn-jarvis')) === 0, 'No reply');
+    },
+  },
+
+  {
+    name: 'voice-listen-check-noise',
+    title: 'A noise the recognizer first hears as "uh" and then takes back during the 2-second check: the countdown goes on and the question is sent as it was',
+    device: 'mac',
+    timeout: 60000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await openListening(t);
+      // The check starts 1.6 s after the words; "uh" comes 0.4 s into it and is taken back 0.15 s later.
+      await say(t, { parts: [{ at: 100, text: 'What is the capital of France' }, { at: 2100, text: 'uh' }, { at: 2250, revise: '' }] });
+      await checkShows(t, 'What is the capital of France');
+      await t.waitFor(() => sentTexts(t).length > 0, {
+        timeout: 9000,
+        message: async () => `the question to be sent (the check is "${await t.page.locator(tid('voice-review')).getAttribute('data-state').catch(() => '')}", status "${norm(await t.text(t.page.locator(tid('voice-status'))))}")`,
+      });
+      t.assert(sentTexts(t)[0] === 'What is the capital of France', `Sent as it was (${JSON.stringify(sentTexts(t))})`);
+      await t.waitForTurn(t.page.locator(tid('turn-jarvis')).first(), ['done']);
+    },
+  },
+
+  {
+    name: 'voice-listen-noise-now',
+    title: 'Send right away: a noise heard as "uh" and taken back is never sent; Jarvis keeps listening and sends the question said after it',
+    device: 'mac',
+    settings: { listenSend: 'now' },
+    timeout: 60000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await openListening(t);
+      await say(t, { parts: [{ at: 100, text: 'uh' }, { at: 250, revise: '' }, { at: 4000, text: 'What time is it' }] });
+      await t.waitFor(() => sentTexts(t).length > 0, { timeout: 12000, message: 'the question to be sent' });
+      t.assert(sentTexts(t)[0] === 'What time is it', `Only the question was sent, never "uh" (${JSON.stringify(sentTexts(t))})`);
+      await t.waitForTurn(t.page.locator(tid('turn-jarvis')).first(), ['done']);
+    },
+  },
+
+  {
+    name: 'voice-listen-restate',
+    title: 'iPhone, Send right away: the owner pauses (iOS ends its session), then says the sentence again from the top with more: it is not cut while they say it',
+    device: 'iphone13',
+    settings: { listenSend: 'now' },
+    timeout: 60000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { recognizer: 'ios', noSpeechMs: 8000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await openListening(t);
+      await say(t, { parts: [{ at: 100, text: 'Set an alarm for seven' }, { at: 1150, text: 'Set an' }, { at: 1450, text: 'alarm for' }, { at: 1750, text: 'seven' }, { at: 2050, text: 'thirty' }] });
+      await t.waitFor(() => sentTexts(t).length > 0, { timeout: 10000, message: 'the question to be sent' });
+      t.assert(sentTexts(t)[0] === 'Set an alarm for seven thirty', `Sent whole, once (${JSON.stringify(sentTexts(t))})`);
+      const v = await voiceState(t);
+      t.assert(v.sessions.length >= 2, `iOS ended its session in the pause and listening started again (${v.sessions.length} sessions)`);
+      await t.waitForTurn(t.page.locator(tid('turn-jarvis')).first(), ['done']);
+    },
+  },
+
+  {
+    name: 'voice-listen-corrections',
+    title:
+      'iPhone, during the 2-second check: "No no, cancel" sends nothing; "No, I said Paris" (nothing sounds like it) shows the guess "What\'s the weather in Paris" and waits for "yes"; "No, I said for four" changes only "for two" and counts down again',
+    device: 'iphone13',
+    timeout: 180000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { recognizer: 'ios', noSpeechMs: 8000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await openListening(t);
+      const review = t.page.locator(tid('voice-review'));
+
+      await t.step('"No no, cancel": nothing is sent', async () => {
+        await say(t, 'Tell me a joke about robots');
+        await checkShows(t, 'Tell me a joke about robots');
+        await say(t, { parts: [{ at: 100, text: 'No no, cancel' }] });
+        await notSent(t, '"No no, cancel"');
+        await t.page.waitForTimeout(2500);
+        t.assert(sentTexts(t).length === 0, `Nothing was sent (${JSON.stringify(sentTexts(t))})`);
+      });
+
+      await t.step('"No, I said Paris": a guess, shown until the owner says "yes"', async () => {
+        await tapToListen(t);
+        await say(t, "What's the weather in Austin");
+        await checkShows(t, "What's the weather in Austin");
+        await say(t, { parts: [{ at: 100, text: 'No, I said Paris' }] });
+        await checkShows(t, "What's the weather in Paris", { timeout: 10000 });
+        await t.waitFor(async () => (await review.getAttribute('data-state')) === 'paused', { timeout: 3000, message: 'the check to wait for the owner' });
+        t.assert(/Is that right\?/.test(await t.text(t.page.locator(tid('voice-status')))), 'Jarvis asks whether that is right');
+        t.assert(/No, I said Paris/.test(await t.text(t.page.locator(tid('voice-review-heard')))), 'What the owner said is shown');
+        t.assert(/Say “yes”/.test(await t.text(t.page.locator(tid('voice-review-hint')))), 'The hint says how to confirm');
+        await t.screenshot('1-guess');
+        await t.page.waitForTimeout(3000);
+        t.assert(sentTexts(t).length === 0, `Nothing is sent while Jarvis is only guessing (${JSON.stringify(sentTexts(t))})`);
+        await say(t, { parts: [{ at: 100, text: 'Yes.' }] });
+        await t.waitFor(() => sentTexts(t).length > 0, { timeout: 8000, message: '"yes" to send it' });
+        t.assert(sentTexts(t)[0] === "What's the weather in Paris", `The guess was sent (${JSON.stringify(sentTexts(t))})`);
+        await t.waitForTurn(t.page.locator(tid('turn-jarvis')).first(), ['done']);
+      });
+
+      await t.step('"No, I said for four": only "for two" changes; the countdown starts again', async () => {
+        const before = (await voiceState(t)).sessions.length;
+        await listeningAgain(t, before - 1);
+        await say(t, 'Book a table for two at seven');
+        await checkShows(t, 'Book a table for two at seven');
+        await say(t, { parts: [{ at: 100, text: 'No, I said for four' }] });
+        await checkShows(t, 'Book a table for four at seven', { timeout: 10000 });
+        await t.waitFor(() => sentTexts(t).length > 1, { timeout: 10000, message: 'the corrected words to be sent' });
+        t.assert(sentTexts(t)[1] === 'Book a table for four at seven', `Sent corrected (${JSON.stringify(sentTexts(t))})`);
         await t.waitForTurn(t.page.locator(tid('turn-jarvis')).nth(1), ['done']);
       });
     },

@@ -1496,7 +1496,7 @@ function createVoiceMode(opts) {
 
   /** The line under the check: what the owner can do now. */
   function reviewHintText(R) {
-    if (R.guess) return R.L ? 'Is that right? Say “yes” or tap Send, or tap the words to fix them.' : 'Is that right? Tap Send, or tap the words to fix them.';
+    if (R.guess) return R.L ? 'Say “yes” or tap Send, or tap the words to fix them.' : 'Tap Send, or tap the words to fix them.';
     return R.L ? 'Tap the words to fix them, or say “no, I said …” or “cancel”.' : 'Tap the words to fix them.';
   }
 
