@@ -34,7 +34,7 @@ export class BuildError extends Error {}
  * Build the app. Resolves to { buildId, version, outDir, files: [{ path, bytes, gzipBytes }] }.
  * Throws BuildError with a readable message when something required is missing or esbuild fails.
  */
-export async function build({ root = ROOT, minify = true, quiet = false, outDir: outOverride = null, plugins = [] } = {}) {
+export async function build({ root = ROOT, minify = true, quiet = false, outDir: outOverride = null } = {}) {
   const log = quiet ? () => {} : (...args) => console.log(...args);
   const srcEntry = path.join(root, 'src', 'main.js');
   const cssEntry = path.join(root, 'src', 'styles', 'app.css');
@@ -84,8 +84,7 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     // their own chunks under assets/chunks/, fetched only when first used; code they share with
     // the main bundle goes to a shared chunk. Chunk names carry a content hash, and every chunk is
     // in the service worker's precache list (below), so they work offline like app.js.
-    // `plugins`: test builds only (test/e2e/run.mjs); the product build passes none.
-    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { 'process.env.NODE_ENV': '"production"' }, plugins });
+    await esbuild.build({ ...common, entryPoints: { app: srcEntry }, format: 'esm', splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { 'process.env.NODE_ENV': '"production"' } });
     if (!existsSync(path.join(assetsDir, 'app.css'))) {
       // main.js did not import the styles: bundle the stylesheet entry on its own.
       if (existsSync(cssEntry)) {

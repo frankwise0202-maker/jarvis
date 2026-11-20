@@ -13,7 +13,7 @@ import { runWatchLook, WATCH_SYSTEM } from '../../src/engine/watch.js';
 import { createMockFetch } from '../mock/anthropic-mock.mjs';
 import { sceneLabels } from '../mock/optics.mjs';
 import { DEFAULT_TEST_SETTINGS, KEY, createFakeLibrary, createMemory, segmentsOf } from './engine.support.test.mjs';
-import { fakeJpeg, newOpticsConversation, opticsAttachment, opticsLeadTools } from './optics.support.mjs';
+import { fakeJpeg, opticsAttachment } from './optics.support.mjs';
 
 function setup({ timeScale = 0.02, camera = null } = {}) {
   const fetch = createMockFetch({ timeScale });
@@ -42,7 +42,7 @@ const pinsOf = (turn) => turn.segments.filter((s) => s.kind === 'pins');
 const textOf = (turn) => segmentsOf(turn, 'text').map((s) => s.text).join('\n');
 const leadRequests = (mock) => mock.requests.filter((r) => r.kind === 'lead');
 
-test('the Optics tools: fresh copies with the names the engine dispatches, never in a frozen version before V5, appended after the latest tools', () => {
+test('the Optics tools: fresh copies with the names the engine dispatches, never in a frozen version before V5, appended to V4 in V5 (new conversations)', () => {
   assert.deepEqual(OPTICS_TOOLS, [PIN_LABELS, LOOK_THROUGH_CAMERA]);
   assert.deepEqual([pinLabelsTool().name, lookThroughCameraTool().name], ['pin_labels', 'look_through_camera']);
   assert.notEqual(pinLabelsTool(), pinLabelsTool(), 'a fresh copy each call');
@@ -50,18 +50,19 @@ test('the Optics tools: fresh copies with the names the engine dispatches, never
   assert.equal('eager_input_streaming' in lookThroughCameraTool(), false);
   // V1–V4 never had them, so older conversations answer a Look without pins (tested below).
   for (const tools of leadToolVersions().slice(0, 4)) assert.ok(!tools.some((t) => OPTICS_TOOLS.includes(t.name)));
-  // Appended: the latest version's tools stay in front unchanged (their cached prefix too).
+  // V5, the latest: appended, so V4's tools stay in front unchanged (their cached prefix too).
+  const v4 = leadToolsV4();
   const latest = leadToolsLatest();
-  const tools = opticsLeadTools();
-  assert.deepEqual(tools.slice(0, latest.length), latest);
-  assert.deepEqual(tools.filter((t) => OPTICS_TOOLS.includes(t.name)), [pinLabelsTool(), lookThroughCameraTool()]);
+  assert.deepEqual(latest.slice(0, v4.length), v4);
+  assert.deepEqual(latest.filter((t) => OPTICS_TOOLS.includes(t.name)), [pinLabelsTool(), lookThroughCameraTool()]);
+  // A new conversation freezes them (the tests below use one as it comes).
   const { jarvis } = setup();
-  assert.deepEqual(newOpticsConversation(jarvis).tools, tools);
+  assert.deepEqual(jarvis.newConversation().tools, latest);
 });
 
 test('mock tool round: a Look pins the scene on its frame (live while streaming), with valid requests throughout', async () => {
   const { jarvis, mock } = setup({ timeScale: 0.05 });
-  const conv = newOpticsConversation(jarvis);
+  const conv = jarvis.newConversation();
   const liveCounts = [];
   const t1 = await look(jarvis, conv, 'What is on my desk?', {
     onRun: (run) => run.on('segment', (e) => {
@@ -100,7 +101,7 @@ test('mock tool round: a Look pins the scene on its frame (live while streaming)
 
 test('portrait frames, follow-up frames get new ids, and an older conversation (V4) still answers without pins', async () => {
   const { jarvis, mock } = setup();
-  const conv = newOpticsConversation(jarvis);
+  const conv = jarvis.newConversation();
   await look(jarvis, conv, '', { width: 720, height: 1280 });
   const t2 = await look(jarvis, conv, 'And now?', { width: 720, height: 1280 });
   assert.equal(conv.turns.at(-2).optics.frameId, 'f2');
@@ -121,7 +122,7 @@ test('portrait frames, follow-up frames get new ids, and an older conversation (
 
 test('wrong frame id: Jarvis answers is_error naming the newest frame, and the retry pins correctly; an off-frame label is skipped', async () => {
   const { jarvis, mock } = setup();
-  const conv = newOpticsConversation(jarvis);
+  const conv = jarvis.newConversation();
   const t1 = await look(jarvis, conv, 'What is this? [[optics:badframe]]');
   const [bad, good] = pinsOf(t1);
   assert.equal(bad.status, 'error');
@@ -149,7 +150,7 @@ test('look_through_camera: a fresh frame while the camera is live (image inside 
     },
   };
   const { jarvis, mock } = setup({ camera });
-  const conv = newOpticsConversation(jarvis);
+  const conv = jarvis.newConversation();
   const t1 = await jarvis.startTurn(conv, { text: 'Can you see it now? [[optics:look]]', mode: 'quick' }).done;
   assert.equal(t1.status, 'done');
   assert.deepEqual(grabs, ['to see what you are pointing at']);

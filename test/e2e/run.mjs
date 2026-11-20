@@ -32,7 +32,6 @@ import regressions from './scenarios/regressions.mjs';
 import optics from './scenarios/optics.mjs';
 import opticsCamera from './scenarios/optics-camera.mjs';
 import naturalVoice from './scenarios/natural-voice.mjs';
-import { opticsToolsShim } from './optics-tools-shim.mjs'; // v7 split, temporary (see the file)
 import holograms from './scenarios/holograms.mjs';
 import voiceSpeech from './scenarios/voice-speech.mjs';
 import screens from './scenarios/screens.mjs';
@@ -47,10 +46,9 @@ const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 const presence = await optionalScenarios('./scenarios/presence.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...screens];
-
-// v7 senses: Optics (the camera) and the natural voice, after every other scenario.
-SCENARIOS.push(...optics, ...opticsCamera, ...naturalVoice);
+// Optics and the natural voice (v7 senses) run last; Optics' scenarios start a Chromium of their own
+// with a fake camera (browserArgs, one such browser open at a time).
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...screens, ...optics, ...opticsCamera, ...naturalVoice];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };
@@ -115,7 +113,7 @@ async function main() {
   if (opts.build) {
     process.stdout.write('Building the app… ');
     try {
-      const { buildId, warnings } = await build({ quiet: true, plugins: [opticsToolsShim(ROOT)] });
+      const { buildId, warnings } = await build({ quiet: true });
       console.log(`build ${buildId}`);
       for (const w of warnings) console.log(`  warning: ${w}`);
     } catch (err) {

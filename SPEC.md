@@ -1827,14 +1827,10 @@ section 17. Where this section and an earlier one differ, this one wins.
   turns the camera on, and returns the frame as an image inside the `tool_result` (a `frame` segment).
 - **Dispatch is by name.** `pin_labels` and `look_through_camera` run when the conversation's frozen tools contain them
   (`isOpticsTool`); otherwise they are "Unknown tool". Older conversations answer a Look in words.
-- **Tool versions are not part of this section.** The tool definitions are `pinLabelsTool()` and
-  `lookThroughCameraTool()` in `src/lib/optics-tools.js` (re-exported by `src/lib/optics.js`), and they must never be
-  edited. The frozen version that adds them (lead tools V5, with `open_screen`) and the system prompt V4 belong to the
-  other half of v7 (`src/engine/prompts.js`), which builds V5 from the same file.
-  - Until the halves are merged, the unit tests give their conversations the tools through
-    `test/unit/optics.support.mjs` (`opticsLeadTools()`, `newOpticsConversation()`).
-  - The E2E build does the same through the esbuild plugin `test/e2e/optics-tools-shim.mjs` (`build({ plugins })`).
-  - Both change nothing once V5 is the latest version.
+- **Tool versions** are §17.1. The definitions are `pinLabelsTool()` and `lookThroughCameraTool()` in
+  `src/lib/optics-tools.js` (re-exported by `src/lib/optics.js`) and must never be edited: `src/engine/prompts.js`
+  builds lead tools V5 (with `open_screen`) from the same file, and new conversations freeze V5 with the system
+  prompt V4. The unit tests and the E2E build use new conversations as they come.
 - Backups keep `userTurn.optics` and the `pins` / `frame` segments, re-validated on import.
 
 **Cameras** (`createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch })`).
