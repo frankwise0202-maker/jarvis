@@ -1057,9 +1057,9 @@ export async function startApp(rootEl) {
       if (res && res.handled) return res;
       return (!optics && voiceLookRequest(text)) || res;
     },
-    note: (text) => {
+    note: (text, opts) => {
       const viewer = getHologramViewer();
-      if (viewer) safe(() => viewer.note(text));
+      if (viewer) safe(() => viewer.note(text, opts));
     },
     spoken: () => {
       const viewer = getHologramViewer();

@@ -62,6 +62,7 @@ const VIEW_LABELS = {
 };
 const CAPTION_HIDE_MS = 20000;
 const SPOKEN_HIDE_MS = 3000; // Voice Mode has said the reply: the caption only repeats it
+const HEARD_HIDE_MS = 6000; // Voice Mode's "what I heard" line (its 2-second check) goes after this long
 const DESKTOP_MQ = '(min-width: 900px)';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -1055,12 +1056,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     captionDetails = details === true;
     caption.hidden = false;
     caption.dataset.state = status;
-    setText(capStatus, status === 'thinking' ? 'Thinking…' : status === 'streaming' ? 'Replying' : status === 'error' ? 'Couldn’t send' : status === 'stopped' ? 'Stopped' : '');
+    setText(capStatus, status === 'thinking' ? 'Thinking…' : status === 'streaming' ? 'Replying' : status === 'error' ? 'Couldn’t send' : status === 'stopped' ? 'Stopped' : status === 'heard' ? 'Heard' : '');
     setText(capText, text || '');
     capText.scrollTop = capText.scrollHeight;
     if (turnId) captionTurn = { conversationId: model.conversationId, turnId };
-    capOpen.hidden = !captionTurn || typeof deps.openInChat !== 'function';
+    // What Voice Mode heard is not a reply: no "Open in chat" for an earlier one under it.
+    capOpen.hidden = status === 'heard' || !captionTurn || typeof deps.openInChat !== 'function';
     if (status === 'done' || status === 'error' || status === 'stopped') captionTimer = setTimeout(hideCaption, status === 'done' ? doneHideMs() : CAPTION_HIDE_MS);
+    else if (status === 'heard') captionTimer = setTimeout(hideCaption, HEARD_HIDE_MS);
     layoutSoon();
   }
 
@@ -1484,9 +1487,10 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       return { handled: true, command: cmd };
     },
     /** A caption from Voice Mode ("I'll take that once the hologram is built."). */
-    note(text) {
+    note(text, { heard = false } = {}) {
       if (disposed || !text) return;
-      showCaption({ status: 'thinking', text: String(text) });
+      // heard: Voice Mode's 2-second check (what it heard, before it is sent); it leaves by itself.
+      showCaption({ status: heard ? 'heard' : 'thinking', text: String(text) });
     },
     /**
      * Voice Mode has said the reply (or an acknowledgement): the caption only repeats it, so a

@@ -775,6 +775,9 @@ provide a tiny shim; choose one and document it). Include XSS cases: `<script>`,
 `sttSupported()`; `startListening({ lang, onPartial, onFinal, onEnd, onError })` → `{ stop() }`
 using `SpeechRecognition || webkitSpeechRecognition`, `interimResults: true`,
 `continuous: false`. Errors mapped to `{ code: 'not-allowed'|'no-speech'|'network'|'aborted'|'unsupported'|'other', message }`.
+Since v7.2 Jarvis, not the browser, decides when the owner has finished: the recognizer is continuous, the API gains
+options (`wait`, `silenceMs`, `maxMs`, `noSpeechMs`, `phrases`, `keepListening`), `onFinal(text, { alternatives,
+reason, turn })`, `abort()`, and the listening language defaults to the device's (§20 wins where it differs).
 
 `src/platform/voice/tts.js` (the browser's built-in `speechSynthesis` only: free voices, no accounts, no
 network hosts of its own; v5 voice upgrade, see §16):
@@ -1187,6 +1190,8 @@ selected/most recent mission (or an idle core with session stats when none).
 | `blueprint-overlay` (`data-state`, `data-model`), `blueprint-live`, `blueprint-viewer` (`data-layout`), `blueprint-stage`, `blueprint-panel`, `blueprint-parts-toggle`, `blueprint-part` (`data-n`), `blueprint-chip`, `blueprint-zoom-in`, `blueprint-zoom-out`, `blueprint-fit`, `blueprint-download-svg`, `blueprint-download-png`, `blueprint-close` | blueprint viewer | |
 | `photo-strip`, `photo-strip-list`, `photo-thumb`, `photo-viewer`, `photo-stage`, `photo-prev`, `photo-next`, `photo-credit`, `photo-source`, `photo-close` | photos | |
 | `library-sheet`, `library-item` (`data-id`, `data-kind`), `library-open`, `library-download`, `library-delete`, `library-filter-all` / `-hologram` / `-blueprint`, `library-empty`, `library-button`, `history-library` | Blueprints library | |
+| `voice-review` (v7.2), `voice-review-text`, `voice-review-input`, `voice-review-send`, `voice-review-now`, `voice-review-cancel`, `voice-review-heard`, `voice-review-hint` | Voice Mode's 2-second check (§20): the words heard, the field to fix them and its Send, Send now (with the ring), Cancel, words heard meanwhile, the hint | `voice-review`: `data-state` (counting\|listening\|paused\|editing), `data-length`; `voice-mode`: `data-review` while it shows |
+| `composer-countdown` (v7.2) | "Sending in 2 seconds. Tap the message to change it." above the message box | the composer has `data-countdown="on"`, Send `.is-counting` |
 
 E2E seeds storage before the app loads: `localStorage['jarvis.dev.apiBase']` (test server
 origin), `localStorage['jarvis.apiKey']` (mock key `sk-ant-test-0123456789abcdefghijklmnop`),
@@ -1237,6 +1242,10 @@ begun saying its answer (not just "Let me check…") the chat doesn't read that 
 (and `data-speech`: `live` | `summary` | `full` | `apology` while speaking). If STT is unsupported, show a clear
 message and a text box fallback (the iOS keyboard dictation key still works). Focus-trapped dialog, Escape closes,
 safe areas, reduced motion, works at 320px wide. Never uses innerHTML.
+
+Listening (v7.2, §20): a turn ends when Jarvis decides the owner has finished (a silence window, longer after an
+unfinished word, never past 60 s), and what was heard is shown for 2 seconds before it is sent (the check: tap to fix,
+"cancel", "no, I said …"); local commands act at once and use the recognizer's other readings too.
 
 Speaking (v5): Voice Mode's own questions are sent with `spoken: true` (the spoken reply channel, §16) and the reply
 is spoken **while it streams**, with `tts.createSpeechStream` (§9.2) and the pure helpers in `src/ui/voice-stream.js`:
@@ -1655,7 +1664,7 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   a lost context, prices on Rebuild and a second tap on 2D, the warm or cold cache in the price, a part card that
   follows the library, "Open in chat" from Voice Mode, reopening the last hologram by voice, no level animation under
   a viewer, and chats from before holograms (not restored; a banner; Voice Mode starts a new chat). Mock:
-  `[[slowbuild]]` (with `[[hologram:…]]`) streams the hologram over 8–9 s so a test can speak while it builds.
+  `[[slowbuild]]` (with `[[hologram:…]]`) streams the hologram over 12–13 s (8–9 s before v7.2) so a test can speak while it builds.
 
 ## 17. v7: the Presence look, Screens, lead versions V4/V5
 
@@ -2340,3 +2349,99 @@ Where this section differs from §17 or §18, it wins.
   navigation, opener, this screen, under 30 s, one use; reload, restore, history, another screen, stale, missing or
   no storage all wait) and `screens.camera` (`autoStart` false: OFF, no getUserMedia, "off" reported, the tap turns
   it on).
+
+## 20. v7.2: Listening (the microphone)
+
+The owner: "the microphone on Jarvis ends a little bit too early and also it's not the greatest of picking up the right
+sentence" (iPhone, Voice Mode in the Home Screen app, Safari's speech recognition). The cause: `continuous: false`,
+`maxAlternatives: 1`, so the browser ended each utterance at the first short pause (very short on iOS) and its one
+reading was taken as it came. The owner chose "Show, then send" for wrong words. Where this section differs from an
+earlier one (§9.2, §14.1), it wins.
+
+**End of turn decided by Jarvis** (`src/platform/voice/stt.js`, API backward compatible, same error mapping):
+- `startListening({ lang, onPartial, onFinal, onEnd, onError, wait, silenceMs, maxMs, noSpeechMs, phrases, keepListening })`
+  → `{ stop(), abort() }`. The recognizer runs with `continuous: true`, `interimResults: true`, `maxAlternatives: 3`.
+  `onPartial(text, { turn })`, `onFinal(text, { alternatives, reason, turn })` (once per turn; `reason`: `silence` |
+  `stop` | `max` | `ended` | `error`), `onError({ code, message, restarted? })`, `onEnd()` exactly once.
+  `stop()` = "I'm done": deliver now (the recognizer's last words within 1.5 s); `abort()` delivers nothing.
+- Transcript (`readResults`): built from all results of a session, robust to Chrome's several finals, iOS's ONE result
+  whose text grows and is final only at the end, repeated results and cumulative results (each with everything before
+  it); revisions replace the old words. A revision that only drops the last words waits 350 ms before `onPartial`
+  (no flicker); the final always has the latest words.
+- Silence window: the turn ends when the words have not changed for `listenWaitMs(wait)` (Settings → Voice → **Wait
+  after I stop talking**: Short 1.0 s, Normal 1.6 s (default), Long 2.6 s; `LISTEN_WAITS`), plus 1.0 s while the words
+  end with one that leaves the sentence hanging (and, or, but, so, because, the, a, an, to, of, for, with, in, on,
+  my, your, is, are, was, if, that, which, then, um, uh, like) or are only an opener of up to three words ("Jarvis,",
+  "okay so", "can you"; `sentenceUnfinished`); never past 60 s from the turn's start (`maxMs`). Nothing heard at all
+  for 10 s: `no-speech`.
+- Restarts: a recognizer that ends by itself before the turn is over (iOS does, after every pause) is started again at
+  once (a new instance, no gesture needed) and its words are appended without repeating any (`joinWords`: the overlap
+  with what was heard, or a session that hands back everything, is not added twice). Within a turn its `no-speech` and
+  `aborted` are ignored; the first session's are reported as before (Voice Mode's quiet retry). A session that ends at
+  once (no result within 0.5 s) or whose `start()` throws is tried again after 150, 300, 600, 1000 ms, and given up
+  after five in a row; at most 40 restarts per listen. A restart the browser refuses (`NotAllowedError`) is never
+  retried (no permission-prompt loops): the words so far are delivered, or the refusal is reported with `restarted:
+  true` (Voice Mode then waits for a tap instead of saying the microphone is blocked). A failure after words (network,
+  microphone) delivers the words. Nothing restarts while the page is hidden.
+- `keepListening`: after a turn's final the same recognizer keeps listening for the next turn (its words only: an
+  earlier turn's results are skipped) until `stop()` or `abort()`; the 2-second check uses it.
+- Language: `lang` '' (the default since v7.2) is the device's language (`resolveListenLang`: navigator.language, then
+  navigator.languages[0], else en-US). Settings `listenLang` defaults to ''; a store saved before v7.2 (no
+  `listenWait` key) with the old default 'en-US' is migrated to '' once, and so is such a backup's (`restoreSettings`).
+  Settings → Voice → Listening language offers "Automatic — this device (English (UK) · en-GB)" first. Every caller
+  passes the setting as it is: Voice Mode, the chat's mic, the hologram viewer's mic and Optics' mic.
+- Contextual biasing (Chrome): when `SpeechRecognitionPhrase` exists and the recognizer has `phrases`, it gets up to 80
+  phrases (`listenPhrases` in `src/ui/voice-heard.js`: "Jarvis" boost 2.5, the open hologram's part names and their
+  other names 2.0, the command words 1.2). A service that answers `phrases-not-supported` is asked again at once
+  without them, and never again on that page. iOS has no such API: skipped silently.
+
+**Show, then send** (Settings → Voice → **After I stop talking**: `listenSend` 'show' (default) "Show what I said for 2
+seconds, then send" | 'now' "Send right away"; both new keys are restored from backups):
+- Voice Mode (`voice-review`): once the owner has finished, a turn's words are shown big (`voice-review-text`), with a
+  2-second countdown ring on **Send now** and **Cancel**, then sent. The listen's recognizer keeps listening
+  (`keepListening`, handed over without a restart): words heard pause the countdown (`data-state="listening"`, shown in
+  `voice-review-heard`); then `reviewReply` decides: "cancel", "never mind", "forget it", "scratch that", "don't send
+  it", "stop" → nothing is sent ("Okay, not sent."); "no, I said …", "I said …", "I meant …", or the sentence said
+  again (same first two words) → corrected (`applyCorrection`: a restatement of four or more words, or most of the
+  sentence, replaces it; a short fix replaces the word or words that sound most like it, by spelling or rhyme, or the one
+  number for a number; one it already says changes nothing; nothing close: it replaces it all) and the countdown starts
+  again; "send it", "yes", "go ahead" → sent now; "wait", "hold on", "no" → the countdown stops (the microphone listens
+  30 s more for a correction); fillers change nothing; anything else is added to the words and the countdown starts
+  again. A tap on the words opens a field (`voice-review-input`, the keyboard in the same tap; the countdown and the
+  microphone stop); its Send (or Enter) sends the fixed words, Escape keeps them and waits. The core, the dock's Send
+  and Send now send at once; Type moves the words to the text box; Exit discards them; a hidden page pauses the check
+  and closes its microphone. Sent words go through the local commands again (a correction can make one), then as a
+  turn. While a viewer covers Voice Mode the check runs the same and its words show in the viewer's caption
+  (`visuals.note(text, { heard: true })`: status "Heard", no "Open in chat" for an earlier reply, gone after 6 s)
+  and command field.
+- A tap on the core (or the dock's Send) while listening still means "I'm done, send now": no check.
+- Local commands (Screens, the hologram and blueprint viewers, Optics, camera words, the blueprint yes/no) act at once,
+  without the check.
+- The chat's microphone: the words go into the message box with the same 2-second countdown (`composer-countdown`, a
+  ring on Send), then `composer.submit()`; a tap on the box (or typing, or Send) stops it; listening again, a new chat
+  or Voice Mode stop it too (the words stay in the box). 'now' submits at once (as before).
+
+**Accuracy**:
+- The recognizer's alternatives (whole-turn readings, swapping one result's reading at a time) are tried for local
+  commands: in Voice Mode every reading goes through Screens and the viewers in turn (the first that is a command acts,
+  the blueprint yes/no included); the chat's mic prefers a reading that is a screen command; the hologram viewer's own
+  mic one that is a viewer command; Optics' mic one that is a screen or Optics command. (Music commands join here when
+  they exist.) For a question, a reading that names a part of the open (or last shown) hologram is preferred when the
+  best one names none (`pickHeard`; `visuals.vocabulary()` → `{ parts }`, the viewer's `partNames()`).
+- The live words stay visible while the owner talks: one caption line updated in place, its type size only grows
+  within a listen, and across a restart the words heard so far stay.
+
+**Tests.** Unit `platform.stt` (Node, virtual clock; fakes in `test/unit/stt.fakes.mjs` behaving like iOS Safari and
+Chrome): the windows and the smart extension, a 1.2 s pause not cut, restarts appended once, `no-speech` after a restart
+ignored, revisions (and the held shrink), the 60 s cap, `stop()` and `abort()`, errors, refused restarts, the retry
+backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines, device language;
+`platform.voice` (Chromium: the continuous recognizer and its release); `ui.voice.heard` (cancel, correction, send,
+wait, fillers, more words, `applyCorrection`, `pickHeard`, `listenPhrases`); `platform.storage` and `platform.db`
+(the new settings, the one-time migration, backups). E2E `voice-listen.mjs` (iPhone 13; the fake recognizer of
+`installFakeSpeech` is a speaker plus sessions, Chrome-like by default and iOS-like with `recognizer: 'ios'`):
+`voice-listen-iphone` (a 1.2 s mid-sentence pause not cut, the device language, the countdown and its timing, a
+trailing "and" waits, tap to fix, "no, I said Boston", "cancel"), `voice-listen-settings` (the three Voice settings, a
+tap on the core sends at once, Send right away with Short), `voice-listen-alternatives` (camera words by an alternative,
+biasing phrases with the hologram's part names, "the separate her" → the separator for free, a question sent with the
+part's name after the check shown in the viewer), `chat-mic-check` (the countdown in the message box; a tap on the box
+keeps the words).

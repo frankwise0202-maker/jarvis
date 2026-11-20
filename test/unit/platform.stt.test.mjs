@@ -331,15 +331,21 @@ test('a restart the browser refuses is never retried (no prompt loops): the word
   assert.deepEqual(b.log, ['error:not-allowed:restarted', 'end'], 'nothing heard: the refusal is reported once, marked as a restart');
 });
 
-test('a recognizer that keeps ending at once is not restarted forever; one that ends after a while is', async (t) => {
+test('a recognizer that keeps ending at once is tried again a little later each time, then given up; one that ends after a while is restarted at once', async (t) => {
   const { clock, rec, stt } = await setup(t);
   const a = listen(stt);
-  for (let i = 0; i < 6 && !a.log.includes('end'); i++) {
+  const startedAt = [];
+  for (let i = 0; i < 10 && !a.log.includes('end'); i++) {
+    const r = rec.current;
+    startedAt.push(r.startedAt - 1_800_000_000_000);
     clock.advance(50);
-    rec.current.end();
+    r.end(); // the microphone wasn't ready: it ends at once
+    for (let k = 0; k < 40 && rec.current === r && !a.log.includes('end'); k++) clock.advance(50);
   }
-  clock.advance(10);
-  assert.equal(rec.made.length, 3, 'three quick ends in a row, then it stops');
+  clock.advance(100);
+  assert.equal(rec.made.length, 5, 'five quick ends in a row, then it stops');
+  const gaps = startedAt.slice(1).map((ms, i) => ms - startedAt[i] - 50);
+  assert.deepEqual(gaps, [150, 300, 600, 1000], 'each retry waits longer');
   assert.deepEqual(a.log, ['error:no-speech', 'end']);
 
   const s = ios(rec);

@@ -28,6 +28,7 @@ function lastLeadUserText(t) {
  * Recognition (v7.2) is a speaker and the recognizer sessions that hear it. A recognizer started
  * while nobody speaks takes the next window.__voice.queue item and the speaker says it:
  *   'words'                          said at once: one final result 500 ms after the start
+ *   ''                               nothing: that listen hears nobody
  *   { parts: [{ at, text, alts?, revise? }] }  said over time (at: ms after it begins; revise: the
  *                                    words so far, read differently; alts: other readings)
  * window.__voice.say(item) has the speaker say one now (the session running hears it, else the
@@ -135,7 +136,10 @@ export function installFakeSpeech(options) {
       session = this;
       this.heardAny = false;
       setTimeout(() => this.onstart && this.onstart({ type: 'start' }), 20);
-      if (!speaking && !buffered.length && voice.queue.length) voice.say(voice.queue.shift());
+      if (!speaking && !buffered.length && voice.queue.length) {
+        const item = voice.queue.shift();
+        if (item) voice.say(item); // '' (or null): a listen that hears nobody
+      }
       if (buffered.length) {
         const parts = buffered.splice(0);
         this.later(() => parts.forEach((p) => this.hear(p)), 40);

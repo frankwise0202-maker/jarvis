@@ -491,8 +491,9 @@ const PACES = {
   // A show_hologram / draw_blueprint call: ~1,000 small input deltas over a few seconds, so the
   // live build is visible (the real API takes a minute or two for a large model).
   hologram: { total: [2400, 3600] },
-  // [[slowbuild]]: a hologram that takes 8–9 s to stream (time to speak to the viewer while it builds).
-  'slow-hologram': { total: [8000, 9000] },
+  // [[slowbuild]]: a hologram that takes 12–13 s to stream (time to speak to the viewer while it
+  // builds: since v7.2 each thing said is taken once the owner has been quiet for 1.6 s).
+  'slow-hologram': { total: [12000, 13000] },
 };
 
 function computeDelays(frames, pace, rng, timeScale) {

@@ -74,7 +74,10 @@
 //                                               request then waits: { handled: false, later })
 //                           sync(info)          { state, label, listening, heard, busy, canListen }
 //                                               for the viewer's mic button
-//                           note(text)          a caption in the viewer ("I'll take that once …")
+//                           note(text, { heard })  a caption in the viewer ("I'll take that once …";
+//                                               heard: what was heard, during the 2-second check)
+//                           vocabulary()        { parts }: the open (or last shown) hologram's part
+//                                               names, listened for and preferred among the readings
 //                           spoken()            a reply or acknowledgement has been said (the
 //                                               viewer's caption of it can leave)
 //   screens               Screens (v7, app.js): command(text) -> null (not a screen command) or
@@ -1483,6 +1486,7 @@ function createVoiceMode(opts) {
     if (!R) return;
     R.text = text;
     setText(reviewText, text);
+    reviewText.setAttribute('aria-label', `Fix what I heard: ${clip(singleLine(text), 300)}`);
     reviewEl.dataset.length = text.length > 90 ? 'long' : 'short';
     root.dataset.caplen = text.length > 90 ? 'medium' : 'short';
     syncVisuals();
@@ -1714,11 +1718,11 @@ function createVoiceMode(opts) {
     return R;
   }
 
-  /** A line in the viewer covering Voice Mode (a hologram's caption), when one is open. */
+  /** A line in the viewer covering Voice Mode (a hologram's caption), when one is open: what was heard. */
   function reviewNote(text) {
     if (!viewerOpen() || !visuals || typeof visuals.note !== 'function') return;
     try {
-      visuals.note(text);
+      visuals.note(text, { heard: true });
     } catch {
       /* decoration */
     }

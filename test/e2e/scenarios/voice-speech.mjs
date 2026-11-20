@@ -24,7 +24,8 @@ function emulateStandalone() {
 }
 
 async function waitForNewTurn(t, before) {
-  await t.waitFor(async () => (await t.count('turn-jarvis')) > before, { timeout: 15000, message: 'a new Jarvis turn' });
+  // Since v7.2 a question is taken once the owner has been quiet for 1.6 s and shown for 2 s first.
+  await t.waitFor(async () => (await t.count('turn-jarvis')) > before, { timeout: 30000, message: 'a new Jarvis turn' });
   return t.page.locator(tid('turn-jarvis')).nth(before);
 }
 

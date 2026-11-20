@@ -40,9 +40,10 @@ const TIMING = Object.freeze({
   abortGraceMs: 1000, // abort(): recognizers occasionally never send 'end'
   shrinkHoldMs: 350, // a revision that only drops the last words waits this long (no flicker)
   maxRestarts: 40, // recognizers started again within one listen
-  fastEndMs: 500, // a session that ends this soon with no result ...
-  fastEnds: 3, // ... this many times in a row: stop restarting
-  retryMs: 250, // a restart whose start() threw is tried again after this long
+  fastEndMs: 500, // a session that ends this soon with no result, or a start() that throws ...
+  fastEnds: 5, // ... this many times in a row: stop restarting
+  retryMs: 150, // ... is tried again after this long, doubling each time (at most 1 s): the
+  //             microphone may still be busy with the session that just ended (about 2 s in all)
 });
 export const LISTEN_TIMING = TIMING;
 
@@ -609,7 +610,8 @@ export function startListening(options = {}) {
         // Contextual biasing isn't available here: listen without it (and never send it again).
         phrasesUnsupported = true;
         S.plain = true;
-        return; // the session ends and starts again without phrases
+        S.again = true; // the session ends: start again at once, without phrases
+        return;
       }
       const T = S.turn;
       const fresh = S.sessions === 1 && T.n === 0 && !T.heard;
@@ -643,9 +645,18 @@ export function startListening(options = {}) {
       S.turn.committed = S.turn.text;
       S.turn.base = 0;
       S.parts = [];
-      const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults;
-      S.fastEnds = quick ? S.fastEnds + 1 : 0;
-      if (pageHidden() || S.restarts >= TIMING.maxRestarts || S.fastEnds >= TIMING.fastEnds) {
+      const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults && !S.again;
+      S.again = false;
+      if (pageHidden()) {
+        giveUp();
+        return;
+      }
+      if (quick) {
+        retryLater(); // it ended at once: give the microphone a moment
+        return;
+      }
+      S.fastEnds = 0;
+      if (S.restarts >= TIMING.maxRestarts) {
         giveUp();
         return;
       }
@@ -685,13 +696,14 @@ export function startListening(options = {}) {
     }
   }
 
+  /** Start again after a quick failure, waiting a little longer each time; give up after a few in a row. */
   function retryLater() {
     S.fastEnds += 1;
     if (S.fastEnds >= TIMING.fastEnds || S.restarts >= TIMING.maxRestarts) {
       giveUp();
       return;
     }
-    schedule('restart', TIMING.retryMs, () => {
+    schedule('restart', Math.min(1000, TIMING.retryMs * 2 ** (S.fastEnds - 1)), () => {
       if (S.ended || S.closing) return;
       S.restarts += 1;
       begin(false);
