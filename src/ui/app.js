@@ -378,6 +378,7 @@ export async function startApp(rootEl) {
     getGreeting: () => greeting(),
     // Optics: a Look's frame card (and a pins row) reopens the frozen frame with its labels.
     onOpenOptics: (turn, seg) => reviewOptics(turn, seg),
+    canReviewOptics: (turn, seg) => !!opticsFrameFor(turn, seg),
     ttsSupported: ttsOk,
     // Presence home (SPEC 2.4.4); the starter prompts are onboarding: first three conversations.
     home: presence.home,
@@ -1418,39 +1419,63 @@ export async function startApp(rootEl) {
     }
   }
 
-  /** Reopens a past Look (from the chat) frozen, with the labels pinned on it. */
+  /**
+   * Reopens a past Look (from the chat) frozen, with the labels pinned on it: the owner's Look (its
+   * attachment), or a frame Jarvis took itself with look_through_camera (its frame segment's preview).
+   */
   function reviewOptics(turn, seg) {
     const conv = state.conv;
     if (!conv || isOpticsOpen()) return;
+    const found = opticsFrameFor(turn, seg);
+    if (!found) return;
+    const { frameId, preview, width, height, source, question, idx, after } = found;
     const turns = conv.turns || [];
-    const frameId = seg && seg.frameId ? seg.frameId : turn && turn.optics ? turn.optics.frameId : null;
-    const userTurn = turns.find((t) => t && t.role === 'user' && t.optics && t.optics.frameId === frameId) || (turn && turn.role === 'user' ? turn : null);
-    if (!userTurn || !userTurn.optics) return;
-    const meta = (userTurn.attachments || [])[0] || {};
-    const idx = turns.indexOf(userTurn);
     // The labels: the given segment, else the newest pins on this frame in the turns that follow.
     let pins = seg && Array.isArray(seg.labels) ? seg.labels : null;
     let answerText = '';
-    for (let i = idx + 1; i < turns.length; i++) {
+    for (let i = idx; i < turns.length; i++) {
       const t = turns[i];
       if (!t || t.role !== 'jarvis') continue;
-      for (const s of t.segments || []) {
+      const segs = t.segments || [];
+      for (let j = 0; j < segs.length; j++) {
+        const s = segs[j];
         if (s && s.kind === 'pins' && s.status === 'done' && s.frameId === frameId && !seg) pins = s.labels;
-        if (i === idx + 1 && s && s.kind === 'text') answerText += `${answerText ? '\n\n' : ''}${s.text || ''}`;
+        // The answer: the reply's text (for a frame Jarvis took, the text after it).
+        if (i === after.turn && j >= after.seg && s && s.kind === 'text') answerText += `${answerText ? '\n\n' : ''}${s.text || ''}`;
       }
     }
-    openOptics(opticsDeps({
-      review: {
-        preview: meta.thumb,
-        width: userTurn.optics.width,
-        height: userTurn.optics.height,
-        source: userTurn.optics.source,
-        frameId,
-        question: userTurn.text || 'What am I looking at?',
-        answer: answerText,
-        pins: pins || [],
-      },
-    }));
+    openOptics(opticsDeps({ review: { preview, width, height, source, frameId, question, answer: answerText, pins: pins || [] } }));
+  }
+
+  /**
+   * The picture of an Optics frame in this conversation: the owner's Look (user turn) or a frame Jarvis
+   * took itself (a reply's frame segment). -> { frameId, preview, width, height, source, question, idx,
+   * after: { turn, seg } } or null (nothing to show: no preview kept).
+   */
+  function opticsFrameFor(turn, seg) {
+    const conv = state.conv;
+    const turns = (conv && conv.turns) || [];
+    const frameId = seg && seg.frameId ? seg.frameId : turn && turn.optics ? turn.optics.frameId : null;
+    const userTurn = turns.find((t) => t && t.role === 'user' && t.optics && t.optics.frameId === frameId) || (turn && turn.role === 'user' && turn.optics ? turn : null);
+    if (userTurn && userTurn.optics) {
+      const meta = (userTurn.attachments || [])[0] || {};
+      if (!meta.thumb) return null;
+      const idx = turns.indexOf(userTurn);
+      return { frameId: frameId || userTurn.optics.frameId, preview: meta.thumb, width: userTurn.optics.width, height: userTurn.optics.height, source: userTurn.optics.source, question: userTurn.text || 'What am I looking at?', idx: idx + 1, after: { turn: idx + 1, seg: 0 } };
+    }
+    if (!frameId) return null;
+    // A frame Jarvis took itself (look_through_camera): its frame segment in a reply.
+    for (let i = 0; i < turns.length; i++) {
+      const t = turns[i];
+      if (!t || t.role !== 'jarvis') continue;
+      const j = (t.segments || []).findIndex((s) => s && s.kind === 'frame' && s.frameId === frameId);
+      if (j < 0) continue;
+      const f = t.segments[j];
+      if (typeof f.thumb !== 'string' || !f.thumb) return null;
+      const asked = turns[i - 1] && turns[i - 1].role === 'user' ? turns[i - 1].text : '';
+      return { frameId, preview: f.thumb, width: f.width, height: f.height, source: f.source || 'camera', question: asked || f.reason || 'Jarvis took a look', idx: i, after: { turn: i, seg: j + 1 } };
+    }
+    return null;
   }
 
   // ---- holograms, blueprints and the saved library ------------------------------------------

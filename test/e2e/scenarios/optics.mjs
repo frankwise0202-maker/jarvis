@@ -20,7 +20,8 @@
 //   optics-screen    "look at my screen": one frame, capture stopped at once, sent as a screen frame
 //   optics-screen-cancel  the home's Screen key with the picker cancelled: the webcam never turns on;
 //                    No screen shared (macOS hint), Try again, Use the camera via the first-use card
-//   optics-camtool   a follow-up where Jarvis calls look_through_camera (image inside the tool result)
+//   optics-camtool   a follow-up where Jarvis calls look_through_camera (image inside the tool result);
+//                    View on the labels it pinned on that frame reopens the frame with them
 // Screenshots also go to $OPTICS_SHOTS (default test/artifacts/optics-shots/).
 
 import { existsSync } from 'node:fs';
@@ -812,6 +813,17 @@ export default [
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 3000, message: 'Optics to close' });
       await t.visible('segment-frame', { message: 'the chat shows the frame Jarvis took' });
       t.assertAppendOnly();
+      // View on the labels Jarvis pinned on the frame it took (f2): that frame, reopened with them.
+      const row = page.locator(tid('segment-pins')).filter({ hasText: 'f2' }).first();
+      t.assert(await row.count(), 'a pins row for f2');
+      await row.locator(tid('pins-view')).click();
+      await t.visible('optics', { message: 'View on the f2 labels opens Optics' });
+      t.assert((await page.locator(tid('optics')).getAttribute('data-state')) === 'review', 'reviewing, frozen');
+      await t.waitFor(async () => (await t.count('optics-pin')) === 3, { timeout: 5000, message: async () => `the three f2 labels (${await t.count('optics-pin')})` });
+      t.assert(/Here's what I see now/.test(await t.text(page.locator(tid('optics-answer-text')))), 'with the answer that followed the frame');
+      t.assert((await liveTracks(page)) === 0, 'the camera stays off');
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 3000, message: 'Optics to close' });
     },
   },
 ];

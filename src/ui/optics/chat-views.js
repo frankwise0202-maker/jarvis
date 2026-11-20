@@ -73,7 +73,7 @@ export function createPinsSegmentView(sctx) {
       el.dataset.status = status;
       setText(label, status === 'error' && !labels.length ? 'Labels not pinned' : status === 'live' ? `Pinning${s.frameId ? ` on ${s.frameId}` : ''}…` : `Pinned${s.frameId ? ` on ${s.frameId}` : ''}`);
       setText(names, labels.map((l) => l.text).join(' · '));
-      viewBtn.hidden = !labels.length || typeof sctx.openOptics !== 'function';
+      viewBtn.hidden = !labels.length || typeof sctx.openOptics !== 'function' || (typeof sctx.canReviewOptics === 'function' && !sctx.canReviewOptics(s));
       viewBtn.setAttribute('aria-label', `View the ${labels.length} pinned labels on the frame`);
       el.hidden = status === 'error' && !labels.length && !(Array.isArray(s.warnings) && s.warnings.length);
     },

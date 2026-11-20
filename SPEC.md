@@ -1823,7 +1823,10 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
 
 **Files.**
 - `src/ui/optics/optics.js`: the screen, an overlay (`overlay.js`).
-- `src/ui/optics/chat-views.js`: the Look card, pins and frame rows in the chat.
+- `src/ui/optics/chat-views.js`: the Look card, pins and frame rows in the chat. A pins row's **View** reopens its
+  frame frozen with those labels and the answer, camera off (app.js `reviewOptics`): the owner's Look (its
+  attachment's preview) or a frame Jarvis took itself (its `frame` segment's preview, with the text after it). View
+  shows only where that picture is kept (`canReviewOptics`).
 - `src/ui/optics/schematic.js`: Sobel edges for Hologram of this.
 - `src/styles/optics.css`.
 - `src/platform/camera.js`: getUserMedia, the camera list, hot-plug, flip, capture, Watch thumbnails, the screen look,

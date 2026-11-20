@@ -1029,6 +1029,8 @@ function createJarvisTurnView(turn, ctx) {
       thumbs: o.thumbs || null,
       // Optics: reopen the frozen frame with this turn's pinned labels.
       openOptics: typeof o.onOpenOptics === 'function' ? (seg) => o.onOpenOptics(turn, seg) : null,
+      // View only where the picture is kept (a Look, or a frame Jarvis took with its preview).
+      canReviewOptics: typeof o.canReviewOptics === 'function' ? (seg) => o.canReviewOptics(turn, seg) : null,
     };
   }
 
