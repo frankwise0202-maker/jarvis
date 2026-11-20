@@ -67,9 +67,9 @@ and your conversations are stored only on your device.
   everything is kept in your **Blueprints** library to reopen for free, and **Photos** shows real
   pictures of any part. It all works by voice too.
 - **Put it on another screen.** "Open this on my other screen" or "float it beside me": a
-  hologram, a blueprint, Mission Control or a report opens on your second monitor, or in a
-  floating panel that stays on top of your other apps, in Jarvis's HUD frame; "bring it back"
-  returns it. See [Screens](#screens-your-other-monitor-or-a-panel-beside-you).
+  hologram, a blueprint, Mission Control, a report or the live camera opens on your second
+  monitor, or in a floating panel that stays on top of your other apps, in Jarvis's HUD frame;
+  "bring it back" returns it. See [Screens](#screens-your-other-monitor-or-a-panel-beside-you).
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
@@ -198,17 +198,19 @@ it once more (copy it from your password manager).
 Jarvis's home screen now tells you what is going on before you ask.
 
 - **The core** in the middle is Jarvis. One word under it says what he is doing: **STANDING
-  BY**, **THINKING**, **WORKING · 3 AGENTS**, **SPEAKING**, **LISTENING** or **OFFLINE** (the same
-  word sits next to the small core at the top). Tap the core to talk (Voice Mode).
+  BY**, **THINKING**, **WORKING · 3 AGENTS**, **SPEAKING**, **LISTENING**, **OPTICS LIVE** (the
+  camera is on), **ANALYZING** (a Look is being answered), **WATCHING 4:32** or **OFFLINE** (the
+  same word sits next to the small core at the top). Tap the core to talk (Voice Mode).
 - **What needs you**: under your greeting, one line ("Nothing needs you.", "2 agents still
   working on 'EV SUVs'."). When a mission finishes while you're in another chat, stops part way
   or has agents that failed, or your spending passes its warning level, a card appears with one
   button (**View**, **Resume**, **Retry**, **Review**), and a small amber dot shows on the core
   and on the small core at the top. Once you have a habit of running your morning or evening
   briefing, it appears there too when it is due (**Run**).
-- **Quick keys**: **Look** (the camera), **Talk** (Voice Mode) and **Brief me** (the briefing
-  for this time of day, in a new chat). The suggestion cards under them are there for your first
-  few chats; after that your Protocols take their place.
+- **Quick keys**: **Look** (the camera: Optics, below), **Talk** (Voice Mode) and **Brief me** (the
+  briefing for this time of day, in a new chat); on a Mac also **Screen** (Jarvis looks at your
+  screen). The suggestion cards under them are there for your first few chats; after that your
+  Protocols take their place.
 - **What the rings mean**: press and hold the core (right-click on a computer). **SPEND** is
   this month's spending against your warning level (amber above it), **AGENTS** how many are
   working now, **MISSION** a running mission's progress, and two dots show whether the
@@ -218,9 +220,11 @@ Jarvis's home screen now tells you what is going on before you ask.
   you, and **Systems** (network, microphone, camera, model and spend; click it for the full
   dashboard). A running mission takes the panel over. On wide windows a line at the top shows the
   network, today's spend and the time.
-- **The microphone is never on unseen**: while the microphone key listens, a red **MIC** pill
-  appears at the top; tap it to turn the microphone off. In Voice Mode the screen says
-  **LISTENING** and the big button stops it.
+- **The microphone and the camera are never on unseen**: while the microphone key listens, a red
+  **MIC** pill appears at the top; tap it to turn the microphone off. In Voice Mode the screen says
+  **LISTENING** and the big button stops it. The camera has its own red pill in Optics, and an
+  **OPTICS** pill at the top while it shows on another screen (tap it to turn the camera off);
+  **WATCH** with its countdown while Watch is on.
 - **Settings → Appearance → HUD**: **Density** (**Calm**, the default, or **Full**: labels
   around the core, the line at the top always, and Mission Control's log open), **Motion**
   (**Full**, **Reduced** or **Still**: still pictures, no movement) and the short start-up
@@ -291,7 +295,7 @@ Jarvis's home screen now tells you what is going on before you ask.
 
 ### Screens: your other monitor, or a panel beside you
 
-Say or type it, in the chat, a hologram's command box or Voice Mode:
+Say or type it, in the chat, a hologram's command box, the camera (Optics) or Voice Mode:
 
 - **"Open this on my other screen"**, "put the hologram on screen 2", "put the report on my
   second monitor": Jarvis opens it on your other monitor, filling it, in his HUD frame. The first
@@ -302,6 +306,11 @@ Say or type it, in the chat, a hologram's command box or Voice Mode:
 - **"Open it in a window"**: its own window on the right half of your screen.
 - **"Bring it back"** closes the other screen and shows it here again; "close the other screen"
   just closes it.
+- **The camera too**: "put the camera on my other screen" (or "put this on my other screen" while
+  the camera is open, "float the camera") shows the live camera there, big, with a red **LIVE**;
+  the camera closes here, so only one view uses it. **Camera off** under the picture (or the
+  **OPTICS** pill at the top of the main window) turns it off; "bring it back" opens the camera
+  here again. On an iPhone it simply opens the camera.
 
 "This" means what you're looking at: the open hologram or blueprint, otherwise the newest card in
 the chat (a running mission shows as Mission Control, a finished one as its report). You can also
@@ -393,15 +402,19 @@ browser asks for permission.
   when something changes (at most every 10 seconds) and tells you if it's worth saying. The
   countdown and the cost so far are on screen.
 - **Look at my screen** (computers): one picture of a screen or window you choose, then the
-  sharing stops at once.
+  sharing stops at once. On a Mac the home's **Screen** key does it in one tap.
+- **On another screen.** "Put the camera on my other screen" or "float the camera" shows the live
+  camera on your other monitor or in a floating panel (see Screens above). It's a view: Look,
+  Watch and the labels stay here in Optics.
 - **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
   "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first. (While a hologram
   is on screen, "what is this?" is about the hologram, not the camera.)
-- **Off means off.** The camera runs only while Optics is open and on screen: the red **LIVE**
-  pill shows it (tap it to turn the camera off), and it turns off by itself when you switch apps,
-  lock the phone, or when a hologram covers Optics.
+- **Off means off.** The camera runs only while Optics (or a camera view you put on another
+  screen) is open and on screen: the red **LIVE** pill shows it (tap it to turn the camera off),
+  and it turns off by itself when you switch apps, lock the phone, minimize that window, or when a
+  hologram covers Optics.
 
 ## What it costs
 
@@ -458,11 +471,12 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   servers. Spoken replies use a voice from your device or browser: voices marked "(online)" in
   Settings → Voice send the text they read aloud to their provider (Google or Microsoft); the
   others speak on your device without sending anything.
-- **Camera (Optics).** The camera is on only while Optics is open and on screen, with the red
-  **LIVE** pill showing; it turns off when you switch apps, lock the phone or close Optics. A
-  picture goes to Anthropic only when you tap **Look** (or say "what am I looking at?"), when
-  Jarvis takes one fresh look you asked for while the camera is live, or while **Watch** is on
-  (you start it, it shows a countdown and stops after 5 minutes). Pictures are made fresh from
+- **Camera (Optics).** The camera is on only while Optics, or a camera view you put on another
+  screen, is open and on screen, with a red **LIVE** showing; it turns off when you switch apps,
+  lock the phone, close it or minimize its window. A camera view on another screen sends nothing
+  anywhere. A picture goes to Anthropic only when you tap **Look** (or say "what am I looking
+  at?"), when Jarvis takes one fresh look you asked for while the camera is live, or while
+  **Watch** is on (you start it, it shows a countdown and stops after 5 minutes). Pictures are made fresh from
   the camera, so they carry no location data. Each Look is kept in the conversation on this device
   (and in backups), like a photo you attach. Jarvis never names people from their faces. Which
   camera you chose last is remembered in this browser's settings.
@@ -704,9 +718,10 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | *(a Jarvis Watch request)* | a structured `{ worth_saying, line, summary }`: the first frame sets the scene, later ones report a change |
 
 **Optics and the natural voice (v7).**
-- Optics: `src/ui/optics/` (the screen, the chat's Look card, the schematic), `src/platform/camera.js`
-  (getUserMedia, the camera list, hot-plug, flip, the screen look), `src/lib/optics.js` (frame
-  mapping, pin layout, Watch, costs, the `pin_labels` / `look_through_camera` tool definitions),
+- Optics: `src/ui/optics/` (the screen, the chat's Look card, the schematic, the camera on a
+  screen), `src/platform/camera.js` (getUserMedia, the camera list, hot-plug, flip, the screen
+  look), `src/lib/optics-tools.js` (the `pin_labels` / `look_through_camera` definitions that lead
+  tools V5 freeze), `src/lib/optics.js` (frame mapping, pin layout, Watch, costs, the tools' checks),
   `src/lib/cameras.js` (camera names, picker order, the remembered camera, hot-plug decisions),
   `src/lib/optics-commands.js` (Optics words: "what am I looking at?", "flip", "hologram of this"),
   `src/engine/optics.js` and `src/engine/watch.js`. The E2E scenarios play a synthetic desk scene

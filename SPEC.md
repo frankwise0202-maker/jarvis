@@ -141,6 +141,21 @@ Added in v6 (holograms, blueprints, photos and the saved library; §16):
 - Tests: `test/mock/visuals.mjs`, `test/mock/fixtures/*.json` (the seven prototype samples), `test/mock/README.md`
   (every mock directive), `test/e2e/scenarios/holograms.mjs`.
 
+Added in v7 (the Presence look, Screens, Optics and the natural voice; §17–§19):
+- Presence: `src/ui/presence/{model,views,presence,hud-prefs}.js`, the Living Core v2 (`src/ui/hud/core.js`) and the
+  mic's bands (`src/ui/hud/voice-bands.js`), `src/styles/presence.css`, `public/fonts/` (Rajdhani 600/700 woff2 and
+  its OFL license).
+- Screens: `src/lib/screen-{commands,targets,placement}.js` (pure), `src/engine/screens.js` (`open_screen`),
+  `src/ui/screens/{controller,frame,panels,pip,screen-page}.js` (`?screen=<kind>` starts the screen page in
+  `src/main.js`), `src/styles/screens.css`.
+- Optics: `src/lib/{optics-tools,optics,cameras,optics-commands}.js` (pure), `src/engine/{optics,watch}.js`,
+  `src/platform/camera.js`, `src/ui/optics/{optics,chat-views,schematic,screen-camera}.js`, `src/styles/optics.css`.
+- The natural voice: `src/platform/voice/{voice-router,speech-text}.js`, `src/platform/voice/natural/*.js`,
+  `src/ui/natural-voice-settings.js`, `src/styles/natural-voice.css`, `scripts/fetch-voice-model.mjs` (the
+  deploy-time model download into `vendor/kokoro/`, which git ignores).
+- Tests: `test/e2e/scenarios/{presence,screens,optics,optics-camera,natural-voice}.mjs`,
+  `test/e2e/{optics-scene,camera-rig,voice-standin}.mjs`, `test/mock/{screens,optics}.mjs`.
+
 Owners: **engine**, **platform**, **ui-shell**, **ui-hud**, **infra**. Files marked "lead, done"
 already exist. If you need something from another owner's module that is not in this spec,
 write against the contract here and mention the need in your report; do not edit their files.
@@ -1626,10 +1641,10 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   a viewer, and chats from before holograms (not restored; a banner; Voice Mode starts a new chat). Mock:
   `[[slowbuild]]` (with `[[hologram:…]]`) streams the hologram over 8–9 s so a test can speak while it builds.
 
-## 17. v7 shell: the Presence look, Screens, lead versions V4/V5
+## 17. v7: the Presence look, Screens, lead versions V4/V5
 
-The v7 release is built in two halves that merge: this section is the shell half (the look and Screens, and the
-frozen lead versions); the camera (Optics) and the natural voice have their own section.
+v7 was built in two parts and merged: this section covers the look, Screens and the frozen lead versions; §18 covers
+the camera (Optics) and the natural voice; §19 says how the two connect (where they differ from §17 or §18, §19 wins).
 
 ### 17.1 Lead versions (new conversations since v7)
 
@@ -1676,7 +1691,7 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   `WORKING · n AGENTS` · `SPEAKING` · `OPTICS LIVE` · `ANALYZING` · `WATCHING m:ss` · `OFFLINE` · `ERROR` (and
   `SYSTEMS UPDATED` for 3 s after an update), in the header (label, then the detail) and on the home, announced at most
   once every 2 s. **Privacy pills** (`live-pill`, 28 px, `--live`): MIC while dictation listens (one tap stops it);
-  OPTICS and WATCH are fed by the camera half. **Sensor tape** (`sensor-tape`): wide windows (≥ 1280 px) in Calm,
+  OPTICS (the camera live, in Optics or on another screen) and WATCH m:ss (Watch on), fed by Optics (§19). **Sensor tape** (`sensor-tape`): wide windows (≥ 1280 px) in Calm,
   always in Full; a 24 px row on phones in Full.
 - **Home** (`src/ui/chat.js` with `home`): hero core 184 / 148 / 120 px by height (232 px on desktop; tap = Voice
   Mode, long-press or the context-menu key = the legend `core-legend`), the state word, the greeting, the situation
@@ -1684,8 +1699,9 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   (`needs-you`, 0–3 `needs-card`s with one `needs-action`: View a mission that finished while the owner was away,
   Resume an interrupted one, Retry failed agents, Review spending over the alert, Run a due briefing once the owner
   has the habit, 2 runs in 7 days; ledger `jarvis.needs.v1`; the startup scan reads conversations without tracking),
-  quick keys `quick-key-look` / `-talk` / `-brief` (Look: Optics when the build has it, else the system camera; Brief
-  me: the briefing protocol for the time of day in a new chat), the starter prompts for the first three conversations
+  quick keys `quick-key-look` / `-talk` / `-brief`, plus `quick-key-screen` on a Mac (Look: Optics where the camera
+  can run, else the system camera; Screen: Optics' screen look; Brief me: the briefing protocol for the time of day in
+  a new chat; §19), the starter prompts for the first three conversations
   only, then the protocols row (152×92 cards, snapping, a 16 px edge fade). No call key (no phone calls).
 - **Desktop awareness rail** (`awareness-rail`, replaces Mission Control's empty "Standing by"; the panel's
   `aria-label` is Awareness or Mission Control): the chronometer (`rail-chronometer`, Rajdhani 44 px, no seconds) with
@@ -1705,7 +1721,7 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
 - **Building blocks** (`src/styles/hud.css`): `.hud-frame` corner brackets (each frame's own `--frame-arm`,
   `--frame-color` and `--frame-weight` apply: `--frame-brackets` is declared again on every pseudo-element that draws
   it, because a custom property declared only on `:root` is substituted there), `.hud-key`, `.hud-label`,
-  `.hud-readout`, `.hud-leader`, `.hud-live`, `.hud-tape`, `.hud-scan`, `.hud-viewport` (the camera half's overlay),
+  `.hud-readout`, `.hud-leader`, `.hud-live`, `.hud-tape`, `.hud-scan`, `.hud-viewport` (Optics' frame),
   `.hud-grid`, `.hud-assemble`. Bracket colors come from the theme (`--line-3` by default; the viewport's and the
   full-screen ones are `--accent-2` mixed with transparent), never a fixed cyan.
 - **Full-screen modes**: Voice Mode's wordmark is the header's (Rajdhani 700, 17 px, .24em); on screens at least
@@ -1724,7 +1740,8 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
 
 ### 17.3 Screens: another monitor, a floating panel, a window
 
-- Commands (typed in the composer or a hologram viewer's command box, or heard in Voice Mode) go to the local matcher
+- Commands (typed in the composer, a hologram viewer's command box or Optics' ask field, or heard in Voice Mode or by
+  Optics' mic; §19) go to the local matcher
   `src/lib/screen-commands.js` first: a known object ("this", "it", the hologram, blueprint, Mission Control, report,
   photo, camera, link + ordinal) plus a place ("other / second / external screen", "screen 2", "monitor", "beside me",
   "float", "pop it out", "on top", "in a window / new tab"), every other word a command word; "bring it back" and
@@ -1784,10 +1801,10 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   open_screen through the real app and the mock: a window on the stubbed second monitor, the one tap a floating panel
   needs, "back").
 
-## 18. v7 senses: Optics, the camera, and the natural voice
+## 18. v7: Optics, the camera, and the natural voice
 
-This section covers the "senses" half of v7. The other half (the new look, Screens and the lead versions V4/V5) is
-section 17. Where this section and an earlier one differ, this one wins.
+This section covers the camera and the natural voice; the new look, Screens and the lead versions V4/V5 are §17, and
+how the parts connect is §19. Where this section and an earlier one differ, this one wins.
 
 ### 18.1 Optics, the camera
 
@@ -1884,10 +1901,10 @@ section 17. Where this section and an earlier one differ, this one wins.
 - **Covered.** When another overlay covers Optics (`el.inert`), the camera stops and Watch ends. When Optics shows
   again, a frozen answer stays frozen; otherwise the camera restarts on a computer, or iPhone shows "Resume camera".
 - **Status hook.** `deps.onLiveChange({ camera, watch, watchEndsAt })` fires when the camera goes live or off and when
-  Watch starts or ends (`watchEndsAt`: ms since the epoch, or null), for the app's status line and sensor beads.
-  `app.openOptics({ start })` (and app.js's `openOpticsScreen`) opens Optics from a tap. At boot, when the camera can
-  run (not the demo, a camera API), app.js sets `window.__jarvisOptics = () => openOpticsScreen()`: the hook the shell
-  half's Presence **Look** key calls (without it, that key takes a photo with the system camera).
+  Watch starts or ends (`watchEndsAt`: ms since the epoch, or null): Presence's state word, pills and beads (§19).
+  `deps.onCapture({ source })` fires for every frame taken (a Look, the screen, look_through_camera).
+  `app.openOptics({ start })` (and app.js's `openOpticsScreen`) opens Optics from a tap: the home's Look and Screen
+  keys, the composer's camera key, Ctrl/⌘ Shift L and Voice Mode's Look.
 
 **Optics words** (`matchOpticsCommand(text, { frozen })`, no tokens). `look` (explicit: "what am I looking at?", "what
 is this?", "what do you see?", "look at this", "identify this", "what am I holding?", "can you read this?", "what about
@@ -1925,7 +1942,7 @@ about 16¢.
 **Tests.**
 - Unit:
   - `optics` (geometry, layout, Watch, costs, tools, validation; the JSON of `pinLabelsTool()` and
-    `lookThroughCameraTool()` pinned by sha256 to the prototype's, the same pins as the shell half's `engine.v7`);
+    `lookThroughCameraTool()` pinned by sha256 to the prototype's, the same pins as `engine.v7`);
   - `optics.cameras` (names, order, remembered camera, hot-plug);
   - `optics.commands` (words, messages, schematic edges, hologram estimate, acks, `isCameraRequest` and
     `voiceCameraRequest`);
@@ -2029,3 +2046,68 @@ takes its CSP from its own response headers and Pages sends none).
   - `natural-voice-webgpu` (a stubbed adapter: 350 MB offered; the fp32 stand-in fails to load; WASM takes over by
     itself; next time 117 MB);
   - `natural-voice-slow` (a kept verdict: the card says so; Voice Mode speaks with the built-in voice).
+
+## 19. v7: how the look, Screens, Optics and the natural voice connect
+
+Where this section differs from §17 or §18, it wins.
+
+- **Tool versions.** One source for the Optics tools: `src/lib/optics-tools.js` (re-exported by `src/lib/optics.js`).
+  Lead tools V5 (§17.1) are built from it, and the Optics engine (§18.1) dispatches `pin_labels` and
+  `look_through_camera` by name against the conversation's frozen tools, so new (V5) conversations get pins and fresh
+  frames and older ones answer a Look in words. The unit tests and the E2E build use new conversations as they come.
+- **Presence × Optics** (`src/ui/app.js`).
+  - Optics' `onLiveChange` drives the state word: `WATCHING m:ss` while Watch is on (counted down once a second),
+    `ANALYZING` while a Look (a turn of the open conversation) is answered, `OPTICS LIVE` while the camera is live;
+    listening and speaking come first. With Optics closed and the camera on another screen, the word is `OPTICS LIVE`
+    when nothing else is under way (after work, offline and error). The cores show `optics` for OPTICS LIVE and WATCHING and `thinking` for
+    ANALYZING (`data-core`, the header's `data-state`).
+  - The OPTICS pill and the cores' OPTICS bead are live while Optics' camera is, or while a camera screen is open
+    (below); the WATCH pill shows Watch's time left. Tapping OPTICS closes Optics and every camera screen ("Camera
+    off."); WATCH stops Watch only (`api.stopWatch()`); the narrow `LIVE ×n` pill stops them all. (Optics covers the
+    window, so its own LIVE pill is the one used while it is open; the header's pills matter for a camera on another
+    screen.)
+  - The home's **Look** key opens Optics where the camera can run (not the demo; a camera API), else the system camera
+    (`composer.takePhoto()`, also Optics' fallback on phones). On a Mac the home also has **Screen** (`quick-key-screen`):
+    Optics opening straight into the screen look (`start: 'screen'`).
+  - Every frame taken flares the home's core (`cue('capture')`, `deps.onCapture`) and plays the `optics` cue, then
+    `scan` while the Look is sent (`src/ui/sounds.js`).
+  - Optics' stage brackets are the shared viewport frame (`.optics-brackets.hud-viewport`: 28px arms in the theme's
+    `--accent-2`, 2px over live video); its title and LIVE colors come from the Presence tokens (`--font-hud`,
+    `--live`, `--scrim-hud`).
+- **Screens × Optics: the camera on a screen** (`src/ui/optics/screen-camera.js`, the `camera` panel of
+  `src/ui/screens/panels.js`).
+  - "Put the camera on my other screen", "float the camera", or "this" while Optics is open (`describeOpenViewer`
+    reports Optics as the camera) shows the live camera in the screen's HUD frame: on another monitor, in the floating
+    panel, or in a window. Typed or said in Optics itself (its ask field, its mic) the words go to Screens first
+    (`deps.screenCommand`); in Voice Mode they always do.
+  - Moving the camera out closes Optics in the main window (one view holds the camera; `closeViewerFor('camera')`).
+    **Bring it back** opens Optics here again; closing the camera screen leaves the camera off. On a phone the camera
+    is Optics itself (`showInApp`), never a screen frame.
+  - The panel opens the camera chosen last in Optics (settings `opticsCameraId` / `opticsCameraLabel`), mirrored when
+    it faces the owner, and follows hot-plug. It is a view: Look, Watch and the labels stay in Optics. Header:
+    `SCREEN 2 · OPTICS · <CAMERA NAME>`; status `LIVE` in the privacy color (tone `rec`, `--live`), `STARTING`,
+    `PAUSED`, `OFF` or `NO CAMERA` (warn, with the reason and **Try again**); the deck's **Camera off / Camera on**
+    (`screen-camera-toggle`; icon only in a floating panel). Test hooks: `screen-camera` `data-state` (starting | live
+    | paused | off | error) and `data-mirrored`.
+  - Privacy as in Optics: the camera runs only while the panel's own window is visible. `createCamera({ win })` listens
+    to that window's `visibilitychange`, `pagehide` and `freeze`, so a floating panel keeps its camera while the app's
+    tab is hidden behind it, and releases it when the panel itself is hidden; on a computer it comes back when shown
+    again (iPhone: a tap). Closing the screen releases it. The controller's `onChange` lets the main window light
+    the OPTICS pill while a camera screen is open, and `closeKind('camera')` is how the pill turns it off.
+- **Voice Mode × the natural voice.** While the natural voice speaks, Voice Mode's Living Core follows its real
+  output: the level from `tts.getOutputLevel()` and the voice band's 8 segments from `tts.getOutputBands()` (the same
+  100 Hz–4 kHz log bands as the mic's, `core.setBands`); when it stops, the band goes back to the level (or to the
+  mic's bands while listening). The device voice keeps the word-length bumps (no `Math.random`).
+- **Composer.** One system-camera call, `takePhoto()` (the duplicate `openCamera()` is gone).
+- **Tests.** Unit: `screens.camera` (Chromium with two fake cameras: live with LIVE in `--live` and the camera's
+  name, mirrored, Camera off and on, the remembered camera, hidden → released → back, a panel in another window
+  that ignores the app tab's visibility, a blocked camera explained, released on close; it fails without
+  `createCamera({ win })`), `screens.controller` (the camera moved out of Optics and floated, the pill's
+  `closeKind`, the change hook, "bring it back", a phone's camera is Optics), `screens.targets` (the camera is "this"
+  while Optics is open). E2E: `optics-screens` (Mac: OPTICS LIVE, the pill and the Systems glance under Optics;
+  WATCHING m:ss counting down with both pills; "put this on my other screen" typed in Optics → screen 2 maximized,
+  LIVE, MACBOOK CAMERA, mirrored, the camera held there and not here; the header's OPTICS pill closes it and the
+  camera stays off; "float the camera" → the floating panel plays the camera; "bring it back" → Optics live here
+  again), `optics-picker` (the home's Look key opens Optics on the remembered webcam; a Mac's home has Screen),
+  `optics-screen` (on a Mac; the Screen key opens Optics straight into one screen frame), `screens-pages` (a camera
+  screen in a browser without a camera says NO CAMERA and offers Try again).

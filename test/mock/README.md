@@ -81,25 +81,6 @@ once, and I can use your other screen, sir." (the permission), "It's back on you
 sir.", or "I couldn't do that: …" for an `is_error` result. `[[screen]]` comes after `[[search]]`
 in the precedence above.
 
-### Voice Mode turns (the spoken reply channel)
-
-A lead request whose newest `<turn_context>` holds the line `Reply channel: spoken` (Voice Mode's
-turns, `startTurn({ spoken: true })`) gets replies written for the ear, and its lead responses
-stream their text a few words at a time, 50–90 ms apart (a web search or page read takes about a
-second), so Voice Mode can start speaking while the reply still arrives. Without the line every
-directive behaves as above.
-
-| Directive / trigger | What the mock does on the spoken channel |
-| --- | --- |
-| *(none)*, `[[search]]`, `[[swarm:N]]`, attachments, `[[memory]]` | two or three plain sentences, a line `---`, then `## Details` with two list items (the details are for the screen and never spoken) |
-| `[[search]]`, `[[pause]]`, `[[swarm:N]]` | first say "Let me check the latest on that." (spoken while the tools run) |
-| `[[long]]` / `[[xss]]` | the whole guide below the `---` line / every payload below it and one in the spoken part |
-| `[[nobreak]]` / `[[longspoken]]` | a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
-| `[[hologram:<sample>]]` | "Pulling up the AA alkaline battery now." before `show_hologram`, then "Here's the AA alkaline battery. Say "expand it", or tap any part." (failed: "I couldn't build that hologram this time. Shall I try again?") |
-| a `Blueprint request` block | "Drawing the blueprint of the separator now." before `draw_blueprint`, then "The blueprint of the separator is ready; it's open on your screen. Tap a numbered callout to see that part." |
-| `[[open-saved]]` | "Here's your saved hologram of the 2024 Toyota Camry Hybrid; no need to build it again." |
-| `[[swarm:N]] [[hologram:<sample>]]` | the hologram line, then a spoken synthesis with its details and sources below `---` |
-
 ### Optics (lead tools version 5: `pin_labels`, `look_through_camera`) and Watch
 
 In `optics.mjs`. A Look is detected from the request itself: the newest user message carries an
@@ -120,3 +101,22 @@ screen-style labels. Only tools the request defines are called.
 | *(the same)* "Tell me more." | a longer answer about the scene |
 | *(the same)* "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" | what it is, then `pin_labels` with that one label at that pixel, then "I've marked it on the frame." (Optics' **What's this part?** for a tapped pin) |
 | a structured request whose system prompt starts `You are Jarvis Watch` | `{ worth_saying, line, summary }`: the first frame (no previous summary) sets the scene; later ones report that the mug moved and the notebook is gone |
+
+### Voice Mode turns (the spoken reply channel)
+
+A lead request whose newest `<turn_context>` holds the line `Reply channel: spoken` (Voice Mode's
+turns, `startTurn({ spoken: true })`) gets replies written for the ear, and its lead responses
+stream their text a few words at a time, 50–90 ms apart (a web search or page read takes about a
+second), so Voice Mode can start speaking while the reply still arrives. Without the line every
+directive behaves as above.
+
+| Directive / trigger | What the mock does on the spoken channel |
+| --- | --- |
+| *(none)*, `[[search]]`, `[[swarm:N]]`, attachments, `[[memory]]` | two or three plain sentences, a line `---`, then `## Details` with two list items (the details are for the screen and never spoken) |
+| `[[search]]`, `[[pause]]`, `[[swarm:N]]` | first say "Let me check the latest on that." (spoken while the tools run) |
+| `[[long]]` / `[[xss]]` | the whole guide below the `---` line / every payload below it and one in the spoken part |
+| `[[nobreak]]` / `[[longspoken]]` | a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
+| `[[hologram:<sample>]]` | "Pulling up the AA alkaline battery now." before `show_hologram`, then "Here's the AA alkaline battery. Say "expand it", or tap any part." (failed: "I couldn't build that hologram this time. Shall I try again?") |
+| a `Blueprint request` block | "Drawing the blueprint of the separator now." before `draw_blueprint`, then "The blueprint of the separator is ready; it's open on your screen. Tap a numbered callout to see that part." |
+| `[[open-saved]]` | "Here's your saved hologram of the 2024 Toyota Camry Hybrid; no need to build it again." |
+| `[[swarm:N]] [[hologram:<sample>]]` | the hologram line, then a spoken synthesis with its details and sources below `---` |
