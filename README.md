@@ -428,7 +428,10 @@ browser asks for permission.
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
   "what am I looking at?" opens it by itself; on an iPhone Jarvis asks you to tap **Look**, and
-  then looks right away with the question you asked. (While a hologram
+  then looks right away with the question you asked. Only a short question that is all about
+  seeing does this ("What do you see?", "Look at this", "What am I holding?"): a longer one that
+  just starts the same way, like "What do you see as the biggest risk in my plan?", is an
+  ordinary question for Jarvis, and the camera stays off. (While a hologram
   is on screen, "what is this?" is about the hologram, not the camera.)
 - **Off means off.** The camera runs only while Optics (or a camera view you put on another
   screen) is open and on screen: the red **LIVE** pill shows it (tap it to turn the camera off),

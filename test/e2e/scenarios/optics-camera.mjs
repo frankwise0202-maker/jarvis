@@ -17,7 +17,8 @@
 //                      new question and its answer scroll into view in the sheet
 //   optics-followups-small  the same on a 375×667 phone: the chips wrap (none off the edge) and
 //                      each follow-up's answer is in view
-//   optics-voice-iphone  iPhone Voice Mode: "what am I looking at?" asks for the tap; Look then
+//   optics-voice-iphone  iPhone Voice Mode: "What do you see as the biggest risk…?" is a spoken
+//                      question for Jarvis; "what am I looking at?" asks for the tap; Look then
 //                      looks at once with those words
 //   optics-look-screen  Mac, two monitors: "put this on my other screen" with a labeled Look on
 //                      screen puts that Look on screen 2 (frame, labels, answer), not the live camera
@@ -29,7 +30,8 @@
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
-//                      ("what's that?" stays a question for Jarvis); "Open in chat" in a hologram over
+//                      ("what's that?" and "What do you see as the biggest risk…?" stay questions for
+//                      Jarvis, without a frame); "Open in chat" in a hologram over
 //                      Optics leaves Voice Mode and closes the Optics it opened
 
 import { tid } from '../harness.mjs';
@@ -46,6 +48,9 @@ async function lastUserQuestion(t) {
   const parts = m && Array.isArray(m.content) ? m.content.filter((b) => b.type === 'text') : [];
   return parts.length ? parts.at(-1).text : '';
 }
+
+/** A question that only starts like a camera request (v7.1): Voice Mode sends it to Jarvis as usual. */
+const RISK_QUESTION = 'What do you see as the biggest risk in moving my savings into index funds?';
 
 const MAC_CAMERAS = [
   { label: 'FaceTime HD Camera (Built-in) (05ac:8514)' },
@@ -447,7 +452,7 @@ export default [
   },
   {
     name: 'optics-voice',
-    title: 'Voice Mode × Optics: Look opens the camera over Voice Mode; "what am I looking at?" is a Look, spoken and pinned; "tell me more" is spoken; "close the camera"; "what\'s that?" stays a question; on a computer the words alone open the camera and look; "Open in chat" closes Voice Mode and its Optics',
+    title: 'Voice Mode × Optics: Look opens the camera over Voice Mode; "what am I looking at?" is a Look, spoken and pinned; "tell me more" is spoken; "close the camera"; "what\'s that?" and a question that only starts like a camera request stay questions; on a computer the words alone open the camera and look; "Open in chat" closes Voice Mode and its Optics',
     device: 'mac',
     timeout: 180000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
@@ -476,7 +481,7 @@ export default [
         // Voice Mode stops listening after two silent tries; then a tap on Optics' mic (Voice
         // Mode's own: the core's tap) listens, and the phrases are heard one per listen.
         await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle', { timeout: 15000, message: 'Voice Mode to wait for a tap' });
-        await page.evaluate(() => window.__voice.queue.push('Jarvis, what am I looking at?', 'Tell me more.', 'Close the camera.', "What's that?", 'What am I looking at?'));
+        await page.evaluate((q) => window.__voice.queue.push('Jarvis, what am I looking at?', 'Tell me more.', 'Close the camera.', "What's that?", q, 'What am I looking at?'), RISK_QUESTION);
         await page.locator(tid('optics-mic')).click();
         await waitAnswer(t);
         const look = lastLook(t);
@@ -499,7 +504,7 @@ export default [
         await t.waitFor(async () => /Camera off\./.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 10000, message: 'the acknowledgement' });
         t.assert(!(await page.locator(tid('voice-mode')).evaluate((el) => el.inert === true)), 'Voice Mode is in front again');
       });
-      await t.step('with the camera closed, "what\'s that?" is a question for Jarvis; "what am I looking at?" opens the camera and looks (a computer where the camera is allowed)', async () => {
+      await t.step('with the camera closed, "what\'s that?" and a question that only starts like a camera request are for Jarvis; "what am I looking at?" opens the camera and looks (a computer where the camera is allowed)', async () => {
         await t.visible('optics', { timeout: 45000, message: 'Optics to open by voice' });
         await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', { timeout: 15000, message: 'the Look' });
         await waitAnswer(t);
@@ -514,6 +519,14 @@ export default [
         const plain = t.requests('lead').filter((r) => r.status === 200).map(userText).find((u) => /\bWhat's that\?$/.test(u.text));
         t.assert(plain, '"What\'s that?" went to Jarvis');
         t.assert(!plain.image && /Reply channel: spoken/.test(plain.text), 'as a spoken turn without a frame: the camera stayed closed');
+        // v7.1: "What do you see as the biggest risk…" only starts like a camera request. It is a
+        // spoken question for Jarvis: no camera, no frame (before, the webcam turned on and a Look
+        // with these words was sent).
+        const risk = t.requests('lead').filter((r) => r.status === 200).map(userText).filter((u) => u.text.endsWith(RISK_QUESTION));
+        t.assert(risk.length === 1, `the question went to Jarvis once (${risk.length})`);
+        t.assert(!risk[0].image && /Reply channel: spoken/.test(risk[0].text) && !/Optics frame/.test(risk[0].text), 'as a spoken turn without a frame');
+        const frames = t.requests('lead').filter((r) => r.status === 200).map(userText).filter((u) => u.image);
+        t.assert(frames.every((u) => !u.text.includes(RISK_QUESTION)), 'no frame was ever sent with it');
         t.assertAppendOnly();
       });
       await t.step('a hologram over Optics, then "Open in chat": Voice Mode closes and takes its Optics with it; the chat shows the reply', async () => {
@@ -538,23 +551,29 @@ export default [
   },
   {
     name: 'optics-voice-iphone',
-    title: 'iPhone Voice Mode: "what am I looking at?" with the camera closed: Jarvis asks for the tap, and the tap on Look looks at once with those words (spoken answer, labels)',
+    title: 'iPhone Voice Mode with the camera closed: a question that only starts like a camera request is a spoken turn; "what am I looking at?" asks for the tap, and the tap on Look looks at once with those words (spoken answer, labels)',
     device: 'iphone13',
     timeout: 120000,
     browserArgs: cameraArgs('desk-portrait.y4m'),
     async run(t) {
       const page = await t.newPage();
       await page.addInitScript(installFakeSpeech);
-      await page.addInitScript(() => {
-        window.__voice.queue = ['Jarvis, what am I looking at?'];
-      });
+      await page.addInitScript((q) => {
+        window.__voice.queue = [q, 'Jarvis, what am I looking at?'];
+      }, RISK_QUESTION);
       await instrument(page);
       await page.context().grantPermissions(['camera']);
       await t.goto('/');
       await (await t.visible('voice-open')).click();
       await t.visible('voice-mode');
-      await t.waitFor(async () => /Tap Look, and show me\./.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 20000, message: 'Jarvis to ask for the tap' });
-      t.assert((await t.count('optics')) === 0 && t.requests('lead').length === 0, 'nothing opened or sent before the tap');
+      // v7.1: a question that only starts like a camera request is a spoken turn (before, Jarvis said
+      // "Tap Look, and show me." and the question was lost).
+      await t.waitFor(async () => /What do you see as the biggest risk/.test(await lastUserQuestion(t)), { timeout: 20000, message: 'the question to go to Jarvis' });
+      const risk = t.requests('lead').filter((r) => r.status === 200).at(-1).body.messages.at(-1);
+      t.assert(/Reply channel: spoken/.test(risk.content[0].text) && !risk.content.some((b) => b.type === 'image'), 'a spoken turn without a frame');
+      t.assert(!(await page.evaluate(() => window.__voice.said)).some((s) => /Tap Look/.test(s)), 'Jarvis never asked for a tap for it');
+      await t.waitFor(async () => /Tap Look, and show me\./.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 30000, message: 'Jarvis to ask for the tap' });
+      t.assert((await t.count('optics')) === 0 && !lastLook(t) && t.requests('lead').length === 1, 'nothing opened or sent for "what am I looking at?" before the tap');
       await page.locator(tid('voice-look')).click();
       await t.visible('optics');
       await t.waitFor(() => !!lastLook(t), { timeout: 15000, message: 'the Look to be sent after the tap' });

@@ -19,8 +19,10 @@
 //
 //   isCameraRequest(text)             words plainly about seeing ("what am I looking at?", "look at
 //                                     this", "what is this?" on its own): Voice Mode opens the camera
-//                                     for them while it is closed. Not "what's that?" or "what is
-//                                     it?", which in a conversation are about something Jarvis said.
+//                                     for them while it is closed. Whole short sentences only: not
+//                                     "what do you see as the biggest risk…?", which only starts like
+//                                     one, and not "what's that?" or "what is it?", which in a
+//                                     conversation are about something Jarvis said.
 //   voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })
 //                                     what Voice Mode does with such words while Optics is closed:
 //                                     null (Jarvis takes them as usual: not about seeing, or a
@@ -87,15 +89,19 @@ function hologramOf(n) {
   return { action: 'hologram', subject: subject ? subject.slice(0, 60) : null };
 }
 
-// With the camera closed (Voice Mode), only words plainly about seeing open it.
+// With the camera closed (Voice Mode), only words plainly about seeing open it: whole short
+// sentences (every pattern ends in $), with at most a short tail about where to look. A question that
+// only starts like one ("what do you see as the biggest risk…", "look at this from the other side")
+// is for Jarvis (v7.1: before, these opened the webcam on a Mac and were swallowed on an iPhone).
+const SEEN_TAIL = '(?: (?:here|now|right now|in front of (?:me|you)|in my hand|on (?:my|the) (?:desk|table)))?';
 const CAMERA_REQUEST = [
-  /^what (?:am i|i'm|i am) (?:looking at|holding|seeing|pointing at|pointing the camera at)\b/,
-  /^(?:what do you see|what can you see|tell me what you see|describe what you see)\b/,
-  /^see (?:this|these|me)\b/,
-  /^do you see (?:this|these)\b/,
+  new RegExp(`^what (?:am i|i'm|i am) (?:looking at|holding|seeing|pointing at|pointing the camera at)${SEEN_TAIL}$`),
+  new RegExp(`^(?:what do you see|what can you see|tell me what you see|describe what you see)${SEEN_TAIL}$`),
+  /^see (?:this|these|me)$/,
+  /^do you see (?:this|these)$/,
   /^(?:take|have) a look(?: at (?:this|these|me|what i'm holding))?$/,
-  /^look at (?:this|these|me|what i'm holding)\b/,
-  /^(?:identify|recognize|recognise) (?:this|these|what you see|what i'm holding)\b/,
+  /^look at (?:this|these|me|what i'm holding)$/,
+  /^(?:identify|recognize|recognise) (?:this|these|what you see|what i'm holding)$/,
   /^what(?:'s| is| are) (?:this|these)(?: (?:thing|things|object|one))?(?: (?:here|in my hand|i'm holding|on (?:my|the) (?:desk|table)))?$/,
   /^whats (?:this|these)$/,
   /^what(?:'s| is) in front of me$/,

@@ -167,6 +167,58 @@ test('with the camera closed, only words plainly about seeing ask for it; "what\
   }
 });
 
+test('with the camera closed, a whole short sentence about seeing asks for it, never a question that only starts like one (v7.1)', () => {
+  // Ordinary questions that merely open with "what do you see…", "look at this…": Jarvis takes them as
+  // usual. Before v7.1 the camera words matched how a sentence started, so on a Mac where the camera
+  // was allowed these opened the webcam and sent a frame, and on an iPhone they were swallowed.
+  for (const words of [
+    'What do you see as the biggest risk in moving my savings into index funds?',
+    'What can you see in these numbers?',
+    'Do you see this working out?',
+    'Look at this from the other side',
+    'Identify these trends for me',
+    'what do you see happening next year',
+    'Tell me what you see in the data',
+    'Do you see these prices going up?',
+    'What am I looking at in terms of cost for a new roof?',
+    'Describe what you see as the ideal plan',
+    'See this through for me',
+    'Look at me when I talk to you about the budget',
+    'What am I holding back on in this plan?',
+    'Recognize these patterns in my spending',
+  ]) {
+    assert.equal(isCameraRequest(words), false, words);
+    for (const cameraAllowed of ['granted', 'prompt']) {
+      assert.equal(voiceCameraRequest(words, { cameraAllowed, ios: false }), null, `${words} (${cameraAllowed})`);
+      assert.equal(voiceCameraRequest(words, { cameraAllowed, ios: true }), null, `${words} (iOS, ${cameraAllowed})`);
+    }
+  }
+  // A short tail about where to look keeps it a camera request.
+  for (const words of [
+    'What do you see?',
+    'What do you see right now?',
+    'What can you see here?',
+    'What can you see in front of you?',
+    'What am I looking at here?',
+    'What am I holding in my hand?',
+    'What am I pointing the camera at?',
+    'Tell me what you see now',
+    'Describe what you see',
+    'So, what do you see, Jarvis?',
+    'Look at me',
+    'Look at these',
+    "Look at what I'm holding",
+    'Identify this, please',
+    'Recognise these',
+    'Do you see this?',
+    'Can you see me?',
+  ]) {
+    assert.equal(isCameraRequest(words), true, words);
+    assert.equal(voiceCameraRequest(words, { cameraAllowed: 'granted', ios: false }), 'look', words);
+    assert.equal(voiceCameraRequest(words, { cameraAllowed: 'granted', ios: true }), 'need-tap', words);
+  }
+});
+
 test('Voice Mode with the camera closed: a Mac where it is allowed looks; iPhone or no permission asks for a tap; a hologram on screen keeps "what is this?" for Jarvis', () => {
   const mac = { cameraAllowed: 'granted', ios: false };
   assert.equal(voiceCameraRequest('Jarvis, what am I looking at?', mac), 'look');

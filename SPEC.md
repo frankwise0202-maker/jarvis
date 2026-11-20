@@ -1983,6 +1983,14 @@ null: it goes to Jarvis as usual.
   included, goes to Jarvis as usual: in a conversation those are about something Jarvis said. While a hologram or
   blueprint is open over Voice Mode the camera is never asked for: "what is this?" is then about what is on screen
   (`voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })` decides: null, `need-tap` or `look`).
+  - **Whole short sentences only** (v7.1). Every camera pattern matches the whole sentence (after "Jarvis", "please"
+    and punctuation are dropped), with at most a short tail about where to look ("here", "now", "right now", "in front
+    of me/you", "in my hand", "on my desk"). A question that only starts like one ("What do you see as the biggest risk
+    in moving my savings?", "Look at this from the other side", "Do you see these prices going up?", "What am I looking
+    at in terms of cost for a new roof?") is a normal spoken turn, without a frame, on every device. (Before, the
+    words matched how a sentence started: on a Mac where the camera was allowed such a question turned the webcam on
+    and sent a Look, and on an iPhone it was answered "Tap Look, and show me." and lost.) So `need-tap` only ever holds
+    words that mean nothing without the camera, and they are dropped after 30 s without a tap.
 - **A hologram** asked for over Voice Mode is opened by Voice Mode itself (`visuals.open`), over Optics.
 
 **A slow camera** (getUserMedia can take seconds: a USB webcam waking up). `createCamera` keeps the start the owner
@@ -2036,12 +2044,13 @@ about 16¢.
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
     shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
     while a start or a switch is still under way);
-  - `optics-voice-iphone` (iPhone Voice Mode: "what am I looking at?" → "Tap Look, and show me." → the tap on Look
-    looks with those words, spoken and pinned);
+  - `optics-voice-iphone` (iPhone Voice Mode: "What do you see as the biggest risk…?" is a spoken turn without a
+    frame, never "Tap Look"; "what am I looking at?" → "Tap Look, and show me." → the tap on Look looks with those
+    words, spoken and pinned);
   - `optics-voice` (Voice Mode: Look; "what am I looking at?" spoken and pinned; "tell me more" spoken; "close the
-    camera"; with the camera closed, "what's that?" is a spoken question without a frame, and on a Mac "what am I
-    looking at?" alone opens the camera and looks; Hologram of this over Optics, then "Open in chat" closes Voice Mode
-    and the Optics it opened).
+    camera"; with the camera closed, "what's that?" and "What do you see as the biggest risk…?" are spoken questions
+    without a frame, and on a Mac "what am I looking at?" alone opens the camera and looks; Hologram of this over
+    Optics, then "Open in chat" closes Voice Mode and the Optics it opened).
   - `test/e2e/camera-rig.mjs` turns Chromium's one fake camera into several labelled cameras with facing modes and
     hot-plug. The harness has a `mac` device (Chrome on macOS).
 
