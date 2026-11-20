@@ -386,7 +386,10 @@ browser asks for permission.
 - **Follow-ups.** Under the answer: **Tell me more**; **Hologram of this** (the picture turns into
   a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
   hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**
-  You can also type a question about the same picture; no new picture is taken.
+  (the hologram button then names that object too). You can also type a question about the same
+  picture; no new picture is taken. Each new question scrolls to the top of the answer so you
+  can watch Jarvis answer it, and the answer's heading says **ANALYZING** while it works. **Live**
+  takes you back to the camera (on a phone it's next to the question box).
 - **Which camera.** The button under **OPTICS** names the camera in use; click or tap it to see
   every camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
   Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and

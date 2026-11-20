@@ -1892,12 +1892,22 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
     that answer adds are merged into the frame's.
   - `optics-more`, "Tell me more.".
   - `optics-hologram`, "Hologram of this", with its price (`estimateHologramCost`, about 16¢ on Opus 5.5), only in a
-    conversation that can show holograms. It sends `Show me a hologram of the <tapped or first label>.` (or "…of
-    this.").
+    conversation that can show holograms; with a pin tapped it names it ("Hologram of the screwdriver"). It sends
+    `Show me a hologram of the <tapped or first label>.` (or "…of this.").
     - While the turn runs, the frozen frame shows its schematic (`optics-schematic`, edges after a 3 × 3 blur, the
       strongest 9%) with `BUILDING HOLOGRAM · <LABEL>` (`optics-schematic-label`).
     - The first `hologram` segment opens the hologram viewer over Optics (`deps.openHologram`).
-  - Phones scroll the chips sideways in one row; on desktop they wrap.
+  - The chips wrap (on a phone too): none slides off the edge of the screen.
+- **The answer sheet** (`optics-answer`; phones: above the deck, `min(40vh, 360px)`; desktop: the side column).
+  - Its header (`optics-answer-status`) follows the newest question: ANALYZING while Jarvis works on the Look or on a
+    follow-up (`data-busy`), NO ANSWER when the newest one failed, else ANSWER; then "In chat ✓" and the cost so far.
+    `data-status` stays the Look's own answer.
+  - Each follow-up (a chip, a typed or spoken question) is added under the answer, and the sheet's scrolling body
+    (`optics-answer-text`) brings its "› question" line to the top so its answer streams in view, until the owner
+    scrolls the answer themselves.
+  - **Live** (`optics-live`, back to the camera) is in the answer's actions on a computer, beside **Ask more**. On a
+    phone it sits in the deck's ask row while a Look is frozen (the ask field is right there, so no Ask more), and the
+    sheet keeps that room for the answer.
 - **Covered.** When another overlay covers Optics (`el.inert`), the camera stops and Watch ends. When Optics shows
   again, a frozen answer stays frozen; otherwise the camera restarts on a computer, or iPhone shows "Resume camera".
 - **Status hook.** `deps.onLiveChange({ camera, watch, watchEndsAt })` fires when the camera goes live or off and when
@@ -1958,7 +1968,9 @@ about 16¢.
   - `optics-phone-cams` (iPhone 13: Back, Flip to Front, mirrored preview, remembered; the front camera's frame sent and
     frozen unmirrored; the picker reaches Back Ultra Wide);
   - `optics-followups` (a tapped pin → "What's this part?"; Tell me more; Hologram of this → the schematic, the viewer
-    over Optics, the camera off underneath, back to the answer);
+    over Optics, the camera off underneath, back to the answer; ANALYZING while each runs, and each follow-up's
+    question and answer in view in the sheet), and `optics-followups-small` (the same on a 375 × 667 phone: every
+    chip whole on screen with a pin tapped);
   - `optics-voice` (Voice Mode: Look; "what am I looking at?" spoken and pinned; "tell me more" spoken; "close the
     camera"; with the camera closed, "what's that?" is a spoken question without a frame, and on a Mac "what am I
     looking at?" alone opens the camera and looks; Hologram of this over Optics, then "Open in chat" closes Voice Mode

@@ -104,6 +104,49 @@ export function lastLook(t) {
   return null;
 }
 
+/**
+ * Where the newest follow-up sits in the answer sheet's scrolling body: whether its "› question"
+ * line shows, and how many pixels of its answer are inside the body's visible rectangle (above the
+ * 18 px fade at its foot).
+ */
+export function followUpView(page) {
+  return page.evaluate(() => {
+    const body = document.querySelector('[data-testid="optics-answer-text"]');
+    if (!body) return null;
+    const qs = body.querySelectorAll('.optics-answer-q--follow');
+    const q = qs[qs.length - 1];
+    if (!q) return null;
+    const b = body.getBoundingClientRect();
+    const seen = (top, bottom) => Math.max(0, Math.min(bottom, b.bottom - 18) - Math.max(top, b.top));
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (let n = q.nextElementSibling; n && !n.classList.contains('optics-answer-q--follow'); n = n.nextElementSibling) {
+      const r = n.getBoundingClientRect();
+      top = Math.min(top, r.top);
+      bottom = Math.max(bottom, r.bottom);
+    }
+    const qr = q.getBoundingClientRect();
+    return {
+      question: q.textContent,
+      bodyHeight: Math.round(b.height),
+      scrollTop: Math.round(body.scrollTop),
+      questionShown: seen(qr.top, qr.bottom) >= qr.height - 1,
+      answerHeight: Number.isFinite(top) ? Math.round(bottom - top) : 0,
+      answerShownPx: Number.isFinite(top) ? Math.round(seen(top, bottom)) : 0,
+    };
+  });
+}
+
+/** The newest follow-up is in view: its question line, and its answer (all of it, or at least 40 px). */
+export async function checkFollowUpInView(t, label, page = t.page) {
+  const v = await followUpView(page);
+  t.assert(v, `${label}: a follow-up in the answer sheet`);
+  t.note(`${label}: ${v.answerShownPx} of ${v.answerHeight} px of the answer in view (body ${v.bodyHeight} px, scrolled ${v.scrollTop})`);
+  t.assert(v.questionShown, `${label}: its question line is in view (${JSON.stringify(v)})`);
+  t.assert(v.answerShownPx >= Math.min(v.answerHeight, 40), `${label}: its answer is in view (${JSON.stringify(v)})`);
+  return v;
+}
+
 /** Checks the pins: exact frame coordinates from the scene, mapped through the frozen view. */
 export async function checkPins(t, frame, page = t.page) {
   const pins = await page.locator(tid('optics-pin')).evaluateAll((els) => els.map((e) => ({ text: e.textContent, x: +e.dataset.x, y: +e.dataset.y, fx: +e.dataset.frameX, fy: +e.dataset.frameY })));
@@ -455,6 +498,8 @@ export default [
       await page.locator(tid('optics-ask')).press('Enter');
       await t.waitFor(async () => /Here's what I see now/.test(await t.text(page.locator(tid('optics-answer-text')))), { timeout: 30000, message: 'the follow-up answer' });
       await t.waitFor(async () => !(await page.locator(tid('optics-ask-more')).isDisabled()), { timeout: 20000, message: 'the follow-up to finish' });
+      await page.waitForTimeout(200);
+      await checkFollowUpInView(t, 'a follow-up in the side column');
       const reqs = t.requests('lead').filter((r) => r.status === 200);
       const withImageResult = reqs.find((r) => r.body.messages.at(-1).content.some?.((b) => b.type === 'tool_result' && Array.isArray(b.content) && b.content.some((c) => c.type === 'image')));
       t.assert(withImageResult, 'a tool_result carrying the fresh frame');

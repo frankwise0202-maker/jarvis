@@ -12,7 +12,10 @@
 //                      so is the frozen frame; the picker reaches the extra back lens
 //   optics-followups   a pin tapped → "What's this part?"; "Tell me more"; "Hologram of this": the
 //                      schematic, then the hologram viewer over Optics (camera off underneath),
-//                      back to the frozen answer when it closes
+//                      back to the frozen answer when it closes; ANALYZING while each runs, and each
+//                      new question and its answer scroll into view in the sheet
+//   optics-followups-small  the same on a 375×667 phone: the chips wrap (none off the edge) and
+//                      each follow-up's answer is in view
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
@@ -23,7 +26,7 @@ import { tid } from '../harness.mjs';
 import { imageSizeOf } from '../../../src/lib/optics.js';
 import { installCameraRig } from '../camera-rig.mjs';
 import { installFakeSpeech } from './features.mjs';
-import { cameraArgs, checkPins, instrument, lastLook, liveTracks, openFromComposer, shot, waitAnswer, waitLive } from './optics.mjs';
+import { cameraArgs, checkFollowUpInView, checkPins, instrument, lastLook, liveTracks, openFromComposer, shot, waitAnswer, waitLive } from './optics.mjs';
 import { installScreenStubs, opensPage, toastText, typeCommand, waitAttr } from './screens.mjs';
 
 /** The newest lead request's last user text block (the owner's words). */
@@ -98,6 +101,20 @@ async function mirrorCheck(page, b64) {
 }
 
 const transformOf = (page, selector) => page.locator(selector).first().evaluate((el) => getComputedStyle(el).transform);
+
+/** Every follow-up chip shown is whole on screen (none slides off the edge of a phone). */
+async function checkChipsInView(t, label, page = t.page) {
+  const chips = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="optics-followups"] .optics-chip')]
+      .filter((b) => !b.hidden)
+      .map((b) => {
+        const r = b.getBoundingClientRect();
+        return { id: b.dataset.testid, left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), vw: innerWidth, vh: innerHeight };
+      }),
+  );
+  t.assert(chips.length >= 2, `${label}: follow-up chips (${chips.length})`);
+  for (const c of chips) t.assert(c.left >= 0 && c.right <= c.vw && c.top >= 0 && c.bottom <= c.vh, `${label}: the ${c.id} chip is whole on screen (${JSON.stringify(c)})`);
+}
 
 export default [
   {
@@ -325,14 +342,20 @@ export default [
         await pin.click();
         t.assert((await pin.getAttribute('data-selected')) === 'true', 'the pin is selected');
         await t.visible('optics-part');
+        await checkChipsInView(t, 'a pin tapped');
+        t.assert(/^Hologram of the screwdriver\s*≈\d+¢$/.test((await t.text(page.locator(tid('optics-hologram')))).trim()), 'the hologram chip names the tapped object');
         await shot(t, 'iphone13-pin-selected');
         await page.locator(tid('optics-part')).click();
+        // While Jarvis works on the follow-up the sheet's header says so (not the first answer's ANSWER).
+        await t.waitFor(async () => (await t.text(page.locator(tid('optics-answer-status')))) === 'ANALYZING', { timeout: 5000, message: 'ANALYZING in the sheet while the follow-up runs' });
         await t.waitFor(async () => /flat-head screwdriver/.test(await t.text(page.locator(tid('optics-answer-text')))), { timeout: 30000, message: 'the answer about the screwdriver' });
         const req = t.requests('lead').filter((r) => r.status === 200).find((r) => /What's this part\?/.test(JSON.stringify(r.body.messages.at(-1))));
         const words = req.body.messages.at(-1).content.at(-1).text;
         t.assert(/^What's this part\? \(the screwdriver you pinned on frame f1, at 466, 810\)$/.test(words), `the question names the pin (${words})`);
         await t.waitFor(async () => !(await page.locator(tid('optics-more')).isDisabled()), { timeout: 30000, message: 'the follow-up to finish' });
         await page.waitForTimeout(200);
+        t.assert((await t.text(page.locator(tid('optics-answer-status')))) === 'ANSWER', 'ANSWER again once it is done');
+        await checkFollowUpInView(t, 'What’s this part?');
         t.assert((await t.count('optics-pin')) === 5, `Jarvis pinned the screwdriver again; the other labels stay (${await t.count('optics-pin')} pins)`);
         t.assert((await page.locator(tid('optics-pin'), { hasText: 'Screwdriver' }).getAttribute('data-selected')) === 'true', 'the tapped pin stays selected');
       });
@@ -340,6 +363,8 @@ export default [
         await page.locator(tid('optics-more')).click();
         await t.waitFor(async () => /worth keeping for the remote/.test(await t.text(page.locator(tid('optics-answer-text')))), { timeout: 30000, message: 'the longer answer' });
         await t.waitFor(async () => !(await page.locator(tid('optics-hologram')).isDisabled()), { timeout: 30000, message: 'the follow-up to finish' });
+        await page.waitForTimeout(200);
+        await checkFollowUpInView(t, 'Tell me more');
         t.assertAppendOnly();
         await shot(t, 'iphone13-followups');
       });
@@ -363,10 +388,43 @@ export default [
         await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-schematic')) !== 'true', { timeout: 10000, message: 'the schematic to end with the turn' });
         t.assert((await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', 'still frozen on the Look');
         t.assert((await t.count('optics-pin')) >= 1, 'the pins are back');
+        await checkFollowUpInView(t, 'Hologram of the AA battery');
         await page.locator(tid('optics-close')).click();
         await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 3000, message: 'Optics to close' });
         t.assert((await t.count('hologram-card')) === 1, 'the hologram is a card in the chat');
       });
+    },
+  },
+  {
+    name: 'optics-followups-small',
+    title: 'Follow-ups on a small phone (375×667): every chip whole on screen with a pin tapped; each new question and its answer scroll into view in the sheet',
+    device: 'small',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await openFromComposer(t);
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.waitForTimeout(400);
+      await page.locator(tid('optics-pin'), { hasText: 'Screwdriver' }).click();
+      await checkChipsInView(t, 'a pin tapped');
+      const done = () => t.waitFor(async () => (await page.locator(tid('optics-answer')).getAttribute('data-busy')) === 'false', { timeout: 30000, message: 'the follow-up to finish' });
+      await page.locator(tid('optics-part')).click();
+      await done();
+      await page.waitForTimeout(200);
+      await checkFollowUpInView(t, 'What’s this part?');
+      await page.locator(tid('optics-more')).click();
+      await done();
+      await page.waitForTimeout(200);
+      await checkFollowUpInView(t, 'Tell me more');
+      await shot(t, 'small-followups');
+      await t.checkNoHorizontalOverflow('Optics follow-ups on a small phone');
+      t.assert(await page.locator(tid('optics-live')).isVisible(), 'Live (back to the camera) stays one tap away, in the deck');
     },
   },
   {

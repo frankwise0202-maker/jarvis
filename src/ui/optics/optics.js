@@ -257,25 +257,32 @@ export function openOptics(deps = {}) {
   const answerQ = h('p', { class: 'optics-answer-q' });
   const answerBody = h('div', { class: 'optics-answer-body prose', attrs: { 'data-testid': 'optics-answer-text', 'aria-live': 'polite' } });
   const pinList = h('ul', { class: 'optics-pin-list', attrs: { 'data-testid': 'optics-pin-list', 'aria-label': 'Pinned labels' } });
+  // Back to the live camera: in the answer's actions on a computer; on a phone in the deck's ask row,
+  // beside the field it would otherwise focus (onResize moves it), so the sheet keeps its room for
+  // the answer.
   const liveBtn = h('button', { class: 'btn btn-sm optics-live-btn', type: 'button', attrs: { 'data-testid': 'optics-live' }, on: { click: () => backToLive() } }, icon('camera', { size: 16 }), h('span', { text: 'Live' }));
-  const moreBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'optics-ask-more' }, on: { click: () => askInput.focus() } }, h('span', { text: 'Ask more' }));
+  const moreBtn = h('button', { class: 'btn btn-sm optics-ask-more', type: 'button', attrs: { 'data-testid': 'optics-ask-more' }, on: { click: () => askInput.focus() } }, h('span', { text: 'Ask more' }));
   const inChat = h('span', { class: 'optics-in-chat', text: 'In chat ✓', hidden: true });
   // Follow-ups on an answer: a pin the owner tapped first ("What's this part?"), then "Tell me more"
-  // and "Hologram of this" (a conversation that can show holograms).
+  // and "Hologram of this" (a conversation that can show holograms); with a pin tapped, the hologram
+  // chip names it ("Hologram of the screwdriver"). On a phone they wrap onto a second line rather
+  // than slide off the edge.
   const partBtn = h('button', { class: 'optics-chip optics-chip--part', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-part' }, on: { click: () => askPart() } }, icon('pin', { size: 15 }), h('span', { text: 'What’s this part?' }));
   const moreChip = h('button', { class: 'optics-chip', type: 'button', attrs: { 'data-testid': 'optics-more' }, on: { click: () => tellMore() } }, h('span', { text: 'Tell me more' }));
   const holoCost = h('span', { class: 'optics-chip-cost' });
-  const holoChip = h('button', { class: 'optics-chip optics-chip--holo', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-hologram' }, on: { click: () => hologramOfThis() } }, icon('hologram', { size: 15 }), h('span', { text: 'Hologram of this' }), holoCost);
+  const holoText = h('span', { class: 'optics-chip-text', text: 'Hologram of this' });
+  const holoChip = h('button', { class: 'optics-chip optics-chip--holo', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-hologram' }, on: { click: () => hologramOfThis() } }, icon('hologram', { size: 15 }), holoText, holoCost);
   const followRow = h('div', { class: 'optics-followups', hidden: true, attrs: { 'data-testid': 'optics-followups' } }, partBtn, moreChip, holoChip);
+  const answerActions = h('div', { class: 'optics-answer-actions' }, liveBtn, moreBtn);
   const answer = h(
     'section',
     { class: 'optics-answer', hidden: true, attrs: { 'data-testid': 'optics-answer', 'aria-label': 'Jarvis’s answer' } },
-    h('div', { class: 'optics-answer-head' }, answerState, answerCost),
+    h('div', { class: 'optics-answer-head' }, answerState, h('span', { class: 'optics-answer-meta' }, inChat, answerCost)),
     answerQ,
     answerBody,
     pinList,
     followRow,
-    h('div', { class: 'optics-answer-actions' }, liveBtn, moreBtn, inChat),
+    answerActions,
   );
   const logList = h('ol', { class: 'optics-log-list' });
   const log = h('section', { class: 'optics-log', attrs: { 'data-testid': 'optics-log', 'aria-label': 'Optics log' } }, h('h2', { class: 'optics-log-title', text: 'OPTICS LOG' }), logList);
@@ -305,7 +312,8 @@ export function openOptics(deps = {}) {
     ? h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-screen', 'aria-label': 'Look at my screen', title: 'Look at my screen (one frame)' }, on: { click: () => lookAtScreen() } }, icon('laptop', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Screen' }))
     : null;
   const keys = h('div', { class: 'optics-keys' }, flipBtn, h('div', { class: 'optics-shutter-wrap' }, lookBtn, lookCaption), watchBtn, screenBtn);
-  const deck = h('div', { class: 'optics-deck' }, h('div', { class: 'optics-ask-row' }, askInput, micBtn), keys);
+  const askRow = h('div', { class: 'optics-ask-row' }, askInput, micBtn);
+  const deck = h('div', { class: 'optics-deck' }, askRow, keys);
   const live = h('div', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', role: 'status' } });
   const main = h('div', { class: 'optics-main' }, stage, deck);
 
@@ -324,6 +332,10 @@ export function openOptics(deps = {}) {
   let mode = 'starting'; // intro | starting | live | frozen | paused | error | review | closed
   let frozen = null; // { canvas|img, width, height, source, mirrored, preview, frameId, pins, question, text, status, costUsd, run, unsub }
   let followups = []; // [{ question, text, status }]
+  // The newest follow-up stays in view in the answer's scrolling body (its "› question" line at the
+  // top) while Jarvis answers it, until the owner scrolls the answer themselves.
+  let followInView = null; // the follow-up entry
+  let followScrolledByOwner = false;
   let watch = null;
   let mic = null;
   let closed = false;
@@ -757,6 +769,8 @@ export function openOptics(deps = {}) {
     }
     frozen = null;
     followups = [];
+    followInView = null;
+    answerBody.scrollTop = 0;
     selectedPin = -1;
     endSchematic();
     frozenHost.replaceChildren();
@@ -889,6 +903,8 @@ export function openOptics(deps = {}) {
     if (!frozen || isBusy()) return null;
     const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, ...(entryExtra || {}) };
     followups.push(entry);
+    followInView = entry;
+    followScrolledByOwner = false;
     renderAnswer();
     setMode(mode);
     let res;
@@ -1073,6 +1089,23 @@ export function openOptics(deps = {}) {
     });
   }
 
+  /**
+   * The newest follow-up's question at the top of the answer's scrolling body (or as near as the
+   * text allows), so its answer streams in view; not once the owner has scrolled the answer.
+   */
+  function keepFollowUpInView() {
+    const node = followInView && !followScrolledByOwner && followInView.node ? followInView.node.firstElementChild : null;
+    if (!node || !node.isConnected || answer.hidden) return;
+    const top = node.getBoundingClientRect().top - answerBody.getBoundingClientRect().top + answerBody.scrollTop;
+    const want = Math.max(0, Math.round(top - 4));
+    if (Math.abs(answerBody.scrollTop - want) > 1) answerBody.scrollTop = want;
+  }
+  // The owner scrolls the answer (a wheel, a finger, the keyboard): stop moving it for them.
+  const ownerScrolls = () => {
+    if (followInView) followScrolledByOwner = true;
+  };
+  for (const type of ['wheel', 'touchmove', 'keydown']) answerBody.addEventListener(type, ownerScrolls, { passive: true });
+
   function renderAnswer() {
     if (!frozen) {
       answer.hidden = true;
@@ -1080,18 +1113,28 @@ export function openOptics(deps = {}) {
     }
     answer.hidden = false;
     const busy = isBusy();
+    // data-status is the Look's own answer; the header follows the newest question: ANALYZING while
+    // Jarvis works on a follow-up too, NO ANSWER when the newest one failed.
     answer.dataset.status = frozen.status;
-    setText(answerState, frozen.status === 'analyzing' ? 'ANALYZING' : frozen.status === 'error' ? 'NO ANSWER' : 'ANSWER');
+    answer.dataset.busy = busy ? 'true' : 'false';
+    const newest = followups.length ? followups[followups.length - 1] : frozen;
+    const tone = busy ? 'busy' : newest.status === 'error' ? 'error' : 'done';
+    answerState.dataset.tone = tone;
+    setText(answerState, tone === 'busy' ? 'ANALYZING' : tone === 'error' ? 'NO ANSWER' : 'ANSWER');
     const total = frozen.costUsd + followups.reduce((s, f) => s + (f.costUsd || 0), 0);
-    setText(answerCost, total > 0 ? `${isBusy() ? 'So far' : 'This look'} ${formatUsd(total)}` : '');
+    setText(answerCost, total > 0 ? `${busy ? 'So far' : 'This look'} ${formatUsd(total)}` : '');
     setText(answerQ, frozen.question);
     const blocks = [];
     if (frozen.text) blocks.push(renderMarkdown(frozen.text, { streaming: frozen.status === 'analyzing' }));
     else if (frozen.status === 'analyzing') blocks.push(h('p', { class: 'optics-answer-wait', text: 'Jarvis is looking…' }));
     for (const f of followups) {
-      blocks.push(h('p', { class: 'optics-answer-q optics-answer-q--follow', text: f.question }));
-      if (f.text) blocks.push(renderMarkdown(f.text, { streaming: f.status === 'analyzing' }));
-      else blocks.push(h('p', { class: 'optics-answer-wait', text: f.status === 'error' ? 'No answer.' : 'Jarvis is thinking…' }));
+      f.node = h(
+        'div',
+        { class: 'optics-answer-follow' },
+        h('p', { class: 'optics-answer-q optics-answer-q--follow', text: f.question }),
+        f.text ? renderMarkdown(f.text, { streaming: f.status === 'analyzing' }) : h('p', { class: 'optics-answer-wait', text: f.status === 'error' ? 'No answer.' : 'Jarvis is thinking…' }),
+      );
+      blocks.push(f.node);
     }
     answerBody.replaceChildren(...blocks);
     answerBody.classList.toggle('is-error', frozen.status === 'error');
@@ -1110,12 +1153,15 @@ export function openOptics(deps = {}) {
         est = 0;
       }
       setText(holoCost, est > 0 ? `≈${formatUsd(est)}` : '');
+      // A tapped pin: the chip says which object ("Hologram of the screwdriver").
+      setText(holoText, pin && theName(pin.text) ? `Hologram of ${theName(pin.text)}` : 'Hologram of this');
       holoChip.setAttribute('aria-label', `Hologram of ${pin ? pin.text : frozen.pins.length ? frozen.pins[0].text : 'this'}${est > 0 ? ` (about ${formatUsd(est)})` : ''}`);
     }
     for (const b of [partBtn, moreChip, holoChip]) b.disabled = busy || !!holo;
     liveBtn.disabled = false;
     moreBtn.disabled = busy;
     setText(liveBtn.lastChild, camera.live ? 'Live' : 'Camera');
+    keepFollowUpInView();
   }
 
   function renderPinList() {
@@ -1530,6 +1576,8 @@ export function openOptics(deps = {}) {
     frozenHost.replaceChildren(node);
     shown.clear();
     followups = [];
+    followInView = null;
+    answerBody.scrollTop = 0;
     setMode('frozen');
     renderAnswer();
     renderPinList();
@@ -1569,8 +1617,13 @@ export function openOptics(deps = {}) {
   window.addEventListener('keydown', onKey);
   offs.push(() => window.removeEventListener('keydown', onKey));
   const onResize = () => {
-    el.dataset.layout = desktopMq && desktopMq.matches ? 'desktop' : 'phone';
+    const layout = desktopMq && desktopMq.matches ? 'desktop' : 'phone';
+    el.dataset.layout = layout;
+    // Live sits in the answer's actions on a computer, and in the deck's ask row on a phone.
+    const home = layout === 'desktop' ? answerActions : askRow;
+    if (liveBtn.parentNode !== home) home.prepend(liveBtn);
     layoutSoon();
+    keepFollowUpInView();
   };
   window.addEventListener('resize', onResize);
   offs.push(() => window.removeEventListener('resize', onResize));
