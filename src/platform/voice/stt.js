@@ -29,7 +29,8 @@
 // ("…and", "…the", "um") or are only an opener ("Jarvis,", "okay so"), and never past 60 s. A recognizer
 // that ends by itself before that (iOS Safari does, after a pause) is started again at once and its
 // words are appended without repeating any; its 'no-speech' and 'aborted' errors are ignored within
-// the turn. The first start happens inside startListening() (iOS only lets recognition begin inside
+// the turn. Any change in the session's own words is speech, even when it adds nothing to the turn
+// (the sentence said again from the top after such a restart): the silence window starts again. The first start happens inside startListening() (iOS only lets recognition begin inside
 // the owner's tap); restarts need no gesture, and one the browser refuses is never retried (no
 // permission-prompt loops). Callbacks never fire synchronously inside startListening(), so the caller
 // always holds the handle first.
@@ -498,8 +499,9 @@ export function startListening(options = {}) {
     plain: false, // start without phrases (the service refused them)
     shown: '', // the words last handed to onPartial
     // committed: the words of this turn from sessions that ended; prior: the normalized words this
-    // session had heard when the last turn ended (keepListening: they belong to that turn)
-    turn: { n: 0, start: Date.now(), committed: '', prior: [], text: '', heard: false, last: 0 },
+    // session had heard when the last turn ended (keepListening: they belong to that turn); own: this
+    // session's words for this turn (normalized), whose changes are speech even when the turn's are not
+    turn: { n: 0, start: Date.now(), committed: '', prior: [], own: '', text: '', heard: false, last: 0 },
     turns: 0,
     timers: {},
   };
@@ -524,7 +526,7 @@ export function startListening(options = {}) {
   }
 
   function newTurn(prior = []) {
-    S.turn = { n: S.turns++, start: now(), committed: '', prior, text: '', heard: false, last: 0 };
+    S.turn = { n: S.turns++, start: now(), committed: '', prior, own: '', text: '', heard: false, last: 0 };
     S.shown = '';
     unschedule('silence', 'shrink');
     schedule('max', maxMs, () => endTurn('max'));
@@ -550,14 +552,15 @@ export function startListening(options = {}) {
     const all = sessionText();
     const from = T.prior.length ? tokenAfterWords(all, continuation(T.prior, normalWords(all))) : 0;
     const r = readings(S.parts, from);
-    const text = joinWords(T.committed, tokens(r.text).slice(from).join(' '));
+    const own = tokens(r.text).slice(from).join(' ');
+    const text = joinWords(T.committed, own);
     const key = normalWords(text).join(' ');
     const alternatives = [];
     for (const v of r.alternatives) {
       const alt = joinWords(T.committed, tokens(v).slice(from).join(' '));
       if (alt && normalWords(alt).join(' ') !== key && !alternatives.includes(alt)) alternatives.push(alt);
     }
-    return { text, alternatives };
+    return { text, alternatives, own: normalWords(own).join(' ') };
   }
 
   function show(text) {
@@ -582,8 +585,14 @@ export function startListening(options = {}) {
 
   function update() {
     const T = S.turn;
-    const { text } = turnReading();
-    if (text === T.text) return;
+    const { text, own } = turnReading();
+    // The owner is talking whenever this session's words for the turn change, even when the turn's
+    // words do not: a session started again after a pause hears the sentence from the top ("Set
+    // an", "Set an alarm for" after "Set an alarm for seven": nothing new to add yet), and the
+    // silence window starts again, so the rest ("… seven thirty") is not cut off.
+    const spoke = own !== T.own;
+    T.own = own;
+    if (text === T.text && !spoke) return;
     T.text = text;
     if (!text) return;
     T.heard = true;
@@ -755,6 +764,7 @@ export function startListening(options = {}) {
       // this session's words and listen again at once.
       S.turn.committed = S.turn.text;
       S.turn.prior = [];
+      S.turn.own = '';
       S.parts = [];
       const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults && !S.again;
       S.again = false;

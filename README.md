@@ -207,7 +207,8 @@ you off.
   second), Normal (1.6 seconds) or Long (2.6 seconds, good if you often pause mid-sentence). One
   request can be up to a minute long.
 - **On iPhone** Safari's speech recognition stops after every short pause. Jarvis starts it again
-  at once and keeps adding your words, so the sentence arrives whole.
+  at once and keeps adding your words, so the sentence arrives whole. If you start the sentence
+  again from the beginning after a pause, Jarvis keeps listening while you say it again.
 - **The 2-second check.** When you have finished, Jarvis shows what it heard in big letters, with
   a ring that fills for 2 seconds, then sends it. Meanwhile you can:
   - **tap the words** to fix them: a text field opens and the countdown stops; tap **Send** when

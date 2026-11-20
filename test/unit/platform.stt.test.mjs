@@ -167,6 +167,30 @@ test('iOS: a sentence with a 1.2 s pause in the middle is not cut; the session t
   assert.deepEqual(a.partials(), ['What is', 'What is the capital', 'What is the capital of France', 'What is the capital of France?']);
 });
 
+test('iOS: a sentence started again after a pause is not cut while the owner says it again (repeated words are speech too)', async (t) => {
+  const { clock, rec, stt } = await setup(t);
+  const s = ios(rec);
+  const a = listen(stt); // one turn: the chat's mic, "Send right away"
+  clock.advance(100);
+  s.say('Set an alarm for seven');
+  clock.advance(700);
+  s.pauseEnd(); // iOS ends the session 0.7 s into the pause
+  clock.advance(300);
+  s.say('Set an'); // the owner says it again, more precisely: the new session hears it from the top
+  clock.advance(300);
+  s.say('Set an alarm for');
+  clock.advance(300);
+  s.say('Set an alarm for seven');
+  clock.advance(300);
+  s.say('Set an alarm for seven thirty');
+  assert.equal(a.finals.length, 0, 'not cut 1.6 s after the first attempt while the owner was still talking');
+  clock.advance(1599);
+  assert.equal(a.finals.length, 0, '1.6 s after the last words');
+  clock.advance(1);
+  assert.deepEqual(a.finals.map((f) => f.text), ['Set an alarm for seven thirty']);
+  assert.ok(!a.partials().some((p) => /seven Set/i.test(p)), 'the repeated words are never added twice');
+});
+
 test('iOS: no-speech from a restarted session is ignored within the turn; the words heard so far are kept', async (t) => {
   const { clock, rec, stt } = await setup(t);
   const s = ios(rec);

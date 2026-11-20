@@ -2373,7 +2373,11 @@ earlier one (§9.2, §14.1), it wins.
   end with one that leaves the sentence hanging (and, or, but, so, because, the, a, an, to, of, for, with, in, on,
   my, your, is, are, was, if, that, which, then, um, uh, like) or are only an opener of up to three words ("Jarvis,",
   "okay so", "can you"; `sentenceUnfinished`); never past 60 s from the turn's start (`maxMs`). Nothing heard at all
-  for 10 s: `no-speech`.
+  for 10 s: `no-speech`. Any change in the current session's own words for the turn counts as speech and starts the
+  window again, even when the turn's words stay the same: a session started again after a pause that hears the
+  sentence said again from the top ("Set an", "Set an alarm for" after "Set an alarm for seven") adds nothing yet, but
+  the owner is talking, so "… seven thirty" is not cut off (in Send right away, the chat's mic, Optics' and the
+  viewer's mics as much as in the 2-second check).
 - Restarts: a recognizer that ends by itself before the turn is over (iOS does, after every pause) is started again at
   once (a new instance, no gesture needed) and its words are appended without repeating any (`joinWords`: the overlap
   with what was heard, or a session that hands back everything, is not added twice). Within a turn its `no-speech` and
@@ -2455,7 +2459,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   within a listen, and across a restart the words heard so far stay.
 
 **Tests.** Unit `platform.stt` (Node, virtual clock; fakes in `test/unit/stt.fakes.mjs` behaving like iOS Safari and
-Chrome): the windows and the smart extension, a 1.2 s pause not cut, restarts appended once, `no-speech` after a restart
+Chrome): the windows and the smart extension, a 1.2 s pause not cut, a sentence said again from the top after a pause
+not cut while it is said, restarts appended once, `no-speech` after a restart
 ignored, revisions (and the held shrink), the 60 s cap, `stop()` and `abort()`, errors, refused restarts, the retry
 backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines (and a late final or an
 iOS rewrite of the turn that ended, with fewer or more words, then "cancel"; `continuation`), device language;
