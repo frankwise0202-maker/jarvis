@@ -716,7 +716,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
     const profile = {
       userName: 'Pepper', tone: 'friendly', verbosity: 'detailed', theme: 'ember', sounds: false, soundVolume: 0.3, haptics: false,
       voiceURI: 'Daniel', voiceRate: 1.2, listenLang: 'en-GB', speakReplies: 'summary', voiceContinuous: false, followups: false,
-      showThinking: false, location: 'London, UK', memoryEnabled: false, notifyOnFinish: false,
+      showThinking: false, location: 'London, UK', memoryEnabled: false, notifyOnFinish: false, naturalVoiceId: 'bm_lewis',
     };
     const second = await backup.importBackup({ app: 'jarvis', version: 1, settings: { ...profile, maxAgents: 'lots', tone: 'friendly' } });
     const afterSecond = settings.getSettings();
@@ -728,7 +728,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: true, settingsChanged: ['userName'], skipped: 0 });
   assert.equal(r.afterFirst.userName, 'Mallory');
   assert.deepEqual(guards(r.afterFirst), before);
-  assert.deepEqual(r.second.settingsChanged, r.restorable, 'all 17 changed');
+  assert.deepEqual(r.second.settingsChanged, r.restorable, 'all 18 changed');
   assert.deepEqual(guards(r.afterSecond), before);
   assert.equal(r.afterSecond.tone, 'friendly');
   assert.equal(r.afterSecond.location, 'London, UK');
@@ -741,7 +741,32 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.restorable, [
     'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
     'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
+    'naturalVoiceId',
   ]);
+});
+
+test('backup (v7.1): the camera chosen on this device is never exported; the natural voice\'s speaker comes back, the voice itself stays off', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const { backup, settings } = window.__mods;
+    settings.saveSettings({ onboarded: true, naturalVoice: true, naturalVoiceId: 'bm_lewis', opticsCameraId: 'c0d3a1b2e3f4', opticsCameraLabel: 'Logitech BRIO (046d:085e)' });
+    const exported = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    // A new device: nothing chosen yet.
+    settings.resetSettings();
+    settings.saveSettings({ onboarded: true });
+    const result = await backup.importBackup({ app: 'jarvis', version: 1, settings: exported });
+    // A hostile or old backup that carries a camera and the voice switched on.
+    const hostile = await backup.importBackup({ app: 'jarvis', version: 1, settings: { naturalVoice: true, opticsCameraId: 'someone-elses', opticsCameraLabel: 'Their webcam' } });
+    return { exported, result, hostile, after: settings.getSettings() };
+  });
+  assert.equal('opticsCameraId' in r.exported, false, 'no per-browser camera id in the file');
+  assert.equal('opticsCameraLabel' in r.exported, false, 'no webcam model or USB ids in the file');
+  assert.equal(r.exported.naturalVoiceId, 'bm_lewis');
+  assert.ok(r.result.settingsChanged.includes('naturalVoiceId'), JSON.stringify(r.result));
+  assert.equal(r.after.naturalVoiceId, 'bm_lewis', 'Lewis is the speaker on the new device');
+  assert.equal(r.after.naturalVoice, false, 'but the voice stays off: an import never starts a download');
+  assert.deepEqual([r.after.opticsCameraId, r.after.opticsCameraLabel], ['', ''], 'a camera in a backup is never applied');
+  assert.deepEqual(r.hostile.settingsChanged, []);
 });
 
 test('backup: a conversation Jarvis made round-trips exactly; nothing imported can be resumed', async () => {

@@ -562,8 +562,10 @@ Other websites (at other addresses) cannot read it.
   contains your API key: a conversation that contains an API key (yours or any other) is left
   out, and Jarvis tells you how many were.
 - **Import backup** adds the backup's conversations, memory notes and saved holograms and
-  blueprints (nothing is deleted) and restores your preferences: name, style, voice, theme and
-  sounds. It never changes your models, agent limits or spending warning. Only conversations that Jarvis itself made are imported (any
+  blueprints (nothing is deleted) and restores your preferences: name, style, voice (the natural
+  voice's speaker too, though the natural voice stays off until you turn it on), theme and
+  sounds. It never changes your models, agent limits or spending warning. The camera you chose in
+  Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
   comes back as stopped: it can't be resumed.
 - **Only import your own backups.** Never import a backup someone else gave you: its

@@ -61,17 +61,22 @@ import { NATURAL_CACHES } from './voice/natural/catalog.js';
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
-const EXCLUDED_SETTINGS = ['onboarded', 'features'];
+// Never exported: onboarding and feature flags, and the camera chosen last in Optics (v7.1: a
+// per-browser device id and the webcam's model with its USB ids, local to this device: SPEC 18.1).
+const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCameraLabel'];
 
 /**
  * The settings an import restores: the owner's profile, voice and appearance. Never limits, models,
  * spending or feature flags (maxAgents, maxParallel, maxWaves, depth, mode, spendWarnUsd, leadModel,
  * workerModel, features, onboarded): a backup - possibly one someone else made - must not be able
- * to raise what Jarvis may spend or switch off the spending warning.
+ * to raise what Jarvis may spend or switch off the spending warning. The natural voice's speaker
+ * (naturalVoiceId, v7.1) is restored, but never naturalVoice itself: an import never starts a
+ * download.
  */
 export const RESTORED_SETTINGS = Object.freeze([
   'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
   'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
+  'naturalVoiceId',
 ]);
 
 /** What replaces an API key in exported data. */

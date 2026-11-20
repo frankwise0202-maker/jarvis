@@ -1899,7 +1899,9 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
 - **Start.** `start()` opens the remembered camera by device id. If the id is gone it opens the default (the back camera
   on a phone, the computer's default camera), then switches to the remembered camera by label when that label is in
   the list. The remembered camera is settings `opticsCameraId` / `opticsCameraLabel` (local; `''` = default). It is
-  saved on an explicit choice (picker or Flip), never on a fallback.
+  saved on an explicit choice (picker or Flip), never on a fallback. Being local, it is never exported in a backup nor
+  applied from one (v7.1: `EXCLUDED_SETTINGS`; before, a backup carried this browser's device id and the webcam's
+  model with its USB ids).
 - **Switching.** `select(id)` and `flip()` stop the camera in use first (iOS can't run two), then open the other one;
   on failure they put the old camera back. `flip()` goes front ↔ back on a phone (facingMode `exact`, else a camera on
   the other side by name), and to the next camera in the list on a computer.
@@ -2115,7 +2117,8 @@ about 16¢.
 - `scripts/fetch-voice-model.mjs`.
 
 **Settings.** `naturalVoice: false`, `naturalVoiceId: 'bm_george'` (George, the owner's choice; Lewis, Fable and the
-others stay selectable).
+others stay selectable). A backup import restores `naturalVoiceId` (v7.1: in `RESTORED_SETTINGS`), never
+`naturalVoice`: an import never starts a download.
 
 **Engines and the ladder** (`ENGINE_PLANS`, `engine-client.js`).
 - **The plans.**
