@@ -344,11 +344,12 @@ export async function startApp(rootEl) {
   });
 
   // Apple Music: one preview player for every Music card. A preview never starts while a microphone
-  // listens (dictation, or Voice Mode listening or showing its 2-second check) or while words from
-  // the chat's mic wait in the box to be sent (the chat's check), and it stops Jarvis's own speech first.
+  // listens (dictation, the viewer's or Optics' mic, or Voice Mode listening or showing its 2-second
+  // check) or while words from the chat's mic wait in the box to be sent (the chat's check), and it
+  // stops Jarvis's own speech first.
   const musicPlayer = createMusicPlayer({
     canStart: () => {
-      if (state.listening || (voiceApi && safe(() => voiceApi.isListening(), false))) return 'listening';
+      if (state.listening || otherMics > 0 || (voiceApi && safe(() => voiceApi.isListening(), false))) return 'listening';
       return safe(() => composer.counting(), false) ? 'checking' : true;
     },
     onStart: () => {
@@ -357,6 +358,37 @@ export async function startApp(rootEl) {
     },
   });
   const onMac = safe(() => isMacDevice(), false);
+  // The hologram viewer's and Optics' own microphones: a preview playing would be heard as speech,
+  // so it pauses before they listen, and none starts until they have stopped (the chat's mic and
+  // Voice Mode see to it themselves).
+  let otherMics = 0;
+  const sttPausingPreviews = {
+    ...stt,
+    startListening: (options = {}) => {
+      safe(() => musicPlayer.pauseForMic());
+      let open = true;
+      otherMics += 1;
+      const closed = () => {
+        if (!open) return;
+        open = false;
+        otherMics = Math.max(0, otherMics - 1);
+      };
+      try {
+        return stt.startListening({
+          ...options,
+          // stt.js calls onEnd exactly once, however listening ended.
+          onEnd: (...args) => {
+            closed();
+            if (typeof options.onEnd === 'function') return options.onEnd(...args);
+            return undefined;
+          },
+        });
+      } catch (err) {
+        closed();
+        throw err;
+      }
+    },
+  };
 
   const chat = createChat({
     musicPlayer,
@@ -1538,7 +1570,7 @@ export async function startApp(rootEl) {
       hologramEstimate: () => estimateHologramCost({ model: getSettings().leadModel }).usd,
       openHologram: (run, seg) => (run && run.turn ? openVisualSegment(run.turn, seg) : null),
       watchLook: watchFromOptics,
-      stt,
+      stt: sttPausingPreviews,
       sttSupported: sttOk,
       sounds,
       wakeLock: { keepAwake: () => keepAwake('optics'), allowSleep: () => allowSleep('optics') },
@@ -1796,7 +1828,7 @@ export async function startApp(rootEl) {
   function viewerDeps() {
     return {
       library: lib,
-      stt,
+      stt: sttPausingPreviews,
       getSettings,
       blueprintCost: (conversationId) => blueprintCost(conversationId),
       requestBlueprint: (req) => requestBlueprint(req),

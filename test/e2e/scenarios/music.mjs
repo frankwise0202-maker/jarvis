@@ -531,8 +531,9 @@ export default [
 
   {
     name: 'music-chat-mic',
+    musicPreviewSeconds: 20, // a pause is told from the clip's end
     title:
-      'The chat\'s mic with listening (v7.2): a music command acts at once with no countdown, also when only the recognizer\'s other reading is one; a question waits 2 seconds in the box, and a preview waits for it too (the card says why), then plays',
+      'The chat\'s mic with listening (v7.2): a music command acts at once with no countdown, also when only the recognizer\'s other reading is one; a question waits 2 seconds in the box, and a preview waits for it too (the card says why), then plays; the hologram viewer\'s own mic pauses a playing preview, and none starts while it listens',
     device: 'iphone13',
     fakeMusic: true,
     timeout: 120000,
@@ -566,10 +567,28 @@ export default [
         await t.waitFor(async () => /The preview waits while what you said is about to be sent\./.test(await toastText(t)), { timeout: 5000, message: async () => `the note (${await toastText(t)})` });
         t.assert((await playerState(c)) !== 'playing', 'no preview during the check');
         await t.waitFor(async () => (await t.count('turn-user')) === 2, { timeout: 8000, message: 'the question to be sent after the countdown' });
-        t.assert(sentTexts(t).at(-1).includes('What is the capital of France?'), 'the question went to Jarvis');
+        await t.waitFor(() => sentTexts(t).some((x) => x.includes('What is the capital of France?')), { timeout: 8000, message: 'the question to reach Jarvis' });
         await t.waitForTurn(t.page.locator(tid('turn-jarvis')).last(), ['done']);
         await c.locator(tid('music-preview')).click();
         await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'Preview to play once the words are sent' });
+      });
+
+      await t.step('the hologram viewer\'s own mic pauses a playing preview before it listens', async () => {
+        await c.locator(tid('music-preview')).click(); // pause while the hologram is asked for (a reply read aloud would pause it anyway)
+        const turn = await t.send('[[hologram:battery]] Show me an AA battery');
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'the preview to play again' });
+        await turn.locator(tid('hologram-card')).locator(tid('hologram-open')).click();
+        await t.visible('hologram-viewer');
+        t.assert((await playerState(c)) === 'playing', 'the preview plays on while the hologram is looked at');
+        await (await t.visible('hologram-mic')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'paused', { timeout: 5000, message: async () => `the preview to pause before the viewer's mic listens (${await playerState(c)})` });
+        t.assert((await t.page.locator(tid('hologram-mic')).getAttribute('aria-pressed')) === 'true', 'the viewer\'s mic listens');
+        // Even a tap that reached the card behind the viewer would not play while that mic listens.
+        await t.page.evaluate(() => [...document.querySelectorAll('[data-testid="music-card"] [data-testid="music-preview"]')].at(-1).click());
+        await t.page.waitForTimeout(400);
+        t.assert((await playerState(c)) === 'paused', `no preview while the viewer's mic listens (${await playerState(c)})`);
       });
     },
   },

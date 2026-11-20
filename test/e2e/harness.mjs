@@ -263,7 +263,8 @@ export class TestContext {
     const fakeMusic = !!this.scenario.fakeMusic;
     if (fakeMusic) {
       if (!placeholder) placeholder = placeholderPng();
-      this.music = await routeFakeMusic(context, { png: placeholder, delayMs: this.scenario.musicDelayMs || 0 }); // the newest context's counts
+      // the newest context's counts; musicPreviewSeconds: a longer clip, so a pause is told from its end
+      this.music = await routeFakeMusic(context, { png: placeholder, delayMs: this.scenario.musicDelayMs || 0, previewSeconds: this.scenario.musicPreviewSeconds || 3 });
     }
     context.on('request', (req) => {
       const url = req.url();

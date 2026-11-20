@@ -2421,15 +2421,17 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   (`data-state` idle | loading | playing | paused | error), `music-progress`, `music-time`, `music-open`,
   `music-open-app`, `music-alts`, `music-alt`, `music-status`; in Voice Mode `voice-music` holding `voice-music-card`.
 - **Previews** (`src/ui/music/player.js`): one shared `<audio>` for every card (`crossOrigin = 'anonymous'`, set
-  before any `src`: Apple's hosts answer `Access-Control-Allow-Origin: *`, and no cookies are sent), one preview at a
-  time. Starting one stops Jarvis's own speech (`stopSpeakingNow`, Voice Mode's `hush()`) and pauses other media on
-  the page; Jarvis starting to speak pauses a playing one (`speakTurn`: Speak and Speak replies; Voice Mode's
-  `onSpeak` at every spoken chunk, so a reply that speaks again after a preview was tapped pauses it). A preview never
-  starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation or Voice Mode; the note says
-  "Tap the mic to stop listening first." in the chat, "Tap the core …" in Voice Mode: the card's `micHint`) or during
-  the 2-second check (v7.2, §21: Voice Mode's counts as listening; the chat's countdown gives `'checking'`), and a
-  playing one pauses before the mic opens (`pauseForMic`: dictation start, Voice Mode's `onListen`). "Stop the music"
-  fades it out in 160 ms. "Play a preview of X" typed starts it after the search (where the browser allows).
+  before any `src`: Apple's hosts answer `Access-Control-Allow-Origin: *`, and no cookies are sent), one preview at
+  a time. Starting one stops Jarvis's own speech (`stopSpeakingNow`, Voice Mode's `hush()`) and pauses other media
+  on the page; Jarvis starting to speak pauses a playing one (`speakTurn`: Speak and Speak replies; Voice Mode's
+  `onSpeak` at every spoken chunk, so a reply that speaks again after a preview was tapped pauses it). A preview
+  never starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation, Voice Mode, and
+  since v7.2 the hologram viewer's and Optics' own mics, counted by the app's wrapped `stt.startListening`; the note
+  says "Tap the mic to stop listening first." in the chat, "Tap the core …" in Voice Mode: the card's `micHint`) or
+  during the 2-second check (v7.2, §21: Voice Mode's counts as listening; the chat's countdown gives `'checking'`),
+  and a playing one pauses before any mic opens (`pauseForMic`: dictation start, Voice Mode's `onListen`, the
+  viewer's and Optics' mics). "Stop the music" fades it out in 160 ms. "Play a preview of X" typed starts it after
+  the search (where the browser allows).
 - **Voice Mode** (`music` option of `openVoiceMode`): what is heard (or typed) goes to music commands after screen
   commands, at once (no 2-second check, §21). "Play Back in Black" → status "Searching Apple Music…", the card under
   the captions, and one short line ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then
@@ -2468,7 +2470,8 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   card, no re-listen, Preview, the core's tap pauses it), `music-voice-small` (375×667 and 320×568: Preview and Open
   take a tap above the dock), `music-voice-cards` (a reply's two picks both shown; the hint for a song and for an
   album), `music-media` (no Apple cookies; Speak and a spoken Voice Mode reply pause a preview; the chat's mic note),
-  `music-tool` (two find_music cards, compact link-free results), `music-phone` (320 px, 44 px targets, AA contrast).
+  `music-tool` (two find_music cards, compact link-free results), `music-phone` (320 px, 44 px targets, AA contrast);
+  with listening (v7.2): `music-voice-listen` and `music-chat-mic` (§21).
 
 ## 21. v7.2: Listening (the microphone)
 
@@ -2587,9 +2590,10 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   `composer.submitCommand()`, the composer's own `onCommand`, the same matchers as typed words) acts at once, without
   the countdown, also while Jarvis is busy (as typed). Other words go into the message box with the same 2-second
   countdown (`composer-countdown`, a ring on Send), then `composer.submit()`; a tap on the box (or typing, or Send)
-  stops it; listening again, a new chat or Voice Mode stop it too (the words stay in the box). 'now' submits at once
-  (as before). A preview tapped during the countdown does not start (`canStart` → `'checking'`; the note: "The preview
-  waits while what you said is about to be sent. Tap the message to stop that first.").
+  stops it; listening again, a new chat or Voice Mode stop it too (the words stay in the box; so do words whose mic
+  was still closing when Voice Mode or another chat took over). 'now' submits at once (as before). A preview tapped
+  during the countdown does not start (`canStart` → `'checking'`; the note: "The preview waits while what you said is
+  about to be sent. Tap the message to stop that first.").
 
 **Accuracy**:
 - The recognizer's alternatives (whole-turn readings, swapping one result's reading at a time) are tried for local
@@ -2644,4 +2648,5 @@ reading → the card at once, free, no check; a question's check hides the card 
 play, Cancel brings it back; a camera command among the other readings beats a music one; with the battery on screen
 "How does the separator work?" is sent although "Play the separator" was another reading) and `music-chat-mic` (iPhone
 13, the chat's mic: the same misheard "play" found at once with no countdown; a preview tapped during a question's
-countdown waits with the note, then plays).
+countdown waits with the note, then plays; the hologram viewer's own mic pauses a playing preview and none starts
+while it listens: a 20-second fake clip, `musicPreviewSeconds`, so the pause is not its end).

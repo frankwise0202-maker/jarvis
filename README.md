@@ -150,7 +150,8 @@ it once more (copy it from your password manager).
 
 - **Ask** by typing, or tap the **microphone** and speak. On a computer, **Enter** sends and
   **Shift+Enter** starts a new line. What you said waits in the message box for 2 seconds before it
-  is sent; tap the box to change it first (see [Talking to Jarvis](#talking-to-jarvis-how-listening-works)).
+  is sent; tap the box to change it first. A command such as "play Back in Black" acts at once (see
+  [Talking to Jarvis](#talking-to-jarvis-how-listening-works)).
 - **Run a Protocol**: tap a tile under the greeting (scroll down on a phone). Tiles that need a
   topic open a small box for it; **New protocol** saves your own one-tap mission.
 - **Show Jarvis a photo or PDF** with the paperclip (or the camera on a phone). Photos are

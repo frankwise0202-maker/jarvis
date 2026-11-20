@@ -103,11 +103,11 @@ export function previewWav(seconds = 3) {
   return Buffer.concat([head, data]);
 }
 
-/** Route the three Apple origins of a browser context; returns the counter object. */
-export async function routeFakeMusic(context, { png, delayMs = 0 } = {}) {
+/** Route the three Apple origins of a browser context; returns the counter object. previewSeconds: the clip's length. */
+export async function routeFakeMusic(context, { png, delayMs = 0, previewSeconds = 3 } = {}) {
   const counts = { searches: [], artwork: 0, previews: 0 };
   const cors = { 'access-control-allow-origin': '*' };
-  const wav = previewWav(3);
+  const wav = previewWav(previewSeconds);
   await context.route(/^https:\/\/itunes\.apple\.com\//, async (route) => {
     counts.searches.push(route.request().url());
     if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
