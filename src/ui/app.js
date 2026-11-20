@@ -1275,7 +1275,10 @@ export async function startApp(rootEl) {
     const { attachment, optics } = opticsAttachment(frame);
     const old = !newChat && preOpticsChat();
     if (newChat || old) setConversation(null);
-    if (!send(text, 'quick', { attachments: [attachment], optics })) return { error: 'That look couldn’t be sent.' };
+    // keepOnStop: a Look stopped before Jarvis replies stays in the chat as a Look (as a Voice Mode
+    // question does). Before v7.1 it was withdrawn and its camera frame went back into the chat box as
+    // a photo, so the owner's next chat message sent the frame again.
+    if (!send(text, 'quick', { attachments: [attachment], optics, keepOnStop: true })) return { error: 'That look couldn’t be sent.' };
     const entry = state.conv && state.runs.get(state.conv.id);
     if (!entry) return { error: 'That look couldn’t be sent.' };
     const user = state.conv.turns[state.conv.turns.length - 2];
@@ -1286,7 +1289,8 @@ export async function startApp(rootEl) {
   function askFromOptics({ text }) {
     const problem = opticsProblem();
     if (problem) return { error: problem };
-    if (!send(text, 'quick')) return { error: 'That question couldn’t be sent.' };
+    // A follow-up asked in Optics stays there when stopped (never put back in the chat box).
+    if (!send(text, 'quick', { keepOnStop: true })) return { error: 'That question couldn’t be sent.' };
     const entry = state.conv && state.runs.get(state.conv.id);
     return entry ? { run: entry.run } : { error: 'That question couldn’t be sent.' };
   }
@@ -1985,6 +1989,11 @@ export async function startApp(rootEl) {
       });
   }
 
+  /** Whether a sent message carried an Optics frame (a camera Look or a screen look). */
+  function sentOpticsFrame(sent) {
+    return !!(sent && Array.isArray(sent.attachments) && sent.attachments.some((a) => a && typeof a.id === 'string' && a.id.startsWith('optics_')));
+  }
+
   /** `sent` = { text, attachments, maxAgents } of a new message: given back if the turn is withdrawn. */
   function attachRun(conv, run, sent = null) {
     const entry = { run, conv, sent, unsub: null, missions: new Set(), started: new Set(), ended: new Set(), agentsDone: new Set() };
@@ -2060,7 +2069,9 @@ export async function startApp(rootEl) {
     // Stopped before Jarvis showed any reply, the message was taken back (the engine marks the turn
     // withdrawn; once part of the reply is on screen it stays in the conversation instead): its
     // text, attachments and team size go back in the box, ready to edit or send again.
-    else if (turn && turn.withdrawn === true && entry.sent && isCurrent(entry)) {
+    // Never an Optics frame (a Look is kept on Stop; this is a backstop): it would become an ordinary
+    // photo in the box and go out with the next message.
+    else if (turn && turn.withdrawn === true && entry.sent && isCurrent(entry) && !sentOpticsFrame(entry.sent)) {
       safe(() => composer.restoreMessage(entry.sent.text, entry.sent.attachments, entry.sent.maxAgents));
       toast('Stopped before Jarvis replied. Your message is back in the box.', { level: 'info', id: 'withdrawn' });
     }

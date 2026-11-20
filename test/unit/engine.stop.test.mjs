@@ -143,6 +143,9 @@ test('showedReply: text, search rows, missions and memory count; thinking, notic
   assert.equal(showedReply(t({ kind: 'tool', tool: 'web_search', status: 'running' })), true);
   assert.equal(showedReply(t({ kind: 'mission', missionId: 'm1' })), true);
   assert.equal(showedReply(t({ kind: 'memory', fact: 'Likes jazz' })), true);
+  // v7.1: labels pinned on the frozen frame, or a frame Jarvis took, are a reply the owner saw.
+  assert.equal(showedReply(t({ kind: 'pins', frame: 'f1', labels: [{ text: 'Mug', x: 10, y: 20 }], status: 'streaming' })), true);
+  assert.equal(showedReply(t({ kind: 'frame', frame: 'f2', status: 'done' })), true);
   assert.equal(showedReply(null), false);
   assert.equal(showedReply({ segments: [null, 'x'] }), false);
 });

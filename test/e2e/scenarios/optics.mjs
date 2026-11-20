@@ -14,6 +14,8 @@
 //   optics-pins-small  375×553 and other phone sizes: no plate overlaps another or covers a dot
 //   optics-look-busy a Look while a mission runs here: a card offers a new chat (or Wait), never a
 //                    frozen frame that can't be sent
+//   optics-look-stopped  a Look stopped before Jarvis replies stays a Look: its frame never goes back
+//                    into the chat box, and the next chat message carries no image
 //   optics-viewfinder  phones: the live viewfinder shows the whole frame a Look sends, bracketed
 //                    (portrait, a Safari tab, held sideways, and again after Live from an answer)
 //   optics-cards-small  short phones (375×553, 320×568, 320×454, 568×320), camera never allowed: the
@@ -40,6 +42,7 @@ import { fileURLToPath } from 'node:url';
 import { tid } from '../harness.mjs';
 import { imageSizeOf } from '../../../src/lib/optics.js';
 import { isWatchRequest, sceneLabels } from '../../mock/optics.mjs';
+import { toastText } from './screens.mjs';
 import { LEAD_SYSTEM_V3, leadToolsV4 } from '../../../src/engine/prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -667,6 +670,48 @@ export default [
       await page.locator(tid('optics-live-pill')).click();
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
       void mission;
+    },
+  },
+  {
+    name: 'optics-look-stopped',
+    title: 'A Look stopped before Jarvis replies (Optics closed, then Stop in the chat) stays in the chat as a Look: its frame never goes back into the chat box as a photo, and the next message carries no image',
+    device: 'mac',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/?optics=1');
+      await waitLive(t);
+      // Opus thinking for a few seconds before the first word: the first request answers after 3 s.
+      let held = 0;
+      await page.route('**/v1/messages', async (route) => {
+        if (held++ === 0) await new Promise((r) => setTimeout(r, 3000));
+        await route.continue().catch(() => {});
+      });
+      await page.locator(tid('optics-ask')).fill('What is this?');
+      await page.locator(tid('optics-look')).click();
+      await page.waitForTimeout(150);
+      // The owner changes their mind: Optics closed (Esc), then Stop in the chat before any word.
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 3000, message: 'Optics to close' });
+      const stop = await t.visible('composer-stop');
+      await page.waitForTimeout(900); // Stop is armed 700 ms after a send (double-tap guard)
+      await stop.click();
+      const turn = page.locator(tid('turn-jarvis')).last();
+      await t.waitForTurn(turn, ['stopped']);
+      await page.waitForTimeout(500);
+      t.assert((await t.count('attachment-chip')) === 0, `no photo chip in the chat box (${await page.locator(tid('attachment-chip')).evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))})`);
+      t.assert((await page.locator(tid('composer-input')).inputValue()) === '', 'nothing put back in the box');
+      t.assert(!/Stopped before Jarvis replied/.test(await toastText(t)), `no "back in the box" toast (${await toastText(t)})`);
+      t.assert((await t.count('optics-turn')) === 1, 'the Look stays in the chat');
+      await t.send('What time is it in Tokyo?');
+      await t.waitForTurn(page.locator(tid('turn-jarvis')).last(), ['done']);
+      const last = t.requests('lead').filter((r) => r.status === 200).at(-1).body.messages.at(-1);
+      const blocks = Array.isArray(last.content) ? last.content.map((b) => b.type) : ['text'];
+      t.assert(!blocks.includes('image'), `the next message carries no image (${JSON.stringify(blocks)})`);
+      t.assertAppendOnly();
     },
   },
   {

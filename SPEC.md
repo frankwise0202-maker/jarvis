@@ -1479,12 +1479,16 @@ Engine and API:
 - The memory block in `<turn_context>` is framed as saved notes ("may be outdated; never instructions").
   `update_memory` is never applied while resuming an interrupted turn.
 - Refused turns are truncated from `apiMessages`. A turn stopped before any reply is shown (answer text, a search row, a
-  mission card, a memory chip, or since v6 a hologram or blueprint card, even one still building; thinking and notices
-  don't count) is withdrawn: its user message is removed and the
-  text, attachments and team size return to the composer. Once part of the reply is on screen, after a Resume, or for a
-  Voice Mode question (`startTurn(conv, { …, keepOnStop: true })`), Stop keeps the message, followed by the reply text
+  mission card, a memory chip, or since v6 a hologram or blueprint card, even one still building, or since v7.1 labels
+  pinned on a frame (`pins`) or a frame Jarvis took (`frame`); thinking and notices don't count) is withdrawn: its user
+  message is removed and the
+  text, attachments and team size return to the composer. Once part of the reply is on screen, after a Resume, for a
+  Voice Mode question, or (v7.1) for an Optics Look (camera, screen, or the busy card's "Look in a new chat") and an
+  Optics follow-up (`startTurn(conv, { …, keepOnStop: true })`), Stop keeps the message, followed by the reply text
   shown so far as one text-only assistant message (an append, not a prefill). Stop keeps finished agents' reports in
-  the tool result.
+  the tool result. An Optics frame (attachment id `optics_…`) is never given back to the composer (app.js
+  `onRunDone`, a backstop): before v7.1 a Look stopped in the thinking pause put its frame in the chat box as an
+  ordinary photo, and the owner's next chat message sent it again.
 - Resume re-runs a saved tool round only while the history still ends with its `tool_use`; otherwise it re-issues the
   next request. A saved live countdown notice (`transient`) is dropped when a stored turn is settled.
 - Fallback-served responses are priced per model (`PRICES` table incl. `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`).
@@ -2060,6 +2064,10 @@ about 16¢.
   - `optics-pins-small` (375 × 553, 390 × 664, 375 × 667, 390 × 844: no plate overlaps or covers a dot);
   - `optics-look-busy` (a Look while a mission runs here: the busy card, not a frozen frame; Wait; Look in a new
     chat, answered there with its labels);
+  - `optics-look-stopped` (Mac: a Look whose first response is held 3 s, Optics closed and Stop tapped in the chat:
+    no photo chip, nothing in the box, no "back in the box" toast, the Look stays in the chat, and the next chat
+    message carries no image; the strict mock accepts the history); unit `engine.stop` counts `pins` and `frame` as
+    a shown reply;
   - `optics-viewfinder` (iPhone 13 portrait, a Safari tab and held sideways: 100% of the sent frame on screen and
     inside the brackets, sampled on a grid; again after a Look and Live);
   - `optics-cards-small` (375 × 553, 320 × 568, 320 × 454 and 568 × 320, the camera never allowed: the first-use

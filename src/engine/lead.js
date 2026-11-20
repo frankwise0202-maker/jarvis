@@ -750,14 +750,15 @@ function stopTurn(ctx) {
 
 /**
  * Whether the owner already saw part of the reply: answer text, a search or page row, a mission
- * card, a memory chip, or a hologram or blueprint card (even one still building). Thinking and
- * notices (a retry countdown, a fallback note) are not a reply.
+ * card, a memory chip, a hologram or blueprint card (even one still building), labels pinned on a
+ * frame (`pins`) or a frame Jarvis took (`frame`). Thinking and notices (a retry countdown, a
+ * fallback note) are not a reply.
  */
 export function showedReply(turn) {
   return (Array.isArray(turn?.segments) ? turn.segments : []).some((s) => {
     if (!s || typeof s !== 'object' || s.transient) return false;
     if (s.kind === 'text') return typeof s.text === 'string' && s.text.trim() !== '';
-    return s.kind === 'tool' || s.kind === 'mission' || s.kind === 'memory' || s.kind === 'hologram' || s.kind === 'blueprint';
+    return s.kind === 'tool' || s.kind === 'mission' || s.kind === 'memory' || s.kind === 'hologram' || s.kind === 'blueprint' || s.kind === 'pins' || s.kind === 'frame';
   });
 }
 
