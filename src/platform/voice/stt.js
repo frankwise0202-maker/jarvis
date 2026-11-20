@@ -16,7 +16,10 @@
 //     noSpeechMs        give up when nothing at all is heard for this long (10 s)
 //     phrases           words to listen for: strings or { phrase, boost } (Chrome's contextual
 //                       biasing where the browser has it; skipped silently elsewhere, iOS included)
-//     keepListening     after a turn, keep listening for the next one until stop() or abort()
+//     keepListening     after a turn, keep listening for the next one until stop() or abort(): the
+//                       same recognizer goes on, and the words it had heard when the turn ended stay
+//                       that turn's even when it rewrites them later (a late final: "twenty five" ->
+//                       "25"); the next turn's words are the ones after them (continuation)
 //   stop(): "I'm done": deliver what was heard now. abort(): cancel without delivering anything.
 //
 // Jarvis, not the browser, decides when the owner has finished (v7.2). The recognizer runs
@@ -246,6 +249,93 @@ export function turnSilenceMs(text, baseMs = TIMING.silenceMs) {
   return baseMs + (sentenceUnfinished(text) ? TIMING.extendMs : 0);
 }
 
+// ---- turns in one session (keepListening) ---------------------------------------------------------
+
+const NUMBER_WORDS = new Set([
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+  'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'thousand',
+  'million', 'billion',
+]);
+const isNumberWord = (w) => /^\d/.test(w) || NUMBER_WORDS.has(w);
+
+/** Normalized words as units: a run of number words or digits is one ("twenty five" and "25" alike). */
+function wordUnits(words) {
+  const out = []; // { key, end }: end is the index after the unit's last word
+  words.forEach((w, i) => {
+    const last = out[out.length - 1];
+    if (isNumberWord(w) && last && last.key === '#') last.end = i + 1;
+    else out.push({ key: isNumberWord(w) ? '#' : w, end: i + 1 });
+  });
+  return out;
+}
+
+function letterDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** The cost of reading word `b` as a rewrite of word `a`: 0 the same, under 1 alike, else 2 (one gone, one new). */
+function rewriteCost(a, b) {
+  if (a === b) return 0;
+  const like = 1 - letterDistance(a, b) / Math.max(a.length, b.length);
+  return like >= 0.5 ? 1 - like : 2;
+}
+
+/**
+ * How many of the words `now` holds are the words `before` again: both are normalized words
+ * (normalWords) of ONE recognizer session, `before` when the last turn ended, `now` later. The
+ * session may have rewritten them since (Chrome's late final for the last phrase, iOS revising its
+ * one growing result: "twenty five" -> "25", "2+2" -> "2 + 2", a last word dropped or changed, "what
+ * is" -> "what's"); the words after them are new (the next turn's). The rewritten part is aligned
+ * word by word with the start of what follows: a word like the old one (by spelling) or a number
+ * for a number rewrites it, any other word is new, and an old word may be gone.
+ */
+export function continuation(before, now) {
+  const b = Array.isArray(before) ? before : [];
+  const n = Array.isArray(now) ? now : [];
+  if (!b.length || !n.length) return 0;
+  const ua = wordUnits(b);
+  const ub = wordUnits(n);
+  let p = 0;
+  while (p < ua.length && p < ub.length && ua[p].key === ub[p].key) p++;
+  const wordsTo = (units) => (units ? ub[units - 1].end : 0);
+  if (p === ua.length) return wordsTo(p);
+  const ra = ua.slice(p).map((u) => u.key);
+  const rb = ub.slice(p, p + ra.length * 2 + 8).map((u) => u.key); // a rewrite never more than doubles
+  if (ra.length > 80) return wordsTo(Math.min(ua.length, ub.length)); // far too long to align: by count
+  // d[i][j]: the cost of reading rb[0..j) as a rewrite of ra[0..i).
+  let prev = Array.from({ length: rb.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= ra.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= rb.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + rewriteCost(ra[i - 1], rb[j - 1]));
+    prev = cur;
+  }
+  // The shortest start of the rest that rewrites all of the old words best: what follows it is new.
+  let best = 0;
+  for (let j = 1; j <= rb.length; j++) if (prev[j] < prev[best] - 1e-9) best = j;
+  return wordsTo(p + best);
+}
+
+/** The index of the token of `text` where the words after the first `count` normalized words start. */
+function tokenAfterWords(text, count) {
+  if (count <= 0) return 0;
+  const list = tokens(text);
+  let seen = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (normWord(list[i])) seen += 1;
+    if (seen === count) return i + 1;
+  }
+  return list.length;
+}
+
 // ---- results ----------------------------------------------------------------------------------
 
 function altTexts(result, max = 3) {
@@ -407,7 +497,9 @@ export function startListening(options = {}) {
     parts: [], // readResults() of the current session
     plain: false, // start without phrases (the service refused them)
     shown: '', // the words last handed to onPartial
-    turn: { n: 0, start: Date.now(), committed: '', base: 0, text: '', heard: false, last: 0 },
+    // committed: the words of this turn from sessions that ended; prior: the normalized words this
+    // session had heard when the last turn ended (keepListening: they belong to that turn)
+    turn: { n: 0, start: Date.now(), committed: '', prior: [], text: '', heard: false, last: 0 },
     turns: 0,
     timers: {},
   };
@@ -431,8 +523,8 @@ export function startListening(options = {}) {
     S.timers = {};
   }
 
-  function newTurn(baseTokens = 0) {
-    S.turn = { n: S.turns++, start: now(), committed: '', base: baseTokens, text: '', heard: false, last: 0 };
+  function newTurn(prior = []) {
+    S.turn = { n: S.turns++, start: now(), committed: '', prior, text: '', heard: false, last: 0 };
     S.shown = '';
     unschedule('silence', 'shrink');
     schedule('max', maxMs, () => endTurn('max'));
@@ -445,19 +537,24 @@ export function startListening(options = {}) {
     }
   }
 
-  function sessionTokens() {
-    return tokens(S.parts.map((p) => p.text).join(' ')).length;
+  function sessionText() {
+    return S.parts.map((p) => p.text).join(' ');
   }
 
-  /** This turn's words: earlier sessions' words, then this session's (after an earlier turn's). */
+  /**
+   * This turn's words: earlier sessions' words, then this session's after the ones an earlier turn
+   * took (found again however the session rewrote them since: `continuation`).
+   */
   function turnReading() {
     const T = S.turn;
-    const r = readings(S.parts, T.base);
-    const text = joinWords(T.committed, tokens(r.text).slice(T.base).join(' '));
+    const all = sessionText();
+    const from = T.prior.length ? tokenAfterWords(all, continuation(T.prior, normalWords(all))) : 0;
+    const r = readings(S.parts, from);
+    const text = joinWords(T.committed, tokens(r.text).slice(from).join(' '));
     const key = normalWords(text).join(' ');
     const alternatives = [];
     for (const v of r.alternatives) {
-      const alt = joinWords(T.committed, tokens(v).slice(T.base).join(' '));
+      const alt = joinWords(T.committed, tokens(v).slice(from).join(' '));
       if (alt && normalWords(alt).join(' ') !== key && !alternatives.includes(alt)) alternatives.push(alt);
     }
     return { text, alternatives };
@@ -524,8 +621,9 @@ export function startListening(options = {}) {
     const words = clean(text || T.text);
     if (words) call(onFinal, words, { alternatives, reason, turn: T.n });
     if (S.ended || S.closing) return; // the caller stopped listening inside onFinal
-    // The session goes on: its words so far belong to the turn that just ended.
-    newTurn(S.rec ? sessionTokens() : 0);
+    // The session goes on: its words so far belong to the turn that just ended, also once the
+    // recognizer rewrites them (a late final); the next turn's words are the ones after them.
+    newTurn(S.rec ? normalWords(sessionText()) : []);
   }
 
   function fail(err) {
@@ -656,7 +754,7 @@ export function startListening(options = {}) {
       // Ended by itself before Jarvis decided the turn is over (iOS does, after a pause): keep
       // this session's words and listen again at once.
       S.turn.committed = S.turn.text;
-      S.turn.base = 0;
+      S.turn.prior = [];
       S.parts = [];
       const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults && !S.again;
       S.again = false;

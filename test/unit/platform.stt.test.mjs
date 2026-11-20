@@ -468,6 +468,91 @@ test('keepListening: iOS sessions end and restart between the turns; the next tu
   assert.equal(a.log.at(-1), 'end');
 });
 
+// The turn that ended may still be rewritten by the same session: Chrome's final for its last phrase
+// comes after the turn ended (with the Short wait especially) and formats it ("twenty five" -> "25",
+// a last word dropped, "2+2" -> "2 + 2"); iOS rewrites its one growing result. The next turn's words
+// are what the session adds after the old ones, never a word count.
+async function lateFinal(t, { wait = 'short', heard, final, next }) {
+  const { clock, rec, stt } = await setup(t);
+  const c = chrome(rec);
+  const a = listen(stt, { keepListening: true, wait });
+  clock.advance(100);
+  c.say(heard);
+  clock.advance(stt.listenWaitMs(wait) + 50); // the turn ends: the 2-second check starts
+  assert.deepEqual(a.finals.map((f) => f.text), [heard]);
+  rec.current.results([{ text: final, final: true }]); // Chrome's late final for that phrase
+  clock.advance(300);
+  if (next) {
+    c.say(next); // said during the check: a new phrase
+    clock.advance(200);
+    c.finalize();
+  }
+  clock.advance(3000);
+  return a;
+}
+
+test('keepListening: a late final with FEWER words for the last turn, then "cancel": the next turn is "cancel"', async (t) => {
+  const a = await lateFinal(t, { heard: 'set a timer for twenty five minutes', final: 'set a timer for 25 minutes', next: 'cancel' });
+  assert.deepEqual(a.finals.map((f) => f.text), ['set a timer for twenty five minutes', 'cancel']);
+  assert.deepEqual(a.finals.map((f) => f.info.turn), [0, 1]);
+  assert.equal(a.partials().at(-1), 'cancel');
+});
+
+test('keepListening: a late final that drops the last word, then "never mind": said whole, not "mind"', async (t) => {
+  const a = await lateFinal(t, { heard: "what's the weather like in Boston today", final: "what's the weather like in Boston", next: 'never mind' });
+  assert.deepEqual(a.finals.map((f) => f.text).slice(1), ['never mind']);
+});
+
+test('keepListening: the same with the Normal wait and "cancel that": not "that"', async (t) => {
+  const a = await lateFinal(t, { wait: 'normal', heard: "what's the weather like in Boston today", final: "what's the weather like in Boston", next: 'cancel that' });
+  assert.deepEqual(a.finals.map((f) => f.text).slice(1), ['cancel that']);
+});
+
+test('keepListening: a late final with MORE words ("2+2" -> "2 + 2") is not a new turn', async (t) => {
+  const a = await lateFinal(t, { heard: 'what is 2+2', final: 'what is 2 + 2' });
+  assert.deepEqual(a.finals.map((f) => f.text), ['what is 2+2'], 'no phantom turn "+ 2"');
+  assert.deepEqual(a.partials(), ['what is 2+2'], 'and no partial for a next turn');
+});
+
+test('keepListening: a late final that only revises a word (Austin -> Boston) is not a new turn; words after it are', async (t) => {
+  const a = await lateFinal(t, { heard: 'what is the weather in Austin', final: 'what is the weather in Boston', next: 'send it' });
+  assert.deepEqual(a.finals.map((f) => f.text), ['what is the weather in Austin', 'send it']);
+});
+
+test('keepListening: an iOS session that outlives the turn rewrites its one result and adds "cancel": the next turn is "cancel"', async (t) => {
+  const { clock, rec, stt } = await setup(t);
+  const s = ios(rec);
+  const a = listen(stt, { keepListening: true });
+  clock.advance(100);
+  s.say('Set a timer for twenty five minutes');
+  clock.advance(1700); // the turn ends; the session goes on (no pause-end yet)
+  assert.deepEqual(a.finals.map((f) => f.text), ['Set a timer for twenty five minutes']);
+  clock.advance(300);
+  s.say('Set a timer for 25 minutes cancel'); // iOS reformats the whole result as it adds the new word
+  clock.advance(700);
+  s.pauseEnd();
+  clock.advance(2000);
+  assert.deepEqual(a.finals.map((f) => f.text), ['Set a timer for twenty five minutes', 'cancel']);
+});
+
+test("continuation: how many words of a session are an earlier turn's again, however they were rewritten", async () => {
+  const stt = await freshStt();
+  assert.equal(typeof stt.continuation, 'function');
+  const n = (before, now) => stt.continuation(stt.normalWords(before), stt.normalWords(now));
+  assert.equal(n('what is the weather', 'what is the weather in Boston'), 4, 'unchanged: the new words follow');
+  assert.equal(n('set a timer for twenty five minutes', 'set a timer for 25 minutes cancel'), 6, 'a number formatted');
+  assert.equal(n('what is 2+2', 'what is 2 + 2'), 4, 'one number in two tokens');
+  assert.equal(n('in Boston today', 'in Boston never mind'), 2, 'a dropped last word is not taken for a new one');
+  assert.equal(n('in Boston today', 'in Boston'), 2);
+  assert.equal(n('the weather in Austin', 'the weather in Boston'), 4, 'a word revised to one like it');
+  assert.equal(n('the weather in Austin', 'the weather in Boston send it'), 4);
+  assert.equal(n('what is the weather', "what's the weather cancel"), 3, 'a contraction');
+  assert.equal(n('play some jazz music', 'play some jazz yes'), 3, 'a new word that only shares a letter or two');
+  assert.equal(n('set a timer', 'cancel'), 0, 'the old words are gone: all of it is new');
+  assert.equal(n('', 'hello there'), 0);
+  assert.equal(n('hello there', ''), 0);
+});
+
 test('callbacks that throw never break listening', async (t) => {
   const { clock, rec, stt } = await setup(t);
   const errors = [];

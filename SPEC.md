@@ -2383,8 +2383,16 @@ earlier one (§9.2, §14.1), it wins.
   retried (no permission-prompt loops): the words so far are delivered, or the refusal is reported with `restarted:
   true` (Voice Mode then waits for a tap instead of saying the microphone is blocked). A failure after words (network,
   microphone) delivers the words. Nothing restarts while the page is hidden.
-- `keepListening`: after a turn's final the same recognizer keeps listening for the next turn (its words only: an
-  earlier turn's results are skipped) until `stop()` or `abort()`; the 2-second check uses it.
+- `keepListening`: after a turn's final the same recognizer keeps listening for the next turn until `stop()` or
+  `abort()`; the 2-second check uses it. The next turn's words are only the ones the session adds after what it had
+  heard when the turn ended, never a word count: the session may still rewrite those words (Chrome's final for the
+  last phrase often comes after the turn ended, more so with the Short wait; iOS revises its one growing result):
+  "twenty five" → "25", a last word dropped, "2+2" → "2 + 2". `continuation(before, now)` finds them again: an
+  unchanged start is matched as it is, the rewritten rest word by word (a run of number words or digits is one
+  number; a word spelled at least half like the old one rewrites it; any other word is new, and an old word may be
+  gone), and the shortest such start that rewrites them all best ends the old turn. So "cancel" said during
+  the check after a late final "set a timer for 25 minutes" is "cancel", "never mind" stays whole, and a final that
+  only rewrites the old words is no new turn.
 - Language: `lang` '' (the default since v7.2) is the device's language (`resolveListenLang`: navigator.language, then
   navigator.languages[0], else en-US). Settings `listenLang` defaults to ''; a store saved before v7.2 (no
   `listenWait` key) with the old default 'en-US' is migrated to '' once, and so is such a backup's (`restoreSettings`).
@@ -2434,7 +2442,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 **Tests.** Unit `platform.stt` (Node, virtual clock; fakes in `test/unit/stt.fakes.mjs` behaving like iOS Safari and
 Chrome): the windows and the smart extension, a 1.2 s pause not cut, restarts appended once, `no-speech` after a restart
 ignored, revisions (and the held shrink), the 60 s cap, `stop()` and `abort()`, errors, refused restarts, the retry
-backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines, device language;
+backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines (and a late final or an
+iOS rewrite of the turn that ended, with fewer or more words, then "cancel"; `continuation`), device language;
 `platform.voice` (Chromium: the continuous recognizer and its release); `ui.voice.heard` (cancel, correction, send,
 wait, fillers, more words, `applyCorrection`, `pickHeard`, `listenPhrases`); `platform.storage` and `platform.db`
 (the new settings, the one-time migration, backups). E2E `voice-listen.mjs` (iPhone 13; the fake recognizer of
