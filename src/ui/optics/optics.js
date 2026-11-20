@@ -598,7 +598,7 @@ export function openOptics(deps = {}) {
     if (res.ok) {
       rememberCamera();
       announce(`Switched to ${cameraName()}.`);
-    } else {
+    } else if (!res.paused && !res.cancelled) {
       showNotice(res.error ? res.error.message : 'That camera could not start.');
     }
     setMode(mode);
@@ -689,8 +689,9 @@ export function openOptics(deps = {}) {
     flipBtn.disabled = true;
     const res = await camera.flip();
     if (closed) return false;
-    if (!res.ok) announce(res.error ? res.error.message : 'Could not switch cameras.');
-    else {
+    if (!res.ok) {
+      if (!res.paused && !res.cancelled) announce(res.error ? res.error.message : 'Could not switch cameras.');
+    } else {
       rememberCamera();
       announce(`Switched to ${cameraName()}.`);
     }

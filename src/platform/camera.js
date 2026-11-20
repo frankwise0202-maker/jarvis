@@ -6,9 +6,12 @@
 //     win: the window the preview is shown in (default this one): its hiding releases the camera.
 //     A floating panel (Document Picture-in-Picture) is another window, visible while the app's
 //     own tab may be hidden (Screens).
-//     camera.start({ facing?, deviceId?, label? }) -> Promise<{ ok, error?: CameraError }>   call from
-//                                                   a tap (iOS); with no arguments: the remembered
-//                                                   camera (preferred()), else the default
+//     camera.start({ facing?, deviceId?, label? }) -> Promise<{ ok, error?: CameraError, paused?, cancelled? }>
+//                                                   call from a tap (iOS); with no arguments: the
+//                                                   remembered camera (preferred()), else the default.
+//                                                   paused: the page was hidden while the camera was
+//                                                   starting (it is released, state 'paused' 'hidden');
+//                                                   cancelled: stop()/destroy() came first (released)
 //     camera.flip() -> Promise<{ ok, error? }>      stops the old track first, then the other camera
 //                                                   (front ↔ back on a phone, the next one on a computer)
 //     camera.select(deviceId) -> Promise<{ ok, error? }>   the camera picked in the list
@@ -28,7 +31,9 @@
 //
 // Privacy rules (SPEC Optics): the camera runs only while Optics is open; it is released at once
 // when the page is hidden or unloaded (visibilitychange, pagehide, freeze), and when a track ends
-// (iOS stops capture for calls, Siri and the app switcher). It never restarts by itself on iOS:
+// (iOS stops capture for calls, Siri and the app switcher). getUserMedia can take seconds (a USB
+// webcam waking up): a camera that arrives after Camera off or closing is released on arrival, and
+// one that arrives while the page is hidden never goes live (paused, as if it had been hidden). It never restarts by itself on iOS:
 // the owner taps to resume (a Home Screen app may ask for permission again after a relaunch).
 // Frames are drawn through a canvas, so they carry no EXIF or location data.
 
@@ -251,7 +256,10 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
   // is plugged in already holds it; were it the baseline, the plug-in would go unnoticed.
   let known = [];
   let current = null; // the described camera in use
-  let starting = null;
+  let starting = null; // { token, promise }: the start under way
+  // The start the owner still wants: stop() and destroy() clear it, so a camera that arrives after
+  // Camera off or closing (getUserMedia can take seconds: a USB webcam waking up) is released at once.
+  let intent = null;
   let chain = Promise.resolve(); // device changes run one at a time
   let destroyed = false;
   let refreshTimer = 0;
@@ -323,6 +331,24 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     emit('paused', { reason });
   }
 
+  /** A stream for a start or switch the owner no longer wants (Camera off, closed): released at once. */
+  function stale(token, s) {
+    if (intent === token && !destroyed) return false;
+    if (s) {
+      for (const t of s.getTracks()) {
+        try {
+          t.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+    }
+    return true;
+  }
+
+  /** What a start or switch that did not go live reports: paused (hidden meanwhile) or cancelled. */
+  const notLive = () => (state === 'paused' ? { ok: false, paused: true } : { ok: false, cancelled: true });
+
   /** The camera list (labels once the owner has allowed the camera), described for the picker. */
   async function listDevices() {
     let raw = [];
@@ -362,6 +388,11 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     return s;
   }
 
+  /**
+   * Shows a stream that just arrived. Resolves true once it is live, false when it was released
+   * meanwhile (Camera off, hidden) or when the page was hidden while the camera was starting: the
+   * camera never runs in the background, not even for a moment (paused, reason 'hidden').
+   */
   async function attach(s, wanted) {
     stream = s;
     const track = s.getVideoTracks()[0];
@@ -382,6 +413,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     } catch {
       /* autoplay with muted+playsinline normally works; the frames still arrive */
     }
+    if (stream !== s) return false; // released meanwhile (hidden, Camera off)
     if (!video.videoWidth) {
       await new Promise((resolve) => {
         const done = () => {
@@ -392,14 +424,22 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
         setTimeout(done, 1500);
       });
     }
+    if (stream !== s) return false;
     current = null;
     await listDevices();
+    if (stream !== s) return false;
     known = cameras;
     current = cameras.find((c) => c.id && c.id === deviceId) || null;
     // Phones say which way a camera faces; a computer's webcam faces the owner but says nothing.
     facing = facingOf(settings.facingMode) || (current && current.facing) || (phone ? wanted || 'rear' : 'camera');
     notifyDevices();
+    // Hidden while the camera was starting (the hide handlers had nothing to release yet).
+    if (view.document.visibilityState === 'hidden') {
+      pause('hidden');
+      return false;
+    }
     emit('live', { width: video.videoWidth, height: video.videoHeight });
+    return true;
   }
 
   async function start({ facing: wanted, deviceId: wantId = '', label: wantLabel = '' } = {}) {
@@ -408,10 +448,14 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
       emit('error', { error });
       return { ok: false, error };
     }
-    if (starting) return starting;
+    // The start under way, unless the owner has turned the camera off since (then a new one).
+    if (starting && starting.token === intent) return starting.promise;
     if (stream) return { ok: true };
+    const token = {};
+    intent = token;
     emit('starting');
-    starting = serial(async () => {
+    const promise = serial(async () => {
+      if (stale(token)) return { ok: false, cancelled: true };
       try {
         const remembered = wantId || wantLabel ? { id: wantId, label: wantLabel } : call(preferred) || null;
         let s = null;
@@ -425,7 +469,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
           }
         }
         // 2. Else the phone's back camera (or the side asked for), or the computer's default camera.
-        if (!s) {
+        if (!s && !stale(token)) {
           const mode = FACING_MODE[wanted || (phone ? 'rear' : '')];
           try {
             s = await open(mode ? { facingMode: { ideal: mode } } : {});
@@ -434,40 +478,51 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
             s = await open({}); // any camera at all
           }
         }
-        await attach(s, wanted || null);
+        if (stale(token, s)) return { ok: false, cancelled: true };
+        if (!(await attach(s, wanted || null))) return notLive();
         // 3. Its id changed (site data cleared, another browser) but its name did not: switch to it.
         if (remembered && !wanted && (remembered.id || remembered.label)) {
           const pick = pickCamera(cameras, remembered, { os: osName });
-          if (pick && pick.by === 'label' && pick.camera.id && pick.camera.id !== deviceId) await switchTo(pick.camera.id);
+          if (pick && pick.by === 'label' && pick.camera.id && pick.camera.id !== deviceId) {
+            const res = await switchTo(pick.camera.id);
+            if (!res.ok && (res.paused || res.cancelled)) return res;
+          }
         }
         return { ok: true };
       } catch (err) {
+        if (stale(token)) return { ok: false, cancelled: true }; // turned off meanwhile: no error to show
         const error = classifyCameraError(err);
         stopTracks();
         emit('error', { error });
         return { ok: false, error };
       }
     }).finally(() => {
-      starting = null;
+      if (starting && starting.promise === promise) starting = null;
     });
-    return starting;
+    starting = { token, promise };
+    return promise;
   }
 
   /** Stops the camera in use, then opens `id` (iOS cannot run two cameras); puts the old one back on failure. */
   async function switchTo(id, { wanted = null } = {}) {
+    const token = intent;
     const previousId = deviceId;
     stopTracks();
     emit('starting', { switching: true });
     try {
-      await attach(await open({ deviceId: { exact: id } }), wanted);
-      return { ok: true };
+      const s = await open({ deviceId: { exact: id } });
+      if (stale(token, s)) return { ok: false, cancelled: true };
+      return (await attach(s, wanted)) ? { ok: true } : notLive();
     } catch (err) {
+      if (stale(token)) return { ok: false, cancelled: true };
       const error = classifyCameraError(err);
       try {
         const back = previousId && previousId !== id && cameras.some((c) => c.id === previousId) ? { deviceId: { exact: previousId } } : {};
-        await attach(await open(back), facing);
+        const s = await open(back);
+        if (stale(token, s)) return { ok: false, cancelled: true };
+        if (!(await attach(s, facing))) return notLive();
       } catch {
-        emit('error', { error });
+        if (!stale(token)) emit('error', { error });
       }
       return { ok: false, error };
     }
@@ -500,7 +555,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     }
     const res = await switchTo(pick.camera.id);
     if (res.ok) call(onSwitch, { why: 'unplugged', from: gone, to: current });
-    else pause('ended');
+    else if (!res.paused && !res.cancelled) pause('ended');
   }
 
   /** After a devicechange: refresh the list; follow the hot-plug plan while the camera is on. */
@@ -527,12 +582,14 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     if (!stream) return { ok: false, error: new CameraError('aborted', MESSAGES.aborted) };
     if ((cameras.length || (await listDevices()).length) < 2) return { ok: false, error: new CameraError('overconstrained', 'This device has only one camera.') };
     return serial(async () => {
+      if (!stream) return { ok: false, error: new CameraError('aborted', MESSAGES.aborted) }; // turned off meanwhile
       if (!phone) {
         const i = cameras.findIndex((c) => c.id === deviceId);
         const next = cameras[(i + 1) % cameras.length];
         if (!next || next.id === deviceId) return { ok: false, error: new CameraError('overconstrained', 'This device has only one camera.') };
         return switchTo(next.id);
       }
+      const token = intent;
       const want = facing === 'front' ? 'rear' : 'front';
       const previousId = deviceId;
       stopTracks(); // iOS cannot open a second camera while one is running
@@ -549,7 +606,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
         } catch (err) {
           if (!MISSING.includes(classifyCameraError(err).code)) throw err;
         }
-        if (!s) {
+        if (!s && !stale(token)) {
           // No facing information (some Android browsers, test rigs): a camera on the other side by
           // its name, else the next one in the list.
           const side = cameras.filter((c) => c.id && c.id !== previousId && (c.facing === want || !c.facing));
@@ -557,15 +614,18 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
           if (!next) throw new CameraError('overconstrained', 'This device has only one camera.');
           s = await open({ deviceId: { exact: next.id } });
         }
-        await attach(s, want);
-        return { ok: true };
+        if (stale(token, s)) return { ok: false, cancelled: true };
+        return (await attach(s, want)) ? { ok: true } : notLive();
       } catch (err) {
+        if (stale(token)) return { ok: false, cancelled: true };
         const error = classifyCameraError(err);
         // Put the previous camera back.
         try {
-          await attach(await open(previousId ? { deviceId: { exact: previousId } } : {}), facing);
+          const s = await open(previousId ? { deviceId: { exact: previousId } } : {});
+          if (stale(token, s)) return { ok: false, cancelled: true };
+          if (!(await attach(s, facing))) return notLive();
         } catch {
-          emit('error', { error });
+          if (!stale(token)) emit('error', { error });
         }
         return { ok: false, error };
       }
@@ -616,12 +676,15 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     setLowPower,
     /** Lists the cameras again (the picker opening): resolves to the list. */
     refreshDevices: () => listDevices().then((list) => (notifyDevices(), list)),
+    /** Camera off: also cancels a start or switch still under way (its camera is released on arrival). */
     stop(reason = 'closed') {
+      intent = null;
       const was = !!stream;
       stopTracks();
       if (was || state !== 'off') emit('off', { reason });
     },
     destroy() {
+      intent = null;
       destroyed = true;
       clearTimeout(refreshTimer);
       stopTracks();

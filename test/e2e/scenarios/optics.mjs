@@ -7,6 +7,8 @@
 //                    the current conversation, a 320 px check, LIVE pill off (tracks released), the
 //                    chat's Optics card and pins row, and the reopened frame with its labels
 //   optics-hidden    the camera is released at once when the page is hidden; resume by tap (iOS)
+//   optics-hidden-start  a slow camera (2 s) and the page hidden while it starts: it never runs in
+//                    the background; shown again on a computer, it comes back by itself
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
@@ -77,6 +79,27 @@ export async function instrument(page, { deny = false, devOptics = null } = {}) 
     }
   }, { deny, devOptics });
 }
+
+/** Init script: getUserMedia resolves `sessionStorage.slowCam` ms late (a USB webcam waking up). */
+export function slowCamera() {
+  const md = navigator.mediaDevices;
+  if (!md) return;
+  const orig = md.getUserMedia.bind(md);
+  md.getUserMedia = async (...args) => {
+    const s = await orig(...args);
+    const ms = Number(sessionStorage.getItem('slowCam') || 0);
+    if (ms) await new Promise((r) => setTimeout(r, ms));
+    return s;
+  };
+}
+
+/** Pretends the page is hidden (another tab or app, the window minimized) or shown again. */
+export const setHidden = (page, hidden) =>
+  page.evaluate((hidden) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
 
 export const liveTracks = (page, api = 'getUserMedia') => page.evaluate((api) => (window.__opticsTracks || []).filter((x) => x.api === api && x.track.readyState === 'live').length, api);
 
@@ -307,6 +330,39 @@ export default [
       // pagehide releases it too.
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
       t.assert((await liveTracks(page)) === 0, 'pagehide releases the camera');
+    },
+  },
+  {
+    name: 'optics-hidden-start',
+    title: 'Optics on a Mac with a slow camera (2 s to start, like a USB webcam waking up): hidden while it starts, it never runs in the background, and comes back by itself when shown',
+    device: 'mac',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().addInitScript(slowCamera);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await page.evaluate(() => sessionStorage.setItem('slowCam', '2000'));
+      await page.keyboard.press('Control+Shift+L');
+      await t.visible('optics');
+      await page.waitForTimeout(400); // getUserMedia is under way
+      t.assert((await page.locator(tid('optics')).getAttribute('data-camera')) !== 'live', 'still starting');
+      await setHidden(page, true);
+      await page.waitForTimeout(3000);
+      const camera = await page.locator(tid('optics')).getAttribute('data-camera');
+      const tracks = await liveTracks(page);
+      t.note(`4 s after hiding mid-start: data-camera=${camera}, live tracks ${tracks}`);
+      t.assert(tracks === 0, `hidden while starting, the camera must not run (${tracks} live track(s), data-camera=${camera})`);
+      t.assert(camera === 'paused', `Optics shows the camera paused (${camera})`);
+      await page.evaluate(() => sessionStorage.removeItem('slowCam'));
+      await setHidden(page, false);
+      await waitLive(t);
+      t.assert((await liveTracks(page)) === 1, 'shown again on a computer: the camera comes back by itself');
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      t.assert((await liveTracks(page)) === 0, 'released after closing');
     },
   },
   {

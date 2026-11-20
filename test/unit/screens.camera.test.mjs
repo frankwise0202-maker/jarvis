@@ -250,3 +250,31 @@ test('closed (or turned off) while the camera is still starting: the camera that
   assert.equal(r.state, 'off');
   assert.equal(r.track, null);
 });
+
+test('its window hidden while the camera is still starting: never live in the background; back by itself once shown (a computer)', async () => {
+  const page = await newPage({
+    init: () => {
+      window.__tracks = [];
+      const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (c) => {
+        await new Promise((r) => setTimeout(r, 600));
+        const s = await gum(c);
+        window.__tracks.push(...s.getTracks());
+        return s;
+      };
+    },
+  });
+  await mount(page);
+  await page.waitForTimeout(150);
+  await setVisibility(page, 'hidden');
+  await waitState(page, 'paused', 'hidden while starting');
+  await page.waitForTimeout(300);
+  let r = await read(page);
+  assert.equal(r.track, null, 'nothing captured while hidden');
+  assert.ok((await page.evaluate(() => window.__tracks.map((t) => t.readyState))).every((x) => x === 'ended'), 'the late camera was released');
+  assert.match(r.card, /Camera paused/);
+  await setVisibility(page, 'visible');
+  await waitState(page, 'live', 'shown again');
+  r = await read(page);
+  assert.equal(r.track.state, 'live');
+});

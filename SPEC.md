@@ -1941,6 +1941,13 @@ null: it goes to Jarvis as usual.
   (`voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })` decides: null, `need-tap` or `look`).
 - **A hologram** asked for over Voice Mode is opened by Voice Mode itself (`visuals.open`), over Optics.
 
+**A slow camera** (getUserMedia can take seconds: a USB webcam waking up). `createCamera` keeps the start the owner
+still wants: Camera off (`stop`) or closing (`destroy`) cancels it, and the camera that arrives later is released at
+once (`start()` answers `{ ok: false, cancelled: true }`, no error shown). A camera that arrives while the page (or the
+panel's window) is hidden never goes live: it is released and the state is `paused` with reason `hidden`
+(`{ ok: false, paused: true }`), so Optics, the Voice Mode Look and a camera screen resume it on a computer when shown
+again, as after any hide. The same holds for a switch (picker, Flip, hot-plug) still under way.
+
 **Unchanged from the prototype.** The intro card, the blocked-camera steps, the LIVE pill, auto-off on
 hide/pagehide/freeze, Watch (64 × 36 differencing, more than 6% changed, still for 1 s, at most one frame per 10 s, 5
 minutes, 60 a day), the screen look, the Optics log, the keys (Space, F, W, Esc, Ctrl/⌘ Shift L), `?optics=1`, and
@@ -1971,6 +1978,9 @@ about 16¢.
     over Optics, the camera off underneath, back to the answer; ANALYZING while each runs, and each follow-up's
     question and answer in view in the sheet), and `optics-followups-small` (the same on a 375 × 667 phone: every
     chip whole on screen with a pin tapped);
+  - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
+    shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
+    while a start or a switch is still under way);
   - `optics-voice` (Voice Mode: Look; "what am I looking at?" spoken and pinned; "tell me more" spoken; "close the
     camera"; with the camera closed, "what's that?" is a spoken question without a frame, and on a Mac "what am I
     looking at?" alone opens the camera and looks; Hologram of this over Optics, then "Open in chat" closes Voice Mode
