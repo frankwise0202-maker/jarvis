@@ -24,7 +24,7 @@ const ERROR_TEXT = {
   network: 'The download stopped. Check the connection, then try again.',
   integrity: 'The download was damaged or changed on the way, so it was not used. Try again.',
   'blocked-host': 'The voice tried to reach a server it is not allowed to use, so it was stopped.',
-  worker: 'The voice engine could not start in this browser.',
+  worker: 'The voice engine could not load. Check the connection, then try again.',
   init: 'The voice could not start.',
 };
 

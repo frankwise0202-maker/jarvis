@@ -454,3 +454,40 @@ test('worker core: a self-hosted split model loads through the parts; WebGPU war
   assert.ok(compileAt < stages.indexOf('warmup'), stages.join(' '));
   assert.equal(stages.filter((x) => x === 'compile').length, 1);
 });
+
+test('v7.1: a download problem on the WebGPU plan (a dropped connection, a damaged part, a refused host) or a worker that never loaded rules nothing out', async (t) => {
+  const clock = installClock();
+  t.after(() => clock.restore());
+  for (const code of ['network', 'integrity', 'blocked-host']) {
+    const { engine, workers, store } = twoPlans({ gpu: true });
+    const p = engine.start();
+    p.catch(() => {});
+    assert.equal(workers[0].posted[0].config.device, 'webgpu');
+    workers[0].emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+    workers[0].emit({ type: 'progress', stage: 'download', loaded: 120, total: 325 });
+    workers[0].emit({ type: 'error', code, message: `onnx/model.onnx: part 3 of 7 (${code})` });
+    assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false, `${code}: no 30-day verdict`);
+    assert.equal(store.saved.has('jarvis.voice.natural.attempt'), false, `${code}: no crash marker left`);
+    assert.equal(workers.length, 1, `${code}: no second download on the processor engine`);
+    assert.deepEqual([engine.status().state, engine.status().error && engine.status().error.code], ['error', code]);
+    await assert.rejects(p, (e) => e.code === code, `${code}: this start fails`);
+    const next = twoPlans({ gpu: true, store });
+    assert.equal((await next.engine.planInfo()).device, 'webgpu', `${code}: the next start tries the graphics chip again`);
+  }
+  // The worker script could not even load (offline right after an update): no message ever came.
+  const { engine, workers, store } = twoPlans({ gpu: true });
+  const p = engine.start();
+  p.catch(() => {});
+  workers[0].onerror({ message: 'Failed to fetch a worker script.', preventDefault() {} });
+  assert.equal(store.saved.has('jarvis.voice.natural.webgpu'), false, 'a worker that never loaded: no verdict');
+  assert.equal(workers.length, 1, 'and no processor engine (it is the same worker script)');
+  await assert.rejects(p, (e) => e.code === 'worker');
+  assert.equal((await twoPlans({ gpu: true, store }).engine.planInfo()).device, 'webgpu');
+  // A worker that was running the GPU set-up and went down is still the graphics chip's fault.
+  const b = twoPlans({ gpu: true });
+  b.engine.start().catch(() => {});
+  b.workers[0].emit({ type: 'progress', stage: 'compile', loaded: 0, total: 1 });
+  b.workers[0].onerror({ message: 'Out of memory', preventDefault() {} });
+  assert.equal(JSON.parse(b.store.saved.get('jarvis.voice.natural.webgpu')).failed, true, 'a crash mid-set-up keeps the verdict');
+  assert.deepEqual([b.workers.length, b.workers[1].posted[0].config.device], [2, 'wasm'], 'and the processor engine takes over');
+});

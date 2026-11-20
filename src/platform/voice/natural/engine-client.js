@@ -25,7 +25,9 @@
 // offer a real WebGPU adapter?). The ladder, by the measured speed:
 //   1. WebGPU: when it fails to load, or its warm-up or its speech is slower than real time, the
 //      verdict is kept for 30 days ('jarvis.voice.natural.webgpu') and the WASM plan loads instead
-//      (status.fallback: 'webgpu-failed' | 'webgpu-slow').
+//      (status.fallback: 'webgpu-failed' | 'webgpu-slow'). Not for a download problem (codes
+//      'network', 'integrity', 'blocked-host') or a worker script that never loaded: that start
+//      fails, and WebGPU is tried again next time (v7.1).
 //   2. WASM: when it is too slow, state 'slow' (verdict 'jarvis.voice.natural.verdict'): the
 //      built-in voice speaks.
 // A page that died while the GPU model was being set up (iOS ends a tab that takes too much memory)
@@ -58,6 +60,8 @@ const ATTEMPT_LOCK = 'jarvis-voice-gpu-setup'; // a Web Lock that page holds mea
 const HEARTBEAT_MS = 2000; // the marker's `at` is refreshed this often while the set-up runs
 const ATTEMPT_STALE_MS = 20000; // without Web Locks: a marker not refreshed for this long is a dead page's
 const VERDICT_DAYS = 30;
+// Engine errors that are about the download, not the graphics chip: never a WebGPU verdict (v7.1).
+const NOT_THE_GPU = new Set(['network', 'integrity', 'blocked-host']);
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
 const IDLE_STOP_MS = 5 * 60 * 1000;
@@ -199,13 +203,16 @@ export function createNaturalEngine({
           return;
         }
         clearGpuAttempt();
-        if (current && current.device === 'webgpu' && nextPlan()) {
+        if (current && current.device === 'webgpu' && !NOT_THE_GPU.has(msg.code) && nextPlan()) {
           // WebGPU could not load the model (no adapter in the worker, a kernel it lacks, memory):
           // the processor (WASM) instead.
           saveWebgpuVerdict({ failed: true, code: msg.code || 'webgpu' });
           fallBack('webgpu-failed');
           break;
         }
+        // Anything else fails this start. On WebGPU that is a download problem (a dropped connection,
+        // a damaged part, a refused host), which says nothing about the graphics chip: no verdict, so
+        // Try again (or the next start) tries WebGPU again (v7.1).
         fail({ code: msg.code || 'init', message: msg.message || 'The natural voice could not start.' });
         break;
       }
@@ -438,18 +445,24 @@ export function createNaturalEngine({
       return;
     }
     const w = worker;
-    worker.onmessage = onMessage;
+    // Whether this worker ever spoke: one that never did failed to load its script (offline right
+    // after an update, say), which says nothing about the graphics chip.
+    let heard = false;
+    worker.onmessage = (e) => {
+      if (worker === w) heard = true;
+      onMessage(e);
+    };
     worker.onerror = (e) => {
       if (e && typeof e.preventDefault === 'function') e.preventDefault();
       if (worker !== w) return;
       // The GPU set-up can take the worker down: the processor plan, if there is one.
-      if (current && current.device === 'webgpu' && st.state !== 'ready' && nextPlan()) {
+      if (heard && current && current.device === 'webgpu' && st.state !== 'ready' && nextPlan()) {
         clearGpuAttempt();
         saveWebgpuVerdict({ failed: true, code: 'worker' });
         fallBack('webgpu-failed');
         return;
       }
-      fail({ code: 'worker', message: (e && e.message) || 'The voice worker failed to load.' });
+      fail({ code: 'worker', message: heard ? (e && e.message) || 'The voice worker stopped.' : 'The voice engine could not be loaded. Check the connection, then try again.' });
     };
     worker.postMessage({
       type: 'init',

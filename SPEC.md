@@ -2127,6 +2127,12 @@ others stay selectable).
   - WebGPU failing to load (an `error` from the worker, or the worker dying before ready), or a WebGPU warm-up
     slower than 1.6× real time, saves `jarvis.voice.natural.webgpu` `{ failed|slow, at }` for 30 days. The WASM plan
     then loads in a new worker; `start()` keeps waiting, and `status.fallback` is `webgpu-failed` or `webgpu-slow`.
+  - Not a download problem (v7.1): an `error` with code `network` (a part that could not be downloaded),
+    `integrity` (a damaged or changed file) or `blocked-host`, or a worker that fails before it ever sent a message
+    (its script could not load: offline right after an update), says nothing about the graphics chip. That start
+    fails (`state: 'error'`, the card's message and **Try again**), nothing is saved, no second download starts on
+    the processor engine, and the next start tries WebGPU again. (Before, each of these ruled WebGPU out for 30
+    days.)
   - WebGPU turning slower than real time while it speaks marks the engine `slow`, so the reply in progress hands over
     to the device voice; the WASM plan then loads for the next replies.
   - WASM too slow is the prototype's `slow` verdict (`jarvis.voice.natural.verdict`): the built-in voice speaks.
