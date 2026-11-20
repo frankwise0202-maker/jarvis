@@ -70,7 +70,8 @@ const WATCH_DAY_KEY = 'jarvis.optics.watch.v1';
 // On screen a phone's cameras are BACK and FRONT, like the iPhone's own names (the frame's source
 // stays 'rear' for Claude: "the owner's rear camera").
 const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
-const DESKTOP_MQ = '(min-width: 900px)';
+// The two-column desktop layout; a phone held sideways (short) keeps the phone layout (optics.css).
+const DESKTOP_MQ = '(min-width: 900px) and (min-height: 501px)';
 
 let current = null;
 

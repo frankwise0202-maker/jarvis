@@ -1908,7 +1908,9 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
       strongest 9%) with `BUILDING HOLOGRAM · <LABEL>` (`optics-schematic-label`).
     - The first `hologram` segment opens the hologram viewer over Optics (`deps.openHologram`).
   - The chips wrap (on a phone too): none slides off the edge of the screen.
-- **The answer sheet** (`optics-answer`; phones: above the deck, `min(40vh, 360px)`; desktop: the side column).
+- **The answer sheet** (`optics-answer`; phones: above the deck, `min(40vh, 360px)`; desktop, at least 900 px wide
+  and over 500 px tall: the side column; a phone held sideways, at most 500 px tall: after a Look the frozen frame
+  on the left and the sheet in a right-hand column, `min(46vw, 420px)`, with the deck's ask row under it).
   - Its header (`optics-answer-status`) follows the newest question: ANALYZING while Jarvis works on the Look or on a
     follow-up (`data-busy`), NO ANSWER when the newest one failed, else ANSWER; then "In chat ✓" and the cost so far.
     `data-status` stays the Look's own answer.
@@ -1988,6 +1990,8 @@ about 16¢.
     over Optics, the camera off underneath, back to the answer; ANALYZING while each runs, and each follow-up's
     question and answer in view in the sheet), and `optics-followups-small` (the same on a 375 × 667 phone: every
     chip whole on screen with a pin tapped);
+  - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
+    least 120 px tall, the chips whole, the pins on their objects);
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
     shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
     while a start or a switch is still under way);

@@ -9,6 +9,7 @@
 //   optics-hidden    the camera is released at once when the page is hidden; resume by tap (iOS)
 //   optics-hidden-start  a slow camera (2 s) and the page hidden while it starts: it never runs in
 //                    the background; shown again on a computer, it comes back by itself
+//   optics-landscape an iPhone held sideways: the frozen frame and a readable answer side by side
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
@@ -365,6 +366,46 @@ export default [
       await page.keyboard.press('Escape');
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
       t.assert((await liveTracks(page)) === 0, 'released after closing');
+    },
+  },
+  {
+    name: 'optics-landscape',
+    title: 'Optics on an iPhone held sideways (844×390): after a Look the frame and a readable answer side by side (the body at least 120 px tall, the chips whole), the pins on their objects',
+    device: 'iphone13',
+    scale: 2,
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.setViewportSize({ width: 844, height: 390 });
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await openFromComposer(t);
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.waitForTimeout(600);
+      const box = await page.evaluate(() => {
+        const b = (sel) => {
+          const e = document.querySelector(sel);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), bottom: Math.round(r.bottom) };
+        };
+        return { stage: b('.optics-stage'), answer: b('[data-testid="optics-answer"]'), body: b('[data-testid="optics-answer-text"]'), follow: b('[data-testid="optics-followups"]'), deck: b('.optics-deck'), vw: innerWidth, vh: innerHeight };
+      });
+      t.note(`stage ${box.stage.w}×${box.stage.h}, answer body ${box.body.w}×${box.body.h}`);
+      t.assert(box.body.h >= 120, `the answer body is readable (${box.body.h} px tall)`);
+      t.assert(box.stage.h >= 250, `the frame keeps the height (${box.stage.h} px)`);
+      t.assert(box.stage.right <= box.answer.x + 1, `frame and answer side by side (${JSON.stringify(box)})`);
+      t.assert(box.follow.bottom <= box.answer.bottom + 1 && box.follow.right <= box.vw, `the follow-up chips are whole (${JSON.stringify(box.follow)})`);
+      t.assert(box.deck.bottom <= box.vh + 1, 'the ask row on screen');
+      await checkPins(t, { width: 1280, height: 720 });
+      await t.checkNoHorizontalOverflow('Optics sideways');
+      await shot(t, 'iphone13-landscape-answer');
+      await page.locator(tid('optics-live')).click();
+      await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-state')) === 'live', { timeout: 5000, message: 'back to live' });
     },
   },
   {
