@@ -397,8 +397,8 @@ export default [
   },
   {
     name: 'optics-screen',
-    title: 'Look at my screen (desktop): one frame, the capture stops at once, sent as a screen frame',
-    device: 'desktop',
+    title: 'Look at my screen (a Mac): one frame, the capture stops at once, sent as a screen frame; the home\'s Screen key opens Optics straight into it',
+    device: 'mac',
     timeout: 60000,
     browserArgs: cameraArgs('desk-landscape.y4m', { extra: ['--auto-select-desktop-capture-source=Entire screen', '--auto-accept-this-tab-capture'] }),
     async run(t) {
@@ -420,6 +420,21 @@ export default [
       t.assert(/^SCREEN · /.test(await t.text(page.locator(tid('optics-sub')))), 'the frozen frame is labeled SCREEN');
       await page.waitForTimeout(400);
       await shot(t, 'desktop-5-screen');
+      await t.step("the home's Screen key: Optics opens straight into the screen look (one frame, sent as a screen frame)", async () => {
+        await page.locator(tid('optics-live-pill')).click();
+        await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+        await page.locator(tid('header-new-chat')).click();
+        const before = t.requests('lead').length;
+        const shots = await page.evaluate(() => window.__opticsTracks.filter((x) => x.api === 'getDisplayMedia').length);
+        await (await t.visible('quick-key-screen')).click();
+        await t.visible('optics');
+        await waitAnswer(t);
+        t.assert((await page.evaluate(() => window.__opticsTracks.filter((x) => x.api === 'getDisplayMedia').length)) === shots + 1, 'one more screen capture');
+        t.assert((await liveTracks(page, 'getDisplayMedia')) === 0, 'stopped right after the frame');
+        t.assert(t.requests('lead').length > before, 'a Look was sent');
+        t.assert(/live frame from the owner's screen/.test(lastLook(t).message.content[0].text), 'as a screen frame');
+        t.assert(/^SCREEN · /.test(await t.text(page.locator(tid('optics-sub')))), 'labeled SCREEN');
+      });
     },
   },
   {

@@ -258,6 +258,10 @@ function createVoiceMode(opts) {
   let levelTarget = 0;
   let levelSent = -1;
   let levelLast = 0;
+  // The natural voice's own 8 bands (its output analyser) drive the core's voice band while it
+  // speaks, as the mic's bands do while Jarvis listens (Living Core v2).
+  const outBands = new Float32Array(8);
+  let outBandsOn = false;
 
   // ------------------------------------------------------------------------------------- DOM
 
@@ -2626,6 +2630,36 @@ function createVoiceMode(opts) {
     levelTarget = Math.max(levelTarget, Math.min(1, v));
   }
 
+  /** The natural voice's output bands to the core while it plays; null hands the band back. */
+  function feedOutputBands(on) {
+    if (typeof core.setBands !== 'function') return;
+    let filled = false;
+    if (on) {
+      try {
+        filled = typeof tts.getOutputBands === 'function' && tts.getOutputBands(outBands) === true;
+      } catch {
+        filled = false;
+      }
+    }
+    if (filled) {
+      if (!outBandsOn) root.dataset.bands = 'output'; // test hook: the voice band follows the natural voice
+      outBandsOn = true;
+      try {
+        core.setBands(outBands);
+      } catch {
+        /* optional */
+      }
+    } else if (outBandsOn) {
+      outBandsOn = false;
+      delete root.dataset.bands;
+      try {
+        core.setBands(null); // the level-driven band again (or the mic's, which push their own)
+      } catch {
+        /* optional */
+      }
+    }
+  }
+
   /** 0..1 from the speech engine's output analyser (the natural voice), or null (device voice). */
   function outputLevel() {
     try {
@@ -2653,6 +2687,7 @@ function createVoiceMode(opts) {
       levelTarget = 0;
       pushLevel(0);
     }
+    if (!want || S.state !== 'speaking') feedOutputBands(false);
   }
 
   function levelTick(ts) {
@@ -2660,6 +2695,7 @@ function createVoiceMode(opts) {
     const dt = levelLast ? Math.min(100, ts - levelLast) : 16;
     levelLast = ts;
     const real = outputLevel();
+    feedOutputBands(real !== null && S.state === 'speaking');
     if (real !== null) {
       // The natural voice plays through Web Audio: the core follows its real loudness, eased. The
       // target is set, not raised, so the word bumps (estimated for this voice) never add to it.

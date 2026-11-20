@@ -1066,8 +1066,6 @@ export function createComposer(o) {
     takePhoto: () => openPicker(cameraInput),
     /** Adds files (File objects) as attachments; returns how many were accepted for processing. */
     addFiles: (files) => addFiles(files, 'picker'),
-    /** The system camera (a photo attachment): Optics' fallback when the live camera is blocked. Call from a tap. */
-    openCamera: () => openPicker(cameraInput),
     /** The ready attachments (full objects, with base64 data). */
     getAttachments: () => readyAttachments(),
     /** Display metadata of the ready attachments (no data). */

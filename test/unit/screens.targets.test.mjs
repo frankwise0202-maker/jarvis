@@ -78,6 +78,17 @@ test('named kinds and nothing to show', () => {
   assert.deepEqual(resolveScreenTarget({ what: 'camera', conv: null }).kind, 'camera');
 });
 
+test('the camera: Optics open makes it "this", and moving it (by name too) closes Optics there', () => {
+  const c = conv([user('u1', 'Show me a Camry'), jarvis('j1', [holoSeg('h1', 'Camry')])]);
+  const optics = { kind: 'camera', ref: {}, title: 'Optics', live: true };
+  const t = resolveScreenTarget({ what: 'this', open: optics, conv: c });
+  assert.deepEqual([t.kind, t.live, t.fromViewer], ['camera', true, true]);
+  assert.equal(resolveScreenTarget({ what: 'camera', open: optics, conv: c }).fromViewer, true, '"the camera" while Optics is open');
+  assert.equal(resolveScreenTarget({ what: 'camera', open: null, conv: c }).fromViewer, undefined, 'Optics closed: nothing to close in the app');
+  const holoOpen = { kind: 'hologram', ref: { segmentId: 'h1' }, title: 'Camry' };
+  assert.equal(resolveScreenTarget({ what: 'camera', open: holoOpen, conv: c }).fromViewer, undefined, 'another viewer stays open');
+});
+
 test('links: the newest answer with links; ordinals; the tool\'s url must be in the conversation', () => {
   const md = 'See [Kia EV9 review](https://www.example.com/ev9) and <https://cars.example.org/x>, plus https://news.example.net/a?b=1). Not [this](javascript:alert(1)) or [that](https://user:pw@evil.example/).';
   assert.deepEqual(linksOf(md).map((l) => l.url), ['https://www.example.com/ev9', 'https://cars.example.org/x', 'https://news.example.net/a?b=1']);

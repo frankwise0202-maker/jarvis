@@ -284,6 +284,8 @@ export async function startApp(rootEl) {
     actions: {
       talk: () => openVoice(),
       look: () => look(),
+      // "Show Jarvis your screen" (Optics' screen look; Presence shows the key on a Mac only).
+      screen: !state.demo && safe(() => screenLookSupported(), false) ? () => openOpticsScreen({ start: 'screen' }) : undefined,
       brief: () => briefMe(),
       openConversation: (id) => openConversation(id),
       resume: (id) => openThen(id, () => resume()),
@@ -298,6 +300,14 @@ export async function startApp(rootEl) {
         if ((kind === 'mic' || kind === 'all') && state.listening) {
           safe(() => state.listening.stop());
           toast('Microphone off.', { level: 'info', id: 'sensor-off' });
+        }
+        // WATCH stops Watch only; OPTICS turns the camera off (Optics, and a camera on another screen).
+        const optics = currentOptics();
+        if (kind === 'watch' && optics && optics.stopWatch) safe(() => optics.stopWatch());
+        if (kind === 'optics' || kind === 'all') {
+          const screensClosed = screensCtl ? safe(() => screensCtl.closeKind('camera'), 0) : 0;
+          if (optics) safe(() => optics.close());
+          if (optics || screensClosed) toast('Camera off.', { level: 'info', id: 'optics-off' });
         }
       },
       spendDismissed: () => {
@@ -375,7 +385,7 @@ export async function startApp(rootEl) {
     mode: state.lastSettings.mode,
     micSupported: sttOk,
     // The camera key opens Optics (live camera); false = no camera API here, use the system camera.
-    onCamera: () => (state.demo || !safe(() => cameraSupported(), false) ? false : openOpticsScreen()),
+    onCamera: () => (opticsAvailable() ? openOpticsScreen() : false),
     getSettings: () => getSettings(),
     onSend: (text, mode, extras) => send(text, mode, extras),
     // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
@@ -459,6 +469,8 @@ export async function startApp(rootEl) {
         live: st.status === 'building',
       };
     }
+    // Optics (under a hologram it opened, above everything else): the live camera.
+    if (isOpticsOpen()) return { kind: 'camera', ref: {}, title: 'Optics', live: true };
     if (mcSheet && state.mcSel && state.conv) return { kind: 'mission', ref: { conversationId: state.conv.id, turnId: state.mcSel.turnId, missionId: state.mcSel.missionId }, title: '' };
     return null;
   }
@@ -483,13 +495,23 @@ export async function startApp(rootEl) {
     } else if (target.kind === 'mission' && mcSheet) {
       safe(() => mcSheet.sheet.close('screens'));
       return true;
+    } else if (target.kind === 'camera' && isOpticsOpen()) {
+      // The camera moves to the other screen: Optics closes here, so one view holds the camera.
+      safe(() => currentOptics().close());
+      return true;
     }
     return false;
   }
 
   /** Show content in the main window: a screen handed it back, or a phone shows it full screen. */
-  function showScreenInApp(target, { reason } = {}) {
+  function showScreenInApp(target, { reason, back = false } = {}) {
     const r = (target && target.ref) || {};
+    if (target.kind === 'camera') {
+      // Optics again, on "bring it back" or on a phone; a camera screen that is just closed leaves the
+      // camera off (closing it is how the owner turns that camera off).
+      if ((reason === 'inapp' || back) && opticsAvailable()) openOpticsScreen({ voice: !!voiceApi });
+      return;
+    }
     if (target.kind === 'hologram' || target.kind === 'blueprint') {
       const at = findSegment(r.segmentId);
       if (at) openVisualSegment(at.turn, at.seg);
@@ -520,6 +542,8 @@ export async function startApp(rootEl) {
         getLibraryItem: (id) => lib.get(id),
         snapshot: (spec, size) => renderHologramImage(spec, { ...size, type: 'image/png' }),
         toast: (msg, opts) => toast(msg, opts),
+        // A camera on another screen lights the OPTICS pill here (one tap turns it off).
+        onChange: () => updateCore(),
       }),
     null,
   );
@@ -606,6 +630,12 @@ export async function startApp(rootEl) {
   function computeCore() {
     if (state.listening) return ['listening', 'Listening…'];
     if (state.speaking) return ['speaking', 'Speaking…'];
+    // Optics (the camera): Watch, a Look being answered (a turn of the open conversation), the live camera.
+    if (isOpticsOpen()) {
+      if (opticsLive.watch) return ['watching', 'Watching'];
+      if (state.conv && state.runs.has(state.conv.id)) return ['analyzing', 'Analyzing…'];
+      if (opticsLive.camera) return ['optics', 'Optics live'];
+    }
     if (state.runs.size) {
       const { anyMission, n } = activeMissionAgents();
       if (anyMission) return ['working', n ? `Working · ${n} agent${n === 1 ? '' : 's'}` : 'Working…'];
@@ -613,11 +643,20 @@ export async function startApp(rootEl) {
     }
     if (!state.online) return ['offline', 'Offline'];
     if (Date.now() < state.errorUntil) return ['error', 'Check reply'];
+    if (cameraOnScreen()) return ['optics', 'Optics live']; // the camera on another screen (Screens)
     return ['idle', 'Online'];
   }
 
+  /** A screen opened from here shows the live camera (another monitor, a floating panel, a window). */
+  function cameraOnScreen() {
+    return !!(screensCtl && safe(() => screensCtl.list().some((x) => x.kind === 'camera'), false));
+  }
+
+  // Presence's state words ANALYZING and WATCHING are the cores' thinking and optics.
+  const CORE_OF = { analyzing: 'thinking', watching: 'optics' };
   const updateCore = raf(() => {
-    const [coreState] = computeCore();
+    const [wordState] = computeCore();
+    const coreState = CORE_OF[wordState] || wordState;
     const { n } = activeMissionAgents();
     const turns = [];
     const titles = [];
@@ -625,12 +664,28 @@ export async function startApp(rootEl) {
       if (entry.run && entry.run.turn) turns.push(entry.run.turn);
       titles.push(entry.conv && typeof entry.conv.title === 'string' ? entry.conv.title : '');
     }
-    presence.update({ coreState, agents: n, listening: !!state.listening, speaking: !!state.speaking, online: state.online, convId: state.conv ? state.conv.id : null, turns, titles });
+    // The OPTICS pill and beads: Optics' live camera, or the camera on another screen (Screens).
+    const cameraScreen = cameraOnScreen();
+    const watchLeftMs = opticsLive.watchEndsAt ? Math.max(0, opticsLive.watchEndsAt - Date.now()) : null;
+    presence.update({ coreState: wordState, agents: n, listening: !!state.listening, speaking: !!state.speaking, online: state.online, convId: state.conv ? state.conv.id : null, turns, titles, optics: opticsLive.camera || cameraScreen, watchLeftMs });
     const word = presence.word();
     header.setState(coreState, word.word, word.tone);
     chat.setCoreState(coreState);
     root.dataset.core = coreState;
   });
+
+  // Optics' live state (deps.onLiveChange): the camera, and Watch with its end (the state word and the
+  // WATCH pill count it down once a second).
+  const opticsLive = { camera: false, watch: false, watchEndsAt: null };
+  let watchTicker = 0;
+  function onOpticsLive({ camera, watch, watchEndsAt } = {}) {
+    opticsLive.camera = !!camera;
+    opticsLive.watch = !!watch;
+    opticsLive.watchEndsAt = opticsLive.watch && Number.isFinite(watchEndsAt) ? watchEndsAt : null;
+    clearInterval(watchTicker);
+    watchTicker = opticsLive.watchEndsAt ? setInterval(() => updateCore(), 1000) : 0;
+    updateCore();
+  }
 
   // ---- Presence data and actions ----------------------------------------------------------------
   /** Today's spend: what Records logged today plus the replies still running (USD). */
@@ -664,15 +719,16 @@ export async function startApp(rootEl) {
     return ok;
   }
   /**
-   * Look: the live camera (Optics, SPEC 2.4.9) when this build has it; otherwise the system
-   * camera, which is also Optics' fallback when the camera is missing or denied.
+   * Look: the live camera (Optics) where it can run; otherwise (the demo, no camera API) the system
+   * camera, which is also Optics' fallback when the camera is missing or denied. Call from the tap.
    */
   function look() {
-    if (typeof window.__jarvisOptics === 'function') {
-      safe(() => window.__jarvisOptics());
-      return;
-    }
+    if (opticsAvailable() && openOpticsScreen()) return;
     composer.takePhoto();
+  }
+  /** Optics can run here: not the demo, and a camera API (getUserMedia in a secure context). */
+  function opticsAvailable() {
+    return !state.demo && safe(() => cameraSupported(), false);
   }
 
   // ---- banners ------------------------------------------------------------------------------
@@ -1279,8 +1335,14 @@ export async function startApp(rootEl) {
       sounds,
       wakeLock: { keepAwake: () => keepAwake('optics'), allowSleep: () => allowSleep('optics') },
       // The system camera (a photo attachment) when the live camera is blocked or missing.
-      fallbackPhoto: state.layout === 'phone' ? () => composer.openCamera() : null,
+      fallbackPhoto: state.layout === 'phone' ? () => composer.takePhoto() : null,
       watchOptions: devOpticsOptions(),
+      // Presence: the state word (OPTICS LIVE, ANALYZING, WATCHING m:ss), the OPTICS and WATCH pills
+      // and the cores' OPTICS bead; a Look's capture flares the home's core.
+      onLiveChange: (live) => onOpticsLive(live),
+      onCapture: () => presence.cue('capture'),
+      // "Put the camera on my other screen", typed or said in Optics (Screens acts on it at once).
+      screenCommand: (text, { spoken = false } = {}) => !!screenCommand(text, null, spoken ? 'voice' : 'typed'),
       onClose: ({ cameraOff } = {}) => {
         if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
         if (!chat.isEmpty()) chat.scrollToBottom(false);
@@ -2844,11 +2906,7 @@ export async function startApp(rootEl) {
   root.dataset.ready = 'true';
   root.setAttribute('aria-busy', 'false');
   // ?optics=1 opens Optics at start (a bookmark on the Mac; tests). Phones open it from a tap.
-  if (!state.demo && params.get('optics') === '1' && safe(() => cameraSupported(), false)) setTimeout(() => openOpticsScreen(), 0);
-  // The v7 home's Look key (the shell half's Presence look()) opens Optics through this hook when
-  // the build has it. Not set without a live camera (demo, no camera API): the key then uses the
-  // system camera, as before.
-  if (!state.demo && safe(() => cameraSupported(), false)) window.__jarvisOptics = () => openOpticsScreen();
+  if (params.get('optics') === '1' && opticsAvailable()) setTimeout(() => openOpticsScreen(), 0);
 
   // Presence: the boot sequence on the home screen (once a session by default), then the scan for
   // interrupted replies in recent conversations (Needs-you).

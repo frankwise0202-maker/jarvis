@@ -21,12 +21,15 @@
 //           looking at?" is a Look, "flip", "close", "tell me more", "hologram of this", "what's
 //           this part?"; the mic button is Voice Mode's.
 //
-//   openOptics(deps) -> { close(), el, command(text) }   isOpticsOpen()   currentOptics()
+//   openOptics(deps) -> { close(), el, command(text), stopWatch() }   isOpticsOpen()   currentOptics()
 //   opticsCameraBridge (engine deps.camera)
 //   deps: { look({ text, frame }) -> Promise<{ run } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
 //           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt }), onClose?(), watchOptions?, review?,
+//           onCapture?({ source }) (a frame was taken: Presence flares the core),
+//           screenCommand?(text, { spoken }) -> true when Screens took the words ("put the camera on
+//           my other screen"), asked first for what is typed or said here,
 //           cameraChoice?: { get() -> { id, label } | null, set({ id, label }) },
 //           hologram?({ subject, frameId }) -> { run } | { error }, canHologram?() -> boolean,
 //           hologramEstimate?() -> usd, openHologram?(run, segment),
@@ -191,7 +194,9 @@ export function openOptics(deps = {}) {
   // ---- DOM ----------------------------------------------------------------------------------
   const video = h('video', { class: 'optics-video', attrs: { 'data-testid': 'optics-video', 'aria-hidden': 'true' } });
   const frozenHost = h('div', { class: 'optics-frozen', attrs: { 'data-testid': 'optics-frozen', 'aria-hidden': 'true' } });
-  const brackets = h('div', { class: 'optics-brackets', attrs: { 'aria-hidden': 'true' } }, h('i'), h('i'), h('i'), h('i'));
+  // The HUD viewport frame shared with the rest of the look (hud.css .hud-viewport): its brackets in
+  // the theme's --accent-2.
+  const brackets = h('div', { class: 'optics-brackets hud-viewport', attrs: { 'aria-hidden': 'true' } });
   const reticle = h(
     'svg',
     { class: 'optics-reticle', attrs: { viewBox: '0 0 72 72', width: '72', height: '72', 'aria-hidden': 'true' } },
@@ -684,9 +689,18 @@ export function openOptics(deps = {}) {
   // ---- LOOK ---------------------------------------------------------------------------------------
   function safeCue(name) {
     try {
-      if (deps.sounds && !deps.sounds.cue(name) && name === 'optics') deps.sounds.cue('tap');
+      if (deps.sounds) deps.sounds.cue(name);
     } catch {
       /* sounds are optional */
+    }
+  }
+
+  /** A frame was taken (a Look, the screen, or Jarvis's look_through_camera): the core's scanner pass. */
+  function captured(source) {
+    try {
+      if (deps.onCapture) deps.onCapture({ source });
+    } catch {
+      /* optional */
     }
   }
 
@@ -788,6 +802,7 @@ export function openOptics(deps = {}) {
   }
 
   async function sendFrame(frame, question) {
+    captured(frame.source);
     freezeWith(frame, question || 'What am I looking at?');
     askInput.value = '';
     setMode('frozen');
@@ -1013,10 +1028,23 @@ export function openOptics(deps = {}) {
     releaseCanvas(schematic);
   }
 
+  /** Screens takes "put the camera on my other screen" first (it acts at once, no Look). */
+  function screenWords(text, spoken) {
+    try {
+      return !!(text && deps.screenCommand && deps.screenCommand(text, { spoken }));
+    } catch {
+      return false;
+    }
+  }
+
   function onAskKey(e) {
     if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
     const q = askInput.value.trim();
+    if (screenWords(q, false)) {
+      askInput.value = '';
+      return;
+    }
     if (frozen && (mode === 'frozen' || mode === 'review')) {
       if (!q) return;
       askInput.value = '';
@@ -1438,8 +1466,13 @@ export function openOptics(deps = {}) {
       },
       onFinal: (t) => {
         askInput.value = t;
-        // Spoken words: an Optics command first ("flip", "hologram of this", "tell me more"), else
-        // a question that goes straight out: a Look when live, a follow-up when frozen.
+        // Spoken words: a screen command or an Optics command first ("flip", "hologram of this",
+        // "tell me more"), else a question that goes straight out: a Look when live, a follow-up
+        // when frozen.
+        if (screenWords(t.trim(), true)) {
+          askInput.value = '';
+          return;
+        }
         const res = command(t);
         if (res && res.handled) {
           askInput.value = '';
@@ -1510,6 +1543,7 @@ export function openOptics(deps = {}) {
     safeCue('optics');
     try {
       const frame = await camera.capture({ maxEdge: OPTICS_LIMITS.lookMaxEdge });
+      captured(frame.source);
       const out = { data: frame.data, thumb: frame.preview, source: frame.source };
       releaseCanvas(frame.canvas);
       announce('Jarvis took a look.');
@@ -1657,6 +1691,8 @@ export function openOptics(deps = {}) {
     command: (text) => command(text),
     /** Voice Mode's listening state for the mic button (opened over Voice Mode). */
     setVoice: (info) => setVoice(info),
+    /** Watch off (the WATCH pill in the header); the camera stays on. */
+    stopWatch: () => stopWatch('Watch stopped.'),
     /** Opened over Voice Mode (its turns are spoken, its mic is Voice Mode's). */
     overVoice: !!deps.voice,
     /** deps.autoLook: a Promise of the Look's outcome ({ run, frameId } | { error }), else null. */

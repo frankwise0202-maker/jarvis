@@ -12,8 +12,8 @@
 //   answer     data { markdown, status, report }   the answer or research report (Markdown, live)
 //   photo      data { src, title, credit }
 //   link       data { url, title }      a web page can't live inside Jarvis: a card that opens it
-//   camera     data {}                  Optics' live view, when Optics registers it
-//              (registerScreenPanel('camera', factory)); until then a placeholder
+//   camera     data {}                  the live camera (src/ui/optics/screen-camera.js): the camera
+//              chosen last in Optics, LIVE while it runs, off when its window is hidden
 //
 // `win` is the window the panel lives in (a floating panel is another window): frames, timers and
 // window.open come from it. deps (all optional): loadHologram() -> the renderer module,
@@ -25,6 +25,7 @@ import { icon } from '../icons.js';
 import { renderMarkdown } from '../../lib/markdown.js';
 import { createMissionControl } from '../hud/mission-control.js';
 import { hostOf } from '../../lib/screen-targets.js';
+import { createCameraScreenPanel } from '../optics/screen-camera.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const txt = (v) => (typeof v === 'string' ? v : '');
@@ -37,7 +38,7 @@ const safe = (fn, fallback) => {
 };
 
 const registry = new Map();
-/** Optics (or a later module) provides a live panel for a kind: factory(ctx) -> panel. */
+/** A module can provide (or replace) the panel of a kind: factory(ctx) -> panel. */
 export function registerScreenPanel(kind, factory) {
   if (typeof factory === 'function') registry.set(kind, factory);
   else registry.delete(kind);
@@ -485,7 +486,7 @@ function blueprintPanel({ win, frame, compact, deps }) {
   };
 }
 
-// ---- photo, link, camera ---------------------------------------------------------------------------
+// ---- photo, link (the camera: src/ui/optics/screen-camera.js) --------------------------------------
 
 function photoPanel({ frame }) {
   const img = h('img', { class: 'scr-photo__img', alt: '', attrs: { referrerpolicy: 'no-referrer', decoding: 'async', 'data-testid': 'screen-photo-img' } });
@@ -581,17 +582,6 @@ function linkPanel({ win, frame, compact }) {
   };
 }
 
-function cameraPlaceholder({ frame }) {
-  const el = h(
-    'div',
-    { class: 'scr-optics', attrs: { 'data-testid': 'screen-camera', 'data-state': 'placeholder' } },
-    h('div', { class: 'scr-optics__reticle', attrs: { 'aria-hidden': 'true' } }, h('i'), h('i'), h('i'), h('i')),
-    message('Optics isn’t installed yet.', 'When it is, the live camera view shows here, with Jarvis’s labels pinned on it.'),
-  );
-  frame.setStatus('STANDBY', 'idle');
-  return { el, update() {}, getState: () => ({}), destroy() {} };
-}
-
 /** The panel for `kind` (see the header). ctx: { win, frame, compact, deps }. */
 export function createScreenPanel(kind, ctx) {
   const c = { win: window, compact: false, deps: {}, ...ctx };
@@ -617,7 +607,7 @@ export function createScreenPanel(kind, ctx) {
     case 'link':
       return linkPanel(c);
     case 'camera':
-      return cameraPlaceholder(c);
+      return createCameraScreenPanel(c);
     default: {
       const el = message('Nothing to show here.');
       return { el, update() {}, getState: () => ({}), destroy() {} };

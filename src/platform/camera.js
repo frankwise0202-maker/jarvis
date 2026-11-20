@@ -2,7 +2,10 @@
 //
 //   cameraSupported() / screenLookSupported() -> boolean
 //   cameraPermission() -> Promise<'granted'|'denied'|'prompt'|'unknown'>
-//   createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch }) -> camera
+//   createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch, win }) -> camera
+//     win: the window the preview is shown in (default this one): its hiding releases the camera.
+//     A floating panel (Document Picture-in-Picture) is another window, visible while the app's
+//     own tab may be hidden (Screens).
 //     camera.start({ facing?, deviceId?, label? }) -> Promise<{ ok, error?: CameraError }>   call from
 //                                                   a tap (iOS); with no arguments: the remembered
 //                                                   camera (preferred()), else the default
@@ -224,8 +227,9 @@ function platformOs() {
  * @param {() => boolean} [o.allowAutoSwitch]  false while switching would get in the way (Watch)
  * @param {string} [o.os]                  parseUserAgent's os (tests); phones flip front/back
  */
-export function createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch, os } = {}) {
+export function createCamera({ video, onState, onDevices, onSwitch, preferred, allowAutoSwitch, os, win } = {}) {
   if (!video) throw new TypeError('createCamera needs a <video>');
+  const view = win && win.document ? win : window; // where the preview is seen (auto-off on hiding)
   // iOS: inline playback (no full-screen takeover) and muted autoplay.
   video.setAttribute('playsinline', '');
   video.setAttribute('webkit-playsinline', '');
@@ -295,7 +299,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
 
   // Auto-off: never capture in the background (released well within 500 ms of hiding).
   const onHidden = () => {
-    if (stream && document.visibilityState === 'hidden') pause('hidden');
+    if (stream && view.document.visibilityState === 'hidden') pause('hidden');
   };
   const onPageHide = () => {
     if (stream) pause('hidden');
@@ -305,9 +309,9 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     target.addEventListener(type, fn);
     listeners.push(() => target.removeEventListener(type, fn));
   };
-  listen(document, 'visibilitychange', onHidden);
-  listen(window, 'pagehide', onPageHide);
-  listen(document, 'freeze', onPageHide);
+  listen(view.document, 'visibilitychange', onHidden);
+  listen(view, 'pagehide', onPageHide);
+  listen(view.document, 'freeze', onPageHide);
   // Hot-plug: a camera plugged in or out (bursts of events: refresh once they settle).
   listen(md(), 'devicechange', () => {
     clearTimeout(refreshTimer);

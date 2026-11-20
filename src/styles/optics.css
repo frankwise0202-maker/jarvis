@@ -39,13 +39,9 @@
 .optics[data-frozen='true'] .optics-video { visibility: hidden; }
 .optics[data-state='review'] .optics-video { visibility: hidden; }
 
-/* Static HUD overlay: corner brackets and a center reticle (never animated). */
-.optics-brackets { position: absolute; inset: 16px; pointer-events: none; }
-.optics-brackets i { position: absolute; width: 28px; height: 28px; border-color: var(--accent-2); border-style: solid; border-width: 0; opacity: 0.7; }
-.optics-brackets i:nth-child(1) { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; }
-.optics-brackets i:nth-child(2) { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; }
-.optics-brackets i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; }
-.optics-brackets i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; }
+/* Static HUD overlay: the shared viewport brackets (hud.css .hud-viewport: 28px arms in the theme's
+   --accent-2, 2px here over live video) and a center reticle (never animated). */
+.optics .optics-brackets { position: absolute; display: block; inset: 16px; pointer-events: none; --frame-inset: 0px; --frame-weight: 2px; }
 .optics-stage .optics-brackets { top: calc(var(--top-h) + 4px); bottom: calc(var(--deck-h) + 12px); }
 .optics[data-frozen='true'] .optics-stage .optics-brackets { top: 10px; bottom: 10px; inset-inline: 10px; }
 .optics-reticle { position: absolute; left: 50%; top: calc((var(--top-h) + 100% - var(--deck-h)) / 2); width: 72px; height: 72px; margin: -36px 0 0 -36px; color: var(--accent-2); opacity: 0.55; pointer-events: none; }

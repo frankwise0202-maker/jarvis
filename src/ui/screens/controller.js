@@ -31,6 +31,7 @@
 //   getLibraryItem(id)                 a saved hologram or blueprint
 //   snapshot(spec, { width, height })  a hologram image (the floating panel's WebGL fallback)
 //   toast(message, opts)               optional
+//   onChange()                         optional: a screen opened, closed or shows something else
 
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
@@ -163,6 +164,9 @@ export function createScreens(deps = {}) {
   };
 
   const newId = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const changed = () => {
+    if (typeof deps.onChange === 'function') safe(() => deps.onChange());
+  };
   const toast = (msg, opts) => {
     if (msg && typeof deps.toast === 'function') safe(() => deps.toast(msg, opts));
   };
@@ -275,6 +279,7 @@ export function createScreens(deps = {}) {
     // view: { frame, panel } rendered here (a floating panel, or full screen in the app on a phone)
     const entry = { id: fields.id || newId(), mode: 'window', label: 'WINDOW', number: null, win: null, kind: 'answer', ref: {}, title: '', report: false, takenFrom: null, view: null, overlay: null, lastPush: 0, pushTimer: 0, ...fields };
     screens.set(entry.id, entry);
+    changed();
     return entry;
   }
 
@@ -355,6 +360,7 @@ export function createScreens(deps = {}) {
     else if (entry.mode === 'inapp') mountInapp(entry);
     else post({ t: 'show', screen: entry.id, kind: entry.kind, ref: entry.kind === 'photo' ? { title: entry.ref.title } : entry.ref, title: entry.title, report: entry.report });
     schedulePush(entry, true);
+    changed();
   }
 
   async function openWindow(target, plan, cmd, gesture) {
@@ -521,8 +527,9 @@ export function createScreens(deps = {}) {
     }
     const plan = planPlacement({ where: cmd.where, kind: target.kind, env, permission, details, currentScreen: window.screen, screen: cmd.screen, target: cmd.target, fullscreen: !!cmd.fullscreen });
     if (plan.mode === 'inapp') {
-      // The app's own full-screen viewers where it has them; the screen frame for the rest.
-      if (target.kind === 'hologram' || target.kind === 'blueprint' || target.kind === 'mission') {
+      // The app's own full-screen viewers where it has them (the camera: Optics); the screen frame
+      // for the rest.
+      if (target.kind === 'hologram' || target.kind === 'blueprint' || target.kind === 'mission' || target.kind === 'camera') {
         safe(() => deps.showInApp(target, { reason: 'inapp' }));
         return outcome('opened', target, { mode: 'inapp', label: 'SCREEN', note: plan.note });
       }
@@ -671,6 +678,7 @@ export function createScreens(deps = {}) {
   function gone(entry, { back }) {
     if (!screens.has(entry.id)) return;
     screens.delete(entry.id);
+    changed();
     clearTimeout(entry.pushTimer);
     if (entry.view) {
       safe(() => entry.view.panel.destroy());
@@ -824,6 +832,12 @@ export function createScreens(deps = {}) {
     },
     isOpen: () => screens.size > 0,
     closeAll: () => closeScreens({}),
+    /** Closes every screen showing that kind (the OPTICS pill stops a camera on another screen). */
+    closeKind(kind) {
+      const list = [...screens.values()].filter((s) => s.kind === kind);
+      for (const s of list) closeEntry(s);
+      return list.length;
+    },
     dismissPrompt,
     pipSupported: () => pipSupported(window),
   };

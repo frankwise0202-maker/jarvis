@@ -306,7 +306,8 @@ export function resolveScreenTarget({ what = 'this', ordinal = null, open = null
     const known = turnsOf(conv).flatMap((t) => linksOf(t.role === 'user' ? txt(t.text) : allTextOf(t))).find((l) => l.url === href);
     return { kind: 'link', ref: { url: href, title: known ? known.title : hostOf(href) }, title: known ? known.title : hostOf(href), live: false };
   }
-  if (want === 'camera') return { kind: 'camera', ref: {}, title: 'Optics', live: true };
+  // The camera: Optics' live view. Moved out of an open Optics, Optics closes there (one camera view).
+  if (want === 'camera') return { kind: 'camera', ref: {}, title: 'Optics', live: true, ...(isObj(open) && open.kind === 'camera' ? { fromViewer: true } : {}) };
   if (open && isObj(open) && open.kind && (want === 'this' || want === open.kind)) {
     return { kind: open.kind, ref: isObj(open.ref) ? open.ref : {}, title: oneLine(open.title || '', 80), live: !!open.live, fromViewer: true };
   }

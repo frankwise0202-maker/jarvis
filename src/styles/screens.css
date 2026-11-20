@@ -263,6 +263,16 @@
   box-shadow: 0 0 8px var(--accent);
   animation: scr-breath 1s var(--ease-breath, ease-in-out) infinite alternate;
 }
+.scr__status[data-tone='rec'] {
+  /* A camera capturing (Optics on a screen): the privacy color, like the LIVE pills. */
+  border-color: color-mix(in srgb, var(--live) 50%, transparent);
+  color: var(--live);
+}
+.scr__status[data-tone='rec'] .scr__status-dot {
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live);
+  animation: scr-breath 1s var(--ease-breath, ease-in-out) infinite alternate;
+}
 .scr__status[data-tone='done'] {
   color: var(--ok);
 }
@@ -525,7 +535,8 @@
   .scr--boot .scr__deck,
   .scr--scan .scr__scan,
   .scr[data-live='true'] .scr-glyph__dot,
-  .scr__status[data-tone='live'] .scr__status-dot {
+  .scr__status[data-tone='live'] .scr__status-dot,
+  .scr__status[data-tone='rec'] .scr__status-dot {
     animation: none !important;
   }
 }
@@ -1056,46 +1067,49 @@
   }
 }
 
-/* camera (Optics placeholder) */
-.scr-optics {
+/* camera (Optics on a screen: src/ui/optics/screen-camera.js) */
+.scr-camera {
   position: relative;
   display: grid;
+  min-height: 0;
+  padding: 14px var(--scr-pad-x) 12px;
+}
+.scr-camera__stage {
+  display: grid;
   place-items: center;
+  min-height: 0;
 }
-.scr-optics__reticle {
+.scr-camera__video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--line-2);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+/* A camera that faces the owner (a webcam, a phone's front camera) is previewed like a mirror. */
+.scr-camera[data-mirrored='true'] .scr-camera__video {
+  transform: scaleX(-1);
+}
+.scr-camera:not([data-state='live']) .scr-camera__video {
+  visibility: hidden;
+}
+.scr-camera__card {
   position: absolute;
-  inset: 18% 24%;
-  pointer-events: none;
+  inset: 0;
 }
-.scr-optics__reticle i {
-  position: absolute;
-  width: 34px;
-  height: 34px;
-  border: 0 solid var(--line-3);
+.scr-camera__actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 6px;
 }
-.scr-optics__reticle i:nth-child(1) {
-  top: 0;
-  left: 0;
-  border-top-width: 1px;
-  border-left-width: 1px;
+.scr-camera--compact {
+  padding: 8px 10px;
 }
-.scr-optics__reticle i:nth-child(2) {
-  top: 0;
-  right: 0;
-  border-top-width: 1px;
-  border-right-width: 1px;
-}
-.scr-optics__reticle i:nth-child(3) {
-  bottom: 0;
-  left: 0;
-  border-bottom-width: 1px;
-  border-left-width: 1px;
-}
-.scr-optics__reticle i:nth-child(4) {
-  right: 0;
-  bottom: 0;
-  border-right-width: 1px;
-  border-bottom-width: 1px;
+.scr-camera__icon {
+  display: inline-grid;
+  place-items: center;
 }
 
 /* ---- in the app: a full-screen screen (phones) and the floating panel's own document ------------ */

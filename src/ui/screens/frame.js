@@ -203,13 +203,16 @@ export function createScreenFrame(opts = {}) {
       setText(detailSep, d ? '·' : '');
       setText(detailText, d);
     },
-    /** A state word like 'WORKING · 3 AGENTS' (tone: live | done | warn | error | idle), or '' to hide. */
+    /**
+     * A state word like 'WORKING · 3 AGENTS', or '' to hide. tone: live | rec | done | warn | error |
+     * idle ('rec': a camera capturing, in the privacy color --live).
+     */
     setStatus(word, tone = 'idle') {
       const w = String(word || '');
       status.hidden = !w;
       setText(statusText, w);
       status.dataset.tone = tone;
-      el.dataset.live = tone === 'live' ? 'true' : 'false';
+      el.dataset.live = tone === 'live' || tone === 'rec' ? 'true' : 'false';
     },
     setState(state) {
       el.dataset.state = state;

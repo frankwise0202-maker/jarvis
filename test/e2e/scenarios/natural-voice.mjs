@@ -123,13 +123,22 @@ export default [
         await t.waitFor(async () => (await audio(t)) > before, { timeout: 20000, message: 'the natural voice to play' });
         t.assert(!(await said(t)).some((s) => /All systems are operational/.test(s)), 'not the built-in voice');
       });
-      await t.step('Voice Mode: the reply is spoken by the natural voice (the router), with captions', async () => {
+      await t.step('Voice Mode: the reply is spoken by the natural voice (the router), with captions; the core\'s voice band follows its output', async () => {
         await t.page.keyboard.press('Escape');
         await t.waitFor(async () => (await t.count('settings-sheet')) === 0, { timeout: 5000, message: 'Settings to close' });
         const before = await audio(t);
+        // Watch for Voice Mode's hook: data-bands="output" while the natural voice's bands drive the core.
+        await t.page.evaluate(() => {
+          window.__bandsSeen = false;
+          new MutationObserver(() => {
+            if (document.querySelector('[data-testid="voice-mode"][data-bands="output"]')) window.__bandsSeen = true;
+          }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-bands'] });
+        });
         await voiceTurn(t);
         t.assert((await audio(t)) > before, 'the answer was played by the natural voice');
         t.assert((await said(t)).length === 0, `the built-in voice said nothing (${JSON.stringify(await said(t))})`);
+        t.assert(await t.page.evaluate(() => window.__bandsSeen), "the core's voice band followed the natural voice's output bands while it spoke");
+        t.assert((await t.page.locator(tid('voice-mode')).getAttribute('data-bands')) === null, 'and let go once it stopped');
         t.note(`${(await audio(t)) - before} natural-voice chunks in the spoken reply`);
       });
     },

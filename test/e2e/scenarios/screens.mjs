@@ -1,7 +1,8 @@
 // Screens (v7): "open this on my other screen", "float it", "open it in a window", "bring it back".
 //
 //   screens-pages      screen mode (?screen=<kind>) renders each kind in the HUD frame: hologram
-//                      (WebGL), blueprint, Mission Control, report, photo, link, camera placeholder
+//                      (WebGL), blueprint, Mission Control, report, photo, link, the camera (none here;
+//                      the live camera on a screen is optics-screens)
 //   screens-sync       a second page follows a live mission and a streaming answer (BroadcastChannel)
 //   screens-pip        the REAL Document Picture-in-Picture of headless Chromium: the floating HUD
 //                      panel with the app's stylesheets copied in and the hologram drawn by WebGL in
@@ -103,9 +104,9 @@ export function installScreenStubs(opts) {
 
 // ---- helpers ------------------------------------------------------------------------------------
 
-const screenAttr = (page, name, testid = 'screen') => page.locator(tid(testid)).first().getAttribute(`data-${name}`);
+export const screenAttr = (page, name, testid = 'screen') => page.locator(tid(testid)).first().getAttribute(`data-${name}`);
 
-async function waitAttr(t, page, testid, name, ok, { timeout = 30000, label } = {}) {
+export async function waitAttr(t, page, testid, name, ok, { timeout = 30000, label } = {}) {
   return t.waitFor(async () => {
     const v = await screenAttr(page, name, testid);
     return (typeof ok === 'function' ? ok(v) : v === ok) ? v || true : null;
@@ -136,7 +137,7 @@ async function appIds(page) {
  * Type words in the composer and send them (Send, or Enter while Jarvis is working and Send is a
  * Stop button): a screen command is acted on here, never sent to Jarvis.
  */
-async function typeCommand(t, text, page = t.page) {
+export async function typeCommand(t, text, page = t.page) {
   const before = await t.count('turn-jarvis', undefined, page);
   const leadBefore = t.requests('lead').length;
   const input = await t.visible('composer-input', { page });
@@ -151,7 +152,7 @@ async function typeCommand(t, text, page = t.page) {
 }
 
 /** Run `fn` and return the page it opens (a screen window or the floating window). */
-async function opensPage(t, fn, { timeout = 15000 } = {}) {
+export async function opensPage(t, fn, { timeout = 15000 } = {}) {
   const context = t.page.context();
   const [popup] = await Promise.all([context.waitForEvent('page', { timeout }), fn()]);
   t.attachPageGuards(popup);
@@ -159,7 +160,7 @@ async function opensPage(t, fn, { timeout = 15000 } = {}) {
   return popup;
 }
 
-async function toastText(t) {
+export async function toastText(t) {
   return (await t.page.locator('.toast-text').allTextContents()).join(' | ');
 }
 
@@ -326,7 +327,7 @@ export default [
         await checkFrameContrast(t, page, 'report screen');
       });
 
-      await t.step('photo, link card, camera placeholder', async () => {
+      await t.step('photo, link card, the camera (no camera in this browser: said so)', async () => {
         await open(`screen=photo&src=${encodeURIComponent(WIKI_PHOTO)}&title=Camry%20Hybrid&w=window&s=pages5`);
         await page.waitForFunction(() => document.querySelector('[data-testid="screen-photo-img"]')?.naturalWidth > 0, null, { timeout: 15000 });
         t.assert((await header()).eyebrow === 'WINDOW · PHOTO', 'eyebrow');
@@ -336,7 +337,11 @@ export default [
         await t.screenshot('link', page);
         await checkFrameContrast(t, page, 'link screen');
         await open('screen=camera&w=other&n=2&s=pages7');
-        t.assert((await screenAttr(page, 'state', 'screen-camera')) === 'placeholder', 'Optics placeholder until Optics registers its panel');
+        // This browser has no camera (the fake camera is the Optics scenarios'): the panel says so and
+        // offers Try again. The live camera on a screen is optics-screens.
+        await waitAttr(t, page, 'screen-camera', 'state', 'error', { timeout: 10000, label: 'the camera screen without a camera' });
+        t.assert((await t.text(page.locator(tid('screen-status')))) === 'NO CAMERA', 'the status says so');
+        t.assert(await page.locator(tid('screen-camera-start')).isVisible(), 'Try again');
         await checkFrameContrast(t, page, 'camera screen');
         // A link that is not http(s) never reaches the page.
         await page.goto(`${t.url}/?screen=link&url=${encodeURIComponent('javascript:alert(1)')}&s=pages8`, { waitUntil: 'domcontentloaded' });

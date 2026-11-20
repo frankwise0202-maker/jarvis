@@ -86,11 +86,11 @@ const CONV = {
 
 /** A page with the controller wired to a fake app; window.__app records what the app was asked. */
 async function page(opts = {}) {
-  const p = await h.newPage({ init: stubs, initArg: opts });
+  const p = await h.newPage({ init: stubs, initArg: opts, contextOptions: opts.contextOptions });
   await p.evaluate((conv) => {
     // Links point at this test server, so opening one never leaves the machine.
     conv.turns[3].segments[0].text = conv.turns[3].segments[0].text.replace('https://example.com/ev9', `${location.origin}/ev9-review`);
-    window.__app = { shownInApp: [], closedInApp: [], toasts: [] };
+    window.__app = { shownInApp: [], closedInApp: [], toasts: [], changes: 0 };
     window.__open = null; // the in-app viewer, for "this"
     window.ctl = window.__mods.ctl.createScreens({
       getConversation: () => conv,
@@ -100,6 +100,7 @@ async function page(opts = {}) {
       showInApp: (t, o) => window.__app.shownInApp.push({ kind: t.kind, reason: o && o.reason, back: !!(o && o.back) }),
       getLibraryItem: async () => null,
       toast: (m) => window.__app.toasts.push(m),
+      onChange: () => (window.__app.changes += 1),
     });
     // Run a command "inside a click" (gesture) or not (voice): resolves to the outcome.
     window.say = async (text, { gesture = false, source = 'typed' } = {}) => {
@@ -266,4 +267,44 @@ test('links open as their own page, without a handle on Jarvis; the tool never n
   // The tool with nothing to show: a clear message for Jarvis.
   const n = await p.evaluate(async () => (await window.ctl.openFromTool({ what: 'mission', where: 'beside' })).message);
   assert.match(n, /no mission in this conversation/);
+});
+
+test('the camera: "this" while Optics is open moves the camera out (Optics closes there); the OPTICS pill closes camera screens; the app hears of each change', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    window.__open = { kind: 'camera', ref: {}, title: 'Optics', live: true };
+  });
+  const o = await p.evaluate(() => window.say('put this on my other screen', { gesture: true }));
+  assert.deepEqual([o.status, o.mode, o.kind], ['opened', 'screen', 'camera']);
+  assert.deepEqual(await p.evaluate(() => window.__app.closedInApp), ['camera'], 'Optics closed here: one view holds the camera');
+  assert.equal(new URL(await p.evaluate(() => window.__opens.at(-1).url)).searchParams.get('screen'), 'camera');
+  const opened = await p.evaluate(() => window.__app.changes);
+  assert.ok(opened >= 1, 'the app hears of the new screen (it lights the OPTICS pill)');
+  // The OPTICS pill turns the camera off: every camera screen closes, and none is handed back "back"
+  // (the app leaves the camera off; only "bring it back" opens Optics again).
+  assert.equal(await p.evaluate(() => window.ctl.closeKind('camera')), 1);
+  assert.deepEqual(await p.evaluate(() => window.ctl.list()), []);
+  assert.ok((await p.evaluate(() => window.__app.changes)) > opened, 'and of its closing');
+  assert.deepEqual(await p.evaluate(() => window.__app.shownInApp), [{ kind: 'camera', reason: 'handback', back: false }]);
+  assert.equal(await p.evaluate(() => window.ctl.closeKind('camera')), 0, 'nothing left to close');
+  // Named while Optics is open: the same move.
+  await p.evaluate(() => {
+    window.__app.closedInApp = [];
+  });
+  const o2 = await p.evaluate(() => window.say('float the camera', { gesture: true }));
+  assert.deepEqual([o2.status, o2.mode, o2.kind], ['opened', 'pip', 'camera']);
+  assert.deepEqual(await p.evaluate(() => window.__app.closedInApp), ['camera']);
+  const back = await p.evaluate(() => window.say('bring it back', { source: 'voice' }));
+  assert.deepEqual([back.status, back.count], ['closed', 1]);
+  assert.deepEqual((await p.evaluate(() => window.__app.shownInApp)).at(-1), { kind: 'camera', reason: 'handback', back: true }, '"bring it back": Optics again');
+});
+
+test('a phone: the camera is Optics itself, shown by the app (never a screen frame)', async () => {
+  const iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  const p = await page({ contextOptions: { userAgent: iphone, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+  const o = await p.evaluate(() => window.say('put the camera on my other screen', { gesture: true }));
+  assert.deepEqual([o.status, o.mode, o.kind], ['opened', 'inapp', 'camera']);
+  assert.deepEqual(await p.evaluate(() => window.__app.shownInApp), [{ kind: 'camera', reason: 'inapp', back: false }]);
+  assert.deepEqual(await p.evaluate(() => window.ctl.list()), [], 'no screen of its own in the app');
+  assert.equal(await p.evaluate(() => window.__opens.length), 0, 'no window');
 });
