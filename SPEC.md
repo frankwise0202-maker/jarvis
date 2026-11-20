@@ -1868,6 +1868,10 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
   `pin_labels`, with turns, nothing running) starts a new chat first, as Voice Mode does for pre-hologram chats; the
   old chat stays in History, and Optics shows "New chat: labels need one (this chat is from before the camera)."
   (Voice Mode notes it under its caption). Follow-ups then go to the new chat.
+  A Look while this chat is busy (a reply or a mission running here or in another window; `deps.lookBlocked`) takes
+  no frame: a card (`data-kind="busy"`) offers **Look in a new chat** (`optics-look-new-chat`: the Look goes to a new
+  chat, the other keeps running, Optics says so) or **Wait** (`optics-look-wait`). The screen look does the same.
+  Over Voice Mode, Voice Mode's own "one moment" applies instead.
 - **Tool versions** are §17.1. The definitions are `pinLabelsTool()` and `lookThroughCameraTool()` in
   `src/lib/optics-tools.js` (re-exported by `src/lib/optics.js`) and must never be edited: `src/engine/prompts.js`
   builds lead tools V5 (with `open_screen`) from the same file, and new conversations freeze V5 with the system
@@ -2018,6 +2022,8 @@ about 16¢.
     chip whole on screen with a pin tapped);
   - `optics-old-chat` (a Look in a v6 chat reopened at launch goes to a new chat with the V5 tools: five labels, the
     notice, the old chat kept);
+  - `optics-look-busy` (a Look while a mission runs here: the busy card, not a frozen frame; Wait; Look in a new
+    chat, answered there with its labels);
   - `optics-viewfinder` (iPhone 13 portrait, a Safari tab and held sideways: 100% of the sent frame on screen and
     inside the brackets, sampled on a grid);
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at

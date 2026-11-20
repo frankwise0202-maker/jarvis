@@ -11,6 +11,8 @@
 //                    the background; shown again on a computer, it comes back by itself
 //   optics-landscape an iPhone held sideways: the frozen frame and a readable answer side by side
 //   optics-old-chat  a Look in a chat from before the camera goes to a new chat, with labels
+//   optics-look-busy a Look while a mission runs here: a card offers a new chat (or Wait), never a
+//                    frozen frame that can't be sent
 //   optics-viewfinder  phones: the live viewfinder shows the whole frame a Look sends, bracketed
 //                    (portrait, a Safari tab, held sideways)
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
@@ -547,6 +549,41 @@ export default [
       t.assert(!(await page.locator(tid('optics-look')).isDisabled()), 'LOOK is reachable');
       await shot(t, 'iphone13-viewfinder-sideways');
       await t.checkNoHorizontalOverflow('the sideways viewfinder');
+    },
+  },
+  {
+    name: 'optics-look-busy',
+    title: 'A Look while a mission runs in this chat: no frozen frame that can\'t be sent; "Look in a new chat" sends it there (the mission keeps going), or Wait',
+    device: 'iphone13',
+    timeout: 150000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      const mission = await t.send('[[swarm:4]] [[slow]] Compare the best robot vacuums for pet hair');
+      await page.waitForTimeout(1500);
+      await openFromComposer(t);
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await t.waitFor(async () => (await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'busy', { timeout: 5000, message: 'the busy card' });
+      t.assert((await page.locator(tid('optics')).getAttribute('data-frozen')) === 'false', 'no frozen frame that cannot be sent');
+      t.assert(/still answering in this chat/.test(await t.text(page.locator(tid('optics-card')))), 'it says why');
+      await shot(t, 'iphone13-look-busy');
+      await page.locator(tid('optics-look-wait')).click();
+      t.assert(await page.locator(tid('optics-card')).isHidden(), 'Wait: back to the live view');
+      await page.locator(tid('optics-look')).click();
+      await page.locator(tid('optics-look-new-chat')).click();
+      await waitAnswer(t);
+      const look = lastLook(t);
+      const opening = look.req.body.messages[0];
+      t.assert(Array.isArray(opening.content) && opening.content.some((b) => b.type === 'image'), 'the Look opened a new chat');
+      t.assert((await t.count('optics-pin')) === 5, 'with its labels');
+      t.assert(/New chat: the other one is still running/.test(await t.text(page.locator(tid('optics-notice')))), 'Optics says where it went');
+      await page.locator(tid('optics-live-pill')).click();
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      void mission;
     },
   },
   {

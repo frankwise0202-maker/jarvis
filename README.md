@@ -386,7 +386,9 @@ browser asks for permission.
   it can: objects, the brand or model when it's visible, text it can read, the parts of a machine.
   Each Look is part of your current conversation, so the chat keeps it too (tap it there to see
   the picture with its labels again). In a chat from before this update, a Look starts a new chat
-  so it can have labels (Optics says so); the old chat stays in History.
+  so it can have labels (Optics says so); the old chat stays in History. While Jarvis is still
+  working in this chat (a long research mission, say), **LOOK** offers **Look in a new chat**
+  (the mission keeps going) or **Wait**.
 - **Follow-ups.** Under the answer: **Tell me more**; **Hologram of this** (the picture turns into
   a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
   hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**

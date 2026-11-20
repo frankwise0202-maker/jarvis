@@ -1210,12 +1210,24 @@ export async function startApp(rootEl) {
     }
   }
 
-  function opticsProblem() {
+  function opticsProblem({ newChat = false } = {}) {
     if (!state.demo && !safe(getApiKey, '')) return 'Add your Anthropic API key first: close Optics, then open Settings → API key.';
     if (!state.online) return 'You’re offline. Reconnect and try again.';
+    if (newChat) return ''; // a new chat has nothing running
     if (currentRunning()) return 'Jarvis is still answering. Try again in a moment.';
     if (state.conv && runningElsewhere(state.conv.id)) return 'Jarvis is busy with this conversation in another window.';
     return '';
+  }
+
+  /**
+   * Before a Look is taken: is this chat busy (a reply or a mission still running, here or in another
+   * window)? Optics then offers the Look in a new chat instead of freezing a frame it can't send.
+   */
+  function opticsLookBlocked() {
+    if (state.demo || !state.conv) return null;
+    if (currentRunning()) return { code: 'busy', title: 'Jarvis is still answering in this chat', text: 'Look in a new chat now (this one keeps going), or wait until he’s done.' };
+    if (runningElsewhere(state.conv.id)) return { code: 'busy', title: 'This chat is busy in another window', text: 'Look in a new chat now, or wait until it’s done.' };
+    return null;
   }
 
   /** A Look's frame as a photo attachment (startTurn checks it), and its Optics record. */
@@ -1246,17 +1258,18 @@ export async function startApp(rootEl) {
   }
   const PRE_OPTICS_NOTE = 'New chat: labels need one (this chat is from before the camera).';
 
-  function lookFromOptics({ text, frame }) {
-    const problem = opticsProblem();
+  function lookFromOptics({ text, frame, newChat = false }) {
+    const problem = opticsProblem({ newChat });
     if (problem) return { error: problem };
     const { attachment, optics } = opticsAttachment(frame);
-    const moved = preOpticsChat();
-    if (moved) setConversation(null);
+    const old = !newChat && preOpticsChat();
+    if (newChat || old) setConversation(null);
     if (!send(text, 'quick', { attachments: [attachment], optics })) return { error: 'That look couldn’t be sent.' };
     const entry = state.conv && state.runs.get(state.conv.id);
     if (!entry) return { error: 'That look couldn’t be sent.' };
     const user = state.conv.turns[state.conv.turns.length - 2];
-    return { run: entry.run, frameId: user && user.optics ? user.optics.frameId : null, note: moved ? PRE_OPTICS_NOTE : '' };
+    const note = newChat ? 'New chat: the other one is still running (it’s in History).' : old ? PRE_OPTICS_NOTE : '';
+    return { run: entry.run, frameId: user && user.optics ? user.optics.frameId : null, note };
   }
 
   function askFromOptics({ text }) {
@@ -1360,6 +1373,7 @@ export async function startApp(rootEl) {
       getSettings,
       lookEstimate,
       look: lookFromOptics,
+      lookBlocked: opticsLookBlocked,
       ask: askFromOptics,
       // The camera the owner chose last on this device (deviceId and label; Settings are local).
       cameraChoice: {
@@ -1414,6 +1428,7 @@ export async function startApp(rootEl) {
       Object.assign(extra, {
         voice: { tap: () => safe(() => voiceApi && voiceApi.tap()) },
         look: lookViaVoice,
+        lookBlocked: null, // Voice Mode says when it is still on the last request
         ask: askViaVoice,
         hologram: askViaVoice,
         openHologram: () => null, // a Voice Mode reply's hologram is opened by Voice Mode (visuals.open)

@@ -26,6 +26,8 @@
 //   deps: { look({ text, frame }) -> Promise<{ run, frameId?, note? } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
+//           lookBlocked?() -> null | { code: 'busy', title, text }: the chat is busy, so LOOK offers
+//           "Look in a new chat" (look({ …, newChat: true })) or Wait instead of freezing a frame,
 //           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt }), onClose?(), watchOptions?, review?,
 //           onCapture?({ source }) (a frame was taken: Presence flares the core),
 //           screenCommand?(text, { spoken }) -> true when Screens took the words ("put the camera on
@@ -826,8 +828,23 @@ export function openOptics(deps = {}) {
     clearPins();
   }
 
-  async function look({ textOverride } = {}) {
+  async function look({ textOverride, newChat = false } = {}) {
     if (!camera.live || isBusy() || !(mode === 'live' || mode === 'frozen')) return { error: camera.live ? 'Jarvis is still answering.' : 'The camera is off.' };
+    // This chat is busy (a reply or a mission running): never a frozen frame that can't be sent. The
+    // owner chooses: the Look in a new chat now, or wait.
+    const blocked = newChat ? null : lookBlockedNow();
+    if (blocked) {
+      const words = (textOverride ?? askInput.value).trim();
+      showCard({
+        kind: 'busy',
+        title: blocked.title || 'Jarvis is still answering',
+        text: blocked.text || '',
+        primary: { label: 'Look in a new chat', testid: 'optics-look-new-chat', fn: () => (hideCard(), look({ textOverride: words, newChat: true })) },
+        secondary: { label: 'Wait', testid: 'optics-look-wait', fn: () => hideCard() },
+      });
+      announce(blocked.title || 'Jarvis is still answering.');
+      return { error: blocked.title || 'Jarvis is still answering.', blocked: true };
+    }
     if (mode === 'frozen') {
       // A new look straight from a frozen one (the desktop deck stays visible): unfreeze first.
       clearFrozen();
@@ -844,12 +861,31 @@ export function openOptics(deps = {}) {
       announce(err && err.message ? err.message : 'Could not capture a frame.');
       return { error: (err && err.message) || 'Could not capture a frame.' };
     }
-    return sendFrame(frame, question);
+    return sendFrame(frame, question, { newChat });
+  }
+
+  function lookBlockedNow() {
+    try {
+      return typeof deps.lookBlocked === 'function' ? deps.lookBlocked() : null;
+    } catch {
+      return null;
+    }
   }
 
   /** One frame of the screen, sent as a Look. Resolves { captureError } when no frame was taken. */
-  async function lookAtScreen() {
+  async function lookAtScreen({ newChat = false } = {}) {
     if (isBusy() || watch) return { skipped: true };
+    const blocked = newChat ? null : lookBlockedNow();
+    if (blocked) {
+      showCard({
+        kind: 'busy',
+        title: blocked.title || 'Jarvis is still answering',
+        text: blocked.text || '',
+        primary: { label: 'Look in a new chat', testid: 'optics-look-new-chat', fn: () => (hideCard(), lookAtScreen({ newChat: true })) },
+        secondary: { label: 'Wait', testid: 'optics-look-wait', fn: () => hideCard() },
+      });
+      return { skipped: true, blocked: true };
+    }
     let frame;
     try {
       frame = await captureScreenFrame({ maxEdge: OPTICS_LIMITS.screenMaxEdge });
@@ -861,7 +897,7 @@ export function openOptics(deps = {}) {
     }
     playFlash();
     safeCue('optics');
-    return sendFrame(frame, askInput.value.trim());
+    return sendFrame(frame, askInput.value.trim(), { newChat });
   }
 
   /**
@@ -873,7 +909,7 @@ export function openOptics(deps = {}) {
     setMode('screen');
     showCard({ kind: 'starting', title: 'Choose a screen…', text: '' });
     lookAtScreen().then((res) => {
-      if (closed || frozen) return;
+      if (closed || frozen || (res && res.blocked)) return; // the busy card offers a new chat
       if (res && res.captureError) showScreenFailed(res.captureError);
       else hideCard();
     });
@@ -894,7 +930,7 @@ export function openOptics(deps = {}) {
     });
   }
 
-  async function sendFrame(frame, question) {
+  async function sendFrame(frame, question, { newChat = false } = {}) {
     captured(frame.source);
     freezeWith(frame, question || 'What am I looking at?');
     askInput.value = '';
@@ -905,7 +941,7 @@ export function openOptics(deps = {}) {
     layoutSoon();
     let res;
     try {
-      res = await deps.look({ text: question, frame });
+      res = await deps.look(newChat ? { text: question, frame, newChat: true } : { text: question, frame });
     } catch (err) {
       res = { error: err && err.message ? err.message : 'That look could not be sent.' };
     }
