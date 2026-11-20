@@ -2380,7 +2380,8 @@ earlier one (§9.2, §14.1), it wins.
   window again, even when the turn's words stay the same: a session started again after a pause that hears the
   sentence said again from the top ("Set an", "Set an alarm for" after "Set an alarm for seven") adds nothing yet, but
   the owner is talking, so "… seven thirty" is not cut off (in Send right away, the chat's mic, Optics' and the
-  viewer's mics as much as in the 2-second check).
+  viewer's mics as much as in the 2-second check). `onPartial` then gets the same words again, so callers see the
+  owner is still talking.
 - Restarts: a recognizer that ends by itself before the turn is over (iOS does, after every pause) is started again at
   once (a new instance, no gesture needed) and its words are appended without repeating any (`joinWords`: the overlap
   with what was heard, or a session that hands back everything, is not added twice). Within a turn its `no-speech` and

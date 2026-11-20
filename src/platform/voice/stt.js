@@ -3,9 +3,10 @@
 //   sttSupported() -> boolean
 //   startListening(options) -> { stop(), abort() }
 //     lang              a BCP 47 tag; '' or missing = the device's language (resolveListenLang)
-//     onPartial(text, info)  the words of this turn so far, as they come (info: { turn }); '' when the
-//                            recognizer took them all back (a noise first heard as "uh"): the turn
-//                            then goes on as if nothing had been heard, and never ends with them
+//     onPartial(text, info)  the words of this turn so far, as they come (info: { turn }); the same
+//                            words again while the owner says them again (after a restart); '' when
+//                            the recognizer took them all back (a noise first heard as "uh"): the
+//                            turn then goes on as if nothing had been heard, and never ends with them
 //     onFinal(text, info)    the owner has finished: once per turn. info: { alternatives, reason, turn }
 //                            (alternatives: other readings of the whole turn, best first; reason:
 //                            'silence' | 'stop' | 'max' | 'ended' | 'error')
@@ -32,10 +33,11 @@
 // that ends by itself before that (iOS Safari does, after a pause) is started again at once and its
 // words are appended without repeating any; its 'no-speech' and 'aborted' errors are ignored within
 // the turn. Any change in the session's own words is speech, even when it adds nothing to the turn
-// (the sentence said again from the top after such a restart): the silence window starts again. The first start happens inside startListening() (iOS only lets recognition begin inside
-// the owner's tap); restarts need no gesture, and one the browser refuses is never retried (no
-// permission-prompt loops). Callbacks never fire synchronously inside startListening(), so the caller
-// always holds the handle first.
+// (the sentence said again from the top after such a restart): the silence window starts again. The
+// first start happens inside startListening() (iOS only lets recognition begin inside the owner's
+// tap); restarts need no gesture, and one the browser refuses is never retried (no permission-prompt
+// loops). Callbacks never fire synchronously inside startListening(), so the caller always holds the
+// handle first.
 
 const TIMING = Object.freeze({
   silenceMs: 1600, // the default silence window ('normal')
@@ -623,7 +625,10 @@ export function startListening(options = {}) {
     T.heard = true;
     T.last = now();
     unschedule('noSpeech');
-    publish(text);
+    // The same words again (only the session's own words changed): onPartial hears it too, so a
+    // caller waiting for the owner to finish (the 2-second check) knows they are still talking.
+    if (text === S.shown) show(text);
+    else publish(text);
     if (!S.closing) armSilence();
   }
 

@@ -188,7 +188,11 @@ test('iOS: a sentence started again after a pause is not cut while the owner say
   assert.equal(a.finals.length, 0, '1.6 s after the last words');
   clock.advance(1);
   assert.deepEqual(a.finals.map((f) => f.text), ['Set an alarm for seven thirty']);
-  assert.ok(!a.partials().some((p) => /seven Set/i.test(p)), 'the repeated words are never added twice');
+  assert.deepEqual(
+    a.partials(),
+    ['Set an alarm for seven', 'Set an alarm for seven', 'Set an alarm for seven', 'Set an alarm for seven', 'Set an alarm for seven thirty'],
+    'the words are never added twice; while they are said again the same words come again (the owner is talking)',
+  );
 });
 
 test('words the recognizer takes back (revised to nothing) are said to be gone, and the listen goes on: no final with them', async (t) => {

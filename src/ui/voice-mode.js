@@ -1622,13 +1622,15 @@ function createVoiceMode(opts) {
   function reviewResume(R) {
     clearTimeout(R.listenTimer);
     R.listenTimer = 0;
-    if (R.guess) setText(reviewHeard, `“${clip(singleLine(R.guess.said), 140)}”`);
-    else {
-      reviewHeard.hidden = true;
-      setText(reviewHeard, '');
-    }
+    guessHeard(R);
     if (R.paused) reviewPause('paused');
     else reviewCount(REVIEW_MS);
+  }
+
+  /** Under a guess, what the owner said for it stays shown ("No, I said Paris"); otherwise nothing. */
+  function guessHeard(R) {
+    setText(reviewHeard, R.guess ? `“${clip(singleLine(R.guess.said), 140)}”` : '');
+    reviewHeard.hidden = !R.guess;
   }
 
   /** How long the check waits for words it is hearing to end: their silence window (stt.js) and 1 s. */
@@ -1659,10 +1661,12 @@ function createVoiceMode(opts) {
         reviewSend('voice');
         return;
       case 'wait':
+        guessHeard(R);
         reviewPause('paused');
         announce('Waiting. Say what to change, or tap Send.');
         return;
       case 'filler':
+        guessHeard(R);
         if (R.paused) reviewPause('paused');
         else reviewCount(REVIEW_MS);
         return;
@@ -1683,8 +1687,7 @@ function createVoiceMode(opts) {
         // the guess is shown and the countdown waits for the owner ("yes", Send, or a tap to fix it).
         R.guess = { from, said };
         setReviewText(plan.text);
-        setText(reviewHeard, `“${clip(singleLine(said), 140)}”`);
-        reviewHeard.hidden = false;
+        guessHeard(R);
         setText(reviewHint, reviewHintText(R));
         reviewPause('paused');
         announce(`Is that right: ${clip(singleLine(R.text), 200)}? Say yes, or tap the words to fix them.`);
