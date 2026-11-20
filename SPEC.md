@@ -1936,6 +1936,9 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
       strongest 9%) with `BUILDING HOLOGRAM · <LABEL>` (`optics-schematic-label`).
     - The first `hologram` segment opens the hologram viewer over Optics (`deps.openHologram`).
   - The chips wrap (on a phone too): none slides off the edge of the screen.
+- **Pins on the frozen frame** (`layoutPins`): the plates may use the whole stage, the black beside (or above and
+  below) the contained frame included, so a small frame (212 px tall in an SE's Safari tab) still gets five plates
+  clear of each other and of every other object's dot.
 - **The answer sheet** (`optics-answer`; phones: above the deck, `min(40vh, 360px)`; desktop, at least 900 px wide
   and over 500 px tall: the side column; a phone held sideways, at most 500 px tall: after a Look the frozen frame
   on the left and the sheet in a right-hand column, `min(46vw, 420px)`, with the deck's ask row under it).
@@ -2022,6 +2025,7 @@ about 16¢.
     chip whole on screen with a pin tapped);
   - `optics-old-chat` (a Look in a v6 chat reopened at launch goes to a new chat with the V5 tools: five labels, the
     notice, the old chat kept);
+  - `optics-pins-small` (375 × 553, 390 × 664, 375 × 667, 390 × 844: no plate overlaps or covers a dot);
   - `optics-look-busy` (a Look while a mission runs here: the busy card, not a frozen frame; Wait; Look in a new
     chat, answered there with its labels);
   - `optics-viewfinder` (iPhone 13 portrait, a Safari tab and held sideways: 100% of the sent frame on screen and

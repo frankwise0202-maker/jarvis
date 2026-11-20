@@ -1339,7 +1339,9 @@ export function openOptics(deps = {}) {
       const v = frameToView(t, fx, p.y);
       return { text: p.text, x: v.x, y: v.y };
     });
-    const safe = { x: Math.max(4, t.x - 40), y: 4, w: Math.min(box.w - 8, t.w + 80), h: box.h - 8 };
+    // Plates may sit in the black beside (or above and below) the frame: a small frozen frame (an SE's
+    // Safari tab gives it 212 px) has no room for five plates on the picture alone.
+    const safe = { x: 4, y: 4, w: Math.max(1, box.w - 8), h: Math.max(1, box.h - 8) };
     const layout = layoutPins(pins, { safe, measure: (text) => measureLabel(text, pinsLayer), plateH: 26, padX: 9, gap: 22, maxPlateW: Math.min(200, safe.w) });
     const motion = !reducedMotion();
     let order = 0;

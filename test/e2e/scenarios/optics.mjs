@@ -11,6 +11,7 @@
 //                    the background; shown again on a computer, it comes back by itself
 //   optics-landscape an iPhone held sideways: the frozen frame and a readable answer side by side
 //   optics-old-chat  a Look in a chat from before the camera goes to a new chat, with labels
+//   optics-pins-small  375×553 and other phone sizes: no plate overlaps another or covers a dot
 //   optics-look-busy a Look while a mission runs here: a card offers a new chat (or Wait), never a
 //                    frozen frame that can't be sent
 //   optics-viewfinder  phones: the live viewfinder shows the whole frame a Look sends, bracketed
@@ -214,6 +215,30 @@ export function viewfinder(page) {
       }
     }
     return { frame: `${fw}×${fh}`, shown: `${Math.round(dw)}×${Math.round(dh)}`, visible: +(seen / (n * n)).toFixed(3), insideBrackets: +(bracketed / (n * n)).toFixed(3) };
+  });
+}
+
+/** The pinned labels' plates: pairs that overlap, and plates that cover another object's dot. */
+export function pinClashes(page) {
+  return page.evaluate(() => {
+    const stage = document.querySelector('.optics-stage').getBoundingClientRect();
+    const plates = [...document.querySelectorAll('[data-testid="optics-pin"]')].map((e) => {
+      const b = e.getBoundingClientRect();
+      return { text: e.textContent, x: b.x, y: b.y, r: b.right, b: b.bottom, ax: stage.x + +e.dataset.x, ay: stage.y + +e.dataset.y };
+    });
+    const overlaps = [];
+    const covered = [];
+    for (let i = 0; i < plates.length; i++) {
+      for (let j = i + 1; j < plates.length; j++) {
+        const a = plates[i];
+        const c = plates[j];
+        const ox = Math.min(a.r, c.r) - Math.max(a.x, c.x);
+        const oy = Math.min(a.b, c.b) - Math.max(a.y, c.y);
+        if (ox > 1 && oy > 1) overlaps.push(`${a.text} × ${c.text} (${Math.round(ox)}×${Math.round(oy)} px)`);
+      }
+      for (const q of plates) if (q !== plates[i] && q.ax > plates[i].x && q.ax < plates[i].r && q.ay > plates[i].y && q.ay < plates[i].b) covered.push(`${plates[i].text} covers ${q.text}'s dot`);
+    }
+    return { stage: `${Math.round(stage.width)}×${Math.round(stage.height)}`, plates: plates.length, overlaps, covered };
   });
 }
 
@@ -584,6 +609,33 @@ export default [
       await page.locator(tid('optics-live-pill')).click();
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
       void mission;
+    },
+  },
+  {
+    name: 'optics-pins-small',
+    title: 'Pins on a small phone screen (375×553, an iPhone SE Safari tab): the frozen frame is small, yet no plate overlaps another or covers another object\'s dot (plates may sit in the black beside the frame)',
+    device: 'safaritab',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await openFromComposer(t);
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.waitForTimeout(600);
+      for (const size of [[375, 553], [390, 664], [375, 667], [390, 844]]) {
+        await page.setViewportSize({ width: size[0], height: size[1] });
+        await page.waitForTimeout(400);
+        const c = await pinClashes(page);
+        t.note(`${size.join('×')}: stage ${c.stage}, ${c.plates} plates, ${c.overlaps.length} overlaps, ${c.covered.length} covered dots`);
+        t.assert(c.plates === 5, `${size.join('×')}: five labels (${c.plates})`);
+        t.assert(!c.overlaps.length && !c.covered.length, `${size.join('×')}: plates clear of each other and of the dots (${JSON.stringify(c)})`);
+        if (size[0] === 375 && size[1] === 553) await shot(t, 'safaritab-pins');
+      }
     },
   },
   {
