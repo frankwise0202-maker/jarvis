@@ -268,6 +268,19 @@ test('links open as their own page, without a handle on Jarvis; the tool never n
   // The tool with nothing to show: a clear message for Jarvis.
   const n = await p.evaluate(async () => (await window.ctl.openFromTool({ what: 'mission', where: 'beside' })).message);
   assert.match(n, /no mission in this conversation/);
+  // v7.1: the turn was stopped (its signal aborted) before or while the app placed it: nothing opens.
+  const stopped = await p.evaluate(async () => {
+    const before = window.__opens.length;
+    const ctl = new AbortController();
+    ctl.abort();
+    const a = await window.ctl.openFromTool({ what: 'answer', where: 'window' }, { signal: ctl.signal });
+    const late = new AbortController();
+    const pending = window.ctl.openFromTool({ what: 'answer', where: 'other' }, { signal: late.signal });
+    late.abort(); // Stop while the controller still resolves what to show
+    const b = await pending;
+    return { a: a.status, b: b.status, opened: window.__opens.length - before };
+  });
+  assert.deepEqual(stopped, { a: 'nothing', b: 'nothing', opened: 0 });
 });
 
 test('the camera: "this" while Optics is open moves the camera out (Optics closes there); the OPTICS pill closes camera screens; the app hears of each change', async () => {

@@ -4,7 +4,8 @@
 //   const screens = createScreens(deps)
 //   screens.command(text, { source: 'typed' | 'voice' | 'viewer' })
 //       -> null (not a screen command: send it to Jarvis) | { handled: true, done: Promise<outcome> }
-//   screens.openFromTool({ what, where, screen, url, id })   -> Promise<outcome>  (engine deps.screens.open)
+//   screens.openFromTool({ what, where, screen, url, id }, { signal })   -> Promise<outcome>  (engine
+//       deps.screens.open; a stopped turn's signal drops a placement still under way)
 //   screens.onRunEvent(entry, evt) / screens.onRunDone(entry)  live content follows the run
 //   screens.list()  screens.closeAll()
 //   screenMessage(outcome) / screenAck(outcome)               what to show / say about an outcome
@@ -599,7 +600,7 @@ export function createScreens(deps = {}) {
 
   // ---- placement --------------------------------------------------------------------------------
 
-  async function place(target, cmd, { gesture = false } = {}) {
+  async function place(target, cmd, { gesture = false, stopped = () => false } = {}) {
     const env = detectScreenEnv(window);
     let permission = null;
     if (cmd.where === 'other' && env.windowManagement) {
@@ -609,6 +610,8 @@ export function createScreens(deps = {}) {
         if (details && typeof details.addEventListener === 'function') safe(() => details.addEventListener('screenschange', () => {}));
       }
     }
+    // The turn that asked was stopped while the browser answered: nothing opens, no button.
+    if (stopped()) return outcome('nothing', target, { message: 'Stopped.' });
     const plan = planPlacement({ where: cmd.where, kind: target.kind, env, permission, details, currentScreen: window.screen, screen: cmd.screen, target: cmd.target, fullscreen: !!cmd.fullscreen });
     if (plan.mode === 'inapp') {
       // The app's own full-screen viewers where it has them (the camera: Optics); the screen frame
@@ -851,13 +854,17 @@ export function createScreens(deps = {}) {
 
   // ---- entry points -------------------------------------------------------------------------------
 
-  async function run(cmd, { source = 'typed', gesture } = {}) {
+  async function run(cmd, { source = 'typed', gesture, signal = null } = {}) {
+    // Jarvis's turn was stopped (signal, the tool's): nothing more is placed or offered (v7.1).
+    const stopped = () => !!(signal && signal.aborted);
+    if (stopped()) return { status: 'nothing', message: 'Stopped.', kind: cmd.what };
     if (cmd.action === 'back') {
       if (!screens.size && !currentPipWindow()) return { status: 'closed', count: 0 };
       return closeScreens({ back: true, tool: source === 'tool' });
     }
     if (cmd.action === 'close') return closeScreens({ where: cmd.where, screen: cmd.screen });
     const target = await resolve(cmd);
+    if (stopped()) return { status: 'nothing', message: 'Stopped.', kind: cmd.what };
     if (!target || target.error) return { status: 'nothing', message: (target && target.message) || 'There’s nothing to put on a screen yet.', kind: cmd.what };
     // A tool call never turns the camera on: it may move a camera that is on, else the owner taps.
     if (source === 'tool' && target.kind === 'camera' && !cameraIsOn()) {
@@ -866,7 +873,7 @@ export function createScreens(deps = {}) {
       recent = { target: rest, at: Date.now() };
       return cameraTap(target, cmd);
     }
-    const o = await place(target, cmd, { gesture: gesture === undefined ? hasGesture(source) : gesture });
+    const o = await place(target, cmd, { gesture: gesture === undefined ? hasGesture(source) : gesture, stopped });
     if (o && (o.status === 'opened' || o.status === 'needs_tap' || o.status === 'needs_permission')) {
       const { fromViewer, ...rest } = target;
       void fromViewer;
@@ -892,11 +899,14 @@ export function createScreens(deps = {}) {
       });
       return { handled: true, command: cmd, done };
     },
-    /** The open_screen tool (engine deps.screens.open): never has a gesture. */
-    openFromTool(input = {}) {
+    /**
+     * The open_screen tool (engine deps.screens.open): never has a gesture. `signal`: the turn's;
+     * once it aborts (Stop), a placement still under way is dropped (no window, no button).
+     */
+    openFromTool(input = {}, { signal = null } = {}) {
       const where = input.where === 'back' ? null : input.where;
       const cmd = { action: input.where === 'back' ? 'back' : 'open', what: input.what || 'this', where, screen: input.screen || null, url: input.url || null, id: input.id || null, ordinal: null, target: null, fullscreen: false };
-      return run(cmd, { source: 'tool', gesture: false }).catch((err) => ({ status: 'error', message: String((err && err.message) || err) }));
+      return run(cmd, { source: 'tool', gesture: false, signal }).catch((err) => ({ status: 'error', message: String((err && err.message) || err) }));
     },
     onRunEvent(runEntry, evt) {
       if (!screens.size || !evt || !runEntry || !runEntry.conv) return;

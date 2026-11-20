@@ -1791,6 +1791,10 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
   for the last two); titles are one line with their double quotes made single. Resume never reopens a window
   (`SCREEN_NOT_RESUMED`). Conversations frozen before V5 answer a stray call with "Unknown tool" and the app is never
   asked. The local matcher runs first for typed and spoken words in every conversation, old ones included.
+  - **Stop** (v7.1). The wait races the turn's signal: Stop ends the turn at once ("Stopped by the owner.") instead
+    of after the app's answer (up to 4 s), and the app gets the signal (`open(input, { signal })` →
+    `openFromTool(input, { signal })`): a placement still under way (resolving what to show, the Window Management
+    permission, the screen details) is dropped, so no window, panel or one-tap button appears after Stop.
   - **The camera and the tool.** A tool call never turns a camera on. `open_screen` may move the camera only while it
     is on (Optics' camera, `deps.cameraLive()`, or a camera screen whose camera reports `live`/`starting`); with the
     camera off, nothing opens: the owner sees **Turn on camera** (`screens-camera-tap`, button `screens-camera-on`,

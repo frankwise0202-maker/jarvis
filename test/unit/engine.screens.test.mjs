@@ -137,6 +137,29 @@ test('a whole round: Jarvis calls open_screen, the app places it, the reply says
   assert.ok(turn.segments.some((s) => s.kind === 'text' && /second screen/.test(s.text)));
 });
 
+test('v7.1: Stop while the app is still placing a screen ends the turn at once (not after the 4 s wait), and the app is told so', async () => {
+  const signals = [];
+  const screens = { open: (input, opts) => (signals.push(opts && opts.signal), new Promise(() => {})) };
+  let h;
+  h = harness(() => (h.api.requests.length === 1 ? { content: [blk.text('Putting it up.'), screenUse('toolu_s9', { what: 'answer', where: 'other_screen' })], stop: 'tool_use' } : { content: [blk.text('Of course.')], stop: 'end_turn' }), { screens });
+  const conv = screensConversation(h.jarvis);
+  const run = h.jarvis.startTurn(conv, { text: 'Put the answer on my other screen', mode: 'auto' });
+  for (let i = 0; i < 200 && !signals.length; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(signals.length, 1, 'the app was asked');
+  const t0 = Date.now();
+  run.abort();
+  const turn = await run.done;
+  const took = Date.now() - t0;
+  assert.equal(turn.status, 'stopped');
+  assert.ok(took < 1000, `stopped in ${took} ms, not after the app's 4 s`);
+  assert.ok(signals[0] && signals[0].aborted === true, 'the app has the turn\'s signal, aborted: it drops the placement');
+  // The history stays valid: the next message works.
+  const next = await h.jarvis.startTurn(conv, { text: 'Thanks', mode: 'auto' }).done;
+  assert.equal(next.status, 'done');
+  const roles = conv.apiMessages.map((m) => m.role);
+  for (let i = 1; i < roles.length; i++) assert.ok(!(roles[i] === 'assistant' && roles[i - 1] === 'assistant'), `no two assistant messages in a row (${roles})`);
+});
+
 test('a blocked window: the result tells Jarvis to ask for the tap, once', async () => {
   const screens = { open: () => ({ status: 'needs_tap', mode: 'screen', kind: 'hologram', title: 'Camry', label: 'SCREEN 2', button: 'Open on screen 2' }) };
   let h;

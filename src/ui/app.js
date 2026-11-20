@@ -210,7 +210,7 @@ export async function startApp(rootEl) {
   // Screens (v7): created once the shell exists; the engine's open_screen tool calls it (deps.screens).
   let screensCtl = null;
   const screensDep = {
-    open: (input) => (screensCtl ? screensCtl.openFromTool(input) : Promise.resolve({ status: 'error', message: 'Screens are still starting up.' })),
+    open: (input, opts) => (screensCtl ? screensCtl.openFromTool(input, opts) : Promise.resolve({ status: 'error', message: 'Screens are still starting up.' })),
   };
   let engine;
   let store;

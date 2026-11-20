@@ -12,12 +12,13 @@
 // tools include it: a V4 conversation answers a stray call with "Unknown tool").
 //
 // The app's dependency (deps.screens; it may return a value or a Promise):
-//   open({ what, where, screen, url, id, conversationId, turnId }) -> outcome
+//   open({ what, where, screen, url, id, conversationId, turnId }, { signal }) -> outcome
+//   (signal: the turn's; once it aborts (Stop) the app drops a placement still under way, v7.1)
 //   outcome: { status: 'opened' | 'needs_tap' | 'needs_permission' | 'closed' | 'nothing' | 'error',
 //              kind, title, report, mode: 'screen' | 'pip' | 'window' | 'inapp' | 'tab',
 //              label ('SCREEN 2'), screenName, internal, note, button, message }
 
-import { isPlainObject, singleLine, truncate } from './util.js';
+import { abortError, isPlainObject, singleLine, truncate } from './util.js';
 
 export const SCREEN_TOOL = 'open_screen';
 export const SCREEN_WHATS = Object.freeze(['this', 'hologram', 'blueprint', 'mission', 'answer', 'photo', 'camera', 'link']);
@@ -153,28 +154,50 @@ function capital(s) {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-function withTimeout(promise, ms) {
+/** The app's answer, null after `ms`, or an AbortError as soon as `signal` aborts (Stop). */
+function withTimeout(promise, ms, signal) {
   let timer;
-  return Promise.race([promise.finally(() => clearTimeout(timer)), new Promise((resolve) => (timer = setTimeout(() => resolve(null), ms)))]);
+  let onAbort = null;
+  return Promise.race([
+    promise,
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => resolve(null), ms);
+      if (signal) {
+        onAbort = () => reject(abortError());
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }),
+  ]).finally(() => {
+    clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  });
 }
 
 /**
  * Run one open_screen call of a tool round and return its tool_result { content, is_error? }.
- * Never throws. ctx: the lead turn context (conv, turn, deps).
+ * Never throws, except an AbortError when the owner stops the turn meanwhile (v7.1: before, Stop
+ * waited for the app, up to 4 s, and the screen could still open afterwards; the app gets the
+ * turn's signal and drops a placement still under way). ctx: the lead turn context (conv, turn,
+ * deps, signal).
  */
 export async function runOpenScreen(ctx, toolUse) {
   const check = validateOpenScreenInput(toolUse && toolUse.input);
   if (!check.ok) return { content: check.error, is_error: true };
   const screens = ctx && ctx.deps && ctx.deps.screens;
   if (!screens || typeof screens.open !== 'function') return { content: 'Screens are not available on this device right now.', is_error: true };
+  const signal = (ctx && ctx.signal) || null;
+  if (signal && signal.aborted) throw abortError();
   try {
     const outcome = await withTimeout(
-      Promise.resolve().then(() => screens.open({ ...check.value, conversationId: ctx.conv ? ctx.conv.id : null, turnId: ctx.turn ? ctx.turn.id : null })),
+      Promise.resolve().then(() => screens.open({ ...check.value, conversationId: ctx.conv ? ctx.conv.id : null, turnId: ctx.turn ? ctx.turn.id : null }, { signal })),
       ctx.screenTimeoutMs ?? SCREEN_TIMEOUT_MS,
+      signal,
     );
     if (!outcome) return { content: 'The app did not answer in time, so the screen may not have opened. Ask the owner whether they can see it.', is_error: true };
     return screenToolResult(outcome);
   } catch (err) {
+    if (err && err.name === 'AbortError' && signal && signal.aborted) throw err;
     return { content: `The screen could not be opened: ${oneLine(String((err && err.message) || err), 200)}.`, is_error: true };
   }
 }
