@@ -1462,15 +1462,24 @@ export function openOptics(deps = {}) {
 
   async function sendWatchFrame() {
     const w = watch;
+    if (!w) return;
+    // In flight from the capture on (v7.1): stopWatch() aborts it, and the sampler waits for it.
+    const controller = new AbortController();
+    w.inflight = controller;
     let frame;
     try {
       frame = await camera.capture({ maxEdge: watchOpts.watchMaxEdge || OPTICS_LIMITS.watchMaxEdge, quality: 0.75, previewEdge: 160 });
     } catch {
+      if (w.inflight === controller) w.inflight = null;
       return;
     }
     if (frame.canvas) releaseCanvas(frame.canvas);
-    const controller = new AbortController();
-    w.inflight = controller;
+    // Watch turned off, Optics closed or the camera stopped while the frame was being encoded:
+    // nothing is sent (before v7.1 it still went to Claude, billed but never shown).
+    if (watch !== w || closed || controller.signal.aborted || !camera.live) {
+      if (w.inflight === controller) w.inflight = null;
+      return;
+    }
     w.looks += 1;
     countWatchLook();
     tickWatch();
@@ -1727,6 +1736,11 @@ export function openOptics(deps = {}) {
     safeCue('optics');
     try {
       const frame = await camera.capture({ maxEdge: OPTICS_LIMITS.lookMaxEdge });
+      // Optics closed or the camera stopped while the frame was being encoded: no frame (v7.1).
+      if (closed || !camera.live) {
+        releaseCanvas(frame.canvas);
+        return null;
+      }
       captured(frame.source);
       const out = { data: frame.data, thumb: frame.preview, source: frame.source };
       releaseCanvas(frame.canvas);

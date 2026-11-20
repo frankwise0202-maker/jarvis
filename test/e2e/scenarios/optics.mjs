@@ -27,6 +27,8 @@
 //                    the focused control and scrolls the answer, never a new Look; Option-F, Option-W
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
 //                    minimum interval, the countdown and cost, the alert line, auto-off
+//   optics-watch-race  a Watch frame still being encoded when Watch is turned off or Optics closes is
+//                    never sent
 //   optics-screen    "look at my screen": one frame, capture stopped at once, sent as a screen frame
 //   optics-screen-cancel  the home's Screen key with the picker cancelled: the webcam never turns on;
 //                    No screen shared (macOS hint), Try again, Use the camera via the first-use card
@@ -976,6 +978,49 @@ export default [
         t.note(`answer ${d0.sh}/${d0.ch} px; Space scrolled it to ${top}`);
         if (d0.sh > d0.ch + 20) t.assert(top > 0, `Space scrolls a long answer (${top})`);
       });
+    },
+  },
+  {
+    name: 'optics-watch-race',
+    title: 'A Watch frame still being encoded when Watch is turned off or Optics is closed is never sent (the JPEG encode slowed to 1.5 s)',
+    device: 'desktop',
+    timeout: 90000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      // The frame's JPEG encode takes 1.5 s (tens of milliseconds on a real device).
+      await page.context().addInitScript(() => {
+        window.__encodes = 0;
+        const orig = HTMLCanvasElement.prototype.toBlob;
+        HTMLCanvasElement.prototype.toBlob = function (cb, ...rest) {
+          const ms = Number(sessionStorage.getItem('slowEncode') || 0);
+          if (ms) window.__encodes += 1;
+          return orig.call(this, (blob) => (ms ? setTimeout(() => cb(blob), ms) : cb(blob)), ...rest);
+        };
+      });
+      await page.context().grantPermissions(['camera']);
+      const watchRequests = () => t.requests().filter((r) => r.body && isWatchRequest(r.body)).length;
+      for (const how of ['Watch off', 'Optics closed']) {
+        await t.step(how, async () => {
+          await t.goto('/?optics=1');
+          await waitLive(t);
+          await page.evaluate(() => sessionStorage.setItem('slowEncode', '1500'));
+          const before = watchRequests();
+          await page.locator(tid('optics-watch-toggle')).click();
+          await t.waitFor(() => page.evaluate(() => window.__encodes > 0), { timeout: 5000, message: 'the first Watch frame to be encoding' });
+          if (how === 'Watch off') await page.locator(tid('optics-watch-toggle')).click();
+          else await page.keyboard.press('Escape');
+          await page.waitForTimeout(3000);
+          t.assert(watchRequests() === before, `${how} while the frame was encoded: nothing was sent (${watchRequests() - before} Watch requests)`);
+          if (how === 'Watch off') {
+            t.assert(/0 looks, 0¢/.test(await t.text(page.locator(tid('optics-watch-note')))), 'the note says 0 looks, and so does the bill');
+            await page.keyboard.press('Escape');
+          }
+          await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics closed' });
+          await page.evaluate(() => sessionStorage.removeItem('slowEncode'));
+        });
+      }
     },
   },
   {

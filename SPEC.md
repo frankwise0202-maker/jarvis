@@ -2026,6 +2026,12 @@ hide/pagehide/freeze, Watch (64 × 36 differencing, more than 6% changed, still 
 minutes, 60 a day), the screen look, the Optics log, Esc and Ctrl/⌘ Shift L, `?optics=1`, and `jarvis.dev.optics`
 (Watch timing, localhost tests).
 
+**Frames in flight** (v7.1). A Watch frame is in flight from its capture on (`watch.inflight`, an AbortController
+made before the JPEG encode): turning Watch off, closing Optics or the camera stopping while it is encoded means it
+is never sent (no request, no cost; before, it still went to Claude, billed but not shown). The sampler never starts
+a second capture meanwhile. `grabForJarvis` (look_through_camera) likewise answers null, the camera-off result, when
+Optics closed or the camera stopped during its capture.
+
 **Keys** (v7.1; `onKey` in optics.js, on window).
 - **Space** looks (live, or frozen with the camera still live) only when focus is on nothing in particular: the page
   body, the Optics root, the picture or the Look key. With focus on a button (Watch, a camera in the list, Tell me
@@ -2084,6 +2090,8 @@ about 16¢.
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
   - unit `engine.optics-mock` also stops a Look, and cuts its connection, while pin_labels streams (the pins settle);
+  - `optics-watch-race` (the JPEG encode slowed to 1.5 s: Watch turned off, or Optics closed, while the first frame
+    is encoded sends no Watch request; the note says 0 looks, 0¢);
   - `optics-keys` (Mac, two cameras: "What is this?" typed right after opening lands in `optics-ask`, Watch off, no
     Look; Option-F switches cameras; Space on Watch starts it with no Look, Option-W stops it and types nothing; Space
     on another camera in the list picks it; Space on Tell me more asks it with no new frame; a click in the answer
