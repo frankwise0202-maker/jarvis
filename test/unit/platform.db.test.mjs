@@ -717,6 +717,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
       userName: 'Pepper', tone: 'friendly', verbosity: 'detailed', theme: 'ember', sounds: false, soundVolume: 0.3, haptics: false,
       voiceURI: 'Daniel', voiceRate: 1.2, listenLang: 'en-GB', speakReplies: 'summary', voiceContinuous: false, followups: false,
       showThinking: false, location: 'London, UK', memoryEnabled: false, notifyOnFinish: false, naturalVoiceId: 'bm_lewis',
+      listenWait: 'long', listenSend: 'now',
     };
     const second = await backup.importBackup({ app: 'jarvis', version: 1, settings: { ...profile, maxAgents: 'lots', tone: 'friendly' } });
     const afterSecond = settings.getSettings();
@@ -728,7 +729,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.first, { conversations: 0, copies: 0, replaced: [], memory: 0, settings: true, settingsChanged: ['userName'], skipped: 0 });
   assert.equal(r.afterFirst.userName, 'Mallory');
   assert.deepEqual(guards(r.afterFirst), before);
-  assert.deepEqual(r.second.settingsChanged, r.restorable, 'all 18 changed');
+  assert.deepEqual(r.second.settingsChanged, r.restorable, 'all 20 changed');
   assert.deepEqual(guards(r.afterSecond), before);
   assert.equal(r.afterSecond.tone, 'friendly');
   assert.equal(r.afterSecond.location, 'London, UK');
@@ -741,7 +742,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.restorable, [
     'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
     'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-    'naturalVoiceId',
+    'naturalVoiceId', 'listenWait', 'listenSend',
   ]);
 });
 
@@ -767,6 +768,29 @@ test('backup (v7.1): the camera chosen on this device is never exported; the nat
   assert.equal(r.after.naturalVoice, false, 'but the voice stays off: an import never starts a download');
   assert.deepEqual([r.after.opticsCameraId, r.after.opticsCameraLabel], ['', ''], 'a camera in a backup is never applied');
   assert.deepEqual(r.hostile.settingsChanged, []);
+});
+
+test('backup (v7.2): how listening ends comes back; a backup from before v7.2 listens in the device language', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const { backup, settings } = window.__mods;
+    settings.saveSettings({ onboarded: true, listenLang: 'en-GB', listenWait: 'long', listenSend: 'now' });
+    const exported = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    settings.resetSettings();
+    await backup.importBackup({ app: 'jarvis', version: 1, settings: exported });
+    const afterFresh = settings.getSettings();
+    // A v7.1 backup: listenLang 'en-US' was only the old default.
+    await backup.importBackup({ app: 'jarvis', version: 1, settings: { listenLang: 'en-US', voiceContinuous: false } });
+    const afterOld = settings.getSettings();
+    // A v7.2 backup that really says en-US keeps it.
+    await backup.importBackup({ app: 'jarvis', version: 1, settings: { listenLang: 'en-US', listenWait: 'normal' } });
+    return { exported, afterFresh, afterOld, after: settings.getSettings() };
+  });
+  assert.deepEqual([r.exported.listenLang, r.exported.listenWait, r.exported.listenSend], ['en-GB', 'long', 'now']);
+  assert.deepEqual([r.afterFresh.listenLang, r.afterFresh.listenWait, r.afterFresh.listenSend], ['en-GB', 'long', 'now']);
+  assert.equal(r.afterOld.listenLang, '', 'the old default follows the device');
+  assert.equal(r.afterOld.voiceContinuous, false);
+  assert.deepEqual([r.after.listenLang, r.after.listenWait], ['en-US', 'normal']);
 });
 
 test('backup: a conversation Jarvis made round-trips exactly; nothing imported can be resumed', async () => {

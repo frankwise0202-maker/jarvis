@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS = deepFreeze({
   speakReplies: 'off', // 'off' | 'summary' | 'full'
   voiceURI: '', // '' = auto-pick
   voiceRate: 1.0, // 0.7..1.5
-  listenLang: 'en-US',
+  listenLang: '', // the language spoken to the microphone; '' = this device's language (v7.2)
   location: '', // free text, e.g. "Austin, Texas, US" ('' = not shared)
   memoryEnabled: true,
   spendWarnUsd: 20, // monthly estimate warning threshold; 0 = off
@@ -52,6 +52,11 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // per site and per browser; the label is the fallback when the id changes ('' = the default camera).
   opticsCameraId: '',
   opticsCameraLabel: '',
+  // Listening (v7.2): the silence that tells Jarvis the owner has finished ('short' 1.0 s, 'normal'
+  // 1.6 s, 'long' 2.6 s; platform/voice/stt.js LISTEN_WAITS), and what happens then: 'show' what was
+  // heard for 2 seconds (tap to fix it, "no, I said …", "cancel"), then send; or send it 'now'.
+  listenWait: 'normal',
+  listenSend: 'show',
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -82,6 +87,8 @@ const LEAD_FROM_HAIKU = LEAD_MODEL_IDS.includes('claude-sonnet-5-5') ? 'claude-s
 const DEPTH_IDS = idsOf(DEPTHS, ['fast', 'balanced', 'deep']);
 const MODE_IDS = idsOf(MODES, ['auto', 'quick', 'swarm']);
 const SPEAK_MODES = ['off', 'summary', 'full'];
+const LISTEN_WAIT_IDS = ['short', 'normal', 'long'];
+const LISTEN_SEND_IDS = ['show', 'now'];
 const FEATURE_KEYS = Object.keys(DEFAULT_SETTINGS.features);
 
 function idsOf(table, fallback) {
@@ -105,9 +112,11 @@ const decimalIn = ({ min, max }, places) => (v, fb) => {
 };
 const line = ({ maxLength }) => (v, fb) => (typeof v === 'string' ? cleanLine(v, maxLength) : fb);
 const voiceUri = (v, fb) => (typeof v === 'string' ? cleanLine(v, 400) : fb);
+// A language tag, or '' for this device's language (the listening language's default since v7.2).
 const lang = (v, fb) => {
   if (typeof v !== 'string') return fb;
   const s = v.trim().replace(/_/g, '-');
+  if (s === '') return '';
   return s.length <= 35 && /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/.test(s) ? s : fb;
 };
 // A stored or imported Haiku lead (from before this rule) becomes Sonnet 5.5.
@@ -156,6 +165,8 @@ const VALIDATORS = {
   naturalVoiceId: (v, fb) => (typeof v === 'string' && /^[a-z]{2}_[a-z]{2,20}$/.test(v) ? v : fb),
   opticsCameraId: (v, fb) => (typeof v === 'string' && v.length <= 256 && /^[\x21-\x7e]*$/.test(v) ? v : fb),
   opticsCameraLabel: line({ maxLength: 120 }),
+  listenWait: oneOf(LISTEN_WAIT_IDS),
+  listenSend: oneOf(LISTEN_SEND_IDS),
 };
 
 /**
@@ -177,7 +188,17 @@ const changes = createEmitter('settings');
 let current = null;
 
 function load() {
-  return normalizeSettings(parseJson(readItem(SETTINGS_KEY), null), DEFAULT_SETTINGS);
+  return normalizeSettings(migrate(parseJson(readItem(SETTINGS_KEY), null)), DEFAULT_SETTINGS);
+}
+
+/**
+ * Stored settings from before v7.2 always carry listenLang 'en-US', the old default, whether the
+ * owner chose it or not (every save writes every key): those now follow the device's language
+ * (''). A store saved by v7.2 or later has listenWait, and keeps whatever it says.
+ */
+function migrate(raw) {
+  if (!isPlainObject(raw) || 'listenWait' in raw || raw.listenLang !== 'en-US') return raw;
+  return { ...raw, listenLang: '' };
 }
 
 /** The current settings (a frozen object; treat as read-only). */

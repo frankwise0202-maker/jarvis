@@ -13,7 +13,7 @@ import { exportBackup, importBackup } from '../platform/backup.js';
 import { isPersistent } from '../platform/db.js';
 import { isStandalone, parseUserAgent } from '../platform/env.js';
 import { ttsSupported, getVoices, pickDefaultVoice, rankVoices, voiceQuality, speak, stopSpeaking } from '../platform/voice/tts.js';
-import { sttSupported } from '../platform/voice/stt.js';
+import { sttSupported, deviceLang } from '../platform/voice/stt.js';
 import { MODELS, DEPTHS, MODES } from '../engine/index.js';
 import { createThemePicker, applyTheme } from './themes.js';
 import { createNaturalVoiceCard } from './natural-voice-settings.js';
@@ -193,6 +193,30 @@ const LANGS = [
   ['zh-TW', '中文 (繁體)'],
   ['hi-IN', 'हिन्दी'],
 ];
+
+/**
+ * The listening language picker's first option: '' follows this device's language (v7.2), e.g.
+ * "Automatic — this device (English (UK) · en-GB)".
+ */
+export function autoLangLabel(tag) {
+  const t = typeof tag === 'string' ? tag.trim() : '';
+  if (!t) return 'Automatic — this device’s language';
+  const known = LANGS.find(([v]) => v.toLowerCase() === t.toLowerCase());
+  return `Automatic — this device (${known ? `${known[1]} · ${known[0]}` : t})`;
+}
+
+/** Settings → Voice → Wait after I stop talking (platform/voice/stt.js LISTEN_WAITS). */
+export const LISTEN_WAIT_OPTIONS = Object.freeze([
+  { value: 'short', label: 'Short (1 second)' },
+  { value: 'normal', label: 'Normal (1.6 seconds)' },
+  { value: 'long', label: 'Long (2.6 seconds)' },
+]);
+
+/** Settings → Voice → After I stop talking. */
+export const LISTEN_SEND_OPTIONS = Object.freeze([
+  { value: 'show', label: 'Show what I said for 2 seconds, then send' },
+  { value: 'now', label: 'Send right away' },
+]);
 
 const CONSOLE = {
   keys: 'https://console.anthropic.com/settings/keys',
@@ -546,7 +570,8 @@ export function createSettingsPanel(o) {
   });
 
   const langOptions = LANGS.map(([value, label]) => ({ value, label: `${label} · ${value}` }));
-  if (!LANGS.some(([v]) => v === s.listenLang)) langOptions.unshift({ value: s.listenLang, label: s.listenLang });
+  if (s.listenLang && !LANGS.some(([v]) => v === s.listenLang)) langOptions.unshift({ value: s.listenLang, label: s.listenLang });
+  langOptions.unshift({ value: '', label: autoLangLabel(safeCall(() => deviceLang(), '')) });
   let testing = null;
   const testVoiceBtn = h(
     'button',
@@ -637,10 +662,24 @@ export function createSettingsPanel(o) {
       row({
         label: 'Listening language',
         help: sttOk
-          ? 'The language you speak to the microphone in. Your browser’s speech service (Google’s in Chrome, Apple’s in Safari) turns your voice into text, possibly on its servers.'
+          ? 'The language you speak to the microphone in (Automatic: this device’s language). Your browser’s speech service (Google’s in Chrome, Apple’s in Safari) turns your voice into text, possibly on its servers.'
           : 'Voice input isn’t supported in this browser.',
         forId: fieldId('listenLang'),
         control: selectField('listenLang', langOptions),
+        stacked: true,
+      }),
+      row({
+        label: 'Wait after I stop talking',
+        help: 'How long Jarvis waits, once you go quiet, before it takes what you said. It waits a second more when you stop on a word like “and” or “the”. Choose Long if you pause to think mid-sentence.',
+        forId: fieldId('listenWait'),
+        control: selectField('listenWait', LISTEN_WAIT_OPTIONS),
+        stacked: true,
+      }),
+      row({
+        label: 'After I stop talking',
+        help: 'Jarvis shows what it heard for 2 seconds before sending it, in Voice Mode and from the microphone in the chat. Tap the words to fix one, or say “no, I said …” or “cancel”.',
+        forId: fieldId('listenSend'),
+        control: selectField('listenSend', LISTEN_SEND_OPTIONS),
         stacked: true,
       }),
       row({

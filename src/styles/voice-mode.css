@@ -530,6 +530,162 @@ html.vm-open body {
   text-wrap: balance;
 }
 
+/* ------------------------------------------------------------ the 2-second check (v7.2) */
+
+/* What was heard, big, before it is sent: tap the words to fix them; Send now carries the ring. */
+.vm-review {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  max-width: 640px;
+  --vm-review-p: 0;
+}
+
+.vm-review-text {
+  display: block;
+  max-width: 100%;
+  min-height: var(--tap);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  cursor: text;
+  text-decoration: underline dotted var(--line-3);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.22em;
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease);
+}
+
+.vm-review[data-length='long'] .vm-review-text {
+  font-size: var(--fs-xl);
+}
+
+.vm-review-form {
+  max-width: 600px;
+}
+
+.vm-review-heard {
+  margin: 0;
+  max-width: 520px;
+  font-size: var(--fs-md);
+  font-style: italic;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+
+.vm-review-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+}
+
+.vm-review-now,
+.vm-review-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap);
+  padding: 0 var(--sp-5) 0 var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--accent-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.vm-review-cancel {
+  padding: 0 var(--sp-5);
+  color: var(--text-2);
+}
+
+/* The countdown ring fills as the 2 seconds pass (JS sets --vm-review-p from 0 to 1). */
+.vm-review-ring {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--vm-review-p) * 1turn), var(--line-2) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3px));
+}
+
+/* Fixing the words: the field has its own Send. */
+.vm-review[data-state='editing'] .vm-review-now {
+  display: none;
+}
+
+.vm-review[data-state='paused'] .vm-review-ring,
+.vm-review[data-state='editing'] .vm-review-ring,
+.vm-review[data-state='listening'] .vm-review-ring {
+  opacity: 0.5;
+}
+
+.vm-review-hint {
+  margin: 0;
+  max-width: 520px;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight);
+  color: var(--text-3);
+  text-wrap: balance;
+}
+
+.vm-review-text:focus-visible,
+.vm-review-now:focus-visible,
+.vm-review-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vm-review-text:hover {
+    border-color: var(--line-2);
+    background: var(--surface);
+  }
+  .vm-review-now:hover,
+  .vm-review-cancel:hover {
+    border-color: var(--line-3);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+
+@media (max-width: 360px), (max-height: 620px) {
+  .vm-review-text {
+    font-size: var(--fs-xl);
+  }
+  .vm-review[data-length='long'] .vm-review-text {
+    font-size: var(--fs-lg);
+  }
+}
+
+@media (min-width: 900px) {
+  .vm-review-text {
+    font-size: var(--fs-3xl);
+  }
+  .vm-review[data-length='long'] .vm-review-text {
+    font-size: var(--fs-2xl);
+  }
+}
+
 /* ---------------------------------------------------------------------- mission strip */
 
 .vm-mission {
@@ -1182,6 +1338,16 @@ html.vm-open body {
     grid-row: 3;
     max-height: 7.5em;
     font-size: var(--fs-lg);
+  }
+  .vm-review {
+    grid-column: 2;
+    grid-row: 3;
+    align-items: flex-start;
+  }
+  .vm-review-text {
+    font-size: var(--fs-lg);
+    padding-left: 0;
+    text-align: left;
   }
   .vm-cap-sub {
     grid-row: 4;

@@ -25,6 +25,22 @@ function lastLeadUserText(t) {
  * window.__voice.queue items one per listen (then reports no speech), and the synthesizer
  * "speaks" each utterance in ~120 ms, recording what was said in window.__voice.said.
  *
+ * Recognition (v7.2) is a speaker and the recognizer sessions that hear it. A recognizer started
+ * while nobody speaks takes the next window.__voice.queue item and the speaker says it:
+ *   'words'                          said at once: one final result 500 ms after the start
+ *   { parts: [{ at, text, alts?, revise? }] }  said over time (at: ms after it begins; revise: the
+ *                                    words so far, read differently; alts: other readings)
+ * window.__voice.say(item) has the speaker say one now (the session running hears it, else the
+ * next one started). Recognizers behave like Chrome (one result per part, final 300 ms later; a
+ * continuous one stays open until stop() or abort(); 'no-speech' 900 ms after a start that hears
+ * nothing), or with options.recognizer 'ios' like iOS Safari: ONE result per session whose text
+ * grows, final only when the session ends; the session ends by itself 700 ms after the last words
+ * (iOS's end of speech) and says 'no-speech' after 1.5 s of silence; a session started again only
+ * hears what is said after it started (options.noSpeechMs: another silence before 'no-speech';
+ * options.phrases: the browser has Chrome's contextual biasing, SpeechRecognitionPhrase).
+ * window.__voice.sessions logs each recognizer started ({ at, lang, continuous, interim,
+ * alternatives, phrases }).
+ *
  * Also recorded (for timing checks): window.__voice.log, one entry per utterance that starts
  * playing { text, at, endAt, voice, running, searchRunning, searchDone, state, speech, captions }
  * (at/endAt from performance.now(); voice: the utterance's voiceURI; running: a Jarvis turn in the
@@ -65,6 +81,40 @@ export function installFakeSpeech(options) {
       return false;
     }
   };
+  const recCfg = {
+    ios: opts.recognizer === 'ios',
+    pauseEndMs: 700,
+    noSpeechMs: Number.isFinite(opts.noSpeechMs) ? opts.noSpeechMs : opts.recognizer === 'ios' ? 1500 : 900,
+  };
+  let session = null; // the recognizer session running now
+  let speaking = null; // the utterance being said
+  const buffered = []; // words said while no session ran (the next one hears them)
+  voice.sessions = [];
+  const hearNow = (part) => {
+    if (session && !session.done) session.hear(part);
+    else buffered.push(part);
+  };
+  voice.say = (item) => {
+    const u = typeof item === 'string' ? { parts: [{ at: 500, text: item, final: true }] } : { parts: (item && Array.isArray(item.parts) ? item.parts : []).map((p) => ({ ...p })) };
+    speaking = u;
+    let last = 0;
+    for (const part of u.parts) {
+      last = Math.max(last, part.at || 0);
+      setTimeout(() => hearNow(part), Math.max(0, part.at || 0));
+    }
+    setTimeout(() => {
+      if (speaking === u) speaking = null;
+    }, last + 20);
+  };
+  if (opts.phrases) {
+    // Chrome's contextual biasing (SpeechRecognitionPhrase and recognition.phrases).
+    window.SpeechRecognitionPhrase = class SpeechRecognitionPhrase {
+      constructor(phrase, boost = 1) {
+        this.phrase = phrase;
+        this.boost = boost;
+      }
+    };
+  }
   class FakeRecognition {
     constructor() {
       this.lang = 'en-US';
@@ -73,30 +123,92 @@ export function installFakeSpeech(options) {
       this.maxAlternatives = 1;
       this.onresult = this.onerror = this.onend = this.onstart = this.onnomatch = null;
       this.done = false;
+      this.results = [];
+      this.timers = [];
+      if (opts.phrases) this.phrases = [];
     }
     start() {
       voice.listens += 1;
       voice.listenLog.push(performance.now());
-      const phrase = voice.queue.shift();
+      const phrases = Array.isArray(this.phrases) ? this.phrases.map((p) => p && p.phrase) : null;
+      voice.sessions.push({ at: performance.now(), lang: this.lang, continuous: this.continuous, interim: this.interimResults, alternatives: this.maxAlternatives, phrases });
+      session = this;
+      this.heardAny = false;
       setTimeout(() => this.onstart && this.onstart({ type: 'start' }), 20);
-      setTimeout(() => {
-        if (this.done) return;
-        if (phrase) {
-          const alt = [{ transcript: phrase, confidence: 0.96 }];
-          alt.isFinal = true;
-          this.onresult && this.onresult({ type: 'result', resultIndex: 0, results: [alt] });
-        } else {
-          this.onerror && this.onerror({ type: 'error', error: 'no-speech' });
-        }
+      if (!speaking && !buffered.length && voice.queue.length) voice.say(voice.queue.shift());
+      if (buffered.length) {
+        const parts = buffered.splice(0);
+        this.later(() => parts.forEach((p) => this.hear(p)), 40);
+      }
+      // Nobody speaks to this session: 'no-speech', then the end.
+      this.later(() => {
+        if (this.done || this.heardAny) return;
+        this.onerror && this.onerror({ type: 'error', error: 'no-speech' });
         this.end();
-      }, phrase ? 500 : 900);
+      }, recCfg.noSpeechMs);
+    }
+    later(fn, ms) {
+      this.timers.push(setTimeout(fn, ms));
+    }
+    emit() {
+      if (this.done || !this.onresult) return;
+      const results = this.results.map((r) => {
+        const alt = [{ transcript: r.text, confidence: 0.96 }, ...(r.alts || []).map((a) => ({ transcript: a, confidence: 0.4 }))];
+        alt.isFinal = !!r.final;
+        return alt;
+      });
+      this.onresult({ type: 'result', resultIndex: 0, results });
+    }
+    hear(part) {
+      if (this.done) {
+        buffered.push(part);
+        return;
+      }
+      this.heardAny = true;
+      if (recCfg.ios) {
+        // One result for the whole session, growing; final only when the session ends.
+        const text = typeof part.revise === 'string' ? part.revise : this.results.length ? `${this.results[0].text} ${part.text}` : part.text;
+        this.results = [{ text, final: false, alts: part.alts || [] }];
+        this.emit();
+        clearTimeout(this.pauseTimer);
+        this.pauseTimer = setTimeout(() => {
+          if (this.done) return;
+          this.results[0].final = true; // iOS ends its session after a pause
+          this.emit();
+          this.end();
+        }, recCfg.pauseEndMs);
+        return;
+      }
+      if (typeof part.revise === 'string' && this.results.length) this.results[this.results.length - 1].text = part.revise;
+      else this.results.push({ text: part.text, final: !!part.final, alts: part.alts || [] });
+      const r = this.results[this.results.length - 1];
+      this.emit();
+      if (!this.continuous) {
+        r.final = true;
+        this.emit();
+        this.end();
+        return;
+      }
+      if (!r.final) {
+        this.later(() => {
+          r.final = true; // Chrome finalizes a phrase after a short pause
+          this.emit();
+        }, 300);
+      }
     }
     end() {
       if (this.done) return;
       this.done = true;
+      for (const t of this.timers) clearTimeout(t);
+      clearTimeout(this.pauseTimer);
+      if (session === this) session = null;
       setTimeout(() => this.onend && this.onend({ type: 'end' }), 30);
     }
     stop() {
+      if (!this.done && this.results.some((r) => !r.final)) {
+        for (const r of this.results) r.final = true;
+        this.emit();
+      }
       this.end();
     }
     abort() {

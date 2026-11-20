@@ -21,6 +21,7 @@ import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
+import { REVIEW_MS, listenPhrases } from './voice-heard.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
@@ -38,6 +39,7 @@ import { currentPhoto } from './photos.js';
 import { createScreens, screenAck, screenMessage } from './screens/controller.js';
 import { isScreenMode } from './screens/screen-page.js';
 import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
+import { matchScreenCommand } from '../lib/screen-commands.js';
 import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
@@ -871,6 +873,9 @@ export async function startApp(rootEl) {
 
   function setConversation(conv, { remember = true } = {}) {
     clearFollowups();
+    // Words from the mic still waiting to be sent belong to the chat they were said in: they stay in
+    // the box, unsent.
+    if (conv !== state.conv) safe(() => composer.cancelCountdown());
     state.conv = conv || null;
     // A turn saved as running with no live run here was cut off (the app was closed or killed
     // mid-reply). Asking the engine settles it (status "interrupted", agents and missions too)
@@ -1039,6 +1044,9 @@ export async function startApp(rootEl) {
    */
   const voiceVisuals = {
     open: (run, seg) => openVisualForVoice(run, seg),
+    // The words to listen for and prefer among the readings heard: the open hologram's part names
+    // (and their other names), else those of the hologram shown last over Voice Mode.
+    vocabulary: () => ({ parts: voicePartNames() }),
     // Optics over Voice Mode counts as a viewer: listening carries on, and what is heard goes to it first.
     isOpen: () => !!(getHologramViewer() || getBlueprintViewer() || isOpticsOpen()),
     command: (text, opts) => {
@@ -1065,6 +1073,19 @@ export async function startApp(rootEl) {
       if (optics && optics.overVoice) safe(() => optics.setVoice(voiceInfo));
     },
   };
+
+  function voicePartNames() {
+    const viewer = getHologramViewer();
+    if (viewer && typeof viewer.partNames === 'function') return safe(() => viewer.partNames(), []);
+    const seg = lastVoiceHologram && lastVoiceHologram.segment;
+    const parts = seg && isObj(seg.spec) && Array.isArray(seg.spec.parts) ? seg.spec.parts : [];
+    const out = [];
+    for (const p of parts) {
+      if (!isObj(p)) continue;
+      for (const n of [p.name, ...(Array.isArray(p.aka) ? p.aka : [])]) if (typeof n === 'string' && n.trim() && !out.includes(n.trim())) out.push(n.trim());
+    }
+    return out.slice(0, 120);
+  }
 
   function openVisualForVoice(run, seg) {
     if (!run || !isVisualSegment(seg)) return null;
@@ -1145,6 +1166,7 @@ export async function startApp(rootEl) {
     refreshCameraPermission();
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
+    safe(() => composer.cancelCountdown()); // Voice Mode takes over: words waiting in the box stay there
     const entry = state.conv && state.runs.get(state.conv.id);
     try {
       voiceApi = openVoiceMode({
@@ -2323,6 +2345,7 @@ export async function startApp(rootEl) {
       return;
     }
     if (!sttOk) return;
+    composer.cancelCountdown(); // listening again: words still waiting in the box are kept, not sent
     stopSpeakingNow();
     safe(() => unlockSpeech());
     const prefix = composer.getText().trim();
@@ -2337,20 +2360,26 @@ export async function startApp(rootEl) {
       header.setLevel(0);
       updateCore();
     };
+    const st = getSettings();
     try {
       handle = startListening({
-        lang: getSettings().listenLang,
+        lang: st.listenLang, // '' = the device's language
+        wait: st.listenWait, // Jarvis decides when the owner has finished (stt.js)
+        phrases: listenPhrases(), // Chrome's contextual biasing, where it exists
         onPartial: (t) => {
           composer.setText(join(t));
           pulseLevel();
         },
-        onFinal: (t) => {
-          const text = join(t);
+        onFinal: (t, info) => {
+          const text = join(chatReading(t, info));
           composer.setText(text);
           if (text && !currentRunning() && state.online && (state.demo || safe(getApiKey, ''))) {
             // submit() goes through onSend with the composer's attachments and team size,
-            // and clears the input and attachments only when the send is accepted.
-            composer.submit();
+            // and clears the input and attachments only when the send is accepted. With "Show
+            // what I said for 2 seconds, then send" the words wait in the box first: a tap on the
+            // box (or typing) stops that, and the owner sends them.
+            if (getSettings().listenSend === 'now') composer.submit();
+            else composer.startCountdown(REVIEW_MS, () => composer.submit());
           }
         },
         onEnd: finish,
@@ -2382,6 +2411,16 @@ export async function startApp(rootEl) {
     safe(() => sounds.play('listen-start'));
     composer.setListening(true);
     updateCore();
+  }
+
+  /**
+   * The reading of words from the chat's mic to use: an alternative that is a screen command (the
+   * composer's local command) when the best reading isn't one.
+   */
+  function chatReading(text, info) {
+    const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
+    if (!alts.length || safe(() => matchScreenCommand(text), null)) return text;
+    return alts.find((a) => typeof a === 'string' && safe(() => matchScreenCommand(a), null)) || text;
   }
 
   // ---- Mission Control ---------------------------------------------------------------------
