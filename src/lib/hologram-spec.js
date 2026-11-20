@@ -824,6 +824,26 @@ function archSides(out, box) {
   return [z1 > 0 ? z1 : z0];
 }
 
+const REVOLVE_NO_AREA = 'hull revolve outline has no area: start or end it on the axis (radius 0) for a solid, or give the wall: out along the outer radius and back along the inner one, e.g. [[300, 0], [300, 400], [260, 400], [260, 0]]';
+
+/**
+ * Whether a revolve profile [[radius, along], …] encloses anything, closed the way the mesher closes
+ * it (revolvePolygon in hull-mesh.js): through the axis when it starts or ends there (a solid), as
+ * written otherwise (a hollow section). A two-point "drum" [[300, 0], [300, 400]] is just a line.
+ */
+function revolveHasArea(profile) {
+  const pts = profile.map(([r, a]) => [a, r]);
+  const rmax = Math.max(...pts.map((p) => p[1]));
+  const onAxis = (p) => p[1] <= rmax * 0.002;
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const solid = onAxis(first) || onAxis(last);
+  const poly = solid ? [...(onAxis(first) ? [] : [[first[0], 0]]), ...pts, ...(onAxis(last) ? [] : [[last[0], 0]])] : pts;
+  const along = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
+  const ext = Math.max(along, rmax);
+  return Math.abs(polygonArea(poly)) > ext * ext * 1e-6;
+}
+
 function normalizeHull(s, out, notes) {
   let given = 0;
   for (const [key, axes, zi] of HULL_VIEWS) {
@@ -845,6 +865,7 @@ function normalizeHull(s, out, notes) {
     if (!pts) return 'hull revolve must be [[radius, along], …] with at least 2 points';
     const fixed = pts.map(([r, a]) => [Math.max(0, r), a]);
     if (!fixed.some((p) => p[0] > 0)) return 'hull revolve needs a point with radius > 0';
+    if (!revolveHasArea(fixed)) return REVOLVE_NO_AREA;
     if (Array.isArray(s.revolve) && s.revolve.length > L.viewPoints) notes.push(`revolve cut to ${L.viewPoints} points`);
     out.revolve = fixed;
     const { axis, bad } = normAxis(s.axis);

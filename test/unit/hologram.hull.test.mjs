@@ -86,6 +86,27 @@ test('hull: revolve profiles (a lathe that can be cut) with their axis', () => {
   assert.match(normalizeShape({ type: 'hull', revolve: [[0, 0], [0, 10]] }).error, /radius > 0/);
 });
 
+test('hull revolve: an outline with no area is dropped with how to write it; everything accepted meshes (RV73-E2)', () => {
+  // A lathe-style "drum" written as two points never touches the axis, so it is hollow and closes
+  // as written: a line, nothing to show. It used to validate silently and render as an invisible,
+  // selectable part (with a paid "Build 2D blueprint" on its card).
+  const noArea = /^hull revolve outline has no area: start or end it on the axis \(radius 0\) for a solid, or give the wall: out along the outer radius and back along the inner one, e.g\. \[\[300, 0\], \[300, 400\], \[260, 400\], \[260, 0\]\]$/;
+  for (const revolve of [[[300, 0], [300, 400]], [[300, 0], [300, 400], [300, 200]], [[0, 0], [0, 400], [10, 400]], [[10, 0], [0, 0], [0, 400]]]) {
+    assert.match(normalizeShape({ type: 'hull', revolve, axis: 'x' }).error || '', noArea, JSON.stringify(revolve));
+  }
+  const drum = normalizeHologramSpec({ title: 'T', parts: [part('drum', [{ type: 'hull', revolve: [[300, 0], [300, 400]], axis: 'x', at: [0, 2600, 0] }]), part('frame', [{ type: 'box', size: [10, 10, 10] }])] });
+  assert.match(drum.warnings[0], /^parts\[0\] "drum" shapes\[0\] \(hull\): dropped: hull revolve outline has no area: /);
+  assert.deepEqual(drum.spec.parts.map((p) => p.id), ['frame']);
+  // solids (on the axis at either end, or at both), hollow sections with a wall, and a cone: all
+  // accepted, and each one meshes to a visible solid
+  for (const revolve of [[[300, 0], [300, 400], [260, 400], [260, 0]], [[0, 0], [300, 400]], [[300, 0], [0, 400]], [[0, 0], [50, 0], [50, 100], [0, 100]], [[0, 0], [50, 0], [50, 100], [0, 100], [0, 200], [30, 200], [30, 300], [0, 300]], [[300, 0], [0, 200], [300, 400]]]) {
+    const res = normalizeShape({ type: 'hull', revolve, axis: 'x' });
+    assert.ok(res.shape, `${JSON.stringify(revolve)}: ${res.error}`);
+    const m = hullMesh(res.shape, { level: 'coarse', scale: 1000 });
+    assert.ok(m && m.triangles > 100, `${JSON.stringify(revolve)}: ${m && m.triangles} triangles`);
+  }
+});
+
 test('hull round: more than 1 is taken as r with a note; 1 or less is ignored with the note', () => {
   const { r, ...noR } = CAR;
   assert.ok(r);
