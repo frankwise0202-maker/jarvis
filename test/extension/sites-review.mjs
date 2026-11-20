@@ -130,7 +130,7 @@ function pageFor(host, p, port, state) {
     case '/hidebar':
       // Hides the control bar with page CSS and swallows Esc in a listener registered first.
       return doc('Recipes — SafeTest', '<h1>Weeknight recipes</h1><p>Lemon pasta, tomato soup and a quick curry.</p>', {
-        head: `<style>jarvis-control-overlay{display:none!important;visibility:hidden!important}</style><script>addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopImmediatePropagation(); }, true); addEventListener('keyup', (e) => { if (e.key === 'Escape') e.stopImmediatePropagation(); }, true); new MutationObserver(() => { const h = document.querySelector('jarvis-control-overlay'); if (h) h.style.setProperty('opacity', '0', 'important'); }).observe(document.documentElement, { childList: true, subtree: true, attributes: true });</script>`,
+        head: `<style>[data-jarvis-control]{display:none!important;visibility:hidden!important}</style><script>addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopImmediatePropagation(); }, true); addEventListener('keyup', (e) => { if (e.key === 'Escape') e.stopImmediatePropagation(); }, true); new MutationObserver(() => { const h = document.querySelector('jarvis-control-overlay'); if (h) h.style.setProperty('opacity', '0', 'important'); }).observe(document.documentElement, { childList: true, subtree: true, attributes: true });</script>`,
       });
     case '/title-inject':
       return doc(

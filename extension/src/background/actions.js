@@ -119,7 +119,8 @@ function onSettingsOrPaymentForm(d, pageUrl) {
 
 /** A results-page control: pagination, "Load more", or a filter or sort control. */
 function everydayTarget(d, pageUrl) {
-  if (!d || typeof d !== 'object' || d.iframe) return null;
+  // (Never one that shows another page or holds one: a click there can land in that page.)
+  if (!d || typeof d !== 'object' || d.iframe || d.containsFrame) return null;
   if (onSettingsOrPaymentForm(d, pageUrl)) return null;
   const label = labelOf(d);
   const clickable = isButtonLike(d) || isLink(d);
@@ -178,7 +179,9 @@ export function plainLinkDestination(d, pageUrl) {
   const tag = lower(d.tag);
   if (tag !== 'a' && tag !== 'area') return '';
   if (lower(d.role) && lower(d.role) !== 'link') return '';
-  if (d.download || d.targetBlank || isNonNavigatingLink(d)) return '';
+  // A new window (its own target, or the page's <base target>) Jarvis cannot hold; a link that
+  // holds another page (a frame inside it), where a click lands in that page, not on the link.
+  if (d.download || d.targetBlank || targetElsewhere(d.target) || isNonNavigatingLink(d) || d.iframe || d.containsFrame) return '';
   if (linkMarkupAction(d)) return '';
   const dest = destinationOf(d, pageUrl);
   if (!dest) return '';
@@ -195,7 +198,7 @@ export function plainLinkDestination(d, pageUrl) {
  */
 function everydayLinkOk(d) {
   if (!isLink(d)) return true;
-  if (d.download || d.targetBlank || scriptHref(d.href) || linkMarkupAction(d)) return false;
+  if (d.download || d.targetBlank || targetElsewhere(d.target) || scriptHref(d.href) || linkMarkupAction(d) || d.containsFrame) return false;
   return isNonNavigatingLink(d);
 }
 
@@ -235,15 +238,24 @@ export function assessClick({ desc, button = 'left', count = 1, modifiers = 0, p
   return ask({ guard: null, dest });
 }
 
+/** Where a link opens, as the page agent read it (its own target, else the page's <base target>). */
+export function linkTarget(d) {
+  if (typeof d?.target === 'string' && d.target !== '') return d.target;
+  return d?.targetBlank ? '_blank' : '';
+}
+
 /** A submit button whose form opens in a new window or a frame (Jarvis cannot follow that load). */
 function submitsElsewhere(d) {
   return !!(d?.isSubmit && d.form && targetElsewhere(d.formTarget || d.form.target));
 }
 
-/** A link or form target other than this tab's own page: a new window or a named frame. */
+/**
+ * A link or form target other than this tab's own page: a new window or a named frame. Compared
+ * as Chromium does, not trimmed: "_self " is a window named "_self " (a new one).
+ */
 export function targetElsewhere(target) {
-  const t = lower(target).trim();
-  return !!t && t !== '_self' && t !== '_top' && t !== '_parent';
+  const t = lower(target);
+  return t !== '' && t !== '_self' && t !== '_top' && t !== '_parent';
 }
 
 /**
@@ -278,7 +290,7 @@ export function keyDestination(chord, focus, pageUrl = '') {
   if (isLink(focus) && !isNonNavigatingLink(focus)) {
     if (k !== 'Enter') return null;
     const url = destinationOf(focus, pageUrl);
-    return url ? { url, method: 'get', target: focus.targetBlank ? '_blank' : '', via: 'link' } : null;
+    return url ? { url, method: 'get', target: linkTarget(focus), via: 'link' } : null;
   }
   // (Enter or Space on an ordinary button runs the page's script for it, like a click: no form.)
   if (!focus.isSubmit && isButtonLike(focus)) return null;

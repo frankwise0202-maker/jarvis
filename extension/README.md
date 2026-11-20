@@ -74,13 +74,14 @@ You are always in charge:
 Jarvis looks at pages, reads them, scrolls, opens pages on sites you allowed and follows ordinary
 links within them without asking. A link or an address whose words say it does something (like
 `/orders/7/cancel`, `?add-to-cart=42` or `/act/delete`, also when the letters are disguised as
-`%64elete`) is not ordinary: it asks first, showing the address. **Every other step waits for
-you**: a click on a button, typing, a key press, picking from a list, ticking a box, dragging,
-answering a page's "Are you sure?", saving a download. The side panel shows a card with
-**Approve** and **Cancel**. It names the element and its visible text, the item it belongs to
-(for example the product and price in the same row) or how many items are selected, the site,
-where a click leads, and, for anything with consequences, what kind of action it is (a purchase,
-sending, deleting…).
+`%64elete`) is not ordinary: it asks first, showing the address. Neither is a link that opens a new
+window (also when the page makes all its links do that) or one with a box from another site inside
+it. **Every other step waits for you**: a click on a button, typing, a key press, picking from a
+list, ticking a box, dragging, answering a page's "Are you sure?", saving a download. The side
+panel shows a card with **Approve** and **Cancel**. It names the element and its visible text, the
+item it belongs to (for example the product and price in the same row) or how many items are
+selected, the site, where a click leads, and, for anything with consequences, what kind of action
+it is (a purchase, sending, deleting…).
 
 - One **Approve** covers that one step, on that one element, once. If the page changes while you
   decide (another product behind the button, a different selection, another page), Jarvis
@@ -98,8 +99,23 @@ default: *Let Jarvis act on <site> without asking for everyday steps*. When it i
 without asking on that site: typing in a search box and searching, pages of results ("Next", "2",
 "Show more"), filters and sorting. Nothing else does: adding to a cart, buying, paying, sending,
 posting, deleting, account or security changes, downloads, a "Show more" link whose address does
-something, a search sent to another window, and anything Jarvis can't clearly tell still ask,
-every time.
+something, a search sent to another window, a button or link with a box from another site in it,
+and anything Jarvis can't clearly tell still ask, every time. Once a task has read another site,
+typing in the search box asks too (see [Moving between sites](#moving-between-sites)).
+
+### Moving between sites
+
+A page can try to trick Claude into carrying something private from one site to another: a sign-in
+code from your mail put into the address of a page on another site, say. So when a task has read
+one site (its text or a picture of it) and Jarvis is about to act on another, it asks you first,
+naming what it read: **"Carry on to …?"**. (On a site you haven't allowed yet, the site's own
+question says so instead.) It asks again only when the task has read yet another site. Before it
+opens an address on another site that has anything in it besides the site's name (a path, a search,
+a code), it shows you the whole address, decoded: **"Send this address to …?"** (or in the site's
+own question, for a new site). Links Jarvis saw on a page it read don't count as text Claude chose.
+Cancel stops Jarvis working on that site for the rest of the task. Jarvis also never points or
+scrolls at a spot Claude picked: it uses the middle of the element there, so the position itself
+can't carry anything.
 
 ### What Jarvis can do
 
@@ -120,25 +136,35 @@ Jarvis follows these rules whatever a web page says.
 
 1. **You can always see and stop it.** The glowing border and the top bar show which tab Jarvis
    controls. Jarvis puts them back on top when a page tries to hide or cover them, and the side
-   panel tells you if a page keeps trying. Stop works from ⌘⇧., the side panel, the bar and Esc
-   (see above for when Esc can't reach Jarvis).
+   panel tells you if a page keeps trying. On a page where the bar can't be shown at all (a page
+   that is a drawing, an SVG file), the side panel tells you at once and Jarvis asks you before it
+   does anything there. Stop works from ⌘⇧., the side panel, the bar and Esc (see above for when Esc
+   can't reach Jarvis).
 2. **It asks before using a new website.** The first time Jarvis wants to work on a site, the side
    panel asks: **Allow once** (this task only), **Always for this site**, or **Deny**. You can
    remove "always" sites in Settings. This also covers going back to an earlier page, a link to
-   another site (asked before the click), and boxes on a page that come from another site, also
-   boxes inside boxes, and where a form goes when Jarvis presses Enter in it (asked before the
-   key). While Jarvis works in a tab, the page can't load a site you denied there, in the tab or
-   in a box on it: links, scripts, redirects and forms that would open it are stopped before
-   anything is sent to it. A page that sends a form, or opens an address that does something, by
-   itself (with no step you approved behind it, such as a "processing" page that places an order)
-   asks you first. Sites follow the Public Suffix List, so on hosting services where everyone gets
-   an address (like `you.ngrok.io` or `you.duckdns.org`), each address is its own site.
+   another site (asked before the click), and boxes on a page that come from another site (any part
+   of a page that shows another site's page, also one inside a link or a button, and boxes inside
+   boxes), and where a form goes when Jarvis presses Enter in it (asked before the key). While
+   Jarvis works in a tab, the page can't load a site you denied there, in the tab or in a box on it:
+   links, scripts, redirects and forms that would open it are stopped before anything is sent to it.
+   A page that sends a form, or opens an address that does something, by itself (with no step you
+   approved behind it, such as a "processing" page that places an order, or a box from another site
+   sending its own form) asks you first; if Jarvis lets go of the tab while that question waits
+   (Take over, Stop, the end of the task), the page doesn't send it. Sites follow the Public Suffix
+   List, so on hosting services where everyone gets an address (like `you.ngrok.io` or
+   `you.duckdns.org`), each address is its own site.
 3. **It asks before every step that changes something.** Nothing Jarvis does to a page goes
    ahead without your **Approve** (see [Approving steps](#approving-steps)), except reading,
    scrolling, opening pages on sites you allowed, following ordinary links within them, and the
-   everyday steps you turned on. This doesn't depend on Jarvis or Claude recognising what a button does: a separate safety
-   check in the extension sends the click or key only to the element you approved, and stops
-   anything else, even if the page swaps something in at the last moment.
+   everyday steps you turned on. This doesn't depend on Jarvis or Claude recognising what a button
+   does: a separate safety check in the extension sends the click or key only to the element you
+   approved, and stops anything else, even if the page swaps something in at the last moment. Right
+   before it presses, Jarvis asks Chrome itself what is under the pointer: a box from another site
+   there makes the step a step in that box (asked as such). If Jarvis can't confirm afterwards that
+   a click reached the element it checked, it stops and tells you. While Jarvis types, the keyboard
+   focus stays in the field you approved: a page that moves it elsewhere (into another site's box,
+   say) stops the typing before the next line or Enter, and you're told.
    - Steps with consequences are marked on the card: buying or paying, placing an order, sending a
      message, posting, deleting, changing account or security settings, accepting terms, and
      downloading files.
@@ -177,9 +203,13 @@ Jarvis follows these rules whatever a web page says.
 6. **Your unsaved work stays.** If a page asks before you leave it or close it ("Changes you made
    may not be saved"), Jarvis stays on it (and uses a new tab instead). Jarvis is also told to use
    a new tab for tasks that aren't about the page you have open.
-7. **Your data stays with you.** Screenshots and page text go only to the Claude API, to do your
-   task. Your task history is kept only in this browser. You can clear it any time (History →
-   Clear history), or turn on **Incognito: no history** in Settings so nothing is kept.
+7. **Your data stays with you.** Screenshots and page text are sent only to the Claude API, to do
+   your task. A page that tricks Claude could try to get Jarvis to pass what it read on one site to
+   another; Jarvis asks you before it acts on a site after reading another one, and shows you every
+   address with text in it that it would open there (see
+   [Moving between sites](#moving-between-sites)). Your task history is kept only in this browser.
+   You can clear it any time (History → Clear history), or turn on **Incognito: no history** in
+   Settings so nothing is kept. Links in Jarvis's answers show where they really go.
 8. **It respects your budget.** Each task has a budget (default $1.00) and a step limit (default
    40). Jarvis asks before going past either one; **Continue** gives it one more budget (or step
    limit) on top of what it has used.
@@ -200,9 +230,10 @@ matter, and use Take over or Stop if something looks wrong.
 - **Links are judged by their address and wording.** A link whose address or label says it does
   something asks; a site whose plain-looking addresses act when opened (say, `/item/42` deleting
   the item) is not recognised, so such a link opens without asking on a site you allowed.
-- **New windows.** A window a page opens sends its first request from the new tab, where Jarvis
-  can't hold it. Jarvis checks the address and its site before the click or key that opens one
-  (and asks), and closes at once a new window that goes to a site you denied, but a page's own
+- **New windows.** A window a page opens sends its requests from the new tab, where Jarvis can't
+  hold them. Jarvis checks the address and its site before the click or key that opens one (and
+  asks), and closes a new window as soon as it goes to a site you denied or an address you declined
+  (also through a redirect), but that site may already have received the request; a page's own
   script can still open a window to a site you haven't been asked about.
 - **What is selected.** Jarvis sees ticked boxes and selected rows in the page, its components and
   its frames from the same site. When part of a page is hidden from Jarvis (a closed component, a
@@ -214,7 +245,12 @@ matter, and use Take over or Stop if something looks wrong.
 - Parts of a page built as closed components, and buttons drawn on a canvas, can't be read: Jarvis
   doesn't see their text, so clicks there ask you, named as well as Jarvis can.
 - Boxes embedded from another site (videos, maps, chat or payment widgets) are opaque to Jarvis:
-  every click or key in one asks you first (naming that site), and it never types into one.
+  every click or key in one asks you first (naming that site), and it never types into one. A box
+  Jarvis can't identify (a PDF viewer, a fenced ad frame) is not acted in at all.
+- **Boxes that load at once.** A box from another site that, the moment it appears, opens a box of
+  its own or sends a form can get that first request out before Jarvis is checking inside it, even
+  to a site you denied. Jarvis still never acts in such a box without asking. (What Jarvis holds is
+  pages: the pictures, scripts and data a page fetches go out as usual.)
 - Only fields are kept private: a card number or code that a page shows as ordinary text (on a
   receipt, say) is seen like any other text. In pictures, fields inside closed page components,
   and boxes from other sites that don't look like payment or sign-in boxes, are not covered.
@@ -227,6 +263,15 @@ matter, and use Take over or Stop if something looks wrong.
   looks like an ordinary key press: read where it lands.
 - The everyday-steps switch trusts the page's own labels for what is a search box, a filter or a
   page of results. Leave it off for sites where that matters.
+- **What it read can still leak a little.** After you let Jarvis carry on to a site, a tricked
+  Claude can still hint at what it read there through which links it follows, how far it scrolls,
+  which element it points at or how long it waits. Jarvis asks again only after the task reads
+  another site. Typed text and addresses are always shown to you first.
+- Jarvis points and scrolls at the middle of the element at a spot, not the exact spot: hovering
+  over one point of a map or a chart drawn on a canvas reaches its middle.
+- Pressing **Cancel** on Chrome's "started debugging this browser" banner ends Jarvis's control at
+  once: a page load that was waiting for your answer then goes ahead (Chrome lets it), and the step
+  list says it may have happened.
 
 ### What Jarvis asks Chrome for
 
@@ -279,8 +324,8 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
 Source lives in `extension/src/`. The build is `npm run build:extension`, which writes
 `dist-extension/` and `dist-extension.zip`. The tests are `npm run test:extension`, unit tests and
 end-to-end, with Playwright Chromium running the real unpacked extension against a mock Claude API
-and local test sites (`test/extension/sites.mjs`, and `sites-review.mjs` and `sites-rt2.mjs` for
-the pages that attack the safety checks).
+and local test sites (`test/extension/sites.mjs`, and `sites-review.mjs`, `sites-rt2.mjs`,
+`sites-rt3.mjs` and `sites-rt4.mjs` for the pages that attack the safety checks).
 
 - `background/`: the service worker.
   - `controller.js`: tasks, prompts, Stop and Take over, history.
@@ -288,7 +333,9 @@ the pages that attack the safety checks).
     and handles pause_turn and limits.
   - `executor.js`: Claude's `browser_toolset_20260801` member tools, as the browser use tool docs
     specify.
-  - `driver.js`: the owner's tabs through `chrome.debugger`.
+  - `driver.js`: the owner's tabs through `chrome.debugger`: frames from other sites (any element
+    that shows a page, by the frame id Chrome gives it), and the page loads of the tab and of its
+    frames, held for the controller's decision and never left for Chrome to continue on release.
   - Safety modules: `actions.js` (deny by default: which steps may go without asking, and the
     everyday-steps allowlist), `guard.js` (what a step means: purchases, sending, deleting,
     account changes, dialogs, secret fields, and the per-task approvals bound to one element),
@@ -301,7 +348,9 @@ the pages that attack the safety checks).
   itself), draws the control bar, reads the page (accessibility-style tree with element refs,
   visible text, secret values left out), masks private fields for screenshots, and checks every
   pointer, key and input event Jarvis sends at the moment it lands, in the page and in its frames
-  from the same site: anything but the one step the owner approved is cancelled.
+  from the same site: anything but the one step the owner approved is cancelled. Its control bar's
+  host is a plain `<div>` (with `data-jarvis-control`): a page can't take it over by defining a
+  custom element of the same name.
 - `sidepanel/`: the side panel UI, in the app's HUD style.
 - `build/`: the manifest, the icon renderer and the zip writer used by `scripts/build-extension.mjs`.
 

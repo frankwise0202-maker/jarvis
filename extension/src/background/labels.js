@@ -2,7 +2,7 @@
 // "monitor 4K" in Search", "Clicked "Add to cart""). Pure; `info` carries what the executor
 // learned while running the call (the element's name, the page's URL).
 
-import { shortUrl } from './sites.js';
+import { showUrl } from './sites.js';
 import { singleLine, truncate } from '../shared/util.js';
 
 const q = (s, max = 48) => `"${truncate(singleLine(s), max)}"`;
@@ -31,7 +31,8 @@ export function stepLabel(name, input = {}, info = {}) {
       if (url === 'back') return 'Went back';
       if (url === 'forward') return 'Went forward';
       if (url === 'reload') return 'Reloaded the page';
-      return `Opened ${shortUrl(info.url || input.url)}`;
+      // The whole address, decoded, its query too: what an opened address carries is visible.
+      return `Opened ${showUrl(info.url || input.url, 90)}`;
     }
     case 'screenshot':
       return 'Looked at the page';

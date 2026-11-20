@@ -483,7 +483,7 @@ function dialogStop(name, how) {
       ]);
       await task(run, 'Show me the details of order 7');
       await waitFor(() => o.confirms().some((p) => p.title === 'The page asks you'), { message: 'the page question', timeout: 20000 });
-      const rect = await waitFor(() => run.page.locator('jarvis-control-overlay').getAttribute('data-test-stop'), { message: 'stop button position' });
+      const rect = await waitFor(() => run.page.locator('[data-jarvis-control]').getAttribute('data-test-stop'), { message: 'stop button position' });
       const { x, y } = JSON.parse(rect);
       await sleep(300);
       const t0 = Date.now();

@@ -42,6 +42,7 @@ export const CATEGORY_NAMES = Object.freeze(Object.keys(CATEGORIES));
 export const GUARD_CATEGORIES = Object.freeze({
   ...CATEGORIES,
   frame: 'acting inside a box embedded from another site, which Jarvis cannot see into',
+  flow: 'carrying what Jarvis read on one site to another site',
   change: 'a step that changes something on the page',
   dialog: "answering the page's question",
   shortcut: 'a keyboard shortcut, which can send, delete or change things on the page',
@@ -60,6 +61,7 @@ export const CATEGORY_CHIPS = Object.freeze({
   agreement: 'Accepting terms',
   download: 'Downloading a file',
   frame: 'Another site’s box',
+  flow: 'What Jarvis read',
   change: 'Page step',
   dialog: 'The page asks',
   shortcut: 'Keyboard shortcut',

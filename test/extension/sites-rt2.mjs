@@ -531,7 +531,7 @@ function pageFor(host, url, port, state) {
          </script>`,
       );
     case 'rt/inert':
-      return doc('Inert — RT', '<h1>Articles</h1><p>Some reading.</p><script>setInterval(() => { const h = document.querySelector("jarvis-control-overlay"); if (h && !h.inert) h.inert = true; }, 20);</script>');
+      return doc('Inert — RT', '<h1>Articles</h1><p>Some reading.</p><script>setInterval(() => { const h = document.querySelector("[data-jarvis-control]"); if (h && !h.inert) h.inert = true; }, 20);</script>');
     case 'rt/draft':
       return doc(
         'Draft — RT',

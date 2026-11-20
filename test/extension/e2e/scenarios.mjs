@@ -351,7 +351,7 @@ const stop = {
       await measureStop(
         run,
         async () => {
-          const rect = await waitFor(() => run.page.locator('jarvis-control-overlay').getAttribute('data-test-stop'), { message: 'stop button position' });
+          const rect = await waitFor(() => run.page.locator('[data-jarvis-control]').getAttribute('data-test-stop'), { message: 'stop button position' });
           const { x, y } = JSON.parse(rect);
           await run.page.mouse.click(x, y);
         },
@@ -396,6 +396,11 @@ const permissions = {
     await run.send('Look at the shop and the account page');
     await decide('once');
     await decide('always');
+    // Back to the shop after reading the account page: the cross-site prompt (round 4), not a
+    // site prompt (the shop is allowed for this task already).
+    const back = await run.waitPrompt('confirm');
+    assert(/^Carry on to shop\.localhost\?$/.test(await back.locator('.prompt__title').textContent()), 'going back to the shop after reading another site asks once');
+    await back.locator(tid('prompt-choice', '[data-choice="approve"]')).click();
     await run.waitStatus('done');
     let results = mock.requests.at(-1);
     assert(prompts.join(',') === 'shop.localhost:once,login.localhost:always', `one prompt per site in the task (${prompts})`);

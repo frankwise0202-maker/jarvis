@@ -11,6 +11,7 @@ import { Driver } from './driver.js';
 import { Executor, TOOLSET_NAME, memberResult } from './executor.js';
 import { Approvals, CATEGORIES, CATEGORY_CHIPS, GUARD_CATEGORIES, SECRET_NAMES, classifyDialogText } from './guard.js';
 import { addressAction } from './actions.js';
+import { addressKey } from './address.js';
 import { inlineUntrusted } from './injection.js';
 import { Limits } from './limits.js';
 import { MODELS, addUsage } from './models.js';
@@ -32,6 +33,64 @@ export const DIALOG_REPEAT_MS = 30 * 1000;
 const DOWNLOAD_ALLOWANCE_MS = 30 * 1000;
 
 const basename = (p) => String(p || '').split(/[\\/]/).pop() || '';
+
+/** A file name shortened in the middle, so that its end (its real extension) always shows. */
+export function shortFileName(name, max = 80) {
+  const s = singleLine(String(name || ''));
+  if (s.length <= max) return s;
+  const tail = Math.min(36, Math.floor(max / 2));
+  return `${s.slice(0, max - tail - 1)}…${s.slice(-tail)}`;
+}
+
+const FILE_KINDS = {
+  pdf: 'a PDF document', html: 'a web page (.html)', htm: 'a web page (.htm)', xhtml: 'a web page (.xhtml)', svg: 'an SVG picture', txt: 'a text file', csv: 'a spreadsheet (.csv)',
+  xlsx: 'a spreadsheet (.xlsx)', xls: 'a spreadsheet (.xls)', docx: 'a document (.docx)', doc: 'a document (.doc)', pptx: 'a presentation (.pptx)', png: 'a picture (.png)', jpg: 'a picture (.jpg)',
+  jpeg: 'a picture (.jpeg)', gif: 'a picture (.gif)', webp: 'a picture (.webp)', zip: 'a zip archive', mp3: 'a sound file', mp4: 'a video', mov: 'a video', ics: 'a calendar invitation',
+};
+const RISKY_EXT = /^(app|dmg|pkg|mpkg|command|tool|sh|bash|zsh|scpt|applescript|workflow|terminal|jar|exe|msi|bat|cmd|com|scr|ps1|vbs|js|jse|wsf|hta|lnk|iso|img|deb|rpm|apk|xpi|crx)$/i;
+
+/**
+ * What kind of file a download is, by the last extension of its name (what the Mac will open it
+ * as), with a warning when its name pretends to be something else (".pdf.html") or it can run.
+ */
+export function fileKind(name) {
+  const n = String(name || '');
+  const m = /\.([a-z0-9]{1,10})$/i.exec(n);
+  if (!m) return { kind: 'a file with no extension', warn: '' };
+  const ext = m[1].toLowerCase();
+  const prev = /\.([a-z0-9]{1,6})\.[a-z0-9]{1,10}$/i.exec(n);
+  const disguised = prev && prev[1].toLowerCase() !== ext ? `Careful: its name ends in “.${prev[1]}.${ext}”, so it is a .${ext} file, not a .${prev[1]} one.` : '';
+  const runs = RISKY_EXT.test(ext) ? `A .${ext} file can run programs on your Mac.` : '';
+  return { kind: FILE_KINDS[ext] || `a .${ext} file`, warn: [disguised, runs].filter(Boolean).join(' ') };
+}
+
+/** "a.com", "a.com and b.com", "a.com, b.com and c.com". */
+function listSites(sites) {
+  const list = [...new Set(sites)].slice(0, 4);
+  if (list.length <= 1) return list[0] || 'another site';
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+/** Whether an address carries text beyond its site: a path, a query or a fragment (all of which a page there sees). */
+function carriesText(url) {
+  try {
+    const u = new URL(url);
+    return (!!u.search && u.search !== '?') || (!!u.hash && u.hash !== '#') || (!!u.pathname && u.pathname !== '/');
+  } catch {
+    return true;
+  }
+}
+
+/** An address as the cross-site check compares it: normalised (addressKey), with its fragment. */
+function flowKey(url) {
+  try {
+    const u = new URL(url);
+    const k = addressKey(url);
+    return u.hash && u.hash !== '#' ? `${k}#${u.hash.slice(1)}` : k;
+  } catch {
+    return '';
+  }
+}
 function formatBytes(n) {
   if (!(n > 0)) return '';
   if (n < 1024) return `${n} bytes`;
@@ -69,7 +128,10 @@ export class Controller {
     });
     this.driver.onTamper = (toolId) => this.onTamper(toolId);
     this.driver.onPopup = (toolId, url) => this.popupPolicy(toolId, url);
+    this.driver.onTabUrl = (toolId, url) => this.popupMoved(toolId, url);
     this.driver.onUnstyled = (toolId) => this.onUnstyled(toolId);
+    this.driver.onNoBar = (toolId) => this.onNoBar(toolId);
+    this.driver.onLoadStopped = (toolId, info) => this.onLoadStopped(toolId, info);
     this.sendQueue = 0;
     this.retryDelaysMs = undefined; // tests shorten the agent loop's waits between retries
   }
@@ -204,6 +266,14 @@ export class Controller {
       downloadsReported: 0,
       downloadAllowances: [],
       dialogApprovals: [], // the owner's OK to a page question, for doing its step again: { toolId, message, until }
+      loadPrompts: new Set(), // "Approve this page load?" prompts not answered yet (cancelled when Jarvis lets go)
+      // What Claude has read on which site in this task, and where the owner let Jarvis go on
+      // acting after that (see crossSite): reads: the sites read; cleared: site -> the sites whose
+      // reads the owner let Jarvis carry on to it with; seen: addresses of links on pages Jarvis
+      // read; denied: sites the owner would not let it carry on to; urls: addresses the owner
+      // approved opening.
+      flow: { reads: new Set(), cleared: new Map(), seen: new Set(), denied: new Set(), urls: new Set() },
+      noBarOk: new Set(), // documents (tab|doc) where the owner let Jarvis act without its bar
       settings,
       windowId,
     };
@@ -274,9 +344,17 @@ export class Controller {
     // A run Stop already ended (it hung in a call that never returned) finishes nothing more: its
     // late cleanup must not touch the next task's tabs.
     if (run.orphaned) return;
+    // A page load still waiting for the owner's answer does not happen: its prompt ends as Cancel,
+    // and the driver fails it before letting go of the tab (Chrome would otherwise send it).
+    this.cancelLoadPrompts(run);
     // Release the tabs before another task may start, so its new debugger sessions are never
     // detached by this one's cleanup.
-    await this.driver.releaseAll();
+    this.releasingRun = run;
+    try {
+      await this.driver.releaseAll();
+    } finally {
+      if (this.releasingRun === run) this.releasingRun = null;
+    }
     if (this.run === run) this.run = null;
     this.updateBadge(null);
     await this.finishTask(run.task, outcome.status, outcome);
@@ -448,6 +526,8 @@ export class Controller {
     const choices = PROMPT_CHOICES[prompt.kind] || [];
     return new Promise((resolve, reject) => {
       if (run.abort.signal.aborted) return reject(abortError());
+      // A prompt withdrawn before its turn (a page load Jarvis let go of) is never shown.
+      if (prompt.token?.cancelled) return resolve(prompt.timeoutChoice || 'cancel');
       const id = uid('p_');
       const onAbort = () => done(reject, abortError());
       let timer = 0;
@@ -466,7 +546,7 @@ export class Controller {
         fn(v);
       };
       run.abort.signal.addEventListener('abort', onAbort, { once: true });
-      run.prompt = { id, choices, resolve: (v) => done(resolve, v) };
+      run.prompt = { id, choices, token: prompt.token || null, resolve: (v) => done(resolve, v) };
       run.task.prompt = { id, kind: prompt.kind, title: prompt.title, body: prompt.body, facts: prompt.facts || '', site: prompt.site || '', category: prompt.category || '', detail: prompt.detail || '', source: prompt.source || '', consequential: !!prompt.consequential, choices: prompt.choices };
       run.task.status = 'waiting';
       this.updateBadge('waiting');
@@ -482,7 +562,7 @@ export class Controller {
     run.prompt.resolve(choice);
   }
 
-  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0 }) {
+  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0, token = null }) {
     const what = CATEGORY_CHIPS[category] || 'Consequential action';
     const choice = await this.ask(run, {
       kind: 'confirm',
@@ -500,8 +580,21 @@ export class Controller {
       detail: what,
       timeoutMs,
       timeoutChoice: 'cancel',
+      token,
     });
     return choice === 'approve';
+  }
+
+  /**
+   * Withdraws every "Approve this page load?" prompt not answered yet, as Cancel (Jarvis is letting
+   * go of the tab: Take over, the end of the task, Stop). The driver fails those loads before it
+   * detaches, so nothing is sent; an Approve shown afterwards would do nothing.
+   */
+  cancelLoadPrompts(run) {
+    for (const token of [...(run?.loadPrompts || [])]) {
+      token.cancelled = true;
+      if (run.prompt?.token === token) run.prompt.resolve('cancel');
+    }
   }
 
   /**
@@ -527,7 +620,7 @@ export class Controller {
 
   policy(run) {
     return {
-      checkSite: async (url) => {
+      checkSite: async (url, ctx, opts = {}) => {
         const site = siteOf(url);
         if (!site) return null;
         const denied = () => `Error: the owner did not allow Jarvis to work on ${site}. Don't try this site again; tell the owner, or use another site if the task allows.`;
@@ -550,11 +643,15 @@ export class Controller {
         } catch {
           host = '';
         }
+        // What Claude read on other sites in this task could reach this one: say so here (allowing
+        // the site also lets Jarvis carry on to it, and open the address shown; see crossSite).
+        const read = this.readSites(run, site);
+        const address = opts?.address && read.length && carriesText(url) && !run.flow.seen.has(flowKey(url)) ? url : '';
         const asking = this.ask(run, {
           kind: 'site',
           site,
           title: `Let Jarvis work on ${site}?`,
-          body: `Jarvis wants to read and use ${host && host !== site ? `${host} (part of ${site})` : site} in your browser for this task.`,
+          body: `Jarvis wants to read and use ${host && host !== site ? `${host} (part of ${site})` : site} in your browser for this task.${read.length ? ` In this task it has read ${listSites(read)}: if a page tricked Jarvis, what it read there could reach ${site}.` : ''}${address ? ` It would open this address there (everything in it reaches ${site}):\n${showUrl(address, 400)}` : ''}`,
           choices: [
             { id: 'once', label: 'Allow once', tone: 'primary' },
             { id: 'always', label: 'Always for this site', tone: 'secondary' },
@@ -572,10 +669,14 @@ export class Controller {
           await this.store.allowSiteAlways(site);
           run.sitesAllowed.add(site);
           run.always = { ...(run.always || {}), [site]: 'always' };
+          this.clearFlow(run, site, read);
+          if (address) run.flow.urls.add(flowKey(address));
           return null;
         }
         if (choice === 'once') {
           run.sitesAllowed.add(site);
+          this.clearFlow(run, site, read);
+          if (address) run.flow.urls.add(flowKey(address));
           return null;
         }
         run.sitesDenied.add(site);
@@ -604,6 +705,20 @@ export class Controller {
         return `Blocked: the owner declined this step (${c.verb}${quoted}${c.consequential ? `: ${c.reason || what}` : ''}). It was not done. Don't try it again or find another way to do it; tell the owner and finish.`;
       },
       everyday: (site) => !!(site && run.everyday?.[site] === true),
+      // The cross-site check (what Claude read on one site reaching another; see crossSite).
+      noteRead: (site) => {
+        if (site) run.flow.reads.add(site);
+      },
+      noteLinks: (urls) => {
+        for (const u of urls || []) {
+          if (run.flow.seen.size >= 20000) break;
+          const key = flowKey(u);
+          if (key) run.flow.seen.add(key);
+        }
+      },
+      readElsewhere: (site) => [...run.flow.reads.keys()].some((s) => s !== site),
+      crossSite: (site, opts) => this.crossSite(run, site, opts),
+      barCheck: (info) => this.barCheck(run, info),
       isAllowed: (site) => !!site && (run.sitesAllowed.has(site) || run.always?.[site] === 'always') && !run.sitesDenied.has(site),
       isDeclinedHref: (url) => run.approvals.isDeclinedHref(url),
       isDeclinedElement: (key) => run.approvals.isDeclinedElement(key),
@@ -630,6 +745,112 @@ export class Controller {
         this.emitTask(run.task);
       },
     };
+  }
+
+  /**
+   * The sites Claude has read in this task other than `site`; with `since`, only those the owner
+   * has not yet let Jarvis carry on to `site` with.
+   */
+  readSites(run, site, { since = true } = {}) {
+    const cleared = since ? run.flow.cleared.get(site) : null;
+    return [...run.flow.reads].filter((s) => s !== site && !cleared?.has(s));
+  }
+
+  /** The owner let Jarvis act on `site` after reading `sites`. */
+  clearFlow(run, site, sites) {
+    if (!sites?.length) return;
+    const set = run.flow.cleared.get(site) || new Set();
+    for (const s of sites) set.add(s);
+    run.flow.cleared.set(site, set);
+  }
+
+  /**
+   * The cross-site check. Claude may have read something private on one site in this task (a code
+   * in the owner's mail, say), and a page that tricked it would like that to reach a site it
+   * controls: in an address Claude builds, in what Jarvis types, in which links it clicks or where
+   * it points. Before Jarvis acts on `site` (opens a page there, or sends it any input):
+   *   - when Claude read other sites the owner has not yet let Jarvis carry on to `site` with, the
+   *     owner is asked once ("Jarvis read A in this task; now it wants to act on B");
+   *   - when Claude read any other site in this task, opening an address on `site` that carries
+   *     text Claude chose (a query, or a path no page Jarvis read links to) asks every time,
+   *     showing the whole address, decoded.
+   * Returns null, or the refusal (Claude is told not to try again).
+   */
+  async crossSite(run, site, { url = '' } = {}) {
+    if (!site) return null;
+    const flow = run.flow;
+    const refusal = `Blocked: the owner did not let Jarvis carry on to ${site} after reading other sites in this task (what Jarvis read there could reach ${site}). Nothing was sent there. Don't try it again or find another way; tell the owner and finish.`;
+    if (flow.denied.has(site)) return refusal;
+    const others = this.readSites(run, site);
+    const anyOther = this.readSites(run, site, { since: false });
+    const carries = !!url && anyOther.length > 0 && carriesText(url) && !flow.seen.has(flowKey(url)) && !flow.urls.has(flowKey(url));
+    if (!others.length && !carries) return null;
+    const read = carries ? anyOther : others;
+    const body = carries
+      ? `In this task Jarvis has read ${listSites(read)}. Now it wants to open this address on ${site}:\n${showUrl(url, 400)}\nEverything in an address reaches ${site}. If a page tricked Jarvis, something it read (a code, a message, a link) could be in it. Approve only if you recognise all of it.`
+      : `In this task Jarvis has read ${listSites(read)}. Now it wants to act on ${site} (open its pages, click, type or point there). If a page tricked Jarvis, what it read could reach ${site} that way. Approve if going on to ${site} is part of your task.`;
+    const ok = await this.confirm(run, { action: body, category: 'flow', source: 'guard', site, consequential: true, title: carries ? `Send this address to ${site}?` : `Carry on to ${site}?` }).catch((err) => {
+      if (isAbort(err)) throw err;
+      return false;
+    });
+    if (!ok) {
+      flow.denied.add(site);
+      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: carries ? `You cancelled opening ${showUrl(url, 80)}. Jarvis did not open it.` : `You stopped Jarvis from going on to ${site} after reading ${listSites(read)}.`, status: 'done' });
+      this.emitTask(run.task);
+      return refusal;
+    }
+    this.clearFlow(run, site, read);
+    if (carries) flow.urls.add(flowKey(url));
+    return null;
+  }
+
+  /**
+   * The page cannot show Jarvis's control bar (an SVG or XML page, or a page that broke it): before
+   * Jarvis sends input there, the owner decides, once for that page. Returns null or the refusal.
+   */
+  async barCheck(run, { toolId, doc, site }) {
+    const key = `${toolId}|${doc}`;
+    if (run.noBarOk.has(key)) return null;
+    const ok = await this.confirm(run, {
+      action: `Jarvis can't show its control bar and glowing border on ${site || 'this page'}, so you can't see there that Jarvis is in control. Stop still works from the side panel and with ${this.platform === 'mac' ? '⌘⇧.' : 'Ctrl+Shift+.'}. Approve to let Jarvis go on acting on this page without the bar.`,
+      category: 'change',
+      source: 'guard',
+      site,
+      consequential: true,
+      title: 'Act without the control bar?',
+    }).catch((err) => {
+      if (isAbort(err)) throw err;
+      return false;
+    });
+    if (!ok) return `Blocked: Jarvis can't show its control bar on ${site || 'this page'}, and the owner did not let it act there without the bar. Nothing was done. Tell the owner, and don't act on this page.`;
+    run.noBarOk.add(key);
+    return null;
+  }
+
+  /** The control bar could not be shown on a page Jarvis works in: tell the owner at once (once per task). */
+  onNoBar(toolId) {
+    const run = this.run;
+    if (!run || run.noBarWarned) return;
+    run.noBarWarned = true;
+    const t = this.driver.get(toolId);
+    const site = t ? siteOf(t.url) : '';
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `Jarvis can't show its control bar on ${site || 'this page'}. It asks you before acting there; Stop works from here or with ${this.platform === 'mac' ? '⌘⇧.' : 'Ctrl+Shift+.'}.`, status: 'done' });
+    this.emitTask(run.task);
+  }
+
+  /**
+   * A page load the driver stopped (the controller's decision, or Jarvis letting go of the tab
+   * while it waited for the owner): the notice in the step list says what really happened.
+   */
+  onLoadStopped(toolId, { url = '', main = true, sending = false, ok = true, notice = '', released = false, lost = false } = {}) {
+    const run = this.run || this.releasingRun;
+    if (!run) return;
+    const where = `${showUrl(url, 60)}${main ? '' : ' (in a frame)'}`;
+    let label;
+    if (ok) label = notice || (released ? `Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${where}: it was waiting for your answer when Jarvis let go of the tab.` : `Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${where}.`);
+    else label = lost ? `The page may have ${sending ? 'sent a form to' : 'opened'} ${where}: Chrome ended Jarvis's control of the tab while it waited for your answer.` : `Jarvis could not stop the page from ${sending ? 'sending a form to' : 'opening'} ${where}: it may have gone ahead.`;
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label, status: 'done' });
+    this.emitTask(run.task);
   }
 
   /**
@@ -719,73 +940,102 @@ export class Controller {
   }
 
   /**
-   * A page Jarvis works in wants to load `url` in the tab or in a frame of it (a link, a script, a
-   * redirect, a form) while Jarvis acts: { method, main }. Never: a denied site, an address the
-   * owner declined, an address an approved step already opened (unless that step is what loads
-   * it now: repeating it). Asked first: a site not asked about yet (the tab's own page, and forms
-   * sent into a frame); and, when no step the owner approved is behind it, a form sent (POST) and
-   * an address that says it acts ("/act/delete"), so a page that posts an order by itself, or
-   * sends Jarvis on to an action address, cannot act unasked. The owner's own page loads during
-   * Take over are not checked; frames' ordinary page loads are not asked about.
+   * A window a page opened (one Jarvis does not control) went on to another address: a redirect,
+   * or the page's own script. Its request has already left (Chrome sends a new window's loads from
+   * that tab, where Jarvis cannot hold them); when it reached a site the owner denied, an address
+   * they declined or one an approved step already opened, the tab is closed at once and the owner
+   * told that the site may have received the request.
    */
-  async navigationPolicy(toolId, url, { method = 'GET', main = true } = {}) {
+  async popupMoved(toolId, url) {
+    const run = this.run;
+    if (!run || run.takeover || run.stopping || run.abort.signal.aborted || !/^https?:/i.test(String(url || ''))) return;
+    const t = this.driver.get(toolId);
+    if (!t || !t.openedByJarvis || t.attached) return;
+    const site = siteOf(url);
+    const why = run.sitesDenied.has(site) ? `${site}, which you denied` : run.approvals.isDeclinedHref(url) ? `${showUrl(url, 60)}, which you declined` : run.approvals.actionResult(url) ? `${showUrl(url, 60)} again, which repeats a step you approved once` : '';
+    if (!why) return;
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `A window a page opened went on to ${why}; Jarvis closed it, but that site may have received the request.`, status: 'done' });
+    this.emitTask(run.task);
+    try {
+      await this.chrome.tabs.remove(t.chromeId);
+    } catch {
+      /* already closed */
+    }
+  }
+
+  /**
+   * A page Jarvis works in wants to load `url` in the tab or in a frame of it (a link, a script, a
+   * redirect, a form) while Jarvis acts: { method, main, sessionId, frameId } (`sessionId`: the load
+   * comes from inside a box from another site, its own form or a frame nested in it). Never: a
+   * denied site, an address the owner declined, an address an approved step already opened
+   * (unless that step is what loads it now: repeating it). Asked first: a site not asked about yet
+   * (the tab's own page, and forms sent into or from a frame); and, when no step the owner approved
+   * is behind it, a form sent (POST) and an address that says it acts ("/act/delete"), so a page
+   * that posts an order by itself, or sends Jarvis on to an action address, cannot act unasked. A
+   * step approved on the page never covers what another site's box sends by itself. The owner's
+   * own page loads during Take over are not checked; frames' ordinary page loads are not asked
+   * about. Returns true (load it) or { allow: false, notice } (the driver fails it, and the notice
+   * goes in the step list once Chrome confirms nothing was sent).
+   */
+  async navigationPolicy(toolId, url, { method = 'GET', main = true, sessionId = null, frameId = null } = {}) {
     const run = this.run;
     if (!run || run.takeover || run.stopping || run.abort.signal.aborted) return true;
-    if (blockedReason(url)) return !main;
+    if (blockedReason(url)) return main ? { allow: false } : true;
     const site = siteOf(url);
     if (!site) return true;
-    const warn = (label) => {
-      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label, status: 'done' });
-      this.emitTask(run.task);
-    };
-    if (run.approvals.isDeclinedHref(url)) {
-      warn(`Jarvis stopped the page from opening ${showUrl(url, 60)}, which you declined.`);
-      return false;
-    }
-    if (run.sitesDenied.has(site)) {
-      warn(`Jarvis stopped the page from opening ${site}, which you denied.`);
-      return false;
-    }
-    const approved = this.driver.approvedInput(toolId);
+    const stop = (notice) => ({ allow: false, notice });
+    const where = `${showUrl(url, 60)}${main ? '' : ' (in a frame)'}`;
+    if (run.approvals.isDeclinedHref(url)) return stop(`Jarvis stopped the page from opening ${where}, which you declined.`);
+    if (run.sitesDenied.has(site)) return stop(`Jarvis stopped the page from opening ${site}${main ? '' : ' in a frame'}, which you denied.`);
+    const approved = this.driver.approvedInput(toolId, { sessionId, frameId });
     const prior = run.approvals.actionResult(url);
-    if (prior && !approved) {
-      warn(`Jarvis stopped the page from opening ${showUrl(url, 60)} again: that would repeat a step you approved once (${CATEGORIES[prior.category] || 'a step that does something'}).`);
-      return false;
-    }
+    if (prior && !approved) return stop(`Jarvis stopped the page from opening ${showUrl(url, 60)} again: that would repeat a step you approved once (${CATEGORIES[prior.category] || 'a step that does something'}).`);
     const sending = !/^(GET|HEAD)$/i.test(String(method || 'GET'));
     const acts = !sending && main ? addressAction(url) : null;
     if (!approved && (sending || (acts && !acts.file))) {
-      // Nothing the owner approved led here: the page itself is sending a form, or opening an
-      // address that acts. The owner decides.
+      // Nothing the owner approved led here: the page itself (or a box from another site in it) is
+      // sending a form, or opening an address that acts. The owner decides.
       const t = this.driver.get(toolId);
       const from = t && /^https?:/i.test(t.url || '') ? shortUrl(t.url, 60) : site;
       const consequential = !!(acts && CATEGORIES[acts.category]);
-      const what = sending ? `send a form to ${showUrl(url, 90)}${main ? '' : ' (into a frame)'}` : `open ${showUrl(url, 90)} (${acts.reason})`;
-      const ok = await this.confirm(run, {
-        action: `The page ${from} wants to ${what}. No step you approved asked for this: a page can place an order, pay, send or delete this way. Approve lets it go ahead; Cancel stops it.`,
-        category: consequential ? acts.category : 'change',
-        source: 'guard',
-        site,
-        consequential: true,
-        title: 'Approve this page load?',
-      }).catch(() => false);
+      const what = sending ? `send a form to ${showUrl(url, 90)}${sessionId ? ' (from inside a box from another site)' : main ? '' : ' (into a frame)'}` : `open ${showUrl(url, 90)} (${acts.reason})`;
+      // (Withdrawn as Cancel if Jarvis lets go of the tab before the owner answers.)
+      const token = { cancelled: false };
+      run.loadPrompts.add(token);
+      let ok = false;
+      try {
+        ok = await this.confirm(run, {
+          action: `The page ${from} wants to ${what}. No step you approved asked for this: a page can place an order, pay, send or delete this way. Approve lets it go ahead; Cancel stops it.`,
+          category: consequential ? acts.category : 'change',
+          source: 'guard',
+          site,
+          consequential: true,
+          title: 'Approve this page load?',
+          token,
+        });
+      } catch {
+        ok = false;
+      } finally {
+        run.loadPrompts.delete(token);
+      }
+      if (token.cancelled) return stop(`Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${where}: it was waiting for your answer when Jarvis let go of the tab.`);
       if (!ok) {
         // A declined action address stays declined; a form's action does not (the owner may
         // approve sending that form themselves later, with a click).
         run.approvals.decline(consequential ? acts.category : 'change', site, { href: sending ? '' : url });
-        warn(`Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${showUrl(url, 60)}.`);
-        return false;
+        return stop(`Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${where}.`);
       }
     }
     if (!main) {
-      // A frame's own page loads (ads, videos, widgets) go ahead; a form sent into a frame goes to
-      // a site only with the owner's permission.
+      // A frame's own page loads (ads, videos, widgets) go ahead; a form sent into a frame, or from
+      // inside one, goes to a site only with the owner's permission.
       if (!sending || run.sitesAllowed.has(site)) return true;
     } else if (run.sitesAllowed.has(site)) return true;
     try {
-      return !(await run.policy.checkSite(url));
+      const refusal = await run.policy.checkSite(url);
+      return refusal ? stop(`Jarvis stopped the page from ${sending ? 'sending a form to' : 'opening'} ${where}: you did not allow ${site}.`) : true;
     } catch {
-      return false;
+      return stop('');
     }
   }
 
@@ -805,6 +1055,7 @@ export class Controller {
     const name = basename(item?.filename) || basename(new URL(url, 'http://x/').pathname) || 'a file';
     const size = item?.totalBytes > 0 ? item.totalBytes : item?.fileSize > 0 ? item.fileSize : 0;
     const rec = { id: item?.id, url, site, name, size, verdict: 'pending', seq: ++run.downloadSeq };
+    const kind = fileKind(name);
     rec.promise = new Promise((resolve) => (rec.resolve = resolve));
     rec.settle = async (ok) => {
       if (rec.verdict !== 'pending') return;
@@ -822,7 +1073,7 @@ export class Controller {
         /* Chrome stopped waiting */
       }
       rec.resolve(rec.verdict);
-      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: ok ? 'info' : 'warn', label: ok ? `Saved “${truncate(name, 60)}” to your Downloads folder.` : `Jarvis did not save “${truncate(name, 60)}”.`, status: 'done' });
+      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: ok ? 'info' : 'warn', label: ok ? `Saved “${shortFileName(name, 60)}” to your Downloads folder.` : `Jarvis did not save “${shortFileName(name, 60)}”.`, status: 'done' });
       this.emitTask(run.task);
     };
     run.downloads.push(rec);
@@ -836,7 +1087,7 @@ export class Controller {
       return true;
     }
     this.confirm(run, {
-      action: `Save the file “${truncate(name, 80)}”${size ? ` (${formatBytes(size)})` : ''} from ${site || 'a page'}? A page Jarvis is working in started this download.`,
+      action: `Save the file “${shortFileName(name, 80)}” (${kind.kind}${size ? `, ${formatBytes(size)}` : ''}) from ${site || 'a page'}? A page Jarvis is working in started this download.${kind.warn ? ` ${kind.warn}` : ''}`,
       category: 'download',
       source: 'guard',
       site,
@@ -910,6 +1161,8 @@ export class Controller {
     for (const s of run.task.steps) if (s.status === 'running') s.status = 'skipped';
     this.updateBadge(null);
     this.settleDownloads(run);
+    // (The driver fails every page load still waiting for the owner before it lets go of the tab.)
+    this.cancelLoadPrompts(run);
     const release = this.driver.releaseAll();
     this.emitTask(run.task);
     await release;
@@ -943,6 +1196,9 @@ export class Controller {
     if (!run || run.takeover || run.stopping) return;
     run.takeover = true;
     run.takeovers += 1;
+    // A page load waiting for the owner's answer does not happen (the driver fails it before it
+    // lets go of the tab; Chrome would otherwise send it): its prompt ends as Cancel.
+    this.cancelLoadPrompts(run);
     run.task.status = run.task.prompt ? 'waiting' : 'paused';
     this.updateBadge('paused');
     // Downloads Jarvis's pages started and the owner has not approved yet do not happen.

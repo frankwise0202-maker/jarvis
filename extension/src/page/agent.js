@@ -19,7 +19,7 @@ import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from 
 import { addressKey } from '../background/address.js';
 
 (() => {
-  const VERSION = 5;
+  const VERSION = 6;
   if (globalThis.__jarvis && globalThis.__jarvis.version === VERSION) {
     // Evaluated again on a document the page rewrote with document.open(): the agent's state
     // survived, its listeners did not. Put them back.
@@ -115,8 +115,15 @@ import { addressKey } from '../background/address.js';
   }
   const hostStyled = (h) => HOST_STYLE.every(([prop, value]) => prop === 'all' || (h.style.getPropertyValue(prop) === value && h.style.getPropertyPriority(prop) === 'important'));
 
+  // The host is a plain <div> in the HTML namespace: a page can define a custom element of any
+  // hyphenated name (its definition would run, and could forbid or take the shadow root Jarvis
+  // needs), but never redefine a built-in element. It carries a fixed marker attribute, so the
+  // service worker can tell Jarvis's own closed shadow root from the page's.
+  const HOST_MARK = 'data-jarvis-control';
+
   function buildOverlay() {
-    const host = document.createElement('jarvis-control-overlay');
+    const host = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    host.setAttribute(HOST_MARK, '');
     setHostStyles(host);
     // In the top layer, above the page's own modal dialogs (raised again on every heartbeat).
     try {
@@ -239,7 +246,22 @@ import { addressKey } from '../background/address.js';
     }
   }
 
+  /**
+   * Shows the bar (building it if needed). Never throws: returns false when it cannot be shown at
+   * all (the document is not one it can be drawn in), which the heartbeat reports at once.
+   */
   function mountOverlay() {
+    try {
+      mountOverlayOnce();
+      state.barFailed = false;
+      return true;
+    } catch {
+      state.barFailed = true;
+      return false;
+    }
+  }
+
+  function mountOverlayOnce() {
     if (state.mode === 'hidden') return;
     // A host that left the document (the page rebuilt <html>, or rewrote itself with
     // document.open(), which also erases the listeners of the old host's Stop button) is replaced
@@ -271,14 +293,20 @@ import { addressKey } from '../background/address.js';
       state.observer.observe(parent, { childList: true });
       state.mountedOn = parent;
     }
+    // A host the document cannot draw (an SVG or XML document, where an HTML element outside a
+    // foreignObject is not rendered) shows nothing: that is a bar that cannot be shown. (A document
+    // still too early to have an <html> element gets it when it does: the heartbeat puts it there.)
+    if (!document.documentElement) return;
+    if (!state.host.isConnected || !(state.host instanceof HTMLElement) || !(document.documentElement instanceof HTMLElement)) throw new Error('no bar');
   }
 
   function restoreHost() {
     const host = state.host;
     for (const a of [...host.attributes]) {
-      if (a.name === 'style' || a.name === 'popover' || a.name === 'data-test-stop') continue;
+      if (a.name === 'style' || a.name === 'popover' || a.name === 'data-test-stop' || a.name === HOST_MARK) continue;
       host.removeAttribute(a.name);
     }
+    if (!host.hasAttribute(HOST_MARK)) host.setAttribute(HOST_MARK, '');
     if (!hostStyled(host)) setHostStyles(host);
     if (host.getAttribute('popover') !== 'manual') {
       try {
@@ -314,14 +342,19 @@ import { addressKey } from '../background/address.js';
     state.sawHidden = false;
   }
 
+  /** Returns false when the bar could not be shown (see mountOverlay). */
   function setMode(mode) {
     if (mode === 'hidden') {
       unmountOverlay();
-      return;
+      return true;
     }
     state.mode = mode === 'waiting' ? 'waiting' : 'acting';
     state.lastBeat = Date.now();
-    mountOverlay();
+    startTimers();
+    return mountOverlay();
+  }
+
+  function startTimers() {
     if (!state.watchdog) {
       // If the service worker stops sending heartbeats (it was stopped, the debugger was detached
       // from Chrome's own "cancel" button), the bar removes itself instead of lingering.
@@ -389,6 +422,78 @@ import { addressKey } from '../background/address.js';
 
   // -------------------------------------------------------------------------------------------
   // Element helpers
+
+  // Elements that show another page inside this one (a nested browsing context): an iframe, a
+  // frame, an <object> or <embed> showing a page, a fenced frame. One showing another site's page
+  // is a box Jarvis cannot see into or check: it is never treated as part of the element around it.
+  const FRAME_HOSTS = new Set(['iframe', 'frame', 'object', 'embed', 'fencedframe', 'portal']);
+  const FRAME_SELECTOR = 'iframe, frame, object, embed, fencedframe, portal';
+  const isFrameHost = (el) => !!el && el.nodeType === 1 && FRAME_HOSTS.has(el.localName);
+  /** A frame host that shows a page (an <object> showing a picture does not; an <embed> always counts). */
+  const showsPage = (el) => isFrameHost(el) && (el.localName !== 'object' || !!frameDoc(el) || !!el.contentWindow);
+
+  /** The document a frame host shows, when this page may read it (same origin); null otherwise. */
+  function frameDoc(el) {
+    if (!isFrameHost(el)) return null;
+    try {
+      if (el.localName === 'embed') return typeof el.getSVGDocument === 'function' ? el.getSVGDocument() || null : null;
+      return el.contentDocument || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The window a frame host shows, when this page may reach into it (same origin); null otherwise. */
+  function frameWin(el) {
+    const doc = frameDoc(el);
+    return doc ? doc.defaultView || null : null;
+  }
+
+  /** Whether `el` (or an open shadow root inside it) holds an element that shows another page. */
+  function holdsFrame(el, depth = 0) {
+    if (!el || el.nodeType !== 1 || depth > 4) return false;
+    try {
+      if (el.querySelector(FRAME_SELECTOR)) return true;
+      let n = 0;
+      for (const d of el.querySelectorAll('*')) {
+        if (++n > 400) break;
+        if (d.shadowRoot && d !== state.host && (d.shadowRoot.querySelector(FRAME_SELECTOR) || [...d.shadowRoot.children].some((c) => holdsFrame(c, depth + 1)))) return true;
+      }
+      if (el.shadowRoot && el !== state.host && el.shadowRoot.querySelector(FRAME_SELECTOR)) return true;
+    } catch {
+      return true; // can't tell: assume it does (fail closed)
+    }
+    return false;
+  }
+
+  /**
+   * Where a link, an area or a form opens, as Chromium decides: the element's own target (a
+   * submit button's formtarget first), else the document's first <base target>; an empty value
+   * falls through. Compared as is (Chromium opens "_self " in a new window, named "_self ").
+   */
+  function effectiveTarget(el, submitter = null) {
+    if (!el || el.nodeType !== 1) return '';
+    let t = '';
+    if (submitter && submitter.hasAttribute?.('formtarget') && submitter.getAttribute('formtarget') !== '') t = submitter.getAttribute('formtarget');
+    else if (el.hasAttribute?.('target') && el.getAttribute('target') !== '') t = el.getAttribute('target');
+    if (!t) {
+      try {
+        const base = (el.ownerDocument || document).querySelector('base[target]');
+        t = base ? base.getAttribute('target') || '' : '';
+      } catch {
+        t = '';
+      }
+    }
+    // (A name with a line break or a tab and "<" in it opens a new window in Chromium.)
+    if (/[\t\n\r]/.test(t) && t.includes('<')) t = '_blank';
+    return String(t).slice(0, 120);
+  }
+
+  /** A link or form target other than this tab's page: a new window or a named frame. */
+  const elsewhere = (target) => {
+    const t = String(target || '').toLowerCase();
+    return t !== '' && t !== '_self' && t !== '_top' && t !== '_parent';
+  };
 
   const INTERACTIVE_ROLES = new Set([
     'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option',
@@ -485,7 +590,14 @@ import { addressKey } from '../background/address.js';
       case 'label':
         return 'label';
       case 'iframe':
+      case 'frame':
+      case 'fencedframe':
+      case 'portal':
         return 'iframe';
+      case 'object':
+      case 'embed':
+        // A box showing another page (an <object> or <embed> with a document in it).
+        return showsPage(el) ? 'iframe' : null;
       case 'video':
         return 'video';
       case 'p':
@@ -620,7 +732,7 @@ import { addressKey } from '../background/address.js';
       const cap = el.querySelector(':scope > caption');
       if (cap) return cut(cap.textContent);
     }
-    if (tag === 'iframe') return cut(el.title || el.name || '');
+    if (isFrameHost(el)) return cut(el.title || el.getAttribute('name') || '');
     // Interactive elements without a role (an <a> with no href, a div with a click handler) are
     // named by their text too, like buttons.
     if ((role && (INTERACTIVE_ROLES.has(role) || role === 'heading' || role === 'option' || role === 'cell' || role === 'columnheader' || role === 'listitem' || role === 'label' || role === 'paragraph')) || (!role && isInteractive(el, role))) {
@@ -722,25 +834,52 @@ import { addressKey } from '../background/address.js';
     return `${'  '.repeat(depth)}${role}${n}${states(el, role)} [${ref}]`;
   }
 
-  /** Children of an element including its open shadow root and same-origin iframe document. */
+  /** Children of an element including its open shadow root and a same-origin frame's document. */
   function* childrenOf(el) {
-    if (el.shadowRoot) yield* el.shadowRoot.children;
-    if (el.localName === 'iframe') {
-      try {
-        const doc = el.contentDocument;
-        if (doc && doc.body) {
-          yield doc.body;
-          return;
-        }
-      } catch {
-        /* cross-origin */
-      }
+    if (el.shadowRoot && el !== state.host) yield* el.shadowRoot.children;
+    if (isFrameHost(el)) {
+      const doc = frameDoc(el);
+      const root = doc ? doc.body || doc.documentElement : null;
+      if (root) yield root;
+      // (What a frame shows is its page; an <object> that shows none shows its fallback content.)
+      if (showsPage(el)) return;
     }
     if (el.localName === 'slot') {
       for (const n of el.assignedElements({ flatten: true })) yield n;
       return;
     }
     yield* el.children;
+  }
+
+  /**
+   * The addresses this page links to (its links, in open shadow roots and frames of this origin
+   * too): what Jarvis saw on a page it read. Opening one of them by its address carries nothing
+   * Claude made up (see the service worker's cross-site check).
+   */
+  function pageLinks(max = 400) {
+    const out = new Set();
+    const visit = (root, depth) => {
+      if (depth > 4 || out.size >= max) return;
+      let n = 0;
+      for (const el of root.querySelectorAll('a[href], area[href], *')) {
+        if (++n > 20000 || out.size >= max) break;
+        if (el.localName === 'a' || el.localName === 'area') {
+          const href = typeof el.href === 'string' ? el.href : '';
+          if (/^https?:/i.test(href)) out.add(href);
+        }
+        if (el.shadowRoot && el !== state.host) visit(el.shadowRoot, depth + 1);
+        if (isFrameHost(el)) {
+          const doc = frameDoc(el);
+          if (doc) visit(doc, depth + 1);
+        }
+      }
+    };
+    try {
+      visit(document, 0);
+    } catch {
+      /* best effort */
+    }
+    return [...out];
   }
 
   // -------------------------------------------------------------------------------------------
@@ -771,7 +910,7 @@ import { addressKey } from '../background/address.js';
     const visit = (el, d) => {
       if (truncated || !el || el.nodeType !== 1) return;
       const tag = el.localName;
-      if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template' || tag === 'head' || tag === 'jarvis-control-overlay') return;
+      if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template' || tag === 'head' || el === state.host) return;
       if (el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('inert')) return;
       if (!visible(el)) return;
       const role = roleOf(el);
@@ -819,7 +958,7 @@ import { addressKey } from '../background/address.js';
     if (!text) text = interactiveOnly ? '(no interactive elements in view; scroll, or use filter "all")' : '(nothing visible in this part of the page)';
     if (truncated) text += `\n[Output capped at ${MAX_TEXT.toLocaleString('en-US')} characters. Narrow the read with a smaller depth or the ref of a container.]`;
     const header = `Page: ${cut(document.title, 120)}\nViewport: ${innerWidth}x${innerHeight} CSS px, scrolled to (${Math.round(scrollX)}, ${Math.round(scrollY)}) of ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight}`;
-    return { text: `${header}\n${text}`, nextRef: state.nextRef };
+    return { text: `${header}\n${text}`, nextRef: state.nextRef, links: pageLinks() };
   }
 
   // -------------------------------------------------------------------------------------------
@@ -866,7 +1005,7 @@ import { addressKey } from '../background/address.js';
     };
     const walk = (root) => {
       for (const el of root.querySelectorAll('*')) {
-        if (el.localName === 'jarvis-control-overlay') continue;
+        if (el === state.host) continue;
         consider(el);
         if (el.shadowRoot) walk(el.shadowRoot);
       }
@@ -875,7 +1014,7 @@ import { addressKey } from '../background/address.js';
     scored.sort((a, b) => b.score - a.score);
     const top = scored.slice(0, 20);
     if (!top.length) return { text: `No elements matched "${cut(query, 80)}". Try read_page, or a different description.`, nextRef: state.nextRef };
-    return { text: top.map((s) => line(s.el, s.role, s.name, 0)).join('\n'), nextRef: state.nextRef };
+    return { text: top.map((s) => line(s.el, s.role, s.name, 0)).join('\n'), nextRef: state.nextRef, links: pageLinks() };
   }
 
   // -------------------------------------------------------------------------------------------
@@ -1001,12 +1140,9 @@ import { addressKey } from '../background/address.js';
         } else if (c.nodeType === 1) walk(c, inner, op, bg);
       }
       if (el.shadowRoot) for (const c of el.shadowRoot.children) walk(c, inner, op, bg);
-      if (tag === 'iframe') {
-        try {
-          if (el.contentDocument?.body) walk(el.contentDocument.body, ALL, op, null);
-        } catch {
-          /* cross-origin */
-        }
+      if (isFrameHost(el)) {
+        const doc = frameDoc(el);
+        if (doc?.body) walk(doc.body, ALL, op, null);
       }
       if (block) emit('\n');
     };
@@ -1019,7 +1155,7 @@ import { addressKey } from '../background/address.js';
     let text = parts.join('').replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     if (truncated) text += `\n[Text capped at ${MAX_TEXT.toLocaleString('en-US')} characters.]`;
     const scope = main === document.body || main === document.documentElement ? '' : ' (main content)';
-    return { text: `Title: ${cut(document.title, 150)}${scope}\n\n${text || '(no visible text)'}` };
+    return { text: `Title: ${cut(document.title, 150)}${scope}\n\n${text || '(no visible text)'}`, links: pageLinks() };
   }
 
   // -------------------------------------------------------------------------------------------
@@ -1045,21 +1181,19 @@ import { addressKey } from '../background/address.js';
           continue;
         }
       }
-      if (el.localName === 'iframe') {
-        try {
-          const doc = el.contentDocument;
-          if (doc) {
-            const r = el.getBoundingClientRect();
-            ox += r.left + el.clientLeft;
-            oy += r.top + el.clientTop;
-            const inner = topAt(doc, x - ox, y - oy);
-            if (inner) {
-              el = inner;
-              continue;
-            }
+      if (isFrameHost(el)) {
+        // A frame of this origin: what is under the point inside it. Any other (another site's
+        // page, which Jarvis cannot see into) is itself what the point reaches.
+        const doc = frameDoc(el);
+        if (doc) {
+          const r = el.getBoundingClientRect();
+          ox += r.left + el.clientLeft;
+          oy += r.top + el.clientTop;
+          const inner = topAt(doc, x - ox, y - oy);
+          if (inner) {
+            el = inner;
+            continue;
           }
-        } catch {
-          /* cross-origin frame: the frame itself is the target */
         }
       }
       break;
@@ -1069,7 +1203,13 @@ import { addressKey } from '../background/address.js';
 
   const ACTIONABLE = 'a[href], button, input, select, textarea, label, summary, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"], [contenteditable=""], [contenteditable="true"], [onclick]';
 
+  /**
+   * The element a click on `el` activates: its link, button, field or control. An element that
+   * shows another page (a frame) is never mapped to the element around it: a click there goes into
+   * that page, not to the link or button that holds the frame.
+   */
   function actionableAncestor(el) {
+    if (isFrameHost(el)) return el;
     let node = el;
     for (let i = 0; i < 12 && node; i++) {
       if (node.nodeType === 1 && node.matches?.(ACTIONABLE)) {
@@ -1117,7 +1257,7 @@ import { addressKey } from '../background/address.js';
     const action = form.getAttribute('action') || '';
     const searchy = roleSearch || /search|query|\bq\b|find/i.test(`${action} ${form.id} ${form.className}`) || (infos.length <= 2 && infos.some((i) => i.type === 'search' || /^(q|query|search|s|k|keyword|keywords|st)$/i.test(i.name)));
     const cardish = infos.some((i) => /cc-number|cc-csc/.test(i.autocomplete) || /\b(card ?number|cvv|cvc|security code)\b/i.test(`${i.name} ${i.id} ${i.placeholder} ${i.label} ${i.ariaLabel}`));
-    const frames = [...form.querySelectorAll('iframe')].some((f) => /stripe|braintree|adyen|card|payment|cvv|cvc|hosted-field|securefield/i.test(`${f.src} ${f.name} ${f.title} ${f.id}`));
+    const frames = [...form.querySelectorAll(FRAME_SELECTOR)].some((f) => /stripe|braintree|adyen|card|payment|cvv|cvc|hosted-field|securefield/i.test(`${f.src || f.data || ''} ${f.getAttribute('name') || ''} ${f.title} ${f.id}`));
     let actionUrl = '';
     try {
       actionUrl = typeof form.action === 'string' ? form.action : new URL(action || location.href, location.href).href;
@@ -1144,10 +1284,12 @@ import { addressKey } from '../background/address.js';
       action: cut(action, 120),
       actionUrl: cut(actionUrl, 600),
       method: (form.getAttribute('method') || 'get').toLowerCase(),
-      target: cut(form.getAttribute('target') || '', 60),
+      // Where it opens: its own target, else the page's <base target> (as Chromium decides; not
+      // trimmed: "_self " is a new window).
+      target: effectiveTarget(form),
       submitAction: cut(submitAction, 600),
       submitMethod: own(def, 'formmethod').toLowerCase(),
-      submitTarget: cut(own(def, 'formtarget'), 60),
+      submitTarget: String(own(def, 'formtarget')).slice(0, 120),
     };
   }
 
@@ -1311,13 +1453,8 @@ import { addressKey } from '../background/address.js';
       for (const el of root.querySelectorAll('*')) {
         if (++n > 20000) break;
         if (el.shadowRoot && el !== state.host) visit(el.shadowRoot, depth + 1);
-        if (el.localName !== 'iframe' && el.localName !== 'frame') continue;
-        let doc = null;
-        try {
-          doc = el.contentDocument;
-        } catch {
-          doc = null;
-        }
+        if (!showsPage(el)) continue;
+        const doc = frameDoc(el);
         if (doc) {
           if (doc.documentElement) visit(doc, depth + 1);
           continue;
@@ -1325,7 +1462,7 @@ import { addressKey } from '../background/address.js';
         // A frame from another site (or origin): nothing in it can be read from here.
         const r = el.getBoundingClientRect();
         if (r.width < BLIND_FRAME_MIN.w || r.height < BLIND_FRAME_MIN.h || !visible(el)) continue;
-        if (PAYMENT_BOX.test(`${el.src || ''} ${el.name || ''} ${el.title || ''} ${el.id || ''}`)) continue;
+        if (PAYMENT_BOX.test(`${el.src || el.data || ''} ${el.getAttribute('name') || ''} ${el.title || ''} ${el.id || ''}`)) continue;
         blind.push('a box from another site');
       }
     };
@@ -1337,6 +1474,8 @@ import { addressKey } from '../background/address.js';
   /** What the guard needs to know about an element. */
   function describe(el) {
     if (!el) return null;
+    // Jarvis's own control bar (its host, or an element inside its closed shadow root).
+    if (state.host && (el === state.host || el.getRootNode?.()?.host === state.host)) return { tag: el.localName, role: '', name: "Jarvis's control bar", text: '', jarvisBar: true };
     const role = roleOf(el);
     const tag = el.localName;
     const form = el.form || closestAcross(el, 'form');
@@ -1369,10 +1508,16 @@ import { addressKey } from '../background/address.js';
       looksSecret: looksSecret(el),
       readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
       disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
-      targetBlank: (tag === 'a' || tag === 'area') && !/^(|_self|_top|_parent)$/i.test(el.getAttribute('target') || ''),
+      // Where a link opens: its own target, else the page's <base target> (a new window Jarvis
+      // cannot hold is never a plain link).
+      targetBlank: (tag === 'a' || tag === 'area') && elsewhere(effectiveTarget(el)),
+      target: tag === 'a' || tag === 'area' ? effectiveTarget(el) : '',
       formAction: (tag === 'button' || tag === 'input') && typeof el.formAction === 'string' && el.hasAttribute('formaction') ? el.formAction : '',
       formMethod: (tag === 'button' || tag === 'input') && el.hasAttribute('formmethod') ? (el.getAttribute('formmethod') || '').toLowerCase() : '',
-      formTarget: (tag === 'button' || tag === 'input') && el.hasAttribute('formtarget') ? cut(el.getAttribute('formtarget') || '', 60) : '',
+      // (A submit button's own formtarget; an empty one falls back to the form's, then <base>'s.)
+      formTarget: (tag === 'button' || tag === 'input') && el.hasAttribute('formtarget') && el.getAttribute('formtarget') !== '' ? String(el.getAttribute('formtarget')).slice(0, 120) : '',
+      // Another page shown inside it (a frame): a click there goes into that page, not to this element.
+      containsFrame: !isFrameHost(el) && holdsFrame(el),
       // Markup that makes a link an action (Rails/Turbo data-method and data-confirm, a shop theme's
       // add-to-cart class, a ping to another address).
       linkMethod: tag === 'a' || tag === 'area' ? (el.getAttribute('data-method') || el.getAttribute('data-turbo-method') || '').toLowerCase().slice(0, 12) : '',
@@ -1396,16 +1541,11 @@ import { addressKey } from '../background/address.js';
     if (!d.name && !d.text && (tag === 'canvas' || tag === 'svg' || tag === 'img' || tag === 'video' || tag === 'div' || tag === 'span')) {
       d.unlabelled = tag === 'canvas' ? 'a drawing (canvas) with no label' : tag === 'img' || tag === 'svg' ? 'a picture with no label' : `an unlabelled ${tag}`;
     }
-    if (tag === 'iframe' || tag === 'frame') {
-      d.iframe = { src: el.src || '', name: el.name || '', title: el.title || '', id: el.id || '' };
-      // A frame from another site: Jarvis cannot see (or check) anything inside it.
-      let readable = false;
-      try {
-        readable = !!el.contentDocument;
-      } catch {
-        readable = false;
-      }
-      d.crossOrigin = !readable;
+    if (showsPage(el)) {
+      // A box showing a page: an iframe, a frame, an <object> or <embed> with a page in it.
+      d.iframe = { src: String(el.src || el.data || el.getAttribute('src') || el.getAttribute('data') || ''), name: el.getAttribute('name') || '', title: el.title || '', id: el.id || '', tag };
+      // One from another site (or origin): Jarvis cannot see (or check) anything inside it.
+      d.crossOrigin = !frameDoc(el);
     }
     if (d.field && d.multiline) d.field.multiline = true;
     if (role === 'textbox' || role === 'searchbox' || tag === 'textarea' || (tag === 'input' && /^(|text|search|email|url|tel)$/.test(type)) || el.isContentEditable) d.nearbyButtons = nearbyButtons(el);
@@ -1463,9 +1603,27 @@ import { addressKey } from '../background/address.js';
       const y = top + (bottom - top) * fy;
       const hit = deepElementFromPoint(x, y);
       if (!first) first = { x, y, hit };
+      // (A frame at the point, unless it is the element itself, is what the click would reach:
+      // another page, not this element.)
+      if (hit && hit !== el && isFrameHost(hit)) continue;
       if (hit && (hit === el || el.contains(hit) || hit.contains?.(el) || (hit.getRootNode()?.host && el.contains(hit.getRootNode().host)))) return { x, y };
     }
-    return { x: first.x, y: first.y, covered: first.hit ? `${roleOf(first.hit) || first.hit.localName} "${nameOf(first.hit)}"` : 'another element' };
+    const what = first.hit ? (isFrameHost(first.hit) ? `a box from another page "${nameOf(first.hit)}"` : `${roleOf(first.hit) || first.hit.localName} "${nameOf(first.hit)}"`) : 'another element';
+    return { x: first.x, y: first.y, covered: what };
+  }
+
+  /**
+   * A point for Jarvis's pointer that the page cannot read anything into: the click point of the
+   * element at (x, y) (its middle, or the first spot of it not covered), not the exact spot Claude
+   * named. Coordinates a page sees on its pointer events otherwise carry whatever Claude put in them.
+   */
+  function snapPoint({ x, y, actionable = false } = {}) {
+    const hit = deepElementFromPoint(Number(x), Number(y));
+    if (!hit) return { x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2), none: true };
+    const el = actionable ? actionableAncestor(hit) : hit;
+    const p = clickPoint(el, { scroll: false });
+    if (p.error) return { x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2), none: true };
+    return { x: Math.round(p.x), y: Math.round(p.y), targetId: rememberTarget(el), covered: !!p.covered };
   }
 
   /** The element's target id: the same id every time for the same element, for this document. */
@@ -1535,15 +1693,14 @@ import { addressKey } from '../background/address.js';
         el = el.shadowRoot.activeElement;
         continue;
       }
-      if (el.localName === 'iframe') {
-        try {
-          const inner = el.contentDocument?.activeElement;
-          if (inner && inner !== el.contentDocument.body) {
-            el = inner;
-            continue;
-          }
-        } catch {
-          return el; // cross-origin frame has the focus
+      if (isFrameHost(el)) {
+        // Inside a frame of this origin: what has the focus there. A frame from another site that
+        // has the focus is itself the answer (Jarvis cannot see into it).
+        const doc = frameDoc(el);
+        const inner = doc ? doc.activeElement : null;
+        if (inner && inner !== doc.body) {
+          el = inner;
+          continue;
         }
       }
       break;
@@ -1784,12 +1941,6 @@ import { addressKey } from '../background/address.js';
     return null;
   }
 
-  /** A link or form target other than this tab's page: a new window or a named frame. */
-  const elsewhere = (target) => {
-    const t = String(target || '').trim().toLowerCase();
-    return !!t && t !== '_self' && t !== '_top' && t !== '_parent';
-  };
-
   /**
    * Why opening `url` in `target` is not what Jarvis checked before the step (the address the
    * owner's site permission and approval covered), or ''. A page can change a link's href or a
@@ -1809,7 +1960,8 @@ import { addressKey } from '../background/address.js';
     const submitter = e.submitter || null;
     const own = (attr, prop, fallback) => (submitter && submitter.hasAttribute?.(attr) ? submitter[prop] : fallback);
     const url = own('formaction', 'formAction', form.action);
-    const target = own('formtarget', 'formTarget', form.getAttribute('target') || '');
+    // (The button's formtarget, the form's target, then the page's <base target>: where it really opens.)
+    const target = effectiveTarget(form, submitter);
     const pinned = a.approved.find((p) => p.dest && p.dest.via === 'form');
     if (pinned) {
       const why = destMismatch(pinned, url, target);
@@ -1843,11 +1995,16 @@ import { addressKey } from '../background/address.js';
     if (!hit) return blockedInfo(el, 'not what the owner approved');
     if (hit.changed) return blockedInfo(el, 'the item it belongs to changed');
     const p = hit.entry;
+    // The press reached the approved element (Jarvis checks afterwards that it did: input that
+    // lands in a box from another site never shows up here).
+    p.seen = (p.seen || 0) + 1;
+    a.seen += 1;
     if ((e.type === 'click' || e.type === 'auxclick') && p.dest && p.dest.via === 'link') {
-      // The link must still go where Jarvis checked (the page may have swapped its href or target).
+      // The link must still go where Jarvis checked (the page may have swapped its href or target,
+      // or added a <base target> meanwhile).
       const link = closestAcross(first, 'a[href], area[href]');
       if (link) {
-        const why = destMismatch(p, link.href, link.getAttribute('target') || '');
+        const why = destMismatch(p, link.href, effectiveTarget(link));
         if (why) return blockedInfo(el, why);
       }
     }
@@ -1886,6 +2043,9 @@ import { addressKey } from '../background/address.js';
       if (!e.repeat) {
         p.used = (p.used || 0) + 1;
         if (p.used > (p.presses || 1)) break;
+        // The last approved key of a typing step has landed: what the page does with the focus
+        // after it (a search page moving it to the results) is not a move away from the field.
+        if (p.used >= (p.presses || 1) && a.kbd && (p.el === a.kbd || p.el.contains?.(a.kbd))) a.kbdDone = true;
       } else if (!p.hold) break;
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
         const form = target.form || null;
@@ -1908,7 +2068,10 @@ import { addressKey } from '../background/address.js';
     // Never a paste or a drop: the clipboard is the owner's.
     if (/^insertFrom(Paste|PasteAsQuotation|Drop|Yank)$/.test(e.inputType || '')) return blockedInfo(first, 'pasting from the clipboard');
     const hit = first ? approvedFor(a, first, ['type', 'key']) : null;
-    if (hit?.entry) return true;
+    if (hit?.entry) {
+      if (hit.entry.kind === 'type') a.textSeen += 1;
+      return true;
+    }
     return blockedInfo(first, hit?.changed ? 'the item it belongs to changed' : 'text going somewhere the owner did not approve');
   }
 
@@ -1984,6 +2147,54 @@ import { addressKey } from '../background/address.js';
     if (verdict !== true) stopEvent(a, e, verdict);
   }
 
+  /**
+   * While Jarvis types (a `type` step), the keyboard focus stays on the field the owner's step is
+   * for: a page that moves it away (to another element, or into a box from another site, where
+   * the next line and its Enter would land unchecked) has the move undone at once (focusing the
+   * field again during the blur cancels the page's own focus change), and the step reports it.
+   * Once the step's last approved key has landed, what the page does with the focus is its own.
+   */
+  function onFocusLeave(e) {
+    if (e.__jarvisChecked) return;
+    if (IN_FRAME && !state.armed) {
+      // A field in a frame of this site: the top frame's agent holds the step.
+      try {
+        const top = window.top.__jarvis;
+        if (top && top !== globalThis.__jarvis && typeof top.focusLeave === 'function') top.focusLeave(e);
+      } catch {
+        /* a frame from another site */
+      }
+      return;
+    }
+    const a = state.armed;
+    if (!a || !a.kbd || a.kbdDone || Date.now() > a.until) return;
+    try {
+      e.__jarvisChecked = true;
+    } catch {
+      /* ignore */
+    }
+    const from = (typeof e.composedPath === 'function' && e.composedPath()[0]) || e.target;
+    if (from !== a.kbd && !(from && from.nodeType === 1 && from.contains?.(a.kbd))) return;
+    // The window itself lost the focus (the owner clicked the side panel): not a move.
+    if (activeIn(a.kbd)) return;
+    if (!a.focusMoved) a.focusMoved = { at: Date.now() };
+    if (a.relocking || a.relocks > 20) return;
+    a.relocking = true;
+    a.relocks += 1;
+    try {
+      a.kbd.focus({ preventScroll: true });
+    } catch {
+      /* the step fails either way */
+    } finally {
+      a.relocking = false;
+    }
+  }
+
+  /** Whether `el` still has the keyboard focus (through shadow roots and frames of this origin). */
+  function activeIn(el) {
+    return !!el && deepActive() === el;
+  }
+
   /** (Re)registers every listener of the agent: document.open() erases them all, the realm survives. */
   function ensureListeners() {
     for (const target of [window, document]) {
@@ -1991,6 +2202,7 @@ import { addressKey } from '../background/address.js';
       target.addEventListener('keyup', onEsc, true);
     }
     for (const type of ACTIVATION_EVENTS) window.addEventListener(type, onActivation, true);
+    window.addEventListener('blur', onFocusLeave, true);
   }
   ensureListeners();
 
@@ -1998,18 +2210,14 @@ import { addressKey } from '../background/address.js';
   function watchChildFrames(doc = document, depth = 0) {
     if (depth > 4) return;
     let n = 0;
-    for (const f of doc.querySelectorAll('iframe, frame')) {
+    for (const f of doc.querySelectorAll(FRAME_SELECTOR)) {
       if (++n > 30) break;
-      let w = null;
-      try {
-        w = f.contentWindow;
-        if (!w || !w.document) continue;
-      } catch {
-        continue; // another site's frame
-      }
+      const w = frameWin(f); // (another site's frame: none)
+      if (!w) continue;
       try {
         if (!w.__jarvis && !state.childWindows.has(w)) {
           for (const type of ACTIVATION_EVENTS) w.addEventListener(type, onActivation, true);
+          w.addEventListener('blur', onFocusLeave, true);
           state.childWindows.add(w);
         }
         watchChildFrames(w.document, depth + 1);
@@ -2049,10 +2257,19 @@ import { addressKey } from '../background/address.js';
     const sentinel = () => {
       token.hit = true;
     };
+    // A typing step keeps the keyboard focus on its field (see onFocusLeave).
+    const pageLevel = (el) => !el || el === el.ownerDocument?.body || el === el.ownerDocument?.documentElement;
+    const kbd = list.find((p) => p.kind === 'type' && p.el && !pageLevel(p.el))?.el || null;
     state.armed = {
       approved: list,
       scrollOnly: !!scrollOnly,
       activations: 0,
+      seen: 0, // pointer events that reached an approved element (a press that went elsewhere has none)
+      textSeen: 0, // text inputs that reached the approved field
+      kbd,
+      kbdDone: false,
+      focusMoved: null,
+      relocks: 0,
       blocked: [],
       blockedCodes: new Set(),
       values: snapshotControls(),
@@ -2066,14 +2283,27 @@ import { addressKey } from '../background/address.js';
   }
 
   /**
-   * Ends the check: what it stopped, how many approved activations went through, and whether its
+   * The armed step so far, between the parts of a typing step: whether the page tried to move the
+   * focus away from the field, and whether the field has it now.
+   */
+  function armedState() {
+    const a = state.armed;
+    if (!a) return { armed: false };
+    return { armed: true, focusMoved: !!a.focusMoved, onField: a.kbd ? activeIn(a.kbd) : null, blocked: a.blocked.length, textSeen: a.textSeen };
+  }
+
+  /**
+   * Ends the check: what it stopped, how many approved activations went through, whether its
    * listeners were still there at the end (`intact` false: the page rewrote itself with
-   * document.open() during the input, which erases them, so nothing after that was checked).
+   * document.open() during the input, which erases them, so nothing after that was checked), what
+   * reached the approved elements (`seen`: pointer events; `textSeen`, `keysUsed`: text and keys),
+   * and whether the page moved the focus off a field being typed into. `none`: nothing was armed in
+   * this document (the step loaded another page before this answer, so it cannot say).
    */
   function disarm() {
     const a = state.armed;
     state.armed = null;
-    if (!a) return { ok: true, blocked: [], activations: 0, intact: true };
+    if (!a) return { ok: true, none: true, blocked: [], activations: 0, intact: true };
     try {
       window.dispatchEvent(new Event(SENTINEL));
     } catch {
@@ -2081,7 +2311,16 @@ import { addressKey } from '../background/address.js';
     }
     window.removeEventListener(SENTINEL, a.sentinel, true);
     ensureListeners();
-    return { ok: true, blocked: a.blocked, activations: a.activations, intact: a.token.hit };
+    return {
+      ok: true,
+      blocked: a.blocked,
+      activations: a.activations,
+      intact: a.token.hit,
+      seen: a.seen,
+      textSeen: a.textSeen,
+      keysUsed: a.approved.filter((p) => p.kind === 'key').map((p) => p.used || 0),
+      focusMoved: !!a.focusMoved,
+    };
   }
 
   // -------------------------------------------------------------------------------------------
@@ -2100,21 +2339,18 @@ import { addressKey } from '../background/address.js';
     const visit = (root, offset, depth) => {
       if (depth > 6) return;
       let n = 0;
-      for (const el of root.querySelectorAll('input, textarea, [contenteditable], [role="textbox"], iframe, frame')) {
+      for (const el of root.querySelectorAll(`input, textarea, [contenteditable], [role="textbox"], ${FRAME_SELECTOR}`)) {
         if (++n > 2000) break;
-        if (el.localName === 'iframe' || el.localName === 'frame') {
-          let doc = null;
-          try {
-            doc = el.contentDocument;
-          } catch {
-            doc = null;
-          }
+        if (isFrameHost(el)) {
+          if (!showsPage(el)) continue;
+          const doc = frameDoc(el);
           const r = el.getBoundingClientRect();
           if (doc) {
             visit(doc, { x: offset.x + r.left + el.clientLeft, y: offset.y + r.top + el.clientTop }, depth + 1);
             continue;
           }
-          if (secretKind({ iframe: { src: el.src || '', name: el.name || '', title: el.title || '', id: el.id || '' } })) {
+          // Another site's payment or sign-in box (an iframe, or an <object>/<embed> showing one).
+          if (secretKind({ iframe: { src: String(el.src || el.data || ''), name: el.getAttribute('name') || '', title: el.title || '', id: el.id || '' } })) {
             rects.push({ x: offset.x + r.left, y: offset.y + r.top, w: r.width, h: r.height });
           }
           continue;
@@ -2145,34 +2381,61 @@ import { addressKey } from '../background/address.js';
   const OPS = {
     init({ nextRef, mode } = {}) {
       if (Number.isFinite(nextRef) && nextRef > state.nextRef) state.nextRef = nextRef;
-      if (mode) setMode(mode);
-      return { ok: true, nextRef: state.nextRef, version: VERSION };
+      const shown = mode ? setMode(mode) : true;
+      return { ok: true, nextRef: state.nextRef, version: VERSION, noBar: !shown };
     },
-    mode: ({ mode }) => (setMode(mode), { ok: true }),
+    mode: ({ mode }) => ({ ok: true, noBar: !setMode(mode) }),
+    /** Whether the bar is shown (it is put back first if it can be): before Jarvis sends input. */
+    barState() {
+      if (state.mode === 'hidden') return { ok: true, noBar: false };
+      let shown = !state.barFailed && !!state.host && state.host.isConnected;
+      if (!shown) shown = mountOverlay();
+      return { ok: true, noBar: !shown };
+    },
     beat() {
       state.lastBeat = Date.now();
       const stop = state.pendingStop;
-      state.pendingStop = null;
       let tampered = false;
       let unstyled = false;
+      let noBar = false;
       if (state.mode !== 'hidden' && !state.shot) {
         // The page hid, moved or covered the bar (now, or at any check since the last beat): put
         // it back, and tell the service worker when that keeps happening. What counts is the bar's
         // state before the repair: a page that covers it again right after each repair is caught.
-        const wasVisible = !state.pass && overlayVisible();
+        let wasVisible = false;
+        try {
+          wasVisible = !state.pass && overlayVisible();
+        } catch {
+          wasVisible = false;
+        }
         const sampled = state.sawHidden;
         state.sawHidden = false;
+        // (Recorded before the repair: a repair that fails still counts as hidden.)
+        state.hiddenBeats.push(!state.pass && (!wasVisible || sampled));
+        if (state.hiddenBeats.length > 6) state.hiddenBeats.shift();
         if (!wasVisible && !state.pass) {
-          if (!state.host || !state.host.isConnected) mountOverlay();
-          else restoreHost();
-          raiseOverlay();
+          let repaired = false;
+          try {
+            if (!state.host || !state.host.isConnected) repaired = mountOverlay();
+            else {
+              restoreHost();
+              repaired = true;
+            }
+            raiseOverlay();
+          } catch {
+            repaired = false;
+          }
+          // The bar cannot be built or put back at all: the owner is told at once (not after
+          // three beats), and Jarvis holds its input on this page until they say so.
+          if (!repaired || state.barFailed) noBar = true;
         }
         unstyled = stylesBlocked();
-        state.hiddenBeats.push(!unstyled && !state.pass && (!wasVisible || sampled));
-        if (state.hiddenBeats.length > 6) state.hiddenBeats.shift();
+        if (unstyled) state.hiddenBeats[state.hiddenBeats.length - 1] = false;
         tampered = state.hiddenBeats.filter(Boolean).length >= 3;
       }
-      return { ok: true, stop, tampered, unstyled };
+      // (Cleared only now: a beat that fails on the way keeps a Stop pressed on the page for the next.)
+      if (state.pendingStop === stop) state.pendingStop = null;
+      return { ok: true, stop, tampered, unstyled, noBar };
     },
     /** The page rewrote itself (document.open()): listeners and the bar come back at once. */
     heal() {
@@ -2232,7 +2495,9 @@ import { addressKey } from '../background/address.js';
     scrollToRef,
     scrollKey,
     viewport,
+    snapPoint,
     arm,
+    armedState,
     disarm,
   };
 
@@ -2240,6 +2505,8 @@ import { addressKey } from '../background/address.js';
     version: VERSION,
     /** The activation check, for the agents of this site's frames (see onActivation). */
     activation: onActivation,
+    /** The typing step's focus lock, for the agents of this site's frames (see onFocusLeave). */
+    focusLeave: onFocusLeave,
     heal: () => OPS.heal(),
     call(op, args) {
       ensureListeners();

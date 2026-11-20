@@ -7,7 +7,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { assert, tid, waitFor, watchPrompts } from './harness.mjs';
+import { assert, frameLoaded, isFlowPrompt, tid, waitFor, watchPrompts } from './harness.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const read = { name: 'read_page', input: { filter: 'interactive' } };
@@ -67,8 +67,11 @@ function owner(run, policy) {
 }
 
 /** Allow every site once (except `deny`), and answer confirmations with `confirm(p)` (default Cancel). */
-const policyOf = ({ deny = [], confirm = () => 'cancel' } = {}) => async (p) => {
+// (`flow`: the owner's answer when Jarvis goes on to another site after reading one, round 4's
+// cross-site prompt: these scenarios are not about it, so the owner lets it carry on.)
+const policyOf = ({ deny = [], confirm = () => 'cancel', flow = () => 'approve' } = {}) => async (p) => {
   if (p.kind === 'site') return deny.some((d) => p.title.includes(d)) ? 'deny' : 'once';
+  if (isFlowPrompt(p)) return flow(p);
   if (p.kind === 'confirm') return confirm(p);
   if (p.kind === 'budget' || p.kind === 'steps') return 'stop';
   return null;
@@ -860,7 +863,9 @@ const nestedFrames = {
     const o = owner(run, policyOf({ deny: ['rdeny.localhost'], confirm: async (p) => {
       if (/a box from rok\.localhost/.test(p.body)) {
         flag(run, 'move');
-        await waitFor(() => run.page.frames().some((f) => /rdeny\.localhost/.test(f.url())), { message: 'the frame moved' });
+        // (The frame moves itself to the denied site: Jarvis stops that load, inside the frame's own
+        // session, so the frame shows an error page instead; either way it is no longer rok's page.)
+        await waitFor(() => !run.page.frames().some((f) => /rok\.localhost\/widget/.test(f.url())), { message: 'the frame moved' });
         return 'approve';
       }
       return 'cancel';
@@ -869,12 +874,20 @@ const nestedFrames = {
     mock.script([
       () => ({ calls: [{ name: 'navigate', input: { url: U(run, 'rdeny', '/') } }] }),
       () => ({ calls: [{ name: 'navigate', input: { url: U(run, 'rframe', '/nested') } }, { name: 'screenshot', input: {} }] }),
-      async () => ({ calls: [{ name: 'left_click', input: { target: await centre(run, '#mid') } }] }),
+      async () => {
+        // (The boxes are in place first: rmid's page, and in it the frame Jarvis stopped.)
+        await frameLoaded(run, /rmid\.localhost(:\d+)?\/mid/);
+        await frameLoaded(run, /^chrome-error:|rdeny\.localhost(:\d+)?\/btn/);
+        return { calls: [{ name: 'left_click', input: { target: await centre(run, '#mid') } }] };
+      },
       (ctx) => {
         seen.nested = ctx.results[0];
         return { calls: [{ name: 'navigate', input: { url: U(run, 'rframe', '/moving') } }, { name: 'screenshot', input: {} }] };
       },
-      async () => ({ calls: [{ name: 'left_click', input: { target: await centre(run, '#w') } }] }),
+      async () => {
+        await frameLoaded(run, /rok\.localhost(:\d+)?\/widget/);
+        return { calls: [{ name: 'left_click', input: { target: await centre(run, '#w') } }] };
+      },
       (ctx) => {
         seen.moving = ctx.results[0];
         return { answer: 'Did nothing in those frames.' };
@@ -938,7 +951,7 @@ const docOpen = {
     await task(run, 'Read the recipes again');
     await waitFor(() => ev(run, /^\/api\/rewritten$/).length === 2, { message: 'rewrote again' });
     await sleep(1300);
-    const stop = await waitFor(async () => JSON.parse((await run.page.locator('jarvis-control-overlay').getAttribute('data-test-stop')) || 'null'), { message: 'the bar' });
+    const stop = await waitFor(async () => JSON.parse((await run.page.locator('[data-jarvis-control]').getAttribute('data-test-stop')) || 'null'), { message: 'the bar' });
     const t1 = Date.now();
     await run.page.mouse.click(stop.x, stop.y);
     await run.waitStatus('stopped', 3000);
@@ -982,14 +995,14 @@ const csp = {
     await run.decide('site', 'once');
     await waitFor(() => run.server.mock.requests.length >= 2, { message: 'held' });
     await sleep(2500);
-    const stop = await waitFor(async () => JSON.parse((await run.page.locator('jarvis-control-overlay').getAttribute('data-test-stop')) || 'null'), { message: 'the bar' });
-    const top = await run.page.evaluate(({ x, y }) => document.elementsFromPoint(x, y)[0]?.localName, stop);
+    const stop = await waitFor(async () => JSON.parse((await run.page.locator('[data-jarvis-control]').getAttribute('data-test-stop')) || 'null'), { message: 'the bar' });
+    const top = await run.page.evaluate(({ x, y }) => { const e = document.elementsFromPoint(x, y)[0]; return e ? (e.hasAttribute('data-jarvis-control') ? 'the bar' : e.localName) : null; }, stop);
     const t0 = Date.now();
     await run.page.mouse.click(stop.x, stop.y);
     await run.waitStatus('stopped', 3000);
     const ms = Date.now() - t0;
     const steps = await run.steps();
-    assert(top === 'jarvis-control-overlay', `the bar is on top at its Stop (${top})`);
+    assert(top === 'the bar', `the bar is on top at its Stop (${top})`);
     assert(ms < 500, `Stop from the bar in ${ms} ms`);
     assert(!steps.some((s) => /hiding Jarvis's control bar|can't be drawn/.test(s.label)), steps.map((s) => s.label).join(' | '));
     assert(ev(run, /^\/api\/csp$/).length === 0, `no CSP violations (${JSON.stringify(ev(run, /^\/api\/csp$/))})`);

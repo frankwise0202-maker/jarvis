@@ -364,14 +364,15 @@ test('RT2-A02/T7: a download a page starts while a task runs is held until the o
   assert.equal(hold({ id: 7, url: 'https://dl.example/get/mac', finalUrl: 'https://dl.example/files/JarvisHelper.dmg', filename: 'JarvisHelper.dmg', totalBytes: 4096 }), true, 'held: Chrome writes nothing yet');
   let p = await waitFor(() => lastTask()?.prompt);
   assert.deepEqual([p.kind, p.category, p.title, p.consequential], ['confirm', 'download', 'Save this download?', true]);
-  assert.match(p.body, /^Save the file “JarvisHelper\.dmg” \(4 KB\) from dl\.example\?/);
+  assert.match(p.body, /^Save the file “JarvisHelper\.dmg” \(a \.dmg file, 4 KB\) from dl\.example\?/);
+  assert.match(p.body, /A \.dmg file can run programs on your Mac\./);
   assert.deepEqual(answered, []);
   controller.decide(p.id, 'cancel');
   await waitFor(() => answered.length === 1);
   assert.deepEqual(cancelled, [7], 'Cancel: the download is cancelled, nothing saved');
   hold({ id: 8, url: 'https://dl.example/files/report.pdf', filename: 'report.pdf', totalBytes: 2 * 1024 * 1024 });
   p = await waitFor(() => lastTask()?.prompt);
-  assert.match(p.body, /“report\.pdf” \(2\.0 MB\)/);
+  assert.match(p.body, /“report\.pdf” \(a PDF document, 2\.0 MB\)/);
   controller.decide(p.id, 'approve');
   await waitFor(() => answered.length === 2);
   assert.deepEqual(cancelled, [7], 'Approve: saved');
@@ -441,14 +442,16 @@ test('RT2-A14/A15: while Jarvis acts, its tab cannot load an address the owner d
   const run = controller.run;
   assert.equal(await controller.navigationPolicy('tab-1', 'https://shop.example/cart'), true, 'an allowed site loads');
   run.approvals.decline('delete', 'shop.example', { href: 'https://shop.example/act/delete?id=1' });
-  assert.equal(await controller.navigationPolicy('tab-1', 'https://shop.example/act/delete?id=1'), false, 'a declined address does not');
+  // (A load the driver stops is { allow: false, notice }.)
+  const allowed = (v) => v === true || v?.allow === true;
+  assert.equal(allowed(await controller.navigationPolicy('tab-1', 'https://shop.example/act/delete?id=1')), false, 'a declined address does not');
   run.sitesDenied.add('bank.example');
-  assert.equal(await controller.navigationPolicy('tab-1', 'https://bank.example/act/transfer?to=x'), false, 'a denied site does not');
+  assert.equal(allowed(await controller.navigationPolicy('tab-1', 'https://bank.example/act/transfer?to=x')), false, 'a denied site does not');
   const asking = controller.navigationPolicy('tab-1', 'https://news.example/story');
   const p = await waitFor(() => lastTask()?.prompt);
   assert.deepEqual([p.kind, p.site], ['site', 'news.example']);
   controller.decide(p.id, 'deny');
-  assert.equal(await asking, false);
+  assert.equal(allowed(await asking), false);
   // The same check on the tab's own document loads (Fetch interception), end to end.
   const before = fb.calls.length;
   fb.emit(tab, 'Fetch.requestPaused', { requestId: 'r1', frameId: `F${tab.id}`, resourceType: 'Document', request: { url: 'https://bank.example/act/transfer?to=x' } });

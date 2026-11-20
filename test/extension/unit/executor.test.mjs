@@ -270,7 +270,12 @@ test('never types into password, card or CVV fields', async () => {
 
 test('cross-origin payment frames count as card fields', async () => {
   const page = { elements: [{ role: 'iframe', name: 'Secure card payment', x: 0, y: 0, w: 300, h: 40, focusable: true, desc: { tag: 'iframe', iframe: { src: 'https://js.stripe.com/v3/elements-inner-card.html', name: '__privateStripeFrame' } } }] };
-  const { call } = setup({ page });
+  const { call, tab, fb } = setup({ page });
+  // (The payment box is a frame from another site, with its own session, as in Chrome.)
+  const url = 'https://js.stripe.com/v3/elements-inner-card.html';
+  await call('read_page', {});
+  tab.childFrames = [{ sessionId: 'S1', url }];
+  fb.emit(tab, 'Target.attachedToTarget', { sessionId: 'S1', targetInfo: { targetId: 'FRAME1', type: 'iframe', url } });
   await call('left_click', { target: { type: 'coordinate', x: 10, y: 10 } });
   const r = await call('type', { text: '4242424242424242' });
   assert.match(r.result.content, /^Refused: this field holds a card number/);

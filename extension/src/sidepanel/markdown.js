@@ -2,16 +2,40 @@
 // breaks, headings (shown as bold lines), bullet and numbered lists, **bold**, *italic*, `code`,
 // [links](https://…) and bare https:// URLs. DOM construction only (no HTML parsing): model and
 // page-derived text can never inject markup. Links must be absolute http(s) URLs and open in a
-// new tab without a referrer.
+// new tab without a referrer. A link never shows one address and opens another: text that looks
+// like an address (or a site) other than where the link goes is replaced by the real address,
+// and the site a link opens is shown after it when its text doesn't say.
 
 import { h, safeUrl } from './dom.js';
 
 const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|_[^_\s][^_]*_|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
 
-function link(href, text) {
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+/** The host a link's text names, when the text looks like an address or a site ("shop.com/orders"), else ''. */
+export function textHost(text) {
+  const t = String(text ?? '').trim();
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?((?:[a-z0-9-]+\.)+[a-z0-9-]{2,})(?::\d+)?(?:[/?#]\S*)?$/i.exec(t);
+  return m ? m[1].toLowerCase().replace(/^www\./, '') : '';
+}
+
+/** A link: [text](href). Returns its nodes (the link, and the site it opens when its text doesn't say). */
+export function link(href, text) {
   const url = safeUrl(href);
-  if (!url) return document.createTextNode(text);
-  return h('a', { class: 'md-link', href: url, attrs: { target: '_blank', rel: 'noopener noreferrer' }, text });
+  if (!url) return [document.createTextNode(text)];
+  const host = hostOf(url);
+  const named = textHost(text);
+  // Text that names another address than the one the link opens shows the real one instead.
+  const shown = named && named !== host ? url.replace(/^https?:\/\/(www\.)?/, '') : text;
+  const a = h('a', { class: 'md-link', href: url, attrs: { target: '_blank', rel: 'noopener noreferrer', title: url }, text: shown });
+  if (host && !String(shown).toLowerCase().includes(host)) return [a, h('span', { class: 'md-host', text: ` (${host})` })];
+  return [a];
 }
 
 export function inline(text) {
@@ -25,8 +49,9 @@ export function inline(text) {
     else if (tok.startsWith('`')) out.push(h('code', { class: 'md-code', text: tok.slice(1, -1) }));
     else if (tok.startsWith('[')) {
       const mm = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(tok);
-      out.push(mm ? link(mm[2], mm[1]) : document.createTextNode(tok));
-    } else if (/^https?:/.test(tok)) out.push(link(tok, tok.replace(/^https?:\/\/(www\.)?/, '')));
+      if (mm) out.push(...link(mm[2], mm[1]));
+      else out.push(document.createTextNode(tok));
+    } else if (/^https?:/.test(tok)) out.push(...link(tok, tok.replace(/^https?:\/\/(www\.)?/, '')));
     else out.push(h('em', { text: tok.slice(1, -1) }));
     last = m.index + tok.length;
   }

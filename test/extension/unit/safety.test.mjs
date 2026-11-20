@@ -466,7 +466,7 @@ test('S15: Delete, Backspace and single-key shortcuts outside text fields ask fi
 // F3: Jarvis's own control bar
 
 test('F3: a point that resolves to Jarvis’s own control bar is never clicked', async () => {
-  const { call, presses } = setup({ page: { elements: [{ role: '', name: '', x: 400, y: 0, w: 480, h: 50, desc: { tag: 'jarvis-control-overlay' } }] } });
+  const { call, presses } = setup({ page: { elements: [{ role: '', name: '', x: 400, y: 0, w: 480, h: 50, desc: { tag: 'div', jarvisBar: true } }] } });
   await call('screenshot');
   const r = await call('left_click', { target: at(640, 30) });
   assert.equal(r.result.is_error, true);

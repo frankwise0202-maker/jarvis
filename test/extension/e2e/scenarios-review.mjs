@@ -526,7 +526,7 @@ const hiddenBar = {
     await waitFor(() => mock.requests.length >= 2 && !mock.requests.at(-1).endedAt, { message: 'the held request' });
     await sleep(1500); // a few heartbeats
     const vis = await run.page.evaluate(() => {
-      const h = document.querySelector('jarvis-control-overlay');
+      const h = document.querySelector('[data-jarvis-control]');
       if (!h) return { found: false };
       const r = h.getBoundingClientRect();
       const top = document.elementsFromPoint(innerWidth / 2, 27)[0];

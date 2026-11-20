@@ -45,6 +45,31 @@ export async function waitFor(fn, { timeout = 15000, interval = 50, message = 'c
 export const tid = (id, extra = '') => `[data-testid="${id}"]${extra}`;
 
 /**
+ * Waits until a frame on the run's page shows `re` (another site's page loaded in its box). (With
+ * two debugger clients on the tab, the test's and Jarvis's, Chromium now and then never loads a new
+ * frame from another site, also before round 4: the box is then pointed at its page again.)
+ */
+export async function frameLoaded(run, re) {
+  const loaded = () => run.page.frames().some((f) => re.test(f.url()));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await waitFor(loaded, { timeout: 6000 }).catch(() => false)) {
+      await sleep(150);
+      return;
+    }
+    await run.page.evaluate(() => {
+      for (const f of document.querySelectorAll('iframe, object, embed')) {
+        const attr = f.localName === 'object' ? 'data' : 'src';
+        const v = f.getAttribute(attr);
+        if (!v) continue;
+        if (f.localName === 'iframe') f.setAttribute(attr, v);
+        else f.replaceWith(f.cloneNode(true));
+      }
+    });
+  }
+  throw new E2EError(`no frame showing ${re} (frames: ${run.page.frames().map((f) => f.url()).join(', ')})`);
+}
+
+/**
  * One scenario run: a browser with the extension, the panel window and a page in the first
  * window. `server` is the shared test server (mock API + sites).
  */
@@ -238,7 +263,7 @@ export class Run {
 
   async overlayCount(p = this.page) {
     try {
-      return await p.locator('jarvis-control-overlay').count();
+      return await p.locator('[data-jarvis-control]').count();
     } catch {
       return -1;
     }
@@ -276,6 +301,12 @@ export class Run {
 export function assert(cond, message) {
   if (!cond) throw new E2EError(message);
 }
+
+/**
+ * The cross-site prompt (round 4): Jarvis read one site in the task and now acts on another
+ * ("Carry on to x?"), or opens an address it built there ("Send this address to x?").
+ */
+export const isFlowPrompt = (p) => p?.kind === 'confirm' && /^(Carry on to|Send this address to) /.test(p.title || '');
 
 /** Records every prompt the panel shows ({ kind, title, body, chips }), polling every 40 ms. */
 export function watchPrompts(run) {

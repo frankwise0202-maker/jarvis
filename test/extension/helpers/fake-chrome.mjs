@@ -299,7 +299,10 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       }
       case 'arm': {
         const approved = (args.approved || []).map((p) => ({ ...p }));
-        page.armed = { approved, scrollOnly: !!args.scrollOnly, activations: 0, blocked: [] };
+        // seen: pointer events that reached an approved element; textSeen: text that reached the
+        // approved field; focusMoved: the page moved the focus off a field being typed into (a
+        // page model sets page.moveFocusOnInput to simulate that).
+        page.armed = { approved, scrollOnly: !!args.scrollOnly, activations: 0, blocked: [], seen: 0, textSeen: 0, focusMoved: false };
         fb.armedLog = [...(fb.armedLog || []), args.approved || []];
         const known = new Set(page.elements.map(targetIdOf).concat([targetIdOf(page.body)]));
         return { ok: true, missing: approved.filter((p) => p.targetId !== undefined && !known.has(p.targetId)).length };
@@ -307,12 +310,28 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       case 'disarm': {
         const a = page.armed;
         page.armed = null;
+        if (!a) return { ok: true, none: true, blocked: [], activations: 0, intact: true };
+        const extra = { seen: a.seen, textSeen: a.textSeen, keysUsed: a.approved.filter((p) => p.kind === 'key').map((p) => p.used || 0), focusMoved: !!a.focusMoved };
         if (page.rewritten) {
           page.rewritten = false;
-          return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0, intact: false };
+          return { ok: true, blocked: a.blocked, activations: a.activations, intact: false, ...extra };
         }
-        return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0, intact: true };
+        return { ok: true, blocked: a.blocked, activations: a.activations, intact: true, ...extra };
       }
+      case 'armedState': {
+        const a = page.armed;
+        if (!a) return { armed: false };
+        const typing = a.approved.find((p) => p.kind === 'type');
+        return { armed: true, focusMoved: !!a.focusMoved, onField: typing ? !!page.focus && targetIdOf(page.focus) === typing.targetId : null, blocked: a.blocked.length, textSeen: a.textSeen };
+      }
+      case 'snapPoint': {
+        // (As the page agent: the middle of the element at the point, never the point itself.)
+        const el = elAt(page, args.x, args.y);
+        if (!el) return { x: Math.round(page.viewport.w / 2), y: Math.round(page.viewport.h / 2), none: true };
+        return { x: Math.round(el.x + el.w / 2), y: Math.round(el.y + el.h / 2), targetId: targetIdOf(el), covered: false };
+      }
+      case 'barState':
+        return { ok: true, noBar: !!page.noBar };
       case 'scrollKey':
         // Jarvis scrolls the page itself for a scrolling key (no key event reaches the page).
         fb.scrolled = [...(fb.scrolled || []), { key: args.key, repeat: args.repeat }];
@@ -343,7 +362,7 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         if (child.focusFrame) return { result: { type: 'object', objectId: `obj:childfocus:${child.focusFrame}` } };
         return { result: { type: 'object', objectId: 'obj:childbody' } };
       }
-      if (method === 'Target.setAutoAttach' || method === 'Runtime.releaseObjectGroup') return {};
+      if (method === 'Target.setAutoAttach' || method === 'Runtime.releaseObjectGroup' || method === 'Runtime.runIfWaitingForDebugger' || method === 'Fetch.enable' || method === 'Fetch.failRequest' || method === 'Fetch.continueRequest') return {};
       if (method === 'DOM.getNodeForLocation') {
         const inner = (child.frames || []).find((f) => params.x >= f.x && params.x <= f.x + f.w && params.y >= f.y && params.y <= f.y + f.h);
         return inner ? { backendNodeId: `nested:${inner.frameId}` } : { backendNodeId: 7 };
@@ -367,13 +386,18 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       case 'Runtime.releaseObjectGroup':
       case 'Fetch.enable':
       case 'DOM.disable':
+      case 'Runtime.runIfWaitingForDebugger':
+        return {};
+      case 'Fetch.failRequest':
+      case 'Fetch.continueRequest':
+        fb.fetchAnswers = [...(fb.fetchAnswers || []), { method, requestId: params.requestId }];
         return {};
       case 'DOM.getDocument': {
         // The whole document as the debugger sees it: closed shadow roots included
         // (page.closedShadows of them, plus Jarvis's own control bar when it is shown).
         const hosts = [];
         for (let i = 0; i < (page.closedShadows || 0); i++) hosts.push({ nodeName: 'X-WIDGET', localName: 'x-widget', shadowRoots: [{ shadowRootType: 'closed', children: [] }] });
-        if (tab.mode && tab.mode !== 'hidden') hosts.push({ nodeName: 'JARVIS-CONTROL-OVERLAY', localName: 'jarvis-control-overlay', shadowRoots: [{ shadowRootType: 'closed', children: [] }] });
+        if (tab.mode && tab.mode !== 'hidden') hosts.push({ nodeName: 'DIV', localName: 'div', attributes: ['data-jarvis-control', ''], shadowRoots: [{ shadowRootType: 'closed', children: [] }] });
         return { root: { nodeName: '#document', children: [{ nodeName: 'HTML', localName: 'html', children: [{ nodeName: 'BODY', localName: 'body', children: hosts }] }] } };
       }
       case 'DOM.getBoxModel': {
@@ -404,12 +428,16 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
       case 'DOM.describeNode': {
         if (params.backendNodeId !== undefined) {
           const el = [...OBJECTS.values()].find((e) => e && 1000 + targetIdOf(e) === params.backendNodeId);
-          if (el?.desc?.iframe) return { node: { nodeName: 'IFRAME', frameId: el.desc.frameId || 'FRAME1', attributes: ['src', el.desc.iframe.src || ''] } };
+          // `frameAt`: the browser hit-tests the point into a frame inside the element (a frame in a
+          // link), whatever the page agent reports. Any element showing a page has a frame id, an
+          // <object> or <embed> too (its node name is its own).
+          if (el?.frameAt) return { node: { nodeName: 'IFRAME', frameId: el.frameAt, attributes: [] } };
+          if (el?.desc?.iframe) return { node: { nodeName: String(el.desc.tag || 'iframe').toUpperCase(), frameId: el.desc.frameId || 'FRAME1', attributes: ['src', el.desc.iframe.src || ''] } };
           return { node: { nodeName: String(el?.desc?.tag || 'div').toUpperCase() } };
         }
         const obj = OBJECTS.get(params.objectId);
         if (obj?.kind === 'focus' && page.focus?.shadow) return { node: { nodeName: String(page.focus.desc?.tag || 'x-box').toUpperCase(), shadowRoots: [{ shadowRootType: page.focus.shadow.mode || 'closed', backendNodeId: 9001 }] } };
-        if (obj?.kind === 'focus' && page.focus?.desc?.iframe) return { node: { nodeName: 'IFRAME', frameId: page.focus.desc.frameId || 'FR1', attributes: ['src', page.focus.desc.iframe.src || ''] } };
+        if (obj?.kind === 'focus' && page.focus?.desc?.iframe) return { node: { nodeName: String(page.focus.desc.tag || 'iframe').toUpperCase(), frameId: page.focus.desc.frameId || 'FR1', attributes: ['src', page.focus.desc.iframe.src || ''] } };
         return { node: { nodeName: 'INPUT' } };
       }
       case 'DOM.resolveNode':
@@ -455,12 +483,20 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         }
         if (params.type === 'mousePressed' && params.button === 'left') {
           let el = elAt(page, params.x, params.y);
+          // A press into a box from another site (or anywhere the page's own check cannot see:
+          // `swallow`) never reaches that check.
+          if ((el?.desc?.iframe && el.desc.crossOrigin) || el?.frameAt || el?.swallow) {
+            fb.framePresses = [...(fb.framePresses || []), el.name];
+            tab.pressed = null;
+            return {};
+          }
           // The armed check stops a press on anything not approved (the page never sees it).
           if (page.armed && el && !entryFor(page, el, ['pointer'])) {
             block(page, el, 'mousedown');
             tab.pressed = null;
             return {};
           }
+          if (page.armed && el) page.armed.seen += 1;
           // A page that re-renders on mousedown (after every check Jarvis could make).
           if (el?.onPress) {
             await el.onPress(page, fb, tab);
@@ -472,6 +508,12 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         if (params.type === 'mouseReleased' && params.button === 'left') {
           // A click goes to the element pressed and released on (as in Chrome).
           const el = elAt(page, params.x, params.y);
+          // (A release in a box the page's check cannot see is not seen either.)
+          if ((el?.desc?.iframe && el.desc.crossOrigin) || el?.frameAt || el?.swallow) {
+            tab.pressed = null;
+            return {};
+          }
+          if (page.armed && el && entryFor(page, el, ['pointer'])) page.armed.seen += 1;
           if (el && el === tab.pressed) await activate(page, el, `click${params.clickCount}`, () => el.onClick?.(page, fb, tab));
           else if (el && page.armed && !entryFor(page, el, ['pointer'])) block(page, el, 'mouseup');
           tab.pressed = null;
@@ -483,7 +525,10 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
           block(page, page.focus, 'beforeinput', 'text going somewhere not approved');
           return {};
         }
+        if (page.armed) page.armed.textSeen += 1;
         if (page.focus) page.focus.value += params.text;
+        // A page that moves the focus when text arrives (the page agent undoes it and reports it).
+        if (page.armed && page.moveFocusOnInput) page.armed.focusMoved = true;
         return {};
       case 'Input.dispatchKeyEvent': {
         const f = page.focus;
@@ -493,6 +538,11 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
           block(page, f, 'keydown', `the key ${params.key}`);
           page.blockedKey = params.key;
           return {};
+        }
+        // (An approved key that lands on its element counts as used, as in the page agent.)
+        if (down && page.armed) {
+          const p = entryFor(page, f || page.body, ['key']);
+          if (p) p.used = (p.used || 0) + 1;
         }
         if (params.type === 'keyUp' && page.blockedKey === params.key) {
           page.blockedKey = null;

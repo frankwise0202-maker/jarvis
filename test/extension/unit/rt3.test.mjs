@@ -270,7 +270,7 @@ test('RT3-03: the tab’s frames’ document loads are checked too (a form poste
   tab.attached = true;
   driver.onCdpEvent(tab.id, 'Fetch.requestPaused', { requestId: 'r1', frameId: 'CHILD', resourceType: 'Document', request: { url: 'https://other.example/api/subscribe', method: 'POST' } });
   await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(seen, [{ url: 'https://other.example/api/subscribe', method: 'POST', main: false }]);
+  assert.deepEqual(seen, [{ url: 'https://other.example/api/subscribe', method: 'POST', main: false, sessionId: null, frameId: 'CHILD' }]);
   assert.ok(fb.calls.some((c) => c.method === 'Fetch.failRequest' && c.params.requestId === 'r1'), 'stopped');
 });
 
@@ -434,7 +434,9 @@ async function controllerSetup() {
     const p = controller.navigationPolicy('tab-1', url, req);
     const prompt = await Promise.race([waitFor(() => lastTask().prompt?.id !== before && lastTask().prompt, 300).catch(() => null), p.then(() => null)]);
     if (prompt && choice) controller.decide(prompt.id, choice);
-    return { ok: await p, prompt };
+    // (A decision is true, or { allow: false, notice } for a load the driver stops.)
+    const decision = await p;
+    return { ok: decision === true || decision?.allow === true, decision, prompt };
   };
   /** Runs `fn`, then stops the task whatever happened (a held request would keep it alive). */
   const done = async (fn) => {
