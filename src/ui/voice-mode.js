@@ -17,7 +17,19 @@
 // says before a search or a mission ("Let me check the latest on that.") is spoken while it works.
 // When nothing was spoken by the end of the turn, the answer's summary is spoken after a chime.
 //
-// Tap the core: listening = stop and send; thinking/working = stop the turn; speaking = stop
+// Listening (v7.2): Jarvis, not the browser, decides when the owner has finished (stt.js: a silence
+// window from Settings → Voice → Wait after I stop talking, longer after "…and", never past 60 s).
+// Then, with "Show what I said for 2 seconds, then send" (the default), what was heard is shown big
+// with a 2-second countdown ring and "Send now" before it is sent: tap the words to fix them (the
+// countdown stops and a field opens), or say "cancel" / "never mind" (nothing is sent), "no, I said
+// …" (the words are corrected and the countdown starts again; when Jarvis can only guess where the
+// fix goes, the guess is shown and waits for "yes", Send or a tap), "wait", or simply go on talking
+// (the words are added). The microphone keeps listening during those 2 seconds (the same recognizer).
+// Local commands (Screens, the hologram viewer, Optics) act at once without the check, and the
+// recognizer's alternatives are tried for them too.
+//
+// Tap the core: listening = stop and send (at once, no check); the 2-second check = send now;
+// thinking/working = stop the turn; speaking = stop
 // speaking and listen. While Jarvis is still saying the reply itself (before the --- line or the
 // end of what is spoken) that tap stops the turn too, and it stays in the chat as far as it got;
 // once the spoken part is complete (Jarvis is saying its last sentences, or is quiet while the
@@ -63,7 +75,10 @@
 //                                               request then waits: { handled: false, later })
 //                           sync(info)          { state, label, listening, heard, busy, canListen }
 //                                               for the viewer's mic button
-//                           note(text)          a caption in the viewer ("I'll take that once …")
+//                           note(text, { heard })  a caption in the viewer ("I'll take that once …";
+//                                               heard: what was heard, during the 2-second check)
+//                           vocabulary()        { parts }: the open (or last shown) hologram's part
+//                                               names, listened for and preferred among the readings
 //                           spoken()            a reply or acknowledgement has been said (the
 //                                               viewer's caption of it can leave)
 //   screens               Screens (v7, app.js): command(text) -> null (not a screen command) or
@@ -92,6 +107,7 @@ import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
+import { REVIEW_MS, reviewReply, planCorrection, pickHeard, listenPhrases } from './voice-heard.js';
 
 export { splitSentences };
 
@@ -105,6 +121,7 @@ const RELISTEN_DELAY_MS = 350; // after speaking, let the audio settle before th
 const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at most this often
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
 const CONFIRM_MS = 60000; // "Shall I draw a blueprint of …?" waits this long for a yes
+const REVIEW_MIC_MS = 30000; // a paused 2-second check keeps listening for a correction this long
 const MODES = ['auto', 'quick', 'swarm'];
 const AGENT_FINISHED = new Set(['done', 'error', 'stopped', 'interrupted']);
 const AGENT_ACTIVE = new Set(['starting', 'thinking', 'searching', 'reading', 'writing']);
@@ -263,6 +280,8 @@ function createVoiceMode(opts) {
     heldWords: '', // said while a hologram built and not a viewer command: handled once the reply is said
     canListen: false, // last value sent to the viewer's mic (a hologram of this reply is building)
     noRelisten: false, // a Music card was just shown: wait for a tap (Preview) instead of listening again
+    review: null, // the 2-second check: { text, alts, L (its listen, still listening), mode, remaining, … }
+    mic: null, // a finished listen whose recognizer still runs: the check may keep it (handed over in heard())
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -319,6 +338,44 @@ function createVoiceMode(opts) {
   const musicViews = new Map(); // segment id -> card view, in the order shown
   const MAX_VOICE_CARDS = 6;
   const capSub = h('p', { class: 'vm-cap-sub', hidden: true });
+
+  // The 2-second check (v7.2): what was heard, big; tap it to fix it; Send now with the countdown ring.
+  const reviewText = h('button', {
+    class: 'vm-review-text',
+    type: 'button',
+    attrs: { 'data-testid': 'voice-review-text', 'aria-label': 'Fix what I heard' },
+    on: { click: () => onReviewEdit() },
+  });
+  const reviewInput = h('input', {
+    class: 'vm-input vm-review-input',
+    type: 'text',
+    attrs: {
+      'aria-label': 'Fix what I heard',
+      'data-testid': 'voice-review-input',
+      autocomplete: 'off',
+      autocapitalize: 'sentences',
+      spellcheck: 'true',
+      enterkeyhint: 'send',
+      maxlength: '4000',
+    },
+  });
+  const reviewSendBtn = h('button', { class: 'vm-send', type: 'submit', attrs: { 'aria-label': 'Send', 'data-testid': 'voice-review-send' } }, icon('send', { size: 20 }));
+  const reviewForm = h('form', { class: 'vm-form vm-review-form', hidden: true, attrs: { autocomplete: 'off' }, on: { submit: onReviewSubmit } }, reviewInput, reviewSendBtn);
+  const reviewHeard = h('p', { class: 'vm-review-heard', hidden: true, attrs: { 'data-testid': 'voice-review-heard' } });
+  const reviewRing = h('span', { class: 'vm-review-ring', attrs: { 'aria-hidden': 'true' } });
+  const reviewNowLabel = h('span', { class: 'vm-review-now-label', text: 'Send now' });
+  const reviewNow = h('button', { class: 'vm-review-now', type: 'button', attrs: { 'data-testid': 'voice-review-now' }, on: { click: () => reviewSend('button') } }, reviewRing, reviewNowLabel);
+  const reviewCancelBtn = h('button', { class: 'vm-review-cancel', type: 'button', attrs: { 'data-testid': 'voice-review-cancel' }, on: { click: () => reviewDiscard('button') } }, h('span', { text: 'Cancel' }));
+  const reviewHint = h('p', { class: 'vm-review-hint', attrs: { 'data-testid': 'voice-review-hint' } });
+  const reviewEl = h(
+    'div',
+    { class: 'vm-review', hidden: true, attrs: { 'data-testid': 'voice-review', role: 'group', 'aria-label': 'What I heard' } },
+    reviewText,
+    reviewForm,
+    reviewHeard,
+    h('div', { class: 'vm-review-bar' }, reviewNow, reviewCancelBtn),
+    reviewHint,
+  );
 
   const mWave = h('span', { class: 'vm-mission-wave' });
   const mTitle = h('span', { class: 'vm-mission-title' });
@@ -395,7 +452,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, capSub, musicEl, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, missionEl, readFull),
     h(
       'div',
       { class: 'vm-bottom' },
@@ -554,7 +611,12 @@ function createVoiceMode(opts) {
     let label = 'Talk';
     let aria = 'Start listening';
     let coreAria = 'Talk to Jarvis';
-    if (S.listen) {
+    if (S.review) {
+      ic = 'send';
+      label = 'Send';
+      aria = 'Send now';
+      coreAria = 'Send now';
+    } else if (S.listen) {
       const words = !!S.listen.text;
       ic = words ? 'send' : 'stop';
       label = words ? 'Send' : 'Stop';
@@ -607,7 +669,7 @@ function createVoiceMode(opts) {
     const A = S.answer;
     const more = !!A && !!A.full && (typeof A.more === 'boolean' ? A.more : A.full.length > A.summary.length + 24);
     const readingFull = !!S.speech && S.speech.kind === 'full';
-    const busy = !!S.run || (!!S.listen && !!S.listen.text);
+    const busy = !!S.run || !!S.review || (!!S.listen && !!S.listen.text);
     const show = more && !busy && !S.closed;
     readFull.hidden = !show;
     if (!show) return;
@@ -646,6 +708,7 @@ function createVoiceMode(opts) {
     haptic('light');
     unlockSpeech();
     clearRetry();
+    if (S.review) return reviewSend('tap'); // the 2-second check: send now
     if (S.listen) return requestSend(S.listen, false);
     // The spoken part is complete (its last sentences are being said, or the details below the
     // line are being written): stop the voice and listen; the details keep coming in the chat.
@@ -669,6 +732,7 @@ function createVoiceMode(opts) {
     if (S.closed) return;
     unlockSpeech();
     clearRetry();
+    if (S.review) return reviewSend('tap');
     if (S.listen) return requestSend(S.listen, false);
     if (S.run && spokenDone(S.run) && isTalking(liveOf(S.run))) {
       // Stop the voice only (as in v4): the details are still being written, then shown to read.
@@ -725,6 +789,15 @@ function createVoiceMode(opts) {
 
   function toggleTyping() {
     if (S.closed) return;
+    if (S.review) {
+      // Type instead: the words being checked go to the text box, to fix and send from there.
+      const R = endReview();
+      S.typing = true;
+      input.value = R && R.mode === 'editing' ? reviewInput.value.trim() || R.text : R ? R.text : '';
+      goIdle('ready');
+      focusInput();
+      return;
+    }
     S.typing = !S.typing;
     if (S.typing) {
       if (S.listen) {
@@ -768,6 +841,10 @@ function createVoiceMode(opts) {
     event.stopPropagation();
     if (event.key === 'Escape' || event.key === 'Esc') {
       event.preventDefault();
+      if (S.review && S.review.mode === 'editing') {
+        reviewStopEditing();
+        return;
+      }
       close();
       return;
     }
@@ -893,6 +970,11 @@ function createVoiceMode(opts) {
         showCaption('hint', 'Paused while you were away.', S.sttOk ? 'Tap the core to pick up where we left off.' : '');
         announce('Paused');
         break;
+      case 'discarded':
+        setStatus('Ready', 'dot');
+        showCaption('hint', 'Okay, not sent.', tapHint);
+        announce('Not sent');
+        break;
       case 'silent':
         setStatus('Ready', 'dot');
         showCaption('hint', `Still here whenever you need me, ${name}.`, tapHint);
@@ -930,7 +1012,7 @@ function createVoiceMode(opts) {
   }
 
   function onConnectivity() {
-    if (S.closed || S.listen || S.run || S.speech) return;
+    if (S.closed || S.listen || S.run || S.speech || S.review) return;
     if (S.state !== 'idle' && S.state !== 'offline') return;
     const kept = S.idleReason === 'offline-kept' || S.idleReason === 'back-online';
     goIdle(kept ? (isOnline() ? 'back-online' : 'offline-kept') : S.idleReason);
@@ -943,7 +1025,9 @@ function createVoiceMode(opts) {
       const wasListening = !!S.listen || !!S.retryTimer;
       clearRetry();
       stopListening();
-      if (wasListening && !S.run && !S.speech) goIdle('paused');
+      // The 2-second check waits (nothing is sent while the owner is away); its microphone closes.
+      if (S.review) reviewPause('paused', { closeMic: true });
+      else if (wasListening && !S.run && !S.speech) goIdle('paused');
     }
     updateLevelLoop();
   }
@@ -991,8 +1075,10 @@ function createVoiceMode(opts) {
       S.userEl = h('p', { class: 'vm-cap vm-cap--user' });
       captions.appendChild(S.userEl);
     }
-    setText(S.userEl, text);
-    setCaptionLength(text.length > 90 ? 'medium' : 'short');
+    // The same line is updated in place (no fade per word); the type only ever grows while the
+    // owner talks, so a revised word near the 90-character mark never makes it jump back and forth.
+    if (S.userEl.textContent !== text) setText(S.userEl, text);
+    if (text.length > 90 && captions.dataset.length !== 'medium') setCaptionLength('medium');
     captions.scrollTop = captions.scrollHeight;
   }
 
@@ -1141,10 +1227,15 @@ function createVoiceMode(opts) {
    * duringBuild: the owner tapped the viewer's mic while a hologram of the streaming reply builds.
    * The reply goes on (its speech is not cut; no new sentence is spoken while the mic is open), and
    * what is heard is taken by heardDuringBuild(); the listen is one utterance (no retries).
+   *
+   * The recognizer runs until stt.js decides the owner has finished (Settings → Voice → Wait after I
+   * stop talking). With the 2-second check on, it keeps listening after that (keepListening): the
+   * check takes it over to hear "cancel" or "no, I said …" without starting a new one.
    */
   function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false } = {}) {
     if (S.closed || (S.run && !duringBuild)) return;
     clearRetry();
+    if (S.review) endReview(); // a new listen replaces a check still on screen (nothing is sent)
     if (!S.sttOk) {
       S.typing = true;
       goIdle('unsupported');
@@ -1158,7 +1249,8 @@ function createVoiceMode(opts) {
       S.typing = false;
       unlockSpeech();
     }
-    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild };
+    const review = !duringBuild && reviewOn();
+    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer };
     S.listen = L;
     S.noRelisten = false;
     // A preview playing now would be heard as speech: it pauses before the mic opens.
@@ -1178,12 +1270,17 @@ function createVoiceMode(opts) {
 
     let handle = null;
     try {
+      const st = getS();
       handle = stt.startListening({
-        lang: getS().listenLang || 'en-US',
-        onPartial: (value) => onPartial(L, value),
-        onFinal: (value) => onFinal(L, value),
-        onEnd: () => finishListening(L, 'end'),
-        onError: (err) => onListenError(L, err),
+        lang: st.listenLang, // '' = the device's language (stt.js)
+        wait: st.listenWait,
+        phrases: listenPhrases({ partNames: partNamesNow() }), // Chrome's contextual biasing, when it has it
+        keepListening: review,
+        // The check takes over this recognizer once the words are on screen: its events go there.
+        onPartial: (value) => (reviewing(L) ? reviewPartial(value) : onPartial(L, value)),
+        onFinal: (value, info) => (reviewing(L) ? reviewFinal(value) : onFinal(L, value, info)),
+        onEnd: () => (reviewing(L) ? reviewMicEnded(L) : finishListening(L, 'end')),
+        onError: (err) => (reviewing(L) ? reviewMicEnded(L) : onListenError(L, err)),
       });
     } catch (err) {
       onListenError(L, { code: 'other', message: errorText(err) });
@@ -1205,7 +1302,17 @@ function createVoiceMode(opts) {
   function onPartial(L, value) {
     if (S.listen !== L) return;
     const text = toText(value).trim();
-    if (!text) return;
+    if (!text) {
+      // The recognizer took the words back (a noise first heard as "uh"): they are never sent, and
+      // the listen goes on as before them.
+      if (L.text) {
+        L.text = '';
+        if (L.keepAnswer && S.answer) showContext();
+        else showCaption('hint', greeting());
+        renderControls();
+      }
+      return;
+    }
     L.heard = true;
     if (S.sttBlocked) {
       S.sttBlocked = false; // permission was fixed: hands-free can resume
@@ -1219,10 +1326,11 @@ function createVoiceMode(opts) {
     else syncVisuals();
   }
 
-  function onFinal(L, value) {
+  function onFinal(L, value, info) {
     if (S.listen !== L) return;
     const text = toText(value).trim();
     if (text) L.text = text;
+    L.alts = info && Array.isArray(info.alternatives) ? info.alternatives.filter((a) => typeof a === 'string' && a.trim()) : [];
     finishListening(L, 'final');
   }
 
@@ -1235,6 +1343,7 @@ function createVoiceMode(opts) {
     }
     if (L.stopRequested) return;
     L.stopRequested = true;
+    if (!auto) L.sendNow = true; // a tap means "I'm done, send now": no 2-second check
     stopHandle(L.handle);
     setStatus('Got it', 'check');
     // Give the recognizer a moment to deliver its final transcript, then send what we have.
@@ -1245,7 +1354,11 @@ function createVoiceMode(opts) {
     if (S.listen !== L) return;
     S.listen = null;
     clearTimers(L.timers);
-    if (reason !== 'end' && reason !== 'final') abortHandle(L.handle);
+    // Stop the recognizer, unless it ended by itself, or ended this turn by itself (it stops on
+    // its own then), or delivered it and keeps listening for the 2-second check (heard() below
+    // decides whether the check takes it over; it is stopped there otherwise).
+    const keepsMic = reason === 'final' && L.review && !S.closed && !!(L.text || '').trim();
+    if (reason !== 'end' && !keepsMic && !(reason === 'final' && !L.review)) abortHandle(L.handle);
     if (S.closed) return;
     const text = (L.text || '').trim();
     if (L.duringBuild) {
@@ -1261,7 +1374,16 @@ function createVoiceMode(opts) {
     if (text) {
       S.silentTries = 0;
       play('listen-stop');
-      heard(text);
+      // The check may keep this recognizer (to hear "cancel" or "no, I said …"); otherwise it stops.
+      S.mic = reason === 'final' && L.review ? L : null;
+      try {
+        heard(text, L.alts, { sendNow: L.sendNow });
+      } finally {
+        if (S.mic === L) {
+          S.mic = null;
+          abortHandle(L.handle);
+        }
+      }
       return;
     }
     if (L.stopRequested) {
@@ -1312,7 +1434,7 @@ function createVoiceMode(opts) {
     // The platform's messages are already short and actionable (e.g. iPhone: turn on Dictation).
     const detail = err && typeof err.message === 'string' ? asSentence(clip(singleLine(err.message), 160)) : '';
     if (code === 'not-allowed') {
-      if (!L.gesture) {
+      if (!L.gesture || (err && err.restarted)) {
         // Hands-free re-listening only ever follows a tap-started session the browser accepted,
         // so a refusal here means it wants a fresh tap (iOS), not that the mic is blocked.
         goIdle('needs-tap');
@@ -1379,6 +1501,368 @@ function createVoiceMode(opts) {
     S.retryTimer = 0;
   }
 
+  // ======================================================================= the 2-second check
+
+  /** True while the check holds this listen's recognizer (its events are the check's then). */
+  function reviewing(L) {
+    return !!S.review && S.review.L === L;
+  }
+
+  /**
+   * "Show, then send" (Settings → Voice → After I stop talking): what was heard is shown big for 2
+   * seconds with a countdown ring and Send now, then sent. The listen's recognizer keeps listening
+   * (S.mic, handed over by finishListening): "cancel" or "never mind" drops it, "no, I said …"
+   * corrects it and counts again, "wait" stops the countdown, more words are added. A tap on the
+   * words opens a field to fix them (the countdown and the microphone stop).
+   */
+  function startReview(text) {
+    const mic = S.mic && S.mic.handle ? S.mic : null;
+    S.mic = null;
+    if (S.review) endReview();
+    // guess: a correction Jarvis wasn't sure how to apply, shown for the owner to confirm ({ from, said })
+    // listenTimer: while the owner talks during the check, the fallback that lets it go on (reviewPartial)
+    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, listenTimer: 0, guess: null };
+    S.review = R;
+    S.karaoke = null;
+    S.userEl = null;
+    captions.hidden = true;
+    reviewForm.hidden = true;
+    reviewHeard.hidden = true;
+    reviewText.hidden = false;
+    reviewEl.hidden = false;
+    setReviewText(text);
+    setText(reviewHint, reviewHintText(R));
+    setSub('');
+    setVoiceState(mic ? 'listening' : 'idle');
+    announce(`I heard: ${clip(singleLine(text), 200)}. Sending in 2 seconds.`);
+    fadeIn(reviewEl);
+    reviewNote(`“${clip(singleLine(text), 120)}” · sending in 2 s (say “cancel” or “no, I said …”)`);
+    reviewCount(REVIEW_MS);
+  }
+
+  /** The line under the check: what the owner can do now. */
+  function reviewHintText(R) {
+    if (R.guess) return R.L ? 'Say “yes” or tap Send, or tap the words to fix them.' : 'Tap Send, or tap the words to fix them.';
+    return R.L ? 'Tap the words to fix them, or say “no, I said …” or “cancel”.' : 'Tap the words to fix them.';
+  }
+
+  function setReviewText(text) {
+    const R = S.review;
+    if (!R) return;
+    R.text = text;
+    setText(reviewText, text);
+    reviewText.setAttribute('aria-label', `Fix what I heard: ${clip(singleLine(text), 300)}`);
+    reviewEl.dataset.length = text.length > 90 ? 'long' : 'short';
+    // The check is taller than a caption (the words, Send now, the hint): the core steps back.
+    root.dataset.caplen = text.length > 90 ? 'long' : 'medium';
+    syncVisuals();
+  }
+
+  function renderReview() {
+    const R = S.review;
+    if (!R || S.closed) return;
+    root.dataset.review = R.mode;
+    reviewEl.dataset.state = R.mode;
+    setText(reviewNowLabel, R.mode === 'counting' ? 'Send now' : 'Send');
+    const [status, ic] = {
+      counting: ['Sending…', 'send'],
+      listening: ['Listening…', 'mic'],
+      paused: R.guess ? ['Is that right?', 'info'] : ['Ready when you are', 'pause'],
+      editing: ['Fix what I heard', 'edit'],
+    }[R.mode] || ['Sending…', 'send'];
+    setStatus(status, ic);
+    drawRing();
+    renderControls();
+  }
+
+  /** The countdown ring: how much of the 2 seconds has passed (0..1, a CSS variable). */
+  function drawRing() {
+    const R = S.review;
+    if (!R) return;
+    const left = R.mode === 'counting' ? Math.max(0, R.deadline - performance.now()) : R.remaining;
+    reviewEl.style.setProperty('--vm-review-p', (1 - Math.min(1, Math.max(0, left / REVIEW_MS))).toFixed(3));
+  }
+
+  /** Count `ms` down, then send. */
+  function reviewCount(ms) {
+    const R = S.review;
+    if (!R || S.closed) return;
+    clearTimeout(R.timer);
+    clearTimeout(R.micTimer);
+    clearTimeout(R.listenTimer);
+    R.micTimer = 0;
+    R.listenTimer = 0;
+    R.mode = 'counting';
+    R.paused = false;
+    R.remaining = ms;
+    R.deadline = performance.now() + ms;
+    R.timer = setTimeout(() => {
+      if (S.review === R && R.mode === 'counting') reviewSend('timer');
+    }, ms);
+    renderReview();
+    const tick = () => {
+      R.frame = 0;
+      if (S.review !== R || R.mode !== 'counting') return;
+      drawRing();
+      R.frame = requestAnimationFrame(tick);
+    };
+    if (!R.frame) R.frame = requestAnimationFrame(tick);
+  }
+
+  /** Stop the countdown: 'listening' (the owner talks), 'paused' ("wait", or away) or 'editing'. */
+  function reviewPause(mode, { closeMic = false } = {}) {
+    const R = S.review;
+    if (!R) return;
+    if (R.mode === 'counting') R.remaining = Math.max(0, R.deadline - performance.now());
+    clearTimeout(R.timer);
+    R.timer = 0;
+    if (mode !== 'listening') {
+      clearTimeout(R.listenTimer);
+      R.listenTimer = 0;
+    }
+    R.mode = mode;
+    if (mode === 'paused') R.paused = true;
+    if (closeMic && R.L) {
+      const L = R.L;
+      R.L = null;
+      abortHandle(L.handle);
+      reviewHeard.hidden = true;
+      setText(reviewHint, reviewHintText(R)); // nothing more is heard: no "say …"
+    }
+    // A paused check still hears a correction for a while; then its microphone closes (Send stays).
+    clearTimeout(R.micTimer);
+    R.micTimer = 0;
+    if (R.L && mode === 'paused') {
+      R.micTimer = setTimeout(() => {
+        if (S.review === R && R.mode === 'paused') reviewPause('paused', { closeMic: true });
+      }, REVIEW_MIC_MS);
+    }
+    if (!S.closed) setVoiceState(R.L && mode !== 'editing' ? 'listening' : 'idle');
+    renderReview();
+  }
+
+  /**
+   * Words heard during the check: the countdown waits while the owner talks. The words the
+   * recognizer takes back (an empty partial: a noise first heard as "uh") let it go on; so does a
+   * turn that never ends in words (no final within the silence window and 1 s after the last ones).
+   */
+  function reviewPartial(value) {
+    const R = S.review;
+    if (!R || R.mode === 'editing') return;
+    const t = toText(value).trim();
+    if (!t) {
+      if (R.mode === 'listening') reviewResume(R);
+      return;
+    }
+    setText(reviewHeard, `“${t}”`);
+    reviewHeard.hidden = false;
+    bumpLevel(0.5 + ((t.length * 7) % 10) / 30);
+    if (R.mode !== 'listening') reviewPause('listening');
+    clearTimeout(R.listenTimer);
+    R.listenTimer = setTimeout(() => {
+      if (S.review === R && R.mode === 'listening') reviewResume(R);
+    }, reviewListenMs(t));
+  }
+
+  /** The owner said nothing after all: the countdown goes on (or the check waits, when it did). */
+  function reviewResume(R) {
+    clearTimeout(R.listenTimer);
+    R.listenTimer = 0;
+    guessHeard(R);
+    if (R.paused) reviewPause('paused');
+    else reviewCount(REVIEW_MS);
+  }
+
+  /** Under a guess, what the owner said for it stays shown ("No, I said Paris"); otherwise nothing. */
+  function guessHeard(R) {
+    setText(reviewHeard, R.guess ? `“${clip(singleLine(R.guess.said), 140)}”` : '');
+    reviewHeard.hidden = !R.guess;
+  }
+
+  /** How long the check waits for words it is hearing to end: their silence window (stt.js) and 1 s. */
+  function reviewListenMs(text) {
+    try {
+      const wait = typeof stt.listenWaitMs === 'function' ? stt.listenWaitMs(getS().listenWait) : 1600;
+      return (typeof stt.turnSilenceMs === 'function' ? stt.turnSilenceMs(text, wait) : wait + 1000) + 1000;
+    } catch {
+      return 3600;
+    }
+  }
+
+  /** What the owner said during the check: cancel, a correction, send, wait, or more words. */
+  function reviewFinal(value) {
+    const R = S.review;
+    if (!R || R.mode === 'editing') return;
+    clearTimeout(R.listenTimer);
+    R.listenTimer = 0;
+    const said = toText(value).trim();
+    reviewHeard.hidden = true;
+    setText(reviewHeard, '');
+    const reply = reviewReply(said, R.text);
+    switch (reply.kind) {
+      case 'cancel':
+        reviewDiscard('voice');
+        return;
+      case 'send':
+        reviewSend('voice');
+        return;
+      case 'wait':
+        guessHeard(R);
+        reviewPause('paused');
+        announce('Waiting. Say what to change, or tap Send.');
+        return;
+      case 'filler':
+        guessHeard(R);
+        if (R.paused) reviewPause('paused');
+        else reviewCount(REVIEW_MS);
+        return;
+      case 'correct': {
+        // A fix while a guess is shown corrects the words as they were before the guess.
+        const from = R.guess ? R.guess.from : R.text;
+        const plan = planCorrection(from, reply.text);
+        if (plan.sure) {
+          R.guess = null;
+          setReviewText(plan.text);
+          setText(reviewHint, reviewHintText(R));
+          announce(`Corrected: ${clip(singleLine(R.text), 200)}`);
+          reviewNote(`Got it: “${clip(singleLine(R.text), 140)}”.`);
+          reviewCount(REVIEW_MS);
+          return;
+        }
+        // Jarvis isn't sure where the fix goes (nothing sounds like it, or there are two numbers):
+        // the guess is shown and the countdown waits for the owner ("yes", Send, or a tap to fix it).
+        R.guess = { from, said };
+        setReviewText(plan.text);
+        guessHeard(R);
+        setText(reviewHint, reviewHintText(R));
+        reviewPause('paused');
+        announce(`Is that right: ${clip(singleLine(R.text), 200)}? Say yes, or tap the words to fix them.`);
+        reviewNote(`Is that right? “${clip(singleLine(R.text), 140)}”`);
+        return;
+      }
+      default:
+        R.guess = null;
+        setReviewText(addWords(R.text, reply.text));
+        setText(reviewHint, reviewHintText(R));
+        reviewCount(REVIEW_MS);
+    }
+  }
+
+  /** The check's recognizer ended (or failed): the check goes on without it. */
+  function reviewMicEnded(L) {
+    const R = S.review;
+    if (!R || R.L !== L) return;
+    R.L = null;
+    reviewHeard.hidden = true;
+    setText(reviewHint, reviewHintText(R));
+    if (R.mode === 'listening') {
+      if (R.paused) reviewPause('paused');
+      else reviewCount(REVIEW_MS);
+    } else if (R.mode !== 'editing') {
+      setVoiceState('idle');
+      renderReview();
+    }
+  }
+
+  /** Send what was heard now (the countdown ended, Send now, the core, or "send it"). */
+  function reviewSend() {
+    const R = S.review;
+    if (!R || S.closed) return;
+    const text = (R.mode === 'editing' ? reviewInput.value : R.text).trim();
+    endReview();
+    if (!text) {
+      goIdle('ready');
+      return;
+    }
+    // Checked: local commands still come first (a correction may have made it one), then the turn.
+    heard(text, [], { reviewed: true });
+  }
+
+  /** "Cancel" / "never mind" (or the Cancel button): nothing is sent. */
+  function reviewDiscard() {
+    if (!endReview()) return;
+    play('listen-stop');
+    goIdle('discarded');
+    reviewNote('Okay, not sent.');
+  }
+
+  /** A tap on the words: a field to fix them (the countdown and the microphone stop). */
+  function onReviewEdit() {
+    const R = S.review;
+    if (!R || S.closed || R.mode === 'editing') return;
+    haptic('light');
+    R.guess = null; // the owner fixes the words themselves
+    reviewPause('editing', { closeMic: true });
+    reviewInput.value = R.text;
+    reviewText.hidden = true;
+    reviewForm.hidden = false;
+    setText(reviewHint, 'Fix the words, then send.');
+    try {
+      reviewInput.focus({ preventScroll: true }); // inside the tap: the iPhone keyboard opens
+      const n = reviewInput.value.length;
+      reviewInput.setSelectionRange(n, n);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Escape in the field: keep the words as they are now, without sending. */
+  function reviewStopEditing() {
+    const R = S.review;
+    if (!R || R.mode !== 'editing') return;
+    const t = reviewInput.value.trim();
+    if (t) setReviewText(t);
+    reviewForm.hidden = true;
+    reviewText.hidden = false;
+    setText(reviewHint, 'Tap Send when you’re ready.');
+    reviewPause('paused');
+    try {
+      reviewNow.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function onReviewSubmit(event) {
+    event.preventDefault();
+    reviewSend();
+  }
+
+  /** Close the check (its microphone stops). Returns it, or null when there was none. */
+  function endReview() {
+    const R = S.review;
+    if (!R) return null;
+    S.review = null;
+    clearTimeout(R.timer);
+    clearTimeout(R.micTimer);
+    clearTimeout(R.listenTimer);
+    if (R.frame) cancelAnimationFrame(R.frame);
+    R.frame = 0;
+    if (R.L) abortHandle(R.L.handle);
+    R.L = null;
+    const hadFocus = root.contains(document.activeElement) && reviewEl.contains(document.activeElement);
+    reviewEl.hidden = true;
+    reviewForm.hidden = true;
+    reviewHeard.hidden = true;
+    captions.hidden = false;
+    delete root.dataset.review;
+    if (!S.closed) {
+      if (hadFocus) focusDefault();
+      renderControls();
+    }
+    return R;
+  }
+
+  /** A line in the viewer covering Voice Mode (a hologram's caption), when one is open: what was heard. */
+  function reviewNote(text) {
+    if (!viewerOpen() || !visuals || typeof visuals.note !== 'function') return;
+    try {
+      visuals.note(text, { heard: true });
+    } catch {
+      /* decoration */
+    }
+  }
+
   // ================================================================================== a turn
 
   /**
@@ -1394,6 +1878,7 @@ function createVoiceMode(opts) {
     clearRetry();
     cancelSpeech();
     stopListening();
+    if (S.review) endReview();
     if (S.bg) {
       // The previous reply is still writing its details in the chat (one turn at a time): ask
       // this once it is done.
@@ -1976,46 +2461,83 @@ function createVoiceMode(opts) {
 
   /**
    * What the owner said: a screen command, a local command while a viewer covers Voice Mode,
-   * otherwise a turn.
+   * otherwise a turn. `alts`: the recognizer's other readings, tried for the local commands too
+   * (the first reading that is a command acts) and for an open hologram's part names. A turn is
+   * shown for 2 seconds first (the check) unless it was checked already (opts.reviewed), the owner
+   * tapped to send it now (opts.sendNow) or Settings say "Send right away".
    */
-  function heard(text) {
+  function heard(text, alts = [], opts = {}) {
+    const readings = [text];
+    for (const a of Array.isArray(alts) ? alts : []) {
+      const t = typeof a === 'string' ? a.trim() : '';
+      if (t && !readings.some((r) => r.toLowerCase() === t.toLowerCase())) readings.push(t);
+    }
     // "Shall I draw a blueprint of …?" was asked: yes draws it, no drops it; anything else drops the
     // question and is taken as usual.
     const asked = S.confirm;
     S.confirm = null;
     if (asked && Date.now() - asked.at < CONFIRM_MS) {
-      const reply = confirmReply(text);
-      if (reply === 'yes') return confirmBlueprint(text, asked);
-      if (reply === 'no') {
-        showCaption('quote', `“${text}”`);
-        speakAck('Okay, no blueprint.');
-        return;
+      for (const words of readings) {
+        const reply = confirmReply(words);
+        if (reply === 'yes') return confirmBlueprint(words, asked);
+        if (reply === 'no') {
+          showCaption('quote', `“${words}”`);
+          speakAck('Okay, no blueprint.');
+          return;
+        }
       }
     }
     // Said while a hologram of the reply builds (the owner tapped the viewer's mic): see below.
     if (S.run && S.run.run) {
-      heardDuringBuild(text, S.run);
+      heardDuringBuild(text, S.run, readings);
       return;
     }
-    // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
-    // (above) and is taken here once the reply has been said.
-    if (screenCommand(text)) return;
-    // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
-    if (musicCommand(text)) return;
-    // A 2D request heard here is cancelled by Stop while its library lookup is still running.
-    // With no viewer open, the app may open the hologram shown last for a command about it.
-    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    let res = null;
-    if (visuals && typeof visuals.command === 'function') {
-      try {
-        res = visuals.command(text, { signal: ctl ? ctl.signal : null, spoken: true });
-      } catch (err) {
-        console.warn('[voice] the viewer could not take that command', err);
-        res = null;
+    for (const [i, words] of readings.entries()) {
+      // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
+      // (above) and is taken here once the reply has been said.
+      if (screenCommand(words)) return;
+      // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
+      if (i === 0 && musicCommand(words)) return;
+      // A 2D request heard here is cancelled by Stop while its library lookup is still running.
+      // With no viewer open, the app may open the hologram shown last for a command about it.
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const res = viewerWords(words, { signal: ctl ? ctl.signal : null, spoken: true });
+      if (res && res.handled) {
+        viewerCommand(words, res, ctl);
+        return;
       }
     }
-    if (res && res.handled) viewerCommand(text, res, ctl);
-    else send(text);
+    // A question about the hologram on screen: the reading that names one of its parts.
+    const words = pickHeard(text, readings.slice(1), partNamesNow());
+    if (opts.reviewed || opts.sendNow || !reviewOn()) send(words);
+    else startReview(words);
+  }
+
+  /** visuals.command(), quietly (null when there is no viewer bridge or it fails). */
+  function viewerWords(words, options) {
+    if (!visuals || typeof visuals.command !== 'function') return null;
+    try {
+      return visuals.command(words, options);
+    } catch (err) {
+      console.warn('[voice] the viewer could not take that command', err);
+      return null;
+    }
+  }
+
+  /** The open (or last shown) hologram's part names and their other names, for the words heard. */
+  function partNamesNow() {
+    if (!visuals || typeof visuals.vocabulary !== 'function') return [];
+    try {
+      const v = visuals.vocabulary();
+      return v && Array.isArray(v.parts) ? v.parts.filter((n) => typeof n === 'string' && n.trim()).slice(0, 120) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Settings → Voice → After I stop talking: show what was heard for 2 seconds first (the default). */
+  function reviewOn() {
+    return getS().listenSend !== 'now';
   }
 
   /**
@@ -2023,14 +2545,12 @@ function createVoiceMode(opts) {
    * model at once (its toast says so; speaking now would cut the reply's own speech). A question,
    * or a 2D request (it needs the finished hologram), waits until the reply has been said.
    */
-  function heardDuringBuild(text, R) {
+  function heardDuringBuild(text, R, readings = [text]) {
     let res = null;
-    if (viewerOpen() && typeof visuals.command === 'function') {
-      try {
-        res = visuals.command(text, { spoken: false, later: true });
-      } catch (err) {
-        console.warn('[voice] the viewer could not take that command', err);
-        res = null;
+    if (viewerOpen()) {
+      for (const words of readings) {
+        res = viewerWords(words, { spoken: false, later: true });
+        if (res && res.handled) break;
       }
     }
     if (!(res && res.handled && !res.done)) {
@@ -2099,7 +2619,7 @@ function createVoiceMode(opts) {
   /** Words held while a hologram built: taken once the reply has been said (true when they were). */
   function takeHeld() {
     const words = S.heldWords;
-    if (!words || S.closed || S.run || S.listen) return false;
+    if (!words || S.closed || S.run || S.listen || S.review) return false;
     S.heldWords = '';
     heard(words);
     return true;
@@ -2228,8 +2748,8 @@ function createVoiceMode(opts) {
       visuals.sync({
         state: S.state,
         label: coreBtn.getAttribute('aria-label') || '',
-        listening: !!S.listen,
-        heard: S.listen ? S.listen.text || '' : '',
+        listening: !!S.listen || !!(S.review && S.review.L),
+        heard: S.listen ? S.listen.text || '' : S.review ? S.review.text : '',
         busy: !!S.run || !!S.speech,
         canListen,
       });
@@ -2896,6 +3416,7 @@ function createVoiceMode(opts) {
     if (current === instance) current = null;
     clearRetry();
     stopListening();
+    endReview(); // words still being checked are not sent
     // Jarvis had begun saying this answer (or all of its spoken part): when it finishes in the
     // chat, the chat doesn't read it aloud again.
     for (const R of [S.run, S.bg]) if (R && R.run && (R.liveDone || R.answerHeard || R === S.bg)) voicedRuns.add(R.run);
@@ -3099,6 +3620,16 @@ function errorText(err) {
   if (!err) return '';
   if (typeof err === 'string') return err;
   return String(err.message || '');
+}
+
+/** More words for a sentence being checked ("…tomorrow." + "and in Boston" -> "…tomorrow and in Boston"). */
+function addWords(text, more) {
+  let a = String(text ?? '').trim();
+  const b = String(more ?? '').trim();
+  if (!a) return b;
+  if (!b) return a;
+  if (/^[a-z]/.test(b)) a = a.replace(/[.!?…]+$/, '');
+  return `${a} ${b}`;
 }
 
 /** Make sure a message ends like a sentence before another sentence follows it. */

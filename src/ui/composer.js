@@ -302,12 +302,19 @@ export function createComposer(o) {
     },
     on: {
       input: () => {
+        cancelCountdown(); // an edit: the owner sends it
         autoGrow();
         syncButtons();
         if (!keyGuard.hidden) keyGuard.hidden = true; // an edit answers the question
       },
-      keydown: onKeyDown,
+      keydown: (e) => {
+        cancelCountdown();
+        onKeyDown(e);
+      },
       paste: onPaste,
+      // A tap on the box stops "Show, then send": the owner fixes the words and sends them.
+      pointerdown: () => cancelCountdown(),
+      focus: () => cancelCountdown(),
     },
   });
 
@@ -767,7 +774,13 @@ export function createComposer(o) {
     fileInput,
     cameraInput,
   );
-  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, notice, keyGuard, hint, box), live);
+  // ---- "Show, then send" (v7.2): words from the mic wait 2 seconds in the box -----------------
+  const countText = h('span', { class: 'composer-countdown-text', text: 'Sending in 2 seconds. Tap the message to change it.' });
+  const countRing = h('span', { class: 'composer-countdown-ring', attrs: { 'aria-hidden': 'true' } });
+  const countEl = h('div', { class: 'composer-countdown', hidden: true, attrs: { 'data-testid': 'composer-countdown', role: 'status' } }, countRing, countText);
+  let countdown = null; // { timer, frame, deadline, ms, onDone }
+
+  const el = h('div', { class: 'composer', dataset: { mode } }, h('div', { class: 'composer-inner' }, notice, keyGuard, hint, countEl, box), live);
 
   // ---- behaviour --------------------------------------------------------------------
   function onKeyDown(e) {
@@ -783,8 +796,59 @@ export function createComposer(o) {
     return items.filter((i) => i.status === 'processing').length;
   }
 
+  /**
+   * "Show, then send": count `ms` down (a ring on Send and a line above the box), then call
+   * onDone(). A tap on the box, typing, or the owner sending it first cancels it.
+   */
+  function startCountdown(ms, onDone) {
+    cancelCountdown();
+    const total = Math.max(0, Number(ms) || 0);
+    const C = { ms: total, deadline: performance.now() + total, timer: 0, frame: 0, onDone };
+    countdown = C;
+    countEl.hidden = false;
+    el.dataset.countdown = 'on';
+    sendBtn.classList.add('is-counting');
+    const draw = () => {
+      const left = Math.max(0, C.deadline - performance.now());
+      const p = total ? 1 - left / total : 1;
+      el.style.setProperty('--count-p', p.toFixed(3));
+    };
+    draw();
+    const tick = () => {
+      C.frame = 0;
+      if (countdown !== C) return;
+      draw();
+      C.frame = requestAnimationFrame(tick);
+    };
+    C.frame = requestAnimationFrame(tick);
+    C.timer = setTimeout(() => {
+      if (countdown !== C) return;
+      cancelCountdown();
+      try {
+        if (typeof C.onDone === 'function') C.onDone();
+      } catch (err) {
+        console.error('[jarvis] sending from the mic failed:', err);
+      }
+    }, total);
+  }
+
+  /** Stop the countdown (nothing is sent). True when one was running. */
+  function cancelCountdown() {
+    const C = countdown;
+    if (!C) return false;
+    countdown = null;
+    clearTimeout(C.timer);
+    if (C.frame) cancelAnimationFrame(C.frame);
+    countEl.hidden = true;
+    delete el.dataset.countdown;
+    sendBtn.classList.remove('is-counting');
+    el.style.removeProperty('--count-p');
+    return true;
+  }
+
   /** Sends the text and the ready attachments. Returns true when the app accepted the message. */
   function submit() {
+    cancelCountdown();
     // A local command (Screens: "put mission control on my other screen") works while Jarvis is
     // busy too: it is not a message, so the running turn is not in its way.
     const typed = input.value.trim();
@@ -1047,6 +1111,12 @@ export function createComposer(o) {
       syncButtons();
     },
     getText: () => input.value,
+    /** "Show, then send" for words from the mic: onDone() after `ms` unless the owner taps the box first. */
+    startCountdown,
+    /** Stop a countdown (true when one was running). */
+    cancelCountdown,
+    /** True while words from the mic wait to be sent. */
+    counting: () => !!countdown,
     setMeta(text) {
       setText(meta, text || '');
     },

@@ -430,35 +430,40 @@ const FAKE_RECOGNITION = () => {
   window.__result = (rec, items) => rec.onresult({ resultIndex: 0, results: items.map(([text, final]) => Object.assign([{ transcript: text, confidence: 0.9 }], { isFinal: final })) });
 };
 
-test('stt: configures the recognizer, streams partials, delivers one final, then ends once', async () => {
+test('stt: a continuous recognizer; partials stream, one final once the words stop changing (Jarvis decides), then it ends once', async () => {
   const p = await h.newPage({ init: FAKE_RECOGNITION });
   const r = await p.evaluate(async () => {
     const { startListening, sttSupported } = window.__mods.stt;
     const log = [];
     const handle = startListening({
       lang: 'en-GB',
+      silenceMs: 300, // (the default is 1.6 s; the node tests cover the windows)
       onPartial: (t) => log.push(`partial:${t}`),
       onFinal: (t) => log.push(`final:${t}`),
       onEnd: () => log.push('end'),
       onError: (e) => log.push(`error:${e.code}`),
     });
     const rec = window.__recs[0];
-    const config = { lang: rec.lang, interim: rec.interimResults, continuous: rec.continuous, calls: rec.calls.slice(), syncLog: log.length };
+    const config = { lang: rec.lang, interim: rec.interimResults, continuous: rec.continuous, alternatives: rec.maxAlternatives, calls: rec.calls.slice(), syncLog: log.length };
     window.__result(rec, [['what is the', false]]);
     window.__result(rec, [['what is the weather', false]]);
     window.__result(rec, [['what is the weather in Austin', true]]);
-    window.__result(rec, [['what is the weather in Austin', true]]); // duplicate final: ignored
-    rec.onend();
-    if (rec.onend) rec.onend(); // handlers are detached after the end; a stray event is harmless
+    window.__result(rec, [['what is the weather in Austin', true]]); // the same words again: no change
+    const before = log.slice();
+    await new Promise((res) => setTimeout(res, 450));
+    const calls = rec.calls.slice();
+    if (rec.onend) rec.onend();
     handle.stop(); // after the end: harmless
-    return { supported: sttSupported(), config, log };
+    return { supported: sttSupported(), config, before, log, calls };
   });
   assert.equal(r.supported, true);
-  assert.deepEqual(r.config, { lang: 'en-GB', interim: true, continuous: false, calls: ['start'], syncLog: 0 });
+  assert.deepEqual(r.config, { lang: 'en-GB', interim: true, continuous: true, alternatives: 3, calls: ['start'], syncLog: 0 });
+  assert.ok(!r.before.some((x) => x.startsWith('final:')), 'a final result from the browser does not end the turn by itself');
   assert.deepEqual(r.log, ['partial:what is the', 'partial:what is the weather', 'partial:what is the weather in Austin', 'final:what is the weather in Austin', 'end']);
+  assert.deepEqual(r.calls, ['start', 'abort'], 'the recognizer is released once the turn is over');
 });
 
-test('stt: errors are mapped to SPEC codes with helpful messages', async () => {
+test('stt: errors are mapped to SPEC codes with helpful messages; words heard before a failure are kept', async () => {
   const p = await h.newPage({ init: FAKE_RECOGNITION });
   const r = await p.evaluate(async () => {
     const { startListening, mapSttError } = window.__mods.stt;
@@ -466,11 +471,16 @@ test('stt: errors are mapped to SPEC codes with helpful messages', async () => {
     const log = [];
     startListening({ onError: (e) => log.push([e.code, typeof e.message === 'string' && e.message.length > 10]), onEnd: () => log.push('end'), onFinal: (t) => log.push(`final:${t}`) });
     const rec = window.__recs[0];
-    window.__result(rec, [['partial words', false]]);
     rec.onerror({ error: 'not-allowed' });
     rec.onerror({ error: 'network' }); // only the first error is reported
     rec.onend();
-    return { mapped, log };
+    const kept = [];
+    startListening({ onError: (e) => kept.push(`error:${e.code}`), onEnd: () => kept.push('end'), onFinal: (t) => kept.push(`final:${t}`) });
+    const rec2 = window.__recs[1];
+    window.__result(rec2, [['partial words', false]]);
+    rec2.onerror({ error: 'network' });
+    if (rec2.onend) rec2.onend();
+    return { mapped, log, kept };
   });
   assert.deepEqual(r.mapped, {
     'not-allowed': 'not-allowed',
@@ -483,8 +493,9 @@ test('stt: errors are mapped to SPEC codes with helpful messages', async () => {
     'bad-grammar': 'other',
     undefined: 'other',
   });
-  // After an error, partial words are not sent as a final message.
   assert.deepEqual(r.log, [['not-allowed', true], 'end']);
+  // The connection dropped after the owner spoke: what was heard is delivered (the 2-second check shows it).
+  assert.deepEqual(r.kept, ['final:partial words', 'end']);
 });
 
 test('stt: Safari-style sessions without a final flag deliver what was heard; abort() delivers nothing', async () => {

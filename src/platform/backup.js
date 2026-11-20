@@ -77,7 +77,7 @@ const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCam
 export const RESTORED_SETTINGS = Object.freeze([
   'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
   'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-  'naturalVoiceId',
+  'naturalVoiceId', 'listenWait', 'listenSend',
 ]);
 
 /** What replaces an API key in exported data. */
@@ -290,6 +290,9 @@ function restoreSettings(raw) {
   for (const key of RESTORED_SETTINGS) {
     if (Object.prototype.hasOwnProperty.call(raw, key)) patch[key] = raw[key];
   }
+  // A backup from before v7.2 carries listenLang 'en-US', the old default: it follows the device's
+  // language here too, unless the backup says how listening ends (it was saved by v7.2 or later).
+  if (patch.listenLang === 'en-US' && !Object.prototype.hasOwnProperty.call(raw, 'listenWait')) patch.listenLang = '';
   if (!Object.keys(patch).length) return [];
   const before = getSettings();
   const after = saveSettings(patch);

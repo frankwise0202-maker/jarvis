@@ -44,12 +44,13 @@ test('settings: defaults match SPEC and are frozen', async () => {
   const expected = {
     userName: '', leadModel: 'claude-opus-5-5', workerModel: 'claude-sonnet-5-5', depth: 'balanced', mode: 'auto',
     maxAgents: 8, maxParallel: 4, maxWaves: 3, showThinking: true, speakReplies: 'off', voiceURI: '', voiceRate: 1,
-    listenLang: 'en-US', location: '', memoryEnabled: true, spendWarnUsd: 20, onboarded: false, features: { fallbacks: true, compaction: true },
+    listenLang: '', location: '', memoryEnabled: true, spendWarnUsd: 20, onboarded: false, features: { fallbacks: true, compaction: true },
     // Feature pack (SPEC §14) and wave B (SPEC §15.1).
     followups: true, tone: 'butler', verbosity: 'balanced', theme: 'arc', sounds: true, soundVolume: 0.6, haptics: true,
     notifyOnFinish: true, voiceContinuous: true,
     naturalVoice: false, naturalVoiceId: 'bm_george', // the opt-in natural voice (prototype C)
     opticsCameraId: '', opticsCameraLabel: '', // Optics: the camera chosen last on this device (v7)
+    listenWait: 'normal', listenSend: 'show', // listening (v7.2): the silence window, the 2-second check
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);
@@ -130,7 +131,7 @@ test('settings: saveSettings validates, clamps, deep-merges features, persists a
   assert.deepEqual([r.enum.depth, r.enum.mode, r.enum.speakReplies, r.enum.leadModel], ['balanced', 'swarm', 'summary', 'claude-opus-5-5']);
   assert.equal(r.text.userName.length, 40);
   assert.ok(r.text.userName.startsWith('Tony Stark'));
-  assert.equal(r.text.listenLang, 'en-US');
+  assert.equal(r.text.listenLang, '', 'an invalid language keeps the current one (the device language)');
   assert.deepEqual(r.features.features, { fallbacks: false, compaction: true });
   assert.equal(r.noop, true);
   assert.equal(r.notObject, true);
@@ -142,6 +143,39 @@ test('settings: saveSettings validates, clamps, deep-merges features, persists a
   await page2.goto(h.url);
   await page2.waitForFunction(() => window.__ready === true);
   assert.equal(await page2.evaluate(() => window.__mods.settings.getSettings().maxAgents), 2);
+});
+
+test('settings (v7.2): listening follows the device language by default; the old stored default en-US is migrated once; wait and send choices are validated', async () => {
+  // Saved before v7.2: every save wrote listenLang 'en-US' (the old default), and no listenWait.
+  const old = await h.newPage({ init: seed, initArg: { 'jarvis.settings.v1': JSON.stringify({ onboarded: true, listenLang: 'en-US', userName: 'Tony' }) } });
+  const migrated = await old.evaluate(() => window.__mods.settings.getSettings());
+  assert.equal(migrated.listenLang, '', 'the old default now follows the device');
+  assert.equal(migrated.userName, 'Tony');
+  // A language the owner chose (anything but the old default) stays, and so does en-US saved by v7.2.
+  const chosen = await h.newPage({ init: seed, initArg: { 'jarvis.settings.v1': JSON.stringify({ listenLang: 'en-GB' }) } });
+  assert.equal(await chosen.evaluate(() => window.__mods.settings.getSettings().listenLang), 'en-GB');
+  const kept = await h.newPage({ init: seed, initArg: { 'jarvis.settings.v1': JSON.stringify({ listenLang: 'en-US', listenWait: 'long' }) } });
+  assert.deepEqual(
+    await kept.evaluate(() => {
+      const s = window.__mods.settings.getSettings();
+      return [s.listenLang, s.listenWait];
+    }),
+    ['en-US', 'long'],
+  );
+  const r = await old.evaluate(() => {
+    const { saveSettings } = window.__mods.settings;
+    const out = {};
+    out.us = saveSettings({ listenLang: 'en-US' }).listenLang;
+    out.auto = saveSettings({ listenLang: '  ' }).listenLang;
+    out.wait = saveSettings({ listenWait: 'short' }).listenWait;
+    out.badWait = saveSettings({ listenWait: 'forever' }).listenWait;
+    out.send = saveSettings({ listenSend: 'now' }).listenSend;
+    out.badSend = saveSettings({ listenSend: true }).listenSend;
+    out.stored = JSON.parse(localStorage.getItem('jarvis.settings.v1'));
+    return out;
+  });
+  assert.deepEqual([r.us, r.auto, r.wait, r.badWait, r.send, r.badSend], ['en-US', '', 'short', 'short', 'now', 'now']);
+  assert.equal(r.stored.listenWait, 'short', 'saved with the new keys, so the migration never runs again');
 });
 
 test('settings: the Optics camera choice keeps a device id and a one-line label; anything else is refused', async () => {

@@ -980,7 +980,12 @@ export default [
       await t.step('"Open in chat" leaves Voice Mode and shows the reply, details included', async () => {
         await t.waitFor(async () => (await t.count('blueprint-overlay')) === 0, { timeout: 30000, message: '"Never mind." to close the sheet' });
         const open = t.page.locator(tid('hologram-caption-open'));
-        await t.waitFor(async () => /zinc/i.test(await t.text(t.page.locator(tid('hologram-caption')))) && (await open.isVisible()), { timeout: 30000, interval: 50, message: 'the reply about the zinc to be captioned with "Open in chat"' });
+        const cap = t.page.locator(tid('hologram-caption'));
+        // Once the reply is written: on this small screen a long caption is a one-line pill whose
+        // "Open in chat" shows after a tap on it (it may turn into one while it streams).
+        await t.waitFor(async () => /short version on .*zinc/i.test(await t.text(cap)) && (await cap.getAttribute('data-state')) === 'done', { timeout: 30000, interval: 50, message: 'the reply about the zinc to be captioned' });
+        if ((await cap.getAttribute('data-compact')) === 'true' && !(await open.isVisible())) await cap.locator('.hv__caption-text').click();
+        await t.waitFor(() => open.isVisible(), { timeout: 5000, message: '"Open in chat" on the reply' });
         await open.click();
         await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
         await t.page.locator(tid('hologram-viewer')).waitFor({ state: 'detached', timeout: 5000 });

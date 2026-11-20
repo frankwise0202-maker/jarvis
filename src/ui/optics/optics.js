@@ -65,6 +65,8 @@ import {
 } from '../../platform/camera.js';
 import { OPTICS_LIMITS, WATCH_DEFAULTS, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
 import { hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
+import { matchScreenCommand } from '../../lib/screen-commands.js';
+import { listenPhrases } from '../voice-heard.js';
 import { drawSchematic } from './schematic.js';
 
 const INTRO_KEY = 'jarvis.optics.intro.v1';
@@ -1647,15 +1649,20 @@ export function openOptics(deps = {}) {
       return;
     }
     if (!deps.stt || typeof deps.stt.startListening !== 'function') return;
-    const lang = settings().listenLang || 'en-US';
+    const st = settings();
     micBtn.setAttribute('aria-pressed', 'true');
     micBtn.classList.add('is-listening');
     mic = deps.stt.startListening({
-      lang,
+      lang: st.listenLang, // '' = the device's language
+      wait: st.listenWait, // Jarvis decides when the owner has finished (stt.js)
+      phrases: listenPhrases(),
       onPartial: (t) => {
         askInput.value = t;
       },
-      onFinal: (t) => {
+      onFinal: (heardText, info) => {
+        // A reading the recognizer was less sure of that is a command (Screens or Optics) wins
+        // over a best reading that isn't one.
+        const t = commandReading(heardText, info);
         askInput.value = t;
         // Spoken words: a screen command or an Optics command first ("flip", "hologram of this",
         // "tell me more"), else a question that goes straight out: a Look when live, a follow-up
@@ -1682,6 +1689,22 @@ export function openOptics(deps = {}) {
         micBtn.classList.remove('is-listening');
       },
     });
+  }
+
+  /** `text`, or the first of the recognizer's other readings that is a screen or Optics command when `text` isn't one. */
+  function commandReading(text, info) {
+    const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
+    const showing = !!frozen && (mode === 'frozen' || mode === 'review');
+    const isCommand = (words) => {
+      try {
+        return !!(matchScreenCommand(words) || matchOpticsCommand(words, { frozen: showing }));
+      } catch {
+        return false;
+      }
+    };
+    if (!alts.length || isCommand(text)) return text;
+    const alt = alts.find((a) => typeof a === 'string' && a.trim() && isCommand(a));
+    return alt ? alt.trim() : text;
   }
 
   // ---- Optics log (desktop) ----------------------------------------------------------------------

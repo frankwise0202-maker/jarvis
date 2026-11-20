@@ -149,13 +149,16 @@ it once more (copy it from your password manager).
 ## Using Jarvis
 
 - **Ask** by typing, or tap the **microphone** and speak. On a computer, **Enter** sends and
-  **Shift+Enter** starts a new line.
+  **Shift+Enter** starts a new line. What you said waits in the message box for 2 seconds before it
+  is sent; tap the box to change it first (see [Talking to Jarvis](#talking-to-jarvis-how-listening-works)).
 - **Run a Protocol**: tap a tile under the greeting (scroll down on a phone). Tiles that need a
   topic open a small box for it; **New protocol** saves your own one-tap mission.
 - **Show Jarvis a photo or PDF** with the paperclip (or the camera on a phone). Photos are
   resized and their location data removed before they are sent.
 - **Voice Mode**: tap the sound-wave button at the top (or the glowing core on the home screen)
-  and just talk. Jarvis writes its reply for listening (a few natural sentences, no lists or
+  and just talk. Jarvis waits until you have finished (pauses to think are fine), shows what it
+  heard for 2 seconds so you can fix a word, then sends it (see
+  [Talking to Jarvis](#talking-to-jarvis-how-listening-works)). Jarvis writes its reply for listening (a few natural sentences, no lists or
   links) and starts speaking within a second or two, while the rest is still being written. Before
   it searches the web or sends agents it says so ("Let me check the latest on that."), then keeps
   working. Longer details (steps, comparisons, sources) go on screen under the spoken part; tap
@@ -197,6 +200,46 @@ it once more (copy it from your password manager).
   chat. Shortcuts on a computer: **Ctrl/⌘ + K** new chat, **Esc** closes panels.
 - **Demo**: to show Jarvis to someone without using your account, open
   <https://frankwise0202-maker.github.io/jarvis/?demo=1>, a scripted demonstration that costs nothing.
+
+### Talking to Jarvis: how listening works
+
+Jarvis, not your phone, decides when you have finished speaking, so a pause to think doesn't cut
+you off.
+
+- **It waits for you.** Jarvis keeps listening until you have been quiet for about 1.6 seconds.
+  If you stop on a word like "and", "the", "so" or "um", or after just "Jarvis…", it waits one
+  second more. Change how long in Settings → Voice → **Wait after I stop talking**: Short (1
+  second), Normal (1.6 seconds) or Long (2.6 seconds, good if you often pause mid-sentence). One
+  request can be up to a minute long.
+- **On iPhone** Safari's speech recognition stops after every short pause. Jarvis starts it again
+  at once and keeps adding your words, so the sentence arrives whole. If you start the sentence
+  again from the beginning after a pause, Jarvis keeps listening while you say it again.
+- **The 2-second check.** When you have finished, Jarvis shows what it heard in big letters, with
+  a ring that fills for 2 seconds, then sends it. Meanwhile you can:
+  - **tap the words** to fix them: a text field opens and the countdown stops; tap **Send** when
+    it's right;
+  - say **"no, I said …"**, for example "no, I said Boston" (or just "no, Boston"): Jarvis
+    replaces the word that sounds most like it, or only the words next to the ones you repeat
+    ("no, I said for four" changes "for two"; "no, I said oat milk" adds "oat"), or the whole
+    sentence if you say it all again, and counts again. When it can only guess which word you
+    mean (nothing sounds like it, or there are two numbers), it shows its guess and asks "Is that
+    right?": say **"yes"** or tap **Send**, or tap the words to fix them;
+  - say **"cancel"** or **"never mind"** (also "no, no, cancel"): nothing is sent;
+  - say **"wait"** to stop the countdown, or just keep talking: your words are added;
+  - tap **Send now** (or the core) to send it straight away, or **Cancel**.
+- **Tap the core while you talk** to send at once, without the check.
+- **Commands act at once**, without the check: "expand it", "show the alternator", "put it on my
+  other screen", "what am I looking at?" and the other hologram, screen and camera commands. They
+  cost nothing.
+- **The microphone in the chat** puts your words in the message box and sends them after the same
+  2 seconds (a ring runs around Send). Tap the box to stop that and change them, then send.
+- **Don't want the check?** Settings → Voice → **After I stop talking** → **Send right away**.
+- **Better recognition.** Jarvis listens in your phone's or computer's language (Settings → Voice →
+  **Listening language** → Automatic); pick another one there if you speak to Jarvis in a different
+  language or accent. When the speech service isn't sure, Jarvis also checks its other guesses: if
+  one of them is a command, or names a part of the hologram on screen ("the alternate her" → "the
+  alternator"), that one is used. In Chrome, Jarvis also tells the speech service which words to
+  expect ("Jarvis", the commands and the hologram's parts).
 
 ### The new look: Jarvis at a glance
 
@@ -631,7 +674,9 @@ Other websites (at other addresses) cannot read it.
 - **Voice:** whether answers in the chat are read out (**Off**, **Short summary** or **Whole
   reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
   tip for getting a more natural voice on your device, the free **natural voice** (on or off, the
-  speaker, Test, its download; the camera is chosen in Optics itself), the language you speak in, and whether
+  speaker, Test, its download; the camera is chosen in Optics itself), the language you speak in
+  (Automatic: your device's), how long Jarvis waits after you stop talking (Short, Normal, Long),
+  whether it shows what it heard for 2 seconds before sending it (or sends right away), and whether
   Voice Mode keeps listening after each reply.
 - **Appearance & sound:** six color themes, the **HUD** (Calm or Full, motion, the start-up
   animation), sounds and their volume, vibration (Android), and a notification when a mission
@@ -666,6 +711,9 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
 | **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
+| **Jarvis stops listening before I have finished** | Settings → Voice → **Wait after I stop talking** → **Long** (2.6 seconds). Pausing on "and" or "um" already gives you a second more. In Voice Mode you can also just keep talking while your words are shown: they are added. |
+| **Jarvis hears the wrong words** | Check Settings → Voice → **Listening language**: Automatic uses your device's language; pick yours if you speak another language or accent. Fix a word before it is sent: tap the words, or say "no, I said …". Speaking a little closer to the phone helps too. |
+| **I don't want the 2-second check** | Settings → Voice → **After I stop talking** → **Send right away**. A tap on the core while you speak also sends at once. |
 | **The microphone does nothing** | Allow microphone access for the site (iPhone: the **aA** menu in Safari → Website Settings, or Settings → Apps → Safari → Microphone). Voice input needs the secure `https://` link and isn't available in every browser (for example Firefox). |
 | **No "Install" option** | On iPhone use **Safari** (Share → Add to Home Screen); on Android use **Chrome**; on a computer use Chrome or Edge, or Safari's File → Add to Dock. |
 | **A spending warning** | Your estimated spending passed the threshold you set. Change it in Settings → API key & spending. |
@@ -783,7 +831,7 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[long]]` | a long Markdown answer (headings, table, code, lists, quote) |
 | `[[droplead]]` / `[[droplead:N]]` | the lead's first response to each request is cut after N frames (default 60); sending it again (Resume) succeeds |
 | `[[hologram:battery]]` / `[[hologram:alternator]]` / `[[hologram:camry]]` | a sentence, then `show_hologram` with a realistic sample (AA battery, 9 parts; car alternator, 19; 2024 Camry Hybrid, 43; camry by default), streamed in small chunks over about 3 seconds so the live build shows, then one or two sentences |
-| `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 8–9 seconds, so a test can speak or tap while it builds |
+| `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 12–13 seconds, so a test can speak or tap while it builds |
 | `[[hologram:broken]]` / `[[hologram:huge]]` | `show_hologram` with nothing that can be shown (an error card) / far beyond every limit (capped, with warnings) |
 | *(a `Blueprint request` block in `<turn_context>`)* | `draw_blueprint` once, with the best-matching sample sheet and the requested `for` ids, then a sentence |
 | `[[blueprint:<sample>]]` | `draw_blueprint` with that sample (`alternator-part`, `battery-cutaway`, `battery-process`, `camry-assembly`), no `for` |

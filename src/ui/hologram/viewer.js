@@ -44,6 +44,7 @@ import { markdownToPlainText } from '../../lib/markdown.js';
 import { createPhotoStrip, createPhotoViewer } from '../photos.js';
 import { photoQueries, searchPhotos, searchPhotosMerged } from '../../platform/photos.js';
 import { cutAtBreak } from '../voice-stream.js';
+import { listenPhrases } from '../voice-heard.js';
 
 const LIVE_INTERVAL = 125; // ms between live-build updates (about 8 per second)
 const VIEW_CYCLE = ['front-left', 'front', 'left', 'top', 'back', 'front-right'];
@@ -61,6 +62,7 @@ const VIEW_LABELS = {
 };
 const CAPTION_HIDE_MS = 20000;
 const SPOKEN_HIDE_MS = 3000; // Voice Mode has said the reply: the caption only repeats it
+const HEARD_HIDE_MS = 6000; // Voice Mode's "what I heard" line (its 2-second check) goes after this long
 const DESKTOP_MQ = '(min-width: 900px)';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -911,6 +913,23 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   // ---- commands -------------------------------------------------------------------------------
 
+  /** True when `text` is a local command for this hologram (nothing is done). */
+  function isCommand(text) {
+    const words = String(text || '');
+    return !!(safe(() => matchHologramCommand(words, partsForMatcher(), { selected: state.selected }), null) || safe(() => commandNeedingPart(words), null));
+  }
+
+  function partNamesForVoice() {
+    const out = [];
+    for (const p of partsForMatcher()) {
+      for (const n of [p.name, ...(Array.isArray(p.aka) ? p.aka : [])]) {
+        const name = typeof n === 'string' ? n.trim() : '';
+        if (name && !out.includes(name)) out.push(name);
+      }
+    }
+    return out.slice(0, 120);
+  }
+
   function partsForMatcher() {
     const parts = holo && holoReady ? safe(() => holo.listParts(), []) : [];
     return (parts.length ? parts : specParts(model.spec)).map((p) => ({ id: p.id, name: p.name, aka: p.aka || [] }));
@@ -1037,12 +1056,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     captionDetails = details === true;
     caption.hidden = false;
     caption.dataset.state = status;
-    setText(capStatus, status === 'thinking' ? 'Thinking…' : status === 'streaming' ? 'Replying' : status === 'error' ? 'Couldn’t send' : status === 'stopped' ? 'Stopped' : '');
+    setText(capStatus, status === 'thinking' ? 'Thinking…' : status === 'streaming' ? 'Replying' : status === 'error' ? 'Couldn’t send' : status === 'stopped' ? 'Stopped' : status === 'heard' ? 'Heard' : '');
     setText(capText, text || '');
     capText.scrollTop = capText.scrollHeight;
     if (turnId) captionTurn = { conversationId: model.conversationId, turnId };
-    capOpen.hidden = !captionTurn || typeof deps.openInChat !== 'function';
+    // What Voice Mode heard is not a reply: no "Open in chat" for an earlier one under it.
+    capOpen.hidden = status === 'heard' || !captionTurn || typeof deps.openInChat !== 'function';
     if (status === 'done' || status === 'error' || status === 'stopped') captionTimer = setTimeout(hideCaption, status === 'done' ? doneHideMs() : CAPTION_HIDE_MS);
+    else if (status === 'heard') captionTimer = setTimeout(hideCaption, HEARD_HIDE_MS);
     layoutSoon();
   }
 
@@ -1193,16 +1214,23 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     };
     try {
       handle = deps.stt.startListening({
-        lang: settings.listenLang || 'en-US',
+        lang: settings.listenLang, // '' = the device's language
+        wait: settings.listenWait,
+        phrases: listenPhrases({ partNames: partNamesForVoice() }),
         onPartial: (t) => {
           cmdInput.value = String(t || '');
           syncSend();
         },
-        onFinal: (t) => {
+        onFinal: (t, info) => {
           const text = String(t || '').trim();
           cmdInput.value = '';
           syncSend();
-          if (text) api.submit(text, { source: 'voice' });
+          if (!text) return;
+          // A reading the recognizer was less sure of that is a command (a part's name) wins over
+          // a best reading that isn't one.
+          const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
+          const alt = isCommand(text) ? '' : alts.find((a) => typeof a === 'string' && a.trim() && isCommand(a));
+          api.submit(alt ? alt.trim() : text, { source: 'voice' });
         },
         onEnd: finish,
         onError: (e) => {
@@ -1411,6 +1439,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       return model.conversationId;
     },
     isOpen: () => !disposed,
+    /** The parts' names and other names (aka): what Voice Mode listens for while this is open. */
+    partNames: () => partNamesForVoice(),
     getState: () => ({ ...state, status: model.status, libraryId: model.libraryId, segmentId: model.segmentId, title: (model.spec && model.spec.title) || model.title, panel }),
     /** A newer copy of a hologram segment (forwarded by the app for any run). */
     update: (seg) => onSegment(seg),
@@ -1457,9 +1487,10 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       return { handled: true, command: cmd };
     },
     /** A caption from Voice Mode ("I'll take that once the hologram is built."). */
-    note(text) {
+    note(text, { heard = false } = {}) {
       if (disposed || !text) return;
-      showCaption({ status: 'thinking', text: String(text) });
+      // heard: Voice Mode's 2-second check (what it heard, before it is sent); it leaves by itself.
+      showCaption({ status: heard ? 'heard' : 'thinking', text: String(text) });
     },
     /**
      * Voice Mode has said the reply (or an acknowledgement): the caption only repeats it, so a

@@ -53,7 +53,7 @@ visible; the answer after the `tool_result` is one or two sentences.
 | Directive / trigger | What the mock does |
 | --- | --- |
 | `[[hologram:battery]]` / `[[hologram:alternator]]` / `[[hologram:camry]]` | a sentence, then `show_hologram` with `fixtures/battery.json` (AA LR6, 9 parts), `alternator.json` (19 parts) or `camry.json` (2024 Camry Hybrid, 43 parts; default) |
-| `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 8–9 s × `timeScale` (time to speak to the viewer while it builds) |
+| `[[slowbuild]]` (with `[[hologram:…]]`) | the same `show_hologram`, streamed over 12–13 s × `timeScale` (time to speak to the viewer while it builds) |
 | `[[hologram:broken]]` | `show_hologram` whose every shape is invalid: Jarvis answers `is_error`, the mock says it couldn't build it |
 | `[[hologram:huge]]` | `show_hologram` far beyond every limit (95 parts x 6 shapes, over-long text, an invalid tone on every part; about 140 kB): Jarvis caps and warns, and later requests carry the large input |
 | a `Blueprint request` block in the newest `<turn_context>` | `draw_blueprint` once, with the best-matching sample and the requested `for` ids: a part gets `alternator-part.json` (the AA cell's parts get `battery-cutaway.json`); a whole car `camry-assembly.json`, a whole battery `battery-cutaway.json` (`battery-process.json` when the text asks how it is made) |
