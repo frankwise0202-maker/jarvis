@@ -7,7 +7,8 @@
 //
 //   await page.context().addInitScript(installCameraRig, { devices, present })
 //     devices: [{ label, facing?: 'user'|'environment' }]   present: indexes plugged in at the start
-//   In the page: window.__cameraRig.plug(i) / .unplug(i) / .ids() / .live() / .opened (log)
+//   In the page: window.__cameraRig.plug(i) / .unplug(i) / .unplugEndsFirst(i, ms) / .ids() / .live() /
+//   .opened (log). unplug: the list changes, then the track ends; unplugEndsFirst: the other order.
 //
 // The app sees only standard APIs (enumerateDevices, getUserMedia, track events), so this tests the
 // real picker, hot-plug and flip code. It runs before the app's scripts (an init script).
@@ -100,6 +101,18 @@ export function installCameraRig({ devices = [], present = null } = {}) {
       x.track.dispatchEvent(new Event('ended'));
     }
     md.dispatchEvent(new Event('devicechange'));
+  };
+  // The other order Chrome may use: the track ends first, and the list drops the camera `delayMs` later.
+  rig.unplugEndsFirst = (index, delayMs = 400) => {
+    for (const x of rig.tracks) {
+      if (x.index !== index || x.track.readyState !== 'live') continue;
+      x.track.stop();
+      x.track.dispatchEvent(new Event('ended'));
+    }
+    setTimeout(() => {
+      rig.present.delete(index);
+      md.dispatchEvent(new Event('devicechange'));
+    }, delayMs);
   };
   rig.ids = () => devices.map((_, i) => idOf(i));
   rig.live = () => rig.tracks.filter((x) => x.track.readyState === 'live').map((x) => x.index);

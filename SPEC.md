@@ -1896,7 +1896,11 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
     camera if it is there, else the built-in one (`onSwitch({ why: 'unplugged', from, to })`);
   - the remembered camera plugged in is switched to (`why: 'plugged'`), unless `allowAutoSwitch()` says no (Watch, a
     Look being answered, Hologram of this);
-  - a track that ends while its camera is still listed (iOS: a call, Siri) pauses as before.
+  - a track that ends while its camera is still listed (iOS: a call, Siri) pauses as before. On a computer the browser
+    may end an unplugged camera's track a moment before its list drops it: when the next `devicechange` (within 3 s)
+    shows that camera gone, it falls back as above, with the same notice. A computer's paused card names the camera
+    ("The Logitech webcam stopped (unplugged, or another app is using it)."); a phone's still says "another app, a
+    call or Siri".
 - **The viewfinder shows what is sent.** On phones the live picture is letterboxed (`object-fit: contain`) in the
   room between the top bar and the deck, measured by optics.js (`fitLive()`: CSS `--live-*`); held sideways (at
   most 500 px tall) the deck is a column on the right (keys, then the ask row), so the picture keeps the height.
@@ -2004,7 +2008,8 @@ about 16¢.
   - `optics-picker` (Mac: the MacBook camera and a Logitech webcam by name; a pick stops the old camera first and is
     remembered; reopening starts on it by id; mirrored preview, unmirrored frame by a pixel comparison);
   - `optics-hotplug` (the remembered Logitech plugged in is switched to; unplugged while live, back to the MacBook
-    camera with a notice; a camera never chosen is only listed);
+    camera with a notice, also when its track ends 400 ms before the list changes (`rig.unplugEndsFirst`); a camera
+    never chosen is only listed);
   - `optics-phone-cams` (iPhone 13: Back, Flip to Front, mirrored preview, remembered; the front camera's frame sent and
     frozen unmirrored; the picker reaches Back Ultra Wide);
   - `optics-followups` (a tapped pin → "What's this part?"; Tell me more; Hologram of this → the schematic, the viewer

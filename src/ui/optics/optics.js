@@ -511,7 +511,7 @@ export function openOptics(deps = {}) {
         showCard({
           kind: 'paused',
           title: 'Camera paused',
-          text: info && info.reason === 'ended' ? 'The camera was interrupted (another app, a call or Siri).' : 'Jarvis turns the camera off whenever this screen is hidden.',
+          text: info && info.reason === 'ended' ? endedText(info.camera) : 'Jarvis turns the camera off whenever this screen is hidden.',
           primary: { label: 'Resume camera', testid: 'optics-resume', fn: () => startCamera() },
         });
       } else syncTop();
@@ -546,6 +546,13 @@ export function openOptics(deps = {}) {
       announce(`Camera on: ${cameraName()}.`);
       safeCue('tap');
     }
+  }
+
+  /** Why a camera stopped by itself: a phone's is taken by a call or Siri; a computer's names the camera. */
+  function endedText(cam) {
+    if (camera.phone) return 'The camera was interrupted (another app, a call or Siri).';
+    const name = cam && cam.name ? cameraName(cam) : 'the camera';
+    return `${name.charAt(0).toUpperCase()}${name.slice(1)} stopped (unplugged, or another app is using it).`;
   }
 
   /** The camera in use, in words: "the back camera", "the MacBook camera", "the Logitech webcam". */

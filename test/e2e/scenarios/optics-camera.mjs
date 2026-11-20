@@ -6,7 +6,8 @@
 //                      on it); the webcam preview is mirrored, the frame sent is not
 //   optics-hotplug     the chosen Logitech is unplugged at the start: Optics opens on the MacBook
 //                      camera; plugged in, it is switched to; pulled out while live, Optics falls back
-//                      to the MacBook camera and says so; a camera never chosen is only listed
+//                      to the MacBook camera and says so (also when its track ends before the list
+//                      changes); a camera never chosen is only listed
 //   optics-phone-cams  iPhone 13 with Back, Back Ultra Wide and Front: Flip goes front (mirrored
 //                      preview, remembered), the Look sent from the front camera is unmirrored and
 //                      so is the frozen frame; the picker reaches the extra back lens
@@ -257,6 +258,14 @@ export default [
         await page.evaluate(() => window.__cameraRig.plug(1));
         await waitSub(t, /^LOGITECH WEBCAM · /, 'Optics to switch to the Logitech again');
         t.assert((await liveTracks(page)) === 1, 'one live camera');
+      });
+      await t.step('the other order (the track ends 400 ms before the list drops the camera): still back to the MacBook camera, with the notice', async () => {
+        await page.evaluate(() => window.__cameraRig.unplugEndsFirst(1, 400));
+        await waitSub(t, /^MACBOOK CAMERA · /, 'Optics to fall back to the MacBook camera');
+        await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-camera')) === 'live', { timeout: 8000, message: 'the camera live again by itself' });
+        await t.waitFor(async () => /^Logitech webcam was unplugged\. Using the MacBook camera\.$/.test(await t.text(page.locator(tid('optics-notice')))), { timeout: 5000, message: 'the unplug notice' });
+        t.assert(JSON.stringify(await page.evaluate(() => window.__cameraRig.live())) === '[0]', 'the MacBook camera is live');
+        t.assert((await t.count('optics-resume')) === 0, 'no "Camera paused" card left behind');
       });
     },
   },

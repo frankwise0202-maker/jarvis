@@ -261,6 +261,10 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
   // Camera off or closing (getUserMedia can take seconds: a USB webcam waking up) is released at once.
   let intent = null;
   let chain = Promise.resolve(); // device changes run one at a time
+  // A computer's camera whose track ended while it was still listed (paused 'ended'): the browser may
+  // end an unplugged camera's track a moment before its list drops it. { id, camera, at }
+  let endedEarly = null;
+  const ENDED_FIRST_MS = 3000;
   let destroyed = false;
   let refreshTimer = 0;
   let lumaCanvas = null;
@@ -450,6 +454,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     }
     // The start under way, unless the owner has turned the camera off since (then a new one).
     if (starting && starting.token === intent) return starting.promise;
+    endedEarly = null;
     if (stream) return { ok: true };
     const token = {};
     intent = token;
@@ -550,6 +555,9 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     if (stream !== s || destroyed) return;
     const pick = goneId && !after.some((c) => c.id === goneId) ? pickCamera(after.filter((c) => c.id !== goneId), call(preferred), { os: osName }) : null;
     if (!pick) {
+      // Still listed: taken by the system (a phone: a call, Siri), or (a computer) unplugged with its
+      // track ending just before the list changes: the next devicechange decides (refresh()).
+      endedEarly = goneId && !phone ? { id: goneId, camera: gone, at: Date.now() } : null;
       pause('ended');
       return;
     }
@@ -565,6 +573,18 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     const after = await listDevices();
     known = after;
     notifyDevices();
+    // Its track ended first, and now the camera has left the list: it was unplugged after all. Fall
+    // back as if the list had changed first (the remembered camera if there, else the built-in one).
+    const early = endedEarly;
+    if (early && !stream && state === 'paused' && Date.now() - early.at < ENDED_FIRST_MS && !after.some((c) => c.id === early.id)) {
+      endedEarly = null;
+      const pick = pickCamera(after.filter((c) => c.id !== early.id), call(preferred), { os: osName });
+      if (pick && pick.camera.id && intent) {
+        const res = await switchTo(pick.camera.id);
+        if (res.ok) call(onSwitch, { why: 'unplugged', from: early.camera, to: current });
+      }
+      return;
+    }
     if (!stream || destroyed || state !== 'live') return;
     const plan = hotplugPlan({ before, after, currentId: deviceId, remembered: call(preferred) || null, os: osName });
     if (plan.action === 'fallback' && plan.to) {
@@ -679,6 +699,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     /** Camera off: also cancels a start or switch still under way (its camera is released on arrival). */
     stop(reason = 'closed') {
       intent = null;
+      endedEarly = null;
       const was = !!stream;
       stopTracks();
       if (was || state !== 'off') emit('off', { reason });
