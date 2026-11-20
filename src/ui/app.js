@@ -40,7 +40,7 @@ import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
-import { isOnline, onOnlineChange } from '../platform/env.js';
+import { isOnline, onOnlineChange, isIOS } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
@@ -53,7 +53,6 @@ import { runWatchLook } from '../engine/watch.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
 import { voiceCameraRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
-import { isIOS } from '../platform/env.js';
 import { base64ByteLength } from './attachments.js';
 
 const { sttSupported, startListening } = stt;
