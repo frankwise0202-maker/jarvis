@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Jarvis · Microphone</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main class="setup setup--narrow">
+      <div class="setup__hero">
+        <div class="hud-core hud-core--hero">
+          <span class="hud-core__ring hud-core__ring--1"></span><span class="hud-core__ring hud-core__ring--2"></span><span class="hud-core__ring hud-core__ring--3"></span><span class="hud-core__orb"></span>
+        </div>
+      </div>
+      <h1 class="setup__title"><span class="wordmark">JARVIS</span><span class="setup__for">Microphone</span></h1>
+      <p class="setup__lead" id="status">To dictate tasks, allow Jarvis to use your microphone. Chrome asks once.</p>
+      <button class="btn btn--primary btn--wide" id="allow" type="button">Allow microphone</button>
+      <p class="hint hint--center">Dictation uses Chrome’s built-in speech recognition. Nothing is recorded by Jarvis.</p>
+    </main>
+    <script type="module" src="mic.js"></script>
+  </body>
+</html>

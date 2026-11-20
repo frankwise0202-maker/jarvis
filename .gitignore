@@ -5,6 +5,12 @@ node_modules/
 dist/
 .gh-pages-worktree/
 
+# Jarvis for Chrome build output (npm run build:extension), and a development build for
+# node test/extension/e2e/run.mjs --no-build
+dist-extension/
+dist-extension.zip
+dist-extension-dev/
+
 # E2E screenshots and failure reports (npm run e2e)
 test/artifacts/
 
