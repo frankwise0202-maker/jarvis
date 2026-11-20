@@ -1609,8 +1609,10 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   e24cf1b5382a…; V7 694c85d59f3b…); the system prompt stays `LEAD_SYSTEM_V5`; older conversations keep version 1 byte
   for byte (its enum is `SHAPE_TYPES_V1`; `engine.holograms-v7` pins v7.2 request bodies), and backups of V5 + V7 are
   accepted (`isKnownLeadSetup`). One validator serves both versions and adds: `hull` (a solid from `side` [x, y],
-  `top` [x, z] and `front` [z, y] outlines, or a `revolve` profile [[radius, along]] about `axis`; an outline that
-  ends on the centerline is a half, mirrored (a left half is flipped, points within 2% of it snap); edge radius `r`
+  `top` [x, z] and `front` [z, y] outlines, or a `revolve` profile [[radius, along]] about `axis`, a solid when it
+  starts or ends on the axis and a hollow section otherwise (an outline with no area, such as a two-point "drum"
+  [[300, 0], [300, 400]], is an error that says how to write the wall); an outline that ends on the centerline is a
+  half, mirrored (a left half is flipped, points within 2% of it snap); edge radius `r`
   (alias `fillet`; a `round` above 1 is taken as r); ≤ 12 box/cylinder/sphere `cut`s, wheel `arches` [[x, y, r]]
   among them as z cylinders; views that disagree by ≤ 10% are stretched to the master view with a note, more keeps a
   warning, disjoint views are an error), `panel` (lies on an earlier part's hull: `on`, `face`
@@ -1621,16 +1623,19 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   `tube.r2` (a taper); ≤ 16 hulls and ≤ 40 panels per hologram (more are dropped with warnings), ≤ 96 points per
   view. Renderer: lofts and soft shapes are built at once (`smooth.js`); hulls and panels are meshed in a worker
   (`hull-mesh.js`, `hull-service.js`; `dist/assets/hull-worker.js`, a classic script in the precache under the same
-  CSP), a coarse mesh then the fine one (cached by spec hash, 20 entries / 24 MB), on the main thread when Worker is
-  missing or the script fails. Detail follows a triangle budget: smooth shapes get coarser past 300k and 600k
-  triangles and when small in the model (under 12% / 4% of its diagonal, from the spec so far in half octaves, so a
-  live build ends exactly like a reopen); past 600k hulls and panels stay coarse; edge lines carry a weight (`aW`:
-  contour rings faint). `settled(ms)` resolves once every mesh has landed: thumbnails wait for it (≤ 4 s); viewer
-  hooks `data-meshing` (pending|settled) and `data-mesher` (worker|main). Format v1 holograms validate and render
-  byte for byte as in v7.2. Mock `[[hologram:v2/camry|v2/f150|v2/alternator|v2/turbofan|v2/model3|v2/cessna]]`;
-  unit `hologram.hull`, `hologram.loft`, `hologram.v2tool`, `hologram.render`, `hologram.build`,
-  `hologram.v1-parity`, `engine.holograms-v7`; E2E `holograms-real.mjs` (`holograms-real`, `holograms-real-phone`,
-  `holograms-real-offline`, `holograms-real-noworker`).
+  CSP), a coarse mesh then the fine one (cached by spec hash, 64 entries / 24 MB: more than one hologram's 16 hulls
+  and 40 panels, so a hull car's thumbnail and reopens mesh nothing again), on the main thread when Worker is
+  missing or the script fails; a revolve's distance grid covers only what the other views let it reach, so a revolve
+  far bigger than them (a unit mix-up) costs no more than the overlap. Detail follows a triangle budget: smooth
+  shapes get coarser past 300k and 600k triangles and when small in the model (under 12% / 4% of its diagonal, from
+  the spec so far in half octaves, so a live build ends exactly like a reopen); past 600k hulls and panels stay
+  coarse; edge lines carry a weight (`aW`: contour rings faint). `settled(ms)` resolves once every mesh has landed:
+  thumbnails wait for it (≤ 4 s); viewer hooks `data-meshing` (pending|settled) and `data-mesher` (worker|main).
+  Format v1 holograms validate and render byte for byte as in v7.2. Mock
+  `[[hologram:v2/camry|v2/f150|v2/alternator|v2/turbofan|v2/model3|v2/cessna]]`; unit `hologram.hull`,
+  `hologram.loft`, `hologram.v2tool`, `hologram.render`, `hologram.build`, `hologram.v1-parity`,
+  `engine.holograms-v7`; E2E `holograms-real.mjs` (`holograms-real`, `holograms-real-phone`, `holograms-real-offline`,
+  `holograms-real-noworker`).
 - Lead turn (§8.4): live cards from the streamed input; the tool round validates, saves and answers ("Hologram shown to
   the owner: "T" with N labeled parts (S shapes). … Saved to the owner's library as lib_… (reopen it later with
   open_saved)." or "It could not be saved to the owner's library this time."); `for`: the turn's `blueprintFor` wins,
@@ -1644,8 +1649,10 @@ validators, renderer, sheet renderer, photos), integrated in phase B.
   (`- lib_ab12cd34ef · hologram · "2024 Toyota Camry Hybrid" (43 parts)`; titles neutralized like other
   turn-context text), and with `blueprintFor` the `Blueprint request (the owner asked for this 2D blueprint):` block
   (the target part's name and id or the whole object, the hologram's title, the part's group, material, approximate
-  size from its shapes and info, an already saved blueprint, and "Call draw_blueprint exactly once for this target,
-  with "for": {…}. Do not rebuild the hologram. Research specifics only if needed (one or two quick searches).").
+  size from its shapes (only the sides it has, never "× 0": a part made only of v2 panels lies on a hull and adds
+  `a thin panel on the left side of "Body shell" (the hologram does not model its thickness)`) and info, an already
+  saved blueprint, and "Call draw_blueprint exactly once for this target, with "for": {…}. Do not rebuild the
+  hologram. Research specifics only if needed (one or two quick searches).").
 - 2D requests: `startTurn(conv, { …, blueprintFor })` (§7); the visible message reads "Blueprint: Alternator (2024 Toyota
   Camry Hybrid)" (`blueprintRequestText`). A part with a saved blueprint (`findPartBlueprint`) opens it with no
   request; **Rebuild** forces a new build; a request from a conversation without draw_blueprint goes to a new one.
