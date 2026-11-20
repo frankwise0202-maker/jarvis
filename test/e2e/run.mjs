@@ -29,12 +29,12 @@ import features from './scenarios/features.mjs';
 import security from './scenarios/security.mjs';
 import interaction from './scenarios/interaction.mjs';
 import regressions from './scenarios/regressions.mjs';
-import holograms from './scenarios/holograms.mjs';
-import voiceSpeech from './scenarios/voice-speech.mjs';
 import optics from './scenarios/optics.mjs';
 import opticsCamera from './scenarios/optics-camera.mjs';
 import naturalVoice from './scenarios/natural-voice.mjs';
 import { opticsToolsShim } from './optics-tools-shim.mjs'; // v7 split, temporary (see the file)
+import holograms from './scenarios/holograms.mjs';
+import voiceSpeech from './scenarios/voice-speech.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -44,7 +44,10 @@ async function optionalScenarios(rel) {
 const attachments = await optionalScenarios('./scenarios/attachments.mjs');
 
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech, ...optics, ...opticsCamera, ...naturalVoice];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...attachments, ...security, ...interaction, ...regressions, ...voiceSpeech];
+
+// v7 senses: Optics (the camera) and the natural voice, after every other scenario.
+SCENARIOS.push(...optics, ...opticsCamera, ...naturalVoice);
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };
@@ -121,14 +124,19 @@ async function main() {
 
   let playwright;
   let browser;
-  // Scenarios may need their own Chromium flags (Optics: a fake camera playing a test scene).
-  const browsers = new Map();
+  // Scenarios may need their own Chromium flags (Optics: a fake camera playing a test scene). At
+  // most one such browser is open at a time (memory): it closes when a scenario needs other flags.
+  let extra = null; // { key, browser }
   const browserFor = async (scenario) => {
     const args = typeof scenario.browserArgs === 'function' ? await scenario.browserArgs() : scenario.browserArgs || [];
-    if (!args.length) return browser;
     const key = args.join(' ');
-    if (!browsers.has(key)) browsers.set(key, await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0, args }));
-    return browsers.get(key);
+    if (extra && extra.key !== key) {
+      await extra.browser.close().catch(() => {});
+      extra = null;
+    }
+    if (!args.length) return browser;
+    if (!extra) extra = { key, browser: await playwright.chromium.launch({ headless: !opts.headed, slowMo: opts.slowMo || 0, args }) };
+    return extra.browser;
   };
   try {
     playwright = await loadPlaywright();
@@ -174,7 +182,7 @@ async function main() {
   }
 
   await browser.close().catch(() => {});
-  for (const b of browsers.values()) await b.close().catch(() => {});
+  if (extra) await extra.browser.close().catch(() => {});
   await server.close();
 
   // Summary table.

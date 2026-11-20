@@ -216,10 +216,10 @@ export async function startApp(rootEl) {
       getSettings,
       getApiKey,
       getApiBase: getDevApiBase,
-      memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
-      library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
       // Optics: the live camera while the Optics screen is open (look_through_camera, lead tools V5).
       camera: opticsCameraBridge,
+      memory: { list: () => listMemory(), add: (text) => addMemory(text), remove: (text) => removeMemory(text) },
+      library: { save: lib.save, get: lib.get, list: lib.list, findPartBlueprint: lib.findPartBlueprint },
       // A busy or old device can take seconds to write a big spec to IndexedDB: wait longer than the
       // engine's default before going on without saving (an unsaved hologram can't get blueprints).
       libraryTimeoutMs: 12000,
@@ -298,18 +298,18 @@ export async function startApp(rootEl) {
     getSettings: () => getSettings(),
     sounds,
     getGreeting: () => greeting(),
-    ttsSupported: ttsOk,
     // Optics: a Look's frame card (and a pins row) reopens the frozen frame with its labels.
     onOpenOptics: (turn, seg) => reviewOptics(turn, seg),
+    ttsSupported: ttsOk,
   });
 
   const composer = createComposer({
     mode: state.lastSettings.mode,
     micSupported: sttOk,
-    getSettings: () => getSettings(),
-    onSend: (text, mode, extras) => send(text, mode, extras),
     // The camera key opens Optics (live camera); false = no camera API here, use the system camera.
     onCamera: () => (state.demo || !safe(() => cameraSupported(), false) ? false : openOpticsScreen()),
+    getSettings: () => getSettings(),
+    onSend: (text, mode, extras) => send(text, mode, extras),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -823,10 +823,10 @@ export async function startApp(rootEl) {
         // Its own owner: closing Voice Mode must not let the screen sleep while a run continues.
         wakeLock: { keepAwake: () => keepAwake('voice'), allowSleep: () => allowSleep('voice') },
         activeRun: entry ? entry.run : null,
-        mode: () => composer.getMode(),
-        visuals: voiceVisuals,
         // Optics: Look in the dock opens the camera over Voice Mode.
         look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true }) },
+        mode: () => composer.getMode(),
+        visuals: voiceVisuals,
         onClose: () => {
           voiceApi = null;
           voiceInfo = null;
@@ -2598,13 +2598,13 @@ export async function startApp(rootEl) {
     newChat,
     openLibrary,
     openLibraryItem,
+    // Optics: presence-ui's Look quick key and Voice Mode's Look call this (from a tap).
+    openOptics: (opts) => openOpticsScreen(opts), // { start: 'screen' } for the desktop Screen key
+    screenLookSupported: () => safe(() => screenLookSupported(), false),
     // Voice Mode hooks (see src/ui/hologram/viewer.js): open a hologram card's viewer, and the open
     // viewers (command(text, { source: 'voice' }), submit(text), close()).
     openHologram: (turn, seg) => openVisualSegment(turn, seg),
     getHologramViewer,
     getBlueprintViewer,
-    // Optics: presence-ui's Look quick key and Voice Mode's Look call this (from a tap).
-    openOptics: (opts) => openOpticsScreen(opts), // { start: 'screen' } for the desktop Screen key
-    screenLookSupported: () => safe(() => screenLookSupported(), false),
   };
 }
