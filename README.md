@@ -250,48 +250,6 @@ it once more (copy it from your password manager).
   chat: a note at the top of the chat offers **Start one**, and Voice Mode starts a new chat by
   itself. Your old chats stay in History.
 
-### The camera (Optics)
-
-**Optics** lets Jarvis see through your camera. Open it with **Look** on the home screen, the
-**camera key** next to the message box (on a phone), **Ctrl/⌘ + Shift + L** on a computer, or
-**Look** in Voice Mode. The first time, a short card explains how the camera is used before your
-browser asks for permission.
-
-- **Look.** Point the camera and tap **LOOK** (or press **Space**), with a question in the box
-  or without one ("What am I looking at?"). The picture freezes, Jarvis answers below it, and
-  labels appear on the things it names, each with a line to the object. Jarvis identifies what
-  it can: objects, the brand or model when it's visible, text it can read, the parts of a machine.
-  Each Look is part of your current conversation, so the chat keeps it too (tap it there to see
-  the picture with its labels again).
-- **Follow-ups.** Under the answer: **Tell me more**; **Hologram of this** (the picture turns into
-  a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
-  hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**
-  You can also type a question about the same picture; no new picture is taken.
-- **Which camera.** The button under **OPTICS** names the camera in use; click or tap it to see
-  every camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
-  Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and
-  **Front**. Jarvis remembers your choice on each device.
-  - **Plugging in.** Plug in your webcam while Optics is open and it appears in the list; if it's
-    the one you chose last time, Jarvis switches to it by itself. Unplug the camera in use and
-    Jarvis goes back to the built-in one and tells you.
-  - **On a phone**, **Flip** switches between the back and the front camera with one tap.
-- **Mirror image.** The front camera and a webcam pointing at you are shown mirrored, like a
-  mirror, so it's easy to hold things up. The picture Jarvis looks at is never mirrored: after a
-  Look you see exactly what was sent, so writing reads the right way round.
-- **Watch** (the eye key) keeps an eye on the scene for up to 5 minutes: Jarvis looks again only
-  when something changes (at most every 10 seconds) and tells you if it's worth saying. The
-  countdown and the cost so far are on screen.
-- **Look at my screen** (computers): one picture of a screen or window you choose, then the
-  sharing stops at once.
-- **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
-  looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
-  Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
-  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first. (While a hologram
-  is on screen, "what is this?" is about the hologram, not the camera.)
-- **Off means off.** The camera runs only while Optics is open and on screen: the red **LIVE**
-  pill shows it (tap it to turn the camera off), and it turns off by itself when you switch apps,
-  lock the phone, or when a hologram covers Optics.
-
 ### A more natural voice
 
 Jarvis speaks with the voices your device and browser already have, so it costs nothing extra.
@@ -333,6 +291,48 @@ says never leaves the device.
   and the card says so; **Try again** measures once more.
 - Voice Mode, **Speak** and **Speak replies** all use it once it's on and ready. While it's still
   loading, the built-in voice speaks so you never wait.
+
+### The camera (Optics)
+
+**Optics** lets Jarvis see through your camera. Open it with **Look** on the home screen, the
+**camera key** next to the message box (on a phone), **Ctrl/⌘ + Shift + L** on a computer, or
+**Look** in Voice Mode. The first time, a short card explains how the camera is used before your
+browser asks for permission.
+
+- **Look.** Point the camera and tap **LOOK** (or press **Space**), with a question in the box
+  or without one ("What am I looking at?"). The picture freezes, Jarvis answers below it, and
+  labels appear on the things it names, each with a line to the object. Jarvis identifies what
+  it can: objects, the brand or model when it's visible, text it can read, the parts of a machine.
+  Each Look is part of your current conversation, so the chat keeps it too (tap it there to see
+  the picture with its labels again).
+- **Follow-ups.** Under the answer: **Tell me more**; **Hologram of this** (the picture turns into
+  a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
+  hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**
+  You can also type a question about the same picture; no new picture is taken.
+- **Which camera.** The button under **OPTICS** names the camera in use; click or tap it to see
+  every camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
+  Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and
+  **Front**. Jarvis remembers your choice on each device.
+  - **Plugging in.** Plug in your webcam while Optics is open and it appears in the list; if it's
+    the one you chose last time, Jarvis switches to it by itself. Unplug the camera in use and
+    Jarvis goes back to the built-in one and tells you.
+  - **On a phone**, **Flip** switches between the back and the front camera with one tap.
+- **Mirror image.** The front camera and a webcam pointing at you are shown mirrored, like a
+  mirror, so it's easy to hold things up. The picture Jarvis looks at is never mirrored: after a
+  Look you see exactly what was sent, so writing reads the right way round.
+- **Watch** (the eye key) keeps an eye on the scene for up to 5 minutes: Jarvis looks again only
+  when something changes (at most every 10 seconds) and tells you if it's worth saying. The
+  countdown and the cost so far are on screen.
+- **Look at my screen** (computers): one picture of a screen or window you choose, then the
+  sharing stops at once.
+- **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
+  looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
+  Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
+  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first. (While a hologram
+  is on screen, "what is this?" is about the hologram, not the camera.)
+- **Off means off.** The camera runs only while Optics is open and on screen: the red **LIVE**
+  pill shows it (tap it to turn the camera off), and it turns off by itself when you switch apps,
+  lock the phone, or when a hologram covers Optics.
 
 ## What it costs
 
@@ -462,8 +462,8 @@ Other websites (at other addresses) cannot read it.
 - **Voice:** whether answers in the chat are read out (**Off**, **Short summary** or **Whole
   reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
   tip for getting a more natural voice on your device, the free **natural voice** (on or off, the
-  speaker, Test, its download), the language you speak in, and whether Voice Mode keeps listening
-  after each reply. (The camera is chosen in Optics itself and remembered there.)
+  speaker, Test, its download; the camera is chosen in Optics itself), the language you speak in, and whether
+  Voice Mode keeps listening after each reply.
 - **Appearance & sound:** six color themes, sounds and their volume, vibration (Android), and a
   notification when a mission finishes while Jarvis is in the background.
 - **Location:** optional, for local answers (weather, opening hours, prices).
