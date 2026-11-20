@@ -2090,7 +2090,11 @@ Where this section differs from §17 or §18, it wins.
     screen.)
   - The home's **Look** key opens Optics where the camera can run (not the demo; a camera API), else the system camera
     (`composer.takePhoto()`, also Optics' fallback on phones). On a Mac the home also has **Screen** (`quick-key-screen`):
-    Optics opening straight into the screen look (`start: 'screen'`).
+    Optics opening straight into the screen look (`start: 'screen'`). The camera stays off: a cancelled picker (or
+    macOS not letting Chrome record the screen, which looks the same) shows **No screen shared** (`optics-card`
+    `data-kind="screen-failed"`, with the System Settings › Privacy & Security › Screen Recording hint on a Mac),
+    **Try again** (`optics-screen-retry`) and **Use the camera** (`optics-use-camera`), which goes through the
+    first-use card like any first start. Live/Camera after a screen look does the same.
   - Every frame taken flares the home's core (`cue('capture')`, `deps.onCapture`) and plays the `optics` cue, then
     `scan` while the Look is sent (`src/ui/sounds.js`).
   - Optics' stage brackets are the shared viewport frame (`.optics-brackets.hud-viewport`: 28px arms in the theme's
@@ -2131,5 +2135,7 @@ Where this section differs from §17 or §18, it wins.
   LIVE, MACBOOK CAMERA, mirrored, the camera held there and not here; the header's OPTICS pill closes it and the
   camera stays off; "float the camera" → the floating panel plays the camera; "bring it back" → Optics live here
   again), `optics-picker` (the home's Look key opens Optics on the remembered webcam; a Mac's home has Screen),
-  `optics-screen` (on a Mac; the Screen key opens Optics straight into one screen frame), `screens-pages` (a camera
+  `optics-screen` (on a Mac; the Screen key opens Optics straight into one screen frame, the webcam off),
+  `optics-screen-cancel` (the picker cancelled: no getUserMedia call, No screen shared, Try again, Use the camera
+  through the first-use card), `screens-pages` (a camera
   screen in a browser without a camera says NO CAMERA and offers Try again).

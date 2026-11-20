@@ -405,7 +405,10 @@ browser asks for permission.
   when something changes (at most every 10 seconds) and tells you if it's worth saying. The
   countdown and the cost so far are on screen.
 - **Look at my screen** (computers): one picture of a screen or window you choose, then the
-  sharing stops at once. On a Mac the home's **Screen** key does it in one tap.
+  sharing stops at once. On a Mac the home's **Screen** key does it in one tap, and the camera
+  stays off. If you cancel Chrome's "Choose what to share" (or the Mac hasn't allowed Chrome to
+  record the screen yet: System Settings › Privacy & Security › Screen Recording), Jarvis says
+  so and offers **Try again** or **Use the camera**.
 - **On another screen.** "Put the camera on my other screen" or "float the camera" shows the live
   camera on your other monitor or in a floating panel (see Screens above). It's a view: Look,
   Watch and the labels stay here in Optics.

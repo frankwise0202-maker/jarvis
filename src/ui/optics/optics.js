@@ -37,7 +37,9 @@
 //   review: { preview, width, height, source, question, answer, pins, frameId } opens a past Look
 //           (from the chat) frozen, without starting the camera.
 //   start: 'screen' opens straight into "look at my screen" (call from the tap: getDisplayMedia
-//           needs the gesture); the camera starts only if the owner taps Camera later.
+//           needs the gesture); the camera starts only if the owner taps Camera later. A cancelled
+//           picker (or macOS not allowing Chrome to record the screen) shows "No screen shared"
+//           with Try again and Use the camera (through the first-use card), never the camera.
 //
 // Privacy: the camera runs only while this screen is open and visible (src/platform/camera.js);
 // nothing is sent until LOOK (or Watch, which the owner starts and which shows its countdown).
@@ -799,21 +801,51 @@ export function openOptics(deps = {}) {
     return sendFrame(frame, question);
   }
 
+  /** One frame of the screen, sent as a Look. Resolves { captureError } when no frame was taken. */
   async function lookAtScreen() {
-    if (isBusy() || watch) return;
+    if (isBusy() || watch) return { skipped: true };
     let frame;
     try {
       frame = await captureScreenFrame({ maxEdge: OPTICS_LIMITS.screenMaxEdge });
       hideCard();
     } catch (err) {
       announce(err && err.message ? err.message : 'Screen look cancelled.');
-      if (frozen) return;
-      setMode(camera.live ? 'live' : mode);
-      return;
+      if (!frozen) setMode(camera.live ? 'live' : mode);
+      return { captureError: err || new CameraError('other', 'The screen could not be captured.') };
     }
     playFlash();
     safeCue('optics');
-    await sendFrame(frame, askInput.value.trim());
+    return sendFrame(frame, askInput.value.trim());
+  }
+
+  /**
+   * Opened with the Screen key (start: 'screen'): the screen picker first, and nothing else. A
+   * cancelled picker (or macOS not letting Chrome record the screen) never turns the camera on: a
+   * card offers Try again, or the camera, which goes through the usual first-use card.
+   */
+  function screenFirst() {
+    setMode('screen');
+    showCard({ kind: 'starting', title: 'Choose a screen…', text: '' });
+    lookAtScreen().then((res) => {
+      if (closed || frozen) return;
+      if (res && res.captureError) showScreenFailed(res.captureError);
+      else hideCard();
+    });
+  }
+
+  function showScreenFailed(error) {
+    const err = error instanceof CameraError ? error : classifyCameraError(error);
+    setMode('screen');
+    const cancelled = err.code === 'denied';
+    const mac = cameraPlatform().os === 'mac';
+    showCard({
+      kind: 'screen-failed',
+      title: cancelled ? 'No screen shared' : 'Screen look failed',
+      text: cancelled ? 'Nothing was sent, and the camera stays off.' : `${err.message} Nothing was sent.`,
+      steps: cancelled && mac ? ['If you did choose a screen: Chrome needs permission to record it. Open System Settings › Privacy & Security › Screen Recording, turn Chrome on, then quit and reopen Chrome.'] : null,
+      primary: { label: 'Try again', testid: 'optics-screen-retry', fn: () => screenFirst() },
+      secondary: cameraSupported() ? { label: 'Use the camera', testid: 'optics-use-camera', fn: () => (hideCard(), startWithIntro()) } : null,
+    });
   }
 
   async function sendFrame(frame, question) {
@@ -1075,7 +1107,7 @@ export function openOptics(deps = {}) {
     clearFrozen();
     answer.hidden = true;
     if (camera.live) setMode('live');
-    else startCamera();
+    else startWithIntro(); // a screen look or a past Look reviewed: the camera was never on
     layoutSoon();
   }
 
@@ -1677,6 +1709,38 @@ export function openOptics(deps = {}) {
     coverObserver = null;
   }
 
+  /**
+   * Starts the camera, first saying what it is for (report §2.4.9) unless the owner has seen that
+   * card or already allowed the camera: "Let Jarvis see", then Turn on camera or Not now.
+   */
+  async function startWithIntro() {
+    const perm = await cameraPermission();
+    if (closed) return;
+    if (perm === 'granted' || store.get(INTRO_KEY)) {
+      startCamera();
+      return;
+    }
+    setMode('intro');
+    showCard({
+      kind: 'intro',
+      title: 'Let Jarvis see',
+      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch is on, which you start and which turns itself off).',
+      extra: h('p', {
+        class: 'optics-card-cost',
+        text: `About ${formatUsd(estimateLookCost({ model: leadModel() }).usd)} a look with ${leadModel() === 'claude-opus-5-5' ? 'Opus 5.5' : 'your model'}; the first in a new chat about ${formatUsd(estimateLookCost({ model: leadModel(), prefixCached: false }).usd)}.`,
+      }),
+      primary: {
+        label: 'Turn on camera',
+        testid: 'optics-allow',
+        fn: () => {
+          store.set(INTRO_KEY, '1');
+          startCamera();
+        },
+      },
+      secondary: { label: 'Not now', testid: 'optics-not-now', fn: () => close('intro') },
+    });
+  }
+
   // ---- open / close ---------------------------------------------------------------------------------
   function close(reason = 'closed') {
     if (closed) return;
@@ -1780,45 +1844,10 @@ export function openOptics(deps = {}) {
   }
 
   if (deps.start === 'screen' && screenLookSupported()) {
-    setMode('live');
-    showCard({ kind: 'starting', title: 'Choose a screen…', text: '' });
-    lookAtScreen().then(() => {
-      if (!closed && !frozen) {
-        hideCard();
-        startCamera();
-      }
-    });
+    screenFirst();
     return api;
   }
 
-  // First use: say what the camera is for before the system asks (report §2.4.9).
-  (async () => {
-    const perm = await cameraPermission();
-    if (closed) return;
-    if (perm === 'granted' || store.get(INTRO_KEY)) {
-      startCamera();
-      return;
-    }
-    setMode('intro');
-    showCard({
-      kind: 'intro',
-      title: 'Let Jarvis see',
-      text: 'Jarvis uses the camera only while this screen is open. A frame goes to Claude only when you tap Look (or while Watch is on, which you start and which turns itself off).',
-      extra: h('p', {
-        class: 'optics-card-cost',
-        text: `About ${formatUsd(estimateLookCost({ model: leadModel() }).usd)} a look with ${leadModel() === 'claude-opus-5-5' ? 'Opus 5.5' : 'your model'}; the first in a new chat about ${formatUsd(estimateLookCost({ model: leadModel(), prefixCached: false }).usd)}.`,
-      }),
-      primary: {
-        label: 'Turn on camera',
-        testid: 'optics-allow',
-        fn: () => {
-          store.set(INTRO_KEY, '1');
-          startCamera();
-        },
-      },
-      secondary: { label: 'Not now', testid: 'optics-not-now', fn: () => close('intro') },
-    });
-  })();
-
+  startWithIntro();
   return api;
 }

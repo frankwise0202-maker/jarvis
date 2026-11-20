@@ -14,6 +14,8 @@
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
 //                    minimum interval, the countdown and cost, the alert line, auto-off
 //   optics-screen    "look at my screen": one frame, capture stopped at once, sent as a screen frame
+//   optics-screen-cancel  the home's Screen key with the picker cancelled: the webcam never turns on;
+//                    No screen shared (macOS hint), Try again, Use the camera via the first-use card
 //   optics-camtool   a follow-up where Jarvis calls look_through_camera (image inside the tool result)
 // Screenshots also go to $OPTICS_SHOTS (default test/artifacts/optics-shots/).
 
@@ -533,7 +535,60 @@ export default [
         t.assert(t.requests('lead').length > before, 'a Look was sent');
         t.assert(/live frame from the owner's screen/.test(lastLook(t).message.content[0].text), 'as a screen frame');
         t.assert(/^SCREEN · /.test(await t.text(page.locator(tid('optics-sub')))), 'labeled SCREEN');
+        t.assert((await liveTracks(page)) === 0 && (await page.locator(tid('optics')).getAttribute('data-camera')) === 'off', 'the webcam stays off');
       });
+    },
+  },
+  {
+    name: 'optics-screen-cancel',
+    title: "The home's Screen key on a Mac, with the screen picker cancelled (or macOS not letting Chrome record the screen): the webcam never turns on; No screen shared, Try again, or Use the camera through the first-use card",
+    device: 'mac',
+    timeout: 60000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().addInitScript(() => {
+        // The owner cancels Chrome's "Choose what to share" (a missing macOS permission looks the same).
+        window.__gum = 0;
+        const md = navigator.mediaDevices;
+        const gum = md.getUserMedia.bind(md);
+        md.getUserMedia = (...a) => {
+          window.__gum += 1;
+          return gum(...a);
+        };
+        window.__screens = 0;
+        md.getDisplayMedia = () => {
+          window.__screens += 1;
+          return Promise.reject(new DOMException('Permission denied by user', 'NotAllowedError'));
+        };
+      });
+      await t.goto('/'); // the camera permission is still 'prompt', as on a first use
+      const gumCalls = () => page.evaluate(() => window.__gum);
+      await (await t.visible('quick-key-screen')).click();
+      await t.visible('optics');
+      await page.waitForTimeout(2500);
+      t.assert((await gumCalls()) === 0 && (await liveTracks(page)) === 0, `the camera is never asked for (${await gumCalls()} getUserMedia calls, ${await liveTracks(page)} live tracks)`);
+      await t.waitFor(async () => (await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'screen-failed', { timeout: 8000, message: 'the No screen shared card' });
+      t.assert((await page.locator(tid('optics')).getAttribute('data-camera')) === 'off', 'Optics says the camera is off');
+      const card = await t.text(page.locator(tid('optics-card')));
+      t.assert(/No screen shared/.test(card) && /camera stays off/.test(card), `says what happened (${card})`);
+      t.assert(/System Settings › Privacy & Security › Screen Recording/.test(card), 'the macOS Screen Recording hint');
+      t.assert(t.requests('lead').length === 0, 'nothing was sent');
+      await shot(t, 'mac-screen-cancelled');
+      await page.locator(tid('optics-screen-retry')).click();
+      await t.waitFor(async () => (await page.evaluate(() => window.__screens)) === 2, { timeout: 5000, message: 'the picker asked again' });
+      await t.waitFor(async () => (await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'screen-failed', { timeout: 5000, message: 'the card again' });
+      t.assert((await gumCalls()) === 0, 'still no camera');
+      await page.locator(tid('optics-use-camera')).click();
+      await t.visible('optics-allow', { message: 'Use the camera goes through the first-use card' });
+      t.assert((await gumCalls()) === 0, 'the card first, the camera only after it');
+      await page.locator(tid('optics-allow')).click();
+      await waitLive(t);
+      t.assert((await liveTracks(page)) === 1, 'the camera is on once the owner chose it');
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      t.assert((await liveTracks(page)) === 0, 'released');
     },
   },
   {
