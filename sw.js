@@ -8,15 +8,19 @@
  *     (> 4 s) or answered with an error, the cached index.html of this build is served.
  *   - Same-origin GETs of precached files: cache first. A versioned URL from a different build
  *     (?v=<other id>) is left to the network, so old and new files are never mixed.
+ *   - The opt-in natural voice's worker script (voice/*.js, not precached): cache first in this
+ *     build's cache, filled the first time it loads, so the voice also works offline. Its big
+ *     files (model, runtime) are cached by the worker itself (Cache Storage 'transformers-cache',
+ *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them).
  *   - Everything else (any other same-origin GET) is not intercepted at all.
  *   - On activate, caches of older builds (jarvis-*) are deleted.
  *   - { type: 'SKIP_WAITING' } activates a waiting update; { type: 'GET_VERSION' } replies
  *     { type: 'VERSION', buildId }.
  */
 
-self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-7TFBJGWZ.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/chunk-QIGXMQTC.js","./assets/chunks/hologram-ZWGZ3MNJ.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-UUBP7EUB.js","./assets/theme-boot.js","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
+self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-7TFBJGWZ.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/chunk-QIGXMQTC.js","./assets/chunks/hologram-3RXRFO26.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-UUBP7EUB.js","./assets/theme-boot.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
 
-const CACHE = 'jarvis-8edbab21';
+const CACHE = 'jarvis-4950bfed';
 const BUILD_ID = CACHE.slice('jarvis-'.length);
 const BASE = new URL('./', self.location.href).href;
 const SHELL = new URL('index.html', BASE).href;
@@ -145,8 +149,12 @@ self.addEventListener('fetch', (event) => {
   const version = url.searchParams.get('v');
   if (version && version !== BUILD_ID) return; // another build's file: let the network answer
   const key = url.origin + url.pathname;
-  if (!isPrecached(key)) return;
-  event.respondWith(cacheFirst(request, key));
+  if (isPrecached(key)) {
+    event.respondWith(cacheFirst(request, key));
+    return;
+  }
+  const rel = url.href.startsWith(BASE) ? url.pathname.slice(new URL(BASE).pathname.length) : '';
+  if (/^voice\/[\w.-]+\.js$/.test(rel)) event.respondWith(cacheFirst(request, key));
 });
 
 async function cacheFirst(request, key) {

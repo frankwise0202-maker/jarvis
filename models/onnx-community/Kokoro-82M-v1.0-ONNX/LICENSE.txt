@@ -1,0 +1,2 @@
+Kokoro-82M (onnx-community/Kokoro-82M-v1.0-ONNX, revision 1939ad2a8e416c0acfeecc08a694d14ef25f2231) is licensed under the Apache License 2.0.
+https://huggingface.co/hexgrad/Kokoro-82M · https://www.apache.org/licenses/LICENSE-2.0
