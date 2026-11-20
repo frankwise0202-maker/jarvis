@@ -231,7 +231,9 @@ chars, case-insensitive dedupe, max 100 items — drop oldest), `removeMemory(id
 (id or case-insensitive text match) → boolean, `clearMemory()`, `onMemoryChange(fn)`.
 
 `src/platform/spend.js`: `localStorage['jarvis.spend.v1']` = `{ month: 'YYYY-MM', monthUsd, totalUsd }`.
-`addSpend(usd)` (rolls month over by local date), `getSpend()`, `onSpendChange(fn)`.
+`addSpend(usd)` (rolls month over by local date), `getSpend()`, `onSpendChange(fn)`. v7: every `addSpend` also adds
+to today's total, `localStorage['jarvis.spend.day.v1']` = `{ day: 'YYYY-MM-DD', usd }` (`getTodaySpend()`, 0 on a new
+local day; cleared with the rest): replies, Watch frames and follow-up suggestions alike.
 
 `src/platform/db.js` (IndexedDB database `jarvis`, version 1, object stores
 `conversations` keyPath `id` and `meta` keyPath `id`):
@@ -1706,7 +1708,10 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
 - **Desktop awareness rail** (`awareness-rail`, replaces Mission Control's empty "Standing by"; the panel's
   `aria-label` is Awareness or Mission Control): the chronometer (`rail-chronometer`, Rajdhani 44 px, no seconds) with
   a suggested briefing, Needs you (`rail-needs`), the Systems glance (`rail-systems`: network, Jarvis Core "not
-  paired", mic, optics, model, spend today and this month with a bar against the alert; opens Systems). A mission
+  paired", mic, optics, model, spend today and this month with a bar against the alert; opens Systems). Today's spend
+  (here and on the sensor tape) is `getTodaySpend()`, so Watch frames and follow-up suggestions count too (what
+  Records logged today plus running replies, when larger, covers a day begun before v7); a spend change re-renders
+  both. A mission
   takes the rail. "Standing by" is only ever the state word: the Systems launcher under Mission Control says
   "Nothing logged yet" until the first turn is logged (the first mission runs before that).
 - **HUD preferences** (`src/ui/presence/hud-prefs.js`, `jarvis.hud.v1`, its own backup part `hud`): density Calm

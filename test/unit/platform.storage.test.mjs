@@ -371,6 +371,39 @@ test('spend: accumulates, ignores invalid amounts, rolls over by local month', a
   assert.equal(r.events, 3);
 });
 
+test('spend: today\'s total of every source (getTodaySpend) is kept beside the month, rolls over by local day, and is reset with it', async () => {
+  const page = await h.newPage();
+  const r = await page.evaluate(() => {
+    const { addSpend, getTodaySpend, resetSpend } = window.__mods.spend;
+    const morning = new Date(2026, 10, 20, 8, 0);
+    const evening = new Date(2026, 10, 20, 22, 0);
+    const next = new Date(2026, 10, 21, 0, 5);
+    const out = {};
+    out.start = getTodaySpend(morning);
+    addSpend(0.01, morning); // a reply
+    addSpend(0.0057, evening); // a Watch frame
+    addSpend(0.0004, evening); // follow-up suggestions
+    out.today = getTodaySpend(evening);
+    out.nextBefore = getTodaySpend(next);
+    addSpend(0.02, next);
+    out.next = getTodaySpend(next);
+    out.stored = JSON.parse(localStorage.getItem('jarvis.spend.day.v1'));
+    out.month = JSON.parse(localStorage.getItem('jarvis.spend.v1'));
+    resetSpend();
+    out.reset = getTodaySpend(next);
+    out.left = localStorage.getItem('jarvis.spend.day.v1');
+    return out;
+  });
+  assert.equal(r.start, 0);
+  assert.equal(r.today, 0.0161);
+  assert.equal(r.nextBefore, 0, 'a new day starts at zero');
+  assert.equal(r.next, 0.02);
+  assert.deepEqual(r.stored, { day: '2026-11-21', usd: 0.02 });
+  assert.deepEqual(r.month, { month: '2026-11', monthUsd: 0.0361, totalUsd: 0.0361 }, 'the month record keeps its shape');
+  assert.equal(r.reset, 0);
+  assert.equal(r.left, null);
+});
+
 test('spend: corrupt storage reads as zero', async () => {
   for (const raw of ['nope', '{"month":"2026-13","monthUsd":5,"totalUsd":"x"}', '[]']) {
     const page = await h.newPage({ init: seed, initArg: { 'jarvis.spend.v1': raw } });

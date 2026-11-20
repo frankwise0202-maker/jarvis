@@ -43,7 +43,7 @@ import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
 import { listMemory, addMemory, removeMemory, onMemoryChange } from '../platform/memory.js';
-import { addSpend, getSpend, onSpendChange } from '../platform/spend.js';
+import { addSpend, getSpend, getTodaySpend, onSpendChange } from '../platform/spend.js';
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
@@ -697,13 +697,17 @@ export async function startApp(rootEl) {
   }
 
   // ---- Presence data and actions ----------------------------------------------------------------
-  /** Today's spend: what Records logged today plus the replies still running (USD). */
+  /**
+   * Today's spend (USD): every cost of the day (replies, Watch frames, follow-up suggestions) as
+   * spend.js adds it up, so it agrees with the month figure. What Records logged today plus the
+   * replies still running covers a day that began before that total existed (the larger wins).
+   */
   function todaySpend() {
     const stats = safe(() => getStats(), null);
     const day = stats && stats.byDay ? stats.byDay[dayKey(Date.now())] : null;
     let usd = day ? Number(day.costUsd) || 0 : 0;
     for (const entry of state.runs.values()) usd += Number(entry.run && entry.run.turn && entry.run.turn.costUsd) || 0;
-    return usd;
+    return Math.max(usd, safe(() => getTodaySpend(), 0));
   }
   function modelLabel() {
     const s = getSettings();
@@ -2831,6 +2835,7 @@ export async function startApp(rootEl) {
   safe(() => onSpendChange(() => {
     renderBanners();
     renderPanelStatsSoon();
+    updateCore(); // SPEND · TODAY on the tape and in the Systems glance (Watch frames too)
   }));
   // A fact undone from a chip, edited in Settings or changed in another tab: update the chips.
   safe(() => onMemoryChange(() => chat.refreshMemory()));

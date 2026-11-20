@@ -1,11 +1,15 @@
 // Estimated API spend (SPEC §5), in localStorage['jarvis.spend.v1'] as
 // { month: 'YYYY-MM', monthUsd, totalUsd }. The month rolls over by the local date.
 // Amounts are estimates from token counts; the UI always labels them as such.
+// Today's total of every source (replies, Watch frames, follow-up suggestions) is kept beside it in
+// localStorage['jarvis.spend.day.v1'] as { day: 'YYYY-MM-DD', usd } (getTodaySpend), so the "SPEND
+// TODAY" readouts agree with the month figure.
 
 import { readItem, writeItem, removeItem, watchItem } from './storage.js';
 import { createEmitter, isPlainObject, parseJson } from './util.js';
 
 export const SPEND_KEY = 'jarvis.spend.v1';
+export const SPEND_DAY_KEY = 'jarvis.spend.day.v1';
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const changes = createEmitter('spend');
@@ -18,6 +22,18 @@ export function monthKey(date = new Date()) {
 }
 
 const money = (n) => (Number.isFinite(n) && n > 0 ? Math.round(n * 1e6) / 1e6 : 0);
+
+/** 'YYYY-MM-DD' for a Date (local time). */
+export function spendDayKey(date = new Date()) {
+  const d = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  return `${monthKey(d)}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Today's estimated spend from every source (USD; 0 on a new day). */
+export function getTodaySpend(now = new Date()) {
+  const raw = parseJson(readItem(SPEND_DAY_KEY), null);
+  return isPlainObject(raw) && raw.day === spendDayKey(now) ? money(raw.usd) : 0;
+}
 
 function load() {
   const raw = parseJson(readItem(SPEND_KEY), null);
@@ -55,6 +71,8 @@ export function addSpend(usd, now = new Date()) {
   const monthUsd = money((s.month === month ? s.monthUsd : 0) + amount);
   state = { month, monthUsd, totalUsd: money(s.totalUsd + amount) };
   writeItem(SPEND_KEY, JSON.stringify(state));
+  const day = spendDayKey(now);
+  writeItem(SPEND_DAY_KEY, JSON.stringify({ day, usd: money(getTodaySpend(now) + amount) }));
   const result = getSpend(now);
   changes.emit(result);
   return result;
@@ -70,5 +88,6 @@ export function onSpendChange(fn) {
 export function resetSpend() {
   state = { month: monthKey(), monthUsd: 0, totalUsd: 0 };
   removeItem(SPEND_KEY);
+  removeItem(SPEND_DAY_KEY);
   changes.emit(getSpend());
 }

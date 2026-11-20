@@ -675,6 +675,16 @@ export default [
       t.assert(/Watch ended after 0:20/.test(await t.text(page.locator(tid('optics-watch-note')))), 'the end is announced');
       t.assert((await t.text(page.locator('.optics-pill-text'))) === 'OPTICS', 'the pill is back to OPTICS');
       t.note(`${watch.length} Watch frames in ${Math.round((Date.now() - started) / 1000)} s; ${cost}`);
+      // Watch is a cost of the day: SPEND · TODAY on the tape agrees with the month total.
+      await page.keyboard.press('Escape');
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 3000, message: 'Optics to close' });
+      const spend = await page.evaluate(() => ({ month: JSON.parse(localStorage.getItem('jarvis.spend.v1') || '{}').monthUsd || 0 }));
+      t.assert(spend.month > 0, `the Watch frames were counted in the month (${spend.month})`);
+      const tapeToday = async () => {
+        const tape = document.querySelector('[data-testid="sensor-tape"]');
+        return tape ? tape.textContent.replace(/\s+/g, ' ') : '';
+      };
+      await t.waitFor(async () => !/\$0\.00 ?TODAY/.test(await page.evaluate(tapeToday)) && /TODAY/.test(await page.evaluate(tapeToday)), { timeout: 5000, message: async () => `the tape's SPEND · TODAY to include Watch (${await page.evaluate(tapeToday)}; month ${spend.month})` });
     },
   },
   {
