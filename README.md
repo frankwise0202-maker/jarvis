@@ -242,9 +242,9 @@ you off.
   language or accent. When the speech service isn't sure, Jarvis also checks its other guesses: if
   one of them is a command, or names a part of the hologram on screen ("the alternate her" → "the
   alternator"), that one is used. A guess that is a music command is used only when what Jarvis
-  heard best is nothing else ("clay Back in Black" → "play Back in Black"), so a question is never
-  turned into a song. In Chrome, Jarvis also tells the speech service which words to expect
-  ("Jarvis", the commands and the hologram's parts).
+  heard best is nothing else: not a command, and not about the hologram on screen ("clay Back in
+  Black" → "play Back in Black"). In Chrome, Jarvis also tells the speech service which words to
+  expect ("Jarvis", the commands and the hologram's parts).
 
 ### The new look: Jarvis at a glance
 
