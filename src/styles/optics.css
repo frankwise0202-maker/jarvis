@@ -386,6 +386,29 @@
 .optics-card[data-kind='starting'] .optics-card-title { font-size: 15px; font-family: var(--font-mono); letter-spacing: 0.08em; color: var(--text-2); }
 .optics-card-spinner { display: block; width: 18px; height: 18px; margin: 10px auto 0; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); animation: optics-spin 0.9s linear infinite; }
 @keyframes optics-spin { to { transform: rotate(360deg); } }
+/* Phones (v7.1): a card sits in the room between the top bar and the deck (the deck's column when
+   held sideways), measured by fitLive() as --live-*, never under them: centred there, scrolling inside
+   when that room is short, its buttons kept in view (sticky) while the text scrolls. Before, it was
+   centred on the whole screen, so on a short phone (an SE's Safari tab, 320 × 568) the deck covered
+   "Turn on camera" and Optics could not start. A card over a frozen frame keeps the stage's centre
+   (the frozen stage is that room already). */
+.optics[data-layout='phone']:not([data-frozen='true']) .optics-card {
+  top: calc(var(--live-t, var(--top-h)) + 8px);
+  bottom: calc(var(--live-b, var(--deck-h)) + 8px);
+  left: calc(var(--live-l, 0px) + 16px);
+  right: calc(var(--live-r, 0px) + 16px);
+  width: auto;
+  max-width: 360px;
+  height: -webkit-fit-content;
+  height: fit-content;
+  max-height: calc(100% - var(--live-t, var(--top-h)) - var(--live-b, var(--deck-h)) - 16px);
+  margin: auto;
+  transform: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.optics[data-layout='phone']:not([data-frozen='true']) .optics-card[data-kind='starting'] { width: -webkit-fit-content; width: fit-content; }
+.optics[data-layout='phone']:not([data-frozen='true']) .optics-card-actions { position: -webkit-sticky; position: sticky; bottom: -20px; margin: 8px -20px -20px; padding: 8px 20px 20px; background: var(--surface-solid); }
 
 /* ---- desktop: viewport + deck on the left, answer + Optics log on the right ----------------------- */
 /* (Not on a phone held sideways, even a wide one: that is the short-landscape layout below.) */

@@ -1911,6 +1911,16 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
   The brackets and the reticle sit on that frame's edges (`--frame-*`, `data-framed`), so everything a Look sends is
   on screen and inside the brackets; the first-use card says the picture between the brackets is exactly what is
   sent. (Before, the preview filled the screen under the top bar and the deck: 35–61% of the sent frame showed.)
+  `fitLive()` also runs whenever the stage or the deck changes size (a ResizeObserver), so **Live** after an answer
+  brings back the same fit as the stage grows back (v7.1: before, the frozen stage's numbers stayed, and 87% of the
+  frame showed with a quarter of it inside the brackets).
+- **Cards on phones** (the first-use card, Starting, Camera paused, the blocked-camera steps, the busy card) sit in
+  that same room (`--live-*`): between the top bar and the deck, or beside the deck's column when held sideways,
+  centred there, at most 360 px wide, scrolling inside when the room is short, with their buttons kept in view
+  (sticky) while the text scrolls. So every button can be tapped on the shortest phones (an iPhone SE's Safari tab,
+  375 × 553; 320 × 568; 320 × 454; 568 × 320 sideways). v7.1: before, a card was centred on the whole screen and the
+  deck (its real height, 163 px, is more than `--deck-h`) covered Turn on camera and Not now, so Optics could not
+  start there in portrait. A card over a frozen frame keeps the stage's centre: the frozen stage is that room.
 - **Mirroring.** The preview is mirrored for a camera that faces the owner: `facing === 'front'`, or a computer's camera
   with no facing (a webcam). Captured frames are drawn from the video itself and are never mirrored, and the frozen
   frame shows exactly the frame that was sent. `source` is `rear` / `front` on phones and `camera` on computers.
@@ -2037,7 +2047,11 @@ about 16¢.
   - `optics-look-busy` (a Look while a mission runs here: the busy card, not a frozen frame; Wait; Look in a new
     chat, answered there with its labels);
   - `optics-viewfinder` (iPhone 13 portrait, a Safari tab and held sideways: 100% of the sent frame on screen and
-    inside the brackets, sampled on a grid);
+    inside the brackets, sampled on a grid; again after a Look and Live);
+  - `optics-cards-small` (375 × 553, 320 × 568, 320 × 454 and 568 × 320, the camera never allowed: the first-use
+    card and the blocked-camera card are clear of the top bar and the deck, and a tap at the centre of each button
+    lands on it; a real tap on Turn on camera at 320 × 568 starts the camera and sets the intro flag; Take a photo
+    instead opens the system camera);
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
   - unit `engine.optics-mock` also stops a Look, and cuts its connection, while pin_labels streams (the pins settle);

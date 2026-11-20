@@ -15,7 +15,10 @@
 //   optics-look-busy a Look while a mission runs here: a card offers a new chat (or Wait), never a
 //                    frozen frame that can't be sent
 //   optics-viewfinder  phones: the live viewfinder shows the whole frame a Look sends, bracketed
-//                    (portrait, a Safari tab, held sideways)
+//                    (portrait, a Safari tab, held sideways, and again after Live from an answer)
+//   optics-cards-small  short phones (375×553, 320×568, 320×454, 568×320), camera never allowed: the
+//                    first-use and blocked cards sit between the top bar and the deck, every button
+//                    can be tapped at its centre; Turn on camera starts it, Take a photo instead works
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
@@ -216,6 +219,49 @@ export function viewfinder(page) {
     }
     return { frame: `${fw}×${fh}`, shown: `${Math.round(dw)}×${Math.round(dh)}`, visible: +(seen / (n * n)).toFixed(3), insideBrackets: +(bracketed / (n * n)).toFixed(3) };
   });
+}
+
+/**
+ * The Optics card on screen: its box against the top bar and the deck (overlap in px, 0 = clear),
+ * and for each of its buttons what a tap at the button's centre lands on (`hit`: the button itself).
+ */
+export function cardLayout(page) {
+  return page.evaluate(() => {
+    const box = (e) => {
+      const r = e.getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) };
+    };
+    const overlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    const card = document.querySelector('[data-testid="optics-card"]');
+    if (!card || card.hidden) return null;
+    const c = box(card);
+    const topBar = box(document.querySelector('.optics-top'));
+    const deck = box(document.querySelector('.optics-deck'));
+    const buttons = [...card.querySelectorAll('button')].map((b) => {
+      const r = b.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const at = document.elementFromPoint(x, y);
+      return { id: b.dataset.testid, x: Math.round(x), y: Math.round(y), height: Math.round(r.height), hit: !!at && b.contains(at), at: at ? `${at.tagName.toLowerCase()}${at.dataset.testid ? `[${at.dataset.testid}]` : `.${String(at.className).split(' ')[0]}`}` : null };
+    });
+    return { kind: card.dataset.kind, card: c, view: { w: innerWidth, h: innerHeight }, overTopBar: overlap(c, topBar), overDeck: overlap(c, deck), buttons };
+  });
+}
+
+/** The card is clear of the top bar and the deck, inside the screen, and a tap at each button's centre lands on it. */
+export async function checkCard(t, label, kind, page = t.page) {
+  await page.waitForTimeout(400); // resize → fitLive → the card's room
+  const c = await cardLayout(page);
+  t.assert(c && c.kind === kind, `${label}: the ${kind} card shows (${JSON.stringify(c)})`);
+  t.note(`${label}: ${c.kind} card ${c.card.left},${c.card.top}–${c.card.right},${c.card.bottom}; ${c.buttons.map((b) => `${b.id} at ${b.x},${b.y} → ${b.at}`).join('; ')}`);
+  t.assert(c.overTopBar === 0 && c.overDeck === 0, `${label}: the card is clear of the top bar and the deck (${JSON.stringify(c)})`);
+  t.assert(c.card.left >= 0 && c.card.top >= 0 && c.card.right <= c.view.w && c.card.bottom <= c.view.h, `${label}: the card is on screen (${JSON.stringify(c)})`);
+  t.assert(c.buttons.length >= 2, `${label}: two buttons (${JSON.stringify(c.buttons)})`);
+  for (const b of c.buttons) {
+    t.assert(b.hit, `${label}: a tap at the centre of ${b.id} lands on it, not on ${b.at} (${JSON.stringify(c)})`);
+    t.assert(b.height >= 44, `${label}: ${b.id} is at least 44 px tall (${b.height})`);
+  }
+  return c;
 }
 
 /** The pinned labels' plates: pairs that overlap, and plates that cover another object's dot. */
@@ -574,6 +620,16 @@ export default [
       t.assert(!(await page.locator(tid('optics-look')).isDisabled()), 'LOOK is reachable');
       await shot(t, 'iphone13-viewfinder-sideways');
       await t.checkNoHorizontalOverflow('the sideways viewfinder');
+      // v7.1: after a Look, Live brings back the same viewfinder (before, the room measured for the
+      // frozen stage stayed: 87% of the frame showed and a quarter of it sat inside the brackets).
+      await page.setViewportSize({ width: 390, height: 844 });
+      await check('portrait again');
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.locator(tid('optics-live')).click();
+      await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'false', { timeout: 5000, message: 'Live' });
+      await page.waitForTimeout(400); // the stage grows back
+      await check('after Live');
     },
   },
   {
@@ -636,6 +692,65 @@ export default [
         t.assert(!c.overlaps.length && !c.covered.length, `${size.join('×')}: plates clear of each other and of the dots (${JSON.stringify(c)})`);
         if (size[0] === 375 && size[1] === 553) await shot(t, 'safaritab-pins');
       }
+    },
+  },
+  {
+    name: 'optics-cards-small',
+    title: 'Short phones, camera never allowed (an SE\'s Safari tab, 320-wide phones, sideways): the first-use and blocked cards sit between the top bar and the deck, every button can be tapped; Turn on camera starts Optics, Take a photo instead opens the system camera',
+    device: 'safaritab',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const SIZES = [[375, 553], [320, 568], [320, 454], [568, 320]];
+      await t.step('the first-use card (no grantPermissions: the browser would still ask)', async () => {
+        const page = await t.newPage();
+        await instrument(page);
+        await t.goto('/');
+        await openFromComposer(t);
+        for (const [w, h] of SIZES) {
+          await page.setViewportSize({ width: w, height: h });
+          await checkCard(t, `intro ${w}×${h}`, 'intro');
+          if (w === 320 && h === 568) await shot(t, 'intro-320x568');
+          if (w === 375) await shot(t, 'intro-375x553');
+          if (w === 568) await shot(t, 'intro-568x320');
+        }
+        t.assert(await page.locator(tid('optics-look')).isDisabled(), 'LOOK waits for the camera');
+        // A real tap at the centre of Turn on camera, on the shortest portrait screen.
+        await page.setViewportSize({ width: 320, height: 568 });
+        const c = await checkCard(t, 'intro 320×568 again', 'intro');
+        const allow = c.buttons.find((b) => b.id === 'optics-allow');
+        await page.touchscreen.tap(allow.x, allow.y);
+        await waitLive(t);
+        t.assert((await page.evaluate(() => localStorage.getItem('jarvis.optics.intro.v1'))) === '1', 'the card is not shown again');
+        t.assert((await liveTracks(page)) === 1, 'the camera runs');
+        await shot(t, 'live-320x568');
+        await page.locator(tid('optics-live-pill')).click();
+        await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      });
+      await t.step('the blocked-camera card', async () => {
+        const page = await t.newPage();
+        t.page = page;
+        await instrument(page, { deny: true });
+        await page.context().addInitScript(() => localStorage.setItem('jarvis.optics.intro.v1', '1'));
+        await t.goto('/', { page });
+        await openFromComposer(t);
+        await t.visible('optics-retry', { page });
+        for (const [w, h] of SIZES) {
+          await page.setViewportSize({ width: w, height: h });
+          await checkCard(t, `blocked ${w}×${h}`, 'denied', page);
+          if (w === 320 && h === 568) await shot(t, 'blocked-320x568', page);
+          if (w === 568) await shot(t, 'blocked-568x320', page);
+        }
+        await page.setViewportSize({ width: 320, height: 568 });
+        const c = await checkCard(t, 'blocked 320×568 again', 'denied', page);
+        const photo = c.buttons.find((b) => b.id === 'optics-fallback');
+        t.assert(photo, 'Take a photo instead is offered');
+        const chooser = page.waitForEvent('filechooser', { timeout: 5000 });
+        await page.touchscreen.tap(photo.x, photo.y);
+        const fc = await chooser;
+        t.assert((await fc.element().getAttribute('capture')) === 'environment', 'the system camera opens instead');
+        await t.waitFor(async () => (await t.count('optics', undefined, page)) === 0, { timeout: 3000, message: 'Optics to close for the fallback' });
+      });
     },
   },
   {

@@ -1752,8 +1752,16 @@ export function openOptics(deps = {}) {
   offs.push(() => window.removeEventListener('resize', onResize));
   let ro = null;
   if (typeof ResizeObserver === 'function') {
-    ro = new ResizeObserver(() => layoutSoon());
+    // The stage grows back over a short transition after Live (and the deck changes height with its
+    // keys): the room for the live picture and the cards (--live-*) is measured again as they settle.
+    // Before, it kept the frozen stage's numbers, so after Live part of the frame was hidden under the
+    // top bar and the deck and the brackets sat elsewhere.
+    ro = new ResizeObserver(() => {
+      fitLive();
+      layoutSoon();
+    });
     ro.observe(stage);
+    ro.observe(deck);
   }
   const onVisible = () => {
     if (document.visibilityState === 'visible' && resumeOnVisible && !closed && camera.state === 'paused') {
