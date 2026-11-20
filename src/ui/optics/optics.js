@@ -26,7 +26,7 @@
 //   deps: { look({ text, frame }) -> Promise<{ run } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
-//           fallbackPhoto?(), onLiveChange?({ camera, watch }), onClose?(), watchOptions?, review?,
+//           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt }), onClose?(), watchOptions?, review?,
 //           cameraChoice?: { get() -> { id, label } | null, set({ id, label }) },
 //           hologram?({ subject, frameId }) -> { run } | { error }, canHologram?() -> boolean,
 //           hologramEstimate?() -> usd, openHologram?(run, segment),
@@ -343,7 +343,8 @@ export function openOptics(deps = {}) {
     onState: onCameraState,
     onDevices: () => {
       if (menuOpen) renderCameraMenu();
-      syncTop();
+      // The keys follow the list too: Flip turns on when a second camera is plugged in.
+      setMode(mode);
     },
     onSwitch: (e) => onCameraSwitched(e),
     preferred: () => (choice ? choice.get() : null),
@@ -404,7 +405,8 @@ export function openOptics(deps = {}) {
     if (liveKey !== lastLiveKey) {
       lastLiveKey = liveKey;
       try {
-        deps.onLiveChange && deps.onLiveChange({ camera: on, watch: !!watch });
+        // watchEndsAt (ms since the epoch, or null): the app's status line can count Watch down.
+        deps.onLiveChange && deps.onLiveChange({ camera: on, watch: !!watch, watchEndsAt: watch ? watch.endsAt : null });
       } catch {
         /* optional */
       }
@@ -1610,7 +1612,7 @@ export function openOptics(deps = {}) {
     settleAutoLook({ error: 'Closed.' });
     deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
     try {
-      deps.onLiveChange && deps.onLiveChange({ camera: false, watch: false });
+      deps.onLiveChange && deps.onLiveChange({ camera: false, watch: false, watchEndsAt: null });
     } catch {
       /* optional */
     }

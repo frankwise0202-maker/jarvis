@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
 import { createGuardedFetch, createKokoroEngine } from '../../src/platform/voice/natural/kokoro-engine.js';
 import { createNaturalEngine } from '../../src/platform/voice/natural/engine-client.js';
-import { ENGINE_PLANS, MODEL, PART_BYTES, RUNTIME, downloadPlan, formatMegabytes, partsOf, planFor, sourceConfig } from '../../src/platform/voice/natural/catalog.js';
+import { ENGINE_PLANS, MODEL, PART_BYTES, RUNTIME, downloadPlan, formatMegabytes, partRanges, partsOf, planFor, sourceConfig } from '../../src/platform/voice/natural/catalog.js';
 import { webgpuAvailable } from '../../src/platform/voice/natural/setup.js';
 import { createFakeWorker, installClock } from './natural.fakes.mjs';
 
@@ -167,11 +167,49 @@ test('ladder 3: WebGPU turning slow while it speaks hands this reply to the buil
   assert.deepEqual([engine.status().state, engine.status().plan], ['ready', 'wasm']);
 });
 
-test('crash guard: a page that died while setting up the GPU model starts on WASM next time', async (t) => {
+test('crash guard: a page that died while setting up the GPU model starts on WASM next time (a reload mid-download does not count)', async (t) => {
   const clock = installClock();
   t.after(() => clock.restore());
+  // The marker follows the attempt: set at 'load', 'download' while the model downloads, 'compile'
+  // once it is all there, then gone when the engine is ready.
+  const live = twoPlans({ gpu: true });
+  live.engine.start();
+  const w = live.workers[0];
+  const phase = () => (JSON.parse(live.store.saved.get('jarvis.voice.natural.attempt') || 'null') || {}).phase || null;
+  w.emit({ type: 'progress', stage: 'download', file: 'runtime', loaded: 5, total: 50 });
+  assert.equal(phase(), null, 'the runtime download comes before the attempt');
+  w.emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+  assert.equal(phase(), 'load');
+  w.emit({ type: 'progress', stage: 'download', file: 'onnx/model.onnx', loaded: 20, total: 50 });
+  assert.equal(phase(), 'download');
+  w.emit({ type: 'progress', stage: 'download', file: 'onnx/model.onnx', loaded: 50, total: 50 });
+  assert.equal(phase(), 'compile');
+  w.emit({ type: 'progress', stage: 'warmup', loaded: 0, total: 1 });
+  assert.equal(phase(), 'warmup');
+  w.emit({ type: 'ready', device: 'webgpu', dtype: 'fp32', loadMs: 1000, warmupMs: 100, warmupAudioS: 1.5, threads: 1 });
+  assert.equal(phase(), null);
+  // The usual first run: the total also counts the speaker's file, which only downloads with the
+  // first synthesis, so the download never shows 100%. The worker's 'compile' ends it all the same.
+  const first = twoPlans({ gpu: true });
+  first.engine.start();
+  const fw = first.workers[0];
+  const firstPhase = () => (JSON.parse(first.store.saved.get('jarvis.voice.natural.attempt') || 'null') || {}).phase || null;
+  fw.emit({ type: 'progress', stage: 'load', loaded: 0, total: 1 });
+  fw.emit({ type: 'progress', stage: 'download', file: 'onnx/model.onnx', loaded: 49, total: 50 });
+  assert.equal(firstPhase(), 'download');
+  fw.emit({ type: 'progress', stage: 'compile', file: 'onnx/model.onnx', loaded: 0, total: 1 });
+  assert.equal(firstPhase(), 'compile');
+  assert.equal(first.engine.status().state, 'loading', 'the card says it is getting ready, not still downloading');
+  fw.emit({ type: 'progress', stage: 'download', file: 'onnx/model.onnx', loaded: 49, total: 50 });
+  assert.equal(firstPhase(), 'compile', 'a late progress message does not put it back to downloading');
+  // Reloaded in the middle of the download: WebGPU is tried again.
+  const mid = memoryStore();
+  mid.set('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', phase: 'download', at: Date.now() - 60_000 }));
+  assert.equal((await twoPlans({ gpu: true, store: mid }).engine.planInfo()).device, 'webgpu');
+  assert.equal(mid.saved.has('jarvis.voice.natural.webgpu'), false);
+  // Died while setting up the model: WASM from now on.
   const store = memoryStore();
-  store.set('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', at: Date.now() - 60_000 }));
+  store.set('jarvis.voice.natural.attempt', JSON.stringify({ device: 'webgpu', phase: 'compile', at: Date.now() - 60_000 }));
   const { engine } = twoPlans({ gpu: true, store });
   assert.equal((await engine.planInfo()).device, 'wasm');
   assert.equal(JSON.parse(store.saved.get('jarvis.voice.natural.webgpu')).code, 'crashed');
@@ -232,6 +270,25 @@ test('fetch guard: a file split into parts is joined in order, with progress ove
   await assert.rejects(mk({ bytes: 0 }).guarded(url), (e) => e.code === 'integrity', 'a split file needs its pinned size');
 });
 
+test('the deploy script\'s cut and the worker\'s join round-trip: contiguous parts that cover the file, each under the limit', async () => {
+  for (const w of Object.values(MODEL.weights)) {
+    const r = partRanges(w.bytes);
+    assert.equal(r.length, w.parts);
+    assert.equal(r[0][0], 0);
+    assert.equal(r.at(-1)[1], w.bytes);
+    for (let i = 1; i < r.length; i++) assert.equal(r[i][0], r[i - 1][1], 'contiguous');
+    assert.ok(r.every(([a, b]) => b - a > 0 && b - a <= PART_BYTES));
+  }
+  // A small file cut the same way (as fetch-voice-model.mjs does) and joined by the guard.
+  const whole = bytes(25_000, 13);
+  const ranges = partRanges(whole.length, 7_000);
+  assert.equal(ranges.length, 4);
+  const url = `${APP}models/${MODEL.id}/onnx/model.onnx`;
+  const table = Object.fromEntries(ranges.map(([a, b], i) => [`${url}.part${i}`, whole.slice(a, b)]));
+  const guarded = createGuardedFetch(fakeFetch(table), webcrypto.subtle, { selfOrigin: ORIGIN, allowOrigins: [ORIGIN], allowHostSuffixes: [], tracked: [{ suffix: '/onnx/model.onnx', label: 'model', parts: ranges.length, bytes: whole.length, sha256: sha(whole) }] });
+  assert.equal(sha(new Uint8Array(await (await guarded(url)).arrayBuffer())), sha(whole));
+});
+
 test('worker core: a self-hosted split model loads through the parts; WebGPU warms up twice and reports the second run', async () => {
   const posted = [];
   const whole = bytes(7000, 9);
@@ -272,4 +329,10 @@ test('worker core: a self-hosted split model loads through the parts; WebGPU war
   assert.equal(runs.length, 2, 'two warm-up runs');
   assert.equal(ready.warmupMs, 300, 'the speed of the second run');
   assert.equal(ready.device, 'webgpu');
+  // 'compile' once the joined file is checked: after the last download progress, before the warm-up.
+  const stages = posted.filter((m) => m.type === 'progress').map((m) => m.stage);
+  const compileAt = stages.indexOf('compile');
+  assert.ok(compileAt > stages.lastIndexOf('download'), stages.join(' '));
+  assert.ok(compileAt < stages.indexOf('warmup'), stages.join(' '));
+  assert.equal(stages.filter((x) => x === 'compile').length, 1);
 });

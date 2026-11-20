@@ -16,12 +16,22 @@
 //   optics-voice       Voice Mode → Look → "what am I looking at?" is a Look whose answer is spoken
 //                      and pinned; "tell me more" is a spoken follow-up; "close the camera"; then,
 //                      with the camera closed on a computer, "what am I looking at?" opens it and looks
+//                      ("what's that?" stays a question for Jarvis); "Open in chat" in a hologram over
+//                      Optics leaves Voice Mode and closes the Optics it opened
 
 import { tid } from '../harness.mjs';
 import { imageSizeOf } from '../../../src/lib/optics.js';
 import { installCameraRig } from '../camera-rig.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { cameraArgs, checkPins, instrument, lastLook, liveTracks, openFromComposer, shot, waitAnswer, waitLive } from './optics.mjs';
+
+/** The newest lead request's last user text block (the owner's words). */
+async function lastUserQuestion(t) {
+  const r = t.requests('lead').filter((x) => x.status === 200).at(-1);
+  const m = r && r.body.messages.findLast((x) => x.role === 'user');
+  const parts = m && Array.isArray(m.content) ? m.content.filter((b) => b.type === 'text') : [];
+  return parts.length ? parts.at(-1).text : '';
+}
 
 const MAC_CAMERAS = [
   { label: 'FaceTime HD Camera (Built-in) (05ac:8514)' },
@@ -349,7 +359,7 @@ export default [
   },
   {
     name: 'optics-voice',
-    title: 'Voice Mode × Optics: Look opens the camera over Voice Mode; "what am I looking at?" is a Look, spoken and pinned; "tell me more" is spoken; "close the camera"; on a computer the words alone open the camera and look',
+    title: 'Voice Mode × Optics: Look opens the camera over Voice Mode; "what am I looking at?" is a Look, spoken and pinned; "tell me more" is spoken; "close the camera"; "what\'s that?" stays a question; on a computer the words alone open the camera and look; "Open in chat" closes Voice Mode and its Optics',
     device: 'mac',
     timeout: 180000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
@@ -378,7 +388,7 @@ export default [
         // Voice Mode stops listening after two silent tries; then a tap on Optics' mic (Voice
         // Mode's own: the core's tap) listens, and the phrases are heard one per listen.
         await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle', { timeout: 15000, message: 'Voice Mode to wait for a tap' });
-        await page.evaluate(() => window.__voice.queue.push('Jarvis, what am I looking at?', 'Tell me more.', 'Close the camera.', 'What am I looking at?'));
+        await page.evaluate(() => window.__voice.queue.push('Jarvis, what am I looking at?', 'Tell me more.', 'Close the camera.', "What's that?", 'What am I looking at?'));
         await page.locator(tid('optics-mic')).click();
         await waitAnswer(t);
         const look = lastLook(t);
@@ -401,12 +411,39 @@ export default [
         await t.waitFor(async () => /Camera off\./.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 10000, message: 'the acknowledgement' });
         t.assert(!(await page.locator(tid('voice-mode')).evaluate((el) => el.inert === true)), 'Voice Mode is in front again');
       });
-      await t.step('with the camera closed, "what am I looking at?" opens it and looks (a computer where the camera is allowed)', async () => {
-        await t.visible('optics', { timeout: 30000, message: 'Optics to open by voice' });
+      await t.step('with the camera closed, "what\'s that?" is a question for Jarvis; "what am I looking at?" opens the camera and looks (a computer where the camera is allowed)', async () => {
+        await t.visible('optics', { timeout: 45000, message: 'Optics to open by voice' });
         await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', { timeout: 15000, message: 'the Look' });
         await waitAnswer(t);
         const look = lastLook(t);
         t.assert(/Optics frame f2:/.test(look.message.content[0].text), 'a second frame (f2) in the same conversation');
+        t.assert(look.message.content[2].text === 'What am I looking at?', `the Look's question ("${look.message.content[2].text}")`);
+        const userText = (r) => {
+          const m = r.body.messages.findLast((x) => x.role === 'user');
+          const parts = m && Array.isArray(m.content) ? m.content : [];
+          return { text: parts.filter((b) => b.type === 'text').map((b) => b.text).join('\n'), image: parts.some((b) => b.type === 'image') };
+        };
+        const plain = t.requests('lead').filter((r) => r.status === 200).map(userText).find((u) => /\bWhat's that\?$/.test(u.text));
+        t.assert(plain, '"What\'s that?" went to Jarvis');
+        t.assert(!plain.image && /Reply channel: spoken/.test(plain.text), 'as a spoken turn without a frame: the camera stayed closed');
+        t.assertAppendOnly();
+      });
+      await t.step('a hologram over Optics, then "Open in chat": Voice Mode closes and takes its Optics with it; the chat shows the reply', async () => {
+        await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle', { timeout: 30000, message: 'Voice Mode to wait for a tap' });
+        await page.evaluate(() => window.__voice.queue.push('Hologram of this.', 'Who invented it?'));
+        await page.locator(tid('optics-mic')).click();
+        await t.visible('hologram-viewer', { timeout: 60000, message: 'the hologram over Optics' });
+        t.assert((await t.count('optics')) === 1, 'Optics is still open under the viewer');
+        const open = page.locator(tid('hologram-caption-open'));
+        await t.waitFor(async () => (await open.isVisible()) && /invent/i.test(await lastUserQuestion(t)), { timeout: 60000, interval: 100, message: 'the reply to "Who invented it?" captioned with "Open in chat"' });
+        await open.click();
+        await page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        await page.locator(tid('hologram-viewer')).waitFor({ state: 'detached', timeout: 5000 });
+        await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'the Optics Voice Mode opened to close with it' });
+        t.assert((await liveTracks(page)) === 0, 'camera released');
+        const last = page.locator(tid('turn-jarvis')).last();
+        await t.waitForTurn(last, ['done'], { timeout: 30000 });
+        t.assert(await last.isVisible(), 'the chat shows the reply');
         t.assertAppendOnly();
       });
     },

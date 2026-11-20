@@ -51,7 +51,7 @@ import { markdownToPlainText } from '../lib/markdown.js';
 import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
-import { matchOpticsCommand } from '../lib/optics-commands.js';
+import { isCameraRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { isIOS } from '../platform/env.js';
 import { base64ByteLength } from './attachments.js';
@@ -831,6 +831,9 @@ export async function startApp(rootEl) {
           voiceApi = null;
           voiceInfo = null;
           lastVoiceHologram = null;
+          // Optics opened from Voice Mode goes with it (its mic and its turns were Voice Mode's).
+          const optics = currentOptics();
+          if (optics && optics.overVoice) safe(() => optics.close());
           const viewer = getHologramViewer();
           if (viewer) safe(() => viewer.setVoice(null)); // its own mic again
           // The home screen (greeting and core) stays where it was; a conversation shows its end.
@@ -977,12 +980,13 @@ export async function startApp(rootEl) {
    */
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
-    const cmd = safe(() => matchOpticsCommand(text, {}), null);
-    if (!cmd || cmd.action !== 'look' || !cmd.explicit) return null;
+    // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
+    // something Jarvis said, and goes to Jarvis as usual.
+    if (!safe(() => isCameraRequest(text), false)) return null;
     if (cameraAllowed !== 'granted' || safe(() => isIOS(), false)) {
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
     }
-    const optics = openOpticsScreen({ voice: true, autoLook: cmd.question });
+    const optics = openOpticsScreen({ voice: true, autoLook: String(text).trim() });
     const done = optics && optics.autoLookDone ? optics.autoLookDone : Promise.resolve({ error: 'The camera couldn’t start.' });
     return { handled: true, command: { action: 'optics', kind: 'look', ack: '' }, done };
   }

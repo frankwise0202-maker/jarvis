@@ -9,8 +9,8 @@
 //   downloadPlan({ dtype, voices })   -> { files: [{ path, bytes, sha256?, kind }], bytes }
 //   ENGINE_PLANS / planFor(device)    the two ways to run it: 'webgpu' (fp32, the graphics chip)
 //                                     and 'wasm' (q8, the processor)
-//   PART_BYTES / partsOf(bytes)       self-hosted files are split into parts under GitHub's
-//                                     limits (100 MB per file; it warns above 50 MB)
+//   PART_BYTES / partsOf(bytes) / partRanges(bytes)   self-hosted files are split into parts
+//                                     under GitHub's limits (100 MiB per file; it warns above 50 MiB)
 //   formatMegabytes(bytes)            -> "115 MB"
 //   sourceConfig(mode, { origin, base })  where the files come from: 'self' (GitHub Pages, the
 //                         recommendation) or 'hf' (huggingface.co, pinned revision)
@@ -75,7 +75,7 @@ export const DEFAULT_DTYPE = 'q8';
 
 /**
  * Self-hosted files bigger than this are split into numbered parts (<file>.part0, .part1, …):
- * GitHub refuses files over 100 MB and warns above 50 MB. 48 MiB keeps every part under both.
+ * GitHub refuses files over 100 MiB and warns above 50 MiB. 48 MiB keeps every part under both.
  * The worker joins the parts and checks the whole file's size and SHA-256 (kokoro-engine.js).
  */
 export const PART_BYTES = 48 * 1024 * 1024;
@@ -84,6 +84,15 @@ export const PART_BYTES = 48 * 1024 * 1024;
 export function partsOf(bytes) {
   const n = Number(bytes) || 0;
   return n > PART_BYTES ? Math.ceil(n / PART_BYTES) : 1;
+}
+
+/** The byte ranges [start, end) of those parts, in order (the deploy script cuts the file with these). */
+export function partRanges(bytes, partBytes = PART_BYTES) {
+  const n = Math.max(0, Number(bytes) || 0);
+  const size = Math.max(1, Number(partBytes) || PART_BYTES);
+  const out = [];
+  for (let start = 0; start < n; start += size) out.push([start, Math.min(n, start + size)]);
+  return out.length ? out : [[0, 0]];
 }
 
 /**

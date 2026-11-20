@@ -17,6 +17,11 @@
 //     watch     "watch this" / "stop watching" (on: true | false)
 //   Anything else is null: it goes to Jarvis as a normal message (in Voice Mode, a spoken turn).
 //
+//   isCameraRequest(text)             words plainly about seeing ("what am I looking at?", "look at
+//                                     this", "what is this?" on its own): Voice Mode opens the camera
+//                                     for them while it is closed. Not "what's that?" or "what is
+//                                     it?", which in a conversation are about something Jarvis said.
+//
 //   hologramRequest(subject)          "Show me a hologram of the AA battery." (the chip's message)
 //   partQuestion(pin, frameId)        "What's this part? (the AA battery you pinned on frame f1, at 316, 844)"
 //   theName(label)                    "AA battery" -> "the AA battery", "Coffee mug" -> "the coffee mug"
@@ -74,6 +79,27 @@ function hologramOf(n) {
   let subject = m ? m[1].trim() : '';
   if (/^(?:this|that|it|these|those|this one|that one|them|what you see|what i'm (?:looking at|holding))$/.test(subject)) subject = '';
   return { action: 'hologram', subject: subject ? subject.slice(0, 60) : null };
+}
+
+// With the camera closed (Voice Mode), only words plainly about seeing open it.
+const CAMERA_REQUEST = [
+  /^what (?:am i|i'm|i am) (?:looking at|holding|seeing|pointing at|pointing the camera at)\b/,
+  /^(?:what do you see|what can you see|tell me what you see|describe what you see)\b/,
+  /^see (?:this|these|me)\b/,
+  /^do you see (?:this|these)\b/,
+  /^(?:take|have) a look(?: at (?:this|these|me|what i'm holding))?$/,
+  /^look at (?:this|these|me|what i'm holding)\b/,
+  /^(?:identify|recognize|recognise) (?:this|these|what you see|what i'm holding)\b/,
+  /^what(?:'s| is| are) (?:this|these)(?: (?:thing|things|object|one))?(?: (?:here|in my hand|i'm holding|on (?:my|the) (?:desk|table)))?$/,
+  /^whats (?:this|these)$/,
+  /^what(?:'s| is) in front of me$/,
+  /^what (?:brand|model|make) (?:is|are) (?:this|these)$/,
+];
+
+/** Words that ask Jarvis to look even while the camera is closed (see the header). */
+export function isCameraRequest(text) {
+  const n = normalizeOpticsText(text);
+  return !!n && n.length <= 200 && CAMERA_REQUEST.some((re) => re.test(n));
 }
 
 /**

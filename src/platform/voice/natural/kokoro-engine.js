@@ -13,6 +13,8 @@
 //   { type: 'clear' }               delete everything this voice cached (model, voices, runtime)
 // Messages out:
 //   { type: 'progress', stage: 'download'|'compile'|'load'|'warmup', loaded, total, file }
+//     ('load' as the library starts, 'download' while files come in, 'compile' once the model file
+//     is downloaded and checked and the runtime sets it up, 'warmup' for the first synthesis)
 //   { type: 'ready', device, dtype, loadMs, warmupMs, downloadedBytes, threads }
 //   { type: 'audio', id, pcm: Float32Array (transferred), sampleRate, synthMs, chars }
 //   { type: 'error', id?, code, message }   codes: init | network | blocked-host | integrity |
@@ -68,7 +70,8 @@ export function classifyError(err) {
  * The fetch guard (exported for tests).
  *   cfg: { selfOrigin, voiceBase, allowOrigins: string[], allowHostSuffixes: string[],
  *          tracked: [{ suffix, bytes, sha256?, label }] }
- *   hooks: { onProgress({ file, loaded, total }), onDownloaded(bytes) }
+ *   hooks: { onProgress({ file, loaded, total }), onDownloaded(bytes, file) }   (onDownloaded: a tracked
+ *          file arrived whole and checked; `file` is its label)
  */
 export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
   const origins = new Set(cfg.allowOrigins || []);
@@ -124,7 +127,7 @@ export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
       const hex = await sha256Hex(subtle, buf.buffer);
       if (hex !== spec.sha256) throw new EngineError('integrity', `${spec.label || spec.suffix}: the download is damaged or was changed (SHA-256 mismatch).`);
     }
-    if (hooks.onDownloaded) hooks.onDownloaded(loaded);
+    if (hooks.onDownloaded) hooks.onDownloaded(loaded, spec.label || spec.suffix);
     return new Response(buf, { status: 200, statusText: 'OK', headers: { 'content-type': res.headers.get('content-type') || 'application/octet-stream', 'content-length': String(loaded) } });
   };
 
@@ -154,7 +157,7 @@ export function createGuardedFetch(baseFetch, subtle, cfg, hooks = {}) {
       const hex = await sha256Hex(subtle, buf.buffer);
       if (hex !== spec.sha256) throw new EngineError('integrity', `${spec.label || spec.suffix}: the download is damaged or was changed (SHA-256 mismatch).`);
     }
-    if (hooks.onDownloaded) hooks.onDownloaded(loaded);
+    if (hooks.onDownloaded) hooks.onDownloaded(loaded, spec.label || spec.suffix);
     return new Response(buf, { status: 200, statusText: 'OK', headers: { 'content-type': 'application/octet-stream', 'content-length': String(loaded) } });
   }
 }
@@ -235,7 +238,16 @@ export function createKokoroEngine({ scope, post, loadModel, tfEnv, now = () => 
             ...(config.voiceFiles || []).map((v) => ({ suffix: `/voices/${v.id}.bin`, bytes: v.bytes, sha256: v.sha256, label: `voices/${v.id}.bin` })),
           ],
         },
-        { onProgress: ({ file, loaded, total }) => report(file, loaded, total), onDownloaded: (n) => (downloaded += n) },
+        {
+          onProgress: ({ file, loaded, total }) => report(file, loaded, total),
+          onDownloaded: (n, file) => {
+            downloaded += n;
+            // The model file is here and checked: the runtime now sets it up (the GPU kernels, on
+            // WebGPU). The page needs to know the download is over: the progress total also counts
+            // the speaker's file, which only comes with the first synthesis.
+            if (!model && file === weights.path) send({ type: 'progress', stage: 'compile', file, loaded: 0, total: 1 });
+          },
+        },
       );
       // 2. The ONNX Runtime binary: our own cache first (offline), else download with progress.
       const threads = scope.crossOriginIsolated ? Math.max(1, Math.min(4, (scope.navigator && scope.navigator.hardwareConcurrency) || 1)) : 1;

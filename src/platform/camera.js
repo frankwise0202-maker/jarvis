@@ -242,6 +242,10 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
   let facing = phone ? 'rear' : 'camera';
   let deviceId = '';
   let cameras = []; // listCameras(): every videoinput, described, in picker order
+  // The list the hot-plug plan compares with: set when a camera goes live and by each devicechange
+  // refresh, never by other listings (the picker opening, Flip). A listing in flight while a camera
+  // is plugged in already holds it; were it the baseline, the plug-in would go unnoticed.
+  let known = [];
   let current = null; // the described camera in use
   let starting = null;
   let chain = Promise.resolve(); // device changes run one at a time
@@ -386,6 +390,7 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
     }
     current = null;
     await listDevices();
+    known = cameras;
     current = cameras.find((c) => c.id && c.id === deviceId) || null;
     // Phones say which way a camera faces; a computer's webcam faces the owner but says nothing.
     facing = facingOf(settings.facingMode) || (current && current.facing) || (phone ? wanted || 'rear' : 'camera');
@@ -497,8 +502,9 @@ export function createCamera({ video, onState, onDevices, onSwitch, preferred, a
   /** After a devicechange: refresh the list; follow the hot-plug plan while the camera is on. */
   async function refresh() {
     if (destroyed) return;
-    const before = cameras;
+    const before = known;
     const after = await listDevices();
+    known = after;
     notifyDevices();
     if (!stream || destroyed || state !== 'live') return;
     const plan = hotplugPlan({ before, after, currentId: deviceId, remembered: call(preferred) || null, os: osName });

@@ -321,6 +321,10 @@ test('worker core: the progress total is what is really missing (cached files ar
   const totals = h.posted.filter((p) => p.msg.type === 'progress' && p.msg.stage === 'download').map((p) => p.msg.total);
   assert.ok(totals.length >= 1);
   assert.equal(totals[0], h.weights.length + 1000, 'model + voice, not the cached runtime');
+  // So the download never shows 100% here (the voice comes later): 'compile' says the model is in.
+  const stages = h.posted.filter((p) => p.msg.type === 'progress').map((p) => p.msg.stage);
+  assert.deepEqual(stages.filter((x) => x !== 'download'), ['load', 'compile', 'warmup']);
+  assert.ok(stages.indexOf('compile') > stages.lastIndexOf('download'));
 });
 
 test('client: a warm-up far slower than real time marks the device slow at once, and the verdict is kept across reloads until "Try again"', async (t) => {

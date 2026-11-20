@@ -12,7 +12,7 @@
 //   --from <base> (a mirror laid out as <base>/<file>). Every file is checked against the size and
 //   SHA-256 in catalog.js before it is used; a mismatch aborts and changes nothing.
 // - Files bigger than PART_BYTES (48 MiB) are split into <file>.part0, .part1, … so every file on
-//   GitHub Pages stays under GitHub's 100 MB limit (and its 50 MB warning). The worker joins them
+//   GitHub Pages stays under GitHub's 100 MiB limit (and its 50 MiB warning). The worker joins them
 //   and checks the whole file's SHA-256 again (kokoro-engine.js). The whole files are kept in
 //   vendor/kokoro-cache/ (not deployed) so a second run downloads nothing.
 // - Voice files are copied from the kokoro-js npm package (identical to HF's, hashes checked).
@@ -24,7 +24,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { MODEL, PART_BYTES, VOICES, isVoiceId, partsOf } from '../src/platform/voice/natural/catalog.js';
+import { MODEL, PART_BYTES, VOICES, isVoiceId, partRanges } from '../src/platform/voice/natural/catalog.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -89,10 +89,12 @@ async function fetchChecked(rel, spec, dir) {
 
 /** Writes `whole` as <rel>.part0 … in dest (each ≤ PART_BYTES); removes an unsplit copy there. */
 async function writeParts(whole, rel, spec) {
-  const n = partsOf(spec.bytes);
+  const ranges = partRanges(spec.bytes);
+  const n = ranges.length;
   const buf = await readFile(whole);
+  if (buf.length !== spec.bytes) throw new Error(`${rel}: ${buf.length} bytes on disk, ${spec.bytes} pinned`);
   for (let i = 0; i < n; i++) {
-    const part = buf.subarray(i * PART_BYTES, Math.min(buf.length, (i + 1) * PART_BYTES));
+    const part = buf.subarray(ranges[i][0], ranges[i][1]);
     if (part.length >= LIMIT) throw new Error(`${rel}.part${i} would be ${part.length} bytes, over GitHub's 100 MB limit`);
     const file = path.join(dest, `${rel}.part${i}`);
     await mkdir(path.dirname(file), { recursive: true });
@@ -111,7 +113,7 @@ console.log(`Natural voice model ${MODEL.id}@${MODEL.revision.slice(0, 8)} (${dt
 for (const f of MODEL.common) await fetchChecked(f.path, f, dest);
 for (const d of dtypes) {
   const w = MODEL.weights[d];
-  if (partsOf(w.bytes) > 1) await writeParts(await fetchChecked(w.path, w, cacheDir), w.path, w);
+  if (partRanges(w.bytes).length > 1) await writeParts(await fetchChecked(w.path, w, cacheDir), w.path, w);
   else await fetchChecked(w.path, w, dest);
 }
 // Voices: from the npm package, hash-checked.
@@ -129,4 +131,4 @@ for (const id of voices) {
 }
 console.log(`  copied ${voices.length} voices from kokoro-js (sha256 ok)`);
 await writeFile(path.join(dest, 'LICENSE.txt'), `Kokoro-82M (${MODEL.id}, revision ${MODEL.revision}) is licensed under the Apache License 2.0.\nhttps://huggingface.co/hexgrad/Kokoro-82M · https://www.apache.org/licenses/LICENSE-2.0\n`);
-console.log('Done. The next build copies vendor/kokoro/ to dist/models/ (every file under 50 MB).');
+console.log('Done. The next build copies vendor/kokoro/ to dist/models/ (every file under 50 MiB).');

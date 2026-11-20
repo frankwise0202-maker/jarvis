@@ -29,7 +29,8 @@
 //   2. WASM: when it is too slow, state 'slow' (verdict 'jarvis.voice.natural.verdict'): the
 //      built-in voice speaks.
 // A page that died while the GPU model was being set up (iOS ends a tab that takes too much memory)
-// leaves 'jarvis.voice.natural.attempt' behind: the next start skips WebGPU.
+// leaves 'jarvis.voice.natural.attempt' behind: the next start skips WebGPU (not when it died while
+// the model was still downloading).
 //
 // CSP (measured in headless Chromium 157, tools/csp-probe/probe.mjs): a same-origin module
 // Worker takes its policy from its OWN response headers, not from the page's <meta> CSP. On
@@ -45,7 +46,7 @@ const WARMUP_SLOW_RTF = 1.6;
 const WARMUP_FAST_RTF = 0.8;
 const VERDICT_KEY = 'jarvis.voice.natural.verdict'; // { slow: true, rtf, at }: kept across reloads (WASM)
 const WEBGPU_KEY = 'jarvis.voice.natural.webgpu'; // { failed|slow: true, rtf, code, at }: WebGPU ruled out for now
-const ATTEMPT_KEY = 'jarvis.voice.natural.attempt'; // { device: 'webgpu', at } while the GPU model is set up
+const ATTEMPT_KEY = 'jarvis.voice.natural.attempt'; // { device: 'webgpu', phase, at } while the GPU model is set up
 const VERDICT_DAYS = 30;
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
@@ -126,13 +127,14 @@ export function createNaturalEngine({
           set({ voiceLoaded: msg.loaded || 0, voiceTotal: msg.total || 0 }); // a new speaker's file; still ready
           break;
         }
-        // The download is done and the GPU model is being set up: if the page dies now, the next
-        // start knows (iOS ends tabs that use too much memory).
-        if (msg.stage === 'load' && current && current.device === 'webgpu') writeJson(ATTEMPT_KEY, { device: 'webgpu', at: Date.now() });
+        // The GPU model being set up (or tried out): if the page dies now, the next start knows (iOS
+        // ends tabs that use too much memory). Not while it is still downloading: a reload then
+        // says nothing about the graphics chip.
+        if (current && current.device === 'webgpu') noteGpuPhase(msg);
         set({ state: msg.stage === 'download' ? 'downloading' : msg.stage === 'warmup' ? 'warming' : 'loading', stage: msg.stage, loaded: msg.loaded || 0, total: msg.total || 0, file: msg.file || '' });
         break;
       case 'ready': {
-        removeKey(ATTEMPT_KEY);
+        clearGpuAttempt();
         // A first speed reading from the warm-up: a device far slower than real time never gets
         // to start a reply in the natural voice only to switch to the device voice mid-sentence.
         const warmRtf = msg.warmupMs > 0 && msg.warmupAudioS > 0 ? msg.warmupMs / 1000 / msg.warmupAudioS : null;
@@ -172,7 +174,7 @@ export function createNaturalEngine({
           }
           return;
         }
-        removeKey(ATTEMPT_KEY);
+        clearGpuAttempt();
         if (current && current.device === 'webgpu' && nextPlan()) {
           // WebGPU could not load the model (no adapter in the worker, a kernel it lacks, memory):
           // the processor (WASM) instead.
@@ -246,11 +248,31 @@ export function createNaturalEngine({
     writeJson(WEBGPU_KEY, { ...v, at: Date.now() });
   }
 
-  /** A page that died while setting up the GPU model (the attempt marker is still there). */
+  let gpuPhase = ''; // '' | 'load' | 'download' | 'compile' | 'warmup': where the GPU attempt is
+  function noteGpuPhase(msg) {
+    let next = gpuPhase;
+    if (msg.stage === 'load') next = 'load';
+    // The worker says 'compile' once the model file is in and checked. (The download total also
+    // counts the speaker's file, which only comes with the first synthesis, so 100% is not a
+    // reliable sign by itself; a download that does reach it is over all the same.)
+    else if (msg.stage === 'compile') next = 'compile';
+    else if (msg.stage === 'download' && (gpuPhase === 'load' || gpuPhase === 'download')) next = msg.total > 0 && msg.loaded >= msg.total ? 'compile' : 'download';
+    else if (msg.stage === 'warmup') next = 'warmup';
+    if (next === gpuPhase) return;
+    gpuPhase = next;
+    writeJson(ATTEMPT_KEY, { device: 'webgpu', phase: next, at: Date.now() });
+  }
+  function clearGpuAttempt() {
+    gpuPhase = '';
+    removeKey(ATTEMPT_KEY);
+  }
+
+  /** A page that died while setting up the GPU model (the attempt marker is still there, not mid-download). */
   function crashedOnGpu() {
     const a = readJson(ATTEMPT_KEY);
     if (!a || a.device !== 'webgpu') return false;
     removeKey(ATTEMPT_KEY);
+    if (a.phase === 'download') return false;
     saveWebgpuVerdict({ failed: true, code: 'crashed' });
     return true;
   }
@@ -328,7 +350,7 @@ export function createNaturalEngine({
       if (worker !== w) return;
       // The GPU set-up can take the worker down: the processor plan, if there is one.
       if (current && current.device === 'webgpu' && st.state !== 'ready' && nextPlan()) {
-        removeKey(ATTEMPT_KEY);
+        clearGpuAttempt();
         saveWebgpuVerdict({ failed: true, code: 'worker' });
         fallBack('webgpu-failed');
         return;

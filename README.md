@@ -53,6 +53,14 @@ and your conversations are stored only on your device.
   Decide, Trip Planner, Fact Check, Explain Simply, News Sweep and Gift Finder are ready on the
   home screen, and you can save your own.
 - **Show Jarvis.** Attach photos (or take one) and PDFs, and ask about them.
+- **Let Jarvis see (Optics).** Point your phone or your Mac's camera (or a USB webcam such as a
+  Logitech) at something and tap **Look**: Jarvis tells you what it is (brand, model, readable
+  text, the parts of a machine) and pins labels on the picture. Ask follow-ups, tap a label for
+  "What's this part?", or say "Hologram of this" to see it in 3D. In Voice Mode, just ask "what am
+  I looking at?".
+- **Speak with a natural voice, free.** Turn on the **natural voice** (Kokoro, open source) in
+  Settings and Jarvis speaks with a neural British voice (George by default) that runs on your own
+  device.
 - **See how things are built.** Ask "show me a 2024 Camry" or "what's inside an AA battery?" and
   Jarvis builds a glowing **3D hologram** with every part labeled, which you can turn, take apart
   and tap. A **2D blueprint** of a part (or the whole thing) is drawn only when you ask for one,
@@ -242,6 +250,47 @@ it once more (copy it from your password manager).
   chat: a note at the top of the chat offers **Start one**, and Voice Mode starts a new chat by
   itself. Your old chats stay in History.
 
+### The camera (Optics)
+
+**Optics** lets Jarvis see through your camera. Open it with **Look** on the home screen, the
+**camera key** next to the message box (on a phone), **Ctrl/⌘ + Shift + L** on a computer, or
+**Look** in Voice Mode. The first time, a short card explains how the camera is used before your
+browser asks for permission.
+
+- **Look.** Point the camera and tap **LOOK** (or press **Space**), with a question in the box
+  or without one ("What am I looking at?"). The picture freezes, Jarvis answers below it, and
+  labels appear on the things it names, each with a line to the object. Jarvis identifies what
+  it can: objects, the brand or model when it's visible, text it can read, the parts of a machine.
+  Each Look is part of your current conversation, so the chat keeps it too (tap it there to see
+  the picture with its labels again).
+- **Follow-ups.** Under the answer: **Tell me more**; **Hologram of this** (the picture turns into
+  a glowing outline while Jarvis builds a 3D hologram of the object, which then opens in the
+  hologram viewer; the price is on the button); and, after you tap a label, **What's this part?**
+  You can also type a question about the same picture; no new picture is taken.
+- **Which camera.** The line under **OPTICS** names the camera in use; tap it to see every
+  camera this device has: your MacBook's own camera, a **Logitech webcam** or any other USB or
+  Continuity camera, and on an iPhone **Back**, **Back Ultra Wide**, **Back Telephoto** and
+  **Front**. Jarvis remembers your choice on each device.
+  - **Plugging in.** Plug in your webcam while Optics is open and it appears in the list; if it's
+    the one you chose last time, Jarvis switches to it by itself. Unplug the camera in use and
+    Jarvis goes back to the built-in one and tells you.
+  - **On a phone**, **Flip** switches between the back and the front camera with one tap.
+- **Mirror image.** The front camera and a webcam pointing at you are shown mirrored, like a
+  mirror, so it's easy to hold things up. The picture Jarvis looks at is never mirrored: after a
+  Look you see exactly what was sent, so writing reads the right way round.
+- **Watch** (the eye key) keeps an eye on the scene for up to 5 minutes: Jarvis looks again only
+  when something changes (at most every 10 seconds) and tells you if it's worth saying. The
+  countdown and the cost so far are on screen.
+- **Look at my screen** (computers): one picture of a screen or window you choose, then the
+  sharing stops at once.
+- **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
+  looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
+  Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
+  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first.
+- **Off means off.** The camera runs only while Optics is open and on screen: the red **LIVE**
+  pill shows it (tap it to turn the camera off), and it turns off by itself when you switch apps,
+  lock the phone, or when a hologram covers Optics.
+
 ### A more natural voice
 
 Jarvis speaks with the voices your device and browser already have, so it costs nothing extra.
@@ -265,6 +314,25 @@ ones preferred).
 Settings → Voice shows the same tip for the device you're on. **Test voice** plays a short
 greeting with the voice you picked.
 
+### The natural voice (free, on your device)
+
+For a voice that sounds less like a robot reading, turn on **Natural voice** in Settings → Voice.
+It is Kokoro, an open-source neural voice that runs on your own device: it's free, and what it
+says never leaves the device.
+
+- **George** (British) speaks by default; **Lewis**, **Fable** and other voices are in the
+  **Speaker** list. **Test natural voice** plays a short greeting.
+- **A one-time download.** The card says how much before anything downloads: about **350 MB**
+  on a computer whose graphics chip the browser can use (WebGPU: Chrome on a Mac has it, and
+  recent iPhones probably do), about **117 MB** otherwise. It's kept for offline use; **Remove
+  download** deletes it.
+- **Speed.** With WebGPU the voice runs on the graphics chip, which is fast. If the graphics chip
+  can't run it, or is too slow, Jarvis switches to the standard engine by itself (it downloads
+  that one too, about 93 MB more). **If it's too slow, Jarvis uses the built-in voice** instead,
+  and the card says so; **Try again** measures once more.
+- Voice Mode, **Speak** and **Speak replies** all use it once it's on and ready. While it's still
+  loading, the built-in voice speaks so you never wait.
+
 ## What it costs
 
 Jarvis itself is free. You pay Anthropic for what Jarvis uses, at Anthropic's normal prices,
@@ -279,6 +347,11 @@ from the credit in your account. Rough examples:
 | A 3D hologram | about 10–30¢ (a battery at the low end, a whole car at the high end) |
 | A 2D blueprint | about 15¢, or about 35¢ once the conversation has been quiet for 5 minutes (shown on the button before you ask) |
 | Reopening a saved hologram or blueprint, hologram commands, Photos | free |
+| A Look with the camera (Optics) | about 2–3¢ on Opus 5.5 (about 8¢ for the first one in a new or quiet conversation); shown under the LOOK button |
+| A follow-up about the same picture (Tell me more, What's this part?) | about the same as a quick question |
+| Hologram of this | the price of a hologram, about 10–30¢ (shown on the button) |
+| Watch | about 0.6¢ each time Jarvis looks again, at most about 17¢ for a 5-minute session; up to 60 looks a day |
+| The natural voice | free (it runs on your device) |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
 are Fast), with room left over for everyday questions. Follow-up suggestions use the small Claude Haiku model
@@ -315,6 +388,16 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   servers. Spoken replies use a voice from your device or browser: voices marked "(online)" in
   Settings → Voice send the text they read aloud to their provider (Google or Microsoft); the
   others speak on your device without sending anything.
+- **Camera (Optics).** The camera is on only while Optics is open and on screen, with the red
+  **LIVE** pill showing; it turns off when you switch apps, lock the phone or close Optics. A
+  picture goes to Anthropic only when you tap **Look** (or say "what am I looking at?"), when
+  Jarvis takes one fresh look you asked for while the camera is live, or while **Watch** is on
+  (you start it, it shows a countdown and stops after 5 minutes). Pictures are made fresh from
+  the camera, so they carry no location data. Each Look is kept in the conversation on this device
+  (and in backups), like a photo you attach. Jarvis never names people from their faces. Which
+  camera you chose last is remembered in this browser's settings.
+- **The natural voice** runs entirely on your device: what it says is never sent anywhere. Its
+  files come once from the Jarvis site itself (GitHub Pages), not from a third party.
 - **Photos of parts.** When you open **Photos** in a hologram, its search words (the name of the
   object, or of the part with the object's name, such as "alternator rotor" and "rotor"; you can
   change them) are sent to Wikimedia Commons (`commons.wikimedia.org`),
@@ -377,8 +460,9 @@ Other websites (at other addresses) cannot read it.
   waves, whether to show Jarvis's thinking, and follow-up suggestions.
 - **Voice:** whether answers in the chat are read out (**Off**, **Short summary** or **Whole
   reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
-  tip for getting a more natural voice on your device, the language you speak in, and whether
-  Voice Mode keeps listening after each reply.
+  tip for getting a more natural voice on your device, the free **natural voice** (on or off, the
+  speaker, Test, its download), the language you speak in, and whether Voice Mode keeps listening
+  after each reply. (The camera is chosen in Optics itself and remembered there.)
 - **Appearance & sound:** six color themes, sounds and their volume, vibration (Android), and a
   notification when a mission finishes while Jarvis is in the background.
 - **Location:** optional, for local answers (weather, opening hours, prices).
@@ -419,6 +503,11 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Photos don't appear** | Photos need an internet connection (holograms and blueprints don't). If Wikimedia Commons is slow or busy, try again in a moment. |
 | **A hologram says "incomplete"** | It was stopped, or the connection dropped, while Jarvis was building it. An incomplete hologram isn't saved and can't get a 2D blueprint. Ask again (or tap **Resume** if the reply was interrupted). |
 | **"Show me …" gives no hologram in an older chat** | Chats started before holograms existed can't show them. Tap **Start one** in the note at the top of the chat, or start a new chat. |
+| **"Allow the camera"** in Optics | Camera access is blocked for Jarvis. Optics shows the steps for your device. On a Mac in Chrome also check System Settings → Privacy & Security → Camera → Google Chrome. **Take a photo instead** uses the phone's camera app. |
+| **My Logitech (or other USB) webcam isn't in the camera list** | Plug it in while Optics is open; it appears by itself. If it doesn't, unplug it and plug it in again, and close other apps that use the camera (a video call). On a Mac, allow Chrome in System Settings → Privacy & Security → Camera. |
+| **The camera picture looks mirrored** | Only the live picture of a camera that faces you is mirrored, like a mirror. What Jarvis looks at, and the frozen picture with the labels, are the right way round. |
+| **The natural voice says "Too slow on this device"** | Jarvis measured that this device makes the voice more slowly than it speaks, so the built-in voice speaks instead. Tap **Try again** (for example after closing other apps). |
+| **The natural voice download stopped** | Check the connection and tap **Try again**; what was already checked isn't downloaded again. Turning it on asks the browser to keep the download; if the phone runs low on space it may still remove it. |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
 | **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key. |
 
@@ -531,6 +620,34 @@ Requests and violations are logged at `/__mock/requests` and `/__mock/violations
 | `[[swarm:N]] [[hologram:x]]` | a Blueprint mission: agents first, then `show_hologram`, then a synthesis with sources |
 | *(Voice Mode turn: `Reply channel: spoken` in `<turn_context>`)* | every final answer is written for the ear: two or three plain sentences, a line `---`, then `## Details` with two list items (`[[long]]` puts its whole guide below the line; `[[xss]]` puts every payload there and one in the spoken part). The text streams a few words at a time, 50–90 ms apart, and a search takes about a second, so speech can start mid-reply. `[[search]]`, `[[pause]]` and `[[swarm:N]]` first say "Let me check the latest on that." Holograms and blueprints are said for the ear too: "Pulling up the AA alkaline battery now." before `show_hologram`, "Here's the AA alkaline battery. Say "expand it", or tap any part." after it; "Drawing the blueprint of the separator now.", then "The blueprint of the separator is ready; it's open on your screen." |
 | `[[nobreak]]` / `[[longspoken]]` | Voice Mode turns only: a spoken reply with no `---` line or details / a spoken part of about 2,000 characters |
+| *(an `Optics frame fN` line in `<turn_context>`: a Look)* | a first sentence naming the synthetic desk scene's objects, then `pin_labels` on fN with their exact pixel positions (`test/mock/fixtures/optics-scene.json`), then a closing sentence; without `pin_labels` in the tools, one plain answer |
+| `[[optics:nolabels]]` / `[[optics:badframe]]` / `[[optics:offframe]]` | a Look answered in words only / `pin_labels` on a frame that doesn't exist first, then the right one / one label far outside the frame |
+| `[[optics:look]]` | while the turn context says the camera is live: "Let me take a look", `look_through_camera`, then `pin_labels` on the fresh frame |
+| *(after a Look in the conversation)* | "Show me a hologram of the AA battery." → `show_hologram` (battery sample; alternator or Camry when named); "Tell me more." → a longer answer; "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" → what it is, then `pin_labels` with that one label |
+| *(a Jarvis Watch request)* | a structured `{ worth_saying, line, summary }`: the first frame sets the scene, later ones report a change |
+
+**Optics and the natural voice (v7).**
+- Optics: `src/ui/optics/` (the screen, the chat's Look card, the schematic), `src/platform/camera.js`
+  (getUserMedia, the camera list, hot-plug, flip, the screen look), `src/lib/optics.js` (frame
+  mapping, pin layout, Watch, costs, the `pin_labels` / `look_through_camera` tool definitions),
+  `src/lib/cameras.js` (camera names, picker order, the remembered camera, hot-plug decisions),
+  `src/lib/optics-commands.js` (Optics words: "what am I looking at?", "flip", "hologram of this"),
+  `src/engine/optics.js` and `src/engine/watch.js`. The E2E scenarios play a synthetic desk scene
+  through Chromium's fake camera (`test/e2e/optics-scene.mjs`); `test/e2e/camera-rig.mjs` dresses it
+  up as several cameras (a MacBook camera and a Logitech webcam, or an iPhone's Back, Back Ultra Wide
+  and Front) and plugs them in and out.
+- Natural voice: `src/platform/voice/voice-router.js` (the device voice or the natural one, same
+  API as `tts.js`), `src/platform/voice/natural/` (the worker, its client with the WebGPU → WASM →
+  built-in ladder, Web Audio output, the pinned model catalog), `src/ui/natural-voice-settings.js`.
+  The E2E scenarios use a tiny stand-in model (`test/e2e/voice-standin.mjs`, accepted only with
+  `localStorage['jarvis.dev.voiceStandin'] = '1'` on localhost).
+- **Deploying the natural voice:** run `node scripts/fetch-voice-model.mjs` once before
+  `npm run deploy`. It downloads the pinned Kokoro files from huggingface.co (q8, 92.4 MB, and
+  fp32, 325.5 MB), checks their SHA-256, splits every file over 48 MiB into `.partN` files under
+  `vendor/kokoro/` (q8: 2 parts, fp32: 7) so every file on GitHub Pages stays under GitHub's
+  100 MiB limit and its 50 MiB warning, and adds the 13 speakers' files from kokoro-js (hash-checked).
+  The build copies `vendor/kokoro/` to `dist/models/` (about 425 MB; unchanged files cost nothing
+  on later deploys). `npm ci` needs the committed `.npmrc` (`onnxruntime-node-install-cuda=skip`).
 
 Security rules worth knowing before you change anything: the Content-Security-Policy in
 `index.html` is fixed by SPEC §2 (besides `api.anthropic.com`, it allows only the Wikimedia

@@ -99,4 +99,7 @@ screen-style labels. Only tools the request defines are called.
 | `[[optics:badframe]]` | `pin_labels` on frame `f99` first; after Jarvis's `is_error` (it names the newest frame) the same labels on the right frame |
 | `[[optics:offframe]]` | three labels plus one far outside the frame (Jarvis skips it and says so) |
 | `[[optics:look]]` | while the turn context says `Optics: the camera is live`: "Let me take a look.", `look_through_camera`, then `pin_labels` on the frame its result announces |
+| *(a conversation with an Optics frame)* "Show me a hologram of the AA battery." | `show_hologram` with the battery sample (the alternator or Camry when named), spoken lines in Voice Mode: Optics' **Hologram of this** |
+| *(the same)* "Tell me more." | a longer answer about the scene |
+| *(the same)* "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" | what it is, then `pin_labels` with that one label at that pixel, then "I've marked it on the frame." (Optics' **What's this part?** for a tapped pin) |
 | a structured request whose system prompt starts `You are Jarvis Watch` | `{ worth_saying, line, summary }`: the first frame (no previous summary) sets the scene; later ones report that the mug moved and the notebook is gone |

@@ -2,7 +2,7 @@
 // (src/ui/optics/schematic.js) and the Hologram-of-this estimate: pure functions.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hologramRequest, matchOpticsCommand, normalizeOpticsText, partQuestion, theName } from '../../src/lib/optics-commands.js';
+import { hologramRequest, isCameraRequest, matchOpticsCommand, normalizeOpticsText, partQuestion, theName } from '../../src/lib/optics-commands.js';
 import { edgeThreshold, sobelEdges } from '../../src/ui/optics/schematic.js';
 import { estimateHologramCost, formatUsd } from '../../src/lib/optics.js';
 import { commandAck } from '../../src/ui/voice-visuals.js';
@@ -120,4 +120,49 @@ test('Voice Mode says Optics\' own short line for a command it handled', () => {
   assert.equal(commandAck({ action: 'optics', kind: 'flip', ack: 'Switching cameras.' }), 'Switching cameras.');
   assert.equal(commandAck({ action: 'optics', kind: 'look', ack: '' }), '');
   assert.equal(commandAck({ action: 'optics', ack: `  Camera\n off.  ${'x'.repeat(300)}` }).length, 160);
+});
+
+test('with the camera closed, only words plainly about seeing ask for it; "what\'s that?" stays a question for Jarvis', () => {
+  for (const words of [
+    'Jarvis, what am I looking at?',
+    'What am I holding?',
+    'What do you see?',
+    'Can you see this?',
+    'Can you see me?',
+    'Do you see this?',
+    'Look at this.',
+    'Take a look',
+    'Have a look at this, Jarvis',
+    'Identify this, please',
+    'What is this?',
+    "What's this?",
+    'whats this',
+    'What are these?',
+    'What is this thing on my desk?',
+    'Tell me what you see',
+    'What brand is this?',
+    "What's in front of me?",
+  ]) {
+    assert.equal(isCameraRequest(words), true, words);
+    assert.equal(action(words), 'look', `${words}: a Look once the camera is open`);
+  }
+  for (const words of [
+    "What's that?",
+    'What is it?',
+    'whats that',
+    'What is this song?',
+    'What is this about?',
+    'Look',
+    'Look it up',
+    'Take a look at the news',
+    'Read this',
+    'What about now?',
+    'And now?',
+    'Is this ripe?',
+    'How do I fix this?',
+    'What is the weather like?',
+    '',
+  ]) {
+    assert.equal(isCameraRequest(words), false, words);
+  }
 });
