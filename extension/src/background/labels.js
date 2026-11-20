@@ -3,7 +3,7 @@
 // learned while running the call (the element's name, the page's URL).
 
 import { showUrl } from './sites.js';
-import { singleLine, truncate } from '../shared/util.js';
+import { revealText, singleLine, truncate } from '../shared/util.js';
 
 const q = (s, max = 48) => `"${truncate(singleLine(s), max)}"`;
 
@@ -64,7 +64,11 @@ export function stepLabel(name, input = {}, info = {}) {
       return `Scrolled to ${tn || input.target?.ref || 'an element'}`;
     case 'type': {
       const field = info.field ? ` in ${q(info.field, 32)}` : '';
-      return info.secret ? `Did not type into ${info.secretWhat || 'a secret field'}` : `Typed ${q(input.text, 40)}${field}`;
+      // (What was typed, with anything invisible in it made visible: see revealText. A final line
+      // break is the Enter that ends it.)
+      const typed = String(input.text ?? '');
+      const enter = /[^\n]\n$/.test(typed);
+      return info.secret ? `Did not type into ${info.secretWhat || 'a secret field'}` : `Typed ${q(revealText(enter ? typed.slice(0, -1) : typed), 60)}${enter ? ' + Enter' : ''}${field}`;
     }
     case 'key':
       return `Pressed ${info.keyLabel || singleLine(input.text)}`;

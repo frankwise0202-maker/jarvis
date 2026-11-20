@@ -104,7 +104,8 @@ test('secret fields: passwords, card numbers, security codes, IDs and payment fr
 test('approvals cover one element on one site, once, for a short time', () => {
   let now = 1000;
   const a = new Approvals(() => now);
-  const el = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/p', doc: 3, targetId: 7, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  // (A plain click on that element, read by the guard as the owner's card showed it: see RT5B-01.)
+  const el = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/p', doc: 3, targetId: 7, ctx: 'Dell S2721QS — $279.99', selection: '0|', kind: 'click', verdict: { consequential: false, category: 'change', label: 'Continue' } };
   assert.equal(a.consume(el), null);
   assert.equal(a.grant({ category: 'purchase', ...el, text: 'Buy the Dell' }), true);
   assert.equal(a.consume({ ...el, site: 'other.example' }), null, 'other site');
@@ -227,7 +228,7 @@ test('S7: what a confirm() dialog asks about', () => {
 test('S3/F1/S9/RT2-A01: an approval covers one element, in its state, once, on its page, tab and site, within a minute', () => {
   let now = 1000;
   const a = new Approvals(() => now);
-  const cable = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/deals?x=1#top', doc: 2, targetId: 11, ctx: 'USB-C cable, 1 m — $9.00 Buy now', selection: '0|' };
+  const cable = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/deals?x=1#top', doc: 2, targetId: 11, ctx: 'USB-C cable, 1 m — $9.00 Buy now', selection: '0|', kind: 'click', verdict: { consequential: true, category: 'purchase', label: 'Buy now' } };
   const here = { ...cable, url: 'https://shop.example/deals?x=1' };
   assert.equal(a.grant({ category: 'purchase', ...cable, text: 'Buy the USB-C cable (1 m) for $9.00' }), true);
   assert.equal(a.consume({ ...here, url: 'https://shop.example/product/lg' }), null, 'another page');

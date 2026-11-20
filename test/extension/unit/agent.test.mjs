@@ -13,6 +13,9 @@ import { Approvals } from '../../../extension/src/background/guard.js';
 import { memberResult } from '../../../extension/src/background/executor.js';
 import { systemPrompt, taskMessage, tools } from '../../../extension/src/background/prompts.js';
 
+// What the guard reads a click on the fake "Buy now" as (the owner's card shows it; RT5B-01).
+const BUY_NOW = { consequential: true, category: 'purchase', label: 'Buy now' };
+
 function fakeExecutor(behaviour = {}) {
   const calls = [];
   return {
@@ -22,7 +25,7 @@ function fakeExecutor(behaviour = {}) {
       if (behaviour.describeTarget) return behaviour.describeTarget(target);
       const n = Number(String(target?.ref || '').replace(/^ref_/, '')) || 0;
       if (!n) return { error: 'Error: there is no element at that target.' };
-      return { site: 'shop.example', url: 'https://shop.example/product/dell', toolId: 'tab-1', label: 'Buy now', verb: 'Act on', element: `tab-1|1|${n}`, bind: { doc: 1, targetId: n, ctx: 'Dell S2721QS — $279.99', selection: '0|' } };
+      return { site: 'shop.example', url: 'https://shop.example/product/dell', toolId: 'tab-1', label: 'Buy now', category: 'purchase', consequential: true, verb: 'Act on', element: `tab-1|1|${n}`, bind: { kind: 'click', doc: 1, targetId: n, ctx: 'Dell S2721QS — $279.99', selection: '0|', verdict: BUY_NOW } };
     },
     async run(block, ctx) {
       calls.push(block.name);
@@ -249,7 +252,7 @@ test('request_confirmation: an approval is bound to the target element, in its s
   mock.script([() => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99', category: 'purchase', target: { type: 'ref', ref: 'ref_3' } } }] }), () => ({ answer: 'ok' })]);
   await runTask(env, task('Buy'));
   assert.equal(shown[0].facts.bind.targetId, 3, 'the owner is shown the element it covers');
-  const at = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/product/dell', doc: 1, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  const at = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/product/dell', doc: 1, ctx: 'Dell S2721QS — $279.99', selection: '0|', kind: 'click', verdict: BUY_NOW };
   assert.equal(env.approvals.consume({ ...at, targetId: 4 }), null, 'not a same-labelled button on another element');
   assert.equal(env.approvals.consume({ ...at, targetId: 3, ctx: 'MacBook Pro 16 — $2,499.00' }), null, 'not after the item changed');
   assert.equal(env.approvals.consume({ ...at, targetId: 3, selection: '3|a|b|c' }), null, 'not after the selection changed');
@@ -380,7 +383,7 @@ test('S3/S9: an approval is for one action on the page Jarvis is on; none is ask
   assert.match(seen.text, /^Approved by the owner: .*Go ahead now with exactly this one step on the element you named.*The approval covers only that element, once/);
   assert.doesNotMatch(seen.text, /two minutes|next couple of minutes/);
   assert.equal(asked[0].site, 'shop.example', 'the site is read before asking');
-  const at = { site: 'shop.example', tabId: 'tab-1', doc: 1, targetId: 3, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  const at = { site: 'shop.example', tabId: 'tab-1', doc: 1, targetId: 3, ctx: 'Dell S2721QS — $279.99', selection: '0|', kind: 'click', verdict: BUY_NOW };
   assert.equal(env.approvals.consume({ ...at, url: 'https://shop.example/product/lg' }), null, 'not on another product page');
   assert.ok(env.approvals.consume({ ...at, url: 'https://shop.example/product/dell' }));
   assert.equal(env.approvals.consume({ ...at, url: 'https://shop.example/product/dell' }), null, 'once');

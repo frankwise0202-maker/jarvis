@@ -300,7 +300,8 @@ test('typing: line breaks in a message box use Shift+Enter; Enter in a form asks
   // The click and the typing each asked the owner (ordinary steps); the typing showed its text.
   const steps = asked.filter((a) => a[0] === 'guard').map((a) => a[1]);
   assert.deepEqual(steps.map((g) => [g.category, g.consequential]), [['change', false], ['change', false]]);
-  assert.match(steps[1].verb, /^Type "Hi Alex, See you soon\." into$/);
+  // (RT5C-03: the card shows the text whole, its line break included, never folded away.)
+  assert.match(steps[1].verb, /^Type "Hi Alex,\[new line\]See you soon\." into$/);
   await call('left_click', { target: { type: 'ref', ref: 'ref_2' } });
   const sub = await call('type', { text: 'Happy birthday\n' });
   assert.equal(sub.result.is_error, true);

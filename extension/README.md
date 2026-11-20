@@ -86,6 +86,16 @@ it is (a purchase, sending, deleting…).
 - One **Approve** covers that one step, on that one element, once. If the page changes while you
   decide (another product behind the button, a different selection, another page), Jarvis
   doesn't do it.
+- When Jarvis itself asks you first, before something with consequences (**"Jarvis asks for your
+  approval"**, with its own description of what will happen), your Approve covers one click on the
+  button or link the card names, while it still reads as the card showed it. It never covers a key:
+  a key press there (Enter, or a shortcut such as Ctrl+Enter in a message box, which sends it)
+  always shows its own card, saying what the key does.
+- **Pressing the mouse down** (to hold it, not a click) asks you. While Jarvis holds it down,
+  nothing else happens on that page until it lets go at the very same spot: moving the pointer
+  with the button held would drag whatever was pressed (a slider, an item), so Jarvis refuses to.
+  Letting go anywhere else is asked as the drag it is, naming both ends. A press on a slider is
+  shown as a slider on its card, which says that pressing there sets its value.
 - **Cancel** means it won't happen: Jarvis stops that step and everything it had lined up after
   it, doesn't try another way, and isn't allowed that element or that address again in the task
   (however the address is written, and also by opening it directly).
@@ -107,15 +117,28 @@ typing in the search box asks too (see [Moving between sites](#moving-between-si
 
 A page can try to trick Claude into carrying something private from one site to another: a sign-in
 code from your mail put into the address of a page on another site, say. So when a task has read
-one site (its text or a picture of it) and Jarvis is about to act on another, it asks you first,
-naming what it read: **"Carry on to …?"**. (On a site you haven't allowed yet, the site's own
-question says so instead.) It asks again only when the task has read yet another site. Before it
-opens an address on another site that has anything in it besides the site's name (a path, a search,
-a code), it shows you the whole address, decoded: **"Send this address to …?"** (or in the site's
-own question, for a new site). Links Jarvis saw on a page it read don't count as text Claude chose.
-Cancel stops Jarvis working on that site for the rest of the task. Jarvis also never points or
-scrolls at a spot Claude picked: it uses the middle of the element there, so the position itself
-can't carry anything.
+one site and Jarvis is about to act on another, it asks you first, naming what it read: **"Carry
+on to …?"**. (On a site you haven't allowed yet, the site's own question says so instead.)
+Reading a site means anything from it reaching Claude: its text, a picture of it, and also a tab's
+title and address (a mail tab's title can hold a code, and so can the address a redirect ends
+at), a page's pop-up message, or an element's name in Jarvis's report. It asks again only when the
+task has read yet another site. Before it opens an address on another site that has anything in
+it besides the site's own name (a path, a search, the part after "#", or a different host such as
+`code123.site.com`, or a port the task hasn't been on), it shows you the whole address on its own
+line, exactly as it will be sent, and what it reads as when decoded: **"Send this address to
+…?"** (for a site you haven't allowed yet, right after the site's own question). Only an address
+exactly as Jarvis saw it as a link on a page it read doesn't count as text Claude chose
+(`/ARTICLE/2` or `/article/2;x=1` is not the link `/article/2`). Cancel stops Jarvis working on
+that site for the rest of the task.
+
+What Claude types and the values it sets are shown on their cards in full, with anything you
+couldn't see made visible: a run of spaces shows as "[5 spaces]", an invisible character as its
+code ("[ZWSP]", "[U+E0034]"), a letter from another alphabet that looks like a Latin one as its
+code. Once a task has read another site, Jarvis refuses such text altogether, and addresses that
+hide something the same way or write ordinary letters as codes (`%61` for "a"); it never opens an
+address with a user name or password in it (`user:pass@site`), and never one too long to show.
+Jarvis also never points or scrolls at a spot Claude picked: it uses the middle of the element
+there, so the position itself can't carry anything.
 
 ### What Jarvis can do
 
@@ -171,8 +194,14 @@ Jarvis follows these rules whatever a web page says.
    - An "Are you sure?" pop-up from a site is always shown to you with its exact text. So that the
      page never freezes waiting for you (which would also freeze the bar's Stop and Esc), Jarvis
      answers Cancel at once and asks you right after the step: Approve has Jarvis do that same
-     step again and answer OK this time; Cancel leaves it there. Jarvis never answers OK by itself.
-     Simple notices ("Saved.") are acknowledged; pop-ups that ask for text are dismissed.
+     step again and answer OK this time (when the question came from the Enter that ended some
+     typing, Jarvis presses that Enter again, without typing the text twice); Cancel leaves it
+     there. Your OK covers that one step done again, once, on the same page: the same question
+     from any other step (another link or button, another page, another site) is put to you again,
+     and for a step Jarvis can't repeat by itself, your OK lapses unless it is the very next thing
+     Jarvis does. Jarvis never answers OK unless you approved it for that step, and the step list
+     says when it did. Simple notices ("Saved.") are acknowledged; pop-ups that ask for text are
+     dismissed.
    - **Downloads**: while a task runs, a file a page starts to download waits for you (its name,
      size and site); Cancel, Stop or the end of the task cancels it, so nothing is saved. Your own
      downloads, outside a task or during Take over, are not touched.
@@ -241,7 +270,12 @@ matter, and use Take over or Stop if something looks wrong.
   on such a page is asked again at the click.
 - **"Are you sure?" answers.** Jarvis answers a page's pop-up with Cancel at once and asks you
   afterwards. A site whose Cancel itself does something (a rare trick) does that before you are
-  asked.
+  asked. Your OK is for the step that raised it, done again: if the page asks something else that
+  time, or the step can't be done the same way, Jarvis answers Cancel again and tells you.
+- **A held mouse button.** If a task ends (or you take over or press Stop) while Jarvis holds the
+  mouse button down, Jarvis doesn't let go by itself (letting go could finish a drag); the page
+  may still think the button is down until you click. Jarvis moves nothing there until it lets
+  go at that same spot, which then asks you.
 - Parts of a page built as closed components, and buttons drawn on a canvas, can't be read: Jarvis
   doesn't see their text, so clicks there ask you, named as well as Jarvis can.
 - Boxes embedded from another site (videos, maps, chat or payment widgets) are opaque to Jarvis:
@@ -265,8 +299,10 @@ matter, and use Take over or Stop if something looks wrong.
   page of results. Leave it off for sites where that matters.
 - **What it read can still leak a little.** After you let Jarvis carry on to a site, a tricked
   Claude can still hint at what it read there through which links it follows, how far it scrolls,
-  which element it points at or how long it waits. Jarvis asks again only after the task reads
-  another site. Typed text and addresses are always shown to you first.
+  which element it points at or how long it waits, and through choices you can see but might not
+  notice (the capital letters in an address, which words it types). Jarvis asks again only after
+  the task reads another site. Typed text and addresses are always shown to you first, whole, with
+  anything invisible made visible: read them before you approve.
 - Jarvis points and scrolls at the middle of the element at a spot, not the exact spot: hovering
   over one point of a map or a chart drawn on a canvas reaches its middle.
 - Pressing **Cancel** on Chrome's "started debugging this browser" banner ends Jarvis's control at
@@ -325,7 +361,7 @@ Source lives in `extension/src/`. The build is `npm run build:extension`, which 
 `dist-extension/` and `dist-extension.zip`. The tests are `npm run test:extension`, unit tests and
 end-to-end, with Playwright Chromium running the real unpacked extension against a mock Claude API
 and local test sites (`test/extension/sites.mjs`, and `sites-review.mjs`, `sites-rt2.mjs`,
-`sites-rt3.mjs` and `sites-rt4.mjs` for the pages that attack the safety checks).
+`sites-rt3.mjs`, `sites-rt4.mjs` and `sites-rt5.mjs` for the pages that attack the safety checks).
 
 - `background/`: the service worker.
   - `controller.js`: tasks, prompts, Stop and Take over, history.

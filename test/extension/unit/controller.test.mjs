@@ -176,7 +176,7 @@ test('JS dialogs: alerts are accepted, prompt() and "Leave site?" never; every c
   // A stored request_confirmation approval is never used up by a page's question (it used to be
   // for a confirm() whose text Jarvis did not recognise: an approved post deleted an account).
   const t = controller.driver.get('tab-1');
-  run.approvals.grant({ category: 'post', site: 'shop.example', tabId: 'tab-1', url: t.url, doc: t.docSeq, targetId: 5, ctx: '', selection: '0|', text: 'Post the status' });
+  run.approvals.grant({ category: 'post', site: 'shop.example', tabId: 'tab-1', url: t.url, doc: t.docSeq, targetId: 5, ctx: '', selection: '0|', text: 'Post the status', kind: 'click', verdict: { consequential: true, category: 'post', label: 'Post' } });
   const ask = async (message, choice) => {
     // The page is never held waiting for the owner (its own dialog would freeze Jarvis's bar and
     // Esc): Cancel at once, and the owner is asked once the step is done (the executor).
@@ -195,10 +195,15 @@ test('JS dialogs: alerts are accepted, prompt() and "Leave site?" never; every c
   const b = await ask('Place your order for $279.99?', 'approve');
   assert.equal(b.ok, true, 'Approve answers OK');
   assert.equal(b.p.category, 'purchase');
-  // The owner's OK stands for that same question on that tab, once (Jarvis does the step again).
-  controller.policy(run).preApproveDialog({ toolId: 'tab-1', message: 'Place your order for $279.99?' });
+  // The owner's OK stands for that same question on that tab, once, and only while the step it was
+  // about runs again (RT5B-02: bound to that member, input, document and approved elements).
+  const pol = controller.policy(run);
+  const t1 = controller.driver.get('tab-1');
+  const okFor = pol.preApproveDialog({ toolId: 'tab-1', message: 'Place your order for $279.99?', doc: t1.docSeq }, { member: 'left_click', inputKey: '{"target":"ref_5"}', elements: ['tab-1|1|5'] });
+  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: false, deferred: true }, 'not while that step is not running');
+  assert.equal(pol.armDialog({ member: 'left_click', inputKey: '{"target":"ref_5"}', toolId: 'tab-1', doc: t1.docSeq, actedOn: () => ['tab-1|1|5'] }), okFor, 'armed for that step done again');
   assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $9,999?' }), { accept: false, deferred: true }, 'another question is not covered');
-  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: true, asked: true });
+  assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: true, preApproved: true });
   assert.deepEqual(controller.dialogPolicy('tab-1', { type: 'confirm', message: 'Place your order for $279.99?' }), { accept: false, deferred: true }, 'once');
   // Declined kinds are refused without asking again.
   const c = await ask('Delete this file?', 'cancel');

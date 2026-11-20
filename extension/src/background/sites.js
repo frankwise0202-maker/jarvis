@@ -3,6 +3,7 @@
 
 import PSL_RULES from './psl-data.js';
 import { decodeDeep } from './address.js';
+import { hiddenText, revealText } from '../shared/util.js';
 
 // Sites follow the Public Suffix List, as Chrome does (a dated snapshot, both its ICANN and its
 // private sections: see extension/build/psl.mjs). Hosting and tunnel services where strangers get
@@ -137,9 +138,74 @@ export function normalizeNavigateUrl(input) {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { error: 'Error: Navigation refused. Only http and https URLs are allowed.' };
   }
+  // A user name or password in the address (user:pass@site) reaches the site (Chrome sends it
+  // when the site asks for a sign-in) without showing on the page: never opened.
+  if (parsed.username || parsed.password) {
+    return { error: 'Error: Navigation refused: addresses with a user name or password in them (user:pass@site) are not allowed. Open the address without that part.' };
+  }
   const reason = blockedReason(parsed.href);
   if (reason) return { error: `Error: Navigation refused: ${reason}.` };
+  // An address the owner is shown is shown whole: one too long to read on a card is not opened.
+  if (parsed.href.length > MAX_NAVIGATE_URL) {
+    return { error: `Error: Navigation refused: that address is ${parsed.href.length} characters long; Jarvis opens addresses of at most ${MAX_NAVIGATE_URL} characters (the owner may need to read all of it). Use a shorter address.` };
+  }
   return { url: parsed.href };
+}
+
+/** The longest address navigate opens (an address the owner approves is always shown whole). */
+export const MAX_NAVIGATE_URL = 2000;
+
+/**
+ * An address as an approval card shows it: whole and exactly as it is sent (scheme, any user
+ * name, the full host with any port, the path with its ;params, the query and the #fragment,
+ * which the page there can read), with what it reads as when decoded ("%64elete" is "delete",
+ * "%F3%A0%80%B4" an invisible character) after it when that differs. Nothing is left out or
+ * shortened; what would not show on screen is made visible (revealText).
+ */
+export function cardAddress(url) {
+  let u;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return revealText(String(url ?? ''));
+  }
+  const raw = revealText(u.href);
+  let reading = u.href;
+  try {
+    const user = u.username || u.password ? `${decodeDeep(u.username)}${u.password ? `:${decodeDeep(u.password)}` : ''}@` : '';
+    const query = u.search ? decodeDeep(u.search.replace(/\+/g, ' ')) : '';
+    const hash = u.hash ? decodeDeep(u.hash) : '';
+    reading = `${u.protocol}//${user}${u.host}${decodeDeep(u.pathname)}${query}${hash}`;
+  } catch {
+    reading = u.href;
+  }
+  return reading === u.href ? raw : `${raw} (reads as: ${revealText(reading)})`;
+}
+
+const UNRESERVED = /[A-Za-z0-9\-._~]/;
+
+/**
+ * Whether an address Claude built writes something the owner could not see on its card: hidden
+ * characters once decoded (see hiddenText), or letters written in a roundabout way that a plain
+ * address never uses ("%61" for "a", lowercase "%2f", "%2561" for a doubly written one), any of
+ * which can carry data while the address reads the same. Returns what, in words, or ''.
+ */
+export function addressConcern(url) {
+  let u;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return '';
+  }
+  const tail = `${u.pathname}${u.search}${u.hash}`;
+  for (const m of tail.matchAll(/%([0-9A-Fa-f]{2})/g)) {
+    const hex = m[1];
+    if (UNRESERVED.test(String.fromCharCode(parseInt(hex, 16)))) return `a letter or digit written as a code ("%${hex}")`;
+    if (/[a-f]/.test(hex)) return `a lowercase escape ("%${hex}")`;
+    if (hex.toUpperCase() === '25' && /^%25[0-9A-Fa-f]{2}/.test(tail.slice(m.index))) return 'a doubly written escape ("%25…")';
+  }
+  const decoded = `${decodeDeep(u.pathname)}${u.search ? decodeDeep(u.search.replace(/\+/g, ' ')) : ''}${u.hash ? decodeDeep(u.hash) : ''}`;
+  return hiddenText(decoded, { newlines: false });
 }
 
 function truncateUrl(s) {

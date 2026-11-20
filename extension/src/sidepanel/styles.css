@@ -769,6 +769,17 @@ button {
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+.prompt__address {
+  display: block;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .prompt__facts {
   margin: -2px 0 8px;
   padding: 7px 9px;

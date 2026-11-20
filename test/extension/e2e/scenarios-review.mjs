@@ -379,7 +379,8 @@ const dialogs = {
     await run.waitStatus('done');
     assert(/^The page safe\.localhost\/pro-confirm asks: “Place your order for the Pro plan/.test(q1), q1);
     assert(/^The page safe\.localhost\/profile asks: “Permanently delete your account/.test(q2) && /as Jarvis (is|was) clicking "Remove"/.test(q2), q2);
-    assert(/the owner answered OK/.test(seen.buy.text), seen.buy.text);
+    // (RT5B-02: the owner answered the question once; Jarvis then answered OK for that step, and says so.)
+    assert(/the owner then approved it, so Jarvis did the step again and answered OK to that question this time/.test(seen.buy.text) && /Jarvis answered OK, as the owner approved for this step/.test(seen.buy.text), seen.buy.text);
     assert(/the owner answered Cancel/.test(seen.remove.text), seen.remove.text);
     assert(events(run, '/api/delete-account').length === 0, 'the account was not deleted');
     assert(events(run, '/api/order').map((e) => e.body.via).join(',') === 'pro-confirm', JSON.stringify(events(run)));

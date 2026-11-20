@@ -372,7 +372,9 @@ async function toolRound(env, toolUses, epoch) {
         const label = r.ok ? r.label : notDone(r.label, { blocked });
         emit.update(stepId, { label, status: r.ok ? 'done' : blocked ? 'blocked' : 'error', ...(detail ? { detail } : {}) });
         results.push(r.result);
-        if (!r.ok) failed = true;
+        // (`halt`: the call went through, but what is batched after it must not run: the owner's
+        // OK to a page question waits for this same step again, as Claude's next call.)
+        if (!r.ok || r.halt) failed = true;
         continue;
       }
       if (tu.name === 'request_confirmation') {
@@ -418,10 +420,12 @@ async function toolRound(env, toolUses, epoch) {
 
 /**
  * request_confirmation: asks the owner, showing Claude's description and what Jarvis sees of the
- * target element (its text, the item it belongs to, what is selected). Returns { approved,
- * result }. An approval covers one click or key on exactly that element, in that state, in the
- * tab and page Jarvis is on now, once, within a minute: a same-labelled button on another item,
- * or the same button after the page changed its item or selection, asks the owner again.
+ * target element (its text, the item it belongs to, what is selected, what the guard reads it as).
+ * Returns { approved, result }. An approval covers one plain left click on exactly that element,
+ * in that state, in the tab and page Jarvis is on now, once, within a minute, while the guard
+ * reads that click as the card showed it: a same-labelled button on another item, the same button
+ * after the page changed its item or selection, and any key there (a key's own meaning was not on
+ * the card: Ctrl+Enter in a text box sends) ask the owner again.
  */
 async function confirmation(env, tu) {
   const action = singleLine(tu.input?.action || '');
@@ -442,9 +446,10 @@ async function confirmation(env, tu) {
   const approved = await env.confirm({ action, category, source: 'jarvis', site: facts.site || scope.site, facts });
   if (approved) {
     const b = facts.bind || {};
-    env.approvals.grant({ category, site: facts.site || scope.site, tabId: facts.toolId, url: facts.url, doc: b.doc, targetId: b.targetId, ctx: b.ctx, selection: b.selection, text: action });
+    // (Bound to one plain click on that element, as the card showed it: see Approvals.grant.)
+    env.approvals.grant({ category, site: facts.site || scope.site, tabId: facts.toolId, url: facts.url, doc: b.doc, targetId: b.targetId, ctx: b.ctx, selection: b.selection, text: action, kind: b.kind, verdict: b.verdict });
     env.emit.update(stepId, { status: 'done', label: `You approved: ${truncate(action, 200)}` });
-    return { approved: true, result: customResult(tu.id, `Approved by the owner: ${action}. Go ahead now with exactly this one step on the element you named (one click, or one key with it focused). The approval covers only that element, once, while it shows the same item (${CATEGORIES[category]}); anything else asks the owner again.`) };
+    return { approved: true, result: customResult(tu.id, `Approved by the owner: ${action}. Go ahead now with exactly this one step on the element you named: one left_click. The approval covers only that element, once, for that one click, while it shows the same item (${CATEGORIES[category]}); a key press there (Enter, a shortcut) is not covered and asks the owner itself, and so does anything else.`) };
   }
   // The element, and the address it would open (this site's too), stay declined.
   env.approvals.decline(category, facts.site || scope.site, { element: facts.element || '', href: [facts.opens, facts.dest].filter(Boolean) });

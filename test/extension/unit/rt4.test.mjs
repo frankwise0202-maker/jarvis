@@ -318,7 +318,8 @@ test('RT4C-02: before acting on a site, the executor runs the cross-site check (
   const page = { elements: [{ role: 'button', name: 'Post', x: 0, y: 0, w: 80, h: 30, desc: { tag: 'button' } }] };
   const s = setup({ page, extra: { noteRead: (site) => reads.push(site), crossSite: async (site, o) => (flow.push([site, o.url || '']), site === 'blog.example' ? 'Blocked: the owner did not let Jarvis carry on to blog.example.' : null) } });
   await s.call('read_page', {});
-  assert.deepEqual(reads, ['blog.example']);
+  // (Counted for each part of the page that reached Claude: its text, its tab's title; RT5C-04.)
+  assert.deepEqual([...new Set(reads)], ['blog.example']);
   const r = await s.call('left_click', { target: ref(1) });
   assert.match(text(r), /^Blocked: the owner did not let Jarvis carry on to blog\.example/);
   assert.equal(s.presses().length, 0);
@@ -392,14 +393,14 @@ test('RT4C-01/RT4-03: a form another site\'s box sends by itself asks the owner 
     const decision = controller.navigationPolicy('tab-1', 'https://ads.example/api/place-order', { method: 'POST', main: false, sessionId: 'S1', frameId: 'FX' });
     const p = await waitFor(() => lastTask().prompt);
     assert.equal(p.title, 'Approve this page load?');
-    assert.match(p.body, /wants to send a form to ads\.example\/api\/place-order \(from inside a box from another site\)/);
+    assert.match(p.body, /wants to send a form to https:\/\/ads\.example\/api\/place-order \(from inside a box from another site\)/);
     controller.decide(p.id, 'cancel');
     const v = await decision;
     assert.equal(v === true || v?.allow === true, false);
   });
 });
 
-test('RT4C-02: a new site\'s own prompt says what the task read and shows the address Jarvis would open there; allowing it covers both (one prompt)', async () => {
+test('RT4C-02: a new site\'s own prompt says what the task read; the address Jarvis would open there is then shown whole on its own card (RT5C-02: never folded into the site question)', async () => {
   const { controller, lastTask, waitFor, done } = await controllerSetup();
   await done(async () => {
     const policy = controller.run.policy;
@@ -409,10 +410,15 @@ test('RT4C-02: a new site\'s own prompt says what the task read and shows the ad
     const p = await waitFor(() => lastTask().prompt);
     assert.equal(p.kind, 'site');
     assert.match(p.body, /read .*mail\.example/);
-    assert.ok(p.body.includes('new.example/collect?c=482913'), p.body);
     controller.decide(p.id, 'once');
     assert.equal(await asking, null);
-    assert.equal(await policy.crossSite('new.example', { url }), null, 'no second prompt for the same address');
+    const sending = policy.crossSite('new.example', { url });
+    const card = await waitFor(() => lastTask().prompt);
+    assert.equal(card.title, 'Send this address to new.example?');
+    assert.ok(card.body.includes('https://new.example/collect?c=482913') && card.address === 'https://new.example/collect?c=482913', card.body);
+    controller.decide(card.id, 'approve');
+    assert.equal(await sending, null);
+    assert.equal(await policy.crossSite('new.example', { url }), null, 'not again for the same address');
     assert.equal(lastTask().prompt, null);
   });
 });

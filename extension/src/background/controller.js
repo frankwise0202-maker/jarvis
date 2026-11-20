@@ -11,13 +11,12 @@ import { Driver } from './driver.js';
 import { Executor, TOOLSET_NAME, memberResult } from './executor.js';
 import { Approvals, CATEGORIES, CATEGORY_CHIPS, GUARD_CATEGORIES, SECRET_NAMES, classifyDialogText } from './guard.js';
 import { addressAction } from './actions.js';
-import { addressKey } from './address.js';
 import { inlineUntrusted } from './injection.js';
 import { Limits } from './limits.js';
 import { MODELS, addUsage } from './models.js';
 import { systemPrompt, taskMessage, tools } from './prompts.js';
 import { STOPPED_TEXT, runTask } from './agent.js';
-import { blockedReason, isActionableUrl, shortUrl, showUrl, siteOf } from './sites.js';
+import { blockedReason, cardAddress, isActionableUrl, shortUrl, showUrl, siteOf } from './sites.js';
 
 const SESSION_KEY = 'jarvis.session';
 // Errors that a second try usually fixes: Retry then continues the same conversation.
@@ -26,9 +25,8 @@ const BADGE = { running: ['•', '#3ee0ff'], waiting: ['!', '#ffc457'], paused: 
 
 export const RETRY_NOTE = '[Jarvis: the last request failed with a temporary error and the owner pressed Retry. The pages may have changed since: look again (read_page or screenshot) before you act.]';
 
-// How long the owner's OK to a page's "Are you sure?" question stands for the same question when
-// Jarvis does the step again (the page got Cancel at once; see dialogPolicy).
-export const DIALOG_REPEAT_MS = 30 * 1000;
+/** Two lists of element keys, the same and in the same order. */
+const sameKeys = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((k, i) => String(k) === String(b[i]));
 // A download the owner approved a moment ago (the link to it, the address of it) is not asked again.
 const DOWNLOAD_ALLOWANCE_MS = 30 * 1000;
 
@@ -71,26 +69,41 @@ function listSites(sites) {
   return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
 }
 
-/** Whether an address carries text beyond its site: a path, a query or a fragment (all of which a page there sees). */
-function carriesText(url) {
+/**
+ * Whether an address carries text beyond its site's name, which Claude could have chosen: anything
+ * after the host (a path with its ;params, a query, a #fragment, which a page there reads too, or
+ * just a "?" or "#"), a user name or password, or a host other than the site's own name or its
+ * "www." on the usual port (a subdomain; a port the task has not seen on any page or link) that
+ * the task has not been on or seen a link to (`flow.hosts`). A subdomain or a port can spell out a
+ * code as well as a path can.
+ */
+function carriesText(url, flow) {
   try {
     const u = new URL(url);
-    return (!!u.search && u.search !== '?') || (!!u.hash && u.hash !== '#') || (!!u.pathname && u.pathname !== '/');
+    if (u.href !== `${u.protocol}//${u.host}/`) return true;
+    const site = siteOf(url);
+    const bare = (u.hostname === site || u.hostname === `www.${site}`) && (!u.port || !!flow?.ports?.has(u.port));
+    return !bare && !flow?.hosts?.has(u.host);
   } catch {
     return true;
   }
 }
 
-/** An address as the cross-site check compares it: normalised (addressKey), with its fragment. */
-function flowKey(url) {
+/**
+ * An address as the cross-site check matches it: exactly as the browser sends it (its standard
+ * form, #fragment included). Never the loose addressKey: "/ARTICLE/2", "/article/2;c=4" or
+ * "/%61rticle/2" are other addresses than a link to "/article/2" (each can carry something),
+ * however a server reads them. (addressKey stays for what the owner declined, where matching
+ * broadly is the safe direction.)
+ */
+function exactKey(url) {
   try {
-    const u = new URL(url);
-    const k = addressKey(url);
-    return u.hash && u.hash !== '#' ? `${k}#${u.hash.slice(1)}` : k;
+    return new URL(String(url)).href;
   } catch {
     return '';
   }
 }
+
 function formatBytes(n) {
   if (!(n > 0)) return '';
   if (n < 1024) return `${n} bytes`;
@@ -265,14 +278,19 @@ export class Controller {
       downloadSeq: 0,
       downloadsReported: 0,
       downloadAllowances: [],
-      dialogApprovals: [], // the owner's OK to a page question, for doing its step again: { toolId, message, until }
+      // The owner's OK to a page question, bound to the one step it was about (see dialogPolicy):
+      // { toolId, message, doc, member, inputKey, elements, approved, armed: () => the elements the
+      // running call has sent input to }.
+      dialogOk: null,
       loadPrompts: new Set(), // "Approve this page load?" prompts not answered yet (cancelled when Jarvis lets go)
       // What Claude has read on which site in this task, and where the owner let Jarvis go on
       // acting after that (see crossSite): reads: the sites read; cleared: site -> the sites whose
       // reads the owner let Jarvis carry on to it with; seen: addresses of links on pages Jarvis
-      // read; denied: sites the owner would not let it carry on to; urls: addresses the owner
-      // approved opening.
-      flow: { reads: new Set(), cleared: new Map(), seen: new Set(), denied: new Set(), urls: new Set() },
+      // read, exactly as written there; denied: sites the owner would not let it carry on to;
+      // urls: addresses the owner approved opening; hosts: the host:port of every page Jarvis read
+      // or was shown and of every link seen (a subdomain or a port Claude chose is text too), and
+      // ports: the ports among them.
+      flow: { reads: new Set(), cleared: new Map(), seen: new Set(), denied: new Set(), urls: new Set(), hosts: new Set(), ports: new Set() },
       noBarOk: new Set(), // documents (tab|doc) where the owner let Jarvis act without its bar
       settings,
       windowId,
@@ -344,6 +362,9 @@ export class Controller {
     // A run Stop already ended (it hung in a call that never returned) finishes nothing more: its
     // late cleanup must not touch the next task's tabs.
     if (run.orphaned) return;
+    run.dialogOk = null;
+    // A mouse button still held down stays held, but its release asks the owner from now on.
+    this.driver.uncoverPresses?.();
     // A page load still waiting for the owner's answer does not happen: its prompt ends as Cancel,
     // and the driver fails it before letting go of the tab (Chrome would otherwise send it).
     this.cancelLoadPrompts(run);
@@ -547,7 +568,7 @@ export class Controller {
       };
       run.abort.signal.addEventListener('abort', onAbort, { once: true });
       run.prompt = { id, choices, token: prompt.token || null, resolve: (v) => done(resolve, v) };
-      run.task.prompt = { id, kind: prompt.kind, title: prompt.title, body: prompt.body, facts: prompt.facts || '', site: prompt.site || '', category: prompt.category || '', detail: prompt.detail || '', source: prompt.source || '', consequential: !!prompt.consequential, choices: prompt.choices };
+      run.task.prompt = { id, kind: prompt.kind, title: prompt.title, body: prompt.body, address: prompt.address || '', facts: prompt.facts || '', site: prompt.site || '', category: prompt.category || '', detail: prompt.detail || '', source: prompt.source || '', consequential: !!prompt.consequential, choices: prompt.choices };
       run.task.status = 'waiting';
       this.updateBadge('waiting');
       if (!run.takeover) this.driver.setMode('waiting').catch(() => {});
@@ -562,7 +583,7 @@ export class Controller {
     run.prompt.resolve(choice);
   }
 
-  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0, token = null }) {
+  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0, token = null, address = '' }) {
     const what = CATEGORY_CHIPS[category] || 'Consequential action';
     const choice = await this.ask(run, {
       kind: 'confirm',
@@ -572,6 +593,8 @@ export class Controller {
       consequential: consequential ?? category !== 'change',
       title: title || (source === 'guard' ? 'Approve this step?' : 'Jarvis asks for your approval'),
       body: action,
+      // (An address in the body, shown on its own line, whole: see cardAddress.)
+      address,
       facts,
       choices: [
         { id: 'approve', label: 'Approve', tone: 'primary' },
@@ -612,7 +635,7 @@ export class Controller {
     const sel = c.selection?.count ? ` with ${c.selection.count} item${c.selection.count === 1 ? '' : 's'} selected (${c.selection.names.map((n) => q(n, 32)).join('; ')}${c.selection.count > c.selection.names.length ? '; …' : ''})` : '';
     const detail = c.detail ? ` ${c.detail}` : '';
     const where = c.url && /^https?:/i.test(c.url) ? shortUrl(c.url, 60) : c.site || 'this page';
-    const dest = c.dest ? ` It opens ${showUrl(c.dest, 90)}${c.target ? ` ${c.target}` : ''}.` : c.target ? ` It opens ${c.target}.` : '';
+    const dest = c.dest ? ` It opens ${cardAddress(c.dest)}${c.target ? ` ${c.target}` : ''}.` : c.target ? ` It opens ${c.target}.` : '';
     const blind = c.selectionUnknown ? " Jarvis can't see everything that is selected on this page (part of it is hidden from Jarvis)." : '';
     const what = c.consequential ? ` This looks like ${c.reason || GUARD_CATEGORIES[c.category]}.` : !c.label && c.unlabelled ? " Jarvis can't tell what it does." : '';
     return `${c.verb}${shown}${alias}${role}${hidden}${item}${sel}${detail} on ${where}.${dest}${blind}${what}`;
@@ -644,14 +667,15 @@ export class Controller {
           host = '';
         }
         // What Claude read on other sites in this task could reach this one: say so here (allowing
-        // the site also lets Jarvis carry on to it, and open the address shown; see crossSite).
+        // the site also lets Jarvis carry on to it; see crossSite). An address carrying text that
+        // Jarvis would open there is not folded into this question: its own "Send this address"
+        // card follows, showing all of it (a site question is easily allowed as routine).
         const read = this.readSites(run, site);
-        const address = opts?.address && read.length && carriesText(url) && !run.flow.seen.has(flowKey(url)) ? url : '';
         const asking = this.ask(run, {
           kind: 'site',
           site,
           title: `Let Jarvis work on ${site}?`,
-          body: `Jarvis wants to read and use ${host && host !== site ? `${host} (part of ${site})` : site} in your browser for this task.${read.length ? ` In this task it has read ${listSites(read)}: if a page tricked Jarvis, what it read there could reach ${site}.` : ''}${address ? ` It would open this address there (everything in it reaches ${site}):\n${showUrl(address, 400)}` : ''}`,
+          body: `Jarvis wants to read and use ${host && host !== site ? `${host} (part of ${site})` : site} in your browser for this task.${read.length ? ` In this task it has read ${listSites(read)}: if a page tricked Jarvis, what it read there could reach ${site}.` : ''}`,
           choices: [
             { id: 'once', label: 'Allow once', tone: 'primary' },
             { id: 'always', label: 'Always for this site', tone: 'secondary' },
@@ -670,13 +694,11 @@ export class Controller {
           run.sitesAllowed.add(site);
           run.always = { ...(run.always || {}), [site]: 'always' };
           this.clearFlow(run, site, read);
-          if (address) run.flow.urls.add(flowKey(address));
           return null;
         }
         if (choice === 'once') {
           run.sitesAllowed.add(site);
           this.clearFlow(run, site, read);
-          if (address) run.flow.urls.add(flowKey(address));
           return null;
         }
         run.sitesDenied.add(site);
@@ -686,36 +708,38 @@ export class Controller {
       confirmGuard: async (c) => {
         const site = c.site || '';
         const what = GUARD_CATEGORIES[c.category] || 'a step that changes something';
-        const quoted = c.label ? ` ${this.quoteLabel(run, c)}` : '';
+        // (The label, quoted for Claude only in a refusal: see quoteLabel.)
+        const quoted = () => (c.label ? ` ${this.quoteLabel(run, c)}` : '');
         if (c.consequential && run.approvals.isDeclined(c.category, site)) {
           return `Blocked: the owner already declined ${what} on ${site || 'this page'} in this task. It was not done. Don't try again or find another way; tell the owner and finish.`;
         }
         if (run.approvals.isDeclinedElement(c.element) || (c.opens && run.approvals.isDeclinedHref(c.opens)) || (c.dest && run.approvals.isDeclinedHref(c.dest))) {
-          return `Blocked: the owner already declined this step (${c.verb}${quoted}) in this task. It was not done. Don't try again or find another way; tell the owner and finish.`;
+          return `Blocked: the owner already declined this step (${c.verb}${quoted()}) in this task. It was not done. Don't try again or find another way; tell the owner and finish.`;
         }
         // Covered by the owner's request_confirmation approval of exactly this element, in this
         // state (used up now).
         if (c.bind && run.approvals.consume({ ...c.bind, site, tabId: c.toolId, url: c.url })) return null;
-        const ok = await this.confirm(run, { action: this.describeStep(c), category: c.category, source: 'guard', site, consequential: !!c.consequential });
+        const ok = await this.confirm(run, { action: this.describeStep(c), category: c.category, source: 'guard', site, consequential: !!c.consequential, address: c.dest ? cardAddress(c.dest) : '' });
         if (ok) return null;
         // The address it would have opened stays declined too, on any site (this one included).
         run.approvals.decline(c.category, site, { element: c.element, href: [c.opens, c.dest].filter(Boolean) });
         const shown = c.label ? ` "${truncate(singleLine(c.label), 60)}"` : '';
         run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: `You cancelled: ${c.verb}${shown}. Jarvis did not do it.`, status: 'done' });
-        return `Blocked: the owner declined this step (${c.verb}${quoted}${c.consequential ? `: ${c.reason || what}` : ''}). It was not done. Don't try it again or find another way to do it; tell the owner and finish.`;
+        return `Blocked: the owner declined this step (${c.verb}${quoted()}${c.consequential ? `: ${c.reason || what}` : ''}). It was not done. Don't try it again or find another way to do it; tell the owner and finish.`;
       },
       everyday: (site) => !!(site && run.everyday?.[site] === true),
       // The cross-site check (what Claude read on one site reaching another; see crossSite).
-      noteRead: (site) => {
-        if (site) run.flow.reads.add(site);
-      },
+      noteRead: (site, url = '') => this.noteFlowRead(run, site, url),
       noteLinks: (urls) => {
         for (const u of urls || []) {
           if (run.flow.seen.size >= 20000) break;
-          const key = flowKey(u);
-          if (key) run.flow.seen.add(key);
+          const key = exactKey(u);
+          if (!key) continue;
+          run.flow.seen.add(key);
+          this.noteFlowHost(run, key);
         }
       },
+      isSeenLink: (url) => run.flow.seen.has(exactKey(url)),
       readElsewhere: (site) => [...run.flow.reads.keys()].some((s) => s !== site),
       crossSite: (site, opts) => this.crossSite(run, site, opts),
       barCheck: (info) => this.barCheck(run, info),
@@ -726,7 +750,32 @@ export class Controller {
       noteActionResult: (url, what) => run.approvals.noteActionResult(url, what),
       actionResult: (url) => run.approvals.actionResult(url),
       askDialog: (q, opts) => this.askDialog(run, q, opts),
-      preApproveDialog: (q) => run.dialogApprovals.push({ toolId: q.toolId, message: String(q.message || ''), until: this.now() + DIALOG_REPEAT_MS }),
+      // The owner said OK to the page question `q` about one step (member, input, the elements it
+      // was approved on): it stands for that same step done again, once, in that document (see
+      // dialogPolicy), and only while that step is running (armDialog). Anything else drops it.
+      // (`elements`: what the step sent its input to; `approved`: the elements the owner approved
+      // for it, which the step done again does not ask about again.)
+      preApproveDialog: (q, bind = {}) => {
+        run.dialogOk = { toolId: String(q?.toolId || ''), message: String(q?.message || ''), doc: q?.doc, member: String(bind.member || ''), inputKey: String(bind.inputKey || ''), elements: (bind.elements || []).map(String), approved: (bind.approved || []).map(String), armed: null };
+        return run.dialogOk;
+      },
+      // A call starts (or Jarvis does the step again itself): arms the owner's OK when this call is
+      // that very step (same member, same input, same tab and document), else drops it. `actedOn`:
+      // the elements the running call has sent input to so far.
+      armDialog: ({ member, inputKey, toolId, doc, actedOn } = {}) => {
+        const b = run.dialogOk;
+        if (!b) return null;
+        if (b.armed || b.member !== String(member || '') || b.inputKey !== String(inputKey || '') || b.toolId !== String(toolId || '') || b.doc !== doc || typeof actedOn !== 'function') {
+          run.dialogOk = null;
+          return null;
+        }
+        b.armed = actedOn;
+        return b;
+      },
+      // That call ended (done, failed or stopped): the OK is gone, used or not.
+      disarmDialog: (b) => {
+        if (b && run.dialogOk === b) run.dialogOk = null;
+      },
       allowDownload: ({ url, site }) => run.downloadAllowances.push({ url, site, until: this.now() + DOWNLOAD_ALLOWANCE_MS }),
       awaitDownload: (url, opts) => this.awaitDownload(run, url, opts),
       drainDownloads: () => {
@@ -783,25 +832,50 @@ export class Controller {
     if (flow.denied.has(site)) return refusal;
     const others = this.readSites(run, site);
     const anyOther = this.readSites(run, site, { since: false });
-    const carries = !!url && anyOther.length > 0 && carriesText(url) && !flow.seen.has(flowKey(url)) && !flow.urls.has(flowKey(url));
+    // (Any address that is not exactly a link seen on a page Jarvis read, or one the owner already
+    // approved, is shown whole, also when going on to the site would be asked anyway.)
+    const carries = !!url && anyOther.length > 0 && carriesText(url, flow) && !flow.seen.has(exactKey(url)) && !flow.urls.has(exactKey(url));
     if (!others.length && !carries) return null;
     const read = carries ? anyOther : others;
+    const shown = carries ? cardAddress(url) : '';
     const body = carries
-      ? `In this task Jarvis has read ${listSites(read)}. Now it wants to open this address on ${site}:\n${showUrl(url, 400)}\nEverything in an address reaches ${site}. If a page tricked Jarvis, something it read (a code, a message, a link) could be in it. Approve only if you recognise all of it.`
+      ? `In this task Jarvis has read ${listSites(read)}. Now it wants to open this address on ${site}:\n${shown}\nEverything in an address reaches ${site}: the whole host, the path, the search and the part after "#". If a page tricked Jarvis, something it read (a code, a message, a link) could be in it. Approve only if you recognise all of it.`
       : `In this task Jarvis has read ${listSites(read)}. Now it wants to act on ${site} (open its pages, click, type or point there). If a page tricked Jarvis, what it read could reach ${site} that way. Approve if going on to ${site} is part of your task.`;
-    const ok = await this.confirm(run, { action: body, category: 'flow', source: 'guard', site, consequential: true, title: carries ? `Send this address to ${site}?` : `Carry on to ${site}?` }).catch((err) => {
+    const ok = await this.confirm(run, { action: body, category: 'flow', source: 'guard', site, consequential: true, title: carries ? `Send this address to ${site}?` : `Carry on to ${site}?`, address: shown }).catch((err) => {
       if (isAbort(err)) throw err;
       return false;
     });
     if (!ok) {
       flow.denied.add(site);
-      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: carries ? `You cancelled opening ${showUrl(url, 80)}. Jarvis did not open it.` : `You stopped Jarvis from going on to ${site} after reading ${listSites(read)}.`, status: 'done' });
+      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: carries ? `You cancelled opening ${shown}. Jarvis did not open it.` : `You stopped Jarvis from going on to ${site} after reading ${listSites(read)}.`, status: 'done' });
       this.emitTask(run.task);
       return refusal;
     }
     this.clearFlow(run, site, read);
-    if (carries) flow.urls.add(flowKey(url));
+    if (carries) flow.urls.add(exactKey(url));
     return null;
+  }
+
+  /**
+   * Page content from `site` reached Claude (a read, a picture, a tab's title or address, a dialog,
+   * an element's name in a result): the cross-site check counts the site as read, and the page's
+   * host:port as one the task has been on.
+   */
+  noteFlowRead(run, site, url = '') {
+    if (!site) return;
+    run.flow.reads.add(site);
+    this.noteFlowHost(run, url);
+  }
+
+  /** A host:port (and its port) the task has been on or seen a link to (see carriesText). */
+  noteFlowHost(run, url) {
+    try {
+      const u = new URL(String(url));
+      if (run.flow.hosts.size < 2000) run.flow.hosts.add(u.host);
+      if (u.port && run.flow.ports.size < 50) run.flow.ports.add(u.port);
+    } catch {
+      /* not an address */
+    }
   }
 
   /**
@@ -860,9 +934,11 @@ export class Controller {
    * Jarvis never answers OK for the owner, and never holds the page waiting for them either (a page
    * held by its own dialog cannot show Jarvis's bar or hear Esc). So it is answered Cancel at once
    * and left for the owner (deferred): once the step that raised it is done, the executor asks
-   * them, and on their OK does the step again, when this same question is answered OK (the
-   * owner's OK stands for DIALOG_REPEAT_MS, for that tab and that text, once). Returns a boolean or
-   * { accept, asked, deferred }.
+   * them, and on their OK does that step again. Only then is this same question answered OK:
+   * while that very step runs again (armed: the same member and input, in the same tab and
+   * document, sending its input to the same elements), once. The same text from any other step,
+   * page, document or site is put to the owner again. Returns a boolean or
+   * { accept, deferred?, preApproved? }.
    */
   dialogPolicy(toolId, dialog) {
     const run = this.run;
@@ -873,12 +949,20 @@ export class Controller {
     if (!site) return false;
     const category = classifyDialogText(dialog.message);
     if (category && run.approvals.isDeclined(category, site)) return false;
-    const now = this.now();
-    run.dialogApprovals = run.dialogApprovals.filter((a) => a.until > now);
-    const i = run.dialogApprovals.findIndex((a) => a.toolId === toolId && a.message === String(dialog.message || ''));
-    if (i >= 0) {
-      run.dialogApprovals.splice(i, 1);
-      return { accept: true, asked: true };
+    const message = String(dialog.message || '');
+    const b = run.dialogOk;
+    let ok = false;
+    try {
+      ok = !!b && typeof b.armed === 'function' && b.toolId === String(toolId) && b.doc === t.docSeq && b.message === message && sameKeys(b.armed(), b.elements);
+    } catch {
+      ok = false;
+    }
+    if (ok) {
+      b.used = true;
+      run.dialogOk = null;
+      run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'info', label: `Jarvis answered OK to the page's question “${truncate(singleLine(message), 120)}”, as you approved for that step.`, status: 'done' });
+      this.emitTask(run.task);
+      return { accept: true, preApproved: true };
     }
     return { accept: false, deferred: true };
   }
@@ -888,7 +972,7 @@ export class Controller {
    * once the step that raised it is done. `doing`: that step; `rerun`: whether Jarvis can do it
    * again by itself. Resolves true for OK.
    */
-  async askDialog(run, q, { doing = '', rerun = false } = {}) {
+  async askDialog(run, q, { doing = '', rerun = false, redo = '' } = {}) {
     if (this.run !== run || run.abort.signal.aborted) return false;
     const t = q.toolId ? this.driver.get(q.toolId) : null;
     const site = t ? siteOf(t.url) : '';
@@ -896,7 +980,12 @@ export class Controller {
     if (category && run.approvals.isDeclined(category, site)) return false;
     const when = doing ? ` (as Jarvis was ${singleLine(doing).replace(/…$/, '').replace(/^./, (c) => c.toLowerCase())})` : '';
     const quoted = truncate(singleLine(q.message), 300);
-    const then = rerun ? 'Approve: Jarvis does that step again and answers OK.' : 'Approve: Jarvis is told to do that step again, and answers OK then.';
+    // (The OK covers that one step done again, once: never the same question from another step.)
+    const then = redo
+      ? `Approve: Jarvis ${redo} and answers OK to this question then, once.`
+      : rerun
+        ? 'Approve: Jarvis does that same step again and answers OK to this question then, once.'
+        : 'Approve: Jarvis does that same step again as its very next step, and answers OK to this question then, once.';
     const action = `The page ${t ? shortUrl(t.url, 60) : site || 'Jarvis is working in'} asks: “${quoted || '(no text)'}”${when}. Jarvis answered Cancel for now, so what it asks has not happened. ${then} Cancel: nothing more happens.`;
     let ok = false;
     try {
@@ -998,7 +1087,8 @@ export class Controller {
       const t = this.driver.get(toolId);
       const from = t && /^https?:/i.test(t.url || '') ? shortUrl(t.url, 60) : site;
       const consequential = !!(acts && CATEGORIES[acts.category]);
-      const what = sending ? `send a form to ${showUrl(url, 90)}${sessionId ? ' (from inside a box from another site)' : main ? '' : ' (into a frame)'}` : `open ${showUrl(url, 90)} (${acts.reason})`;
+      const shownUrl = cardAddress(url);
+      const what = sending ? `send a form to ${shownUrl}${sessionId ? ' (from inside a box from another site)' : main ? '' : ' (into a frame)'}` : `open ${shownUrl} (${acts.reason})`;
       // (Withdrawn as Cancel if Jarvis lets go of the tab before the owner answers.)
       const token = { cancelled: false };
       run.loadPrompts.add(token);
@@ -1012,6 +1102,7 @@ export class Controller {
           consequential: true,
           title: 'Approve this page load?',
           token,
+          address: shownUrl,
         });
       } catch {
         ok = false;
@@ -1118,6 +1209,10 @@ export class Controller {
   quoteLabel(run, c) {
     const { text, injections } = inlineUntrusted(truncate(singleLine(c.label), 60));
     if (injections.length) this.noteInjection(run, injections, c.url, c.toolId);
+    // (A page's label reaching Claude is content of the page in the tab: see noteFlowRead. Labels
+    // Jarvis writes itself, "a box from …", "this address", are nothing of any site.)
+    const pageSite = c.pageLabel && /^https?:/i.test(String(c.url || '')) ? siteOf(c.url) : '';
+    if (pageSite) this.noteFlowRead(run, pageSite, c.url);
     return text;
   }
 
@@ -1152,6 +1247,8 @@ export class Controller {
     if (!run || run.stopping) return;
     run.stopping = true;
     run.task.stoppedVia = via;
+    run.dialogOk = null;
+    this.driver.uncoverPresses?.();
     run.abort.abort();
     run.resumeWaiter?.reject(abortError());
     // The task card turns "stopped" right away; the loop finishes the bookkeeping when it unwinds.
@@ -1196,6 +1293,11 @@ export class Controller {
     if (!run || run.takeover || run.stopping) return;
     run.takeover = true;
     run.takeovers += 1;
+    // The owner's OK to a page question was for a step Jarvis was about to do: not after this.
+    run.dialogOk = null;
+    // The owner may use the page now: a mouse button Jarvis holds down stays held for Jarvis
+    // (nothing moves until it is released at its point), but its release asks the owner.
+    this.driver.uncoverPresses?.();
     // A page load waiting for the owner's answer does not happen (the driver fails it before it
     // lets go of the tab; Chrome would otherwise send it): its prompt ends as Cancel.
     this.cancelLoadPrompts(run);

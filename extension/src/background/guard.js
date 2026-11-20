@@ -593,15 +593,25 @@ export function pageKey(url) {
 export const UNKNOWN_SELECTION = '?';
 export const isUnknownSelection = (key) => String(key || '').startsWith(UNKNOWN_SELECTION);
 
+/** What the owner was shown about an element, or what a step on it would do: { consequential, category, label }. */
+function sameVerdict(a, b) {
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  return !!a.consequential === !!b.consequential && String(a.category || 'change') === String(b.category || 'change') && String(a.label || '') === String(b.label || '');
+}
+
 /**
  * Per-task approvals and refusals.
  *
  * An approval (from request_confirmation) is bound to one element: the same element (by identity,
  * in the same document, tab and page it was asked on), with the same item around it (its row, card
  * or form: the product's name and price, the message's subject) and the same items selected on the
- * page, once, within a minute. Anything else asks the owner again; so does a page where Jarvis
- * cannot see everything that could be selected (an unknown selection never matches). The guard's
- * own Approve covers only the step it was shown for and is never stored here.
+ * page, once, within a minute. It covers one input only: a plain left click on that element (never
+ * a key, whose own meaning the card did not show: Ctrl+Enter in a text box sends), and only while
+ * the guard reads that click exactly as the owner's card showed it (the same verdict: consequential
+ * or not, the kind of action, the label), and, for a step the guard calls consequential, only when
+ * Claude named that same kind of action. Anything else asks the owner again; so does a page where
+ * Jarvis cannot see everything that could be selected (an unknown selection never matches). The
+ * guard's own Approve covers only the step it was shown for and is never stored here.
  *
  * A refusal of a consequential kind of action (a purchase, sending, posting, deleting, an account
  * change, accepting terms, a download, a box from another site) blocks that kind on that site for
@@ -624,11 +634,16 @@ export class Approvals {
 
   /**
    * Records an approval bound to an element ({ category, site, tabId, url, doc, targetId, ctx,
-   * selection, text }). Without a site or an element it is not stored. Returns whether it was.
+   * selection, text, kind, verdict }). `kind`: the one input it covers ('click', a plain left
+   * click); `verdict`: what the owner's card said about the element ({ consequential, category,
+   * label }). Without a site, an element, the input or the verdict it is not stored. Returns
+   * whether it was.
    */
-  grant({ category, site, tabId = '', url = '', doc, targetId, ctx = '', selection = '', text = '' } = {}) {
+  grant({ category, site, tabId = '', url = '', doc, targetId, ctx = '', selection = '', text = '', kind = '', verdict = null } = {}) {
     if (!category || !site || targetId === undefined || targetId === null || targetId === '' || doc === undefined || doc === null || !tabId) return false;
-    this.granted.push({ category, site, tabId: String(tabId), page: pageKey(url), doc, targetId: String(targetId), ctx: String(ctx || ''), selection: String(selection || ''), text: String(text || ''), expires: this.now() + APPROVAL_TTL_MS, uses: APPROVAL_USES });
+    if (kind !== 'click' || !verdict || typeof verdict !== 'object') return false;
+    const shown = { consequential: !!verdict.consequential, category: String(verdict.category || 'change'), label: String(verdict.label || '') };
+    this.granted.push({ category, site, tabId: String(tabId), page: pageKey(url), doc, targetId: String(targetId), ctx: String(ctx || ''), selection: String(selection || ''), text: String(text || ''), kind, verdict: shown, expires: this.now() + APPROVAL_TTL_MS, uses: APPROVAL_USES });
     return true;
   }
 
@@ -640,13 +655,22 @@ export class Approvals {
 
   /**
    * Uses up the approval for a step on exactly that element, in that state, if there is one.
+   * `kind`: the step's input ('click' for a plain left click; anything else never matches);
+   * `verdict`: what the guard says that step would do ({ consequential, category, label }), which
+   * must be what the owner's card showed, and, when consequential, the kind of action Claude named.
    * Returns the approval (its category and text) or null.
    */
-  consume({ site, tabId, url, doc, targetId, ctx = '', selection = '' } = {}) {
+  consume({ site, tabId, url, doc, targetId, ctx = '', selection = '', kind = '', verdict = null } = {}) {
     if (!site || targetId === undefined || targetId === null) return null;
+    // One plain click, never a key or any other input (fail closed).
+    if (kind !== 'click' || !verdict || typeof verdict !== 'object') return null;
     // What is selected must be known, now and when the owner approved (fail closed).
     if (isUnknownSelection(selection)) return null;
-    const match = this.live().find((a) => a.site === site && a.tabId === String(tabId || '') && a.page === pageKey(url) && a.doc === doc && a.targetId === String(targetId) && a.ctx === String(ctx || '') && a.selection === String(selection || '') && !isUnknownSelection(a.selection));
+    const match = this.live().find(
+      (a) =>
+        a.site === site && a.tabId === String(tabId || '') && a.page === pageKey(url) && a.doc === doc && a.targetId === String(targetId) && a.ctx === String(ctx || '') && a.selection === String(selection || '') && !isUnknownSelection(a.selection) &&
+        a.kind === kind && sameVerdict(a.verdict, verdict) && (!verdict.consequential || a.category === String(verdict.category || '')),
+    );
     if (!match) return null;
     match.uses -= 1;
     return match;

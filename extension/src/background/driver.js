@@ -634,15 +634,18 @@ export class Driver {
         } catch {
           decision = false;
         }
-        const answer = (accept, asked = false, deferred = false) => {
+        // (`doc`: the document that asked, which an OK the owner gives afterwards is bound to.)
+        const doc = t.docSeq;
+        const answer = (accept, asked = false, deferred = false, preApproved = false) => {
           // "Leave site? Changes you made may not be saved": Jarvis stays (the owner's unsaved work).
           if (params.type === 'beforeunload' && !accept) t.unloadBlocked = true;
-          this.dialogs.push({ ...dialog, accepted: accept, toolId: id, asked, deferred, seq: ++this.dialogSeq });
+          this.dialogs.push({ ...dialog, accepted: accept, toolId: id, asked, deferred, preApproved, doc, seq: ++this.dialogSeq });
           Promise.resolve(this.chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept })).catch(() => {});
         };
-        // { accept, asked?, deferred? }: answered now; deferred: the owner is asked afterwards.
+        // { accept, asked?, deferred?, preApproved? }: answered now; deferred: the owner is asked
+        // afterwards; preApproved: OK, as the owner approved for the step running now.
         if (decision && typeof decision === 'object' && typeof decision.then !== 'function') {
-          answer(!!decision.accept, !!decision.asked, !!decision.deferred);
+          answer(!!decision.accept, !!decision.asked, !!decision.deferred, !!decision.preApproved);
           break;
         }
         if (decision && typeof decision.then === 'function') {
@@ -955,6 +958,15 @@ export class Driver {
       },
       () => held.fail(),
     );
+  }
+
+  /**
+   * Jarvis let go of the tabs (Take over, Stop, the end of a task): a left button it still holds
+   * down on a page stays held (nothing moves there until it is released at its point), but the
+   * owner's approval of the press no longer covers the release (it asks).
+   */
+  uncoverPresses() {
+    for (const t of this.tabs.values()) if (t.press) t.press.coverable = false;
   }
 
   /** Forget every tab (a new conversation starts its tab ids again at tab-1). */

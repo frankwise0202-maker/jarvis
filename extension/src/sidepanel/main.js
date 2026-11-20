@@ -628,7 +628,7 @@ class TaskCard {
         'div',
         { class: 'prompt', attrs: { 'data-testid': 'prompt', 'data-kind': prompt.kind, 'data-prompt-id': prompt.id, 'data-source': prompt.source || '', 'data-consequential': prompt.kind === 'confirm' ? String(!!prompt.consequential) : '', role: 'alertdialog', 'aria-label': prompt.title } },
         h('div', { class: 'prompt__head' }, h('span', { class: 'prompt__icon' }, icon(ic, { size: 18 })), h('span', { class: 'prompt__title', text: prompt.title })),
-        h('p', { class: 'prompt__body', attrs: { 'data-testid': 'prompt-body' }, text: displayText(prompt.body) }),
+        h('p', { class: 'prompt__body', attrs: { 'data-testid': 'prompt-body' } }, promptBody(prompt)),
         prompt.facts ? h('p', { class: 'prompt__facts', attrs: { 'data-testid': 'prompt-facts' }, text: displayText(prompt.facts) }) : null,
         meta,
         choices,
@@ -655,6 +655,18 @@ class TaskCard {
     if (!t?.answer) return;
     navigator.clipboard.writeText(t.answer).then(() => toast('Answer copied'), () => toast('Could not copy'));
   }
+}
+
+/**
+ * A prompt's body as nodes: an address it shows (prompt.address, already made fully visible by the
+ * service worker) goes on its own line, in a monospace block, whole; the rest is plain text.
+ */
+function promptBody(prompt) {
+  const body = displayText(prompt.body);
+  const address = displayText(prompt.address || '');
+  const at = address ? body.indexOf(address) : -1;
+  if (at < 0) return [body];
+  return [body.slice(0, at), h('code', { class: 'prompt__address', attrs: { 'data-testid': 'prompt-address' }, text: address }), body.slice(at + address.length)];
 }
 
 function stateIcon(s) {

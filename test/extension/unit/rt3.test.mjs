@@ -35,11 +35,15 @@ function setup({ url = 'https://shop.example/', page, decline = () => false, sit
   const approvals = new Approvals();
   let pre = null;
   const dialogs = { asked: [], answer: true, held: 0 };
+  // As the controller's dialogPolicy (RT5B-02): the owner's OK stands only while that very step
+  // runs again (armed: same tab, document and approved elements), once.
   const onDialog = (id, d) => {
     if (d.type !== 'confirm') return d.type === 'alert';
-    if (pre && pre.message === d.message) {
+    const t = driver.get(id);
+    if (pre && typeof pre.armed === 'function' && pre.message === d.message && pre.toolId === id && pre.doc === t?.docSeq && JSON.stringify(pre.armed()) === JSON.stringify(pre.elements)) {
+      pre.used = true;
       pre = null;
-      return { accept: true, asked: true };
+      return { accept: true, preApproved: true };
     }
     return { accept: false, deferred: true };
   };
@@ -80,8 +84,18 @@ function setup({ url = 'https://shop.example/', page, decline = () => false, sit
       dialogs.asked.push({ q, o });
       return dialogs.answer;
     },
-    preApproveDialog: (q) => {
-      pre = { message: q.message };
+    preApproveDialog: (q, bind = {}) => (pre = { toolId: q.toolId, message: q.message, doc: q.doc, member: bind.member, inputKey: bind.inputKey, elements: bind.elements || [], armed: null }),
+    armDialog: (call) => {
+      if (!pre) return null;
+      if (pre.armed || call.member !== pre.member || call.inputKey !== pre.inputKey || call.toolId !== pre.toolId || call.doc !== pre.doc) {
+        pre = null;
+        return null;
+      }
+      pre.armed = call.actedOn;
+      return pre;
+    },
+    disarmDialog: (b) => {
+      if (b && pre === b) pre = null;
     },
     drainDownloads: () => downloads.splice(0),
     onBlocked: () => {},
@@ -130,7 +144,9 @@ test('RT3-01: navigate to an address that says it acts asks, showing the address
   assert.match(text(r), /^Blocked/);
   const g = s.guards()[0];
   assert.deepEqual([g.category, g.verb, g.consequential], ['delete', 'Open', true]);
-  assert.match(g.label, /mail\.example\/act\/delete\?id=tax-2025/, 'the address is shown');
+  // (RT5C-02: the card's "It opens …" shows the address whole; the step reads "Open this address".)
+  assert.equal(g.dest, 'https://mail.example/act/delete?id=tax-2025', 'the address is shown');
+  assert.equal(g.label, 'this address');
   // The owner declined deleting on this site: another delete address is refused without asking.
   assert.match(text(await s.call('navigate', { url: 'https://mail.example/act/delete?id=mom' })), /^Blocked/);
   assert.equal(s.guards().length, 1);
@@ -191,8 +207,9 @@ test('RT3-07: everyday steps never allow, by its label, a link the plain-link te
 
 test('RT3-02: an unknown selection (closed shadow roots, frames from other sites) never matches an approval', () => {
   const a = new Approvals();
-  const grant = (selection) => a.grant({ category: 'delete', site: 'mail.example', tabId: 'tab-1', url: 'https://mail.example/inbox', doc: 1, targetId: 7, ctx: 'Delete | ', selection, text: 'Delete the newsletter' });
-  const use = (selection) => a.consume({ site: 'mail.example', tabId: 'tab-1', url: 'https://mail.example/inbox', doc: 1, targetId: 7, ctx: 'Delete | ', selection });
+  const verdict = { consequential: true, category: 'delete', label: 'Delete' };
+  const grant = (selection) => a.grant({ category: 'delete', site: 'mail.example', tabId: 'tab-1', url: 'https://mail.example/inbox', doc: 1, targetId: 7, ctx: 'Delete | ', selection, text: 'Delete the newsletter', kind: 'click', verdict });
+  const use = (selection) => a.consume({ site: 'mail.example', tabId: 'tab-1', url: 'https://mail.example/inbox', doc: 1, targetId: 7, ctx: 'Delete | ', selection, kind: 'click', verdict });
   grant('?0|');
   assert.equal(use('?0|'), null, 'unknown when approved and now');
   grant('0|');
@@ -455,10 +472,11 @@ test('RT3-05: a form the page sends, or an action address it opens, with no appr
   await done(async () => {
   const post = await load('https://shop.example/order', { method: 'POST', main: true }, 'cancel');
   assert.ok(post.prompt, 'asked');
-  assert.match(post.prompt.body, /wants to send a form to shop\.example\/order/);
+  // (RT5C-02: the whole address, as it is sent.)
+  assert.match(post.prompt.body, /wants to send a form to https:\/\/shop\.example\/order\./);
   assert.equal(post.ok, false, 'Cancel stops it');
   const get = await load('https://shop.example/account/%64elete?now=1', { method: 'GET', main: true }, 'cancel');
-  assert.match(get.prompt.body, /wants to open shop\.example\/account\/delete\?now=1/);
+  assert.match(get.prompt.body, /wants to open https:\/\/shop\.example\/account\/%64elete\?now=1 \(reads as: https:\/\/shop\.example\/account\/delete\?now=1\)/);
   assert.equal(get.ok, false);
   assert.equal((await load('https://shop.example/product/2', { method: 'GET', main: true })).ok, true, 'a plain page loads unasked');
   // An approved step is in flight: its form goes through.
@@ -480,7 +498,7 @@ test('RT3-03/04: frames: a denied site and a declined address never load; a form
   assert.deepEqual([ad.ok, ad.prompt], [true, null], 'a frame\'s own page from a site not asked about loads unasked');
   // A form the page posts into a frame with no approved step behind it: the owner is asked.
   const unasked = await load('https://other.example/api/subscribe', { method: 'POST', main: false }, 'cancel');
-  assert.match(unasked.prompt?.body || '', /wants to send a form to other\.example\/api\/subscribe \(into a frame\)/);
+  assert.match(unasked.prompt?.body || '', /wants to send a form to https:\/\/other\.example\/api\/subscribe \(into a frame\)/);
   assert.equal(unasked.ok, false);
   // Sent by an approved step: it still needs its site.
   controller.driver.markApproved(controller.driver.get('tab-1'));

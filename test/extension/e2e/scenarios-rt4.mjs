@@ -519,9 +519,12 @@ const flowLinks = {
     assert(ev(run, /^\/article\//).length === 0, `no post opened (${JSON.stringify(ev(run, /^\/article\//))})`);
     const ask = o.confirms().find((p) => p.title === 'Carry on to r4blog.localhost?');
     assert(ask && /read r4mail\.localhost/.test(ask.body), bodies(o));
-    // Control: a task on one site asks nothing extra (plain links stay unasked).
+    // Control: a task on one site asks nothing extra (plain links stay unasked). (It first closes
+    // the mail tab Jarvis opened above, which asks nothing: while open, that tab's title and
+    // address reach Claude in every result, and count as reading the mail (RT5C-04).)
     const o2 = owner(run, async (p) => (p.kind === 'site' ? 'once' : p.kind === 'confirm' ? 'cancel' : null));
     mock.script([
+      () => ({ calls: [{ name: 'close_tab', input: { tab_id: 'tab-2' } }] }),
       () => ({ calls: [{ name: 'navigate', input: { url: U(run, 'r4blog', '/blog') } }, read] }),
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /link "Story 2"/) } }] }),
       (ctx) => {

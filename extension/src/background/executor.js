@@ -29,7 +29,8 @@
 //     press, form_input, closing the owner's own tab, a download, and the page's own confirm()
 //     questions. The prompt names the element, its visible text, the item around it (a product's
 //     name and price), what is selected, and what the guard (guard.js) recognises it would do.
-//     A request_confirmation approval covers one click or key on exactly the element it named.
+//     A request_confirmation approval covers one plain left click on exactly the element it named,
+//     while the guard reads that click as the owner's card showed it; a key always shows its own card.
 //     The owner's "everyday steps" setting for a site skips asking only for searching, pages of
 //     results, filters and sorting, never for anything consequential;
 //   - after an approval: the same element, with the same item and selection, or nothing happens;
@@ -42,8 +43,8 @@
 //     clipboard (paste, copy, cut), keys that would change a select or radio, form_input on
 //     buttons, reloading a page that is the result of a submitted form.
 
-import { abortError, abortableSleep, isAbort, singleLine, truncate } from '../shared/util.js';
-import { blockedReason, isActionableUrl, normalizeNavigateUrl, sanitizeUrl, showUrl, siteOf } from './sites.js';
+import { abortError, abortableSleep, hiddenText, isAbort, revealText, singleLine, truncate } from '../shared/util.js';
+import { addressConcern, blockedReason, cardAddress, isActionableUrl, normalizeNavigateUrl, sanitizeUrl, siteOf } from './sites.js';
 import { CATEGORIES, GUARD_CATEGORIES, UNKNOWN_SELECTION, classifyAction, isEditableFocus, isLink, isToggle, isUnknownSelection, pageKey, secretKindOf, secretRefusal, SECRET_NAMES } from './guard.js';
 import { addressAction, assessClick, assessFormInput, assessKey, assessType, formSubmission, keyDestination, linkTarget, targetElsewhere } from './actions.js';
 import { addressKey } from './address.js';
@@ -73,11 +74,15 @@ export const TAB_MANAGEMENT = Object.freeze(new Set(['new_tab', 'list_tabs', 'sw
 const CLICKS = { left_click: 1, double_click: 2, triple_click: 3, right_click: 1, middle_click: 1 };
 const BUTTON = { left_click: 'left', double_click: 'left', triple_click: 'left', right_click: 'right', middle_click: 'middle' };
 const NO_THUMB = new Set(['read_page', 'find', 'get_page_text', 'wait', 'list_tabs', 'screenshot', 'zoom']);
-// A press of the mouse the owner approved also covers its release on the same element.
+// A press of the mouse the owner approved also covers its release at that same point, soon after.
 const PRESS_APPROVAL_MS = 60 * 1000;
+// How far (CSS px) a release may be from the press and still count as "at the same point".
+const PRESS_SLOP = 2;
 // Keys Jarvis presses without asking (the caret in a text field, typing in a search box) at most
 // this many times in one call.
 export const UNASKED_REPEAT_MAX = 30;
+// The longest text one type or form_input call sends: the owner's card shows all of it.
+export const MAX_TYPED = 1000;
 // Calls that send input to a page: a page load or a form they cause counts as theirs only when
 // the owner approved the step (see Driver.markApproved and the controller's navigation policy).
 const INPUT_MEMBERS = new Set(['left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'left_click_drag', 'left_mouse_down', 'left_mouse_up', 'type', 'key', 'hold_key', 'form_input']);
@@ -87,6 +92,11 @@ const ENTER = { mods: [], key: { key: 'Enter', code: 'Enter', keyCode: 13, text:
 // Members whose effect a page can see (input, the pointer, scrolling): the cross-site check
 // (flowCheck) runs before each, for the site of the page it acts on.
 const ACTING = new Set(['left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'hover', 'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up', 'scroll', 'scroll_to', 'type', 'key', 'hold_key', 'form_input']);
+// While Jarvis holds the left button down on a page (an approved left_mouse_down), only its release
+// at that point may act there: every other member moves the pointer (each sends a move first),
+// scrolls the page under it or sends input, and with the button held a page's slider or drag
+// handle follows the pointer (a drag the owner never approved).
+const HELD_REFUSED = new Set([...ACTING].filter((m) => m !== 'left_mouse_up'));
 
 /** Where a click on `desc` sends the browser, as Jarvis checks it: { url, target, via } or null. */
 function clickDestination(desc, pageUrl, url) {
@@ -97,6 +107,13 @@ function clickDestination(desc, pageUrl, url) {
     return s?.url ? { url: s.url, target: s.target, via: 'form', method: s.method } : null;
   }
   return null;
+}
+
+/** A call's input in one canonical form (keys sorted): "the same input" for the owner's OK to a page question. */
+export function inputKey(v) {
+  if (Array.isArray(v)) return `[${v.map(inputKey).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${inputKey(v[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
 }
 
 /** "in a new window" / "into a frame": where a link or form opens when not in this tab's page. */
@@ -278,7 +295,21 @@ export class Executor {
     this.hooks = hooks;
     this.progress = () => {};
     this.seenTitles = new Set(); // (tab, title) pairs already scanned for prompt injection
-    this.pressed = null; // an approved left_mouse_down whose release is covered
+  }
+
+  /**
+   * The left button Jarvis holds down on `t`'s page (a left_mouse_down not released yet: the
+   * driver's tab keeps it across tasks, Take over and Stop), or null. It belongs to that document:
+   * once the tab shows another page, it is forgotten.
+   */
+  heldPress(t) {
+    const p = t?.press;
+    if (!p) return null;
+    if (p.doc !== t.docSeq) {
+      t.press = null;
+      return null;
+    }
+    return p;
   }
 
   /**
@@ -323,24 +354,61 @@ export class Executor {
       }
     };
     this.current = name;
+    ctx.approvedElements = [];
+    // (The elements this call sends input to, approved or not: what an OK to a page question binds to.)
+    ctx.actedOn = [];
+    // The owner's OK to a page question stands only for this very call, when it is the step they
+    // were asked about (see pageQuestions); any other call drops it, before anything is sent.
+    const armed = this.armDialogFor(name, input, ctx);
     try {
       if (!ENABLED_MEMBERS.has(name)) {
         return this.error(block, MEMBERS.includes(name) ? `Error: ${name} is not enabled in this environment.` : `Error: ${singleLine(name).slice(0, 60) || 'that tool'} is not a browser tool.`, info);
       }
       validateInput(name, input);
       const mark = this.driver.dialogMark?.() ?? 0;
-      ctx.approvedElements = [];
       let content = TAB_MANAGEMENT.has(name) ? await this.tabOp(name, input, info, ctx) : await this.member(name, input, info, ctx);
       if (INPUT_MEMBERS.has(name)) content = await this.pageQuestions(name, input, info, ctx, content, mark);
       if (ctx.signal?.aborted) throw abortError();
-      return { result: memberResult(block.id, content), ok: true, label: stepLabel(name, input, info), info };
+      // (`halt`: nothing else batched after this call runs; see pageQuestions.)
+      return { result: memberResult(block.id, content), ok: true, label: stepLabel(name, input, info), info, ...(info.halt ? { halt: true } : {}) };
     } catch (err) {
       // Stop is the run's signal; anything else (Take over letting go of a page load, an
       // interrupted wait) is this call failing.
       if (ctx.signal?.aborted) throw abortError();
       const text = err instanceof CallError || err instanceof DriverError ? err.message : isAbort(err) ? 'Error: the action was interrupted before it finished.' : `Error: ${singleLine(err?.message || err).replace(/^Error:\s*/, '')}`;
       return this.error(block, text, info, name, input);
+    } finally {
+      if (armed) this.policy.disarmDialog?.(armed);
     }
+  }
+
+  /**
+   * A call starts: when the owner approved a page question about exactly this step (the same
+   * member and input, in the same tab and document) and it is to be done again now, their OK is
+   * armed for this call only, and the elements they approved it on are not asked about again;
+   * any other call drops it. Returns the armed OK, or null.
+   */
+  armDialogFor(name, input, ctx) {
+    if (typeof this.policy.armDialog !== 'function') return null;
+    let t = null;
+    try {
+      t = input?.tab_id ? this.driver.get(input.tab_id) : this.driver.active();
+    } catch {
+      t = null;
+    }
+    let b = null;
+    try {
+      b = this.policy.armDialog({ member: name, inputKey: inputKey(input), toolId: t?.toolId || '', doc: t?.docSeq, actedOn: () => ctx.actedOn || [] });
+    } catch {
+      b = null;
+    }
+    if (b) ctx.rerun = (b.approved || []).slice();
+    return b;
+  }
+
+  /** This call sends input to element `targetId` of `t`'s page (see run's ctx.actedOn). */
+  actOn(ctx, t, targetId) {
+    if (Array.isArray(ctx?.actedOn) && t) ctx.actedOn.push(`${t.toolId}|${t.docSeq}|${targetId ?? ''}`);
   }
 
   error(block, text, info, name = block?.name, input = block?.input) {
@@ -356,12 +424,29 @@ export class Executor {
   browserState({ changes = true } = {}) {
     const tabs = this.driver.inventory({ reveal: (url) => this.revealed(url) });
     this.scanTitles(tabs);
+    this.noteShownTabs();
     const block = { type: 'browser_state', tabs };
     if (changes) {
       const sc = this.driver.drainChanges();
       if (sc.length) block.state_changes = sc;
     }
     return block;
+  }
+
+  /**
+   * Every tab whose title and address browser_state shows Claude (those on sites the owner
+   * allowed) is page content from its site: a mail tab's title ("482913 is your sign-in code"), an
+   * address a redirect chose ("?otp=…"). The cross-site check counts its site as read.
+   */
+  noteShownTabs() {
+    try {
+      for (const t of this.driver.openTabs()) {
+        const url = t.url || '';
+        if (/^https?:/i.test(url) && this.revealed(url)) this.policy.noteRead?.(siteOf(url), url);
+      }
+    } catch {
+      /* bookkeeping only */
+    }
   }
 
   /** Tab titles are page text too: a title that addresses an AI is reported to the owner (once). */
@@ -385,6 +470,8 @@ export class Executor {
   wrap(t, text, kind) {
     const { text: wrapped, injections } = wrapUntrusted(text, { tabId: t?.toolId || '', url: sanitizeUrl(t?.url || ''), kind });
     if (injections.length) this.hooks.onInjection?.({ toolId: t?.toolId || '', url: t?.url || '', quotes: injections });
+    // (Page text reaching Claude, a dialog's too: the cross-site check counts the site as read.)
+    this.noteRead(t);
     return wrapped;
   }
 
@@ -396,6 +483,8 @@ export class Executor {
   quote(t, text, kind = 'element_name', max = 80) {
     const { text: out, injections } = inlineUntrusted(truncate(singleLine(text), max), { kind });
     if (injections.length) this.hooks.onInjection?.({ toolId: t?.toolId || '', url: t?.url || '', quotes: injections });
+    // (A page's label, option or file name reaching Claude is page content from that site.)
+    this.noteRead(t);
     return out;
   }
 
@@ -403,15 +492,20 @@ export class Executor {
   scan(t, texts) {
     const quotes = (texts || []).flatMap((s) => detectInjection(s));
     if (quotes.length) this.hooks.onInjection?.({ toolId: t?.toolId || '', url: t?.url || '', quotes });
+    if ((texts || []).length) this.noteRead(t);
   }
 
   /**
    * The page asked "Are you sure?" (confirm()) while this input step ran. Jarvis answered Cancel
    * at once, so the page never waits on the owner (a page held by its own dialog cannot show
    * Jarvis's bar or hear Esc, which would leave the owner only the side panel to stop Jarvis).
-   * Now the owner decides, with the step done: Cancel leaves it at that; OK has Jarvis do the
-   * step again (a click, one key, form_input) and answer OK this time, or, for other steps,
-   * tells Claude to do it again. Returns the result content, with a note.
+   * Now the owner decides, with the step done: Cancel leaves it at that; OK is bound to this very
+   * step (the controller's dialogPolicy): Jarvis does it again (a click, one key, form_input, or
+   * the Enter that ended a typing step when the question came from that Enter) and that same
+   * question is answered OK while it runs, once; for other steps Claude is told to make exactly
+   * this call again as its very next one (and nothing else in the batch runs), and the OK stands
+   * for that call only. The same question from any other step, page or site goes to the owner
+   * again. Returns the result content, with a note.
    */
   async pageQuestions(name, input, info, ctx, content, mark) {
     const list = this.driver.takeDeferredDialogs?.() || [];
@@ -421,13 +515,44 @@ export class Executor {
     const t = (q.toolId && this.driver.get(q.toolId)) || ctx.tab || null;
     const msg = truncate(singleLine(q.message), 300);
     const shown = msg ? ` Its text:\n${this.wrap(t, msg, 'dialog')}` : '';
-    const rerun = RERUNNABLE.has(name) && (input.repeat ?? 1) === 1 && !(name === 'key' && /\s/.test(String(input.text || '').trim()));
-    const ok = await this.policy.askDialog(q, { doing: progressive(stepLabel(name, input, info)), rerun });
+    // (A question that came from the Enter a typing step ended with: Jarvis presses that Enter
+    // again, in the same field, not the text again.)
+    const enterOnly = name === 'type' && Number.isFinite(info.finalEnter) && q.seq > info.finalEnter && !!info.typedInto;
+    const rerun = enterOnly || (RERUNNABLE.has(name) && (input.repeat ?? 1) === 1 && !(name === 'key' && /\s/.test(String(input.text || '').trim())));
+    const ok = await this.policy.askDialog(q, { doing: progressive(stepLabel(name, input, info)), rerun, redo: enterOnly ? 'presses Enter in that field again' : '' });
     if (!ok) return this.withNote(content, [`The page asked a question while Jarvis did this: Jarvis answered Cancel at once, and the owner answered Cancel too. Don't try it again or find another way; tell the owner and finish.${shown}`, others].filter(Boolean).join('\n'));
-    this.policy.preApproveDialog?.(q);
-    if (!rerun) return this.withNote(content, [`The page asked a question while Jarvis did this; Jarvis answered Cancel at once, and the owner then approved what it asks. Do the same step again now: Jarvis answers OK this time.${shown}`, others].filter(Boolean).join('\n'));
-    const again = await this.member(name, input, info, { ...ctx, rerun: (ctx.approvedElements || []).slice(), approvedElements: [] });
-    return this.withNote(again, [`The page asked a question; Jarvis answered Cancel at once, the owner then approved it, so Jarvis did the step again and answered OK.${shown}`, others].filter(Boolean).join('\n'));
+    // The owner's OK is for this step only: this member and input, in that tab and document, sent
+    // to the same elements (what the step acted on, asked about or not). Done again, the elements
+    // the owner approved for it (for the Enter: the field typed into) are not asked about again.
+    const approvedNow = (ctx.approvedElements || []).slice();
+    const approved = enterOnly && !approvedNow.length ? [info.typedInto] : approvedNow;
+    const elements = (ctx.actedOn || []).slice();
+    const key = inputKey(input);
+    this.policy.preApproveDialog?.(q, { member: name, inputKey: key, elements, approved });
+    if (!rerun) {
+      info.halt = true;
+      return this.withNote(content, [`The page asked a question while Jarvis did this; Jarvis answered Cancel at once, so what it asks has not happened. The owner then approved it, for this step only. Jarvis can't do this kind of step again by itself: make your very next call exactly this ${name} call again, with the same input (nothing in between, and nothing else in this batch was run). Jarvis answers OK to that same question then, once; any other call first drops the owner's OK.${shown}`, others].filter(Boolean).join('\n'));
+    }
+    const rctx = { ...ctx, rerun: approved, approvedElements: [], actedOn: [] };
+    const armed = this.policy.armDialog?.({ member: name, inputKey: key, toolId: String(q.toolId || ''), doc: q.doc, actedOn: () => rctx.actedOn }) || null;
+    const before = this.driver.dialogMark?.() ?? 0;
+    let again;
+    try {
+      again = enterOnly ? await this.member('key', { text: 'Enter', ...(input.tab_id ? { tab_id: input.tab_id } : {}) }, {}, rctx) : await this.member(name, input, info, rctx);
+    } finally {
+      if (armed) this.policy.disarmDialog?.(armed);
+    }
+    // A question the page asked during the redo that the owner's OK did not cover (other words,
+    // another element): answered Cancel, and reported.
+    const lateList = (this.driver.takeDeferredDialogs?.() || []).filter((d) => d.seq > before);
+    const late = lateList.map((d) => this.formatDialog({ ...d, deferred: false })).join('\n');
+    const did = enterOnly ? 'Jarvis pressed Enter in that field again' : 'Jarvis did the step again';
+    const answered = armed?.used
+      ? ' and answered OK to that question this time'
+      : lateList.some((d) => d.message === q.message)
+        ? '; the page asked that question again, but about something else than the owner approved (the page had changed), so Jarvis answered Cancel'
+        : '; the page did not ask that question again, so Jarvis answered nothing OK';
+    return this.withNote(again, [`The page asked a question; Jarvis answered Cancel at once, the owner then approved it, so ${did}${answered}.${shown}`, others, late].filter(Boolean).join('\n'));
   }
 
   /** `content` (a result's blocks) with `note` added to its text. */
@@ -452,9 +577,13 @@ export class Executor {
 
   formatDialog(d) {
     const t = d.toolId ? this.driver.get(d.toolId) : null;
-    const verdict = d.asked ? (d.accepted ? 'the owner answered OK' : 'the owner answered Cancel') : d.accepted ? 'Jarvis accepted it' : d.type === 'beforeunload' ? 'Jarvis stayed on the page' : d.type === 'confirm' ? 'Jarvis answered Cancel' : 'Jarvis dismissed it';
+    // (Only a dialog the owner was shown is "the owner answered": an OK the owner gave for the
+    // step running now is Jarvis's answer, as approved.)
+    const verdict = d.preApproved && d.accepted ? 'Jarvis answered OK, as the owner approved for this step' : d.asked ? (d.accepted ? 'the owner answered OK' : 'the owner answered Cancel') : d.accepted ? 'Jarvis accepted it' : d.type === 'beforeunload' ? 'Jarvis stayed on the page' : d.type === 'confirm' ? 'Jarvis answered Cancel' : 'Jarvis dismissed it';
     const advice = !d.accepted && d.type === 'confirm' ? (d.asked ? " Don't try it again or find another way; tell the owner and finish." : ' If the owner wants what it asks, call request_confirmation describing exactly that action, then do it again.') : '';
     const msg = truncate(singleLine(d.message), 300);
+    // (Its text is content of the page or frame that showed it, maybe another site's box.)
+    if (msg && /^https?:/i.test(String(d.url || ''))) this.noteRead({ url: d.url });
     return `The page showed ${aOrAn(d.type)} dialog (${verdict}).${advice}${msg ? ` Its text:\n${this.wrap(t, msg, 'dialog')}` : ''}`;
   }
 
@@ -467,6 +596,8 @@ export class Executor {
   blockedNotes() {
     const list = this.driver.drainBlockedLoads?.() || [];
     const seen = new Set();
+    // (An address a page chose to open is that page's content: its site counts as read.)
+    for (const b of list) this.noteRead(this.driver.get(b.toolId));
     return list
       .filter((b) => !seen.has(`${b.url}|${b.sending}`) && seen.add(`${b.url}|${b.sending}`))
       .slice(0, 3)
@@ -480,6 +611,7 @@ export class Executor {
   downloadNotes() {
     try {
       const list = this.policy.drainDownloads?.() || [];
+      // (The file's name is its server's: quote() counts that site as read.)
       return list.map((d) => `A download started: ${this.quote({ toolId: '', url: d.url || '' }, d.name, 'file_name')} from ${d.site || 'the page'} (${d.verdict === 'approved' ? 'the owner approved it; Chrome saved it to the Downloads folder' : d.verdict === 'pending' ? 'the owner has not answered yet' : 'the owner declined it; nothing was saved'}).`).join('\n');
     } catch {
       return '';
@@ -496,6 +628,7 @@ export class Executor {
       // tabs not yet reported stay queued for the next result.
       const tabs = d.inventory({ reveal: (url) => this.revealed(url) });
       this.scanTitles(tabs);
+      this.noteShownTabs();
       return [{ type: 'browser_state', tabs, state_changes: [{ type: 'tab_opened', tab_id: t.toolId }] }];
     }
     if (name === 'list_tabs') {
@@ -599,6 +732,12 @@ export class Executor {
         d.changes.push({ type: 'tab_opened', tab_id: t.toolId });
       }
       ctx.tab = t;
+      // With the left button held down on this page, only a load of another page lets go of it:
+      // going back or forward, or to a spot on this same page, can scroll it under the pointer.
+      const held = this.heldPress(t);
+      if (held && (n.history === 'back' || n.history === 'forward' || (!n.history && pageKey(n.url) === pageKey(t.url)))) {
+        fail(`Error: the left mouse button is still held down on this page, from left_mouse_down at (${held.input.x}, ${held.input.y}). Release it at that same point first with left_mouse_up.`);
+      }
       // A page load from here on is this call's, not an earlier approved step's.
       d.clearApproved(t);
       let asked = n.url;
@@ -646,6 +785,16 @@ export class Executor {
         if (this.policy.isDeclinedHref?.(n.url)) fail(`Blocked: the owner declined a step that opens this address (${truncate(sanitizeUrl(n.url), 120)}). It was not done. Don't try it again or find another way; tell the owner and finish.`);
         const prior = this.policy.actionResult?.(n.url);
         if (prior) fail(`Error: ${truncate(sanitizeUrl(n.url), 120)} is what an approved step opened (${this.repeatWhat(prior)}); opening it again would repeat that step, so Jarvis did not open it. If the owner wants it done again, do the step itself again (the owner is asked).`);
+        // After reading another site, an address Claude wrote (not a link seen on a page) must say
+        // all it carries in plain sight: nothing invisible once decoded, no letters written as codes.
+        let elsewhere = false;
+        try {
+          elsewhere = !!this.policy.readElsewhere?.(siteOf(n.url)) && !this.policy.isSeenLink?.(n.url);
+        } catch {
+          elsewhere = true;
+        }
+        const concern = elsewhere ? addressConcern(n.url) : '';
+        if (concern) fail(`Refused: that address holds ${concern}, which the owner could not read on a card, and this task has read another site (what was read there must not leave hidden in an address). Nothing was opened. Write the address plainly.`);
         await this.allowSite(n.url, ctx, { address: true });
         // What Claude read on other sites must not leave in an address it built (or reach this
         // site unasked): see flowCheck.
@@ -677,6 +826,12 @@ export class Executor {
 
     // Every other member acts on the tab's current page.
     const t = this.tab(input);
+    // The left button is held down there: nothing that moves the pointer, scrolls or sends input
+    // goes out until it is released at the point where it was pressed (a move would drag).
+    const held = HELD_REFUSED.has(name) ? this.heldPress(t) : null;
+    if (held) {
+      fail(`Error: the left mouse button is still held down on this page, from left_mouse_down at (${held.input.x}, ${held.input.y}). With the button held, moving the pointer, scrolling, clicking or typing drags whatever was pressed (a slider, an item), so Jarvis did nothing. First release it at that same point: left_mouse_up at (${held.input.x}, ${held.input.y}). To drag something, use left_click_drag instead (the owner is asked).`);
+    }
     await this.ensureSite(t, ctx);
     if (ACTING.has(name)) {
       // A page where Jarvis's control bar cannot be shown: the owner decides before any input.
@@ -983,7 +1138,7 @@ export class Executor {
   noteRead(t, links = null) {
     try {
       const url = t?.url || '';
-      if (/^https?:/i.test(url)) this.policy.noteRead?.(siteOf(url));
+      if (/^https?:/i.test(url)) this.policy.noteRead?.(siteOf(url), url);
       if (Array.isArray(links) && links.length) this.policy.noteLinks?.(links);
     } catch {
       /* bookkeeping only */
@@ -991,10 +1146,30 @@ export class Executor {
   }
 
   /**
+   * Text Claude chose that goes to `site` (typed, set with form_input): never longer than a card
+   * shows whole, and, once the task has read another site, never with anything a card could not
+   * show (an invisible character, a special space, a run of spaces, a look-alike letter), which
+   * could carry what was read there. Throws the refusal.
+   */
+  checkChosenText(text, site, what = 'type') {
+    const s = String(text ?? '');
+    if (s.length > MAX_TYPED) fail(`Error: that text is ${s.length} characters long; Jarvis ${what === 'type' ? 'types' : 'sets'} at most ${MAX_TYPED} characters at a time (the owner is shown all of it). Split it into parts.`);
+    let elsewhere = false;
+    try {
+      elsewhere = !!this.policy.readElsewhere?.(site);
+    } catch {
+      elsewhere = true;
+    }
+    const hidden = elsewhere ? hiddenText(s) : '';
+    if (hidden) fail(`Refused: the text holds ${hidden}, which the owner could not see on the card, and this task has read another site (what was read there must not leave hidden in text). Nothing was ${what === 'type' ? 'typed' : 'set'}. Use plain text: single spaces, no invisible characters.`);
+  }
+
+  /**
    * The owner's approval for one step, or the refusal (thrown). `step`: { kind, verb, desc, label?,
    * targetId?, ctx? (what the approval binds to: its name and item), item? (the item, shown),
    * selection?, guard? (what it would do), detail?, dest?, site?,
-   * bindable? (a request_confirmation approval of exactly this element may cover it) }.
+   * bindable? (a request_confirmation approval of exactly this element may cover it: a plain left
+   * click only, while the guard reads it as the owner's card did) }.
    */
   async approve(t, step, ctx) {
     const c = this.stepFacts(t, step, ctx);
@@ -1034,6 +1209,8 @@ export class Executor {
       category: g?.category || 'change',
       consequential: !!g,
       label: truncate(singleLine(label), 80),
+      // (Whether the label is the page's: the element's own text or name, not Jarvis's words.)
+      pageLabel: !step.label && !!label,
       plain: !!step.plain,
       alias: g?.alias || other || '',
       reason: g ? `${g.reason || GUARD_CATEGORIES[g.category] || ''}${via}` : '',
@@ -1052,9 +1229,14 @@ export class Executor {
       url: t.url,
       site,
       toolId: t.toolId,
-      bind: step.bindable && step.targetId !== undefined && step.targetId !== null ? { doc: step.doc ?? t.docSeq, targetId: step.targetId, ctx: step.ctx || '', selection: step.selection?.key || '' } : null,
       element: step.targetId !== undefined && step.targetId !== null ? `${t.toolId}|${step.doc ?? t.docSeq}|${step.targetId}` : '',
     };
+    // What a request_confirmation approval binds to (and is checked against): the element in that
+    // state, the one input (a plain left click: request_confirmation's own target counts as one),
+    // and what the guard says that click does, as the owner's card showed it.
+    if (step.bindable && step.targetId !== undefined && step.targetId !== null) {
+      c.bind = { kind: 'click', doc: step.doc ?? t.docSeq, targetId: step.targetId, ctx: step.ctx || '', selection: step.selection?.key || '', verdict: { consequential: c.consequential, category: c.category, label: c.label } };
+    } else c.bind = null;
     return c;
   }
 
@@ -1120,7 +1302,7 @@ export class Executor {
    * reaching the approved element: one that went somewhere the check cannot see (another site's
    * box) fails the step, and the owner is told.
    */
-  async sendMouse(t, ctx, events, { approved = [], expect = null, step = null, scrollOnly = false, landing = false } = {}) {
+  async sendMouse(t, ctx, events, { approved = [], expect = null, step = null, scrollOnly = false, landing = false, beforeRest = null } = {}) {
     const d = this.driver;
     this.steady(t, ctx);
     const doc = t.docSeq;
@@ -1134,6 +1316,7 @@ export class Executor {
       if (expect) await this.hoverCheck(t, expect, step, ctx);
       if (rest.length) {
         this.steady(t, ctx);
+        beforeRest?.();
         await d.mouse(t, rest);
       }
     } finally {
@@ -1258,7 +1441,8 @@ export class Executor {
       if (v.verdict === 'ask') {
         const bindable = name === 'left_click' && !modifiers;
         const selection = bindable ? await this.bindingSelection(t, r.targetId, p.selection) : p.selection;
-        step = { kind: 'click', verb: VERBS[name], desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection, guard: v.guard, dest: v.dest && siteOf(v.dest) !== ctx.site ? v.dest : '', opens: dest?.url || v.dest || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', detail: modifiers ? `with ${input.modifiers} held` : '', bindable, doc: t.docSeq };
+        const detail = [modifiers ? `with ${input.modifiers} held` : '', isSlider(desc) ? '(clicking a slider sets it to the value at that point)' : ''].filter(Boolean).join(' ');
+        step = { kind: 'click', verb: VERBS[name], desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection, guard: v.guard, dest: v.dest && siteOf(v.dest) !== ctx.site ? v.dest : '', opens: dest?.url || v.dest || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', detail, bindable, doc: t.docSeq };
         await this.approve(t, step, ctx);
       } else if (this.policy.isDeclinedElement?.(`${t.toolId}|${t.docSeq}|${r.targetId}`)) {
         fail('Blocked: the owner declined this step earlier in this task. It was not done. Don\'t try it again or find another way; tell the owner and finish.');
@@ -1266,6 +1450,7 @@ export class Executor {
     }
     if (step) p = await this.recheck(t, input.target, info, step, ctx);
     const target = this.reach(p);
+    this.actOn(ctx, t, step?.frameChain ? `frame:${step.frameChain.map((f) => f.frameId).join('>')}` : target.targetId);
     // The page agent lets the click through only to that element, and only to the address (and
     // window) Jarvis checked: a page that swaps a link's href or a form's action meanwhile is stopped.
     const pin = dest ? { url: dest.url, target: dest.target, via: dest.via } : null;
@@ -1352,6 +1537,8 @@ export class Executor {
       { targetId: rf.targetId, ctx: rf.ctx, kind: 'pointer', clicks: 1 },
       { targetId: rt.targetId, ctx: rt.ctx, kind: 'pointer', clicks: 1 },
     ];
+    this.actOn(ctx, t, rf.targetId);
+    this.actOn(ctx, t, rt.targetId);
     const before = d.marks(t);
     d.markApproved(t, undefined, { frames: step.frameChain || [] }); // every drag is approved by the owner (or refused)
     const events = [{ type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0 }, { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 }];
@@ -1371,44 +1558,88 @@ export class Executor {
     const d = this.driver;
     d.clearApproved(t);
     const down = name === 'left_mouse_down';
-    let p = await this.point(t, input.target, info, {}, ctx);
+    let p = await this.point(t, input.target, info, { scroll: false }, ctx);
     const r = this.reach(p);
     if (isBar(r.desc)) fail("Error: Jarvis's own control bar is at that point. Scroll the page first.");
-    // Pressing alone fires pointerdown and mousedown, which some sites act on: it asks. The release
-    // on the same element is covered by the owner's approval of the press.
-    const press = this.pressed;
+    // Pressing alone fires pointerdown and mousedown, which some sites act on (a slider jumps to
+    // the point): it asks. With the button held, nothing else moves the pointer (see run's
+    // HELD_REFUSED), so a release at the very point of the press moves nothing: the owner's
+    // approval of the press covers it. A release anywhere else drags what was pressed (a slider's
+    // thumb, an item) and asks as the drag it is.
+    const press = down ? null : this.heldPress(t);
     // (A frame Jarvis cannot check at the point, as the browser hit-tests it, makes it a step in that box.)
     const chain = await this.framesAt(t, p.x, p.y);
     const inFrame = isForeignFrame(r.desc) || !Array.isArray(chain) || chain.length > 0;
-    const covered = !down && press && press.toolId === t.toolId && press.doc === t.docSeq && String(press.targetId) === String(r.targetId) && press.ctx === r.ctx && !!press.frames === inFrame && Date.now() - press.at < PRESS_APPROVAL_MS;
+    const atPress = !!press && Math.abs(p.x - press.x) <= PRESS_SLOP && Math.abs(p.y - press.y) <= PRESS_SLOP;
+    const covered = !!press && atPress && press.coverable && String(press.targetId) === String(r.targetId) && press.ctx === r.ctx && !!press.frames === inFrame && Date.now() - press.at < PRESS_APPROVAL_MS;
     let step = null;
-    if (!covered) {
+    let dragFrom = null;
+    if (press && !atPress && (inFrame || press.frames)) {
+      fail(`Error: releasing the left button there would drag ${press.frames ? 'out of' : 'into'} a box from another site, which Jarvis can't follow. Release it where it was pressed, with left_mouse_up at (${press.input.x}, ${press.input.y}); to drag, use left_click_drag (the owner is asked).`);
+    }
+    if (covered) {
+      if (inFrame) await this.sameFrames(t, p, { frameChain: press.frames });
+      // Exactly where it pressed: the pointer does not move at all.
+      p = { ...p, x: press.x, y: press.y };
+    } else if (press && !atPress) {
+      const name2 = (x) => truncate(singleLine(x?.name || x?.text || x?.unlabelled || 'the page'), 40);
+      const slider = isSlider(press.desc) ? '; on a slider that moves it to that point and sets its value' : '';
+      step = { kind: 'drag', verb: 'Drag', desc: press.desc, targetId: press.targetId, ctx: press.ctx, item: press.item, selection: p.selection, guard: classifyAction(press.desc) || classifyAction(r.desc), detail: `from "${press.label}" to "${name2(r.desc)}" (the left button is held down since the press: releasing it at that other point drags${slider})`, label: press.label, doc: t.docSeq };
+      await this.approve(t, step, ctx);
+      const again = this.reach(await this.point(t, input.target, info, { scroll: false }, ctx));
+      if (t.docSeq !== step.doc || String(again.targetId) !== String(r.targetId) || (again.ctx || '') !== (r.ctx || '')) fail('Error: the page changed while the owner was deciding, so Jarvis did not release the button there. Look at the page again before you act.');
+      dragFrom = press;
+    } else {
+      const sliderNote = down && isSlider(r.desc) ? '(pressing on a slider sets it to the value at that point, and releasing it there keeps that value)' : '';
       step = inFrame
         ? await this.frameStep(t, p, r, down ? 'Press the mouse on' : 'Release the mouse on', ctx, chain)
-        : { kind: 'click', verb: down ? 'Press the mouse on' : 'Release the mouse on', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard: classifyAction(r.desc), doc: t.docSeq };
+        : { kind: 'click', verb: down ? 'Press the mouse on' : 'Release the mouse on', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard: classifyAction(r.desc), detail: sliderNote, doc: t.docSeq };
       await this.approve(t, step, ctx);
       p = await this.recheck(t, input.target, info, step, ctx);
-    } else if (inFrame) await this.sameFrames(t, p, { frameChain: press.frames });
+      // (A release of the held button goes exactly where it was pressed: nothing moves.)
+      if (press && atPress) p = { ...p, x: press.x, y: press.y };
+    }
     const target = this.reach(p);
-    const approved = [{ targetId: target.targetId, ctx: step ? step.ctx : press?.ctx, kind: 'pointer', clicks: 1 }];
+    if (dragFrom) this.actOn(ctx, t, dragFrom.targetId);
+    this.actOn(ctx, t, target.targetId);
+    const approved = dragFrom
+      ? [{ targetId: dragFrom.targetId, ctx: dragFrom.ctx, kind: 'pointer', clicks: 1 }, { targetId: target.targetId, ctx: target.ctx, kind: 'pointer', clicks: 1 }]
+      : [{ targetId: target.targetId, ctx: step ? step.ctx : press?.ctx, kind: 'pointer', clicks: 1 }];
     const before = d.marks(t);
-    const frames = step ? step.frameChain || null : press?.frames || null;
+    const frames = dragFrom ? null : step ? step.frameChain || null : press?.frames || null;
     d.markApproved(t, undefined, { frames: frames || [] }); // the press (and its release) is approved by the owner
-    await this.sendMouse(
-      t,
-      ctx,
-      [
-        { type: 'mouseMoved', x: p.x, y: p.y, button: down ? 'none' : 'left', buttons: down ? 0 : 1 },
-        { type: down ? 'mousePressed' : 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: down ? 1 : 0, clickCount: 1 },
-      ],
-      { approved, expect: { x: p.x, y: p.y, targetId: target.targetId }, step: step || (frames ? { frameChain: frames } : null), landing: !frames },
-    );
-    this.pressed = down ? { toolId: t.toolId, doc: t.docSeq, targetId: target.targetId, ctx: target.ctx, frames, at: Date.now() } : null;
+    let events;
+    let expect;
+    if (down) {
+      events = [{ type: 'mouseMoved', x: p.x, y: p.y, button: 'none', buttons: 0 }, { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 }];
+      expect = { x: p.x, y: p.y, targetId: target.targetId };
+    } else if (dragFrom) {
+      // The drag the owner approved: from the press point (not moving first) to the release point.
+      events = [{ type: 'mouseMoved', x: dragFrom.x, y: dragFrom.y, button: 'left', buttons: 1 }];
+      for (let i = 1; i <= 8; i++) events.push({ type: 'mouseMoved', x: dragFrom.x + ((p.x - dragFrom.x) * i) / 8, y: dragFrom.y + ((p.y - dragFrom.y) * i) / 8, button: 'left', buttons: 1 });
+      events.push({ type: 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: 0, clickCount: 1 });
+      expect = { x: dragFrom.x, y: dragFrom.y, targetId: dragFrom.targetId };
+    } else {
+      events = [{ type: 'mouseMoved', x: p.x, y: p.y, button: 'left', buttons: 1 }, { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: 0, clickCount: 1 }];
+      expect = { x: p.x, y: p.y, targetId: target.targetId };
+    }
+    // The press is held from the moment its event goes out (even if the step then fails: the
+    // button may be down), and the release lets it go only when it went through as checked.
+    let sent = false;
+    try {
+      await this.sendMouse(t, ctx, events, { approved, expect, step: step || (frames ? { frameChain: frames } : null), landing: !frames, beforeRest: () => (sent = true) });
+    } catch (err) {
+      if (down && sent) t.press = { doc: t.docSeq, x: p.x, y: p.y, input: { x: input.target.x, y: input.target.y }, targetId: target.targetId, ctx: target.ctx, item: target.item || '', desc: target.desc || null, label: truncate(singleLine(target.desc?.name || target.desc?.text || target.desc?.unlabelled || 'the page'), 40), frames, at: Date.now(), coverable: false };
+      else if (!down && t.press) t.press.coverable = false;
+      throw err;
+    }
+    t.press = down ? { doc: t.docSeq, x: p.x, y: p.y, input: { x: input.target.x, y: input.target.y }, targetId: target.targetId, ctx: target.ctx, item: target.item || '', desc: target.desc || null, label: truncate(singleLine(target.desc?.name || target.desc?.text || target.desc?.unlabelled || 'the page'), 40), frames, at: Date.now(), coverable: true } : null;
     await d.settleAfter(t, before, { signal: ctx.signal });
     await d.refresh(t);
     await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
-    return this.ack(down ? `Pressed the left button at (${input.target.x}, ${input.target.y}).` : `Released the left button at (${input.target.x}, ${input.target.y}).`);
+    if (down) return this.ack(`Pressed the left button at (${input.target.x}, ${input.target.y}). It stays held down: release it at that same point with left_mouse_up before anything else on this page (moving the pointer now would drag).`);
+    return this.ack(dragFrom ? `Released the left button at (${input.target.x}, ${input.target.y}), dragging from where it was pressed (the owner approved the drag).` : `Released the left button at (${input.target.x}, ${input.target.y}).`);
   }
 
   /**
@@ -1515,7 +1746,9 @@ export class Executor {
     // The browser's own view of the focus: inside a frame Jarvis cannot check (one the page agent
     // did not recognise), typing is refused like in any box from another site.
     await this.noForeignFocus(t, info, ctx);
-    // (Typed text is chosen by Claude: after a read on another site it is never an everyday step.)
+    // (Typed text is chosen by Claude: shown whole on the card, with nothing hidden in it after a
+    // read on another site, and then never an everyday step.)
+    this.checkChosenText(text, ctx.site, 'type');
     const v = assessType({ focus: desc, text, everyday: this.everyday(ctx, { typing: true }) });
     const multiline = !!(desc.multiline || desc.isContentEditable);
     const parts = String(text).split(/\r?\n/);
@@ -1527,15 +1760,20 @@ export class Executor {
     if (dest) await this.checkDestination(dest.url, ctx);
     let step = null;
     if (v.verdict === 'ask' || (dest && targetElsewhere(dest.target))) {
-      const shown = truncate(singleLine(text), 200);
-      const submits = breaks > 0 && !multiline;
-      step = { kind: 'type', verb: `Type "${shown}"${submits ? ' and press Enter' : ''} into`, desc, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', doc: t.docSeq };
+      // (All of it, with whatever would not show made visible: see revealText. In a one-line field
+      // every line break is an Enter: shown as such, the last one as "and press Enter".)
+      const last = !multiline && breaks > 0 && parts[parts.length - 1] === '';
+      const shown = (last ? parts.slice(0, -1) : parts).map((x) => revealText(x)).join(multiline ? '[new line]' : '[Enter]');
+      step = { kind: 'type', verb: `Type "${shown}"${last ? ' and press Enter' : ''} into`, desc, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', doc: t.docSeq };
       await this.approve(t, step, ctx);
       // The focus may have moved while the owner was deciding.
       const again = await this.focus(t, ctx);
       if (String(again.targetId) !== String(f.targetId) || (again.ctx || '') !== (f.ctx || '') || t.docSeq !== step.doc) fail('Error: the page changed while the owner was deciding (the keyboard focus moved), so Jarvis did not type. Look at the page again before you act.');
     }
     const enter = { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' };
+    // (The field this text goes to: a page question its final Enter raises is about that field.)
+    info.typedInto = `${t.toolId}|${t.docSeq}|${f.targetId}`;
+    this.actOn(ctx, t, f.targetId);
     const approved = [{ targetId: f.targetId, ctx: f.ctx, kind: 'type' }];
     if (breaks) approved.push({ targetId: f.targetId, kind: 'key', keys: [{ key: 'Enter', mods: multiline ? 'shift' : '' }], presses: breaks, ...(dest ? { dest: { url: dest.url, target: dest.target, via: dest.via } } : {}) });
     // The owner approved this typing: the page loads and forms it causes are theirs.
@@ -1563,6 +1801,8 @@ export class Executor {
           await this.stillTyping(t, f, ctx);
           const ev = chordEvents({ mods: multiline ? ['shift'] : [], key: enter });
           this.steady(t, ctx);
+          // (The Enter that ends the text: what the page asks from here on comes from it.)
+          if (!multiline && i === parts.length - 2 && !parts[parts.length - 1]) info.finalEnter = d.dialogMark?.() ?? 0;
           await d.keyEvents(t, [...ev.down, ...ev.press, ...ev.up]);
         }
       }
@@ -1658,6 +1898,7 @@ export class Executor {
       if (v.why === 'a modifier key alone') return { approved: [], scrollOnly: true };
       if (!v.scroll) {
         if (repeat > UNASKED_REPEAT_MAX) fail(`Error: Jarvis presses ${label} at most ${UNASKED_REPEAT_MAX} times in a row without asking the owner. Press it fewer times.`);
+        this.actOn(ctx, t, f.targetId);
         return { approved: [{ targetId: f.targetId, kind: 'key', keys, presses: repeat, hold, ...(pin ? { dest: pin } : {}) }], focusClass };
       }
     }
@@ -1665,12 +1906,15 @@ export class Executor {
       fail(`Error: pressing ${label} ${repeat} times would activate ${this.quote(t, v.guard.label, 'element_name', 60)} (${v.guard.reason || GUARD_CATEGORIES[v.guard.category]}) more than once. Press it once; the owner is asked first.`);
     }
     const where = focus ? (isEditableFocus(focus) ? 'in' : 'on') : 'on';
-    const selection = await this.bindingSelection(t, f.targetId, f.selection);
-    const step = { kind: 'key', verb: `Press ${label}${repeat > 1 ? ` ${repeat} times` : ''}${hold ? ' and hold it' : ''} ${where}`, desc: focus, label: focus ? '' : 'the page', plain: !focus, targetId: f.targetId, ctx: f.ctx, item: f.item, selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', bindable: true, doc: t.docSeq };
+    // A key always shows its own card, naming the key and what it does there: a request_confirmation
+    // approval of the element never covers it (its card showed a click on the element, and a key in
+    // a text box can send what is in it).
+    const step = { kind: 'key', verb: `Press ${label}${repeat > 1 ? ` ${repeat} times` : ''}${hold ? ' and hold it' : ''} ${where}`, desc: focus, label: focus ? '' : 'the page', plain: !focus, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', doc: t.docSeq };
     await this.approve(t, step, ctx);
     // The focus may have moved while the owner was deciding.
     const again = await this.focus(t, ctx);
     if (String(again.targetId) !== String(f.targetId) || (again.ctx || '') !== (f.ctx || '') || t.docSeq !== step.doc) fail('Error: the page changed while the owner was deciding (the keyboard focus moved), so Jarvis did not press the key. Look at the page again before you act.');
+    this.actOn(ctx, t, f.targetId);
     return { approved: [{ targetId: f.targetId, ctx: f.ctx, kind: 'key', keys, presses: repeat, hold, ...(pin ? { dest: pin } : {}) }], focusClass, asked: true, step };
   }
 
@@ -1705,6 +1949,7 @@ export class Executor {
     const same = Array.isArray(again) && again.length === chain.length && again.every((fr, i) => fr.frameId === chain[i].frameId && fr.site === chain[i].site && fr.navSeq === chain[i].navSeq);
     if (!same) fail('Error: the page changed while the owner was deciding (the box with the focus moved or loaded another page), so Jarvis did not press the key. Look at the page again before you act.');
     // (The owner approved this key in that box: that box's own page loads are theirs.)
+    this.actOn(ctx, t, `frame:${chain.map((fr) => fr.frameId).join('>')}`);
     return { approved: [], frame: true, asked: true, step, frames: chain };
   }
 
@@ -1850,8 +2095,11 @@ export class Executor {
         if (v.verdict === 'ask') step = { kind: 'form', verb: `Choose "${truncate(singleLine(pv.option.text), 60)}" in`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, option: pv.option.text, doc };
       }
     } else {
-      const v = assessFormInput({ desc: r.desc, everyday: this.everyday(ctx), pageUrl: t.url });
-      if (v.verdict === 'ask') step = { kind: 'form', verb: `Set`, detail: `to "${truncate(singleLine(String(value)), 120)}"`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
+      // A value set into a text field is text Claude chose, like typing: shown whole, nothing
+      // hidden in it after a read on another site, and then never an everyday step.
+      this.checkChosenText(String(value), ctx.site, 'form');
+      const v = assessFormInput({ desc: r.desc, everyday: this.everyday(ctx, { typing: true }), pageUrl: t.url });
+      if (v.verdict === 'ask') step = { kind: 'form', verb: `Set`, detail: `to "${revealText(String(value))}"`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
     }
     if (step) {
       await this.approve(t, step, ctx);
@@ -1863,6 +2111,7 @@ export class Executor {
       }
     }
     this.steady(t, ctx);
+    this.actOn(ctx, t, r.targetId);
     // A change handler may submit a form or load a page: that is the owner's approved step's.
     if (step) this.driver.markApproved(t);
     const res = await this.pageOp(t, 'formInput', { ref, value }, ctx);
@@ -1909,15 +2158,16 @@ export class Executor {
     }
     const a = addressAction(url);
     if (!a) return null;
-    const shown = showUrl(url, 100);
+    // (The card shows the address whole in "It opens …"; the step itself is "Open this address".)
+    const shown = cardAddress(url);
     let step;
     if (a.category === 'download' && a.file) {
       const name = a.word || 'a file';
       step = { kind: 'navigate', verb: 'Download', label: name, detail: `from ${site}`, guard: { category: 'download', label: name, reason: a.reason }, dest: url, opens: url, site };
     } else if (CATEGORIES[a.category]) {
-      step = { kind: 'navigate', verb: 'Open', label: shown, plain: true, guard: { category: a.category, label: shown, reason: `${CATEGORIES[a.category]} (${a.reason})` }, dest: url, opens: url, site };
+      step = { kind: 'navigate', verb: 'Open', label: 'this address', plain: true, guard: { category: a.category, label: shown, reason: `${CATEGORIES[a.category]} (${a.reason})` }, dest: url, opens: url, site };
     } else {
-      step = { kind: 'navigate', verb: 'Open', label: shown, plain: true, guard: null, detail: `(${a.reason})`, dest: url, opens: url, site };
+      step = { kind: 'navigate', verb: 'Open', label: 'this address', plain: true, guard: null, detail: `(${a.reason})`, dest: url, opens: url, site };
     }
     await this.approve(t, step, { ...ctx, site });
     return step;
@@ -2009,17 +2259,32 @@ export class Executor {
   }
 }
 
-/** "a button", "a link", "a text box": what kind of element the owner is asked about. */
+/** A slider (a range input or role=slider): pressing on it sets its value where it is pressed. */
+function isSlider(d) {
+  const role = String(d?.role || '').toLowerCase();
+  const tag = String(d?.tag || '').toLowerCase();
+  const type = String(d?.type || d?.field?.type || '').toLowerCase();
+  return role === 'slider' || (tag === 'input' && type === 'range');
+}
+
+// Inputs that are not text boxes, by what they hold.
+const INPUT_KINDS = { range: 'a slider', number: 'a number field', date: 'a date field', 'datetime-local': 'a date and time field', month: 'a month field', week: 'a week field', time: 'a time field', color: 'a colour picker', checkbox: 'a checkbox', radio: 'a radio button', file: 'a file picker' };
+
+/** "a button", "a link", "a text box", "a slider": what kind of element the owner is asked about. */
 function describeRole(d) {
   const role = String(d?.role || '').toLowerCase();
   const tag = String(d?.tag || '').toLowerCase();
+  const type = String(d?.type || d?.field?.type || '').toLowerCase();
   if (d?.iframe) return 'a box from another site';
-  if (role === 'button' || tag === 'button' || (tag === 'input' && /^(submit|button|reset|image)$/i.test(d?.type || ''))) return 'a button';
+  if (role === 'button' || tag === 'button' || (tag === 'input' && /^(submit|button|reset|image)$/i.test(type))) return 'a button';
   if (role === 'link' || tag === 'a') return 'a link';
   if (role === 'checkbox' || role === 'switch') return role === 'switch' ? 'a switch' : 'a checkbox';
   if (role === 'radio') return 'a radio button';
+  if (isSlider(d)) return 'a slider';
+  if (role === 'spinbutton') return 'a number field';
   if (tag === 'select' || role === 'combobox' || role === 'listbox') return 'a list of options';
-  if (role === 'searchbox' || (tag === 'input' && String(d?.type || '').toLowerCase() === 'search')) return 'a search box';
+  if (role === 'searchbox' || (tag === 'input' && type === 'search')) return 'a search box';
+  if (tag === 'input' && INPUT_KINDS[type]) return INPUT_KINDS[type];
   if (role === 'textbox' || tag === 'textarea' || tag === 'input' || d?.isContentEditable) return 'a text box';
   if (role === 'option' || role === 'menuitem' || role === 'tab') return `a ${role === 'menuitem' ? 'menu item' : role}`;
   return '';
