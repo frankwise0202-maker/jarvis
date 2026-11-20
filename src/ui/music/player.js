@@ -28,6 +28,9 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
     if (audio) return audio;
     audio = typeof createAudio === 'function' ? createAudio() : new Audio();
     audio.preload = 'none';
+    // Fetched without the browser's Apple cookies (CORS, anonymous: Apple's host answers
+    // Access-Control-Allow-Origin: *), like the search; set before any src.
+    audio.crossOrigin = 'anonymous';
     try {
       audio.setAttribute('data-testid', 'music-audio');
     } catch {

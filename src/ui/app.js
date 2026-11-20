@@ -1267,11 +1267,21 @@ export async function startApp(rootEl) {
         music: {
           command: (text) => musicCommand(text, { source: 'voice', spoken: true }),
           card: (seg) => {
-            const view = createMusicCardView({ player: musicPlayer, isMac: onMac, notify: (m) => voiceApi && safe(() => voiceApi.note(m)), testid: 'voice-music-card' });
+            const view = createMusicCardView({
+              player: musicPlayer,
+              isMac: onMac,
+              notify: (m) => voiceApi && safe(() => voiceApi.note(m)),
+              testid: 'voice-music-card',
+              micHint: 'Tap the core to stop listening first.',
+            });
             view.update(seg);
             return view;
           },
           onListen: () => musicPlayer.pauseForMic(),
+          // Jarvis starts speaking (a line, an answer): a preview playing would play over him.
+          onSpeak: () => {
+            if (musicPlayer.isPlaying()) musicPlayer.pause();
+          },
         },
         onClose: () => {
           voiceApi = null;
@@ -2375,6 +2385,8 @@ export async function startApp(rootEl) {
     const text = safe(() => toSpeech(md, mode), '');
     if (!text) return;
     stopSpeakingNow();
+    // A preview playing now would play over Jarvis's voice (Speak, Speak replies): it pauses.
+    if (musicPlayer.isPlaying()) safe(() => musicPlayer.pause());
     const s = getSettings();
     const entry = { turnId: turn.id, handle: null };
     state.speaking = entry;

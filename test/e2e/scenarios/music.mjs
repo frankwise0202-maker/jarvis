@@ -21,6 +21,33 @@ async function playerState(locator) {
   return locator.locator(tid('music-player')).getAttribute('data-state');
 }
 
+/** Where the Voice Mode card's buttons are, and whether a tap at their centre reaches them. */
+function voiceCardLayout(page) {
+  return page.evaluate(() => {
+    const box = (el) => {
+      const b = el.getBoundingClientRect();
+      return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right) };
+    };
+    const hit = (el) => {
+      const b = el.getBoundingClientRect();
+      const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return !!at && (at === el || el.contains(at));
+    };
+    const out = { vw: innerWidth, vh: innerHeight, dockTop: Math.round(document.querySelector('.vm-bottom').getBoundingClientRect().top), scrollW: document.documentElement.scrollWidth };
+    for (const id of ['music-preview', 'music-open']) {
+      const el = document.querySelector(`[data-testid="voice-music"] [data-testid="${id}"]`);
+      out[id] = el ? { ...box(el), hit: hit(el) } : null;
+    }
+    const alts = document.querySelector('[data-testid="voice-music"] [data-testid="music-alts"]');
+    out.altsShown = !!alts && alts.getBoundingClientRect().height > 0;
+    return out;
+  });
+}
+
+async function toastText(t) {
+  return t.text(t.page.locator('.toast, [data-testid="toast"]').last()).catch(() => '');
+}
+
 export default [
   {
     name: 'music-chat',
@@ -154,6 +181,144 @@ export default [
       await (await t.visible('voice-close')).click();
       // The exchange is in the chat too.
       await t.waitFor(async () => (await t.count('music-card')) === 1, { timeout: 5000, message: 'the Music card in the chat' });
+    },
+  },
+
+  {
+    name: 'music-voice-small',
+    title: 'Voice Mode on small phones (375×667, then 320×568): the whole card fits above the dock, so Preview and Open in Apple Music take a tap without scrolling; "Also found" stays in the chat',
+    device: 'small',
+    fakeMusic: true,
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['Jarvis, play Back in Black'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      await waitCard(t, 'voice-music-card');
+      await t.waitFor(async () => /Ready/.test(await t.text(await t.visible('voice-status'))), { timeout: 10000, message: 'Voice Mode to wait (Ready)' });
+      for (const [w, hgt] of [[375, 667], [320, 568]]) {
+        await t.page.setViewportSize({ width: w, height: hgt });
+        await t.page.waitForTimeout(400);
+        const m = await voiceCardLayout(t.page);
+        for (const id of ['music-preview', 'music-open']) {
+          const b = m[id];
+          t.assert(b && b.hit && b.bottom <= m.dockTop && b.top >= 0, `${w}×${hgt}: ${id} takes a tap above the dock (${JSON.stringify(b)}, dock at ${m.dockTop})`);
+        }
+        t.assert(!m.altsShown, `${w}×${hgt}: "Also found" is not in Voice Mode`);
+        t.assert(m.scrollW <= w, `${w}×${hgt}: no sideways scroll (${m.scrollW})`);
+        await t.screenshot(`voice-${w}`);
+      }
+    },
+  },
+
+  {
+    name: 'music-voice-cards',
+    title: 'Voice Mode: a reply with two find_music picks shows both cards (not just the last), and the hint names what the cards offer: Preview for a song with a clip, Open in Apple Music for an album',
+    device: 'iphone13',
+    fakeMusic: true,
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = ['[[music:recommend]] Play something for a rainy Sunday afternoon'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      const hint = t.page.locator('.vm-cap-sub');
+      await t.waitFor(async () => (await t.page.locator(tid('voice-music-card')).count()) === 2, { timeout: 30000, message: async () => `two cards in Voice Mode (${await t.page.locator(tid('voice-music-card')).count()})` });
+      await t.waitFor(async () => /Ready/.test(await t.text(await t.visible('voice-status'))), { timeout: 30000, message: 'the reply to be said (Ready)' });
+      const titles = await t.page.locator(`${tid('voice-music')} ${tid('music-title')}`).allTextContents();
+      t.assert(JSON.stringify(titles) === JSON.stringify(['Riders On the Storm', 'Come Away With Me']), `both picks: ${JSON.stringify(titles)}`);
+      await t.waitFor(async () => (await t.text(hint)) === 'Tap Preview to hear a clip, or the core to talk.', { timeout: 5000, message: async () => `the hint for a song with a clip (${await t.text(hint)})` });
+      await t.screenshot('two-cards');
+
+      await t.page.evaluate(() => {
+        window.__voice.queue = ['play the album Rumours'];
+      });
+      await (await t.visible('voice-core')).click();
+      await t.waitFor(async () => (await t.page.locator(tid('voice-music-card')).count()) === 1 && (await t.text(t.page.locator(`${tid('voice-music')} ${tid('music-title')}`))) === 'Rumours', {
+        timeout: 15000,
+        message: 'the album card replaces the picks',
+      });
+      await t.waitFor(async () => /Ready/.test(await t.text(await t.visible('voice-status'))), { timeout: 15000, message: 'Ready after the line' });
+      await t.waitFor(async () => (await t.text(hint)) === 'Tap Open in Apple Music to play it, or the core to talk.', { timeout: 5000, message: async () => `no "Preview" in the hint for an album (${await t.text(hint)})` });
+    },
+  },
+
+  {
+    name: 'music-media',
+    title: 'Previews and Jarvis\'s voice never overlap: Speak (chat) and a spoken reply (Voice Mode) pause a preview; the chat\'s mic note says "Tap the mic"; previews and artwork carry no Apple cookies',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      const ctx = t.page.context();
+      await ctx.addCookies([
+        { name: 'appleid_session', value: 'SECRET123', domain: '.apple.com', path: '/', secure: true, sameSite: 'None', httpOnly: true },
+        { name: 'mz_art', value: 'ART456', domain: '.mzstatic.com', path: '/', secure: true, sameSite: 'None' },
+      ]);
+      const sent = { preview: [], art: [], search: [] };
+      const watch = (key) => async (route) => {
+        sent[key].push((await route.request().allHeaders()).cookie || '');
+        return route.fallback();
+      };
+      await ctx.route(/^https:\/\/audio-ssl\.itunes\.apple\.com\//, watch('preview'));
+      await ctx.route(/^https:\/\/is\d{1,2}-ssl\.mzstatic\.com\//, watch('art'));
+      await ctx.route(/^https:\/\/itunes\.apple\.com\//, watch('search'));
+      await t.page.addInitScript(installFakeSpeech, { durationMs: 4000 });
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      const turn = await t.send('play Back in Black');
+      const c = await waitCard(t);
+
+      await t.step('no Apple cookies with the search, the artwork or the preview', async () => {
+        t.assert((await c.locator('img.music-art-img').getAttribute('crossorigin')) === 'anonymous', 'the artwork is loaded anonymously');
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'the preview to play' });
+        await t.waitFor(() => sent.art.length > 0 && sent.preview.length > 0, { timeout: 5000, message: 'the artwork and preview requests' });
+        t.assert([...sent.search, ...sent.art, ...sent.preview].every((cookie) => cookie === ''), `no cookies sent: ${JSON.stringify(sent)}`);
+      });
+
+      await t.step('Speak on the reply pauses the preview', async () => {
+        await turn.locator(tid('turn-speak')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'paused', { timeout: 5000, message: async () => `the preview to pause while Jarvis reads (${await playerState(c)})` });
+        t.assert(await t.page.evaluate(() => window.speechSynthesis.speaking), 'Jarvis reads the reply');
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 5000, message: 'Resume plays again' });
+        await t.waitFor(() => t.page.evaluate(() => !window.speechSynthesis.speaking), { timeout: 5000, message: 'and Jarvis stops reading' });
+      });
+
+      await t.step('the chat\'s mic: the preview pauses, and the note says "Tap the mic"', async () => {
+        await (await t.visible('composer-mic')).click();
+        await t.waitFor(async () => (await playerState(c)) !== 'playing', { timeout: 5000, message: 'the preview to pause before the mic listens' });
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => /Tap the mic to stop listening first\./.test(await toastText(t)), { timeout: 5000, message: async () => `the note (${await toastText(t)})` });
+        t.assert(!/core/.test(await toastText(t)), 'no "core" in the chat');
+        t.assert((await playerState(c)) !== 'playing', 'nothing plays while the mic listens');
+        await (await t.visible('composer-mic')).click();
+      });
+
+      await t.step('Voice Mode: a spoken reply pauses a preview', async () => {
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: async () => `the preview to play again (${await playerState(c)})` });
+        await (await t.visible('voice-open')).click();
+        await t.visible('voice-mode');
+        await (await t.visible('voice-type-toggle')).click();
+        await (await t.visible('voice-input')).fill('What role does OPEC play in oil prices?');
+        await (await t.visible('voice-send')).click();
+        await t.waitFor(() => t.page.evaluate(() => window.speechSynthesis.speaking), { timeout: 20000, message: 'Jarvis to speak the reply' });
+        await t.waitFor(async () => (await playerState(c)) === 'paused', { timeout: 5000, message: async () => `the preview to pause while Jarvis speaks (${await playerState(c)})` });
+      });
     },
   },
 

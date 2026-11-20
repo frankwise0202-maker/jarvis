@@ -281,15 +281,22 @@
   }
 }
 
-/* Voice Mode: the card sits under the captions, above the dock; the core gets smaller meanwhile. */
+/* Voice Mode: the cards sit under the captions, above the dock; the core gets smaller meanwhile.
+   The captions give way first (they scroll), so a card's Preview and Open in Apple Music stay
+   clear of the dock; several cards (a reply's find_music picks) stack and scroll in their box. */
 .vm.vm--music {
   --vm-core: min(44vw, 22vh, 240px);
 }
+.vm.vm--music[data-music-cards]:not([data-music-cards='1']) {
+  --vm-core: min(36vw, 17vh, 200px);
+}
 .vm-music {
+  flex: 0 1 auto;
   width: min(560px, calc(100% - 2 * var(--sp-4)));
   max-height: 46vh;
   margin: var(--sp-2) auto 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   text-align: left;
   pointer-events: auto;
 }
@@ -298,4 +305,60 @@
 }
 .vm-music .music-card {
   margin: 0;
+}
+.vm-music .music-card + .music-card {
+  margin-top: var(--sp-2);
+}
+/* "Also found" stays in the chat: in Voice Mode the card is the song, Preview and Open. */
+.vm-music .music-alts {
+  display: none;
+}
+.vm.vm--music .vm-captions {
+  flex-shrink: 20;
+  min-height: 2.6em;
+}
+.vm-music .music-player {
+  gap: var(--sp-2);
+}
+.vm-music .music-progress {
+  min-width: 24px;
+}
+
+/* Short phones (an iPhone SE: 375×667, 320×568): a smaller core and card, and no hint line while a
+   card is shown, so the whole card fits above the dock without scrolling. */
+@media (max-height: 740px) and (orientation: portrait) {
+  .vm.vm--music {
+    --vm-core: min(30vw, 13vh, 150px);
+  }
+  .vm.vm--music .vm-stage {
+    gap: var(--sp-2);
+  }
+  .vm.vm--music .vm-core {
+    margin-bottom: 0;
+  }
+  .vm.vm--music .vm-cap-sub {
+    display: none;
+  }
+  .vm.vm--music .vm-captions {
+    padding: var(--sp-1) 0;
+    font-size: var(--fs-md);
+  }
+  .vm-music {
+    margin-top: 0;
+  }
+  .vm-music .music-card {
+    padding: var(--sp-2);
+  }
+  .vm-music .music-art {
+    width: 56px;
+    height: 56px;
+  }
+  .vm-music .music-title {
+    font-size: var(--fs-md);
+    -webkit-line-clamp: 1;
+  }
+  .vm-music .music-player,
+  .vm-music .music-actions {
+    margin-top: var(--sp-2);
+  }
 }

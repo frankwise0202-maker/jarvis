@@ -73,11 +73,13 @@
 //   music                 Apple Music (app.js): command(text) -> null (not a music command) or
 //                           { handled: true, done: Promise<{ ack, segment? }> }: "play Back in Black"
 //                           searches (free: no turn), shows the Music card here and Jarvis says one
-//                           short line. card(segment) -> { el, update, destroy } (a Music card, also
-//                           for a reply's find_music results); onListen() before the mic opens (a
-//                           playing preview pauses: previews never play while Jarvis listens). After a
-//                           card is shown Jarvis waits for a tap instead of listening again, so the
-//                           owner can tap Preview.
+//                           short line. card(segment) -> { el, update, destroy, current } (a Music
+//                           card, also for each of a reply's find_music results: they stack, a new
+//                           question clears them); onListen() before the mic opens and onSpeak()
+//                           when Jarvis starts speaking (a playing preview pauses: previews never
+//                           play while Jarvis listens or over his voice). After a card is shown
+//                           Jarvis waits for a tap instead of listening again, so the owner can tap
+//                           Preview (or Open in Apple Music: the hint says which).
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -311,9 +313,11 @@ function createVoiceMode(opts) {
   const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText);
 
   const captions = h('div', { class: 'vm-captions', attrs: { 'data-testid': 'voice-captions', 'data-kind': 'hint' } });
-  // Apple Music: the Music card of a "play …" (or of a reply's find_music) sits under the captions.
+  // Apple Music: the Music card of a "play …" (or the cards of a reply's find_music calls, stacked)
+  // sits under the captions.
   const musicEl = h('div', { class: 'vm-music', hidden: true, attrs: { 'data-testid': 'voice-music' } });
-  let musicView = null; // { segId, view }
+  const musicViews = new Map(); // segment id -> card view, in the order shown
+  const MAX_VOICE_CARDS = 6;
   const capSub = h('p', { class: 'vm-cap-sub', hidden: true });
 
   const mWave = h('span', { class: 'vm-mission-wave' });
@@ -877,7 +881,7 @@ function createVoiceMode(opts) {
         setStatus('Ready', 'dot');
         finishKaraoke();
         if (captions.dataset.kind === 'context') captions.dataset.kind = 'jarvis';
-        setSub(S.sttOk && !S.typing ? 'Tap Preview to hear it, or the core to talk.' : '');
+        setSub(S.sttOk && !S.typing ? musicHint() : '');
         break;
       case 'stopped':
         setStatus('Stopped', 'stop');
@@ -1874,39 +1878,64 @@ function createVoiceMode(opts) {
     return true;
   }
 
-  /** Show a Music card under the captions (a new one replaces the last; the same one updates). */
-  function showMusicCard(seg) {
+  /**
+   * Show a Music card under the captions. The cards of one reply stack (two find_music picks: a
+   * song and an album); `fresh` (a new "play …") clears the last ones first; the same one updates.
+   */
+  function showMusicCard(seg, { fresh = false } = {}) {
     if (!music || typeof music.card !== 'function' || !seg || typeof seg.id !== 'string' || S.closed) return;
     try {
-      if (musicView && musicView.segId === seg.id) {
-        musicView.view.update(seg);
+      if (fresh) clearMusicCard();
+      const shown = musicViews.get(seg.id);
+      if (shown) {
+        shown.update(seg);
       } else {
-        clearMusicCard();
         const view = music.card(seg);
         if (!view || !view.el) return;
-        musicView = { segId: seg.id, view };
-        musicEl.replaceChildren(view.el);
+        musicViews.set(seg.id, view);
+        musicEl.appendChild(view.el);
+        while (musicViews.size > MAX_VOICE_CARDS) dropMusicCard(musicViews.keys().next().value);
       }
       musicEl.hidden = false;
-      root.classList.add('vm--music'); // a smaller core makes room for the card
+      root.classList.add('vm--music'); // a smaller core makes room for the cards
+      root.dataset.musicCards = String(musicViews.size);
       if (seg.status === 'done' && Array.isArray(seg.items) && seg.items.length) S.noRelisten = true;
     } catch (err) {
       console.warn('[voice] the Music card could not be shown', err);
     }
   }
 
-  function clearMusicCard() {
-    if (musicView && musicView.view && typeof musicView.view.destroy === 'function') {
-      try {
-        musicView.view.destroy();
-      } catch {
-        /* ignore */
-      }
+  function dropMusicCard(segId) {
+    const view = musicViews.get(segId);
+    musicViews.delete(segId);
+    if (!view) return;
+    try {
+      if (typeof view.destroy === 'function') view.destroy();
+    } catch {
+      /* ignore */
     }
-    musicView = null;
+    if (view.el) view.el.remove();
+  }
+
+  function clearMusicCard() {
+    for (const id of [...musicViews.keys()]) dropMusicCard(id);
     musicEl.replaceChildren();
     musicEl.hidden = true;
     root.classList.remove('vm--music');
+    delete root.dataset.musicCards;
+  }
+
+  /** The hint under a shown card, from what it offers: a Preview only for songs that have one. */
+  function musicHint() {
+    const items = [];
+    for (const view of musicViews.values()) {
+      const item = typeof view.current === 'function' ? view.current() : null;
+      if (item) items.push(item);
+    }
+    const several = items.length > 1;
+    if (items.some((item) => item.type === 'song' && item.previewUrl)) return several ? 'Tap Preview to hear a clip, or the core to talk.' : 'Tap Preview to hear it, or the core to talk.';
+    if (items.length) return several ? 'Tap Open in Apple Music to play one, or the core to talk.' : 'Tap Open in Apple Music to play it, or the core to talk.';
+    return 'Tap the core to talk.';
   }
 
   /**
@@ -1933,7 +1962,7 @@ function createVoiceMode(opts) {
       (out) => {
         if (S.closed || S.run !== marker) return;
         S.run = null;
-        if (out && out.segment) showMusicCard(out.segment);
+        if (out && out.segment) showMusicCard(out.segment, { fresh: true });
         speakAck(out && typeof out.ack === 'string' ? out.ack : '');
       },
       () => {
@@ -2520,12 +2549,23 @@ function createVoiceMode(opts) {
   function onSpeechStart(sp) {
     if (sp.token !== S.speechToken || sp.started) return;
     sp.started = true;
+    pauseMusicForSpeech();
     if (sp.kind === 'live') announce('Jarvis is speaking');
+  }
+
+  /** Jarvis's voice starts (a line, an answer, or the next sentences of a reply): a preview pauses. */
+  function pauseMusicForSpeech() {
+    try {
+      if (music && typeof music.onSpeak === 'function') music.onSpeak();
+    } catch {
+      /* decoration */
+    }
   }
 
   /** A chunk starts playing: highlight it, and show that Jarvis is speaking. */
   function onSpeechChunk(sp, c) {
     if (sp.token !== S.speechToken || !c) return;
+    pauseMusicForSpeech(); // also when a reply speaks again after a pause (a preview tapped meanwhile)
     const start = Number(c.start);
     const end = Number(c.end);
     if (!Number.isFinite(start) || start < 0) return;

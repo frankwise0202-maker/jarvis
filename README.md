@@ -342,28 +342,34 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
 Type it or say it, in the chat or in Voice Mode:
 
 - **"Play Back in Black"**, "play Back in Black by AC/DC", "put on some Miles Davis", "play the
-  album Rumours", "open Thriller in Apple Music": Jarvis finds it in Apple Music at once and shows
-  a **Music card**: the artwork, the title, the artist, the album and year, and a few other
-  versions to pick from ("Also found").
+  album Rumours", "find the song Yesterday", "open Thriller in Apple Music": Jarvis finds it in
+  Apple Music at once and shows a **Music card**: the artwork, the title, the artist, the album
+  and year, and a few other versions to pick from ("Also found"). "Play some Queen" shows Queen's
+  own top songs (not songs by other artists where Queen is only a guest).
 - **Open in Apple Music** plays the whole song or album in Apple's Music app (on an iPhone it opens
   the Music app; elsewhere Apple Music on the web, where you can sign in). On a Mac there is also
   **Open in Music app**, which opens it straight in the Music app (Chrome asks once whether it may).
 - **Preview** plays Apple's 30-second clip inside Jarvis, with a progress bar; tap again to
   pause. "Play a preview of Hey Jude" starts it straight away; **"stop the music"** stops it.
-  Starting a preview stops Jarvis talking, and a preview never plays while the microphone is
-  listening (it pauses when you tap to talk).
+  A preview and Jarvis's voice never overlap: starting a preview stops Jarvis talking, and Jarvis
+  starting to talk (Speak, or a reply in Voice Mode) pauses it. A preview never plays while the
+  microphone is listening (it pauses when you tap to talk).
 - **In Voice Mode**, "Jarvis, play Back in Black" gets one short line ("Here's Back in Black by
   AC/DC. Tap Open in Apple Music to play it.") and the card on screen; Jarvis then waits for your
-  tap instead of listening again, so you can tap Preview.
-- **Recommendations.** Ask in your own words ("play something for a rainy Sunday", "what should I
-  listen to while I cook?") and Jarvis picks real songs or albums and shows a card for each (this
-  is a normal question, so it costs like one; in chats started after this update).
+  tap instead of listening again, so you can tap Preview. When he recommends a few, every card
+  shows (scroll them). On small iPhones the card fits above the buttons at the bottom.
+- **Recommendations.** Ask in your own words ("play something for a rainy Sunday", "play a song to
+  cheer me up", "play the new Taylor Swift song", "what should I listen to while I cook?") and
+  Jarvis picks real songs or albums and shows a card for each (this is a normal question, so it
+  costs like one; in chats started after this update).
 
 What it can't do: Jarvis can't play full songs itself or control the Music app (that needs an
 Apple Music subscription and Apple's developer program), and Apple Music playlists can't be
 searched for free, so for "play my workout playlist" he shows the closest albums and songs and
 says so. The short commands are free: they never go to Claude, and the exchange is kept in the chat
-like any other.
+like any other. Everyday requests that only sound like music ("find the record low for Chicago",
+"find the single best laptop", "open the album I shared yesterday") go to Jarvis as usual: "find",
+"show" and "open" mean music only with "in Apple Music", "the song", "the album" or "the playlist".
 
 ### A more natural voice
 
@@ -556,8 +562,8 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
 - **Apple Music.** When you ask for music, the words searched (such as "back in black") go to
   Apple (`itunes.apple.com`), with your country taken from your device's language settings; the
   artwork loads from Apple's `mzstatic.com` and previews from `audio-ssl.itunes.apple.com`. No
-  account, cookies or referrer are sent, and nothing else goes to Apple. Opening a song in Apple
-  Music is between you and Apple.
+  account, cookies or referrer are sent (not even cookies your browser has for Apple), and nothing
+  else goes to Apple. Opening a song in Apple Music is between you and Apple.
 - **Holograms and blueprints** you've made are saved on this device only, like your
   conversations, and are included in backups. Deleting a conversation keeps its saved holograms
   and blueprints (delete those in the Blueprints library); **Reset Jarvis** deletes them. If the

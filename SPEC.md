@@ -2353,12 +2353,16 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
 
 - **Search** (`src/platform/music.js`, pure parts in `src/lib/music.js`). The iTunes Search API, called from the
   browser (`Access-Control-Allow-Origin: *`): `GET https://itunes.apple.com/search?term&media=music&entity=song|album|
-  musicArtist&limit&country`, and `/lookup?id=<artist>&entity=song` for an artist's top songs. `searchMusic(query,
+  musicArtist&limit&country`, and `/lookup?id=<artist>&entity=song&limit=25` for an artist's top songs. `searchMusic(query,
   { kind: 'song'|'album'|'artist'|'playlist', limit, country, fetch, signal, timeoutMs, title, artist })` and
   `topSongs(artistId, …)` return `{ ok: true, items, kind, country, query, artist? }` or `{ ok: false, error:
   'empty'|'offline'|'timeout'|'aborted'|'network'|'bad_response', message }`, never throw; 8 s timeout; credentials
   omitted, no referrer; the country from the device locale (`en-GB` → `gb`, else `us`); a 10-minute in-memory cache
-  (60 entries). `artist` finds the artist then its top songs; `playlist` is searched as albums, then songs.
+  (60 entries). `artist` finds the artist then its top songs: Apple's lookup order is not by popularity and mixes in
+  other artists' recordings where this one is only featured ("Somebody to Love" by George Michael & Queen), so
+  `artistSongsFirst` (`src/lib/music.js`) puts the artist's own first (their id; their name alone before "Queen & Adam
+  Lambert"), then the rest, each title once (a live or remastered copy of a title shown is dropped), cut to the limit.
+  `playlist` is searched as albums, then songs.
   "X by Y" ranks results (the named artist first, then the exact title, then iTunes' order; karaoke and tributes sink).
 - **Strict parsing and the host whitelist** (`src/lib/music.js`). `parseItunesResults` throws on a wrong shape and
   keeps only songs (`wrapperType: 'track', kind: 'song'`) and albums (`collection`), deduplicated:
@@ -2370,9 +2374,17 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   card, backups). `musicAppLink(url)` is the `music://` form of a link (the Music app on a Mac).
 - **Local commands, free** (`src/lib/music-commands.js`, `matchMusicCommand(text)` → `{ action: 'play'|'open'|
   'preview'|'stop', kind, query, title, artist, apple }` or null): "play X", "play X by Y", "put on some <artist>",
-  "play the album X", "play my X playlist", "open X in Apple Music", "play a preview of X", "stop the music". Strict:
-  a music verb first (after fillers), a concrete title or artist ("play something relaxing", "play some jazz" go to
-  Jarvis, who picks with find_music), never a question ("what role does X play"), never an idiom ("play devil's
+  "play the album X", "play my X playlist", "open X in Apple Music", "find the song X", "play a preview of X", "stop
+  the music". Strict: a music verb first (after fillers), a concrete title or artist ("play something relaxing", "play
+  some jazz", "play some 80s rock" go to Jarvis, who picks with find_music), never a question ("what role does X
+  play"), never research: open, find, show, get, look up and search need Apple Music or iTunes named, or "the song",
+  "the album" or "the playlist" and a title after it ("find the record low for Chicago", "find the single best
+  laptop", "find the track record of a fund", "find the song lyrics to …", "open the album I shared yesterday", "show me
+  the album cover" go to Jarvis), never a wish or a chart after "a song / the track" ("play a song for a rainy Sunday",
+  "a song to cheer me up", "a song like Back in Black", "the song from Titanic", "the best song of 1985", "the number
+  one song right now", "the new Taylor Swift song", "the latest Drake album", "the Top Gun soundtrack": Jarvis picks; a
+  title with those words is taken when it names its artist, "New Rules by Dua Lipa", or says "the song called …"),
+  never Jarvis's own things ("play the hologram of the engine", "the video I saved", photos), never an idiom ("play devil's
   advocate", "play chess", "play it safe"), never Jarvis's own replies ("play it again", "play back the answer",
   "play my voicemail"), never words that are not a title ("let me hear your thoughts", "listen to me", "play something
   upbeat for my run"; a title that starts that way is taken when it names its artist: "play Your Song by Elton John"),
@@ -2384,9 +2396,12 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   label; footer "Free · Apple Music"), in the open conversation or a new one (not while a reply runs in it: the words
   wait like any message). `apiMessages` is never touched, so Claude never sees it and the next request is exactly
   what it would have been. Persisted with the conversation; backups keep `local` and re-check the music segment.
+  Shares, copies and the whole-conversation export write a card as "[Apple Music: Back In Black by AC/DC](link)"; a
+  local exchange's stats line is "Free · Apple Music" there too.
 - **The Music card** (`src/ui/music/card.js`, `src/styles/music.css`; segment `{ kind: 'music', status:
   'searching'|'done'|'error', query, searchKind, items, artist, error, toolUseId, local? }`): artwork (shown once
-  loaded), "APPLE MUSIC · SONG|ALBUM", title, artist, "album · year · m:ss", **Preview** with a mini player
+  loaded; `crossorigin="anonymous"`, no referrer: no cookies), "APPLE MUSIC · SONG|ALBUM", title, artist, "album ·
+  year · m:ss", **Preview** with a mini player
   (play/pause, progress, time; songs with a preview only), **Open in Apple Music** (the https link, new tab, noopener:
   the Music app on an iPhone, the web player elsewhere), on a Mac **Open in Music app** (`music://`, same tab), and up
   to four alternatives ("Also found") that swap in. Presence look (tokens, `.hud-frame` brackets, `.hud-label`), text
@@ -2394,16 +2409,25 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   empty | error), `music-title`, `music-artist`, `music-sub`, `music-preview` (`aria-pressed`), `music-player`
   (`data-state` idle | loading | playing | paused | error), `music-progress`, `music-time`, `music-open`,
   `music-open-app`, `music-alts`, `music-alt`, `music-status`; in Voice Mode `voice-music` holding `voice-music-card`.
-- **Previews** (`src/ui/music/player.js`): one shared `<audio>` for every card, one preview at a time. Starting one
-  stops Jarvis's own speech (`stopSpeakingNow`, Voice Mode's `hush()`) and pauses other media on the page. A preview
-  never starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation or Voice Mode), and a
+- **Previews** (`src/ui/music/player.js`): one shared `<audio>` for every card (`crossOrigin = 'anonymous'`, set
+  before any `src`: Apple's hosts answer `Access-Control-Allow-Origin: *`, and no cookies are sent), one preview at a
+  time. Starting one stops Jarvis's own speech (`stopSpeakingNow`, Voice Mode's `hush()`) and pauses other media on
+  the page; Jarvis starting to speak pauses a playing one (`speakTurn`: Speak and Speak replies; Voice Mode's
+  `onSpeak` at every spoken chunk, so a reply that speaks again after a preview was tapped pauses it). A preview never
+  starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation or Voice Mode; the note says
+  "Tap the mic to stop listening first." in the chat, "Tap the core …" in Voice Mode: the card's `micHint`), and a
   playing one pauses before the mic opens (`pauseForMic`: dictation start, Voice Mode's `onListen`). "Stop the music"
   fades it out in 160 ms. "Play a preview of X" typed starts it after the search (where the browser allows).
 - **Voice Mode** (`music` option of `openVoiceMode`): what is heard (or typed) goes to music commands after screen
   commands. "Play Back in Black" → status "Searching Apple Music…", the card under the captions, and one short line
-  ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then Jarvis waits (Ready, "Tap Preview to
-  hear it, or the core to talk.") instead of listening again, so a tap on Preview can play. A Voice Mode reply's
-  find_music cards show there too; a new question clears the card (it stays in the chat).
+  ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then Jarvis waits (Ready) instead of
+  listening again, so a tap on Preview can play. The hint names what the cards offer: "Tap Preview to hear it, or the
+  core to talk." when a song has a clip, else "Tap Open in Apple Music to play it, or the core to talk." A Voice Mode
+  reply's find_music cards show there too, stacked (at most 6; the box scrolls); a new "play …" or question clears
+  them (they stay in the chat). In Voice Mode a card has no "Also found" (the chat has it), the captions give way
+  before the cards, and on short portrait screens (≤ 740 px: an iPhone SE) the core, the card and its artwork are
+  smaller and the hint line is hidden while a card shows, so Preview and Open in Apple Music sit above the dock at
+  375×667 and 320×568 without scrolling.
 - **Lead versions** (new conversations only). `LEAD_SYSTEM_V5` = V4 plus `MUSIC_SECTION` (596 characters) before
   "# Writing the answer"; `leadToolsV6()` = `[...leadToolsV5(), findMusicTool()]` (appended: the V5 prefix and its
   cache are unchanged). Both lists keep every older version (`isKnownLeadSetup`). Pinned (sha256): V5 31a77e44bcde…,
@@ -2421,10 +2445,15 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   after the results, one sentence read from them.
 - **Tests.** Unit `music` (the real "back in black" answer parsed, the whitelist against look-alikes, strict
   parsing, ranking, lines and tool results; the search URL, cache, country, artist and playlist flows, timeout, Stop,
-  HTTP and JSON errors; the matcher with slips and the sentences it must never take) and `engine.music` (versions
+  HTTP and JSON errors; an artist's own top songs first (Queen's live lookup order); the matcher with slips and the
+  sentences it must never take: the review's research requests, wishes and charts; previews without cookies; the
+  whole-conversation export) and `engine.music` (versions
   pinned, v7 conversations byte-identical, the find_music round, failures, Stop, the strict mock's directives, the
   local exchange never reaching Claude). E2E (`fakeMusic: true`: `test/e2e/music-fakes.mjs` answers the iTunes API,
-  artwork and a short WAV preview with route()): `music-chat` (Mac: the card, links, preview play/pause,
-  alternatives, "stop the music", kept after a reload, a question with "play" still goes to Jarvis), `music-voice`
-  (the line, the card, no re-listen, Preview, the core's tap pauses it), `music-tool` (two find_music cards, compact
-  link-free results), `music-phone` (320 px, 44 px targets, AA contrast).
+  artwork and a short WAV preview with route(); its artist lookup lists a featured track first, like Apple's):
+  `music-chat` (Mac: the card, links, preview play/pause, alternatives, "stop the music", kept after a reload, a
+  question with "play" still goes to Jarvis, "play some AC/DC" shows AC/DC's own songs), `music-voice` (the line, the
+  card, no re-listen, Preview, the core's tap pauses it), `music-voice-small` (375×667 and 320×568: Preview and Open
+  take a tap above the dock), `music-voice-cards` (a reply's two picks both shown; the hint for a song and for an
+  album), `music-media` (no Apple cookies; Speak and a spoken Voice Mode reply pause a preview; the chat's mic note),
+  `music-tool` (two find_music cards, compact link-free results), `music-phone` (320 px, 44 px targets, AA contrast).

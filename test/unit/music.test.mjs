@@ -433,6 +433,38 @@ test('previews: never while the mic listens, Jarvis stops talking first, Apple\'
   assert.ok(states.length > 0);
 });
 
+test('previews are fetched without the browser\'s Apple cookies: crossOrigin "anonymous" is set before the preview\'s address', async () => {
+  const [song] = parseItunesResults(SAMPLE);
+  const audio = fakeAudio();
+  let src = '';
+  let corsWhenSrcSet = null;
+  Object.defineProperty(audio, 'src', {
+    get: () => src,
+    set: (v) => {
+      corsWhenSrcSet = audio.crossOrigin;
+      src = v;
+    },
+  });
+  const player = createMusicPlayer({ createAudio: () => audio });
+  assert.deepEqual(await player.play(song), { ok: true });
+  assert.equal(src, song.previewUrl);
+  assert.equal(corsWhenSrcSet, 'anonymous', 'CORS without credentials before the request starts');
+});
+
+test('exporting the whole conversation keeps a Music card as its Apple Music link, like a shared reply', async () => {
+  const { answerMarkdown, conversationMarkdown } = await import('../../src/ui/share.js');
+  const { appendMusicTurn, musicSegment } = await import('../../src/engine/music.js');
+  const [song] = parseItunesResults(SAMPLE);
+  const conv = { id: 'c1', title: '', turns: [], apiMessages: [], system: '', tools: [] };
+  const seg = musicSegment({ ok: true, items: [song], kind: 'song' }, { query: 'back in black', kind: 'song', local: true });
+  const { turn } = appendMusicTurn(conv, { text: 'play Back in Black', line: 'Here’s Back In Black by AC/DC. Tap Open in Apple Music to play it.', segment: seg });
+  const link = '[Apple Music: Back In Black by AC/DC](https://music.apple.com/us/album/back-in-black/574050396?i=574050602)';
+  assert.ok(answerMarkdown(turn).includes(link));
+  const md = conversationMarkdown(conv, { now: Date.now() });
+  assert.ok(md.includes(`## Jarvis`) && md.includes(`Here’s Back In Black by AC/DC. Tap Open in Apple Music to play it.\n\n${link}\n`), md);
+  assert.match(md, /\n\*Free · Apple Music\*\n/, 'the footer as in the chat (no Claude request)');
+});
+
 test('a Music card is shared and copied as its song or album with the Apple Music link', async () => {
   const { answerMarkdown } = await import('../../src/ui/share.js');
   const [song] = parseItunesResults(SAMPLE);

@@ -4,7 +4,9 @@
 // elsewhere) and, on a Mac, Open in Music app (the music:// form of the same link), plus up to
 // four alternatives that swap in with a tap. Used in the chat (a `music` segment) and in Voice Mode.
 //
-//   const view = createMusicCardView({ player, isMac, notify });
+//   const view = createMusicCardView({ player, isMac, notify, micHint });
+//   (micHint: how to stop the mic where the card is: "Tap the mic …" in the chat, "Tap the core …"
+//   in Voice Mode)
 //   view.update(segment)   // { status: 'searching' | 'done' | 'error', query, searchKind, items, error }
 //   view.el, view.destroy()
 //
@@ -32,14 +34,15 @@ export function isMacDevice(nav = typeof navigator !== 'undefined' ? navigator :
   }
 }
 
-export function createMusicCardView({ player = null, isMac = false, notify = null, testid = 'music-card' } = {}) {
+export function createMusicCardView({ player = null, isMac = false, notify = null, testid = 'music-card', micHint = 'Tap the mic to stop listening first.' } = {}) {
   let seg = null;
   let items = [];
   let selected = 0;
   let unsub = null;
 
-  // Shown once loaded (data-loaded), so a broken or slow image never shows as a broken icon.
-  const art = h('img', { class: 'music-art-img', alt: '', attrs: { decoding: 'async', referrerpolicy: 'no-referrer', width: '96', height: '96' } });
+  // Shown once loaded (data-loaded), so a broken or slow image never shows as a broken icon. Loaded
+  // without cookies or referrer (crossorigin anonymous: mzstatic.com answers Access-Control-Allow-Origin: *).
+  const art = h('img', { class: 'music-art-img', alt: '', attrs: { decoding: 'async', referrerpolicy: 'no-referrer', crossorigin: 'anonymous', width: '96', height: '96' } });
   const artFallback = h('span', { class: 'music-art-fallback', attrs: { 'aria-hidden': 'true' } }, icon('wave', { size: 30 }));
   const artBox = h('div', { class: 'music-art' }, artFallback, art);
   art.addEventListener('error', () => {
@@ -90,7 +93,7 @@ export function createMusicCardView({ player = null, isMac = false, notify = nul
     if (!item || !player) return;
     Promise.resolve(player.toggle(item)).then((res) => {
       if (res && res.ok === false && typeof notify === 'function') {
-        if (res.reason === 'listening') notify('The preview waits while the microphone is listening. Tap the core to stop listening first.');
+        if (res.reason === 'listening') notify(`The preview waits while the microphone is listening. ${micHint}`);
         else if (res.reason === 'no-preview') notify('There’s no preview for this one. Tap Open in Apple Music to play it.');
         else if (res.reason === 'error') notify('The preview couldn’t be played. Open it in Apple Music instead.');
       }
