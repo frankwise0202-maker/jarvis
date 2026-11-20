@@ -110,6 +110,8 @@ export async function renderHologramImage(spec, { width = 320, height = 240, typ
     holo = createHologram(host, { labels: false, autoRotate: false, reveal: false, antialias: false });
     const res = holo.setSpec(spec);
     if (!res || !res.ok) return null;
+    // hull bodies and panels are meshed off the main thread: wait for their fine meshes (at most 4 s)
+    if (holo.settled) await holo.settled(4000);
     return holo.snapshot({ width, height, type, quality, view: spec.view || null });
   } catch (err) {
     console.warn('[jarvis] hologram image failed:', err && err.message);

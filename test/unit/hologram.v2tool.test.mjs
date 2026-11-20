@@ -18,7 +18,10 @@ import {
   normalizeHologramSpec,
   showHologramTool,
   showHologramToolV2,
+  specBounds,
 } from '../../src/lib/hologram-spec.js';
+import { buildShapeChunk, detailFor } from '../../src/ui/hologram/geometry.js';
+import { quantizeScale } from '../../src/ui/hologram/hull-service.js';
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 export const V2_FIXTURES = Object.freeze(['camry', 'f150', 'alternator', 'turbofan', 'model3', 'cessna']);
@@ -187,4 +190,28 @@ test('the six v2 fixtures validate with zero warnings and re-validate unchanged'
   assert.ok(types('camry').has('hull') && types('camry').has('panel'));
   assert.ok(types('turbofan').has('loft') && !types('turbofan').has('hull'));
   assert.ok(types('cessna').has('loft'));
+});
+
+test('the six v2 fixtures stay within the phone budget (under 200k triangles each, every hull and panel meshed)', () => {
+  for (const name of V2_FIXTURES) {
+    const spec = normalizeHologramSpec(v2Fixture(name)).spec;
+    const scale = quantizeScale(Math.hypot(...specBounds(spec).size));
+    const hosts = (id) => (spec.parts.find((p) => p.id === id)?.shapes || []).filter((s) => s.type === 'hull');
+    let triangles = 0;
+    let lines = 0;
+    for (const p of spec.parts) {
+      for (const s of p.shapes) {
+        // the renderer's own rule for detail (Node meshes hulls and panels at once, at fine)
+        const c = buildShapeChunk(s, { ...detailFor(s, triangles, scale), scale, hosts });
+        if (s.type === 'hull' || s.type === 'panel') {
+          assert.equal(c.done, true);
+          assert.ok(c.vertexCount > 0, `${name} ${p.id}: ${s.type} meshed`);
+        }
+        triangles += c.indices.length / 3;
+        lines += c.lineVertexCount / 2;
+      }
+    }
+    assert.ok(triangles <= 200000, `${name}: ${triangles} triangles`);
+    assert.ok(lines < 60000, `${name}: ${lines} line segments`);
+  }
 });

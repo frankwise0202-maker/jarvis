@@ -6,7 +6,8 @@
 // 1. clean dist/
 // 2. bundle src/main.js -> dist/assets/app.js (+ app.css from the CSS it imports, or from
 //    src/styles/app.css), ESM, minified, with source maps, target es2020 + safari15; code
-//    splitting puts dynamically imported modules (the 3D viewer) in dist/assets/chunks/
+//    splitting puts dynamically imported modules (the 3D viewer) in dist/assets/chunks/; the
+//    hologram's hull worker -> dist/assets/hull-worker.js (a classic worker, precached)
 // 3. copy public/ -> dist/
 // 4. BUILD_ID = first 8 hex chars of sha256 over every output file (path + content)
 // 5. fill placeholders: __BUILD_ID__ (index.html, sw.js), __APP_VERSION__ (index.html) and
@@ -98,6 +99,20 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     if (!quiet && err.errors?.length) throw new BuildError('esbuild failed (see the errors above).');
     const details = (err.errors || []).map((e) => `  ${e.location ? `${e.location.file}:${e.location.line}:${e.location.column}: ` : ''}${e.text}`).join('\n');
     throw new BuildError(`esbuild failed${details ? `:\n${details}` : `: ${err.message}`}`);
+  }
+
+  // The hologram's hull worker (src/ui/hologram/hull-worker.js): meshes car bodies and other
+  // blueprint-view solids off the main thread. A classic worker (IIFE, so it starts everywhere,
+  // Safari included) next to app.js, loaded under the CSP's worker-src 'self' and precached with
+  // the rest of assets/ (it works offline).
+  const hullWorker = path.join(root, 'src', 'ui', 'hologram', 'hull-worker.js');
+  if (existsSync(hullWorker)) {
+    try {
+      await esbuild.build({ ...common, entryPoints: { 'hull-worker': hullWorker }, format: 'iife', splitting: false, define: { 'process.env.NODE_ENV': '"production"' } });
+    } catch (err) {
+      const details = (err.errors || []).map((e) => `  ${e.location ? `${e.location.file}:${e.location.line}: ` : ''}${e.text}`).join('\n');
+      throw new BuildError(`esbuild failed on the hull worker${details ? `:\n${details}` : `: ${err.message}`}`);
+    }
   }
 
   // Natural voice (opt-in, platform/voice/natural/): its own module Worker bundle and the ONNX

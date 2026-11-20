@@ -9,11 +9,21 @@
 //   holo.select(id) / focus(id) / isolate(id | null) / setView('top') / resetView()
 //   holo.setLabels(on) / autoRotate(on) / setInsets({ top, right, bottom, left })
 //   holo.snapshot({ width, height })  // small PNG data URL for the saved library
+//   await holo.settled(ms)            // every hull and panel shows its final mesh (before a snapshot)
 //   holo.listParts() / getPart(id) / getState() / dispose()
 //
 // Look: translucent additive fills with a fresnel rim, crisp edge lines, depth fade, a scan band
 // and fine scan rows, a projector floor, tone colors; the selected part glows and the rest dims.
 // Labels are HTML (textContent only) with SVG leaders, decluttered by label-layout.js.
+//
+// Realistic shapes (format v2): lofts, soft boxes and smooth lathes are built at once (smooth.js);
+// hull bodies and the panels on them are meshed in a worker (hull-service.js): a coarse mesh first,
+// then the fine one, each swapped in without restarting the part's materialize sweep; the camera
+// frames the model when its first geometry lands. Detail follows a triangle budget: smooth shapes
+// get coarser after 300k and 600k triangles (and when small in the model), and past 600k new hulls
+// and panels stay at their coarse mesh (detailFor in geometry.js). The model's size for both comes from the spec so far,
+// rounded to half octaves, so a live build and a reopened hologram tessellate alike. Option
+// hullWorker: the worker script URL, or null to mesh on the main thread.
 //
 // Cost control: renders on demand only (interaction, tweens, the materialize sweep, auto-rotate at
 // up to 30 fps), sleeps while the page is hidden, the view is off-screen or covered by an inert
@@ -42,8 +52,9 @@ import {
   WebGLRenderer,
   WebGLRenderTarget,
 } from 'three';
-import { normalizeHologramSpec, DEFAULT_VIEW } from '../../lib/hologram-spec.js';
-import { buildShapeChunk, mergeChunks } from './geometry.js';
+import { normalizeHologramSpec, specBounds, DEFAULT_VIEW } from '../../lib/hologram-spec.js';
+import { budgetLevel, buildShapeChunk, detailFor, hasDetailLevels, mergeChunks, sizeLevel } from './geometry.js';
+import { hullJobsPending, hullStats, onHullGeometry, quantizeScale, setHullWorkerUrl } from './hull-service.js';
 import { layoutLabels } from './label-layout.js';
 import { BG_FS, BG_VS, FILL_FS, FILL_VS, FLOOR_FS, FLOOR_VS, LINE_FS, LINE_VS } from './shaders.js';
 
@@ -183,6 +194,7 @@ export function createHologram(container, options = {}) {
     maxDpr: MAX_DPR,
     ...options,
   };
+  if (o.hullWorker !== undefined) setHullWorkerUrl(o.hullWorker);
 
   // ---------------------------------------------------------------------------------------------
   // DOM (in the container's document: another window's when the hologram floats in a panel)
@@ -350,7 +362,7 @@ export function createHologram(container, options = {}) {
 
   const t0 = performance.now();
   const clock = () => (performance.now() - t0) / 1000;
-  const counters = { frames: 0, shapesBuilt: 0, shapesRebuilt: 0, partsCreated: 0, labelMs: 0 };
+  const counters = { frames: 0, shapesBuilt: 0, shapesRebuilt: 0, partsCreated: 0, labelMs: 0, hullUpgrades: 0, hullRescaled: 0, detailRebuilt: 0 };
   let lastBorn = -Infinity;
 
   // ---------------------------------------------------------------------------------------------
@@ -413,7 +425,33 @@ export function createHologram(container, options = {}) {
     return rec;
   }
 
-  function setShapes(rec, shapes, bornAt, stagger) {
+  // The model's size: the diagonal of the spec so far, rounded to half octaves (so a model that grows
+  // a little keeps it). A hull or panel is meshed at the size of the update that built it (every
+  // hull of a model gets the same detail: the mesher's cells follow it) and small smooth details
+  // are judged against it. When the finished spec is bigger than the first parts were (a truck's
+  // cab, then its bed), finishPass() re-meshes what was built at a smaller size, so a live build
+  // ends exactly like the same hologram reopened.
+  function modelScale() {
+    const b = spec ? specBounds(spec) : null;
+    return b ? quantizeScale(Math.hypot(b.size[0], b.size[1], b.size[2])) : 0;
+  }
+  function hostsOf(partId) {
+    for (const rec of records.values()) if (rec.part.id === partId) return rec.part.shapes.filter((sh) => sh.type === 'hull');
+    return [];
+  }
+  /** The build context of one shape (see buildShapeChunk). */
+  function shapeCtx(level, hullMode, scale) {
+    return { level: level || 0, hullMode: hullMode || null, scale: scale || 0, hosts: hostsOf };
+  }
+
+  /** Triangles built so far (hulls and panels at the mesh they show now). */
+  function builtTriangles() {
+    let n = 0;
+    for (const r of records.values()) for (const c of r.chunks) n += c.chunk.indices.length / 3;
+    return n;
+  }
+
+  function setShapes(rec, shapes, bornAt, stagger, sizing) {
     const sigs = shapes.map((s) => JSON.stringify(s));
     let same = 0;
     while (same < rec.chunks.length && same < sigs.length && rec.chunks[same].sig === sigs[same]) same++;
@@ -422,13 +460,175 @@ export function createHologram(container, options = {}) {
     counters.shapesRebuilt += rec.chunks.length - same; // shapes replaced (never expected while streaming)
     rec.chunks.length = same;
     rec.born.length = same;
+    const scale = sizing.size();
     for (let j = same; j < shapes.length; j++) {
-      rec.chunks.push({ sig: sigs[j], chunk: buildShapeChunk(shapes[j]) });
+      // the detail budget (geometry.js): coarser smooth shapes as triangles add up and for small
+      // details, coarse-only hulls and panels past 600k
+      const built = builtTriangles();
+      const { level, hullMode } = detailFor(shapes[j], built, scale);
+      const chunk = buildShapeChunk(shapes[j], shapeCtx(level, hullMode, scale));
+      rec.chunks.push({ sig: sigs[j], chunk, lod: level, lodBudget: budgetLevel(built), scale, wait: null });
       counters.shapesBuilt++;
       const b = bornAt + stagger * (j - same);
       rec.born.push(b);
       if (b > lastBorn) lastBorn = b;
     }
+    remerge(rec);
+    return true;
+  }
+
+  // Meshes that land close together (the worker finishes many small panels in a row) are applied
+  // in one pass: one merge per part, one camera refit.
+  const landed = new Set();
+  let landTimer = 0;
+  function onHullLanded(key) {
+    if (disposed) return;
+    landed.add(key);
+    if (!landTimer) landTimer = win.setTimeout(flushLanded, 30);
+  }
+  function flushLanded() {
+    landTimer = 0;
+    const keys = new Set(landed);
+    landed.clear();
+    onHullMesh(keys);
+  }
+
+  /** Hull or panel meshes got better (coarse, then fine): rebuild the chunks that use them. */
+  function onHullMesh(keys) {
+    if (disposed) return;
+    let changed = false;
+    let hadGeometry = false;
+    for (const rec of records.values()) if (rec.box) hadGeometry = true;
+    const now = clock();
+    const animate = o.reveal !== false && !reducedMq.matches;
+    for (const rec of records.values()) {
+      let recChanged = false;
+      rec.chunks.forEach((c, j) => {
+        const shape = rec.part.shapes[j];
+        if (!shape) return;
+        if (c.wait && keys.has(c.wait.key)) {
+          // re-meshed at the finished model's size: swapped in once it is there (no sweep replay)
+          const next = buildShapeChunk(shape, shapeCtx(c.lod, c.wait.mode, c.wait.scale));
+          if (next.level !== c.wait.level) return;
+          const had = c.chunk.vertexCount || c.chunk.lineVertexCount;
+          const has = next.vertexCount || next.lineVertexCount;
+          if (had && !has) {
+            c.wait = null; // the new mesh failed: keep the one that shows
+            return;
+          }
+          if (!had && has) {
+            rec.born[j] = animate ? now : -1e4;
+            if (rec.born[j] > lastBorn) lastBorn = rec.born[j];
+          }
+          c.chunk = next;
+          c.scale = c.wait.scale;
+          c.wait = null;
+          counters.hullRescaled++;
+          recChanged = true;
+          return;
+        }
+        if (!c.chunk.asyncKey || !keys.has(c.chunk.asyncKey) || c.chunk.done) return;
+        const wasEmpty = !c.chunk.vertexCount && !c.chunk.lineVertexCount;
+        const next = buildShapeChunk(shape, shapeCtx(c.lod, c.chunk.hullMode, c.scale));
+        if (next.level === c.chunk.level && next.done === c.chunk.done) return;
+        c.chunk = next;
+        counters.hullUpgrades++;
+        if (wasEmpty && (next.vertexCount || next.lineVertexCount)) {
+          // first mesh of this shape: it materializes now (a later, finer one does not replay it)
+          rec.born[j] = animate ? now : -1e4;
+          if (rec.born[j] > lastBorn) lastBorn = rec.born[j];
+        }
+        recChanged = true;
+      });
+      if (recChanged) {
+        remerge(rec);
+        changed = true;
+      }
+    }
+    if (changed) {
+      computeAutoOffsets();
+      updateFloor();
+      // the first geometry of the model (it was all hulls, still meshing): frame it at once; a part
+      // focused before its mesh landed is framed again now
+      if (!hadGeometry && records.size && fitMode !== 'user') snapFit();
+      else if (records.size && (fitMode === 'auto' || fitMode === 'part')) refit(true);
+      requestRender();
+      emit();
+    }
+    if (!asyncPending()) resolveSettled();
+  }
+  const offHull = onHullGeometry(onHullLanded);
+
+  /** Hulls and panels of this model: how many, still waiting, and with nothing to show (debug). */
+  function asyncSummary() {
+    const out = { hulls: 0, panels: 0, pending: 0, empty: 0, coarse: 0 };
+    for (const rec of records.values()) {
+      rec.chunks.forEach((c, j) => {
+        if (!c.chunk.asyncKey) return;
+        const type = rec.part.shapes[j] && rec.part.shapes[j].type;
+        if (type === 'hull') out.hulls++;
+        else out.panels++;
+        if (!c.chunk.done) out.pending++;
+        if (!c.chunk.vertexCount && !c.chunk.lineVertexCount) out.empty++;
+        if (c.chunk.level === 'coarse') out.coarse++;
+      });
+    }
+    return out;
+  }
+
+  /** Whether any hull or panel of this model still waits for its final mesh. */
+  function asyncPending() {
+    for (const rec of records.values()) for (const c of rec.chunks) if ((c.chunk.asyncKey && !c.chunk.done) || c.wait) return true;
+    return false;
+  }
+
+  /**
+   * The finished spec (a live build's last update): what was built while the model looked smaller
+   * than it is gets the detail the same hologram has when reopened. Hulls and panels meshed at a
+   * smaller size are meshed again at the final one (only the mesh they show now: fine, or coarse
+   * past the budget), the old mesh showing until the new one lands; smooth shapes whose size class
+   * changed are rebuilt at once.
+   */
+  function finishPass(scale) {
+    if (!(scale > 0)) return;
+    for (const rec of records.values()) {
+      let recChanged = false;
+      rec.chunks.forEach((c, j) => {
+        const shape = rec.part.shapes[j];
+        if (!shape) return;
+        if (c.chunk.asyncKey) {
+          if (c.scale === scale || (c.wait && c.wait.scale === scale)) return;
+          const mode = c.chunk.hullMode === 'coarse' ? 'coarse' : 'fine';
+          const next = buildShapeChunk(shape, shapeCtx(c.lod, mode, scale));
+          if (next.level === mode && next.done) {
+            c.chunk = next;
+            c.scale = scale;
+            c.wait = null;
+            counters.hullRescaled++;
+            recChanged = true;
+          } else c.wait = { key: next.asyncKey, scale, mode, level: mode };
+          return;
+        }
+        if (!hasDetailLevels(shape)) return;
+        const level = Math.max(c.lodBudget || 0, sizeLevel(shape, scale));
+        if (level === c.lod) return;
+        c.chunk = buildShapeChunk(shape, shapeCtx(level, null, scale));
+        c.lod = level;
+        c.scale = scale;
+        counters.detailRebuilt++;
+        recChanged = true;
+      });
+      if (recChanged) remerge(rec);
+    }
+  }
+  let settleWaiters = [];
+  function resolveSettled() {
+    const list = settleWaiters;
+    settleWaiters = [];
+    for (const fn of list) fn(true);
+  }
+
+  function remerge(rec) {
     const merged = mergeChunks(
       rec.chunks.map((c) => c.chunk),
       rec.born,
@@ -469,7 +669,6 @@ export function createHologram(container, options = {}) {
       rec.center.set((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
       rec.size = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
     }
-    return true;
   }
 
   function disposeRecord(rec) {
@@ -516,6 +715,9 @@ export function createHologram(container, options = {}) {
     const stagger = animate && totalNew > 1 && !building ? Math.min(0.045, 1.6 / totalNew) : 0;
     let cursor = animate ? now : -1e4;
     let changed = false;
+    // the model's size for small details: worked out once per update, only when a shape is built
+    let size = null;
+    const sizing = { size: () => (size === null ? (size = modelScale()) : size) };
     for (const part of next.parts) {
       seen.add(part.key);
       let rec = records.get(part.key);
@@ -530,7 +732,7 @@ export function createHologram(container, options = {}) {
       updateLabelText(rec);
       if (part.shapes.length) {
         const before = rec.chunks.length;
-        if (setShapes(rec, part.shapes, cursor, stagger)) changed = true;
+        if (setShapes(rec, part.shapes, cursor, stagger, sizing)) changed = true;
         if (stagger) cursor += stagger * Math.max(0, part.shapes.length - before);
       }
     }
@@ -542,6 +744,7 @@ export function createHologram(container, options = {}) {
           changed = true;
         }
       }
+      finishPass(sizing.size());
       if (selectedKey && !records.has(selectedKey)) selectedKey = null;
       if (isolatedKey && !records.has(isolatedKey)) isolatedKey = null;
     }
@@ -565,6 +768,8 @@ export function createHologram(container, options = {}) {
     updateVisGoals();
     requestRender();
     emit();
+    // the parts still meshing may have gone (a final spec without them): nothing left to wait for
+    if (settleWaiters.length && !asyncPending()) resolveSettled();
   }
 
   function computeAutoOffsets() {
@@ -735,7 +940,13 @@ export function createHologram(container, options = {}) {
   function refit(animate) {
     const f = currentFitGoal();
     if (!f) return;
-    tweenCamera({ target: f.target, radius: f.radius }, animate);
+    const goal = { target: f.target, radius: f.radius };
+    // a view change still under way keeps turning to its angles
+    if (camTween && camTween.to) {
+      if (camTween.to.theta !== undefined) goal.theta = camTween.to.theta;
+      if (camTween.to.phi !== undefined) goal.phi = camTween.to.phi;
+    }
+    tweenCamera(goal, animate);
   }
 
   /** Animate the camera to `to` ({ target?, radius?, theta?, phi? }); fields left out are not touched. */
@@ -1858,6 +2069,24 @@ export function createHologram(container, options = {}) {
       requestRender();
       return type === 'image/png' ? c.toDataURL('image/png') : c.toDataURL(type, quality);
     },
+    /**
+     * Resolves (true) once every hull and panel shows its final mesh, or (false) after timeoutMs:
+     * a snapshot taken then shows the finished model.
+     */
+    settled(timeoutMs = 5000) {
+      if (disposed || !asyncPending()) return Promise.resolve(!disposed);
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        };
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        settleWaiters.push(finish);
+      });
+    },
     listParts() {
       return Array.from(records.values()).map(publicPart);
     },
@@ -1908,12 +2137,20 @@ export function createHologram(container, options = {}) {
         awake,
         dpr,
         ...counters,
+        triangles: builtTriangles(),
+        meshes: asyncSummary(),
+        hullJobs: hullJobsPending(),
+        hullPending: asyncPending(),
+        hullStats: hullStats(),
         frameMs: frameTimes.slice(-30),
       };
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      offHull();
+      win.clearTimeout(landTimer);
+      resolveSettled();
       if (rafId) win.cancelAnimationFrame(rafId);
       clearTimeout(restoreTimer);
       win.clearTimeout(rotateWake);
@@ -1972,6 +2209,7 @@ function noopController(root) {
     zoom: NOOP,
     setInsets: NOOP,
     snapshot: nothing,
+    settled: () => Promise.resolve(false),
     listParts: () => [],
     getPart: nothing,
     getState: () => ({ ready: false, error: 'webgl' }),

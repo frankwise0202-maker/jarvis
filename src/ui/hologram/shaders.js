@@ -77,15 +77,18 @@ export const FILL_FS = /* glsl */ `
 export const LINE_VS = /* glsl */ `
   attribute float aBorn;
   attribute float aH;
+  attribute float aW;
   varying float vH;
   varying float vBorn;
   varying float vDepth;
   varying float vWY;
+  varying float vW;
   void main() {
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vec4 mv = viewMatrix * wp;
     vH = aH;
     vBorn = aBorn;
+    vW = aW;
     vDepth = -mv.z;
     vWY = wp.y;
     gl_Position = projectionMatrix * mv;
@@ -98,11 +101,12 @@ export const LINE_FS = /* glsl */ `
   varying float vBorn;
   varying float vDepth;
   varying float vWY;
+  varying float vW;
   void main() {
     ${REVEAL}
     float fade = 1.0 - 0.62 * smoothstep(uFade.x, uFade.y, vDepth);
     float scan = exp(-pow((vWY - uScanY) / uScanW, 2.0));
-    float a = uAlpha * fade * uVis * uFlicker * (1.0 + 0.8 * uSel + 0.45 * uHover);
+    float a = uAlpha * vW * fade * uVis * uFlicker * (1.0 + 0.8 * uSel + 0.45 * uHover);
     a += (scan * 0.22 + front) * uVis;
     vec3 col = mix(uColor, vec3(0.9, 1.0, 1.0), clamp(0.28 + 0.55 * uSel + 0.25 * uHover, 0.0, 1.0));
     gl_FragColor = vec4(col * a, 1.0);

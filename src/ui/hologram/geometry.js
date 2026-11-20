@@ -8,9 +8,22 @@
 // seams, tube centerlines, rounded-box and bevelled-extrude outlines), because a smooth glowing
 // blob without any lines reads poorly as a hologram.
 //
+// Smooth surfaces (format v2, smooth.js, built at once): a loft is a skin through its cross-sections
+// with smooth vertex normals, its section outlines as faint contour rings, shoulder lines along it
+// and crease lines where it really folds (wheel arches); a box with `round` is a superellipsoid with
+// its three outlines; a lathe with `smooth` follows a Catmull-Rom curve through its profile; a tube
+// with r2 tapers. Shapes copied by a large repeat (fan blades) are built coarser and crowded copies
+// draw two strokes each, so a ring of 40 blades stays cheap. ctx.level (0, 1, 2) builds them
+// coarser still for a hologram that is already heavy, or a detail that is small in the model.
+//
+// Hulls and panels (realistic bodies) come from hull-service.js, meshed off the main thread: their
+// chunks carry asyncKey/level and are built again when a better mesh lands (coarse, then fine).
+// Their lines are the creases where blueprint views meet, panel outlines and faint contour rings.
+//
 // Per-vertex attributes added at merge time:
 //   aBorn  seconds (hologram clock) when the shape arrived: drives the materialize sweep
 //   aH     0..1 height of the vertex inside its shape: the sweep goes bottom to top
+//   aW     (lines) brightness weight: 1, or less for contour rings (hulls 0.32, lofts 0.55)
 
 import {
   BoxGeometry,
@@ -33,11 +46,56 @@ import {
   Vector3,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { loftSkin, smoothPolyline, superellipsoid } from './smooth.js';
+import { hullGeometry, panelGeometry } from './hull-service.js';
+import { smoothOutline } from './hull-mesh.js';
+import { partBounds } from '../../lib/hologram-spec.js';
 
 const EDGE_ANGLE = 32; // degrees between faces before an edge line is drawn
 const DEG = Math.PI / 180;
 const ROUND_SEGMENTS = 32;
 const LATHE_SEGMENTS = 40;
+const SMOOTH_LATHE_SEGMENTS = 48;
+const SECTION_KEYS = { x: ['z', 'y'], y: ['x', 'z'], z: ['x', 'y'] };
+
+// ---------------------------------------------------------------------------------------------
+// Detail budget (one rule for the live build and a reopened hologram)
+
+/**
+ * Triangles already built before later shapes get coarser: smooth shapes (lofts, soft boxes, smooth
+ * lathes) at level 1 and then 2, and past the second, hulls and panels at their coarse mesh only. A
+ * typical vehicle is 130-160k; a spec at every limit stays around a million or less.
+ */
+export const TRIANGLE_BUDGET = Object.freeze([300000, 600000]);
+/** Smooth shapes smaller than these fractions of the model's size are built coarser (level 1, 2). */
+export const SMALL_DETAIL = Object.freeze([0.12, 0.04]);
+
+/** The detail level (0-2) the triangles built so far allow. */
+export function budgetLevel(built) {
+  return built >= TRIANGLE_BUDGET[1] ? 2 : built >= TRIANGLE_BUDGET[0] ? 1 : 0;
+}
+
+/** The detail level (0-2) of a shape by its size in the model: small details need less. */
+export function sizeLevel(shape, modelSize) {
+  if (!(modelSize > 0) || !shape || shape.type === 'hull' || shape.type === 'panel') return 0;
+  const b = partBounds({ shapes: [shape] });
+  const size = b ? Math.hypot(b.size[0], b.size[1], b.size[2]) : 0;
+  return size < modelSize * SMALL_DETAIL[1] ? 2 : size < modelSize * SMALL_DETAIL[0] ? 1 : 0;
+}
+
+/** Whether a shape's geometry depends on its detail level (the smooth shapes built at once). */
+export function hasDetailLevels(shape) {
+  return !!shape && (shape.type === 'loft' || (shape.type === 'box' && shape.round > 0) || (shape.type === 'lathe' && !!shape.smooth));
+}
+
+/**
+ * The detail of the next shape of a hologram from the triangles built so far and the model's size
+ * (its diagonal): { level (0-2: smooth shapes), hullMode ('coarse': hulls and panels stay at their
+ * coarse mesh, past the second budget step; null: coarse, then fine) }.
+ */
+export function detailFor(shape, built, modelSize) {
+  return { level: Math.max(budgetLevel(built), sizeLevel(shape, modelSize)), hullMode: built >= TRIANGLE_BUDGET[1] ? 'coarse' : null };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Orientation: round shapes are built along +y, extrusions along +z; `axis` turns them.
@@ -59,7 +117,9 @@ const EXTRUDE_ROTATION = {
 
 function shapeMatrix(shape) {
   const m = new Matrix4();
-  if (shape.type === 'extrude') {
+  if (shape.type === 'loft' || shape.type === 'hull') {
+    // built in place (a loft along its own axis; a hull's axis is its revolve's, already in its mesh)
+  } else if (shape.type === 'extrude') {
     const r = EXTRUDE_ROTATION[(shape.axis || 'z').replace('-', '')];
     if (r) m.copy(r);
   } else if (shape.axis && AXIS_ROTATION[shape.axis]) {
@@ -119,6 +179,47 @@ function edgesOf(geometry) {
   return arr;
 }
 
+/** Many copies (blade rows, vanes, fins): their full outlines would glow into one bright blur. */
+function crowded(shape) {
+  return !!shape.repeat && shape.repeat.count > 12;
+}
+
+/**
+ * Two strokes along a box's longest side, at either end of its middle side: a blade's leading
+ * and trailing edges. Used instead of all twelve edges when the box is repeated many times.
+ */
+function bladeLines(size) {
+  const order = [0, 1, 2].sort((a, b) => size[b] - size[a]);
+  const [long, mid] = order;
+  const out = [];
+  for (const sgn of [-1, 1]) {
+    const a = [0, 0, 0];
+    const b = [0, 0, 0];
+    a[long] = -size[long] / 2;
+    b[long] = size[long] / 2;
+    a[mid] = b[mid] = (sgn * size[mid]) / 2;
+    out.push(...a, ...b);
+  }
+  return out;
+}
+
+/** A lathe profile or extrude outline with `smooth` (B's rule): gentle bends become curves. */
+function smoothPoints(points, closed) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const flat = new Float64Array(points.length * 2);
+  points.forEach(([u, v], i) => {
+    flat[i * 2] = u;
+    flat[i * 2 + 1] = v;
+    lo = Math.min(lo, u, v);
+    hi = Math.max(hi, u, v);
+  });
+  const out = smoothOutline(flat, (hi - lo) / 60 || 1, closed);
+  const pts = [];
+  for (let i = 0; i < out.length; i += 2) pts.push([out[i], out[i + 1]]);
+  return pts;
+}
+
 function roundedBoxLines(size, r) {
   // The 12 box edges, drawn along the middle of each rounded edge (gaps at the corners).
   const [w, h, d] = size.map((v) => v / 2);
@@ -136,16 +237,112 @@ function roundedBoxLines(size, r) {
 // ---------------------------------------------------------------------------------------------
 // Base geometry (local orientation) + its line segments
 
-function base(shape) {
+/** An indexed geometry from plain arrays, with smooth (averaged) vertex normals. */
+function indexedGeometry(positions, indices) {
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(positions instanceof Float32Array ? positions : new Float32Array(positions), 3));
+  g.setIndex(new BufferAttribute(indices instanceof Uint32Array ? indices : Uint32Array.from(indices), 1));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A hull or panel mesh (plain arrays from hull-mesh.js) as a BufferGeometry with its lines. */
+function meshGeometry(mesh) {
+  const lines = mesh && mesh.lines ? Array.from(mesh.lines) : [];
+  const lineWeights = mesh && mesh.lineWeights && mesh.lineWeights.length === lines.length / 3 ? mesh.lineWeights : null;
+  if (!mesh || !mesh.positions || !mesh.positions.length) return { geometry: null, lines, lineWeights };
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(mesh.positions, 3));
+  g.setAttribute('normal', new BufferAttribute(mesh.normals, 3));
+  g.setIndex(new BufferAttribute(mesh.indices, 1));
+  return { geometry: g, lines, lineWeights };
+}
+
+/**
+ * Level of detail for smooth shapes: coarser when a repeat makes many copies, and coarser again
+ * at level 1 or 2 (chosen by the renderer: a hologram that is already heavy, or a detail that is
+ * small in the model), so even a spec at every limit stays drawable on a phone.
+ */
+function detail(shape, level = 0) {
+  const copies = shape.repeat ? shape.repeat.count : 1;
+  // a loft of a few sections (a door skin, a lamp, a blade) needs fewer rings along it
+  const along = shape.type === 'loft' ? Math.min(40, 8 + 6 * shape.sections.length) : 40;
+  let d;
+  if (copies > 16) d = { N: 16, M: Math.min(along, 12), around: 16, rows: 8, lathe: 24 };
+  else if (copies > 4) d = { N: 24, M: Math.min(along, 20), around: 20, rows: 10, lathe: 32 };
+  else d = { N: 40, M: along, around: 32, rows: 16, lathe: SMOOTH_LATHE_SEGMENTS };
+  d.archSteps = 12;
+  d.ribGap = 0.03;
+  if (level > 0) {
+    const k = level >= 2 ? 0.34 : 0.6;
+    const even = (v, min) => Math.max(min, 4 * Math.round((v * k) / 4));
+    d = {
+      N: even(d.N, 12),
+      M: Math.max(6, Math.round(d.M * k)),
+      around: even(d.around, 12),
+      rows: Math.max(6, 2 * Math.round((d.rows * k) / 2)),
+      lathe: even(d.lathe, 16),
+      archSteps: level >= 2 ? 6 : 8,
+      ribGap: level >= 2 ? 0.2 : 0.1,
+    };
+  }
+  return d;
+}
+
+/** A normalized loft in the form smooth.js reads: sections { s, c: [u, v], w, h, round, top, twist, pts }. */
+function loftInput(shape) {
+  const axis = shape.axis || 'x';
+  const [uKey, vKey] = SECTION_KEYS[axis];
+  return {
+    axis,
+    cap: shape.cap,
+    arches: shape.arches,
+    sections: shape.sections.map((sec) => ({
+      s: sec[axis],
+      c: [sec[uKey] || 0, sec[vKey] || 0],
+      w: sec.w,
+      h: sec.h,
+      round: sec.round ?? 1,
+      top: sec.top,
+      twist: sec.twist,
+      pts: sec.pts,
+    })),
+  };
+}
+
+function base(shape, ctx) {
+  const level = ctx.level || 0;
   switch (shape.type) {
+    case 'hull': {
+      // a solid carved from blueprint views, meshed off the main thread (coarse first, then fine)
+      const res = hullGeometry(shape, ctx.scale || 0, ctx.hullMode || null);
+      return { ...meshGeometry(res.mesh), asyncKey: res.key, level: res.mesh ? res.level : null, done: res.done };
+    }
+    case 'panel': {
+      // part of another part's hull surface (already in model space)
+      const hosts = ctx.hosts ? ctx.hosts(shape.on) : [];
+      const res = panelGeometry(shape, hosts, ctx.scale || 0, ctx.hullMode || null);
+      return { ...meshGeometry(res.mesh), asyncKey: res.key, level: res.mesh ? res.level : null, done: res.done };
+    }
+    case 'loft': {
+      const lod = detail(shape, level);
+      const many = !!shape.repeat && shape.repeat.count > 6;
+      const skin = loftSkin(loftInput(shape), { N: lod.N, M: lod.M, archSteps: lod.archSteps, ribGap: lod.ribGap, ribs: !many, edges: many });
+      return { geometry: indexedGeometry(skin.positions, skin.indices), lines: skin.lines, lineWeights: skin.lineWeights };
+    }
     case 'box': {
       const [x, y, z] = shape.size;
+      if (shape.round > 0) {
+        const lod = detail(shape, level);
+        const se = superellipsoid(shape.size, shape.round, { around: lod.around, rows: lod.rows });
+        return { geometry: indexedGeometry(se.positions, se.indices), lines: crowded(shape) ? bladeLines(shape.size) : se.lines };
+      }
       if (shape.r > 0) {
         const g = new RoundedBoxGeometry(x, y, z, 3, shape.r);
         return { geometry: g, lines: roundedBoxLines(shape.size, shape.r) };
       }
       const g = new BoxGeometry(x, y, z);
-      return { geometry: g, lines: edgesOf(g) };
+      return { geometry: g, lines: crowded(shape) ? bladeLines(shape.size) : edgesOf(g) };
     }
     case 'cylinder': {
       const sides = shape.sides || ROUND_SEGMENTS;
@@ -211,12 +408,33 @@ function base(shape) {
       return { geometry: g, lines };
     }
     case 'lathe': {
+      if (shape.smooth) {
+        const lod = detail(shape, level);
+        const { points, corners, given } = smoothPolyline(shape.profile, 8);
+        const g = new LatheGeometry(points.map(([r, y]) => new Vector2(Math.max(0, r), y)), lod.lathe);
+        // contour rings: at the profile's corners and ends, and at the given points in between
+        // (thinned so rings never crowd: at least 4% of the profile's length apart)
+        const lines = [];
+        let along = 0;
+        const at = [0];
+        for (let i = 1; i < points.length; i++) at.push((along += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])));
+        let last = -Infinity;
+        for (const i of Array.from(new Set([...corners, ...given])).sort((a, b) => a - b)) {
+          const [r, y] = points[i];
+          if (r <= 1e-9) continue;
+          if (at[i] - last < along * 0.04 && !corners.includes(i)) continue;
+          circle(lines, r, y, 64);
+          last = at[i];
+        }
+        return { geometry: g, lines };
+      }
       const pts = shape.profile.map(([r, y]) => new Vector2(r, y));
       const g = new LatheGeometry(pts, LATHE_SEGMENTS);
       return { geometry: g, lines: edgesOf(g) };
     }
     case 'extrude': {
-      const s = new Shape(shape.outline.map(([u, v]) => new Vector2(u, v)));
+      const outline = shape.smooth ? smoothPoints(shape.outline, true) : shape.outline;
+      const s = new Shape(outline.map(([u, v]) => new Vector2(u, v)));
       const bevel = shape.bevel || 0;
       const core = Math.max(shape.depth - 2 * bevel, shape.depth * 0.1);
       const g = new ExtrudeGeometry(s, {
@@ -233,7 +451,7 @@ function base(shape) {
       if (bevel > 0) {
         lines = edgesOf(g);
         for (const z of [-core / 2, core / 2]) {
-          const ring = shape.outline.map(([u, v]) => new Vector3(u, v, z));
+          const ring = outline.map(([u, v]) => new Vector3(u, v, z));
           ring.push(ring[0].clone());
           polylineSegments(lines, ring);
         }
@@ -246,7 +464,24 @@ function base(shape) {
       const pts = shape.path.map(([x, y, z]) => new Vector3(x, y, z));
       const curve = new CatmullRomCurve3(pts, false, 'centripetal');
       const segs = Math.min(160, Math.max(12, pts.length * 10));
-      const g = new TubeGeometry(curve, segs, shape.r, 10, false);
+      const radial = shape.r2 !== undefined ? 12 : 10;
+      const g = new TubeGeometry(curve, segs, shape.r, radial, false);
+      if (shape.r2 !== undefined && shape.r2 !== shape.r) {
+        // taper: scale each ring around its point on the path, r at the start to r2 at the end
+        const pos = g.getAttribute('position');
+        const c = new Vector3();
+        const v = new Vector3();
+        for (let i = 0; i <= segs; i++) {
+          curve.getPointAt(i / segs, c);
+          const f = (shape.r + ((shape.r2 - shape.r) * i) / segs) / shape.r;
+          for (let j = 0; j <= radial; j++) {
+            const idx = i * (radial + 1) + j;
+            v.fromBufferAttribute(pos, idx).sub(c).multiplyScalar(f).add(c);
+            pos.setXYZ(idx, v.x, v.y, v.z);
+          }
+        }
+        g.computeVertexNormals();
+      }
       return { geometry: g, lines: polylineSegments([], curve.getPoints(segs)) };
     }
     case 'line': {
@@ -264,11 +499,21 @@ function base(shape) {
  * Build one shape: { positions, normals, indices, lines, vertexCount, lineVertexCount, minY, maxY }
  * in model space with every repeat copy included. Plain typed arrays, so chunks can be cached and
  * merged without three.js objects.
+ * ctx (all optional):
+ *   level      0, 1 or 2: coarser smooth shapes (lofts, soft boxes, smooth lathes) for a hologram
+ *              that is already heavy or a detail that is small in the model (hologram.js)
+ *   scale      the model's size (the detail of hull meshes: the same for every hull of a model)
+ *   hosts(id)  the hull shapes of that part (a panel's host)
+ *   hullMode   hulls and panels: null (coarse, then fine), 'coarse' (coarse only: a heavy
+ *              hologram) or 'fine' (fine only: re-meshing at a new scale while the old mesh shows)
+ * Hull and panel chunks also carry asyncKey, level ('coarse' | 'fine' | null while nothing is
+ * meshed yet), done and hullMode: hull-service.js tells the renderer when a better mesh is ready,
+ * and the chunk is built again with the same ctx.
  */
-export function buildShapeChunk(shape) {
-  const { geometry, lines } = base(shape);
-  const local = shapeMatrix(shape);
-  const copies = repeatMatrices(shape.repeat);
+export function buildShapeChunk(shape, ctx = {}) {
+  const { geometry, lines, lineWeights, asyncKey, level, done } = base(shape, ctx || {});
+  const local = shape.type === 'panel' ? new Matrix4() : shapeMatrix(shape);
+  const copies = shape.type === 'panel' ? [new Matrix4()] : repeatMatrices(shape.repeat);
   let g = geometry;
   let posAttr = null;
   let normAttr = null;
@@ -325,7 +570,20 @@ export function buildShapeChunk(shape) {
     minY = 0;
     maxY = 0;
   }
-  return { positions, normals, indices, lines: linePos, vertexCount: vCount * copies.length, lineVertexCount: lCount * copies.length, minY, maxY };
+  const chunk = { positions, normals, indices, lines: linePos, vertexCount: vCount * copies.length, lineVertexCount: lCount * copies.length, minY, maxY };
+  if (lineWeights && lineWeights.length === lCount) {
+    // per line vertex brightness (contour rings are faint), repeated for every copy
+    const w = new Float32Array(lCount * copies.length);
+    for (let c = 0; c < copies.length; c++) w.set(lineWeights, c * lCount);
+    chunk.lineWeights = w;
+  }
+  if (asyncKey) {
+    chunk.asyncKey = asyncKey;
+    chunk.level = level;
+    chunk.done = !!done;
+    if (ctx && ctx.hullMode) chunk.hullMode = ctx.hullMode;
+  }
+  return chunk;
 }
 
 /**
@@ -390,6 +648,7 @@ export function mergeChunks(chunks, born) {
     const pos = new Float32Array(lTotal * 3);
     const bornAttr = new Float32Array(lTotal);
     const hAttr = new Float32Array(lTotal);
+    const wAttr = new Float32Array(lTotal).fill(1);
     let lo = 0;
     chunks.forEach((c, k) => {
       pos.set(c.lines, lo * 3);
@@ -398,6 +657,7 @@ export function mergeChunks(chunks, born) {
         bornAttr[lo + i] = born[k];
         hAttr[lo + i] = (c.lines[i * 3 + 1] - c.minY) / span;
       }
+      if (c.lineWeights) wAttr.set(c.lineWeights, lo);
       grow(c.lines);
       lo += c.lineVertexCount;
     });
@@ -405,6 +665,7 @@ export function mergeChunks(chunks, born) {
     lines.setAttribute('position', new BufferAttribute(pos, 3));
     lines.setAttribute('aBorn', new BufferAttribute(bornAttr, 1));
     lines.setAttribute('aH', new BufferAttribute(hAttr, 1));
+    lines.setAttribute('aW', new BufferAttribute(wAttr, 1));
     lines.computeBoundingSphere();
   }
 
