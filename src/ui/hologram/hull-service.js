@@ -18,7 +18,11 @@
 
 import { hullKey, hullMesh, panelMesh } from './hull-mesh.js';
 
-const MAX_ENTRIES = 20;
+// Room for the biggest hologram's meshes (16 hulls and 40 panels) and then some: a hull car has
+// about 23 (the Camry 7 + 16, about 3 MB), and an LRU smaller than one model would drop its own
+// meshes while it is shown, so its thumbnail and every reopen would mesh them again. The bytes
+// bound the memory.
+const MAX_ENTRIES = 64;
 const MAX_BYTES = 24 * 1024 * 1024;
 const LEVELS = ['coarse', 'fine'];
 const cache = new Map(); // key -> { coarse, fine, done, bytes } (Map order = recency)

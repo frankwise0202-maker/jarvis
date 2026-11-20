@@ -198,3 +198,63 @@ test('the viewer takes a saved hull car\'s library thumbnail once its meshes hav
   assert.deepEqual(await page.cspViolations(), []);
   assert.deepEqual(page.problems, []);
 });
+
+test('a hull car reopened after its live build and its card thumbnail meshes nothing again (UX73-2)', async () => {
+  // The Camry has 23 hull and panel meshes (7 hulls, 16 panels): the shared cache must hold all of
+  // them, so the thumbnail and every reopen are served from it with no worker job (the cache held 20
+  // entries: the LRU dropped the car's own meshes while it was shown, and each reopen re-meshed them).
+  workerMissing = false;
+  workerRequests = 0;
+  const page = await harness.newPage({
+    init: () => {
+      window.__posted = [];
+      const post = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (msg, ...rest) {
+        window.__posted.push(msg && msg.kind ? `${msg.kind}-${msg.level}` : 'other');
+        return post.call(this, msg, ...rest);
+      };
+    },
+  });
+  const r = await page.evaluate(async (text) => {
+    const { createHologram } = window.__mods.hologram;
+    const { renderHologramImage } = window.__mods.viewer;
+    const { normalizeHologramSpec } = window.__mods.spec;
+    const spec = normalizeHologramSpec(JSON.parse(text)).spec;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:640px;height:420px';
+    document.body.append(host);
+    const opts = { labels: false, autoRotate: false, reveal: false };
+    const live = createHologram(host, opts);
+    live.setSpec(spec);
+    const liveSettled = await live.settled(60000);
+    const afterLive = window.__posted.length;
+    // the card's thumbnail, while the live hologram is still shown
+    const image = await renderHologramImage(spec);
+    const afterThumb = window.__posted.length;
+    live.dispose();
+    const reopens = [];
+    for (let i = 0; i < 3; i++) {
+      const again = createHologram(host, opts);
+      again.setSpec(spec);
+      const settled = await again.settled(60000);
+      const info = again.debugInfo();
+      reopens.push({ settled, posted: window.__posted.length, empty: info.meshes.empty, cached: info.hullStats.cached });
+      again.dispose();
+    }
+    host.remove();
+    return { liveSettled, afterLive, afterThumb, image: typeof image === 'string' && image.startsWith('data:image/'), reopens, kinds: window.__posted.slice(afterLive) };
+  }, fixture('camry'));
+  const msg = JSON.stringify(r);
+  assert.equal(r.liveSettled, true, msg);
+  assert.equal(r.afterLive, 46, `the live build: coarse and fine for each of the 23 meshes: ${msg}`);
+  assert.equal(r.image, true, msg);
+  assert.equal(r.afterThumb, r.afterLive, `the thumbnail meshes nothing: ${msg}`);
+  for (const reopen of r.reopens) {
+    assert.equal(reopen.settled, true, msg);
+    assert.equal(reopen.posted, r.afterLive, `a reopen meshes nothing: ${msg}`);
+    assert.equal(reopen.empty, 0, msg);
+    assert.ok(reopen.cached >= 23, msg);
+  }
+  assert.equal(workerRequests, 1);
+  assert.deepEqual(page.problems, []);
+});
