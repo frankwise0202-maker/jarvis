@@ -86,6 +86,10 @@ test('readResults: Chrome phrases follow each other; iOS one growing result; rep
   assert.equal(text([['hello', true], ['hello how', true], ['hello how are you', false]]), 'hello how are you');
   assert.equal(text([['no', true], [' no', true]]), 'no no'); // a single word said twice stays twice
   assert.equal(text([['', false], ['  ', true], ['ok', false]]), 'ok');
+  // WebKit sometimes hands back a final with the same words twice in a row: one copy is kept.
+  assert.equal(text([['what time is it What time is it?', true]]), 'What time is it?');
+  assert.equal(text([['go team go', true]]), 'go team go', 'not a repeat');
+  assert.equal(text([['no no', true]]), 'no no', 'too short to be the quirk');
   const parts = stt.readResults(r([['expand it', true, 'expanded', 'x band it']]));
   assert.deepEqual(parts, [{ text: 'expand it', alts: ['expanded', 'x band it'], final: true }]);
 });

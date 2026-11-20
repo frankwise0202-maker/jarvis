@@ -253,10 +253,23 @@ function altTexts(result, max = 3) {
   const n = Math.min(Number(result && result.length) || 0, max);
   for (let k = 0; k < n; k++) {
     const alt = result[k];
-    const t = clean(alt && typeof alt.transcript === 'string' ? alt.transcript : '');
+    const t = undouble(clean(alt && typeof alt.transcript === 'string' ? alt.transcript : ''));
     if (t && !out.includes(t)) out.push(t);
   }
   return out;
+}
+
+/**
+ * One copy of a transcript that holds the same words twice in a row ("what time is it what time is
+ * it": WebKit sometimes hands back a continuous session's final like that). Four words or more only.
+ */
+function undouble(text) {
+  const t = tokens(text);
+  if (t.length < 4 || t.length % 2) return text;
+  const half = t.length / 2;
+  const a = normalWords(t.slice(0, half).join(' ')).join(' ');
+  const b = normalWords(t.slice(half).join(' ')).join(' ');
+  return a && a === b ? t.slice(half).join(' ') : text;
 }
 
 /**
