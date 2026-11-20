@@ -1211,7 +1211,7 @@ function createVoiceMode(opts) {
       unlockSpeech();
     }
     const review = !duringBuild && reviewOn();
-    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false };
+    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer };
     S.listen = L;
     syncCoreAgents(null);
     setVoiceState('listening');
@@ -1256,7 +1256,17 @@ function createVoiceMode(opts) {
   function onPartial(L, value) {
     if (S.listen !== L) return;
     const text = toText(value).trim();
-    if (!text) return;
+    if (!text) {
+      // The recognizer took the words back (a noise first heard as "uh"): they are never sent, and
+      // the listen goes on as before them.
+      if (L.text) {
+        L.text = '';
+        if (L.keepAnswer && S.answer) showContext();
+        else showCaption('hint', greeting());
+        renderControls();
+      }
+      return;
+    }
     L.heard = true;
     if (S.sttBlocked) {
       S.sttBlocked = false; // permission was fixed: hands-free can resume
@@ -1464,7 +1474,8 @@ function createVoiceMode(opts) {
     S.mic = null;
     if (S.review) endReview();
     // guess: a correction Jarvis wasn't sure how to apply, shown for the owner to confirm ({ from, said })
-    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, guess: null };
+    // listenTimer: while the owner talks during the check, the fallback that lets it go on (reviewPartial)
+    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, listenTimer: 0, guess: null };
     S.review = R;
     S.karaoke = null;
     S.userEl = null;
@@ -1532,7 +1543,9 @@ function createVoiceMode(opts) {
     if (!R || S.closed) return;
     clearTimeout(R.timer);
     clearTimeout(R.micTimer);
+    clearTimeout(R.listenTimer);
     R.micTimer = 0;
+    R.listenTimer = 0;
     R.mode = 'counting';
     R.paused = false;
     R.remaining = ms;
@@ -1557,6 +1570,10 @@ function createVoiceMode(opts) {
     if (R.mode === 'counting') R.remaining = Math.max(0, R.deadline - performance.now());
     clearTimeout(R.timer);
     R.timer = 0;
+    if (mode !== 'listening') {
+      clearTimeout(R.listenTimer);
+      R.listenTimer = 0;
+    }
     R.mode = mode;
     if (mode === 'paused') R.paused = true;
     if (closeMic && R.L) {
@@ -1578,22 +1595,58 @@ function createVoiceMode(opts) {
     renderReview();
   }
 
-  /** Words heard during the check: the countdown waits while the owner talks. */
+  /**
+   * Words heard during the check: the countdown waits while the owner talks. The words the
+   * recognizer takes back (an empty partial: a noise first heard as "uh") let it go on; so does a
+   * turn that never ends in words (no final within the silence window and 1 s after the last ones).
+   */
   function reviewPartial(value) {
     const R = S.review;
     if (!R || R.mode === 'editing') return;
     const t = toText(value).trim();
-    if (!t) return;
+    if (!t) {
+      if (R.mode === 'listening') reviewResume(R);
+      return;
+    }
     setText(reviewHeard, `“${t}”`);
     reviewHeard.hidden = false;
     bumpLevel(0.5 + ((t.length * 7) % 10) / 30);
     if (R.mode !== 'listening') reviewPause('listening');
+    clearTimeout(R.listenTimer);
+    R.listenTimer = setTimeout(() => {
+      if (S.review === R && R.mode === 'listening') reviewResume(R);
+    }, reviewListenMs(t));
+  }
+
+  /** The owner said nothing after all: the countdown goes on (or the check waits, when it did). */
+  function reviewResume(R) {
+    clearTimeout(R.listenTimer);
+    R.listenTimer = 0;
+    if (R.guess) setText(reviewHeard, `“${clip(singleLine(R.guess.said), 140)}”`);
+    else {
+      reviewHeard.hidden = true;
+      setText(reviewHeard, '');
+    }
+    if (R.paused) reviewPause('paused');
+    else reviewCount(REVIEW_MS);
+  }
+
+  /** How long the check waits for words it is hearing to end: their silence window (stt.js) and 1 s. */
+  function reviewListenMs(text) {
+    try {
+      const wait = typeof stt.listenWaitMs === 'function' ? stt.listenWaitMs(getS().listenWait) : 1600;
+      return (typeof stt.turnSilenceMs === 'function' ? stt.turnSilenceMs(text, wait) : wait + 1000) + 1000;
+    } catch {
+      return 3600;
+    }
   }
 
   /** What the owner said during the check: cancel, a correction, send, wait, or more words. */
   function reviewFinal(value) {
     const R = S.review;
     if (!R || R.mode === 'editing') return;
+    clearTimeout(R.listenTimer);
+    R.listenTimer = 0;
     const said = toText(value).trim();
     reviewHeard.hidden = true;
     setText(reviewHeard, '');
@@ -1733,6 +1786,7 @@ function createVoiceMode(opts) {
     S.review = null;
     clearTimeout(R.timer);
     clearTimeout(R.micTimer);
+    clearTimeout(R.listenTimer);
     if (R.frame) cancelAnimationFrame(R.frame);
     R.frame = 0;
     if (R.L) abortHandle(R.L.handle);

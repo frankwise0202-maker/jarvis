@@ -3,7 +3,9 @@
 //   sttSupported() -> boolean
 //   startListening(options) -> { stop(), abort() }
 //     lang              a BCP 47 tag; '' or missing = the device's language (resolveListenLang)
-//     onPartial(text, info)  the words of this turn so far, as they come (info: { turn })
+//     onPartial(text, info)  the words of this turn so far, as they come (info: { turn }); '' when the
+//                            recognizer took them all back (a noise first heard as "uh"): the turn
+//                            then goes on as if nothing had been heard, and never ends with them
 //     onFinal(text, info)    the owner has finished: once per turn. info: { alternatives, reason, turn }
 //                            (alternatives: other readings of the whole turn, best first; reason:
 //                            'silence' | 'stop' | 'max' | 'ended' | 'error')
@@ -530,13 +532,29 @@ export function startListening(options = {}) {
     S.shown = '';
     unschedule('silence', 'shrink');
     schedule('max', maxMs, () => endTurn('max'));
-    if (S.turn.n === 0) {
-      schedule('noSpeech', noSpeechMs, () => {
-        if (S.ended || S.closing || S.turn.heard) return;
-        fail(mapSttError('no-speech'));
-        close('error');
-      });
-    }
+    if (S.turn.n === 0) armNoSpeech();
+  }
+
+  /** The first turn: give up when nothing at all is heard for noSpeechMs. */
+  function armNoSpeech() {
+    schedule('noSpeech', noSpeechMs, () => {
+      if (S.ended || S.closing || S.turn.heard) return;
+      fail(mapSttError('no-speech'));
+      close('error');
+    });
+  }
+
+  /**
+   * The recognizer took back all of this turn's words (a noise it first heard as "uh"): the caller
+   * is told (an empty onPartial, after the wait any shrink gets), and the turn goes on as if nothing
+   * had been heard; it never ends with those words.
+   */
+  function withdrawn() {
+    const T = S.turn;
+    unschedule('silence');
+    T.heard = false;
+    publish('');
+    if (T.n === 0 && !S.closing) armNoSpeech();
   }
 
   function sessionText() {
@@ -568,10 +586,13 @@ export function startListening(options = {}) {
     call(onPartial, text, { turn: S.turn.n });
   }
 
-  /** Hand the words to onPartial; a revision that only drops the last words waits a moment. */
+  /**
+   * Hand the words to onPartial; a revision that only drops the last words waits a moment (so does
+   * one that drops them all: '' once the recognizer took them back).
+   */
   function publish(text) {
     unschedule('shrink');
-    if (!text || text === S.shown) return;
+    if (text === S.shown) return;
     const nw = normalWords(text);
     const shownWords = normalWords(S.shown);
     if (S.shown && nw.length < shownWords.length && startsWith(shownWords, nw)) {
@@ -593,8 +614,12 @@ export function startListening(options = {}) {
     const spoke = own !== T.own;
     T.own = own;
     if (text === T.text && !spoke) return;
+    const had = T.text;
     T.text = text;
-    if (!text) return;
+    if (!text) {
+      if (had) withdrawn();
+      return;
+    }
     T.heard = true;
     T.last = now();
     unschedule('noSpeech');
@@ -666,11 +691,17 @@ export function startListening(options = {}) {
     detach(S.rec);
     S.rec = null;
     // stop(): deliver what was heard in this turn (some engines never flag a result final).
+    let delivered = false;
     if (S.closing === 'stop' && !S.errored) {
       const { text, alternatives } = turnReading();
       const words = clean(text || S.turn.text);
-      if (words) call(onFinal, words, { alternatives, reason: 'stop', turn: S.turn.n });
+      if (words) {
+        call(onFinal, words, { alternatives, reason: 'stop', turn: S.turn.n });
+        delivered = true;
+      }
     }
+    // Words still shown that the recognizer took back (the wait before saying so was cut short).
+    if (!delivered && S.shown && !clean(S.turn.text)) show('');
     call(onEnd);
   }
 

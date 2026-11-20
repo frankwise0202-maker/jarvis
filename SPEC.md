@@ -2367,7 +2367,10 @@ earlier one (§9.2, §14.1), it wins.
 - Transcript (`readResults`): built from all results of a session, robust to Chrome's several finals, iOS's ONE result
   whose text grows and is final only at the end, repeated results and cumulative results (each with everything before
   it); revisions replace the old words. A revision that only drops the last words waits 350 ms before `onPartial`
-  (no flicker); the final always has the latest words.
+  (no flicker); the final always has the latest words. Words the recognizer takes back altogether (a noise first heard
+  as "uh", then revised to nothing) are reported as `onPartial('', { turn })` (after the same 350 ms, or at once before
+  `onEnd` when listening stops first); the silence window stops and the turn goes on as if nothing had been heard (the
+  first turn's 10 s `no-speech` counts again), so it never ends with those words: no final, no stale words sent.
 - Silence window: the turn ends when the words have not changed for `listenWaitMs(wait)` (Settings → Voice → **Wait
   after I stop talking**: Short 1.0 s, Normal 1.6 s (default), Long 2.6 s; `LISTEN_WAITS`), plus 1.0 s while the words
   end with one that leaves the sentence hanging (and, or, but, so, because, the, a, an, to, of, for, with, in, on,
@@ -2412,7 +2415,9 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 - Voice Mode (`voice-review`): once the owner has finished, a turn's words are shown big (`voice-review-text`), with a
   2-second countdown ring on **Send now** and **Cancel**, then sent. The listen's recognizer keeps listening
   (`keepListening`, handed over without a restart): words heard pause the countdown (`data-state="listening"`, shown in
-  `voice-review-heard`); then `reviewReply` decides: "cancel", "never mind", "forget it", "scratch that", "don't send
+  `voice-review-heard`); words the recognizer takes back (`onPartial('')`) let it go on (counting 2 s again, or
+  waiting as before), and so does a turn heard that never ends in words: no final within its silence window (with the
+  extension for an unfinished last word) and 1 s more after the last words heard. Otherwise `reviewReply` decides: "cancel", "never mind", "forget it", "scratch that", "don't send
   it", "stop", also after any run of "no", "oh", "wait" ("No no, cancel") → nothing is sent ("Okay, not sent.");
   "no, I said …", "I said …", "I meant …" (after any run of "no"), "no, <words>" ("No, Boston"), or the sentence said
   again (same first two words) → corrected; "send it", "yes", "go ahead" (also "no, send it") → sent now; "wait",
@@ -2442,6 +2447,9 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
   (`visuals.note(text, { heard: true })`: status "Heard", no "Open in chat" for an earlier reply, gone after 6 s)
   and command field.
 - A tap on the core (or the dock's Send) while listening still means "I'm done, send now": no check.
+- Words taken back while Voice Mode listens (`onPartial('')`) are cleared at once (the caption goes back to what it
+  showed before them), so a listen that ends without a final never sends them (also a listen while a hologram builds).
+  The chat's, the viewer's and Optics' mics show the field without them.
 - Local commands (Screens, the hologram and blueprint viewers, Optics, camera words, the blueprint yes/no) act at once,
   without the check.
 - The chat's microphone: the words go into the message box with the same 2-second countdown (`composer-countdown`, a
@@ -2461,7 +2469,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 **Tests.** Unit `platform.stt` (Node, virtual clock; fakes in `test/unit/stt.fakes.mjs` behaving like iOS Safari and
 Chrome): the windows and the smart extension, a 1.2 s pause not cut, a sentence said again from the top after a pause
 not cut while it is said, restarts appended once, `no-speech` after a restart
-ignored, revisions (and the held shrink), the 60 s cap, `stop()` and `abort()`, errors, refused restarts, the retry
+ignored, revisions (and the held shrink), words taken back (an empty partial, no final, the listen goes on; also
+with `keepListening` and on `stop()`), the 60 s cap, `stop()` and `abort()`, errors, refused restarts, the retry
 backoff, alternatives, contextual biasing (and its refusal), `keepListening` on both engines (and a late final or an
 iOS rewrite of the turn that ended, with fewer or more words, then "cancel"; `continuation`), device language;
 `platform.voice` (Chromium: the continuous recognizer and its release); `ui.voice.heard` (cancel, correction, send,

@@ -191,6 +191,73 @@ test('iOS: a sentence started again after a pause is not cut while the owner say
   assert.ok(!a.partials().some((p) => /seven Set/i.test(p)), 'the repeated words are never added twice');
 });
 
+test('words the recognizer takes back (revised to nothing) are said to be gone, and the listen goes on: no final with them', async (t) => {
+  const { clock, rec, stt } = await setup(t);
+  const c = chrome(rec);
+  const a = listen(stt);
+  clock.advance(300);
+  c.say('uh'); // a noise heard as "uh"…
+  clock.advance(150);
+  rec.current.results([{ text: '' }]); // …taken back
+  clock.advance(400);
+  assert.deepEqual(a.log, ['partial:uh', 'partial:'], 'an empty partial once the words are gone (after the 350 ms a shrink waits)');
+  clock.advance(3000);
+  assert.ok(!a.log.includes('end'), 'still listening: nothing was said yet');
+  c.say('What time is it');
+  clock.advance(1600);
+  assert.deepEqual(a.finals.map((f) => f.text), ['What time is it']);
+
+  const b = listen(stt);
+  clock.advance(300);
+  c.say('uh');
+  clock.advance(150);
+  rec.current.results([{ text: '' }]);
+  clock.advance(10000);
+  clock.advance(1100);
+  assert.deepEqual(b.log, ['partial:uh', 'partial:', 'error:no-speech', 'end'], 'nothing else said: no-speech, never a final "uh"');
+});
+
+test('stop() while words just taken back are still shown: the caller is told they are gone before the end', async (t) => {
+  const { clock, rec, stt } = await setup(t);
+  const c = chrome(rec);
+  const a = listen(stt);
+  clock.advance(300);
+  c.say('uh');
+  clock.advance(150);
+  rec.current.results([{ text: '' }]);
+  clock.advance(100); // within the 350 ms a shrink waits
+  a.handle.stop();
+  clock.advance(1600);
+  assert.deepEqual(a.log, ['partial:uh', 'partial:', 'end']);
+});
+
+test('keepListening: words taken back during the next turn give an empty partial for that turn and no final; words after it count', async (t) => {
+  const { clock, rec, stt } = await setup(t);
+  const c = chrome(rec);
+  const log = [];
+  const finals = [];
+  stt.startListening({
+    keepListening: true,
+    onPartial: (text, info) => log.push(`partial[${info.turn}]:${text}`),
+    onFinal: (text, info) => finals.push(`${info.turn}:${text}`),
+  });
+  clock.advance(100);
+  c.say('What is the capital of France');
+  clock.advance(1700); // turn 0 ends: the 2-second check
+  c.finalize();
+  clock.advance(100);
+  c.say('uh'); // a noise during the check…
+  clock.advance(150);
+  rec.current.results([...rec.current.items.slice(0, -1), { text: '' }]); // …taken back
+  clock.advance(400);
+  assert.deepEqual(log.slice(-2), ['partial[1]:uh', 'partial[1]:']);
+  clock.advance(20000);
+  assert.deepEqual(finals, ['0:What is the capital of France'], 'no final for the words taken back');
+  c.say('cancel');
+  clock.advance(1700);
+  assert.deepEqual(finals, ['0:What is the capital of France', '1:cancel']);
+});
+
 test('iOS: no-speech from a restarted session is ignored within the turn; the words heard so far are kept', async (t) => {
   const { clock, rec, stt } = await setup(t);
   const s = ios(rec);
