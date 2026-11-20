@@ -445,6 +445,39 @@ test('hullMesh: an off-center mirrored hull is meshed once and twinned; revolve 
   assert.ok(minR > 18, `hollow: nothing near the axis (${minR})`);
 });
 
+test('hullMesh: a revolve far bigger than the other views (a unit mix-up) costs only its overlap (RV73-E1)', () => {
+  // A solid revolve 20x and 200x the size of the side and top views, near the axis and out at its
+  // rim: only the overlap is solid (the validator says so), and the revolve's distance grid covers
+  // just what the voxel grid can reach, like the view grids. It used to cover the whole profile:
+  // (revolve size / cell)² nodes, 5–20 s and 0.5–2 GB in the worker for one part.
+  const hull = (R, x0, x1) => ({ type: 'hull', revolve: [[0, 0], [R, 0], [R, R], [0, R]], side: [[x0, 0], [x1, 0], [x1, 100], [x0, 100]], top: [[x0, -50], [x1, -50], [x1, 50], [x0, 50]] });
+  const scaleOf = (spec) => quantizeScale(Math.hypot(...specBounds(spec).size));
+  for (const [R, x0, x1] of [[2000, -50, 50], [2000, 1900, 2050], [20000, -50, 50], [20000, 19900, 20050]]) {
+    const res = normalizeHologramSpec({ title: 'Test', parts: [part('housing', [hull(R, x0, x1)])] });
+    assert.ok(res.ok);
+    assert.ok(res.warnings.some((w) => /only the overlap is solid/.test(w)), res.warnings.join('\n'));
+    const shape = res.spec.parts[0].shapes[0];
+    const scale = scaleOf(res.spec);
+    for (const level of ['coarse', 'fine']) {
+      const F = hullField(shape, { level, scale });
+      const views = Math.max(F.mx * F.my, F.mx * F.mz, F.mz * F.my);
+      assert.ok(F.R.nu * F.R.nv <= 2 * views, `R=${R} x ${x0}…${x1} ${level}: revolve grid ${F.R.nu}×${F.R.nv} vs view grids ≤ ${views} nodes`);
+    }
+  }
+  // the same mesh as a revolve of the views' own size: nothing the mesher looks at changed
+  const small = normalizeHologramSpec({ title: 'Test', parts: [part('housing', [hull(200, -50, 50)])] });
+  const big = normalizeHologramSpec({ title: 'Test', parts: [part('housing', [hull(20000, -50, 50)])] });
+  const scale = scaleOf(small.spec);
+  assert.equal(scaleOf(big.spec), scale);
+  for (const level of ['coarse', 'fine']) {
+    const a = hullMesh(small.spec.parts[0].shapes[0], { level, scale });
+    const b = hullMesh(big.spec.parts[0].shapes[0], { level, scale });
+    assert.ok(a.triangles > 1000, `${level}: ${a.triangles} triangles`);
+    assert.deepEqual(Array.from(b.positions), Array.from(a.positions));
+    assert.deepEqual(Array.from(b.indices), Array.from(a.indices));
+  }
+});
+
 test('smoothOutline: gentle bends become curves through the points, sharp corners stay', () => {
   const square = Float64Array.from([0, 0, 100, 0, 100, 100, 0, 100]);
   assert.deepEqual(Array.from(smoothOutline(square, 10)), Array.from(square), 'a square stays a square');

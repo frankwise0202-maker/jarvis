@@ -202,14 +202,15 @@ export function smoothOutline(poly, step, closed = true) {
 
 /**
  * Signed distance of a closed polygon (positive inside, even-odd rule) on the grid
- * u = u0 + i*d (i < nu), v = v0 + j*d (j < nv). Distances beyond `clamp` are clamped.
+ * u = u0 + (i0 + i)*d (i < nu), v = v0 + (j0 + j)*d (j < nv): a window of a bigger grid starts at
+ * node (i0, j0) of it. Distances beyond `clamp` are clamped.
  */
-function sdfGrid(poly, u0, nu, v0, nv, d, clamp) {
+function sdfGrid(poly, u0, nu, v0, nv, d, clamp, i0 = 0, j0 = 0) {
   const n = poly.length / 2;
   const out = new Float32Array(nu * nv);
   const cross = new Float64Array(n + 1);
   for (let j = 0; j < nv; j++) {
-    const v = v0 + j * d;
+    const v = v0 + (j0 + j) * d;
     // even-odd crossings of the row
     let nc = 0;
     for (let e = 0; e < n; e++) {
@@ -221,7 +222,7 @@ function sdfGrid(poly, u0, nu, v0, nv, d, clamp) {
     const xs = Array.from(cross.subarray(0, nc)).sort((a, b) => a - b);
     let ptr = 0;
     for (let i = 0; i < nu; i++) {
-      const u = u0 + i * d;
+      const u = u0 + (i0 + i) * d;
       while (ptr < xs.length && xs[ptr] < u) ptr++;
       const inside = (ptr & 1) === 1;
       let best = clamp * clamp;
@@ -250,11 +251,14 @@ function sdfGrid(poly, u0, nu, v0, nv, d, clamp) {
 }
 
 // Bilinear lookup of a 2D grid with its derivatives (in model units): value returned, du/dv kept.
+// A window of a bigger grid (sdfGrid's i0, j0) keeps that grid's origin, so it reads exactly the same.
 class Grid2 {
-  constructor(data, u0, nu, v0, nv, d) {
+  constructor(data, u0, nu, v0, nv, d, i0 = 0, j0 = 0) {
     this.data = data;
     this.u0 = u0;
     this.v0 = v0;
+    this.i0 = i0;
+    this.j0 = j0;
     this.nu = nu;
     this.nv = nv;
     this.inv = 1 / d;
@@ -263,8 +267,8 @@ class Grid2 {
   }
   at(u, v) {
     const inv = this.inv;
-    let fu = (u - this.u0) * inv;
-    let fv = (v - this.v0) * inv;
+    let fu = (u - this.u0) * inv - this.i0;
+    let fv = (v - this.v0) * inv - this.j0;
     const nu = this.nu;
     if (fu < 0) fu = 0;
     else if (fu > nu - 1.0001) fu = nu - 1.0001;
@@ -525,10 +529,28 @@ class HullField {
     this.F = front ? new Grid2(sdfGrid(sm(front), gz, mz, gy, my, d2, clamp), gz, mz, gy, my, d2) : null;
     this.R = null;
     if (rev) {
+      // The profile's grid in (along, radius), cropped to what the voxel grid can reach (plus a
+      // margin): a revolve much bigger than the other views (a unit mix-up) would otherwise need
+      // (revolve size / cell)² nodes, seconds and hundreds of MB. The crop keeps the full grid's
+      // nodes, so every point the mesher looks at gets the same value as without it.
       const r = polyRange(rev);
       const ru0 = r.u0 - 2 * h, ru = Math.ceil((r.u1 - r.u0 + 4 * h) / d2) + 1;
       const rv0 = -2 * h, rv = Math.ceil((r.v1 + 4 * h) / d2) + 1;
-      this.R = new Grid2(sdfGrid(sm(rev), ru0, ru, rv0, rv, d2, clamp), ru0, ru, rv0, rv, d2);
+      const lo = [gx, gy, gz];
+      const hi = [gx + (nx - 1) * h, gy + (ny - 1) * h, gz + (nz - 1) * h];
+      const a = (ri + 1) % 3, b = (ri + 2) % 3;
+      const along0 = rsign > 0 ? lo[ri] : -hi[ri], along1 = rsign > 0 ? hi[ri] : -lo[ri];
+      const nearest = (l, u) => (l > 0 ? l : u < 0 ? -u : 0); // |the point of [l, u] nearest 0|
+      const rad0 = Math.hypot(nearest(lo[a], hi[a]), nearest(lo[b], hi[b]));
+      const rad1 = Math.hypot(Math.max(-lo[a], hi[a]), Math.max(-lo[b], hi[b]));
+      const crop = (from, to, o, n) => {
+        const s = Math.max(0, Math.min(n - 2, Math.floor((from - 2 * h - o) / d2)));
+        return [s, Math.max(s + 1, Math.min(n - 1, Math.ceil((to + 2 * h - o) / d2)))];
+      };
+      const [i0, i1] = crop(along0, along1, ru0, ru);
+      const [j0, j1] = crop(rad0, rad1, rv0, rv);
+      const nu = i1 - i0 + 1, nv = j1 - j0 + 1;
+      this.R = new Grid2(sdfGrid(sm(rev), ru0, nu, rv0, nv, d2, clamp, i0, j0), ru0, nu, rv0, nv, d2, i0, j0);
       this.ri = ri;
       this.rsign = rsign;
     }
