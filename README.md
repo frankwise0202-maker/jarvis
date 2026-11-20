@@ -310,7 +310,11 @@ Say or type it, in the chat, a hologram's command box, the camera (Optics) or Vo
   the camera is open, "float the camera") shows the live camera there, big, with a red **LIVE**;
   the camera closes here, so only one view uses it. **Camera off** under the picture (or the
   **OPTICS** pill at the top of the main window) turns it off; "bring it back" opens the camera
-  here again. On an iPhone it simply opens the camera.
+  here again. On an iPhone it simply opens the camera. With a **Look** on screen (the frozen
+  picture with its labels), "put this on my other screen" sends that Look instead: the picture,
+  its labels and Jarvis's answer.
+- **Jarvis never turns the camera on by himself.** If he offers to show the camera on a screen
+  while it's off, you get a **Turn on camera** button; nothing happens until you tap it.
 
 "This" means what you're looking at: the open hologram or blueprint, otherwise the newest card in
 the chat (a running mission shows as Mission Control, a finished one as its report). You can also
