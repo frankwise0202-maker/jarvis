@@ -7,9 +7,10 @@
 //   fb.chrome  -> pass to Driver / createStore / Controller
 //   fb.onCdpEvent = (tabId, method, params) => driver.onCdpEvent(tabId, method, params)
 //
-// Like the real page agent, the fake page checks activations while the executor has it armed
-// ('arm' / 'disarm'): a click or an Enter/Space press that reaches a consequential element (the
-// guard's classifyAction) the executor did not approve does not run the element's handler.
+// Like the real page agent, the fake page checks input while the executor has it armed ('arm' /
+// 'disarm'), deny by default: a click, a key or typed text runs only on the element (target id)
+// and with the keys the executor approved for that step; anything else is stopped (the element's
+// handler does not run) and reported at disarm.
 // Elements can open dialogs (fb.dialog(tab, type, message) -> accepted?), pages can hold their
 // load (routes[url].delayMs), ask before unload (page.beforeunload), and keep a focused field
 // inside a closed shadow root (focus.shadow = { desc }), which only the debugger can see.
@@ -41,8 +42,11 @@ export const fakeEncoder = {
     return { width: w, height: h };
   },
   async encode(bmp, { w, h, crop }) {
-    fakeEncoder.last = { from: [bmp.width, bmp.height], w, h, crop };
+    fakeEncoder.last = { from: [bmp.width, bmp.height], w, h, crop, masked: bmp.masked || [] };
     return fakePng(w, h);
+  },
+  async mask(bmp, rects) {
+    return { ...bmp, masked: [...(bmp.masked || []), ...rects] };
   },
 };
 
@@ -77,6 +81,8 @@ function makePage(spec = {}) {
     viewport: { w: 1280, h: 800, dpr: 1, ...(spec.viewport || {}) },
     elements: (spec.elements || []).map((e) => ({ focusable: /textbox|searchbox|combobox|button|link|option|switch|checkbox|radio/.test(e.role), value: '', ...e })),
     focus: null,
+    body: { name: '', role: 'document', desc: { tag: 'body' } }, // what has the focus when nothing else does
+    selection: spec.selection || null,
     refs: new Map(),
     nextRef: 1,
     dialogs: [],
@@ -86,6 +92,12 @@ function makePage(spec = {}) {
 }
 
 const descOf = (el) => (el ? { name: el.name, role: el.role, ...(el.desc || {}) } : null);
+// As the page agent: an approval binds to the element's name and the item it belongs to.
+const ctxOf = (el) => (el ? `${el.name} | ${el.ctx ?? ''}` : '');
+const NO_SELECTION = { key: '0|', count: 0, names: [] };
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
+const modsOf = (bits) => ['alt', 'ctrl', 'meta', 'shift'].filter((m, i) => bits & [1, 2, 4, 8][i]).join('+');
+const arrowsChange = (el) => !!el && (el.desc?.tag === 'select' || /radio|listbox|option|slider|spinbutton|combobox|menuitemradio/.test(el.role || '') || el.desc?.type === 'radio');
 
 export function createFakeBrowser({ windowId = 1 } = {}) {
   const tabs = new Map();
@@ -154,22 +166,43 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
     return targetIds.get(el);
   }
 
-  /** The fake page agent's activation check (see page/agent.js onActivation). */
-  function activate(page, el, via, run) {
+  /** The approved entry of the armed check for `el` (by target id), of one of `kinds`. */
+  function entryFor(page, el, kinds) {
     const a = page.armed;
-    if (a) {
-      const c = classifyAction(descOf(el));
-      if (c) {
-        const ok = !a.used && (a.approved || []).some((p) => (p.targetId !== undefined && p.targetId === targetIdOf(el)) || (p.category === c.category && String(p.label).toLowerCase() === String(c.label).toLowerCase()));
-        if (!ok) {
-          a.blocked.push({ type: via, category: c.category, label: c.label, reason: c.reason });
-          fb.blocked.push({ name: el.name, via });
-          return;
-        }
-        a.used = true;
-        a.activations += 1;
+    if (!a || !el) return null;
+    return (a.approved || []).find((p) => kinds.includes(p.kind || 'pointer') && p.targetId !== undefined && p.targetId === targetIdOf(el) && (p.ctx === undefined || p.ctx === null || p.ctx === ctxOf(el))) || null;
+  }
+
+  function block(page, el, via, why = 'not approved') {
+    const c = el ? classifyAction(descOf(el)) : null;
+    page.armed.blocked.push({ type: via, category: c?.category || 'change', label: c?.label || el?.name || 'the page', reason: c?.reason || why });
+    fb.blocked.push({ name: el?.name || 'the page', via });
+  }
+
+  /** Whether the armed check lets key `key` (with CDP modifier bits) land on the focused element. */
+  function keyAllowed(page, key, bits) {
+    const a = page.armed;
+    if (!a) return true;
+    const f = page.focus || page.body;
+    if (['Shift', 'Control', 'Alt', 'Meta'].includes(key)) return true;
+    const p = entryFor(page, f, ['key']);
+    if (p && (p.keys || []).some((k) => String(k.key).toLowerCase() === String(key).toLowerCase() && (k.mods || '') === modsOf(bits))) return true;
+    if (a.scrollOnly && SCROLL_KEYS.has(key) && !(bits & 7) && !arrowsChange(page.focus)) return true;
+    return false;
+  }
+
+  /** The fake page agent's activation check (see page/agent.js onActivation): deny by default. */
+  function activate(page, el, via, run, { byKey = false } = {}) {
+    const a = page.armed;
+    if (a && !byKey) {
+      const p = entryFor(page, el, ['pointer']);
+      p && (p.used = (p.used || 0) + 1);
+      if (!p || p.used > (p.clicks || 1)) {
+        block(page, el, via, p ? 'already activated' : 'not approved');
+        return;
       }
     }
+    if (a) a.activations += 1;
     fb.activations.push({ name: el.name, via });
     return run();
   }
@@ -186,9 +219,13 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         return { ok: true };
       case 'beat':
       case 'suppressEsc':
-      case 'shot':
       case 'pass':
+      case 'heal':
         return { ok: true };
+      case 'shot':
+        fb.shots = [...(fb.shots || []), args];
+        if (args.on && page.fail?.shot) throw new Error('shot failed');
+        return { ok: true, rects: args.on ? page.secretRects || [] : [] };
       case 'viewport':
         return { ...page.viewport, title: page.title, url: tab.url };
       case 'readPage':
@@ -203,20 +240,27 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         return { text: `Title: ${page.title}\n\n${page.text}` };
       case 'resolveTarget': {
         let el;
+        const selection = page.selection || NO_SELECTION;
         if (args.ref !== undefined) {
           el = page.refs.get(args.ref);
           if (!el) return { error: `Error: ${args.ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
-          return { x: el.x + el.w / 2, y: el.y + el.h / 2, desc: descOf(el), name: el.name, role: el.role, targetId: targetIdOf(el) };
+          return { x: el.x + el.w / 2, y: el.y + el.h / 2, desc: descOf(el), name: el.name, role: el.role, targetId: targetIdOf(el), ctx: ctxOf(el), item: el.ctx ?? '', selection };
         }
         el = elAt(page, args.x, args.y);
-        return el ? { x: args.x, y: args.y, desc: descOf(el), name: el.name, role: el.role, targetId: targetIdOf(el) } : { desc: null };
+        return el ? { x: args.x, y: args.y, desc: descOf(el), name: el.name, role: el.role, targetId: targetIdOf(el), ctx: ctxOf(el), item: el.ctx ?? '', selection } : { desc: null, selection };
       }
       case 'hitCheck': {
         const el = elAt(page, args.x, args.y);
-        return { same: !!el && targetIdOf(el) === args.targetId, desc: descOf(el), name: el?.name || '' };
+        return { same: !!el && targetIdOf(el) === args.targetId, desc: descOf(el), name: el?.name || '', ctx: ctxOf(el), targetId: el ? targetIdOf(el) : undefined };
       }
-      case 'focusInfo':
-        return page.focus ? { desc: descOf(page.focus), name: page.focus.name, role: page.focus.role } : { desc: null };
+      case 'focusInfo': {
+        const selection = page.selection || NO_SELECTION;
+        return page.focus ? { desc: descOf(page.focus), name: page.focus.name, role: page.focus.role, targetId: targetIdOf(page.focus), ctx: ctxOf(page.focus), item: page.focus.ctx ?? '', selection } : { desc: null, targetId: targetIdOf(page.body), ctx: '', selection };
+      }
+      case 'linksTo': {
+        const links = page.elements.filter((e) => e.desc?.href && e.desc.href === args.url).map((e) => ({ desc: descOf(e), targetId: targetIdOf(e), ctx: ctxOf(e), item: e.ctx ?? '' }));
+        return { links };
+      }
       case 'formInput': {
         const el = page.refs.get(args.ref);
         if (!el) return { error: `Error: ${args.ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
@@ -243,14 +287,21 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         const opt = el?.desc?.options?.find((o) => o.toLowerCase().includes(String(args.value).toLowerCase()));
         return { option: opt ? { text: opt, value: opt, selected: el.value === opt } : null, selectName: el?.name || '' };
       }
-      case 'arm':
-        page.armed = { approved: args.approved || [], used: false, activations: 0, blocked: [] };
+      case 'arm': {
+        const approved = (args.approved || []).map((p) => ({ ...p }));
+        page.armed = { approved, scrollOnly: !!args.scrollOnly, activations: 0, blocked: [] };
         fb.armedLog = [...(fb.armedLog || []), args.approved || []];
-        return { ok: true };
+        const known = new Set(page.elements.map(targetIdOf).concat([targetIdOf(page.body)]));
+        return { ok: true, missing: approved.filter((p) => p.targetId !== undefined && !known.has(p.targetId)).length };
+      }
       case 'disarm': {
         const a = page.armed;
         page.armed = null;
-        return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0 };
+        if (page.rewritten) {
+          page.rewritten = false;
+          return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0, intact: false };
+        }
+        return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0, intact: true };
       }
       case 'scrollToRef': {
         const el = page.refs.get(args.ref);
@@ -269,17 +320,44 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
     if (!tab.attached) throw new Error('Debugger is not attached to the tab with id: ' + tab.id);
     const page = tab.page;
     if (sessionId) {
-      // A child frame's session: only location.href is asked.
+      // A child frame's session (a frame from another site): its address, what is at a point in
+      // it (a nested frame, or nothing Jarvis needs), and what has its focus.
       const child = (tab.childFrames || []).find((f) => f.sessionId === sessionId);
       if (!child) throw new Error('No session with given id');
-      if (method === 'Runtime.evaluate') return { result: { type: 'string', value: child.url } };
+      if (method === 'Runtime.evaluate' && params.expression === 'location.href') return { result: { type: 'string', value: child.url } };
+      if (method === 'Runtime.evaluate' && params.expression === 'document.activeElement') {
+        if (child.focusFrame) return { result: { type: 'object', objectId: `obj:childfocus:${child.focusFrame}` } };
+        return { result: { type: 'object', objectId: 'obj:childbody' } };
+      }
+      if (method === 'Target.setAutoAttach' || method === 'Runtime.releaseObjectGroup') return {};
+      if (method === 'DOM.getNodeForLocation') {
+        const inner = (child.frames || []).find((f) => params.x >= f.x && params.x <= f.x + f.w && params.y >= f.y && params.y <= f.y + f.h);
+        return inner ? { backendNodeId: `nested:${inner.frameId}` } : { backendNodeId: 7 };
+      }
+      if (method === 'DOM.describeNode') {
+        const id = params.backendNodeId !== undefined ? String(params.backendNodeId) : String(params.objectId || '');
+        const m = /^(?:nested|obj:childfocus):(.+)$/.exec(id);
+        if (m) return { node: { nodeName: 'IFRAME', frameId: m[1], attributes: [] } };
+        return { node: { nodeName: 'BUTTON' } };
+      }
+      if (method === 'DOM.getBoxModel') {
+        const inner = (child.frames || []).find((f) => `nested:${f.frameId}` === String(params.backendNodeId));
+        if (!inner) throw new Error('No node');
+        return { model: { content: [inner.x, inner.y, inner.x + inner.w, inner.y, inner.x + inner.w, inner.y + inner.h, inner.x, inner.y + inner.h] } };
+      }
       throw new Error(`fake CDP (child): ${method} not implemented`);
     }
     switch (method) {
       case 'Page.enable':
       case 'Runtime.addBinding':
       case 'Runtime.releaseObjectGroup':
+      case 'Fetch.enable':
         return {};
+      case 'DOM.getBoxModel': {
+        const el = [...OBJECTS.values()].find((e) => e && 1000 + targetIdOf(e) === params.backendNodeId);
+        if (!el) throw new Error('No node with given id found');
+        return { model: { content: [el.x, el.y, el.x + el.w, el.y, el.x + el.w, el.y + el.h, el.x, el.y + el.h] } };
+      }
       case 'Page.handleJavaScriptDialog':
         tab.dialogAnswer = !!params.accept;
         return {};
@@ -308,6 +386,7 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         }
         const obj = OBJECTS.get(params.objectId);
         if (obj?.kind === 'focus' && page.focus?.shadow) return { node: { nodeName: String(page.focus.desc?.tag || 'x-box').toUpperCase(), shadowRoots: [{ shadowRootType: page.focus.shadow.mode || 'closed', backendNodeId: 9001 }] } };
+        if (obj?.kind === 'focus' && page.focus?.desc?.iframe) return { node: { nodeName: 'IFRAME', frameId: page.focus.desc.frameId || 'FR1', attributes: ['src', page.focus.desc.iframe.src || ''] } };
         return { node: { nodeName: 'INPUT' } };
       }
       case 'DOM.resolveNode':
@@ -353,6 +432,12 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         }
         if (params.type === 'mousePressed' && params.button === 'left') {
           let el = elAt(page, params.x, params.y);
+          // The armed check stops a press on anything not approved (the page never sees it).
+          if (page.armed && el && !entryFor(page, el, ['pointer'])) {
+            block(page, el, 'mousedown');
+            tab.pressed = null;
+            return {};
+          }
           // A page that re-renders on mousedown (after every check Jarvis could make).
           if (el?.onPress) {
             await el.onPress(page, fb, tab);
@@ -365,28 +450,48 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
           // A click goes to the element pressed and released on (as in Chrome).
           const el = elAt(page, params.x, params.y);
           if (el && el === tab.pressed) await activate(page, el, `click${params.clickCount}`, () => el.onClick?.(page, fb, tab));
+          else if (el && page.armed && !entryFor(page, el, ['pointer'])) block(page, el, 'mouseup');
           tab.pressed = null;
         }
         return {};
       }
       case 'Input.insertText':
+        if (page.armed && !entryFor(page, page.focus, ['type'])) {
+          block(page, page.focus, 'beforeinput', 'text going somewhere not approved');
+          return {};
+        }
         if (page.focus) page.focus.value += params.text;
         return {};
       case 'Input.dispatchKeyEvent': {
         const f = page.focus;
         const buttonish = f && /button|link|switch|checkbox|radio|option/.test(f.role);
+        const down = params.type === 'rawKeyDown' || params.type === 'keyDown';
+        if (down && !keyAllowed(page, params.key, params.modifiers || 0)) {
+          block(page, f, 'keydown', `the key ${params.key}`);
+          page.blockedKey = params.key;
+          return {};
+        }
+        if (params.type === 'keyUp' && page.blockedKey === params.key) {
+          page.blockedKey = null;
+          return {};
+        }
         if (params.type === 'keyDown' && params.key === 'Enter' && !(params.modifiers & 8)) {
-          if (buttonish) await activate(page, f, 'enter', () => f.onClick?.(page, fb, tab));
-          else if (f?.onEnter) await (f.submitsTo ? activate(page, { name: f.submitsTo, role: 'button', desc: { tag: 'button', isSubmit: true } }, 'submit', () => f.onEnter(page, fb, tab)) : f.onEnter(page, fb, tab));
+          if (buttonish) await activate(page, f, 'enter', () => f.onClick?.(page, fb, tab), { byKey: true });
+          else if (f?.onEnter) await (f.submitsTo ? activate(page, { name: f.submitsTo, role: 'button', desc: { tag: 'button', isSubmit: true } }, 'submit', () => f.onEnter(page, fb, tab), { byKey: true }) : f.onEnter(page, fb, tab));
         }
         // Space presses a focused button (or flips a switch) when it is released, whatever modifiers are held.
-        if (params.type === 'keyUp' && params.key === ' ' && buttonish) await activate(page, f, 'space', () => f.onClick?.(page, fb, tab));
-        if (params.type === 'rawKeyDown' || params.type === 'keyDown') await page.onKey?.(page, fb, tab, params);
+        if (params.type === 'keyUp' && params.key === ' ' && buttonish) await activate(page, f, 'space', () => f.onClick?.(page, fb, tab), { byKey: true });
+        if (down) await page.onKey?.(page, fb, tab, params);
         return {};
       }
       case 'Page.navigate': {
         const url = params.url;
         if (fb.routes[url]?.error) return { frameId: `F${tab.id}`, errorText: fb.routes[url].error };
+        // An address that is a file: Chrome downloads it and the tab stays where it was.
+        if (fb.routes[url]?.download) {
+          fb.downloads = [...(fb.downloads || []), url];
+          return { frameId: `F${tab.id}`, errorText: 'net::ERR_ABORTED', isDownload: true };
+        }
         // "Leave site? Changes you made may not be saved."
         if (page.beforeunload && !fb.dialog(tab, 'beforeunload', '')) return { frameId: `F${tab.id}`, errorText: 'net::ERR_ABORTED' };
         tab.history = tab.history.slice(0, tab.index + 1).concat(url);
@@ -397,12 +502,15 @@ export function createFakeBrowser({ windowId = 1 } = {}) {
         return { frameId: `F${tab.id}`, loaderId: `L${tab.doc + 1}` };
       }
       case 'Page.getNavigationHistory':
-        return { currentIndex: tab.index, entries: tab.history.map((url, i) => ({ id: i, url })) };
+        return { currentIndex: tab.index, entries: tab.history.map((url, i) => ({ id: i, url, transitionType: (tab.transitions || [])[i] || 'typed' })) };
       case 'Page.navigateToHistoryEntry':
         tab.index = params.entryId;
         setTimeout(() => fb.navigateTab(tab, tab.history[tab.index]), 5);
         return {};
       case 'Page.reload':
+        fb.reloads = (fb.reloads || 0) + 1;
+        // After one reload Chrome reports a form result's entry as "reload".
+        if (tab.transitions) tab.transitions[tab.index] = 'reload';
         setTimeout(() => fb.navigateTab(tab, tab.url), 5);
         return {};
       default:

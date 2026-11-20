@@ -267,7 +267,7 @@ function renderSetup() {
 
 function safetyList() {
   const items = [
-    ['shield', 'Asks before buying, sending, posting, deleting or changing settings.'],
+    ['shield', 'Asks you before every step that changes something, and always before buying, sending, posting, deleting or changing settings.'],
     ['lock', 'Never types your passwords or card numbers. You sign in yourself.'],
     ['globe', 'Asks before it works on a new site.'],
     ['hand', `Stop any time: the bar on the page, Esc, ${STOP_KEYS}, or here.`],
@@ -618,14 +618,18 @@ class TaskCard {
       ),
     );
     const kindChip = prompt.detail ? h('span', { class: 'chip chip--kind', attrs: { 'data-testid': 'prompt-category' }, text: prompt.detail.charAt(0).toUpperCase() + prompt.detail.slice(1) }) : null;
-    const meta = prompt.kind === 'confirm' ? h('div', { class: 'prompt__meta' }, prompt.site ? h('span', { class: 'chip', text: prompt.site }) : null, kindChip, prompt.source === 'guard' ? h('span', { class: 'chip chip--warn', text: 'Stopped by the safety check' }) : h('span', { class: 'chip', text: 'Jarvis asked first' })) : null;
+    const sourceChip = prompt.source === 'guard'
+      ? h('span', { class: `chip${prompt.consequential ? ' chip--warn' : ''}`, text: prompt.consequential ? 'Stopped by the safety check' : 'Jarvis asks before each step' })
+      : h('span', { class: 'chip', text: 'Jarvis asked first' });
+    const meta = prompt.kind === 'confirm' ? h('div', { class: 'prompt__meta' }, prompt.site ? h('span', { class: 'chip', text: prompt.site }) : null, kindChip, sourceChip) : null;
     append(
       this.promptBox,
       h(
         'div',
-        { class: 'prompt', attrs: { 'data-testid': 'prompt', 'data-kind': prompt.kind, 'data-prompt-id': prompt.id, role: 'alertdialog', 'aria-label': prompt.title } },
+        { class: 'prompt', attrs: { 'data-testid': 'prompt', 'data-kind': prompt.kind, 'data-prompt-id': prompt.id, 'data-source': prompt.source || '', 'data-consequential': prompt.kind === 'confirm' ? String(!!prompt.consequential) : '', role: 'alertdialog', 'aria-label': prompt.title } },
         h('div', { class: 'prompt__head' }, h('span', { class: 'prompt__icon' }, icon(ic, { size: 18 })), h('span', { class: 'prompt__title', text: prompt.title })),
         h('p', { class: 'prompt__body', attrs: { 'data-testid': 'prompt-body' }, text: displayText(prompt.body) }),
+        prompt.facts ? h('p', { class: 'prompt__facts', attrs: { 'data-testid': 'prompt-facts' }, text: displayText(prompt.facts) }) : null,
         meta,
         choices,
       ),
@@ -750,6 +754,7 @@ function sheetHead(title, onBack = closeSheet) {
 async function renderSettings() {
   const s = await store.getSettings();
   const sites = await store.getSites();
+  const everyday = await store.getEveryday();
   const sheet = ui.els.sheet;
   const save = async (patch) => {
     ui.settings = await store.setSettings(patch);
@@ -787,7 +792,22 @@ async function renderSettings() {
     e.target.value = ui.settings.maxSteps;
   } } });
   const incognito = h('input', { type: 'checkbox', checked: s.incognito, attrs: { 'data-testid': 'settings-incognito' }, on: { change: (e) => save({ incognito: e.target.checked }) } });
-  const siteList = Object.keys(sites).sort();
+  const siteList = [...new Set([...Object.keys(sites), ...Object.keys(everyday)])].sort();
+  const siteRow = (site) => {
+    const toggle = h('input', { type: 'checkbox', checked: everyday[site] === true, attrs: { 'data-testid': 'everyday-toggle', 'data-site': site, 'aria-label': `Let Jarvis act on ${site} without asking for everyday steps` }, on: { change: async (e) => {
+      await store.setEveryday(site, e.target.checked);
+      toast(e.target.checked ? `Everyday steps on ${site} won’t ask` : `Jarvis asks before every step on ${site}`);
+    } } });
+    return h(
+      'li',
+      { class: 'site-row' },
+      h('div', { class: 'site-row__head' }, h('span', { class: 'site-row__name', text: site }), sites[site] === 'always' ? h('button', { class: 'btn btn--ghost btn--sm', type: 'button', text: 'Remove', on: { click: async () => {
+        await store.forgetSite(site);
+        renderSettings();
+      } } }) : null),
+      h('label', { class: 'toggle toggle--small' }, toggle, h('span', { class: 'toggle__ui' }), h('span', null, h('span', { text: `Let Jarvis act on ${site} without asking for everyday steps` }), h('span', { class: 'sub', text: 'Searching, pages of results, filters and sorting. Buying, sending, posting, deleting, account changes, downloads and anything unclear always ask.' }))),
+    );
+  };
   replaceChildren(
     sheet,
     sheetHead('Settings'),
@@ -808,11 +828,9 @@ async function renderSettings() {
         'section',
         { class: 'panel' },
         h('div', { class: 'label' }, icon('globe', { size: 14 }), 'Sites Jarvis may always use'),
+        h('p', { class: 'hint', text: 'Jarvis asks you before every step that changes something on a page. For a site you trust you can let everyday steps go without asking.' }),
         siteList.length
-          ? h('ul', { class: 'sites', attrs: { 'data-testid': 'allowed-sites' } }, siteList.map((site) => h('li', null, h('span', { text: site }), h('button', { class: 'btn btn--ghost btn--sm', type: 'button', text: 'Remove', on: { click: async () => {
-              await store.forgetSite(site);
-              renderSettings();
-            } } }))))
+          ? h('ul', { class: 'sites', attrs: { 'data-testid': 'allowed-sites' } }, siteList.map(siteRow))
           : h('p', { class: 'hint', text: 'None yet. Jarvis asks the first time it works on a site.' }),
       ),
       h(

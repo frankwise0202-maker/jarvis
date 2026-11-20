@@ -111,15 +111,15 @@ const buy = {
     const steps = await run.steps();
     assert(steps.some((s) => s.status === 'blocked' && /^Did not click "Buy now"/.test(s.label)), `the blocked click shows as not done (${steps.map((s) => s.label).join(' | ')})`);
 
-    // 2. Claude asks first (request_confirmation); the owner approves; the click goes through
-    //    without a second prompt.
+    // 2. Claude asks first (request_confirmation, naming the button); the owner approves; the
+    //    click on that button goes through without a second prompt.
     mock.script([
-      () => ({ say: 'I will ask you first.', calls: [{ name: 'request_confirmation', input: { action: 'Buy the Dell S2721QS 27" 4K monitor for $279.99 with Buy now on shop.localhost', category: 'purchase' }, custom: true }] }),
+      () => ({ calls: [read] }),
+      (ctx) => ({ say: 'I will ask you first.', calls: [{ name: 'request_confirmation', input: { action: 'Buy the Dell S2721QS 27" 4K monitor for $279.99 with Buy now on shop.localhost', category: 'purchase', target: ref(ctx, /button "Buy now"/) }, custom: true }] }),
       (ctx) => {
         assert(/^Approved by the owner/.test(ctx.results[0].text), `approval result (${ctx.results[0].text})`);
-        return { calls: [read] };
+        return { calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Buy now"/) } }] };
       },
-      (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Buy now"/) } }] }),
       (ctx) => {
         assert(!ctx.results[0].isError, `approved click runs (${ctx.results[0].text})`);
         return { answer: 'Done: order placed.' };
@@ -128,13 +128,16 @@ const buy = {
     await run.send('OK, buy it');
     const jarvisAsk = await run.waitPrompt('confirm');
     assert(/Dell S2721QS/.test(await jarvisAsk.textContent()), 'Jarvis’s own request shows its description');
+    const facts = await jarvisAsk.locator(tid('prompt-facts')).textContent();
+    assert(/What it covers: Act on "Buy now" \(a button\)/.test(facts) && /279\.99/.test(facts), `and the element it covers, with its item (${facts})`);
     await run.decide('confirm', 'approve');
     await run.waitStatus('done');
     assert(sites.state.orders.length === 1 && sites.state.orders[0].via === 'buy-now', `one order after approval (${JSON.stringify(sites.state.orders)})`);
 
     // 3. Claude asks; the owner declines; nothing happens.
     mock.script([
-      () => ({ calls: [{ name: 'request_confirmation', input: { action: 'Buy a second Dell monitor for $279.99', category: 'purchase' }, custom: true }] }),
+      () => ({ calls: [{ name: 'navigate', input: { url: product } }, read] }),
+      (ctx) => ({ calls: [{ name: 'request_confirmation', input: { action: 'Buy a second Dell monitor for $279.99', category: 'purchase', target: ref(ctx, /button "Buy now"/) }, custom: true }] }),
       (ctx) => {
         assert(/^Declined by the owner/.test(ctx.results[0].text), 'decline result');
         return { answer: 'OK, I did not buy a second one.' };

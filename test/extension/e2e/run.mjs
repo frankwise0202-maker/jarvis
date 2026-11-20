@@ -18,6 +18,9 @@ import { buildExtension } from '../../../scripts/build-extension.mjs';
 import { startExtensionTestServer } from '../server.mjs';
 import { Run, loadPlaywright } from './harness.mjs';
 import { SCENARIOS } from './scenarios.mjs';
+import { RT2_SCENARIOS } from './scenarios-rt2.mjs';
+
+const ALL = [...SCENARIOS, ...RT2_SCENARIOS];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(HERE, '..', 'artifacts');
@@ -39,10 +42,10 @@ function parseArgs(argv) {
 export async function runE2E(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
   if (opts.list) {
-    for (const s of SCENARIOS) console.log(`${s.name.padEnd(16)} ${s.title}`);
+    for (const s of ALL) console.log(`${s.name.padEnd(16)} ${s.title}`);
     return { passed: 0, failed: 0 };
   }
-  const selected = opts.only.length ? SCENARIOS.filter((s) => opts.only.includes(s.name)) : SCENARIOS;
+  const selected = opts.only.length ? ALL.filter((s) => opts.only.includes(s.name)) : ALL;
   if (!selected.length) throw new Error(`no scenarios match ${opts.only.join(',')}`);
 
   const extDir = opts.build ? await mkdtemp(path.join(os.tmpdir(), 'jarvis-ext-dev-')) : path.resolve(HERE, '..', '..', '..', 'dist-extension-dev');
@@ -60,7 +63,8 @@ export async function runE2E(argv = process.argv.slice(2)) {
     const t0 = Date.now();
     let error = null;
     try {
-      await run.start(scenario.start || {});
+      // `start` may be a function of the test server (options that need its port, a temp folder).
+      await run.start((typeof scenario.start === 'function' ? await scenario.start(server) : scenario.start) || {});
       await scenario.run(run);
       const violations = server.mock.violations.filter((v) => v.status !== 0 && !(scenario.allowViolations || []).some((re) => re.test(v.message)));
       if (violations.length) throw new Error(`mock API violations: ${violations.map((v) => v.message).join('; ')}`);

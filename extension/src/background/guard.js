@@ -2,15 +2,18 @@
 // service worker uses them before every input it sends, and the page agent (page/agent.js, which
 // bundles this module) uses them again at the moment the page receives that input.
 //
+// Jarvis denies by default (see actions.js): every step that can change a page or the owner's
+// accounts waits for the owner's approval of that exact step, except reading, scrolling and plain
+// links within a site. This module says what a step would do, so that the owner's prompt names
+// it, and so that nothing consequential is ever covered by the owner's "everyday steps" setting:
+//
 // classifyAction(descriptor) decides whether activating an element (a click, Enter or Space on
 // it, or submitting the form it belongs to) looks like a consequential action: a purchase or
 // payment, placing an order, sending a message or email, posting or publishing, deleting,
 // changing account or security settings, accepting terms or granting access, or downloading or
 // running a file. Switches, checkboxes and radios go through classifyToggle(), keyboard shortcuts
 // outside text fields through classifyShortcutKey(), and native confirm() dialogs through
-// classifyDialogText(). The executor blocks such an action until the owner approves it (a
-// request_confirmation approval for exactly that action, or the guard's own Approve / Cancel
-// prompt).
+// classifyDialogText().
 //
 // secretKind(field) decides whether a form field holds a secret Jarvis must never type into or
 // read out: a password (or one-time code), a card number, a card security code, or a national ID.
@@ -34,7 +37,16 @@ export const CATEGORY_NAMES = Object.freeze(Object.keys(CATEGORIES));
  * Every category the guard can stop an action for: the request_confirmation ones, plus a click or
  * key press inside a box embedded from another site, which Jarvis cannot see into.
  */
-export const GUARD_CATEGORIES = Object.freeze({ ...CATEGORIES, frame: 'acting inside a box embedded from another site, which Jarvis cannot see into' });
+export const GUARD_CATEGORIES = Object.freeze({
+  ...CATEGORIES,
+  frame: 'acting inside a box embedded from another site, which Jarvis cannot see into',
+  change: 'a step that changes something on the page',
+  dialog: "answering the page's question",
+  shortcut: 'a keyboard shortcut, which can send, delete or change things on the page',
+});
+
+/** Categories a refusal blocks for the rest of the task on that site (the others: that one step). */
+export const STICKY_DECLINES = Object.freeze(new Set([...Object.keys(CATEGORIES), 'frame', 'shortcut']));
 
 /** Short names for the side panel's chip on an approval prompt. */
 export const CATEGORY_CHIPS = Object.freeze({
@@ -46,6 +58,9 @@ export const CATEGORY_CHIPS = Object.freeze({
   agreement: 'Accepting terms',
   download: 'Downloading a file',
   frame: 'Another site’s box',
+  change: 'Page step',
+  dialog: 'The page asks',
+  shortcut: 'Keyboard shortcut',
 });
 
 /** Lowercase, collapse whitespace, keep letters/digits/$ and a few separators. */
@@ -72,6 +87,10 @@ const RULES = [
       // Moving an amount of money: "Transfer $500 to Alex", "Send €20", "Wire $1,000".
       /\b(transfer|send|wire|pay|tip|gift)\s?[$€£¥]\s?\d/, /\bwire (money|funds|transfer)\b/,
       /\bredeem\b/, /\bclaim (offer|deal)\b/,
+      // Money-moving wording without a price on the button ("Confirm transfer", "Make payment").
+      /\b(confirm|make|schedule|submit|send|complete|review and send|authori[sz]e) (a |an |the |your |my |this )?(transfer|payment|wire|withdrawal|deposit|sale|bid|trade|money)\b/,
+      /\bwithdraw\b/, /\bcash ?out\b/, /^sell\b/, /\bsell (now|it|all|shares|order|this)\b/, /\bconfirm (sale|sell|trade|swap)\b/,
+      /\bsubmit (bid|offer|order|trade)\b/, /\brequest (a |your )?(ride|pickup|delivery)\b/, /^order( now| it)?$/, /\bpay (bill|invoice|balance)\b/,
     ],
   },
   {
@@ -88,6 +107,8 @@ const RULES = [
       /\bdelete\b/, /\bpermanently\b/, /\berase\b/, /\bwipe\b/, /\bempty (the )?(trash|bin|recycle)\b/, /\bmove to (the )?(trash|bin)\b/, /^trash$/, /^discard\b/,
       /\bremove (my |your |the )?(account|everything|all|permanently|forever|data|profile|page|repository|repo|channel|workspace|member|user)\b/,
       /\bcancel (my |your |the )?(order|subscription|membership|account|plan|booking|reservation|service)\b/, /\bclose (my |your |the )?account\b/, /\bdeactivate\b/, /\bclear (all|history|data|everything)\b/,
+      /\bremove (this |the |my |your )?(card|payment method|bank( account)?|device|phone( number)?|email( address)?|passkey|security key|authenticator|recovery \w+|address|item|message|file|files|photo|photos|post|comment)\b/,
+      /\bempty (inbox|folder|cart)\b/, /\bdelete all\b/, /\bpurge\b/, /\bdestroy\b/,
     ],
   },
   {
@@ -98,6 +119,7 @@ const RULES = [
       /\bsign out (of |from )?(all|every|other)\b/, /\blog out (of |from )?(all|every|other)\b/, /\brevoke\b/, /\bauthori[sz]e\b/, /\ballow access\b/, /\bgrant (access|permission|permissions)\b/,
       /\b(connect|link) (my |your |an? )?(account|app|bank|card)\b/, /\btransfer ownership\b/, /\bmake (owner|admin)\b/, /\badd (user|member|admin|collaborator)\b/, /\bunsubscribe\b/,
       /\bsave (changes|settings|preferences|profile|security)\b/, /\bupdate (profile|account|settings|security|billing|payment method)\b/,
+      /\bunlink\b/, /\bdisconnect\b(?! from (wi-?fi|vpn))/, /\bturn off (2-step|two-step|two-factor|2fa|mfa|verification|login alerts?|sign-in alerts?)\b/,
     ],
   },
   {
@@ -115,11 +137,13 @@ const GENERIC_COMMIT = /^(confirm|ok|okay|yes|yes,? .{0,30}|continue|submit|done
 
 // Context words strong enough to classify a generic commit button inside a form or dialog.
 const CONTEXT_RULES = [
-  { category: 'delete', pattern: /\b(delete|deleted|deleting|permanently|erase|remove (your|the|this) (account|data)|cannot be undone|can't be undone|close your account|deactivate)\b/ },
+  { category: 'delete', pattern: /\b(delete|deleted|deleting|permanently|erase|remove (your|the|this) (account|data)|cannot be undone|can't be undone|close your account|deactivate|danger zone)\b/ },
   { category: 'purchase', pattern: /\b(place (your )?order|card number|payment details|pay now|complete (your )?purchase|confirm (your )?(order|purchase|payment)|you will be charged|will be charged)\b/ },
+  // A transfer or payment review: an amount of money next to transfer/payment wording.
+  { category: 'purchase', pattern: /([$€£¥] ?\d[\d,.]*.{0,80}\b(transfer|payment|recipient|withdraw|wire|send to)\b|\b(transfer|payment|recipient|withdraw|wire|amount)\b.{0,80}[$€£¥] ?\d)/ },
   { category: 'send', pattern: /\b(send (this )?(message|email)|new message)\b/ },
   { category: 'post', pattern: /\b(publish|post (this|publicly)|go live)\b/ },
-  { category: 'account', pattern: /\b(change (your )?password|new password|security settings|two-factor|2fa|recovery (email|phone)|account settings)\b/ },
+  { category: 'account', pattern: /\b(change (your )?password|new password|security settings|two-factor|two factor|2fa|2-step|two-step|2-step verification|multi-factor|recovery (email|phone)|account settings|passkeys?|security keys?)\b/ },
   { category: 'agreement', pattern: /\b(terms of (service|use)|license agreement|i agree|consent to)\b/ },
 ];
 
@@ -127,6 +151,16 @@ const CONTEXT_RULES = [
 // "Next" there commits the purchase even without any "Place order" wording.
 const ORDER_REVIEW = /\b(payment( method)?|paying with|pay with|(visa|mastercard|amex|american express|discover|card|debit card|credit card) ending( in)?|review (your )?order|order review)\b/;
 const ORDER_TOTAL = /\b(total|order total|amount due|you pay)\b/;
+
+// Bare verbs whose object is somewhere else on the page ("Turn off" under "2-Step Verification",
+// "Remove" in a card's "Danger zone"): the heading, legend or dialog around them says what.
+const BARE_VERB = /^(turn off|turn on|switch off|switch on|disable|enable|remove|delete|unlink|disconnect|deactivate|revoke|reset|confirm|yes|ok|okay|continue|cancel|stop|end|close|leave|archive|send|post|submit|apply|save|update)( it| this| now)?$/;
+
+/** Whether a label only means something with the text around it (see BARE_VERB, GENERIC_COMMIT). */
+export function needsContext(label) {
+  const n = normalizeLabel(label);
+  return !!n && (BARE_VERB.test(n) || GENERIC_COMMIT.test(n));
+}
 
 // Words that mark a switch, checkbox or radio as a security setting wherever it is.
 const SECURITY_TOGGLE = /\b(two-factor|two factor|2fa|2-step|two-step|mfa|multi-factor|security key|passkeys?|authenticator|login alerts?|sign-in alerts?|recovery (email|phone|codes?)|app passwords?|require (a )?password)\b/;
@@ -140,9 +174,9 @@ const STRONG_LINK = [
   /\b(confirm|submit|complete|finali[sz]e|finish) (your |my |the )?(order|purchase|payment|booking)\b/, /\bsend money\b/,
 ];
 
-const SETTINGS_PATH = /\/(settings|account|accounts|security|profile|preferences|privacy|billing|admin|manage)(\/|$|\?|#)/i;
-const RISKY_FILE = /\.(exe|msi|msix|dmg|pkg|app|apk|aab|deb|rpm|sh|bash|zsh|command|bat|cmd|ps1|vbs|jar|iso|img|scr|run|bin|xpi|crx|appimage|torrent)(\?|#|$)/i;
-const FILE_LIKE = /\.(zip|rar|7z|tar|gz|tgz|bz2|xz|pdf|docx?|xlsx?|pptx?|csv|mp4|mov|mp3|wav)(\?|#|$)/i;
+export const SETTINGS_PATH = /\/(settings|account|accounts|security|profile|preferences|privacy|billing|admin|manage)(\/|$|\?|#)/i;
+export const RISKY_FILE = /\.(exe|msi|msix|dmg|pkg|app|apk|aab|deb|rpm|sh|bash|zsh|command|bat|cmd|ps1|vbs|jar|iso|img|scr|run|bin|xpi|crx|appimage|torrent)(\?|#|$)/i;
+export const FILE_LIKE = /\.(zip|rar|7z|tar|gz|tgz|bz2|xz|pdf|docx?|xlsx?|pptx?|csv|mp4|mov|mp3|wav)(\?|#|$)/i;
 
 function firstMatch(label, { skip = [] } = {}) {
   for (const rule of RULES) {
@@ -161,14 +195,14 @@ function contextCategory(text) {
 
 const lower = (v) => String(v || '').toLowerCase();
 
-const isButtonLike = (d) => {
+export const isButtonLike = (d) => {
   const role = lower(d?.role);
   const tag = lower(d?.tag);
   const type = lower(d?.type);
   return role === 'button' || role === 'menuitem' || role === 'option' || tag === 'button' || (tag === 'input' && ['submit', 'button', 'image', 'reset'].includes(type)) || role === 'tab';
 };
 
-const isLink = (d) => lower(d?.role) === 'link' || lower(d?.tag) === 'a';
+export const isLink = (d) => lower(d?.role) === 'link' || lower(d?.tag) === 'a';
 
 const TOGGLE_ROLES = new Set(['checkbox', 'switch', 'radio', 'menuitemcheckbox', 'menuitemradio']);
 
@@ -179,7 +213,7 @@ export function isToggle(d) {
   return !!(d.isToggle || d.isCheckbox || TOGGLE_ROLES.has(lower(d.role)) || (lower(d.tag) === 'input' && (type === 'checkbox' || type === 'radio')));
 }
 
-const isRadio = (d) => lower(d?.role) === 'radio' || lower(d?.role) === 'menuitemradio' || (lower(d?.tag) === 'input' && lower(d?.type) === 'radio');
+export const isRadio = (d) => lower(d?.role) === 'radio' || lower(d?.role) === 'menuitemradio' || (lower(d?.tag) === 'input' && lower(d?.type) === 'radio');
 
 /** A link that does not go anywhere: no href, "#", javascript:, or this same page (a JS handler does the work). */
 export function isNonNavigatingLink(d) {
@@ -274,6 +308,21 @@ export function classifyAction(d) {
     const composer = labels.find((l) => /^(reply|reply all|comment|respond|submit|share|add comment)$/.test(l.norm));
     if (composer) return result(/comment/.test(composer.norm) ? 'post' : 'send', composer.shown, null, d);
   }
+
+  // A bare verb takes its object from the heading, legend or dialog around it: "Turn off" under
+  // "2-Step Verification" turns off 2-step verification; "Remove" under "Danger zone: delete
+  // your account" deletes the account.
+  if (isButtonLike(d) || d.isSubmit || nonNavigating || (isLink(d) && !nonNavigating && STRONG_LINK.some((p) => labels.some((l) => p.test(l.norm))))) {
+    for (const { norm, shown } of labels) {
+      if (!BARE_VERB.test(norm)) continue;
+      for (const around of [d.headingText, d.dialogText, d.groupLabel]) {
+        const ctx = normalizeLabel(around);
+        if (!ctx) continue;
+        const byBoth = firstMatch(`${norm} ${ctx}`) || contextCategory(ctx);
+        if (byBoth) return result(byBoth, shown, `${CATEGORIES[byBoth]} ("${String(around).trim().slice(0, 60)}")`, d);
+      }
+    }
+  }
   return null;
 }
 
@@ -286,6 +335,22 @@ export function classifyToggle(d, { willCheck = true } = {}) {
   if (!d || typeof d !== 'object') return null;
   const labels = labelsOf(d);
   const shown = labels[0]?.shown || 'a setting';
+  // A radio "Off" or a switch "Enabled" means what its group says: "Two-factor authentication: Off".
+  const group = String(d.groupLabel || '').trim();
+  if (group) {
+    const g = normalizeLabel(group);
+    for (const { norm, shown: s } of labels) {
+      const both = `${g} ${norm}`;
+      const turnsOff = /\b(off|no|disabled?|none|never|turn off|don't|do not)\b/.test(norm);
+      if (SECURITY_TOGGLE.test(both) && (turnsOff || !willCheck || isRadio(d))) {
+        return result('account', s, `${willCheck ? 'choosing' : 'turning off'} "${s.slice(0, 40)}" for "${group.slice(0, 60)}" (changing account or security settings)`, d);
+      }
+      const skip = ['send', 'download'];
+      if (isRadio(d)) skip.push('purchase');
+      const byBoth = firstMatch(both, { skip });
+      if (byBoth && byBoth !== 'agreement') return result(byBoth, s, `${willCheck ? 'choosing' : 'turning off'} "${s.slice(0, 40)}" for "${group.slice(0, 60)}" (${CATEGORIES[byBoth]})`, d);
+    }
+  }
   const verb = willCheck ? 'turning on' : 'turning off';
   for (const { norm, shown: s } of labels) {
     // (a) consent: ticking "I agree to the terms" accepts them.
@@ -346,15 +411,34 @@ export function classifySubmitKey(focus, { modified = false } = {}) {
     if (c) return c;
     if (focus.form.hasCardField) return { category: 'purchase', label: submit || 'the form', reason: 'submitting payment details' };
   }
+  // In a multi-line field a page may send on Enter too (support chats, messengers): a form whose
+  // submit button sends or posts, or a Send/Post button around the field.
+  if (isMultiline && focus.form && !focus.form.isSearch && focus.form.submitLabel) {
+    const c = classifyAction({ role: 'button', tag: 'button', name: focus.form.submitLabel, nearTextbox: true });
+    if (c && (c.category === 'send' || c.category === 'post')) return { ...c, reason: `${c.reason} (Enter here may send it)` };
+  }
   // Chat and mail composers send on Enter (or ctrl/cmd+Enter) when a Send/Post button sits nearby.
   if ((isMultiline || role === 'textbox' || tag === 'input') && Array.isArray(focus.nearbyButtons)) {
     for (const b of focus.nearbyButtons) {
       const c = classifyAction({ role: 'button', tag: 'button', name: b, nearTextbox: true });
-      if (c && (c.category === 'send' || c.category === 'post')) {
-        if (isMultiline && !modified && !focus.enterSends) continue;
-        return { ...c, reason: `${c.reason} (Enter here may send it)` };
-      }
+      if (c && (c.category === 'send' || c.category === 'post')) return { ...c, reason: `${c.reason} (Enter here may send it)` };
     }
+  }
+  return null;
+}
+
+/**
+ * A key chord with Ctrl, Cmd or Alt pressed in a text field (other than plain editing: select
+ * all, undo, redo, word-wise movement): composers send or post on such shortcuts (Alt+S,
+ * Cmd+Enter). Returns the send/post classification when the composer has such a button.
+ */
+export function classifyComposerShortcut(chord, focus) {
+  if (!chord || !focus || typeof focus !== 'object') return null;
+  const mods = Array.isArray(chord.mods) ? chord.mods : [];
+  if (!mods.some((m) => m === 'ctrl' || m === 'meta' || m === 'alt')) return null;
+  for (const b of Array.isArray(focus.nearbyButtons) ? focus.nearbyButtons : []) {
+    const c = classifyAction({ role: 'button', tag: 'button', name: b, nearTextbox: true });
+    if (c && (c.category === 'send' || c.category === 'post')) return { ...c, reason: `${c.reason} (a shortcut here may send it)` };
   }
   return null;
 }
@@ -413,7 +497,7 @@ const PASSWORD_HINT = /\b(pass(word|wd|code|phrase)?|pwd|pin|secret|otp|one[- ]?
 const CARD_HINT = /\b(card ?(number|no|num|#)|cc ?(num|number|no)|credit ?card|debit ?card|cardnumber|ccnumber|ccnum|pan|card details)\b/;
 const CVV_HINT = /\b(cvv2?|cvc2?|csc|cvn|cid|security code|card verification|verification value|card code)\b/;
 const ID_HINT = /\b(ssn|social security|national insurance|tax id|itin|sin number|passport number)\b/;
-const PAYMENT_FRAME = /stripe|braintree|adyen|checkout\.com|paypal|venmo|applepay|apple-pay|googlepay|google-pay|pay\.google|shop-pay|shopify-pay|klarna|affirm|afterpay|card|payment|cvv|cvc|securefield|secure-field|hosted-field|hostedfield|recurly|squareup|square|spreedly|authorize\.net|cybersource|worldpay|3ds|tokeni[sz]/i;
+export const PAYMENT_FRAME = /stripe|braintree|adyen|checkout\.com|paypal|venmo|applepay|apple-pay|googlepay|google-pay|pay\.google|shop-pay|shopify-pay|klarna|affirm|afterpay|card|payment|cvv|cvc|securefield|secure-field|hosted-field|hostedfield|recurly|squareup|square|spreedly|authorize\.net|cybersource|worldpay|3ds|tokeni[sz]/i;
 const CREDENTIAL_FRAME = /login|signin|sign-in|auth|accounts\.|password|identity|sso/i;
 
 /** Words used to describe a field: label, name, id, placeholder, aria-label, autocomplete. */
@@ -449,6 +533,30 @@ export function secretKind(f) {
   return null;
 }
 
+/**
+ * The kind of secret an element holds, from the page agent's description of it: the one rule for
+ * typing into a field and for reading its value back (read_page, find, screenshots).
+ * 'password' | 'card' | 'cvv' | 'id' | null.
+ */
+export function secretKindOf(desc) {
+  if (!desc || typeof desc !== 'object') return null;
+  if (desc.iframe) return secretKind({ iframe: desc.iframe });
+  if (desc.field) {
+    const kind = secretKind(desc.field);
+    if (kind) return kind;
+    // Its accessible name too: aria-labelledby ("Card PIN"), a label the field info misses.
+    const name = String(desc.name || '').trim();
+    if (name) {
+      const byName = secretKind({ ...desc.field, label: `${desc.field.label || ''} ${name}` });
+      if (byName) return byName;
+    }
+  }
+  if (desc.looksSecret) return 'password';
+  const role = lower(desc.role);
+  if (desc.isContentEditable || role === 'textbox' || role === 'searchbox' || role === 'combobox' || role === 'spinbutton') return secretKind({ label: desc.name, ariaLabel: desc.name });
+  return null;
+}
+
 export const SECRET_NAMES = Object.freeze({ password: 'a password', card: 'a card number', cvv: 'a card security code', id: 'an ID number' });
 
 /** The message Claude and the owner see when Jarvis refuses to type into a secret field. */
@@ -474,52 +582,38 @@ export function pageKey(url) {
   }
 }
 
-// Words in a button label that say nothing about what is being done.
-const FILLER = new Set(['now', 'it', 'the', 'a', 'an', 'my', 'your', 'our', 'this', 'that', 'to', 'for', 'of', 'on', 'in', 'and', 'with', 'me', 'here', 'please', '&', '+', '-']);
-
-/** Whether the owner's approved description covers a button labelled `label`. */
-function labelCovered(approvedText, label) {
-  const words = normalizeLabel(label).split(' ').filter((w) => w && !FILLER.has(w));
-  if (!words.length) return true;
-  const said = new Set(normalizeLabel(approvedText).split(' ').filter(Boolean));
-  const near = (w) => said.has(w) || [...said].some((s) => s.length >= 3 && w.length >= 3 && (s.startsWith(w) || w.startsWith(s)));
-  return words.every(near);
-}
-
 /**
  * Per-task approvals and refusals.
  *
- * An approval (from request_confirmation) covers exactly one guarded action: the same category,
- * on the same site, in the same tab and on the same page it was asked on, whose button matches
- * the description the owner approved, within a minute. Anything else asks the owner again. The
- * guard's own Approve covers only the action it was shown for, and is never stored here.
+ * An approval (from request_confirmation) is bound to one element: the same element (by identity,
+ * in the same document, tab and page it was asked on), with the same item around it (its row, card
+ * or form: the product's name and price, the message's subject) and the same items selected on the
+ * page, once, within a minute. Anything else asks the owner again. The guard's own Approve covers
+ * only the step it was shown for and is never stored here.
  *
- * A refusal blocks that category on that site for the rest of the task without asking again (a
- * refusal made while no site was open blocks the category everywhere: that direction fails safe).
+ * A refusal of a consequential kind of action (a purchase, sending, posting, deleting, an account
+ * change, accepting terms, a download, a box from another site) blocks that kind on that site for
+ * the rest of the task without asking again (one made while no site was open blocks it
+ * everywhere: that direction fails safe). A refusal of any other step blocks that element, and the
+ * address a link of it opens.
  */
 export class Approvals {
   constructor(now = () => Date.now()) {
     this.now = now;
     this.granted = [];
     this.declined = new Set();
+    this.declinedElements = new Set();
+    this.declinedHrefs = new Set();
   }
 
   /**
-   * Records an approval. `site` is required: an approval asked while no website was open matches
-   * nothing (it is not stored). Returns whether it was stored.
+   * Records an approval bound to an element ({ category, site, tabId, url, doc, targetId, ctx,
+   * selection, text }). Without a site or an element it is not stored. Returns whether it was.
    */
-  grant(category, site, { tabId = '', url = '', text = '' } = {}) {
-    if (!category || !site) return false;
-    this.granted.push({ category, site, tabId: String(tabId || ''), page: pageKey(url), text: String(text || ''), expires: this.now() + APPROVAL_TTL_MS, uses: APPROVAL_USES });
+  grant({ category, site, tabId = '', url = '', doc, targetId, ctx = '', selection = '', text = '' } = {}) {
+    if (!category || !site || targetId === undefined || targetId === null || targetId === '' || doc === undefined || doc === null || !tabId) return false;
+    this.granted.push({ category, site, tabId: String(tabId), page: pageKey(url), doc, targetId: String(targetId), ctx: String(ctx || ''), selection: String(selection || ''), text: String(text || ''), expires: this.now() + APPROVAL_TTL_MS, uses: APPROVAL_USES });
     return true;
-  }
-
-  decline(category, site) {
-    this.declined.add(`${category}|${site || '*'}`);
-  }
-
-  isDeclined(category, site) {
-    return this.declined.has(`${category}|${site || '*'}`) || this.declined.has(`${category}|*`);
   }
 
   live() {
@@ -528,35 +622,38 @@ export class Approvals {
     return this.granted;
   }
 
-  matches(a, category, site, { tabId, url } = {}) {
-    if (!site || a.site !== site) return false;
-    if (category !== null && a.category !== category) return false;
-    if (a.tabId && tabId && a.tabId !== String(tabId)) return false;
-    if (a.page && url !== undefined && a.page !== pageKey(url)) return false;
-    return true;
+  /**
+   * Uses up the approval for a step on exactly that element, in that state, if there is one.
+   * Returns the approval (its category and text) or null.
+   */
+  consume({ site, tabId, url, doc, targetId, ctx = '', selection = '' } = {}) {
+    if (!site || targetId === undefined || targetId === null) return null;
+    const match = this.live().find((a) => a.site === site && a.tabId === String(tabId || '') && a.page === pageKey(url) && a.doc === doc && a.targetId === String(targetId) && a.ctx === String(ctx || '') && a.selection === String(selection || ''));
+    if (!match) return null;
+    match.uses -= 1;
+    return match;
   }
 
-  /**
-   * Uses up the approval for this action if there is one; true when it was approved. `label` is
-   * the button's label ("Buy now"): it must match what the owner approved, unless `generic` (a
-   * plain "Continue" or "Confirm" that takes its meaning from the page).
-   */
-  consume(category, site, { tabId, url, label = '', alias = '', generic = false } = {}) {
-    const match = this.live().find((a) => this.matches(a, category, site, { tabId, url }) && (generic || !a.text || labelCovered(a.text, label) || (alias && labelCovered(a.text, alias))));
-    if (!match) return false;
-    match.uses -= 1;
-    return true;
+  /** Records a refusal: the kind of action on the site (consequential kinds), the element, the address. */
+  decline(category, site, { element = '', href = '' } = {}) {
+    if (STICKY_DECLINES.has(category)) this.declined.add(`${category}|${site || '*'}`);
+    if (element) this.declinedElements.add(String(element));
+    const key = href ? pageKey(href) : '';
+    if (key) this.declinedHrefs.add(key);
   }
 
-  /**
-   * A native confirm() dialog on `site` asks about `category` (null when its text says nothing
-   * Jarvis recognises): uses up a live approval for this page and tab in that category.
-   */
-  consumeForDialog(category, site, { tabId, url } = {}) {
-    const match = this.live().find((a) => this.matches(a, category, site, { tabId, url }));
-    if (!match) return false;
-    match.uses -= 1;
-    return true;
+  isDeclined(category, site) {
+    return this.declined.has(`${category}|${site || '*'}`) || this.declined.has(`${category}|*`);
+  }
+
+  isDeclinedElement(key) {
+    return !!key && this.declinedElements.has(String(key));
+  }
+
+  /** Whether the owner declined a step that would have opened this address (navigate must not open it either). */
+  isDeclinedHref(url) {
+    const key = pageKey(url);
+    return !!key && this.declinedHrefs.has(key);
   }
 }
 

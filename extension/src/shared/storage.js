@@ -5,17 +5,22 @@
 //                     Claude API; never logged, never sent anywhere but the API.
 //   jarvis.settings   { model, budgetUsd, maxSteps, incognito }
 //   jarvis.sites      { [site]: 'always' } sites the owner allowed permanently
+//   jarvis.everyday   { [site]: true } sites where the owner lets Jarvis take everyday steps
+//                     (searching, pages of results, filters and sorting) without asking each time;
+//                     off for every site unless the owner turns it on in Settings
 //   jarvis.history    finished tasks (not written while incognito is on); can be cleared
 //
 // In development builds only, jarvis.dev.apiBase points the API client at a local mock.
 
 import { DEFAULT_MODEL, isModel } from '../background/models.js';
 import { DEFAULT_BUDGET_USD, DEFAULT_MAX_STEPS, normalizeBudget, normalizeSteps } from '../background/limits.js';
+import { isListedPublicSuffix } from '../background/sites.js';
 
 export const KEYS = Object.freeze({
   apiKey: 'jarvis.apiKey',
   settings: 'jarvis.settings',
   sites: 'jarvis.sites',
+  everyday: 'jarvis.everyday',
   history: 'jarvis.history',
 });
 
@@ -85,11 +90,23 @@ export function createStore(chromeLike = globalThis.chrome) {
       return next;
     },
 
+    /**
+     * Sites allowed permanently. A grant saved by an older version for a whole hosting service
+     * (a public suffix such as "ngrok.io", where strangers get subdomains) is dropped: it would
+     * cover other people's sites.
+     */
     async getSites() {
       const v = await get(KEYS.sites);
-      return v && typeof v === 'object' ? { ...v } : {};
+      const sites = v && typeof v === 'object' ? { ...v } : {};
+      const stale = Object.keys(sites).filter((site) => isListedPublicSuffix(site));
+      if (stale.length) {
+        for (const site of stale) delete sites[site];
+        await set(KEYS.sites, sites);
+      }
+      return sites;
     },
     async allowSiteAlways(site) {
+      if (isListedPublicSuffix(site)) return;
       const sites = await this.getSites();
       sites[site] = 'always';
       await set(KEYS.sites, sites);
@@ -98,6 +115,22 @@ export function createStore(chromeLike = globalThis.chrome) {
       const sites = await this.getSites();
       delete sites[site];
       await set(KEYS.sites, sites);
+      await this.setEveryday(site, false);
+    },
+
+    /** Sites where everyday steps need no approval: { [site]: true }. Off unless the owner turns it on. */
+    async getEveryday() {
+      const v = await get(KEYS.everyday);
+      const out = {};
+      if (v && typeof v === 'object') for (const [site, on] of Object.entries(v)) if (on === true && site && !isListedPublicSuffix(site)) out[site] = true;
+      return out;
+    },
+    async setEveryday(site, on) {
+      const map = await this.getEveryday();
+      if (on && site && !isListedPublicSuffix(site)) map[site] = true;
+      else delete map[site];
+      await set(KEYS.everyday, map);
+      return map;
     },
 
     async getHistory() {

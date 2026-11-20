@@ -57,7 +57,8 @@ const PUNCTUATION = {
 const PUNCT_NAMES = { minus: '-', equal: '=', equals: '=', plus: '+', comma: ',', period: '.', dot: '.', slash: '/', backslash: '\\', semicolon: ';', apostrophe: "'", quote: "'", grave: '`', backquote: '`', bracketleft: '[', bracketright: ']' };
 
 // Editing commands CDP runs directly (on macOS, shortcut keys alone do not edit text fields).
-const EDIT_COMMANDS = { a: 'selectAll', c: 'copy', x: 'cut', v: 'paste', z: 'undo', y: 'redo' };
+// Never paste, copy or cut: Jarvis does not use the owner's clipboard (see isClipboardChord).
+const EDIT_COMMANDS = Object.freeze({ a: 'selectAll', z: 'undo', y: 'redo' });
 
 function resolveKey(name) {
   const raw = String(name);
@@ -199,4 +200,39 @@ export function isPrintableChord(chord) {
 /** What the guard needs to judge a key as a shortcut: { key (DOM name), mods, printable }. */
 export function shortcutInfo(chord) {
   return { key: chord.key.key, mods: [...chord.mods], printable: isPrintableChord(chord) };
+}
+
+const hasCmd = (chord) => chord.mods.includes('ctrl') || chord.mods.includes('meta');
+
+/**
+ * A chord that pastes from the clipboard: cmd/ctrl+V (with any other modifiers) and
+ * Shift+Insert. Chrome pastes on these by itself on Windows, Linux and ChromeOS, so leaving the
+ * paste command out of the key event is not enough: Jarvis refuses these chords.
+ */
+export function isPasteChord(chord) {
+  const k = chord?.key?.key || '';
+  return (/^v$/i.test(k) && hasCmd(chord)) || (k === 'Insert' && chord.mods.includes('shift') && !hasCmd(chord));
+}
+
+/** A chord that copies or cuts to the clipboard (cmd/ctrl+C or X, Ctrl+Insert, Shift+Delete). */
+export function isCopyCutChord(chord) {
+  const k = chord?.key?.key || '';
+  return (/^[cx]$/i.test(k) && hasCmd(chord)) || (k === 'Insert' && hasCmd(chord)) || (k === 'Delete' && chord.mods.includes('shift') && !hasCmd(chord));
+}
+
+/** Pasting, copying or cutting: Jarvis never touches the owner's clipboard. */
+export function isClipboardChord(chord) {
+  return isPasteChord(chord) || isCopyCutChord(chord);
+}
+
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
+
+/** A bare scrolling key (arrows, Page Up/Down, Home, End; Shift allowed, no Ctrl, Cmd or Alt). */
+export function isScrollChord(chord) {
+  return SCROLL_KEYS.has(chord?.key?.key) && !chord.mods.some((m) => m === 'ctrl' || m === 'meta' || m === 'alt');
+}
+
+/** A lone modifier key ("shift"): pressing it alone changes nothing. */
+export function isModifierChord(chord) {
+  return !!chord?.key?.isModifier;
 }

@@ -17,6 +17,13 @@ function fakeExecutor(behaviour = {}) {
   const calls = [];
   return {
     calls,
+    /** request_confirmation's target, as the real executor describes it (ref_N -> element N). */
+    async describeTarget(target) {
+      if (behaviour.describeTarget) return behaviour.describeTarget(target);
+      const n = Number(String(target?.ref || '').replace(/^ref_/, '')) || 0;
+      if (!n) return { error: 'Error: there is no element at that target.' };
+      return { site: 'shop.example', url: 'https://shop.example/product/dell', toolId: 'tab-1', label: 'Buy now', verb: 'Act on', element: `tab-1|1|${n}`, bind: { doc: 1, targetId: n, ctx: 'Dell S2721QS — $279.99', selection: '0|' } };
+    },
     async run(block, ctx) {
       calls.push(block.name);
       const fn = behaviour[block.name];
@@ -221,7 +228,7 @@ test('request_confirmation: decline is reported, recorded and blocks the categor
   const { mock, env } = setup({ confirm: async () => false });
   let seen;
   mock.script([
-    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Place the order for $279.99', category: 'purchase' } }] }),
+    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Place the order for $279.99', category: 'purchase', target: { type: 'ref', ref: 'ref_3' } } }] }),
     (ctx) => {
       seen = ctx.results[0];
       return { answer: 'Not ordered.' };
@@ -231,15 +238,47 @@ test('request_confirmation: decline is reported, recorded and blocks the categor
   assert.equal(seen.member, false, 'custom tool results carry no toolset_name');
   assert.match(seen.text, /^Declined by the owner: Place the order for \$279\.99/);
   assert.ok(env.approvals.isDeclined('purchase', 'shop.example'));
+  assert.ok(env.approvals.isDeclinedElement('tab-1|1|3'), 'and that element');
   noViolations(mock);
 });
 
-test('request_confirmation: approval grants the category on the site for the next actions', async () => {
-  const { mock, env } = setup({ confirm: async () => true });
-  mock.script([() => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Send the email to Alex', category: 'send' } }] }), () => ({ answer: 'ok' })]);
-  await runTask(env, task('Send'));
-  assert.ok(env.approvals.consume('send', 'shop.example'));
-  assert.ok(!env.approvals.consume('purchase', 'shop.example'));
+test('request_confirmation: an approval is bound to the target element, in its state, for one step', async () => {
+  const shown = [];
+  const { mock, env } = setup({ confirm: async (q) => (shown.push(q), true) });
+  env.scope = () => ({ site: 'shop.example', url: 'https://shop.example/product/dell', tabId: 'tab-1' });
+  mock.script([() => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99', category: 'purchase', target: { type: 'ref', ref: 'ref_3' } } }] }), () => ({ answer: 'ok' })]);
+  await runTask(env, task('Buy'));
+  assert.equal(shown[0].facts.bind.targetId, 3, 'the owner is shown the element it covers');
+  const at = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/product/dell', doc: 1, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  assert.equal(env.approvals.consume({ ...at, targetId: 4 }), null, 'not a same-labelled button on another element');
+  assert.equal(env.approvals.consume({ ...at, targetId: 3, ctx: 'MacBook Pro 16 — $2,499.00' }), null, 'not after the item changed');
+  assert.equal(env.approvals.consume({ ...at, targetId: 3, selection: '3|a|b|c' }), null, 'not after the selection changed');
+  assert.equal(env.approvals.consume({ ...at, targetId: 3, doc: 2 }), null, 'not in another document');
+  assert.ok(env.approvals.consume({ ...at, targetId: 3 }), 'that element, as the owner saw it');
+  assert.equal(env.approvals.consume({ ...at, targetId: 3 }), null, 'once');
+});
+
+test('request_confirmation without a target, or one Jarvis cannot see, is an error and asks nothing', async () => {
+  const shown = [];
+  const { mock, env } = setup({ confirm: async (q) => (shown.push(q), true) });
+  let results = [];
+  mock.script([
+    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99', category: 'purchase' } }] }),
+    (ctx) => {
+      results.push(ctx.results[0]);
+      return { calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99', category: 'purchase', target: { type: 'ref', ref: 'ref_0' } } }] };
+    },
+    (ctx) => {
+      results.push(ctx.results[0]);
+      return { answer: 'ok' };
+    },
+  ]);
+  await runTask(env, task('Buy'));
+  assert.ok(results.every((r) => r.isError), JSON.stringify(results));
+  assert.match(results[0].text, /needs "action".*"target"/);
+  assert.match(results[1].text, /no element at that target/);
+  assert.equal(shown.length, 0, 'the owner was not asked');
+  assert.equal(env.approvals.live().length, 0);
 });
 
 test('flag_prompt_injection tells the owner', async () => {
@@ -312,7 +351,7 @@ test('F2: Cancel on request_confirmation stops the batch: nothing after it runs'
   const { mock, env, executor } = setup({ confirm: async () => false });
   let seen;
   mock.script([
-    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99 with Get it now', category: 'purchase' } }, { name: 'left_click', input: { target: { type: 'ref', ref: 'ref_1' } } }, { name: 'key', input: { text: 'Enter' } }] }),
+    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell for $279.99 with Get it now', category: 'purchase', target: { type: 'ref', ref: 'ref_1' } } }, { name: 'left_click', input: { target: { type: 'ref', ref: 'ref_1' } } }, { name: 'key', input: { text: 'Enter' } }] }),
     (ctx) => {
       seen = ctx.results;
       return { answer: 'Not bought.' };
@@ -331,26 +370,27 @@ test('S3/S9: an approval is for one action on the page Jarvis is on; none is ask
   env.scope = () => ({ site: 'shop.example', url: 'https://shop.example/product/dell', tabId: 'tab-1' });
   let seen;
   mock.script([
-    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell S2721QS for $279.99 with Buy now', category: 'purchase' } }] }),
+    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell S2721QS for $279.99 with Buy now', category: 'purchase', target: { type: 'ref', ref: 'ref_3' } } }] }),
     (ctx) => {
       seen = ctx.results[0];
       return { answer: 'ok' };
     },
   ]);
   await runTask(env, task('Buy'));
-  assert.match(seen.text, /^Approved by the owner: .*Go ahead with exactly this one action, on this page, now\. The approval covers only this action/);
+  assert.match(seen.text, /^Approved by the owner: .*Go ahead now with exactly this one step on the element you named.*The approval covers only that element, once/);
   assert.doesNotMatch(seen.text, /two minutes|next couple of minutes/);
   assert.equal(asked[0].site, 'shop.example', 'the site is read before asking');
-  assert.equal(env.approvals.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/lg', label: 'Buy now' }), false, 'not on another product page');
-  assert.equal(env.approvals.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell', label: 'Buy now' }), true);
-  assert.equal(env.approvals.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell', label: 'Buy now' }), false, 'once');
+  const at = { site: 'shop.example', tabId: 'tab-1', doc: 1, targetId: 3, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  assert.equal(env.approvals.consume({ ...at, url: 'https://shop.example/product/lg' }), null, 'not on another product page');
+  assert.ok(env.approvals.consume({ ...at, url: 'https://shop.example/product/dell' }));
+  assert.equal(env.approvals.consume({ ...at, url: 'https://shop.example/product/dell' }), null, 'once');
 
   // From a blank tab: an error for Claude, no prompt for the owner, nothing granted.
   const blank = setup({ confirm: async (q) => (asked.push(q), true) });
   blank.env.scope = () => ({ site: '', url: '', tabId: '' });
   let err;
   blank.mock.script([
-    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Sign up for the free newsletter', category: 'purchase' } }] }),
+    () => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Sign up for the free newsletter', category: 'purchase', target: { type: 'ref', ref: 'ref_1' } } }] }),
     (ctx) => {
       err = ctx.results[0];
       return { answer: 'ok' };

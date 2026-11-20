@@ -14,26 +14,34 @@
 //   - page-derived text (page reads, dialog messages, option and element names) is wrapped as
 //     untrusted content and scanned for prompt injection, and so are tab titles.
 //
-// Safety, before every input it sends:
+// Safety: deny by default (actions.js). Before every input it sends:
 //   - site permission for the page the input lands on: checked again after the owner answers (a
-//     page can move meanwhile), on every page read, and right before the input is dispatched; a
-//     frame from another site needs that site's permission too;
-//   - the consequential-action guard (guard.js) for clicks, drags, mouse presses and releases,
-//     Enter and Space (with any modifiers, also held), switches/checkboxes/radios and selects in
-//     form_input, keyboard shortcuts outside text fields, and anything inside a frame Jarvis
-//     cannot see into; one approval activates its element once (double/triple clicks and repeated
-//     keys on such an element are refused);
-//   - the page agent's activation check while the input is sent: an element the owner did not
-//     approve that ends up receiving it (swapped in under the pointer, focused by the page) is not
-//     activated;
-//   - a hard refusal to type into password, card-number or CVV fields, also inside closed shadow
-//     roots and frames from other sites (which Jarvis cannot see into, so it does not type there).
+//     page can move meanwhile), on every page read, and right before the input is dispatched;
+//     every frame from another site at the point (nested ones too), and the site a link or form
+//     goes to, need the owner's permission as well;
+//   - the owner's approval of that exact step: every click (except one plain click on an ordinary
+//     link to another page of the same site), typing, key (except scrolling keys), drag, mouse
+//     press, form_input, closing the owner's own tab, a download, and the page's own confirm()
+//     questions. The prompt names the element, its visible text, the item around it (a product's
+//     name and price), what is selected, and what the guard (guard.js) recognises it would do.
+//     A request_confirmation approval covers one click or key on exactly the element it named.
+//     The owner's "everyday steps" setting for a site skips asking only for searching, pages of
+//     results, filters and sorting, never for anything consequential;
+//   - after an approval: the same element, with the same item and selection, or nothing happens;
+//   - the page agent's activation check while the input is sent, the one choke point: any event
+//     that is not the approved step (another element swapped in, a key landing elsewhere, a
+//     select or radio changed by a key, a paste) is cancelled before the page sees it;
+//   - hard refusals: typing into password, card-number or CVV fields (also inside closed shadow
+//     roots, and anywhere in frames from other sites, which Jarvis cannot see into), the
+//     clipboard (paste, copy, cut), keys that would change a select or radio, form_input on
+//     buttons, reloading a page that is the result of a submitted form.
 
 import { abortError, abortableSleep, isAbort, singleLine, truncate } from '../shared/util.js';
 import { blockedReason, isActionableUrl, normalizeNavigateUrl, sanitizeUrl, siteOf } from './sites.js';
-import { GUARD_CATEGORIES, classifyAction, classifyOption, classifyShortcutKey, classifySpaceKey, classifySubmitKey, classifyToggle, isEditableFocus, isToggle, normalizeLabel, secretKind, secretRefusal, SECRET_NAMES } from './guard.js';
+import { GUARD_CATEGORIES, RISKY_FILE, classifyAction, isEditableFocus, isToggle, pageKey, secretKindOf, secretRefusal, SECRET_NAMES } from './guard.js';
+import { assessClick, assessFormInput, assessKey, assessType } from './actions.js';
 import { coordinateError, frameFor, toCss, zoomPlan, THUMB_WIDTH } from './images.js';
-import { chordEvents, chordLabel, clickModifiers, isEnterChord, isEscapeChord, isPrintableChord, isSpaceChord, parseKeys, shortcutInfo } from './keys.js';
+import { chordEvents, chordLabel, clickModifiers, isClipboardChord, isEscapeChord, isPasteChord, isPrintableChord, parseKeys } from './keys.js';
 import { detectInjection, wrapUntrusted } from './injection.js';
 import { stepLabel } from './labels.js';
 import { DriverError } from './driver.js';
@@ -203,9 +211,15 @@ function isFieldLike(desc) {
 /** A frame from another site: Jarvis cannot see or check anything inside it. */
 const isForeignFrame = (desc) => !!(desc && desc.iframe && desc.crossOrigin);
 
-const sameClass = (a, b) => !!a && !!b && a.category === b.category && normalizeLabel(a.label) === normalizeLabel(b.label);
-
 const aOrAn = (word) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
+
+/** A chord's modifiers as the page agent sees them on the key event ("ctrl+shift"). */
+const modsOf = (chord) => ['alt', 'ctrl', 'meta', 'shift'].filter((m) => chord.mods.includes(m)).join('+');
+
+/** An <input> that is a button (its value is its label): form_input must not rename it. */
+const isButtonInput = (d) => String(d?.tag || '').toLowerCase() === 'input' && ['submit', 'button', 'reset', 'image', 'hidden', 'file'].includes(String(d?.type || '').toLowerCase());
+
+const VERBS = { left_click: 'Click', right_click: 'Right-click', middle_click: 'Middle-click (opens it in a new tab)', double_click: 'Double-click', triple_click: 'Triple-click' };
 
 // ---------------------------------------------------------------------------------------------
 
@@ -226,6 +240,26 @@ export class Executor {
     this.progress = () => {};
     this.seenTitles = new Set(); // (tab, title) pairs already scanned for prompt injection
     this.pressed = null; // an approved left_mouse_down whose release is covered
+  }
+
+  /** The owner's "everyday steps" setting for the site Jarvis acts on (off unless they turned it on). */
+  everyday(ctx) {
+    try {
+      return !!(ctx?.site && this.policy.everyday?.(ctx.site));
+    } catch {
+      return false;
+    }
+  }
+
+  /** Whether a tab's page may be described to Claude (its site is allowed in this task). */
+  revealed(url) {
+    if (!/^https?:/i.test(String(url || ''))) return true;
+    if (typeof this.policy.isAllowed !== 'function') return true;
+    try {
+      return !!this.policy.isAllowed(siteOf(url));
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -257,9 +291,6 @@ export class Executor {
       if (ctx.signal?.aborted) throw abortError();
       const text = err instanceof CallError || err instanceof DriverError ? err.message : isAbort(err) ? 'Error: the action was interrupted before it finished.' : `Error: ${singleLine(err?.message || err).replace(/^Error:\s*/, '')}`;
       return this.error(block, text, info, name, input);
-    } finally {
-      // A confirm() dialog the owner's approval covered can only follow this very call.
-      if (ctx.tab) this.driver.disarmDialog(ctx.tab);
     }
   }
 
@@ -273,7 +304,7 @@ export class Executor {
   }
 
   browserState({ changes = true } = {}) {
-    const tabs = this.driver.inventory();
+    const tabs = this.driver.inventory({ reveal: (url) => this.revealed(url) });
     this.scanTitles(tabs);
     const block = { type: 'browser_state', tabs };
     if (changes) {
@@ -313,8 +344,8 @@ export class Executor {
     return list
       .map((d) => {
         const t = d.toolId ? this.driver.get(d.toolId) : null;
-        const verdict = d.accepted ? 'Jarvis accepted it' : d.type === 'beforeunload' ? 'Jarvis stayed on the page' : 'Jarvis dismissed it';
-        const advice = !d.accepted && d.type === 'confirm' ? ' If the owner wants what it asks, call request_confirmation describing exactly that action, then do it again.' : '';
+        const verdict = d.asked ? (d.accepted ? 'the owner answered OK' : 'the owner answered Cancel') : d.accepted ? 'Jarvis accepted it' : d.type === 'beforeunload' ? 'Jarvis stayed on the page' : 'Jarvis dismissed it';
+        const advice = !d.accepted && d.type === 'confirm' ? (d.asked ? " Don't try it again or find another way; tell the owner and finish." : ' If the owner wants what it asks, call request_confirmation describing exactly that action, then do it again.') : '';
         const msg = truncate(singleLine(d.message), 300);
         return `The page showed ${aOrAn(d.type)} dialog (${verdict}).${advice}${msg ? ` Its text:\n${this.wrap(t, msg, 'dialog')}` : ''}`;
       })
@@ -322,8 +353,18 @@ export class Executor {
   }
 
   ack(text) {
-    const notes = this.dialogNotes();
+    const notes = [this.dialogNotes(), this.downloadNotes()].filter(Boolean).join('\n');
     return [{ type: 'text', text: notes ? `${text}\n${notes}` : text }, this.browserState()];
+  }
+
+  /** Downloads started since the last result, and what the owner decided. */
+  downloadNotes() {
+    try {
+      const list = this.policy.drainDownloads?.() || [];
+      return list.map((d) => `A download started: "${truncate(singleLine(d.name), 80)}" from ${d.site || 'the page'} (${d.verdict === 'approved' ? 'the owner approved it; Chrome saved it to the Downloads folder' : d.verdict === 'pending' ? 'the owner has not answered yet' : 'the owner declined it; nothing was saved'}).`).join('\n');
+    } catch {
+      return '';
+    }
   }
 
   // -------------------------------------------------------------------------------------------
@@ -334,7 +375,7 @@ export class Executor {
       const t = await d.newTab({ windowId: d.active()?.windowId });
       // Exactly one browser_state with exactly one tab_opened matching the active tab. Page-opened
       // tabs not yet reported stay queued for the next result.
-      const tabs = d.inventory();
+      const tabs = d.inventory({ reveal: (url) => this.revealed(url) });
       this.scanTitles(tabs);
       return [{ type: 'browser_state', tabs, state_changes: [{ type: 'tab_opened', tab_id: t.toolId }] }];
     }
@@ -344,14 +385,21 @@ export class Executor {
     }
     const t = d.get(input.tab_id);
     if (!t) fail(`Error: there is no open tab "${input.tab_id}". Call list_tabs to see the open tabs.`);
-    info.title = t.title;
+    const shown = this.revealed(t.url);
+    info.title = shown ? t.title : siteOf(t.url) || t.toolId;
     if (name === 'switch_tab') {
       await d.activate(t);
-      await this.thumbnail(t, ctx);
+      // A tab on a site the owner has not allowed: no picture of it (and no debugger session).
+      if (shown) await this.thumbnail(t, ctx);
       return [this.browserState()];
     }
-    // close_tab
-    await d.closeTab(t);
+    // close_tab: a tab Jarvis opened closes; the owner's own tabs only with their OK.
+    if (!t.openedByJarvis) {
+      const site = /^https?:/i.test(t.url || '') ? siteOf(t.url) : '';
+      await this.approve(t, { kind: 'tab', verb: 'Close', detail: `${t.toolId}, your own tab${site ? ` on ${site}` : ''}`, label: `${t.toolId}`, site }, { ...ctx, site });
+    }
+    const r = await d.closeTab(t, { signal: ctx.signal });
+    if (r?.error) fail(r.error);
     return [this.browserState()];
   }
 
@@ -430,12 +478,16 @@ export class Executor {
       }
       ctx.tab = t;
       let asked = n.url;
+      let download = null;
       if (n.history) {
         if (n.history === 'reload') {
           await d.refresh(t);
           asked = t.url;
           await this.allowSite(t.url, ctx);
           await d.activate(t);
+          // A page that is the result of a submitted form (an order, a payment, a message): a
+          // reload sends the form again (Chrome would warn a person; the debugger's reload doesn't).
+          if (await d.isFormResult(t)) fail('Error: this page is the result of a form that was submitted (an order, a payment, a message or similar). Reloading it would send the form again and repeat that action, so Jarvis did not reload. Look at the page as it is, or navigate to an address instead.');
           const r = await d.historyGo(t, 'reload', { signal });
           if (r.error) fail(r.error);
         } else {
@@ -450,14 +502,20 @@ export class Executor {
         }
       } else {
         info.url = n.url;
+        // An address the owner declined to open (a link they cancelled) stays closed.
+        if (this.policy.isDeclinedHref?.(n.url)) fail(`Blocked: the owner declined a step that opens this address (${truncate(sanitizeUrl(n.url), 120)}). It was not done. Don't try it again or find another way; tell the owner and finish.`);
         await this.allowSite(n.url, ctx);
         await d.activate(t);
+        await this.navigateCheck(t, n.url, ctx);
         const r = await d.navigate(t, n.url, { signal });
-        if (r.error) fail(r.error);
+        if (r.download) download = await this.downloadOutcome(n.url, ctx);
+        else if (r.blocked) fail(`Error: Jarvis stopped ${truncate(sanitizeUrl(n.url), 120)} from opening: it went to a site the owner has not allowed. Nothing was done there.`);
+        else if (r.error) fail(r.error);
       }
       await d.refresh(t);
-      info.url = t.url;
+      info.url = download ? n.url : t.url;
       t.frame = null;
+      if (download) return this.ack(download);
       // A redirect to another site needs that site's permission before anything about it is reported.
       if (asked && siteOf(t.url) !== siteOf(asked)) await this.allowSite(t.url, ctx);
       await this.thumbnail(t, ctx);
@@ -504,11 +562,12 @@ export class Executor {
         const delta = 100 * amount;
         const dir = input.scroll_direction;
         const before = d.marks(t);
-        this.steady(t, ctx);
-        await d.mouse(t, [
+        // Scrolling changes nothing: the check stops anything else the wheel might do (a number
+        // field under the pointer that would change its value).
+        await this.sendMouse(t, ctx, [
           { type: 'mouseMoved', x: p.x, y: p.y, button: 'none', buttons: 0 },
           { type: 'mouseWheel', x: p.x, y: p.y, deltaX: dir === 'left' ? -delta : dir === 'right' ? delta : 0, deltaY: dir === 'up' ? -delta : dir === 'down' ? delta : 0 },
-        ]);
+        ], { scrollOnly: true });
         await d.settleAfter(t, before, { signal, quietMs: 350 });
         await this.thumbnail(t, ctx);
         return this.ack(`Scrolled ${dir} ${amount} notch${amount === 1 ? '' : 'es'} at (${input.target.x}, ${input.target.y}).`);
@@ -553,15 +612,28 @@ export class Executor {
   // -------------------------------------------------------------------------------------------
   // Members
 
+  /** A capture, decoded, with other sites' payment or sign-in boxes painted over. */
+  async captureBitmap(t, { hideOverlay, quality } = {}) {
+    const shot = await this.driver.capture(t, { hideOverlay, ...(quality ? { quality } : {}) });
+    let bmp = await this.encoder.decode(shot.data, 'image/jpeg');
+    if (shot.masks?.length) {
+      if (typeof this.encoder.mask !== 'function') throw new DriverError("Error: Jarvis could not hide this page's private fields for a picture, so it took none.");
+      const vp = t.frame?.cssW ? t.frame.cssW : null;
+      const k = vp ? bmp.width / vp : t.frame?.dpr || 1;
+      bmp = await this.encoder.mask(bmp, shot.masks.map((r) => ({ x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k })));
+    }
+    return bmp;
+  }
+
   async screenshot(t, ctx) {
-    const d = this.driver;
-    await this.pageOp(t, 'viewport', {}, ctx).catch((err) => {
+    const vp0 = await this.pageOp(t, 'viewport', {}, ctx).catch((err) => {
       if (err instanceof CallError) throw err;
+      return null;
     }); // makes sure the control bar can be hidden
+    if (vp0?.w) t.frame = t.frame || { ...frameFor(vp0.w, vp0.h), cssW: vp0.w, cssH: vp0.h, dpr: vp0.dpr || 1 };
     this.steady(t, ctx);
-    const data = await d.capture(t, { hideOverlay: true });
+    const bmp = await this.captureBitmap(t, { hideOverlay: true });
     this.steady(t, ctx); // the picture is of the page the owner allowed
-    const bmp = await this.encoder.decode(data, 'image/jpeg');
     const vp = await this.pageOp(t, 'viewport', {}, ctx).catch((err) => {
       if (err instanceof CallError) throw err;
       return null;
@@ -583,9 +655,8 @@ export class Executor {
   async zoom(t, region, ctx) {
     const frame = await this.ensureFrame(t, ctx);
     this.steady(t, ctx);
-    const data = await this.driver.capture(t, { hideOverlay: true });
+    const bmp = await this.captureBitmap(t, { hideOverlay: true });
     this.steady(t, ctx);
-    const bmp = await this.encoder.decode(data, 'image/jpeg');
     const dpr = bmp.width / frame.cssW;
     const plan = zoomPlan(frame, region, dpr);
     if (plan.error) fail(plan.error);
@@ -599,9 +670,10 @@ export class Executor {
 
   /**
    * Resolves a target to a CSS-pixel point plus the element under it ({ x, y, desc, targetId,
-   * covered, hitDesc, hitId }). Refs are scrolled into view first; coordinates are checked against
-   * the screenshot frame. `hitDesc` is what a click there really reaches when another element
-   * covers the ref's element.
+   * covered, hitDesc, hitId, ctx, selection }). Refs are scrolled into view first; coordinates are
+   * checked against the screenshot frame. `hitDesc` is what a click there really reaches when it
+   * is another element than the ref's (a covering element, a button inside it); `ctx` is the item
+   * that element belongs to, `selection` what is selected on the page.
    */
   async point(t, target, info, { scroll = true, describe = true } = {}, ctx = {}) {
     if (target.type === 'ref') {
@@ -610,7 +682,7 @@ export class Executor {
       info.target = { name: r.name, role: r.role };
       this.progress(info);
       ctx.doc = t.docSeq;
-      return { x: r.x, y: r.y, desc: r.desc, covered: r.covered, targetId: r.targetId, hitDesc: r.hitDesc, hitId: r.hitId };
+      return { x: r.x, y: r.y, desc: r.desc, covered: r.covered, targetId: r.targetId, hitDesc: r.hitDesc, hitId: r.hitId, ctx: r.ctx || '', item: r.item || '', selection: r.selection || null };
     }
     const frame = await this.ensureFrame(t, ctx);
     const err = coordinateError(frame, target.x, target.y);
@@ -621,82 +693,178 @@ export class Executor {
     if (r?.name || r?.role) info.target = { name: r.name, role: r.role };
     this.progress(info);
     ctx.doc = t.docSeq;
-    return { x: css.x, y: css.y, desc: r?.desc || null, targetId: r?.targetId };
+    return { x: css.x, y: css.y, desc: r?.desc || null, targetId: r?.targetId, ctx: r?.ctx || '', item: r?.item || '', selection: r?.selection || null };
   }
 
-  /** What a click at `p` reaches: the element, or what covers it. */
+  /** What a click at `p` reaches: the element, or what covers it (or sits inside it at that point). */
   reach(p) {
-    return p.hitDesc ? { desc: p.hitDesc, targetId: p.hitId } : { desc: p.desc, targetId: p.targetId };
+    return p.hitDesc ? { desc: p.hitDesc, targetId: p.hitId, ctx: p.ctx || '', item: p.item || '' } : { desc: p.desc, targetId: p.targetId, ctx: p.ctx || '', item: p.item || '' };
   }
 
   /**
-   * What activating the element at point `p` would do: the guard's classification, or for a frame
-   * from another site (whose site must be allowed too) an activation Jarvis cannot see into.
+   * A custom element whose inside is a closed shadow root: what a click at `p` really reaches in
+   * there, for the owner's prompt (the page agent only sees the host).
    */
-  async classifyAt(t, p, ctx) {
-    const { desc } = this.reach(p);
-    if (desc?.tag === 'jarvis-control-overlay') fail("Error: Jarvis's own control bar is at that point. Scroll the page, or use a ref from read_page or find.");
-    if (isForeignFrame(desc)) return this.frameGuard(t, p, desc, ctx);
-    return classifyAction(desc);
-  }
-
-  /** A point over a frame from another site: that site needs permission, and the owner's OK. */
-  async frameGuard(t, p, desc, ctx) {
-    let url = '';
+  async pierced(t, p, desc) {
+    if (!desc || !String(desc.tag || '').includes('-') || p.x === undefined) return desc;
     try {
-      url = (await this.driver.frameAt(t, p.x, p.y))?.url || '';
+      const r = await this.driver.pierceAt(t, p.x, p.y);
+      if (r?.desc && r.desc.tag !== desc.tag) return { ...r.desc, inClosedShadow: true };
     } catch {
-      url = '';
+      /* keep what the page agent saw */
     }
-    if (!/^https?:/i.test(url)) url = /^https?:/i.test(desc.iframe?.src || '') ? desc.iframe.src : '';
-    const site = url ? siteOf(url) : '';
-    if (site && site !== ctx.site) await this.allowSite(url, ctx);
-    const pay = classifyAction(desc);
-    if (pay) return pay;
-    const from = site || 'another site';
-    return { category: 'frame', label: `a box from ${from}`, reason: `acting inside a box embedded from ${from}, which Jarvis cannot see into`, frameSrc: desc.iframe?.src || '' };
+    return desc;
   }
 
-  /** The consequential-action guard for activating `desc`; throws the refusal. Returns the approved classification. */
-  async guardElement(t, desc, verb, ctx, classification = classifyAction(desc)) {
-    if (!classification) return null;
-    const refusal = await this.policy.confirmGuard({ ...classification, verb, url: t.url, site: siteOf(t.url), toolId: t.toolId }, ctx);
+  /** The site a link or form sends the click to needs the owner's permission too (before the request). */
+  async checkDestination(dest, ctx) {
+    if (!dest) return;
+    if (this.policy.isDeclinedHref?.(dest)) fail(`Blocked: the owner declined a step that opens this address (${truncate(sanitizeUrl(dest), 120)}). It was not done. Don't try it again or find another way; tell the owner and finish.`);
+    if (/^https?:/i.test(dest) && siteOf(dest) !== ctx.site) await this.allowSite(dest, ctx);
+  }
+
+  /**
+   * A point over a frame from another site: every site in the chain of frames there (frames nested
+   * in frames too) needs permission, the step names the innermost one, and the owner approves it.
+   */
+  async frameStep(t, p, r, verb, ctx) {
+    let chain;
+    try {
+      chain = await this.driver.frameChainAt(t, p.x, p.y);
+    } catch {
+      chain = { error: 'failed' };
+    }
+    if (!Array.isArray(chain) || !chain.length) fail("Error: Jarvis can't tell which site the box at that point comes from, so it did nothing there. Look at the page again, or open that site in its own tab.");
+    for (const f of chain) if (f.site !== ctx.site) await this.allowSite(f.url, ctx);
+    const inner = chain[chain.length - 1];
+    const outer = chain.length > 1 ? chain[0] : null;
+    const where = `${inner.site}${outer && outer.site !== inner.site ? `, inside a box from ${outer.site}` : ''}`;
+    const guard = classifyAction(r.desc) || { category: 'frame', label: `a box from ${where}`, reason: `acting inside a box embedded from ${inner.site}, which Jarvis cannot see into` };
+    return { kind: 'click', verb, desc: r.desc, label: `a box from ${where}`, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard, frameChain: chain, site: inner.site, doc: t.docSeq };
+  }
+
+  /**
+   * The owner's approval for one step, or the refusal (thrown). `step`: { kind, verb, desc, label?,
+   * targetId?, ctx? (what the approval binds to: its name and item), item? (the item, shown),
+   * selection?, guard? (what it would do), detail?, dest?, site?,
+   * bindable? (a request_confirmation approval of exactly this element may cover it) }.
+   */
+  async approve(t, step, ctx) {
+    const c = this.stepFacts(t, step, ctx);
+    const refusal = await this.policy.confirmGuard(c, ctx);
     if (refusal) fail(refusal);
-    // A confirm() dialog this approved action opens may be accepted (only during this call).
-    this.driver.armDialog(t, { category: classification.category, site: siteOf(t.url) });
-    return classification;
+    if (step.dest && step.guard?.category === 'download') this.policy.allowDownload?.({ url: step.dest, site: c.site, toolId: t.toolId });
+    return c;
+  }
+
+  /** What the owner is shown about a step, and what an approval of it binds to. */
+  stepFacts(t, step, ctx) {
+    const g = step.guard || null;
+    const d = step.desc || null;
+    const site = step.site || ctx.site || siteOf(t.url);
+    const own = d?.name || d?.text || d?.value || '';
+    // A key or text goes to the focused element: that is what the owner is shown (what the guard
+    // recognises it would do, a form's "Place order", goes in the reason).
+    const focused = step.kind === 'key' || step.kind === 'type';
+    const label = step.label || (focused ? own || g?.label : g?.label || own) || '';
+    const via = focused && g?.label && own && singleLine(g.label) !== singleLine(own) ? ` ("${truncate(singleLine(g.label), 60)}")` : '';
+    // What the element shows and what the page labels it, when they differ (a text field's text is
+    // its content, not a label).
+    const editable = !!d && (isEditableFocus(d) || d.isContentEditable);
+    const other = !editable && d?.name && d?.text && singleLine(d.name) !== singleLine(d.text) ? (singleLine(label) === singleLine(d.text) ? d.name : d.text) : '';
+    const c = {
+      category: g?.category || 'change',
+      consequential: !!g,
+      label: truncate(singleLine(label), 80),
+      plain: !!step.plain,
+      alias: g?.alias || other || '',
+      reason: g ? `${g.reason || GUARD_CATEGORIES[g.category] || ''}${via}` : '',
+      verb: step.verb,
+      role: d ? describeRole(d) : '',
+      item: step.item && step.item !== label ? truncate(singleLine(step.item), 160) : '',
+      selection: step.selection && step.selection.count ? { count: step.selection.count, names: step.selection.names || [] } : null,
+      detail: step.detail || '',
+      dest: step.dest || '',
+      unlabelled: !label ? d?.unlabelled || 'an element with no label' : '',
+      hidden: !!d?.inClosedShadow,
+      url: t.url,
+      site,
+      toolId: t.toolId,
+      bind: step.bindable && step.targetId !== undefined && step.targetId !== null ? { doc: step.doc ?? t.docSeq, targetId: step.targetId, ctx: step.ctx || '', selection: step.selection?.key || '' } : null,
+      element: step.targetId !== undefined && step.targetId !== null ? `${t.toolId}|${step.doc ?? t.docSeq}|${step.targetId}` : '',
+    };
+    return c;
+  }
+
+  /**
+   * request_confirmation's target: the element in the active tab it names, described for the
+   * owner, and what an approval binds to (that element in this document, the item around it,
+   * what is selected). Returns the step's facts, or { error } (nothing is asked then).
+   */
+  async describeTarget(target, ctx = {}) {
+    try {
+      if (!isObj(target)) fail('Error: request_confirmation needs "target": the element the action will use, as {"type": "ref", "ref": "ref_N"} or {"type": "coordinate", "x": <int>, "y": <int>}.');
+      checkTarget(target);
+      const t = this.tab({});
+      const c = { ...ctx };
+      await this.ensureSite(t, c);
+      const p = await this.point(t, target, {}, { scroll: true }, c);
+      const r = this.reach(p);
+      if (!r.desc || r.targetId === undefined || r.targetId === null) fail('Error: there is no element at that target. Look at the page again and name the element the action will use.');
+      if (r.desc.tag === 'jarvis-control-overlay') fail("Error: Jarvis's own control bar is at that point. Name the element with a ref from read_page or find.");
+      const desc = await this.pierced(t, p, r.desc);
+      const step = { kind: 'confirm', verb: 'Act on', desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard: isForeignFrame(desc) ? { category: 'frame', label: 'a box from another site', reason: 'acting inside a box embedded from another site, which Jarvis cannot see into' } : classifyAction(desc), bindable: true, doc: t.docSeq };
+      return this.stepFacts(t, step, c);
+    } catch (err) {
+      if (ctx.signal?.aborted) throw abortError();
+      return { error: err instanceof CallError || err instanceof DriverError ? err.message : `Error: ${singleLine(err?.message || err).replace(/^Error:\s*/, '')}` };
+    }
   }
 
   /**
    * After an approval the page may have changed while the owner was deciding: resolve the target
-   * again and refuse if it is no longer the element that was approved.
+   * again and refuse unless it is the same element, in the same document, with the same item and
+   * selection (and, for a frame from another site, the same frames showing the same pages).
    */
-  async recheck(t, target, info, approved, ctx) {
+  async recheck(t, target, info, step, ctx) {
+    if (step.doc !== undefined && t.docSeq !== step.doc) fail('Error: the page changed while the owner was deciding, so Jarvis did not act. Look at the page again before you act.');
     const again = await this.point(t, target, info, { scroll: false }, ctx);
-    const { desc } = this.reach(again);
-    let now;
-    if (approved.category === 'frame') now = isForeignFrame(desc) && (desc.iframe?.src || '') === (approved.frameSrc || '') ? approved : null;
-    else now = classifyAction(desc);
-    if (!sameClass(now, approved)) fail('Error: the page changed while the owner was deciding, so Jarvis did not click. Look at the page again before you act.');
+    const r = this.reach(again);
+    if (step.frameChain) await this.sameFrames(t, again, step);
+    else if (String(r.targetId) !== String(step.targetId) || (r.ctx || '') !== (step.ctx || '') || (again.selection?.key || '') !== (step.selection?.key || '')) {
+      fail('Error: the page changed while the owner was deciding (the element, the item it belongs to, or what is selected), so Jarvis did not act. Look at the page again before you act.');
+    }
     return again;
   }
 
+  /** The frames at the point are still the ones the owner approved (none moved to another page). */
+  async sameFrames(t, p, step) {
+    let chain;
+    try {
+      chain = await this.driver.frameChainAt(t, p.x, p.y);
+    } catch {
+      chain = null;
+    }
+    const same = Array.isArray(chain) && chain.length === step.frameChain.length && chain.every((f, i) => f.frameId === step.frameChain[i].frameId && f.site === step.frameChain[i].site && f.navSeq === step.frameChain[i].navSeq && f.sessionId === step.frameChain[i].sessionId);
+    if (!same) fail('Error: the page changed while the owner was deciding (a box from another site moved or loaded another page), so Jarvis did not act. Look at the page again before you act.');
+  }
+
   /**
-   * Sends mouse events with the page agent's activation check armed: `approved` elements are
-   * activated once, any other consequential element that receives the input is not. With
-   * `expect`, after the first event (the pointer arriving) the element under the pointer must
-   * still be the one Jarvis checked.
+   * Sends mouse events with the page agent's activation check armed: only the `approved` elements
+   * receive them (anything else consequential or not is stopped). With `expect`, after the first
+   * event (the pointer arriving) the element under the pointer must still be the one approved.
    */
-  async sendMouse(t, ctx, events, { approved = [], expect = null } = {}) {
+  async sendMouse(t, ctx, events, { approved = [], expect = null, step = null, scrollOnly = false } = {}) {
     const d = this.driver;
     this.steady(t, ctx);
-    await this.pageOp(t, 'arm', { approved }, ctx);
+    const armed = await this.pageOp(t, 'arm', { approved, scrollOnly }, ctx);
     let res = null;
     await d.passthrough(t, true);
     try {
+      if (armed?.missing) fail('Error: the page changed before Jarvis could act (the element is gone), so Jarvis did nothing. Look at the page again before you act.');
       const [first, ...rest] = events;
       await d.mouse(t, [first]);
-      if (expect) await this.hoverCheck(t, expect, approved, ctx);
+      if (expect) await this.hoverCheck(t, expect, step, ctx);
       if (rest.length) {
         this.steady(t, ctx);
         await d.mouse(t, rest);
@@ -709,78 +877,94 @@ export class Executor {
     return res;
   }
 
-  /** The pointer reached the target: if hover put something consequential there instead, stop. */
-  async hoverCheck(t, expect, approved, ctx) {
+  /** The pointer reached the target: if the page put another element (or another item) there, stop. */
+  async hoverCheck(t, expect, step, ctx) {
+    if (step?.frameChain) {
+      await this.sameFrames(t, expect, step);
+      return;
+    }
     if (expect.targetId === undefined) return;
     const r = await this.pageOp(t, 'hitCheck', { x: expect.x, y: expect.y, targetId: expect.targetId }, ctx);
     if (!r) return;
-    const c = r.desc ? classifyAction(r.desc) : null;
-    if (!c || approved.some((a) => sameClass(a, c))) return;
-    const text = `Error: when the pointer reached it, the page put "${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]}) under the pointer, so Jarvis did not press. Nothing was done. Look at the page again before you act.`;
-    this.policy.onBlocked?.(`Jarvis did not click: the page swapped in “${truncate(singleLine(c.label), 60)}” under the pointer.`);
-    fail(text);
+    const changedItem = r.same && step && typeof step.ctx === 'string' && (r.ctx || '') !== step.ctx;
+    if (r.same && !changedItem) return;
+    const now = r.desc ? classifyAction(r.desc) : null;
+    const what = truncate(singleLine(now?.label || r.name || r.desc?.unlabelled || 'another element'), 60);
+    const why = now ? ` (${now.reason || GUARD_CATEGORIES[now.category]})` : '';
+    this.policy.onBlocked?.(changedItem ? `Jarvis did not click: the item “${what}” belongs to changed when the pointer reached it.` : `Jarvis did not click: the page swapped in “${what}” under the pointer.`);
+    fail(changedItem
+      ? `Error: when the pointer reached it, the item that element belongs to had changed, so Jarvis did not press. Nothing was done. Look at the page again before you act.`
+      : `Error: when the pointer reached it, the page put "${what}"${why} under the pointer, so Jarvis did not press. Nothing was done. Look at the page again before you act.`);
   }
 
-  /** The page agent stopped an activation the owner did not approve: report it. */
+  /** The page agent stopped input the owner did not approve (or could not check it): report it. */
   checkActivations(res) {
+    if (res && res.intact === false) {
+      this.policy.onBlocked?.('The page rewrote itself while Jarvis was acting, so Jarvis could not check what its input did.');
+      fail('Error: the page rewrote itself (document.open) while Jarvis was pressing, so Jarvis cannot tell what that input did. Look at the page again before you act, and tell the owner if something may have happened.');
+    }
     if (!res?.blocked?.length) return;
     const b = res.blocked[0];
     const label = truncate(singleLine(b.label), 60);
-    const why = b.reason || GUARD_CATEGORIES[b.category] || 'a consequential action';
-    this.policy.onBlocked?.(`Jarvis stopped the page from activating “${label}”: ${why}, not approved.`);
-    fail(`Error: the input reached "${label}" (${why}), which is not what Jarvis checked${res.activations ? ' after the approved action went through once' : ''}, so Jarvis stopped it before it took effect.${res.activations ? '' : ' Nothing was done.'} Look at the page again before you act; ask the owner with request_confirmation if that is what the task needs.`);
+    const why = b.reason || GUARD_CATEGORIES[b.category] || 'not what the owner approved';
+    this.policy.onBlocked?.(`Jarvis stopped input from reaching “${label}”: ${why}.`);
+    fail(`Error: the input reached "${label}" (${why}), which is not what Jarvis checked${res.activations ? ' after the approved step went through once' : ''}, so Jarvis stopped it before it took effect.${res.activations ? '' : ' Nothing was done.'} Look at the page again before you act.`);
   }
 
   async click(name, t, input, info, ctx) {
     const d = this.driver;
-    const p = await this.point(t, input.target, info, {}, ctx);
+    let p = await this.point(t, input.target, info, {}, ctx);
     const modifiers = clickModifiers(input.modifiers);
     const count = CLICKS[name];
     const button = BUTTON[name];
-    let target = p;
-    const approved = [];
-    if (name === 'right_click') {
-      // A right click opens a context menu: never consequential (the page check lets it through).
-      const raw = classifyAction(this.reach(p).desc);
-      if (raw) approved.push({ targetId: this.reach(p).targetId, category: raw.category, label: raw.label });
+    const r = this.reach(p);
+    if (r.desc?.tag === 'jarvis-control-overlay') fail("Error: Jarvis's own control bar is at that point. Scroll the page, or use a ref from read_page or find.");
+    let step = null;
+    if (isForeignFrame(r.desc)) {
+      step = await this.frameStep(t, p, r, VERBS[name], ctx);
+      if (count > 1) fail(`Error: ${name} would act more than once inside a box from ${step.site}, which Jarvis cannot see into. Use a single left_click; the owner is asked first.`);
+      await this.approve(t, step, ctx);
     } else {
-      let c = await this.classifyAt(t, p, ctx);
-      // Middle-click opens links in a new tab; only downloads (and frames) are consequential there.
-      if (c && name === 'middle_click' && c.category !== 'download' && c.category !== 'frame') {
-        approved.push({ targetId: this.reach(p).targetId, category: c.category, label: c.label });
-        c = null;
+      const desc = await this.pierced(t, p, r.desc);
+      const v = assessClick({ desc, button, count, modifiers, pageUrl: t.url, everyday: this.everyday(ctx) });
+      if (v.guard && count > 1 && !isTextField(desc)) {
+        fail(`Error: ${name} would activate "${truncate(singleLine(v.guard.label), 60)}" (${v.guard.reason || GUARD_CATEGORIES[v.guard.category]}) more than once. Use a single left_click; the owner is asked first.`);
       }
-      if (c) {
-        const { desc } = this.reach(p);
-        if (count > 1 && !isTextField(desc)) {
-          fail(`Error: ${name} would activate "${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]}) more than once. Use a single left_click; the owner is asked first.`);
-        }
-        await this.guardElement(t, desc, 'Click', ctx, c);
-        target = await this.recheck(t, input.target, info, c, ctx);
-        approved.push({ targetId: this.reach(target).targetId, category: c.category, label: c.label });
+      await this.checkDestination(v.dest, ctx);
+      if (v.verdict === 'ask') {
+        step = { kind: 'click', verb: VERBS[name], desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard: v.guard, dest: v.dest && siteOf(v.dest) !== ctx.site ? v.dest : '', detail: modifiers ? `with ${input.modifiers} held` : '', bindable: name === 'left_click' && !modifiers, doc: t.docSeq };
+        await this.approve(t, step, ctx);
+      } else if (this.policy.isDeclinedElement?.(`${t.toolId}|${t.docSeq}|${r.targetId}`)) {
+        fail('Blocked: the owner declined this step earlier in this task. It was not done. Don\'t try it again or find another way; tell the owner and finish.');
       }
     }
+    if (step) p = await this.recheck(t, input.target, info, step, ctx);
+    const target = this.reach(p);
+    const approved = [{ targetId: target.targetId, ctx: step ? step.ctx : undefined, kind: 'pointer', clicks: count }];
     const buttons = button === 'left' ? 1 : button === 'right' ? 2 : 4;
     const before = d.marks(t);
-    const { x, y } = target;
-    const expect = { x, y, targetId: this.reach(target).targetId };
+    const { x, y } = p;
+    const expect = { x, y, targetId: target.targetId };
+    const firstClass = classifyAction(target.desc);
     for (let i = 1; i <= count; i++) {
       const events = i === 1 ? [{ type: 'mouseMoved', x, y, button: 'none', buttons: 0, modifiers }] : [];
       events.push({ type: 'mousePressed', x, y, button, buttons, clickCount: i, modifiers }, { type: 'mouseReleased', x, y, button, buttons: 0, clickCount: i, modifiers });
       if (i > 1) {
         // Between clicks the page may have turned the element into something else ("Continue"
-        // becoming "Place order"): look again before the next press. (A consequential element
-        // never gets here: multi-clicks on one are refused above.)
-        const r = await this.pageOp(t, 'hitCheck', { x, y, targetId: expect.targetId }, ctx);
-        const c = r?.desc ? classifyAction(r.desc) : null;
-        if (c && !isTextField(r.desc)) {
-          fail(`Error: Jarvis stopped after ${i - 1} of ${count} clicks: the element there is now "${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]}). Look at the page again before you act.`);
+        // becoming "Place order"): the owner approved what it was, so look again first.
+        const r2 = await this.pageOp(t, 'hitCheck', { x, y, targetId: target.targetId }, ctx);
+        const now = r2?.desc ? classifyAction(r2.desc) : null;
+        const changed = !r2?.same || (step && (r2.ctx || '') !== (step.ctx || '')) || (now && (!firstClass || now.category !== firstClass.category || now.label !== firstClass.label));
+        if (changed && !isTextField(r2?.desc)) {
+          const what = truncate(singleLine(now?.label || r2?.name || 'something else'), 60);
+          fail(`Error: Jarvis stopped after ${i - 1} of ${count} clicks: the element there is now "${what}"${now ? ` (${now.reason || GUARD_CATEGORIES[now.category]})` : ''}. Look at the page again before you act.`);
         }
       }
-      await this.sendMouse(t, ctx, events, { approved, expect: i === 1 ? expect : null });
+      await this.sendMouse(t, ctx, events, { approved: i === 1 ? approved : approved.map((a) => ({ ...a, clicks: 1 })), expect: i === 1 ? expect : null, step });
     }
     await d.settleAfter(t, before, { signal: ctx.signal });
     await d.refresh(t);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     const verb = { left_click: 'Clicked', right_click: 'Right-clicked', middle_click: 'Middle-clicked', double_click: 'Double-clicked', triple_click: 'Triple-clicked' }[name];
     const what = input.target.type === 'ref' ? `element ${input.target.ref}` : `at (${input.target.x}, ${input.target.y})`;
@@ -788,27 +972,50 @@ export class Executor {
     return this.ack(`${verb} ${what}.${covered}`);
   }
 
+  /**
+   * After input that may have taken the tab elsewhere: a page on another site needs that site's
+   * permission before anything about it (title, address, picture) is reported.
+   */
+  async afterInput(t, ctx) {
+    if (/^https?:/i.test(t.url || '') && ctx.site && siteOf(t.url) !== ctx.site) await this.allowSite(t.url, ctx);
+  }
+
   async drag(t, input, info, ctx) {
     const d = this.driver;
     const from = await this.point(t, input.from, info, {}, ctx);
     const to = await this.point(t, input.target, info, { scroll: false }, ctx);
-    // A drag that starts and ends on one button clicks it: both ends go through the guard.
-    const approved = [];
-    const guarded = [];
-    for (const [p, target] of [[from, input.from], [to, input.target]]) {
-      const c = await this.classifyAt(t, p, ctx);
-      if (!c || approved.some((a) => sameClass(a, c))) continue;
-      await this.guardElement(t, this.reach(p).desc, 'Drag on', ctx, c);
-      approved.push({ targetId: this.reach(p).targetId, category: c.category, label: c.label });
-      guarded.push([target, c]);
+    const rf = this.reach(from);
+    const rt = this.reach(to);
+    for (const r of [rf, rt]) if (r.desc?.tag === 'jarvis-control-overlay') fail("Error: Jarvis's own control bar is at that point. Scroll the page first.");
+    // A drag always asks: it presses, moves and releases (it can click, move things, or drop them).
+    let step;
+    if (isForeignFrame(rf.desc) || isForeignFrame(rt.desc)) {
+      const end = isForeignFrame(rf.desc) ? [from, rf] : [to, rt];
+      step = await this.frameStep(t, end[0], end[1], 'Drag in', ctx);
+    } else {
+      const guard = classifyAction(rf.desc) || classifyAction(rt.desc);
+      const labelOf = (r) => truncate(singleLine(r.desc?.name || r.desc?.text || r.desc?.unlabelled || 'the page'), 40);
+      step = { kind: 'drag', verb: 'Drag', desc: rf.desc, targetId: rf.targetId, ctx: rf.ctx, item: rf.item, selection: from.selection, guard, detail: `from "${labelOf(rf)}" to "${labelOf(rt)}"`, label: labelOf(rf), doc: t.docSeq };
     }
-    for (const [target, c] of guarded) await this.recheck(t, target, info, c, ctx);
+    await this.approve(t, step, ctx);
+    if (step.frameChain) await this.sameFrames(t, isForeignFrame(rf.desc) ? from : to, step);
+    else {
+      await this.recheck(t, input.from, info, step, ctx);
+      const toAgain = this.reach(await this.point(t, input.target, info, { scroll: false }, ctx));
+      if (String(toAgain.targetId) !== String(rt.targetId) || toAgain.ctx !== rt.ctx) fail('Error: the page changed while the owner was deciding, so Jarvis did not drag. Look at the page again before you act.');
+    }
+    const approved = [
+      { targetId: rf.targetId, ctx: rf.ctx, kind: 'pointer', clicks: 1 },
+      { targetId: rt.targetId, ctx: rt.ctx, kind: 'pointer', clicks: 1 },
+    ];
     const before = d.marks(t);
     const events = [{ type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0 }, { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 }];
     for (let i = 1; i <= 8; i++) events.push({ type: 'mouseMoved', x: from.x + ((to.x - from.x) * i) / 8, y: from.y + ((to.y - from.y) * i) / 8, button: 'left', buttons: 1 });
     events.push({ type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
-    await this.sendMouse(t, ctx, events, { approved, expect: { x: from.x, y: from.y, targetId: this.reach(from).targetId } });
+    await this.sendMouse(t, ctx, events, { approved, expect: { x: from.x, y: from.y, targetId: rf.targetId }, step });
     await d.settleAfter(t, before, { signal: ctx.signal });
+    await d.refresh(t);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     return this.ack(`Dragged from (${input.from.x}, ${input.from.y}) to (${input.target.x}, ${input.target.y}).`);
   }
@@ -817,19 +1024,22 @@ export class Executor {
     const d = this.driver;
     const down = name === 'left_mouse_down';
     let p = await this.point(t, input.target, info, {}, ctx);
-    const c = await this.classifyAt(t, p, ctx);
-    const approved = [];
-    if (c) {
-      // Pressing alone fires pointerdown and mousedown, which some sites act on. The release on
-      // the same element is covered by the owner's approval of the press.
-      const press = this.pressed;
-      const covered = !down && press && press.toolId === t.toolId && press.doc === t.docSeq && sameClass(press, c) && Date.now() - press.at < PRESS_APPROVAL_MS;
-      if (!covered) {
-        await this.guardElement(t, this.reach(p).desc, down ? 'Press the mouse on' : 'Click', ctx, c);
-        p = await this.recheck(t, input.target, info, c, ctx);
-      } else this.driver.armDialog(t, { category: c.category, site: siteOf(t.url) });
-      approved.push({ targetId: this.reach(p).targetId, category: c.category, label: c.label });
+    const r = this.reach(p);
+    if (r.desc?.tag === 'jarvis-control-overlay') fail("Error: Jarvis's own control bar is at that point. Scroll the page first.");
+    // Pressing alone fires pointerdown and mousedown, which some sites act on: it asks. The release
+    // on the same element is covered by the owner's approval of the press.
+    const press = this.pressed;
+    const covered = !down && press && press.toolId === t.toolId && press.doc === t.docSeq && String(press.targetId) === String(r.targetId) && press.ctx === r.ctx && Date.now() - press.at < PRESS_APPROVAL_MS;
+    let step = null;
+    if (!covered) {
+      step = isForeignFrame(r.desc)
+        ? await this.frameStep(t, p, r, down ? 'Press the mouse on' : 'Release the mouse on', ctx)
+        : { kind: 'click', verb: down ? 'Press the mouse on' : 'Release the mouse on', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: p.selection, guard: classifyAction(r.desc), doc: t.docSeq };
+      await this.approve(t, step, ctx);
+      p = await this.recheck(t, input.target, info, step, ctx);
     }
+    const target = this.reach(p);
+    const approved = [{ targetId: target.targetId, ctx: step ? step.ctx : press?.ctx, kind: 'pointer', clicks: 1 }];
     const before = d.marks(t);
     await this.sendMouse(
       t,
@@ -838,23 +1048,27 @@ export class Executor {
         { type: 'mouseMoved', x: p.x, y: p.y, button: down ? 'none' : 'left', buttons: down ? 0 : 1 },
         { type: down ? 'mousePressed' : 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: down ? 1 : 0, clickCount: 1 },
       ],
-      { approved, expect: { x: p.x, y: p.y, targetId: this.reach(p).targetId } },
+      { approved, expect: { x: p.x, y: p.y, targetId: target.targetId }, step },
     );
-    this.pressed = down && c ? { toolId: t.toolId, doc: t.docSeq, category: c.category, label: c.label, at: Date.now() } : null;
+    this.pressed = down ? { toolId: t.toolId, doc: t.docSeq, targetId: target.targetId, ctx: target.ctx, at: Date.now() } : null;
     await d.settleAfter(t, before, { signal: ctx.signal });
+    await d.refresh(t);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     return this.ack(down ? `Pressed the left button at (${input.target.x}, ${input.target.y}).` : `Released the left button at (${input.target.x}, ${input.target.y}).`);
   }
 
   /**
    * The element with the keyboard focus, described for the guard, looking inside closed shadow
-   * roots (through the debugger) when the page agent only sees their host. null: nothing focused.
-   * `unknown`: focus is somewhere Jarvis cannot identify.
+   * roots (through the debugger) when the page agent only sees their host: { desc (null: the page
+   * itself has the focus), targetId (the element the page's key events reach), ctx, selection }.
+   * desc.unknown: focus is somewhere Jarvis cannot identify.
    */
   async focus(t, ctx) {
     const f = await this.pageOp(t, 'focusInfo', {}, ctx);
-    const desc = f?.desc || null;
-    if (!desc || desc.iframe || isFieldLike(desc)) return desc;
+    const out = { desc: f?.desc || null, targetId: f?.targetId, ctx: f?.ctx || '', item: f?.item || '', selection: f?.selection || null };
+    const desc = out.desc;
+    if (!desc || desc.iframe || isFieldLike(desc)) return out;
     let deep = null;
     try {
       deep = await this.driver.pierceFocus(t);
@@ -863,21 +1077,16 @@ export class Executor {
     }
     if (deep?.pierced) {
       if (typeof deep.href === 'string' && ctx?.site !== undefined && siteOf(deep.href) !== ctx.site) this.moved(t, deep.href);
-      return deep.desc ? { ...deep.desc, inClosedShadow: true } : { tag: desc.tag, unknown: true };
+      out.desc = deep.desc ? { ...deep.desc, inClosedShadow: true } : { tag: desc.tag, unknown: true };
+      return out;
     }
     // A custom element whose inside Jarvis could not check might hold a field.
-    if (deep?.failed && String(desc.tag || '').includes('-')) return { ...desc, unknown: true };
-    return desc;
+    if (deep?.failed && String(desc.tag || '').includes('-')) out.desc = { ...desc, unknown: true };
+    return out;
   }
 
   secretOf(desc) {
-    if (!desc) return null;
-    if (desc.iframe) return secretKind({ iframe: desc.iframe });
-    const kind = desc.field ? secretKind(desc.field) : null;
-    if (kind) return kind;
-    if (desc.looksSecret) return 'password';
-    if (desc.isContentEditable || desc.role === 'textbox') return secretKind({ label: desc.name, ariaLabel: desc.name });
-    return null;
+    return secretKindOf(desc);
   }
 
   refuseSecret(kind, info, ctx) {
@@ -901,47 +1110,66 @@ export class Executor {
 
   async type(t, text, info, ctx) {
     const d = this.driver;
-    const desc = await this.focus(t, ctx);
+    const f = await this.focus(t, ctx);
+    const desc = f.desc;
     if (!desc) fail('Error: nothing on the page has keyboard focus. Click a text field first, then type.');
     info.field = desc.name || desc.field?.label || desc.field?.placeholder || '';
     this.progress(info);
     this.checkTypingInto(desc, info, ctx);
+    const v = assessType({ focus: desc, text, everyday: this.everyday(ctx) });
     const multiline = !!(desc.multiline || desc.isContentEditable);
     const parts = String(text).split(/\r?\n/);
+    if (v.verdict === 'ask') {
+      const shown = truncate(singleLine(text), 200);
+      const step = { kind: 'type', verb: `Type "${shown}"${v.submits ? ' and press Enter' : ''} into`, desc, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, doc: t.docSeq };
+      await this.approve(t, step, ctx);
+      // The focus may have moved while the owner was deciding.
+      const again = await this.focus(t, ctx);
+      if (String(again.targetId) !== String(f.targetId) || (again.ctx || '') !== (f.ctx || '') || t.docSeq !== step.doc) fail('Error: the page changed while the owner was deciding (the keyboard focus moved), so Jarvis did not type. Look at the page again before you act.');
+    }
+    const breaks = parts.length - 1;
+    const enter = { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' };
+    const approved = [{ targetId: f.targetId, ctx: f.ctx, kind: 'type' }];
+    if (breaks) approved.push({ targetId: f.targetId, kind: 'key', keys: [{ key: 'Enter', mods: multiline ? 'shift' : '' }], presses: breaks });
     const before = d.marks(t);
-    for (let i = 0; i < parts.length; i++) {
-      if (ctx.signal?.aborted) throw abortError();
-      if (parts[i]) {
-        this.steady(t, ctx);
-        await d.insertText(t, parts[i]);
-      }
-      if (i < parts.length - 1) {
-        if (multiline) {
-          // A line break inside a message: Shift+Enter, which never sends.
-          const ev = chordEvents({ mods: ['shift'], key: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' } });
+    this.steady(t, ctx);
+    const armed = await this.pageOp(t, 'arm', { approved, ms: 30000 + text.length * 20 }, ctx);
+    let res = null;
+    try {
+      if (armed?.missing) fail('Error: the page changed before Jarvis could type (the field is gone), so Jarvis did nothing. Look at the page again before you act.');
+      for (let i = 0; i < parts.length; i++) {
+        if (ctx.signal?.aborted) throw abortError();
+        if (parts[i]) {
+          this.steady(t, ctx);
+          await d.insertText(t, parts[i]);
+        }
+        if (i < parts.length - 1) {
+          // A line break inside a message is Shift+Enter, which never sends; in a one-line field
+          // it is Enter (the owner approved "and press Enter").
+          const ev = chordEvents({ mods: multiline ? ['shift'] : [], key: enter });
           this.steady(t, ctx);
           await d.keyEvents(t, [...ev.down, ...ev.press, ...ev.up]);
-        } else {
-          const c = classifySubmitKey(desc);
-          if (c) await this.guardElement(t, desc, 'Press Enter to submit', ctx, c);
-          const { press } = chordEvents({ mods: [], key: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' } });
-          await this.sendKeys(t, ctx, press, { approved: c ? [{ category: c.category, label: c.label }] : [] });
         }
       }
+    } finally {
+      res = await d.page(t, 'disarm', {}).catch(() => null);
     }
+    this.checkActivations(res);
     await d.settleAfter(t, before, { signal: ctx.signal, quietMs: 200 });
     await d.refresh(t);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     return this.ack(`Typed "${truncate(singleLine(text), 120)}".`);
   }
 
   /** Sends key events with the page agent's activation check armed (see sendMouse). */
-  async sendKeys(t, ctx, events, { approved = [] } = {}) {
+  async sendKeys(t, ctx, events, { approved = [], scrollOnly = false, ms } = {}) {
     const d = this.driver;
     this.steady(t, ctx);
-    await this.pageOp(t, 'arm', { approved }, ctx);
+    const armed = await this.pageOp(t, 'arm', { approved, scrollOnly, ...(ms ? { ms } : {}) }, ctx);
     let res = null;
     try {
+      if (armed?.missing) fail('Error: the page changed before Jarvis could press the key (the element is gone), so Jarvis did nothing. Look at the page again before you act.');
       await d.keyEvents(t, events);
     } finally {
       res = await d.page(t, 'disarm', {}).catch(() => null);
@@ -950,54 +1178,82 @@ export class Executor {
   }
 
   /**
-   * What pressing `chord` (`repeat` times) does with the current focus, through the guard:
-   * Enter/Space activate the focused element (a button, link, switch, or the form's submit);
-   * typed characters must not go into a secret field; Delete, Backspace and single-key shortcuts
-   * outside a text field may delete or archive. Returns { approved, activation, focus }.
+   * What pressing `chord` (`repeat` times) may do with the current focus, deny by default: the
+   * clipboard is refused, keys into a frame from another site need that site and the owner's OK,
+   * scrolling keys need nothing (where they scroll), typed characters never go into a secret
+   * field, keys that would change a select or radio are refused, and every other key asks the
+   * owner. Returns { approved, scrollOnly, frame } for sending it.
    */
-  async keyCheck(t, chord, info, ctx, { repeat = 1 } = {}) {
-    const focus = await this.focus(t, ctx);
+  async keyCheck(t, chord, info, ctx, { repeat = 1, hold = false } = {}) {
     const label = chordLabel(chord);
-    const activation = isEnterChord(chord) || isSpaceChord(chord);
-    const once = (c) => {
-      if (repeat > 1) fail(`Error: pressing ${label} ${repeat} times would activate "${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]}) more than once. Press it once; the owner is asked first.`);
-    };
-    if (isForeignFrame(focus)) {
-      if (isPrintableChord(chord)) this.checkTypingInto(focus, info, ctx);
-      if (activation || chord.key.key === 'Delete' || chord.key.key === 'Backspace') {
-        const c = classifyAction(focus) || { category: 'frame', label: 'a box from another site', reason: 'a key pressed inside a box embedded from another site, which Jarvis cannot see into' };
-        once(c);
-        await this.guardElement(t, focus, `Press ${label} in`, ctx, c);
-        return { approved: [{ category: c.category, label: c.label }], activation, focus };
-      }
-      return { approved: [], activation, focus };
+    if (isClipboardChord(chord)) {
+      info.secret = isPasteChord(chord);
+      fail(isPasteChord(chord)
+        ? "Refused: Jarvis never pastes from the clipboard (it may hold the owner's password, a code or other private data, and the page would get it). Use type with the exact text instead, or ask the owner to paste it themselves."
+        : "Refused: Jarvis never copies or cuts to the owner's clipboard (it would replace what they copied, and a page can change what lands there). Read text with get_page_text instead.");
     }
-    if (focus?.unknown) {
+    const f = await this.focus(t, ctx);
+    const focus = f.desc;
+    if (isForeignFrame(focus)) return this.frameKeyCheck(t, chord, focus, info, ctx, { repeat });
+    if (focus?.unknown && !/^(Arrow|Page|Home|End|Shift|Control|Alt|Meta)/.test(chord.key.key)) {
       if (isPrintableChord(chord)) this.checkTypingInto(focus, info, ctx);
-      if (activation) fail(`Error: Jarvis can't see what has the keyboard focus (part of the page Jarvis cannot read), so it did not press ${label}. Click the element you mean instead.`);
-    }
-    if (activation) {
-      const modified = chord.mods.includes('ctrl') || chord.mods.includes('meta');
-      const c = isEnterChord(chord) ? classifySubmitKey(focus, { modified }) : classifySpaceKey(focus);
-      if (!c) return { approved: [], activation, focus };
-      once(c);
-      await this.guardElement(t, focus, `Press ${isEnterChord(chord) ? 'Enter' : 'Space'} on`, ctx, c);
-      // The focus may have moved while the owner was deciding.
-      const again = await this.focus(t, ctx);
-      const now = isEnterChord(chord) ? classifySubmitKey(again, { modified }) : classifySpaceKey(again);
-      if (!sameClass(now, c)) fail('Error: the page changed while the owner was deciding, so Jarvis did not press the key. Look at the page again before you act.');
-      return { approved: [{ category: c.category, label: c.label }], activation, focus };
+      fail(`Error: Jarvis can't see what has the keyboard focus (part of the page Jarvis cannot read), so it did not press ${label}. Click the element you mean instead.`);
     }
     if (isPrintableChord(chord)) {
       const kind = this.secretOf(focus);
       if (kind) this.refuseSecret(kind, info, ctx);
     }
-    const sc = classifyShortcutKey(shortcutInfo(chord), focus);
-    if (sc) {
-      once(sc);
-      await this.guardElement(t, focus, `Press ${label} on`, ctx, sc);
+    const v = assessKey({ chord, focus, everyday: this.everyday(ctx), pageUrl: t.url });
+    if (v.verdict === 'refuse') fail(v.text);
+    const keys = [{ key: chord.key.key, mods: modsOf(chord) }];
+    const focusClass = focus ? classifyAction(focus) : null;
+    if (v.verdict === 'allow') {
+      if (v.why === 'a scrolling key' || v.why === 'a modifier key alone') return { approved: [], scrollOnly: true };
+      return { approved: [{ targetId: f.targetId, kind: 'key', keys, presses: repeat, hold }], focusClass };
     }
-    return { approved: [], activation, focus };
+    if (v.guard && repeat > 1) {
+      fail(`Error: pressing ${label} ${repeat} times would activate "${truncate(singleLine(v.guard.label), 60)}" (${v.guard.reason || GUARD_CATEGORIES[v.guard.category]}) more than once. Press it once; the owner is asked first.`);
+    }
+    const where = focus ? (isEditableFocus(focus) ? 'in' : 'on') : 'on';
+    const step = { kind: 'key', verb: `Press ${label}${repeat > 1 ? ` ${repeat} times` : ''}${hold ? ' and hold it' : ''} ${where}`, desc: focus, label: focus ? '' : 'the page', plain: !focus, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, bindable: true, doc: t.docSeq };
+    await this.approve(t, step, ctx);
+    // The focus may have moved while the owner was deciding.
+    const again = await this.focus(t, ctx);
+    if (String(again.targetId) !== String(f.targetId) || (again.ctx || '') !== (f.ctx || '') || t.docSeq !== step.doc) fail('Error: the page changed while the owner was deciding (the keyboard focus moved), so Jarvis did not press the key. Look at the page again before you act.');
+    return { approved: [{ targetId: f.targetId, ctx: f.ctx, kind: 'key', keys, presses: repeat, hold }], focusClass };
+  }
+
+  /**
+   * A key with the focus in a frame from another site: every site in the frames that hold the
+   * focus needs permission (a denied one: refused), the key asks the owner naming the innermost
+   * site, and the frames must not have moved meanwhile. Typing there is refused.
+   */
+  async frameKeyCheck(t, chord, focus, info, ctx, { repeat = 1 } = {}) {
+    let chain;
+    try {
+      chain = await this.driver.focusedFrameChain(t);
+    } catch {
+      chain = { error: 'failed' };
+    }
+    if (!Array.isArray(chain) || !chain.length) fail("Refused: Jarvis can't tell which site the box with the keyboard focus comes from, so it pressed nothing. Click the element you mean instead.");
+    for (const fr of chain) if (fr.site !== ctx.site) await this.allowSite(fr.url, ctx);
+    const editing = /^[azy]$/i.test(chord.key.key) && chord.mods.some((m) => m === 'ctrl' || m === 'meta');
+    if (isPrintableChord(chord) || editing) this.checkTypingInto(focus, info, ctx);
+    const inner = chain[chain.length - 1];
+    const outer = chain.length > 1 ? chain[0] : null;
+    const where = `${inner.site}${outer && outer.site !== inner.site ? `, inside a box from ${outer.site}` : ''}`;
+    const label = chordLabel(chord);
+    const step = { kind: 'key', verb: `Press ${label}${repeat > 1 ? ` ${repeat} times` : ''} in`, desc: focus, label: `a box from ${where}`, guard: { category: 'frame', label: `a box from ${where}`, reason: `a key pressed inside a box embedded from ${inner.site}, which Jarvis cannot see into` }, site: inner.site, doc: t.docSeq };
+    await this.approve(t, step, ctx);
+    let again;
+    try {
+      again = await this.driver.focusedFrameChain(t);
+    } catch {
+      again = null;
+    }
+    const same = Array.isArray(again) && again.length === chain.length && again.every((fr, i) => fr.frameId === chain[i].frameId && fr.site === chain[i].site && fr.navSeq === chain[i].navSeq);
+    if (!same) fail('Error: the page changed while the owner was deciding (the box with the focus moved or loaded another page), so Jarvis did not press the key. Look at the page again before you act.');
+    return { approved: [], frame: true };
   }
 
   async key(t, input, info, ctx) {
@@ -1018,29 +1274,26 @@ export class Executor {
         await d.page(t, 'suppressEsc', { ms: 800 + 100 * repeat }).catch(() => {});
       }
       const ev = chordEvents(chord);
-      this.steady(t, ctx);
-      await d.keyEvents(t, ev.down);
-      try {
-        for (let i = 0; i < repeat; i++) {
-          if (!check.activation) {
-            this.steady(t, ctx);
-            await d.keyEvents(t, [ev.keyDown, ev.keyUp]);
-            continue;
+      // Every chord goes out with the activation check armed: only the approved key on the
+      // approved element (or a scrolling key where it scrolls) reaches the page.
+      const first = check.approved[0];
+      const label0 = check.focusClass;
+      for (let i = 0; i < repeat; i++) {
+        if (i > 0 && first) {
+          // Each press can land on something new (the page moved the focus, or changed the element).
+          const now = await this.focus(t, ctx);
+          const c = now.desc ? classifyAction(now.desc) : null;
+          if (String(now.targetId) !== String(first.targetId) || (typeof first.ctx === 'string' && (now.ctx || '') !== first.ctx) || (c && (!label0 || c.label !== label0.label || c.category !== label0.category))) {
+            fail(`Error: Jarvis stopped after ${i} of ${repeat} presses: ${chordLabel(chord)} would now reach ${c ? `"${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]})` : 'another element'}. Look at the page again before you act.`);
           }
-          if (i > 0) {
-            // Each Enter or Space can land on something new (the page moved the focus).
-            const now = await this.focus(t, ctx);
-            const c = isEnterChord(chord) ? classifySubmitKey(now) : classifySpaceKey(now);
-            if (c) fail(`Error: Jarvis stopped after ${i} of ${repeat} presses: ${chordLabel(chord)} would now activate "${truncate(singleLine(c.label), 60)}" (${c.reason || GUARD_CATEGORIES[c.category]}). Look at the page again before you act.`);
-          }
-          await this.sendKeys(t, ctx, [ev.keyDown, ev.keyUp], { approved: check.approved });
         }
-      } finally {
-        await d.keyEvents(t, ev.up).catch(() => {});
+        const approved = check.approved.map((a) => ({ ...a, presses: 1 }));
+        await this.sendKeys(t, ctx, [...ev.down, ev.keyDown, ev.keyUp, ...ev.up], { approved, scrollOnly: !!check.scrollOnly });
       }
     }
     await d.settleAfter(t, before, { signal: ctx.signal });
     await d.refresh(t);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     return this.ack(`Pressed ${info.keyLabel}${repeat > 1 ? ` ${repeat} times` : ''}.`);
   }
@@ -1056,17 +1309,17 @@ export class Executor {
     if (chords.length !== 1) fail('Error: hold_key takes one key or chord, such as "shift" or "ArrowDown".');
     const chord = chords[0];
     info.keyLabel = chordLabel(chord);
-    // Holding Enter or Space and letting go activates the focused element just like a press.
-    const check = await this.keyCheck(t, chord, info, ctx);
+    const check = await this.keyCheck(t, chord, info, ctx, { hold: true });
     if (isEscapeChord(chord)) {
       d.suppressEsc(input.duration * 1000 + 800);
       await d.page(t, 'suppressEsc', { ms: input.duration * 1000 + 800 }).catch(() => {});
     }
     const ev = chordEvents(chord);
     this.steady(t, ctx);
-    await this.pageOp(t, 'arm', { approved: check.approved, ms: input.duration * 1000 + 5000 }, ctx);
+    const armed = await this.pageOp(t, 'arm', { approved: check.approved, scrollOnly: !!check.scrollOnly, ms: input.duration * 1000 + 5000 }, ctx);
     let res = null;
     try {
+      if (armed?.missing) fail('Error: the page changed before Jarvis could press the key (the element is gone), so Jarvis did nothing. Look at the page again before you act.');
       await d.keyEvents(t, [...ev.down, { ...ev.keyDown, autoRepeat: false }]);
       try {
         await abortableSleep(input.duration * 1000, ctx.signal);
@@ -1077,6 +1330,7 @@ export class Executor {
       res = await d.page(t, 'disarm', {}).catch(() => null);
     }
     this.checkActivations(res);
+    await this.afterInput(t, ctx);
     await this.thumbnail(t, ctx);
     return this.ack(`Held ${info.keyLabel} for ${input.duration} second${input.duration === 1 ? '' : 's'}.`);
   }
@@ -1090,9 +1344,16 @@ export class Executor {
     };
     const r = await resolve();
     info.target = { name: r.name, role: r.role };
+    // A button's value is its label: form_input would rename it ("Place order" -> "Search").
+    if (isButtonInput(r.desc)) {
+      const type = String(r.desc.type).toLowerCase();
+      fail(type === 'hidden' || type === 'file' ? `Error: ${ref} is a ${type} input, not a form field Jarvis sets.` : `Error: ${ref} is a button, not a form field. Click it instead.`);
+    }
     const kind = this.secretOf(r.desc);
     if (kind) this.refuseSecret(kind, info, ctx);
     let value = input.value;
+    let step = null;
+    const doc = t.docSeq;
     if (isToggle(r.desc)) {
       // "true", 1, "on" … tick it, just as true does; the page agent gets the boolean.
       const want = value === true || value === 1 || /^(true|1|on|yes|checked)$/i.test(String(value).trim());
@@ -1100,24 +1361,27 @@ export class Executor {
       const radio = String(r.desc.role).toLowerCase() === 'radio' || String(r.desc.type).toLowerCase() === 'radio';
       const changes = radio ? want && !r.desc.checked : want !== !!r.desc.checked;
       if (changes) {
-        const c = classifyToggle(r.desc, { willCheck: want });
-        if (c) {
-          await this.guardElement(t, r.desc, want ? 'Turn on' : 'Turn off', ctx, c);
-          const again = await resolve();
-          if (!sameClass(classifyToggle(again.desc, { willCheck: want }), c)) fail('Error: the page changed while the owner was deciding, so Jarvis did not change it. Look at the page again before you act.');
-        }
+        const v = assessFormInput({ desc: r.desc, willCheck: want, everyday: this.everyday(ctx), pageUrl: t.url });
+        if (v.verdict === 'ask') step = { kind: 'form', verb: want ? 'Turn on' : 'Turn off', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
       }
     } else if (String(r.desc?.tag || '').toLowerCase() === 'select') {
       // A dropdown's change handler may act at once ("Actions: Delete all messages").
-      const preview = async () => this.pageOp(t, 'previewOption', { ref, value }, ctx);
-      const pv = await preview();
+      const pv = await this.pageOp(t, 'previewOption', { ref, value }, ctx);
       if (pv?.option && !pv.option.selected) {
-        const c = classifyOption({ name: pv.selectName || r.desc.name }, pv.option.text);
-        if (c) {
-          await this.guardElement(t, r.desc, 'Choose', ctx, c);
-          const again = await preview();
-          if (!again?.option || again.option.text !== pv.option.text) fail('Error: the page changed while the owner was deciding, so Jarvis did not choose it. Look at the page again before you act.');
-        }
+        const v = assessFormInput({ desc: { ...r.desc, name: pv.selectName || r.desc.name }, option: pv.option, everyday: this.everyday(ctx), pageUrl: t.url });
+        if (v.verdict === 'ask') step = { kind: 'form', verb: `Choose "${truncate(singleLine(pv.option.text), 60)}" in`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, option: pv.option.text, doc };
+      }
+    } else {
+      const v = assessFormInput({ desc: r.desc, everyday: this.everyday(ctx), pageUrl: t.url });
+      if (v.verdict === 'ask') step = { kind: 'form', verb: `Set`, detail: `to "${truncate(singleLine(String(value)), 120)}"`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
+    }
+    if (step) {
+      await this.approve(t, step, ctx);
+      const again = await resolve();
+      if (String(again.targetId) !== String(step.targetId) || (again.ctx || '') !== (step.ctx || '') || t.docSeq !== doc) fail('Error: the page changed while the owner was deciding, so Jarvis did not change it. Look at the page again before you act.');
+      if (step.option) {
+        const pv = await this.pageOp(t, 'previewOption', { ref, value }, ctx);
+        if (!pv?.option || pv.option.text !== step.option) fail('Error: the page changed while the owner was deciding, so Jarvis did not choose it. Look at the page again before you act.');
       }
     }
     this.steady(t, ctx);
@@ -1132,6 +1396,59 @@ export class Executor {
     return this.ack(what);
   }
 
+  /**
+   * navigate to an address: one the owner declined, a link or form on this page that the guard
+   * recognises as consequential (navigating to its address does what clicking it does), or a
+   * file to download, asks first.
+   */
+  async navigateCheck(t, url, ctx) {
+    const site = siteOf(url);
+    let links = null;
+    // (An address on the page itself: links to it are this page's own script links, which a load
+    // of the address does not run.)
+    if (/^https?:/i.test(t.url || '') && siteOf(t.url) === site && pageKey(t.url) !== pageKey(url)) {
+      links = await this.driver.page(t, 'linksTo', { url }).catch(() => null);
+    }
+    for (const l of links?.links || []) {
+      const g = classifyAction(l.desc);
+      if (!g) continue;
+      await this.approve(t, { kind: 'navigate', verb: 'Open the address of', desc: l.desc, targetId: l.targetId, ctx: l.ctx, item: l.item, guard: g, dest: url, site, doc: t.docSeq }, { ...ctx, site });
+      return;
+    }
+    let path = '';
+    try {
+      path = new URL(url).pathname;
+    } catch {
+      path = '';
+    }
+    if (RISKY_FILE.test(path)) {
+      const name = decodeURIComponent(path.split('/').pop() || 'a file');
+      await this.approve(t, { kind: 'navigate', verb: 'Download', label: name, detail: `from ${site}`, guard: { category: 'download', label: name, reason: 'downloading a file (an app or installer)' }, dest: url, site }, { ...ctx, site });
+    }
+  }
+
+  /** navigate opened a file: Chrome downloads it, held until the owner decides (see the downloads gate). */
+  async downloadOutcome(url, ctx) {
+    const name = (() => {
+      try {
+        return decodeURIComponent(new URL(url).pathname.split('/').pop() || '') || 'a file';
+      } catch {
+        return 'a file';
+      }
+    })();
+    let verdict = null;
+    try {
+      verdict = await this.policy.awaitDownload?.(url, { signal: ctx.signal });
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      verdict = null;
+    }
+    if (verdict === 'approved') return `That address is a file download ("${truncate(singleLine(name), 80)}"). The owner approved it; Chrome saved it to the Downloads folder. The tab stayed on its page.`;
+    if (verdict === 'declined') fail(`Blocked: that address is a file download ("${truncate(singleLine(name), 80)}") and the owner declined it, so nothing was saved. Don't try it again or find another way; tell the owner and finish.`);
+    fail(`Error: that address is a file download ("${truncate(singleLine(name), 80)}"), not a page. Jarvis did not save it.`);
+    return '';
+  }
+
   /** Page-derived text as an untrusted, injection-checked result. */
   untrusted(t, text, kind) {
     return this.ack(this.wrap(t, text, kind));
@@ -1141,13 +1458,12 @@ export class Executor {
   // Thumbnails for the side panel's step list (never sent to the API)
 
   async thumbnail(t, ctx) {
-    if (!ctx.stepId || !this.hooks.onThumb || !isActionableUrl(t.url)) return;
+    if (!ctx.stepId || !this.hooks.onThumb || !isActionableUrl(t.url) || !this.revealed(t.url)) return;
     try {
-      const data = await this.driver.capture(t, { hideOverlay: false, quality: 55 });
-      const bmp = await this.encoder.decode(data, 'image/jpeg');
+      const bmp = await this.captureBitmap(t, { hideOverlay: false, quality: 55 });
       await this.thumbFrom(bmp, ctx);
     } catch {
-      /* thumbnails are best effort */
+      /* thumbnails are best effort (and never unmasked) */
     }
   }
 
@@ -1164,6 +1480,22 @@ export class Executor {
       /* best effort */
     }
   }
+}
+
+/** "a button", "a link", "a text box": what kind of element the owner is asked about. */
+function describeRole(d) {
+  const role = String(d?.role || '').toLowerCase();
+  const tag = String(d?.tag || '').toLowerCase();
+  if (d?.iframe) return 'a box from another site';
+  if (role === 'button' || tag === 'button' || (tag === 'input' && /^(submit|button|reset|image)$/i.test(d?.type || ''))) return 'a button';
+  if (role === 'link' || tag === 'a') return 'a link';
+  if (role === 'checkbox' || role === 'switch') return role === 'switch' ? 'a switch' : 'a checkbox';
+  if (role === 'radio') return 'a radio button';
+  if (tag === 'select' || role === 'combobox' || role === 'listbox') return 'a list of options';
+  if (role === 'searchbox' || (tag === 'input' && String(d?.type || '').toLowerCase() === 'search')) return 'a search box';
+  if (role === 'textbox' || tag === 'textarea' || tag === 'input' || d?.isContentEditable) return 'a text box';
+  if (role === 'option' || role === 'menuitem' || role === 'tab') return `a ${role === 'menuitem' ? 'menu item' : role}`;
+  return '';
 }
 
 export { NO_THUMB };

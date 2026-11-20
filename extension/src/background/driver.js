@@ -12,16 +12,22 @@
 //     `__jarvisBar` binding (Runtime.bindingCalled) without enabling the Runtime domain (which
 //     pages can detect).
 //   - Frames from other sites run in their own processes: Target auto-attach gives a session per
-//     frame, used only to learn which site a frame really shows.
+//     frame (frames nested in those too), used to learn which site each frame really shows and
+//     which frame is at a point or has the keyboard focus.
+//   - While Jarvis acts, the tab's own page loads go through Fetch interception: a page that tries
+//     to load a site the owner denied (a link, a script, a redirect) is stopped before the request
+//     leaves, and a site not asked about yet is asked first (see onNavigationRequest).
 
 import { abortError, sleep, untilAborted, withTimeout } from '../shared/util.js';
-import { sanitizeTitle, sanitizeUrl } from './sites.js';
+import { sanitizeTitle, sanitizeUrl, siteOf } from './sites.js';
 
 export const WORLD = 'jarvis-control';
 export const BINDING = '__jarvisBar';
 const CALL_PAGE = 'function (op, args) { return globalThis.__jarvis ? globalThis.__jarvis.call(op, args) : { error: "__agent_missing__" }; }';
 const CDP_TIMEOUT_MS = 15000;
 const HEARTBEAT_MS = 1000;
+
+const FRAME_FILTER = [{ type: 'iframe', exclude: false }, { exclude: true }];
 
 const CONTEXT_GONE = /Cannot find context|Execution context was destroyed|context with specified id|Inspected target navigated|No frame with given id|Frame with the given id was not found/i;
 
@@ -43,15 +49,18 @@ export class Driver {
    * @param {object} opts.chrome        chrome-like API: debugger, tabs, windows
    * @param {string} opts.pageSource    the page agent script (an IIFE)
    * @param {(info) => void} [opts.onStopRequest]   Stop/Esc pressed in a page
-   * @param {(toolId, dialog) => boolean} [opts.onDialog]  accept a JS dialog?
+   * @param {(toolId, dialog) => boolean | Promise<boolean>} [opts.onDialog]  accept a JS dialog?
+   *        (a promise holds the dialog open until the owner answers)
    * @param {(toolId, reason) => void} [opts.onDetach]     a debugger session ended unexpectedly
+   * @param {(toolId, url) => Promise<boolean>} [opts.onNavigationRequest]  may the tab load this page?
    */
-  constructor({ chrome, pageSource = '', onStopRequest = () => {}, onDialog = () => true, onDetach = () => {} }) {
+  constructor({ chrome, pageSource = '', onStopRequest = () => {}, onDialog = () => true, onDetach = () => {}, onNavigationRequest = null }) {
     this.chrome = chrome;
     this.pageSource = pageSource;
     this.onStopRequest = onStopRequest;
     this.onDialog = onDialog;
     this.onDetachCb = onDetach;
+    this.onNavigationRequest = onNavigationRequest;
     this.tabs = new Map(); // toolId -> TabState
     this.byChrome = new Map(); // chrome tab id -> toolId
     this.nextNum = 1;
@@ -64,6 +73,7 @@ export class Driver {
     this.heartbeat = 0;
     this.suppressEscUntil = 0; // Jarvis itself is pressing Escape until then
     this.onTamper = () => {}; // the page keeps hiding or covering the control bar
+    this.onUnstyled = () => {}; // the control bar's styles could not be applied on a page
     // Debugger sessions may only be (re)attached while a task is acting: after Stop or Take over
     // an action still in flight fails instead of quietly taking control again.
     this.allowAttach = false;
@@ -106,11 +116,17 @@ export class Driver {
       frame: null, // the latest screenshot frame { w, h, scale, cssW, cssH, dpr }
       waiters: new Set(),
       frames: new Map(), // out-of-process child frames: targetId (= frameId) -> { sessionId, url }
-      dialogArm: null, // a confirm() the owner's approval covers (see armDialog)
+      dialogPending: 0, // JS dialogs held open while the owner decides
       unloadBlocked: false, // the page asked before leaving (beforeunload) and Jarvis said no
+      docOpenSeq: 0, // times the page rewrote its document with document.open()
+      postEntries: new Set(), // history entry ids that are the result of a submitted form
+      openedByJarvis: false, // a tab Jarvis (or a page it works in) opened, not the owner's own
     });
     this.byChrome.set(tab.id, toolId);
-    if (opened) this.changes.push({ type: 'tab_opened', tab_id: toolId });
+    if (opened) {
+      this.changes.push({ type: 'tab_opened', tab_id: toolId });
+      this.tabs.get(toolId).openedByJarvis = true;
+    }
     return toolId;
   }
 
@@ -144,17 +160,40 @@ export class Driver {
     return [...this.tabs.values()].filter((t) => !t.closed);
   }
 
-  /** browser_state `tabs`: the full inventory, exactly one active entry when not empty. */
-  inventory() {
+  /**
+   * browser_state `tabs`: the full inventory, exactly one active entry when not empty. `reveal(url)`
+   * says whether a page's title and full address may be reported: a tab on a site the owner has
+   * not allowed (yet) is listed with a placeholder title and only its origin.
+   */
+  inventory({ reveal = null } = {}) {
     const open = this.openTabs();
     let active = this.active();
     if (!active && open.length) active = open[0];
-    return open.map((t) => ({
-      tab_id: t.toolId,
-      title: sanitizeTitle(t.title),
-      url: sanitizeUrl(t.url || 'about:blank'),
-      ...(active && t.toolId === active.toolId ? { active: true } : {}),
-    }));
+    return open.map((t) => {
+      const url = t.url || 'about:blank';
+      let hidden = false;
+      if (reveal && /^https?:/i.test(url)) {
+        try {
+          hidden = !reveal(url);
+        } catch {
+          hidden = true;
+        }
+      }
+      let origin = '';
+      if (hidden) {
+        try {
+          origin = `${new URL(url).origin}/`;
+        } catch {
+          origin = 'about:blank';
+        }
+      }
+      return {
+        tab_id: t.toolId,
+        title: hidden ? 'Site not allowed yet' : sanitizeTitle(t.title),
+        url: hidden ? sanitizeUrl(origin) : sanitizeUrl(url),
+        ...(active && t.toolId === active.toolId ? { active: true } : {}),
+      };
+    });
   }
 
   /** Takes the state changes (tabs opened by the page) that happened since the last call. */
@@ -215,12 +254,40 @@ export class Driver {
     if (!t || t.closed) throw new DriverError('Error: that tab is closed.');
     if (!t.attached) await this.attach(t); // refused after Stop / Take over (see allowAttach)
     try {
-      return await withTimeout(this.chrome.debugger.sendCommand({ tabId: t.chromeId }, method, params), timeoutMs, `Error: the page did not respond to ${method} within ${Math.round(timeoutMs / 1000)} s.`);
+      const sent = this.chrome.debugger.sendCommand({ tabId: t.chromeId }, method, params);
+      // Input that opened a dialog the owner is still deciding about waits for that answer.
+      if (/^Input\./.test(method)) return await this.whileDialogs(t, sent, timeoutMs, method);
+      return await withTimeout(sent, timeoutMs, `Error: the page did not respond to ${method} within ${Math.round(timeoutMs / 1000)} s.`);
     } catch (err) {
       const msg = String(err?.message || err);
       if (/not attached|Detached while handling|No tab with given id|Debugger is not attached/i.test(msg)) t.attached = false;
       throw err;
     }
+  }
+
+  /** Waits for a command, without timing out while one of the tab's dialogs waits for the owner. */
+  whileDialogs(t, sent, timeoutMs, method) {
+    return new Promise((resolve, reject) => {
+      let timer = 0;
+      const wait = () => {
+        timer = setTimeout(() => {
+          if (t.dialogPending > 0) wait();
+          else reject(new DriverError(`Error: the page did not respond to ${method} within ${Math.round(timeoutMs / 1000)} s.`));
+        }, timeoutMs);
+        timer.unref?.();
+      };
+      wait();
+      sent.then(
+        (v) => (clearTimeout(timer), resolve(v)),
+        (e) => (clearTimeout(timer), reject(e)),
+      );
+    });
+  }
+
+  /** A command in a child frame's session (a frame from another site). */
+  async inSession(t, sessionId, method, params = {}, { timeoutMs = 5000 } = {}) {
+    if (!sessionId) return this.cdp(t, method, params);
+    return withTimeout(this.chrome.debugger.sendCommand({ tabId: t.chromeId, sessionId }, method, params), timeoutMs, `Error: a frame did not respond to ${method}.`);
   }
 
   async attach(t) {
@@ -259,7 +326,17 @@ export class Driver {
       // The page agent runs at the start of every later document, before the page's scripts.
       if (this.pageSource) await send('Page.addScriptToEvaluateOnNewDocument', { source: this.pageSource, worldName: WORLD }).catch(() => {});
       // A session per frame from another site (to know which site it shows).
-      await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'iframe', exclude: false }, { exclude: true }] }).catch(() => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {}));
+      await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: FRAME_FILTER }).catch(() => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {}));
+      // The tab's own page loads, checked before they leave (see onNavigationRequest).
+      if (this.onNavigationRequest) {
+        try {
+          const { frameTree } = await send('Page.getFrameTree', {});
+          if (frameTree?.frame?.id) t.frameId = frameTree.frame.id;
+          await send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] });
+        } catch {
+          /* no Fetch domain: the executor's own checks still apply */
+        }
+      }
       if (firstSession && before) await this.settleViewport(t, before);
       if (!this.allowAttach || !t.attached) {
         await this.detachTab(t);
@@ -329,7 +406,14 @@ export class Driver {
     }
     if (!t) return;
     if (method === 'Target.attachedToTarget' && params.targetInfo?.type === 'iframe') {
-      t.frames.set(params.targetInfo.targetId, { sessionId: params.sessionId, url: params.targetInfo.url || '' });
+      const old = t.frames.get(params.targetInfo.targetId);
+      t.frames.set(params.targetInfo.targetId, { sessionId: params.sessionId, url: params.targetInfo.url || '', parent: sessionId || null, navSeq: (old?.navSeq || 0) + 1 });
+      // Frames nested inside this one get their own sessions too.
+      try {
+        Promise.resolve(this.chrome.debugger.sendCommand({ tabId, sessionId: params.sessionId }, 'Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: FRAME_FILTER })).catch(() => {});
+      } catch {
+        /* ignore */
+      }
       return;
     }
     if (method === 'Target.detachedFromTarget') {
@@ -337,7 +421,13 @@ export class Driver {
       return;
     }
     if (method === 'Target.targetInfoChanged' && t.frames.has(params.targetInfo?.targetId)) {
-      t.frames.get(params.targetInfo.targetId).url = params.targetInfo.url || '';
+      const f = t.frames.get(params.targetInfo.targetId);
+      if ((params.targetInfo.url || '') !== f.url) f.navSeq += 1;
+      f.url = params.targetInfo.url || '';
+      return;
+    }
+    if (method === 'Fetch.requestPaused' && !sessionId) {
+      this.onRequestPaused(t, tabId, params);
       return;
     }
     if (sessionId) return; // other events from a child frame's session
@@ -363,6 +453,16 @@ export class Driver {
           else if (params.frame.url) t.url = params.frame.url + (params.frame.urlFragment || '');
           // Put the control bar back on the new document right away.
           if (this.mode !== 'hidden') this.page(t, 'mode', { mode: this.mode }).catch(() => {});
+          // Remember entries that are the result of a submitted form (reloading one sends it again).
+          this.recordHistory(t).catch(() => {});
+        }
+        break;
+      case 'Page.documentOpened':
+        // document.open() erased the page agent's listeners (Esc, Stop, the activation check):
+        // put them back at once.
+        if (!params.frame?.parentId) {
+          t.docOpenSeq += 1;
+          if (t.ctx && t.ctxDoc === t.docSeq) this.callIn(t, t.ctx, 'heal', {}).catch(() => {});
         }
         break;
       case 'Page.navigatedWithinDocument':
@@ -380,16 +480,30 @@ export class Driver {
         break;
       case 'Page.javascriptDialogOpening': {
         const dialog = { type: params.type, message: String(params.message || '').slice(0, 300), url: params.url };
-        let accept = false;
+        let decision = false;
         try {
-          accept = !!this.onDialog(id, dialog);
+          decision = this.onDialog(id, dialog);
         } catch {
-          accept = false;
+          decision = false;
         }
-        // "Leave site? Changes you made may not be saved": Jarvis stays (the owner's unsaved work).
-        if (params.type === 'beforeunload' && !accept) t.unloadBlocked = true;
-        this.dialogs.push({ ...dialog, accepted: accept, toolId: id });
-        this.chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept }).catch(() => {});
+        const answer = (accept, asked = false) => {
+          // "Leave site? Changes you made may not be saved": Jarvis stays (the owner's unsaved work).
+          if (params.type === 'beforeunload' && !accept) t.unloadBlocked = true;
+          this.dialogs.push({ ...dialog, accepted: accept, toolId: id, asked });
+          Promise.resolve(this.chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept })).catch(() => {});
+        };
+        if (decision && typeof decision.then === 'function') {
+          // The owner decides (the page waits): input that opened it keeps waiting meanwhile.
+          t.dialogPending += 1;
+          const settle = (accept) => {
+            t.dialogPending = Math.max(0, t.dialogPending - 1);
+            answer(accept, true);
+            for (const w of [...t.waiters]) w.check();
+          };
+          decision.then((v) => settle(!!v), () => settle(false));
+          break;
+        }
+        answer(!!decision);
         break;
       }
       default:
@@ -533,6 +647,7 @@ export class Driver {
           .then((r) => {
             if (r && r.stop) this.onStopRequest({ via: r.stop, toolId: t.toolId });
             if (r && r.tampered) this.onTamper(t.toolId);
+            if (r && r.unstyled) this.onUnstyled(t.toolId);
           })
           .catch(() => {});
       }
@@ -562,7 +677,6 @@ export class Driver {
         }
         if (t.ctx) await withTimeout(this.callIn(t, t.ctx, 'mode', { mode: 'hidden' }), 150, 'hide timeout').catch(() => {});
         if (t.attached) await this.detachTab(t);
-        t.dialogArm = null;
         // Whatever was waiting for a page load ends here. A Stop has already ended it with an
         // AbortError; on Take over it is not a Stop: the task pauses.
         for (const w of [...t.waiters]) w.reject(new DriverError('Error: Jarvis let go of the browser before the page finished loading.', { code: 'released' }));
@@ -576,15 +690,27 @@ export class Driver {
   }
 
   // -------------------------------------------------------------------------------------------
-  // Dialogs the owner's approval covers
+  // Page loads while Jarvis acts (Fetch interception of the tab's own documents)
 
-  /** A confirm() opened by the approved action in this call may be accepted (see Controller.dialogPolicy). */
-  armDialog(t, { category, site, ms = 10000 }) {
-    t.dialogArm = { category, site, until: Date.now() + ms, uses: 1 };
-  }
-
-  disarmDialog(t) {
-    if (t) t.dialogArm = null;
+  /** A paused document request: the main frame's loads are checked, everything else continues. */
+  onRequestPaused(t, tabId, params) {
+    const send = (method, extra = {}) => Promise.resolve(this.chrome.debugger.sendCommand({ tabId }, method, { requestId: params.requestId, ...extra })).catch(() => {});
+    const url = String(params.request?.url || '');
+    const main = !params.frameId || !t.frameId || params.frameId === t.frameId;
+    if (!main || !this.onNavigationRequest || !/^https?:/i.test(url)) {
+      send('Fetch.continueRequest');
+      return;
+    }
+    let decision;
+    try {
+      decision = Promise.resolve(this.onNavigationRequest(t.toolId, url));
+    } catch {
+      decision = Promise.resolve(false);
+    }
+    decision.then(
+      (ok) => (ok ? send('Fetch.continueRequest') : send('Fetch.failRequest', { errorReason: 'BlockedByClient' })),
+      () => send('Fetch.failRequest', { errorReason: 'BlockedByClient' }),
+    );
   }
 
   /** Forget every tab (a new conversation starts its tab ids again at tab-1). */
@@ -636,21 +762,55 @@ export class Driver {
     // new_tab reports its own tab_opened; never report this tab a second time.
     this.changes = this.changes.filter((c) => c.tab_id !== id);
     this.activeToolId = id;
+    this.tabs.get(id).openedByJarvis = true;
     return this.get(id);
   }
 
-  async closeTab(t) {
-    if (t.attached) {
-      this.detaching.add(t.chromeId);
+  /**
+   * Closes a tab. A page that asks before closing ("Leave site?") keeps it open: Jarvis's dialog
+   * policy says Stay, and the call returns an error instead of waiting (chrome.tabs.remove never
+   * settles while such a tab stays open).
+   */
+  async closeTab(t, { signal, timeoutMs = 3000 } = {}) {
+    t.unloadBlocked = false;
+    // With a debugger session, the page's "Leave site?" comes to Jarvis (which stays) instead of
+    // blocking the page behind a dialog.
+    if (!t.attached && this.allowAttach) {
       try {
-        await this.chrome.debugger.detach({ tabId: t.chromeId });
+        await this.attach(t);
       } catch {
-        /* ignore */
-      } finally {
-        this.detaching.delete(t.chromeId);
+        /* the tab cannot be controlled: Chrome asks the owner itself */
       }
     }
-    await this.chrome.tabs.remove(t.chromeId);
+    this.detaching.add(t.chromeId); // the session ends with the tab: not an unexpected detach
+    let removing;
+    try {
+      removing = Promise.resolve(this.chrome.tabs.remove(t.chromeId));
+    } catch (err) {
+      this.detaching.delete(t.chromeId);
+      throw err;
+    }
+    removing.catch(() => {});
+    let gone = false;
+    try {
+      gone = await untilAborted(
+        Promise.race([
+          removing.then(() => true, () => false),
+          this.waitFor(t, () => t.closed || t.unloadBlocked, timeoutMs).then(() => t.closed, () => t.closed),
+          sleep(timeoutMs).then(() => false),
+        ]),
+        signal,
+      );
+    } finally {
+      this.detaching.delete(t.chromeId);
+    }
+    if (!gone && !t.closed) {
+      const still = await this.refresh(t);
+      if (still) {
+        if (t.attached) await this.detachTab(t);
+        return { error: `Error: ${t.toolId} has unsaved changes (the page asked before closing), so Jarvis kept it open. Leave it open, or ask the owner to save or discard their work and close it.` };
+      }
+    }
     this.onTabRemoved(t.chromeId);
     const next = this.active();
     if (next) {
@@ -660,6 +820,7 @@ export class Driver {
         /* ignore */
       }
     }
+    return {};
   }
 
   // -------------------------------------------------------------------------------------------
@@ -686,6 +847,9 @@ export class Driver {
     t.unloadBlocked = false;
     const res = await untilAborted(this.cdp(t, 'Page.navigate', { url, transitionType: 'typed' }), signal);
     if (t.unloadBlocked) return { error: unsavedChanges(t) };
+    // The address is a file: Chrome downloads it instead of showing a page (see the downloads gate).
+    if (res?.isDownload) return { download: true };
+    if (res?.errorText === 'net::ERR_BLOCKED_BY_CLIENT') return { blocked: true };
     if (res?.errorText) {
       const reason = String(res.errorText).replace(/^net::/, '');
       return { error: `Error: Navigation to ${url} failed (${reason}). The page may be unavailable.` };
@@ -695,6 +859,24 @@ export class Driver {
     if (!ok) return { error: `Error: Navigation to ${url} timed out after ${Math.round(timeoutMs / 1000)} seconds. The page may be unavailable.` };
     await untilAborted(sleep(300), signal);
     return {};
+  }
+
+  /** Notes which history entries are the result of a submitted form (transitionType form_submit). */
+  async recordHistory(t) {
+    const h = await this.cdp(t, 'Page.getNavigationHistory', {});
+    for (const e of h?.entries || []) if (e.transitionType === 'form_submit') t.postEntries.add(e.id);
+    return h;
+  }
+
+  /**
+   * Whether the page shown now is the result of a submitted form (an order, a payment, a sent
+   * message): reloading it would send the form again. Entries are remembered by id while they
+   * still say form_submit (after one reload Chrome reports them as "reload").
+   */
+  async isFormResult(t) {
+    const h = await this.recordHistory(t);
+    const cur = h?.entries?.[h.currentIndex];
+    return !!cur && t.postEntries.has(cur.id);
   }
 
   /** The history entry "back" or "forward" would open ({ id, url }), or null. */
@@ -784,15 +966,30 @@ export class Driver {
   // -------------------------------------------------------------------------------------------
   // Capture and input
 
-  /** A screenshot of the viewport as captured (device pixels), with the control bar hidden. */
+  /**
+   * A screenshot of the viewport as captured (device pixels): { data, masks }. The page agent
+   * masks every private field first (passwords, card numbers, security codes) and, with
+   * `hideOverlay`, hides the control bar; `masks` are viewport rectangles (CSS px) of other sites'
+   * payment or sign-in boxes, which the caller paints over. If the page agent cannot mask the page,
+   * there is no picture (fail closed).
+   */
   async capture(t, { hideOverlay = true, format = 'jpeg', quality = 85 } = {}) {
-    const hide = hideOverlay && this.mode !== 'hidden' && t.ctx;
-    if (hide) await this.callIn(t, t.ctx, 'shot', { on: true }).catch(() => {});
+    const ctx = await this.world(t);
+    let prep = null;
+    try {
+      prep = await withTimeout(this.callIn(t, ctx, 'shot', { on: true, bar: hideOverlay && this.mode !== 'hidden' }), 3000, 'shot timeout');
+    } catch {
+      prep = null;
+    }
+    if (!prep || !prep.ok) {
+      this.callIn(t, ctx, 'shot', { on: false }).catch(() => {});
+      throw new DriverError("Error: Jarvis could not hide this page's private fields for a picture, so it took none. Read the page with read_page or get_page_text instead.");
+    }
     try {
       const shot = await this.cdp(t, 'Page.captureScreenshot', { format, ...(format === 'jpeg' ? { quality } : {}), captureBeyondViewport: false, fromSurface: true });
-      return shot.data;
+      return { data: shot.data, masks: Array.isArray(prep.rects) ? prep.rects : [] };
     } finally {
-      if (hide) await this.callIn(t, t.ctx, 'shot', { on: false }).catch(() => {});
+      await this.callIn(t, ctx, 'shot', { on: false }).catch(() => {});
     }
   }
 
@@ -806,6 +1003,92 @@ export class Driver {
 
   async insertText(t, text) {
     await this.cdp(t, 'Input.insertText', { text });
+  }
+
+  /**
+   * The chain of frames from other sites at viewport point (x, y), outermost first, each with the
+   * page it really shows: [{ frameId, sessionId, url, navSeq }]. [] when the point is not in such
+   * a frame; { error } when a frame there cannot be identified (Jarvis then does nothing).
+   */
+  async frameChainAt(t, x, y) {
+    const chain = [];
+    let session = null;
+    let px = x;
+    let py = y;
+    for (let hop = 0; hop < 6; hop++) {
+      const hit = await this.inSession(t, session, 'DOM.getNodeForLocation', { x: Math.round(px), y: Math.round(py), includeUserAgentShadowDOM: false });
+      if (!hit?.backendNodeId) return chain;
+      const { node } = await this.inSession(t, session, 'DOM.describeNode', { backendNodeId: hit.backendNodeId });
+      if (!node || !/^i?frame$/i.test(node.nodeName || '') || node.contentDocument || !node.frameId) return chain;
+      const f = t.frames.get(node.frameId);
+      if (!f) return { error: 'unknown frame' };
+      const url = await this.frameUrl(t, node.frameId);
+      if (!/^https?:/i.test(url)) return { error: 'unknown frame address' };
+      const box = await this.inSession(t, session, 'DOM.getBoxModel', { backendNodeId: hit.backendNodeId }).catch(() => null);
+      const q = box?.model?.content;
+      if (!Array.isArray(q) || q.length < 8) return { error: 'frame box' };
+      // A rotated or skewed frame: the point cannot be followed into it.
+      if (Math.abs(q[1] - q[3]) > 0.5 || Math.abs(q[0] - q[6]) > 0.5) return { error: 'transformed frame' };
+      chain.push({ frameId: node.frameId, sessionId: f.sessionId, url, site: siteOf(url), navSeq: f.navSeq || 0 });
+      px -= q[0];
+      py -= q[1];
+      session = f.sessionId;
+    }
+    return chain;
+  }
+
+  /**
+   * The chain of frames from other sites that hold the keyboard focus, outermost first (as
+   * frameChainAt). [] when the focus is not in one; { error } when it cannot be followed.
+   */
+  async focusedFrameChain(t) {
+    const ctx = await this.world(t);
+    const objectGroup = 'jarvis-frame-focus';
+    const chain = [];
+    try {
+      let session = null;
+      for (let hop = 0; hop < 6; hop++) {
+        const ae = session
+          ? await this.inSession(t, session, 'Runtime.evaluate', { expression: 'document.activeElement', objectGroup })
+          : await this.cdp(t, 'Runtime.evaluate', { expression: 'document.activeElement', contextId: ctx, objectGroup });
+        const objectId = ae?.result?.objectId;
+        if (!objectId) return chain;
+        const { node } = await this.inSession(t, session, 'DOM.describeNode', { objectId });
+        if (!node || !/^i?frame$/i.test(node.nodeName || '') || node.contentDocument || !node.frameId) return chain;
+        const f = t.frames.get(node.frameId);
+        if (!f) return { error: 'unknown frame' };
+        const url = await this.frameUrl(t, node.frameId);
+        if (!/^https?:/i.test(url)) return { error: 'unknown frame address' };
+        chain.push({ frameId: node.frameId, sessionId: f.sessionId, url, site: siteOf(url), navSeq: f.navSeq || 0 });
+        session = f.sessionId;
+      }
+      return chain;
+    } finally {
+      this.cdp(t, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
+    }
+  }
+
+  /**
+   * The element at viewport point (x, y) inside closed shadow roots (which the page agent cannot
+   * open), described like resolveTarget's desc, or null.
+   */
+  async pierceAt(t, x, y) {
+    const ctx = await this.world(t);
+    const objectGroup = 'jarvis-pierce';
+    try {
+      // (Elements with pointer-events: none, Jarvis's own overlay among them, are not hit.)
+      const hit = await this.cdp(t, 'DOM.getNodeForLocation', { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: false });
+      if (!hit?.backendNodeId) return null;
+      const { node } = await this.cdp(t, 'DOM.describeNode', { backendNodeId: hit.backendNodeId });
+      if (/^jarvis-control-overlay$/i.test(node?.nodeName || '')) return null;
+      if (!hit?.backendNodeId) return null;
+      const { object } = await this.cdp(t, 'DOM.resolveNode', { backendNodeId: hit.backendNodeId, executionContextId: ctx, objectGroup });
+      if (!object?.objectId) return null;
+      const r = await this.cdp(t, 'Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function () { return globalThis.__jarvis ? globalThis.__jarvis.describeEl(this, { actionable: true }) : null; }', returnByValue: true });
+      return r?.result?.value || null;
+    } finally {
+      this.cdp(t, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
+    }
   }
 
   /** Lets synthesized mouse events pass through the control bar while Jarvis clicks. */

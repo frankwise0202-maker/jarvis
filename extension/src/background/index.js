@@ -42,6 +42,14 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId !== undefined) controller.driver.onDetached(source.tabId, reason);
 });
 
+// Every download that starts while a task runs is held until the owner approves it (no file is
+// written meanwhile); downloads while no task runs, or during Take over, are left alone.
+chrome.downloads?.onDeterminingFilename?.addListener((item, suggest) => (controller.holdDownload(item, suggest) ? true : undefined));
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local') controller.onStorageChanged(changes);
+});
+
 chrome.tabs.onCreated.addListener((tab) => controller.driver.onTabCreated(tab));
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => controller.driver.onTabUpdated(tabId, info, tab));
 chrome.tabs.onActivated.addListener((info) => controller.driver.onTabActivated(info));

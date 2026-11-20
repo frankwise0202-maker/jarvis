@@ -9,12 +9,14 @@
 //   evil.localhost   the attacker's site: every request to it is recorded
 //
 // State that the tests assert on (cart, orders, sent messages, hits per host) lives here. The pages
-// for the review fixes (safe.localhost and friends) are in sites-review.mjs.
+// for the review fixes (safe.localhost and friends) are in sites-review.mjs, those for the second
+// review (deny by default; r*.localhost, rt.localhost, *.ngrok.io) in sites-rt2.mjs.
 
 import { REVIEW_HOSTS, handleReview } from './sites-review.mjs';
+import { handleRt2, isRt2Host } from './sites-rt2.mjs';
 
 export function createSites() {
-  const state = { cart: [], orders: [], sent: [], hits: {}, logins: [], events: [], flags: {} };
+  const state = { cart: [], orders: [], sent: [], hits: {}, logins: [], events: [], flags: {}, rt: { events: [], flags: {} } };
   return { state, handle: (req, res, body) => handle(state, req, res, body) };
 }
 
@@ -79,6 +81,7 @@ function handle(state, req, res, body) {
       return send(res, 200, page('Totally safe page', '', '<h1>Thanks!</h1>'));
     default:
       if (REVIEW_HOSTS.has(host)) return handleReview(state, req, res, body);
+      if (isRt2Host(host)) return handleRt2(state.rt, req, res, body);
       return send(res, 404, page('Not found', '', '<h1>Not found</h1>'));
   }
 }

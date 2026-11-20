@@ -71,8 +71,12 @@ test('Enter submits through the form; search forms and message line breaks are f
   assert.equal(classifySubmitKey(field({ isSearch: false, submitLabel: 'Sign in' })), null);
   assert.equal(classifySubmitKey(field({ isSearch: false, submitLabel: 'Continue', hasCardField: true }))?.category, 'purchase');
   const textarea = { tag: 'textarea', role: 'textbox', multiline: true, nearbyButtons: ['Send', 'Discard'] };
-  assert.equal(classifySubmitKey(textarea), null, 'Enter in a textarea adds a line');
+  // RT2-A03: support chats and messengers send on a plain Enter in a textarea too.
+  assert.equal(classifySubmitKey(textarea)?.category, 'send', 'Enter in a textarea next to Send may send it');
   assert.equal(classifySubmitKey(textarea, { modified: true })?.category, 'send', 'cmd+Enter sends');
+  assert.equal(classifySubmitKey({ tag: 'textarea', role: 'textbox', multiline: true, nearbyButtons: ['Save'] }), null, 'no send or post button: a line break');
+  assert.equal(classifySubmitKey({ tag: 'textarea', role: 'textbox', multiline: true }), null);
+  assert.equal(classifySubmitKey({ tag: 'textarea', role: 'textbox', multiline: true, form: { isSearch: false, submitLabel: 'Post reply' } })?.category, 'post', 'a form whose button posts');
   const chat = { tag: 'div', role: 'textbox', isContentEditable: true, enterSends: true, nearbyButtons: ['Send'] };
   assert.equal(classifySubmitKey(chat)?.category, 'send', 'chat boxes send on Enter');
   assert.equal(classifySubmitKey(button('Delete account'))?.category, 'delete', 'Enter on a focused button activates it');
@@ -97,21 +101,27 @@ test('secret fields: passwords, card numbers, security codes, IDs and payment fr
   assert.match(secretRefusal('password'), /^Refused: this field holds a password\..*Please sign in yourself, then tell me to continue/);
 });
 
-test('approvals cover one category on one site, a few actions, for a short time', () => {
+test('approvals cover one element on one site, once, for a short time', () => {
   let now = 1000;
   const a = new Approvals(() => now);
-  assert.equal(a.consume('purchase', 'shop.example'), false);
-  a.grant('purchase', 'shop.example');
-  assert.equal(a.consume('send', 'shop.example'), false, 'other category');
-  assert.equal(a.consume('purchase', 'other.example'), false, 'other site');
-  for (let i = 0; i < APPROVAL_USES; i++) assert.equal(a.consume('purchase', 'shop.example'), true);
-  assert.equal(a.consume('purchase', 'shop.example'), false, 'used up');
-  a.grant('delete', 'mail.example');
+  const el = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/p', doc: 3, targetId: 7, ctx: 'Dell S2721QS — $279.99', selection: '0|' };
+  assert.equal(a.consume(el), null);
+  assert.equal(a.grant({ category: 'purchase', ...el, text: 'Buy the Dell' }), true);
+  assert.equal(a.consume({ ...el, site: 'other.example' }), null, 'other site');
+  for (let i = 0; i < APPROVAL_USES; i++) assert.equal(a.consume(el)?.category, 'purchase');
+  assert.equal(a.consume(el), null, 'used up');
+  a.grant({ category: 'delete', ...el, site: 'mail.example' });
   now += 3 * 60 * 1000;
-  assert.equal(a.consume('delete', 'mail.example'), false, 'expired');
+  assert.equal(a.consume({ ...el, site: 'mail.example' }), null, 'expired');
   a.decline('purchase', 'shop.example');
   assert.equal(a.isDeclined('purchase', 'shop.example'), true);
   assert.equal(a.isDeclined('purchase', 'other.example'), false);
+  // An ordinary step the owner cancels blocks that element and its address, not every step.
+  a.decline('change', 'shop.example', { element: 'tab-1|3|9', href: 'https://shop.example/act/delete?id=1#x' });
+  assert.equal(a.isDeclined('change', 'shop.example'), false);
+  assert.equal(a.isDeclinedElement('tab-1|3|9'), true);
+  assert.equal(a.isDeclinedHref('https://shop.example/act/delete?id=1'), true);
+  assert.equal(a.isDeclinedHref('https://shop.example/act/delete?id=2'), false);
 });
 
 test('a click into a cross-origin payment frame is a purchase', () => {
@@ -214,24 +224,91 @@ test('S7: what a confirm() dialog asks about', () => {
   assert.equal(classifyDialogText('Are you sure?'), null);
 });
 
-test('S3/F1/S9: an approval covers one action, once, on its page, tab and site, within a minute', () => {
+test('S3/F1/S9/RT2-A01: an approval covers one element, in its state, once, on its page, tab and site, within a minute', () => {
   let now = 1000;
   const a = new Approvals(() => now);
-  const dell = { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1#reviews', text: 'Buy the Dell S2721QS 27-inch 4K monitor for $279.99 with Buy now' };
-  assert.equal(a.grant('purchase', 'shop.example', dell), true);
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/lg', label: 'Buy now' }), false, 'another product page');
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-2', url: 'https://shop.example/product/dell?x=1', label: 'Buy now' }), false, 'another tab');
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1', label: 'Delete review' }), false, 'a button the owner did not approve');
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1', label: 'Buy now' }), true, 'the approved action');
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1', label: 'Buy now' }), false, 'once only');
-  a.grant('purchase', 'shop.example', dell);
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1', label: 'Continue', generic: true }), true, 'a generic commit takes the approved meaning');
-  a.grant('purchase', 'shop.example', dell);
+  const cable = { site: 'shop.example', tabId: 'tab-1', url: 'https://shop.example/deals?x=1#top', doc: 2, targetId: 11, ctx: 'USB-C cable, 1 m — $9.00 Buy now', selection: '0|' };
+  const here = { ...cable, url: 'https://shop.example/deals?x=1' };
+  assert.equal(a.grant({ category: 'purchase', ...cable, text: 'Buy the USB-C cable (1 m) for $9.00' }), true);
+  assert.equal(a.consume({ ...here, url: 'https://shop.example/product/lg' }), null, 'another page');
+  assert.equal(a.consume({ ...here, tabId: 'tab-2' }), null, 'another tab');
+  assert.equal(a.consume({ ...here, doc: 3 }), null, 'another document of the page');
+  // RT2-A01: the same label on another item ("Buy now" next to a $2,499 laptop) is another element.
+  assert.equal(a.consume({ ...here, targetId: 12, ctx: 'MacBook Pro 16" — $2,499.00 Buy now' }), null, 'a same-labelled button on another item');
+  assert.equal(a.consume({ ...here, targetId: 12, ctx: cable.ctx }), null, 'another element, even showing the same item');
+  // RT2-A13: the same element after the page swapped the item it belongs to.
+  assert.equal(a.consume({ ...here, ctx: 'MacBook Pro 16" — $2,499.00 Buy now' }), null, 'the item changed');
+  // RT2-A01: a toolbar button after the selection changed ("Select all", then "Delete").
+  assert.equal(a.consume({ ...here, selection: '3|Acme|Accountant|Mom' }), null, 'the selection changed');
+  // A generic "Continue" or "Yes, delete all" is covered only by an approval bound to it.
+  assert.equal(a.consume({ ...here, targetId: 13, ctx: 'Empty inbox? Yes, delete all' }), null, 'a generic label elsewhere');
+  assert.ok(a.consume(here), 'the approved element, as the owner saw it');
+  assert.equal(a.consume(here), null, 'once only');
+  a.grant({ category: 'purchase', ...cable });
   now += 61 * 1000;
-  assert.equal(a.consume('purchase', 'shop.example', { tabId: 'tab-1', url: 'https://shop.example/product/dell?x=1', label: 'Buy now' }), false, 'expired after a minute');
-  // S9: an approval asked while no website was open matches nothing.
-  assert.equal(a.grant('purchase', '', { text: 'Sign up for the newsletter' }), false);
-  assert.equal(a.consume('purchase', 'shop.example', { label: 'Buy now' }), false);
-  assert.equal(a.consumeForDialog(null, 'shop.example', {}), false);
+  assert.equal(a.consume(here), null, 'expired after a minute');
+  // S9: an approval asked while no website was open, or for no element, matches nothing.
+  assert.equal(a.grant({ category: 'purchase', ...cable, site: '' }), false);
+  assert.equal(a.grant({ category: 'purchase', ...cable, targetId: undefined }), false);
+  assert.equal(a.grant({ category: 'purchase', ...cable, tabId: '' }), false);
+  assert.equal(a.live().length, 0);
+  // RT2-A07: there is no way for a page's question to use an approval up.
+  assert.equal(a.consumeForDialog, undefined);
   assert.equal(pageKey('https://shop.example/a?b=1#c'), 'https://shop.example/a?b=1');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Second review (RT2-A10, T4): what the owner's prompt says a step would do
+
+import { classifyComposerShortcut, needsContext, secretKindOf } from '../../../extension/src/background/guard.js';
+
+test('RT2-A10: explicit money, removal and account wording is recognised', () => {
+  const b = (name, extra = {}) => cat({ tag: 'button', role: 'button', name, text: name, ...extra });
+  for (const n of ['Confirm transfer', 'Make payment', 'Make a payment', 'Schedule payment', 'Withdraw funds', 'Cash out', 'Sell now', 'Submit bid', 'Confirm sale', 'Request ride', 'Order']) assert.equal(b(n), 'purchase', n);
+  for (const n of ['Remove card', 'Remove payment method', 'Remove device']) assert.equal(b(n), 'delete', n);
+  for (const n of ['Unlink account', 'Disconnect']) assert.equal(b(n), 'account', n);
+  assert.equal(b('Disconnect from Wi-Fi'), null);
+  for (const n of ['Save for later', 'Add to cart', 'Order history']) assert.equal(b(n), null, n);
+  // A bare verb takes its object from the heading, legend or dialog around it.
+  assert.equal(b('Turn off', { headingText: '2-Step Verification' }), 'account');
+  assert.equal(b('Remove', { headingText: 'Danger zone' }), 'delete');
+  assert.equal(b('Turn off'), null, 'alone it says nothing');
+  assert.equal(b('Confirm', { isSubmit: true, form: { text: 'From: Checking ••1234 To: Alex Amount: $5,000.00' } }), 'purchase', 'a generic Confirm on a transfer review');
+  assert.equal(needsContext('Turn off'), true);
+  assert.equal(needsContext('Buy now'), false);
+  // A radio or switch means what its group says.
+  const radio = (name, groupLabel) => classifyToggle({ tag: 'input', type: 'radio', role: 'radio', isToggle: true, name, groupLabel }, { willCheck: true });
+  assert.equal(radio('Off', 'Two-factor authentication for payments')?.category, 'account');
+  assert.equal(radio('Price: low to high', 'Sort by'), null);
+});
+
+test('RT2-A05: a shortcut in a composer with a Send button is sending', () => {
+  const editor = { tag: 'div', role: 'textbox', isContentEditable: true, nearbyButtons: ['Bold', 'Italic', 'Send'] };
+  assert.equal(classifyComposerShortcut({ key: 's', mods: ['alt'] }, editor)?.category, 'send');
+  assert.equal(classifyComposerShortcut({ key: 's', mods: ['ctrl', 'alt'] }, editor)?.category, 'send');
+  assert.equal(classifyComposerShortcut({ key: 's', mods: [] }, editor), null, 'a typed letter');
+  assert.equal(classifyComposerShortcut({ key: 's', mods: ['alt'] }, { ...editor, nearbyButtons: ['Save'] }), null);
+});
+
+test('T4: reading and typing use one secret rule (the page agent bundles secretKindOf)', () => {
+  const field = (f, extra = {}) => ({ tag: 'input', role: 'textbox', field: { tag: 'input', type: 'text', ...f }, ...extra });
+  const cases = [
+    [field({ name: 'card-number', id: 'card-number' }), 'card'],
+    [field({ name: 'card_number' }), 'card'],
+    [field({ name: 'cc-number' }), 'card'],
+    [field({ name: 'cvc2' }), 'cvv'],
+    [field({ name: 'cvv2' }), 'cvv'],
+    [field({ name: 'security_code' }), 'cvv'],
+    [field({ name: 'pinfield' }, { name: 'Card PIN' }), 'password'],
+    [field({ name: 'otp' }), 'password'],
+    [field({ name: 'ssn' }), 'id'],
+    [field({ name: 'pwd' }), 'password'],
+    [field({ name: 'passwd' }), 'password'],
+    [field({ name: 'x', placeholder: '1234 1234 1234 1234' }), 'card'],
+    [field({ name: 'x' }, { name: 'Password' }), 'password'],
+    [{ tag: 'div', role: 'textbox', isContentEditable: true, name: 'Password' }, 'password'],
+    [field({ name: 'fullname' }, { name: 'Full name' }), null],
+    [field({ name: 'q', type: 'search' }, { name: 'Search products', role: 'searchbox' }), null],
+  ];
+  for (const [desc, kind] of cases) assert.equal(secretKindOf(desc), kind, JSON.stringify(desc));
 });

@@ -78,12 +78,12 @@ test('S1: a drag that starts and ends on "Buy now" asks first; on Cancel no pres
     assert.equal(r.result.is_error, true);
     assert.match(r.result.content, /^Blocked/);
   }
-  assert.deepEqual(guards().map((g) => [g.category, g.verb, g.label]), [['purchase', 'Drag on', 'Buy now'], ['purchase', 'Drag on', 'Buy now']]);
+  assert.deepEqual(guards().map((g) => [g.category, g.verb, g.label]), [['purchase', 'Drag', 'Buy now'], ['purchase', 'Drag', 'Buy now']]);
   assert.equal(presses().length, 0);
   assert.deepEqual(fb.orders || [], []);
 });
 
-test('S1: an approved drag on "Buy now" activates it once; a drag elsewhere asks nothing', async () => {
+test('S1: an approved drag on "Buy now" activates it once; a drag elsewhere asks too (deny by default)', async () => {
   const { call, guards, fb } = setup({ page: shop() });
   await call('screenshot');
   const ok = await call('left_click_drag', { from: at(300, 220), target: at(300, 220) });
@@ -92,7 +92,8 @@ test('S1: an approved drag on "Buy now" activates it once; a drag elsewhere asks
   assert.equal(guards().length, 1);
   const plain = await call('left_click_drag', { from: at(110, 210), target: at(200, 230) });
   assert.ok(!plain.result.is_error, text(plain));
-  assert.equal(guards().length, 1, 'Add to cart needs no approval');
+  assert.equal(guards().length, 2, 'every drag asks the owner');
+  assert.deepEqual([guards()[1].category, guards()[1].consequential], ['change', false], 'as an ordinary step');
 });
 
 test('S1: left_mouse_down on "Buy now" asks first; its approval covers the release on it', async () => {
@@ -123,7 +124,7 @@ test('S2: Space with any modifier, and hold_key Space, on a focused "Buy now" as
     assert.equal(r.result.is_error, true, `${name} ${input.text}`);
     assert.match(r.result.content, /^Blocked/, `${name} ${input.text}`);
   }
-  assert.deepEqual(guards().map((g) => g.verb), ['Press Space on', 'Press Space on', 'Press Space on', 'Press Space on', 'Press Space on', 'Press Space on', 'Press Enter on']);
+  assert.deepEqual(guards().map((g) => g.verb), ['Press ⇧Space on', 'Press Ctrl+Space on', 'Press ⌥Space on', 'Press ⌘Space on', 'Press Space and hold it on', 'Press ⇧Space and hold it on', 'Press Enter and hold it on']);
   assert.ok(guards().every((g) => g.category === 'purchase' && g.label === 'Buy now'));
   assert.equal(keys((p) => p.key === ' ' || p.key === 'Enter').length, 0, 'no Space or Enter reached the page');
   assert.deepEqual(fb.orders || [], []);
@@ -220,9 +221,11 @@ test('S5: form_input and clicks on switches, checkboxes, radios and selects that
   assert.equal(tab.page.elements[1].desc.checked, true);
   assert.equal(tab.page.elements[2].value, '');
   assert.equal(presses().length, 0);
+  // Deny by default: "Remember me" asks too, as an ordinary step (here the owner cancels it).
   const fine = await call('form_input', { target: ref(6), value: true });
-  assert.ok(!fine.result.is_error, text(fine));
-  assert.equal(guards().length, 8, '"Remember me" needs no approval');
+  assert.match(fine.result.content, /^Blocked/);
+  assert.equal(guards().length, 9);
+  assert.deepEqual([guards()[8].category, guards()[8].consequential], ['change', false]);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -435,7 +438,7 @@ test('S14: keys that type characters into a light-DOM password field are refused
 // ---------------------------------------------------------------------------------------------
 // S15: keyboard shortcuts that delete
 
-test('S15: Delete, Backspace and single-key shortcuts outside text fields ask first; editing text does not', async () => {
+test('S15: Delete, Backspace and single-key shortcuts outside text fields ask first (as deletions); editing text asks as an ordinary step', async () => {
   const page = {
     elements: [
       { role: 'option', name: 'Tax return 2025.pdf', x: 0, y: 0, w: 400, h: 30, desc: { tag: 'li' } },
@@ -452,8 +455,10 @@ test('S15: Delete, Backspace and single-key shortcuts outside text fields ask fi
   assert.equal(keys((p) => /^(Delete|Backspace|e|E)$/.test(p.key)).length, 0);
   tab.page.focus = tab.page.elements[1];
   const edit = await call('key', { text: 'BackSpace' });
-  assert.ok(!edit.result.is_error, text(edit));
-  assert.equal(guards().length, 4);
+  assert.match(edit.result.content, /^Blocked/, 'every key but scrolling asks (here: cancelled)');
+  assert.equal(guards().length, 5);
+  assert.deepEqual([guards()[4].category, guards()[4].consequential], ['change', false], 'not as a deletion');
+  assert.equal(keys((p) => /^(Delete|Backspace|e|E)$/.test(p.key)).length, 0);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -547,4 +552,250 @@ test('F7: navigating away from a page with unsaved changes is refused, with the 
   assert.equal(s.tab.url, 'https://notes.example/draft');
   const next = await s.call('list_tabs');
   assert.doesNotMatch(JSON.stringify(next.result), /beforeunload/, 'no stale note later');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Second review (deny by default; RT2-A02–A15, T1, T5, T8, T11)
+
+const ok = () => null;
+const declineAll = () => DECLINE;
+const SELECT_PAGE = {
+  elements: [
+    { role: 'combobox', name: 'Actions', x: 0, y: 0, w: 300, h: 30, value: '', desc: { tag: 'select', options: ['Choose…', 'Mark all as read', 'Delete all messages'] } },
+    { role: 'radio', name: 'Disable two-factor authentication', x: 0, y: 50, w: 300, h: 20, desc: { tag: 'input', type: 'radio', isToggle: true, checked: false, groupLabel: 'Sign-in protection' } },
+  ],
+};
+
+test('RT2-A04: letters, arrows, Home/End and held keys on a select or a radio are refused before any key is sent', async () => {
+  const s = setup({ page: SELECT_PAGE, policy: { guard: ok } });
+  s.tab.page.focus = s.tab.page.elements[0];
+  for (const [name, input] of [['key', { text: 'd' }], ['key', { text: 'End' }], ['key', { text: 'ArrowDown' }], ['key', { text: 'PageDown' }], ['hold_key', { text: 'End', duration: 0 }]]) {
+    const r = await s.call(name, input);
+    assert.match(text(r), /use form_input/, `${name} ${input.text}`);
+  }
+  s.tab.page.focus = s.tab.page.elements[1];
+  for (const k of ['ArrowDown', 'ArrowRight', 'Home']) assert.match(text(await s.call('key', { text: k })), /use form_input/, `radio ${k}`);
+  assert.equal(s.keys().length, 0, 'no key event at all');
+  assert.equal(s.guards().length, 0, 'refused, not asked');
+  assert.equal(s.tab.page.elements[0].value, '');
+});
+
+test('RT2-A05: Alt+S in a composer asks as sending; on the page it asks as a shortcut; Cancel sends nothing', async () => {
+  const page = { elements: [{ role: 'textbox', name: 'Message body', x: 0, y: 0, w: 300, h: 80, desc: { tag: 'div', isContentEditable: true, multiline: true, nearbyButtons: ['Bold', 'Send'] } }] };
+  const s = setup({ page, policy: { guard: declineAll } });
+  s.tab.page.focus = s.tab.page.elements[0];
+  assert.match(text(await s.call('key', { text: 'alt+s' })), /^Blocked/);
+  assert.equal(s.guards()[0].category, 'send');
+  s.tab.page.focus = null;
+  const t = setup({ page, policy: { guard: declineAll } });
+  assert.match(text(await t.call('key', { text: 'alt+s' })), /^Blocked/);
+  assert.equal(t.guards()[0].category, 'shortcut');
+  assert.equal(s.keys((p) => p.key === 's').length + t.keys((p) => p.key === 's').length, 0);
+});
+
+test('RT2-A06: form_input on a submit, button, reset, image, hidden or file input is refused (it would rename or set it)', async () => {
+  const types = ['submit', 'button', 'reset', 'image', 'hidden', 'file'];
+  const page = { elements: types.map((type, i) => ({ role: 'button', name: `Place order ${i}`, x: 0, y: i * 40, w: 200, h: 30, desc: { tag: 'input', type } })) };
+  const s = setup({ page, policy: { guard: ok } });
+  await s.call('read_page', {});
+  for (let i = 0; i < types.length; i++) {
+    const r = await s.call('form_input', { target: { type: 'ref', ref: `ref_${i + 1}` }, value: 'Search' });
+    assert.match(text(r), /not a form field/, types[i]);
+  }
+  assert.equal(s.fb.calls.filter((c) => c.method === 'Runtime.callFunctionOn' && c.params.arguments?.[0]?.value === 'formInput').length, 0, 'the page never got formInput');
+});
+
+test('RT2-A08: navigate "reload" on the result of a submitted form is refused (no Page.reload); a GET page reloads', async () => {
+  const s = setup({ url: 'https://shop.example/order', page: shop(), policy: { guard: ok } });
+  s.tab.transitions = ['form_submit'];
+  const r = await s.call('navigate', { url: 'reload' });
+  assert.match(text(r), /result of a form that was submitted/);
+  assert.equal(s.fb.reloads || 0, 0);
+  // After one reload Chrome reports the entry as "reload": it is remembered by id.
+  s.tab.transitions = ['reload'];
+  assert.match(text(await s.call('navigate', { url: 'reload' })), /result of a form that was submitted/);
+  const g = setup({ url: 'https://shop.example/', page: shop(), policy: { guard: ok } });
+  g.fb.routes['https://shop.example/'] = { title: 'Shop' };
+  const fine = await g.call('navigate', { url: 'reload' });
+  assert.ok(!fine.result.is_error, text(fine));
+  assert.equal(g.fb.reloads, 1);
+});
+
+test('RT2-A09/T6: key and hold_key never paste (or copy, or cut), whatever has the focus', async () => {
+  const page = { elements: [
+    { role: 'textbox', name: 'Password', x: 0, y: 0, w: 100, h: 20, desc: { tag: 'input', field: { type: 'password' }, looksSecret: true } },
+    { role: 'searchbox', name: 'Search', x: 0, y: 40, w: 100, h: 20, desc: { tag: 'input', type: 'search', field: { type: 'search' } } },
+  ] };
+  const s = setup({ page, policy: { guard: ok } });
+  for (const focus of [s.tab.page.elements[0], s.tab.page.elements[1], null]) {
+    s.tab.page.focus = focus;
+    for (const [name, input] of [['key', { text: 'cmd+v' }], ['key', { text: 'ctrl+v' }], ['key', { text: 'cmd+shift+v' }], ['key', { text: 'ctrl+shift+v' }], ['key', { text: 'shift+Insert' }], ['key', { text: 'cmd+alt+shift+v' }], ['hold_key', { text: 'cmd+v', duration: 0 }], ['key', { text: 'cmd+c' }], ['key', { text: 'ctrl+x' }]]) {
+      assert.match(text(await s.call(name, input)), /^Refused: Jarvis never (pastes|copies)/, `${name} ${input.text} on ${focus?.name || 'the page'}`);
+    }
+  }
+  assert.equal(s.keys((p) => /^(v|V|Insert|c|x)$/.test(p.key) || (p.commands || []).length).length, 0, 'no such key event, no editing command');
+  assert.equal(s.guards().length, 0);
+});
+
+test('RT2-A11/T9: keys into a frame from a denied site are refused; an allowed one asks, naming the frame\'s site', async () => {
+  const deny = (u) => (siteOf(u) === 'bank.example' ? 'Error: the owner did not allow Jarvis to work on bank.example.' : null);
+  const a = setup({ url: 'https://host.example/offers', page: framePage({ src: 'https://cdn.example/w' }), policy: { site: deny, guard: ok } });
+  await a.call('screenshot');
+  a.tab.page.focus = a.tab.page.elements[0];
+  withFrameSession(a, 'https://bank.example/plan');
+  for (const k of ['ArrowDown', 'Tab', 'End', 'Enter', 'Delete']) assert.match(text(await a.call('key', { text: k })), /did not allow Jarvis to work on bank\.example/, k);
+  assert.match(text(await a.call('key', { text: 'ctrl+v' })), /^Refused/);
+  assert.equal(a.keys().length, 0);
+  assert.ok(a.asked.some((x) => x[0] === 'site' && x[1] === 'https://bank.example/plan'), 'the frame’s real address was checked, not its src');
+  const b = setup({ url: 'https://host.example/offers', page: framePage(), policy: { guard: declineAll } });
+  await b.call('screenshot');
+  b.tab.page.focus = b.tab.page.elements[0];
+  withFrameSession(b, 'https://widget.example/inner');
+  assert.match(text(await b.call('key', { text: 'ArrowDown' })), /^Blocked/);
+  const g = b.guards()[0];
+  assert.deepEqual([g.category, g.label, g.site], ['frame', 'a box from widget.example', 'widget.example']);
+  assert.match(text(await b.call('type', { text: 'hi' })), /^Refused/);
+  assert.equal(b.keys().length, 0);
+});
+
+test('RT2-A12: a denied site nested inside an allowed frame is refused; a frame that moves while the owner decides is not clicked', async () => {
+  const deny = (u) => (siteOf(u) === 'deny.example' ? 'Error: the owner did not allow Jarvis to work on deny.example.' : null);
+  const nest = (s, innerUrl) => {
+    s.tab.childFrames = [{ sessionId: 'S1', url: 'https://mid.example/mid', frames: [{ frameId: 'FR2', x: 20, y: 20, w: 200, h: 80 }] }, { sessionId: 'S2', url: innerUrl }];
+    s.fb.emit(s.tab, 'Target.attachedToTarget', { sessionId: 'S1', targetInfo: { targetId: 'FR1', type: 'iframe', url: 'https://mid.example/mid' } });
+    s.fb.emit(s.tab, 'Target.attachedToTarget', { sessionId: 'S2', targetInfo: { targetId: 'FR2', type: 'iframe', url: innerUrl } }, 'S1');
+  };
+  const a = setup({ url: 'https://host.example/offers', page: framePage({ src: 'https://mid.example/mid' }), policy: { site: deny, guard: ok } });
+  await a.call('screenshot');
+  nest(a, 'https://deny.example/btn');
+  const r = await a.call('left_click', { target: at(60, 60) });
+  assert.match(text(r), /did not allow Jarvis to work on deny\.example/);
+  assert.equal(a.presses().length, 0);
+  // A frame that loads another page while the owner decides.
+  let b;
+  b = setup({ url: 'https://host.example/offers', page: framePage({ src: 'https://ok.example/w' }), policy: { guard: () => {
+    b.tab.childFrames[0].url = 'https://deny.example/btn';
+    b.fb.emit(b.tab, 'Target.targetInfoChanged', { targetInfo: { targetId: 'FR1', type: 'iframe', url: 'https://deny.example/btn' } });
+    return null;
+  } } });
+  await b.call('screenshot');
+  withFrameSession(b, 'https://ok.example/w');
+  const m = await b.call('left_click', { target: at(60, 60) });
+  assert.match(text(m), /page changed while the owner was deciding/);
+  assert.equal(b.guards()[0].label, 'a box from ok.example');
+  assert.equal(b.presses().length, 0);
+});
+
+test('RT2-A14: a middle click asks like a left click and stays declined; navigate to a declined address is refused', async () => {
+  const page = { elements: [{ role: 'link', name: 'Delete', x: 0, y: 0, w: 80, h: 20, desc: { tag: 'a', href: 'https://mail.example/act/delete?id=1' } }] };
+  let declined = false;
+  const s = setup({ url: 'https://mail.example/old', page, policy: { guard: (c) => {
+    if (c.category === 'delete') declined = true;
+    return DECLINE;
+  } } });
+  s.ex.policy.isDeclinedHref = (u) => declined && /act\/delete\?id=1/.test(u);
+  await s.call('read_page', {});
+  assert.match(text(await s.call('middle_click', { target: { type: 'ref', ref: 'ref_1' } })), /^Blocked/);
+  assert.deepEqual(s.guards().map((g) => [g.category, g.verb]), [['delete', 'Middle-click (opens it in a new tab)']]);
+  // Declined: the same link, by any button, is not asked about again.
+  for (const name of ['middle_click', 'right_click', 'left_click']) assert.match(text(await s.call(name, { target: { type: 'ref', ref: 'ref_1' } })), /^Blocked/, name);
+  assert.equal(s.guards().length, 1, 'asked once');
+  assert.equal(s.presses().length, 0);
+  assert.match(text(await s.call('navigate', { url: 'https://mail.example/act/delete?id=1' })), /^Blocked: the owner declined a step that opens this address/);
+  // A right click on such a link asks too.
+  const r = setup({ url: 'https://mail.example/old', page: structuredClone(page), policy: { guard: declineAll } });
+  await r.call('read_page', {});
+  assert.match(text(await r.call('right_click', { target: { type: 'ref', ref: 'ref_1' } })), /^Blocked/);
+  assert.deepEqual(r.guards().map((g) => [g.category, g.verb]), [['delete', 'Right-click']]);
+  assert.equal(r.presses().length, 0);
+});
+
+test('RT2-A15: a link to another site asks for that site before the click; a denied one is never clicked', async () => {
+  const deny = (u) => (siteOf(u) === 'bank.example' ? 'Error: the owner did not allow Jarvis to work on bank.example.' : null);
+  const page = { elements: [{ role: 'link', name: 'Read the analysis', x: 0, y: 0, w: 200, h: 20, desc: { tag: 'a', href: 'https://bank.example/act/transfer?to=evil' } }] };
+  const s = setup({ url: 'https://news.example/story', page, policy: { site: deny, guard: ok } });
+  await s.call('read_page', {});
+  const r = await s.call('left_click', { target: { type: 'ref', ref: 'ref_1' } });
+  assert.match(text(r), /did not allow Jarvis to work on bank\.example/);
+  assert.ok(s.asked.some((x) => x[0] === 'site' && x[1] === 'https://bank.example/act/transfer?to=evil'));
+  assert.equal(s.presses().length, 0);
+});
+
+test('RT2-A02/T7: navigate to an installer asks first; an address that turns out to be a download reports what the owner decided', async () => {
+  const s = setup({ url: 'https://dl.example/app', page: shop(), policy: { guard: declineAll } });
+  const r = await s.call('navigate', { url: 'https://dl.example/files/Setup.dmg' });
+  assert.match(text(r), /^Blocked/);
+  assert.deepEqual([s.guards()[0].category, s.guards()[0].verb, s.guards()[0].label], ['download', 'Download', 'Setup.dmg']);
+  assert.deepEqual(s.fb.downloads || [], [], 'nothing was fetched');
+  const t = setup({ url: 'https://dl.example/app', page: shop(), policy: { guard: ok } });
+  t.fb.routes['https://dl.example/get?id=42'] = { download: true };
+  t.ex.policy.awaitDownload = async () => 'declined';
+  const d = await t.call('navigate', { url: 'https://dl.example/get?id=42' });
+  assert.match(text(d), /^Blocked: that address is a file download/);
+  assert.doesNotMatch(text(d), /may be unavailable/);
+  t.ex.policy.awaitDownload = async () => 'approved';
+  const ok2 = await t.call('navigate', { url: 'https://dl.example/get?id=42' });
+  assert.match(text(ok2), /The owner approved it/);
+});
+
+test('T5: every capture masks the private fields first; other sites\' payment boxes are painted over; no mask, no picture', async () => {
+  const s = setup({ page: shop(), policy: { guard: ok } });
+  s.tab.page.secretRects = [{ x: 10, y: 20, w: 100, h: 30 }];
+  const r = await s.call('screenshot');
+  assert.ok(!r.result.is_error, text(r));
+  const shotAt = s.fb.calls.findIndex((c) => c.method === 'Runtime.callFunctionOn' && c.params.arguments?.[0]?.value === 'shot' && c.params.arguments?.[1]?.value?.on === true);
+  const capAt = s.fb.calls.findIndex((c) => c.method === 'Page.captureScreenshot');
+  assert.ok(shotAt >= 0 && shotAt < capAt, 'private fields masked before the capture');
+  assert.ok(s.fb.shots.some((a) => a.on === false), 'and restored after');
+  assert.deepEqual(fakeEncoder.last.masked, [{ x: 10, y: 20, w: 100, h: 30 }], 'the payment box is painted over');
+  s.tab.page.fail = { shot: true };
+  const no = await s.call('screenshot');
+  assert.equal(no.result.is_error, true);
+  assert.match(text(no), /could not hide this page's private fields/);
+  assert.match(text(await s.call('zoom', { region: [0, 0, 100, 100] })), /could not hide/);
+});
+
+test('T8: tabs on sites the owner has not allowed are listed without their title or full address, and get no picture', async () => {
+  const s = setup({ url: 'https://secret.example/inbox?token=SECRET', page: { title: 'Inbox - owner@example.com', elements: [] }, policy: { guard: ok } });
+  s.tab.title = 'Inbox - owner@example.com';
+  s.ex.policy.isAllowed = (site) => site === 'shop.example';
+  const r = await s.call('list_tabs');
+  const tabs = r.result.content[0].tabs;
+  assert.deepEqual([tabs[0].title, tabs[0].url], ['Site not allowed yet', 'https://secret.example/']);
+  assert.doesNotMatch(JSON.stringify(r.result), /owner@example|SECRET/);
+  const before = s.fb.calls.filter((c) => c.method === 'Page.captureScreenshot').length;
+  await s.call('switch_tab', { tab_id: 'tab-1' });
+  assert.equal(s.fb.calls.filter((c) => c.method === 'Page.captureScreenshot').length, before, 'no thumbnail of it');
+  s.ex.policy.isAllowed = () => true;
+  assert.equal((await s.call('list_tabs')).result.content[0].tabs[0].title, 'Inbox - owner@example.com', 'once allowed, the real title');
+});
+
+test('T11: close_tab on a tab that never closes (it asked "Leave site?") returns an error instead of hanging', async () => {
+  const s = setup({ page: shop(), policy: { guard: ok } });
+  s.fb.chrome.tabs.remove = () => new Promise(() => {}); // Chrome waits while the owner chooses Stay
+  const t0 = Date.now();
+  const r = await s.call('close_tab', { tab_id: 'tab-1' });
+  assert.match(text(r), /has unsaved changes/);
+  assert.ok(Date.now() - t0 < 5000, 'within the timeout');
+  assert.equal(s.guards()[0].verb, 'Close', 'the owner’s own tab: asked first');
+});
+
+test('T1: input during which the page rewrote itself (document.open) fails: Jarvis cannot tell what it did', async () => {
+  const s = setup({ page: shop(), policy: { guard: ok } });
+  await s.call('read_page', {});
+  s.tab.page.rewritten = true;
+  const r = await s.call('left_click', { target: { type: 'ref', ref: 'ref_2' } });
+  assert.match(text(r), /rewrote itself/);
+  assert.equal(s.notices.length, 1, 'the owner is told');
+});
+
+test('RT2-A13: an element whose item changed while the owner decided is not clicked; one whose name changed neither', async () => {
+  let s;
+  s = setup({ page: shop(), policy: { guard: () => {
+    s.tab.page.elements[2].ctx = 'MacBook Pro 16 — $2,499.00';
+    return null;
+  } } });
+  await s.call('read_page', {});
+  assert.match(text(await s.call('left_click', { target: { type: 'ref', ref: 'ref_3' } })), /page changed while the owner was deciding/);
+  assert.equal(s.presses().length, 0);
 });

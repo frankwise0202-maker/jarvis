@@ -110,3 +110,14 @@ export function wrapUntrusted(content, { tabId, url, kind = 'page' } = {}) {
   const text = `${note ? `${note}\n\n` : ''}${open}\n${body}\n</${UNTRUSTED_TAG}>`;
   return { text, injections };
 }
+
+/**
+ * Page text quoted inside a sentence (an element's name in a refusal or an error): marked as page
+ * content and scanned like any page read. Returns { text, injections }.
+ */
+export function inlineUntrusted(content, { kind = 'element_name' } = {}) {
+  const raw = String(content ?? '');
+  const injections = detectInjection(raw);
+  const text = `<${UNTRUSTED_TAG} kind="${attr(kind)}">${neutralize(raw).replace(/[\r\n]+/g, ' ')}</${UNTRUSTED_TAG}>`;
+  return { text, injections };
+}

@@ -29,7 +29,7 @@
     "sidePanel",
     "debugger",
     "tabs",
-    "activeTab",
+    "downloads",
     "storage"
   ],
   "host_permissions": [

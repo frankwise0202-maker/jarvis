@@ -57,7 +57,7 @@ const dragBuy = {
     await run.decide('site', 'once');
     const body = await run.decide('confirm', 'cancel');
     await run.waitStatus('done');
-    assert(/Drag on "Buy now"/.test(body) && /purchase/.test(body), `the drag is shown to the owner (${body})`);
+    assert(/Drag "Buy now"/.test(body) && /purchase/.test(body), `the drag is shown to the owner (${body})`);
     assert(sites.state.orders.length === 0, `no order (${JSON.stringify(sites.state.orders)})`);
     assert(result.isError && /^Blocked/.test(result.text), `Claude is told (${result.text})`);
   },
@@ -92,7 +92,7 @@ const spaceBuy = {
     await run.waitStatus('done');
     prompts.stop();
     assert(seen.focus === 'buy', `focus was on Buy now (${seen.focus})`);
-    assert(/Press Space on "Buy now"/.test(body), body);
+    assert(/Press Space and hold it on "Buy now"/.test(body), body);
     assert(seen.hold.isError && /^Blocked/.test(seen.hold.text) && seen.shift.isError && /^Blocked/.test(seen.shift.text), `both blocked (${seen.hold.text} | ${seen.shift.text})`);
     assert(prompts.confirms().length === 1, 'Shift+Space after Cancel is blocked without asking again');
     assert(sites.state.orders.length === 0, `no order (${JSON.stringify(sites.state.orders)})`);
@@ -126,9 +126,10 @@ const approvalScope = {
     // 2. request_confirmation for the Dell does not cover the LG.
     let approvedText = '';
     mock.script([
-      () => ({ calls: [{ name: 'navigate', input: { url: url('dell-s2721qs') } }, { name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell S2721QS 27-inch 4K monitor for $279.99 with Buy now on shop.localhost', category: 'purchase' } }] }),
+      () => ({ calls: [{ name: 'navigate', input: { url: url('dell-s2721qs') } }, read] }),
+      (ctx) => ({ calls: [{ name: 'request_confirmation', custom: true, input: { action: 'Buy the Dell S2721QS 27-inch 4K monitor for $279.99 with Buy now on shop.localhost', category: 'purchase', target: ref(ctx, /button "Buy now"/) } }] }),
       (ctx) => {
-        approvedText = ctx.results[1].text;
+        approvedText = ctx.results[0].text;
         return { calls: [{ name: 'navigate', input: { url: url('lg-27up850') } }, read] };
       },
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Buy now"/) } }] }),
@@ -138,13 +139,13 @@ const approvalScope = {
     await run.decide('confirm', 'approve');
     await run.decide('confirm', 'cancel');
     await run.waitStatus('done');
-    assert(/exactly this one action, on this page/.test(approvedText) && !/two minutes/.test(approvedText), approvedText);
+    assert(/exactly this one step on the element you named/.test(approvedText) && !/two minutes/.test(approvedText), approvedText);
     assert(sites.state.orders.length === 1, `the LG was not bought (${JSON.stringify(sites.state.orders)})`);
     // 3. Asking from a blank tab: an error for Claude, no prompt.
     const before = prompts.confirms().length;
     let blank;
     mock.script([
-      () => ({ calls: [{ name: 'new_tab', input: {} }, { name: 'request_confirmation', custom: true, input: { action: 'Sign you up for the free weekly deals newsletter', category: 'purchase' } }] }),
+      () => ({ calls: [{ name: 'new_tab', input: {} }, { name: 'request_confirmation', custom: true, input: { action: 'Sign you up for the free weekly deals newsletter', category: 'purchase', target: { type: 'coordinate', x: 100, y: 100 } } }] }),
       (ctx) => {
         blank = ctx.results[1];
         return { answer: 'Open a shop first.' };
@@ -161,26 +162,35 @@ const approvalScope = {
 
 const otherButtons = {
   name: 'other-buttons',
-  title: 'A right click or a middle click (new tab) on a "Buy now" link is not a purchase and is not blocked',
+  title: 'RT2-A14: a right click or a middle click (new tab) on a "Buy now" link asks like a left click; Cancel buys nothing',
   async run(run) {
     const { mock, sites } = run.server;
     const prompts = watchPrompts(run);
     const seen = {};
     mock.script([
       () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/buy-link') } }, read] }),
-      (ctx) => ({ calls: [{ name: 'right_click', input: { target: ref(ctx, /link "Buy now"/) } }, { name: 'key', input: { text: 'Escape' } }, { name: 'middle_click', input: { target: ref(ctx, /link "Buy now"/) } }] }),
+      (ctx) => ({ calls: [{ name: 'right_click', input: { target: ref(ctx, /link "Buy now"/) } }] }),
       (ctx) => {
-        seen.results = ctx.results;
-        return { answer: 'Opened it in a new tab.' };
+        seen.right = ctx.results[0];
+        return { calls: [{ name: 'middle_click', input: { target: ref(ctx, /link "Buy now"/) } }] };
+      },
+      (ctx) => {
+        seen.middle = ctx.results[0];
+        return { answer: 'Did not open it.' };
       },
     ]);
     await run.send('Open the Pro plan in a new tab');
     await run.decide('site', 'once');
+    const body = await run.decide('confirm', 'cancel');
     await run.waitStatus('done');
     prompts.stop();
-    assert(seen.results.every((r) => !r.isError), seen.results.map((r) => r.text).join(' | '));
-    assert(prompts.confirms().length === 0, 'no prompt');
+    assert(/Right-click "Buy now"/.test(body) && /purchase/.test(body), body);
+    assert(seen.right.isError && /^Blocked/.test(seen.right.text), seen.right.text);
+    // The purchase was declined: the middle click (the same address in a new tab) is blocked too.
+    assert(seen.middle.isError && /^Blocked: the owner already declined/.test(seen.middle.text), seen.middle.text);
+    assert(prompts.confirms().length === 1, 'no second prompt after Cancel');
     assert(events(run, '/api/order').length === 0 && sites.state.orders.length === 0, 'nothing bought');
+    assert((await run.attachedTabs()).length <= 1, 'no new tab');
   },
 };
 
@@ -202,7 +212,7 @@ const enterSubmit = {
     await run.decide('site', 'once');
     const body = await run.decide('confirm', 'approve');
     await run.waitStatus('done');
-    assert(/Press Enter on "Place order"/.test(body), body);
+    assert(/Press Enter in "Full name"/.test(body) && /purchase/.test(body) && /"Place order"/.test(body), body);
     assert(!result.isError, result.text);
     await waitFor(() => sites.state.orders.length === 1, { message: 'one order' });
     await sleep(300);
@@ -342,34 +352,36 @@ const frames = {
 
 const dialogs = {
   name: 'dialogs',
-  title: "S7: a purchase approval does not accept a delete confirm(); the approved click's own confirm() is accepted",
+  title: "S7/RT2-A07: a page's confirm() is the owner's question: Jarvis shows it and answers only what the owner answers",
   async run(run) {
     const { mock } = run.server;
     const seen = {};
     mock.script([
-      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/pro') } }, read] }),
-      (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Buy now"/) } }] }),
-      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/profile') } }, read] }),
-      (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Remove"/) } }] }),
-      (ctx) => {
-        seen.remove = ctx.results[0];
-        return { calls: [{ name: 'navigate', input: { url: safe(run, '/pro-confirm') } }, read] };
-      },
+      () => ({ calls: [{ name: 'navigate', input: { url: safe(run, '/pro-confirm') } }, read] }),
       (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Buy now"/) } }] }),
       (ctx) => {
         seen.buy = ctx.results[0];
+        return { calls: [{ name: 'navigate', input: { url: safe(run, '/profile') } }, read] };
+      },
+      (ctx) => ({ calls: [{ name: 'left_click', input: { target: ref(ctx, /button "Remove"/) } }] }),
+      (ctx) => {
+        seen.remove = ctx.results[0];
         return { answer: 'Done.' };
       },
     ]);
     await run.send('Buy the Pro plan, then tidy my profile');
     await run.decide('site', 'always');
-    await run.decide('confirm', 'approve');
-    await run.decide('confirm', 'approve');
+    await run.decide('confirm', 'approve'); // the guard: Click "Buy now"
+    const q1 = await run.decide('confirm', 'approve'); // the page: "Place your order …?"
+    await run.decide('confirm', 'approve'); // the guard: Click "Remove" (deleting, by its section)
+    const q2 = await run.decide('confirm', 'cancel'); // the page: "Permanently delete your account …?"
     await run.waitStatus('done');
-    assert(/Jarvis dismissed it/.test(seen.remove.text) && /request_confirmation/.test(seen.remove.text), seen.remove.text);
+    assert(/^The page safe\.localhost\/pro-confirm asks: “Place your order for the Pro plan/.test(q1), q1);
+    assert(/^The page safe\.localhost\/profile asks: “Permanently delete your account/.test(q2) && /as Jarvis is clicking "Remove"/.test(q2), q2);
+    assert(/the owner answered OK/.test(seen.buy.text), seen.buy.text);
+    assert(/the owner answered Cancel/.test(seen.remove.text), seen.remove.text);
     assert(events(run, '/api/delete-account').length === 0, 'the account was not deleted');
-    assert(/Jarvis accepted it/.test(seen.buy.text), seen.buy.text);
-    assert(events(run, '/api/order').map((e) => e.body.via).join(',') === 'pro,pro-confirm', JSON.stringify(events(run)));
+    assert(events(run, '/api/order').map((e) => e.body.via).join(',') === 'pro-confirm', JSON.stringify(events(run)));
   },
 };
 

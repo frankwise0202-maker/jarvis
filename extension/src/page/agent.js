@@ -7,18 +7,24 @@
 //     get_page_text (rendered text only: most ways of hiding text from the reader are filtered);
 //   - targets: resolving a ref or a viewport point to a click point plus a description of the
 //     element for the safety guard, the focused field, and form_input;
-//   - the activation check: while Jarvis sends a click or a key, the element that really receives
-//     it is classified again (with the same guard rules as the service worker, bundled from
-//     background/guard.js); a consequential element the owner did not approve is not activated.
+//   - the activation check, the one choke point for Jarvis's input: while Jarvis sends a click, a
+//     key or text, every trusted pointer, key, text and form-change event is checked against the
+//     single step the owner approved (that exact element, with the same item around it); anything
+//     else is cancelled before the page sees it (deny by default).
 // Bundled into an IIFE string at build time. The service worker injects it at document start in
 // its isolated world (so its Esc and activation listeners come before the page's own), evaluates
 // it again on the current document, and then calls globalThis.__jarvis.call(op, args).
 
-import { classifyAction, isGenericLabel, normalizeLabel } from '../background/guard.js';
+import { classifyAction, needsContext, pageKey, secretKind, secretKindOf } from '../background/guard.js';
 
 (() => {
-  const VERSION = 4;
-  if (globalThis.__jarvis && globalThis.__jarvis.version === VERSION) return;
+  const VERSION = 5;
+  if (globalThis.__jarvis && globalThis.__jarvis.version === VERSION) {
+    // Evaluated again on a document the page rewrote with document.open(): the agent's state
+    // survived, its listeners did not. Put them back.
+    globalThis.__jarvis.heal?.();
+    return;
+  }
 
   const BINDING = '__jarvisBar';
   const MAX_TEXT = 50000;
@@ -40,10 +46,16 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     observer: null,
     watchdog: 0,
     root: null, // the overlay's inner wrapper (its state lives in the closed shadow root, not on the host)
-    tamper: 0, // heartbeats in a row on which the bar was hidden or covered
-    targets: new Map(), // target id -> WeakRef(Element): what resolveTarget pointed at
+    mountedOn: null, // the <html> element the overlay was mounted in (a rewritten document gets a new one)
+    hiddenBeats: [], // the last heartbeats: whether the bar was hidden or covered when each began
+    sawHidden: false, // the fast check saw the bar hidden or covered since the last heartbeat
+    sampler: 0,
+    pass: false, // Jarvis's own clicks pass through the bar right now
+    targets: new Map(), // target id -> WeakRef(Element): elements Jarvis pointed at
+    targetIds: new WeakMap(), // Element -> its target id (one id per element for this document)
     nextTarget: 1,
     armed: null, // the activation check while Jarvis sends input (see arm())
+    childWindows: new WeakSet(), // same-site frames without an agent of their own, checked from here
   };
 
   // -------------------------------------------------------------------------------------------
@@ -93,9 +105,18 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     @media (prefers-reduced-motion: reduce) { .frame, .core { animation: none; } }
   `;
 
+  // The host's own styles, set through the CSSOM (a page's Content-Security-Policy can forbid
+  // style attributes and <style> elements, but not this).
+  const HOST_STYLE = [['all', 'initial'], ['position', 'fixed'], ['inset', '0'], ['z-index', '2147483647'], ['pointer-events', 'none'], ['display', 'block']];
+  function setHostStyles(h) {
+    h.style.cssText = '';
+    for (const [prop, value] of HOST_STYLE) h.style.setProperty(prop, value, 'important');
+  }
+  const hostStyled = (h) => HOST_STYLE.every(([prop, value]) => prop === 'all' || (h.style.getPropertyValue(prop) === value && h.style.getPropertyPriority(prop) === 'important'));
+
   function buildOverlay() {
     const host = document.createElement('jarvis-control-overlay');
-    host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; display: block;';
+    setHostStyles(host);
     // In the top layer, above the page's own modal dialogs (raised again on every heartbeat).
     try {
       host.popover = 'manual';
@@ -103,10 +124,18 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       /* no popover support: the z-index still applies */
     }
     const shadow = host.attachShadow({ mode: 'closed' });
+    // A constructed style sheet: unlike a <style> element, a page's CSP (style-src) does not block it.
+    let adopted = false;
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(OVERLAY_CSS);
+      shadow.adoptedStyleSheets = [sheet];
+      adopted = true;
+    } catch {
+      adopted = false;
+    }
     const root = document.createElement('div');
     root.className = 'root';
-    const style = document.createElement('style');
-    style.textContent = OVERLAY_CSS;
     const frame = document.createElement('div');
     frame.className = 'frame';
     const bar = document.createElement('div');
@@ -146,11 +175,25 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     }
     bar.append(core, name, label, sep, stop, key);
     root.append(frame, bar);
-    shadow.append(style, root);
+    if (adopted) shadow.append(root);
+    else {
+      const style = document.createElement('style');
+      style.textContent = OVERLAY_CSS;
+      shadow.append(style, root);
+    }
     state.host = host;
     state.root = root;
     state.bar = bar;
     state.label = label;
+    state.root.classList.toggle('pass', state.pass);
+    // Count (never fight) a page hiding the host: `inert`, `hidden`, styles.
+    try {
+      new MutationObserver(() => {
+        if (state.mode !== 'hidden' && state.host === host) state.sawHidden = true;
+      }).observe(host, { attributes: true });
+    } catch {
+      /* ignore */
+    }
     return host;
   }
 
@@ -174,6 +217,7 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
   function overlayVisible() {
     const host = state.host;
     if (!host || !host.isConnected || !state.bar) return false;
+    if (host.inert || host.closest?.('[inert]')) return false;
     if (typeof host.checkVisibility === 'function' && !host.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
     const hr = host.getBoundingClientRect();
     const vw = document.documentElement?.clientWidth || innerWidth;
@@ -185,9 +229,21 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return top === host;
   }
 
+  /** The overlay's own styles did not apply (a strict page CSP in a Chrome without constructed sheets). */
+  function stylesBlocked() {
+    try {
+      return !!state.bar && state.bar.isConnected && getComputedStyle(state.bar).position !== 'fixed';
+    } catch {
+      return false;
+    }
+  }
+
   function mountOverlay() {
     if (state.mode === 'hidden') return;
-    if (!state.host) buildOverlay();
+    // A host that left the document (the page rebuilt <html>, or rewrote itself with
+    // document.open(), which also erases the listeners of the old host's Stop button) is replaced
+    // by a new one.
+    if (!state.host || !state.host.isConnected) buildOverlay();
     state.root.classList.toggle('waiting', state.mode === 'waiting');
     state.label.textContent = state.mode === 'waiting' ? 'is waiting for you' : 'is in control';
     const parent = document.documentElement || document.body;
@@ -203,25 +259,26 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
         if (r && state.host) state.host.dataset.testStop = JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
       });
     }
-    if (!state.observer && parent) {
+    if (parent && state.mountedOn !== parent) {
       // Pages that rebuild <html>'s children must not remove the control bar. (Attributes a page
       // sets on the host are put back on the next heartbeat, not here: a page observer fighting
       // this one could otherwise loop forever.)
+      state.observer?.disconnect();
       state.observer = new MutationObserver(() => {
         if (state.mode !== 'hidden' && state.host && !state.host.isConnected) mountOverlay();
       });
       state.observer.observe(parent, { childList: true });
+      state.mountedOn = parent;
     }
   }
 
   function restoreHost() {
     const host = state.host;
-    const want = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; display: block;';
     for (const a of [...host.attributes]) {
-      if (a.name === 'style' || a.name === 'popover' || (a.name === 'data-test-stop')) continue;
+      if (a.name === 'style' || a.name === 'popover' || a.name === 'data-test-stop') continue;
       host.removeAttribute(a.name);
     }
-    if (host.getAttribute('style') !== want) host.setAttribute('style', want);
+    if (!hostStyled(host)) setHostStyles(host);
     if (host.getAttribute('popover') !== 'manual') {
       try {
         host.popover = 'manual';
@@ -238,6 +295,7 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     if (state.observer) {
       state.observer.disconnect();
       state.observer = null;
+      state.mountedOn = null;
     }
     if (state.host) {
       try {
@@ -249,6 +307,10 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     }
     clearInterval(state.watchdog);
     state.watchdog = 0;
+    clearInterval(state.sampler);
+    state.sampler = 0;
+    state.hiddenBeats = [];
+    state.sawHidden = false;
   }
 
   function setMode(mode) {
@@ -265,6 +327,14 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       state.watchdog = setInterval(() => {
         if (state.mode !== 'hidden' && Date.now() - state.lastBeat > 4000) unmountOverlay();
       }, 1000);
+    }
+    if (!state.sampler) {
+      // Between heartbeats, look more often: a page that covers the bar again right after each
+      // repair is still seen (and reported) here.
+      state.sampler = setInterval(() => {
+        if (state.mode === 'hidden' || state.shot || state.pass) return;
+        if (!overlayVisible()) state.sawHidden = true;
+      }, 250);
     }
   }
 
@@ -315,10 +385,6 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     if (e.type === 'keydown') state.escDownAt = Date.now();
     requestStop('esc');
   };
-  for (const target of [window, document]) {
-    target.addEventListener('keydown', onEsc, true);
-    target.addEventListener('keyup', onEsc, true);
-  }
 
   // -------------------------------------------------------------------------------------------
   // Element helpers
@@ -485,6 +551,8 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       if (e.localName === 'svg') {
         const t = e.querySelector('title');
         if (t) out += ` ${t.textContent} `;
+        // Words drawn in the picture (<text>, <tspan>): a button made of SVG shows its label so.
+        for (const tx of e.querySelectorAll('text')) out += ` ${tx.textContent} `;
         return;
       }
       if (e !== el && typeof e.checkVisibility === 'function' && !e.checkVisibility({ checkVisibilityCSS: true })) return;
@@ -576,6 +644,7 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
   }
 
   const SECRET_TYPES = new Set(['password']);
+  /** The quick check (type, autocomplete, common words); secretField() is the full rule. */
   function looksSecret(el) {
     if (el.localName !== 'input' && el.localName !== 'textarea') return false;
     const type = (el.getAttribute('type') || '').toLowerCase();
@@ -583,6 +652,25 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     if (SECRET_TYPES.has(type) || /current-password|new-password|one-time-code|cc-number|cc-csc/.test(ac)) return true;
     const words = `${el.name || ''} ${el.id || ''} ${el.getAttribute('placeholder') || ''} ${el.getAttribute('aria-label') || ''} ${labelFor(el)}`.toLowerCase();
     return /\b(cvv|cvc|csc|security code|card ?number|cc-?num|password|passcode)\b/.test(words);
+  }
+
+  /**
+   * The kind of secret an element holds ('password', 'card', 'cvv', 'id') or null: the same rule
+   * the service worker uses before typing (guard.js secretKindOf), here for reading values back
+   * (read_page, find, get_page_text) and for screenshots (shot).
+   */
+  function secretField(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const tag = el.localName;
+    const role = roleOf(el);
+    const field = tag === 'input' || tag === 'textarea' || tag === 'select' ? fieldInfo(el) : null;
+    const editable = !!el.isContentEditable && el.getAttribute('contenteditable') !== null;
+    if (!field && !editable && role !== 'textbox' && role !== 'searchbox' && role !== 'combobox' && role !== 'spinbutton') return null;
+    try {
+      return secretKindOf({ tag, role: role || '', field, looksSecret: tag === 'input' || tag === 'textarea' ? looksSecret(el) : false, isContentEditable: editable, name: nameOf(el, role) });
+    } catch {
+      return 'password';
+    }
   }
 
   function states(el, role) {
@@ -598,7 +686,7 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       if (tag === 'select') value = el.selectedOptions?.[0]?.textContent || '';
       else if (tag === 'input' || tag === 'textarea') value = el.value;
       else if (el.isContentEditable) value = el.textContent;
-      if (value) parts.push(looksSecret(el) ? 'value="[hidden]"' : `value="${cut(value, 80).replace(/"/g, "'")}"`);
+      if (value) parts.push(secretField(el) ? 'value="[hidden]"' : `value="${cut(value, 80).replace(/"/g, "'")}"`);
       if (tag === 'input') {
         const type = (el.getAttribute('type') || 'text').toLowerCase();
         if (type !== 'text' && type !== 'search') parts.push(`type=${type}`);
@@ -869,6 +957,10 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       const tag = el.localName;
       if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template' || el === state.host || tag === 'svg') return;
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return; // values are not page text
+      // The text of a rich-text field that holds a secret (a contenteditable "Password") is a value.
+      if ((el.isContentEditable && el.getAttribute('contenteditable') !== null) || roleOf(el) === 'textbox') {
+        if (secretField(el)) return;
+      }
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return;
       const op = opacity * (Number(cs.opacity) || 0);
@@ -1025,6 +1117,12 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     const searchy = roleSearch || /search|query|\bq\b|find/i.test(`${action} ${form.id} ${form.className}`) || (infos.length <= 2 && infos.some((i) => i.type === 'search' || /^(q|query|search|s|k|keyword|keywords|st)$/i.test(i.name)));
     const cardish = infos.some((i) => /cc-number|cc-csc/.test(i.autocomplete) || /\b(card ?number|cvv|cvc|security code)\b/i.test(`${i.name} ${i.id} ${i.placeholder} ${i.label} ${i.ariaLabel}`));
     const frames = [...form.querySelectorAll('iframe')].some((f) => /stripe|braintree|adyen|card|payment|cvv|cvc|hosted-field|securefield/i.test(`${f.src} ${f.name} ${f.title} ${f.id}`));
+    let actionUrl = '';
+    try {
+      actionUrl = typeof form.action === 'string' ? form.action : new URL(action || location.href, location.href).href;
+    } catch {
+      actionUrl = '';
+    }
     return {
       isSearch: !!searchy,
       hasPasswordField: infos.some((i) => i.type === 'password'),
@@ -1033,23 +1131,146 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       submitLabel: submit ? nameOf(submit) || 'Submit' : '',
       text: cut(form.innerText || '', 300),
       action: cut(action, 120),
+      actionUrl: cut(actionUrl, 300),
+      method: (form.getAttribute('method') || 'get').toLowerCase(),
     };
   }
 
+  const SENDISH = /\b(send|post|publish|submit|reply|comment|tweet|share|respond)\b/i;
+  const BUTTONS = 'button, [role="button"], input[type="submit"], input[type="button"]';
+
+  function buttonLabel(b) {
+    return cut(nameOf(b) || b.getAttribute('title') || b.getAttribute('data-tooltip') || '', 60);
+  }
+
+  /**
+   * The buttons of the composer around a text field, send-like ones first ("Send", "Post"): the
+   * field's form, dialog or section as a whole (however deep the field sits), else the nearest
+   * ancestor that has a send-like button.
+   */
   function nearbyButtons(el) {
-    // Buttons near a composer: walk up a few levels and collect button labels.
-    let node = el;
-    const labels = new Set();
-    for (let i = 0; i < 6 && node && labels.size < 12; i++) {
-      node = node.parentElement || node.getRootNode()?.host || null;
-      if (!node) break;
-      for (const b of node.querySelectorAll('button, [role="button"], input[type="submit"]')) {
-        const n = nameOf(b);
-        if (n) labels.add(n);
-        if (labels.size >= 12) break;
+    const send = [];
+    const other = new Set();
+    let seen = 0;
+    const collect = (root) => {
+      for (const b of root.querySelectorAll(BUTTONS)) {
+        if (++seen > 300) break;
+        const n = buttonLabel(b);
+        if (!n) continue;
+        if (SENDISH.test(n)) {
+          if (!send.includes(n)) send.push(n);
+        } else other.add(n);
       }
+    };
+    const scope = closestAcross(el, 'form, dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="region"], section, article');
+    if (scope) collect(scope);
+    for (let node = el.parentElement || el.getRootNode()?.host || null; !send.length && node && seen <= 300; node = node.parentElement || node.getRootNode()?.host || null) {
+      if (node === scope) continue;
+      collect(node);
+      if (node === document.body) break;
     }
-    return [...labels];
+    return [...send, ...[...other].slice(0, Math.max(0, 40 - send.length))];
+  }
+
+  /** The heading, legend or label of the section, fieldset or dialog around an element. */
+  function headingFor(el) {
+    let node = el.parentElement || el.getRootNode()?.host || null;
+    for (let i = 0; i < 10 && node && node !== document.body && node !== document.documentElement; i++) {
+      const labelled = node.getAttribute('aria-labelledby') ? byIds(node, 'aria-labelledby') : '';
+      if (labelled) return cut(labelled, 120);
+      const role = node.getAttribute('role') || '';
+      if (node.getAttribute('aria-label') && (/^(region|group|dialog|alertdialog|form|radiogroup)$/.test(role) || /^(section|fieldset|dialog|form)$/.test(node.localName))) return cut(node.getAttribute('aria-label'), 120);
+      const legend = node.querySelector(':scope > legend');
+      if (legend) return cut(legend.textContent, 120);
+      const h = node.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > header > h1, :scope > header > h2, :scope > header > h3, :scope > b, :scope > strong');
+      if (h && h !== el && !h.contains(el)) return cut(h.textContent, 120);
+      node = node.parentElement || node.getRootNode()?.host || null;
+    }
+    return '';
+  }
+
+  /** What a radio, checkbox or switch belongs to: its fieldset's legend or its group's name. */
+  function groupLabelOf(el) {
+    const fs = closestAcross(el, 'fieldset');
+    const lg = fs?.querySelector(':scope > legend');
+    if (lg) return cut(lg.textContent, 120);
+    const g = closestAcross(el, '[role="radiogroup"], [role="group"]');
+    if (g) return cut((g.getAttribute('aria-labelledby') ? byIds(g, 'aria-labelledby') : '') || g.getAttribute('aria-label') || '', 120);
+    return '';
+  }
+
+  const PAGINATION_BOX = 'nav, [role="navigation"], [aria-label*="pagination" i], [aria-label*="pages" i], [class*="pagination" i], [class*="pager" i], [class*="paging" i]';
+  const FILTER_BOX = '[aria-label*="filter" i], [aria-label*="refine" i], [aria-label*="facet" i], [id*="filter" i], [class*="filter" i], [class*="facet" i], [class*="refine" i], [data-testid*="filter" i]';
+
+  function inFilters(el) {
+    if (closestAcross(el, FILTER_BOX)) return true;
+    return /\b(filter|filters|refine|narrow|facets?|sort by|show only)\b/i.test(groupLabelOf(el));
+  }
+
+  // Clock-like tokens ("Ends in 04:59") change every second: they are not part of what an item is.
+  const CLOCK = /\b\d{1,2}:\d{2}(:\d{2})?\b/g;
+  const ITEM_BOX = 'li, tr, [role="row"], [role="listitem"], [role="article"], article, [role="gridcell"], [role="option"], [role="treeitem"], fieldset, form, dialog, [role="dialog"], [role="alertdialog"]';
+
+  /**
+   * The item an element belongs to, as text: its row, list item, card, form or dialog (a product's
+   * name and price, a message's sender and subject). An approval is bound to it: if it changes
+   * while the owner decides (a carousel, a re-sorted list), Jarvis asks again.
+   */
+  function itemContext(el) {
+    if (!el || el.nodeType !== 1) return '';
+    const own = collapse(visibleText(el, 300));
+    // Text of the item beyond its controls: a row of buttons ("Add to cart  Buy now") is not an item.
+    const ownText = (node, text) => {
+      let controls = 0;
+      let n = 0;
+      for (const c of node.querySelectorAll('button, a[href], [role="button"], [role="link"], input, select, textarea')) {
+        if (++n > 60) break;
+        controls += collapse(c.innerText ?? c.value ?? '').length;
+      }
+      return text.length - controls;
+    };
+    let fallback = '';
+    let node = el.parentElement || el.getRootNode()?.host || null;
+    for (let i = 0; i < 8 && node && node !== document.body && node !== document.documentElement; i++) {
+      const text = collapse(node.innerText ?? node.textContent ?? '');
+      if (text.length > 4000) break;
+      if (text.length >= own.length + 3 && ownText(node, text) >= 3 && node.matches?.(ITEM_BOX)) return cut(text.replace(CLOCK, ''), 300);
+      if (!fallback && text.length >= own.length + 8 && ownText(node, text) >= 8) fallback = text;
+      node = node.parentElement || node.getRootNode()?.host || null;
+    }
+    return cut((fallback || own).replace(CLOCK, ''), 300);
+  }
+
+  /**
+   * What an approval of `el` is bound to: its name (what it says it does, aria-label included) and
+   * the item it belongs to. Either changing (a relabelled button, a rotated product) is another step.
+   */
+  function ctxOf(el) {
+    if (!el || el.nodeType !== 1) return '';
+    // A key pressed with nothing focused goes to the page itself: not bound to its text.
+    if (el === el.ownerDocument?.body || el === el.ownerDocument?.documentElement) return '';
+    return cut(`${nameOf(el)} | ${itemContext(el)}`, 420);
+  }
+
+  const SELECTED = 'input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"], [role="row"][aria-selected="true"], [role="option"][aria-selected="true"], [role="gridcell"][aria-selected="true"], [role="treeitem"][aria-selected="true"], [role="listitem"][aria-selected="true"], tr[aria-selected="true"], li[aria-selected="true"]';
+  const LISTISH = 'li, tr, [role="row"], [role="option"], [role="listitem"], [role="treeitem"], [role="gridcell"], [role="grid"], [role="listbox"], table, ul, ol';
+
+  /**
+   * What is selected on the page now (ticked boxes, selected rows): a toolbar's "Delete" or
+   * "Archive" acts on these. `key` changes whenever the selection does; `names` are the selected
+   * list items, for the owner's prompt.
+   */
+  function selectionSnapshot() {
+    const all = [];
+    const listed = [];
+    for (const c of document.querySelectorAll(SELECTED)) {
+      if (all.length >= 200) break;
+      const row = c.closest('li, tr, [role="row"], [role="option"], [role="listitem"], [role="treeitem"]');
+      const name = cut(nameOf(c) || collapse(row?.innerText || ''), 50);
+      all.push(name);
+      if (c.closest(LISTISH)) listed.push(name);
+    }
+    return { key: `${all.length}|${all.join('|')}`, count: listed.length, names: listed.slice(0, 4) };
   }
 
   /** What the guard needs to know about an element. */
@@ -1085,11 +1306,26 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       pageUrl: location.href,
       field: tag === 'input' || tag === 'textarea' || tag === 'select' ? fieldInfo(el) : null,
       looksSecret: looksSecret(el),
+      readonly: !!el.readOnly || el.getAttribute('aria-readonly') === 'true',
+      disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+      targetBlank: (tag === 'a' || tag === 'area') && !/^(|_self|_top|_parent)$/i.test(el.getAttribute('target') || ''),
+      formAction: (tag === 'button' || tag === 'input') && typeof el.formAction === 'string' && el.hasAttribute('formaction') ? el.formAction : '',
+      inPagination: !!closestAcross(el, PAGINATION_BOX),
+      inFilters: inFilters(el),
+      inSearch: !!closestAcross(el, '[role="search"], search'),
+      headingText: '',
+      groupLabel: toggle ? groupLabelOf(el) : '',
+      unlabelled: '',
     };
-    // A generic "Continue" takes its meaning from the section around it (an order-review page's
-    // "Payment: Visa ending 4242 · Total $279.99"); read only then (innerText costs a layout).
-    if (isGenericLabel(d.name) || isGenericLabel(d.text) || (d.isSubmit && !d.name && !d.text)) {
+    // A generic "Continue", or a bare verb like "Turn off", takes its meaning from the section
+    // around it (an order-review page's "Payment: Visa ending 4242 · Total $279.99", a heading
+    // "2-Step Verification"); read only then (innerText costs a layout).
+    if (needsContext(d.name) || needsContext(d.text) || (d.isSubmit && !d.name && !d.text)) {
       d.contextText = cut((closestAcross(el, 'section, article, main, [role="main"]') || document.body)?.innerText || '', 400);
+      d.headingText = headingFor(el);
+    }
+    if (!d.name && !d.text && (tag === 'canvas' || tag === 'svg' || tag === 'img' || tag === 'video' || tag === 'div' || tag === 'span')) {
+      d.unlabelled = tag === 'canvas' ? 'a drawing (canvas) with no label' : tag === 'img' || tag === 'svg' ? 'a picture with no label' : `an unlabelled ${tag}`;
     }
     if (tag === 'iframe' || tag === 'frame') {
       d.iframe = { src: el.src || '', name: el.name || '', title: el.title || '', id: el.id || '' };
@@ -1103,7 +1339,7 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       d.crossOrigin = !readable;
     }
     if (d.field && d.multiline) d.field.multiline = true;
-    if (role === 'textbox' || tag === 'textarea' || el.isContentEditable) d.nearbyButtons = nearbyButtons(el);
+    if (role === 'textbox' || role === 'searchbox' || tag === 'textarea' || (tag === 'input' && /^(|text|search|email|url|tel)$/.test(type)) || el.isContentEditable) d.nearbyButtons = nearbyButtons(el);
     return d;
   }
 
@@ -1163,10 +1399,16 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return { x: first.x, y: first.y, covered: first.hit ? `${roleOf(first.hit) || first.hit.localName} "${nameOf(first.hit)}"` : 'another element' };
   }
 
+  /** The element's target id: the same id every time for the same element, for this document. */
   function rememberTarget(el) {
-    const id = state.nextTarget++;
+    let id = state.targetIds.get(el);
+    if (!id) {
+      id = state.nextTarget++;
+      state.targetIds.set(el, id);
+    }
+    state.targets.delete(id);
     state.targets.set(id, new WeakRef(el));
-    if (state.targets.size > 64) state.targets.delete(state.targets.keys().next().value);
+    if (state.targets.size > 256) state.targets.delete(state.targets.keys().next().value);
     return id;
   }
 
@@ -1175,6 +1417,12 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return el && el.isConnected ? el : null;
   }
 
+  /**
+   * A ref or a viewport point -> the click point, the element (desc, targetId), what a click there
+   * really reaches (hitDesc, hitId: the actionable element at the point, when it is another one,
+   * e.g. a covering element or a button inside the ref), the item it belongs to (ctx) and what is
+   * selected on the page (selection).
+   */
   function resolveTarget({ ref, x, y, scroll = true, wantPoint = true } = {}) {
     if (ref !== undefined) {
       const el = lookup(ref);
@@ -1182,25 +1430,33 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       if (!visible(el)) return { error: `Error: ${ref} is not visible on the page right now. Scroll, or re-read the page.` };
       const point = wantPoint ? clickPoint(el, { scroll }) : null;
       if (point?.error) return { error: `Error: ${ref} ${point.error}.` };
-      // What a click at that point really reaches (another element may cover this one).
-      const reach = point && point.covered ? actionableAncestor(deepElementFromPoint(point.x, point.y) || el) : el;
-      return { x: point?.x, y: point?.y, covered: point?.covered, desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, targetId: rememberTarget(el), hitId: reach !== el ? rememberTarget(reach) : undefined, hitDesc: reach !== el ? describe(reach) : undefined };
+      // What a click at that point really reaches: the actionable element there.
+      const hit = point ? deepElementFromPoint(point.x, point.y) : null;
+      const reach = (point && hit ? actionableAncestor(hit) : el) || el;
+      return { x: point?.x, y: point?.y, covered: point?.covered, desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, targetId: rememberTarget(el), hitId: reach !== el ? rememberTarget(reach) : undefined, hitDesc: reach !== el ? describe(reach) : undefined, ctx: ctxOf(reach), item: itemContext(reach), selection: selectionSnapshot() };
     }
     const hit = deepElementFromPoint(Number(x), Number(y));
-    if (!hit) return { desc: null };
+    if (!hit) return { desc: null, selection: selectionSnapshot() };
     const el = actionableAncestor(hit);
-    return { x: Number(x), y: Number(y), desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, targetId: rememberTarget(el) };
+    return { x: Number(x), y: Number(y), desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, targetId: rememberTarget(el), ctx: ctxOf(el), item: itemContext(el), selection: selectionSnapshot() };
   }
 
   /**
    * After the pointer moved to (x, y), or between two clicks: the element there now (hover can
-   * swap it, a click can relabel it), and whether it is still `targetId`.
+   * swap it, a click can relabel it), whether it is still `targetId`, and its item now.
    */
   function hitCheck({ x, y, targetId } = {}) {
     const hit = deepElementFromPoint(Number(x), Number(y));
     const el = hit ? actionableAncestor(hit) : null;
     const want = targetEl(targetId);
-    return { same: !!(el && want && el === want), desc: el ? describe(el) : null, name: el ? nameOf(el) : '' };
+    return { same: !!(el && want && el === want), desc: el ? describe(el) : null, name: el ? nameOf(el) : '', ctx: el ? ctxOf(el) : '', targetId: el ? rememberTarget(el) : undefined, selection: selectionSnapshot() };
+  }
+
+  /** Facts about an element Jarvis pointed at before (it may have left the page). */
+  function targetFacts({ targetId } = {}) {
+    const el = targetEl(targetId);
+    if (!el) return { gone: true };
+    return { gone: false, ctx: ctxOf(el), item: itemContext(el), selection: selectionSnapshot(), desc: describe(el) };
   }
 
   function deepActive() {
@@ -1226,10 +1482,14 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return el;
   }
 
+  /** The element with the keyboard focus (the page itself when nothing has it). */
   function focusInfo() {
     const el = deepActive();
-    if (!el || el === document.body || el === document.documentElement) return { desc: null };
-    return { desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName };
+    if (!el || el === document.body || el === document.documentElement) {
+      const page = (el && el.ownerDocument?.body) || document.body || document.documentElement;
+      return { desc: null, targetId: page ? rememberTarget(page) : undefined, ctx: '', selection: selectionSnapshot() };
+    }
+    return { desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, targetId: rememberTarget(el), ctx: ctxOf(el), item: itemContext(el), selection: selectionSnapshot() };
   }
 
   function setNativeValue(el, value) {
@@ -1258,13 +1518,19 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return { option: opt ? { text: cut(opt.textContent, 80), value: opt.value, selected: opt.selected } : null, selectName: nameOf(el) };
   }
 
+  // Inputs form_input may set. Buttons (submit, button, reset, image), hidden and file inputs are
+  // not fields: setting a button's value would rename it ("Place order" -> "Search").
+  const SETTABLE_INPUTS = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'number', 'date', 'datetime-local', 'month', 'week', 'time', 'range', 'color', 'checkbox', 'radio']);
+
   function formInput({ ref, value } = {}) {
     const el = lookup(ref);
     if (!el) return { error: `Error: ${ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
-    if (looksSecret(el)) return { error: 'secret' };
+    if (looksSecret(el) || secretField(el)) return { error: 'secret' };
     const tag = el.localName;
     const role = roleOf(el);
     const type = (el.getAttribute('type') || '').toLowerCase();
+    const itype = tag === 'input' ? String(el.type || 'text').toLowerCase() : '';
+    if (tag === 'input' && !SETTABLE_INPUTS.has(itype)) return { error: `Error: ${ref} is ${itype === 'hidden' || itype === 'file' ? `a ${itype} input` : 'a button'}, not a form field. ${itype === 'hidden' || itype === 'file' ? 'Jarvis does not set it.' : 'Click it instead.'}` };
     if (el.disabled) return { error: `Error: ${ref} is disabled.` };
     if (tag === 'select') {
       const opts = [...el.options];
@@ -1300,6 +1566,24 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     return { error: `Error: ${ref} is a ${role || tag}, not a form field. Click it instead.` };
   }
 
+  /** Links and forms on this page that open `url` (navigating to it does what clicking them does). */
+  function linksTo({ url } = {}) {
+    const key = pageKey(url);
+    const links = [];
+    if (!key) return { links };
+    for (const a of document.querySelectorAll('a[href], area[href]')) {
+      if (links.length >= 5) break;
+      if (pageKey(a.href) === key) links.push({ desc: describe(a), targetId: rememberTarget(a), ctx: ctxOf(a), item: itemContext(a) });
+    }
+    for (const f of document.forms) {
+      if (links.length >= 8) break;
+      if (pageKey(f.action) !== key) continue;
+      const submit = f.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+      if (submit) links.push({ desc: describe(submit), targetId: rememberTarget(submit), ctx: ctxOf(submit), item: itemContext(submit) });
+    }
+    return { links };
+  }
+
   function scrollToRef({ ref } = {}) {
     const el = lookup(ref);
     if (!el) return { error: `Error: ${ref} is stale or not found on the current page. Re-read the page to get fresh references.` };
@@ -1322,94 +1606,388 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
 
 
   // -------------------------------------------------------------------------------------------
-  // The activation check. The service worker classifies the element under the pointer (or with
-  // the focus) before it sends input, and asks the owner first when that looks consequential. The
-  // page can still change between that check and the moment the input arrives (a different element
-  // swapped in on hover, a label that turns "Continue" into "Place order" after the first of two
-  // clicks), and some inputs activate an element without a click Jarvis aimed (Space or Enter on a
-  // focused button, a drag that starts and ends on one button). So while Jarvis sends input, every
-  // trusted pointer/mouse event, click and Enter/Space key is checked against the element that
-  // really receives it: one the owner did not approve is not activated (the event is cancelled
-  // before the page sees it), and an approved element is activated once.
+  // The activation check: the one choke point for Jarvis's input, deny by default. The service
+  // worker gets the owner's approval for one step (or finds that step needs none: a plain link, a
+  // scrolling key) and then arms this check with exactly that step: the element (by identity), the
+  // item around it, and what may happen to it (pointer presses and how many clicks, which keys,
+  // text). While armed, every trusted pointer, mouse, click, key, text-input and form-change event
+  // that is not part of that step is cancelled before the page sees it: a different element
+  // swapped in under the pointer, a page that moves the focus before a key lands, a select or radio
+  // changed by a key, a paste. The service worker hears what was stopped (disarm) and fails the
+  // step. Frames of this site hand their events to this check; frames from other sites are opaque
+  // (every step into one is asked as such).
 
-  const ACTIVATION_EVENTS = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'keydown'];
+  const POINTER_EVENTS = new Set(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu', 'drop']);
+  const KEY_EVENTS = new Set(['keydown', 'keypress', 'keyup']);
+  const FORM_EVENTS = new Set(['input', 'change']);
+  const ACTIVATION_EVENTS = [...POINTER_EVENTS, ...KEY_EVENTS, 'beforeinput', ...FORM_EVENTS];
   const EDITABLE_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'tel', 'number', 'password', 'date', 'datetime-local', 'month', 'week', 'time']);
+  const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'AltGraph', 'Fn', 'OS']);
+  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
+  const ARROW_ROLES = new Set(['listbox', 'option', 'radio', 'radiogroup', 'menuitemradio', 'menuitemcheckbox', 'menu', 'menubar', 'menuitem', 'tab', 'tablist', 'slider', 'spinbutton', 'grid', 'gridcell', 'treegrid', 'tree', 'treeitem', 'row', 'scrollbar', 'switch', 'checkbox', 'combobox']);
+  const ARROW_INPUTS = new Set(['radio', 'checkbox', 'range', 'number', 'date', 'datetime-local', 'month', 'week', 'time', 'color']);
 
-  function isEditableEl(el) {
+  function isTextEl(el) {
     if (!el || el.nodeType !== 1) return false;
     if (el.isContentEditable) return true;
     const tag = el.localName;
-    if (tag === 'textarea' || tag === 'select') return true;
-    return tag === 'input' && EDITABLE_TYPES.has((el.getAttribute('type') || '').toLowerCase());
+    if (tag === 'textarea') return true;
+    return tag === 'input' && EDITABLE_TYPES.has(String(el.type || 'text').toLowerCase()) && !ARROW_INPUTS.has(String(el.type || '').toLowerCase());
+  }
+
+  /** Arrow keys, Home/End and Page Up/Down change what is chosen here (a select, radios, a slider, a list). */
+  function arrowsChange(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.localName === 'select') return true;
+    if (el.localName === 'input' && ARROW_INPUTS.has(String(el.type || '').toLowerCase())) return true;
+    if (isTextEl(el)) return false;
+    return ARROW_ROLES.has(roleOf(el) || '');
+  }
+
+  const keyMods = (e) => ['alt', 'ctrl', 'meta', 'shift'].filter((m) => e[`${m}Key`]).join('+');
+
+  /** What the owner's step said about an element the input reached instead (for the report). */
+  function blockedInfo(el, why) {
+    let c = null;
+    let label = '';
+    try {
+      const d = el ? describe(el) : null;
+      c = d ? classifyAction(d) : null;
+      label = c?.label || (d ? d.name || d.text || d.unlabelled || '' : '') || (el ? roleOf(el) || el.localName : 'the page');
+    } catch {
+      label = el?.localName || 'the page';
+    }
+    return { category: c?.category || 'change', label: cut(label, 80), alias: c?.alias || '', reason: c ? `${c.reason || ''}${why ? `; ${why}` : ''}` : why || 'not the step the owner approved' };
+  }
+
+  function stopEvent(a, e, info) {
+    if (e.cancelable) e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!a.blocked.some((b) => b.label === info.label && b.reason === info.reason)) a.blocked.push({ type: e.type, ...info });
+  }
+
+  /** The approved entry for `el`, if its item is still the one the owner saw. */
+  function approvedFor(a, el, kinds) {
+    for (const p of a.approved) {
+      if (!p.el || !kinds.includes(p.kind)) continue;
+      // (A rich-text field's events can come from inside it; nothing else stands in for an element.)
+      if (p.el !== el && !(p.kind !== 'pointer' && p.el.isContentEditable && p.el.contains?.(el))) continue;
+      if (typeof p.ctx === 'string') {
+        if (p.ctxNow === undefined) p.ctxNow = ctxOf(p.el);
+        if (p.ctxNow !== p.ctx) return { changed: true };
+      }
+      return { entry: p };
+    }
+    return null;
+  }
+
+  function checkPointer(a, e, first) {
+    if (!first) return true;
+    const el = actionableAncestor(first);
+    // A click on a label clicks its control right after: one activation, not two.
+    if (e.type === 'click' && a.labelClick && a.labelClick === el && Date.now() - a.labelAt < 1000) {
+      a.labelClick = null;
+      return true;
+    }
+    // The click an approved Enter or Space causes: on the focused button, link or box itself, or
+    // on its form's default button (Enter in a field submits the form through it).
+    const ka = a.keyActivation;
+    if (ka && Date.now() < ka.until && (e.type === 'click' || POINTER_EVENTS.has(e.type)) && (el === ka.el || (ka.submit && el === ka.submit))) {
+      if (e.type === 'click') {
+        a.keyActivation = null;
+        a.activations += 1;
+      }
+      return true;
+    }
+    const hit = approvedFor(a, el, ['pointer']);
+    if (!hit) return blockedInfo(el, 'not what the owner approved');
+    if (hit.changed) return blockedInfo(el, 'the item it belongs to changed');
+    const p = hit.entry;
+    if (e.type === 'click' || e.type === 'auxclick' || e.type === 'contextmenu') {
+      p.used = (p.used || 0) + (e.type === 'contextmenu' ? 0 : 1);
+      if (p.used > (p.clicks || 1)) return blockedInfo(el, 'it was already activated once');
+      if (e.type !== 'contextmenu') a.activations += 1;
+      if (first !== el && first.closest?.('label')?.control === el) {
+        a.labelClick = el;
+        a.labelAt = Date.now();
+      }
+    }
+    return true;
+  }
+
+  function checkKey(a, e, first) {
+    if (MODIFIER_KEYS.has(e.key)) return true;
+    const code = e.code || e.key;
+    if (e.type !== 'keydown') {
+      // A page can act on keyup or keypress too: those of a stopped key are stopped as well.
+      return a.blockedCodes.has(code) ? blockedInfo(first, `the key ${e.key}`) : true;
+    }
+    const target = first || document.body;
+    const mods = keyMods(e);
+    // With nothing focused, a key goes to <body> (or <html>): "the page" either way.
+    const pageLevel = (el) => !el || el === el.ownerDocument?.body || el === el.ownerDocument?.documentElement;
+    for (const p of a.approved) {
+      if (p.kind !== 'key' || !p.el) continue;
+      const same = p.el === target || (p.el.isContentEditable && p.el.contains?.(target)) || (pageLevel(p.el) && pageLevel(target) && p.el.ownerDocument === target.ownerDocument);
+      if (!same) continue;
+      if (!p.keys.some((k) => String(k.key).toLowerCase() === String(e.key).toLowerCase() && (k.mods || '') === mods)) continue;
+      if (typeof p.ctx === 'string') {
+        if (p.ctxNow === undefined) p.ctxNow = ctxOf(p.el);
+        if (p.ctxNow !== p.ctx) break;
+      }
+      if (!e.repeat) {
+        p.used = (p.used || 0) + 1;
+        if (p.used > (p.presses || 1)) break;
+      } else if (!p.hold) break;
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        const form = target.form || null;
+        let submit = null;
+        try {
+          submit = form ? form.querySelector('button[type="submit"], input[type="submit"], input[type="image"], button:not([type])') : null;
+        } catch {
+          submit = null;
+        }
+        a.keyActivation = { el: target, submit, until: Date.now() + 1500 };
+      }
+      return true;
+    }
+    if (a.scrollOnly && SCROLL_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !arrowsChange(target)) return true;
+    a.blockedCodes.add(code);
+    return blockedInfo(target === document.body ? null : target, `the key ${e.key}${mods ? ` with ${mods}` : ''} there was not approved`);
+  }
+
+  function checkInput(a, e, first) {
+    // Never a paste or a drop: the clipboard is the owner's.
+    if (/^insertFrom(Paste|PasteAsQuotation|Drop|Yank)$/.test(e.inputType || '')) return blockedInfo(first, 'pasting from the clipboard');
+    const hit = first ? approvedFor(a, first, ['type', 'key']) : null;
+    if (hit?.entry) return true;
+    return blockedInfo(first, hit?.changed ? 'the item it belongs to changed' : 'text going somewhere the owner did not approve');
+  }
+
+  function checkChange(a, e, first) {
+    if (!first || isTextEl(first)) return true; // text: checked at beforeinput
+    if (approvedFor(a, first, ['pointer', 'key', 'type', 'change'])?.entry) return true;
+    // A select, radio, checkbox or slider changed by input nobody approved: put it back before the
+    // page's own handlers see the change.
+    restoreValue(a, first);
+    return blockedInfo(first, 'changing it was not approved');
+  }
+
+  /** Values of the page's choice controls when the check was armed (to undo an unapproved change). */
+  function snapshotControls() {
+    const values = new Map();
+    let n = 0;
+    for (const c of document.querySelectorAll('select, input[type="checkbox"], input[type="radio"], input[type="range"], input[type="number"]')) {
+      if (++n > 600) break;
+      values.set(c, c.localName === 'select' ? c.value : c.type === 'checkbox' || c.type === 'radio' ? c.checked : c.value);
+    }
+    return values;
+  }
+
+  function restoreValue(a, el) {
+    try {
+      if (el.localName === 'input' && el.type === 'radio') {
+        const group = el.name ? [...(el.form || el.ownerDocument).querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)] : [el];
+        for (const r of group) if (a.values.has(r)) r.checked = a.values.get(r);
+        return;
+      }
+      if (!a.values.has(el)) return;
+      const v = a.values.get(el);
+      if (el.localName === 'input' && el.type === 'checkbox') el.checked = v;
+      else el.value = v;
+    } catch {
+      /* best effort: the step fails either way */
+    }
   }
 
   function onActivation(e) {
+    if (e.__jarvisChecked) return; // the same event, seen again from a frame's listener
+    if (IN_FRAME && !state.armed) {
+      // A frame of this site: the top frame's agent holds the check (Jarvis arms that one).
+      try {
+        const top = window.top.__jarvis;
+        if (top && top !== globalThis.__jarvis && typeof top.activation === 'function') top.activation(e);
+      } catch {
+        /* a frame from another site: no access to the top frame */
+      }
+      return;
+    }
     const a = state.armed;
     if (!a || !e.isTrusted) return;
     if (Date.now() > a.until) {
       state.armed = null;
       return;
     }
-    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-    const first = path.find((n) => n && n.nodeType === 1) || (e.target && e.target.nodeType === 1 ? e.target : null);
-    if (!first || first === state.host) return;
-    if (e.type === 'keydown' && isEditableEl(first)) return; // typing; Enter in a form is checked when it clicks the submit button
-    const el = actionableAncestor(first);
-    if (!el || el === state.host) return;
-    // A click on a label clicks its control right after: one activation, not two.
-    if (e.type === 'click' && a.labelClick && a.labelClick === el && Date.now() - a.labelAt < 1000) {
-      a.labelClick = null;
-      return;
-    }
-    let c = null;
-    let d = null;
     try {
-      d = describe(el);
-      c = classifyAction(d);
+      e.__jarvisChecked = true;
     } catch {
-      c = null;
+      /* ignore */
     }
-    if (!c) return;
-    // The approved element, or one of the same kind with the same wording (any of its labels).
-    const names = new Set([c.label, d.text, d.name, d.value].map(normalizeLabel).filter(Boolean));
-    const approved = !a.used && a.approved.some((p) => (p.el && p.el === el) || (p.category === c.category && names.has(normalizeLabel(p.label))));
-    if (approved) {
-      if (e.type === 'click' || e.type === 'auxclick') {
-        a.used = true;
-        a.activations += 1;
-        if (first !== el && first.closest?.('label')?.control === el) {
-          a.labelClick = el;
-          a.labelAt = Date.now();
-        }
-      }
-      return;
-    }
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (!a.blocked.some((b) => b.category === c.category && b.label === c.label)) a.blocked.push({ type: e.type, category: c.category, label: c.label, alias: c.alias || '', reason: c.reason || '' });
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    if (state.host && path.includes(state.host)) return; // Jarvis's own bar
+    const first = path.find((n) => n && n.nodeType === 1) || (e.target && e.target.nodeType === 1 ? e.target : null);
+    let verdict;
+    if (POINTER_EVENTS.has(e.type)) verdict = checkPointer(a, e, first);
+    else if (KEY_EVENTS.has(e.type)) verdict = checkKey(a, e, first);
+    else if (e.type === 'beforeinput') verdict = checkInput(a, e, first);
+    else if (FORM_EVENTS.has(e.type)) verdict = checkChange(a, e, first);
+    else verdict = true;
+    if (verdict !== true) stopEvent(a, e, verdict);
   }
-  for (const type of ACTIVATION_EVENTS) window.addEventListener(type, onActivation, true);
+
+  /** (Re)registers every listener of the agent: document.open() erases them all, the realm survives. */
+  function ensureListeners() {
+    for (const target of [window, document]) {
+      target.addEventListener('keydown', onEsc, true);
+      target.addEventListener('keyup', onEsc, true);
+    }
+    for (const type of ACTIVATION_EVENTS) window.addEventListener(type, onActivation, true);
+  }
+  ensureListeners();
+
+  /** Same-site frames that have no agent of their own (made by script, never loaded): check them from here. */
+  function watchChildFrames(doc = document, depth = 0) {
+    if (depth > 4) return;
+    let n = 0;
+    for (const f of doc.querySelectorAll('iframe, frame')) {
+      if (++n > 30) break;
+      let w = null;
+      try {
+        w = f.contentWindow;
+        if (!w || !w.document) continue;
+      } catch {
+        continue; // another site's frame
+      }
+      try {
+        if (!w.__jarvis && !state.childWindows.has(w)) {
+          for (const type of ACTIVATION_EVENTS) w.addEventListener(type, onActivation, true);
+          state.childWindows.add(w);
+        }
+        watchChildFrames(w.document, depth + 1);
+      } catch {
+        /* the frame went away */
+      }
+    }
+  }
+
+  // A listener only this agent knows about: if it is gone when the input is over, the page
+  // rewrote itself (document.open()) meanwhile and erased the check's listeners too.
+  const SENTINEL = `jarvis-check-${Math.random().toString(36).slice(2)}`;
 
   /**
-   * Arms the check for the input Jarvis is about to send. `approved`: [{ targetId?, category, label }]
-   * the owner approved (activated once, as a whole); everything else consequential is blocked.
+   * Arms the check for the step Jarvis is about to send. `approved`: [{ targetId, ctx?, kind:
+   * 'pointer' | 'key' | 'type' | 'change', clicks?, keys?: [{ key, mods }], presses?, hold? }] (the
+   * owner's step, or a step that needs no approval such as a plain link); `scrollOnly`: only
+   * scrolling keys may land (and not where they change a choice). Everything else is stopped.
    */
-  function arm({ approved = [], ms = 15000 } = {}) {
+  function arm({ approved = [], scrollOnly = false, ms = 15000 } = {}) {
+    ensureListeners();
+    watchChildFrames();
+    const list = (Array.isArray(approved) ? approved : []).map((p) => ({
+      el: p.targetId !== undefined && p.targetId !== null ? targetEl(p.targetId) : null,
+      ctx: typeof p.ctx === 'string' ? p.ctx : undefined,
+      kind: ['pointer', 'key', 'type', 'change'].includes(p.kind) ? p.kind : 'pointer',
+      clicks: Math.max(1, Math.min(3, Number(p.clicks) || 1)),
+      keys: Array.isArray(p.keys) ? p.keys.map((k) => ({ key: String(k.key || ''), mods: String(k.mods || '') })) : [],
+      presses: Math.max(1, Math.min(100, Number(p.presses) || 1)),
+      hold: !!p.hold,
+    }));
+    const missing = list.filter((p) => !p.el).length;
+    const token = { hit: false };
+    const sentinel = () => {
+      token.hit = true;
+    };
     state.armed = {
-      approved: (Array.isArray(approved) ? approved : []).map((p) => ({ el: p.targetId !== undefined ? targetEl(p.targetId) : null, category: String(p.category || ''), label: String(p.label || '') })),
-      used: false,
+      approved: list,
+      scrollOnly: !!scrollOnly,
       activations: 0,
       blocked: [],
-      until: Date.now() + Math.max(500, Math.min(60000, Number(ms) || 15000)),
+      blockedCodes: new Set(),
+      values: snapshotControls(),
+      until: Date.now() + Math.max(500, Math.min(120000, Number(ms) || 15000)),
+      sentinel,
+      token,
+      keyActivation: null,
     };
-    return { ok: true };
+    window.addEventListener(SENTINEL, sentinel, true);
+    return { ok: true, missing };
   }
 
+  /**
+   * Ends the check: what it stopped, how many approved activations went through, and whether its
+   * listeners were still there at the end (`intact` false: the page rewrote itself with
+   * document.open() during the input, which erases them, so nothing after that was checked).
+   */
   function disarm() {
     const a = state.armed;
     state.armed = null;
-    return { ok: true, blocked: a ? a.blocked : [], activations: a ? a.activations : 0 };
+    if (!a) return { ok: true, blocked: [], activations: 0, intact: true };
+    try {
+      window.dispatchEvent(new Event(SENTINEL));
+    } catch {
+      /* ignore */
+    }
+    window.removeEventListener(SENTINEL, a.sentinel, true);
+    ensureListeners();
+    return { ok: true, blocked: a.blocked, activations: a.activations, intact: a.token.hit };
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Screenshots: the control bar hidden, and private fields masked
+
+  const masked = new Map(); // element -> [-webkit-text-security value, priority] before masking
+
+  /**
+   * Masks every field that holds a secret (passwords, card numbers, security codes, ID numbers,
+   * card expiry) with dots for a screenshot, in the page, its open shadow roots and its frames of
+   * this site. Frames from other sites that look like payment or sign-in boxes cannot be reached:
+   * their rectangles are returned, and the service worker paints over them.
+   */
+  function maskSecrets() {
+    const rects = [];
+    const visit = (root, offset, depth) => {
+      if (depth > 6) return;
+      let n = 0;
+      for (const el of root.querySelectorAll('input, textarea, [contenteditable], [role="textbox"], iframe, frame')) {
+        if (++n > 2000) break;
+        if (el.localName === 'iframe' || el.localName === 'frame') {
+          let doc = null;
+          try {
+            doc = el.contentDocument;
+          } catch {
+            doc = null;
+          }
+          const r = el.getBoundingClientRect();
+          if (doc) {
+            visit(doc, { x: offset.x + r.left + el.clientLeft, y: offset.y + r.top + el.clientTop }, depth + 1);
+            continue;
+          }
+          if (secretKind({ iframe: { src: el.src || '', name: el.name || '', title: el.title || '', id: el.id || '' } })) {
+            rects.push({ x: offset.x + r.left, y: offset.y + r.top, w: r.width, h: r.height });
+          }
+          continue;
+        }
+        const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+        if (!secretField(el) && !/\bcc-(exp|exp-month|exp-year|name)\b/.test(ac)) continue;
+        if (!masked.has(el)) masked.set(el, [el.style.getPropertyValue('-webkit-text-security'), el.style.getPropertyPriority('-webkit-text-security')]);
+        el.style.setProperty('-webkit-text-security', 'disc', 'important');
+      }
+      for (const host of root.querySelectorAll('*')) if (host.shadowRoot) visit(host.shadowRoot, offset, depth + 1);
+    };
+    visit(document, { x: 0, y: 0 }, 0);
+    return rects.filter((r) => r.w > 0 && r.h > 0 && r.x + r.w > 0 && r.y + r.h > 0 && r.x < innerWidth && r.y < innerHeight);
+  }
+
+  function unmaskSecrets() {
+    for (const [el, [value, priority]] of masked) {
+      try {
+        if (value) el.style.setProperty('-webkit-text-security', value, priority);
+        else el.style.removeProperty('-webkit-text-security');
+      } catch {
+        /* the element went away */
+      }
+    }
+    masked.clear();
   }
 
   const OPS = {
@@ -1424,18 +2002,31 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       const stop = state.pendingStop;
       state.pendingStop = null;
       let tampered = false;
+      let unstyled = false;
       if (state.mode !== 'hidden' && !state.shot) {
-        // The page hid, moved or covered the bar: put it back, and tell the service worker when
-        // that keeps happening.
-        if (!overlayVisible()) {
-          if (state.host && !state.host.isConnected) mountOverlay();
-          else if (state.host) restoreHost();
+        // The page hid, moved or covered the bar (now, or at any check since the last beat): put
+        // it back, and tell the service worker when that keeps happening. What counts is the bar's
+        // state before the repair: a page that covers it again right after each repair is caught.
+        const wasVisible = !state.pass && overlayVisible();
+        const sampled = state.sawHidden;
+        state.sawHidden = false;
+        if (!wasVisible && !state.pass) {
+          if (!state.host || !state.host.isConnected) mountOverlay();
+          else restoreHost();
           raiseOverlay();
-          state.tamper = overlayVisible() ? 0 : state.tamper + 1;
-        } else state.tamper = 0;
-        tampered = state.tamper >= 2;
+        }
+        unstyled = stylesBlocked();
+        state.hiddenBeats.push(!unstyled && !state.pass && (!wasVisible || sampled));
+        if (state.hiddenBeats.length > 6) state.hiddenBeats.shift();
+        tampered = state.hiddenBeats.filter(Boolean).length >= 3;
       }
-      return { ok: true, stop, tampered };
+      return { ok: true, stop, tampered, unstyled };
+    },
+    /** The page rewrote itself (document.open()): listeners and the bar come back at once. */
+    heal() {
+      ensureListeners();
+      if (state.mode !== 'hidden') mountOverlay();
+      return { ok: true };
     },
     suppressEsc({ ms = 600 } = {}) {
       state.suppressEscUntil = Date.now() + ms;
@@ -1447,19 +2038,32 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
       requestStop(via);
       return { ok: true };
     },
-    shot: ({ on }) => {
-      state.shot = !!on;
-      if (!state.host || !state.host.isConnected || !state.root) return { ok: true };
-      state.root.classList.toggle('shot', !!on);
-      // Resolve once a frame without the bar has been rendered (or after 80 ms in a hidden tab,
-      // where frames are not produced), so the screenshot never contains the control bar.
+    /**
+     * Before (on) and after (off) every capture: private fields masked, and the control bar hidden
+     * when `bar` (screenshots for Claude; the step thumbnails keep it). Resolves once a frame with
+     * that has been rendered (or after 80 ms in a hidden tab), with the rectangles of other
+     * sites' payment or sign-in boxes, which the service worker paints over.
+     */
+    shot: ({ on, bar = true }) => {
+      if (!on) {
+        state.shot = false;
+        state.root?.classList.remove('shot');
+        unmaskSecrets();
+        return { ok: true };
+      }
+      const rects = maskSecrets();
+      if (bar && state.host && state.host.isConnected && state.root) {
+        state.shot = true;
+        state.root.classList.add('shot');
+      }
       return new Promise((resolve) => {
-        const done = () => resolve({ ok: true });
+        const done = () => resolve({ ok: true, rects, viewport: { w: innerWidth, h: innerHeight } });
         const timer = setTimeout(done, 80);
         requestAnimationFrame(() => requestAnimationFrame(() => (clearTimeout(timer), done())));
       });
     },
     pass: ({ on }) => {
+      state.pass = !!on;
       if (state.root) state.root.classList.toggle('pass', !!on);
       return { ok: true };
     },
@@ -1468,9 +2072,11 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
     pageText,
     resolveTarget,
     hitCheck,
+    targetFacts,
     focusInfo,
     formInput,
     previewOption,
+    linksTo,
     scrollToRef,
     viewport,
     arm,
@@ -1479,7 +2085,11 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
 
   globalThis.__jarvis = {
     version: VERSION,
+    /** The activation check, for the agents of this site's frames (see onActivation). */
+    activation: onActivation,
+    heal: () => OPS.heal(),
     call(op, args) {
+      ensureListeners();
       const fn = OPS[op];
       if (!fn) return { error: `unknown op ${op}` };
       try {
@@ -1492,9 +2102,14 @@ import { classifyAction, isGenericLabel, normalizeLabel } from '../background/gu
         return { error: `Error: ${String(err && err.message ? err.message : err)}`, href: location.href };
       }
     },
-    /** Describes an element handle (the service worker passes the focused element of a closed shadow root). */
-    describeEl(el) {
-      return el && el.nodeType === 1 ? { desc: describe(el), name: nameOf(el), role: roleOf(el) || el.localName, href: location.href } : { desc: null, href: location.href };
+    /**
+     * Describes an element handle the service worker found inside a closed shadow root (the focused
+     * element, or the one at a point: `actionable` describes what a click there activates).
+     */
+    describeEl(el, { actionable = false } = {}) {
+      if (!el || el.nodeType !== 1) return { desc: null, href: location.href };
+      const target = actionable ? actionableAncestor(el) : el;
+      return { desc: describe(target), name: nameOf(target), role: roleOf(target) || target.localName, ctx: ctxOf(target), item: itemContext(target), href: location.href };
     },
   };
 })();

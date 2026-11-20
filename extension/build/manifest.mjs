@@ -6,7 +6,8 @@
 //              in (chrome.debugger is how Jarvis acts on any site without permanent access to
 //              all of them; every new site still needs the owner's OK in the side panel)
 //   tabs       read the URL and title of the tabs Jarvis works in; open, switch and close them
-//   activeTab  the tab the owner is looking at when they open Jarvis
+//   downloads  hold every download that starts while Jarvis works until the owner approves it
+//              (nothing is saved meanwhile; a declined one is cancelled)
 //   storage    the API key, settings, allowed sites and task history (this computer only)
 // Host permissions: only api.anthropic.com (and, in development builds, the local mock API).
 // The page CSP lets extension pages and the service worker connect to the API and nowhere else.
@@ -30,7 +31,7 @@ export function createManifest({ dev = false, version = '1.0.0' } = {}) {
     },
     side_panel: { default_path: 'sidepanel.html' },
     background: { service_worker: 'background.js', type: 'module' },
-    permissions: ['sidePanel', 'debugger', 'tabs', 'activeTab', 'storage'],
+    permissions: ['sidePanel', 'debugger', 'tabs', 'downloads', 'storage'],
     host_permissions: ['https://api.anthropic.com/*', ...(dev ? ['http://127.0.0.1/*', 'http://localhost/*'] : [])],
     commands: {
       _execute_action: {

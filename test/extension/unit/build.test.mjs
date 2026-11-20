@@ -18,7 +18,9 @@ test('release build: manifest, icons, zip', async () => {
     const m = JSON.parse(await readFile(path.join(out, 'manifest.json'), 'utf8'));
     assert.equal(m.manifest_version, 3);
     assert.equal(m.name, 'Jarvis for Chrome');
-    assert.deepEqual(m.permissions.sort(), ['activeTab', 'debugger', 'sidePanel', 'storage', 'tabs']);
+    // downloads: every download that starts while Jarvis works waits for the owner (RT2-A02);
+    // no activeTab: nothing uses it (RT2 T13).
+    assert.deepEqual(m.permissions.sort(), ['debugger', 'downloads', 'sidePanel', 'storage', 'tabs']);
     assert.deepEqual(m.host_permissions, ['https://api.anthropic.com/*']);
     assert.equal(m.background.service_worker, 'background.js');
     assert.equal(m.background.type, 'module');
@@ -58,4 +60,10 @@ test('development build: local mock allowed, no zip', async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the Public Suffix List data matches the vendored list (RT2 T10)', async () => {
+  const { generatePslModule, PSL_MODULE } = await import('../../../extension/build/psl.mjs');
+  const { readFile: rf } = await import('node:fs/promises');
+  assert.equal(await rf(PSL_MODULE, 'utf8'), generatePslModule(), 'regenerate with node extension/build/psl.mjs');
 });

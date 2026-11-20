@@ -389,7 +389,7 @@ function parseResult(r, use) {
     member: r.toolset_name === 'browser',
     isError: !!r.is_error,
     text: blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n'),
-    images: blocks.filter((b) => b.type === 'image').map((b) => ({ ...imageSize(b.source?.data || ''), mediaType: b.source?.media_type })),
+    images: blocks.filter((b) => b.type === 'image').map((b) => ({ ...imageSize(b.source?.data || ''), mediaType: b.source?.media_type, data: b.source?.data || '' })),
     state: blocks.find((b) => b.type === 'browser_state') || null,
   };
 }

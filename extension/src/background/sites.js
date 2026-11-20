@@ -1,56 +1,51 @@
 // URL policy and sites: which URLs Jarvis may open or act on, and the "site" (registrable domain)
 // that site permissions are keyed by. Pure functions, no chrome.* access.
 
-// Public suffixes with more than one label that people commonly meet. Chrome does not expose its
-// Public Suffix List to extensions, so this is a compact subset: country second-level domains and
-// hosting platforms where every customer gets a subdomain. A host under a suffix missing here is
-// grouped one level too broadly (e.g. "a.example.xy" and "b.example.xy" count as one site), which
-// only means one permission prompt covers both.
-const MULTI_LABEL_SUFFIXES = new Set(
-  `
-  co.uk org.uk me.uk ltd.uk plc.uk net.uk ac.uk gov.uk nhs.uk sch.uk police.uk
-  com.au net.au org.au edu.au gov.au asn.au id.au
-  co.nz net.nz org.nz govt.nz ac.nz
-  co.jp ne.jp or.jp ac.jp go.jp gr.jp ed.jp lg.jp
-  co.kr or.kr ne.kr go.kr ac.kr
-  com.cn net.cn org.cn gov.cn edu.cn
-  com.hk org.hk net.hk edu.hk gov.hk
-  com.tw org.tw net.tw edu.tw gov.tw
-  com.sg org.sg net.sg edu.sg gov.sg
-  com.my org.my net.my edu.my gov.my
-  co.in firm.in net.in org.in gen.in ind.in ac.in edu.in gov.in
-  co.id or.id ac.id go.id web.id
-  co.th or.th ac.th go.th in.th
-  com.ph org.ph net.ph gov.ph edu.ph
-  com.vn net.vn org.vn edu.vn gov.vn
-  com.br net.br org.br gov.br edu.br art.br
-  com.mx org.mx gob.mx edu.mx net.mx
-  com.ar org.ar gob.ar net.ar edu.ar
-  com.co org.co net.co gov.co edu.co
-  com.pe org.pe gob.pe net.pe
-  co.za org.za gov.za ac.za net.za
-  com.tr org.tr gov.tr edu.tr net.tr
-  com.sa org.sa gov.sa edu.sa net.sa
-  co.il org.il gov.il ac.il net.il
-  com.eg org.eg gov.eg edu.eg
-  com.ng org.ng gov.ng edu.ng
-  co.ke or.ke go.ke ac.ke
-  com.pk org.pk gov.pk edu.pk net.pk
-  com.ua org.ua gov.ua net.ua edu.ua
-  com.pl net.pl org.pl
-  co.at or.at gv.at ac.at
-  com.es org.es gob.es nom.es
-  com.pt org.pt gov.pt
-  com.gr org.gr gov.gr edu.gr
-  co.it
-  github.io githubusercontent.com gitlab.io vercel.app netlify.app pages.dev workers.dev
-  herokuapp.com appspot.com web.app firebaseapp.com blogspot.com wordpress.com
-  azurewebsites.net cloudfront.net amazonaws.com s3.amazonaws.com onrender.com fly.dev
-  myshopify.com squarespace.com wixsite.com webflow.io glitch.me repl.co replit.app
-  `
-    .split(/\s+/)
-    .filter(Boolean),
-);
+import PSL_RULES from './psl-data.js';
+
+// Sites follow the Public Suffix List, as Chrome does (a dated snapshot, both its ICANN and its
+// private sections: see extension/build/psl.mjs). Hosting and tunnel services where strangers get
+// subdomains (ngrok.io, duckdns.org, readthedocs.io, github.io, ...) are public suffixes there, so
+// victim.ngrok.io and attacker.ngrok.io are two different sites, each asked about separately.
+let rules = null;
+function pslRules() {
+  if (!rules) {
+    rules = { exact: new Set(), wild: new Set(), except: new Set() };
+    for (const r of PSL_RULES.split(' ')) {
+      if (!r) continue;
+      if (r.startsWith('!')) rules.except.add(r.slice(1));
+      else if (r.startsWith('*.')) rules.wild.add(r.slice(2));
+      else rules.exact.add(r);
+    }
+  }
+  return rules;
+}
+
+/**
+ * The public suffix of a (lowercase, ASCII) host by the Public Suffix List algorithm: an exception
+ * rule wins, then the matching rule with the most labels; with no rule, the last label ("*").
+ * `listed` tells whether a rule of the list matched (not just the default).
+ */
+export function publicSuffix(host) {
+  const labels = String(host || '').toLowerCase().replace(/\.$/, '').split('.').filter(Boolean);
+  if (!labels.length) return { suffix: '', listed: false };
+  const { exact, wild, except } = pslRules();
+  for (let i = 0; i < labels.length; i++) {
+    const candidate = labels.slice(i).join('.');
+    if (except.has(candidate)) return { suffix: labels.slice(i + 1).join('.'), listed: true };
+    if (exact.has(candidate)) return { suffix: candidate, listed: true };
+    if (i + 1 < labels.length && wild.has(labels.slice(i + 1).join('.'))) return { suffix: candidate, listed: true };
+  }
+  return { suffix: labels[labels.length - 1], listed: false };
+}
+
+/** Whether `site` is itself a public suffix named by the list (a grant for it would cover strangers). */
+export function isListedPublicSuffix(site) {
+  const host = String(site || '').toLowerCase();
+  if (!host || host.startsWith('[') || IPV4.test(host)) return false;
+  const { suffix, listed } = publicSuffix(host);
+  return listed && suffix === host;
+}
 
 /** The URL's hostname in lowercase without a trailing dot, or '' when it has none. */
 export function hostOf(url) {
@@ -65,7 +60,8 @@ const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 /**
  * The registrable domain ("site") of a URL or host: bestbuy.com for www.bestbuy.com,
- * bbc.co.uk for www.bbc.co.uk, shop.localhost for shop.localhost, 127.0.0.1 for 127.0.0.1.
+ * bbc.co.uk for www.bbc.co.uk, victim.ngrok.io for victim.ngrok.io, shop.localhost for
+ * shop.localhost, 127.0.0.1 for 127.0.0.1. A host that is itself a public suffix is its own site.
  */
 export function siteOf(urlOrHost) {
   let host = String(urlOrHost || '');
@@ -73,13 +69,11 @@ export function siteOf(urlOrHost) {
   host = host.toLowerCase().replace(/\.$/, '');
   if (!host) return '';
   if (host.startsWith('[') || IPV4.test(host)) return host; // IP addresses are their own site
+  const { suffix } = publicSuffix(host);
+  if (!suffix || suffix === host) return host;
   const labels = host.split('.');
-  if (labels.length <= 2) return host;
-  for (let take = Math.min(4, labels.length - 1); take >= 2; take--) {
-    const suffix = labels.slice(-take).join('.');
-    if (MULTI_LABEL_SUFFIXES.has(suffix)) return labels.slice(-(take + 1)).join('.');
-  }
-  return labels.slice(-2).join('.');
+  const take = suffix.split('.').length + 1;
+  return labels.slice(-take).join('.');
 }
 
 const WEB_STORE_HOSTS = new Set(['chromewebstore.google.com']);

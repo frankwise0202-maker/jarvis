@@ -393,6 +393,8 @@ async function toolRound(env, toolUses, epoch) {
     }
   } catch (err) {
     // Stop (or an unexpected failure): answer every call that has no result yet, then rethrow.
+    // (A run Stop already ended, because it hung, has answered them itself.)
+    if (env.isCurrent && !env.isCurrent()) throw err;
     const answered = new Set(results.map((r) => r.tool_use_id));
     let first = !failed;
     for (const tu of toolUses) {
@@ -415,27 +417,36 @@ async function toolRound(env, toolUses, epoch) {
 }
 
 /**
- * request_confirmation: asks the owner. Returns { approved, result }. An approval covers exactly
- * the one action described, on the page and in the tab Jarvis is on now (read before asking, so a
- * tab switch while the owner decides changes nothing), once, within a minute.
+ * request_confirmation: asks the owner, showing Claude's description and what Jarvis sees of the
+ * target element (its text, the item it belongs to, what is selected). Returns { approved,
+ * result }. An approval covers one click or key on exactly that element, in that state, in the
+ * tab and page Jarvis is on now, once, within a minute: a same-labelled button on another item,
+ * or the same button after the page changed its item or selection, asks the owner again.
  */
 async function confirmation(env, tu) {
   const action = singleLine(tu.input?.action || '');
   const category = CATEGORY_NAMES.includes(tu.input?.category) ? tu.input.category : null;
-  if (!action || !category) return { approved: false, result: customResult(tu.id, `Error: request_confirmation needs "action" (what will happen) and "category" (one of ${CATEGORY_NAMES.join(', ')}).`, true) };
+  const target = tu.input?.target;
+  if (!action || !category || !target || typeof target !== 'object') return { approved: false, result: customResult(tu.id, `Error: request_confirmation needs "action" (what will happen), "category" (one of ${CATEGORY_NAMES.join(', ')}) and "target" (the element that will do it: {"type": "ref", "ref": "ref_N"} or {"type": "coordinate", "x": <int>, "y": <int>}).`, true) };
   const scope = env.scope ? env.scope() : { site: env.site() };
   if (!scope.site) {
     // An approval belongs to the site where the action happens; there is none open yet.
-    return { approved: false, result: customResult(tu.id, 'Error: no website is open in the tab Jarvis works in. Open the page where this will happen first, then call request_confirmation right before the action (approvals apply to one page).', true) };
+    return { approved: false, result: customResult(tu.id, 'Error: no website is open in the tab Jarvis works in. Open the page where this will happen first, then call request_confirmation right before the action (approvals apply to one element on one page).', true) };
   }
+  // What the approval will be bound to, read before asking (a tab switch or a page change while
+  // the owner decides changes nothing it covers).
+  const facts = typeof env.executor?.describeTarget === 'function' ? await env.executor.describeTarget(target, { signal: env.signal }) : null;
+  if (!facts) return { approved: false, result: customResult(tu.id, 'Error: Jarvis could not look at that element. Look at the page again, then ask.', true) };
+  if (facts.error) return { approved: false, result: customResult(tu.id, facts.error, true) };
   const stepId = env.emit.step({ kind: 'ask', label: `Asked you to approve: ${truncate(action, 200)}`, status: 'running' });
-  const approved = await env.confirm({ action, category, source: 'jarvis', site: scope.site });
+  const approved = await env.confirm({ action, category, source: 'jarvis', site: facts.site || scope.site, facts });
   if (approved) {
-    env.approvals.grant(category, scope.site, { tabId: scope.tabId, url: scope.url, text: action });
+    const b = facts.bind || {};
+    env.approvals.grant({ category, site: facts.site || scope.site, tabId: facts.toolId, url: facts.url, doc: b.doc, targetId: b.targetId, ctx: b.ctx, selection: b.selection, text: action });
     env.emit.update(stepId, { status: 'done', label: `You approved: ${truncate(action, 200)}` });
-    return { approved: true, result: customResult(tu.id, `Approved by the owner: ${action}. Go ahead with exactly this one action, on this page, now. The approval covers only this action (${CATEGORIES[category]}); anything else will ask the owner again.`) };
+    return { approved: true, result: customResult(tu.id, `Approved by the owner: ${action}. Go ahead now with exactly this one step on the element you named (one click, or one key with it focused). The approval covers only that element, once, while it shows the same item (${CATEGORIES[category]}); anything else asks the owner again.`) };
   }
-  env.approvals.decline(category, scope.site);
+  env.approvals.decline(category, facts.site || scope.site, { element: facts.element || '' });
   env.emit.update(stepId, { status: 'blocked', label: `You declined: ${truncate(action, 200)}` });
   return { approved: false, result: customResult(tu.id, `Declined by the owner: ${action}. Do not do this or anything equivalent. Tell the owner what you did so far and finish.`) };
 }

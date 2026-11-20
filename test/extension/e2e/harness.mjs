@@ -58,13 +58,25 @@ export class Run {
   /**
    * `nativeWindow`: a real window size instead of Playwright's fixed viewport (Chrome's debugging
    * bar then makes the page shorter, as on a Mac). `startUrl`: the page the owner has open.
+   * `approveSteps` (default on): the owner approves every ordinary step Jarvis asks about (deny
+   * by default asks before each click, typing and key), so a scenario answers only the prompts
+   * it is about: site prompts and consequential steps. `everyday`: sites whose "everyday steps"
+   * switch is on. `downloads`: Chrome's own download handling, into this folder.
    */
-  async start({ settings = {}, seed = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null } = {}) {
+  async start({ settings = {}, seed = true, panelSize = { width: 400, height: 860 }, deviceScaleFactor = 1, nativeWindow = false, startUrl = null, approveSteps = true, everyday = [], always = [], downloads = null, launch = {} } = {}) {
     this.profile = await mkdtemp(path.join(os.tmpdir(), 'jarvis-ext-e2e-'));
+    this.downloads = downloads;
+    if (downloads) {
+      // Chrome's own download folder for this profile (with Playwright's handling switched off
+      // below, Chrome's download manager decides, as in the owner's Chrome).
+      await mkdir(path.join(this.profile, 'Default'), { recursive: true });
+      await writeFile(path.join(this.profile, 'Default', 'Preferences'), JSON.stringify({ download: { default_directory: downloads, prompt_for_download: false, directory_upgrade: true }, savefile: { default_directory: downloads } }));
+    }
     this.context = await this.pw.chromium.launchPersistentContext(this.profile, {
       channel: 'chromium',
       headless: !this.headed,
-      args: [`--disable-extensions-except=${this.extDir}`, `--load-extension=${this.extDir}`, '--no-proxy-server', '--no-first-run', '--no-default-browser-check', ...(nativeWindow ? ['--window-size=1280,900'] : [])],
+      args: [`--disable-extensions-except=${this.extDir}`, `--load-extension=${this.extDir}`, '--no-proxy-server', '--no-first-run', '--no-default-browser-check', ...(nativeWindow ? ['--window-size=1280,900'] : []), ...(launch.args || [])],
+      ...(launch.ignoreDefaultArgs ? { ignoreDefaultArgs: launch.ignoreDefaultArgs } : {}),
       ...(nativeWindow ? { viewport: null } : { viewport: { width: 1280, height: 800 }, deviceScaleFactor }),
     });
     this.sw = this.context.serviceWorkers()[0] || (await this.context.waitForEvent('serviceworker', { timeout: 15000 }));
@@ -73,16 +85,29 @@ export class Run {
       if (msg.type() === 'error') this.issues.push(`service worker console error: ${msg.text()}`);
     });
     if (seed) {
+      const port = this.server.port;
       await this.sw.evaluate(
-        ({ key, base, settings }) =>
-          chrome.storage.local.set({ 'jarvis.apiKey': key, 'jarvis.dev.apiBase': base, 'jarvis.settings': { model: 'claude-sonnet-5-5', budgetUsd: 1, maxSteps: 40, incognito: false, ...settings } }),
-        { key: TEST_API_KEY, base: this.server.apiBase, settings },
+        ({ key, base, settings, everyday, always }) =>
+          chrome.storage.local.set({
+            'jarvis.apiKey': key,
+            'jarvis.dev.apiBase': base,
+            'jarvis.settings': { model: 'claude-sonnet-5-5', budgetUsd: 1, maxSteps: 40, incognito: false, ...settings },
+            'jarvis.everyday': Object.fromEntries(everyday.map((s) => [s, true])),
+            'jarvis.sites': Object.fromEntries(always.map((s) => [s, 'always'])),
+          }),
+        { key: TEST_API_KEY, base: this.server.apiBase, settings, everyday, always },
       );
+      void port;
     } else {
       await this.sw.evaluate((base) => chrome.storage.local.set({ 'jarvis.dev.apiBase': base }), this.server.apiBase);
     }
     this.page = this.context.pages()[0] || (await this.context.newPage());
     this.watchPage(this.page);
+    if (downloads) {
+      const cdp = await this.context.newCDPSession(this.page);
+      await cdp.send('Browser.setDownloadBehavior', { behavior: 'default' });
+      await cdp.detach().catch(() => {});
+    }
     // The extension answers the page's JS dialogs itself (through the debugger). Without a
     // listener Playwright would answer them first (and accept "Leave site?").
     this.page.on('dialog', () => {});
@@ -94,7 +119,41 @@ export class Run {
     await this.panel.setViewportSize(panelSize);
     this.watchPage(this.panel, 'panel');
     await this.panel.waitForLoadState('domcontentloaded');
+    this.stepPrompts = [];
+    if (approveSteps) this.approveSteps();
     return this;
+  }
+
+  /**
+   * Plays an owner who approves every ordinary step Jarvis asks about (the prompts with
+   * data-consequential="false"); records them in this.stepPrompts ({ title, body }).
+   */
+  approveSteps() {
+    if (this.stepLoop) return;
+    this.stepLoop = { on: true };
+    const loop = this.stepLoop;
+    const done = new Set();
+    (async () => {
+      while (loop.on) {
+        try {
+          const list = await this.panel.locator('[data-testid="prompt"][data-kind="confirm"][data-consequential="false"]').evaluateAll((els) => els.map((e) => ({ id: e.dataset.promptId, title: e.querySelector('.prompt__title')?.textContent || '', body: e.querySelector('[data-testid="prompt-body"]')?.textContent || '' })));
+          for (const p of list) {
+            if (done.has(p.id)) continue;
+            done.add(p.id);
+            this.stepPrompts.push(p);
+            await this.panel.locator(`[data-prompt-id="${p.id}"] [data-testid="prompt-choice"][data-choice="approve"]`).click({ timeout: 5000 }).catch(() => {});
+          }
+        } catch {
+          /* the panel is busy */
+        }
+        await sleep(40);
+      }
+    })();
+  }
+
+  stopApprovingSteps() {
+    if (this.stepLoop) this.stepLoop.on = false;
+    this.stepLoop = null;
   }
 
   watchPage(p, label = 'page') {
@@ -125,7 +184,8 @@ export class Run {
   }
 
   async waitPrompt(kind, timeout = 15000) {
-    const loc = this.lastCard().locator(tid('prompt', `[data-kind="${kind}"]`));
+    // With ordinary steps approved in the background, only the prompts the scenario answers.
+    const loc = this.lastCard().locator(tid('prompt', `[data-kind="${kind}"]${kind === 'confirm' && this.stepLoop ? ':not([data-consequential="false"])' : ''}`));
     await loc.waitFor({ timeout });
     return loc;
   }
@@ -203,6 +263,7 @@ export class Run {
         /* best effort */
       }
     }
+    this.stopApprovingSteps();
     try {
       await this.context?.close();
     } catch {
@@ -224,7 +285,7 @@ export function watchPrompts(run) {
   (async () => {
     while (on) {
       try {
-        const list = await run.panel.locator(tid('prompt')).evaluateAll((els) => els.map((e) => ({ id: e.closest('[data-testid="task-card"]')?.dataset.status || '', kind: e.dataset.kind, title: e.querySelector('.prompt__title')?.textContent || '', body: e.querySelector('[data-testid="prompt-body"]')?.textContent || '', chips: [...e.querySelectorAll('.chip')].map((c) => c.textContent) })));
+        const list = await run.panel.locator(tid('prompt')).evaluateAll((els) => els.map((e) => ({ id: e.closest('[data-testid="task-card"]')?.dataset.status || '', kind: e.dataset.kind, step: e.dataset.consequential === 'false', title: e.querySelector('.prompt__title')?.textContent || '', body: e.querySelector('[data-testid="prompt-body"]')?.textContent || '', facts: e.querySelector('[data-testid="prompt-facts"]')?.textContent || '', chips: [...e.querySelectorAll('.chip')].map((c) => c.textContent) })));
         for (const p of list) {
           const k = `${p.kind}|${p.title}|${p.body}`;
           if (!keys.has(k)) {
@@ -238,5 +299,7 @@ export function watchPrompts(run) {
       await sleep(40);
     }
   })();
-  return { seen, stop: () => (on = false), confirms: () => seen.filter((p) => p.kind === 'confirm'), sites: () => seen.filter((p) => p.kind === 'site') };
+  // confirms(): the consequential approvals (and Jarvis's own questions); steps(): the ordinary
+  // steps deny-by-default asks about.
+  return { seen, stop: () => (on = false), confirms: () => seen.filter((p) => p.kind === 'confirm' && !p.step), steps: () => seen.filter((p) => p.kind === 'confirm' && p.step), sites: () => seen.filter((p) => p.kind === 'site') };
 }

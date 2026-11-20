@@ -217,15 +217,18 @@ test('refs keep counting across navigations (a stale ref never points at a new e
 
 test('the guard asks before a consequential click; declined clicks never happen', async () => {
   let answer = 'Blocked: the owner declined this action.';
-  const { call, mouse, asked } = setup({ page: SHOP, policy: { guard: () => answer } });
+  // The owner approves ordinary steps and declines consequential ones.
+  const { call, mouse, asked } = setup({ page: SHOP, policy: { guard: (c) => (c.consequential ? answer : null) } });
   await call('read_page', {});
   const add = await call('left_click', { target: { type: 'ref', ref: 'ref_2' } });
-  assert.ok(!add.result.is_error, 'Add to cart is not consequential');
-  assert.equal(asked.filter((a) => a[0] === 'guard').length, 0);
+  assert.ok(!add.result.is_error, text(add));
+  // Deny by default: even Add to cart asks the owner, as an ordinary step.
+  const first = asked.filter((a) => a[0] === 'guard').map((a) => a[1]);
+  assert.deepEqual(first.map((g) => [g.category, g.consequential, g.label]), [['change', false, 'Add to cart']]);
   const buy = await call('left_click', { target: { type: 'ref', ref: 'ref_3' } });
   assert.equal(buy.result.is_error, true);
   assert.match(buy.result.content, /^Blocked/);
-  const g = asked.find((a) => a[0] === 'guard')[1];
+  const g = asked.filter((a) => a[0] === 'guard')[1][1];
   assert.equal(g.category, 'purchase');
   assert.equal(g.label, 'Buy now');
   assert.equal(g.site, 'shop.example');
@@ -280,7 +283,7 @@ test('typing: line breaks in a message box use Shift+Enter; Enter in a form asks
       { role: 'textbox', name: 'Gift note', x: 0, y: 200, w: 300, h: 20, desc: { tag: 'input', form: { isSearch: false, submitLabel: 'Place order' } } },
     ],
   };
-  const { call, fb, asked } = setup({ page, policy: { guard: () => 'Blocked: the owner declined this action.' } });
+  const { call, fb, asked, tab } = setup({ page, policy: { guard: (c) => (c.consequential ? 'Blocked: the owner declined this action.' : null) } });
   await call('read_page', {});
   await call('left_click', { target: { type: 'ref', ref: 'ref_1' } });
   const r = await call('type', { text: 'Hi Alex,\nSee you soon.' });
@@ -288,13 +291,18 @@ test('typing: line breaks in a message box use Shift+Enter; Enter in a form asks
   const enters = fb.calls.filter((c) => c.method === 'Input.dispatchKeyEvent' && c.params.key === 'Enter' && c.params.type === 'keyDown');
   assert.equal(enters.length, 1);
   assert.equal(enters[0].params.modifiers, 8, 'Shift+Enter');
-  assert.equal(asked.filter((a) => a[0] === 'guard').length, 0);
+  assert.equal(tab.page.elements[0].value, 'Hi Alex,See you soon.');
+  // The click and the typing each asked the owner (ordinary steps); the typing showed its text.
+  const steps = asked.filter((a) => a[0] === 'guard').map((a) => a[1]);
+  assert.deepEqual(steps.map((g) => [g.category, g.consequential]), [['change', false], ['change', false]]);
+  assert.match(steps[1].verb, /^Type "Hi Alex, See you soon\." into$/);
   await call('left_click', { target: { type: 'ref', ref: 'ref_2' } });
   const sub = await call('type', { text: 'Happy birthday\n' });
   assert.equal(sub.result.is_error, true);
   assert.match(sub.result.content, /^Blocked/);
-  const g = asked.find((a) => a[0] === 'guard')[1];
+  const g = asked.filter((a) => a[0] === 'guard').map((a) => a[1]).find((x) => x.consequential);
   assert.equal(g.category, 'purchase');
+  assert.match(g.verb, /and press Enter into$/);
   const plainEnter = await call('key', { text: 'Enter' });
   assert.match(plainEnter.result.content, /^Blocked/);
 });
