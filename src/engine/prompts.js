@@ -570,23 +570,45 @@ export function buildSavedItemsBlock(items) {
 }
 
 const fmtNumber = (v) => {
+  // under 0.05 (a 4 mm plate in a model in metres): two significant digits, never "0"
+  if (v > 0 && v < 0.05) return v.toLocaleString('en-US', { maximumSignificantDigits: 2 });
   const n = Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
   return n.toLocaleString('en-US');
 };
+
+const SIZE_AXES = ['length', 'height', 'width'];
+const PANEL_FACE_WORDS = { right: 'right side', left: 'left side', sides: 'sides', front: 'front', back: 'back', top: 'top', bottom: 'underside' };
+const wordList = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0] || '');
+
+/** "a thin panel on the left side of "Body shell"" for a part made only of panels ({ on: [host names], faces }). */
+function panelLine(panel) {
+  const faces = (Array.isArray(panel.faces) ? panel.faces : []).map((f) => PANEL_FACE_WORDS[f]).filter(Boolean);
+  const hosts = (Array.isArray(panel.on) ? panel.on : []).map((n) => libText(n, 40)).filter(Boolean);
+  const many = panel.count > 1 ? 'thin panels' : 'a thin panel';
+  const where = faces.length ? ` on the ${wordList([...new Set(faces)])}` : '';
+  const of = hosts.length ? ` of ${wordList([...new Set(hosts)].map((n) => `"${n}"`))}` : '';
+  return `${many}${where}${of} (the hologram does not model its thickness)`;
+}
 
 /**
  * The "Blueprint request" block (SPEC holograms §5): the owner asked for a 2D blueprint of one part
  * of a saved hologram (`part` = its id) or of the whole object (`part` null).
  *   model: 'lib_…'; hologram: { title, subtitle, units, groups, parts } (normalized) or null when it
- *   could not be loaded; partInfo: { name, info, material, group, size: [x, y, z] } for the part, or
- *   null; size: [x, y, z] of the whole object; existing: id of a saved blueprint for the same target.
+ *   could not be loaded; partInfo: { name, info, material, group, size: [x, y, z], panel } for the
+ *   part, or null (panel: { on: [host part names], faces, count } when the part is only panels, which
+ *   lie on a hull's surface and have no depth: the size then names only the sides it has); size:
+ *   [x, y, z] of the whole object; existing: id of a saved blueprint for the same target.
  */
 export function buildBlueprintRequestBlock({ model, part = null, hologram = null, partInfo = null, size = null, existing = null }) {
   const forIds = part ? { model, part } : { model };
   const units = hologram && typeof hologram.units === 'string' ? libText(hologram.units, 4) : 'mm';
-  const dims = (v) => (Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n) && n >= 0)
-    ? `about ${v.map(fmtNumber).join(' × ')} ${units} (length × height × width)`
-    : '');
+  const dims = (v) => {
+    if (!(Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n) && n >= 0))) return '';
+    // never a 0 side (a panel's depth): Claude would draw it that thin
+    const sides = [0, 1, 2].filter((i) => v[i] > 0 && fmtNumber(v[i]) !== '0');
+    if (!sides.length) return '';
+    return `about ${sides.map((i) => fmtNumber(v[i])).join(' × ')} ${units} (${sides.map((i) => SIZE_AXES[i]).join(' × ')})`;
+  };
   const lines = ['Blueprint request (the owner asked for this 2D blueprint):'];
   const of = hologram
     ? `the saved hologram ${model}, "${libText(hologram.title) || 'Untitled'}"`
@@ -601,6 +623,7 @@ export function buildBlueprintRequestBlock({ model, part = null, hologram = null
       if (partInfo.material) details.push(`material: ${libText(partInfo.material, 80)}`);
       const sz = dims(partInfo.size);
       if (sz) details.push(`size: ${sz}`);
+      if (partInfo.panel && typeof partInfo.panel === 'object') details.push(panelLine(partInfo.panel));
       if (details.length) lines.push(`- Part details: ${details.join('; ')}`);
       if (partInfo.info) lines.push(`- About the part: ${libText(partInfo.info, 300)}`);
     }

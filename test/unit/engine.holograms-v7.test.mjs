@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
+  buildBlueprintRequestBlock,
   LEAD_SYSTEM_LATEST,
   LEAD_SYSTEM_V4,
   LEAD_SYSTEM_V5,
@@ -207,4 +208,58 @@ test('a v2 spec with authoring slips: still shown, and the tool_result lists wha
   assert.match(result.content, /parts\[0\] "Body shell" shapes\[0\] \(hull\): top: taken as a half outline and mirrored\./);
   assert.match(result.content, /parts\[0\] "Body shell" shapes\[0\] \(hull\): round taken as r \(60\): a hull's edge radius is r; round is the 0–1 softness of boxes and loft sections\./);
   assert.match(result.content, /parts\[14\] "Roof rack" shapes\[0\] \(panel\): dropped: panel on "battery": that part has no hull \(panels lie on hulls only\)\./);
+});
+
+test('a 2D blueprint of a v2 panel part (doors, hood, lights, tailgate) never says it is 0 mm thick (UX73-1)', async () => {
+  // A panel lies on its hull's surface, so its box has no depth across its face. The paid request
+  // must not tell Claude "1,085 × 804 × 0 mm": the size names only the sides it has, and the part is
+  // described as a thin panel on that face of its host.
+  const library = createFakeLibrary();
+  const models = [];
+  for (const name of ['camry', 'f150', 'model3']) {
+    const spec = normalizeHologramSpec(fixture(`v2/${name}`)).spec;
+    const id = `lib_${name}00000`.slice(0, 14);
+    library.add({ id, kind: 'hologram', title: spec.title, subject: spec.subtitle, spec, stats: { parts: spec.parts.length } });
+    models.push({ id, spec });
+  }
+  let h;
+  h = createHarness({ library, now: FIXED_NOW, handler: () => ({ content: [blk.text('Drawing it.')], stop: 'end_turn' }) });
+  const contextFor = async (model, part) => {
+    const conv = h.jarvis.newConversation();
+    const before = h.api.requests.length;
+    await runTurn(h.jarvis, conv, 'Blueprint', 'auto', { blueprintFor: { model, part } });
+    const body = h.api.requests[before].body;
+    return body.messages.filter((m) => m.role === 'user' && m.content[0]?.text?.startsWith('<turn_context>')).at(-1).content[0].text;
+  };
+  const camry = models[0];
+  const door = await contextFor(camry.id, 'door-fl');
+  assert.match(door, /\n- Part details: group: Body; material: Steel, glass; size: about 1,085 × 804 mm \(length × height\); a thin panel on the left side of "Body shell" \(the hologram does not model its thickness\)\n/);
+  const hood = await contextFor(camry.id, 'hood');
+  assert.match(hood, /size: about 1,168 × 1,544 mm \(length × width\); a thin panel on the top of "Body shell"/);
+  // every panel-only part of the three vehicles: no zero side, the panel line, the host's name
+  let checked = 0;
+  for (const { id, spec } of models) {
+    for (const part of spec.parts) {
+      if (!part.shapes.every((s) => s.type === 'panel')) continue;
+      const ctx = await contextFor(id, part.id);
+      const details = ctx.split('\n').find((l) => l.startsWith('- Part details: '));
+      assert.ok(details, `${part.id}: ${ctx}`);
+      assert.doesNotMatch(details, /(^|[^\d,.])0 mm|× 0\b/, `${spec.title} ${part.id}: ${details}`);
+      assert.match(details, /size: about [\d,.]+( × [\d,.]+){1,2} mm \((length|height|width)( × (length|height|width)){1,2}\)/, `${part.id}: ${details}`);
+      const host = spec.parts.find((p) => p.id === part.shapes[0].on).name;
+      const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      assert.match(details, new RegExp(`; (a thin panel|thin panels) on the [a-z ,]+ of "${escaped}" \\(the hologram does not model its thickness\\)$`), `${part.id}: ${details}`);
+      checked++;
+    }
+  }
+  assert.equal(checked, 11 + 10 + 8, 'all panel-only parts of the Camry, F-150 and Model 3');
+  // a part with real thickness keeps its three sides and gets no panel line
+  const body = await contextFor(camry.id, 'body-shell');
+  assert.match(body, /size: about 4,884 × 1,279 × 1,840 mm \(length × height × width\)\n/);
+  assert.doesNotMatch(body, /thin panel/);
+  // the block itself: a 0 side is left out, a thin one in metres is not rounded to 0
+  const block = (size, units = 'mm') => buildBlueprintRequestBlock({ model: 'lib_abcdefghij', part: 'p', hologram: { title: 'T', units, parts: [] }, partInfo: { name: 'P', size } }).split('\n').find((l) => l.startsWith('- Part details'));
+  assert.equal(block([1085, 804, 0]), '- Part details: size: about 1,085 × 804 mm (length × height)');
+  assert.equal(block([1.2, 0.8, 0.004], 'm'), '- Part details: size: about 1.2 × 0.8 × 0.004 m (length × height × width)');
+  assert.equal(block([0, 0, 0]), undefined, 'no size at all rather than 0 × 0 × 0');
 });

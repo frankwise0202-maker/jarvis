@@ -193,6 +193,13 @@ async function addVisualBlocks(ctx) {
       if (part) {
         const group = part.group ? hologram.groups.find((g) => g.id === part.group)?.name || part.group : '';
         partInfo = { name: part.name, info: part.info, material: part.material, group, size: partBounds(part)?.size || null };
+        // a part made only of panels (a door, the hood, lights) lies on another part's hull and has
+        // no depth of its own: the request says so instead of "× 0 mm"
+        const panels = part.shapes.filter((s) => s.type === 'panel');
+        if (panels.length && panels.length === part.shapes.length) {
+          const on = [...new Set(panels.map((s) => s.on))].map((id) => hologram.parts.find((p) => p.id === id)?.name || id);
+          partInfo.panel = { on, faces: [...new Set(panels.map((s) => s.face))], count: panels.length };
+        }
       }
     } else if (hologram) {
       size = specBounds(hologram)?.size || null;
