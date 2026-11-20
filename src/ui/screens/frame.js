@@ -87,10 +87,14 @@ export function createScreenFrame(opts = {}) {
   const whereText = h('span', { class: 'scr__where', text: opts.label || 'SCREEN' });
   const kindText = h('span', { class: 'scr__kind', text: screenKindLabel(kind, { report }) });
   // A third, optional part ("43 PARTS"): kept in the header so nothing sits on the content. Empty
-  // and hidden when unused, so the eyebrow's text is just "SCREEN 2 · BLUEPRINT".
+  // and hidden when unused, so the eyebrow's text is just "SCREEN 2 · BLUEPRINT". It travels with
+  // its "·" (the tail): in a header too narrow for it the whole tail drops out of the line (CSS), so
+  // no "·" is left dangling; the kind then shortens with an ellipsis.
   const detailSep = h('span', { class: 'scr__sep', hidden: true, attrs: { 'aria-hidden': 'true' } });
   const detailText = h('span', { class: 'scr__detail', hidden: true, attrs: { 'data-testid': 'screen-detail' } });
-  const eyebrow = h('p', { class: 'scr__eyebrow' }, whereText, h('span', { class: 'scr__sep', attrs: { 'aria-hidden': 'true' }, text: '·' }), kindText, detailSep, detailText);
+  const lead = h('span', { class: 'scr__lead' }, whereText, h('span', { class: 'scr__sep', attrs: { 'aria-hidden': 'true' }, text: '·' }), kindText);
+  const tail = h('span', { class: 'scr__tail', hidden: true }, detailSep, detailText);
+  const eyebrow = h('p', { class: 'scr__eyebrow' }, lead, tail);
   const title = h('h1', { class: 'scr__title', attrs: { 'data-testid': 'screen-title' } });
   const statusDot = h('span', { class: 'scr__status-dot', attrs: { 'aria-hidden': 'true' } });
   const statusText = h('span', { class: 'scr__status-text' });
@@ -193,6 +197,7 @@ export function createScreenFrame(opts = {}) {
     /** The header's third part after the kind, like '43 PARTS', or '' for none. */
     setDetail(text) {
       const d = String(text || '');
+      tail.hidden = !d;
       detailSep.hidden = !d;
       detailText.hidden = !d;
       setText(detailSep, d ? '·' : '');

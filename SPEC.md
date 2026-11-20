@@ -1766,9 +1766,19 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   WORKING · n AGENTS, WRITING, COMPLETE · n/n), a 300ms assemble and one scanline on open and when the content
   finishes; static under reduced motion and Still. The brackets, edge and glows are the theme's accent (they follow
   Settings → Appearance like the rest of the HUD; E2E checks Ember). Text uses the app tokens (AA, checked in E2E).
+- Sizes: a maximized screen window has the one-row header. A window up to 1000px wide (the "window" placement is half
+  a laptop screen, about 720px; any screen window can be dragged down to panel size) has two tiers: the glyph,
+  eyebrow, status, clock and icon-only buttons on top (Bring back keeps its name as label and tooltip), the title on
+  the whole width under them; up to 640px the status chip gives way, the title is 17px and the deck's tools show
+  icons. A floating panel has the compact header (no buttons: Chrome's panel has its own); a phone's in-app screen
+  has two tiers with Close, and the title on up to two lines. The eyebrow is one line: its "· 43 PARTS" tail drops
+  out whole when it does not fit (no dangling "·"), then the kind shortens with an ellipsis.
 - Tests: unit `screens.commands`, `screens.targets`, `screens.placement`, `screens.controller` (Chromium, stubbed
-  Window Management / PiP / popup blocker / gesture), `engine.screens` (the tool round through the fake API, on the
-  frozen V5), `engine.v7` (the round through the strict mock's `[[screen:…]]`); E2E `screens.mjs`: `screens-pages`,
+  Window Management / PiP / popup blocker / gesture), `screens.frame` (Chromium with the app's stylesheets: at
+  1440, 720, 460 and 420px wide, and on 390, 375 and 320px phones, the buttons stay inside the frame, nothing in the
+  header overlaps, the eyebrow never ends in "·" and the title keeps its room), `engine.screens` (the tool round
+  through the fake API, on the frozen V5), `engine.v7` (the round through the strict mock's `[[screen:…]]`); E2E
+  `screens.mjs`: `screens-pages`,
   `screens-sync`, `screens-pip` (the real Document PiP of headless Chromium), `screens-pip-snapshot`,
   `screens-monitor`, `screens-fallbacks`, `screens-no-apis`, `screens-phone`, `screens-tool` (Jarvis calls
   open_screen through the real app and the mock: a window on the stubbed second monitor, the one tap a floating panel

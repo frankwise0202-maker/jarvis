@@ -163,11 +163,17 @@
 .scr__titles {
   min-width: 0;
 }
+/* One line: "SCREEN 2 · HOLOGRAM" (the lead) and, when it fits, "· 43 PARTS" (the tail). A tail that
+   does not fit wraps onto a second line, which is clipped, so it drops out whole; after that the
+   kind shortens with an ellipsis. */
 .scr__eyebrow {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  column-gap: 8px;
+  height: 1.2em;
   margin: 0 0 3px;
+  overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -177,17 +183,28 @@
   white-space: nowrap;
   color: var(--accent);
 }
+.scr__lead,
+.scr__tail {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.scr__lead {
+  min-width: 0;
+}
+.scr__tail {
+  flex: none;
+}
 .scr__sep {
   color: var(--text-3);
 }
 .scr__kind {
-  color: var(--text-2);
-}
-/* "43 PARTS": the last part of the eyebrow gives way first in a narrow panel. */
-.scr__detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-2);
+}
+.scr__detail {
   color: var(--text-2);
 }
 .scr__title {
@@ -570,6 +587,81 @@
 }
 @media (max-width: 460px) {
   .scr--compact .scr__status {
+    display: none;
+  }
+}
+
+/* ---- a narrow screen window (not a floating panel) ------------------------------------------------ */
+
+/* "Open it in a window" takes the right half of the screen (about 720px on a laptop), and the owner
+   can drag any screen window down to the size of a floating panel. Then the header has two tiers:
+   the glyph, eyebrow, clock, status and buttons share the top row, and the title gets the whole width
+   under them. Bring back shows its icon only (its name stays the button's label and tooltip). In a
+   panel-sized window the status chip gives way, as in a floating panel (the glyph still breathes
+   while the content is live, and the panel shows its progress), and the deck's tools show their
+   icons. A maximized window keeps the one-row header. */
+@media (max-width: 1000px) {
+  .scr:not(.scr--compact) {
+    --scr-pad-x: 18px;
+  }
+  .scr:not(.scr--compact) .scr__head {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 8px 12px;
+    padding: 12px var(--scr-pad-x) 12px;
+  }
+  .scr:not(.scr--compact) .scr__titles {
+    display: contents;
+  }
+  .scr:not(.scr--compact) .scr__core {
+    grid-row: 1;
+    width: 30px;
+    height: 30px;
+  }
+  .scr:not(.scr--compact) .scr__eyebrow {
+    grid-row: 1;
+    grid-column: 2;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+  .scr:not(.scr--compact) .scr__title {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .scr:not(.scr--compact) .scr__meta {
+    grid-row: 1;
+    grid-column: 3;
+    gap: 10px;
+  }
+  .scr:not(.scr--compact) .scr__actions {
+    grid-row: 1;
+    grid-column: 4;
+    gap: 6px;
+  }
+  .scr:not(.scr--compact) .scr__btn {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 8px;
+  }
+  .scr:not(.scr--compact) .scr__btn--text > span {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .scr:not(.scr--compact) .scr__status {
+    display: none;
+  }
+  .scr:not(.scr--compact) .scr__title {
+    font-size: var(--fs-lg); /* 17px: the display face is never below 16px (Presence 2.4.15) */
+  }
+  .scr:not(.scr--compact) .scr__deck {
+    gap: 8px 10px;
+    padding: 10px var(--scr-pad-x) 12px;
+  }
+  .scr:not(.scr--compact) .scr-tool--text {
+    padding: 0 10px;
+  }
+  .scr:not(.scr--compact) .scr-tool--text > span {
     display: none;
   }
 }
@@ -1126,10 +1218,41 @@
   }
 }
 
-/* A screen shown full screen inside the app keeps its close button, even when compact. */
+/* A screen shown full screen inside the app keeps its close button, even when compact. On a phone
+   its header has two tiers, like a narrow screen window: the glyph, eyebrow, clock and close button
+   on top, and the title on the whole width under them, on up to two lines. */
 .scr-inapp .scr--compact .scr__actions {
   display: flex;
+  grid-row: 1;
+  grid-column: 4;
 }
 .scr-inapp .scr--compact .scr__head {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
+  row-gap: 8px;
+}
+.scr-inapp .scr--compact .scr__titles {
+  display: contents;
+}
+.scr-inapp .scr--compact .scr__core {
+  grid-row: 1;
+}
+.scr-inapp .scr--compact .scr__eyebrow {
+  grid-row: 1;
+  grid-column: 2;
+  min-width: 0;
+  margin: 0;
+}
+.scr-inapp .scr--compact .scr__meta {
+  grid-row: 1;
+  grid-column: 3;
+}
+.scr-inapp .scr--compact .scr__title {
+  display: -webkit-box;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
