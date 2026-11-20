@@ -12,6 +12,7 @@ import { icon } from './icons.js';
 import { fmtDuration, fmtUsd, hostname } from './hud/format.js';
 import { MODELS, DEPTHS, MODES } from '../engine/models.js';
 import { isVisualSegment, visualExportLine } from '../engine/visuals.js';
+import { describeItem, musicExportItem } from '../lib/music.js';
 
 // ---------------------------------------------------------------------------------------------
 // Small, defensive accessors
@@ -468,6 +469,7 @@ export function turnMetrics(turn) {
  */
 export function turnStatsLine(turn, opts = {}) {
   if (!isObj(turn)) return '';
+  if (turn.local === 'music') return 'Free · Apple Music'; // searched on the device, no Claude request
   const m = turnMetrics(turn);
   const parts = [];
   if (turn.status === 'stopped' && !(isObj(opts) && opts.status === false)) parts.push('Stopped');
@@ -573,6 +575,13 @@ function joinText(segments) {
       // A hologram or blueprint: one line ("[Hologram: … · 43 parts]"), never its spec.
       const line = visualExportLine(seg);
       if (line) groups.push(escapeInline(line));
+      current = null;
+      continue;
+    }
+    if (seg.kind === 'music') {
+      // A Music card: its song or album as a link ("Apple Music: Back In Black by AC/DC").
+      const item = musicExportItem(seg);
+      if (item) groups.push(mdLink(`Apple Music: ${describeItem(item)}`, item.url));
       current = null;
       continue;
     }
@@ -930,6 +939,10 @@ function jarvisBody(turn) {
       if (line) out.push(line);
     } else if (seg.kind === 'memory' && oneLine(seg.fact)) {
       out.push(`*${seg.action === 'remove' ? 'Forgot' : 'Remembered'}: “${escapeInline(seg.fact)}”*`);
+    } else if (seg.kind === 'music') {
+      // A Music card: its song or album as a link, as in a shared reply (joinText).
+      const item = musicExportItem(seg);
+      if (item) out.push(mdLink(`Apple Music: ${describeItem(item)}`, item.url));
     } else if (seg.kind === 'notice' && oneLine(seg.text)) {
       out.push(`> Note: ${escapeInline(seg.text)}`);
     } else if (seg.kind === 'error' && isObj(seg.error) && oneLine(seg.error.message)) {

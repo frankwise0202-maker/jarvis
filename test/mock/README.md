@@ -81,6 +81,24 @@ once, and I can use your other screen, sir." (the permission), "It's back on you
 sir.", or "I couldn't do that: …" for an `is_error` result. `[[screen]]` comes after `[[search]]`
 in the precedence above.
 
+### Apple Music (lead tools version 6: `find_music`)
+
+In `music.mjs`. Only when the request defines `find_music` (new conversations since Apple Music); an
+older conversation gets a plain answer. Local music commands ("play Back in Black") never reach the
+API: these test the tool path, Jarvis choosing music himself.
+
+| Directive | What the mock does |
+| --- | --- |
+| `[[music]]` | `find_music` with the owner's words as the query ("Play Back in Black by AC/DC" → `Back in Black AC/DC`), kind `song`, limit 3 |
+| `[[music:<query>]]` / `[[music:album:<query>]]` / `[[music:artist:<name>]]` | that query (and kind) |
+| `[[music:recommend]]` | one sentence, then two `find_music` calls in one response: `Riders on the Storm The Doors` (song) and `Come Away With Me Norah Jones` (album) |
+
+After the `tool_result`(s), one sentence read from them: "Here's Back In Black by AC/DC. Tap Open in
+Apple Music to play it, or Preview to hear 30 seconds." (spoken: without the Preview part), "For a
+rainy Sunday: … and …. Tap Preview to hear a clip, or Open in Apple Music to play one.", or "I
+couldn't search Apple Music just now: …" for an `is_error` result. `[[music]]` comes after
+`[[screen]]` in the precedence above.
+
 ### Optics (lead tools version 5: `pin_labels`, `look_through_camera`) and Watch
 
 In `optics.mjs`. A Look is detected from the request itself: the newest user message carries an

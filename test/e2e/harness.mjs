@@ -11,6 +11,7 @@ import { execSync } from 'node:child_process';
 import { deflateSync } from 'node:zlib';
 import { canonicalJson } from '../mock/util.mjs';
 import { startTestServer, MOCK_API_KEY } from '../server.mjs';
+import { MUSIC_ORIGIN_RE, routeFakeMusic } from './music-fakes.mjs';
 
 export const BAD_API_KEY = 'sk-ant-bad-0123456789abcdefghijk';
 export const SEED_MARKER = '__jarvis_e2e_seeded__';
@@ -258,12 +259,18 @@ export class TestContext {
         return route.fulfill({ status: 200, contentType: 'image/png', headers: cors, body: placeholder });
       });
     }
+    // Apple Music (`fakeMusic: true`): the iTunes API, artwork and previews (music-fakes.mjs).
+    const fakeMusic = !!this.scenario.fakeMusic;
+    if (fakeMusic) {
+      if (!placeholder) placeholder = placeholderPng();
+      this.music = await routeFakeMusic(context, { png: placeholder, delayMs: this.scenario.musicDelayMs || 0 }); // the newest context's counts
+    }
     context.on('request', (req) => {
       const url = req.url();
       if (!/^https?:/i.test(url)) return;
       try {
         const from = new URL(url).origin;
-        if (from !== origin && !faked.includes(from)) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
+        if (from !== origin && !faked.includes(from) && !(fakeMusic && MUSIC_ORIGIN_RE.test(from))) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
       } catch {
         /* ignore */
       }

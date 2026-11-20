@@ -56,6 +56,7 @@ import { isKnownLeadSetup } from '../engine/prompts.js';
 import { normalizeHologramSpec } from '../lib/hologram-spec.js';
 import { normalizeBlueprintSpec, summarizeBlueprint } from '../lib/blueprint-spec.js';
 import { cleanFrame, cleanLabelText, OPTICS_LIMITS } from '../lib/optics.js';
+import { MUSIC_SEARCH_KINDS, cleanMusicItems, cleanQuery, cleanText } from '../lib/music.js';
 import { NATURAL_CACHES } from './voice/natural/catalog.js';
 
 export const BACKUP_APP = 'jarvis';
@@ -403,6 +404,17 @@ function segment(s, settled) {
     case 'frame':
       Object.assign(seg, opticsSegment(s));
       break;
+    case 'music':
+      // Apple Music cards: every item re-checked (Apple's own hosts only), nothing is still searching.
+      seg.status = s.status === 'done' ? 'done' : 'error';
+      seg.query = cleanQuery(s.query);
+      seg.searchKind = oneOf(s.searchKind, MUSIC_SEARCH_KINDS, 'song');
+      seg.items = seg.status === 'done' ? cleanMusicItems(s.items) : [];
+      seg.artist = cleanText(s.artist, 120);
+      seg.error = seg.status === 'error' ? oneOf(s.error, ['offline', 'timeout', 'network', 'bad_response', 'empty', 'aborted'], 'network') : null;
+      if (typeof s.toolUseId === 'string' && s.toolUseId) seg.toolUseId = s.toolUseId;
+      if (s.local === true) seg.local = true;
+      break;
     default:
       break;
   }
@@ -590,6 +602,7 @@ function turnOf(t, fallbackTime) {
   if (blueprintFor) turn.blueprintFor = blueprintFor;
   const apiStart = int(t.apiStart, 0, 1e9);
   if (apiStart !== null) turn.apiStart = apiStart;
+  if (t.local === 'music') turn.local = 'music'; // a free Apple Music exchange (no model, no cost)
   return turn;
 }
 

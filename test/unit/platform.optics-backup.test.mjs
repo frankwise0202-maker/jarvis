@@ -57,3 +57,47 @@ test('backup: an Optics Look keeps its frame record, pins and camera frame; bad 
   const live = j1.segments.find((s) => s.id === 's4');
   assert.deepEqual([live.status, live.labels.length], ['error', 0], 'nothing imported is still pinning');
 });
+
+test('backup: an Apple Music exchange keeps its card (items re-checked against Apple\'s hosts) and stays local', async () => {
+  const page = await h.newPage();
+  const r = await page.evaluate(async () => {
+    const { db, backup, prompts } = window.__mods;
+    const song = {
+      type: 'song', id: '574050602', title: 'Back In Black', artist: 'AC/DC', album: 'Back In Black', year: 1980, genre: 'Hard Rock', durationMs: 256000,
+      url: 'https://music.apple.com/us/album/back-in-black/574050396?i=574050602', previewUrl: 'https://audio-ssl.itunes.apple.com/a/b.m4a',
+      artwork: 'https://is1-ssl.mzstatic.com/image/thumb/a.jpg/300x300bb.jpg', explicit: false, artistId: '5040714', trackCount: null,
+    };
+    const usage = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, searches: 0, fetches: 0 };
+    const conv = {
+      id: 'music-chat', v: 1, title: 'play Back in Black', createdAt: 1000, updatedAt: 2000, system: prompts.LEAD_SYSTEM_LATEST, tools: prompts.leadToolsLatest(),
+      apiMessages: [],
+      turns: [
+        { id: 'u1', role: 'user', text: 'play Back in Black', mode: 'auto', createdAt: 1000 },
+        {
+          id: 'j1', role: 'jarvis', local: 'music', status: 'done', createdAt: 1000, endedAt: 1100, mode: 'auto', leadModel: 'local', workerModel: 'local', depth: 'balanced', missions: {}, usage, costUsd: 0,
+          stats: { agents: 0, searches: 0, sources: 0, waves: 0, durationMs: 0 }, error: null,
+          segments: [
+            { id: 's1', kind: 'text', text: 'Here’s Back In Black by AC/DC.', req: 0, citations: [] },
+            { id: 's2', kind: 'music', req: 0, toolUseId: null, status: 'done', query: 'back in black', searchKind: 'song', artist: '', error: null, local: true,
+              items: [song, { ...song, id: '1', url: 'https://evil.example/x' }, { ...song, id: '2', previewUrl: 'javascript:alert(1)', artwork: 'https://evil.example/a.jpg' }] },
+            { id: 's3', kind: 'music', req: 0, status: 'searching', query: 'x', searchKind: 'podcast', items: [song] },
+          ],
+        },
+      ],
+      pending: null,
+    };
+    const result = await backup.importBackup({ app: 'jarvis', version: 1, conversations: [conv] });
+    return { result, saved: await db.getConversation('music-chat') };
+  });
+  assert.equal(r.result.conversations, 1, JSON.stringify(r.result));
+  const j1 = r.saved.turns[1];
+  assert.equal(j1.local, 'music');
+  const card = j1.segments.find((s) => s.id === 's2');
+  assert.deepEqual(card.items.map((i) => [i.id, i.previewUrl, i.artwork]), [
+    ['574050602', 'https://audio-ssl.itunes.apple.com/a/b.m4a', 'https://is1-ssl.mzstatic.com/image/thumb/a.jpg/300x300bb.jpg'],
+    ['2', null, null],
+  ], 'a foreign link drops the item; a foreign preview or artwork is dropped');
+  assert.equal(card.local, true);
+  const searching = j1.segments.find((s) => s.id === 's3');
+  assert.deepEqual([searching.status, searching.items.length, searching.searchKind], ['error', 0, 'song'], 'nothing imported is still searching');
+});

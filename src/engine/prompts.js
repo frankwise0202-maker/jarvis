@@ -9,6 +9,7 @@ import { showHologramTool } from '../lib/hologram-spec.js';
 import { drawBlueprintTool, sheetLabel } from '../lib/blueprint-spec.js';
 import { lookThroughCameraTool, pinLabelsTool } from '../lib/optics-tools.js';
 import { openScreenTool } from './screens.js';
+import { findMusicTool } from './music.js';
 
 export const LEAD_SYSTEM_V1 = `You are Jarvis, a personal AI assistant to one person, the owner. You run in their browser and on their phone. You can answer from your own knowledge, search the web and read pages, remember facts the owner asks you to keep, and deploy a team of research agents that work in parallel.
 
@@ -166,8 +167,27 @@ export const LEAD_SYSTEM_V4 = (() => {
   return LEAD_SYSTEM_V3.replace(anchor, `\n\n${CAMERA_AND_SCREENS_SECTION}${anchor}`);
 })();
 
+/**
+ * The section version 5 adds (Apple Music, find & open). Kept short: it is cached with every
+ * request. find_music carries the details.
+ */
+export const MUSIC_SECTION = `# Music
+- find_music searches Apple Music and shows the owner a card for each search: artwork, a 30-second preview and an Open in Apple Music button. When the owner wants music, recommendations or "something for" a mood or moment, pick concrete songs or albums yourself and call find_music for each (title and artist), then say in a sentence or two what you chose and why.
+- You cannot play full songs or control the Music app: never say that something is playing. The owner taps Open in Apple Music to play it there. Apple Music playlists cannot be searched, so offer songs or albums and say so.`;
+
+/**
+ * Version 5 (Apple Music, new conversations): everything in V4, plus the "Music" section before
+ * "Writing the answer". Frozen with leadToolsV6; older conversations keep the prompt they were
+ * created with. Built from V4, which never changes (a test pins every version).
+ */
+export const LEAD_SYSTEM_V5 = (() => {
+  const anchor = '\n\n# Writing the answer\n';
+  if (LEAD_SYSTEM_V4.split(anchor).length !== 2) throw new Error('prompts: LEAD_SYSTEM_V4 changed');
+  return LEAD_SYSTEM_V4.replace(anchor, `\n\n${MUSIC_SECTION}${anchor}`);
+})();
+
 /** The lead system prompt new conversations freeze. */
-export const LEAD_SYSTEM_LATEST = LEAD_SYSTEM_V4;
+export const LEAD_SYSTEM_LATEST = LEAD_SYSTEM_V5;
 
 export const WORKER_SYSTEM_V1 = `You are a Jarvis field agent: one member of a research team working in parallel for Jarvis, a personal AI assistant. Jarvis has given you a single assignment. Your report goes back to Jarvis, who combines it with your teammates' reports into one answer for the owner. You cannot ask questions, so make sensible assumptions, state them in your report and get on with the work.
 
@@ -322,18 +342,27 @@ export function leadToolsV5() {
   return [...leadToolsV4(), pinLabelsTool(), lookThroughCameraTool(), openScreenTool()];
 }
 
+/**
+ * Version 6 (Apple Music, new conversations): everything in V5, plus find_music (src/engine/music.js:
+ * search Apple Music on the owner's device and show Music cards). Appended, so the V5 part of the
+ * list (and the cached prefix) is unchanged. Frozen with LEAD_SYSTEM_V5.
+ */
+export function leadToolsV6() {
+  return [...leadToolsV5(), findMusicTool()];
+}
+
 /** The lead tools new conversations freeze. */
-export const leadToolsLatest = leadToolsV5;
+export const leadToolsLatest = leadToolsV6;
 
 /** The client tools of version 4 that show something on the owner's screen. */
 export const VISUAL_TOOLS = Object.freeze(['show_hologram', 'draw_blueprint', 'open_saved']);
 
 /** Every lead system prompt Jarvis has frozen into a conversation (oldest first). */
-export const LEAD_SYSTEM_VERSIONS = Object.freeze([LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4]);
+export const LEAD_SYSTEM_VERSIONS = Object.freeze([LEAD_SYSTEM_V1, LEAD_SYSTEM_V2, LEAD_SYSTEM_V3, LEAD_SYSTEM_V4, LEAD_SYSTEM_V5]);
 
 /** Every lead tool list Jarvis has frozen into a conversation (fresh copies, oldest first). */
 export function leadToolVersions() {
-  return [leadToolsV1(), leadToolsV2(), leadToolsV3(), leadToolsV4(), leadToolsV5()];
+  return [leadToolsV1(), leadToolsV2(), leadToolsV3(), leadToolsV4(), leadToolsV5(), leadToolsV6()];
 }
 
 /**

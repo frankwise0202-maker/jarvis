@@ -1,0 +1,364 @@
+/* Apple Music (find & open): the Music card in the chat and in Voice Mode, with its mini player.
+   Presence look: tokens only, the shared .hud-frame corner brackets, mono HUD labels. Every text
+   color passes WCAG AA on the card's surface; every control is at least 44 px (--tap); the card
+   fits a 320 px screen (the artwork shrinks, the buttons wrap). */
+
+.music-card {
+  --frame-color: var(--line-3);
+  --frame-inset: 0px;
+  --frame-arm: 12px;
+  display: block;
+  max-width: 560px;
+  margin: var(--sp-2) 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 14px);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  color: var(--text);
+}
+
+.music-card[data-status='searching'] .music-status-icon {
+  animation: music-pulse 1.2s var(--ease, ease) infinite;
+}
+@keyframes music-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-card[data-status='searching'] .music-status-icon {
+    animation: none;
+  }
+}
+
+.music-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap);
+  color: var(--text-2);
+}
+.music-status-row[hidden] {
+  display: none;
+}
+.music-status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight);
+}
+.music-card[data-status='error'] .music-status-icon {
+  color: var(--warn);
+}
+
+.music-body[hidden] {
+  display: none;
+}
+
+.music-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.music-art {
+  position: relative;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg-3);
+}
+.music-art-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.music-art-img:not([data-loaded]) {
+  opacity: 0;
+}
+.music-art-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent-3);
+}
+
+.music-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.music-kicker {
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+}
+.music-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.music-artist {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-sub {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The mini player: Preview (play/pause), progress, time. */
+.music-player {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.music-player[hidden] {
+  display: none;
+}
+.music-play {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 var(--sp-4) 0 var(--sp-3);
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-pill, 999px);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.music-play:focus-visible,
+.music-alt-btn:focus-visible,
+.music-open:focus-visible,
+.music-open-app:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.music-player[data-state='playing'] .music-play,
+.music-player[data-state='loading'] .music-play {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.music-progress {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 48px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line-2);
+}
+.music-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-progress-fill {
+    transition: none;
+  }
+}
+.music-time {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.music-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.music-actions .btn {
+  min-height: var(--tap);
+}
+
+.music-alts {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+.music-alts[hidden] {
+  display: none;
+}
+.music-alts-label {
+  margin-bottom: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+}
+.music-alt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.music-alt-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .music-alt-btn:hover {
+    background: var(--accent-soft);
+  }
+}
+.music-alt-title {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-alt-meta {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Small phones: smaller artwork, full-width buttons. */
+@media (max-width: 380px) {
+  .music-card {
+    padding: var(--sp-2);
+  }
+  .music-art {
+    width: 72px;
+    height: 72px;
+  }
+  .music-title {
+    font-size: var(--fs-md);
+  }
+  .music-actions .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* Voice Mode: the cards sit under the captions, above the dock; the core gets smaller meanwhile.
+   The captions give way first (they scroll), so a card's Preview and Open in Apple Music stay
+   clear of the dock; several cards (a reply's find_music picks) stack and scroll in their box. */
+.vm.vm--music {
+  --vm-core: min(44vw, 22vh, 240px);
+}
+.vm.vm--music[data-music-cards]:not([data-music-cards='1']) {
+  --vm-core: min(36vw, 17vh, 200px);
+}
+.vm-music {
+  flex: 0 1 auto;
+  width: min(560px, calc(100% - 2 * var(--sp-4)));
+  max-height: 46vh;
+  margin: var(--sp-2) auto 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  text-align: left;
+  pointer-events: auto;
+}
+.vm-music[hidden] {
+  display: none;
+}
+.vm-music .music-card {
+  margin: 0;
+}
+.vm-music .music-card + .music-card {
+  margin-top: var(--sp-2);
+}
+/* "Also found" stays in the chat: in Voice Mode the card is the song, Preview and Open. */
+.vm-music .music-alts {
+  display: none;
+}
+.vm.vm--music .vm-captions {
+  flex-shrink: 20;
+  min-height: 2.6em;
+}
+.vm-music .music-player {
+  gap: var(--sp-2);
+}
+.vm-music .music-progress {
+  min-width: 24px;
+}
+
+/* Short phones (an iPhone SE: 375×667, 320×568): a smaller core and card, and no hint line while a
+   card is shown, so the whole card fits above the dock without scrolling. */
+@media (max-height: 740px) and (orientation: portrait) {
+  .vm.vm--music {
+    --vm-core: min(30vw, 13vh, 150px);
+  }
+  .vm.vm--music .vm-stage {
+    gap: var(--sp-2);
+  }
+  .vm.vm--music .vm-core {
+    margin-bottom: 0;
+  }
+  .vm.vm--music .vm-cap-sub {
+    display: none;
+  }
+  .vm.vm--music .vm-captions {
+    padding: var(--sp-1) 0;
+    font-size: var(--fs-md);
+  }
+  .vm-music {
+    margin-top: 0;
+  }
+  .vm-music .music-card {
+    padding: var(--sp-2);
+  }
+  .vm-music .music-art {
+    width: 56px;
+    height: 56px;
+  }
+  .vm-music .music-title {
+    font-size: var(--fs-md);
+    -webkit-line-clamp: 1;
+  }
+  .vm-music .music-player,
+  .vm-music .music-actions {
+    margin-top: var(--sp-2);
+  }
+}

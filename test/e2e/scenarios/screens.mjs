@@ -700,8 +700,9 @@ export default [
         const leads = t.requests('lead').slice(leadBefore);
         t.assert(leads.length === 2, `a tool round: the call, then its result (${leads.length} lead requests)`);
         const tools = leads[0].body.tools.map((x) => x.name);
-        t.assert(tools.slice(-3).join(',') === 'pin_labels,look_through_camera,open_screen', `a new conversation has lead tools V5 (${tools.join(', ')})`);
-        t.assert(/# Camera and screens/.test(leads[0].body.system[0].text), 'and the V4 prompt');
+        // New conversations freeze lead tools V6 since Apple Music: V5 (the Optics tools and open_screen) plus find_music.
+        t.assert(tools.slice(-4).join(',') === 'pin_labels,look_through_camera,open_screen,find_music', `a new conversation has lead tools V6, which keep V5's open_screen (${tools.join(', ')})`);
+        t.assert(/# Camera and screens/.test(leads[0].body.system[0].text), 'and the prompt\'s "Camera and screens" section');
         const results = leads[1].body.messages.at(-1).content.filter((b) => b.type === 'tool_result');
         t.assert(results.length === 1 && !results[0].is_error && /^Opened the (answer|report) ".*" on screen 2 \(the owner's other monitor, DELL U2720Q\), maximized\./.test(String(results[0].content)), `the tool_result says what happened (${JSON.stringify(results)})`);
         const last = await t.page.evaluate(() => window.__opens.at(-1));
