@@ -67,6 +67,7 @@ export function createCameraScreenPanel({ win = window, frame, compact = false }
   frame.showDeck(true);
 
   let destroyed = false;
+  let wanted = false; // the owner wants the camera on (Camera off, or closing, says no)
   let resumeOnVisible = false;
   const camera = createCamera({
     video,
@@ -123,20 +124,34 @@ export function createCameraScreenPanel({ win = window, frame, compact = false }
     frame.setState('ready');
   }
 
+  // Shown again (a computer): the camera comes back by itself, as in Optics. iPhone waits for a tap.
+  const doc = win.document;
+
   function start() {
     if (destroyed) return;
+    wanted = true;
     resumeOnVisible = false;
-    camera.start().catch(() => {});
+    camera.start().then(
+      () => {
+        // The camera arrived after the owner turned it off, closed the screen or hid its window
+        // (getUserMedia can take a moment): release it at once.
+        if (destroyed || !wanted) camera.stop(destroyed ? 'closed' : 'owner');
+        else if (doc.visibilityState === 'hidden') {
+          camera.stop('hidden');
+          resumeOnVisible = cameraPlatform().autoResume;
+        }
+      },
+      () => {},
+    );
   }
 
   function stop() {
     if (destroyed) return;
+    wanted = false;
     resumeOnVisible = false;
     camera.stop('owner');
   }
 
-  // Shown again (a computer): the camera comes back by itself, as in Optics. iPhone waits for a tap.
-  const doc = win.document;
   const onVisible = () => {
     if (!destroyed && resumeOnVisible && doc.visibilityState === 'visible') start();
   };
@@ -152,6 +167,7 @@ export function createCameraScreenPanel({ win = window, frame, compact = false }
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      wanted = false;
       doc.removeEventListener('visibilitychange', onVisible);
       try {
         camera.destroy();

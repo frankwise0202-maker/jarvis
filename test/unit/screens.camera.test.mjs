@@ -216,3 +216,37 @@ test('a blocked camera: NO CAMERA, the reason in words and Try again', async () 
   assert.ok(await page.isVisible('[data-testid="screen-camera-start"]'), 'Try again');
   assert.match(await page.textContent('[data-testid="screen-camera-start"]'), /Try again/);
 });
+
+test('closed (or turned off) while the camera is still starting: the camera that arrives late is released at once', async () => {
+  const page = await newPage({
+    init: () => {
+      // A slow camera: getUserMedia answers after 600 ms; every track is recorded.
+      window.__tracks = [];
+      const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (c) => {
+        await new Promise((r) => setTimeout(r, 600));
+        const s = await gum(c);
+        window.__tracks.push(...s.getTracks());
+        return s;
+      };
+    },
+  });
+  await mount(page);
+  await page.evaluate(() => {
+    window.__scr.panel.destroy();
+    window.__scr.frame.destroy();
+  });
+  await page.waitForTimeout(1500);
+  let tracks = await page.evaluate(() => window.__tracks.map((t) => t.readyState));
+  assert.ok(tracks.length >= 1, 'the camera did arrive');
+  assert.ok(tracks.every((x) => x === 'ended'), `released (${tracks})`);
+
+  await mount(page);
+  await page.click('[data-testid="screen-camera-toggle"]'); // Camera off while starting
+  await page.waitForTimeout(1500);
+  tracks = await page.evaluate(() => window.__tracks.map((t) => t.readyState));
+  assert.ok(tracks.every((x) => x === 'ended'), `released after Camera off (${tracks})`);
+  const r = await read(page);
+  assert.equal(r.state, 'off');
+  assert.equal(r.track, null);
+});
