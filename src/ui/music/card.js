@@ -94,6 +94,7 @@ export function createMusicCardView({ player = null, isMac = false, notify = nul
     Promise.resolve(player.toggle(item)).then((res) => {
       if (res && res.ok === false && typeof notify === 'function') {
         if (res.reason === 'listening') notify(`The preview waits while the microphone is listening. ${micHint}`);
+        else if (res.reason === 'checking') notify('The preview waits while what you said is about to be sent. Tap the message to stop that first.');
         else if (res.reason === 'no-preview') notify('There’s no preview for this one. Tap Open in Apple Music to play it.');
         else if (res.reason === 'error') notify('The preview couldn’t be played. Open it in Apple Music instead.');
       }

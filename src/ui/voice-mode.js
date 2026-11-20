@@ -25,8 +25,9 @@
 // …" (the words are corrected and the countdown starts again; when Jarvis can only guess where the
 // fix goes, the guess is shown and waits for "yes", Send or a tap), "wait", or simply go on talking
 // (the words are added). The microphone keeps listening during those 2 seconds (the same recognizer).
-// Local commands (Screens, the hologram viewer, Optics) act at once without the check, and the
-// recognizer's alternatives are tried for them too.
+// Local commands (Screens, Apple Music, the hologram viewer, Optics) act at once without the check,
+// and the recognizer's alternatives are tried for them too (another reading for Apple Music only
+// when the best one is nothing else: not a command, not about a part of the hologram on screen).
 //
 // Tap the core: listening = stop and send (at once, no check); the 2-second check = send now;
 // thinking/working = stop the turn; speaking = stop
@@ -92,7 +93,9 @@
 //                           card, also for each of a reply's find_music results: they stack, a new
 //                           question clears them); onListen() before the mic opens and onSpeak()
 //                           when Jarvis starts speaking (a playing preview pauses: previews never
-//                           play while Jarvis listens or over his voice). After a card is shown
+//                           play while Jarvis listens, during the 2-second check (the cards step
+//                           aside for it; api.isListening() is true) or over his voice). Music
+//                           commands act at once, without the check. After a card is shown
 //                           Jarvis waits for a tap instead of listening again, so the owner can tap
 //                           Preview (or Open in Apple Music: the hint says which).
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
@@ -107,7 +110,7 @@ import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
-import { REVIEW_MS, reviewReply, planCorrection, pickHeard, listenPhrases } from './voice-heard.js';
+import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
 
 export { splitSentences };
 
@@ -567,8 +570,11 @@ function createVoiceMode(opts) {
       goIdle('music');
       return true;
     },
-    /** Whether the microphone is open (previews never start then). */
-    isListening: () => !S.closed && !!S.listen,
+    /**
+     * Whether the microphone is open or the 2-second check is on screen (its microphone may still
+     * be listening for "cancel" or "no, I said …"): previews never start then.
+     */
+    isListening: () => !S.closed && (!!S.listen || !!S.review),
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -1526,6 +1532,7 @@ function createVoiceMode(opts) {
     S.karaoke = null;
     S.userEl = null;
     captions.hidden = true;
+    syncMusicShown(); // the Music cards step aside (and no preview plays) while the words are checked
     reviewForm.hidden = true;
     reviewHeard.hidden = true;
     reviewText.hidden = false;
@@ -1846,6 +1853,7 @@ function createVoiceMode(opts) {
     reviewHeard.hidden = true;
     captions.hidden = false;
     delete root.dataset.review;
+    syncMusicShown();
     if (!S.closed) {
       if (hadFocus) focusDefault();
       renderControls();
@@ -2381,8 +2389,7 @@ function createVoiceMode(opts) {
         musicEl.appendChild(view.el);
         while (musicViews.size > MAX_VOICE_CARDS) dropMusicCard(musicViews.keys().next().value);
       }
-      musicEl.hidden = false;
-      root.classList.add('vm--music'); // a smaller core makes room for the cards
+      syncMusicShown(); // a smaller core makes room for the cards
       root.dataset.musicCards = String(musicViews.size);
       if (seg.status === 'done' && Array.isArray(seg.items) && seg.items.length) S.noRelisten = true;
     } catch (err) {
@@ -2405,9 +2412,19 @@ function createVoiceMode(opts) {
   function clearMusicCard() {
     for (const id of [...musicViews.keys()]) dropMusicCard(id);
     musicEl.replaceChildren();
-    musicEl.hidden = true;
-    root.classList.remove('vm--music');
+    syncMusicShown();
     delete root.dataset.musicCards;
+  }
+
+  /**
+   * The Music cards show (and the core shrinks for them) unless the 2-second check is on screen: it
+   * needs the room, and a preview never plays during it. A question sent from the check clears
+   * them (send); a check that ends with nothing sent shows them again.
+   */
+  function syncMusicShown() {
+    const shown = musicViews.size > 0 && !S.review;
+    musicEl.hidden = !shown;
+    root.classList.toggle('vm--music', shown);
   }
 
   /** The hint under a shown card, from what it offers: a Preview only for songs that have one. */
@@ -2492,6 +2509,9 @@ function createVoiceMode(opts) {
       heardDuringBuild(text, S.run, readings);
       return;
     }
+    // Local commands act at once, without the 2-second check. Each reading in turn, the best first:
+    // a screen command, Apple Music (the best reading only, see below), then the viewers' commands;
+    // the first reading that is one acts.
     for (const [i, words] of readings.entries()) {
       // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
       // (above) and is taken here once the reply has been said.
@@ -2507,8 +2527,15 @@ function createVoiceMode(opts) {
         return;
       }
     }
+    const parts = partNamesNow();
+    // Apple Music by another reading ("Clay Back in Black" heard, "play Back in Black" meant): only
+    // when the best reading is nothing else, neither a command (above) nor a question about a part
+    // of the hologram on screen.
+    if (readings.length > 1 && !namesPart(text, parts)) {
+      for (const words of readings.slice(1)) if (musicCommand(words)) return;
+    }
     // A question about the hologram on screen: the reading that names one of its parts.
-    const words = pickHeard(text, readings.slice(1), partNamesNow());
+    const words = pickHeard(text, readings.slice(1), parts);
     if (opts.reviewed || opts.sendNow || !reviewOn()) send(words);
     else startReview(words);
   }

@@ -21,7 +21,7 @@ import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
-import { REVIEW_MS, listenPhrases } from './voice-heard.js';
+import { REVIEW_MS, listenPhrases, commandReading } from './voice-heard.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
@@ -344,9 +344,13 @@ export async function startApp(rootEl) {
   });
 
   // Apple Music: one preview player for every Music card. A preview never starts while a microphone
-  // listens (dictation or Voice Mode), and it stops Jarvis's own speech first.
+  // listens (dictation, or Voice Mode listening or showing its 2-second check) or while words from
+  // the chat's mic wait in the box to be sent (the chat's check), and it stops Jarvis's own speech first.
   const musicPlayer = createMusicPlayer({
-    canStart: () => (state.listening || (voiceApi && safe(() => voiceApi.isListening(), false)) ? 'listening' : true),
+    canStart: () => {
+      if (state.listening || (voiceApi && safe(() => voiceApi.isListening(), false))) return 'listening';
+      return safe(() => composer.counting(), false) ? 'checking' : true;
+    },
     onStart: () => {
       stopSpeakingNow();
       if (voiceApi) safe(() => voiceApi.hush());
@@ -2471,6 +2475,8 @@ export async function startApp(rootEl) {
     const join = (t) => [prefix, String(t || '').trim()].filter(Boolean).join(' ');
     let handle = null;
     let ended = false; // the STT module may end (or fail) synchronously inside startListening()
+    let heard = ''; // the words of the turn (onFinal): taken once the mic has closed (below)
+    const convId = state.conv ? state.conv.id : null; // the chat they are said in
     const finish = () => {
       if (!ended) safe(() => sounds.play('listen-stop'));
       ended = true;
@@ -2478,6 +2484,9 @@ export async function startApp(rootEl) {
       composer.setListening(false);
       header.setLevel(0);
       updateCore();
+      const text = heard;
+      heard = '';
+      if (text) afterChatMic(text, convId);
     };
     const st = getSettings();
     try {
@@ -2492,14 +2501,9 @@ export async function startApp(rootEl) {
         onFinal: (t, info) => {
           const text = join(chatReading(t, info));
           composer.setText(text);
-          if (text && !currentRunning() && state.online && (state.demo || safe(getApiKey, ''))) {
-            // submit() goes through onSend with the composer's attachments and team size,
-            // and clears the input and attachments only when the send is accepted. With "Show
-            // what I said for 2 seconds, then send" the words wait in the box first: a tap on the
-            // box (or typing) stops that, and the owner sends them.
-            if (getSettings().listenSend === 'now') composer.submit();
-            else composer.startCountdown(REVIEW_MS, () => composer.submit());
-          }
+          // Taken once the recognizer has closed (onEnd follows at once): "play a preview of …"
+          // then finds the mic off, and nothing is heard while it acts.
+          heard = text;
         },
         onEnd: finish,
         onError: (e) => {
@@ -2533,13 +2537,35 @@ export async function startApp(rootEl) {
   }
 
   /**
-   * The reading of words from the chat's mic to use: an alternative that is a screen command (the
-   * composer's local command) when the best reading isn't one.
+   * Words from the chat's mic, once it has closed. A local command (Screens, Apple Music) acts now,
+   * as in Voice Mode: no 2-second check (it is free, and a misheard one only shows the wrong card or
+   * screen); like a typed one it also works while Jarvis is busy. A message waits 2 seconds in the box
+   * (Settings → Voice → After I stop talking), or goes at once with "Send right away".
+   */
+  function afterChatMic(text, convId) {
+    if (composer.getText().trim() !== text.trim()) return; // the owner changed the box meanwhile
+    // Voice Mode opened, or another chat, while the mic closed: the words stay in the box, unsent.
+    if ((state.conv ? state.conv.id : null) !== convId || safe(() => isVoiceModeOpen(), false)) return;
+    if (safe(() => composer.submitCommand(), false)) return;
+    if (!currentRunning() && state.online && (state.demo || safe(getApiKey, ''))) {
+      // submit() goes through onSend with the composer's attachments and team size, and clears the
+      // input and attachments only when the send is accepted. With "Show what I said for 2 seconds,
+      // then send" the words wait in the box first: a tap on the box (or typing) stops that, and the
+      // owner sends them.
+      if (getSettings().listenSend === 'now') composer.submit();
+      else composer.startCountdown(REVIEW_MS, () => composer.submit());
+    }
+  }
+
+  /**
+   * The reading of words from the chat's mic to use, by the composer's own local commands' matchers
+   * (so what the box shows is what they take): an alternative that is a screen command when the best
+   * reading is no command; an alternative that is an Apple Music command only when the best reading
+   * is nothing else (Voice Mode's rule).
    */
   function chatReading(text, info) {
     const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
-    if (!alts.length || safe(() => matchScreenCommand(text), null)) return text;
-    return alts.find((a) => typeof a === 'string' && safe(() => matchScreenCommand(a), null)) || text;
+    return commandReading(text, alts, { isCommand: (words) => matchScreenCommand(words), isMusic: (words) => matchMusicCommand(words) });
   }
 
   // ---- Mission Control ---------------------------------------------------------------------

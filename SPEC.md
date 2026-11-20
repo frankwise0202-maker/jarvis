@@ -2399,7 +2399,9 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   upbeat for my run"; a title that starts that way is taken when it names its artist: "play Your Song by Elton John"),
   never another app ("… on Spotify", "… on the TV"); "put on" only with music words ("put on some Miles Davis", not
   "put on a jacket"). Speech-to-text slips folded ("play list", "a c d c", "apple muse ick", "played …").
-  Taken in the composer (`onCommand`, after screen commands), Voice Mode (said or typed) and a viewer's command box.
+  Taken in the composer (`onCommand`, after screen commands), Voice Mode (said or typed) and a viewer's command box;
+  said, they act at once without the 2-second check, also into the chat's mic, and the recognizer's other readings
+  are tried for them (v7.2, §21).
   The search runs at once and the chat gets a local exchange (`appendMusicTurn` in `src/engine/music.js`): the
   owner's words and a Jarvis turn `{ local: 'music', status: 'done', costUsd: 0, segments: [text, music] }` (no model
   label; footer "Free · Apple Music"), in the open conversation or a new one (not while a reply runs in it: the words
@@ -2424,19 +2426,20 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   the page; Jarvis starting to speak pauses a playing one (`speakTurn`: Speak and Speak replies; Voice Mode's
   `onSpeak` at every spoken chunk, so a reply that speaks again after a preview was tapped pauses it). A preview never
   starts while a microphone listens (`canStart` → `'listening'`: the composer's dictation or Voice Mode; the note says
-  "Tap the mic to stop listening first." in the chat, "Tap the core …" in Voice Mode: the card's `micHint`), and a
+  "Tap the mic to stop listening first." in the chat, "Tap the core …" in Voice Mode: the card's `micHint`) or during
+  the 2-second check (v7.2, §21: Voice Mode's counts as listening; the chat's countdown gives `'checking'`), and a
   playing one pauses before the mic opens (`pauseForMic`: dictation start, Voice Mode's `onListen`). "Stop the music"
   fades it out in 160 ms. "Play a preview of X" typed starts it after the search (where the browser allows).
 - **Voice Mode** (`music` option of `openVoiceMode`): what is heard (or typed) goes to music commands after screen
-  commands. "Play Back in Black" → status "Searching Apple Music…", the card under the captions, and one short line
-  ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then Jarvis waits (Ready) instead of
-  listening again, so a tap on Preview can play. The hint names what the cards offer: "Tap Preview to hear it, or the
-  core to talk." when a song has a clip, else "Tap Open in Apple Music to play it, or the core to talk." A Voice Mode
-  reply's find_music cards show there too, stacked (at most 6; the box scrolls); a new "play …" or question clears
-  them (they stay in the chat). In Voice Mode a card has no "Also found" (the chat has it), the captions give way
-  before the cards, and on short portrait screens (≤ 740 px: an iPhone SE) the core, the card and its artwork are
-  smaller and the hint line is hidden while a card shows, so Preview and Open in Apple Music sit above the dock at
-  375×667 and 320×568 without scrolling.
+  commands, at once (no 2-second check, §21). "Play Back in Black" → status "Searching Apple Music…", the card under
+  the captions, and one short line ("Here's Back In Black by AC/DC. Tap Open in Apple Music to play it."); then
+  Jarvis waits (Ready) instead of listening again, so a tap on Preview can play. The hint names what the cards
+  offer: "Tap Preview to hear it, or the core to talk." when a song has a clip, else "Tap Open in Apple Music to
+  play it, or the core to talk." A Voice Mode reply's find_music cards show there too, stacked (at most 6; the box
+  scrolls); a new "play …" or question clears them (they stay in the chat). In Voice Mode a card has no "Also found"
+  (the chat has it), the captions give way before the cards, and on short portrait screens (≤ 740 px: an iPhone SE)
+  the core, the card and its artwork are smaller and the hint line is hidden while a card shows, so Preview and Open
+  in Apple Music sit above the dock at 375×667 and 320×568 without scrolling.
 - **Lead versions** (new conversations only). `LEAD_SYSTEM_V5` = V4 plus `MUSIC_SECTION` (596 characters) before
   "# Writing the answer"; `leadToolsV6()` = `[...leadToolsV5(), findMusicTool()]` (appended: the V5 prefix and its
   cache are unchanged). Both lists keep every older version (`isKnownLeadSetup`). Pinned (sha256): V5 31a77e44bcde…,
@@ -2525,7 +2528,8 @@ earlier one (§9.2, §14.1), it wins.
   passes the setting as it is: Voice Mode, the chat's mic, the hologram viewer's mic and Optics' mic.
 - Contextual biasing (Chrome): when `SpeechRecognitionPhrase` exists and the recognizer has `phrases`, it gets up to 80
   phrases (`listenPhrases` in `src/ui/voice-heard.js`: "Jarvis" boost 2.5, the open hologram's part names and their
-  other names 2.0, the command words 1.2). A service that answers `phrases-not-supported` is asked again at once
+  other names 2.0, the command words 1.2, Apple Music's last: "Apple Music", "stop the music", "play the album", "a
+  preview of"). A service that answers `phrases-not-supported` is asked again at once
   without them, and never again on that page. iOS has no such API: skipped silently.
 
 **Show, then send** (Settings → Voice → **After I stop talking**: `listenSend` 'show' (default) "Show what I said for 2
@@ -2569,19 +2573,42 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 - Words taken back while Voice Mode listens (`onPartial('')`) are cleared at once (the caption goes back to what it
   showed before them), so a listen that ends without a final never sends them (also a listen while a hologram builds).
   The chat's, the viewer's and Optics' mics show the field without them.
-- Local commands (Screens, the hologram and blueprint viewers, Optics, camera words, the blueprint yes/no) act at once,
-  without the check.
-- The chat's microphone: the words go into the message box with the same 2-second countdown (`composer-countdown`, a
-  ring on Send), then `composer.submit()`; a tap on the box (or typing, or Send) stops it; listening again, a new chat
-  or Voice Mode stop it too (the words stay in the box). 'now' submits at once (as before).
+- Local commands (Screens, Apple Music, the hologram and blueprint viewers, Optics, camera words, the blueprint yes/no)
+  act at once, without the check: they are free, and a misheard one only shows the wrong card or view (a wrong title
+  is a wrong Music card, nothing plays by itself). A correction made during the check can still make the words one:
+  sent words go through the local commands again first.
+- Apple Music and the check (Voice Mode): while the check shows, the Music cards step aside (`voice-music` hidden, the
+  core's `vm--music` size off: the check needs the room); a question sent from it clears them (as any question does),
+  and a check that ends with nothing sent ("cancel", Type, a new listen) shows them again. No preview starts during
+  the check, its microphone open or not (`api.isListening()` is true while `S.review` is set: the player's
+  `canStart` → `'listening'`).
+- The chat's microphone: its words are taken once the recognizer has closed (`onEnd` right after the final), so a
+  preview a command asks for finds the microphone off. A local command (a screen or Apple Music command:
+  `composer.submitCommand()`, the composer's own `onCommand`, the same matchers as typed words) acts at once, without
+  the countdown, also while Jarvis is busy (as typed). Other words go into the message box with the same 2-second
+  countdown (`composer-countdown`, a ring on Send), then `composer.submit()`; a tap on the box (or typing, or Send)
+  stops it; listening again, a new chat or Voice Mode stop it too (the words stay in the box). 'now' submits at once
+  (as before). A preview tapped during the countdown does not start (`canStart` → `'checking'`; the note: "The preview
+  waits while what you said is about to be sent. Tap the message to stop that first.").
 
 **Accuracy**:
 - The recognizer's alternatives (whole-turn readings, swapping one result's reading at a time) are tried for local
   commands: in Voice Mode every reading goes through Screens and the viewers in turn (the first that is a command acts,
   the blueprint yes/no included); the chat's mic prefers a reading that is a screen command; the hologram viewer's own
-  mic one that is a viewer command; Optics' mic one that is a screen or Optics command. (Music commands join here when
-  they exist.) For a question, a reading that names a part of the open (or last shown) hologram is preferred when the
-  best one names none (`pickHeard`; `visuals.vocabulary()` → `{ parts }`, the viewer's `partNames()`).
+  mic one that is a viewer command; Optics' mic one that is a screen or Optics command. For a question, a reading that
+  names a part of the open (or last shown) hologram is preferred when the best one names none (`pickHeard`;
+  `visuals.vocabulary()` → `{ parts }`, the viewer's `partNames()`).
+- Apple Music joins them with one rule: another reading is taken for a music command only when the best reading is
+  nothing else. In Voice Mode `heard()` tries the best reading for Screens, then Apple Music, then the viewers (as
+  before); every other reading for Screens and the viewers; and only then, when the best reading names no part of the
+  hologram on screen (`namesPart`), the other readings for Apple Music ("Clay Back in Black" heard, "Play Back in
+  Black" the other reading → the card; "What am I locking at?" with "Play Locking At" and "What am I looking at?" →
+  Look; "How does the separator work?" with "Play the separator", a battery on screen → the question). The chat's mic
+  does the same with the composer's two local commands (`commandReading(text, alternatives, { isCommand: Screens,
+  isMusic: Apple Music })`: the best reading when it is either, else another that is a screen command, else another
+  that is a music command), so what the box shows is what `onCommand` takes. The viewer's own mic and Optics' mic
+  keep their own commands' readings (a music command said into the viewer's mic is taken from the best reading, as
+  typed in its box; Optics has no music commands).
 - The live words stay visible while the owner talks: one caption line updated in place, its type size only grows
   within a listen, and across a restart the words heard so far stay.
 
@@ -2594,7 +2621,9 @@ backoff, alternatives, contextual biasing (and its refusal), `keepListening` on 
 iOS rewrite of the turn that ended, with fewer or more words, then "cancel"; `continuation`), device language;
 `platform.voice` (Chromium: the continuous recognizer and its release); `ui.voice.heard` (cancel, correction, send,
 wait, fillers, more words, "no no, cancel", "no, Boston", `applyCorrection`, `planCorrection`: anchored multi-word
-fixes, guesses that wait for the owner, the sure cases, `pickHeard`, `listenPhrases`); `platform.storage` and `platform.db`
+fixes, guesses that wait for the owner, the sure cases, `pickHeard`, `namesPart`, `commandReading` (a command first,
+another reading for Apple Music only when the best is nothing else), `listenPhrases` with Apple Music's words);
+`music` (the player refuses `'checking'`); `platform.storage` and `platform.db`
 (the new settings, the one-time migration, backups). E2E `voice-listen.mjs` (iPhone 13; the fake recognizer of
 `installFakeSpeech` is a speaker plus sessions, Chrome-like by default and iOS-like with `recognizer: 'ios'`):
 `voice-listen-iphone` (a 1.2 s mid-sentence pause not cut, the device language, the countdown and its timing, a
@@ -2609,4 +2638,10 @@ ended, then "cancel" / "never mind" during the check: nothing sent), `voice-list
 during the check: the question is still sent), `voice-listen-noise-now` (Mac, Send right away: "uh" taken back is
 never sent, the question after it is), `voice-listen-restate` (iOS, Send right away: the sentence said again from
 the top after a pause is sent whole), `voice-listen-corrections` (iOS: "No no, cancel"; "No, I said Paris" → the
-guess waits for "yes"; "No, I said for four" → "Book a table for four at seven").
+guess waits for "yes"; "No, I said for four" → "Book a table for four at seven"). With Apple Music (`music.mjs`,
+`fakeMusic`): `music-voice-listen` (iPhone 13, Voice Mode: "Clay Back in Black" with "Play Back in Black" as the other
+reading → the card at once, free, no check; a question's check hides the card and a preview tapped then does not
+play, Cancel brings it back; a camera command among the other readings beats a music one; with the battery on screen
+"How does the separator work?" is sent although "Play the separator" was another reading) and `music-chat-mic` (iPhone
+13, the chat's mic: the same misheard "play" found at once with no countdown; a preview tapped during a question's
+countdown waits with the note, then plays).

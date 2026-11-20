@@ -433,6 +433,18 @@ test('previews: never while the mic listens, Jarvis stops talking first, Apple\'
   assert.ok(states.length > 0);
 });
 
+test('previews: never while words from the chat\'s mic wait to be sent (the 2-second check), and the card says why', async () => {
+  const [song] = parseItunesResults(SAMPLE);
+  let checking = true;
+  const audio = fakeAudio();
+  const player = createMusicPlayer({ canStart: () => (checking ? 'checking' : true), createAudio: () => audio });
+  assert.deepEqual(await player.toggle(song), { ok: false, reason: 'checking' });
+  assert.equal(audio.plays, 0, 'nothing played during the check');
+  checking = false;
+  assert.deepEqual(await player.toggle(song), { ok: true });
+  assert.deepEqual(await createMusicPlayer({ canStart: () => false, createAudio: fakeAudio }).play(song), { ok: false, reason: 'blocked' }, 'any other refusal is "blocked"');
+});
+
 test('previews are fetched without the browser\'s Apple cookies: crossOrigin "anonymous" is set before the preview\'s address', async () => {
   const [song] = parseItunesResults(SAMPLE);
   const audio = fakeAudio();

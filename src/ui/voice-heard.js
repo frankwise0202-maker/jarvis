@@ -23,8 +23,12 @@
 //   applyCorrection(heard, said)    planCorrection's text
 //   pickHeard(text, alternatives, partNames)  the reading to use: an alternative that names a part of
 //                                   the open hologram when the best reading names none
+//   namesPart(text, partNames)      the words name a part of the open hologram
+//   commandReading(text, alternatives, { isCommand, isMusic })  the reading the chat's mic acts on:
+//                                   a command first (the best reading, then another), an Apple Music
+//                                   command by another reading only when the best one is nothing else
 //   listenPhrases({ partNames })    phrases for Chrome's contextual biasing: "Jarvis", the hologram's
-//                                   part names and the command words
+//                                   part names and the command words (Apple Music's too)
 
 export const REVIEW_MS = 2000;
 
@@ -375,18 +379,47 @@ function names(text, name) {
   return !!n && t.includes(` ${n} `);
 }
 
+function partList(partNames) {
+  return (Array.isArray(partNames) ? partNames : []).map(clean).filter((n) => n.length >= 2);
+}
+
+/** True when `text` names one of `partNames` (the open hologram's parts and their other names). */
+export function namesPart(text, partNames = []) {
+  return partList(partNames).some((n) => names(text, n));
+}
+
 /**
  * The reading of what was heard to use: the best one, unless it names none of `partNames` (the
  * open hologram's parts and their other names) while an alternative does.
  */
 export function pickHeard(text, alternatives = [], partNames = []) {
   const best = clean(text);
-  const list = (Array.isArray(partNames) ? partNames : []).map(clean).filter((n) => n.length >= 2);
+  const list = partList(partNames);
   if (!list.length || !Array.isArray(alternatives) || !alternatives.length) return best;
   const hit = (t) => list.some((n) => names(t, n));
   if (hit(best)) return best;
   for (const alt of alternatives) if (typeof alt === 'string' && clean(alt) && hit(alt)) return clean(alt);
   return best;
+}
+
+/**
+ * The reading to act on when only local commands matter (the chat's mic): the best one when it is
+ * a command (`isCommand`: Screens) or a music command (`isMusic`: Apple Music); else the first other
+ * reading that is a command; else, as the last resort, the first other reading that is a music
+ * command, so an alternative is taken for Apple Music only when the best reading is nothing else.
+ */
+export function commandReading(text, alternatives = [], { isCommand = () => false, isMusic = () => false } = {}) {
+  const best = clean(text);
+  const alts = (Array.isArray(alternatives) ? alternatives : []).filter((a) => typeof a === 'string').map(clean).filter(Boolean);
+  const test = (fn, t) => {
+    try {
+      return !!fn(t);
+    } catch {
+      return false;
+    }
+  };
+  if (!alts.length || test(isCommand, best) || test(isMusic, best)) return best;
+  return alts.find((a) => test(isCommand, a)) || alts.find((a) => test(isMusic, a)) || best;
 }
 
 // The words Jarvis listens for (Chrome's contextual biasing): its name and the local commands.
@@ -395,6 +428,7 @@ export const COMMAND_PHRASES = Object.freeze([
   'stop rotating', 'labels on', 'labels off', 'front view', 'side view', 'top view', 'reset the view', 'parts list', 'photos of',
   'blueprint', 'close the blueprint', 'switch it to 2D', 'other screen', 'second screen', 'float it', 'bring it back', 'in a window',
   'what am I looking at', 'look at this', 'flip the camera', 'watch this', 'hologram of this', 'cancel', 'never mind', 'no, I said',
+  'Apple Music', 'stop the music', 'play the album', 'a preview of',
 ]);
 
 /** Phrases for contextual biasing: "Jarvis" first, the open hologram's part names, then the command words. */

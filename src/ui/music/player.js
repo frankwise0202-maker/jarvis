@@ -3,13 +3,14 @@
 // previewLink); the full song is played by the Music app (Open in Apple Music).
 //
 //   const player = createMusicPlayer({ canStart, onStart });
-//   player.toggle(item)  -> Promise<{ ok: true } | { ok: false, reason: 'listening' | 'no-preview' | 'blocked' | 'error' }>
+//   player.toggle(item)  -> Promise<{ ok: true } | { ok: false, reason: 'listening' | 'checking' | 'no-preview' | 'blocked' | 'error' }>
 //   player.stop()        stop and rewind (a fade of 160 ms)
 //   player.pauseForMic() pause because the microphone is about to listen (Voice Mode, dictation)
 //   player.subscribe(fn) -> unsubscribe; fn({ id, playing, loading, time, duration, error })
 //   player.state()
 //
-// canStart() -> true | false | 'listening': previews never start while the mic listens.
+// canStart() -> true | false | 'listening' | 'checking': previews never start while the mic listens,
+// nor while what the owner said waits to be sent (the 2-second check of words from the chat's mic).
 // onStart(): stop other sounds first, politely (Jarvis's own speech, other media).
 
 import { previewLink } from '../../lib/music.js';
@@ -98,7 +99,7 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
     const url = previewLink(item && item.previewUrl);
     if (!url) return { ok: false, reason: 'no-preview' };
     const allowed = safeCall(canStart, true);
-    if (allowed !== true) return { ok: false, reason: allowed === 'listening' ? 'listening' : 'blocked' };
+    if (allowed !== true) return { ok: false, reason: allowed === 'listening' || allowed === 'checking' ? allowed : 'blocked' };
     safeCall(onStart);
     pauseOtherMedia();
     const a = ensureAudio();

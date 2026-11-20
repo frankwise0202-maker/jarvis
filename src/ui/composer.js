@@ -846,18 +846,26 @@ export function createComposer(o) {
     return true;
   }
 
+  /**
+   * The words in the box as a local command (Screens: "put mission control on my other screen";
+   * Apple Music: "play Back in Black"), acted on now: true when they were one (the box is cleared),
+   * false when they are a message (nothing changes). It works while Jarvis is busy too: a command is
+   * not a message, so the running turn is not in its way.
+   */
+  function submitCommand() {
+    const typed = input.value.trim();
+    if (!typed || readyAttachments().length || typeof o.onCommand !== 'function' || !o.onCommand(typed)) return false;
+    cancelCountdown();
+    input.value = '';
+    autoGrow();
+    syncButtons();
+    return true;
+  }
+
   /** Sends the text and the ready attachments. Returns true when the app accepted the message. */
   function submit() {
     cancelCountdown();
-    // A local command (Screens: "put mission control on my other screen") works while Jarvis is
-    // busy too: it is not a message, so the running turn is not in its way.
-    const typed = input.value.trim();
-    if (typed && !readyAttachments().length && typeof o.onCommand === 'function' && o.onCommand(typed)) {
-      input.value = '';
-      autoGrow();
-      syncButtons();
-      return true;
-    }
+    if (submitCommand()) return true;
     if (running) return false;
     const text = input.value.trim();
     const attachments = readyAttachments();
@@ -1113,6 +1121,8 @@ export function createComposer(o) {
     getText: () => input.value,
     /** "Show, then send" for words from the mic: onDone() after `ms` unless the owner taps the box first. */
     startCountdown,
+    /** The words in the box as a local command, acted on now (true), or false: a message (see submit). */
+    submitCommand,
     /** Stop a countdown (true when one was running). */
     cancelCountdown,
     /** True while words from the mic wait to be sent. */

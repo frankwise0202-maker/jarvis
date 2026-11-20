@@ -229,17 +229,21 @@ you off.
   - tap **Send now** (or the core) to send it straight away, or **Cancel**.
 - **Tap the core while you talk** to send at once, without the check.
 - **Commands act at once**, without the check: "expand it", "show the alternator", "put it on my
-  other screen", "what am I looking at?" and the other hologram, screen and camera commands. They
-  cost nothing.
+  other screen", "what am I looking at?", "play Back in Black" and the other hologram, screen, camera
+  and [Apple Music](#apple-music) commands. They cost nothing, and a misheard song only shows the
+  wrong card. While your words are shown, Music cards step aside and no preview plays.
 - **The microphone in the chat** puts your words in the message box and sends them after the same
-  2 seconds (a ring runs around Send). Tap the box to stop that and change them, then send.
+  2 seconds (a ring runs around Send). Tap the box to stop that and change them, then send. A
+  command ("play Back in Black", "put it on my other screen") acts at once there too.
 - **Don't want the check?** Settings → Voice → **After I stop talking** → **Send right away**.
 - **Better recognition.** Jarvis listens in your phone's or computer's language (Settings → Voice →
   **Listening language** → Automatic); pick another one there if you speak to Jarvis in a different
   language or accent. When the speech service isn't sure, Jarvis also checks its other guesses: if
   one of them is a command, or names a part of the hologram on screen ("the alternate her" → "the
-  alternator"), that one is used. In Chrome, Jarvis also tells the speech service which words to
-  expect ("Jarvis", the commands and the hologram's parts).
+  alternator"), that one is used. A guess that is a music command is used only when what Jarvis
+  heard best is nothing else ("clay Back in Black" → "play Back in Black"), so a question is never
+  turned into a song. In Chrome, Jarvis also tells the speech service which words to expect
+  ("Jarvis", the commands and the hologram's parts).
 
 ### The new look: Jarvis at a glance
 
@@ -382,7 +386,7 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
 
 ### Apple Music
 
-Type it or say it, in the chat or in Voice Mode:
+Type it or say it, in the chat or in Voice Mode (said, it acts at once, without the 2-second check):
 
 - **"Play Back in Black"**, "play Back in Black by AC/DC", "put on some Miles Davis", "play the
   album Rumours", "find the song Yesterday", "open Thriller in Apple Music": Jarvis finds it in
@@ -396,7 +400,8 @@ Type it or say it, in the chat or in Voice Mode:
   pause. "Play a preview of Hey Jude" starts it straight away; **"stop the music"** stops it.
   A preview and Jarvis's voice never overlap: starting a preview stops Jarvis talking, and Jarvis
   starting to talk (Speak, or a reply in Voice Mode) pauses it. A preview never plays while the
-  microphone is listening (it pauses when you tap to talk).
+  microphone is listening (it pauses when you tap to talk), or while what you said is shown before
+  it is sent (the 2-second check).
 - **In Voice Mode**, "Jarvis, play Back in Black" gets one short line ("Here's Back in Black by
   AC/DC. Tap Open in Apple Music to play it.") and the card on screen; Jarvis then waits for your
   tap instead of listening again, so you can tap Preview. When he recommends a few, every card

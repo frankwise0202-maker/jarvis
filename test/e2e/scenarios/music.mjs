@@ -48,6 +48,55 @@ async function toastText(t) {
   return t.text(t.page.locator('.toast, [data-testid="toast"]').last()).catch(() => '');
 }
 
+// ---- with listening (v7.2): the recognizer's other readings and the 2-second check --------------
+
+const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const say = (t, item) => t.page.evaluate((x) => window.__voice.say(x), item);
+const said = (t) => t.page.evaluate(() => window.__voice.said.slice());
+
+/** Counts each time Voice Mode's 2-second check or the chat's countdown comes on screen (init script). */
+function watchChecks() {
+  const seen = { review: 0, countdown: 0 };
+  window.__checks = seen;
+  const was = { review: false, countdown: false };
+  const tick = () => {
+    for (const [key, id] of [['review', 'voice-review'], ['countdown', 'composer-countdown']]) {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      const on = !!el && !el.hidden;
+      if (on && !was[key]) seen[key] += 1;
+      was[key] = on;
+    }
+  };
+  new MutationObserver(tick).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
+}
+const checks = (t) => t.page.evaluate(() => ({ ...window.__checks }));
+
+/** The owner's words in every request Jarvis (the lead model) got. */
+function sentTexts(t) {
+  return t.requests('lead').map((r) => {
+    const msgs = r.body?.messages || [];
+    const user = [...msgs].reverse().find((m) => m.role === 'user');
+    const blocks = Array.isArray(user?.content) ? user.content.filter((b) => b.type === 'text') : [];
+    return norm(blocks.at(-1)?.text || '');
+  });
+}
+
+/** Voice Mode listens for a new request (not the 2-second check); `tap`: tap the core when it waits. */
+async function voiceListening(t, message = 'Voice Mode to listen', { tap = true } = {}) {
+  const vm = t.page.locator(tid('voice-mode'));
+  const ready = async (states) => states.includes(await vm.getAttribute('data-state')) && !(await t.page.locator(tid('voice-review')).isVisible());
+  await t.waitFor(() => ready(tap ? ['listening', 'idle'] : ['listening']), { timeout: 30000, message });
+  if ((await vm.getAttribute('data-state')) !== 'listening') await t.page.locator(tid('voice-core')).click();
+  await t.waitFor(() => ready(['listening']), { timeout: 8000, message });
+}
+
+async function checkShows(t, words) {
+  await t.waitFor(async () => (await t.page.locator(tid('voice-review')).isVisible()) && norm(await t.text(t.page.locator(tid('voice-review-text')))) === words, {
+    timeout: 15000,
+    message: async () => `the 2-second check to show "${words}" (it shows "${norm(await t.text(t.page.locator(tid('voice-review-text'))).catch(() => ''))}")`,
+  });
+}
+
 export default [
   {
     name: 'music-chat',
@@ -395,6 +444,133 @@ export default [
       });
       for (const [sel, r] of Object.entries(ratios)) t.assert(r >= 4.5, `${sel} contrast ${r}:1 (AA 4.5:1)`);
       await t.screenshot('320');
+    },
+  },
+
+  {
+    name: 'music-voice-listen',
+    title:
+      'Voice Mode with listening (v7.2): a misheard "play" is found by the recognizer\'s other reading, at once with no 2-second check; while a check shows the cards step aside and no preview plays, and "cancel" brings them back; another reading that is a camera command comes first, and a question about a part of the hologram on screen is never taken for music',
+    device: 'iphone13',
+    fakeMusic: true,
+    timeout: 180000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(watchChecks);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      await voiceListening(t);
+
+      let c;
+      await t.step('"Clay Back in Black" heard, "Play Back in Black" the other reading: the card at once, free, no check', async () => {
+        await say(t, { parts: [{ at: 100, text: 'Clay Back in Black', alts: ['Play Back in Black'] }] });
+        c = await waitCard(t, 'voice-music-card');
+        t.assert((await t.text(c.locator(tid('music-title')))) === 'Back In Black', 'the song meant');
+        const asked = norm(await t.text(t.page.locator(tid('turn-user')).last()));
+        t.assert(asked === 'Play Back in Black', `the reading taken is the owner's line in the chat (${asked})`);
+        await t.waitFor(async () => (await said(t)).some((x) => /Back In Black by AC\/DC/.test(x)), { timeout: 15000, message: 'Jarvis to say the line' });
+        t.assert((await checks(t)).review === 0, 'a music command acts at once: no 2-second check');
+        t.assert(t.requests('lead').length === 0, 'free: no Claude request');
+        await t.waitFor(async () => /Ready/.test(await t.text(await t.visible('voice-status'))), { timeout: 8000, message: 'Voice Mode to wait for a tap (Ready)' });
+      });
+
+      await t.step('a question: while the check shows, the card steps aside and no preview plays; Cancel brings it back', async () => {
+        await voiceListening(t);
+        await say(t, 'Who sang it first');
+        await checkShows(t, 'Who sang it first');
+        await t.page.locator(tid('voice-review-text')).click(); // fixing the words: the countdown waits
+        await t.visible('voice-review-input');
+        t.assert(await t.page.locator(tid('voice-music')).isHidden(), 'the cards step aside for the check');
+        // Even a tap that reached the hidden card would not play while the words are checked.
+        await t.page.evaluate(() => document.querySelector('[data-testid="voice-music"] [data-testid="music-preview"]').click());
+        await t.page.waitForTimeout(400);
+        t.assert((await playerState(c)) !== 'playing', `no preview during the check (${await playerState(c)})`);
+        await t.screenshot('check-over-card');
+        await t.page.locator(tid('voice-review-cancel')).click();
+        await t.waitFor(async () => /Okay, not sent\./.test(await t.text(t.page.locator(tid('voice-captions')))), { timeout: 8000, message: '"Okay, not sent."' });
+        await t.waitFor(() => t.page.locator(tid('voice-music')).isVisible(), { timeout: 3000, message: 'the card to be back' });
+        t.assert((await t.text(c.locator(tid('music-title')))) === 'Back In Black', 'the same card');
+        t.assert(sentTexts(t).length === 0, 'nothing was sent');
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'Preview to play once the check is gone' });
+      });
+
+      await t.step('another reading that is a camera command comes before one that is a music command', async () => {
+        await voiceListening(t, 'Voice Mode to listen again');
+        t.assert((await playerState(c)) !== 'playing', 'the preview paused for the mic');
+        const searches = t.music.searches.length;
+        await say(t, { parts: [{ at: 100, text: 'What am I locking at?', alts: ['Play Locking At', 'What am I looking at?'] }] });
+        await t.waitFor(async () => (await said(t)).some((x) => /Tap Look, and show me\./.test(x)), { timeout: 10000, message: 'Jarvis to ask for Look' });
+        t.assert(t.music.searches.length === searches, `Apple Music was not searched (${t.music.searches.slice(searches).join(' ')})`);
+        t.assert(sentTexts(t).length === 0, 'nothing was sent');
+      });
+
+      await t.step('with a hologram on screen, a question naming one of its parts is sent, not taken for music by another reading', async () => {
+        await voiceListening(t, 'Voice Mode to be ready');
+        await say(t, { parts: [{ at: 100, text: '[[hologram:battery]] Show me an AA battery' }] });
+        await t.visible('hologram-viewer', { timeout: 30000, message: 'The hologram viewer opens over Voice Mode' });
+        await t.waitFor(async () => (await t.page.locator(tid('hologram-viewer')).getAttribute('data-state')) === 'ready', { timeout: 60000, message: 'the hologram to be built' });
+        await t.waitFor(async () => /Say "expand it", or tap any part\./.test((await said(t)).join(' ')), { timeout: 30000, message: 'Jarvis to say the hologram is up' });
+        // The viewer covers Voice Mode: it listens again by itself (Continuous).
+        await voiceListening(t, 'Voice Mode to listen again under the viewer', { tap: false });
+        const searches = t.music.searches.length;
+        const before = sentTexts(t).length;
+        await say(t, { parts: [{ at: 100, text: 'How does the separator work?', alts: ['Play the separator'] }] });
+        await checkShows(t, 'How does the separator work?');
+        await t.waitFor(() => sentTexts(t).length > before, { timeout: 10000, message: 'the question to be sent' });
+        t.assert(sentTexts(t).at(-1).includes('How does the separator work?'), `the question was sent ("${sentTexts(t).at(-1)}")`);
+        t.assert(t.music.searches.length === searches, `Apple Music was not searched (${t.music.searches.slice(searches).join(' ')})`);
+      });
+    },
+  },
+
+  {
+    name: 'music-chat-mic',
+    title:
+      'The chat\'s mic with listening (v7.2): a music command acts at once with no countdown, also when only the recognizer\'s other reading is one; a question waits 2 seconds in the box, and a preview waits for it too (the card says why), then plays',
+    device: 'iphone13',
+    fakeMusic: true,
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 8000 });
+      await t.page.addInitScript(watchChecks);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await t.visible('empty-state');
+
+      let c;
+      await t.step('"Clay Back in Black" heard, "Play Back in Black" the other reading: found at once, no countdown', async () => {
+        await t.page.evaluate(() => window.__voice.queue.push({ parts: [{ at: 100, text: 'Clay Back in Black', alts: ['Play Back in Black'] }] }));
+        await (await t.visible('composer-mic')).click();
+        c = await waitCard(t);
+        t.assert((await t.text(c.locator(tid('music-title')))) === 'Back In Black', 'the song meant');
+        t.assert(/^Play Back in Black$/.test(norm(await t.text(t.page.locator(tid('turn-user')).first()))), `the reading taken is the owner's line (${norm(await t.text(t.page.locator(tid('turn-user')).first()))})`);
+        t.assert((await checks(t)).countdown === 0, 'a music command acts at once: no countdown');
+        t.assert((await t.page.locator(tid('composer-input')).inputValue()) === '', 'the box is empty');
+        t.assert(t.requests('lead').length === 0, 'free: no Claude request');
+      });
+
+      await t.step('a question waits 2 seconds in the box; a preview waits for it too, then plays', async () => {
+        await t.page.evaluate(() => window.__voice.queue.push('What is the capital of France?'));
+        await (await t.visible('composer-mic')).click();
+        await t.visible('composer-countdown', { timeout: 8000, message: 'The countdown shows' });
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => /The preview waits while what you said is about to be sent\./.test(await toastText(t)), { timeout: 5000, message: async () => `the note (${await toastText(t)})` });
+        t.assert((await playerState(c)) !== 'playing', 'no preview during the check');
+        await t.waitFor(async () => (await t.count('turn-user')) === 2, { timeout: 8000, message: 'the question to be sent after the countdown' });
+        t.assert(sentTexts(t).at(-1).includes('What is the capital of France?'), 'the question went to Jarvis');
+        await t.waitForTurn(t.page.locator(tid('turn-jarvis')).last(), ['done']);
+        await c.locator(tid('music-preview')).click();
+        await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'Preview to play once the words are sent' });
+      });
     },
   },
 ];

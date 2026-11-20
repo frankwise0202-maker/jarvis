@@ -5,7 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REVIEW_MS, reviewReply, applyCorrection, planCorrection as plan, pickHeard, listenPhrases } from '../../src/ui/voice-heard.js';
+import { REVIEW_MS, reviewReply, applyCorrection, planCorrection as plan, pickHeard, namesPart, commandReading, listenPhrases } from '../../src/ui/voice-heard.js';
+import { matchMusicCommand } from '../../src/lib/music-commands.js';
+import { matchScreenCommand } from '../../src/lib/screen-commands.js';
 
 test('the check lasts 2 seconds', () => {
   assert.equal(REVIEW_MS, 2000);
@@ -123,4 +125,40 @@ test('listenPhrases: Jarvis first, then the part names (once each), then the com
   assert.ok(p.some((x) => x.phrase === 'expand it' && x.boost === 1.2));
   assert.ok(p.every((x) => x.boost >= 0 && x.boost <= 10 && typeof x.phrase === 'string' && x.phrase.length <= 60));
   assert.deepEqual(listenPhrases().slice(0, 2), [{ phrase: 'Jarvis', boost: 2.5 }, { phrase: 'expand it', boost: 1.2 }]);
+});
+
+test('namesPart: the words name a part of the hologram on screen (whole words, any case, other names too)', () => {
+  const parts = ['Separator', 'Positive terminal', 'cap', 'x'];
+  assert.equal(namesPart('How does the separator work?', parts), true);
+  assert.equal(namesPart('show me the POSITIVE TERMINAL', parts), true);
+  assert.equal(namesPart('What is a capacitor?', parts), false, 'whole words only');
+  assert.equal(namesPart('play x', parts), false, 'a name of one letter is ignored');
+  assert.equal(namesPart('How does the separator work?', []), false);
+  assert.equal(namesPart('', parts), false);
+});
+
+test('commandReading (the chat\'s mic): a command first; another reading for Apple Music only when the best one is nothing else', () => {
+  const m = { isCommand: (t) => matchScreenCommand(t), isMusic: (t) => matchMusicCommand(t) };
+  // No alternatives, or the best reading is a command or a music command: the best reading.
+  assert.equal(commandReading('What is the capital of France?', [], m), 'What is the capital of France?');
+  assert.equal(commandReading('play Back in Black', ['pay back in black'], m), 'play Back in Black');
+  assert.equal(commandReading('put mission control on my other screen', ['play mission control'], m), 'put mission control on my other screen');
+  // A misheard "play": the reading that is a music command.
+  assert.equal(commandReading('Clay Back in Black', ['play Back in Black'], m), 'play Back in Black');
+  assert.equal(commandReading('Stop the mu sick', ['stop the music'], m), 'stop the music');
+  // A screen command among the other readings comes before a music one.
+  assert.equal(commandReading('put mission control on my other green', ['play mission control', 'put mission control on my other screen'], m), 'put mission control on my other screen');
+  // A best reading that is a music command keeps it over another reading's screen command.
+  assert.equal(commandReading('play Thriller', ['put it on my other screen'], m), 'play Thriller');
+  // Nothing is a command: the best reading as it was heard.
+  assert.equal(commandReading('What role does OPEC play in oil prices?', ['What role does OPEC play in oil price'], m), 'What role does OPEC play in oil prices?');
+  // Matchers that fail count as "no".
+  assert.equal(commandReading('Clay Back in Black', ['play Back in Black'], { isMusic: () => { throw new Error('x'); } }), 'Clay Back in Black');
+});
+
+test('listenPhrases: Apple Music\'s command words are listened for too (after the check\'s own words)', () => {
+  const p = listenPhrases().map((x) => x.phrase);
+  for (const w of ['Apple Music', 'stop the music', 'play the album', 'a preview of']) assert.ok(p.includes(w), w);
+  assert.ok(p.indexOf('no, I said') < p.indexOf('Apple Music'), 'the check\'s words come first');
+  assert.ok(listenPhrases({ partNames: Array.from({ length: 60 }, (_, i) => `Part ${i}`) }).length <= 80);
 });
