@@ -1001,10 +1001,13 @@ export async function startApp(rootEl) {
     if (optics) extras.optics = optics;
     // A chat from before holograms (its tools are frozen without show_hologram) can't show one: Voice
     // Mode, whose headline is "show me this car", asks in a new chat instead (the old one stays in History).
+    // So does a Look in a chat from before the camera (no pin_labels): labels need a new chat.
     const oldChat = !state.demo && !!state.conv && turnsOf(state.conv).length > 0 && !hasVisualTools(state.conv, 'show_hologram') && !state.runs.has(state.conv.id);
-    if (oldChat) setConversation(null);
+    const oldForLook = !oldChat && !!optics && preOpticsChat();
+    if (oldChat || oldForLook) setConversation(null);
     if (!send(text, mode, extras)) throw new Error('I couldn’t start that request.');
     if (oldChat && voiceApi) safe(() => voiceApi.note('New chat: older chats can’t show holograms.'));
+    if (oldForLook && voiceApi) safe(() => voiceApi.note(PRE_OPTICS_NOTE));
     const entry = state.conv && state.runs.get(state.conv.id);
     const run = entry ? entry.run : null;
     // A hologram is open over Voice Mode: the reply is captioned there too.
@@ -1226,15 +1229,27 @@ export async function startApp(rootEl) {
     return { attachment, optics: { source: frame.source, capturedAt: at } };
   }
 
+  /**
+   * A chat from before the camera (v7): its tools are frozen without pin_labels, so a Look there
+   * would be answered in words only, with no labels and no "What's this part?". Such a Look goes to
+   * a new chat instead (the old one stays in History), as Voice Mode does for holograms; Optics says so.
+   */
+  function preOpticsChat() {
+    return !state.demo && !!state.conv && turnsOf(state.conv).length > 0 && !hasVisualTools(state.conv, 'pin_labels') && !state.runs.has(state.conv.id);
+  }
+  const PRE_OPTICS_NOTE = 'New chat: labels need one (this chat is from before the camera).';
+
   function lookFromOptics({ text, frame }) {
     const problem = opticsProblem();
     if (problem) return { error: problem };
     const { attachment, optics } = opticsAttachment(frame);
+    const moved = preOpticsChat();
+    if (moved) setConversation(null);
     if (!send(text, 'quick', { attachments: [attachment], optics })) return { error: 'That look couldn’t be sent.' };
     const entry = state.conv && state.runs.get(state.conv.id);
     if (!entry) return { error: 'That look couldn’t be sent.' };
     const user = state.conv.turns[state.conv.turns.length - 2];
-    return { run: entry.run, frameId: user && user.optics ? user.optics.frameId : null };
+    return { run: entry.run, frameId: user && user.optics ? user.optics.frameId : null, note: moved ? PRE_OPTICS_NOTE : '' };
   }
 
   function askFromOptics({ text }) {
@@ -1279,10 +1294,11 @@ export async function startApp(rootEl) {
     const problem = opticsProblem();
     if (problem) return { error: problem };
     const { attachment, optics } = opticsAttachment(frame);
+    const moved = preOpticsChat();
     const out = voiceTurnResult(safe(() => voiceApi.ask(text || 'What am I looking at?', { mode: 'quick', attachments: [attachment], optics }), null));
     if (out.error) return out;
     const user = state.conv ? state.conv.turns[state.conv.turns.length - 2] : null;
-    return { run: out.run, frameId: user && user.optics ? user.optics.frameId : null };
+    return { run: out.run, frameId: user && user.optics ? user.optics.frameId : null, note: moved ? PRE_OPTICS_NOTE : '' };
   }
 
   function askViaVoice({ text }) {

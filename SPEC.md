@@ -1853,7 +1853,11 @@ how the parts connect is §19. Where this section and an earlier one differ, thi
   "camera is live" line): a camera turned on during the turn is not the owner's request. It never turns the camera
   on, and returns the frame as an image inside the `tool_result` (a `frame` segment).
 - **Dispatch is by name.** `pin_labels` and `look_through_camera` run when the conversation's frozen tools contain them
-  (`isOpticsTool`); otherwise they are "Unknown tool". Older conversations answer a Look in words.
+  (`isOpticsTool`); otherwise they are "Unknown tool". An older conversation would answer a Look in words, so the
+  app never sends one there: a Look (Optics, or Voice Mode's) in a chat from before the camera (tools without
+  `pin_labels`, with turns, nothing running) starts a new chat first, as Voice Mode does for pre-hologram chats; the
+  old chat stays in History, and Optics shows "New chat: labels need one (this chat is from before the camera)."
+  (Voice Mode notes it under its caption). Follow-ups then go to the new chat.
 - **Tool versions** are §17.1. The definitions are `pinLabelsTool()` and `lookThroughCameraTool()` in
   `src/lib/optics-tools.js` (re-exported by `src/lib/optics.js`) and must never be edited: `src/engine/prompts.js`
   builds lead tools V5 (with `open_screen`) from the same file, and new conversations freeze V5 with the system
@@ -1990,6 +1994,8 @@ about 16¢.
     over Optics, the camera off underneath, back to the answer; ANALYZING while each runs, and each follow-up's
     question and answer in view in the sheet), and `optics-followups-small` (the same on a 375 × 667 phone: every
     chip whole on screen with a pin tapped);
+  - `optics-old-chat` (a Look in a v6 chat reopened at launch goes to a new chat with the V5 tools: five labels, the
+    notice, the old chat kept);
   - `optics-landscape` (an iPhone 13 held sideways, 844 × 390: the frame and the answer side by side, the body at
     least 120 px tall, the chips whole, the pins on their objects);
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;

@@ -23,7 +23,7 @@
 //
 //   openOptics(deps) -> { close(), el, command(text), stopWatch() }   isOpticsOpen()   currentOptics()
 //   opticsCameraBridge (engine deps.camera)
-//   deps: { look({ text, frame }) -> Promise<{ run } | { error }>, ask({ text }) -> same,
+//   deps: { look({ text, frame }) -> Promise<{ run, frameId?, note? } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
 //           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt }), onClose?(), watchOptions?, review?,
@@ -874,6 +874,11 @@ export function openOptics(deps = {}) {
     }
     inChat.hidden = false;
     if (res.frameId) frozen.frameId = res.frameId;
+    // The app may say something about where the Look went ("New chat: labels need one…").
+    if (typeof res.note === 'string' && res.note) {
+      showNotice(res.note, 7000);
+      announce(res.note);
+    }
     follow(res.run, frozen);
     addLogEntry(frozen);
     return res;

@@ -10,6 +10,7 @@
 //   optics-hidden-start  a slow camera (2 s) and the page hidden while it starts: it never runs in
 //                    the background; shown again on a computer, it comes back by itself
 //   optics-landscape an iPhone held sideways: the frozen frame and a readable answer side by side
+//   optics-old-chat  a Look in a chat from before the camera goes to a new chat, with labels
 //   optics-denied    a blocked camera: platform steps and the system-camera fallback
 //   optics-desktop   desktop: viewport + deck + answer + Optics log; Flip between two cameras
 //   optics-watch     Watch on a scene that changes: first frame, change-only frames spaced by the
@@ -28,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { tid } from '../harness.mjs';
 import { imageSizeOf } from '../../../src/lib/optics.js';
 import { sceneLabels } from '../../mock/optics.mjs';
+import { LEAD_SYSTEM_V3, leadToolsV4 } from '../../../src/engine/prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const FEED_DIR = path.join(ROOT, 'test', 'artifacts', 'optics-feed');
@@ -406,6 +408,72 @@ export default [
       await shot(t, 'iphone13-landscape-answer');
       await page.locator(tid('optics-live')).click();
       await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-state')) === 'live', { timeout: 5000, message: 'back to live' });
+    },
+  },
+  {
+    name: 'optics-old-chat',
+    title: 'A Look in a chat from before the camera (v6: tools V4, the one the app reopens at launch after the update) goes to a new chat, with labels; Optics says so; the old chat stays in History',
+    device: 'iphone13',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      const first = await t.send('What is the capital of France?');
+      await t.waitForTurn(first, ['done'], { timeout: 30000 });
+      await page.waitForTimeout(1200);
+      // Make it a v6 conversation (the V3 prompt, the V4 tools: holograms, no Optics tools).
+      const oldId = await page.evaluate(async ({ system, tools }) => {
+        const req = indexedDB.open('jarvis');
+        const db = await new Promise((resolve) => (req.onsuccess = () => resolve(req.result)));
+        const all = await new Promise((resolve) => {
+          const q = db.transaction('conversations').objectStore('conversations').getAll();
+          q.onsuccess = () => resolve(q.result);
+        });
+        const conv = all.find((x) => typeof x.id === 'string' && x.system);
+        const hist = all.find((x) => Array.isArray(x.apiMessages));
+        conv.system = system;
+        conv.tools = tools;
+        if (hist) for (const m of hist.apiMessages) if (m.role === 'assistant' && Array.isArray(m.content)) m.content = m.content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+        await new Promise((resolve) => {
+          const tx = db.transaction('conversations', 'readwrite');
+          tx.objectStore('conversations').put(conv);
+          if (hist && hist !== conv) tx.objectStore('conversations').put(hist);
+          tx.oncomplete = resolve;
+        });
+        db.close();
+        return conv.id;
+      }, { system: LEAD_SYSTEM_V3, tools: leadToolsV4() });
+      await t.reload();
+      await t.waitFor(async () => (await t.count('turn-jarvis')) === 1, { timeout: 10000, message: 'the v6 chat reopened at launch' });
+      await openFromComposer(t);
+      await waitLive(t);
+      await page.locator(tid('optics-look')).click();
+      await waitAnswer(t);
+      await page.waitForTimeout(500);
+      const look = lastLook(t);
+      const names = (look.req.body.tools || []).map((x) => x.name);
+      t.assert(names.includes('pin_labels'), `the Look went to a new chat with the camera's tools (${names.join(', ')})`);
+      const opening = look.req.body.messages[0];
+      t.assert(Array.isArray(opening.content) && opening.content.some((b) => b.type === 'image'), 'a new conversation: the Look is its first message');
+      t.assert((await t.count('optics-pin')) === 5, `labels pinned (${await t.count('optics-pin')})`);
+      t.assert(/New chat: labels need one/.test(await t.text(page.locator(tid('optics-notice')))), 'Optics says why');
+      await shot(t, 'iphone13-old-chat-look');
+      await page.locator(tid('optics-live-pill')).click();
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
+      const ids = await page.evaluate(async () => {
+        const req = indexedDB.open('jarvis');
+        const db = await new Promise((resolve) => (req.onsuccess = () => resolve(req.result)));
+        const all = await new Promise((resolve) => {
+          const q = db.transaction('conversations').objectStore('conversations').getAll();
+          q.onsuccess = () => resolve(q.result);
+        });
+        db.close();
+        return all.filter((x) => typeof x.id === 'string' && x.system).map((x) => x.id);
+      });
+      t.assert(ids.includes(oldId) && ids.length === 2, `the old chat is kept, beside the new one (${ids.length} conversations)`);
     },
   },
   {
