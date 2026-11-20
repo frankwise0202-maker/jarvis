@@ -248,8 +248,9 @@ function hologramPanel({ win, frame, compact, deps }) {
   const partName = h('p', { class: 'scr-holo__part-name' });
   const partInfo = h('p', { class: 'scr-holo__part-info' });
   const plate = h('div', { class: 'scr-holo__plate', hidden: true, attrs: { 'data-testid': 'screen-hologram-part', role: 'status' } }, partName, compact ? null : partInfo);
-  const readout = h('p', { class: 'scr-holo__readout', attrs: { 'aria-hidden': 'true' } });
-  const el = h('div', { class: 'scr-holo', attrs: { 'data-testid': 'screen-hologram', 'data-gl': 'loading', 'data-parts': '0', 'data-state': 'loading', 'data-exploded': '0' } }, stage, snap, plate, readout);
+  // The part count lives in the header ("SCREEN 2 · HOLOGRAM · 43 PARTS"): a readout on the stage
+  // collided with the labels the renderer places there, worst in a floating panel.
+  const el = h('div', { class: 'scr-holo', attrs: { 'data-testid': 'screen-hologram', 'data-gl': 'loading', 'data-parts': '0', 'data-state': 'loading', 'data-exploded': '0' } }, stage, snap, plate);
   let holo = null;
   let ready = false;
   let model = { spec: null, status: 'loading' };
@@ -289,10 +290,11 @@ function hologramPanel({ win, frame, compact, deps }) {
     tLabels.setAttribute('aria-pressed', String(!!state.labels));
     tRotate.setAttribute('aria-pressed', String(!!state.autoRotate));
     const still = el.dataset.gl === 'snapshot' ? ' · SNAPSHOT' : '';
-    setText(readout, parts ? `${parts} PART${parts === 1 ? '' : 'S'}${state.exploded > 0.5 ? ' · EXPLODED' : ''}${still}` : '');
-    if (model.status === 'building') frame.setStatus(`BUILDING · ${parts} PART${parts === 1 ? '' : 'S'}`, 'live');
+    frame.setDetail(parts ? `${parts} PART${parts === 1 ? '' : 'S'}${still}` : '');
+    // The chip carries the state only; the count is in the header beside it.
+    if (model.status === 'building') frame.setStatus('BUILDING', 'live');
     else if (model.status === 'error') frame.setStatus('INCOMPLETE', 'warn');
-    else frame.setStatus('', 'idle'); // the readout in the corner has the part count
+    else frame.setStatus('', 'idle');
   }
 
   function applyModel() {

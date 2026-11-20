@@ -251,7 +251,7 @@ export default [
         await waitAttr(t, page, 'screen-hologram', 'gl', 'ready', { timeout: 45000 });
         await waitAttr(t, page, 'screen-hologram', 'parts', '43');
         const hd = await header();
-        t.assert(hd.eyebrow === 'SCREEN 2 · HOLOGRAM', `eyebrow "${hd.eyebrow}"`);
+        t.assert(hd.eyebrow === 'SCREEN 2 · HOLOGRAM · 43 PARTS', `eyebrow "${hd.eyebrow}" (the part count is in the header, off the stage)`);
         t.assert(/Camry/i.test(hd.title), `title "${hd.title}"`);
         t.assert(/^\d{2}:\d{2}$/.test(hd.clock), `clock "${hd.clock}" (hours and minutes)`);
         t.assert((await page.title()).startsWith('Jarvis · Hologram'), `document title "${await page.title()}"`);
@@ -265,6 +265,27 @@ export default [
         await t.screenshot('hologram', page);
         await t.checkNoHorizontalOverflow('screen: hologram', page);
         await checkFrameContrast(t, page, 'hologram screen');
+        // The frame follows the theme: its brackets are the theme's --accent-2 at 78% (they were
+        // Arc Cyan in every theme). Ember's --accent-2 is #ffcaa6.
+        const themed = await page.evaluate(() => {
+          const root = document.documentElement;
+          const prev = root.dataset.theme;
+          const probe = document.createElement('i');
+          document.body.append(probe);
+          const read = (hex) => {
+            probe.style.color = `color-mix(in srgb, ${hex} 78%, transparent)`;
+            return [getComputedStyle(document.querySelector('.scr__corner--tl')).borderTopColor, getComputedStyle(probe).color];
+          };
+          const arc = read('#8af3ff');
+          root.dataset.theme = 'ember';
+          const ember = read('#ffcaa6');
+          if (prev === undefined) delete root.dataset.theme;
+          else root.dataset.theme = prev;
+          probe.remove();
+          return { arc, ember };
+        });
+        t.assert(themed.arc[0] === themed.arc[1], `Arc Cyan brackets: ${themed.arc.join(' vs ')}`);
+        t.assert(themed.ember[0] === themed.ember[1], `Ember brackets follow the theme: ${themed.ember.join(' vs ')}`);
       });
 
       await t.step('blueprint: the sheet in the blueprint viewer (zoom, parts)', async () => {

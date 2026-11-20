@@ -1705,11 +1705,12 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   `--frame-color` and `--frame-weight` apply: `--frame-brackets` is declared again on every pseudo-element that draws
   it, because a custom property declared only on `:root` is substituted there), `.hud-key`, `.hud-label`,
   `.hud-readout`, `.hud-leader`, `.hud-live`, `.hud-tape`, `.hud-scan`, `.hud-viewport` (the camera half's overlay),
-  `.hud-grid`, `.hud-assemble`.
+  `.hud-grid`, `.hud-assemble`. Bracket colors come from the theme (`--line-3` by default; the viewport's and the
+  full-screen ones are `--accent-2` mixed with transparent), never a fixed cyan.
 - **Full-screen modes**: Voice Mode's wordmark is the header's (Rajdhani 700, 17 px, .24em); on screens at least
-  700 px wide, Voice Mode and the hologram viewer get the screen windows' corner brackets (34 px arms, 2 px, a faint
-  glow; static; `pointer-events: none`; above the viewer's top bar and deck, under its part card, panels and toasts).
-  Phones skip them (rounded display corners).
+  700 px wide, Voice Mode and the hologram viewer get the screen windows' corner brackets (34 px arms, 2 px, the
+  theme's `--accent-2` at 60% with a faint glow; static; `pointer-events: none`; above the viewer's top bar and deck,
+  under its part card, panels and toasts). Phones skip them (rounded display corners).
 - **Sounds**: `boot`, `optics`, `scan`, `alert` join the family (no `comms`).
 - Deviations from the research spec: gauges sit still (the sweep laps them); the third gauge is MISSION (no Pi yet);
   MIC at 8 o'clock and OPTICS at 4; no weather (the CSP stays frozen; `situationLine` has the hook); Standby, mini mode
@@ -1758,10 +1759,12 @@ frozen lead versions); the camera (Optics) and the natural voice have their own 
   for the last two); titles are one line with their double quotes made single. Resume never reopens a window
   (`SCREEN_NOT_RESUMED`). Conversations frozen before V5 answer a stray call with "Unknown tool" and the app is never
   asked. The local matcher runs first for typed and spoken words in every conversation, old ones included.
-- Look: corner brackets and a thin glowing edge, a faint 24px grid, a header "SCREEN 2 · HOLOGRAM" over the title, a
-  clock (hh:mm), a core glyph that breathes only while the content is live, a status chip (BUILDING · n PARTS,
+- Look: corner brackets and a thin glowing edge, a faint 24px grid, a header "SCREEN 2 · HOLOGRAM · 43 PARTS" over
+  the title (a hologram's part count sits in the header, never on the stage where the renderer places its labels), a
+  clock (hh:mm), a core glyph that breathes only while the content is live, a status chip (BUILDING,
   WORKING · n AGENTS, WRITING, COMPLETE · n/n), a 300ms assemble and one scanline on open and when the content
-  finishes; static under reduced motion and Still. Text uses the app tokens (AA, checked in E2E).
+  finishes; static under reduced motion and Still. The brackets, edge and glows are the theme's accent (they follow
+  Settings → Appearance like the rest of the HUD; E2E checks Ember). Text uses the app tokens (AA, checked in E2E).
 - Tests: unit `screens.commands`, `screens.targets`, `screens.placement`, `screens.controller` (Chromium, stubbed
   Window Management / PiP / popup blocker / gesture), `engine.screens` (the tool round through the fake API, on the
   frozen V5), `engine.v7` (the round through the strict mock's `[[screen:…]]`); E2E `screens.mjs`: `screens-pages`,

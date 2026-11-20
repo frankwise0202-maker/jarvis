@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHarness, ROOT } from './platform.harness.test.mjs';
 
-const CSS = ['src/styles/tokens.css', 'src/styles/hud.css', 'src/styles/presence.css'].map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
+const CSS = ['src/styles/tokens.css', 'src/styles/themes.css', 'src/styles/hud.css', 'src/styles/presence.css'].map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 
 let h;
 before(async () => {
@@ -318,7 +318,15 @@ test('presence controller: state word, situation, Needs-you ledger, core feeds a
 test('HUD frames: each frame draws its own arm, color and weight; full-screen modes get the screen-window brackets only on wide screens', async () => {
   const measure = () => {
     const first = (el, pseudo) => getComputedStyle(el, pseudo).backgroundSize.split(',')[0].trim();
-    const color = (el, pseudo) => (getComputedStyle(el, pseudo).backgroundImage.match(/rgba?\([^)]*\)/) || [''])[0];
+    // The bracket color as [r, g, b, a] (0–255, alpha to 3 places), from rgba() or color(srgb …).
+    const color = (el, pseudo) => {
+      const s = getComputedStyle(el, pseudo).backgroundImage;
+      const m = s.match(/rgba?\(([^)]*)\)/) || s.match(/color\(srgb ([^)]*)\)/);
+      if (!m) return null;
+      const v = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      const k = m[0].startsWith('color(') ? 255 : 1;
+      return [Math.round(v[0] * k), Math.round(v[1] * k), Math.round(v[2] * k), Math.round((v[3] ?? 1) * 1000) / 1000];
+    };
     const mk = (cls) => {
       const el = document.createElement('div');
       el.className = cls;
@@ -338,6 +346,7 @@ test('HUD frames: each frame draws its own arm, color and weight; full-screen mo
       rail: first(rail, '::before'),
       viewport: first(viewport, '::before'),
       viewportColor: color(viewport, '::before'),
+      vmColor: color(vm, '::after'),
       vm: { content: getComputedStyle(vm, '::after').content, size: first(vm, '::after'), events: getComputedStyle(vm, '::after').pointerEvents },
       hv: { content: getComputedStyle(hv, '::after').content, size: first(hv, '::after'), z: getComputedStyle(hv, '::after').zIndex },
     };
@@ -349,9 +358,17 @@ test('HUD frames: each frame draws its own arm, color and weight; full-screen mo
   assert.equal(w.needs, '9px 1px', 'a Needs-you card draws its own 9px arms');
   assert.equal(w.rail, '14px 1px', 'the rail\'s live slot draws 14px arms');
   assert.equal(w.viewport, '28px 1px', 'the shared viewport draws 28px arms');
-  assert.equal(w.viewportColor, 'rgba(138, 243, 255, 0.7)', 'in its own color');
+  assert.deepEqual(w.viewportColor, [138, 243, 255, 0.7], 'in its own color: the theme\'s --accent-2 at 70% (Arc Cyan #8af3ff)');
+  assert.deepEqual(w.vmColor, [138, 243, 255, 0.6], 'the full-screen brackets: --accent-2 at 60%');
   assert.deepEqual(w.vm, { content: '""', size: '34px 2px', events: 'none' }, 'Voice Mode: the screen-window brackets, never in the way of a tap');
   assert.deepEqual(w.hv, { content: '""', size: '34px 2px', z: '4' }, 'the hologram viewer: above its top bar and deck, under its cards');
+  // The brackets follow the theme (they were Arc Cyan in every theme): Ember's --accent-2 is #ffcaa6.
+  await wide.evaluate(() => {
+    document.documentElement.dataset.theme = 'ember';
+  });
+  const e = await wide.evaluate(measure);
+  assert.deepEqual(e.viewportColor, [255, 202, 166, 0.7], 'Ember: the viewport brackets are Ember\'s --accent-2');
+  assert.deepEqual(e.vmColor, [255, 202, 166, 0.6], 'Ember: so are the full-screen brackets');
   const phone = await page({ contextOptions: { viewport: { width: 390, height: 844 } } });
   const n = await phone.evaluate(measure);
   assert.equal(n.needs, '9px 1px');

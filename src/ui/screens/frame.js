@@ -3,14 +3,16 @@
 //   const frame = createScreenFrame({ win, label: 'SCREEN 2', kind: 'hologram', title, where,
 //                                     compact, onBack, onClose, onFullscreen })
 //   host.append(frame.el); frame.body.append(panel.el); frame.deck.append(controls)
-//   frame.setTitle(t)  frame.setKind(kind, { report })  frame.setStatus(word, tone)  frame.scan()
-//   frame.setState('loading' | 'ready' | 'missing' | 'error')  frame.destroy()
+//   frame.setTitle(t)  frame.setKind(kind, { report })  frame.setDetail('43 PARTS')
+//   frame.setStatus(word, tone)  frame.scan()  frame.setState('loading' | 'ready' | 'missing' | 'error')
+//   frame.destroy()
 //
-// What makes it a JARVIS screen: corner brackets and a thin glowing edge, a faint 24px grid behind
-// the content, a header "SCREEN 2 · HOLOGRAM · 2024 CAMRY HYBRID" with a small core glyph and a
-// clock (hours and minutes, so nothing ticks), and a 300ms assemble on open (brackets draw in, then
-// the content fades up 4px) with one scanline. Under reduced motion all of it is static. Nothing
-// loops while idle; the glyph breathes only while the content is live (a build, a stream, agents).
+// What makes it a JARVIS screen: corner brackets and a thin glowing edge (in the theme's accent), a
+// faint 24px grid behind the content, a header "SCREEN 2 · HOLOGRAM · 43 PARTS" over "2024 CAMRY
+// HYBRID" with a small core glyph and a clock (hours and minutes, so nothing ticks), and a 300ms
+// assemble on open (brackets draw in, then the content fades up 4px) with one scanline. Under reduced
+// motion all of it is static. Nothing loops while idle; the glyph breathes only while the content is
+// live (a build, a stream, agents).
 //
 // `win` is the window the frame lives in (a floating Picture-in-Picture panel is another window):
 // its timers drive the clock, so they keep running while the app's own tab is hidden. All text is
@@ -84,7 +86,11 @@ export function createScreenFrame(opts = {}) {
 
   const whereText = h('span', { class: 'scr__where', text: opts.label || 'SCREEN' });
   const kindText = h('span', { class: 'scr__kind', text: screenKindLabel(kind, { report }) });
-  const eyebrow = h('p', { class: 'scr__eyebrow' }, whereText, h('span', { class: 'scr__sep', attrs: { 'aria-hidden': 'true' }, text: '·' }), kindText);
+  // A third, optional part ("43 PARTS"): kept in the header so nothing sits on the content. Empty
+  // and hidden when unused, so the eyebrow's text is just "SCREEN 2 · BLUEPRINT".
+  const detailSep = h('span', { class: 'scr__sep', hidden: true, attrs: { 'aria-hidden': 'true' } });
+  const detailText = h('span', { class: 'scr__detail', hidden: true, attrs: { 'data-testid': 'screen-detail' } });
+  const eyebrow = h('p', { class: 'scr__eyebrow' }, whereText, h('span', { class: 'scr__sep', attrs: { 'aria-hidden': 'true' }, text: '·' }), kindText, detailSep, detailText);
   const title = h('h1', { class: 'scr__title', attrs: { 'data-testid': 'screen-title' } });
   const statusDot = h('span', { class: 'scr__status-dot', attrs: { 'aria-hidden': 'true' } });
   const statusText = h('span', { class: 'scr__status-text' });
@@ -184,7 +190,15 @@ export function createScreenFrame(opts = {}) {
       setText(whereText, text || 'SCREEN');
       syncTitleAttr();
     },
-    /** A state word like 'BUILDING · 23 PARTS' (tone: live | done | warn | error | idle), or '' to hide. */
+    /** The header's third part after the kind, like '43 PARTS', or '' for none. */
+    setDetail(text) {
+      const d = String(text || '');
+      detailSep.hidden = !d;
+      detailText.hidden = !d;
+      setText(detailSep, d ? '·' : '');
+      setText(detailText, d);
+    },
+    /** A state word like 'WORKING · 3 AGENTS' (tone: live | done | warn | error | idle), or '' to hide. */
     setStatus(word, tone = 'idle') {
       const w = String(word || '');
       status.hidden = !w;

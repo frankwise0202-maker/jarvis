@@ -1032,14 +1032,14 @@ svg.turn-glyph {
   .hv::after {
     --frame-arm: 34px;
     --frame-weight: 2px;
-    --frame-color: rgba(138, 243, 255, 0.6);
+    --frame-color: color-mix(in srgb, var(--accent-2) 60%, transparent); /* the theme's, like the screens' */
     content: '';
     position: absolute;
     inset: 10px;
     z-index: 2;
     pointer-events: none;
     background: var(--frame-brackets);
-    filter: drop-shadow(0 0 5px rgba(62, 224, 255, 0.4));
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 40%, transparent));
   }
 
   /* Above the viewer's top bar and deck, under its part card, panels and toasts. */

@@ -2177,7 +2177,7 @@
   min-height: 0;
   --frame-arm: 28px;
   --frame-inset: 16px;
-  --frame-color: rgba(138, 243, 255, 0.7);
+  --frame-color: color-mix(in srgb, var(--accent-2) 70%, transparent); /* follows the theme */
 }
 .hud-viewport::before {
   content: '';

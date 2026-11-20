@@ -217,6 +217,7 @@ export async function startScreenPage(root, { search = location.search } = {}) {
     frame.showDeck(false);
     frame.setKind(kind, { report });
     frame.setTitle(title || ref.title || '');
+    frame.setDetail('');
     frame.setStatus('', 'idle');
     frame.setState('loading');
     panel = createScreenPanel(kind, { win: window, frame, compact: false, deps: panelDeps });

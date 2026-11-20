@@ -190,7 +190,8 @@ test('one monitor: "other screen" floats beside; the floating panel copies the s
     };
   });
   assert.ok(inPip.styles >= 1 && inPip.copied, 'stylesheets copied into the floating document');
-  assert.deepEqual([inPip.where, inPip.kind, inPip.compact, inPip.title, inPip.eyebrow], ['beside', 'hologram', 'true', '2024 Camry', 'FLOAT·HOLOGRAM']);
+  // The part count is in the header (a readout on the stage collided with the labels).
+  assert.deepEqual([inPip.where, inPip.kind, inPip.compact, inPip.title, inPip.eyebrow], ['beside', 'hologram', 'true', '2024 Camry', 'FLOAT·HOLOGRAM·1 PART']);
   assert.match(inPip.htmlClass, /is-pip/);
   // The panel is open: the next thing floats in it without a gesture.
   const o2 = await p.evaluate(() => window.say('float the report', { source: 'voice' }));
