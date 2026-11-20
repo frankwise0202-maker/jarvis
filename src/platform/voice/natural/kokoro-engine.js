@@ -37,9 +37,11 @@
 // WebGPU (config.device 'webgpu', dtype 'fp32'): the same flow; the first inference compiles the
 // GPU kernels, so the warm-up runs twice (config.warmupRuns) and the speed is read from the last.
 
+import { NATURAL_CACHES } from './catalog.js';
+
 const HF_MAIN_VOICES = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/';
 const RUNTIME_CACHE = 'voice-runtime-v1'; // not 'jarvis-…': the service worker deletes those on every update
-const KNOWN_CACHES = ['transformers-cache', 'kokoro-voices', RUNTIME_CACHE];
+const KNOWN_CACHES = NATURAL_CACHES; // transformers-cache (the model), kokoro-voices, RUNTIME_CACHE
 const WARMUP_TEXT = 'All systems are ready.'; // ~1.5 s of audio: long enough for a first speed reading
 
 export class EngineError extends Error {

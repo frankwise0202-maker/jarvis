@@ -42,6 +42,13 @@ export const MODEL = Object.freeze({
   voiceBytes: 522240, // 510 × 256 float32 style vectors per voice
 });
 
+/**
+ * The Cache Storage caches the natural voice fills (the model, the speakers, the ONNX Runtime binary).
+ * Not 'jarvis-…': the service worker deletes those on every update. Remove download and Reset Jarvis
+ * delete these.
+ */
+export const NATURAL_CACHES = Object.freeze(['transformers-cache', 'kokoro-voices', 'voice-runtime-v1']);
+
 /** The ONNX Runtime build the worker loads (from node_modules, copied to dist/voice/ort/). */
 export const RUNTIME = Object.freeze({
   wasm: 'ort-wasm-simd-threaded.jsep.wasm', // WASM + WebGPU (JSEP) build used by transformers.js 3.8

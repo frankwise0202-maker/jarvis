@@ -630,7 +630,7 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **The natural voice says "Too slow on this device"** | Jarvis measured that this device makes the voice more slowly than it speaks, so the built-in voice speaks instead. Tap **Try again** (for example after closing other apps). |
 | **The natural voice download stopped** | Check the connection and tap **Try again**; what was already checked isn't downloaded again. Turning it on asks the browser to keep the download; if the phone runs low on space it may still remove it. |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
-| **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key. |
+| **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key and the natural voice download. |
 
 ## Running Jarvis on your own computer (optional)
 

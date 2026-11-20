@@ -32,7 +32,8 @@
 //   resetApp()         -> Promise<{ ok, failed }>  clears settings, API key, memory, spend, all
 //                         conversations, the saved library and other jarvis.* local data (custom protocols, stats,
 //                         UI preferences), unregisters this app's
-//                         service worker and deletes its caches. Never throws. Reload afterwards.
+//                         service worker and deletes its caches, the natural voice's download
+//                         included (NATURAL_CACHES). Never throws. Reload afterwards.
 //   backupFileName()   -> 'jarvis-backup-YYYY-MM-DD.json' (local date)
 //   registerBackupPart(name, { exportData, importData }) -> unregister()
 //                         lets a feature module add its own data (the app registers the owner's
@@ -55,6 +56,7 @@ import { isKnownLeadSetup } from '../engine/prompts.js';
 import { normalizeHologramSpec } from '../lib/hologram-spec.js';
 import { normalizeBlueprintSpec, summarizeBlueprint } from '../lib/blueprint-spec.js';
 import { cleanFrame, cleanLabelText, OPTICS_LIMITS } from '../lib/optics.js';
+import { NATURAL_CACHES } from './voice/natural/catalog.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -643,9 +645,12 @@ async function unregisterServiceWorkers() {
   await Promise.all(regs.filter((r) => typeof r.scope === 'string' && r.scope.startsWith(base)).map((r) => r.unregister()));
 }
 
+// The app's offline caches ('jarvis-<build>') and the natural voice's download (the model, the
+// speakers and the ONNX Runtime binary: up to about 445 MB, kept outside 'jarvis-' so app updates
+// don't delete it). Other sites' caches on this origin are left alone.
 async function clearCaches() {
   const store = globalThis.caches;
   if (!store || typeof store.keys !== 'function') return;
   const names = await store.keys();
-  await Promise.all(names.filter((n) => n.startsWith('jarvis-')).map((n) => store.delete(n)));
+  await Promise.all(names.filter((n) => n.startsWith('jarvis-') || NATURAL_CACHES.includes(n)).map((n) => store.delete(n)));
 }

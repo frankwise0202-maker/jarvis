@@ -146,6 +146,20 @@ export default [
         t.assert((await t.page.locator(tid('voice-mode')).getAttribute('data-bands')) === null, 'and let go once it stopped');
         t.note(`${(await audio(t)) - before} natural-voice chunks in the spoken reply`);
       });
+      await t.step('Reset Jarvis deletes the natural voice download too (v7.1: before, up to ~445 MB stayed on the device)', async () => {
+        const voiceCaches = () => t.page.evaluate(async () => (await caches.keys()).filter((n) => ['transformers-cache', 'kokoro-voices', 'voice-runtime-v1'].includes(n)).sort());
+        t.assert((await voiceCaches()).includes('transformers-cache'), `the download is in Cache Storage before the reset (${await voiceCaches()})`);
+        await t.page.locator(tid('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        await (await t.visible('settings-button')).click();
+        await t.visible('settings-sheet');
+        const reset = t.page.locator(tid('reset-app'));
+        await reset.scrollIntoViewIfNeeded();
+        await reset.click();
+        await Promise.all([t.page.waitForEvent('load', { timeout: 20000 }), reset.click()]); // "Tap again to erase everything": the app reloads
+        const left = await voiceCaches();
+        t.assert(left.length === 0, `no natural voice cache is left (${JSON.stringify(left)})`);
+      });
     },
   },
   {

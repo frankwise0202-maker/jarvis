@@ -1002,6 +1002,10 @@ test('backup: resetApp clears everything Jarvis stored, only its own service wor
     await navigator.serviceWorker.register('/other/sw.js', { scope: '/other/' });
     await (await caches.open('jarvis-abc12345')).put('/x', new Response('x'));
     await (await caches.open('someone-else')).put('/y', new Response('y'));
+    // The natural voice's download (v7.1: Reset Jarvis deletes it too; before, up to ~445 MB stayed).
+    await (await caches.open('transformers-cache')).put('/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model.onnx', new Response('m'));
+    await (await caches.open('kokoro-voices')).put('/voices/bm_george.bin', new Response('v'));
+    await (await caches.open('voice-runtime-v1')).put('/voice/ort/ort-wasm-simd-threaded.jsep.wasm', new Response('w'));
     const result = await backup.resetApp();
     return {
       result,

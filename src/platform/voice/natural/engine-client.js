@@ -45,6 +45,8 @@
 // (+ the model host). WebKit is expected to behave the same (CSP3 §4.2.2) but is untested here:
 // if Safari refuses to compile, the engine reports code 'wasm' and Jarvis keeps the device voice.
 
+import { NATURAL_CACHES } from './catalog.js';
+
 const SLOW_RTF = 1.0;
 // The warm-up is the engine's first inference (kernel set-up included), so it is judged leniently.
 const WARMUP_SLOW_RTF = 1.6;
@@ -614,7 +616,7 @@ export function createNaturalEngine({
   /** Delete the download (model, voices, runtime) and stop. */
   async function clear() {
     teardown();
-    for (const name of ['transformers-cache', 'kokoro-voices', 'voice-runtime-v1']) {
+    for (const name of NATURAL_CACHES) {
       try {
         await scope.caches.delete(name);
       } catch {

@@ -2613,6 +2613,9 @@ export async function startApp(rootEl) {
       },
       resetApp: async () => {
         await stopAllRuns();
+        // The natural voice's worker first (it could still be writing its download), then its files
+        // go with everything else (resetApp deletes its caches too).
+        if (!state.demo && naturalVoice) await Promise.resolve(safe(() => naturalVoice.engine.clear(), null)).catch(() => {});
         if (!state.demo) await resetApp();
         uiSet(UI_KEYS.last, null);
         uiSet(UI_KEYS.sidebar, null);

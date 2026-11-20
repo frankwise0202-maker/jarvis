@@ -294,6 +294,11 @@ result has a `library` count when the backup has one (Settings' summary names it
 hologram and blueprint segments (re-validated, never `building`) and `turn.blueprintFor`. `resetApp()` clears the
 library; deleting a conversation keeps its saved items.
 
+v7.1: `resetApp()` also deletes the natural voice's download (`NATURAL_CACHES` in
+`src/platform/voice/natural/catalog.js`: `transformers-cache`, `kokoro-voices`, `voice-runtime-v1`, up to about 445
+MB, kept outside `jarvis-…` so app updates don't remove it), and the app stops the voice's worker first
+(`engine.clear()`), so nothing writes the download back. Other caches on the origin stay.
+
 ## 6. Conversation data model (engine owns mutation; platform stores; UI reads)
 
 All objects are plain JSON (structured-clone safe). IDs: `crypto.randomUUID()` when
