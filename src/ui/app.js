@@ -1149,7 +1149,9 @@ export async function startApp(rootEl) {
         wakeLock: { keepAwake: () => keepAwake('voice'), allowSleep: () => allowSleep('voice') },
         activeRun: entry ? entry.run : null,
         // Optics: Look in the dock opens the camera over Voice Mode.
-        look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true }) },
+        // Look: the words of a "what am I looking at?" that had to wait for this tap (iPhone) are
+        // looked at as soon as the camera is live.
+        look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true, autoLook: takePendingVoiceLook() }) },
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
@@ -1326,6 +1328,15 @@ export async function startApp(rootEl) {
    * "What am I looking at?" in Voice Mode with the camera closed: on a computer where the camera is
    * allowed, Optics opens over Voice Mode and looks at once; otherwise Jarvis asks for a tap on Look.
    */
+  // "What am I looking at?" said where the camera needs a tap first (iPhone): kept for Voice Mode's Look.
+  let pendingVoiceLook = null; // { text, at }
+  const PENDING_LOOK_MS = 30000;
+  function takePendingVoiceLook() {
+    const p = pendingVoiceLook;
+    pendingVoiceLook = null;
+    return p && Date.now() - p.at <= PENDING_LOOK_MS ? p.text : '';
+  }
+
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
     // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
@@ -1334,7 +1345,11 @@ export async function startApp(rootEl) {
     const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
     const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
     if (!kind) return null;
-    if (kind === 'need-tap') return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
+    if (kind === 'need-tap') {
+      // The question waits for that tap (30 s): Look then looks at once, with these words.
+      pendingVoiceLook = { text: String(text).trim().slice(0, 500), at: Date.now() };
+      return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
+    }
     const optics = openOpticsScreen({ voice: true, autoLook: String(text).trim() });
     const done = optics && optics.autoLookDone ? optics.autoLookDone : Promise.resolve({ error: 'The camera couldn’t start.' });
     return { handled: true, command: { action: 'optics', kind: 'look', ack: '' }, done };

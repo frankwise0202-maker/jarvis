@@ -419,7 +419,8 @@ browser asks for permission.
 - **In Voice Mode**, tap **Look** to open the camera over Voice Mode and just talk: "What am I
   looking at?", "What is this?", "Tell me more", "Hologram of this", "Flip", "Close the camera".
   Jarvis answers out loud and pins the labels too. On a Mac where you have allowed the camera,
-  "what am I looking at?" opens it by itself; on an iPhone, tap **Look** first. (While a hologram
+  "what am I looking at?" opens it by itself; on an iPhone Jarvis asks you to tap **Look**, and
+  then looks right away with the question you asked. (While a hologram
   is on screen, "what is this?" is about the hologram, not the camera.)
 - **Off means off.** The camera runs only while Optics (or a camera view you put on another
   screen) is open and on screen: the red **LIVE** pill shows it (tap it to turn the camera off),

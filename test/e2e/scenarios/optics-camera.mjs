@@ -16,6 +16,8 @@
 //                      new question and its answer scroll into view in the sheet
 //   optics-followups-small  the same on a 375×667 phone: the chips wrap (none off the edge) and
 //                      each follow-up's answer is in view
+//   optics-voice-iphone  iPhone Voice Mode: "what am I looking at?" asks for the tap; Look then
+//                      looks at once with those words
 //   optics-tool-camera(-float)  Jarvis's open_screen for the camera never turns it on: the owner's
 //                      Turn on camera does (iPhone: Optics; Mac: the open floating panel); a live
 //                      camera may be moved back to Optics
@@ -521,6 +523,36 @@ export default [
         t.assert(await last.isVisible(), 'the chat shows the reply');
         t.assertAppendOnly();
       });
+    },
+  },
+  {
+    name: 'optics-voice-iphone',
+    title: 'iPhone Voice Mode: "what am I looking at?" with the camera closed: Jarvis asks for the tap, and the tap on Look looks at once with those words (spoken answer, labels)',
+    device: 'iphone13',
+    timeout: 120000,
+    browserArgs: cameraArgs('desk-portrait.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = ['Jarvis, what am I looking at?'];
+      });
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      await t.waitFor(async () => /Tap Look, and show me\./.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 20000, message: 'Jarvis to ask for the tap' });
+      t.assert((await t.count('optics')) === 0 && t.requests('lead').length === 0, 'nothing opened or sent before the tap');
+      await page.locator(tid('voice-look')).click();
+      await t.visible('optics');
+      await t.waitFor(() => !!lastLook(t), { timeout: 15000, message: 'the Look to be sent after the tap' });
+      const words = await lastUserQuestion(t);
+      t.assert(/what am I looking at\?/i.test(words), `with the words that were said (${words})`);
+      await t.waitFor(async () => /That's your desk, sir/.test((await page.evaluate(() => window.__voice.said)).join(' ')), { timeout: 30000, message: 'Jarvis to speak the answer' });
+      await t.waitFor(async () => (await t.count('optics-pin')) >= 1, { timeout: 15000, message: 'the labels on the frame' });
+      await page.locator(tid('optics-live-pill')).click();
+      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
     },
   },
   {

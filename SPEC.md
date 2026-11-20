@@ -1967,7 +1967,8 @@ null: it goes to Jarvis as usual.
 - **Camera closed.** Words plainly about seeing (`isCameraRequest`: "what am I looking at?", "what do you see?", "look
   at this", "what is this?" on its own, "what brand is this?") in Voice Mode on a computer where the camera permission
   is `granted` open Optics over Voice Mode and look once it is live (`deps.autoLook`, `api.autoLookDone`). On iPhone,
-  or without the permission, Jarvis says "Tap Look, and show me." Everything else, "what's that?" and "what is it?"
+  or without the permission, Jarvis says "Tap Look, and show me." and keeps those words for 30 s: the tap on Voice
+  Mode's Look opens Optics with them as `autoLook`, so it looks at once. Everything else, "what's that?" and "what is it?"
   included, goes to Jarvis as usual: in a conversation those are about something Jarvis said. While a hologram or
   blueprint is open over Voice Mode the camera is never asked for: "what is this?" is then about what is on screen
   (`voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios })` decides: null, `need-tap` or `look`).
@@ -2020,6 +2021,8 @@ about 16¢.
   - `optics-hidden-start` (Mac, a camera that takes 2 s to start: the page hidden meanwhile, the camera never runs;
     shown again, it comes back by itself); unit `platform.camera-races` (hidden, Camera off, closing, and off-then-on
     while a start or a switch is still under way);
+  - `optics-voice-iphone` (iPhone Voice Mode: "what am I looking at?" → "Tap Look, and show me." → the tap on Look
+    looks with those words, spoken and pinned);
   - `optics-voice` (Voice Mode: Look; "what am I looking at?" spoken and pinned; "tell me more" spoken; "close the
     camera"; with the camera closed, "what's that?" is a spoken question without a frame, and on a Mac "what am I
     looking at?" alone opens the camera and looks; Hologram of this over Optics, then "Open in chat" closes Voice Mode
