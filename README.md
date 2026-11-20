@@ -370,6 +370,8 @@ says so. The short commands are free: they never go to Claude, and the exchange 
 like any other. Everyday requests that only sound like music ("find the record low for Chicago",
 "find the single best laptop", "open the album I shared yesterday") go to Jarvis as usual: "find",
 "show" and "open" mean music only with "in Apple Music", "the song", "the album" or "the playlist".
+A title with "new", "best", "top" or "latest" in it is free when you name the artist too ("play
+New Rules by Dua Lipa"); without one, Jarvis looks it up like a recommendation.
 
 ### A more natural voice
 
