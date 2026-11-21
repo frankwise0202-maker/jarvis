@@ -11,16 +11,18 @@
  *   - The opt-in natural voice's worker script (voice/*.js, not precached): cache first in this
  *     build's cache, filled the first time it loads, so the voice also works offline. Its big
  *     files (model, runtime) are cached by the worker itself (Cache Storage 'transformers-cache',
- *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them).
+ *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them). The same
+ *     for the opt-in "Hey Jarvis" worker (wake/*.js and its runtime's glue wake/ort/*.mjs; its
+ *     models and runtime binary: 'wake-word-v1').
  *   - Everything else (any other same-origin GET) is not intercepted at all.
  *   - On activate, caches of older builds (jarvis-*) are deleted.
  *   - { type: 'SKIP_WAITING' } activates a waiting update; { type: 'GET_VERSION' } replies
  *     { type: 'VERSION', buildId }.
  */
 
-self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-7TFBJGWZ.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-I2T6UIOM.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/hologram-M5RHAZZJ.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-UUBP7EUB.js","./assets/hull-worker.js","./assets/theme-boot.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
+self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-7BKFX5XS.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-I2T6UIOM.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/hologram-M5RHAZZJ.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-DFPTSUGC.js","./assets/hull-worker.js","./assets/theme-boot.js","./assets/wake-worklet.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
 
-const CACHE = 'jarvis-fdb0f974';
+const CACHE = 'jarvis-585b6152';
 const BUILD_ID = CACHE.slice('jarvis-'.length);
 const BASE = new URL('./', self.location.href).href;
 const SHELL = new URL('index.html', BASE).href;
@@ -154,7 +156,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   const rel = url.href.startsWith(BASE) ? url.pathname.slice(new URL(BASE).pathname.length) : '';
-  if (/^voice\/[\w.-]+\.js$/.test(rel)) event.respondWith(cacheFirst(request, key));
+  if (/^voice\/[\w.-]+\.js$/.test(rel) || /^wake\/(?:ort\/)?[\w.-]+\.m?js$/.test(rel)) event.respondWith(cacheFirst(request, key));
 });
 
 async function cacheFirst(request, key) {
