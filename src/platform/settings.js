@@ -57,6 +57,13 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // heard for 2 seconds (tap to fix it, "no, I said …", "cancel"), then send; or send it 'now'.
   listenWait: 'normal',
   listenSend: 'show',
+  // Wake Jarvis (Standby, SPEC §22): while the Standby screen is open, Jarvis listens on this device
+  // for two claps (or snaps) and, once its ~15 MB download is on, for "Hey Jarvis"; nothing leaves the
+  // device until he is woken. After a conversation he goes back to Standby (wakeReturn).
+  wakeClap: true,
+  wakeClapSensitivity: 'normal', // 'low' | 'normal' | 'high' (src/lib/wake/clap.js)
+  wakeWord: false, // the "Hey Jarvis" models download only when the owner turns this on
+  wakeReturn: true,
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -89,6 +96,7 @@ const MODE_IDS = idsOf(MODES, ['auto', 'quick', 'swarm']);
 const SPEAK_MODES = ['off', 'summary', 'full'];
 const LISTEN_WAIT_IDS = ['short', 'normal', 'long'];
 const LISTEN_SEND_IDS = ['show', 'now'];
+const CLAP_SENSITIVITY_IDS = ['low', 'normal', 'high'];
 const FEATURE_KEYS = Object.keys(DEFAULT_SETTINGS.features);
 
 function idsOf(table, fallback) {
@@ -167,6 +175,10 @@ const VALIDATORS = {
   opticsCameraLabel: line({ maxLength: 120 }),
   listenWait: oneOf(LISTEN_WAIT_IDS),
   listenSend: oneOf(LISTEN_SEND_IDS),
+  wakeClap: bool,
+  wakeClapSensitivity: oneOf(CLAP_SENSITIVITY_IDS),
+  wakeWord: bool,
+  wakeReturn: bool,
 };
 
 /**

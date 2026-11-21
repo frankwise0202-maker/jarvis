@@ -87,6 +87,8 @@ const ICONS = {
   'reset-view': [P('M12 4.5a7.5 7.5 0 1 1-7.5 7.5'), P('M4.5 4.5v4h4'), C(12, 12, 1.6, { fill: true })],
   minus: [P('M6 12h12')],
   fit: [P('M4 9V4h5'), P('M20 9V4h-5'), P('M4 15v5h5'), P('M20 15v5h-5')],
+  // Standby (v7.4): a crescent moon.
+  moon: [P('M19.6 14.6A7.8 7.8 0 1 1 9.4 4.4a6.2 6.2 0 0 0 10.2 10.2z')],
 };
 
 /** All available icon names. */

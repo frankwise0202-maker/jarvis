@@ -103,7 +103,7 @@ function isMac() {
  * @param {{ play?: Function, haptic?: Function }} [o.sounds]
  * @param {object} o.actions  openConversation(id) · resume(convId) · retry(convId, turnId) ·
  *   openSettings(opts) · openSystems() · openHistory() · talk() · look(event) · brief() ·
- *   screen?() · stopSensor(kind) · spendDismissed() → bool
+ *   screen?() · standby?() · stopSensor(kind) · spendDismissed() → bool
  */
 export function createPresence(o) {
   const actions = o.actions || {};
@@ -140,9 +140,25 @@ export function createPresence(o) {
     { id: 'brief', label: 'Brief me', icon: 'clock', title: 'Run the briefing for this time of day' },
   ];
   if (typeof actions.screen === 'function' && isMac()) keyDefs.push({ id: 'screen', label: 'Screen', icon: 'laptop', title: 'Show Jarvis your screen' });
+  // Standby (v7.4, SPEC §22): the ambient screen; two claps or "Hey Jarvis" wake Jarvis.
+  if (typeof actions.standby === 'function') keyDefs.push({ id: 'standby', label: 'Standby', icon: 'moon', title: 'Standby: clap twice or say “Hey Jarvis” to wake Jarvis' });
   const keys = createQuickKeys({ keys: keyDefs, onKey: (id, e) => onKey(id, e) });
   const readouts = createReadouts();
-  const legend = createLegend();
+  // The core's menu (long-press the core): its legend, and Standby.
+  const legend = createLegend({
+    action:
+      typeof actions.standby === 'function'
+        ? {
+            label: 'Standby',
+            icon: 'moon',
+            testid: 'core-legend-standby',
+            run: (e) => {
+              legend.close();
+              safe(() => actions.standby(e));
+            },
+          }
+        : null,
+  });
 
   // Desktop rail.
   const chrono = createChronometer({ onSuggest: () => onKey('brief') });
@@ -411,6 +427,7 @@ export function createPresence(o) {
     else if (id === 'look') safe(() => actions.look && actions.look(e));
     else if (id === 'brief') safe(() => actions.brief && actions.brief(e));
     else if (id === 'screen') safe(() => actions.screen && actions.screen(e));
+    else if (id === 'standby') safe(() => actions.standby && actions.standby(e));
   }
 
   function onNeedsAction(item) {

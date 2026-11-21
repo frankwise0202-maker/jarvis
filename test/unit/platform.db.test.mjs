@@ -717,7 +717,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
       userName: 'Pepper', tone: 'friendly', verbosity: 'detailed', theme: 'ember', sounds: false, soundVolume: 0.3, haptics: false,
       voiceURI: 'Daniel', voiceRate: 1.2, listenLang: 'en-GB', speakReplies: 'summary', voiceContinuous: false, followups: false,
       showThinking: false, location: 'London, UK', memoryEnabled: false, notifyOnFinish: false, naturalVoiceId: 'bm_lewis',
-      listenWait: 'long', listenSend: 'now',
+      listenWait: 'long', listenSend: 'now', wakeClap: false, wakeClapSensitivity: 'high', wakeReturn: false,
     };
     const second = await backup.importBackup({ app: 'jarvis', version: 1, settings: { ...profile, maxAgents: 'lots', tone: 'friendly' } });
     const afterSecond = settings.getSettings();
@@ -742,8 +742,34 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.restorable, [
     'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
     'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-    'naturalVoiceId', 'listenWait', 'listenSend',
+    'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn',
   ]);
+});
+
+test('backup (v7.4): the Wake Jarvis settings travel; "Hey Jarvis" stays off after an import (its models are a download)', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const { backup, settings } = window.__mods;
+    settings.saveSettings({ onboarded: true, userName: 'Frank', wakeClap: false, wakeClapSensitivity: 'low', wakeWord: true, wakeReturn: false });
+    const exported = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    settings.resetSettings();
+    settings.saveSettings({ onboarded: true });
+    const result = await backup.importBackup({ app: 'jarvis', version: 1, settings: exported });
+    return { exported, result, after: settings.getSettings() };
+  });
+  // The backup carries all four (and the greeting name, which is the owner's name).
+  assert.equal(r.exported.wakeClap, false);
+  assert.equal(r.exported.wakeClapSensitivity, 'low');
+  assert.equal(r.exported.wakeWord, true);
+  assert.equal(r.exported.wakeReturn, false);
+  assert.equal(r.exported.userName, 'Frank');
+  // The import restores them, except the wake word: an import never starts a download.
+  assert.equal(r.after.wakeClap, false);
+  assert.equal(r.after.wakeClapSensitivity, 'low');
+  assert.equal(r.after.wakeReturn, false);
+  assert.equal(r.after.userName, 'Frank');
+  assert.equal(r.after.wakeWord, false);
+  assert.ok(!r.result.settingsChanged.includes('wakeWord'));
 });
 
 test('backup (v7.1): the camera chosen on this device is never exported; the natural voice\'s speaker comes back, the voice itself stays off', async () => {

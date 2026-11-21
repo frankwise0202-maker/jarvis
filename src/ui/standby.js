@@ -1,0 +1,639 @@
+// Standby (SPEC §22): the ambient screen for a charger or a desk. A dim Presence display (the time,
+// the date, the core breathing slowly, one status line), the screen kept awake, and, while it is
+// open, Jarvis listening ON THIS DEVICE for two claps and (once its download is on) "Hey Jarvis".
+// A small pill says truthfully what it listens for. Nothing leaves the device until he is woken.
+//
+//   const standby = createStandby({ getSettings, onSettingsChange, createCore, wakeLock,
+//                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
+//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS });
+//   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
+//   standby.resume()      after the wake routine (Voice Mode closed): show it again, listen again
+//   standby.exit()        leave (a tap on the screen, Escape): the microphone is released
+//   standby.isOpen() / standby.isAwaiting()   on screen / woken (Voice Mode up, coming back after)
+//   standby.update()      the app's state changed (the status line)
+//   standby.trigger(kind) wake it as if the owner clapped ('clap') or said "Hey Jarvis" ('word')
+//
+// Waking (two claps or "Hey Jarvis"): the microphone is released FIRST (never two captures at once:
+// iOS refuses speech recognition while another capture runs), then onWake({ trigger }) opens Voice
+// Mode with the wake routine. Leaving: a tap anywhere, Escape, or the wake routine.
+//
+// The page hidden: on a phone (pauseWhenHidden) listening pauses and comes back when Jarvis is on
+// screen again (iOS stops it anyway); on a Mac it keeps listening in a background tab or window.
+// OLED: a black page, dim text, the content shifted a few pixels every minute, dimmer after 5 min.
+
+import { h, setText } from './dom.js';
+import { icon } from './icons.js';
+import { CLAP_SENSITIVITIES } from '../lib/wake/clap.js';
+
+const SHIFT_MS = 60000;
+const DEEP_DIM_MS = 5 * 60000;
+const SHIFTS = [
+  [0, 0],
+  [3, -2],
+  [-2, 3],
+  [2, 2],
+  [-3, -1],
+  [1, -3],
+  [-1, 2],
+  [3, 1],
+];
+
+export function createStandby(deps = {}) {
+  const {
+    getSettings = () => ({}),
+    onSettingsChange = null,
+    createCore = null,
+    wakeLock = null,
+    createCapture,
+    createWakeWord = null,
+    statusLine = () => '',
+    stateWord = () => '',
+    chronometer = defaultClock,
+    onWake = () => {},
+    onExit = () => {},
+    unlock = () => {},
+    pauseWhenHidden = false,
+    isIOS = false,
+  } = deps;
+
+  let phase = 'closed'; // 'closed' | 'open' | 'awaiting' (woken: Voice Mode is up)
+  let root = null;
+  let core = null;
+  let capture = null;
+  let word = null; // the "Hey Jarvis" client (created when the setting is on)
+  let wordUnsubs = [];
+  let listen = 'off'; // the capture: 'off' | 'starting' | 'live' | 'paused' | 'denied' | 'no-mic' | 'needs-tap' | 'error' | 'unsupported'
+  let clockTimer = 0;
+  let shiftTimer = 0;
+  let dimTimer = 0;
+  let shiftIndex = 0;
+  let unsubSettings = null;
+  let offs = [];
+  let lastTrigger = 0;
+  let prevFocus = null;
+  const els = {};
+
+  const settings = () => {
+    try {
+      return getSettings() || {};
+    } catch {
+      return {};
+    }
+  };
+  const clapOn = () => settings().wakeClap !== false;
+  const sensitivity = () => (CLAP_SENSITIVITIES.includes(settings().wakeClapSensitivity) ? settings().wakeClapSensitivity : 'normal');
+  const wordOn = () => settings().wakeWord === true;
+
+  // ------------------------------------------------------------------------------------- DOM
+
+  function build() {
+    els.canvas = h('canvas', { class: 'standby-core-canvas', attrs: { 'aria-hidden': 'true' } });
+    els.core = h('div', { class: 'standby-core', attrs: { 'data-testid': 'standby-core', 'aria-hidden': 'true' } }, els.canvas);
+    els.digits = h('span', { class: 'standby-digits' });
+    els.period = h('span', { class: 'standby-period' });
+    els.time = h('time', { class: 'standby-time', attrs: { 'data-testid': 'standby-time' } }, els.digits, els.period);
+    els.date = h('p', { class: 'standby-date hud-label', attrs: { 'data-testid': 'standby-date' } });
+    els.status = h('p', { class: 'standby-status', attrs: { 'data-testid': 'standby-status' } });
+    els.word = h('p', { class: 'standby-state hud-label', attrs: { 'data-testid': 'standby-state' } });
+    const info = h('div', { class: 'standby-info' }, els.time, els.date, els.word, els.status);
+    els.stage = h('div', { class: 'standby-stage' }, els.core, info);
+    els.pillDot = h('span', { class: 'standby-pill-dot', attrs: { 'aria-hidden': 'true' } });
+    els.pillText = h('span', { class: 'standby-pill-text' });
+    els.pill = h('p', { class: 'standby-pill', attrs: { 'data-testid': 'standby-pill', role: 'status' } }, els.pillDot, els.pillText);
+    els.hint = h('p', { class: 'standby-hint', attrs: { 'data-testid': 'standby-hint' } });
+    els.leave = h('span', { class: 'standby-leave', attrs: { 'aria-hidden': 'true' } }, icon('moon', { size: 14 }), h('span', { text: 'Tap anywhere to leave Standby' }));
+    const foot = h('div', { class: 'standby-foot' }, els.pill, els.hint, els.leave);
+    els.live = h('p', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', 'data-testid': 'standby-announcer' } });
+    root = h(
+      'div',
+      {
+        class: 'standby',
+        tabIndex: 0,
+        attrs: {
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': 'Standby. Tap or press Escape to leave.',
+          'data-testid': 'standby',
+          'data-listening': 'off',
+          'data-word': 'off',
+          'data-clap': 'off',
+          'data-dim': 'soft',
+        },
+        on: { click: onTap },
+      },
+      els.stage,
+      foot,
+      els.live,
+    );
+  }
+
+  function mount() {
+    if (!root) build();
+    if (!root.isConnected) document.body.appendChild(root);
+    document.documentElement.classList.add('standby-open');
+    root.hidden = false;
+    if (createCore && !core) {
+      try {
+        const size = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.4);
+        core = createCore(els.canvas, { size, mode: 'hero', maxFps: 15 });
+        if (core && typeof core.setState === 'function') core.setState('standby');
+      } catch (err) {
+        console.warn('[jarvis] standby core unavailable', err);
+        core = null;
+      }
+    }
+    try {
+      prevFocus = document.activeElement;
+      root.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function unmount() {
+    if (!root) return;
+    root.hidden = true;
+    document.documentElement.classList.remove('standby-open');
+    if (core) {
+      try {
+        core.destroy();
+      } catch {
+        /* ignore */
+      }
+      core = null;
+    }
+    root.remove();
+  }
+
+  // ------------------------------------------------------------------------------ lifecycle
+
+  /** Open Standby (call inside the tap that asked for it where possible). */
+  function enter() {
+    if (phase === 'open') return;
+    if (typeof createCapture !== 'function') return;
+    try {
+      unlock(); // the voice that will greet the owner later is unlocked in this tap (iOS)
+    } catch {
+      /* decoration */
+    }
+    if (!capture) capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    try {
+      capture.prepare(); // the AudioContext starts inside the tap (iOS)
+    } catch {
+      /* the start reports it */
+    }
+    open();
+  }
+
+  /** Back to Standby after the wake routine or a conversation (no tap needed: the context is ready). */
+  function resume() {
+    if (phase === 'open') return;
+    if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    open();
+  }
+
+  function open() {
+    phase = 'open';
+    mount();
+    shiftIndex = 0;
+    applyShift();
+    setDim('soft');
+    keepAwake();
+    tickClock();
+    scheduleClock();
+    shiftTimer = setInterval(() => {
+      shiftIndex = (shiftIndex + 1) % SHIFTS.length;
+      applyShift();
+    }, SHIFT_MS);
+    resetDim();
+    if (!offs.length) {
+      offs = [listenOn(document, 'visibilitychange', onVisibility), listenOn(window, 'pagehide', onPageHide), listenOn(document, 'keydown', onKey, true)];
+    }
+    if (typeof onSettingsChange === 'function' && !unsubSettings) unsubSettings = onSettingsChange(() => applySettings());
+    render();
+    announce(`Standby. ${listenSummary()}`);
+    startListening();
+  }
+
+  /** Leave Standby (a tap, Escape): release the microphone and the screen. */
+  function exit({ silent = false } = {}) {
+    if (phase === 'closed') return;
+    const was = phase;
+    phase = 'closed';
+    teardown();
+    stopWord({ terminate: true });
+    if (capture) {
+      try {
+        capture.close();
+      } catch {
+        /* ignore */
+      }
+      capture = null;
+    }
+    listen = 'off';
+    unmount();
+    try {
+      if (prevFocus && prevFocus.isConnected && typeof prevFocus.focus === 'function') prevFocus.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+    if (!silent) {
+      try {
+        onExit({ from: was });
+      } catch (err) {
+        console.error('[jarvis] standby exit failed:', err);
+      }
+    }
+  }
+
+  function teardown() {
+    clearTimeout(clockTimer);
+    clearInterval(shiftTimer);
+    clearTimeout(dimTimer);
+    clockTimer = shiftTimer = dimTimer = 0;
+    for (const off of offs) off();
+    offs = [];
+    if (unsubSettings) {
+      try {
+        unsubSettings();
+      } catch {
+        /* ignore */
+      }
+      unsubSettings = null;
+    }
+    allowSleep();
+  }
+
+  /** Two claps or "Hey Jarvis": release the microphone, then wake (Voice Mode, the routine). */
+  function trigger(kind) {
+    if (phase !== 'open') return false;
+    const now = Date.now();
+    if (now - lastTrigger < 1500) return false;
+    lastTrigger = now;
+    phase = 'awaiting';
+    // The microphone goes first: Voice Mode's speech recognition must find it free (iOS).
+    if (capture) capture.stop();
+    listen = 'off';
+    wordPortGiven = false;
+    if (word) word.reset();
+    teardown();
+    unmount();
+    try {
+      onWake({ trigger: kind === 'word' ? 'word' : kind === 'clap' ? 'clap' : 'tap' });
+    } catch (err) {
+      console.error('[jarvis] waking failed:', err);
+    }
+    return true;
+  }
+
+  // ------------------------------------------------------------------------------ listening
+
+  async function startListening() {
+    if (phase !== 'open' || !capture) return;
+    const wantClap = clapOn();
+    const wantWord = wordOn();
+    if (!wantClap && !wantWord) {
+      capture.stop();
+      listen = 'off';
+      render();
+      return;
+    }
+    if (pauseWhenHidden && document.hidden) {
+      listen = 'paused';
+      render();
+      return;
+    }
+    listen = 'starting';
+    wordPortGiven = false; // each start makes a new frames channel
+    render();
+    if (wantWord) ensureWord();
+    const res = await capture.start({ clap: wantClap, sensitivity: sensitivity(), word: wantWord && wordReady() });
+    if (phase !== 'open') {
+      if (res.ok) capture.stop();
+      return;
+    }
+    if (!res.ok) {
+      if (res.reason !== 'stopped') {
+        listen = res.reason === 'needs-tap' ? 'needs-tap' : res.reason || 'error';
+        render();
+      }
+      return;
+    }
+    listen = 'live';
+    if (capture.context && capture.context.state !== 'running') listen = 'needs-tap';
+    connectWord();
+    render();
+  }
+
+  function onCaptureState(info) {
+    if (phase !== 'open' || !info) return;
+    if (info.state === 'off' && info.reason === 'ended' && listen === 'live') {
+      // The system took the microphone (a call, another app): try again when it is ours again.
+      listen = 'paused';
+      render();
+      setTimeout(() => {
+        if (phase === 'open' && listen === 'paused' && !document.hidden) startListening();
+      }, 1500);
+    }
+  }
+
+  function ensureWord() {
+    if (word || typeof createWakeWord !== 'function') return;
+    try {
+      word = createWakeWord();
+    } catch (err) {
+      console.warn('[jarvis] the wake word could not be created', err);
+      word = null;
+      return;
+    }
+    wordUnsubs = [
+      word.subscribe(() => {
+        if (phase === 'open' && wordReady() && listen === 'live') connectWord();
+        render();
+      }),
+      word.onDetect(() => trigger('word')),
+    ];
+    word.start().catch(() => render());
+  }
+
+  function wordReady() {
+    return !!word && word.status().state === 'ready';
+  }
+
+  let wordPortGiven = false; // the worker has this start's frames channel
+  function connectWord() {
+    if (!capture || !word || !wordReady() || listen !== 'live' || wordPortGiven) return;
+    const port = capture.wordPort();
+    if (port && word.attach(port)) {
+      wordPortGiven = true;
+      capture.configure({ word: true });
+      render();
+    }
+  }
+
+  function stopWord({ terminate = false } = {}) {
+    wordPortGiven = false;
+    if (!word) return;
+    if (terminate) {
+      for (const u of wordUnsubs) {
+        try {
+          u();
+        } catch {
+          /* ignore */
+        }
+      }
+      wordUnsubs = [];
+      try {
+        word.stop();
+      } catch {
+        /* ignore */
+      }
+      word = null;
+    }
+  }
+
+  function applySettings() {
+    if (phase !== 'open') return;
+    if (!wordOn() && word) {
+      if (capture) capture.configure({ word: false });
+      stopWord({ terminate: true });
+    }
+    const listening = listen === 'live' || listen === 'starting';
+    if ((clapOn() || wordOn()) && !listening && listen !== 'denied' && listen !== 'needs-tap') {
+      startListening();
+      return;
+    }
+    if (!clapOn() && !wordOn()) {
+      if (capture) capture.stop();
+      listen = 'off';
+    } else if (capture) {
+      capture.configure({ clap: clapOn(), sensitivity: sensitivity() });
+      if (wordOn()) {
+        ensureWord();
+        connectWord();
+      }
+    }
+    render();
+  }
+
+  // ------------------------------------------------------------------------------- events
+
+  function onTap(event) {
+    if (phase !== 'open') return;
+    if (event) event.preventDefault();
+    // iOS may want one tap before its microphone and audio start: this tap starts them.
+    if (listen === 'needs-tap' && capture) {
+      capture.prepare();
+      startListening();
+      return;
+    }
+    exit();
+  }
+
+  function onKey(event) {
+    if (phase !== 'open') return;
+    if (event.key === 'Escape' || event.key === 'Esc' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      event.stopPropagation();
+      exit();
+      return;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault(); // nothing else to reach: the whole screen is the one control
+      return;
+    }
+    event.stopPropagation(); // the app's shortcuts do not act underneath
+  }
+
+  function onVisibility() {
+    if (phase !== 'open') return;
+    if (document.hidden) {
+      if (pauseWhenHidden) {
+        // A phone: Jarvis listens only while he is on screen.
+        if (capture) capture.stop();
+        if (word) word.reset();
+        wordPortGiven = false;
+        listen = 'paused';
+        render();
+      }
+      return;
+    }
+    tickClock();
+    if (listen === 'paused' || listen === 'off') startListening();
+  }
+
+  function onPageHide() {
+    if (phase === 'closed') return;
+    if (capture) capture.stop();
+    wordPortGiven = false;
+    listen = 'paused';
+  }
+
+  // ------------------------------------------------------------------------------- render
+
+  function listensFor() {
+    const out = [];
+    if (listen !== 'live') return out;
+    if (clapOn()) out.push('TWO CLAPS');
+    if (wordOn() && wordReady() && wordPortGiven) out.push('“HEY JARVIS”');
+    return out;
+  }
+
+  function listenSummary() {
+    const what = listensFor();
+    if (!what.length) return 'Not listening. Tap to leave.';
+    return `Listening on this device for ${what.map((w) => w.toLowerCase()).join(' and ')}.`;
+  }
+
+  function render() {
+    if (!root) return;
+    const what = listensFor();
+    root.dataset.listening = listen;
+    root.dataset.clap = clapOn() && listen === 'live' ? 'on' : 'off';
+    const ws = word ? word.status() : null;
+    root.dataset.word = !wordOn() || !ws ? 'off' : ws.state === 'ready' ? (wordPortGiven ? 'ready' : 'connecting') : ws.state;
+    let pill;
+    let tone = 'off';
+    if (what.length) {
+      pill = `LISTENING ON THIS DEVICE · ${what.join(' · ')}`;
+      tone = 'live';
+    } else if (listen === 'starting') {
+      pill = 'STARTING THE MICROPHONE…';
+    } else if (listen === 'paused') {
+      pill = 'MICROPHONE PAUSED';
+    } else if (listen === 'denied') {
+      pill = 'MICROPHONE BLOCKED · NOT LISTENING';
+      tone = 'warn';
+    } else if (listen === 'no-mic') {
+      pill = 'NO MICROPHONE · NOT LISTENING';
+      tone = 'warn';
+    } else if (listen === 'needs-tap') {
+      pill = 'TAP ONCE TO START LISTENING';
+      tone = 'warn';
+    } else if (listen === 'error' || listen === 'busy' || listen === 'unsupported') {
+      pill = 'NOT LISTENING';
+      tone = 'warn';
+    } else {
+      pill = 'NOT LISTENING';
+    }
+    setText(els.pillText, pill);
+    els.pill.dataset.tone = tone;
+    els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : pill.toLowerCase());
+    setText(els.hint, hintText(what, ws));
+    setText(els.status, safeText(statusLine));
+    const word0 = safeText(stateWord);
+    setText(els.word, word0 && word0 !== 'STANDING BY' ? word0 : '');
+    els.word.hidden = !els.word.textContent;
+  }
+
+  function hintText(what, ws) {
+    const both = clapOn() && wordOn();
+    if (listen === 'denied') return 'Allow the microphone for Jarvis in your browser’s settings to wake him by clapping or by voice.';
+    if (listen === 'no-mic') return 'Connect a microphone to wake Jarvis by clapping or by voice.';
+    if (listen === 'needs-tap') return 'This browser needs one tap before it listens.';
+    if (listen === 'paused') return isIOS ? 'Jarvis listens only while he is open on screen.' : 'Listening resumes when Jarvis is on screen again.';
+    if (!clapOn() && !wordOn()) return 'Turn on Clap twice or Say “Hey Jarvis” in Settings → Voice → Wake Jarvis.';
+    if (wordOn() && ws && ws.state === 'loading') {
+      const pct = ws.total ? Math.round((ws.loaded / ws.total) * 100) : 0;
+      return `Getting “Hey Jarvis” ready… ${pct}%${clapOn() ? ' Two claps work meanwhile.' : ''}`;
+    }
+    if (wordOn() && ws && ws.state === 'error') return `“Hey Jarvis” couldn’t load${ws.error && ws.error.code === 'network' ? ' (offline?)' : ''}.${clapOn() ? ' Two claps still work.' : ''}`;
+    if (!what.length) return '';
+    const how = both && what.length === 2 ? 'Clap twice or say “Hey Jarvis”' : what[0] === 'TWO CLAPS' ? 'Clap twice' : 'Say “Hey Jarvis”';
+    return `${how} to wake Jarvis.${isIOS ? ' He listens only while he is open on screen.' : ''}`;
+  }
+
+  function safeText(fn) {
+    try {
+      const v = fn();
+      return typeof v === 'string' ? v : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function tickClock() {
+    if (!root) return;
+    const c = chronometer(new Date());
+    setText(els.digits, c.digits || '');
+    setText(els.period, c.period || '');
+    els.period.hidden = !c.period;
+    setText(els.date, c.date || '');
+    els.time.setAttribute('datetime', new Date().toISOString());
+  }
+
+  function scheduleClock() {
+    clearTimeout(clockTimer);
+    const now = new Date();
+    const ms = 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50;
+    clockTimer = setTimeout(() => {
+      tickClock();
+      render();
+      scheduleClock();
+    }, ms);
+  }
+
+  function applyShift() {
+    if (!els.stage) return;
+    const [x, y] = SHIFTS[shiftIndex];
+    els.stage.style.transform = x || y ? `translate(${x}px, ${y}px)` : '';
+  }
+
+  function setDim(level) {
+    if (root) root.dataset.dim = level;
+  }
+
+  function resetDim() {
+    clearTimeout(dimTimer);
+    setDim('soft');
+    dimTimer = setTimeout(() => setDim('deep'), DEEP_DIM_MS);
+  }
+
+  function announce(text) {
+    if (els.live) setText(els.live, text);
+  }
+
+  function keepAwake() {
+    try {
+      if (wakeLock && typeof wakeLock.keepAwake === 'function') wakeLock.keepAwake();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function allowSleep() {
+    try {
+      if (wakeLock && typeof wakeLock.allowSleep === 'function') wakeLock.allowSleep();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return {
+    enter,
+    resume,
+    exit,
+    trigger,
+    update: () => {
+      if (phase === 'open') render();
+    },
+    isOpen: () => phase === 'open',
+    isAwaiting: () => phase === 'awaiting',
+    /** The owner is done with the woken session (Voice Mode closed and no return): fully closed. */
+    release: () => {
+      if (phase === 'awaiting') exit({ silent: true });
+    },
+    get listening() {
+      return listen;
+    },
+  };
+}
+
+function listenOn(target, type, fn, opts) {
+  target.addEventListener(type, fn, opts);
+  return () => target.removeEventListener(type, fn, opts);
+}
+
+function defaultClock(d) {
+  return { digits: `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`, period: '', date: d.toDateString().toUpperCase() };
+}

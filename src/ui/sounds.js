@@ -5,6 +5,8 @@
 //
 //   initSounds(getSettings)   // once at boot: unlocks audio on the first tap/key (iOS)
 //   play('launch')            // see SOUND_NAMES; returns true if the sound was scheduled
+//   play('wake', { hidden: true })  // the one sound that may play in a background tab: Jarvis woken
+//                             // from Standby on a Mac (the owner clapped; he should hear it)
 //   haptic('success')         // 'light' | 'success' | 'error' (navigator.vibrate; Android)
 //   cue('mission-done')       // play() + the matching haptic
 //
@@ -12,7 +14,7 @@
 // page is hidden, or before the owner has interacted with the page (browsers block audio
 // until then). Rapid repeats are rate-limited (e.g. at most one 'agent-done' per 120 ms).
 
-export const SOUND_NAMES = Object.freeze(['send', 'launch', 'agent-done', 'mission-done', 'reply-done', 'error', 'listen-start', 'listen-stop', 'tap', 'notify', 'boot', 'optics', 'scan', 'alert']);
+export const SOUND_NAMES = Object.freeze(['send', 'launch', 'agent-done', 'mission-done', 'reply-done', 'error', 'listen-start', 'listen-stop', 'tap', 'notify', 'boot', 'optics', 'scan', 'alert', 'wake']);
 
 // gap: minimum ms between two plays of the same sound. big: a prominent sound; small
 // sounds are skipped for a moment after one so they never clutter it. gain: output level,
@@ -34,6 +36,8 @@ const SPECS = {
   optics: { gap: 250, small: true, gain: 0.5, verb: 0.4 },
   scan: { gap: 500, small: true, gain: 0.22, verb: 0.3 },
   alert: { gap: 1200, big: true, gain: 0.8, verb: 0.6 },
+  // Wake Jarvis (Standby): a swell and four bells climbing, as the core boots.
+  wake: { gap: 2000, big: true, gain: 0.75, verb: 1 },
 };
 
 const DEFAULT_VOLUME = 0.6;
@@ -88,7 +92,7 @@ export function play(name, opts) {
     const s = readSettings();
     if (!s.sounds) return false;
     const volume = opts && opts.volume !== undefined && opts.volume !== null ? toVolume(opts.volume, s.volume) : s.volume;
-    if (volume <= 0 || isHidden()) return false;
+    if (volume <= 0 || (isHidden() && !(opts && opts.hidden === true && name === 'wake'))) return false;
 
     const now = nowMs();
     if (now - (lastAt.get(name) ?? -Infinity) < spec.gap) return false;
@@ -752,6 +756,16 @@ const RECIPES = {
     k.bell({ f: N.E5, t, decay: 0.2, peak: 0.06, ratio: 2, index: 0.6, attack: 0.004, pan: -0.08 });
     k.bell({ f: N.Cs5, t: t + 0.16, decay: 0.3, peak: 0.06, ratio: 2, index: 0.55, attack: 0.004, pan: 0.08 });
     k.warm({ f: N.A4, t: t + 0.16, decay: 0.26, peak: 0.016, attack: 0.012, cutoff: 1600 });
+  },
+
+  // Wake Jarvis: a soft swell, then bells climbing E5 → A5 → C#6 → E6 as the core boots (about 1.4 s).
+  wake(k, t) {
+    k.warm({ f: N.A3, t, decay: 0.9, peak: 0.016, attack: 0.35, cutoff: 1100, detune: 5 });
+    k.noise({ t, decay: 0.7, peak: 0.009, attack: 0.4, type: 'bandpass', f: 500, to: 2200, q: 0.7 });
+    k.bell({ f: N.E5, t: t + 0.28, decay: 0.32, peak: 0.045, ratio: 2, index: 0.7, attack: 0.006, pan: -0.15 });
+    k.bell({ f: N.A5, t: t + 0.42, decay: 0.32, peak: 0.045, ratio: 2, index: 0.65, attack: 0.006, pan: -0.05 });
+    k.bell({ f: N.Cs6, t: t + 0.56, decay: 0.36, peak: 0.045, ratio: 2, index: 0.6, attack: 0.006, pan: 0.05 });
+    k.bell({ f: N.E6, t: t + 0.7, decay: 0.6, peak: 0.04, ratio: 3.5, index: 0.45, attack: 0.008, pan: 0.15 });
   },
 
   // Attention: two bright glass pings over a soft fundamental.

@@ -98,6 +98,24 @@
 //                           commands act at once, without the check. After a card is shown
 //                           Jarvis waits for a tap instead of listening again, so the owner can tap
 //                           Preview (or Open in Apple Music: the hint says which).
+//   standby               Standby (v7.4, SPEC §22): an object (present = available). "Jarvis, standby",
+//                           "go to sleep" or "go back to sleep" (heard or typed, the whole sentence) gets
+//                           a short reply, then Voice Mode closes with onClose({ reason: 'standby' }) and
+//                           the app opens Standby, free.
+//   wake                  the wake routine (v7.4, SPEC §22), when Voice Mode is opened by two claps or
+//                           "Hey Jarvis" in Standby: { trigger: 'clap'|'word', name() -> the greeting
+//                           name, offer() -> Promise<{ artist, segment, playText } | null> (the Music
+//                           card offered: Apple Music, free), briefing() -> { text, mode, part } | null,
+//                           returnToStandby() -> boolean (Settings), canSleep() -> boolean (no preview
+//                           playing), onAwake({ line, hidden }) }. The core boots with the wake sound
+//                           while the microphone listens a moment for "wake up", "daddy's home", "I'm
+//                           home" ("Welcome home, Frank."); otherwise the greeting follows the time of
+//                           day ("Good evening, Frank."). Then one line offers music and the briefing
+//                           and Jarvis listens (the v7.2 rules): "yes" / "play it" shows the Music card
+//                           (a tap plays it), "brief me" runs the briefing, "no" / "go back to sleep"
+//                           returns to Standby; anything else is an ordinary question. The routine
+//                           itself never asks Claude anything. After the conversation (silence, Exit)
+//                           Voice Mode goes back to Standby when returnToStandby() says so.
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -111,6 +129,7 @@ import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
+import { homePhrase, standbyCommand, routineReply, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 
 export { splitSentences };
 
@@ -125,6 +144,11 @@ const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
 const CONFIRM_MS = 60000; // "Shall I draw a blueprint of …?" waits this long for a yes
 const REVIEW_MIC_MS = 30000; // a paused 2-second check keeps listening for a correction this long
+const WAKE_WINDOW_MS = 2400; // woken: how long the microphone waits for "wake up, daddy's home" before the greeting
+const WAKE_BOOT_MS = 1700; // woken in a background tab (no listening there): the greeting follows the boot
+const WAKE_OFFER_WAIT_MS = 2500; // the Music card offered may take this long to find (else just the briefing)
+const SLEEP_SILENT_MS = 2500; // a woken session that went quiet returns to Standby after this
+const SLEEP_IDLE_MS = 60000; // ... and one left idle (an answer read, a card shown) after this
 const MODES = ['auto', 'quick', 'swarm'];
 const AGENT_FINISHED = new Set(['done', 'error', 'stopped', 'interrupted']);
 const AGENT_ACTIVE = new Set(['starting', 'thinking', 'searching', 'reading', 'writing']);
@@ -249,6 +273,8 @@ function createVoiceMode(opts) {
     createMicBands,
     screens,
     music,
+    standby,
+    wake,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -285,6 +311,10 @@ function createVoiceMode(opts) {
     noRelisten: false, // a Music card was just shown: wait for a tap (Preview) instead of listening again
     review: null, // the 2-second check: { text, alts, L (its listen, still listening), mode, remaining, … }
     mic: null, // a finished listen whose recognizer still runs: the check may keep it (handed over in heard())
+    wake: null, // the wake routine: { phase: 'opening'|'greeting'|'asking', offer, timer } (v7.4)
+    wakeSession: false, // this Voice Mode was opened from Standby (it goes back there afterwards)
+    sleepAfter: false, // "go back to sleep": Standby once the short reply has been said
+    sleepTimer: 0,
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -586,6 +616,8 @@ function createVoiceMode(opts) {
     if (asked) showCaption('quote', `“${asked}”`);
     else showCaption('hint', 'Working on it.');
     attachRun(activeRun, S.run, false); // the owner started it in the chat; exiting never stops a run
+  } else if (wake && typeof wake === 'object') {
+    startWake();
   } else if (S.sttOk) {
     startListening({ gesture: true });
   } else {
@@ -711,6 +743,7 @@ function createVoiceMode(opts) {
 
   function onCoreTap() {
     if (S.closed) return;
+    disarmSleep();
     haptic('light');
     unlockSpeech();
     clearRetry();
@@ -736,6 +769,7 @@ function createVoiceMode(opts) {
 
   function onPrimary() {
     if (S.closed) return;
+    disarmSleep();
     unlockSpeech();
     clearRetry();
     if (S.review) return reviewSend('tap');
@@ -833,6 +867,11 @@ function createVoiceMode(opts) {
     if (S.run) return;
     unlockSpeech();
     input.value = '';
+    disarmSleep();
+    if (canStandby() && standbyCommand(text)) {
+      goToStandby(text);
+      return;
+    }
     // Apple Music: "play Back in Black" typed here is found at once too (free: no turn).
     if (musicCommand(text)) return;
     send(text);
@@ -907,6 +946,7 @@ function createVoiceMode(opts) {
   function setVoiceState(next) {
     S.state = next;
     root.dataset.state = next;
+    if (next !== 'idle' && next !== 'offline') disarmSleep();
     try {
       core.setState(next);
     } catch (err) {
@@ -947,6 +987,8 @@ function createVoiceMode(opts) {
   function goIdle(reason = 'ready') {
     if (S.closed) return;
     S.idleReason = reason;
+    // A woken session that is over (quiet, or idle a while) goes back to Standby (Settings).
+    if (S.wakeSession) armSleep(reason === 'silent' ? SLEEP_SILENT_MS : SLEEP_IDLE_MS);
     const offline = !isOnline();
     setVoiceState(offline ? 'offline' : 'idle');
     const name = ownerName();
@@ -1034,6 +1076,10 @@ function createVoiceMode(opts) {
       // The 2-second check waits (nothing is sent while the owner is away); its microphone closes.
       if (S.review) reviewPause('paused', { closeMic: true });
       else if (wasListening && !S.run && !S.speech) goIdle('paused');
+    } else if (S.wake && S.wake.phase === 'asking' && !S.listen && !S.run && !S.speech && !S.review && S.sttOk && !S.typing && !S.sttBlocked) {
+      // Woken in a background tab (a Mac): the offer was said out loud; now that Jarvis is on screen,
+      // he listens for the answer.
+      startListening({ keepAnswer: true });
     }
     updateLevelLoop();
   }
@@ -1238,9 +1284,10 @@ function createVoiceMode(opts) {
    * stop talking). With the 2-second check on, it keeps listening after that (keepListening): the
    * check takes it over to hear "cancel" or "no, I said …" without starting a new one.
    */
-  function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false } = {}) {
+  function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false, wakeWindow = false } = {}) {
     if (S.closed || (S.run && !duringBuild)) return;
     clearRetry();
+    disarmSleep();
     if (S.review) endReview(); // a new listen replaces a check still on screen (nothing is sent)
     if (!S.sttOk) {
       S.typing = true;
@@ -1256,7 +1303,7 @@ function createVoiceMode(opts) {
       unlockSpeech();
     }
     const review = !duringBuild && reviewOn();
-    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer };
+    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer, wakeWindow };
     S.listen = L;
     S.noRelisten = false;
     // A preview playing now would be heard as speech: it pauses before the mic opens.
@@ -1268,7 +1315,8 @@ function createVoiceMode(opts) {
     syncCoreAgents(null);
     setVoiceState('listening');
     setStatus(retry ? 'Listening again…' : 'Listening…', 'mic');
-    if (retry) showCaption('hint', 'I didn’t catch anything — take your time.', 'Still listening.');
+    if (wakeWindow) showCaption('hint', 'Waking up…');
+    else if (retry) showCaption('hint', 'I didn’t catch anything — take your time.', 'Still listening.');
     else if (keepAnswer && S.answer) showContext();
     else showCaption('hint', greeting());
     announce(retry ? 'Listening again' : 'Listening');
@@ -1303,6 +1351,14 @@ function createVoiceMode(opts) {
       }, SILENCE_MS),
       setTimeout(() => requestSend(L, true), MAX_LISTEN_MS),
     );
+    // Woken: if the owner says nothing right away ("wake up, daddy's home"), Jarvis greets.
+    if (wakeWindow) {
+      L.timers.push(
+        setTimeout(() => {
+          if (S.listen === L && !L.text) finishListening(L, 'silence');
+        }, WAKE_WINDOW_MS),
+      );
+    }
   }
 
   function onPartial(L, value) {
@@ -1372,6 +1428,10 @@ function createVoiceMode(opts) {
       afterBuildListen(text);
       return;
     }
+    if (!text && S.wake && S.wake.phase === 'opening') {
+      greetWake(false); // woken, and nothing said right away: Jarvis greets
+      return;
+    }
     if (reason === 'cancel') {
       play('listen-stop');
       goIdle('ready');
@@ -1420,6 +1480,15 @@ function createVoiceMode(opts) {
   function onListenError(L, err) {
     if (S.listen !== L) return;
     const code = (err && err.code) || 'other';
+    if (S.wake && S.wake.phase === 'opening' && !(L.text || '').trim()) {
+      // Woken and the microphone can't hear the opening words (no speech, or the browser wants a
+      // tap first): Jarvis greets anyway.
+      S.listen = null;
+      clearTimers(L.timers);
+      abortHandle(L.handle);
+      if (!S.closed) greetWake(false);
+      return;
+    }
     if (code === 'no-speech') {
       finishListening(L, 'silence');
       return;
@@ -1913,7 +1982,7 @@ function createVoiceMode(opts) {
     S.run = pending;
     setVoiceState('thinking');
     setStatus('Thinking…', 'sparkle');
-    showCaption('quote', `“${words}”`);
+    showCaption('quote', `“${opts && typeof opts.caption === 'string' && opts.caption ? opts.caption : words}”`);
     announce('Jarvis is thinking');
     let result;
     try {
@@ -1923,6 +1992,7 @@ function createVoiceMode(opts) {
       // An Optics Look heard here: its frame goes with the words.
       if (opts && Array.isArray(opts.attachments) && opts.attachments.length) input.attachments = opts.attachments;
       if (opts && opts.optics) input.optics = opts.optics;
+      if (opts && opts.newChat) input.newChat = true; // the wake routine's briefing: a chat of its own
       result = startTurn(words, input);
     } catch (err) {
       S.run = null;
@@ -2489,6 +2559,14 @@ function createVoiceMode(opts) {
       const t = typeof a === 'string' ? a.trim() : '';
       if (t && !readings.some((r) => r.toLowerCase() === t.toLowerCase())) readings.push(t);
     }
+    // Woken from Standby: "wake up, daddy's home" (the greeting), then the answer to its offer.
+    if (S.wake && wakeHeard(readings)) return;
+    // "Jarvis, standby" / "go to sleep": back to Standby, at once and free.
+    const sleepWords = canStandby() ? readings.find((r) => standbyCommand(r)) : null;
+    if (sleepWords) {
+      goToStandby(sleepWords);
+      return;
+    }
     // "Shall I draw a blueprint of …?" was asked: yes draws it, no drops it; anything else drops the
     // question and is taken as usual.
     const asked = S.confirm;
@@ -2740,6 +2818,172 @@ function createVoiceMode(opts) {
     if (o.signal && o.signal.aborted) return { error: 'Stopped.', stopped: true };
     if (S.run && S.run.viewer) S.run = null; // "blueprint the …" (or an Optics Look) was waiting for this turn
     return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null, attachments: Array.isArray(o.attachments) ? o.attachments : null, optics: o.optics || null });
+  }
+
+  // ============================================================================ the wake routine
+
+  /**
+   * Woken from Standby (two claps or "Hey Jarvis"): the core boots with the wake sound while the
+   * microphone listens a moment for "wake up, daddy's home"; then the greeting and the offer.
+   * Nothing here asks Claude: the offer's Music card is an Apple Music search (free).
+   */
+  function startWake() {
+    S.wakeSession = true;
+    const W = { phase: 'opening', offer: null, timer: 0, hidden: !!document.hidden };
+    S.wake = W;
+    W.offer = Promise.resolve()
+      .then(() => (typeof wake.offer === 'function' ? wake.offer() : null))
+      .catch(() => null);
+    setVoiceState('idle');
+    setStatus('Waking up…', 'sparkle');
+    showCaption('hint', 'Waking up…');
+    announce('Jarvis is waking up');
+    try {
+      if (typeof core.boot === 'function') core.boot();
+    } catch {
+      /* decoration */
+    }
+    try {
+      // The one sound allowed in a background tab: the owner clapped and should hear him wake.
+      if (sounds && typeof sounds.play === 'function') sounds.play('wake', { hidden: true });
+    } catch {
+      /* decoration */
+    }
+    if (S.sttOk && !document.hidden) startListening({ wakeWindow: true });
+    else W.timer = setTimeout(() => greetWake(false), WAKE_BOOT_MS);
+  }
+
+  /** The greeting and the offer: "Good evening, Frank. Shall I put on some AC/DC? Or I can …". */
+  async function greetWake(home) {
+    const W = S.wake;
+    if (!W || W.phase !== 'opening' || S.closed) return;
+    W.phase = 'greeting';
+    clearTimeout(W.timer);
+    stopListening();
+    setVoiceState('idle');
+    setStatus('Waking up…', 'sparkle');
+    let offer = null;
+    try {
+      offer = await Promise.race([W.offer, new Promise((r) => setTimeout(() => r(null), WAKE_OFFER_WAIT_MS))]);
+    } catch {
+      offer = null;
+    }
+    if (S.closed || S.wake !== W) return;
+    W.phase = 'asking';
+    W.offerData = offer && typeof offer === 'object' ? offer : null;
+    const name = typeof wake.name === 'function' ? wake.name() : ownerName();
+    const part = partOfDayFor(new Date());
+    const music = W.offerData && W.offerData.segment && W.offerData.artist ? W.offerData : null;
+    const line = `${greetingLine({ now: new Date(), name, home })} ${suggestionLine({ artist: music ? music.artist : '', part })}`;
+    W.line = line;
+    if (music) {
+      showMusicCard(music.segment, { fresh: true });
+      S.noRelisten = false; // the offer waits for an answer, not for a tap
+    }
+    try {
+      if (typeof wake.onAwake === 'function') wake.onAwake({ line, hidden: !!document.hidden });
+    } catch {
+      /* decoration */
+    }
+    speakAck(line);
+  }
+
+  /**
+   * What the owner said while woken: the opening words ("wake up, daddy's home", "go back to
+   * sleep"), or the answer to the offer. True when the routine took them; anything else ends the
+   * routine and is an ordinary question (heard() goes on).
+   */
+  function wakeHeard(readings) {
+    const W = S.wake;
+    if (!W) return false;
+    const name = typeof wake.name === 'function' ? wake.name() : '';
+    if (W.phase === 'opening') {
+      if (readings.some((r) => homePhrase(r, { name }))) {
+        greetWake(true);
+        return true;
+      }
+      const sleep = readings.find((r) => standbyCommand(r));
+      if (sleep && canStandby()) {
+        S.wake = null;
+        goToStandby(sleep);
+        return true;
+      }
+      // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question.
+      S.wake = null;
+      clearTimeout(W.timer);
+      return false;
+    }
+    if (W.phase !== 'asking') return false;
+    for (const words of readings) {
+      const reply = routineReply(words);
+      if (!reply) continue;
+      S.wake = null;
+      if (reply === 'music') {
+        const offer = W.offerData;
+        if (offer && offer.playText && musicCommand(offer.playText)) return true;
+        showCaption('quote', `“${words}”`);
+        speakAck('I couldn’t find the music just now.');
+        return true;
+      }
+      if (reply === 'brief') {
+        const b = typeof wake.briefing === 'function' ? wake.briefing() : null;
+        clearMusicCard();
+        if (!b || !b.text) {
+          showCaption('quote', `“${words}”`);
+          speakAck('I can’t run the briefing just now.');
+          return true;
+        }
+        send(b.text, { mode: b.mode, caption: words, newChat: true });
+        return true;
+      }
+      goToStandby(words, { offered: true });
+      return true;
+    }
+    S.wake = null;
+    return false;
+  }
+
+  /** "Go back to sleep" / "Jarvis, standby": a short reply, then Standby. */
+  function canStandby() {
+    return !!standby && typeof standby === 'object';
+  }
+
+  function goToStandby(words, { offered = false } = {}) {
+    if (!canStandby()) {
+      showCaption('quote', `“${words}”`);
+      speakAck(offered ? 'Very good.' : '');
+      return;
+    }
+    S.wake = null;
+    showCaption('quote', `“${words}”`);
+    S.sleepAfter = true;
+    speakAck(`Very good, ${typeof wake === 'object' && wake && typeof wake.name === 'function' ? wake.name() : ownerName()}.`);
+  }
+
+  /** Close Voice Mode and open Standby again (the app does the latter: onClose { reason }). */
+  function closeToStandby() {
+    if (S.closed) return;
+    close('standby');
+  }
+
+  function armSleep(ms) {
+    disarmSleep();
+    if (!wake || typeof wake !== 'object' || typeof wake.returnToStandby !== 'function') return;
+    if (!probe(() => wake.returnToStandby())) return;
+    S.sleepTimer = setTimeout(() => {
+      S.sleepTimer = 0;
+      if (S.closed || S.listen || S.run || S.speech || S.review || S.typing) return;
+      if (typeof wake.canSleep === 'function' && !probe(() => wake.canSleep())) {
+        armSleep(SLEEP_IDLE_MS); // a preview is playing: later
+        return;
+      }
+      closeToStandby();
+    }, ms);
+  }
+
+  function disarmSleep() {
+    if (S.sleepTimer) clearTimeout(S.sleepTimer);
+    S.sleepTimer = 0;
   }
 
   /**
@@ -3216,7 +3460,7 @@ function createVoiceMode(opts) {
       afterApology();
       return;
     }
-    if (how === 'done') afterSpeech();
+    if (how === 'done' || S.sleepAfter) afterSpeech();
     else {
       goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
       takeHeld();
@@ -3226,6 +3470,11 @@ function createVoiceMode(opts) {
   /** After a reply was spoken to the end: listen again (continuous) or wait for a tap. */
   function afterSpeech() {
     if (S.closed) return;
+    if (S.sleepAfter) {
+      S.sleepAfter = false;
+      closeToStandby();
+      return;
+    }
     finishKaraoke();
     // A viewer over Voice Mode captions what was just said: it can make room for the model now.
     try {
@@ -3240,7 +3489,9 @@ function createVoiceMode(opts) {
       goIdle('music');
       return;
     }
-    if (S.continuous && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
+    // Woken: the offer was just made, so Jarvis listens for the answer (Continuous or not).
+    const asking = !!S.wake && S.wake.phase === 'asking';
+    if ((S.continuous || asking) && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
       // Hands-free: listen again once the speaker has gone quiet.
       setStatus('Your turn', 'mic');
       S.retryTimer = setTimeout(() => {
@@ -3437,9 +3688,10 @@ function createVoiceMode(opts) {
 
   // =============================================================================== lifecycle
 
-  function close() {
+  function close(reason = 'exit') {
     if (S.closed) return;
     S.closed = true;
+    disarmSleep();
     if (current === instance) current = null;
     clearRetry();
     stopListening();
@@ -3492,7 +3744,7 @@ function createVoiceMode(opts) {
       /* ignore */
     }
     try {
-      if (typeof onClose === 'function') onClose();
+      if (typeof onClose === 'function') onClose({ reason: typeof reason === 'string' ? reason : 'exit', wakeSession: S.wakeSession });
     } catch (err) {
       console.error('[voice] onClose failed', err);
     }

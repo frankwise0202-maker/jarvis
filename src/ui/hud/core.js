@@ -3,7 +3,7 @@
 // ('orbit', where the mission's agents circle the core as status-colored nodes).
 //
 //   const core = createCore(canvas, { size: 184, mode: 'hero' });   // 'hero' | 'mini' | 'orbit'
-//   core.setState('thinking');           // idle listening thinking working speaking optics error offline
+//   core.setState('thinking');           // idle listening thinking working speaking optics error offline standby
 //   core.setLevel(0.4);                  // voice level 0..1 (all eight voice-band segments)
 //   core.setBands(float32x8 | null);     // real voice bands 0..1 (mic analyser); null = synthetic
 //   core.setTelemetry({ spend: 0.08, agents: [0, 8], mission: null });   // real data; null = unknown
@@ -50,9 +50,9 @@ const MAX_DPR_SMALL = 2;
 const MINI_DOZE_MS = 30000;
 // HUD motion "Reduced": hero and orbit cores rest too, after a short spell at rest.
 const REDUCED_DOZE_MS = 4000;
-const RESTING = new Set(['idle', 'offline', 'error']);
+const RESTING = new Set(['idle', 'offline', 'error', 'standby']);
 
-export const CORE_STATES = Object.freeze(['idle', 'listening', 'thinking', 'working', 'speaking', 'optics', 'error', 'offline']);
+export const CORE_STATES = Object.freeze(['idle', 'listening', 'thinking', 'working', 'speaking', 'optics', 'error', 'offline', 'standby']);
 const STATES = CORE_STATES;
 
 // Per-state targets. Every number eases toward its target, so state changes glide.
@@ -70,6 +70,9 @@ const STATE_PARAMS = {
   optics: { color: 'accent', speed: 0.8, dir: 1, pulseHz: 0.3, pulse: 0.12, glow: 0.9, scan: 0, voice: 0, tight: 0, packets: 0, cross: 1, dim: 1 },
   error: { color: 'err', speed: 0.45, dir: 1, pulseHz: 0.4, pulse: 0.3, glow: 0.9, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 0.9 },
   offline: { color: 'mute', speed: 0.2, dir: 1, pulseHz: 0.1, pulse: 0.06, glow: 0.35, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 0.55 },
+  // Standby (the ambient screen on a charger): the rings barely turn and the heart breathes once
+  // every 10 s, dimmed for an OLED screen in a dark room.
+  standby: { color: 'accent', speed: 0.3, dir: 1, pulseHz: 0.1, pulse: 0.22, glow: 0.55, scan: 0, voice: 0, tight: 0, packets: 0, cross: 0, dim: 0.6 },
 };
 const PARAM_KEYS = ['speed', 'dir', 'pulseHz', 'pulse', 'glow', 'scan', 'voice', 'tight', 'cross', 'dim'];
 
@@ -82,6 +85,7 @@ const STATE_TEXT = {
   optics: 'optics live',
   error: 'error',
   offline: 'offline',
+  standby: 'standby',
 };
 
 // Agent status → palette key, and how the node behaves.
@@ -709,6 +713,8 @@ export function createCore(canvas, opts = {}) {
 
   function updateFps() {
     fps = mode === 'mini' || smallMq.matches ? 30 : 60;
+    // opts.maxFps: a slower cap for a core that barely moves (Standby: 15 fps saves the battery).
+    if (Number.isFinite(opts.maxFps) && opts.maxFps >= 5) fps = Math.min(fps, opts.maxFps);
     minInterval = 1000 / fps;
   }
 

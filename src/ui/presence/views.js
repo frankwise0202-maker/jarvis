@@ -286,11 +286,21 @@ export function createReadouts() {
  * "What the rings mean", with the live numbers. open(anchor, rows) where rows are
  * [{ term, text }]; closes on Escape, a tap outside, or the Close button.
  */
-export function createLegend({ onClose } = {}) {
+export function createLegend({ onClose, action = null } = {}) {
   const list = h('dl', { class: 'core-legend__list' });
   const close = h('button', { class: 'icon-btn core-legend__close', type: 'button', attrs: { 'aria-label': 'Close', 'data-testid': 'core-legend-close' } }, icon('close', { size: 18 }));
   const title = h('p', { class: 'core-legend__title hud-label', text: 'What the rings mean' });
-  const el = h('div', { class: 'core-legend hud-frame', attrs: { role: 'dialog', 'aria-label': 'What the rings mean', 'data-testid': 'core-legend' }, hidden: true }, h('div', { class: 'core-legend__head' }, title, close), list);
+  // One action under the legend (v7.4: Standby), so the core's long-press is also its menu.
+  const actionBtn =
+    action && typeof action.run === 'function'
+      ? h(
+          'button',
+          { class: 'btn core-legend__action', type: 'button', attrs: { 'data-testid': action.testid || 'core-legend-action' }, on: { click: (e) => action.run(e) } },
+          action.icon ? icon(action.icon, { size: 16 }) : null,
+          h('span', { text: action.label || 'More' }),
+        )
+      : null;
+  const el = h('div', { class: 'core-legend hud-frame', attrs: { role: 'dialog', 'aria-label': 'What the rings mean', 'data-testid': 'core-legend' }, hidden: true }, h('div', { class: 'core-legend__head' }, title, close), list, actionBtn);
   let returnFocus = null;
   const onKey = (e) => {
     if (e.key === 'Escape') {

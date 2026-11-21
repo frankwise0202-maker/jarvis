@@ -33,7 +33,8 @@
 //                         conversations, the saved library and other jarvis.* local data (custom protocols, stats,
 //                         UI preferences), unregisters this app's
 //                         service worker and deletes its caches, the natural voice's download
-//                         included (NATURAL_CACHES). Never throws. Reload afterwards.
+//                         included (NATURAL_CACHES), and the "Hey Jarvis" models (WAKE_CACHE). Never
+//                         throws. Reload afterwards.
 //   backupFileName()   -> 'jarvis-backup-YYYY-MM-DD.json' (local date)
 //   registerBackupPart(name, { exportData, importData }) -> unregister()
 //                         lets a feature module add its own data (the app registers the owner's
@@ -58,6 +59,7 @@ import { normalizeBlueprintSpec, summarizeBlueprint } from '../lib/blueprint-spe
 import { cleanFrame, cleanLabelText, OPTICS_LIMITS } from '../lib/optics.js';
 import { MUSIC_SEARCH_KINDS, cleanMusicItems, cleanQuery, cleanText } from '../lib/music.js';
 import { NATURAL_CACHES } from './voice/natural/catalog.js';
+import { WAKE_CACHE } from '../lib/wake/catalog.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -72,12 +74,14 @@ const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCam
  * workerModel, features, onboarded): a backup - possibly one someone else made - must not be able
  * to raise what Jarvis may spend or switch off the spending warning. The natural voice's speaker
  * (naturalVoiceId, v7.1) is restored, but never naturalVoice itself: an import never starts a
- * download.
+ * download. Wake Jarvis (Standby): two claps, their sensitivity and the return to Standby are
+ * restored; "Hey Jarvis" (wakeWord) is carried in the file but never switched on by an import, for
+ * the same reason (its models are a download).
  */
 export const RESTORED_SETTINGS = Object.freeze([
   'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
   'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-  'naturalVoiceId', 'listenWait', 'listenSend',
+  'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn',
 ]);
 
 /** What replaces an API key in exported data. */
@@ -673,5 +677,5 @@ async function clearCaches() {
   const store = globalThis.caches;
   if (!store || typeof store.keys !== 'function') return;
   const names = await store.keys();
-  await Promise.all(names.filter((n) => n.startsWith('jarvis-') || NATURAL_CACHES.includes(n)).map((n) => store.delete(n)));
+  await Promise.all(names.filter((n) => n.startsWith('jarvis-') || NATURAL_CACHES.includes(n) || n === WAKE_CACHE).map((n) => store.delete(n)));
 }

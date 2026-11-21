@@ -11,7 +11,9 @@
  *   - The opt-in natural voice's worker script (voice/*.js, not precached): cache first in this
  *     build's cache, filled the first time it loads, so the voice also works offline. Its big
  *     files (model, runtime) are cached by the worker itself (Cache Storage 'transformers-cache',
- *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them).
+ *     'kokoro-voices', 'voice-runtime-v1'; names outside jarvis-* so updates keep them). The same
+ *     for the opt-in "Hey Jarvis" worker (wake/*.js and its runtime's glue wake/ort/*.mjs; its
+ *     models and runtime binary: 'wake-word-v1').
  *   - Everything else (any other same-origin GET) is not intercepted at all.
  *   - On activate, caches of older builds (jarvis-*) are deleted.
  *   - { type: 'SKIP_WAITING' } activates a waiting update; { type: 'GET_VERSION' } replies
@@ -154,7 +156,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   const rel = url.href.startsWith(BASE) ? url.pathname.slice(new URL(BASE).pathname.length) : '';
-  if (/^voice\/[\w.-]+\.js$/.test(rel)) event.respondWith(cacheFirst(request, key));
+  if (/^voice\/[\w.-]+\.js$/.test(rel) || /^wake\/(?:ort\/)?[\w.-]+\.m?js$/.test(rel)) event.respondWith(cacheFirst(request, key));
 });
 
 async function cacheFirst(request, key) {

@@ -7,7 +7,9 @@
 // 2. bundle src/main.js -> dist/assets/app.js (+ app.css from the CSS it imports, or from
 //    src/styles/app.css), ESM, minified, with source maps, target es2020 + safari15; code
 //    splitting puts dynamically imported modules (the 3D viewer) in dist/assets/chunks/; the
-//    hologram's hull worker -> dist/assets/hull-worker.js (a classic worker, precached)
+//    hologram's hull worker -> dist/assets/hull-worker.js (a classic worker, precached); Standby's
+//    AudioWorklet -> dist/assets/wake-worklet.js (precached) and the "Hey Jarvis" worker ->
+//    dist/wake/wake-word-worker.js with dist/wake/ort/ (not precached, like the natural voice)
 // 3. copy public/ -> dist/
 // 4. BUILD_ID = first 8 hex chars of sha256 over every output file (path + content)
 // 5. fill placeholders: __BUILD_ID__ (index.html, sw.js), __APP_VERSION__ (index.html) and
@@ -134,6 +136,33 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
     await mkdir(path.join(outDir, 'voice', 'ort'), { recursive: true });
     await cp(ortWasm, path.join(outDir, 'voice', 'ort', 'ort-wasm-simd-threaded.jsep.wasm'));
   }
+  // Wake Jarvis (Standby, v7.4): the listener's AudioWorklet (assets/wake-worklet.js, precached: two
+  // claps work offline) and the opt-in "Hey Jarvis" worker with its ONNX Runtime binary under wake/
+  // (not precached: they download only when the owner turns the wake word on; the models are
+  // public/models/openwakeword/, copied below with public/).
+  const wakeWorklet = path.join(root, 'src', 'platform', 'wake', 'wake-worklet.js');
+  if (existsSync(wakeWorklet)) {
+    try {
+      await esbuild.build({ ...common, entryPoints: { 'wake-worklet': wakeWorklet }, format: 'iife', splitting: false, define: { 'process.env.NODE_ENV': '"production"' } });
+    } catch (err) {
+      const details = (err.errors || []).map((e) => `  ${e.location ? `${e.location.file}:${e.location.line}: ` : ''}${e.text}`).join('\n');
+      throw new BuildError(`esbuild failed on the Standby worklet${details ? `:\n${details}` : `: ${err.message}`}`);
+    }
+  }
+  const wakeWorker = path.join(root, 'src', 'platform', 'wake', 'wake-word-worker.js');
+  if (existsSync(wakeWorker)) {
+    try {
+      await esbuild.build({ ...common, entryPoints: { 'wake-word-worker': wakeWorker }, outdir: path.join(outDir, 'wake'), format: 'esm', splitting: false, define: { 'process.env.NODE_ENV': '"production"' } });
+    } catch (err) {
+      const details = (err.errors || []).map((e) => `  ${e.location ? `${e.location.file}:${e.location.line}: ` : ''}${e.text}`).join('\n');
+      throw new BuildError(`esbuild failed on the wake-word worker${details ? `:\n${details}` : `: ${err.message}`}`);
+    }
+    // The plain WebAssembly build of the same onnxruntime-web the natural voice uses.
+    const ortWasmDir = path.dirname(createRequire(path.join(root, 'package.json')).resolve('onnxruntime-web/wasm'));
+    await mkdir(path.join(outDir, 'wake', 'ort'), { recursive: true });
+    await cp(path.join(ortWasmDir, 'ort-wasm-simd-threaded.wasm'), path.join(outDir, 'wake', 'ort', 'ort-wasm-simd-threaded.wasm'));
+    await cp(path.join(ortWasmDir, 'ort-wasm-simd-threaded.mjs'), path.join(outDir, 'wake', 'ort', 'ort-wasm-simd-threaded.mjs')); // its glue module
+  }
   const vendoredModel = path.join(root, 'vendor', 'kokoro');
   if (existsSync(vendoredModel)) await cp(vendoredModel, path.join(outDir, 'models'), { recursive: true });
 
@@ -150,7 +179,7 @@ export async function build({ root = ROOT, minify = true, quiet = false, outDir:
 
   const precache = files
     .filter((rel) => !rel.endsWith('.map') && rel !== 'sw.js' && !rel.split('/').some((seg) => seg.startsWith('.')))
-    .filter((rel) => !rel.startsWith('voice/') && !rel.startsWith('models/')) // the opt-in natural voice
+    .filter((rel) => !rel.startsWith('voice/') && !rel.startsWith('models/') && !rel.startsWith('wake/')) // the opt-in natural voice and wake word
     .map((rel) => `./${rel}`);
 
   const warnings = [];

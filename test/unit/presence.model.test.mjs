@@ -259,7 +259,7 @@ test('hero sizes follow SPEC 2.4.4: 232 desktop; 184 / 148 / 120 on phones by he
 // ---- the core's states and phases ------------------------------------------------------------------------
 
 test('the core knows the Presence states (no call state) and phases come from ids, not chance', () => {
-  assert.deepEqual([...CORE_STATES].sort(), ['error', 'idle', 'listening', 'offline', 'optics', 'speaking', 'thinking', 'working']);
+  assert.deepEqual([...CORE_STATES].sort(), ['error', 'idle', 'listening', 'offline', 'optics', 'speaking', 'standby', 'thinking', 'working']);
   assert.equal(phaseOf('agent-1'), phaseOf('agent-1'));
   assert.notEqual(phaseOf('agent-1'), phaseOf('agent-2'));
   for (const id of ['a', 'b', 'Atlas', '#3']) {

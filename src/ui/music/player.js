@@ -11,7 +11,8 @@
 //
 // canStart() -> true | false | 'listening' | 'checking': previews never start while the mic listens,
 // nor while what the owner said waits to be sent (the 2-second check of words from the chat's mic).
-// onStart(): stop other sounds first, politely (Jarvis's own speech, other media).
+// onStart(item): stop other sounds first, politely (Jarvis's own speech, other media); the item that
+// starts (the wake routine remembers its artist: platform/music-recent.js).
 
 import { previewLink } from '../../lib/music.js';
 
@@ -100,7 +101,7 @@ export function createMusicPlayer({ canStart = () => true, onStart = () => {}, c
     if (!url) return { ok: false, reason: 'no-preview' };
     const allowed = safeCall(canStart, true);
     if (allowed !== true) return { ok: false, reason: allowed === 'listening' || allowed === 'checking' ? allowed : 'blocked' };
-    safeCall(onStart);
+    safeCall(() => onStart(item));
     pauseOtherMedia();
     const a = ensureAudio();
     clearTimeout(fadeTimer);

@@ -28,7 +28,7 @@ import { createShareOptions, redactSecrets } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols, getProtocol } from './protocols.js';
 import { createPresence } from './presence/presence.js';
 import { exportHud, importHud } from './presence/hud-prefs.js';
-import { partOfDay } from './presence/model.js';
+import { partOfDay, chronometer } from './presence/model.js';
 import { fmtUsd } from './hud/format.js';
 import { openHologramViewer, getHologramViewer, renderHologramImage } from './hologram/viewer.js';
 import { openBlueprintViewer, getBlueprintViewer } from './blueprint/open.js';
@@ -49,7 +49,7 @@ import { addSpend, getSpend, getTodaySpend, onSpendChange } from '../platform/sp
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
-import { isOnline, onOnlineChange, isIOS } from '../platform/env.js';
+import { isOnline, onOnlineChange, isIOS, isAndroid, isTouch } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
@@ -69,6 +69,11 @@ import { searchMusic } from '../platform/music.js';
 import { appendMusicTurn, musicSegment } from '../engine/music.js';
 import { createMusicPlayer } from './music/player.js';
 import { createMusicCardView, isMacDevice } from './music/card.js';
+import { createStandby } from './standby.js';
+import { createStandbyCapture } from '../platform/wake/capture.js';
+import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
+import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
+import { standbyCommand } from '../lib/wake/phrases.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -300,6 +305,8 @@ export async function startApp(rootEl) {
       // "Show Jarvis your screen" (Optics' screen look; Presence shows the key on a Mac only).
       screen: !state.demo && safe(() => screenLookSupported(), false) ? () => openOpticsScreen({ start: 'screen' }) : undefined,
       brief: () => briefMe(),
+      // Standby (v7.4): the ambient screen; two claps or "Hey Jarvis" wake Jarvis. Not in the demo.
+      standby: state.demo ? undefined : () => enterStandby(),
       openConversation: (id) => openConversation(id),
       resume: (id) => openThen(id, () => resume()),
       retry: (id, turnId) => openThen(id, () => {
@@ -352,9 +359,10 @@ export async function startApp(rootEl) {
       if (state.listening || otherMics > 0 || (voiceApi && safe(() => voiceApi.isListening(), false))) return 'listening';
       return safe(() => composer.counting(), false) ? 'checking' : true;
     },
-    onStart: () => {
+    onStart: (item) => {
       stopSpeakingNow();
       if (voiceApi) safe(() => voiceApi.hush());
+      if (item) safe(() => noteMusicPlayed(item)); // the wake routine offers what was played lately
     },
   });
   const onMac = safe(() => isMacDevice(), false);
@@ -455,7 +463,7 @@ export async function startApp(rootEl) {
     // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
     // also while Jarvis is working ("put mission control on screen 2").
     // Apple Music: "play Back in Black" is found here, free (no Claude request): a Music card.
-    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }),
+    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -699,6 +707,7 @@ export async function startApp(rootEl) {
           .catch((err) => console.error('[jarvis] saving the music turn failed:', err));
         // "Play a preview of …" typed: the preview starts (never while a mic listens).
         const top = seg.items[0];
+        if (top) safe(() => noteMusicPlayed(top)); // the wake routine offers what was played lately
         if (cmd.action === 'preview' && !spoken && top && top.previewUrl) musicPlayer.play(top);
         return { ack: line, segment: seg, outcome };
       });
@@ -801,6 +810,7 @@ export async function startApp(rootEl) {
 
   // Presence's state words ANALYZING and WATCHING are the cores' thinking and optics.
   const CORE_OF = { analyzing: 'thinking', watching: 'optics' };
+  let standby = null; // Standby and wake (v7.4): created below with the Voice Mode wiring
   const updateCore = raf(() => {
     const [wordState] = computeCore();
     const coreState = CORE_OF[wordState] || wordState;
@@ -819,6 +829,7 @@ export async function startApp(rootEl) {
     header.setState(coreState, word.word, word.tone);
     chat.setCoreState(coreState);
     root.dataset.core = coreState;
+    if (standby) safe(() => standby.update());
   });
 
   // Optics' live state (deps.onLiveChange): the camera, and Watch with its end (the state word and the
@@ -1131,7 +1142,7 @@ export async function startApp(rootEl) {
   let lastVoiceHologram = null;
   const REOPEN_ACTIONS = new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']);
 
-  function startTurnForVoice(text, { mode, blueprintFor, attachments, optics } = {}) {
+  function startTurnForVoice(text, { mode, blueprintFor, attachments, optics, newChat: freshChat = false } = {}) {
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
     if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
@@ -1149,7 +1160,9 @@ export async function startApp(rootEl) {
     // So does a Look in a chat from before the camera (no pin_labels): labels need a new chat.
     const oldChat = !state.demo && !!state.conv && turnsOf(state.conv).length > 0 && !hasVisualTools(state.conv, 'show_hologram') && !state.runs.has(state.conv.id);
     const oldForLook = !oldChat && !!optics && preOpticsChat();
-    if (oldChat || oldForLook) setConversation(null);
+    // The wake routine's "brief me": the briefing in a chat of its own, like the Brief me key.
+    const briefingChat = !!freshChat && !!state.conv && turnsOf(state.conv).length > 0 && !state.runs.has(state.conv.id);
+    if (oldChat || oldForLook || briefingChat) setConversation(null);
     if (!send(text, mode, extras)) throw new Error('I couldn’t start that request.');
     if (oldChat && voiceApi) safe(() => voiceApi.note('New chat: older chats can’t show holograms.'));
     if (oldForLook && voiceApi) safe(() => voiceApi.note(PRE_OPTICS_NOTE));
@@ -1285,8 +1298,11 @@ export async function startApp(rootEl) {
     return res;
   }
 
-  /** Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). */
-  function openVoice() {
+  /**
+   * Open Voice Mode. Call synchronously inside a click/keydown (iOS mic and speech rules). The wake
+   * routine (Standby, v7.4) opens it without a tap: { wake } carries the routine's hooks.
+   */
+  function openVoice({ wake = null } = {}) {
     refreshCameraPermission();
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
@@ -1311,6 +1327,9 @@ export async function startApp(rootEl) {
         look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true, autoLook: takePendingVoiceLook() }) },
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
+        // Standby (v7.4): "Jarvis, standby" / "go to sleep" closes Voice Mode into Standby.
+        standby: state.demo ? null : {},
+        wake,
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
         createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
@@ -1341,10 +1360,17 @@ export async function startApp(rootEl) {
             if (musicPlayer.isPlaying()) musicPlayer.pause();
           },
         },
-        onClose: () => {
+        onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
           lastVoiceHologram = null;
+          // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
+          const reason = info && info.reason;
+          const back = reason === 'standby' || (info && info.wakeSession && safe(() => getSettings().wakeReturn !== false, true));
+          setTimeout(() => {
+            if (back && !state.demo) enterStandby({ again: true });
+            else if (standby) safe(() => standby.release());
+          }, 0);
           // Optics opened from Voice Mode goes with it (its mic and its turns were Voice Mode's).
           const optics = currentOptics();
           if (optics && optics.overVoice) safe(() => optics.close());
@@ -1359,6 +1385,112 @@ export async function startApp(rootEl) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
     }
+  }
+
+  // ---- Standby and wake (v7.4, SPEC §22) ---------------------------------------------------------
+  // Standby: the ambient screen. While it is open Jarvis listens on THIS device for two claps and,
+  // once its download is on, for "Hey Jarvis"; nothing leaves the device until he is woken. Waking
+  // opens Voice Mode with the wake routine (the greeting, an Apple Music card, the briefing for the
+  // time of day): the routine asks Claude nothing; only what the owner asks next costs. On a phone
+  // listening pauses while Jarvis is not on screen; on a Mac it goes on in a background tab.
+  const phoneLike = safe(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches), false);
+  standby = createStandby({
+    getSettings,
+    onSettingsChange,
+    createCore,
+    wakeLock: { keepAwake: () => keepAwake('standby'), allowSleep: () => allowSleep('standby') },
+    createCapture: (o) => createStandbyCapture(o),
+    createWakeWord: () => (wakeStubAllowed() ? createWakeWordStub() : createWakeWord()),
+    statusLine: () => safe(() => String(presence.home.situationEl.textContent || '').trim(), ''),
+    stateWord: () => safe(() => presence.word().word, ''),
+    chronometer: (d) => chronometer(d),
+    onWake: ({ trigger }) => wakeUp(trigger),
+    onExit: () => updateAll(),
+    unlock: () => safe(() => unlockSpeech()),
+    pauseWhenHidden: phoneLike,
+    isIOS: safe(() => isIOS(), false),
+  });
+
+  /** Tests on localhost only: a stand-in for the "Hey Jarvis" worker (no download, said on demand). */
+  function wakeStubAllowed() {
+    try {
+      const host = location.hostname;
+      return (host === 'localhost' || host === '127.0.0.1') && localStorage.getItem('jarvis.dev.wakeWord') === 'stub';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Open Standby: the Home's Standby key, the core's menu, Settings, "Jarvis, standby" typed or said.
+   * Call inside the tap where possible (iOS starts the microphone's audio only there). `again`: back
+   * after the wake routine or a conversation (no tap needed then).
+   */
+  function enterStandby({ again = false } = {}) {
+    if (state.demo) return false;
+    if (isVoiceModeOpen()) return false; // Voice Mode closes itself into Standby ("go to sleep")
+    if (state.listening) safe(() => state.listening.stop());
+    safe(() => composer.cancelCountdown());
+    if (settingsSheet) settingsSheet.close('navigate');
+    closePhoneSheets();
+    if (!standby) return false;
+    if (again && standby.isAwaiting()) standby.resume();
+    else standby.enter();
+    return true;
+  }
+
+  /** "standby" / "go to sleep" typed (or dictated) in the chat. */
+  function standbyFromChat(text) {
+    if (state.demo || !safe(() => standbyCommand(text), false)) return false;
+    return enterStandby();
+  }
+
+  /** Two claps or "Hey Jarvis" in Standby (its microphone is already released): the routine. */
+  function wakeUp(trigger) {
+    if (isVoiceModeOpen()) return;
+    if (state.listening) safe(() => state.listening.stop());
+    openVoice({
+      wake: {
+        trigger,
+        name: () => {
+          const n = String(getSettings().userName || '').trim();
+          return n || 'sir';
+        },
+        offer: () => wakeOffer(),
+        briefing: () => wakeBriefing(),
+        returnToStandby: () => getSettings().wakeReturn !== false,
+        canSleep: () => !musicPlayer.isPlaying(),
+        // Woken in a background tab (a Mac): the greeting is said out loud; a notification brings Jarvis forward.
+        onAwake: ({ line, hidden }) => {
+          if (hidden) safe(() => missionFinished({ title: 'Jarvis is awake', summary: `${line} Switch to Jarvis to answer.` }));
+        },
+      },
+    });
+  }
+
+  /**
+   * The routine's music: the artist the owner played lately (this device's history), else Back in
+   * Black by AC/DC, found in Apple Music (free). { artist, segment, playText } or null.
+   */
+  async function wakeOffer() {
+    const pick = safe(() => suggestedMusic(), null);
+    if (!pick) return null;
+    const kind = pick.fromHistory ? 'artist' : 'song';
+    const outcome = await searchMusic(pick.query, pick.fromHistory ? { kind, limit: 4 } : { kind, limit: 4, title: pick.title, artist: pick.artist }).catch(() => null);
+    if (!outcome || !outcome.ok || !Array.isArray(outcome.items) || !outcome.items.length) return null;
+    const segment = musicSegment(outcome, { query: pick.query, kind, local: true });
+    const playText = pick.fromHistory ? `play some ${pick.artist}` : `play ${pick.title} by ${pick.artist}`;
+    return { artist: pick.artist, segment, playText };
+  }
+
+  /** "Brief me": the briefing protocol for the time of day (a chat of its own; a paid request). */
+  function wakeBriefing() {
+    const p = safe(() => getProtocol('morning-briefing'), null);
+    if (!p) return null;
+    const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
+    if (!text) return null;
+    safe(() => presence.noteBriefing(new Date()));
+    return { text, mode: p.mode || 'swarm' };
   }
 
   // ---- Optics (the camera) ----------------------------------------------------------------------
@@ -2862,6 +2994,8 @@ export async function startApp(rootEl) {
         if (settingsSheet) settingsSheet.close('navigate');
         setTimeout(() => openOnboarding(), 50);
       },
+      // Voice → Wake Jarvis → Go to Standby (inside the tap: iOS starts the microphone's audio there).
+      enterStandby: () => enterStandby(),
       toast,
     });
     const sheet = createSheet({

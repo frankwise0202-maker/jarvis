@@ -20,6 +20,7 @@ import { createNaturalVoiceCard } from './natural-voice-settings.js';
 import * as sounds from './sounds.js';
 import { notifyPermission, requestNotifyPermission, explainNotifyPermission } from './attention.js';
 import { getHud, saveHud, onHudChange } from './presence/hud-prefs.js';
+import { wakeWordDownloadBytes, formatMegabytes, WAKE_MODEL_SOURCE } from '../lib/wake/catalog.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -216,6 +217,13 @@ export const LISTEN_WAIT_OPTIONS = Object.freeze([
 export const LISTEN_SEND_OPTIONS = Object.freeze([
   { value: 'show', label: 'Show what I said for 2 seconds, then send' },
   { value: 'now', label: 'Send right away' },
+]);
+
+/** Settings → Voice → Wake Jarvis → Clap sensitivity (src/lib/wake/clap.js). */
+export const CLAP_SENSITIVITY_OPTIONS = Object.freeze([
+  { value: 'low', label: 'Low (loud claps, a noisy room)' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'high', label: 'High (soft claps, a quiet room)' },
 ]);
 
 const CONSOLE = {
@@ -689,7 +697,82 @@ export function createSettingsPanel(o) {
         control: switchField('voiceContinuous', { label: 'Continuous conversation' }),
       }),
     ),
+    wakeCard(),
   );
+
+  // Wake Jarvis (Standby, v7.4, SPEC §22)
+  function wakeCard() {
+    if (o.demo || !sttOk) return null;
+    const size = formatMegabytes(wakeWordDownloadBytes());
+    // The greeting uses the owner's name (Profile's "What should Jarvis call you"): one setting.
+    let nameTimer = 0;
+    timers.add(() => clearTimeout(nameTimer));
+    const nameInput = h('input', {
+      class: 'input',
+      id: fieldId('wakeName'),
+      type: 'text',
+      value: s.userName || '',
+      placeholder: 'sir',
+      maxLength: 40,
+      attrs: { 'data-testid': 'setting-wakeName', autocomplete: 'off', spellcheck: 'false' },
+      on: {
+        input: () => {
+          clearTimeout(nameTimer);
+          nameTimer = setTimeout(saveName, 450);
+        },
+        change: () => saveName(),
+      },
+    });
+    function saveName() {
+      clearTimeout(nameTimer);
+      const next = commit({ userName: nameInput.value });
+      if (document.activeElement !== nameInput && nameInput.value !== next.userName) nameInput.value = next.userName;
+    }
+    controls.set('wakeName', {
+      set(_v, st) {
+        if (document.activeElement !== nameInput) nameInput.value = (st && st.userName) || '';
+      },
+      flush: saveName,
+    });
+    const goBtn = h(
+      'button',
+      { class: 'btn', type: 'button', attrs: { 'data-testid': 'settings-standby' }, on: { click: () => o.enterStandby && o.enterStandby() } },
+      icon('moon', { size: 16 }),
+      h('span', { text: 'Go to Standby' }),
+    );
+    const where = currentOs() === 'ios'
+      ? 'On iPhone, Jarvis listens only while he is open on screen: leave him in Standby on the charger.'
+      : 'On a Mac in Chrome, Standby keeps listening while Jarvis is in a background tab or behind other windows.';
+    return card(
+      h('div', { class: 'set-card-title', attrs: { 'data-testid': 'settings-wake' } }, icon('moon', { size: 16 }), h('span', { text: 'Wake Jarvis' })),
+      h(
+        'p',
+        { class: 'set-help set-help--card' },
+        `Standby is a dim clock that keeps the screen on. While it is open, Jarvis listens on this device only (nothing is sent anywhere until he wakes) and greets you, offers music and your briefing. ${where}`,
+      ),
+      row({
+        label: 'Clap twice',
+        help: 'Two claps (or two finger snaps) wake Jarvis. A single clap, knocking, music or talking do not.',
+        forId: fieldId('wakeClap'),
+        control: switchField('wakeClap', { label: 'Clap twice' }),
+      }),
+      row({ label: 'Clap sensitivity', forId: fieldId('wakeClapSensitivity'), control: selectField('wakeClapSensitivity', CLAP_SENSITIVITY_OPTIONS), stacked: true }),
+      row({
+        label: `Say “Hey Jarvis” (free, downloads about ${size})`,
+        help: `The wake word runs on this device with ${WAKE_MODEL_SOURCE.project}’s models by ${WAKE_MODEL_SOURCE.author} (${WAKE_MODEL_SOURCE.license}: personal, non-commercial use). It downloads the first time Standby opens with this on (Standby shows how far it got); after that it works offline.`,
+        forId: fieldId('wakeWord'),
+        control: switchField('wakeWord', { label: 'Say Hey Jarvis' }),
+      }),
+      row({ label: 'Greeting name', help: 'How Jarvis greets you (“Welcome home, Frank.”). It’s also what he calls you everywhere.', forId: fieldId('wakeName'), control: nameInput, stacked: true }),
+      row({
+        label: 'Return to standby after a conversation',
+        help: 'When you are done (Exit, “go back to sleep”, or a quiet minute), Jarvis goes back to Standby.',
+        forId: fieldId('wakeReturn'),
+        control: switchField('wakeReturn', { label: 'Return to standby after a conversation' }),
+      }),
+      h('div', { class: 'set-row-actions' }, goBtn),
+    );
+  }
 
   // Appearance & sound (SPEC §14.3)
   const themePicker = createThemePicker({
