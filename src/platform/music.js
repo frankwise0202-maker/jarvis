@@ -6,11 +6,18 @@
 //     -> { ok: true, items: [MusicItem], kind, country, query, artist? }
 //      | { ok: false, error: 'empty' | 'offline' | 'timeout' | 'aborted' | 'network' | 'bad_response', message }
 //   topSongs(artistId, { limit, country, fetch, signal }) -> the same shape (kind 'artist')
+//   lookupMusic(['574050602'], { country, fetch, signal }) -> the same shape (kind 'song'): songs or
+//     albums by their Apple ids, in the order asked (the wake routine's offer)
 //
 // kind 'artist' finds the artist, then their top songs (lookup?id=…&entity=song&limit=25: their own
 // recordings first, not the ones where they are only featured; each title once). kind 'playlist'
 // is searched as albums, then songs: Apple Music has no free playlist search. Privacy: the words
 // searched go to Apple (itunes.apple.com), with no cookies and no referrer; nothing else does.
+//
+// iPhone: Apple answers a search from an iPhone that says media=music with a redirect to the Music
+// app (301 to musics://…), which a web page can neither follow nor read (the CSP blocks it too). The
+// search therefore never sends `media`: its `entity` (song, album, musicArtist) asks for the same
+// music, and Apple answers an iPhone with the results. Lookups by id are never redirected.
 //
 // CSP (public/index.html): connect-src https://itunes.apple.com; img-src https://*.mzstatic.com;
 // media-src https://audio-ssl.itunes.apple.com.
@@ -128,8 +135,9 @@ async function getJson(url, { fetch: fetchFn, signal, timeoutMs }) {
   }
 }
 
+/** A search URL. No `media=music`: on an iPhone that sends Apple's answer to the Music app (above). */
 function searchUrl(term, entity, limit, country) {
-  const p = new URLSearchParams({ term, media: 'music', entity, limit: String(limit), country });
+  const p = new URLSearchParams({ term, entity, limit: String(limit), country });
   return `${ITUNES_SEARCH_URL}?${p.toString()}`;
 }
 
@@ -156,6 +164,31 @@ export async function topSongs(artistId, { limit = 5, country, fetch: fetchFn, s
     const items = artistSongsFirst(songs, { artistId: id, artist: artist || found, max: n });
     const named = artist || found || (items[0] && items[0].artist) || '';
     const value = { ok: true, items, kind: 'artist', country: cc, query: named, artist: named };
+    cachePut(key, value);
+    return value;
+  } catch (err) {
+    return failure(err);
+  }
+}
+
+/**
+ * Songs or albums by their Apple ids (lookup?id=a,b: never redirected, also on an iPhone), in the
+ * order asked; ids Apple no longer has in this country's store are left out.
+ */
+export async function lookupMusic(ids, { country, fetch: fetchFn, signal, timeoutMs = MUSIC_TIMEOUT_MS, query = '' } = {}) {
+  const list = (Array.isArray(ids) ? ids : [ids]).map((v) => (typeof v === 'number' ? String(v) : String(v || '').trim())).filter((v) => /^\d{1,20}$/.test(v));
+  const want = Array.from(new Set(list)).slice(0, MAX_MUSIC_ITEMS);
+  if (!want.length) return { ok: false, error: 'empty', message: 'Nothing to look up.' };
+  const cc = cleanCountry(country);
+  const key = `lookup|${cc}|${want.join(',')}`;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  try {
+    const p = new URLSearchParams({ id: want.join(','), country: cc });
+    const json = await getJson(`${ITUNES_LOOKUP_URL}?${p.toString()}`, { fetch: fetchFn, signal, timeoutMs });
+    const found = parseItunesResults(json, { max: MAX_MUSIC_ITEMS * 2 });
+    const items = want.map((id) => found.find((i) => i.id === id)).filter(Boolean);
+    const value = { ok: true, items, kind: items.length && items[0].type === 'album' ? 'album' : 'song', country: cc, query: cleanQuery(query) || (items[0] ? items[0].title : '') };
     cachePut(key, value);
     return value;
   } catch (err) {

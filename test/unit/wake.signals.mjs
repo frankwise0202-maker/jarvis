@@ -333,6 +333,39 @@ export function click({ peakDb = -26, seed = 81, rate = RATE } = {}) {
   return normalize(x, peakDb);
 }
 
+/** A metronome's woodblock click: a bright knock ringing near 2.4 kHz for ~40 ms. */
+export function woodblock({ freq = 2400, tau = 0.012, peakDb = -16, seed = 1, rate = RATE } = {}) {
+  const rand = rng(seed);
+  const n = Math.round(0.15 * rate);
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const env = t < 0.0005 ? t / 0.0005 : Math.exp(-t / tau);
+    x[i] = env * (Math.sin(2 * Math.PI * freq * t) + 0.6 * Math.sin(2 * Math.PI * freq * 1.7 * t) + 0.3 * gauss(rand));
+  }
+  return normalize(x, peakDb);
+}
+
+/** A glass or a spoon on a plate: a tick, then a bright ring (a few partials) dying over ~0.1–0.3 s. */
+export function glassClink({ freq = 3100, tau = 0.12, peakDb = -18, seed = 1, rate = RATE } = {}) {
+  const rand = rng(seed);
+  const n = Math.round(0.8 * rate);
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const env = t < 0.0003 ? t / 0.0003 : Math.exp(-t / tau);
+    x[i] = env * (Math.sin(2 * Math.PI * freq * t) + 0.5 * Math.sin(2 * Math.PI * freq * 2.31 * t) + 0.3 * Math.sin(2 * Math.PI * freq * 3.9 * t)) + 0.4 * gauss(rand) * Math.exp(-t / 0.002);
+  }
+  return normalize(x, peakDb);
+}
+
+/** `count` sounds `gapMs` apart: gen(k) makes the k-th (a rhythm: clapping along, a metronome). */
+export function beats(gapMs, count, gen, rate = RATE) {
+  const x = new Float32Array(Math.round((((count - 1) * gapMs) / 1000 + 0.6) * rate));
+  for (let k = 0; k < count; k++) mixAt(x, gen(k), (k * gapMs) / 1000, rate);
+  return x;
+}
+
 /** Typing: keys (a press and a release ~70 ms later) in bursts, irregular, for `seconds`. */
 export function typing({ seconds = 5, peakDb = -30, seed = 91, rate = RATE } = {}) {
   const rand = rng(seed);
@@ -363,6 +396,52 @@ export function inRoom(dry, { rt60 = 0.45, wet = 0.25, seed = 71, rate = RATE } 
     for (let i = 0; i < dry.length; i++) out[i + j] += dry[i] * g;
   }
   return out;
+}
+
+/**
+ * A sound from across a room (a statistical room, independent of inRoom): the direct sound, three
+ * early reflections, then a diffuse tail that decays 60 dB in `rt60` and carries `R` dB more energy
+ * than the direct sound (R = 20·log10(distance / the room's critical distance): a living room's
+ * critical distance is about 0.6–1 m, so R is about +6 dB at 1.5–2 m and +12 dB at 3–4 m).
+ */
+export function farField(dry, { rt60 = 0.5, R = 6, seed = 1, rate = RATE } = {}) {
+  const rand = rng(seed);
+  const n = Math.round(rt60 * 1.1 * rate);
+  const ir = new Float32Array(n);
+  const tauE = rt60 / Math.log(1e6); // the tail's energy time constant
+  const start = Math.round(0.004 * rate);
+  let e = 0;
+  for (let i = start; i < n; i++) {
+    const v = gauss(rand) * Math.exp(-(i - start) / rate / (2 * tauE));
+    ir[i] = v;
+    e += v * v;
+  }
+  const g = Math.sqrt(10 ** (R / 10) / e);
+  for (let i = start; i < n; i++) ir[i] *= g;
+  ir[0] += 1;
+  for (const [ms, a] of [[3, 0.5], [6, 0.35], [11, 0.25]]) ir[Math.round((ms / 1000) * rate)] += a * Math.min(1, 10 ** (R / 20) / 2);
+  // the dry sound's silent end is skipped (a clap is a few milliseconds long)
+  let last = dry.length - 1;
+  let peak = 0;
+  for (const v of dry) peak = Math.max(peak, Math.abs(v));
+  while (last > 0 && Math.abs(dry[last]) < peak * 1e-5) last--;
+  const out = new Float32Array(last + 1 + n);
+  for (let i = 0; i <= last; i++) {
+    const x = dry[i];
+    if (x === 0) continue;
+    for (let j = 0; j < n; j++) out[i + j] += x * ir[j];
+  }
+  return out;
+}
+
+/** The energy after an impulse's first sample relative to it (dB): the R of a room model. */
+export function reverbRatioDb(room) {
+  const imp = new Float32Array(1);
+  imp[0] = 1;
+  const ir = room(imp);
+  let rev = 0;
+  for (let i = 1; i < ir.length; i++) rev += ir[i] * ir[i];
+  return 10 * Math.log10(rev / (ir[0] * ir[0]));
 }
 
 /** Two claps `gapMs` apart (each with its own randomness), in `seconds` of signal. */
@@ -413,8 +492,9 @@ export function withRoom(x, { rmsDb = -60, seed = 5, hum = false, rate = RATE } 
 export function runDetector(detector, x, block = 128) {
   const events = [];
   for (let i = 0; i < x.length; i += block) events.push(...detector.push(x.subarray(i, Math.min(x.length, i + block))));
-  // a little silence after, so a pair at the very end can be confirmed
-  events.push(...detector.push(new Float32Array(Math.round(0.8 * RATE))));
+  // silence after, so a pair at the very end can be confirmed (up to 1.35 s of quiet after its second
+  // clap, judged 200 ms later)
+  events.push(...detector.push(new Float32Array(Math.round(1.8 * RATE))));
   return events;
 }
 

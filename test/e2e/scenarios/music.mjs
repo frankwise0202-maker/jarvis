@@ -17,6 +17,21 @@ async function waitCard(t, testid = 'music-card', status = 'done', timeout = 150
   return card(t, testid);
 }
 
+/**
+ * Wait until the entrance animations around `locator` (its turn's fade-up, the card's own) have
+ * finished: a box measured mid-animation is translated by a fraction of a pixel and its height can
+ * come out as 43.99997 px.
+ */
+async function settled(locator) {
+  await locator.evaluate((el) => {
+    const host = el.closest('.turn') || el.closest('[data-testid$="music-card"]') || el;
+    const anims = [...host.getAnimations({ subtree: true }), ...(host.parentElement ? host.parentElement.getAnimations() : [])];
+    // Only the ones that end (a pulsing dot or a spinner never does).
+    const ending = anims.filter((a) => a.effect && Number.isFinite(a.effect.getComputedTiming().endTime));
+    return Promise.all(ending.map((a) => a.finished.catch(() => null)));
+  });
+}
+
 async function playerState(locator) {
   return locator.locator(tid('music-player')).getAttribute('data-state');
 }
@@ -118,7 +133,8 @@ export default [
         const line = await t.text(turn.locator(tid('segment-text')).first());
         t.assert(line === 'Here’s Back In Black by AC/DC. Tap Open in Apple Music to play it.', `Jarvis's line: "${line}"`);
         t.assert(t.requests('lead').length === 0, `no Claude request for a local music command (${t.requests('lead').length})`);
-        t.assert(t.music.searches.length >= 1 && t.music.searches.every((u) => u.startsWith('https://itunes.apple.com/search?') && /media=music/.test(u) && /country=us/.test(u)), `searched the iTunes API (${t.music.searches.join(' ')})`);
+        // No media=music: Apple would answer an iPhone with a redirect to the Music app (music-fakes.mjs).
+        t.assert(t.music.searches.length >= 1 && t.music.searches.every((u) => u.startsWith('https://itunes.apple.com/search?') && /entity=song/.test(u) && !/[?&]media=/.test(u) && /country=us/.test(u)), `searched the iTunes API (${t.music.searches.join(' ')})`);
         t.assert(/term=back\+in\+black/.test(t.music.searches[0]), `the words searched: ${t.music.searches[0]}`);
         t.assert(/^Free · Apple Music$/.test(await t.text(turn.locator(tid('turn-stats')))), `stats: ${await t.text(turn.locator(tid('turn-stats')))}`);
         await t.waitFor(() => c.locator('img.music-art-img').evaluate((img) => img.complete && img.naturalWidth > 0 && img.dataset.loaded === 'true'), { timeout: 8000, message: 'the artwork to load' });
@@ -133,6 +149,7 @@ export default [
         t.assert((await open.getAttribute('target')) === '_blank' && /noopener/.test((await open.getAttribute('rel')) || ''), 'a new tab, noopener');
         const app = await c.locator(tid('music-open-app')).getAttribute('href');
         t.assert(app === 'music://music.apple.com/us/album/back-in-black/574050396?i=574050602', `Open in Music app: ${app}`);
+        await settled(open); // measured mid-entrance (translateY), the box can be 43.99997 px
         const box = await open.boundingBox();
         t.assert(box && box.height >= 44, `44 px target (${box && box.height})`);
         await t.screenshot('card');
@@ -419,6 +436,7 @@ export default [
       await t.checkNoHorizontalOverflow('music card at 320 px');
       const box = await c.boundingBox();
       t.assert(box && box.x >= 0 && box.x + box.width <= 320, `the card fits (${box && Math.round(box.x)}–${box && Math.round(box.x + box.width)})`);
+      await settled(c);
       for (const id of ['music-preview', 'music-open', 'music-alt']) {
         const b = await c.locator(tid(id)).first().boundingBox();
         t.assert(b && b.height >= 44 && b.width >= 44, `${id} is at least 44 px (${b && `${Math.round(b.width)}×${Math.round(b.height)}`})`);

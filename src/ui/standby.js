@@ -62,7 +62,9 @@ export function createStandby(deps = {}) {
   let capture = null;
   let word = null; // the "Hey Jarvis" client (created when the setting is on)
   let wordUnsubs = [];
-  let listen = 'off'; // the capture: 'off' | 'starting' | 'live' | 'paused' | 'denied' | 'no-mic' | 'needs-tap' | 'error' | 'unsupported'
+  // the capture: 'off' | 'starting' | 'live' | 'paused' | 'waiting' ("Hey Jarvis" alone, not ready:
+  // the microphone stays off) | 'denied' | 'no-mic' | 'needs-tap' | 'error' | 'unsupported'
+  let listen = 'off';
   let clockTimer = 0;
   let shiftTimer = 0;
   let dimTimer = 0;
@@ -127,11 +129,24 @@ export function createStandby(deps = {}) {
     );
   }
 
+  let inerted = []; // what Standby covers: made inert while it is open (aria-modal is true, and the
+  // cores underneath sleep instead of drawing behind the black screen all night)
+
   function mount() {
     if (!root) build();
+    try {
+      prevFocus = document.activeElement;
+    } catch {
+      prevFocus = null;
+    }
     if (!root.isConnected) document.body.appendChild(root);
     document.documentElement.classList.add('standby-open');
     root.hidden = false;
+    for (const el of Array.from(document.body.children)) {
+      if (el === root || el.inert || el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'TEMPLATE') continue;
+      el.inert = true;
+      inerted.push(el);
+    }
     if (createCore && !core) {
       try {
         const size = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.4);
@@ -143,7 +158,6 @@ export function createStandby(deps = {}) {
       }
     }
     try {
-      prevFocus = document.activeElement;
       root.focus({ preventScroll: true });
     } catch {
       /* ignore */
@@ -152,6 +166,8 @@ export function createStandby(deps = {}) {
 
   function unmount() {
     if (!root) return;
+    for (const el of inerted) if (el.isConnected) el.inert = false;
+    inerted = [];
     root.hidden = true;
     document.documentElement.classList.remove('standby-open');
     if (core) {
@@ -305,13 +321,22 @@ export function createStandby(deps = {}) {
       render();
       return;
     }
+    if (wantWord) ensureWord();
+    if (!wantClap && !wordReady()) {
+      waitForWord();
+      return;
+    }
     listen = 'starting';
     wordPortGiven = false; // each start makes a new frames channel
     render();
-    if (wantWord) ensureWord();
     const res = await capture.start({ clap: wantClap, sensitivity: sensitivity(), word: wantWord && wordReady() });
     if (phase !== 'open') {
       if (res.ok) capture.stop();
+      return;
+    }
+    if (res.ok && !clapOn() && !wordReady()) {
+      // "Hey Jarvis" alone, and it stopped while the microphone started: nothing would listen.
+      waitForWord();
       return;
     }
     if (!res.ok) {
@@ -357,7 +382,11 @@ export function createStandby(deps = {}) {
     }
     wordUnsubs = [
       word.subscribe(() => {
-        if (phase === 'open' && wordReady() && listen === 'live') connectWord();
+        if (phase === 'open') {
+          if (wordReady() && listen === 'live') connectWord();
+          else if (wordReady() && listen === 'waiting') startListening(); // its download is done
+          else if (!wordReady() && !clapOn() && (listen === 'live' || listen === 'starting')) waitForWord(); // it failed
+        }
         render();
       }),
       word.onDetect(() => trigger('word')),
@@ -367,6 +396,17 @@ export function createStandby(deps = {}) {
 
   function wordReady() {
     return !!word && word.status().state === 'ready';
+  }
+
+  /**
+   * "Hey Jarvis" alone (claps off) and not ready yet (downloading, or its download failed): the
+   * microphone is not held while nothing listens. It starts once the word is ready.
+   */
+  function waitForWord() {
+    if (capture) capture.stop();
+    wordPortGiven = false;
+    listen = 'waiting';
+    render();
   }
 
   let wordPortGiven = false; // the worker has this start's frames channel
@@ -408,7 +448,9 @@ export function createStandby(deps = {}) {
       stopWord({ terminate: true });
     }
     const listening = listen === 'live' || listen === 'starting';
-    if ((clapOn() || wordOn()) && !listening && listen !== 'denied' && listen !== 'needs-tap') {
+    // Not listening yet, or claps just turned off while "Hey Jarvis" is not ready: (re)decide.
+    const recheck = !listening || (!clapOn() && !wordReady());
+    if ((clapOn() || wordOn()) && recheck && listen !== 'denied' && listen !== 'needs-tap') {
       startListening();
       return;
     }
@@ -505,11 +547,22 @@ export function createStandby(deps = {}) {
     if (ws && Number.isFinite(ws.avgMs)) root.dataset.wordMs = String(ws.avgMs);
     let pill;
     let tone = 'off';
+    const micOn = !!capture && capture.live === true;
+    const wordComing = wordOn() && (!ws || ws.state === 'loading' || ws.state === 'off' || (ws.state === 'ready' && !wordPortGiven));
     if (what.length) {
       pill = `LISTENING ON THIS DEVICE · ${what.join(' · ')}`;
       tone = 'live';
     } else if (listen === 'starting') {
       pill = 'STARTING THE MICROPHONE…';
+    } else if (micOn) {
+      // A track is live but nothing listens yet ("Hey Jarvis" connecting): the pill says the
+      // microphone is on, as the system's own indicator does.
+      pill = wordComing ? 'MICROPHONE ON · GETTING “HEY JARVIS” READY' : 'MICROPHONE ON';
+      tone = 'live';
+    } else if (listen === 'waiting') {
+      // "Hey Jarvis" alone: the microphone waits for it (off meanwhile).
+      pill = wordComing ? 'GETTING “HEY JARVIS” READY · MICROPHONE OFF' : 'NOT LISTENING';
+      tone = wordComing ? 'off' : 'warn';
     } else if (listen === 'paused') {
       pill = 'MICROPHONE PAUSED';
     } else if (listen === 'denied') {
@@ -529,7 +582,7 @@ export function createStandby(deps = {}) {
     }
     setText(els.pillText, pill);
     els.pill.dataset.tone = tone;
-    els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : pill.toLowerCase());
+    els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
     setText(els.hint, hintText(what, ws));
     setText(els.status, safeText(statusLine));
     const word0 = safeText(stateWord);

@@ -4,7 +4,10 @@
 // those origins are not third-party requests for the guard. "back in black" answers with the real
 // sample saved from the API (test/unit/fixtures/itunes-back-in-black.json); other terms get small
 // realistic results. A preview is a short generated WAV (Playwright's Chromium has no AAC decoder).
-// t.music counts what was asked: { searches: [url], artwork: n, previews: n }.
+// Like Apple, it answers an iPhone's search that says media=music with a redirect to the Music app
+// (301 to musics://…, which the page cannot follow: a CSP violation the suite reports), and looks up
+// songs, albums and artists by id. t.music counts what was asked: { searches: [url], redirected:
+// [url], artwork: n, previews: n }.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -59,7 +62,13 @@ export function fakeItunesAnswer(url) {
   const limit = Math.max(1, Math.min(25, Number(u.searchParams.get('limit')) || 5));
   let results = [];
   if (u.pathname === '/lookup') {
-    results = u.searchParams.get('id') === '5040714' ? ACDC_TOP() : [];
+    const ids = (u.searchParams.get('id') || '').split(',');
+    if (ids.length === 1 && ids[0] === '5040714') results = ACDC_TOP();
+    else {
+      // Songs and albums by id, from everything this fake knows.
+      const known = [...JSON.parse(readFileSync(ITUNES_FIXTURE, 'utf8')).results, ...ACDC_TOP(), ...Object.values(KNOWN).flatMap((f) => f())];
+      results = ids.map((id) => known.find((r) => String(r.trackId || r.collectionId) === id)).filter(Boolean);
+    }
   } else if (entity === 'musicArtist') {
     if (/ac\/?dc|ac dc/.test(term)) results = [{ wrapperType: 'artist', artistType: 'Artist', artistName: 'AC/DC', artistId: 5040714, primaryGenreName: 'Hard Rock' }];
   } else if (/back in black/.test(term) && entity === 'song') {
@@ -105,12 +114,20 @@ export function previewWav(seconds = 3) {
 
 /** Route the three Apple origins of a browser context; returns the counter object. previewSeconds: the clip's length. */
 export async function routeFakeMusic(context, { png, delayMs = 0, previewSeconds = 3 } = {}) {
-  const counts = { searches: [], artwork: 0, previews: 0 };
+  const counts = { searches: [], redirected: [], artwork: 0, previews: 0 };
   const cors = { 'access-control-allow-origin': '*' };
   const wav = previewWav(previewSeconds);
   await context.route(/^https:\/\/itunes\.apple\.com\//, async (route) => {
-    counts.searches.push(route.request().url());
+    const url = route.request().url();
+    counts.searches.push(url);
     if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    // Apple: an iPhone searching with media=music is sent to the Music app instead.
+    const u = new URL(url);
+    const ua = route.request().headers()['user-agent'] || '';
+    if (/iPhone|iPod/.test(ua) && u.pathname === '/search' && u.searchParams.get('media') === 'music') {
+      counts.redirected.push(url);
+      return route.fulfill({ status: 301, headers: { ...cors, location: `musics://mzstoreservices-st.itunes.apple.com${u.pathname}${u.search}` }, body: '' });
+    }
     return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', headers: cors, body: JSON.stringify(fakeItunesAnswer(route.request().url())) });
   });
   await context.route(/^https:\/\/is\d{1,2}-ssl\.mzstatic\.com\//, (route) => {

@@ -2407,8 +2407,12 @@ opens it in the Music app with one tap, and plays Apple's 30-second previews ins
 Apple Music has no free API for playback or playlists: Jarvis never plays full songs or controls the Music app.
 
 - **Search** (`src/platform/music.js`, pure parts in `src/lib/music.js`). The iTunes Search API, called from the
-  browser (`Access-Control-Allow-Origin: *`): `GET https://itunes.apple.com/search?term&media=music&entity=song|album|
-  musicArtist&limit&country`, and `/lookup?id=<artist>&entity=song&limit=25` for an artist's top songs. `searchMusic(query,
+  browser (`Access-Control-Allow-Origin: *`): `GET https://itunes.apple.com/search?term&entity=song|album|musicArtist&
+  limit&country`, and `/lookup?id=<artist>&entity=song&limit=25` for an artist's top songs. No `media=music` (since
+  v7.4): Apple answers an iPhone's search that says it (the Home Screen app, Safari, Chrome on iOS) with `301` to
+  `musics://…` (the Music app), which fetch cannot follow and the CSP blocks, so every search failed on an iPhone; the
+  `entity` alone asks for the same music, and lookups by id are never redirected. `lookupMusic(ids, …)` (`/lookup?id=a,b`)
+  returns songs or albums by their Apple ids, in the order asked (the wake routine's offer, §22). `searchMusic(query,
   { kind: 'song'|'album'|'artist'|'playlist', limit, country, fetch, signal, timeoutMs, title, artist })` and
   `topSongs(artistId, …)` return `{ ok: true, items, kind, country, query, artist? }` or `{ ok: false, error:
   'empty'|'offline'|'timeout'|'aborted'|'network'|'bad_response', message }`, never throw; 8 s timeout; credentials
@@ -2509,15 +2513,19 @@ Apple Music has no free API for playback or playlists: Jarvis never plays full s
   sentences it must never take: the review's research requests, wishes and charts; previews without cookies; the
   whole-conversation export) and `engine.music` (versions
   pinned, v7 conversations byte-identical, the find_music round, failures, Stop, the strict mock's directives, the
-  local exchange never reaching Claude). E2E (`fakeMusic: true`: `test/e2e/music-fakes.mjs` answers the iTunes API,
-  artwork and a short WAV preview with route(); its artist lookup lists a featured track first, like Apple's):
-  `music-chat` (Mac: the card, links, preview play/pause, alternatives, "stop the music", kept after a reload, a
-  question with "play" still goes to Jarvis, "play some AC/DC" shows AC/DC's own songs), `music-voice` (the line, the
-  card, no re-listen, Preview, the core's tap pauses it), `music-voice-small` (375×667 and 320×568: Preview and Open
-  take a tap above the dock), `music-voice-cards` (a reply's two picks both shown; the hint for a song and for an
-  album), `music-media` (no Apple cookies; Speak and a spoken Voice Mode reply pause a preview; the chat's mic note),
-  `music-tool` (two find_music cards, compact link-free results), `music-phone` (320 px, 44 px targets, AA contrast);
-  with listening (v7.2): `music-voice-listen` and `music-chat-mic` (§21).
+  local exchange never reaching Claude); since v7.4 also an iPhone's Apple (a search with media=music fails; none is
+  sent) and `lookupMusic`. E2E (`fakeMusic: true`: `test/e2e/music-fakes.mjs` answers the iTunes API, artwork and a
+  short WAV preview with route(); its artist lookup lists a featured track first, like Apple's; since v7.4 it answers
+  an iPhone's search that says media=music with Apple's 301 to `musics://…` (a CSP violation the suite reports) and
+  looks songs and albums up by id): `music-chat` (Mac: the card, links, preview play/pause, alternatives, "stop the
+  music", kept after a reload, a question with "play" still goes to Jarvis, "play some AC/DC" shows AC/DC's own songs;
+  the 44 px target measured once the card's entrance animation has finished: mid-animation the box can read
+  43.99997 px), `music-voice` (the line, the card, no re-listen, Preview, the core's tap pauses it),
+  `music-voice-small` (375×667 and 320×568: Preview and Open take a tap above the dock), `music-voice-cards` (a reply's
+  two picks both shown; the hint for a song and for an album), `music-media` (no Apple cookies; Speak and a spoken
+  Voice Mode reply pause a preview; the chat's mic note), `music-tool` (two find_music cards, compact link-free
+  results), `music-phone` (320 px, 44 px targets after the entrance, AA contrast); with listening (v7.2):
+  `music-voice-listen` and `music-chat-mic` (§21).
 
 ## 21. v7.2: Listening (the microphone)
 
@@ -2714,23 +2722,31 @@ trigger(kind), update(), isOpen(), isAwaiting(), release() }`):
   sentence: `standbyCommand`), and "standby" typed or dictated in the chat (the composer's `onCommand`). `enter()` runs
   inside the tap where possible: it unlocks speech and creates/resumes the capture's AudioContext (iOS starts audio
   only in a gesture); `resume()` (after the wake routine) needs no tap: the same context is kept.
-- The screen (`standby`, `data-listening` off | starting | live | paused | denied | no-mic | needs-tap | error,
+- The screen (`standby`, `data-listening` off | starting | live | paused | waiting | denied | no-mic | needs-tap | error,
   `data-word` off | loading | connecting | ready | error, `data-clap` on | off, `data-dim` soft | deep, `data-word-ms`
   the worker's inference time per frame): black, the hero core at 40 vmin in the core's new `standby` state (rings at
   0.3×, a 10 s breath, dimmed; `createCore(…, { maxFps: 15 })`; resting, so Reduced motion dozes it), the time
   (`standby-time`, Rajdhani 700 `--fs-hud-2xl`, the period small), the date (`standby-date`), the state word when not
   STANDING BY (`standby-state`) and one status line, Presence's situation line (`standby-status`). Landscape (an
   iPhone on its side, a laptop): the core beside the time. A dialog (`aria-modal`), the whole screen one control: a tap,
-  Escape, Enter or Space leaves (focus returns); other keys never reach the app's shortcuts. Burn-in: the stage moves by
+  Escape, Enter or Space leaves (focus returns); other keys never reach the app's shortcuts. Everything else on the page
+  is `inert` while it shows (restored on leaving or waking), so the dialog is truly modal and the covered cores (the
+  Home's, the header's) sleep instead of drawing behind the black screen all night: only Standby's 15 fps core
+  animates (E2E counts the canvases' draw calls). Burn-in: the stage moves by
   2–3 px every 60 s (eight positions), and after 5 minutes the colors step down (`data-dim="deep"`; small text stays at
   least 4.5:1 on black, the clock 3:1; no full-screen filters). Wake lock owner `'standby'` while it shows.
 - The pill (`standby-pill`, `data-tone` live | warn | off) says truthfully what the microphone is doing: `LISTENING ON
   THIS DEVICE · TWO CLAPS · “HEY JARVIS”` (each only when it really runs: the word only once its worker has this
-  start's frames), `STARTING THE MICROPHONE…`, `MICROPHONE PAUSED`, `MICROPHONE BLOCKED · NOT LISTENING`, `NO
-  MICROPHONE · NOT LISTENING`, `TAP ONCE TO START LISTENING` (the context could not start without a tap: the next tap
-  starts it instead of leaving), `NOT LISTENING`. The hint (`standby-hint`) says how to wake him, the wake word's
-  download ("Getting “Hey Jarvis” ready… 40% Two claps work meanwhile."), or why it isn't listening; on iOS "He listens
-  only while he is open on screen."
+  start's frames), `STARTING THE MICROPHONE…`, `MICROPHONE ON · GETTING “HEY JARVIS” READY` (whenever a track is live
+  but nothing listens yet, the pill says the microphone is on, as the system's indicator does), `GETTING “HEY JARVIS”
+  READY · MICROPHONE OFF` (`waiting`: "Hey Jarvis" alone, still downloading), `MICROPHONE PAUSED`, `MICROPHONE BLOCKED ·
+  NOT LISTENING`, `NO MICROPHONE · NOT LISTENING`, `TAP ONCE TO START LISTENING` (the context could not start without a
+  tap: the next tap starts it instead of leaving), `NOT LISTENING`. The hint (`standby-hint`) says how to wake him, the
+  wake word's download ("Getting “Hey Jarvis” ready… 40% Two claps work meanwhile."), or why it isn't listening; on iOS
+  "He listens only while he is open on screen."
+- Claps off and "Hey Jarvis" on: the microphone is opened only once the word is ready (`waiting` until then: the
+  download, or one that failed, holds no microphone) and released if the word stops working; with claps on it opens
+  at once (two claps work while the word downloads).
 - The page hidden: on a phone (`pauseWhenHidden`: iOS, Android, a touch screen up to 1024 px) the microphone is
   released at once and comes back when Jarvis is shown again; on a computer Standby keeps listening in a background tab
   or window (the owner's Mac; Chrome shows its recording indicator). `pagehide` releases it everywhere.
@@ -2747,15 +2763,29 @@ frames straight to the worker through a MessageChannel (the page's main thread n
 recorded.
 
 **Two claps** (`src/lib/wake/clap.js`, `createClapDetector({ sampleRate: 16000, sensitivity })`, pure, 5 ms frames
-and 1 ms sub-frames): a transient is a local peak `rise` dB above the adaptive noise floor (fast down, ~3 s up) and
-above `minDb`; sudden (the 15–60 ms before it ≥ 12 dB quieter); short (15–50 ms after ≥ 9 dB down, 50–120 ms after ≥ 15
-dB down or within 9 dB of the floor, within 10 dB of its peak for 30 ms at most but 3 ms at least: a mouse, trackpad or
-key click is shorter); bright (≥ 33% of its energy above 1.5 kHz, ≤ 50% below 500 Hz: knocks, steps and slams are
-low). Two claps: transients 150–900 ms apart, within 12 dB of each other, no other transient in the 600 ms before the
-first or after the second (a third clap, applause, knocking, a beat), no other loud onset near them (ripples of a sound
-dying away do not count), and the room busy (≥ 10 dB above the floor) less than 35% of the time around them; reported
-600 ms after the second. Sensitivity (`wakeClapSensitivity`): low (rise 24 dB, ≥ -44 dBFS), normal (18, -50), high (13,
--58). Its own compute cost: 0.25% of one core (resampler + detector, Node, 48 kHz input).
+and 1 ms sub-frames; each peak judged 200 ms after it): a transient is a local peak `rise` dB above the adaptive noise
+floor (fast down, ~3 s up) and above `minDb`; sudden (the 15–60 ms before it ≥ 12 dB quieter); bright (≥ 33% of its
+energy above 1.5 kHz, ≤ 50% below 500 Hz: knocks, steps and slams are low); a body of 3 ms at least (1 ms steps within
+10 dB of the loudest: a mouse, trackpad or key click is shorter); and then gone one of two ways:
+- short, a clap near the microphone: 15–50 ms after ≥ 9 dB down, 50–120 ms after ≥ 15 dB down or within 9 dB of the
+  floor, within 10 dB of its peak for 30 ms at most;
+- or dying away like a room's echo, a clap from across the room (v7.4 fix): past the room's critical distance (about
+  0.6–1 m in a living room) the reverberation carries as much energy as the clap or more, and its tail failed "short"
+  at every sensitivity. So the onset is judged, not the tail's length: in the windows 30–50, 50–90, 90–140 and
+  140–200 ms after the peak the sound never comes back up by more than 1.5 dB, falls at least 5 dB per 100 ms
+  (W0→W2 and W1→W3; a room that goes quiet within about 1.2 s) unless already within 6 dB of the floor, starts no more
+  than 3 dB above the peak (a consonant's louder vowel fails), and is noisy: its 1 ms energies wander ≥ 1 dB (RMS)
+  around their 5 ms frame's over 30–90 ms (a diffuse tail flickers; a ringing glass, a bell or a beep is smooth).
+Peaks within 50 ms are one clap (its early reflections). Two claps: transients 150–900 ms apart, within 12 dB of each
+other, no other transient in the quiet before the first or after the second (600 ms, or 1.5× their gap when that is
+longer: a third clap in the same rhythm always cancels them, so clapping along to music or a metronome at 70–120 bpm
+never wakes him; v7.4 fix: before, a third hit 500–850 ms later and every steady beat 500–900 ms apart woke him), no
+other loud onset there (ripples of a sound dying away do not count), and the room busy (≥ 10 dB above the floor) less
+than 35% of the time around them, the claps' own echoes aside (each while it keeps falling and is 10 dB above the
+floor, ≤ 800 ms); reported once the quiet after the second has been judged: 0.8 s after the second clap of a typical
+pair (420 ms), up to 1.55 s for the widest. Sensitivity (`wakeClapSensitivity`): low (rise 24 dB, ≥ -44 dBFS), normal
+(18, -50), high (13, -58): only how loud against the room, never how far. Its own compute cost: 0.3% of one core
+(resampler + detector, Node, 48 kHz input).
 
 **"Hey Jarvis"** (`src/lib/wake/oww.js`, `createWakePipeline({ melspec, embed, classify })`): openWakeWord v0.5.1's
 streaming pipeline, engine-agnostic: per 1280-sample frame (int16 scale) `melspectrogram.onnx` on the frame plus the 480
@@ -2802,24 +2832,37 @@ before; on iOS they never do.
   "<name>'s home" from the owner's `userName`, "I'm home", "rise and shine", with "Jarvis", "hey", "honey", "okay" around
   them, the whole sentence) or what is left of one when the recognizer started late ("…daddy's home", "home": up to 5
   words with "home") → "Welcome home, Frank."; `standbyCommand` → back to sleep; a fragment of one or two words ("up",
-  "Jarvis") or nothing heard (or the browser wants a tap: iOS) → the greeting by the time of day (`greetingLine`: Good
-  morning 5–11, afternoon 12–16, evening 17–4); a real question ends the routine and is asked. In a background tab
-  nothing listens: the greeting follows the boot.
+  "Jarvis") or nothing heard (or the browser wants a tap: iOS) → the greeting by the time of day (`greetingLine`:
+  `partOfDayFor`, one rule with the offer and the briefing protocol itself: morning 0–11, afternoon 12–16, evening
+  17–23, so at 1:30 a.m. "Good morning, Frank. … your morning briefing", and the briefing then opens "Good morning"
+  too; v7.4 fix: it said "Good evening … your morning briefing" after midnight). Anything else: woken by "Hey Jarvis",
+  a real question ends the routine and is asked; woken by claps, it is not sent anywhere (the "claps" may have been a
+  beat or a bang and the words the room's own talk) and he greets as if nothing was said. In a background tab nothing
+  listens: the greeting follows the boot.
 - The offer, made while he boots (`wake.offer()`, ≤ 2.5 s): the artist played lately on this device
   (`src/platform/music-recent.js`, `jarvis.music.recent.v1`: noted when a local "play …" finds something, a preview
-  starts or the player's `onStart(item)`; newest first, one per artist, 120 days; not in backups), searched as an
-  artist (top songs), else "Back in Black" by AC/DC as a song: the Apple Music search (§20, free). Spoken in one line
+  starts or the player's `onStart(item)`, with the item's Apple ids (`artistId`, `id`); newest first, one per artist,
+  120 days; not in backups), as their top songs, else "Back in Black" by AC/DC pinned by its ids (song 574050602, album
+  574050396, artist 5040714). Found by id: `topSongs(artistId)` / `lookupMusic([id])` (§20, free), because Apple sends an
+  iPhone's search for music to the Music app (301 to `musics://…`: before v7.4 no music was ever offered on the owner's
+  iPhone); a search (no `media=music`) only for an entry without ids or an id Apple no longer has. Spoken in one line
   with the card shown (`showMusicCard`, `noRelisten` cleared): "Good evening, Frank. Shall I put on some AC/DC? Or I can
   run your evening briefing." (`suggestionLine`; without music "Shall I run your evening briefing?"). `wake.onAwake({
   line, hidden })`: in a background tab the app shows a notification (attention's `missionFinished`, when allowed).
 - Then Jarvis listens (Continuous or not; in a background tab once he is on screen again) with the v7.2 rules, and
-  `routineReply` decides: "yes" / "play it" / "sure" … → the music command `playText` ("play Back in Black by AC/DC",
-  "play some <artist>": a local exchange in the chat, "Here's Back In Black by AC/DC. Tap Open in Apple Music to play
-  it.", then a tap; a preview plays in-app after a tap; "yes" with no music offered is the briefing); "brief me" /
-  "the briefing" / "catch me up" → `wake.briefing()`: the briefing protocol for the time of day sent as a spoken Voice
-  Mode turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid request); "no" / "not
-  now" / "go back to sleep" … → "Very good, Frank." then Voice Mode closes into Standby (`onClose({ reason: 'standby'
-  })`); anything else → an ordinary turn (the 2-second check).
+  `routineReply` decides, on the whole sentence or in pieces (`answerParts`: an answer word, yes / yeah / sure / okay /
+  no / nope / not now / thanks …, then what it means, thanks and "Jarvis" aside; v7.4 fix: "No, go back to sleep." was
+  sent to Claude): "yes" / "play it" / "sure" / "yes, please do" / "yeah, sure" … → the music command `playText`
+  ("play Back in Black by AC/DC", "play some <artist>": a local exchange in the chat, "Here's Back In Black by AC/DC.
+  Tap Open in Apple Music to play it.", showing what the offer found, no second search; then a tap; a preview plays
+  in-app after a tap; "yes" with no music offered is the briefing); "brief me" / "the briefing" / "catch me up" /
+  "sure, run the briefing" / "no, just the briefing" → `wake.briefing()`: the briefing protocol for the time of day sent
+  as a spoken Voice Mode turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid
+  request); "no" / "not now, thanks" / "go back to sleep" / "no thanks, go back to sleep" … → "Very good, Frank." then
+  Voice Mode closes into Standby (`onClose({ reason: 'standby' })`); an answer word then a music command ("Yes, play
+  some AC/DC", "No, play Highway to Hell") → that command, local and free (the offer's card when it names the offered
+  artist); anything else → an ordinary turn (the 2-second check). `standbyCommand` takes the same pieces anywhere in
+  Voice Mode ("No thanks, go back to sleep", "Okay, standby").
 - The routine itself never calls Claude (E2E: no lead request until "brief me").
 - After a woken conversation (`wakeSession`) Voice Mode goes back to Standby when `wakeReturn` is on: on Exit (onClose
   `{ wakeSession: true }`), "go back to sleep", 2.5 s after it stopped listening for silence, or after a minute idle
@@ -2833,23 +2876,36 @@ iPhone only while open on screen; on a Mac in a background tab too). Backups car
 `wakeClap`, `wakeClapSensitivity`, `wakeReturn` (and `userName`) but never switches `wakeWord` on (a download, like
 `naturalVoice`).
 
-**Measured** (this Linux VM, headless Chromium, `nice`): the clap path's compute 0.25% of one core; the wake word 5.6 ms
+**Measured** (this Linux VM, headless Chromium, `nice`): the clap path's compute 0.3% of one core; the wake word 5.6 ms
 of inference per 80 ms frame (about 7% of one core); the whole browser 22% (claps) / 31% (claps + word) with the page
 hidden, mostly the fake audio devices and two AudioContexts of the test rig; on screen the 15 fps core adds software
 rendering (SwiftShader). Not measured on a Mac or an iPhone.
 
 **Tests.** Unit `wake.clap` (double claps 160–880 ms apart, soft, loud, uneven, a noisy and a reverberant room, snaps;
-one, three, too close, too far, applause; speech, music, drums at every sensitivity; knocks, steps, a door slam, mouse
-clicks, typing; music over claps; the floor adapting; sensitivity ordering; the recorded-style fixture
-`fixtures/wake/room-double-clap.wav` (a living room: room tone and hum, talking, two claps through a room response,
-talking) at 16 kHz and at 48 kHz through the resampler; the resampler's pitch, level and anti-aliasing), `wake.oww`
-(the pinned models, runtime and license; scores equal to the Python reference; "Hey Jarvis" by three Kokoro voices
-detected once each, also with room noise and babble 10 dB under it and through 48 kHz; no trigger on "Hey Travis", a
-question, noise, music, babble, claps, silence; patience and refractory), `wake.engine` (integrity, sizes, origins,
-the cache, progress, frames → one detection, clear; the page client), `wake.routine` (phrases, greeting, offer, what
-was played lately), `platform.storage` / `platform.db` (the settings, backups). Offline check behind them: 39 of 40
-Kokoro renditions of "Hey Jarvis" (13 voices × plain, slow, "…, wake up") detected, 0 of 32 negatives; 0 false wakes
-from claps in 405 s of synthetic speech, music and typing. E2E `standby.mjs` (fake microphone through the real
-capture path): `standby-screen`, `standby-double-clap`, `standby-welcome-home`, `standby-brief-me`,
-`standby-go-to-sleep`, `standby-hey-jarvis` (the real models in the real worker on a synthetic voice),
-`standby-hey-jarvis-stub`, `standby-background`, `standby-denied`.
+from across the room: the builder's `inRoom` with its tail raised (wet 1 and 1.5, R ≈ +4 and +8 dB, RT60 0.45 and
+0.6 s, every sensitivity) and an independent statistical room (`farField`: R +3 to +9 dB, RT60 0.35–0.9 s; R +12 dB
+soft claps; snaps); one, three, too close, too far, applause; a third clap 500–590 ms after a pair, three claps evenly
+500–850 ms apart, clapping or snapping along (8 claps 500–850 ms apart), a metronome's woodblock at 70–120 bpm, every
+sensitivity, and a double clap after the rhythm stopped still waking it; the wake reported only once the quiet after
+the second clap was judged; speech, music, drums at every sensitivity; knocks, steps, a door slam, mouse clicks,
+typing; the same from across the room, a ringing glass and a spoon on a plate (no clap: too smooth); music over claps;
+the floor adapting; sensitivity ordering; the recorded-style fixture `fixtures/wake/room-double-clap.wav` (a living
+room: room tone and hum, talking, two claps through a room response, talking) at 16 kHz and at 48 kHz through the
+resampler; the resampler's pitch, level and anti-aliasing), `wake.oww` (the pinned models, runtime and license; scores
+equal to the Python reference; "Hey Jarvis" by three Kokoro voices detected once each, also with room noise and babble
+10 dB under it and through 48 kHz; no trigger on "Hey Travis", a question, noise, music, babble, claps, silence;
+patience and refractory), `wake.engine` (integrity, sizes, origins, the cache, progress, frames → one detection,
+clear; the page client), `wake.routine` (phrases, the answers whole and in pieces, the greeting, the offer and the
+briefing agreeing at every hour, what was played lately with its Apple ids), `music` (an iPhone's Apple: no
+`media=music`; `lookupMusic`), `platform.storage` / `platform.db` (the settings, backups). Offline check behind them:
+39 of 40 Kokoro renditions of "Hey Jarvis" (13 voices × plain, slow, "…, wake up") detected, 0 of 32 negatives; 0
+false wakes and 0 clap-like sounds from 443 s of Kokoro speech (dry, through a room, -6 to -30 dBFS) at each
+sensitivity. Known limit: two sharp, noisy bangs 150–900 ms apart with silence around them (two snare-drum hits) are
+two claps to the detector, near or far. E2E `standby.mjs` (fake microphone through the real capture path; the fake
+Apple redirects an iPhone's media=music search like Apple): `standby-screen` (the app inert under Standby, its cores
+not drawing), `standby-double-clap` (the offer looked up by id on an iPhone, "yes" shows it without a second search),
+`standby-welcome-home` (the offer from what was played lately, by the artist's id; "No, go back to sleep."),
+`standby-brief-me`, `standby-go-to-sleep`, `standby-rhythm` (8 claps 650 ms apart never wake him; woken by claps, the
+room's talk is not sent), `standby-word-failed` and `standby-word-wait` (claps off: the microphone waits for the
+word, never held while nothing listens), `standby-hey-jarvis` (the real models in the real worker on a synthetic
+voice), `standby-hey-jarvis-stub`, `standby-background`, `standby-denied`.

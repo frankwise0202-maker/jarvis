@@ -1,9 +1,11 @@
 // Two claps wake Jarvis (SPEC §22): the clap detector (src/lib/wake/clap.js) and the resampler
 // (src/lib/wake/resample.js), on synthetic sounds (wake.signals.mjs) in 128-sample blocks, as the
-// Standby AudioWorklet feeds them: double claps and snaps wake it; one clap, three claps, claps too
-// close or too far apart, speech, music, drums, knocks, footsteps, a door slam, mouse clicks and
-// typing do not; the noise floor adapts; the sensitivity setting moves the line; the recorded-style
-// room take (fixtures/wake/room-double-clap.wav) wakes it, also at 48 kHz through the resampler.
+// Standby AudioWorklet feeds them: double claps and snaps wake it, also from across a reverberant
+// room (two room models); one clap, three claps, a third clap in the same rhythm, clapping along or a
+// metronome, claps too close or too far apart, speech, music, drums, knocks, footsteps, a door slam,
+// a ringing glass, mouse clicks and typing do not (near and far); the noise floor adapts; the
+// sensitivity setting moves the line; the recorded-style room take (fixtures/wake/room-double-clap.wav)
+// wakes it, also at 48 kHz through the resampler.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -53,6 +55,113 @@ test('not two claps: one, three, too close, too far apart, applause', () => {
   const applause = S.silence(2.2);
   for (let k = 0; k < 8; k++) S.mixAt(applause, S.clap({ seed: 200 + k, peakDb: -12 - (k % 3) }), k * 0.2);
   assert.equal(doubles(inRoom(applause)).length, 0, 'applause');
+});
+
+/** A double clap from across a room: each clap through `room(dry, seed)`, over quiet room tone. */
+function farDouble(room, { peakDb = -16, gapMs = 450, seed = 1, snaps = false } = {}) {
+  const dry = (s, p) => (snaps ? S.snap({ peakDb: p, seed: s }) : S.clap({ peakDb: p, seed: s, tail: 0 }));
+  const x = S.silence(4.2);
+  S.mixAt(x, room(dry(seed + 10, peakDb), seed + 20), 1.2);
+  S.mixAt(x, room(dry(seed + 30, peakDb - 1), seed + 40), 1.2 + gapMs / 1000);
+  return S.withRoom(x, { rmsDb: -62, seed: seed + 50 });
+}
+
+test('claps from across the room wake it: the room’s echo as loud as the clap or louder, at every sensitivity', () => {
+  // The builder's room (inRoom) with its diffuse tail raised: wet 1 is R ≈ +4 dB, wet 1.5 ≈ +8 dB.
+  const builder = (wet, rt60) => (dry, seed) => S.inRoom(dry, { wet, rt60, seed });
+  assert.ok(S.reverbRatioDb((x) => S.inRoom(x, { wet: 1, rt60: 0.45 })) > 3, 'wet 1: the echo carries more energy than the clap');
+  for (const [wet, rt60] of [[1, 0.45], [1.5, 0.45], [1, 0.6], [1.5, 0.6]]) {
+    for (const sens of CLAP_SENSITIVITIES) {
+      for (const seed of [7, 207]) {
+        const ev = doubles(farDouble(builder(wet, rt60), { seed }), sens);
+        assert.equal(ev.length, 1, `inRoom wet ${wet}, RT60 ${rt60} s, ${sens}, seed ${seed}`);
+        assert.ok(Math.abs(ev[0].gapMs - 450) <= 10, `the gap (${ev[0].gapMs})`);
+      }
+    }
+  }
+  // An independent statistical room: R +3 to +9 dB (about 1.2–3 m in a living room), RT60 0.35–0.9 s.
+  const far = (R, rt60) => (dry, seed) => S.farField(dry, { R, rt60, seed });
+  for (const rt60 of [0.35, 0.5, 0.7, 0.9]) {
+    for (const R of [3, 6, 9]) {
+      for (const seed of [7, 307]) assert.equal(doubles(farDouble(far(R, rt60), { seed })).length, 1, `farField R +${R} dB, RT60 ${rt60} s, seed ${seed}`);
+    }
+  }
+  for (const sens of CLAP_SENSITIVITIES) assert.equal(doubles(farDouble(far(6, 0.5), { seed: 11 }), sens).length, 1, `R +6 dB at ${sens}`);
+  // Snaps from across the room, and a softer pair farther away (R +12 dB, RT60 0.5 s).
+  assert.equal(doubles(farDouble(far(6, 0.5), { snaps: true, peakDb: -20, seed: 5 })).length, 1, 'two snaps across the room');
+  assert.equal(doubles(farDouble(far(12, 0.5), { peakDb: -24, seed: 9 })).length, 1, 'soft claps 3–4 m away');
+});
+
+test('from across the room too: speech, music, knocks, steps, typing, a metronome and a ringing glass do not wake it', () => {
+  const far = (x, seed = 9) => S.farField(x, { R: 6, rt60: 0.5, seed });
+  const sounds = {
+    'speech across the room': far(S.speechLike({ seconds: 6, seed: 25 })),
+    'music across the room': far(S.musicLike({ seconds: 6, bpm: 100, seed: 38 })),
+    'drums across the room': far(S.musicLike({ seconds: 6, bpm: 75, chords: false, seed: 39 })),
+    'knocks across the room': far(S.knocks()),
+    'two steps across the room': far(S.footsteps({ count: 2, gapMs: 500 })),
+    'typing across the room': far(S.typing({ seconds: 4, peakDb: -18, seed: 93 })),
+    'a metronome across the room': far(S.beats(667, 8, (k) => S.woodblock({ seed: k + 1, peakDb: -16 - (k % 2) }))),
+    'two glasses clinking': S.beats(300, 2, (k) => S.glassClink({ seed: 80 + k, peakDb: -18 - k })),
+    'a spoon on a plate, twice': S.beats(400, 2, (k) => S.glassClink({ seed: 90 + k, freq: 4200, tau: 0.08, peakDb: -20 })),
+  };
+  for (const sens of CLAP_SENSITIVITIES) for (const [name, x] of Object.entries(sounds)) assert.equal(doubles(inRoom(x), sens).length, 0, `${name} (${sens})`);
+  // A ringing glass is clap-like at its start, but no room's echo rings that smoothly.
+  const d = createClapDetector({ sensitivity: 'high' });
+  const ev = S.runDetector(d, inRoom(S.glassClink({ seed: 3 })));
+  assert.equal(ev.filter((e) => e.type === 'transient').length, 0, 'a clink is not a clap');
+});
+
+test('a third clap in the rhythm cancels the pair: 500–850 ms after it, or a steady beat of 70–120 bpm', () => {
+  // A pair 350 ms apart, then a third clap 500–590 ms after the second (inside the 600 ms of quiet).
+  for (const third of [500, 550, 590]) {
+    const x = S.silence(2.6);
+    S.mixAt(x, S.clap({ seed: 1, peakDb: -12 }), 0);
+    S.mixAt(x, S.clap({ seed: 2, peakDb: -13 }), 0.35);
+    S.mixAt(x, S.clap({ seed: 3, peakDb: -12 }), 0.35 + third / 1000);
+    for (const sens of CLAP_SENSITIVITIES) assert.equal(doubles(inRoom(x), sens).length, 0, `a third clap ${third} ms after the second (${sens})`);
+  }
+  // Three claps evenly spaced, 500–850 ms apart: the third always comes within 1.5× the pair's gap.
+  for (const gap of [500, 600, 700, 850]) {
+    const x = S.beats(gap, 3, (k) => S.clap({ seed: 20 + k, peakDb: -12 - (k % 2) }));
+    assert.equal(doubles(inRoom(x)).length, 0, `three claps ${gap} ms apart`);
+  }
+  // Clapping along (8 claps 500–850 ms apart), snapping along, a metronome's woodblock at 70–120 bpm.
+  for (const gap of [500, 550, 650, 750, 850]) {
+    const x = S.beats(gap, 8, (k) => S.clap({ seed: 300 + k, peakDb: -12 - (k % 2) }));
+    for (const sens of CLAP_SENSITIVITIES) assert.equal(doubles(inRoom(x), sens).length, 0, `8 claps every ${gap} ms (${sens})`);
+  }
+  for (const gap of [550, 700]) assert.equal(doubles(inRoom(S.beats(gap, 6, (k) => S.snap({ seed: 400 + k, peakDb: -16 })))).length, 0, `6 snaps every ${gap} ms`);
+  for (const bpm of [70, 80, 90, 100, 110, 120]) {
+    const x = S.beats(60000 / bpm, 8, (k) => S.woodblock({ seed: k + 1, peakDb: -16 - (k % 2) }));
+    for (const sens of CLAP_SENSITIVITIES) assert.equal(doubles(inRoom(x), sens).length, 0, `a metronome at ${bpm} bpm (${sens})`);
+  }
+  // A double clap a while after a rhythm (more than 1.5× its gap later) still wakes it.
+  const after = S.concat(S.beats(650, 4, (k) => S.clap({ seed: 500 + k, peakDb: -12 })), S.silence(1.2), S.doubleClap({ at: 0.1, seconds: 1.2, seed: 41 }));
+  assert.equal(doubles(inRoom(after)).length, 1, 'a double clap after the rhythm stopped');
+});
+
+test('the wake is reported only once the quiet after the second clap has been judged', () => {
+  for (const gapMs of [300, 420, 800]) {
+    const x = inRoom(S.doubleClap({ gapMs, at: 0.8, seconds: 1.8 }));
+    const d = createClapDetector();
+    let reportedAt = null;
+    let t = 0;
+    for (let i = 0; i < x.length; i += 128) {
+      const block = x.subarray(i, i + 128);
+      t += block.length;
+      if (d.push(block).some((e) => e.type === 'double') && reportedAt === null) reportedAt = t / S.RATE;
+    }
+    for (let k = 0; k < 40 && reportedAt === null; k++) {
+      t += 1280;
+      if (d.push(new Float32Array(1280)).some((e) => e.type === 'double')) reportedAt = t / S.RATE;
+    }
+    const second = 1 + 0.8 + gapMs / 1000;
+    const quiet = Math.max(CLAP.isolationMs, CLAP.isolationGap * gapMs) / 1000;
+    assert.ok(reportedAt !== null, `gap ${gapMs}: reported`);
+    assert.ok(reportedAt >= second + quiet + CLAP.judgeMs / 1000 - 0.01, `gap ${gapMs}: reported at ${reportedAt.toFixed(2)} s, not before the quiet after ${second.toFixed(2)} s was judged`);
+    assert.ok(reportedAt <= second + quiet + CLAP.judgeMs / 1000 + 0.1, `gap ${gapMs}: reported promptly (${reportedAt.toFixed(2)} s)`);
+  }
 });
 
 test('speech, music and drums never wake it (every sensitivity)', () => {

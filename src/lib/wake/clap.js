@@ -1,30 +1,46 @@
 // Two claps (or two finger snaps) wake Jarvis from Standby. A streaming detector for 16 kHz mono
 // audio, pure (no DOM, no Web Audio): the Standby AudioWorklet runs it on the microphone, the unit
-// tests on synthetic claps, snaps, speech, music, knocks, footsteps and a door slam.
+// tests on synthetic claps, snaps, speech, music, knocks, footsteps, a door slam and claps from
+// across a reverberant room.
 //
 // What counts as a clap ("a transient"), from 5 ms frames of the signal:
 //   - loud against the room: its peak frame is `rise` dB above the adaptive noise floor (the quiet
 //     between sounds, tracked fast down and slowly up) and above an absolute minimum level;
 //   - sudden: the 15–60 ms before it are at least 12 dB quieter than the peak;
-//   - short: 15–50 ms after the peak the sound is at least 9 dB down, 50–120 ms after at least
-//     15 dB down (or back within 9 dB of the floor), and it stays within 10 dB of its peak for 30 ms at most,
-//     but for 3 ms at least (in 1 ms steps: the click of a mouse, a trackpad or a key is shorter);
 //   - bright: at least a third of its energy above 1.5 kHz, at most half below 500 Hz (a knock on a
-//     door, a footstep or a door slam is mostly low; a hand clap or a snap is mostly high).
-// Speech fails "short" (a consonant runs into its vowel), music fails "sudden" or "short", or brings
-// more beats (below), a knock or a step fails "bright", a slam fails "short" and "bright".
+//     door, a footstep or a door slam is mostly low; a hand clap or a snap is mostly high);
+//   - a body of 3 ms at least (1 ms steps within 10 dB of the loudest: the click of a mouse, a
+//     trackpad or a key is shorter);
+//   - and then gone, one of two ways:
+//     - short (a clap near the microphone): 15–50 ms after the peak at least 9 dB down, 50–120 ms
+//       after at least 15 dB down (or back within 9 dB of the floor), within 10 dB of its peak for
+//       30 ms at most;
+//     - or dying away like a room's echo (a clap from across the room, where the room's
+//       reverberation is as loud as the clap itself or louder): from 30 ms after the peak the sound
+//       never comes back up, falls at least 5 dB per 100 ms (a room that takes up to about 1.2 s to go
+//       quiet) until it is lost in the room's noise, starts no more than 3 dB above the clap, and is
+//       noisy (a reverberant tail flickers from one millisecond to the next; a glass, a bell or a beep
+//       rings smoothly). The onset is judged, not the tail's length: the farther away, the longer the
+//       echo, and a sensitivity setting cannot change that.
+// Speech fails "sudden", "bright" or the dying away (a consonant runs into its louder vowel), music
+// fails "sudden" or dies into its own sustained notes (or brings more beats, below), a knock or a step
+// fails "bright", a slam fails "bright" and "short".
 //
-// What counts as "two claps": two transients 150–900 ms apart, of similar loudness (within 12 dB)
-// and brightness, with no other transient in the 600 ms before the first or after the second (a
-// third clap, applause, knocking, a drum beat: no), and a quiet background around them (the room
-// busy above the floor less than 35% of the time: not in the middle of speech or music). The
-// detection is reported 600 ms after the second clap, once nothing followed it.
+// What counts as "two claps": two transients 150–900 ms apart, of similar loudness (within 12 dB),
+// with no other transient in the 600 ms before the first or after the second (or 1.5 times their gap
+// when that is longer, so a third clap in the same rhythm always cancels them: clapping along to
+// music, a metronome, applause), no other loud onset there either (a word, a beat, a knock), and a
+// quiet background around them (the room busy above the floor less than 35% of the time, the claps'
+// own echoes aside: not in the middle of speech or music). Peaks within 50 ms of each other are one
+// clap (its early reflections). The detection is reported once everything up to the end of the quiet
+// after the second clap has been judged (each peak is judged 200 ms after it happens): 0.8–1.6 s after
+// the second clap.
 //
 //   const d = createClapDetector({ sampleRate: 16000, sensitivity: 'normal' });
 //   for each block: for (const ev of d.push(samples)) if (ev.type === 'double') wake(ev);
 //   events: { type: 'transient', at, level, bright } (every clap-like sound; tests and diagnostics)
 //           { type: 'double', at, gapMs, levels: [a, b] }
-//   d.setSensitivity('low' | 'normal' | 'high'); d.reset(); d.floorDb
+//   d.setSensitivity('low' | 'normal' | 'high'); d.reset(); d.floorDb; d.lastJudged
 
 export const CLAP_SENSITIVITY = Object.freeze({
   // rise: dB above the noise floor; minDb: the peak frame's absolute level (dBFS, mean square)
@@ -38,12 +54,20 @@ export const CLAP = Object.freeze({
   frameMs: 5,
   minGapMs: 150,
   maxGapMs: 900,
-  isolationMs: 600,
+  isolationMs: 600, // nothing else this long before the first clap and after the second …
+  isolationGap: 1.5, // … or this many times their gap, when that is longer
+  mergeMs: 50, // peaks this close are one clap (early reflections)
+  judgeMs: 200, // a peak is judged once this much has followed it (the echo's last window)
   preQuietDb: 12,
-  decayEarlyDb: 9, // 15–50 ms after the peak
-  decayLateDb: 15, // 50–120 ms after the peak
-  maxLoudMs: 30, // within 10 dB of the peak
+  decayEarlyDb: 9, // short: 15–50 ms after the peak
+  decayLateDb: 15, // short: 50–120 ms after the peak
+  maxLoudMs: 30, // short: within 10 dB of the peak
   minBodyMs: 3, // ... and at least this long (1 ms steps): a mouse, trackpad or key click is shorter
+  roomDecayDb: 5, // a room's echo: at least this many dB per 100 ms (RT60 up to about 1.2 s)
+  roomStartDb: 3, // ... starting no more than this above the clap itself
+  roomRiseDb: 1.5, // ... never coming back up by more than this
+  roomRoughDb: 1, // ... and noisy: its 1 ms energies wander at least this much (dB, RMS)
+  nearFloorDb: 6, // an echo this close to the floor is over
   matchDb: 12, // the two claps' peaks
   minBright: 0.33, // energy above 1.5 kHz / all
   maxLow: 0.5, // energy below 500 Hz / all
@@ -87,7 +111,8 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
   const hop = Math.max(16, Math.round((sampleRate * CLAP.frameMs) / 1000)); // 80 samples at 16 kHz
   const frameMs = (hop / sampleRate) * 1000;
   const frames = (ms) => Math.max(1, Math.round(ms / frameMs));
-  const HISTORY = frames(2400); // frames of energy kept: enough for the busy check around two claps
+  // Frames of energy kept: the longest pair (900 ms) with 1.5× its gap of quiet on both sides, judged.
+  const HISTORY = frames(CLAP.maxGapMs * (1 + 2 * CLAP.isolationGap) + CLAP.judgeMs + 400);
   const total = new Float32Array(HISTORY); // dB per frame, ring buffer
   const bright = new Float32Array(HISTORY); // share above 1.5 kHz
   const low = new Float32Array(HISTORY); // share below 500 Hz
@@ -110,10 +135,11 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
   let floorDb = -70;
   let warm = 0; // frames seen (the floor settles during the first second)
   let sens = CLAP_SENSITIVITY[sensitivity] || CLAP_SENSITIVITY.normal;
-  const transients = []; // { frame, level, bright } recent clap-like sounds, oldest first
+  const transients = []; // { frame, level, bright, end } recent clap-like sounds, oldest first
   const others = []; // frames of loud sounds that are not claps (they break pairs)
-  let pair = null; // { a, b, due } two claps waiting for the quiet after them
+  let pair = null; // { a, b, before, after, due } two claps waiting for the quiet after them
   let lastJudged = null; // the last peak's measurements (diagnostics)
+  const judgeAt = frames(CLAP.judgeMs); // a peak is judged this many frames after it
   const pre = frames(60); // look back 60 ms before the peak
   const preNear = frames(15);
   const early0 = frames(15);
@@ -123,9 +149,19 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
   const iso = frames(CLAP.isolationMs);
   const gapMin = frames(CLAP.minGapMs);
   const gapMax = frames(CLAP.maxGapMs);
+  const merge = frames(CLAP.mergeMs);
+  // The echo's windows after the peak: 30–50, 50–90, 90–140 and 140–200 ms ([first, last frame, centre ms]).
+  const ECHO = [
+    [frames(30), frames(50) - 1, 40],
+    [frames(50), frames(90) - 1, 70],
+    [frames(90), frames(140) - 1, 115],
+    [frames(140), frames(200) - 1, 170],
+  ];
 
   const at = (frame) => (frame % HISTORY + HISTORY) % HISTORY;
   const dbAt = (frame) => total[at(frame)];
+  /** The quiet needed on each side of a pair `gap` frames apart. */
+  const quietFor = (gap) => Math.max(iso, Math.round(CLAP.isolationGap * gap));
 
   function reset() {
     n = 0;
@@ -190,13 +226,18 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
 
   function judge(out) {
     const now = n - 1; // the newest frame
-    // A peak is judged once 120 ms have passed after it.
-    const f = now - late1;
+    // A peak is judged once 200 ms have passed after it (its echo's last window).
+    const f = now - judgeAt;
     if (f >= pre && warm > frames(300) && isLocalMax(f) && dbAt(f) - floorAt[at(f)] >= sens.rise) {
       const t = asClap(f);
-      if (t) {
+      const last = transients[transients.length - 1];
+      if (t && last && f - last.frame <= merge) {
+        // The same clap again (its early reflections): one clap, at its loudest.
+        last.level = Math.max(last.level, t.level);
+        last.end = Math.max(last.end, t.end);
+      } else if (t) {
         transients.push(t);
-        while (transients.length && f - transients[0].frame > HISTORY - late1) transients.shift();
+        while (transients.length && f - transients[0].frame > HISTORY - judgeAt) transients.shift();
         emit(out, { type: 'transient', at: (f * frameMs) / 1000, level: Math.round(t.level * 10) / 10, bright: Math.round(t.bright * 100) / 100 });
         considerPair(t);
       } else if (!inClap(f) && dbAt(f) - meanDb(f - pre, f - preNear) >= 6) {
@@ -205,7 +246,7 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
         noteOther(f);
       }
     }
-    // A pair waiting for the quiet after its second clap.
+    // A pair waiting for the quiet after its second clap: reported once all of it has been judged.
     if (pair && now >= pair.due) {
       const p = pair;
       pair = null;
@@ -216,10 +257,9 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
     }
   }
 
-  /** The peak at frame f as a clap ({ frame, level, bright }), or null when it is not one. */
+  /** The peak at frame f as a clap ({ frame, level, bright, end }), or null when it is not one. */
   function asClap(f) {
     const peak = dbAt(f);
-    if (peak < sens.minDb) return null;
     const floor = floorAt[at(f)];
     const before = meanDb(f - pre, f - preNear);
     const early = meanDb(f + early0, f + early1);
@@ -245,18 +285,67 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
     for (let k = f - 1; k <= f + 2; k++) for (let j = 0; j < SUBS; j++) if (sub[at(k) * SUBS + j] >= subMax - 10) body++;
     const bodyMs = (body * subLen * 1000) / sampleRate;
     const sudden = peak - before >= CLAP.preQuietDb;
-    const short = peak - early >= CLAP.decayEarlyDb && (peak - late >= CLAP.decayLateDb || late - floor <= 9) && loud <= loudMax + 1 && bodyMs >= CLAP.minBodyMs;
     const isBright = br >= CLAP.minBright && lo <= CLAP.maxLow;
-    lastJudged = { frame: f, peak, floor, before, early, late, loud, bodyMs, br, lo, sudden, short, isBright };
-    return sudden && short && isBright ? { frame: f, level: peak, bright: br } : null;
+    const onset = peak >= sens.minDb && sudden && isBright && bodyMs >= CLAP.minBodyMs;
+    const short = peak - early >= CLAP.decayEarlyDb && (peak - late >= CLAP.decayLateDb || late - floor <= 9) && loud <= loudMax + 1;
+    const echo = onset && !short ? roomEcho(f, peak, floor) : null;
+    // Where the clap is over (10 dB above the floor) within the judged 200 ms: its own decay.
+    let end = f + judgeAt;
+    for (let k = f + 1; k <= f + judgeAt; k++) {
+      if (dbAt(k) - floorAt[at(k)] < 10) {
+        end = k;
+        break;
+      }
+    }
+    const isClap = onset && (short || (!!echo && echo.ok));
+    lastJudged = { frame: f, peak, floor, before, early, late, loud, bodyMs, br, lo, sudden, short, isBright, echo, isClap };
+    return isClap ? { frame: f, level: peak, bright: br, end: Math.max(end, f + late1) } : null;
+  }
+
+  /**
+   * After a sudden, bright onset that is not short: does the sound die away like a room's echo? The
+   * windows 30–50, 50–90, 90–140 and 140–200 ms after the peak (energy means): never rising, falling
+   * at least `roomDecayDb` per 100 ms (W0→W2 and W1→W3) unless already lost in the room's noise,
+   * starting no more than `roomStartDb` above the peak, and noisy (1 ms energies over 30–90 ms).
+   */
+  function roomEcho(f, peak, floor) {
+    const w = ECHO.map(([a, b]) => meanDb(f + a, f + b));
+    const near = (v) => v - floor <= CLAP.nearFloorDb;
+    const s1 = ((w[0] - w[2]) / (ECHO[2][2] - ECHO[0][2])) * 100;
+    const s2 = ((w[1] - w[3]) / (ECHO[3][2] - ECHO[1][2])) * 100;
+    let rises = false;
+    for (let i = 1; i < w.length; i++) if (!near(w[i - 1]) && w[i] - w[i - 1] > CLAP.roomRiseDb) rises = true;
+    // Roughness: how far the 1 ms energies wander around their 5 ms frame's (RMS, dB), where the
+    // echo is still well above the floor.
+    let rs = 0;
+    let rn = 0;
+    for (let k = f + ECHO[0][0]; k <= f + ECHO[1][1]; k++) {
+      if (dbAt(k) - floorAt[at(k)] < 10) continue;
+      let lin = 0;
+      for (let j = 0; j < SUBS; j++) lin += 10 ** (sub[at(k) * SUBS + j] / 10);
+      const mean = toDb(lin / SUBS);
+      for (let j = 0; j < SUBS; j++) {
+        const d = sub[at(k) * SUBS + j] - mean;
+        rs += d * d;
+        rn++;
+      }
+    }
+    const rough = rn >= 2 * SUBS ? Math.sqrt(rs / rn) : null;
+    const ok =
+      w[0] - peak <= CLAP.roomStartDb &&
+      (s1 >= CLAP.roomDecayDb || near(w[2])) &&
+      (s2 >= CLAP.roomDecayDb || near(w[3])) &&
+      !rises &&
+      (rough === null || rough >= CLAP.roomRoughDb);
+    return { windows: w, s1, s2, rises, rough, ok };
   }
 
   /** Inside a clap already found (its own decay): not another sound. */
   function inClap(f) {
     for (let i = transients.length - 1; i >= 0; i--) {
-      const d = f - transients[i].frame;
-      if (d >= -2 && d <= late1) return true;
-      if (d > late1) break;
+      const t = transients[i];
+      if (f >= t.frame - 2 && f <= t.end) return true;
+      if (f - t.frame > HISTORY) break;
     }
     return false;
   }
@@ -268,13 +357,12 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
   function noteOther(f) {
     others.push(f);
     while (others.length && f - others[0] > HISTORY) others.shift();
-    if (pair && f > pair.a.frame - iso && f <= pair.b.frame + iso && !(f >= pair.b.frame - 2 && f <= pair.b.frame + late1)) pair.broken = true;
   }
 
   function considerPair(t) {
-    // A new clap: a third one breaks a waiting pair.
+    // A new clap: a third one within the quiet after a waiting pair cancels it.
     if (pair) {
-      if (t.frame - pair.b.frame <= iso) {
+      if (t.frame - pair.b.frame <= pair.after) {
         pair = null;
         return;
       }
@@ -283,21 +371,38 @@ export function createClapDetector({ sampleRate = 16000, sensitivity = 'normal',
     if (!prev) return;
     const gap = t.frame - prev.frame;
     if (gap < gapMin || gap > gapMax) return;
-    // Nothing clap-like in the 600 ms before the first.
+    const quiet = quietFor(gap);
+    // Nothing clap-like in the quiet before the first (the end of a rhythm is no double clap either).
     const third = transients.length >= 3 ? transients[transients.length - 3] : null;
-    if (third && prev.frame - third.frame <= iso) return;
+    if (third && prev.frame - third.frame <= quiet) return;
     if (Math.abs(t.level - prev.level) > CLAP.matchDb) return;
-    pair = { a: prev, b: t, due: t.frame + iso, broken: false };
+    // Reported once the quiet after the second clap has been judged: a third clap at its very end is
+    // only judged 200 ms after it.
+    pair = { a: prev, b: t, before: quiet, after: quiet, due: t.frame + quiet + judgeAt + 1 };
+  }
+
+  /** Where a clap's own echo ends: while it keeps falling and is 10 dB above the floor (≤ 800 ms). */
+  function echoEnd(c) {
+    let k = Math.max(c.frame + 1, c.end);
+    let lowest = meanDb(k, k + 2);
+    const limit = Math.min(n - 3, c.frame + frames(800));
+    for (; k < limit; k++) {
+      const v = meanDb(k, k + 2);
+      if (v - floorAt[at(k)] < 10 || v > lowest + 2) break;
+      lowest = Math.min(lowest, v);
+    }
+    return Math.max(c.end, k);
   }
 
   /** No loud non-clap sound near the pair, and the room not busy around it. */
   function quietAround(p) {
-    if (p.broken) return false;
-    const own = (f) => (f >= p.a.frame - 2 && f <= p.a.frame + late1) || (f >= p.b.frame - 2 && f <= p.b.frame + late1);
-    for (const f of others) if (f > p.a.frame - iso && f <= p.b.frame + iso && !own(f)) return false;
-    // Busy: frames well above the floor, outside the two claps' own 120 ms.
-    const from = p.a.frame - iso;
-    const to = p.b.frame + iso;
+    const endA = echoEnd(p.a);
+    const endB = echoEnd(p.b);
+    const own = (f) => (f >= p.a.frame - 2 && f <= endA) || (f >= p.b.frame - 2 && f <= endB);
+    const from = p.a.frame - p.before;
+    const to = p.b.frame + p.after;
+    for (const f of others) if (f > from && f <= to && !own(f)) return false;
+    // Busy: frames well above the floor, outside the two claps' own echoes.
     let busy = 0;
     let count = 0;
     for (let f = from; f <= to; f++) {

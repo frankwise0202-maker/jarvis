@@ -104,18 +104,22 @@
 //                           the app opens Standby, free.
 //   wake                  the wake routine (v7.4, SPEC §22), when Voice Mode is opened by two claps or
 //                           "Hey Jarvis" in Standby: { trigger: 'clap'|'word', name() -> the greeting
-//                           name, offer() -> Promise<{ artist, segment, playText } | null> (the Music
-//                           card offered: Apple Music, free), briefing() -> { text, mode, part } | null,
+//                           name, offer() -> Promise<{ artist, segment, playText, found } | null> (the
+//                           Music card offered: Apple Music, free; `found` is shown again on "yes",
+//                           without a second search), briefing() -> { text, mode, part } | null,
 //                           returnToStandby() -> boolean (Settings), canSleep() -> boolean (no preview
 //                           playing), onAwake({ line, hidden }) }. The core boots with the wake sound
 //                           while the microphone listens a moment for "wake up", "daddy's home", "I'm
 //                           home" ("Welcome home, Frank."); otherwise the greeting follows the time of
-//                           day ("Good evening, Frank."). Then one line offers music and the briefing
-//                           and Jarvis listens (the v7.2 rules): "yes" / "play it" shows the Music card
-//                           (a tap plays it), "brief me" runs the briefing, "no" / "go back to sleep"
-//                           returns to Standby; anything else is an ordinary question. The routine
-//                           itself never asks Claude anything. After the conversation (silence, Exit)
-//                           Voice Mode goes back to Standby when returnToStandby() says so.
+//                           day ("Good evening, Frank."). Woken by "Hey Jarvis", a question said right
+//                           away is asked; woken by claps, other words then are not sent anywhere (the
+//                           claps may have been something else, the words the room's talk): he greets.
+//                           Then one line offers music and the briefing and Jarvis listens (the v7.2
+//                           rules): "yes" / "play it" shows the Music card (a tap plays it), "brief me"
+//                           runs the briefing, "no" / "go back to sleep" returns to Standby; anything
+//                           else is an ordinary question. The routine itself never asks Claude
+//                           anything. After the conversation (silence, Exit) Voice Mode goes back to
+//                           Standby when returnToStandby() says so.
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -129,7 +133,7 @@ import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
-import { openingIntent, standbyCommand, routineReply, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
+import { openingIntent, standbyCommand, routineReply, answerParts, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 
 export { splitSentences };
 
@@ -2516,12 +2520,13 @@ function createVoiceMode(opts) {
    * Apple Music (free, no turn): "play Back in Black" finds it and shows the Music card here; Jarvis
    * says one short line ("Here's Back in Black by AC/DC. Tap Open in Apple Music to play it.") and
    * then waits for a tap. "Stop the music" stops a preview. True when the words were a music command.
+   * `extra.found`: what was already found for them (the wake routine's offer): no second search.
    */
-  function musicCommand(text) {
+  function musicCommand(text, extra = null) {
     if (!music || typeof music.command !== 'function') return false;
     let res = null;
     try {
-      res = music.command(text);
+      res = extra ? music.command(text, extra) : music.command(text);
     } catch (err) {
       console.warn('[voice] the music command failed', err);
       res = null;
@@ -2916,6 +2921,13 @@ function createVoiceMode(opts) {
         greetWake(false);
         return true;
       }
+      // Woken by two claps, other words are not a question for Jarvis: the "claps" may have been
+      // something else (a beat, a bang) and the room's own talk goes nowhere. He greets; once he is
+      // awake, what the owner asks is asked.
+      if (wake.trigger !== 'word') {
+        greetWake(false);
+        return true;
+      }
       // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question.
       S.wake = null;
       clearTimeout(W.timer);
@@ -2930,7 +2942,7 @@ function createVoiceMode(opts) {
       S.wake = null;
       if (reply === 'music') {
         const offer = W.offerData;
-        if (offer && offer.playText && musicCommand(offer.playText)) return true;
+        if (offer && offer.playText && musicCommand(offer.playText, offer.found ? { found: offer.found } : null)) return true;
         showCaption('quote', `“${words}”`);
         speakAck('I couldn’t find the music just now.');
         return true;
@@ -2948,6 +2960,18 @@ function createVoiceMode(opts) {
       }
       goToStandby(words, { offered: true });
       return true;
+    }
+    // "Yes, play some AC/DC" / "No, play Highway to Hell": what follows the answer word is a music
+    // command (local and free); the offer's own card when it names the music offered.
+    for (const words of readings) {
+      const p = answerParts(words);
+      if (!p || !/^(?:play|put on)\b/.test(p.rest)) continue;
+      const offer = W.offerData;
+      const squash = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const same = p.answer !== 'no' && !!offer && !!offer.playText && !!squash(offer.artist) && squash(p.rest).includes(squash(offer.artist));
+      S.wake = null;
+      if (musicCommand(same ? offer.playText : p.rest, same && offer.found ? { found: offer.found } : null)) return true;
+      S.wake = W; // not a music command after all
     }
     S.wake = null;
     return false;

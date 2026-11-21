@@ -7,13 +7,20 @@
 //                                "home"), 'sleep', 'greet' (a fragment of one or two words: "up",
 //                                "Jarvis") or 'ask' (a real question: the routine steps aside)
 //   standbyCommand(text)          "standby", "Jarvis, standby", "go to sleep", "go back to sleep",
-//                                "sleep mode": the whole sentence, nothing else in it
+//                                "sleep mode": the whole sentence, nothing else in it (an answer
+//                                word before it and thanks after it allowed: "No thanks, go back to
+//                                sleep", "Okay, standby")
 //   routineReply(text)            after "Shall I put on some AC/DC? Or I can run your evening
 //                                briefing.": 'music' | 'brief' | 'sleep' | null (anything else is
-//                                a question for Jarvis)
+//                                a question for Jarvis). Whole sentences, or in pieces: an answer
+//                                word (yes / no / sure / okay …) and what follows it ("No, go back to
+//                                sleep", "Yes, please do", "Sure, run the briefing"), thanks aside
+//   answerParts(text)             { answer: 'yes' | 'no', rest } for such a reply, else null
 //   greetingLine({ now, name, home })   "Welcome home, Frank." | "Good evening, Frank."
 //   suggestionLine({ artist, part })    "Shall I put on some AC/DC? Or I can run your evening briefing."
-//   partOfDayFor(date)            'morning' | 'afternoon' | 'evening' (the briefing protocol's)
+//   partOfDayFor(date)            'morning' (0–11) | 'afternoon' (12–16) | 'evening' (17–23): one
+//                                rule for the greeting, the offer and the briefing itself (the
+//                                briefing protocol's and Presence's split: after midnight is morning)
 
 /** Lowercase words: apostrophes kept inside words (curly ones made straight), the rest dropped. */
 export function normalizeWords(text) {
@@ -75,15 +82,45 @@ export function openingIntent(text, { name = '' } = {}) {
 
 const STANDBY = /^(?:(?:go |go back |back )?to sleep|go back to sleep|sleep|sleep mode|standby|stand by|standby mode|go to standby|go into standby|standby please|you can go to sleep|you can sleep now|time to sleep|goodnight|good night)$/;
 
-/** "standby", "go to sleep", "go back to sleep" and nothing else (a question about sleep is not it). */
+/**
+ * "standby", "go to sleep", "go back to sleep" and nothing else (a question about sleep is not it),
+ * also after an answer word or before thanks: "No thanks, go back to sleep", "Okay, standby".
+ */
 export function standbyCommand(text) {
   const t = core(text);
-  return !!t && STANDBY.test(t);
+  if (!t) return false;
+  if (STANDBY.test(t)) return true;
+  const p = answerParts(text);
+  return !!p && !!p.rest && STANDBY.test(p.rest);
 }
 
 const YES = /^(?:yes|yeah|yep|yup|sure|please|yes please|ok|okay|alright|all right|absolutely|of course|definitely|go ahead|do it|go for it|sounds good|sounds great|perfect|why not|let's do it|let's hear it|let's go|i'd love that|that'd be great|that would be great|play it|play that|play them|put it on|put them on|put that on|hit it|music|the music|play music|play some music|some music|the first one|yes play it|yeah play it|sure play it|please play it)$/;
 const BRIEF = /^(?:brief me|briefing|the briefing|my briefing|a briefing|(?:the |my )?(?:morning|afternoon|evening|night) briefing|run (?:the |my )?(?:\w+ )?briefing|run it|do the briefing|give me (?:the |my |a )?briefing|give me the (?:news|rundown)|catch me up|update me|(?:the )?briefing please|brief me please|yes brief me|the second one|the news|news)$/;
 const NO = /^(?:no|nope|nah|no thanks|no thank you|not|not now|not right now|maybe later|later|never mind|nevermind|nothing|nothing thanks|that's all|that's it|that will be all|that'll be all|i'm good|im good|i'm fine|all good|no i'm good|no that's all|go back to sleep|back to sleep|go to sleep|sleep|standby|stand by|goodnight|good night)$/;
+// What may follow a yes: "Yes, please do", "Yeah, sure", "Okay, go ahead".
+const AFFIRM = /^(?:please do|do|do it|please|sure|yes|yeah|go ahead|go for it|of course|why not|sounds good|sounds great|that sounds good|that'd be great|that would be great|i'd love that|let's do it|let's hear it|let's go|play it|play that|put it on|put that on|hit it|the music|music|some music|play music|play some music)$/;
+// The answer words a reply may start with (longest first) and the thanks it may end with.
+const ANSWER = /^(no thank you|no thanks|not right now|not tonight|not now|not yet|not really|maybe later|nope|nah|no|yes please|yes|yeah|yep|yup|sure|okay|ok|alright|all right|of course|absolutely|definitely|thank you|thanks)(?: (?:thanks|thank you|please))?(?: (.+))?$/;
+const THANKS = /(?:\s+(?:thanks|thank you|thanks a lot|thank you very much|cheers))+$/;
+const NO_WORDS = new Set(['no thank you', 'no thanks', 'not right now', 'not tonight', 'not now', 'not yet', 'not really', 'maybe later', 'nope', 'nah', 'no']);
+const THANKS_WORDS = new Set(['thank you', 'thanks']);
+
+/**
+ * A reply in pieces: the answer word it starts with and what follows, thanks and "Jarvis" aside.
+ * "No thanks, go back to sleep." → { answer: 'no', rest: 'go back to sleep' }; "Yes, please do" →
+ * { answer: 'yes', rest: 'do' }; "Thanks, go back to sleep" → { answer: 'thanks', rest: … }; null
+ * when it starts with no answer word.
+ */
+export function answerParts(text) {
+  const t = core(text)
+    .replace(THANKS, '')
+    .replace(/(?:\s+(?:jarvis|please))+$/, '')
+    .trim();
+  const m = ANSWER.exec(t);
+  if (!m) return null;
+  const rest = (m[2] || '').replace(/^(?:jarvis )+/, '').trim();
+  return { answer: NO_WORDS.has(m[1]) ? 'no' : THANKS_WORDS.has(m[1]) ? 'thanks' : 'yes', rest };
+}
 
 /** The owner's answer to the wake routine's offer: 'music' | 'brief' | 'sleep' | null. */
 export function routineReply(text) {
@@ -92,22 +129,32 @@ export function routineReply(text) {
   if (BRIEF.test(t)) return 'brief';
   if (NO.test(t)) return 'sleep';
   if (YES.test(t)) return 'music';
-  return null;
+  // In pieces: "No, go back to sleep", "Not now, thanks", "Yes, please do", "Sure, run the briefing".
+  const p = answerParts(text);
+  if (!p) return null;
+  const rest = p.rest.replace(/^just /, '');
+  if (!rest) return p.answer === 'no' ? 'sleep' : p.answer === 'yes' ? 'music' : null; // "Thank you." alone: unclear
+  if (BRIEF.test(rest)) return 'brief';
+  if (NO.test(rest) || STANDBY.test(rest)) return 'sleep';
+  if (p.answer !== 'no' && (YES.test(rest) || AFFIRM.test(rest))) return 'music';
+  return null; // "Yes, and what's the weather?", "No, play Highway to Hell": not the routine's
 }
 
-/** 'morning' (5–11), 'afternoon' (12–16), 'evening' (17–4): the briefing protocol's times. */
+/**
+ * 'morning' (0–11), 'afternoon' (12–16), 'evening' (17–23): the briefing protocol's split (its own
+ * prompt opens "Good morning" before noon) and Presence's. The greeting and the offer both use it,
+ * so after midnight Jarvis says "Good morning … your morning briefing", as the briefing will.
+ */
 export function partOfDayFor(date = new Date()) {
   const h = date instanceof Date && !Number.isNaN(date.getTime()) ? date.getHours() : 12;
   return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
 }
 
-/** The greeting: "Welcome home, Frank." after a home phrase, else by the time of day. */
+/** The greeting: "Welcome home, Frank." after a home phrase, else by the time of day (partOfDayFor). */
 export function greetingLine({ now = new Date(), name = '', home = false } = {}) {
   const who = String(name || '').trim() || 'sir';
   if (home) return `Welcome home, ${who}.`;
-  const h = now instanceof Date && !Number.isNaN(now.getTime()) ? now.getHours() : 12;
-  const part = h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : 'evening';
-  return `Good ${part}, ${who}.`;
+  return `Good ${partOfDayFor(now)}, ${who}.`;
 }
 
 /** The offer: music (when Apple Music found something) and the briefing for the time of day. */

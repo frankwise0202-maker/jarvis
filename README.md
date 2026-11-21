@@ -257,32 +257,44 @@ he wakes up, greets you and offers some music or your briefing.
 
 - **Standby** is a dim clock for a charger or a desk: the time, the date, the core breathing
   slowly and one line about what's going on (black, so an iPhone's screen is mostly off). It keeps
-  the screen on. Open it with **Standby** on the home screen, by long-pressing the core
+  the screen on, and only its own slow core moves: the app underneath rests until you leave.
+  Open it with **Standby** on the home screen, by long-pressing the core
   (right-click on a computer) → **Standby**, with Settings → Voice → Wake Jarvis → **Go to
   Standby**, or say "Jarvis, standby" or "go to sleep" in Voice Mode (typing "standby" in the chat
   works too). Tap anywhere (or press Esc) to leave it.
 - **While Standby is open, Jarvis listens on this device only.** The red pill at the bottom says
   exactly what for: **LISTENING ON THIS DEVICE · TWO CLAPS · “HEY JARVIS”**. The sound is checked on
   your device and thrown away; nothing is recorded, and nothing is sent anywhere until he wakes.
-  Leave Standby and the microphone is off.
+  Leave Standby and the microphone is off. Whenever the microphone is on, the pill says so.
 - **Clap twice** (or snap your fingers twice): two sharp claps about half a second apart (anything
-  from a sixth of a second to almost a second works). One clap, three claps, knocking, footsteps, a
-  door, music or talking don't wake him. Clapping softly across a noisy room? Settings → Voice →
-  Wake Jarvis → **Clap sensitivity** → **High**; if something else keeps waking him, **Low**.
+  from a sixth of a second to almost a second works). He wakes about a second after your second
+  clap: first he makes sure no third one follows. One clap, three claps in a row, clapping along to
+  music or a metronome, knocking, footsteps, a door, music or talking don't wake him. **From across
+  the room** works too: he listens for the clap's sharp start and then for the room's echo dying
+  away, so the echo of a big room doesn't hide it (tested with simulated rooms, up to about 3 m in
+  a living room). **Clap sensitivity** (Settings → Voice → Wake Jarvis) is only about loudness, not
+  distance: **High** hears softer claps or claps over a noisy room; if something else keeps waking
+  him, **Low**.
 - **"Hey Jarvis"**: turn on Settings → Voice → Wake Jarvis → **Say "Hey Jarvis"**. The first time
   Standby opens with it on, it downloads about **15 MB** (Standby shows how far it got; two claps
   work meanwhile); after that it works offline. Say it the way you'd call someone, then a short
-  pause.
+  pause. With **Clap twice** off, the microphone stays off until "Hey Jarvis" is ready (the pill
+  says **GETTING “HEY JARVIS” READY · MICROPHONE OFF**), and if the download fails it stays off.
 - **When he wakes**: the core boots with a chime. If you go on talking ("wake up, daddy's home",
   "Frank's home", "I'm home") he says **"Welcome home, Frank."**; otherwise he greets you for the
-  time of day ("Good evening, Frank."). Then he offers: "Shall I put on some AC/DC? Or I can run
-  your evening briefing." with an **Apple Music card** (the artist you played lately, else Back in
-  Black by AC/DC) and listens:
-  - **"Yes"** (or "play it", "sure"): the card is ready for you: tap **Open in Apple Music** (or
-    **Preview** to hear a clip here). Jarvis can't start the music app by himself.
-  - **"Brief me"**: he runs the briefing for the time of day and reads it to you (that's the first
-    thing that costs anything, like any briefing).
-  - **"No"** or **"go back to sleep"**: "Very good, Frank." and back to Standby.
+  time of day ("Good evening, Frank."; after midnight it's "Good morning", like the briefing). After
+  "Hey Jarvis" you can ask a question straight away; after two claps, anything else said in that
+  moment isn't sent anywhere (it may just be people talking in the room): he greets you, then
+  you ask. Then he offers: "Shall I put on some AC/DC? Or I can run your evening briefing." with an
+  **Apple Music card** (the artist you played lately, else Back in Black by AC/DC; on iPhone too)
+  and listens:
+  - **"Yes"** (or "play it", "sure", "yes, please do"): the card is ready for you: tap **Open in
+    Apple Music** (or **Preview** to hear a clip here). Jarvis can't start the music app by himself.
+  - **"Brief me"** (or "sure, run the briefing"): he runs the briefing for the time of day and
+    reads it to you (that's the first thing that costs anything, like any briefing).
+  - **"No"** or **"go back to sleep"** (or "no thanks, go back to sleep", "not now, thanks"):
+    "Very good, Frank." and back to Standby.
+  - "Yes, play some Miles Davis" or "no, play Highway to Hell" finds that music instead (free).
   - Anything else is a normal question (with the usual 2-second check).
 - **Afterwards** he goes back to Standby by himself: when you tap **Exit**, say "go back to sleep",
   or after a quiet minute. Turn that off with Settings → Voice → Wake Jarvis → **Return to standby
@@ -306,9 +318,12 @@ he wakes up, greets you and offers some music or your briefing.
   licensed **CC BY-NC-SA 4.0** (free for personal, non-commercial use; see
   `public/models/openwakeword/LICENSE.md`). They run on your device with ONNX Runtime, the same
   engine as the natural voice.
-- **Honest limits**: the clap detector and the wake word were tested with synthetic claps and
-  synthetic voices (and the wake word with the real models), not yet in your room with your voice.
-  If he misses you, raise the sensitivity or clap closer; if he wakes by himself, lower it.
+- **Honest limits**: the clap detector and the wake word were tested with synthetic claps (near,
+  and from across simulated rooms) and synthetic voices (and the wake word with the real models),
+  not yet in your room with your voice. Two sharp, noisy bangs about half a second apart with
+  silence around them (two snare-drum hits, say) sound like two claps to him. If he misses soft
+  claps, try **High**; if he misses you from far away, clap sharper or say "Hey Jarvis"; if he
+  wakes by himself, choose **Low**.
 
 ### The new look: Jarvis at a glance
 
@@ -462,7 +477,9 @@ Type it or say it, in the chat or in Voice Mode (said, it acts at once, without 
   album Rumours", "find the song Yesterday", "open Thriller in Apple Music": Jarvis finds it in
   Apple Music at once and shows a **Music card**: the artwork, the title, the artist, the album
   and year, and a few other versions to pick from ("Also found"). "Play some Queen" shows Queen's
-  own top songs (not songs by other artists where Queen is only a guest).
+  own top songs (not songs by other artists where Queen is only a guest). This works on iPhone
+  too: Apple sends some kinds of music search from an iPhone straight to the Music app, where Jarvis
+  can't see the answer, so he asks Apple the way it answers a web page.
 - **Open in Apple Music** plays the whole song or album in Apple's Music app (on an iPhone it opens
   the Music app; elsewhere Apple Music on the web, where you can sign in). On a Mac there is also
   **Open in Music app**, which opens it straight in the Music app (Chrome asks once whether it may).
@@ -722,11 +739,14 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
 - **Standby (Wake Jarvis).** While Standby is open, the microphone listens on this device for two
   claps and, if you turned it on, "Hey Jarvis". The sound is checked on the device and thrown
   away: nothing is recorded or sent, and the red **LISTENING ON THIS DEVICE** pill shows it the
-  whole time. Leaving Standby turns the microphone off. On a phone it also stops while Jarvis is
-  not on screen; on a Mac it keeps listening in a background tab while Standby is open. When he
-  wakes, Voice Mode takes over as usual (your browser's speech service hears what you say next).
-  The "Hey Jarvis" models download once from the Jarvis site itself, and what you played lately
-  (for the music he offers) stays on this device.
+  whole time (the pill says whenever the microphone is on; with only "Hey Jarvis" on, the
+  microphone stays off until it is ready). Leaving Standby turns the microphone off. On a phone it
+  also stops while Jarvis is not on screen; on a Mac it keeps listening in a background tab while
+  Standby is open. When he wakes, Voice Mode takes over as usual (your browser's speech service
+  hears what you say next); woken by claps, words heard in that first moment are not sent to
+  Claude (they may be the room talking). The "Hey Jarvis" models download once from the Jarvis
+  site itself, and what you played lately (for the music he offers, with Apple's ids for it)
+  stays on this device.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
@@ -823,8 +843,8 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
 | **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
-| **Two claps don't wake Jarvis** | Check that Standby's pill says **LISTENING ON THIS DEVICE · TWO CLAPS**. Clap sharply, twice, about half a second apart; or Settings → Voice → Wake Jarvis → **Clap sensitivity** → **High**. On iPhone Jarvis must be open on screen. |
-| **Jarvis wakes up by himself** | Settings → Voice → Wake Jarvis → **Clap sensitivity** → **Low**, or turn off **Clap twice** and use "Hey Jarvis". |
+| **Two claps don't wake Jarvis** | Check that Standby's pill says **LISTENING ON THIS DEVICE · TWO CLAPS**. Clap sharply, twice, about half a second apart, then wait a second (he checks that no third clap follows). Soft claps or a noisy room: Settings → Voice → Wake Jarvis → **Clap sensitivity** → **High**. From far away the sensitivity doesn't help: clap sharper, or say "Hey Jarvis". On iPhone Jarvis must be open on screen. |
+| **Jarvis wakes up by himself** | Settings → Voice → Wake Jarvis → **Clap sensitivity** → **Low**, or turn off **Clap twice** and use "Hey Jarvis". Woken by claps, he never sends what the room is saying anywhere; he greets you and waits. |
 | **"Hey Jarvis" doesn't wake him** | Wait until Standby's pill names “HEY JARVIS” (the first time it downloads about 15 MB). Say "Hey Jarvis" clearly and pause; closer to the device works better, and loud music in the room makes it harder. Two claps always work too. |
 | **Jarvis stops listening before I have finished** | Settings → Voice → **Wait after I stop talking** → **Long** (2.6 seconds). Pausing on "and" or "um" already gives you a second more. In Voice Mode you can also just keep talking while your words are shown: they are added. |
 | **Jarvis hears the wrong words** | Check Settings → Voice → **Listening language**: Automatic uses your device's language; pick yours if you speak another language or accent. Fix a word before it is sent: tap the words, or say "no, I said …". Speaking a little closer to the phone helps too. |

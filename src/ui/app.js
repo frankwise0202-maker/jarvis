@@ -65,7 +65,7 @@ import { cameraPermission, cameraSupported, screenLookSupported } from '../platf
 import { base64ByteLength } from './attachments.js';
 import { matchMusicCommand } from '../lib/music-commands.js';
 import { describeItem, musicExportItem, musicLine } from '../lib/music.js';
-import { searchMusic } from '../platform/music.js';
+import { searchMusic, topSongs, lookupMusic } from '../platform/music.js';
 import { appendMusicTurn, musicSegment } from '../engine/music.js';
 import { createMusicPlayer } from './music/player.js';
 import { createMusicCardView, isMacDevice } from './music/card.js';
@@ -656,9 +656,10 @@ export async function startApp(rootEl) {
    * (the owner's words, Jarvis's line and the Music card; src/engine/music.js appendMusicTurn), in
    * the open conversation or a new one. "Stop the music" stops a preview. Returns null (not a music
    * command, or this chat is busy: the words wait like any message) or { handled: true, done }
-   * (done: Promise<{ ack, segment }>).
+   * (done: Promise<{ ack, segment }>). `found`: what was already found for these words (the wake
+   * routine's offer, looked up by id): shown without searching again.
    */
-  function musicCommand(text, { source = 'typed', spoken = false } = {}) {
+  function musicCommand(text, { source = 'typed', spoken = false, found = null } = {}) {
     const words = String(text || '').trim();
     const cmd = safe(() => matchMusicCommand(words), null);
     if (!cmd) return null;
@@ -689,7 +690,8 @@ export async function startApp(rootEl) {
     chat.scrollToBottom(false);
     if (!safe(() => isVoiceModeOpen(), false)) safe(() => sounds.cue('send'));
     if (state.layout === 'phone' && source === 'typed') composer.blur();
-    const done = searchMusic(cmd.query, { kind: cmd.kind, limit: 5, title: cmd.title, artist: cmd.artist })
+    const known = found && found.ok && Array.isArray(found.items) && found.items.length ? found : null;
+    const done = (known ? Promise.resolve(known) : searchMusic(cmd.query, { kind: cmd.kind, limit: 5, title: cmd.title, artist: cmd.artist }))
       .catch(() => ({ ok: false, error: 'network', message: 'Apple Music could not be reached.' }))
       .then((outcome) => {
         const filled = musicSegment(outcome, { query: cmd.query, kind: cmd.kind, local: true });
@@ -1342,7 +1344,7 @@ export async function startApp(rootEl) {
         },
         // Apple Music: "play Back in Black" said here is found at once (free) and shown as a Music card.
         music: {
-          command: (text) => musicCommand(text, { source: 'voice', spoken: true }),
+          command: (text, extra) => musicCommand(text, { source: 'voice', spoken: true, found: (extra && extra.found) || null }),
           card: (seg) => {
             const view = createMusicCardView({
               player: musicPlayer,
@@ -1470,17 +1472,25 @@ export async function startApp(rootEl) {
 
   /**
    * The routine's music: the artist the owner played lately (this device's history), else Back in
-   * Black by AC/DC, found in Apple Music (free). { artist, segment, playText } or null.
+   * Black by AC/DC, found in Apple Music (free) by Apple's ids where known: an iTunes lookup, which
+   * Apple never redirects (an iPhone's search for music can be sent to the Music app instead), then
+   * a search. { artist, segment, playText, found } or null; `found` is what "yes" shows.
    */
   async function wakeOffer() {
     const pick = safe(() => suggestedMusic(), null);
     if (!pick) return null;
     const kind = pick.fromHistory ? 'artist' : 'song';
-    const outcome = await searchMusic(pick.query, pick.fromHistory ? { kind, limit: 4 } : { kind, limit: 4, title: pick.title, artist: pick.artist }).catch(() => null);
-    if (!outcome || !outcome.ok || !Array.isArray(outcome.items) || !outcome.items.length) return null;
+    const usable = (o) => !!o && o.ok && Array.isArray(o.items) && o.items.length > 0;
+    let outcome = null;
+    if (pick.fromHistory && pick.artistId) outcome = await topSongs(pick.artistId, { limit: 4, artist: pick.artist }).catch(() => null);
+    else if (!pick.fromHistory && pick.ids.length) outcome = await lookupMusic(pick.ids, { query: pick.query }).catch(() => null);
+    if (!usable(outcome)) {
+      outcome = await searchMusic(pick.query, pick.fromHistory ? { kind, limit: 4 } : { kind, limit: 4, title: pick.title, artist: pick.artist }).catch(() => null);
+    }
+    if (!usable(outcome)) return null;
     const segment = musicSegment(outcome, { query: pick.query, kind, local: true });
     const playText = pick.fromHistory ? `play some ${pick.artist}` : `play ${pick.title} by ${pick.artist}`;
-    return { artist: pick.artist, segment, playText };
+    return { artist: pick.artist, segment, playText, found: outcome };
   }
 
   /** "Brief me": the briefing protocol for the time of day (a chat of its own; a paid request). */

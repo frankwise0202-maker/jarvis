@@ -19,6 +19,8 @@ const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 
 const pad = (x, before = 0.4, after = 0.9) => S.concat(S.silence(before), x, S.silence(after));
 const DOUBLE_CLAP = Array.from(pad(S.doubleClap({ gapMs: 420, at: 0.2, seconds: 1.0, peakDb: -10 })));
 const SINGLE_CLAP = Array.from(pad(S.clap({ peakDb: -10 })));
+// Clapping along to music: 8 claps 650 ms apart (about 92 bpm).
+const RHYTHM = Array.from(pad(S.beats(650, 8, (k) => S.clap({ seed: 300 + k, peakDb: -12 - (k % 2) })), 0.4, 1.0));
 const HEY_JARVIS = () => Array.from(pad(S.readWav(readFileSync(path.join(FIX, 'hey-jarvis-george.wav'))).samples, 0.6, 1.2));
 
 const play = (t, samples, page = t.page) => page.evaluate((x) => window.__fakeMic.play(x), samples);
@@ -36,16 +38,41 @@ async function standbyState(t, page = t.page) {
   });
 }
 
+/**
+ * 2D-canvas drawing calls per canvas (keyed by the nearest data-testid) over `ms`: which cores are
+ * still animating (stroke, fill, arc, drawImage are wrapped on the prototype once).
+ */
+async function countDraws(t, ms, page = t.page) {
+  await page.evaluate(() => {
+    if (!window.__draws) {
+      window.__draws = new Map();
+      const P = CanvasRenderingContext2D.prototype;
+      for (const name of ['stroke', 'fill', 'arc', 'drawImage']) {
+        const orig = P[name];
+        P[name] = function counted(...args) {
+          const c = this.canvas;
+          const host = c && typeof c.closest === 'function' ? c.closest('[data-testid]') : null;
+          const key = host ? host.getAttribute('data-testid') : '?';
+          window.__draws.set(key, (window.__draws.get(key) || 0) + 1);
+          return orig.apply(this, args);
+        };
+      }
+    }
+    window.__draws.clear();
+  });
+  await page.waitForTimeout(ms);
+  return page.evaluate(() => Object.fromEntries(window.__draws));
+}
+
 async function waitListening(t, page = t.page, timeout = 15000) {
   await t.waitFor(async () => (await standbyState(t, page))?.listening === 'live', { timeout, message: async () => `Standby to listen (${JSON.stringify(await standbyState(t, page))})` });
 }
 
-/** The greeting this page's clock gives (the routine follows the time of day). */
+/** The greeting this page's clock gives: one rule for the greeting and the briefing (before noon is morning). */
 async function expectedGreeting(t, name = 'Tony') {
   const h = await t.page.evaluate(() => new Date().getHours());
-  const part = h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : 'evening';
-  const brief = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
-  return { hello: `Good ${part}, ${name}.`, brief: `${brief} briefing` };
+  const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+  return { hello: `Good ${part}, ${name}.`, brief: `${part} briefing` };
 }
 
 async function setup(t, { speech = {}, micOptions = {}, settings = {}, device } = {}) {
@@ -111,6 +138,18 @@ export default [
         await t.checkNoHorizontalOverflow('standby portrait');
         await t.screenshot('1-standby-portrait');
       });
+      await t.step('the app underneath is covered: inert (a true dialog), and its cores stop drawing', async () => {
+        const covered = await t.page.evaluate(() => ({
+          app: !!document.querySelector('[data-testid="app"]').closest('[inert]'),
+          standby: !!document.querySelector('[data-testid="standby"]').closest('[inert]'),
+        }));
+        t.assert(covered.app && !covered.standby, `The app is inert under Standby, Standby is not (${JSON.stringify(covered)})`);
+        await t.page.waitForTimeout(300);
+        const draws = await countDraws(t, 1500);
+        const under = Object.keys(draws).filter((k) => k !== 'standby-core');
+        t.assert(!under.length, `Nothing under Standby keeps drawing (${JSON.stringify(draws)})`);
+        t.assert((draws['standby-core'] || 0) > 0, `Standby's own core breathes (${JSON.stringify(draws)})`);
+      });
       await t.step('landscape (an iPhone on its side on a charger)', async () => {
         await t.page.setViewportSize({ width: 844, height: 390 });
         await t.page.waitForTimeout(400);
@@ -131,6 +170,9 @@ export default [
         const m = await mic(t);
         t.assert(m.locks.held === 0, `The screen may sleep again (${JSON.stringify(m.locks)})`);
         await t.visible('composer-input', { message: 'The app is back' });
+        t.assert(!(await t.page.evaluate(() => !!document.querySelector('[data-testid="app"]').closest('[inert]'))), 'The app is usable again (not inert)');
+        const draws = await countDraws(t, 800);
+        t.assert((draws['hero-core'] || 0) > 0, `The Home's core animates again (${JSON.stringify(draws)})`);
       });
       await t.step('the core menu (long-press the core) has Standby', async () => {
         await t.page.locator(tid('hero-core')).click({ button: 'right' });
@@ -212,16 +254,21 @@ export default [
         t.assert(m.overlaps === 0, `Speech recognition never started while Standby's microphone was live (${m.overlaps})`);
         t.assert(m.live === 0, 'Standby released the microphone');
         t.assert(leadCount(t) === before, 'The wake routine asked Claude nothing');
-        t.assert(t.music.searches.some((u) => /back\+in\+black|back%20in%20black/i.test(u)), 'Apple Music was searched (free)');
+        // On an iPhone Apple sends a search for music to the Music app (the fake does too): the offer
+        // is looked up by its Apple id instead (free).
+        t.assert(t.music.searches.some((u) => /^https:\/\/itunes\.apple\.com\/lookup\?id=574050602&/.test(u)), `Back in Black was looked up by its Apple id (${t.music.searches.join(' ')})`);
+        t.assert(!t.music.redirected.length, `no search was sent to the Music app (${t.music.redirected.join(' ')})`);
         await t.screenshot('1-greeting');
       });
       await t.step('"yes" shows the Music card to tap (Open in Apple Music, Preview)', async () => {
         await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer' });
         await t.page.evaluate(() => window.__voice.say('Yes, please.'));
+        const asked = t.music.searches.length;
         await waitSaid(t, /Here.s Back In Black by AC\/DC\. Tap Open in Apple Music to play it\./);
         await t.waitFor(async () => (await voiceState(t)) === 'idle', { message: 'Jarvis to wait for a tap' });
         await t.visible('music-open', { message: 'Open in Apple Music is there to tap' });
         t.assert(leadCount(t) === before, 'Still no Claude request');
+        t.assert(t.music.searches.length === asked && !t.music.redirected.length, `"yes" shows what was found, without searching again (${t.music.searches.slice(asked).join(' ')})`);
         await t.screenshot('2-music');
       });
       await t.step('Exit: back to Standby (Return to standby after a conversation)', async () => {
@@ -235,12 +282,15 @@ export default [
   },
   {
     name: 'standby-welcome-home',
-    title: '"Wake up, daddy\'s home" right after the claps: "Welcome home, Tony." with the offer; "no thanks" → "Very good, Tony." and Standby again, listening',
+    title: '"Wake up, daddy\'s home" right after the claps: "Welcome home, Tony." with the offer (AC/DC, played lately, looked up by id); "No, go back to sleep." → "Very good, Tony." and Standby again, listening, nothing sent to Claude',
     device: 'iphone13',
     fakeMusic: true,
     timeout: 120000,
     async run(t) {
       await setup(t);
+      // AC/DC played lately on this phone (a preview: its Apple ids kept): the offer is their top
+      // songs, looked up by the artist's id.
+      await t.page.evaluate((at) => localStorage.setItem('jarvis.music.recent.v1', JSON.stringify([{ artist: 'AC/DC', title: 'Thunderstruck', kind: 'song', at, artistId: '5040714', id: '574043989' }])), Date.now());
       await enterStandby(t);
       await t.step('the claps, then "wake up, daddy\'s home"', async () => {
         await t.page.evaluate(() => window.__voice.queue.push({ parts: [{ at: 300, text: 'Wake up,' }, { at: 900, text: "daddy's home." }] }));
@@ -249,11 +299,12 @@ export default [
         const line = all.find((x) => /Welcome home/.test(x));
         t.assert(/^Welcome home, Tony\. Shall I put on some AC\/DC\? Or I can run your (morning|afternoon|evening) briefing\.$/.test(line), `"${line}"`);
         t.assert(leadCount(t) === 0, 'No Claude request');
+        t.assert(t.music.searches.some((u) => /^https:\/\/itunes\.apple\.com\/lookup\?id=5040714&entity=song&/.test(u)) && !t.music.searches.some((u) => u.includes('/search?')), `AC/DC's top songs, looked up by id (${t.music.searches.join(' ')})`);
         await t.screenshot('1-welcome-home');
       });
-      await t.step('"no thanks": back to sleep', async () => {
+      await t.step('"No, go back to sleep.": back to sleep, free', async () => {
         await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer' });
-        await t.page.evaluate(() => window.__voice.say('No thanks.'));
+        await t.page.evaluate(() => window.__voice.say('No, go back to sleep.'));
         await waitSaid(t, /^Very good, Tony\.$/);
         await backInStandby(t);
         const m = await mic(t);
@@ -422,6 +473,90 @@ export default [
         await setHidden(page, false);
         await waitListening(t, page);
         t.assert((await mic(t, page)).live === 1, 'Listening again');
+      });
+    },
+  },
+  {
+    name: 'standby-rhythm',
+    title: 'Clapping along (8 claps 650 ms apart, Low sensitivity) never wakes Jarvis; a real double clap then does, and the room talking at that moment is not sent anywhere: he greets and makes his offer, no Claude request',
+    device: 'iphone13',
+    fakeMusic: true,
+    timeout: 120000,
+    async run(t) {
+      await setup(t, { settings: { wakeClapSensitivity: 'low' } });
+      await enterStandby(t);
+      await t.step('a rhythm of claps does not wake him', async () => {
+        await play(t, RHYTHM);
+        await t.page.waitForTimeout(2600); // the last pair's quiet (1.5× its gap), judged
+        // Never woken at any point (a wake releases Standby's microphone and Jarvis speaks).
+        const m = await mic(t);
+        t.assert(m.stops === 0 && m.live === 1, `Standby's microphone was never handed over (${JSON.stringify(m)})`);
+        t.assert(!(await said(t)).length, `Jarvis said nothing (${JSON.stringify(await said(t))})`);
+        t.assert(!(await t.page.locator(tid('voice-mode')).count()), 'Voice Mode stays closed');
+        t.assert((await standbyState(t))?.listening === 'live', 'Standby still listens');
+      });
+      await t.step('a double clap wakes him; what the room is saying is not a question for Jarvis', async () => {
+        await t.page.evaluate(() => window.__voice.queue.push({ parts: [{ at: 300, text: 'so anyway I told him the meeting moved' }, { at: 900, text: 'so anyway I told him the meeting moved to Thursday at ten' }] }));
+        await wakeByClaps(t);
+        await waitSaid(t, /Shall I put on some/);
+        await t.page.waitForTimeout(2800); // the 2-second check would have sent it by now
+        const all = await said(t);
+        t.assert(!all.some((x) => /meeting|Thursday/i.test(x)), `Jarvis did not answer the room's talk (${JSON.stringify(all)})`);
+        t.assert(leadCount(t) === 0, `Nothing was sent to Claude (${leadCount(t)} request(s))`);
+        await t.screenshot('1-woken-room-talk');
+      });
+    },
+  },
+  {
+    name: 'standby-word-failed',
+    title: 'Claps off, "Hey Jarvis" on, its download failing: the microphone is never opened (nothing would listen), and the pill and hint say why',
+    device: 'iphone13',
+    timeout: 60000,
+    allowConsole: [/status of 503/],
+    async run(t) {
+      await setup(t, { settings: { wakeClap: false, wakeWord: true } });
+      await t.page.context().route('**/models/openwakeword/**', (route) => route.fulfill({ status: 503, body: 'down' }));
+      await (await t.visible('quick-key-standby')).click();
+      await t.visible('standby');
+      await t.waitFor(async () => (await standbyState(t))?.word === 'error', { timeout: 20000, message: async () => `the wake word to fail (${JSON.stringify(await standbyState(t))})` });
+      await t.page.waitForTimeout(1500);
+      const st = await standbyState(t);
+      const m = await mic(t);
+      t.assert(m.gets === 0 && m.all === 0, `The microphone was never opened (${JSON.stringify(m)})`);
+      t.assert(st.listening === 'waiting' && st.pill === 'NOT LISTENING', `The pill says it is not listening (${JSON.stringify(st)})`);
+      t.assert(/“Hey Jarvis” couldn’t load/.test(st.hint), `The hint says why (${st.hint})`);
+      await t.screenshot('1-word-failed');
+    },
+  },
+  {
+    name: 'standby-word-wait',
+    title: 'Claps off, "Hey Jarvis" on, its download slow: the microphone stays off while the pill says "Hey Jarvis" is getting ready, then opens once the real wake word is ready and the pill names it',
+    device: 'mac',
+    timeout: 180000,
+    async run(t) {
+      await setup(t, { settings: { wakeClap: false, wakeWord: true } });
+      await t.page.context().route('**/models/openwakeword/**', async (route) => {
+        await new Promise((r) => setTimeout(r, 2500));
+        await route.continue();
+      });
+      await (await t.visible('quick-key-standby')).click();
+      await t.visible('standby');
+      await t.step('while it downloads: no microphone', async () => {
+        await t.page.waitForTimeout(1200);
+        const st = await standbyState(t);
+        const m = await mic(t);
+        t.assert(st.listening === 'waiting' && st.word === 'loading', `Waiting for the wake word (${JSON.stringify(st)})`);
+        t.assert(st.pill === 'GETTING “HEY JARVIS” READY · MICROPHONE OFF', `The pill says so (${st.pill})`);
+        t.assert(/Getting “Hey Jarvis” ready…/.test(st.hint) && !/Two claps/.test(st.hint), `The hint (${st.hint})`);
+        t.assert(m.gets === 0 && m.all === 0, `The microphone is not held meanwhile (${JSON.stringify(m)})`);
+        await t.screenshot('1-word-waiting');
+      });
+      await t.step('ready: the microphone opens and listens for "Hey Jarvis" only', async () => {
+        await t.waitFor(async () => (await standbyState(t))?.word === 'ready', { timeout: 90000, message: async () => `the wake word to be ready (${JSON.stringify(await standbyState(t))})` });
+        await waitListening(t);
+        const st = await standbyState(t);
+        t.assert(st.pill === 'LISTENING ON THIS DEVICE · “HEY JARVIS”', `The pill names the word (${st.pill})`);
+        t.assert((await mic(t)).live === 1, 'One capture');
       });
     },
   },

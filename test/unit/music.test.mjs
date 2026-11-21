@@ -10,7 +10,7 @@ import {
   artworkLink, cleanMusicItem, cleanMusicItems, describeItem, formatDuration, itemSubtitle, musicAppLink, musicLine, musicLink, musicToolResult,
   parseItunesResults, previewLink, rankItems,
 } from '../../src/lib/music.js';
-import { clearMusicCache, deviceCountry, searchMusic, topSongs } from '../../src/platform/music.js';
+import { clearMusicCache, deviceCountry, lookupMusic, searchMusic, topSongs } from '../../src/platform/music.js';
 import { matchMusicCommand, normalizeMusicText } from '../../src/lib/music-commands.js';
 
 const SAMPLE = JSON.parse(readFileSync(new URL('./fixtures/itunes-back-in-black.json', import.meta.url), 'utf8'));
@@ -145,7 +145,53 @@ function fakeFetch(answers) {
   return fn;
 }
 
-test('searchMusic: the iTunes URL (media=music, entity, limit, country), no cookies or referrer, the cache', async () => {
+/**
+ * Apple's API as an iPhone meets it: a search that says media=music is answered with a 301 to
+ * musics://… (the Music app), which fetch cannot follow (in Safari, and the CSP blocks it): it
+ * rejects with a TypeError. Lookups and searches without media are answered.
+ */
+function appleForIphone(answer) {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    const u = new URL(url);
+    if (u.pathname === '/search' && u.searchParams.has('media')) throw new TypeError('Load failed');
+    return { ok: true, status: 200, text: async () => JSON.stringify(answer(u)) };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+test('an iPhone finds music: no search says media=music (Apple would send it to the Music app)', async () => {
+  clearMusicCache();
+  const fetch = appleForIphone((u) => (u.pathname === '/lookup' ? { results: [{ wrapperType: 'artist', artistId: 5040714, artistName: 'AC/DC' }, SAMPLE.results[0]] } : u.searchParams.get('entity') === 'musicArtist' ? { results: [{ wrapperType: 'artist', artistId: 5040714, artistName: 'AC/DC' }] } : SAMPLE));
+  for (const kind of ['song', 'album', 'artist', 'playlist']) {
+    const r = await searchMusic(`back in black ${kind}`, { kind, country: 'us', fetch });
+    assert.equal(r.ok, true, `${kind}: ${r.message || ''}`);
+  }
+  assert.ok(fetch.calls.length >= 5);
+  for (const { url } of fetch.calls) assert.ok(!new URL(url).searchParams.has('media'), `no media in ${url}`);
+});
+
+test('lookupMusic: songs and albums by Apple id, in the order asked; never a search', async () => {
+  clearMusicCache();
+  const fetch = appleForIphone(() => ({ results: [SAMPLE.results[1], SAMPLE.results[0]] }));
+  const r = await lookupMusic(['574050602', 897099334, 'junk', '574050602', '1'], { country: 'us', fetch });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.items.map((i) => i.id), ['574050602', '897099334'], 'in the order asked; unknown ids and repeats left out');
+  assert.equal(r.kind, 'song');
+  const u = new URL(fetch.calls[0].url);
+  assert.equal(u.origin + u.pathname, 'https://itunes.apple.com/lookup');
+  assert.deepEqual(Object.fromEntries(u.searchParams), { id: '574050602,897099334,1', country: 'us' });
+  assert.equal(fetch.calls[0].init.credentials, 'omit');
+  await lookupMusic(['574050602', 897099334, 'junk', '574050602', '1'], { country: 'us', fetch });
+  assert.equal(fetch.calls.length, 1, 'cached');
+  assert.deepEqual(await lookupMusic([], { fetch }), { ok: false, error: 'empty', message: 'Nothing to look up.' });
+  const offline = await lookupMusic(['1'], { country: 'gb', fetch: async () => { throw new TypeError('Failed to fetch'); } });
+  assert.equal(offline.ok, false);
+});
+
+test('searchMusic: the iTunes URL (entity, limit, country; no media), no cookies or referrer, the cache', async () => {
   clearMusicCache();
   const fetch = fakeFetch({ body: SAMPLE });
   const r = await searchMusic('Back in Black AC/DC', { kind: 'song', limit: 2, country: 'gb', fetch, title: 'back in black', artist: 'ac/dc' });
@@ -155,7 +201,7 @@ test('searchMusic: the iTunes URL (media=music, entity, limit, country), no cook
   assert.equal(r.country, 'gb');
   const u = new URL(fetch.calls[0].url);
   assert.equal(u.origin + u.pathname, 'https://itunes.apple.com/search');
-  assert.deepEqual(Object.fromEntries(u.searchParams), { term: 'Back in Black AC/DC', media: 'music', entity: 'song', limit: '7', country: 'gb' });
+  assert.deepEqual(Object.fromEntries(u.searchParams), { term: 'Back in Black AC/DC', entity: 'song', limit: '7', country: 'gb' });
   assert.equal(fetch.calls[0].init.credentials, 'omit');
   assert.equal(fetch.calls[0].init.referrerPolicy, 'no-referrer');
   // Cached: the same search again does not fetch.
