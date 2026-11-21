@@ -232,10 +232,12 @@ export function createStandby(deps = {}) {
     }
     listen = 'off';
     unmount();
-    try {
-      if (prevFocus && prevFocus.isConnected && typeof prevFocus.focus === 'function') prevFocus.focus({ preventScroll: true });
-    } catch {
-      /* ignore */
+    if (was === 'open') {
+      try {
+        if (prevFocus && prevFocus.isConnected && typeof prevFocus.focus === 'function') prevFocus.focus({ preventScroll: true });
+      } catch {
+        /* ignore */
+      }
     }
     if (!silent) {
       try {
@@ -319,8 +321,15 @@ export function createStandby(deps = {}) {
       }
       return;
     }
+    if (capture.context && capture.context.state !== 'running') {
+      // The browser wants a tap before its audio runs (iOS outside a gesture): the microphone is not
+      // held for nothing, and the pill asks for that tap.
+      capture.stop();
+      listen = 'needs-tap';
+      render();
+      return;
+    }
     listen = 'live';
-    if (capture.context && capture.context.state !== 'running') listen = 'needs-tap';
     connectWord();
     render();
   }

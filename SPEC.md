@@ -2795,7 +2795,8 @@ tracks stopped (E2E counts it). On a computer Voice Mode's mic bands (§17.2) ma
 before; on iOS they never do.
 
 **The wake routine** (Voice Mode option `wake`, §14.1; words in `src/lib/wake/phrases.js`):
-- Opening: status "Waking up…", `core.boot()` (1.6 s) and the `wake` sound (a swell and four bells; the one sound that
+- Opening: status "Waking up…", `core.boot()` (1.6 s; since v7.4 Voice Mode's orbit core assembles too, the mini orb
+  still never does; skipped under Reduced or Still motion) and the `wake` sound (a swell and four bells; the one sound that
   may play in a background tab: `play('wake', { hidden: true })`), while the microphone listens up to 2.4 s
   (`wakeWindow`) for the owner going on (`openingIntent`): a home phrase (`homePhrase`: "wake up", "daddy's home",
   "<name>'s home" from the owner's `userName`, "I'm home", "rise and shine", with "Jarvis", "hey", "honey", "okay" around
@@ -2824,7 +2825,7 @@ before; on iOS they never do.
   `{ wakeSession: true }`), "go back to sleep", 2.5 s after it stopped listening for silence, or after a minute idle
   (not while a preview plays: `wake.canSleep()`).
 
-**Settings** (Voice → **Wake Jarvis**, `settings-wake`; not in the demo or without speech recognition): `wakeClap`
+**Settings** (Voice → **Wake Jarvis**, `settings-wake`; not in the demo): `wakeClap`
 (default on: Standby itself is the opt-in), `wakeClapSensitivity` (`setting-wakeClapSensitivity`), `wakeWord` (default
 off; the label shows "free, downloads about 15 MB"; the help credits openWakeWord and its license), the greeting name
 (`setting-wakeName`, bound to `userName`), `wakeReturn` (default on), Go to Standby. The card says where it listens (on

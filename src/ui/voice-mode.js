@@ -868,6 +868,8 @@ function createVoiceMode(opts) {
     unlockSpeech();
     input.value = '';
     disarmSleep();
+    // Woken: a typed answer to the offer ("yes", "brief me", "no") is taken like a spoken one.
+    if (S.wake && wakeHeard([text])) return;
     if (canStandby() && standbyCommand(text)) {
       goToStandby(text);
       return;

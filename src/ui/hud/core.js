@@ -1410,30 +1410,35 @@ export function createCore(canvas, opts = {}) {
     const amp = corePulse();
     const thin = Math.max(1, R * 0.006);
     const orbitR = R * 0.7;
+    // The boot (v7.4: Voice Mode woken from Standby): the rings assemble outward like the hero's.
+    const rvBezel = reveal(BOOT_LAYER.bezel);
+    const rvTicks = reveal(BOOT_LAYER.ticks);
+    const rvData = reveal(BOOT_LAYER.data);
+    const rvScan = reveal(BOOT_LAYER.scanner);
 
     // Outer bezel with fine ticks.
     ctx.lineWidth = thin;
     ctx.globalAlpha = 0.1 * dim;
-    strokeCircle(ctx, cx, cy, R * 0.985);
-    ctx.globalAlpha = 0.2 * dim;
+    strokeCirclePart(ctx, cx, cy, R * 0.985, rvBezel);
+    ctx.globalAlpha = 0.2 * dim * rvTicks;
     strokeTicks(ctx, cx, cy, R * 0.985, rot[1], tickTable(90), R * 0.016, 15, R * 0.04, 0, 0, -3);
     ctx.lineWidth = Math.max(1.5, R * 0.014);
-    ctx.globalAlpha = 0.6 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.985, rot[0], ORBIT_BRACKETS);
+    ctx.globalAlpha = 0.6 * dim * rvBezel;
+    strokeArcs(ctx, cx, cy, R * 0.985, rot[0], ORBIT_BRACKETS, rvBezel);
 
     // Orbit track the agents ride on.
     ctx.lineWidth = thin;
     ctx.globalAlpha = 0.22 * dim;
-    strokeDashes(ctx, cx, cy, orbitR, orbitRot, 96, 1.5 * DEG);
+    strokeDashes(ctx, cx, cy, orbitR, orbitRot, 96, 1.5 * DEG, rvData);
 
     // Inner instrument rings.
     ctx.lineWidth = Math.max(1.2, R * 0.011);
-    ctx.globalAlpha = 0.6 * dim;
-    strokeArcs(ctx, cx, cy, R * 0.505, rot[2], ORBIT_SEG);
+    ctx.globalAlpha = 0.6 * dim * rvScan;
+    strokeArcs(ctx, cx, cy, R * 0.505, rot[2], ORBIT_SEG, rvScan);
     ctx.lineWidth = thin;
-    ctx.globalAlpha = 0.09 * dim;
+    ctx.globalAlpha = 0.09 * dim * rvScan;
     strokeCircle(ctx, cx, cy, R * 0.505);
-    ctx.globalAlpha = 0.28 * dim;
+    ctx.globalAlpha = 0.28 * dim * rvScan;
     strokeTicks(ctx, cx, cy, R * 0.44, rot[3], tickTable(72), R * 0.02, 6, R * 0.04, 0, 0, -3);
     if (cur.scan > 0.01) drawScanner(cx, cy, R * 0.585, Math.max(1.5, R * 0.016), 0.75 * cur.scan * dim, scanAngle);
 
@@ -1448,9 +1453,10 @@ export function createCore(canvas, opts = {}) {
     if (burstColor) drawBurst(cx, cy, R, R * 0.345, Math.max(2, R * 0.022));
 
     // Core: a luminous ring around a dark readout when there are agents; a hot core otherwise.
+    const light = bootAt >= 0 ? clamp01((clock - bootAt) / 0.3) : 1;
     ctx.globalCompositeOperation = 'lighter';
-    stateGlow('soft', cx, cy, R * 0.44 * (1 + 0.08 * amp), cur.glow * (0.45 + 0.4 * amp) * dim);
-    if (!readout) stateGlow('hot', cx, cy, R * 0.25 * (1 + 0.2 * amp), (0.85 + 0.15 * amp) * dim);
+    stateGlow('soft', cx, cy, R * 0.44 * (1 + 0.08 * amp), cur.glow * (0.45 + 0.4 * amp) * dim * light);
+    if (!readout) stateGlow('hot', cx, cy, R * 0.25 * (1 + 0.2 * amp), (0.85 + 0.15 * amp) * dim * light);
     ctx.globalCompositeOperation = 'source-over';
     if (readout) {
       const rc = R * 0.205;
@@ -1767,10 +1773,11 @@ export function createCore(canvas, opts = {}) {
   /**
    * The 1.6 s boot: the heart lights, the rings assemble outward and the sweep runs one fast
    * lap. Resolves true when it played to the end, false when skipped (skipBoot, reduced motion
-   * or "Still", a non-hero core). Never plays late: a core asleep at the time just resolves.
+   * or "Still", the mini orb). Never plays late: a core asleep at the time just resolves. The orbit
+   * core (Voice Mode) boots too since v7.4: Jarvis woken from Standby.
    */
   function boot() {
-    if (destroyed || mode !== 'hero' || stillMotion()) return Promise.resolve(false);
+    if (destroyed || mode === 'mini' || stillMotion()) return Promise.resolve(false);
     if (bootResolve) return Promise.resolve(false); // already booting: the first caller waits
     noteNews();
     bootAt = clock;

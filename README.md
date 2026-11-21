@@ -296,9 +296,10 @@ he wakes up, greets you and offers some music or your briefing.
 - **On a Mac in Chrome** Standby keeps listening while Jarvis is in a background tab or behind
   other windows (Chrome shows its red recording dot on the tab). Two claps there: you hear the
   chime and the greeting; switch to Jarvis (or click the notification, if you allowed
-  notifications in Settings → Appearance & sound) and answer. In our tests the listening itself
-  took well under 1% of one processor core and "Hey Jarvis" about 7% more (on a test computer, not
-  yet on a Mac).
+  notifications in Settings → Appearance & sound) and answer. In our measurements the clap
+  detector itself used well under 1% of one processor core and "Hey Jarvis" about 7% (on a Linux
+  test computer; Chrome's own microphone handling comes on top, and it hasn't been measured on a
+  Mac yet).
 - **Free**: Standby, the claps, "Hey Jarvis" and the wake routine never ask Claude anything; the
   Apple Music search is free. Only what you ask next costs.
 - **Credit**: "Hey Jarvis" uses the pre-trained models of **openWakeWord** by David Scripka,
@@ -763,8 +764,8 @@ Other websites (at other addresses) cannot read it.
   blueprints (nothing is deleted) and restores your preferences: name, style, voice (the natural
   voice's speaker too, though the natural voice stays off until you turn it on), theme and
   sounds, and Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
-  until you turn it on, because it is a download). It never changes your models, agent limits or
-  spending warning. The camera you chose in
+  until you turn it on, because it is a download). It never changes your models,
+  agent limits or spending warning. The camera you chose in
   Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
   comes back as stopped: it can't be resumed.
