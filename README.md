@@ -75,6 +75,10 @@ and your conversations are stored only on your device.
   play it in the Music app, or **Preview** to hear 30 seconds right in Jarvis. Ask for
   recommendations ("something for a rainy Sunday") and he picks real songs for you. No account and
   no cost. See [Apple Music](#apple-music).
+- **Wake him up.** Put Jarvis on **Standby** (a dim clock that keeps the screen on), clap twice
+  or say "Hey Jarvis", and he wakes up: "Welcome home, Frank. Shall I put on some AC/DC? Or I
+  can run your evening briefing." Listening happens on your device only, and it's free. See
+  [Wake Jarvis (Standby)](#wake-jarvis-standby).
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
@@ -245,6 +249,65 @@ you off.
   heard best is nothing else: not a command, and not about the hologram on screen ("clay Back in
   Black" → "play Back in Black"). In Chrome, Jarvis also tells the speech service which words to
   expect ("Jarvis", the commands and the hologram's parts).
+
+### Wake Jarvis (Standby)
+
+"Jarvis, wake up. Daddy's home." Put Jarvis on **Standby**, clap twice (or say "Hey Jarvis"), and
+he wakes up, greets you and offers some music or your briefing.
+
+- **Standby** is a dim clock for a charger or a desk: the time, the date, the core breathing
+  slowly and one line about what's going on (black, so an iPhone's screen is mostly off). It keeps
+  the screen on. Open it with **Standby** on the home screen, by long-pressing the core
+  (right-click on a computer) → **Standby**, with Settings → Voice → Wake Jarvis → **Go to
+  Standby**, or say "Jarvis, standby" or "go to sleep" in Voice Mode (typing "standby" in the chat
+  works too). Tap anywhere (or press Esc) to leave it.
+- **While Standby is open, Jarvis listens on this device only.** The red pill at the bottom says
+  exactly what for: **LISTENING ON THIS DEVICE · TWO CLAPS · “HEY JARVIS”**. The sound is checked on
+  your device and thrown away; nothing is recorded, and nothing is sent anywhere until he wakes.
+  Leave Standby and the microphone is off.
+- **Clap twice** (or snap your fingers twice): two sharp claps about half a second apart (anything
+  from a sixth of a second to almost a second works). One clap, three claps, knocking, footsteps, a
+  door, music or talking don't wake him. Clapping softly across a noisy room? Settings → Voice →
+  Wake Jarvis → **Clap sensitivity** → **High**; if something else keeps waking him, **Low**.
+- **"Hey Jarvis"**: turn on Settings → Voice → Wake Jarvis → **Say "Hey Jarvis"**. The first time
+  Standby opens with it on, it downloads about **15 MB** (Standby shows how far it got; two claps
+  work meanwhile); after that it works offline. Say it the way you'd call someone, then a short
+  pause.
+- **When he wakes**: the core boots with a chime. If you go on talking ("wake up, daddy's home",
+  "Frank's home", "I'm home") he says **"Welcome home, Frank."**; otherwise he greets you for the
+  time of day ("Good evening, Frank."). Then he offers: "Shall I put on some AC/DC? Or I can run
+  your evening briefing." with an **Apple Music card** (the artist you played lately, else Back in
+  Black by AC/DC) and listens:
+  - **"Yes"** (or "play it", "sure"): the card is ready for you: tap **Open in Apple Music** (or
+    **Preview** to hear a clip here). Jarvis can't start the music app by himself.
+  - **"Brief me"**: he runs the briefing for the time of day and reads it to you (that's the first
+    thing that costs anything, like any briefing).
+  - **"No"** or **"go back to sleep"**: "Very good, Frank." and back to Standby.
+  - Anything else is a normal question (with the usual 2-second check).
+- **Afterwards** he goes back to Standby by himself: when you tap **Exit**, say "go back to sleep",
+  or after a quiet minute. Turn that off with Settings → Voice → Wake Jarvis → **Return to standby
+  after a conversation**.
+- **The greeting** uses your name (Settings → Profile, also shown in Wake Jarvis as **Greeting
+  name**).
+- **On iPhone** Jarvis can listen only while he is open on screen, so leave him on Standby on the
+  charger (Standby keeps the screen on). If you switch apps or lock the phone, he stops listening
+  until you come back (the pill says **MICROPHONE PAUSED**). If Safari wants a tap before it
+  listens again, the pill says **TAP ONCE TO START LISTENING**: tap it.
+- **On a Mac in Chrome** Standby keeps listening while Jarvis is in a background tab or behind
+  other windows (Chrome shows its red recording dot on the tab). Two claps there: you hear the
+  chime and the greeting; switch to Jarvis (or click the notification, if you allowed
+  notifications in Settings → Appearance & sound) and answer. In our tests the listening itself
+  took well under 1% of one processor core and "Hey Jarvis" about 7% more (on a test computer, not
+  yet on a Mac).
+- **Free**: Standby, the claps, "Hey Jarvis" and the wake routine never ask Claude anything; the
+  Apple Music search is free. Only what you ask next costs.
+- **Credit**: "Hey Jarvis" uses the pre-trained models of **openWakeWord** by David Scripka,
+  licensed **CC BY-NC-SA 4.0** (free for personal, non-commercial use; see
+  `public/models/openwakeword/LICENSE.md`). They run on your device with ONNX Runtime, the same
+  engine as the natural voice.
+- **Honest limits**: the clap detector and the wake word were tested with synthetic claps and
+  synthetic voices (and the wake word with the real models), not yet in your room with your voice.
+  If he misses you, raise the sensitivity or clap closer; if he wakes by himself, lower it.
 
 ### The new look: Jarvis at a glance
 
@@ -655,6 +718,14 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   sent, and it stops when Voice Mode stops listening or you switch away (not used on iPhone yet).
 - **What needs you** (finished missions you haven't seen, briefings) and your HUD choices are
   stored on this device only; the HUD choices are included in backups.
+- **Standby (Wake Jarvis).** While Standby is open, the microphone listens on this device for two
+  claps and, if you turned it on, "Hey Jarvis". The sound is checked on the device and thrown
+  away: nothing is recorded or sent, and the red **LISTENING ON THIS DEVICE** pill shows it the
+  whole time. Leaving Standby turns the microphone off. On a phone it also stops while Jarvis is
+  not on screen; on a Mac it keeps listening in a background tab while Standby is open. When he
+  wakes, Voice Mode takes over as usual (your browser's speech service hears what you say next).
+  The "Hey Jarvis" models download once from the Jarvis site itself, and what you played lately
+  (for the music he offers) stays on this device.
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
@@ -691,7 +762,9 @@ Other websites (at other addresses) cannot read it.
 - **Import backup** adds the backup's conversations, memory notes and saved holograms and
   blueprints (nothing is deleted) and restores your preferences: name, style, voice (the natural
   voice's speaker too, though the natural voice stays off until you turn it on), theme and
-  sounds. It never changes your models, agent limits or spending warning. The camera you chose in
+  sounds, and Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
+  until you turn it on, because it is a download). It never changes your models, agent limits or
+  spending warning. The camera you chose in
   Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
   comes back as stopped: it can't be resumed.
@@ -712,8 +785,10 @@ Other websites (at other addresses) cannot read it.
   tip for getting a more natural voice on your device, the free **natural voice** (on or off, the
   speaker, Test, its download; the camera is chosen in Optics itself), the language you speak in
   (Automatic: your device's), how long Jarvis waits after you stop talking (Short, Normal, Long),
-  whether it shows what it heard for 2 seconds before sending it (or sends right away), and whether
-  Voice Mode keeps listening after each reply.
+  whether it shows what it heard for 2 seconds before sending it (or sends right away), whether
+  Voice Mode keeps listening after each reply, and **Wake Jarvis** (Standby: two claps and their
+  sensitivity, "Hey Jarvis" with its 15 MB download, the greeting name, back to Standby after a
+  conversation, and **Go to Standby**).
 - **Appearance & sound:** six color themes, the **HUD** (Calm or Full, motion, the start-up
   animation), sounds and their volume, vibration (Android), and a notification when a mission
   finishes while Jarvis is in the background.
@@ -747,6 +822,9 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
 | **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
+| **Two claps don't wake Jarvis** | Check that Standby's pill says **LISTENING ON THIS DEVICE · TWO CLAPS**. Clap sharply, twice, about half a second apart; or Settings → Voice → Wake Jarvis → **Clap sensitivity** → **High**. On iPhone Jarvis must be open on screen. |
+| **Jarvis wakes up by himself** | Settings → Voice → Wake Jarvis → **Clap sensitivity** → **Low**, or turn off **Clap twice** and use "Hey Jarvis". |
+| **"Hey Jarvis" doesn't wake him** | Wait until Standby's pill names “HEY JARVIS” (the first time it downloads about 15 MB). Say "Hey Jarvis" clearly and pause; closer to the device works better, and loud music in the room makes it harder. Two claps always work too. |
 | **Jarvis stops listening before I have finished** | Settings → Voice → **Wait after I stop talking** → **Long** (2.6 seconds). Pausing on "and" or "um" already gives you a second more. In Voice Mode you can also just keep talking while your words are shown: they are added. |
 | **Jarvis hears the wrong words** | Check Settings → Voice → **Listening language**: Automatic uses your device's language; pick yours if you speak another language or accent. Fix a word before it is sent: tap the words, or say "no, I said …". Speaking a little closer to the phone helps too. |
 | **I don't want the 2-second check** | Settings → Voice → **After I stop talking** → **Send right away**. A tap on the core while you speak also sends at once. |
@@ -801,8 +879,8 @@ binding contract for every module.
 ```text
 public/           static files copied into dist/ (index.html, manifest, service worker, icons)
 src/engine/       conversation engine: lead, agent missions, streaming, prompts, holograms and blueprints (visuals.js) (no DOM)
-src/platform/     settings, API key, IndexedDB history and the saved library, memory, spend, voice, Wikimedia photo search, PWA helpers
-src/lib/          safe streaming Markdown → DOM renderer; hologram and blueprint spec validators and the hologram command matcher; the screen-command matcher, "this" and placement for Screens (pure)
+src/platform/     settings, API key, IndexedDB history and the saved library, memory, spend, voice, Wikimedia photo search, PWA helpers; wake/ the Standby microphone (AudioWorklet), the "Hey Jarvis" worker and its client
+src/lib/          safe streaming Markdown → DOM renderer; hologram and blueprint spec validators and the hologram command matcher; the screen-command matcher, "this" and placement for Screens; wake/ the clap detector, the resampler, openWakeWord's pipeline and the wake routine's words (pure)
 src/ui/           app shell, chat, composer, sheets; src/ui/hud/ the HUD (Living Core, Mission Control); src/ui/presence/ the home screen, state word, Needs-you and awareness rail; src/ui/screens/ Screens (screen mode, floating panels); src/ui/hologram/ the 3D viewer (three.js, loaded on demand); src/ui/blueprint/ the blueprint viewer
 src/styles/       design tokens and styles
 scripts/          build.mjs, serve.mjs, deploy-pages.mjs, make-icons.mjs

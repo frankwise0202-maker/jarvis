@@ -159,6 +159,15 @@ Added in v7 (the Presence look, Screens, Optics and the natural voice; §17–§
 - Tests: `test/e2e/scenarios/{presence,screens,optics,optics-camera,natural-voice}.mjs`,
   `test/e2e/{optics-scene,camera-rig,voice-standin}.mjs`, `test/mock/{screens,optics}.mjs`.
 
+Added in v7.4 (Standby & wake; §22):
+- Pure: `src/lib/wake/{clap,resample,oww,tap,phrases,catalog}.js`.
+- Platform: `src/platform/wake/{capture,wake-worklet,wake-word,wake-word-engine,wake-word-worker}.js`,
+  `src/platform/music-recent.js`; the models `public/models/openwakeword/` (with `LICENSE.md`).
+- UI: `src/ui/standby.js`, `src/styles/standby.css`; the wake routine in `src/ui/voice-mode.js`; the Settings card in
+  `src/ui/settings.js`; the Home key and the core's menu in `src/ui/presence/`.
+- Tests: unit `wake.clap`, `wake.oww`, `wake.engine`, `wake.routine` (+ `wake.signals.mjs`, `wake.fixtures.mjs`,
+  `fixtures/wake/`); E2E `test/e2e/scenarios/standby.mjs` with `test/e2e/fake-mic.mjs`.
+
 Owners: **engine**, **platform**, **ui-shell**, **ui-hud**, **infra**. Files marked "lead, done"
 already exist. If you need something from another owner's module that is not in this spec,
 write against the contract here and mention the need in your report; do not edit their files.
@@ -911,7 +920,8 @@ Chat rendering and plain-text copy are unchanged.
   `isStandalone()`, `isIOS()` (incl. iPadOS desktop UA with touch), `isAndroid()`.
 - wakelock: `keepAwake(owner)` (Screen Wake Lock API, re-acquire on visibilitychange while held),
   `allowSleep(owner)`; reference-counted by owner (`'run'` while a reply runs, `'voice'` while Voice Mode is open,
-  `'speech'` while the chat reads a reply aloud). No-ops when unsupported.
+  `'speech'` while the chat reads a reply aloud, `'optics'` in Optics, `'standby'` while Standby is on screen, §22).
+  No-ops when unsupported.
 - pwa: `registerServiceWorker({ onUpdateReady })` — only if `'serviceWorker' in navigator` and secure
   context; register `./sw.js`; when a new worker is waiting, call `onUpdateReady(apply)` where
   `apply()` posts `{type:'SKIP_WAITING'}` and reloads on `controllerchange`.
@@ -2686,3 +2696,159 @@ play, Cancel brings it back; a camera command among the other readings beats a m
 13, the chat's mic: the same misheard "play" found at once with no countdown; a preview tapped during a question's
 countdown waits with the note, then plays; the hologram viewer's own mic pauses a playing preview and none starts
 while it listens: a 20-second fake clip, `musicPreviewSeconds`, so the pause is not its end).
+
+
+## 22. v7.4: Standby & wake ("Jarvis, wake up, daddy's home")
+
+The owner: "I want [it] always listening. So you know that iconic scene in Iron Man where he says, wake up, snap,
+snap, daddy's home … wake up, snap, snap. Or like, clap, clap. Or just like, wake up. So it can like wake up and like
+suggest like music or something." He uses an iPhone (the Home Screen app, often on a charger) and Chrome on a Mac.
+"Always listening" is scoped to an explicit **Standby** screen (research §2.4.11): nothing listens unless it is open,
+and nothing leaves the device until Jarvis is woken.
+
+**Standby** (`src/ui/standby.js`, `src/styles/standby.css`; `createStandby(deps)` → `{ enter(), resume(), exit(),
+trigger(kind), update(), isOpen(), isAwaiting(), release() }`):
+- Opened by the Home quick key `quick-key-standby` (not in the demo), the core's menu (long-press / right-click the hero
+  core: `core-legend-standby` under the legend), Settings → Voice → Wake Jarvis → **Go to Standby**
+  (`settings-standby`), "Jarvis, standby" / "go to sleep" / "go back to sleep" in Voice Mode (heard or typed, the whole
+  sentence: `standbyCommand`), and "standby" typed or dictated in the chat (the composer's `onCommand`). `enter()` runs
+  inside the tap where possible: it unlocks speech and creates/resumes the capture's AudioContext (iOS starts audio
+  only in a gesture); `resume()` (after the wake routine) needs no tap: the same context is kept.
+- The screen (`standby`, `data-listening` off | starting | live | paused | denied | no-mic | needs-tap | error,
+  `data-word` off | loading | connecting | ready | error, `data-clap` on | off, `data-dim` soft | deep, `data-word-ms`
+  the worker's inference time per frame): black, the hero core at 40 vmin in the core's new `standby` state (rings at
+  0.3×, a 10 s breath, dimmed; `createCore(…, { maxFps: 15 })`; resting, so Reduced motion dozes it), the time
+  (`standby-time`, Rajdhani 700 `--fs-hud-2xl`, the period small), the date (`standby-date`), the state word when not
+  STANDING BY (`standby-state`) and one status line, Presence's situation line (`standby-status`). Landscape (an
+  iPhone on its side, a laptop): the core beside the time. A dialog (`aria-modal`), the whole screen one control: a tap,
+  Escape, Enter or Space leaves (focus returns); other keys never reach the app's shortcuts. Burn-in: the stage moves by
+  2–3 px every 60 s (eight positions), and after 5 minutes the colors step down (`data-dim="deep"`; small text stays at
+  least 4.5:1 on black, the clock 3:1; no full-screen filters). Wake lock owner `'standby'` while it shows.
+- The pill (`standby-pill`, `data-tone` live | warn | off) says truthfully what the microphone is doing: `LISTENING ON
+  THIS DEVICE · TWO CLAPS · “HEY JARVIS”` (each only when it really runs: the word only once its worker has this
+  start's frames), `STARTING THE MICROPHONE…`, `MICROPHONE PAUSED`, `MICROPHONE BLOCKED · NOT LISTENING`, `NO
+  MICROPHONE · NOT LISTENING`, `TAP ONCE TO START LISTENING` (the context could not start without a tap: the next tap
+  starts it instead of leaving), `NOT LISTENING`. The hint (`standby-hint`) says how to wake him, the wake word's
+  download ("Getting “Hey Jarvis” ready… 40% Two claps work meanwhile."), or why it isn't listening; on iOS "He listens
+  only while he is open on screen."
+- The page hidden: on a phone (`pauseWhenHidden`: iOS, Android, a touch screen up to 1024 px) the microphone is
+  released at once and comes back when Jarvis is shown again; on a computer Standby keeps listening in a background tab
+  or window (the owner's Mac; Chrome shows its recording indicator). `pagehide` releases it everywhere.
+
+**The microphone** (`src/platform/wake/capture.js`, `createStandbyCapture({ onClap, onState })` → `{ prepare(),
+start({ clap, sensitivity, word }), configure(), wordPort(), stop(), close(), state, live, context }`): getUserMedia
+with echo cancellation, noise suppression and auto gain asked off (raw sound, as both detectors were made for) →
+`MediaStreamSource` → the AudioWorklet `jarvis-wake` (`assets/wake-worklet.js`, precached, under script-src 'self') →
+a silent gain to the destination (keeps the graph pulled). Without AudioWorklet a ScriptProcessor runs the same code
+on the page. `stop()` stops the tracks (the browser's indicator goes off) and keeps the AudioContext; `close()` ends
+it. The worklet (`src/lib/wake/tap.js`) resamples to 16 kHz (`src/lib/wake/resample.js`: windowed sinc, Blackman,
+8 zero crossings, 256 phases, unity DC gain), runs the clap detector and, with the wake word on, posts 1280-sample
+frames straight to the worker through a MessageChannel (the page's main thread never sees the audio). Nothing is
+recorded.
+
+**Two claps** (`src/lib/wake/clap.js`, `createClapDetector({ sampleRate: 16000, sensitivity })`, pure, 5 ms frames
+and 1 ms sub-frames): a transient is a local peak `rise` dB above the adaptive noise floor (fast down, ~3 s up) and
+above `minDb`; sudden (the 15–60 ms before it ≥ 12 dB quieter); short (15–50 ms after ≥ 9 dB down, 50–120 ms after ≥ 15
+dB down or within 9 dB of the floor, within 10 dB of its peak for 30 ms at most but 3 ms at least: a mouse, trackpad or
+key click is shorter); bright (≥ 33% of its energy above 1.5 kHz, ≤ 50% below 500 Hz: knocks, steps and slams are
+low). Two claps: transients 150–900 ms apart, within 12 dB of each other, no other transient in the 600 ms before the
+first or after the second (a third clap, applause, knocking, a beat), no other loud onset near them (ripples of a sound
+dying away do not count), and the room busy (≥ 10 dB above the floor) less than 35% of the time around them; reported
+600 ms after the second. Sensitivity (`wakeClapSensitivity`): low (rise 24 dB, ≥ -44 dBFS), normal (18, -50), high (13,
+-58). Its own compute cost: 0.25% of one core (resampler + detector, Node, 48 kHz input).
+
+**"Hey Jarvis"** (`src/lib/wake/oww.js`, `createWakePipeline({ melspec, embed, classify })`): openWakeWord v0.5.1's
+streaming pipeline, engine-agnostic: per 1280-sample frame (int16 scale) `melspectrogram.onnx` on the frame plus the 480
+samples before it (8 new mel frames; 5 the first time), `x / 10 + 2`, `embedding_model.onnx` on the last 76 mel frames
+(the buffer starts as ones, as in openWakeWord) → 96 numbers, `hey_jarvis_v0.1.onnx` on the last 16 embeddings → a
+score. Deliberate difference: no score until 16 real embeddings exist (openWakeWord seeds noise embeddings and zeroes
+its first 5); from there the numbers are openWakeWord's (unit test against a Python reference of its own code:
+max difference 6e-6). Detection (`WAKE_WORD`): ≥ 0.5 for 2 frames in a row (patience), then 2 s refractory.
+- The worker (`src/platform/wake/wake-word-worker.js` → `dist/wake/wake-word-worker.js`, a module Worker;
+  `wake-word-engine.js`): onnxruntime-web's WASM build (`onnxruntime-web/wasm`, the package and version the natural
+  voice uses; its binary `dist/wake/ort/ort-wasm-simd-threaded.wasm`, 11.1 MB, and its glue module `…mjs`, which this
+  build loads from the app's own origin), one thread, no proxy. The CSP approach is the natural voice's: a same-origin
+  module Worker takes its policy from its own response headers, so on GitHub Pages it compiles WebAssembly while the page
+  keeps script-src 'self' without 'wasm-unsafe-eval'; the page CSP is unchanged and no host is added. It fetches only
+  from its own origin (another is `blocked-host`), checks every file's size and SHA-256 (`WAKE_MODELS`, `WAKE_RUNTIME`
+  in `src/lib/wake/catalog.js`; `integrity` / `network` errors) before ONNX Runtime sees it, keeps them in Cache Storage
+  `wake-word-v1` under `<url>?sha256=<hash>` (outside `jarvis-…`: app updates keep it; a cached copy of the wrong size
+  is dropped), and reports progress over the whole download (`wakeWordDownloadBytes()`: about 15 MB). Frames are scored
+  in order; more than 10 behind (800 ms) are dropped and the pipeline starts again. `stats` every 10 s (average ms per
+  frame). Messages: in `init`, `audio` (+ port), `reset`, `clear`; out `progress`, `ready`, `detected`, `stats`,
+  `error`, `cleared`.
+- The page's client (`src/platform/wake/wake-word.js`, `createWakeWord()` → `{ start, attach(port), reset, stop, clear,
+  status, subscribe, onDetect }`); a localhost-only stand-in (`jarvis.dev.wakeWord = 'stub'`: ready after 300 ms,
+  `window.__jarvisWake.say()` "hears" it, its port drains the frames) for E2E.
+- Downloaded only when the owner turns `wakeWord` on and Standby opens (the service worker serves `wake/*.js` and
+  `wake/ort/*.mjs` cache-first in this build's cache; the binary and models are the worker's). Reset Jarvis deletes
+  `wake-word-v1`. The worker stays loaded while Standby waits for the routine (no second compile) and ends when
+  Standby is left.
+- Models: `public/models/openwakeword/{melspectrogram,embedding_model,hey_jarvis_v0.1}.onnx`, openWakeWord v0.5.1
+  release assets by David Scripka, unmodified, CC BY-NC-SA 4.0 (personal, non-commercial use; attribution in
+  `LICENSE.md` there, in the README and in Settings); copied to `dist/models/openwakeword/`, not precached.
+
+**Waking** (`standby.trigger('clap' | 'word')`, debounced 1.5 s): the microphone is released FIRST (its tracks stopped,
+the worker's port reset), Standby steps aside (its wake lock goes; Voice Mode holds `'voice'`), then the app opens Voice
+Mode without a tap: `openVoice({ wake })`. Never two captures at once: speech recognition starts only after Standby's
+tracks stopped (E2E counts it). On a computer Voice Mode's mic bands (§17.2) may still run beside recognition, as
+before; on iOS they never do.
+
+**The wake routine** (Voice Mode option `wake`, §14.1; words in `src/lib/wake/phrases.js`):
+- Opening: status "Waking up…", `core.boot()` (1.6 s) and the `wake` sound (a swell and four bells; the one sound that
+  may play in a background tab: `play('wake', { hidden: true })`), while the microphone listens up to 2.4 s
+  (`wakeWindow`) for the owner going on (`openingIntent`): a home phrase (`homePhrase`: "wake up", "daddy's home",
+  "<name>'s home" from the owner's `userName`, "I'm home", "rise and shine", with "Jarvis", "hey", "honey", "okay" around
+  them, the whole sentence) or what is left of one when the recognizer started late ("…daddy's home", "home": up to 5
+  words with "home") → "Welcome home, Frank."; `standbyCommand` → back to sleep; a fragment of one or two words ("up",
+  "Jarvis") or nothing heard (or the browser wants a tap: iOS) → the greeting by the time of day (`greetingLine`: Good
+  morning 5–11, afternoon 12–16, evening 17–4); a real question ends the routine and is asked. In a background tab
+  nothing listens: the greeting follows the boot.
+- The offer, made while he boots (`wake.offer()`, ≤ 2.5 s): the artist played lately on this device
+  (`src/platform/music-recent.js`, `jarvis.music.recent.v1`: noted when a local "play …" finds something, a preview
+  starts or the player's `onStart(item)`; newest first, one per artist, 120 days; not in backups), searched as an
+  artist (top songs), else "Back in Black" by AC/DC as a song: the Apple Music search (§20, free). Spoken in one line
+  with the card shown (`showMusicCard`, `noRelisten` cleared): "Good evening, Frank. Shall I put on some AC/DC? Or I can
+  run your evening briefing." (`suggestionLine`; without music "Shall I run your evening briefing?"). `wake.onAwake({
+  line, hidden })`: in a background tab the app shows a notification (attention's `missionFinished`, when allowed).
+- Then Jarvis listens (Continuous or not; in a background tab once he is on screen again) with the v7.2 rules, and
+  `routineReply` decides: "yes" / "play it" / "sure" … → the music command `playText` ("play Back in Black by AC/DC",
+  "play some <artist>": a local exchange in the chat, "Here's Back In Black by AC/DC. Tap Open in Apple Music to play
+  it.", then a tap; a preview plays in-app after a tap; "yes" with no music offered is the briefing); "brief me" /
+  "the briefing" / "catch me up" → `wake.briefing()`: the briefing protocol for the time of day sent as a spoken Voice
+  Mode turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid request); "no" / "not
+  now" / "go back to sleep" … → "Very good, Frank." then Voice Mode closes into Standby (`onClose({ reason: 'standby'
+  })`); anything else → an ordinary turn (the 2-second check).
+- The routine itself never calls Claude (E2E: no lead request until "brief me").
+- After a woken conversation (`wakeSession`) Voice Mode goes back to Standby when `wakeReturn` is on: on Exit (onClose
+  `{ wakeSession: true }`), "go back to sleep", 2.5 s after it stopped listening for silence, or after a minute idle
+  (not while a preview plays: `wake.canSleep()`).
+
+**Settings** (Voice → **Wake Jarvis**, `settings-wake`; not in the demo or without speech recognition): `wakeClap`
+(default on: Standby itself is the opt-in), `wakeClapSensitivity` (`setting-wakeClapSensitivity`), `wakeWord` (default
+off; the label shows "free, downloads about 15 MB"; the help credits openWakeWord and its license), the greeting name
+(`setting-wakeName`, bound to `userName`), `wakeReturn` (default on), Go to Standby. The card says where it listens (on
+iPhone only while open on screen; on a Mac in a background tab too). Backups carry all of them; an import restores
+`wakeClap`, `wakeClapSensitivity`, `wakeReturn` (and `userName`) but never switches `wakeWord` on (a download, like
+`naturalVoice`).
+
+**Measured** (this Linux VM, headless Chromium, `nice`): the clap path's compute 0.25% of one core; the wake word 5.6 ms
+of inference per 80 ms frame (about 7% of one core); the whole browser 22% (claps) / 31% (claps + word) with the page
+hidden, mostly the fake audio devices and two AudioContexts of the test rig; on screen the 15 fps core adds software
+rendering (SwiftShader). Not measured on a Mac or an iPhone.
+
+**Tests.** Unit `wake.clap` (double claps 160–880 ms apart, soft, loud, uneven, a noisy and a reverberant room, snaps;
+one, three, too close, too far, applause; speech, music, drums at every sensitivity; knocks, steps, a door slam, mouse
+clicks, typing; music over claps; the floor adapting; sensitivity ordering; the recorded-style fixture
+`fixtures/wake/room-double-clap.wav` (a living room: room tone and hum, talking, two claps through a room response,
+talking) at 16 kHz and at 48 kHz through the resampler; the resampler's pitch, level and anti-aliasing), `wake.oww`
+(the pinned models, runtime and license; scores equal to the Python reference; "Hey Jarvis" by three Kokoro voices
+detected once each, also with room noise and babble 10 dB under it and through 48 kHz; no trigger on "Hey Travis", a
+question, noise, music, babble, claps, silence; patience and refractory), `wake.engine` (integrity, sizes, origins,
+the cache, progress, frames → one detection, clear; the page client), `wake.routine` (phrases, greeting, offer, what
+was played lately), `platform.storage` / `platform.db` (the settings, backups). Offline check behind them: 39 of 40
+Kokoro renditions of "Hey Jarvis" (13 voices × plain, slow, "…, wake up") detected, 0 of 32 negatives; 0 false wakes
+from claps in 405 s of synthetic speech, music and typing. E2E `standby.mjs` (fake microphone through the real
+capture path): `standby-screen`, `standby-double-clap`, `standby-welcome-home`, `standby-brief-me`,
+`standby-go-to-sleep`, `standby-hey-jarvis` (the real models in the real worker on a synthetic voice),
+`standby-hey-jarvis-stub`, `standby-background`, `standby-denied`.

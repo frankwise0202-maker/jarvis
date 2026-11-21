@@ -129,7 +129,7 @@ import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
-import { homePhrase, standbyCommand, routineReply, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
+import { openingIntent, standbyCommand, routineReply, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 
 export { splitSentences };
 
@@ -2898,14 +2898,20 @@ function createVoiceMode(opts) {
     if (!W) return false;
     const name = typeof wake.name === 'function' ? wake.name() : '';
     if (W.phase === 'opening') {
-      if (readings.some((r) => homePhrase(r, { name }))) {
+      const intents = readings.map((r) => openingIntent(r, { name }));
+      if (intents.includes('home')) {
         greetWake(true);
         return true;
       }
-      const sleep = readings.find((r) => standbyCommand(r));
-      if (sleep && canStandby()) {
+      const sleepAt = intents.indexOf('sleep');
+      if (sleepAt >= 0 && canStandby()) {
         S.wake = null;
-        goToStandby(sleep);
+        goToStandby(readings[sleepAt]);
+        return true;
+      }
+      // A fragment ("up", "Jarvis"): the greeting as if nothing was said.
+      if (intents[0] === 'greet') {
+        greetWake(false);
         return true;
       }
       // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question.
@@ -2915,8 +2921,10 @@ function createVoiceMode(opts) {
     }
     if (W.phase !== 'asking') return false;
     for (const words of readings) {
-      const reply = routineReply(words);
+      let reply = routineReply(words);
       if (!reply) continue;
+      // "Yes" to "Shall I run your evening briefing?" (no music found, offline say): the briefing.
+      if (reply === 'music' && !(W.offerData && W.offerData.playText)) reply = 'brief';
       S.wake = null;
       if (reply === 'music') {
         const offer = W.offerData;

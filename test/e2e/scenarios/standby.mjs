@@ -144,11 +144,25 @@ export default [
         await (await t.visible('settings-button')).click();
         const card = await t.visible('settings-wake', { message: 'Settings → Voice has Wake Jarvis' });
         await card.scrollIntoViewIfNeeded();
+        const text = await t.page.evaluate(() => document.querySelector('[data-testid="settings-wake"]').closest('.set-card').textContent);
+        t.assert(/Say “Hey Jarvis” \(free, downloads about 15 MB\)/.test(text), 'The wake word shows its download size');
+        t.assert(/openWakeWord/.test(text) && /CC BY-NC-SA 4\.0/.test(text), 'The models are credited with their license');
+        t.assert(/On iPhone, Jarvis listens only while he is open on screen/.test(text), 'The iPhone limit is stated');
+        t.assert((await t.locator('setting-wakeClap').isChecked()) && !(await t.locator('setting-wakeWord').isChecked()) && (await t.locator('setting-wakeReturn').isChecked()), 'Claps on, the wake word off, back to Standby on');
+        t.assert((await t.locator('setting-wakeName').inputValue()) === 'Tony', 'The greeting name is the owner’s name');
+        await t.locator('setting-wakeClapSensitivity').selectOption('high');
+        t.assert(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1')).wakeClapSensitivity === 'high'), 'The sensitivity is saved');
         await t.screenshot('3-settings-wake');
         await (await t.visible('settings-standby')).click();
         await t.visible('standby');
         await waitListening(t);
         t.assert((await mic(t)).live === 1, 'One capture again');
+      });
+      await t.step('reduced motion: the pill does not pulse, Standby still shows and listens', async () => {
+        await t.page.emulateMedia({ reducedMotion: 'reduce' });
+        const anim = await t.page.evaluate(() => getComputedStyle(document.querySelector('.standby-pill-dot')).animationName);
+        t.assert(anim === 'none', `No pulse under reduced motion (${anim})`);
+        await t.page.emulateMedia({ reducedMotion: 'no-preference' });
       });
       await t.step('a small phone (320×568) and a desktop window', async () => {
         await t.page.setViewportSize({ width: 320, height: 568 });

@@ -702,7 +702,7 @@ export function createSettingsPanel(o) {
 
   // Wake Jarvis (Standby, v7.4, SPEC §22)
   function wakeCard() {
-    if (o.demo || !sttOk) return null;
+    if (o.demo) return null;
     const size = formatMegabytes(wakeWordDownloadBytes());
     // The greeting uses the owner's name (Profile's "What should Jarvis call you"): one setting.
     let nameTimer = 0;

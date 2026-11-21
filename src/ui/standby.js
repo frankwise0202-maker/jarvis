@@ -492,6 +492,8 @@ export function createStandby(deps = {}) {
     root.dataset.clap = clapOn() && listen === 'live' ? 'on' : 'off';
     const ws = word ? word.status() : null;
     root.dataset.word = !wordOn() || !ws ? 'off' : ws.state === 'ready' ? (wordPortGiven ? 'ready' : 'connecting') : ws.state;
+    // The wake word's cost: its worker's average inference time per 80 ms frame (diagnostics).
+    if (ws && Number.isFinite(ws.avgMs)) root.dataset.wordMs = String(ws.avgMs);
     let pill;
     let tone = 'off';
     if (what.length) {
