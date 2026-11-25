@@ -3,8 +3,10 @@
 //   getHomeBaseStatus(base)   GET  api/status -> { ok: true, data } | failure
 //   testHomeBase(base)        GET  api/info, then api/status -> { ok: true, host, version, level, summary } | failure
 //   askHomeBase(base, q)      POST api/ask {q} -> { ok: true, answer, intent, suggestions } | failure
-//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal, allowEmpty, rawBody, headers, maxChars })
-//   (v7.6: the brain's routes, src/platform/brain.js, and sync, src/platform/sync.js, use requestHomeBase too)
+//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal, allowEmpty, rawBody, headers, maxChars, binary, probe })
+//   (v7.6: the brain's routes, src/platform/brain.js, and sync, src/platform/sync.js, use requestHomeBase too;
+//   v7.7: hearing and voice, src/platform/senses.js: `binary` reads a 2xx answer as bytes ({ ok, bytes,
+//   contentType }), and `probe: false` says 'unreachable' at once instead of pinging to tell it from 'down')
 //
 // A failure is { ok: false, kind, status?, code?, message? } with kind 'unreachable' | 'down' |
 // 'refused' | 'starting' | 'rate' | 'notcore' | 'http' | 'aborted' (src/lib/homebase.js
@@ -71,7 +73,7 @@ async function answersAtAll(base, f) {
  * One request to the home base: { ok: true, data } (the JSON answer) or a failure (see the header).
  * `base` is a stored address ('https://<host>.ts.net/').
  */
-export async function requestHomeBase(base, path, { method = 'GET', body, rawBody, headers, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal, allowEmpty = false, maxChars = MAX_BODY_CHARS } = {}) {
+export async function requestHomeBase(base, path, { method = 'GET', body, rawBody, headers, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal, allowEmpty = false, maxChars = MAX_BODY_CHARS, binary = false, probe = true } = {}) {
   const f = fetchOf(fetchImpl);
   const d = deadline(timeoutMs, signal);
   const init = { method, credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', mode: 'cors', signal: d.signal };
@@ -85,17 +87,26 @@ export async function requestHomeBase(base, path, { method = 'GET', body, rawBod
   }
   let res;
   let text = '';
+  let bytes = null;
   try {
     res = await f(homeBaseApi(base, path), init);
-    text = await res.text();
+    // v7.7: a voice (audio/wav) is read as bytes; an error answer is still the Core's JSON.
+    const type = String((res.headers && typeof res.headers.get === 'function' && res.headers.get('content-type')) || '');
+    if (binary && res.status >= 200 && res.status <= 299 && !/json/i.test(type)) bytes = await res.arrayBuffer();
+    else text = await res.text();
   } catch {
     const timedOut = d.timedOut();
     d.done();
     if (signal && signal.aborted) return { ok: false, kind: 'aborted' };
-    if (timedOut || res) return { ok: false, kind: 'unreachable' }; // no answer in time (or the answer stopped halfway)
+    if (timedOut) return probe ? { ok: false, kind: 'unreachable' } : { ok: false, kind: 'unreachable', timedOut: true }; // no answer in time
+    if (res || !probe) return { ok: false, kind: 'unreachable' }; // the answer stopped halfway (or no ping wanted)
     return { ok: false, kind: (await answersAtAll(base, f)) ? 'down' : 'unreachable' };
   }
   d.done();
+  if (bytes) {
+    const type = String((res.headers && typeof res.headers.get === 'function' && res.headers.get('content-type')) || '');
+    return { ok: true, bytes, contentType: type, status: res.status };
+  }
   let data = null;
   if (text && text.length <= maxChars) {
     try {

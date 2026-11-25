@@ -2,7 +2,10 @@
 // (assets/wake-worklet.js: 16 kHz, the clap detector, frames for the "Hey Jarvis" worker), or a
 // ScriptProcessor running the same code on the page where AudioWorklet is missing.
 //
-//   const cap = createStandbyCapture({ onClap, onState });
+//   const cap = createStandbyCapture({ onClap, onState, processed });
+//                            processed (v7.7, hearing through the home base): ask the browser for its
+//                            processed sound (echo cancellation, noise suppression, auto gain), as for a
+//                            call; Standby's detectors keep the raw sound (the default)
 //   cap.prepare()            inside a tap: create/resume the AudioContext (iOS starts audio only there)
 //   await cap.start({ clap, sensitivity, word })  -> { ok: true } | { ok: false, reason }
 //                            reason: 'unsupported' | 'denied' | 'no-mic' | 'busy' | 'error'
@@ -21,7 +24,7 @@
 import { WAKE_WORKLET_PATH } from '../../lib/wake/catalog.js';
 import { createWakeTap } from '../../lib/wake/tap.js';
 
-export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {} } = {}) {
+export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false } = {}) {
   let ctx = null;
   let moduleReady = null; // Promise of addModule (per context)
   let stream = null;
@@ -83,7 +86,7 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
     let media;
     try {
       media = await scope.navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 1 } },
+        audio: processed ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 1 } } : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 1 } },
         video: false,
       });
     } catch (err) {
