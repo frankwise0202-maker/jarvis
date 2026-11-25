@@ -312,7 +312,8 @@ export function createBrainView({ kiosk }) {
     const research = known ? jobs.filter((j) => j.kind !== 'watch-check' && j.kind !== 'briefing') : [];
     const running = known ? research.filter((j) => j.status === 'running').length : brain.jobs.running;
     const queued = known ? research.filter((j) => j.status === 'queued').length : brain.jobs.queued;
-    chip(n.missionsChip, running + queued > 0 ? 'ok' : 'unknown', running + queued > 0 ? `${running} RUNNING${queued ? `${SEP}${queued} QUEUED` : ''}` : 'IDLE');
+    // One short word for the chip (it shares the header with the tabs); the list shows the queue.
+    chip(n.missionsChip, running + queued > 0 ? 'ok' : 'unknown', running ? `${running} RUNNING` : queued ? `${queued} QUEUED` : 'IDLE');
     // A failed or blocked mission marks its own row; the panel itself stays calm (it is not the machine's health).
   }
 

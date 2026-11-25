@@ -111,6 +111,18 @@ async function brainProblems(page, preset) {
       if (t.closest('[hidden]') || !t.offsetParent) continue;
       if (t.scrollWidth > t.clientWidth + 1) out.push(`text cut: ${t.id || t.className} "${t.textContent}"`);
     }
+    // The pieces of a panel's header (the title, the tabs, the chip) side by side, never on top of each other.
+    for (const head of document.querySelectorAll('.panel-head')) {
+      if (head.closest('[hidden]') || !head.offsetParent) continue;
+      const parts = [...head.querySelectorAll(':scope > h2, :scope > .tabs > .tab, :scope > .chip')].filter((p) => p.offsetParent).map((p) => [p.textContent.trim(), p.getBoundingClientRect()]);
+      for (let i = 0; i < parts.length; i++)
+        for (let j = i + 1; j < parts.length; j++) {
+          const [ta, a] = parts[i];
+          const [tb, b] = parts[j];
+          if (a.right > b.left + 1 && b.right > a.left + 1 && a.bottom > b.top + 1 && b.bottom > a.top + 1) out.push(`header pieces overlap: "${ta}" and "${tb}"`);
+        }
+      if (head.scrollWidth > head.clientWidth + 1) out.push(`${head.parentElement.id} header runs out of its panel`);
+    }
     const key = document.getElementById('bc-key-text').textContent;
     if (preset === 'nokey' && !/Add your key from Jarvis on your phone/.test(key)) out.push(`no key, but the key line says "${key}"`);
     if (preset === 'sdk' && !/Run jarvis-core update/.test(key)) out.push(`SDK missing, but the key line says "${key}"`);
