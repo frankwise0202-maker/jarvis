@@ -255,11 +255,13 @@ export default [
         await t.locator('brain-result-back').click();
       });
 
-      await t.step('Research: cancel', async () => {
+      await t.step('Research: Enter (the iPhone keyboard’s send key) starts it; cancel', async () => {
         t.core.brain.jobSteps = 100;
-        await t.locator('brain-research-input').fill('Heat pumps for an old house');
-        await t.locator('brain-research-start').click();
-        await t.waitFor(() => t.core.brain.jobs.length === 2, { timeout: 5000, message: 'the second job' });
+        const input = t.locator('brain-research-input');
+        await input.fill('Heat pumps for an old house');
+        await input.press('Enter');
+        await t.waitFor(() => t.core.brain.jobs.length === 2, { timeout: 5000, message: async () => `the second job, started by Enter (the box holds ${JSON.stringify(await input.inputValue())})` });
+        t.assert(!/\n/.test(await input.inputValue()), 'Enter added no line break');
         const job = t.core.brain.jobs[0];
         const row = t.page.locator(`${tid('brain-job')}[data-id="${job.id}"]`);
         await row.locator(tid('brain-job-cancel')).click();
@@ -354,6 +356,9 @@ export default [
         const banner = await t.visible('brain-banner');
         await t.waitFor(async () => (await banner.getAttribute('data-state')) === 'old', { timeout: 8000, message: 'the old-Core state' });
         t.assert(/jarvis-core update/.test(await t.text(banner)), 'says how to update');
+        await t.waitFor(async () => !(await t.page.locator(tid('brain-briefing-run')).isVisible()), { timeout: 8000, message: 'no “Make a new one now” that can only fail' });
+        const tabText = await t.text(t.locator('brain-panel-briefing'));
+        t.assert(!/jarvis-core update/.test(tabText), `the banner says it once, not the tab too (${tabText})`);
         await shot(t, '3-old-core');
         await (await t.visible('brain-close')).click();
         t.core.brain.enabled = true;
@@ -383,9 +388,23 @@ export default [
       await t.newPage();
       await t.goto('/');
 
-      await t.step('from the rail', async () => {
+      await t.step('the rail’s briefing suggestion opens the home base’s new briefing (free), not a paid one', async () => {
         await t.page.locator(tid('morning-card')).waitFor({ state: 'visible', timeout: 10000 });
         await shot(t, '1-desktop-morning');
+        const suggestion = t.page.locator(tid('rail-suggestion'));
+        if (await suggestion.isVisible()) {
+          await suggestion.click();
+        } else {
+          // The suggestion comes and goes with the time of day: the home's Brief me key does the same.
+          await (await t.visible('quick-key-brief')).click();
+        }
+        await t.visible('brain-panel-briefing', { timeout: 8000, message: 'the Home base sheet’s Briefing' });
+        await t.waitFor(async () => /Good morning, Tony\./.test(await t.text(t.locator('brain-panel-briefing'))), { timeout: 8000, message: 'the briefing' });
+        t.assert(t.requests('lead').length === 0, 'no paid briefing protocol');
+        await (await t.visible('brain-close')).click();
+      });
+
+      await t.step('from the rail', async () => {
         await openSheet(t, 'rail');
         await t.visible('brain-panel-briefing');
         await t.waitFor(async () => /Good morning, Tony\./.test(await t.text(t.locator('brain-panel-briefing'))), { timeout: 8000, message: 'the briefing' });
@@ -495,6 +514,66 @@ export default [
   },
 
   {
+    name: 'brain-chat-questions',
+    title: 'Everyday questions that only look like a command go to Jarvis as before: with a home base linked (“Tell me if …”, “Let me know if …”, a past release, a colon) no watcher is made; with none linked nothing new answers at all',
+    device: 'iphone13',
+    seed: LINKED,
+    fakeCore: { brain: { key: true, briefing: true } },
+    timeout: 180000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      const ask = async (q) => {
+        const before = t.requests('lead').length;
+        const turn = await t.send(q);
+        await t.waitForTurn(turn, ['done'], { timeout: 45000 });
+        t.assert(t.requests('lead').length > before, `“${q}” reached Jarvis (Claude)`);
+        t.assert(!/Free · Home base/.test(await t.text(turn)), `“${q}” was not a home base command`);
+      };
+      await t.step('linked: questions stay questions', async () => {
+        await ask('Tell me if this email sounds less than professional: Hi Bob, send me the report now.');
+        await ask('Let me know if it’s cheaper to fly or drive from Atlanta to Boston.');
+        await ask('Tell me when Python 3.12 was released');
+        await ask('Keep an eye on my grammar while I write this cover letter');
+        t.assert(t.core.brain.watchers.length === 0, `no watcher on the home base (${t.core.brain.watchers.map((w) => w.what).join(' | ')})`);
+        t.assert(t.core.brain.jobs.length === 0, 'no research job');
+      });
+      await t.step('not linked: nothing new answers, everything goes to Jarvis', async () => {
+        await (await t.visible('settings-button')).click();
+        await t.visible('settings-sheet');
+        await (await t.visible('homebase-remove')).click();
+        await t.waitFor(async () => /No home base linked/.test(await t.text(t.page.locator('#settings-homebase'))), { timeout: 5000, message: 'unlinked' });
+        await (await t.visible('settings-close')).click();
+        await ask('Tell me if there is a cheaper alternative to Photoshop');
+        await ask('Watch for the LG 27GP850 dropping under $300');
+        t.assert(t.core.brain.watchers.length === 0, 'no watcher');
+      });
+    },
+  },
+
+  {
+    name: 'brain-brief-unreachable',
+    title: '“Brief me” typed with the home base out of reach (Tailscale off on the phone): asked of Jarvis as before v7.6, one ordinary turn, no dead end',
+    device: 'iphone13',
+    seed: LINKED,
+    fakeCore: { mode: 'unreachable' },
+    allowConsole: NETWORK_NOISE,
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      const turn = await t.send('Brief me');
+      await t.waitFor(() => t.requests('lead').length >= 1, { timeout: 20000, message: async () => `a Claude request (the turn says ${await t.text(turn)})` });
+      await t.waitForTurn(t.page.locator(tid('turn-jarvis')).last(), ['done'], { timeout: 45000 });
+      t.assert((await t.count('turn-user')) === 1, 'one “Brief me” in the chat');
+      t.assert((await t.count('turn-jarvis')) === 1, 'one answer: the waiting line went');
+      t.assert(!/Can’t reach the home base/.test(await t.text(t.page.locator(tid('turn-jarvis')).last())), 'no dead end');
+      const msgs = t.requests('lead')[0].body?.messages || [];
+      t.assert(/Brief me/.test(JSON.stringify(msgs)), 'the owner’s words were asked');
+    },
+  },
+
+  {
     name: 'brain-wake',
     title: 'Standby & wake with a home base linked: two claps, “brief me”, and Jarvis says the home base’s briefing (free: no Claude request, no paid protocol)',
     device: 'iphone13',
@@ -510,6 +589,17 @@ export default [
         window.__voice.queue = [];
       });
       await t.goto('/');
+      await t.step('a notification tapped while Standby is on screen: Standby makes way for the briefing', async () => {
+        await (await t.visible('quick-key-standby')).click();
+        await t.visible('standby');
+        await t.waitFor(async () => (await t.page.evaluate(() => document.querySelector('[data-testid="standby"]')?.dataset.listening)) === 'live', { timeout: 15000, message: 'Standby listening' });
+        await t.page.evaluate(() => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { type: 'HOMEBASE_LINK', link: 'briefing' } })));
+        await t.page.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        const panel = await t.visible('brain-panel-briefing', { timeout: 8000, message: 'the briefing in front' });
+        await t.waitFor(async () => /Good morning, Tony\./.test(await t.text(panel)), { timeout: 8000, message: 'the briefing' });
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__fakeMic.live)) === 0, { timeout: 5000, message: 'Standby’s microphone released' });
+        await (await t.visible('brain-close')).click();
+      });
       await t.step('wake, then "brief me"', async () => {
         await (await t.visible('quick-key-standby')).click();
         await t.visible('standby');

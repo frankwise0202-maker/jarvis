@@ -262,6 +262,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     const r = await brain.call('getBriefing');
     if (destroyed) return;
     if (r && r.ok) {
+      briefRun.hidden = false;
       msg(briefMsg, '');
       renderBriefing(r.briefing);
       safe(() => brain.dismissMorning(r.briefing));
@@ -269,7 +270,15 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     }
     const p = brainProblem(r);
     renderBriefing(null);
-    msg(briefMsg, p.message, p.state === 'none' ? 'info' : 'warn');
+    showProblem(p);
+  }
+
+  /** A failure in the tab. A 1.0 Core can't make one either: no button, and the banner says it once. */
+  function showProblem(p) {
+    const old = p.state === 'old';
+    briefRun.hidden = old;
+    if (old) renderBanner();
+    msg(briefMsg, old && bannerKind === 'old' ? '' : p.message, p.state === 'none' ? 'info' : 'warn');
   }
 
   async function runBriefing() {
@@ -288,7 +297,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
       brain.load({ force: true });
       return;
     }
-    msg(briefMsg, brainProblem(r, { limits: limitsNow() }).message, 'warn');
+    showProblem(brainProblem(r, { limits: limitsNow() }));
   }
 
   panel('briefing', briefMsg, briefBody, h('div', { class: 'hbs-actions' }, briefRun));
@@ -321,11 +330,11 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
   const resultEl = h('div', { class: 'hbs-result', hidden: true, attrs: { 'data-testid': 'brain-result' } });
   const researchList = h('div', { class: 'hbs-research-list' }, rForm, h('h4', { class: 'hbs-subtitle hud-label', text: 'Recent' }), jobEmpty, jobList);
   panel('research', researchList, resultEl);
+  // Enter starts it (the iPhone keyboard's key says "send"); Shift+Enter is a new line.
   rInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      rForm.requestSubmit ? rForm.requestSubmit() : startResearch(e);
-    }
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    rForm.requestSubmit ? rForm.requestSubmit() : startResearch(e);
   });
 
   let starting = false;

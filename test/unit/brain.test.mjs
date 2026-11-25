@@ -19,6 +19,7 @@ import {
   parseHomeBaseLink,
   homeBaseLinkOf,
   matchBrainCommand,
+  briefingFallback,
   briefingMarkdown,
   briefingSpeech,
   resultsMarkdown,
@@ -221,9 +222,16 @@ test('chat commands: research in the background, what did it find, watch for / t
     'Home base results': { kind: 'results' },
     'Watch for the LG 27GP850 dropping under $300': { kind: 'watch', what: 'the LG 27GP850 dropping under $300' },
     'Tell me when the LG 27GP850 drops under $300.': { kind: 'watch', what: 'When the LG 27GP850 drops under $300' },
-    'Let me know if the PS6 is announced': { kind: 'watch', what: 'If the PS6 is announced' },
+    'Home base, let me know if the PS6 is announced': { kind: 'watch', what: 'If the PS6 is announced' },
+    'Let me know when the PS6 is announced': { kind: 'watch', what: 'When the PS6 is announced' },
     'home base, tell me when tickets go on sale': { kind: 'watch', what: 'When tickets go on sale' },
-    'Keep an eye on the price of the Bambino Plus': { kind: 'watch', what: 'the price of the Bambino Plus' },
+    'Home base, keep an eye on the price of the Bambino Plus': { kind: 'watch', what: 'the price of the Bambino Plus' },
+    'Have the home base monitor the price of the Bambino Plus': { kind: 'watch', what: 'the price of the Bambino Plus' },
+    'Tell me when the Bambino Plus is back in stock': { kind: 'watch', what: 'When the Bambino Plus is back in stock' },
+    'Tell me when the iPhone 18 comes out': { kind: 'watch', what: 'When the iPhone 18 comes out' },
+    'Let me know when Nintendo announces the Switch 3': { kind: 'watch', what: 'When Nintendo announces the Switch 3' },
+    'Keep an eye out for Taylor Swift tickets going on sale': { kind: 'watch', what: 'Taylor Swift tickets going on sale' },
+    'Tell me when the Sony XM6 falls below 300 dollars': { kind: 'watch', what: 'When the Sony XM6 falls below 300 dollars' },
     'Brief me': { kind: 'brief' },
     'Brief me.': { kind: 'brief' },
     'Morning briefing': { kind: 'brief' },
@@ -243,11 +251,57 @@ test('chat commands: research in the background, what did it find, watch for / t
     'How’s the home base?', // v7.5's status question
     'I want to research the background of the Roman empire',
     'what is a briefing',
+    // Everyday questions for Jarvis that only look like a watch (a watch is a paid daily check on the
+    // home base): a bare "tell me if" / "let me know if", "keep an eye on", "monitor", "watch out
+    // for", the past, "is there", "available in", "cheaper than", a colon, a line break, a question.
+    'Let me know if the PS6 is announced',
+    'Tell me if this email sounds less than professional: Hi Bob, send me the report now.',
+    'Let me know if it’s cheaper to fly or drive from Atlanta to Boston.',
+    'Let me know if more than one of these options works for a vegetarian: pasta, steak, salad.',
+    'Tell me if there is anything available for dinner tonight near me',
+    'Tell me if there is a cheaper alternative to Photoshop',
+    'Keep an eye on my grammar while I write this cover letter',
+    'Keep an eye on the kids while I cook, any tips?',
+    'Keep an eye on the price of the Bambino Plus',
+    'Watch out for typos in this paragraph: Teh quick brown fox.',
+    'Watch out for typos in the next paragraph',
+    'Watch for signs of dehydration in a toddler',
+    'Monitor my heart rate during workouts',
+    'Monitor my tone in this message and tell me if it is rude: I hate this.',
+    'Let me know if this function hits the database more than once:\n\nfunction f(){ db.query(); db.query(); }',
+    'Tell me when my code reaches the return statement in this loop',
+    'Tell me if the store opens for business on Thanksgiving',
+    'Let me know if my essay passes the word count of 500',
+    'Let me know if my code passes the tests',
+    'Let me know if you have any questions',
+    'Tell me when Python 3.12 was released',
+    'Tell me when the first iPhone was released',
+    'Tell me if the Model Y is available in Canada',
+    'Tell me when the Model Y is available in Canada',
+    'Tell me if this is cheaper than buying a new one',
+    'Let me know if more than 3 people can sit in a Miata',
+    'Tell me when Apple usually releases new iPhones',
+    'Tell me when the iPhone 18 comes out?',
+    'Tell me when this drops under $300',
+    'Tell me when the LG 27GP850 drops under $300 and also explain how monitor refresh rates work, what HDR really means and whether I need it',
+    // Research: "overnight" / "while I'm at work" that belong to the question.
+    'Look into why my sourdough is flat overnight',
+    'Find out what my dog does while I’m at work',
+    'Research what happened in the markets overnight',
   ];
   for (const text of no) assert.equal(matchBrainCommand(text), null, text);
   // The v7.5 status questions stay theirs.
   assert.equal(matchHomeBaseCommand('home base results'), false);
   assert.equal(matchHomeBaseCommand('What did the home base find?'), false);
+});
+
+test('“brief me” the home base can’t answer (out of reach, a 1.0 Core) is briefed as before v7.6; its own answers are said', () => {
+  for (const f of [{ kind: 'unreachable' }, { kind: 'aborted' }, { kind: 'down' }, { kind: 'starting' }, { kind: 'refused', message: 'forbidden' }, { kind: 'notcore' }, { kind: 'http', status: 404, code: 'not_found' }, { kind: 'http', status: 404 }, { kind: 'http', status: 503, code: 'internal' }, { ok: false, kind: 'error' }]) {
+    assert.equal(briefingFallback(f), true, JSON.stringify(f));
+  }
+  for (const f of [{ ok: true }, { kind: 'http', status: 404, code: 'none_yet' }, { kind: 'http', status: 409, code: 'no_key' }, { kind: 'http', status: 402, code: 'spend_cap' }, { kind: 'rate' }, { kind: 'unset' }, null]) {
+    assert.equal(briefingFallback(f), false, JSON.stringify(f));
+  }
 });
 
 // ---- the client (fake fetch) ---------------------------------------------------------------------------
