@@ -35,7 +35,7 @@ export function readWhatsNew(file, today) {
         const d = Date.parse(`${e.date}T12:00:00Z`);
         return Number.isFinite(d) && t - d <= 2 * 86_400_000 && d - t <= 86_400_000;
       })
-      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)) // newest first; a day's entries in the file's order
       .slice(0, 4)
       .map((e) => ({ title: oneLine(e.title, 120), detail: oneLine(typeof e.detail === 'string' ? e.detail : '', 400) }));
   } catch {

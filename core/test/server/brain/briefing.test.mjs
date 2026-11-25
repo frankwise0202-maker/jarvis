@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startFakeClaude, toolUse, search } from './fake-claude.mjs';
 import { makeBrain, tmp, KEY, MORNING, TZ } from './helpers.mjs';
 import { createManualClock } from '../../../server/clock.mjs';
@@ -13,6 +14,7 @@ import { parseFeed, mergeHeadlines } from '../../../server/brain/rss.mjs';
 import { parseForecast } from '../../../server/brain/weather.mjs';
 import { nextDailyAt } from '../../../server/brain/schedule.mjs';
 import { overnightReport } from '../../../server/brain/homebase.mjs';
+import { readWhatsNew } from '../../../server/brain/briefing.mjs';
 import { fixtureCore } from '../helpers.mjs';
 import { setLocale } from '../../../server/format.mjs';
 
@@ -281,6 +283,22 @@ test('a scheduled briefing made while the feeds and the weather fail is made aga
   } finally {
     await brain.stop();
   }
+});
+
+test('core/whats-new.json announces this release: valid entries, the newest shown in the briefing (4 at most)', () => {
+  const file = fileURLToPath(new URL('../../../whats-new.json', import.meta.url));
+  const list = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(Array.isArray(list) && list.length > 0, 'what\'s new in Jarvis has entries');
+  for (const e of list) {
+    assert.match(e.date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(typeof e.title === 'string' && e.title.trim() && e.title.length <= 120, e.title);
+    assert.ok(typeof e.detail === 'string' && e.detail.trim() && e.detail.length <= 400, e.detail);
+    assert.ok(!/[[\]*`#]|https?:/.test(`${e.title} ${e.detail}`), 'plain words: they are read aloud too');
+  }
+  const newest = list.map((e) => e.date).sort().at(-1);
+  const shown = readWhatsNew(file, newest);
+  assert.ok(shown.length >= 1 && shown.length <= 4);
+  assert.deepEqual(shown[0], { title: list.find((e) => e.date === newest).title, detail: list.find((e) => e.date === newest).detail });
 });
 
 test('overnight report: tonight\'s update, a rollback and restarts are told; a rollback is something to look at', () => {
