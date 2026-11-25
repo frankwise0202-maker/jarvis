@@ -81,14 +81,18 @@ shows a full-screen "Good morning, Frank." (the owner's name from `api/brain` �
 - three cards: the headlines (up to 6, two lines each), the night at the home base and what finished
   while he slept (research and watchers), and what's new with the music suggestion;
 - without a key, one line at the bottom: "Give the home base your key from Jarvis on your iPhone to
-  unlock background research."
+  unlock background research."; when something needs a look (a warning, an alert, the Core
+  offline), the Core's own sentence in its color above it;
 - no briefing yet at the briefing time: the greeting, a big clock, the Core's summary and "Your
   briefing is on its way."; the briefing shows the moment it arrives over the stream. Only today's
   briefing counts (its `date` on the Core's clock).
 
 A key press or a mouse move returns to the full system report (that key does not also start a
-question; Alt+J still opens Jarvis); after 10 minutes without either, the morning comes back, until
-10:00. The night dim is lifted while the morning shows (a 06:30 briefing inside a 23:00–07:00 dim),
+question; Alt+J still opens Jarvis; Chrome's own mousemove without movement does not count); after
+10 minutes without either, the morning comes back, until 10:00. Only input during the window
+counts, so a mouse touched at 06:58 does not hold the morning back. The cards are built when a
+briefing arrives, shown or not, so the screen appears at once and its size never changes when it
+does. The night dim is lifted while the morning shows (a 06:30 briefing inside a 23:00–07:00 dim),
 the living core behind it runs at half speed, the motion is calm (two slow rings, a breathing heart,
 the cards rising in once) and stops with reduced motion. A window too small for the kiosk layout
 gets the morning in one scrolling column.
@@ -308,6 +312,12 @@ without compiled code) and event listeners. The whole JS heap, its compiled code
 renderer's RSS are reported beside them: V8 keeps optimizing functions as they get hot, so code
 climbs for about a simulated day and then levels off, and the page cannot make new code (its CSP
 has no `'unsafe-eval'`). See `test/growth.mjs` for the limits.
+
+With `--brain <preset>` the phone run uses the stand-in Core with the brain instead of the real
+Core 1.0, so the morning briefing, HOME BASE and missions panels get the same checks at every size,
+and the long run with `--brain ok` pushes four missions, a watcher and the spend every simulated
+hour and a new briefing at 07:00, leaves 07:00–07:12 without questions so the morning screen comes
+up (the next question closes it), and warms up until the page also keeps its 30 missions.
 
 The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain
 preset (`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a

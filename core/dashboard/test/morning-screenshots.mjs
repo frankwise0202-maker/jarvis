@@ -76,8 +76,10 @@ async function morningProblems(page) {
       if (t.closest('[hidden]')) continue;
       if (t.scrollWidth > t.clientWidth + 1) out.push(`text cut: ${t.id || t.className} "${t.textContent}"`);
     }
-    const strip = m.querySelector('.m-strip').getBoundingClientRect();
-    if (strip.height > 90) out.push(`the strip wraps (${Math.round(strip.height)}px tall)`);
+    // The strip on one line: its parts side by side (the page scales with the screen, so no fixed height).
+    const parts = [...m.querySelector('.m-strip').children].map((c) => c.getBoundingClientRect()).filter((r) => r.height);
+    const mid = (r) => r.top + r.height / 2;
+    if (parts.some((r) => Math.abs(mid(r) - mid(parts[0])) > r.height / 2)) out.push('the strip wraps onto two lines');
     // Every card's last item must end inside the card (a line-clamped title is fine; a whole item under the edge is not).
     for (const card of m.querySelectorAll('.m-card')) {
       if (card.closest('[hidden]')) continue;

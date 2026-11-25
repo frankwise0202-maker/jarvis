@@ -481,6 +481,7 @@ export function createBrainView({ kiosk }) {
       return li;
     });
     if (!b.headlines.length) n.mHeadlines.append(el('li', 'm-hl m-hl-none', 'No headlines this morning (the news feeds did not answer).'));
+    setData(n.mHeadlines, 'long', b.headlines.some((h) => h.title.length > 70) ? 'true' : null);
     const hb = b.homebase;
     setData(n.mHb, 'level', hb ? hb.level : 'unknown');
     setText(n.mHbText, hb ? keepUnits(hb.summary || '') : 'The overnight report is not available.');

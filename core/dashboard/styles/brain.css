@@ -881,7 +881,7 @@ html[data-morning='on'] .stage > .grid {
 .m-label {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 0.9375rem;
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   color: var(--accent);
@@ -912,7 +912,7 @@ html[data-morning='on'] .stage > .grid {
   color: var(--accent);
 }
 .m-hl-title {
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   line-height: 1.3;
   color: var(--text);
   overflow: hidden;
@@ -923,8 +923,12 @@ html[data-morning='on'] .stage > .grid {
 .m-hl-src {
   margin-top: 0.125rem;
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--text-3);
+}
+/* Long headlines (over 70 characters) keep two lines each at a size that holds six of them. */
+.m-headlines[data-long='true'] .m-hl-title {
+  font-size: 1.5rem;
 }
 .m-hl-none::before {
   content: '';
@@ -937,7 +941,7 @@ html[data-morning='on'] .stage > .grid {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   line-height: 1.3;
   color: var(--text);
 }
@@ -957,7 +961,7 @@ html[data-morning='on'] .stage > .grid {
   padding-left: 1.625rem;
 }
 .m-notes li {
-  font-size: 1.1875rem;
+  font-size: 1.3125rem;
   line-height: 1.4;
   color: var(--text-2);
 }
@@ -968,7 +972,7 @@ html[data-morning='on'] .stage > .grid {
   min-height: 0;
 }
 .m-done .m-done-title {
-  font-size: 1.375rem;
+  font-size: 1.5rem;
   line-height: 1.3;
 }
 .m-done .m-done-word {
@@ -976,7 +980,7 @@ html[data-morning='on'] .stage > .grid {
 }
 .m-done .m-done-sum {
   padding-left: 1.5rem;
-  font-size: 1.1875rem;
+  font-size: 1.3125rem;
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
@@ -998,18 +1002,18 @@ html[data-morning='on'] .stage > .grid {
   gap: 0.125rem;
 }
 .m-new b {
-  font-size: 1.375rem;
+  font-size: 1.5rem;
   font-weight: 600;
   line-height: 1.3;
   color: var(--text);
 }
 .m-new span {
-  font-size: 1.1875rem;
+  font-size: 1.3125rem;
   line-height: 1.4;
   color: var(--text-2);
 }
 .m-music {
-  font-size: 1.375rem;
+  font-size: 1.5rem;
   line-height: 1.4;
   color: var(--text);
 }
@@ -1196,6 +1200,9 @@ html[data-morning='on'] .stage > .grid {
     gap: 0.625rem;
   }
   .m-hl-title {
+    font-size: 1.5rem;
+  }
+  .m-headlines[data-long='true'] .m-hl-title {
     font-size: 1.3125rem;
   }
   .m-lead {

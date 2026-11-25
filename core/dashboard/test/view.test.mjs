@@ -139,3 +139,28 @@ test('typing anywhere starts a question on the kiosk screen only', () => {
   assert.equal(startsQuestion(key('h', { defaultPrevented: true }), true), false);
   assert.equal(startsQuestion(key('h', { target: field }), true), false, 'typing in a field stays in that field');
 });
+
+test('morning mode lifts the night dim on the kiosk (a briefing time inside the dim window)', () => {
+  const page = fakePage();
+  let morning = true;
+  const night = [];
+  const k = createKiosk({
+    root: page.root,
+    stage: page.stage,
+    veil: null,
+    settings: readSettings(new URLSearchParams('dim=23:00-07:30')),
+    timeZone: 'UTC',
+    isCoreLive: () => true,
+    onNightChange: (on) => night.push(on),
+    kiosk: true,
+    liftDim: () => morning,
+  });
+  const sevenFive = Date.parse('2026-11-25T07:05:00Z');
+  k.tick(sevenFive);
+  assert.equal(page.root.dataset.night, 'off', 'the morning screen is never dimmed');
+  morning = false; // a key press returned to the system report: the dim window applies again
+  k.tick(sevenFive + 1000);
+  assert.equal(page.root.dataset.night, 'on');
+  assert.deepEqual(night, [false, true]);
+  k.destroy();
+});
