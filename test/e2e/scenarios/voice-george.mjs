@@ -523,6 +523,7 @@ export default [
         await t.waitFor(async () => (await saidCount()) > 0, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
         const gap = await t.page.evaluate(() => window.__voice.log[0].at - window.__stuckAudio.starts[0].t);
         t.assert(gap >= 3000 && gap <= 5500, `the iPhone voice ${(gap / 1000).toFixed(1)} s after George’s first words were due (about 3.5 s: a kick at 1.5 s, the handoff at 3.5 s)`);
+        t.note(`iPhone voice after ${(gap / 1000).toFixed(2)} s`);
         const clock = await t.page.evaluate(() => window.__stuckAudio.contexts.map((c) => [c.state, c.currentTime]));
         t.assert(clock.length === 1 && clock[0][0] !== 'running', `George’s audio really is stuck (${JSON.stringify(clock)})`);
         const label = await t.visible('voice-label', { timeout: 5000 });
@@ -552,6 +553,7 @@ export default [
         await t.waitFor(async () => (await saidCount()) > n, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
         const silence = (Date.now() - shownAt) / 1000;
         t.assert(silence < 2, `the iPhone voice ${silence.toFixed(1)} s after the reply came (no new 3.5 s wait)`);
+        t.note(`next reply ${silence.toFixed(2)} s`);
         t.assert(t.core.senses.speaks.length === asked, `nothing asked of George (${JSON.stringify(t.core.senses.speaks.slice(asked))})`);
         const label = await t.visible('voice-label', { timeout: 5000 });
         t.assert(norm(await t.text(label)) === 'iPhone voice', `labelled (${await t.text(label)})`);
@@ -581,6 +583,7 @@ export default [
         await t.waitFor(async () => (await saidCount()) > n, { timeout: 15000, interval: 50, message: 'the iPhone voice reads it' });
         const took = (Date.now() - t0) / 1000;
         t.assert(took <= 6, `read by the iPhone voice ${took.toFixed(1)} s after the tap`);
+        t.note(`Speak ${took.toFixed(2)} s`);
         t.assert(t.core.senses.speaks.length > asked, 'George was tried again (the tap unlocks audio)');
         const tag = t.page.locator(tid('turn-speak-voice')).last();
         await t.waitFor(async () => (await tag.isVisible()) && norm(await t.text(tag)) === 'iPhone voice', { timeout: 5000, message: async () => `the label beside Stop (${await t.text(tag)})` });
@@ -641,6 +644,7 @@ export default [
         await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.length)) > 0, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
         const gap = await t.page.evaluate(() => window.__voice.log[0].at - window.__stuckAudio.stoppedAt);
         t.assert(gap >= 3000 && gap <= 5500, `the iPhone voice ${(gap / 1000).toFixed(1)} s after the clock stopped`);
+        t.note(`iPhone voice ${(gap / 1000).toFixed(2)} s after the stop`);
         const label = t.page.locator(tid('voice-label'));
         await t.waitFor(async () => (await label.isVisible()) && norm(await t.text(label)) === 'iPhone voice', { timeout: 5000, message: async () => `the label changed (${await t.text(label)})` });
         await t.screenshot('2-iphone-voice');
@@ -650,6 +654,7 @@ export default [
         const head = said.slice(0, said.indexOf('Paris.') + 'Paris.'.length); // what the iPhone voice said of George's first sentence
         t.assert(said.includes('Paris.') && sentence.endsWith(` ${head}`) && head !== sentence, `from a word inside George’s first sentence, not its start: the rest of it (${said})`);
         t.assert(/travel brief, Tony\?$/.test(said) && said.split('Paris.').length === 2, `then everything after it, once (${said})`);
+        t.note(`from “${said.split(' ')[0]}”`);
       });
       await t.step('Voice Mode listens again', async () => {
         await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening' && (await t.page.evaluate(() => window.__voice.listens)) >= 2, { timeout: 15000, message: 'listening for the next turn' });
