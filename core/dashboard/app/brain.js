@@ -238,8 +238,9 @@ export function spendState(brain) {
 export function watcherState(brain, watchers) {
   if (!brain) return null;
   const list = arr(watchers);
+  // The list follows the stream (a watcher met a minute ago), so it counts once it has arrived.
   const counted = list.filter((w) => w.status === 'watching').length;
-  const active = brain.watchers.active ?? counted;
+  const active = list.length ? counted : brain.watchers.active ?? 0;
   let latest = null;
   for (const w of list) {
     if (w.status !== 'met' && !(w.lastResult && w.lastResult.met)) continue;

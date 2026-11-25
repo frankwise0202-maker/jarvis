@@ -182,7 +182,7 @@ function render() {
 
 function renderMorning(c) {
   if (!morningShown) {
-    brainView.renderMorning({ on: false });
+    brainView.renderMorning({ on: false, latest: brainState.briefing, brain: brainState.brain });
     return;
   }
   const v = vm || normalize(raw || {}, info);
@@ -192,6 +192,7 @@ function renderMorning(c) {
     on: true,
     brain: brainState.brain,
     briefing: todaysBriefing(brainState.briefing, c.now, timeZone),
+    latest: brainState.briefing,
     vm: v,
     ctx: c,
     sw,

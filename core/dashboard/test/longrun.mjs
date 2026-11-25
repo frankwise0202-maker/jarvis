@@ -4,6 +4,14 @@
 // at least 48 more simulated hours, with a verdict on growth.
 //
 //   nice -n 10 node core/dashboard/test/longrun.mjs [--hours 48] [--rate 200] [--json out.json]
+//                                                  [--brain ok] [--start 2026-11-25T01:00:00Z]
+//
+// --brain <preset> gives the stand-in Core the home base brain (brain-fixtures.mjs): every simulated
+// hour four missions move on (`job` frames), a watcher is checked (`watcher`) and the spend changes
+// (`spend`); at 07:00 a new briefing arrives (`briefing`), and no question is asked from 07:00 to
+// 07:12, so the kiosk's morning screen comes up (the questions after it close it). The warm-up also
+// waits for the page's 30 missions.
+// --start moves the simulated start (e.g. 01:00, so the measured hours run across 07:00 and 10:00).
 //
 // The mock Core streams one snapshot per simulated second at --rate snapshots per real second
 // (200: a day in about seven minutes, 200 times the real load on the page), cycling the scenarios
@@ -30,13 +38,14 @@ import { judgeGrowth } from './growth.mjs';
 import { startMockCore } from './mock-server.mjs';
 import { loadPlaywright } from './screenshots.mjs';
 
-const START = Date.parse('2026-11-25T06:00:00Z'); // morning, evening, night dim, morning, …
+let START = Date.parse('2026-11-25T06:00:00Z'); // morning, evening, night dim, morning, …
 const HOUR = 3600 * 1000;
 const SCENARIO_CYCLE = ['ok', 'warn', 'alert', 'nogpu'];
 const QUESTIONS = ['How are you?', 'Anything wrong?', 'GPU temp?', 'Status report', 'thanks', 'how hot is the cpu', 'is the internet working'];
 const WAYS = ['fill', 'type', 'anywhere', 'chip', 'escape'];
 const MAX_EVENTS = 40;
 const MAX_MESSAGES = 12;
+const MAX_JOBS = 30; // the missions the page keeps (app/brain.js MAX_JOBS)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -50,6 +59,8 @@ function parseArgs(argv) {
     rate: Number(opt('rate', 200)),
     maxWarmup: Number(opt('max-warmup', 16)), // simulated hours allowed to fill the bounded things
     json: opt('json', null),
+    brain: opt('brain', null),
+    start: opt('start', null),
   };
 }
 
@@ -100,8 +111,9 @@ async function heapSplit(cdp) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.start) START = Date.parse(opts.start);
   const pw = await loadPlaywright();
-  const mock = await startMockCore({ port: 0, scenario: 'ok', rate: 1, start: START });
+  const mock = await startMockCore({ port: 0, scenario: 'ok', rate: 1, start: START, brain: opts.brain || 'none' });
   const browser = await pw.chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC' });
   const page = await context.newPage();
@@ -163,6 +175,9 @@ async function main() {
       streamMessages: stats.client.messages,
       reconnects: stats.client.reconnects,
       night: stats.night,
+      morning: stats.morning,
+      brain: stats.brain,
+      jobs: stats.jobs,
       orbFrames: stats.orb.frames,
     };
   }
@@ -200,6 +215,7 @@ async function main() {
   const t0 = Date.now();
   await mock.control({ rate: opts.rate });
   let lastHour = -1;
+  let lastBrainHour = -1;
   let lastAsk = 0;
   let asks = 0;
   let outages = 0;
@@ -224,7 +240,26 @@ async function main() {
       await page.waitForFunction(() => window.__jarvisCore.stats().online, null, { timeout: 30000 });
       downNow = false;
     }
-    if (Date.now() - lastAsk > 2000) {
+    // The brain: one mission, one watcher and the spend move on every simulated hour; a briefing at 07:00.
+    const localHour = new Date(mock.state.simT).getUTCHours();
+    if (opts.brain && simHour !== lastBrainHour) {
+      lastBrainHour = simHour;
+      const at = new Date(mock.state.simT).toISOString();
+      // Four missions move on each hour (ids cycling over 40), so the page's list of 30 fills during the warm-up.
+      for (let k = 0; k < 4; k++) {
+        const n = simHour * 4 + k;
+        const id = `j_lr${n % 40}`;
+        const running = k === 3;
+        await mock.control({ job: { id, kind: 'research', title: `Long-run mission ${n}`, prompt: '…', depth: 'quick', status: running ? 'running' : 'done', createdAt: at, startedAt: at, finishedAt: running ? null : at, costUsd: 0.05, summary: running ? '' : `Finished at hour ${simHour}.`, error: null } });
+      }
+      await mock.control({ watcher: { id: `w_lr${simHour % 5}`, what: `Watch ${simHour % 5}`, every: '6h', status: simHour % 3 ? 'watching' : 'met', createdAt: at, lastCheckAt: at, nextCheckAt: null, lastResult: { met: simHour % 3 === 0, summary: `Checked at hour ${simHour}.`, sources: [] }, costUsd: 0.01 } });
+      await mock.control({ spend: { day: at.slice(0, 10), todayUsd: +((simHour % 24) * 0.2).toFixed(2), month: at.slice(0, 7), monthUsd: 3 + simHour * 0.2, capReached: null } });
+      if (localHour === 7) await mock.control({ briefing: true });
+    }
+    // The first 12 minutes of 07:00 without questions: the morning screen comes up (a quiet 15
+    // minutes would also clear the transcript, which is not what is measured here).
+    const quietMorning = opts.brain && localHour === 7 && new Date(mock.state.simT).getUTCMinutes() < 12;
+    if (!quietMorning && Date.now() - lastAsk > 2000) {
       lastAsk = Date.now();
       await askOnce(asks++);
       if ((await page.inputValue('#ask-input')) !== '') boxLeftFull++;
@@ -232,11 +267,11 @@ async function main() {
     if (simHour !== lastHour) {
       lastHour = simHour;
       const s = await measure(simHour);
-      if (warmupHour === null && s.events >= MAX_EVENTS && s.messages >= MAX_MESSAGES) warmupHour = simHour;
+      if (warmupHour === null && s.events >= MAX_EVENTS && s.messages >= MAX_MESSAGES && (!opts.brain || s.jobs >= MAX_JOBS)) warmupHour = simHour;
       s.hour = warmupHour === null ? null : simHour - warmupHour; // hours into the measured window
       samples.push(s);
       const tag = s.hour === null ? 'warm-up' : `+${String(s.hour).padStart(2, '0')}h`;
-      console.log(`h${String(simHour).padStart(2, '0')} ${tag.padEnd(7)} live ${s.liveNodes}  nodes ${s.nodes}  heap ${s.heapMB.toFixed(2)} MB (data ${s.jsDataMB.toFixed(2)}, code ${s.codeMB.toFixed(2)})  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  reconnects ${s.reconnects}`);
+      console.log(`h${String(simHour).padStart(2, '0')} ${tag.padEnd(7)} live ${s.liveNodes}  nodes ${s.nodes}  heap ${s.heapMB.toFixed(2)} MB (data ${s.jsDataMB.toFixed(2)}, code ${s.codeMB.toFixed(2)})  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  reconnects ${s.reconnects}${opts.brain ? `  morning ${s.morning}  jobs ${s.jobs}` : ''}`);
     }
     await sleep(250);
   }

@@ -166,11 +166,15 @@ export function startMockCore({ port = 8790, scenario = 'ok', rate = 1, start = 
         broadcast(frame('briefing', { date: b.date, generatedAt: b.generatedAt, kind: b.kind, greeting: b.greeting }));
       }
       if (brainData.brain && body.job && typeof body.job === 'object') {
-        brainData.jobs = [body.job, ...brainData.jobs.filter((j) => j.id !== body.job.id)];
+        brainData.jobs = [body.job, ...brainData.jobs.filter((j) => j.id !== body.job.id)].slice(0, 50);
         broadcast(frame('job', body.job));
       }
+      if (brainData.brain && body.spend && typeof body.spend === 'object') {
+        brainData.brain.spend = body.spend;
+        broadcast(frame('spend', body.spend));
+      }
       if (brainData.brain && body.watcher && typeof body.watcher === 'object') {
-        brainData.watchers = [body.watcher, ...brainData.watchers.filter((w) => w.id !== body.watcher.id)];
+        brainData.watchers = [body.watcher, ...brainData.watchers.filter((w) => w.id !== body.watcher.id)].slice(0, 20);
         broadcast(frame('watcher', body.watcher));
       }
       if (state.down) dropStreams();

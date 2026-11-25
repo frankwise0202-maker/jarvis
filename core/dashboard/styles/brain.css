@@ -275,6 +275,13 @@
   line-height: 1.5;
   color: var(--text-2);
 }
+.brief-cols,
+.brief-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  min-width: 0;
+}
 .brief-sec {
   display: flex;
   flex-direction: column;
@@ -584,6 +591,15 @@ a.brief-hl-title:hover {
     padding-left: 1rem;
     border-top: 0;
     border-left: 1px solid var(--line);
+  }
+}
+/* A wide briefing panel (a tablet, a laptop window): the headlines beside the rest. */
+@container panel (min-width: 44rem) {
+  .brief-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+    column-gap: 2rem;
   }
 }
 @container panel (max-width: 26rem) {
@@ -1050,6 +1066,13 @@ html[data-morning='on'] .stage > .grid {
 .morning[data-state='waiting'] .m-hero {
   grid-template-columns: auto minmax(0, 1fr);
 }
+/* The cards, the weather and the lead are built from the latest briefing; while today's has not
+   come yet they belong to yesterday and stay out of sight. */
+.morning[data-state='waiting'] .m-weather,
+.morning[data-state='waiting'] .m-wx-hint,
+.morning[data-state='waiting'] .m-lead {
+  display: none !important;
+}
 
 .m-foot {
   display: flex;
@@ -1057,6 +1080,23 @@ html[data-morning='on'] .stage > .grid {
   justify-content: space-between;
   gap: 2rem;
   min-height: 1.5rem;
+}
+.m-foot-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.m-health {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--lv);
+}
+.m-health[data-level='offline'] {
+  color: var(--text-2);
 }
 .m-key {
   display: flex;

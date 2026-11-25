@@ -167,6 +167,8 @@ export function createBrainView({ kiosk }) {
     mSummary: $('m-summary'),
     mWaitText: $('m-wait-text'),
     mKey: $('m-key'),
+    mHealth: $('m-health'),
+    mHealthText: $('m-health-text'),
   };
 
   // --- the missions list: fixed rows, updated in place ------------------------------------------
@@ -304,10 +306,13 @@ export function createBrainView({ kiosk }) {
     }
     setText(n.missionsEmpty, empty);
     setHidden(n.missionsEmpty, !empty);
-    const running = list.filter((j) => j.status === 'running').length;
-    const queued = list.filter((j) => j.status === 'queued').length;
-    const cr = (brain.jobs.running || running) + (brain.jobs.queued || queued) > 0;
-    chip(n.missionsChip, cr ? 'ok' : 'unknown', cr ? `${brain.jobs.running || running} RUNNING${(brain.jobs.queued || queued) ? ` · ${brain.jobs.queued || queued} QUEUED` : ''}` : 'IDLE');
+    // The list follows the stream, so it counts; the brain's own counts only until a list arrives.
+    // (Only research counts here: a watcher's check or the briefing's call is not a mission.)
+    const known = Array.isArray(jobs) && jobs.length > 0;
+    const research = known ? jobs.filter((j) => j.kind !== 'watch-check' && j.kind !== 'briefing') : [];
+    const running = known ? research.filter((j) => j.status === 'running').length : brain.jobs.running;
+    const queued = known ? research.filter((j) => j.status === 'queued').length : brain.jobs.queued;
+    chip(n.missionsChip, running + queued > 0 ? 'ok' : 'unknown', running + queued > 0 ? `${running} RUNNING${queued ? `${SEP}${queued} QUEUED` : ''}` : 'IDLE');
     // A failed or blocked mission marks its own row; the panel itself stays calm (it is not the machine's health).
   }
 
@@ -405,10 +410,10 @@ export function createBrainView({ kiosk }) {
   function renderMorning(m) {
     setHidden(n.morning, !m.on);
     setData(n.root, 'morning', m.on ? 'on' : null);
-    if (!m.on) {
-      morningSig = null;
-      return;
-    }
+    // The cards are built when a briefing arrives, shown or not, so the morning screen appears at
+    // once and its size never changes when it does (the long run measures exactly that).
+    buildMorningContent(m.latest || null, m.brain || null);
+    if (!m.on) return;
     const { vm, ctx, brain, briefing: b } = m;
     // The strip: the state word, the four vitals and the clock, so health stays in sight.
     setData(n.mState, 'level', m.sw.level);
@@ -426,6 +431,11 @@ export function createBrainView({ kiosk }) {
     setText(n.mClockDate, date);
     setText(n.mBigClock, `${cp.time}${cp.period ? ` ${cp.period}` : ''}`);
     setText(n.mSummary, m.summary || '');
+    // Something needs a look: the Core's own sentence, in its color, above the key line.
+    const needsLook = m.sw.level === 'warn' || m.sw.level === 'alert' || m.sw.level === 'offline';
+    setHidden(n.mHealth, !needsLook || !!(n.mWaiting && !b));
+    setData(n.mHealth, 'level', m.sw.level === 'offline' ? 'offline' : m.sw.level);
+    setText(n.mHealthText, needsLook ? `${m.summary || ''} Press any key for the system report.`.trim() : '');
     setText(n.mGreeting, greetingFor(m.ownerName));
     setText(n.mKicker, `${date.toUpperCase()}${b ? `${SEP}${b.kind === 'full' ? 'YOUR BRIEFING, WRITTEN BY CLAUDE' : 'YOUR BRIEFING'}` : ''}`);
     setHidden(n.mKey, !(brain && !brain.key.set));
@@ -433,8 +443,13 @@ export function createBrainView({ kiosk }) {
     setHidden(n.mWaiting, !!b);
     setHidden(n.mCards, !b);
     setText(n.mWaitText, m.online ? 'Your briefing is on its way.' : 'Waiting for the Core to come back.');
+    // Only today's briefing is shown: while waiting, the weather and the lead (yesterday's) stay
+    // hidden with the cards (brain.css: .morning[data-state='waiting']).
+  }
 
-    const sig = b ? `${b.date}|${b.generatedAt}|${brain?.briefing.location ? 1 : 0}` : 'waiting';
+  /** The briefing's cards (headlines, the night, what finished, what's new, music), the weather and the lead. */
+  function buildMorningContent(b, brain) {
+    const sig = b ? `${b.date}|${b.generatedAt}|${brain?.briefing.location ? 1 : 0}|${brain?.key.set ? 1 : 0}` : 'none';
     if (sig === morningSig) return;
     morningSig = sig;
     if (!b) {

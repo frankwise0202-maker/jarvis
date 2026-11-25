@@ -216,11 +216,17 @@
             <p class="brief-greeting" id="brief-greeting"></p>
             <p class="brief-weather" id="brief-weather"></p>
             <p class="brief-lead" id="brief-lead" hidden></p>
-            <div class="brief-sec" id="brief-news-sec"><h3 class="hud-label">HEADLINES</h3><ol class="brief-list brief-news" id="brief-news"></ol></div>
-            <div class="brief-sec" id="brief-hb-sec"><h3 class="hud-label">OVERNIGHT AT THE HOME BASE</h3><p class="brief-hb" id="brief-hb" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span id="brief-hb-text"></span></p><ul class="brief-list" id="brief-hb-notes"></ul></div>
-            <div class="brief-sec" id="brief-done-sec"><h3 class="hud-label">FINISHED OVERNIGHT</h3><ul class="brief-list brief-done" id="brief-done"></ul></div>
-            <div class="brief-sec" id="brief-new-sec"><h3 class="hud-label">WHAT'S NEW</h3><ul class="brief-list" id="brief-new"></ul></div>
-            <div class="brief-sec" id="brief-music-sec"><h3 class="hud-label">MUSIC FOR THE MORNING</h3><p class="brief-music" id="brief-music"></p></div>
+            <div class="brief-cols">
+              <div class="brief-col">
+              <div class="brief-sec" id="brief-news-sec"><h3 class="hud-label">HEADLINES</h3><ol class="brief-list brief-news" id="brief-news"></ol></div>
+              </div>
+              <div class="brief-col">
+              <div class="brief-sec" id="brief-hb-sec"><h3 class="hud-label">OVERNIGHT AT THE HOME BASE</h3><p class="brief-hb" id="brief-hb" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span id="brief-hb-text"></span></p><ul class="brief-list" id="brief-hb-notes"></ul></div>
+              <div class="brief-sec" id="brief-done-sec"><h3 class="hud-label">FINISHED OVERNIGHT</h3><ul class="brief-list brief-done" id="brief-done"></ul></div>
+              <div class="brief-sec" id="brief-new-sec"><h3 class="hud-label">WHAT'S NEW</h3><ul class="brief-list" id="brief-new"></ul></div>
+              <div class="brief-sec" id="brief-music-sec"><h3 class="hud-label">MUSIC FOR THE MORNING</h3><p class="brief-music" id="brief-music"></p></div>
+              </div>
+            </div>
             <p class="brief-key" id="brief-key" hidden>Give the home base your key from Jarvis on your iPhone to unlock background research.</p>
           </div>
         </section>
@@ -379,7 +385,10 @@
     </div>
 
     <footer class="m-foot">
+      <div class="m-foot-lines">
+      <p class="m-health" id="m-health" data-level="warn" hidden><i class="lv-icon" aria-hidden="true"></i><span id="m-health-text"></span></p>
       <p class="m-key" id="m-key" hidden><i class="lv-icon" aria-hidden="true"></i>Give the home base your key from Jarvis on your iPhone to unlock background research.</p>
+      </div>
       <p class="m-hint">Press any key or move the mouse for the full system report.</p>
     </footer>
   </section>
