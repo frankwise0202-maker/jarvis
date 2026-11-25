@@ -1251,8 +1251,21 @@ refresh() {
     else
       "$SELF_BIN" open
     fi
+  elif [ "$DRY_RUN" != 1 ] && in_service && [ -f "$AUTOSTART_FILE" ] && have systemd-run && screen_env_ready; then
+    # No dashboard on the screen while the desktop is up: an earlier update could have stopped it along with
+    # its own job. Start it again as a user unit of its own, so it outlives this job (jarvis-core screen
+    # waits for the Core, then becomes Chrome, so the unit lasts as long as the dashboard is open).
+    if systemd-run --user --collect --quiet --unit="jarvis-core-screen-$(date +%s)" --description="Jarvis Core screen" "$SELF_BIN" screen </dev/null >/dev/null 2>&1; then
+      ok "Put the dashboard back on the screen"
+    else
+      note "Couldn't put the dashboard back on the screen; log out and back in, or run: jarvis-core open"
+    fi
   fi
   printf '\n%sJarvis Core is up to date.%s\n' "$B" "$N"
+}
+
+screen_env_ready() { # the desktop session's display is known to the user manager (GNOME exports it at login)
+  systemctl --user show-environment 2>/dev/null | grep -qE '^(WAYLAND_DISPLAY|DISPLAY)='
 }
 
 in_service() { # run by a systemd service (an update timer): whatever it starts is stopped with it

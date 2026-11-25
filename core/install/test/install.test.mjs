@@ -630,6 +630,30 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       }
     });
 
+    await t.test('a refresh run by the update timer puts a missing dashboard back on the screen, in a unit of its own', () => {
+      // An earlier update (Core 1.0's refresh) reopened Chrome from inside the timer's job, and systemd stopped it
+      // with the job: the screen had no dashboard. The next update must bring it back without the owner.
+      const marker = path.join(sb.stubs, 'systemd-run-called');
+      fs.rmSync(marker, { force: true });
+      const asOwner = { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_UNATTENDED: '1' };
+      // no desktop session known to the user manager: nothing is started
+      let r = install(sb, ['--refresh'], { env: asOwner });
+      assert.equal(r.code, 0, r.out);
+      assert.ok(!fs.existsSync(marker), 'no systemd-run without a desktop session');
+      // the desktop is up (GNOME exported its display) and no dashboard is on the screen: it comes back
+      r = install(sb, ['--refresh'], { env: { ...asOwner, STUB_SHOW_ENV: 'XDG_RUNTIME_DIR=/run/user/1000\nWAYLAND_DISPLAY=wayland-0' } });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Put the dashboard back on the screen/);
+      const log = stubLog(sb);
+      const call = (Array.isArray(log) ? log : String(log).split('\n')).filter((l) => l.startsWith('systemd-run ')).pop();
+      assert.match(call, /^systemd-run --user --collect --quiet --unit=jarvis-core-screen-\d+ --description=Jarvis Core screen \S+\/jarvis-core screen$/);
+      // from a terminal (not the timer), a refresh with no dashboard on the screen starts nothing either
+      fs.rmSync(marker, { force: true });
+      r = install(sb, ['--refresh'], { env: { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_CGROUP_FILE: path.join(sb.root, 'no-such-cgroup'), STUB_SHOW_ENV: 'WAYLAND_DISPLAY=wayland-0' } });
+      assert.equal(r.code, 0, r.out);
+      assert.ok(!fs.existsSync(marker), 'only the update timer puts it back');
+    });
+
     await t.test('uninstall puts everything back and keeps the history', () => {
       const data = path.join(sb.home, '.local/share/jarvis-core');
       fs.mkdirSync(data, { recursive: true });

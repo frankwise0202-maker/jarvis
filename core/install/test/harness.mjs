@@ -95,6 +95,7 @@ if [ "$1" = -n ]; then
 fi
 [ "$1" = -v ] && exit 0
 exec "$@"`,
+  'systemd-run': `echo "systemd-run $*" >> "$STUB_LOG"; touch "$STUB_DIR/systemd-run-called"; exit 0`,
   'apt-get': `echo "apt-get $*" >> "$STUB_LOG"; exit 0`,
   'dpkg-query': `pkg="\${@: -1}"
 case " \${STUB_PKGS:-} " in *" $pkg "*) printf 'install ok installed' ;; *) exit 1 ;; esac`,
@@ -145,7 +146,7 @@ case "$1" in
   start) start ;;
   restart) stop; start ;;
   stop) stop ;;
-  show-environment) exit 0 ;;
+  show-environment) [ -n "\${STUB_SHOW_ENV:-}" ] && printf '%s\n' "$STUB_SHOW_ENV"; exit 0 ;;
   *) exit 0 ;;
 esac`,
   journalctl: `echo "journalctl $*" >> "$STUB_LOG"; cat "$STUB_DIR/core.log" 2>/dev/null; exit 0`,
