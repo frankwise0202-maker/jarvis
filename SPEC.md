@@ -3536,7 +3536,10 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   heard (or the one before it when that one came less than `stallBackS`, 0.3 s, before the stop: the speaker
   can lag the clock by more than `latency()` says, Bluetooth with no `outputLatency` above all, so a word said
   twice beats a word lost), the next chunk if this one's voice had all been heard, or the start of the chunk
-  that never started. Hidden, nothing counts; a visibility change starts it again from fresh readings.
+  that never started. The same rule at a chunk's end (second review): when a chunk's voice ended less than
+  0.3 s before the stop (the stop in its kept silence, in the pause after it, or in the next chunk's first
+  word), from that chunk's last word. Hidden, nothing counts; a visibility change starts it again from fresh
+  readings. The stream's handle tells how long the clock has stood still meanwhile (`stalledMs()`).
 - **Why these thresholds can't fire in normal playback.** A running context's clock moves every few
   milliseconds (iOS buffers are 5-40 ms), so a 40 ms tick sees it move whenever audio plays; the chunk start,
   `leadS` (60 ms) ahead, isn't what is watched. What stops it legitimately is short: our own 30 s idle
@@ -3552,17 +3555,30 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   `speak()`) go straight to the device voice, with no new wait, until one of these. Then George speaks again;
   if his sound still doesn't start, the watchdog hands over once more. `tts.audioStuck()`,
   `tts.onAudioStuck(fn)`. No setting is changed and the home base doesn't rest (it isn't its fault).
+  - **A cancel past the kick is a stall too** (second review). A George reply cancelled (Voice Mode's core
+    tapped in the silence, the chat's Stop, a new reply replacing it) once its watchdog has counted the clock
+    standing still for `stallKickMs` (the kick tried, nothing moved) marks the output stuck as a stall would,
+    so the next reply doesn't wait 3.5 s for him again. A tap during a real route change of 1.5-3.5 s costs one
+    reply on the iPhone voice; the probe (below) then brings George back.
   - **A tap:** `unlockSpeech()` inside a tap (the first tap, Voice Mode opened by hand, Test, a reply's Speak,
     the chat mic, Standby's key). Each stuck output is started afresh inside the tap (`audio.revive()`: the
     stuck context is suspended and resumed, then closed, and a fresh one made and started, as at the very first
     unlock; a `resume()` alone does nothing to a context that says 'running' with its clock stopped, and iOS
-    starts audio only in a gesture). Nothing plays on a stuck output meanwhile, so nothing is cut.
+    starts audio only in a gesture), also one George doesn't use right now (switched off on this device: Hearing
+    and voice's Test plays through it). Nothing plays on a stuck output meanwhile, so nothing is cut. Second
+    review: an output that stalled since its context was made but whose clock has moved again since (it came
+    back by itself, below) is started afresh too, once, at the first tap that finds nothing playing on it: iOS
+    can leave a context the interruption stopped running with nothing heard, which no clock shows. Never while
+    a George reply plays on it (his stream waits on that context's clock: replacing it under him would leave
+    him waiting on times the new clock reaches only much later).
   - **The sound coming back by itself:** its clock has moved 0.25 s since the stall (checked when a reply
     starts and when Settings asks). Each reply sent to the device voice because of it asks the stuck output to
     run again (`audio.probe()`: the watchdog's kick, no sound, then the usual idle suspend), only as a reply
     starts (Voice Mode's microphone is closed then) and only for an output George would use; so once the
     sound can play again (an interruption ended, a Mac's output device came back) George is back by the
-    second reply, with no tap.
+    second reply, with no tap. If iOS lets that context run but nothing out, those replies are silent until
+    the next tap above starts it afresh (in Voice Mode, whose unlock is one-shot, until it is opened again):
+    nothing can tell from here.
   - **Not without a tap.** `unlockSpeech({ tap: false })` keeps what is known: Standby entered again when Voice
     Mode closes into it (`standby.enter({ again: true })`), and Voice Mode opened by the wake routine (claps or
     "Hey Jarvis"), whose one-shot unlock then waits for its first real tap. Where the browser tells
@@ -3574,7 +3590,9 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
     stops audio in the background); otherwise "Nothing played: George's sound didn't start on this iPhone, so the iPhone
     voice speaks for now. Tap Test to try again." (`silentSampleText()`), and the output is marked stuck
     (`tts.noteAudioStuck(audio)`). Hearing and voice's Test unlocks through the router first, so it is a tap
-    like the others.
+    like the others. With no verdict (Jarvis hidden meanwhile, or the sound restarted under the sample) it says
+    so, "Couldn't tell whether it played: Jarvis was in the background during the test. Tap Test to try again."
+    (`unsureSampleText()`, an info line), and marks nothing; the on-device voice's Test says nothing then.
 - **Settings → Voice → Jarvis's voice** (`voiceInUse({ audioStuck })`): "iPhone voice", and in the pending line
   (`data-state="stuck"`, warning tint) "George's sound didn't start on this iPhone, so the iPhone voice is
   speaking. Tap Test to try again." (a Mac: "this Mac", "the built-in voice").
@@ -3612,6 +3630,20 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   tap, George is back by the second reply; a Speak tap: George) and `george-stuck-wake` ("Jarvis, standby" and
   two wakes with no tap since the stall: each greeting at once on the iPhone voice); `george-stuck` now also
   checks that each tap while stuck started a fresh context.
+- **Tests added after the second review** (each failed on aa0b53b, build 2f785fe1, apart from one guard: a Stop
+  while George plays teaches nothing). Unit `natural.stuck` (+5): a
+  context that runs again after an interruption with nothing heard (George back on it by himself, silent) is
+  replaced at the next idle tap, once, and never by a tap while he speaks; a reply cancelled 2.5 s into the
+  silence marks the output stuck and the next reply is on the device voice at once (1 s in: nothing learned);
+  a Stop while he plays teaches nothing; with George off on this device, three Hearing and voice Tests each play,
+  on one fresh context; the no-verdict wording. Unit `natural.stall`: the last-silence test now stops the clock
+  25 ms after a chunk's voice, in the pause after it and 20 ms into the next chunk (each from that chunk's last
+  word) and 0.33 s after it (from the next chunk). E2E (`voice-george-stuck.mjs`, the second review's probes):
+  `george-stuck-tap-early` (Voice Mode, the core tapped 2.5 s into the silence: the next reply on the iPhone
+  voice at once, George not tried), `george-stuck-replaced` (George back by himself on the context that stalled;
+  an idle Speak tap reads on a fresh one), `george-test-george-off` (the first context stuck, George off on this
+  iPhone: Hearing and voice's Test plays, twice, on one fresh context) and `george-test-hidden` (the Test with
+  Jarvis hidden for the whole sample: the no-verdict line, not marked stuck).
 
 **26.7 Also in v7.8.1** (§24).
 - **One total for today in Spending.** The Home base sheet's Spending tab drew today's and this month's totals
