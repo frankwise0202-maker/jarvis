@@ -299,6 +299,7 @@ exact numbers):
 | load + warm-up from the disk cache: base.en / Kokoro fp32 | 3.3-3.8 s / 3.4 s |
 | the first request after the idle unload: hear 7 s / speak "Certainly, Frank." | 3.0 s / 2.2 s (load without the warm-up run) |
 | memory of an engine process: base.en / small.en / Kokoro fp32 | 660 MB / 1.46 GB / 1.08 GB (all of it back after 30 idle minutes) |
+| the same round trip while other programs kept the 4 threads busy (load average 15) | hear base.en 6 s: 3.1 s; speak fp32 6 s: 13 s (nice 10 gives way, as intended) |
 
 **Tests.** `npm test` (no downloads): WAV parsing and writing, the resampler, sentence splitting, prompts,
 settings validation and the catalog (`test/server/senses/pure.test.mjs`); the engine host with a stub
