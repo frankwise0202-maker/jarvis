@@ -77,22 +77,37 @@ The same page, laid out by the window's size (`styles/dashboard.css`, after the 
 kiosk layout itself is unchanged and is used wherever it fits (1366×740 and up, e.g. the Mac's
 Chrome at 1440×900):
 
-- **A phone held upright (up to 480 px wide)**: one column that scrolls. A compact top bar (the
-  state word and the clock; the host, the uptime and a small Open Jarvis button under them), the
-  living core at about `min(78vw, 320px)` with its four readouts (CPU, GPU, RAM, DISK) in a 2×2
-  grid under it instead of leader lines, the Core's summary sentence, then the panels in this
-  order: Services, CPU, GPU, Memory, Storage, Network, Status assistant, Top processes, Event log.
-- **A phone on its side, a tablet, a laptop window (481–1365 px wide, or under 740 px tall)**: the
+- **The kiosk layout on a remote viewer** (the Mac's Chrome, an iPad Pro on its side): the Mac's
+  mouse keeps the kiosk's own sizes; a screen that can be touched (`any-pointer: coarse`) gets
+  44 px chips, Ask and Open Jarvis and a 16 px question box. The transcript and the event log,
+  which the kiosk shows only the newest of, scroll (the mouse wheel, a finger), and a new answer
+  taller than its box arrives showing its first line, never only its end (`assistant.js`).
+- **A phone held upright, a narrow window, an iPad in Split View (up to 560 px wide)**: one column
+  that scrolls. A compact top bar (the state word and the clock; the host, the uptime and a small
+  Open Jarvis button under them), the living core at about `min(78vw, 320px)` with its four
+  readouts (CPU, GPU, RAM, DISK) in a 2×2 grid under it instead of leader lines, the Core's
+  summary sentence, then the panels in this order: Services, CPU, GPU, Memory, Storage, Network,
+  Status assistant, Top processes, Event log.
+- **A phone on its side, a tablet, a laptop window (561–1365 px wide, or under 740 px tall)**: the
   core with its readouts beside it on top (the four in one row from 1024 px), then the panels two
-  by two in the same order, the event log across both columns.
+  by two in the same order, the event log across both columns. Two columns start at 561 px, where a
+  half-width panel still holds the network's values ("UNREACHABLE", "999 Mb/s").
+- **A phone on its side (under 431 px tall)**: the top bar keeps to one line (the small orb and the
+  HOST label go, and at 640 px and narrower the host name, which the Services panel still shows in
+  the machine's tailnet name), and the core sits at the top of its readouts, so the whole core is
+  on the first screen.
 - Each panel lays out its insides by its own width (CSS container queries): the big figure beside
   or above the others, the process lists stacked, a log row's text under its time, so the
   phone's column and a tablet's half-width column both fit. Nothing is cut: subtitles, captions,
   the event text and the transcript wrap instead of ending in "…", and the log and the
-  transcript show everything they keep.
+  transcript show everything they keep. A caption's parts are joined by " ·" and a no-break space
+  (`format.js` `SEP`), so a wrapped caption takes its dot down with the next part.
+- Only the state word sits on the smaller core's heart, sized with the core (12 px at the least),
+  so "NOMINAL" and "CAUTION" stay inside it.
 - 1rem is 16 px: labels 12 px, sentences 14 px and up, the question box 16 px (iOS zooms the
-  whole page into a smaller field). Buttons and suggestion chips are 44 px tall; hover effects only
-  where a pointer can hover, so a tapped chip does not stay lit.
+  whole page into a smaller field); where the box is too narrow for its hint, the hint ends in
+  "…". Buttons and suggestion chips are 44 px tall; hover effects only where a pointer can hover,
+  so a tapped chip does not stay lit.
 - iOS: `viewport-fit=cover` with the safe-area insets around the page (the notch on its side, the
   home bar), `100dvh` heights, `-webkit-text-size-adjust: 100%`.
 - The panels' index numbers (01–09) belong to the kiosk's columns and are hidden here.
@@ -204,14 +219,22 @@ row and a long drive name in each corner caption, and fails if either runs out o
 The phone run (`phone-screenshots.mjs`) loads the page the way the iPhone does, through the
 fixture's tailnet name (`alienware.tail4e5f6a.ts.net`, resolved to this computer, with the headers
 Tailscale serve adds), at 320×568, 375×667 (iPhone SE), 390×844 and 844×390 (iPhone 13, with its
-notch and home bar emulated), 820×1180 (iPad), 1280×800 and 1440×900 and the same two minus
-Chrome's tabs and address bar, in every state (`night` included: a remote viewer must not dim).
-It saves the first screen and the whole page, and fails on: sideways scrolling or anything past
-the screen's edges or under the notch, overlapping panels, readouts or pieces of a row, text cut
-off or spilling out of its box (also with the longest values each figure can show), text under
-12 px or sentences under 14 px, touch targets under 44 px, a question box under 16 px, and any
-kiosk behaviour (dimming, shifting, a hidden cursor, typed keys pulled into the question box).
-Windows big enough for the kiosk layout get the kiosk run's checks instead.
+notch and home bar emulated), 667×375 and 568×320 (the iPhone SE and the first SE on their sides),
+820×1180 (iPad), 1366×1024 (iPad Pro on its side), windows of 500×800 and 640×900, 1280×800 and
+1440×900, the same two minus Chrome's tabs and address bar (712 and 812 tall), 1440×789 (with the
+bookmarks bar) and 1366×740 (the smallest kiosk layout), in every state (`night` included: a
+remote viewer must not dim). It saves the first screen and the whole page, and fails on: sideways
+scrolling or anything past the screen's edges or under the notch, overlapping panels, readouts or
+pieces of a row, text cut off or spilling out of its box (also with the longest values each figure
+can show), a caption line that ends on its separator dot, text under 12 px or sentences under
+14 px, touch targets under 44 px, a question box under 16 px or a hint cut without "…", a state
+word wider than the core's heart, a core that does not fit the first screen, a top bar on two lines
+on a phone on its side, the newest answer starting above the transcript's readable area, a
+transcript or a log that is cut and cannot be scrolled to its first and last rows (by the mouse
+wheel where there is a mouse), and any kiosk behaviour (dimming, shifting, a hidden cursor, typed
+keys pulled into the question box). Windows big enough for the kiosk layout get the kiosk run's
+checks instead, plus the transcript and log checks, and on a touch screen the 44 px targets and
+the 16 px box.
 
 The long run plays the stand-in Core at 200× (a simulated day in about eight minutes): one
 snapshot per simulated second, the scenarios cycling every two hours, an event every ten minutes,

@@ -7,19 +7,26 @@
 //
 //   node core/dashboard/test/phone-screenshots.mjs [--out DIR] [--only ok,night] [--sizes iphone-13,ipad]
 //
-// Sizes (--sizes takes the keys): iphone-se1 320×568, iphone-se 375×667, iphone-13 390×844 and
-// iphone-13-side 844×390 (with the notch and the home bar), ipad 820×1180, laptop-1280 1280×800 and
-// laptop-1440 1440×900, mac-chrome-1280 / mac-chrome-1440 the same screens minus Chrome's tabs and
-// address bar (712 and 812 tall). States: ok, warn, alert, nogpu, internet (the Core's `offline` fixture: the internet is
-// down), offline (the Core itself stops), night (23:31). Each shot is saved twice: the first screen
-// (<state>-<size>.png) and the whole page (<state>-<size>-full.png).
+// Sizes (--sizes takes the keys; SIZES below): iPhones upright (320×568, 375×667, 390×844 with the
+// notch and the home bar) and on their sides (844×390 with the notch, 667×375, 568×320), the iPad
+// (820×1180) and the iPad Pro on its side (1366×1024), windows of 500×800 and 640×900, laptops at
+// 1280×800 and 1440×900, the Mac's Chrome on those screens (712, 812 and, with the bookmarks bar,
+// 789 tall) and the smallest kiosk-layout window (1366×740). States: ok, warn, alert, nogpu,
+// internet (the Core's `offline` fixture: the internet is down), offline (the Core itself stops),
+// night (23:31). Each shot is saved twice: the first screen (<state>-<size>.png) and the whole page
+// (<state>-<size>-full.png).
 //
 // Checks, at every size: no sideways scrolling and nothing past the screen's edges, no overlapping
 // panels or readouts, no text cut off or spilling out of its box (also with the longest values the
-// panels can show), text at 12 px or more and sentences at 14 px or more, 44 px touch targets, a
-// question box at 16 px (iOS zooms the page into a smaller one), and none of the kiosk's own
-// behaviour. A window big enough for the kiosk layout (1440×900, 1440×812) gets the kiosk's checks
-// instead (one screen, no scrolling, nothing cut off). One Chromium at a time; run under nice.
+// panels can show), no caption line ending on its separator dot, text at 12 px or more and
+// sentences at 14 px or more, 44 px touch targets, a question box at 16 px (iOS zooms the page into
+// a smaller one) whose hint fits or ends in "…", the state word inside the core's heart, the whole
+// core on the first screen (and a one-line top bar on a phone on its side), the newest answer
+// starting inside the transcript, a transcript and a log that reach their first and last rows (by
+// the mouse wheel where there is a mouse), and none of the kiosk's own behaviour. A window big
+// enough for the kiosk layout gets the kiosk's checks instead (one screen, no scrolling, nothing
+// cut off), plus the transcript and log checks and, on a touch screen, the 44 px targets and the
+// 16 px box. One Chromium at a time; run under nice.
 
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
