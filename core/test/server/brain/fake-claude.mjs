@@ -13,6 +13,7 @@
 //   that stays open, silent, for pauseMs. Like the real API, output_tokens never exceeds the request's
 //   max_tokens: a turn scripted with more output ends there, with stop_reason max_tokens.
 //   fake.url, fake.requests (each { headers, body, path }), fake.violations, await fake.close()
+//   search results take { url, title, pageAge?, contentChars? } (contentChars: the size of the encrypted snippet)
 //
 // Standalone, for trying the whole Core with no real API (any sk-ant-… key is accepted):
 //   node core/test/server/brain/fake-claude.mjs --port 8791
@@ -34,7 +35,7 @@ export function search(query, results) {
     {
       type: 'web_search_tool_result',
       tool_use_id: useId,
-      content: results.map((r) => ({ type: 'web_search_result', url: r.url, title: r.title, encrypted_content: 'ZW5jcnlwdGVk'.repeat(40), page_age: r.pageAge ?? null })),
+      content: results.map((r) => ({ type: 'web_search_result', url: r.url, title: r.title, encrypted_content: r.contentChars ? 'Q'.repeat(r.contentChars) : 'ZW5jcnlwdGVk'.repeat(40), page_age: r.pageAge ?? null })),
     },
   ];
 }

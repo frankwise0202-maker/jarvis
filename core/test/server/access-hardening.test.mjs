@@ -94,15 +94,17 @@ test('Tailscale Funnel traffic is refused even though it arrives from localhost'
   assert.equal(checkAccess(req({ host: 'localhost:8788', 'tailscale-funnel-request': '' }), { port: 8788 }).ok, false);
 });
 
-test('CORS with the hardened access: allowed origins unchanged', () => {
+test('CORS with the hardened access: the app and the Core\'s own pages; other localhost pages refused', () => {
   const local = checkAccess(req({ host: 'localhost:8788' }), { port: 8788 });
   const allow = (origin, access = local) => checkOrigin(req({ origin }), access, { allowedOrigins: [APP] });
   assert.equal(allow(APP).allow, APP);
   assert.equal(allow('http://localhost:8788').ok, true);
+  assert.equal(allow('http://localhost:5173').ok, false);
   assert.equal(allow('https://evil.example').ok, false);
   const ts = checkAccess(req(TS), { port: 8788, tailscaleDnsName: OUR_NAME });
   assert.equal(allow(`https://${OUR_NAME}`, ts).ok, true);
   assert.equal(allow('https://other.tail9999.ts.net', ts).ok, false);
+  assert.equal(allow('http://localhost:5173', ts).ok, false);
 });
 
 // ------------------------------------------------------------------------------------- the real server
@@ -182,10 +184,18 @@ test('server: private-network preflights are answered for allowed origins only',
   assert.equal(askPre.status, 204);
   assert.equal(askPre.headers['access-control-allow-private-network'], 'true');
   assert.match(askPre.headers['access-control-allow-headers'], /Content-Type/);
-  // a localhost page asks too (directly, on the Core's port)
-  const local = await request(port, '/api/status', { method: 'OPTIONS', host: `localhost:${port}`, headers: { origin: 'http://localhost:5173', 'access-control-request-method': 'GET', 'access-control-request-private-network': 'true' } });
+  // the Core's own page asks too (directly, on the Core's port)
+  const local = await request(port, '/api/status', { method: 'OPTIONS', host: `localhost:${port}`, headers: { origin: `http://localhost:${port}`, 'access-control-request-method': 'GET', 'access-control-request-private-network': 'true' } });
   assert.equal(local.status, 204);
   assert.equal(local.headers['access-control-allow-private-network'], 'true');
+  // a page another program serves on another localhost port does not get an answer, directly or through the tailnet
+  for (const host of [`localhost:${port}`, OUR_NAME]) {
+    const via = host === OUR_NAME ? { headers: TS } : { host, headers: {} };
+    const other = await request(port, '/api/status', { method: 'OPTIONS', host: via.host ?? null, headers: { ...via.headers, origin: 'http://localhost:5173', 'access-control-request-method': 'GET', 'access-control-request-private-network': 'true' } });
+    assert.equal(other.status, 403, host);
+    assert.equal(other.headers['access-control-allow-private-network'], undefined, host);
+    assert.equal(other.headers['access-control-allow-origin'], undefined, host);
+  }
   // other origins: refused, and nothing that would let the browser go ahead
   for (const origin of ['https://evil.example', 'https://frankwise0202-maker.github.io.evil.example', 'http://frankwise0202-maker.github.io', 'null']) {
     const r = await preflight(origin);

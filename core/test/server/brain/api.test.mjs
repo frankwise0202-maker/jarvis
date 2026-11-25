@@ -268,6 +268,56 @@ test('access rules apply to the new routes: Funnel, DNS rebinding, foreign origi
   bodies.push(fromApp.body);
 });
 
+test('a page served on another localhost port reaches nothing: not the backups, the key, the settings, jobs or watchers', async () => {
+  const data = tmpDir('jarvis-core-origin-');
+  const config = testConfig(['--fixture', 'ok', '--port', '0', '--data-dir', data]);
+  Object.assign(config, { startMs: START, persist: true, secretsDir: path.join(data, 'secrets'), dashboardDir: tmpDir('jarvis-core-dash-'), claudeBase: fake.url });
+  const rt2 = await createRuntime(config);
+  const { port: p2 } = await rt2.start({ port: 0 });
+  try {
+    const backup = JSON.stringify({ app: 'jarvis', version: 3, conversations: [{ id: 'c1', title: 'a private chat' }] });
+    assert.equal((await request(p2, '/api/sync/iphone-0001', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: backup })).status, 200);
+    const tailnet = { host: 'alienware.tail4e5f6a.ts.net', 'tailscale-user-login': 'owner@example.com', 'x-forwarded-for': '100.64.0.2', 'x-forwarded-proto': 'https' };
+    const evil = 'http://localhost:5173';
+    const tries = [
+      ['GET', '/api/sync/iphone-0001'],
+      ['GET', '/api/sync'],
+      ['GET', '/api/jobs'],
+      ['POST', '/api/brain/key', { key: KEY }],
+      ['DELETE', '/api/brain/key'],
+      ['PUT', '/api/brain/settings', { limits: { dailyUsd: 50 } }],
+      ['POST', '/api/jobs', { kind: 'research', prompt: 'spend it all', depth: 'deep' }],
+      ['POST', '/api/watchers', { what: 'anything', every: '6h' }],
+    ];
+    for (const via of [{ headers: tailnet }, { host: `localhost:${p2}`, headers: {} }]) {
+      for (const [method, p, body] of tries) {
+        const r = await request(p2, p, { method, host: via.host ?? null, headers: { ...via.headers, origin: evil, 'content-type': 'application/json' }, body: body === undefined ? null : JSON.stringify(body) });
+        assert.equal(r.status, 403, `${method} ${p} ${via.host ?? 'tailnet'}`);
+        assert.equal(r.json?.error, 'origin_not_allowed');
+        assert.equal(r.headers['access-control-allow-origin'], undefined);
+        assert.ok(!r.body.includes('a private chat'));
+      }
+      const pre = await request(p2, '/api/sync/iphone-0001', { method: 'OPTIONS', host: via.host ?? null, headers: { ...via.headers, origin: evil, 'access-control-request-method': 'GET', 'access-control-request-private-network': 'true' } });
+      assert.equal(pre.status, 403);
+      assert.equal(pre.headers['access-control-allow-private-network'], undefined);
+    }
+    // Nothing changed: no key, the default limits.
+    const brain = await request(p2, '/api/brain');
+    assert.equal(brain.json.key.set, false);
+    assert.equal(brain.json.limits.dailyUsd, 5);
+    // The Jarvis app and the dashboard's own page still get through.
+    const app = await request(p2, '/api/sync/iphone-0001', { headers: { ...tailnet, origin: 'https://frankwise0202-maker.github.io', 'accept-encoding': 'identity' } });
+    assert.equal(app.status, 200);
+    assert.equal(app.headers['access-control-allow-origin'], 'https://frankwise0202-maker.github.io');
+    const own = await request(p2, '/api/brain', { headers: { ...tailnet, origin: 'https://alienware.tail4e5f6a.ts.net' } });
+    assert.equal(own.status, 200);
+    const kiosk = await request(p2, '/api/brain', { host: `127.0.0.1:${p2}`, headers: { origin: `http://localhost:${p2}` } });
+    assert.equal(kiosk.status, 200);
+  } finally {
+    await rt2.stop();
+  }
+});
+
 test('sync routes on a persistent home base: upload (over 4 KB, gzip), list, download; the 4 KB limit stays elsewhere', async () => {
   const data = tmpDir('jarvis-core-sync-');
   const config = testConfig(['--fixture', 'ok', '--port', '0', '--data-dir', data]);

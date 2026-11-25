@@ -227,7 +227,8 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   }
   if (!['ok', 'warn', 'alert'].includes(cfg.gpuMissingLevel)) cfg.gpuMissingLevel = 'warn';
   if (!Array.isArray(cfg.allowedOrigins)) cfg.allowedOrigins = [...DEFAULTS.allowedOrigins];
-  cfg.allowedOrigins = cfg.allowedOrigins.filter((o) => typeof o === 'string' && /^https?:\/\/[^/]+$/.test(o));
+  // Origins added in config.json (a developer's dev server) come on top of the Jarvis app's, never instead.
+  cfg.allowedOrigins = [...new Set([...DEFAULTS.allowedOrigins, ...cfg.allowedOrigins.filter((o) => typeof o === 'string' && /^https?:\/\/[^/]+$/.test(o))])];
   if (!Array.isArray(cfg.tailscaleLogins)) cfg.tailscaleLogins = [];
   if (!cfg.ownerName) cfg.ownerName = null;
   if (cfg.locale !== null && cfg.locale !== undefined && cfg.locale !== '') {

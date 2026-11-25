@@ -92,8 +92,14 @@ export function createBrain({
 
   // ---- key vault, Claude, spending
   const vault = createVault({ dir: secretsDir, log, now });
+  // A key saved while offline is verified by its first request (and one Anthropic rejects is not).
+  function onKeyCheck(works, key) {
+    if (!key || vault.get() !== key || vault.status().verified === works) return;
+    vault.markVerified(works);
+    log(works ? 'the API key works (its first request was accepted)' : 'Anthropic rejected the API key');
+  }
   // claudeTuning (tests only): { outputTokensPerSecond, checkEveryMs } of the live cost estimate.
-  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log, ...claudeTuning });
+  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log, onKeyCheck, ...claudeTuning });
   const spend = createSpend({ file: file('spend-v1.json'), timeZone, now, limits: () => settings.limits, log });
   let lastSpendEmit = 0;
   let spendTimer = null;
@@ -220,6 +226,19 @@ export function createBrain({
   });
 
   // ---- briefing
+  // Right after a start (the machine booted at 08:00, an update at 06:59) the scheduled briefing waits for
+  // the Core's first readings and the network: until the internet check is up (15 s at the least), or 2
+  // minutes at most. A simulated home base (fixture mode) has no network to wait for.
+  function briefingReady() {
+    if (config?.fixture) return true;
+    const core = getCore();
+    const startedAt = core?.startedAt;
+    if (!core || !Number.isFinite(startedAt)) return true;
+    const up = now() - startedAt;
+    if (up >= 120_000) return true;
+    return up >= 15_000 && core.snapshot?.services?.internet?.status === 'up';
+  }
+
   const briefings = createBriefings({
     file: file('briefing-v1.json'),
     now,
@@ -232,6 +251,7 @@ export function createBrain({
     spend,
     fullAvailable: () => Boolean(vault.get()) && claude.sdkInstalled(),
     whatsNewFile,
+    ready: briefingReady,
     log,
     onReady(b, { scheduled }) {
       emit('briefing', compactBriefing(b));

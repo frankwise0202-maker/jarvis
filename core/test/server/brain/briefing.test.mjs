@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startFakeClaude, toolUse, search } from './fake-claude.mjs';
 import { makeBrain, tmp, KEY, MORNING, TZ } from './helpers.mjs';
 import { createManualClock } from '../../../server/clock.mjs';
@@ -12,6 +13,8 @@ import { createFixtureFetch } from '../../../server/brain/fixture-fetch.mjs';
 import { parseFeed, mergeHeadlines } from '../../../server/brain/rss.mjs';
 import { parseForecast } from '../../../server/brain/weather.mjs';
 import { nextDailyAt } from '../../../server/brain/schedule.mjs';
+import { overnightReport } from '../../../server/brain/homebase.mjs';
+import { readWhatsNew } from '../../../server/brain/briefing.mjs';
 import { fixtureCore } from '../helpers.mjs';
 import { setLocale } from '../../../server/format.mjs';
 
@@ -192,6 +195,138 @@ test('scheduler: 07:00 local every day across daylight saving time, once per day
   assert.equal(third.brain.info().briefing.time, '06:30');
   assert.equal(third.brain.info().briefing.nextAt, '2026-11-03T11:30:00.000Z');
   await third.brain.stop();
+});
+
+/** A Core that has just started: its internet check has not answered yet. */
+function startingCore(clock) {
+  return {
+    startedAt: clock.now(),
+    snapshot: { health: { level: 'ok', summary: 'All systems normal' }, services: { internet: { status: 'unknown' } } },
+    history: { query: () => ({ t: [], series: {} }) },
+    events: { between: () => [] },
+  };
+}
+
+test('a missed 07:00 after a boot waits for the network and the first readings (2 minutes at most), then catches up', async () => {
+  // The machine was off at 07:00 and boots at 08:00 New York time; the network comes up 20 s later.
+  const clock = createManualClock(Date.parse('2026-11-26T13:00:00Z'));
+  const real = createFixtureFetch();
+  let networkUp = false;
+  const fetchFn = (url, opts) => (networkUp ? real(url, opts) : Promise.reject(Object.assign(new TypeError('fetch failed'), { code: 'ENETUNREACH' })));
+  const core = startingCore(clock);
+  const { brain, push } = makeBrain({ clock, core, fetchFn });
+  try {
+    await brain.putSettings({ briefing: { location: LOCATION } });
+    brain.briefings.reschedule();
+    assert.equal(brain.info().briefing.nextAt, '2026-11-26T12:00:00.000Z', 'the missed 07:00 is due');
+    brain.tick(); // what start() does at once
+    assert.equal(brain.briefings.tick(), null, 'not in the first moments after a start');
+    assert.equal(brain.latestBriefing(), null);
+    clock.set(clock.now() + 20_000);
+    networkUp = true;
+    core.snapshot.services.internet.status = 'up';
+    const b = await brain.briefings.tick();
+    assert.ok(b, 'made once the internet is up');
+    assert.equal(b.date, '2026-11-26');
+    assert.equal(b.weather?.label, 'Wellington, New Zealand');
+    assert.ok(b.headlines.length > 0);
+    assert.equal(push.sent.length, 1);
+    assert.equal(brain.info().briefing.nextAt, '2026-11-27T12:00:00.000Z');
+    // No internet answer at all: it still comes, 2 minutes after the start.
+    const clock2 = createManualClock(Date.parse('2026-11-26T13:00:00Z'));
+    const second = makeBrain({ clock: clock2, core: startingCore(clock2) });
+    await second.brain.putSettings({ briefing: { location: LOCATION } });
+    second.brain.briefings.reschedule();
+    clock2.set(clock2.now() + 60_000);
+    assert.equal(second.brain.briefings.tick(), null, 'still waiting after a minute');
+    clock2.set(clock2.now() + 61_000);
+    const late = await second.brain.briefings.tick();
+    assert.ok(late && late.weather, 'made at the 2-minute deadline');
+    await second.brain.stop();
+  } finally {
+    await brain.stop();
+  }
+});
+
+test('a scheduled briefing made while the feeds and the weather fail is made again 7 minutes later, quietly', async () => {
+  const clock = createManualClock(Date.parse('2026-11-26T11:59:00Z')); // 06:59 in New York
+  const real = createFixtureFetch();
+  let networkUp = false;
+  const fetchFn = (url, opts) => (networkUp ? real(url, opts) : Promise.reject(new TypeError('fetch failed')));
+  const data = tmp();
+  const { brain, push, logs } = makeBrain({ clock, fetchFn, dataDir: data });
+  const events = [];
+  brain.on('briefing', (e) => events.push(e));
+  try {
+    await brain.putSettings({ briefing: { location: LOCATION } });
+    clock.set(Date.parse('2026-11-26T12:00:10Z'));
+    const first = await brain.briefings.tick();
+    assert.equal(first.weather, null);
+    assert.deepEqual(first.headlines, []);
+    assert.equal(push.sent.length, 1);
+    assert.ok(logs.some((l) => /made again in 7 minutes/.test(l)));
+    networkUp = true;
+    clock.set(clock.now() + 5 * 60_000);
+    assert.equal(brain.briefings.tick(), null, 'not yet');
+    clock.set(clock.now() + 2 * 60_000 + 1000);
+    const again = await brain.briefings.tick();
+    assert.ok(again, 'made again');
+    assert.equal(again.date, '2026-11-26');
+    assert.equal(again.weather?.label, 'Wellington, New Zealand');
+    assert.ok(again.headlines.length > 0);
+    assert.deepEqual(brain.latestBriefing(), again);
+    assert.equal(push.sent.length, 1, 'no second notification');
+    assert.equal(events.length, 2, 'the dashboard and the app hear about the better one');
+    clock.set(clock.now() + 30 * 60_000);
+    assert.equal(brain.briefings.tick(), null, 'only once');
+    assert.equal(brain.info().briefing.nextAt, '2026-11-27T12:00:00.000Z');
+  } finally {
+    await brain.stop();
+  }
+});
+
+test('core/whats-new.json announces this release: valid entries, the newest shown in the briefing (4 at most)', () => {
+  const file = fileURLToPath(new URL('../../../whats-new.json', import.meta.url));
+  const list = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(Array.isArray(list) && list.length > 0, 'what\'s new in Jarvis has entries');
+  for (const e of list) {
+    assert.match(e.date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(typeof e.title === 'string' && e.title.trim() && e.title.length <= 120, e.title);
+    assert.ok(typeof e.detail === 'string' && e.detail.trim() && e.detail.length <= 400, e.detail);
+    assert.ok(!/[[\]*`#]|https?:/.test(`${e.title} ${e.detail}`), 'plain words: they are read aloud too');
+  }
+  const newest = list.map((e) => e.date).sort().at(-1);
+  const shown = readWhatsNew(file, newest);
+  assert.ok(shown.length >= 1 && shown.length <= 4);
+  assert.deepEqual(shown[0], { title: list.find((e) => e.date === newest).title, detail: list.find((e) => e.date === newest).detail });
+});
+
+test('overnight report: tonight\'s update, a rollback and restarts are told; a rollback is something to look at', () => {
+  setLocale('en-US');
+  const t = MORNING;
+  const report = (evs, level = 'ok') => overnightReport({
+    core: { snapshot: { health: { level, summary: 'All systems normal' } }, history: { query: () => ({ t: [], series: {} }) }, events: { between: (a, b) => evs.filter((e) => e.t >= a && e.t <= b) } },
+    now: t,
+    fromMs: t - 12 * 3600_000,
+    timeZone: TZ,
+  });
+  const update = { t: t - 7.5 * 3600_000, level: 'info', kind: 'system', rule: 'core.update', message: 'Jarvis Core updated itself to a1b2c3d' };
+  const start = { t: t - 7.4 * 3600_000, level: 'info', kind: 'system', rule: 'core.start', message: 'Jarvis Core started (version 1.1.0)' };
+  const rollback = { t: t - 3 * 3600_000, level: 'warn', kind: 'system', rule: 'core.rollback', message: 'An automatic update to d4e5f6a didn\'t start properly, so Jarvis Core went back to a1b2c3d' };
+  const all = report([update, start, rollback]);
+  assert.equal(all.summary, 'All clear now, after one thing overnight.');
+  assert.deepEqual(all.notes, ['11:30 PM: Jarvis Core updated itself to a1b2c3d', "4:00 AM: An automatic update to d4e5f6a didn't start properly, so Jarvis Core went back to a1b2c3d"]);
+  // An update and its restart: a normal night, and it says so.
+  const updated = report([update, start]);
+  assert.equal(updated.summary, 'All systems normal overnight.');
+  assert.deepEqual(updated.notes, ['11:30 PM: Jarvis Core updated itself to a1b2c3d']);
+  // A restart by hand is told too; a quiet night says there were no restarts.
+  const restarted = report([{ ...start, t: t - 2 * 3600_000 }]);
+  assert.deepEqual(restarted.notes, ['5:00 AM: Jarvis Core started (version 1.1.0)']);
+  assert.deepEqual(report([]).notes, ['No restarts overnight']);
+  const crashed = report([{ t: t - 3600_000, level: 'warn', kind: 'system', rule: 'core.crash', message: 'Jarvis Core restarted after an unexpected stop' }, { ...start, t: t - 3600_000 + 1000 }]);
+  assert.equal(crashed.summary, 'All clear now, after one thing overnight.');
+  assert.deepEqual(crashed.notes, ['6:00 AM: Jarvis Core restarted after an unexpected stop']);
 });
 
 test('settings: limits, time, units, owner; a city is geocoded (Open-Meteo); coordinates rounded to 2 decimals; bad input refused', async () => {

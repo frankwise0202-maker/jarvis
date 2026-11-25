@@ -170,8 +170,8 @@ free morning briefing, notifications and sync. You just see one "Give the home b
 
 Work in the background costs money on your Claude account, so the home base stops itself at **$5 a
 day** and **$50 a month** (change both under **Limits**). Research that would start over a limit waits
-("blocked"); research that reaches the limit while it runs stops and keeps what it found so far. The
-morning briefing's Claude part never costs more than $0.30 a day. The home base sheet (tap the home
+("blocked"); research that reaches the limit while it runs stops and keeps what it found so far, so the
+limit is never passed. The morning briefing's Claude part never costs more than $0.30 a day. The home base sheet (tap the home
 base tile) shows today's and this month's spending.
 
 ### The morning briefing
@@ -179,7 +179,9 @@ base tile) shows today's and this month's spending.
 Every day at **7:00** the home base writes a short briefing: the weather for your place, a few headlines
 (news and tech), how the home base did overnight, anything it finished for you overnight, what's new
 in Jarvis and a music suggestion. With your key, Jarvis writes it in its own voice and picks
-the top stories; without one you get the same facts in plain form.
+the top stories; without one you get the same facts in plain form. If the Alienware was off at 7:00,
+the briefing comes once it is back on and online (within 3 hours); if the weather or the news could not
+be fetched, it tries once more a few minutes later, without a second notification.
 
 - **On the Alienware's screen** it fills the screen ("Good morning, Frank.") until 10:00. Move the
   mouse or press a key to see the system report; after 10 quiet minutes the briefing comes back.

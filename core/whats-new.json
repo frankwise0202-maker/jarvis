@@ -1,1 +1,22 @@
-[]
+[
+  {
+    "date": "2026-11-25",
+    "title": "Your home base keeps working while your phone is locked",
+    "detail": "Ask Jarvis to research something in the background, or to tell you when something happens (a price drop, say). Your iPhone gets a notification when it is ready."
+  },
+  {
+    "date": "2026-11-25",
+    "title": "A morning briefing at 7:00",
+    "detail": "The weather, a few headlines and how the home base did overnight, on the Alienware's screen and your iPhone. Say \"brief me\" any time; change the time or the place in Jarvis, Settings, Home base."
+  },
+  {
+    "date": "2026-11-25",
+    "title": "Your devices stay in sync",
+    "detail": "Each device's Jarvis backup is kept on the home base, and your other devices pick up the conversations they are missing. Nothing is ever deleted."
+  },
+  {
+    "date": "2026-11-25",
+    "title": "Give the home base your key",
+    "detail": "In Jarvis on your iPhone: Settings, Home base, one tap. Then Jarvis writes the briefing in its own voice and can research for you, never spending more than $5 a day."
+  }
+]
