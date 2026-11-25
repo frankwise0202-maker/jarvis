@@ -258,3 +258,7 @@
   color: var(--text);
   background: var(--accent-soft);
 }
+
+.jv-head > .btn {
+  margin-inline-start: auto;
+}
