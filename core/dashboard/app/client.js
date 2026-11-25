@@ -105,6 +105,7 @@ export function createClient(hooks) {
   let openedAt = 0; // when the current stream was opened (a silent stream is replaced)
   let everConnected = false;
   let everOpened = false; // the first stream open follows start()'s own full read
+  let infoOk = false; // api/info has been read (a page loaded while the Core was down has not)
   let reopenReads = 0;
 
   function setOnline(v) {
@@ -118,6 +119,7 @@ export function createClient(hooks) {
       // The brain is read once the Core has said which version it is: a 1.0 Core has none, and
       // asking it anyway would only log a 404 in the browser's console.
       getJson(`${base}api/info`, fetchImpl).then((b) => {
+        infoOk = true;
         hooks.onInfo(b);
         coreVersion = b && typeof b === 'object' ? b.version : undefined;
         return hasBrainApi(coreVersion) ? readBrain() : onBrain(null);
@@ -214,8 +216,9 @@ export function createClient(hooks) {
     attempt = 0;
     if (!online) {
       setOnline(true);
-      // Back after an outage (or the first frame): one full read fills what the stream leaves out.
-      if (everConnected) fullRead().catch(() => {});
+      // Back after an outage (or the first frame of a page loaded while the Core was down): one
+      // full read fills what the stream leaves out, api/info's version among it.
+      if (everConnected || !infoOk) fullRead().catch(() => {});
     }
     everConnected = true;
   }

@@ -51,6 +51,7 @@ function setup(core = { version: '1.1.0' }) {
   const seen = { status: 0, snapshot: 0, info: 0, history: 0, events: 0, links: [], versions: [] };
   const fetchImpl = async (url) => {
     calls.push(url);
+    if (core.down) throw new TypeError('Failed to fetch');
     const body = url.startsWith('api/info') ? { version: core.version } : url.startsWith('api/brain') ? { version: '1.1.0', briefing: { lastAt: '2026-11-25T07:00:00Z' } } : url.startsWith('api/status') ? { t: 1 } : url.startsWith('api/history') ? { series: {} } : { events: [] };
     return { ok: true, status: 200, json: async () => body };
   };
@@ -235,6 +236,23 @@ test('a quick Core restart (back within the browser\'s 3 s retry, never offline)
   await flush();
   assert.deepEqual(h.seen.links, [true]);
   assert.deepEqual(h.seen.versions, ['1.0.0', '1.1.0', '1.1.1']);
+  h.client.stop();
+});
+
+test('a page loaded while the Core was down reads everything at the first frame', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const h = setup({ version: '1.1.0' });
+  h.core.down = true;
+  assert.equal(await h.client.start(), false);
+  assert.deepEqual(h.seen.versions, []);
+  h.core.down = false;
+  const es = FakeES.all[0];
+  es.open();
+  es.send({ t: 1 }, 'status');
+  await flush();
+  await flush();
+  assert.deepEqual(h.seen.versions, ['1.1.0'], 'api/info read once the Core answers');
   h.client.stop();
 });
 

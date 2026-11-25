@@ -79,7 +79,10 @@ shows a full-screen "Good morning, Frank." (the owner's name from `api/brain` �
   location, a calm line to open Jarvis on the iPhone once and share it; a full briefing (written by
   Claude) adds its first lines under the greeting;
 - three cards: the headlines (up to 6, two lines each), the night at the home base and what finished
-  while he slept (research and watchers), and what's new with the music suggestion;
+  while he slept, and what's new with the music suggestion. The middle card always fits: the
+  research first, then the watchers, three at most (the title on one line, the summary on one
+  line) and "+N more on your phone" for the rest; two of the night's notes when something
+  finished, three otherwise; the status dot on the summary's first line;
 - without a key, one line at the bottom: "Give the home base your key from Jarvis on your iPhone to
   unlock background research."; when something needs a look (a warning, an alert, the Core
   offline), the Core's own sentence in its color above it;
@@ -120,7 +123,11 @@ hides the cursor and never reloads itself; keys typed on its page stay where the
   (stale data never looks live). The link reconnects on its own (1 → 10 s backoff) and catches up
   with one full read.
 - **Updates**: when `api/info` reports a new version after a restart, the page reloads itself (a
-  remote viewer gets a notice instead: "Jarvis Core was updated. Reload this page…").
+  remote viewer gets a notice instead: "Jarvis Core was updated. Reload this page…"). The page
+  reads `api/info` again whenever its stream reopens, not only after an outage: a `systemctl
+  restart` (an update, the autoupdate timer) is back in under 2 s, within the browser's own 3 s
+  retry and well before the 5 s that call the Core offline. An `info` frame on the stream counts
+  too.
 - **Daily refresh** at 04:00 (only if the page has been open an hour and the Core answers), as a
   safety net against browser-level growth; the page itself does not grow (see the long-run test).
 - **Service worker** (`sw.js`): network first for the page's own files, so a kiosk that reloads
@@ -203,7 +210,9 @@ behind `tailscale serve`. The contract is the Core's (`/tmp/jarvis-scratch/core/
 frames (every second, without `services` and without `health.items`) replace the sections they carry
 and keep the rest, `event` frames go to the log (with their ids, so a reconnect replays what was
 missed). Events are also polled every 15 s. Any frame proves the Core is alive; 5 s of silence on
-the monotonic clock means offline. A page coming back from the background after more than 2 s (the
+the monotonic clock means offline. Every time the stream opens again (the browser's own retry or
+the page's reconnect) the page reads everything once more, so a Core that restarted too quickly to
+look offline still hands over its new version (the kiosk reloads, the brain is asked for). A page coming back from the background after more than 2 s (the
 iPhone unlocked, a tab brought back, a page restored from the back-forward cache) opens a new
 stream at once and reads everything again, so it shows fresh values instead of a red "Core
 offline" banner while the browser notices that its old stream died.
@@ -267,7 +276,7 @@ nice -n 10 node core/dashboard/test/morning-screenshots.mjs        # morning mod
 nice -n 10 node core/dashboard/test/phone-screenshots.mjs --brain ok   # the remote view with the brain's panels
 nice -n 10 node core/dashboard/test/longrun.mjs --hours 24 --brain ok --start 2026-11-25T00:00:00Z   # with the brain, across 07:00 and 10:00
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
-node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy)
+node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy, night)
 ```
 
 The screenshot run starts a fresh real Core in fixture mode for every shot (`ok`, `warn`, `alert`,
@@ -321,15 +330,16 @@ up (the next question closes it), and warms up until the page also keeps its 30 
 limits are made for long windows: over 6 hours the transcript's suggestion chips (±5 nodes) alone
 read as a slope, so judge the brain with 24 hours or more.
 
-The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain
-preset (`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a
-long headline list, the full briefing, the alert scenario, and no briefing yet at 07:00 (then one
-arrives over the stream and must show at once); the system report with the brain in the ok, warn
+The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain preset
+(`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a long
+headline list, a busy night (`night`: five research results, three met watchers, the overnight
+report's six long notes), the full briefing, the alert scenario, and no briefing yet at 07:00 (then
+one arrives over the stream and must show at once); the system report with the brain in the ok, warn
 and alert scenarios, without a key, over the cap, with the SDK missing, busy, and an old Core
 without a brain (no brain UI at all). It fails on anything cut off or spilling out of the morning
-screen or its cards, a strip on two lines, the night dim over the morning, a key press that does
-not return to the system report (or lands in the question box), the brain UI on an old Core, and
-the kiosk run's own layout checks.
+screen or its cards, a strip on two lines, the night's status dot off the summary's first line, the
+night dim over the morning, a key press that does not return to the system report (or lands in the
+question box), the brain UI on an old Core, and the kiosk run's own layout checks.
 
 What cannot be tested here: real NVIDIA readings, a GNOME session, Chrome's kiosk window and the
 Open Jarvis window behaviour, a physical monitor (burn-in, brightness), Tailscale.
