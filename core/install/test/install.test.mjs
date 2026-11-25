@@ -75,7 +75,7 @@ test('dry run on a fresh machine: every step shown, nothing changed', () => {
     assert.match(o, /gsettings reset org\.gnome\.desktop\.session idle-delay/);
     // automatic login, Tailscale's three commands, the final box
     assert.match(o, /set AutomaticLoginEnable=true and AutomaticLogin=frank-wise in the \[daemon\] section/);
-    assert.match(o, /curl -fsSL https:\/\/tailscale\.com\/install\.sh \| sh\n.*sudo tailscale up\n.*sudo tailscale serve --bg 8788/);
+    assert.match(o, /wget -qO- https:\/\/tailscale\.com\/install\.sh \| sh\n.*sudo tailscale up\n.*sudo tailscale serve --bg 8788/);
     assert.match(o, /Done\. Here's what to do next/);
     assert.match(o, /jarvis-core url/);
     assert.match(o, /That was a dry run: nothing was changed\./);
@@ -540,9 +540,8 @@ test('jarvis-core open: starts the screen on its own, and restarts it when it is
 });
 
 test('the Tailscale steps it prints use wget, which a fresh Ubuntu desktop has (curl may be missing)', async () => {
-  const { readFile } = await import('node:fs/promises');
   for (const f of ['install.sh', 'jarvis-core']) {
-    const text = await readFile(new URL(`../${f}`, import.meta.url), 'utf8');
+    const text = fs.readFileSync(path.join(import.meta.dirname, '..', f), 'utf8');
     assert.ok(text.includes('wget -qO- https://tailscale.com/install.sh | sh'), `${f} prints the wget form`);
     assert.ok(!text.includes('curl -fsSL https://tailscale.com/install.sh'), `${f} never prints the curl form`);
   }
