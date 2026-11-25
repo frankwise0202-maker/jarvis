@@ -197,7 +197,7 @@ export function missionRows(jobs, max = MISSION_ROWS) {
  */
 export function keyState(brain) {
   if (!brain) return null;
-  if (!brain.sdk.installed) return { state: 'sdk', level: 'warn', word: 'UPDATE NEEDED', text: 'Run jarvis-core update' };
+  if (!brain.sdk.installed) return { state: 'sdk', level: 'warn', word: 'NOT READY', text: 'Run jarvis-core update' };
   if (!brain.key.set) return { state: 'none', level: 'unknown', word: 'NO KEY', text: 'Add your key from Jarvis on your phone' };
   const hint = brain.key.hint || '';
   if (brain.key.verified === false) return { state: 'unverified', level: 'ok', word: 'KEY SAVED', text: `${hint ? `${hint} · ` : ''}checked when online`.trim() };

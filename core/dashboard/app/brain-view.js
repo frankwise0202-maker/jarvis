@@ -97,6 +97,7 @@ export function createBrainView({ kiosk }) {
     keyWord: $('bc-key-word'),
     keyText: $('bc-key-text'),
     spend: $('bc-spend'),
+    spendLabel: $('bc-spend-label'),
     today: $('bc-today'),
     todayMeter: $('bc-today-meter'),
     month: $('bc-month'),
@@ -144,6 +145,7 @@ export function createBrainView({ kiosk }) {
     mLead: $('m-lead'),
     mWeather: $('m-weather'),
     mTemp: $('m-temp'),
+    mTempUnit: $('m-temp-unit'),
     mWxNow: $('m-wx-now'),
     mWxRange: $('m-wx-range'),
     mWxPlace: $('m-wx-place'),
@@ -170,15 +172,17 @@ export function createBrainView({ kiosk }) {
   // --- the missions list: fixed rows, updated in place ------------------------------------------
   const rows = [];
   for (let i = 0; i < MISSION_ROWS; i++) {
+    // [icon] the title ........ its time
+    //        DONE · the one-line summary
     const li = el('li', 'mission');
-    const st = el('span', 'mission-status');
     const icon = el('i', 'lv-icon');
-    const word = el('span', 'mission-word', '');
-    st.append(icon, word);
     const title = el('span', 'mission-title', '');
     const when = el('span', 'mission-when mono', '');
+    const line = el('span', 'mission-line');
+    const word = el('span', 'mission-word', '');
     const sum = el('span', 'mission-sum', '');
-    li.append(st, title, when, sum);
+    line.append(word, sum);
+    li.append(icon, title, when, line);
     li.hidden = true;
     n.missionsList.append(li);
     rows.push({ li, word, title, when, sum });
@@ -250,6 +254,7 @@ export function createBrainView({ kiosk }) {
     const wa = watcherState(brain, watchers);
     setData(n.key, 'level', k.level);
     setData(n.key, 'state', k.state);
+    setData(n.brain, 'key', k.state);
     setText(n.keyWord, k.word);
     setText(n.keyText, k.text);
     setData(n.spend, 'level', sp.level);
@@ -257,6 +262,8 @@ export function createBrainView({ kiosk }) {
     setText(n.month, sp.month.text ?? 'not available');
     meter(n.todayMeter, sp.today.frac, sp.today.level);
     meter(n.monthMeter, sp.month.frac, sp.month.level);
+    setText(n.spendLabel, sp.capReached ? `SPEND${SEP}${sp.capReached === 'monthly' ? 'MONTHLY' : 'DAILY'} CAP REACHED` : 'SPEND');
+    setData(n.spendLabel, 'level', sp.capReached ? 'alert' : null);
     setText(n.cap, sp.capWords || '');
     setHidden(n.cap, !sp.capWords);
     setData(n.watch, 'level', wa.latestMet ? 'ok' : 'unknown');
@@ -288,6 +295,7 @@ export function createBrainView({ kiosk }) {
       setText(r.sum, sum ? keepUnits(sum) : '');
       setHidden(r.sum, !sum);
     }
+    setHidden(n.missionsList, !list.length);
     let empty = '';
     if (!list.length) {
       if (k.state === 'sdk') empty = 'Background research needs one more step on the home base: run jarvis-core update.';
@@ -300,7 +308,7 @@ export function createBrainView({ kiosk }) {
     const queued = list.filter((j) => j.status === 'queued').length;
     const cr = (brain.jobs.running || running) + (brain.jobs.queued || queued) > 0;
     chip(n.missionsChip, cr ? 'ok' : 'unknown', cr ? `${brain.jobs.running || running} RUNNING${(brain.jobs.queued || queued) ? ` · ${brain.jobs.queued || queued} QUEUED` : ''}` : 'IDLE');
-    setData(n.missions, 'level', list.some((j) => j.level === 'alert') ? 'alert' : 'ok');
+    // A failed or blocked mission marks its own row; the panel itself stays calm (it is not the machine's health).
   }
 
   function renderBriefingPanel(b, brain, ctx) {
@@ -442,7 +450,8 @@ export function createBrainView({ kiosk }) {
     setHidden(n.mWeather, !w);
     setHidden(n.mWxHint, !!w);
     if (w) {
-      setText(n.mTemp, fmtDegrees(w.temp, w.units) ?? '—');
+      setText(n.mTemp, w.temp !== null ? String(Math.round(w.temp)) : '—');
+      setText(n.mTempUnit, `°${w.units}`);
       setText(n.mWxNow, w.summary || '');
       const range = [w.high !== null ? `High ${fmtDegrees(w.high, w.units)}` : null, w.low !== null ? `Low ${fmtDegrees(w.low, w.units)}` : null, w.rainPct !== null ? `${Math.round(w.rainPct)}% rain` : null].filter(Boolean).join(SEP);
       setText(n.mWxRange, range);

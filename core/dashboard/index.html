@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="styles/tokens.css">
 <link rel="stylesheet" href="styles/hud.css">
 <link rel="stylesheet" href="styles/dashboard.css">
+<link rel="stylesheet" href="styles/brain.css">
 <script type="module" src="app/main.js"></script>
 </head>
 <body>
@@ -180,7 +181,7 @@
             <p class="bc-line"><i class="lv-icon" aria-hidden="true"></i><b class="bc-word" id="bc-key-word">—</b><span class="bc-text" id="bc-key-text"></span></p>
           </div>
           <div class="bc bc-spend" id="bc-spend" data-level="ok">
-            <span class="hud-label">SPEND</span>
+            <span class="hud-label" id="bc-spend-label">SPEND</span>
             <div class="bc-bar"><span class="bc-bar-name">TODAY</span><span class="meter" id="bc-today-meter" data-level="ok"><i></i></span><b class="mono bc-usd" id="bc-today">—</b></div>
             <div class="bc-bar"><span class="bc-bar-name">MONTH</span><span class="meter" id="bc-month-meter" data-level="ok"><i></i></span><b class="mono bc-usd" id="bc-month">—</b></div>
           </div>
@@ -207,7 +208,7 @@
 
         <section class="panel hud-frame tabbed brief-panel" id="p-briefing" aria-labelledby="h-briefing" data-tab="briefing" hidden>
           <header class="panel-head">
-            <h2 id="h-briefing"><span class="idx">08</span>MORNING BRIEFING</h2>
+            <h2 id="h-briefing"><span class="idx">08</span><span class="h-long">MORNING </span>BRIEFING</h2>
             <div class="tabs" role="tablist" aria-label="Show"></div>
             <p class="panel-sub" id="brief-sub">—</p>
           </header>
@@ -341,7 +342,7 @@
         <p class="m-lead" id="m-lead" hidden></p>
       </div>
       <div class="m-weather" id="m-weather" hidden>
-        <b class="m-temp" id="m-temp">—</b>
+        <p class="m-temp"><b id="m-temp">—</b><span class="m-temp-unit" id="m-temp-unit"></span></p>
         <div class="m-wx">
           <b class="m-wx-now" id="m-wx-now"></b>
           <span class="m-wx-range" id="m-wx-range"></span>

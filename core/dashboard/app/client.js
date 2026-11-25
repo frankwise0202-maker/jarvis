@@ -51,6 +51,15 @@ async function getStatusJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   }
 }
 
+/** Does a Core of this version have the brain API (1.1.0 and later)? Unknown versions are asked. */
+export function hasBrainApi(version) {
+  const m = /^v?(\d+)\.(\d+)/.exec(String(version ?? ''));
+  if (!m) return version === undefined || version === null || version === '';
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  return major > 1 || (major === 1 && minor >= 1);
+}
+
 /**
  * @param {{
  *   onStatus: (raw: object) => void,          a full status (replaces the merged state)
@@ -80,6 +89,8 @@ export function createClient(hooks) {
   const onBrainEvent = hooks.onBrainEvent || noop;
   let brainTimer = 0;
   let brainReads = 0;
+  let coreVersion; // from api/info: the brain API exists from 1.1.0
+  let briefingAt = null; // the brain's briefing.lastAt when the briefing was last read
   let es = null;
   let online = false;
   let lastMessage = 0; // monotonic
@@ -102,11 +113,16 @@ export function createClient(hooks) {
 
   async function fullRead() {
     const results = await Promise.allSettled([
-      getJson(`${base}api/info`, fetchImpl).then((b) => hooks.onInfo(b)),
+      // The brain is read once the Core has said which version it is: a 1.0 Core has none, and
+      // asking it anyway would only log a 404 in the browser's console.
+      getJson(`${base}api/info`, fetchImpl).then((b) => {
+        hooks.onInfo(b);
+        coreVersion = b && typeof b === 'object' ? b.version : undefined;
+        return hasBrainApi(coreVersion) ? readBrain() : onBrain(null);
+      }),
       getJson(`${base}api/status`, fetchImpl).then((b) => hooks.onStatus(b)),
       getJson(`${base}api/history?range=15m&series=cpu,gpu,ram,netRx,netTx`, fetchImpl).then((b) => hooks.onHistory(b)),
       getJson(`${base}api/events?limit=40`, fetchImpl).then((b) => hooks.onEvents(b)),
-      readBrain(),
     ]);
     return results[1].status === 'fulfilled';
   }
@@ -126,7 +142,7 @@ export function createClient(hooks) {
    * The brain: api/brain, then its jobs, watchers and the latest briefing. A 404 means the Core
    * has no brain (1.0.0): the page shows none of it. Any other failure keeps what is shown.
    */
-  async function readBrain() {
+  async function readBrain(force = false) {
     brainReads++;
     let r;
     try {
@@ -140,16 +156,22 @@ export function createClient(hooks) {
     }
     if (r.status !== 200 || !r.body || typeof r.body !== 'object') return;
     onBrain(r.body);
-    await Promise.allSettled([
-      getJson(`${base}api/jobs?limit=30`, fetchImpl).then((b) => onJobs(b)),
-      getJson(`${base}api/watchers`, fetchImpl).then((b) => onWatchers(b)),
-      readBriefing(),
-    ]);
+    // The latest briefing only when there is one (briefing.lastAt) and it changed since the last
+    // read: before the first one the Core answers 404 none_yet, which the console would log.
+    const lastAt = r.body.briefing && typeof r.body.briefing === 'object' ? r.body.briefing.lastAt ?? null : null;
+    const reads = [getJson(`${base}api/jobs?limit=30`, fetchImpl).then((b) => onJobs(b)), getJson(`${base}api/watchers`, fetchImpl).then((b) => onWatchers(b))];
+    if (!lastAt) {
+      briefingAt = null;
+      onBriefing(null);
+    } else if (lastAt !== briefingAt || force) {
+      reads.push(readBriefing().then(() => (briefingAt = lastAt)));
+    }
+    await Promise.allSettled(reads);
   }
 
   async function pollBrain() {
     if (stopped) return;
-    if (online) await readBrain().catch(() => {});
+    if (online && hasBrainApi(coreVersion)) await readBrain().catch(() => {});
     if (!stopped) brainTimer = setTimeout(pollBrain, BRAIN_EVERY_MS);
   }
 
