@@ -66,8 +66,14 @@ function pageHidden() {
 
 function outLink(url, text, cls) {
   const href = safeUrl(url);
-  if (!href) return h('span', { class: cls, text });
+  // Not a web address: its words, not looking like a link.
+  if (!href) return h('span', { class: 'hbs-text', text });
   return h('a', { class: cls, href, text, attrs: { target: '_blank', rel: 'noopener noreferrer' } });
+}
+
+/** replaceChildren() without the empty parts (it would write "null"). */
+function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 }
 
 function msg(el, text, tone = 'info') {
@@ -190,13 +196,14 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
 
   function renderBriefing(v) {
     if (!v) {
-      briefBody.replaceChildren();
+      fill(briefBody);
       return;
     }
     const wx = weatherLine(v.weather);
     const section = (title, ...kids) => h('section', { class: 'hbs-bsec' }, h('h4', { class: 'hbs-bsec__title hud-label', text: title }), ...kids);
     const items = (list, fn) => h('ul', { class: 'hbs-list' }, list.map((x) => h('li', { class: 'hbs-list__item' }, ...fn(x))));
-    briefBody.replaceChildren(
+    fill(
+      briefBody,
       h('h3', { class: 'hbs-greeting', text: v.greeting, attrs: { 'data-testid': 'brain-briefing-greeting' } }),
       wx ? h('p', { class: 'hbs-weather', attrs: { 'data-testid': 'brain-briefing-weather' } }, icon('globe', { size: 14 }), h('span', { text: `${v.weather.label ? `${v.weather.label}: ` : ''}${wx}${v.weather.summary ? `. ${v.weather.summary}` : ''}` })) : null,
       v.headlines.length ? section('Headlines', items(v.headlines, (x) => [outLink(x.url, x.title, 'hbs-link'), x.source ? h('span', { class: 'hbs-src', text: ` · ${x.source}` }) : null])) : null,
@@ -335,7 +342,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
 
   function renderJobs() {
     const list = jobs.filter((j) => j.kind === 'research');
-    jobList.replaceChildren(...list.map(jobRow));
+    fill(jobList, ...list.map(jobRow));
     jobEmpty.hidden = !jobsLoaded || list.length > 0;
   }
 
@@ -371,12 +378,12 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     openJob = { id, job: null };
     researchList.hidden = true;
     resultEl.hidden = false;
-    resultEl.replaceChildren(h('p', { class: 'hbs-msg', dataset: { tone: 'busy' }, text: 'Opening the result…' }));
+    fill(resultEl, h('p', { class: 'hbs-msg', dataset: { tone: 'busy' }, text: 'Opening the result…' }));
     const r = await brain.call('getJob', id);
     if (destroyed || !openJob || openJob.id !== id) return;
     if (!r || !r.ok) {
       const p = brainProblem(r);
-      resultEl.replaceChildren(backBtn(), h('p', { class: 'hbs-msg', dataset: { tone: 'warn' }, attrs: { 'data-testid': 'brain-result-msg' }, text: r && r.kind === 'http' && r.status === 404 ? 'That research isn’t on the home base any more.' : p.message }));
+      fill(resultEl, backBtn(), h('p', { class: 'hbs-msg', dataset: { tone: 'warn' }, attrs: { 'data-testid': 'brain-result-msg' }, text: r && r.kind === 'http' && r.status === 404 ? 'That research isn’t on the home base any more.' : p.message }));
       return;
     }
     openJob.job = r.job;
@@ -392,11 +399,12 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     const meta = [j.statusWord, j.depth === 'deep' ? 'deep' : 'quick'];
     if (j.finishedAt) meta.push(when(j.finishedAt));
     if (j.costUsd !== null && j.costUsd > 0) meta.push(formatUsd(j.costUsd));
-    const body = h('div', { class: 'hbs-result__body md-body', attrs: { 'data-testid': 'brain-result-body' } });
+    const body = h('div', { class: 'hbs-result__body prose', attrs: { 'data-testid': 'brain-result-body' } });
     if (j.result && j.result.markdown) body.appendChild(renderMarkdown(j.result.markdown));
     else body.appendChild(h('p', { class: 'hbs-p', text: j.active ? 'Still working on it. This page updates by itself.' : (j.error && j.error.message) || j.summary || 'No result.' }));
     const sources = j.result && j.result.sources.length ? h('section', { class: 'hbs-bsec' }, h('h4', { class: 'hbs-bsec__title hud-label', text: 'Sources' }), h('ol', { class: 'hbs-sources', attrs: { 'data-testid': 'brain-result-sources' } }, j.result.sources.map((s) => h('li', {}, outLink(s.url, s.title, 'hbs-link'))))) : null;
-    resultEl.replaceChildren(
+    fill(
+      resultEl,
       backBtn(),
       h('h3', { class: 'hbs-result__title', text: j.title, attrs: { 'data-testid': 'brain-result-title' } }),
       h('p', { class: 'hbs-item__meta', text: meta.join(' · ') }),
@@ -410,7 +418,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
   function closeResult() {
     openJob = null;
     resultEl.hidden = true;
-    resultEl.replaceChildren();
+    fill(resultEl);
     researchList.hidden = false;
   }
 
@@ -493,7 +501,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
   }
 
   function renderWatchers() {
-    watchList.replaceChildren(...watchers.map(watcherRow));
+    fill(watchList, ...watchers.map(watcherRow));
     watchEmpty.hidden = !watchersLoaded || watchers.length > 0;
     if (focusWatch) {
       const row = watchList.querySelector(`[data-id="${CSS && CSS.escape ? CSS.escape(focusWatch) : focusWatch}"]`);
@@ -579,7 +587,8 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     const b = st.brain;
     const block = (el, label, used, limit, reached) => {
       const frac = limit ? (used || 0) / limit : 0;
-      el.replaceChildren(
+      fill(
+        el,
         h('div', { class: 'hbs-spend__head' }, h('span', { class: 'hud-label', text: label }), h('span', { class: 'hbs-spend__figure' }, h('strong', { text: formatUsd(used) }), h('span', { class: 'hbs-spend__of', text: limit !== null ? ` of ${formatUsd(limit)}` : '' }))),
         bar(frac, reached ? 'err' : frac >= 0.8 ? 'warn' : 'ok'),
       );
@@ -604,7 +613,8 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     const days = r.days.filter((d) => d.usd > 0);
     msg(spendMsg, days.length ? '' : 'Nothing spent in the last 30 days.', 'info');
     const max = Math.max(0.01, ...days.map((d) => d.usd));
-    spendDays.replaceChildren(
+    fill(
+      spendDays,
       ...days.map((d) => {
         let label = d.day;
         try {

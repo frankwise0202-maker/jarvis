@@ -3650,7 +3650,7 @@ export async function startApp(rootEl) {
       try {
         const u = new URL(location.href);
         u.searchParams.delete('homebase');
-        history.replaceState(history.state, '', `${u.pathname}${u.search}${u.hash}`);
+        window.history.replaceState(window.history.state, '', `${u.pathname}${u.search}${u.hash}`);
       } catch {
         /* keep the address */
       }

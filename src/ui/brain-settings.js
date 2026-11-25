@@ -147,7 +147,7 @@ export function createBrainSettings(brain, { getApiKey, toast, requestPermission
 
   // ---- limits -------------------------------------------------------------------------------------
   const limitInput = (id, label, range) =>
-    h('input', { class: 'input', type: 'number', id, min: range.min, max: range.max, step: '0.5', attrs: { inputmode: 'decimal', 'data-testid': id === 'brain-daily' ? 'brain-limit-daily' : 'brain-limit-monthly', 'aria-label': label } });
+    h('input', { class: 'input input--money', type: 'number', id, min: range.min, max: range.max, step: '0.5', attrs: { inputmode: 'decimal', 'data-testid': id === 'brain-daily' ? 'brain-limit-daily' : 'brain-limit-monthly', 'aria-label': label } });
   const dailyIn = limitInput('brain-daily', 'Daily limit in dollars', LIMIT_RANGES.dailyUsd);
   const monthlyIn = limitInput('brain-monthly', 'Monthly limit in dollars', LIMIT_RANGES.monthlyUsd);
   const limitsSave = h('button', { class: 'btn', type: 'button', attrs: { 'data-testid': 'brain-limits-save' }, on: { click: () => saveLimits() } }, icon('check', { size: 16 }), h('span', { text: 'Save limits' }));

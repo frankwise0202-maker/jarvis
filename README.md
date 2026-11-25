@@ -937,6 +937,54 @@ itself only contacts the address you save (or test in Settings). The trade-off: 
 code run inside Jarvis, that policy would not stop it from sending data to someone else's `.ts.net`
 address, as it stops other sites.
 
+### Your home base can now work for you
+
+With Jarvis Core 1.1 on the Alienware (it updates itself, or type `jarvis-core update` there), your
+home base does things for you while your phone is locked: it researches questions, keeps an eye on
+things you're waiting for, and has a **morning briefing** ready when you wake up.
+
+**Set it up once (Settings → Home base, below the address):**
+
+1. **Give the home base your key.** One tap sends the Claude key this iPhone already has to your home
+   base, over Tailscale. It is kept there in a private file, never shown again (you only see its last
+   four characters, like `…Ab3D`), never written to any log, and only ever sent to Anthropic. **Remove**
+   takes it off the home base. Without a key the free parts still work: the briefing (weather,
+   headlines, how the night went) and the system report.
+2. **Spending limits.** What the home base may spend on its own: **$5 a day** and **$50 a month** to
+   start. It won't start anything new past a limit, and research that reaches one stops with what it
+   has. This is separate from what Jarvis spends on your phone.
+3. **Morning briefing.** On at **7:00**. Tap **Use this iPhone's location** for the weather (it is
+   rounded to about a kilometre before it leaves the phone), or type a city. °F or °C.
+4. **Notifications.** Tap **Turn on notifications** and allow them: the home base then tells this
+   iPhone when research is done, something you're watching happens, or your briefing is ready, even
+   with Jarvis closed. **Send a test** shows one. On an iPhone this works in the Jarvis app on your
+   Home Screen (Share → Add to Home Screen), not in a Safari tab.
+
+**Using it.** Tap **Briefing & research** on the home base tile (on a computer, in the panel on the
+right). Four tabs:
+
+- **Briefing:** this morning's briefing, with links to the headlines. **Make a new one now** if you
+  want a fresh one.
+- **Research:** type a question, pick **Quick** (a few minutes) or **Deep** (reads more, costs
+  more), tap **Start research**. You can lock your phone: the home base keeps going and notifies you.
+  Tap **Open** on a finished one to read it with its sources; **Cancel** stops one that's running.
+- **Watching:** "Tell me when… the LG 27GP850 drops under $300". Choose how often it checks (every 6
+  or 12 hours, or once a day). It notifies you once, when it happens. **Check now**, or the bin to stop.
+- **Spending:** today and this month against your limits, and the last 30 days.
+
+**Or just say it,** typed in the chat or said in Voice Mode (free, no Claude request from your phone):
+
+- "Research the best espresso machines under $500 **in the background**" (or "home base, research …";
+  add "in depth" for deep research)
+- "**What did the home base find?**"
+- "**Watch for** the LG 27GP850 dropping under $300" or "**Tell me when** the PS6 is announced"
+- "**Brief me**" or "**Morning briefing**": the home base's briefing; in Voice Mode Jarvis reads it
+  to you. Woken from Standby, "brief me" reads the home base's briefing too.
+
+**In the morning** the briefing waits at the top of the home screen until you read it or close it
+(×), and the 7:00 notification opens it. If the home base can't be reached, or still runs Jarvis Core
+1.0, the sheet says so plainly; nothing else changes.
+
 ## For developers
 
 Jarvis is plain JavaScript ES modules (no framework) bundled with esbuild. The browser calls the

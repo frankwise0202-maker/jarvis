@@ -98,6 +98,8 @@ export default [
     device: 'iphone13',
     seed: LINKED,
     fakeCore: { brain: {} },
+    // The Core's answer to an unknown city (400), on purpose.
+    allowConsole: [/Failed to load resource: the server responded with a status of 400/],
     timeout: 150000,
     async run(t) {
       await t.newPage();

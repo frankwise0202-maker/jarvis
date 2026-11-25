@@ -3014,3 +3014,113 @@ again, refused, starting, one poll per load and no stream), `homebase-desktop` (
 alert), `homebase-laptop` (1280×720: the rail's tile below the fold, CORE and the glance live), `homebase-chat` (typed
 in the chat, said in Voice Mode; no Claude request). Not testable here: a real Tailscale network, Chrome's private-network rules against a 100.x
 address, and iOS Safari itself.
+
+## 24. v7.6: the home base works for you (Jarvis Core 1.1's brain)
+
+Jarvis Core 1.1 adds a "brain" to the home base: the owner's Claude key kept on the Core (a vault),
+background research ("jobs"), watchers, a morning briefing (free without a key, written by Claude with
+one), spending caps of its own and Web Push. Its API is fixed by the brain handoff (`GET api/brain`,
+`PUT api/brain/settings`, `POST|DELETE api/brain/key`, `api/jobs`, `api/watchers`, `api/briefing`,
+`api/spend`, `api/push/*`); the app talks to it with the §23.2 rules (no credentials, no referrer, no
+cache, a timeout; failures as `{ ok: false, kind, status, code, message }`). Nothing of it shows
+without a linked home base; a Core 1.0 (404 `not_found` on `api/brain`) says it needs an update.
+The sync of backups through the home base is a separate part (not here).
+
+**24.1 Modules.** `src/lib/brain.js` (pure): `brainView`, `jobView`, `watcherView`, `briefingView`,
+`spendDaysView` check every field of the Core's answers (a missing number is null, never 0; a key
+"hint" longer than a few characters is never shown; sources and headlines keep only absolute
+http(s) addresses without credentials; music only `https://music.apple.com`); `brainProblem` words a
+failure (`old`, `nokey` 409, `cap` 402, `badkey` 400, `none` 404 `none_yet`, `offline`, `rate`,
+`error`); `parseHomeBaseLink` / `homeBaseLinkOf` (deep links); `matchBrainCommand` (chat commands);
+`briefingMarkdown`, `briefingSpeech`, `resultsMarkdown`, `resultsSpeech`; `roundCoord` (2 decimals),
+`formatUsd`, `deviceLabel`. `src/platform/brain.js`: one function per route on `requestHomeBase`
+(which gains `allowEmpty` for 204 answers); the key travels only in the body of `POST api/brain/key`
+(20 s timeout), never in an address, a log or a failure. `src/platform/push.js`: `pushSupport()`
+(`ios-tab` for an iPhone's Safari tab: Web Push needs the Home Screen app), `subscribePush(vapidKey,
+{ requestPermission })` (the permission prompt first, inside the tap; a subscription made with another
+key is replaced), `unsubscribePush()`, `vapidKeyBytes()`. `src/ui/brain.js`: `createBrain()` (the
+controller: `load()` on demand, at most every 15 s unless forced; no polling of its own) and
+`createMorningCard()`. `src/ui/brain-settings.js` (Settings card), `src/ui/homebase-sheet.js` (the
+sheet), `src/styles/homebase-brain.css`.
+
+**24.2 Settings → Home base**, below the address card, only while linked ("What the home base does
+for you"): **the key** ("Let it work while your phone is locked": what it is for and the daily
+limit, then one tap, **Give the home base your key**, sends this device's stored key; afterwards only
+the hint, "accepted by Anthropic" or "not checked yet", and **Remove**; without a key on this device
+the button is disabled with "Add your Claude API key on this device first"); **spending limits** (a
+day 0–50, a month 0–500, checked here before `PUT`); **morning briefing** (on/off, time, °F/°C,
+**Use this iPhone's location** (the device's own name) through `navigator.geolocation` from the tap,
+coordinates rounded to 2 decimals before they leave the device, label "Your location"; or a city the
+Core geocodes); **notifications** (**Turn on notifications**: permission only from that tap, then a
+push subscription with the Core's `push.vapidPublicKey`, sent with `POST api/push/subscribe` and the
+device's label; **Send a test**; **Turn off** unsubscribes here and `DELETE`s it there). Opening
+Settings at a part: `openSettings({ section: 'homebase', brain: 'key' | 'limits' })`.
+
+**24.3 The Home base sheet** (`brain-sheet`, a full sheet): from **Briefing & research** on both
+tiles (home and rail; shown while linked), the morning card, deep links, notifications and the
+banner. Tabs Briefing · Research · Watching · Spending (arrow keys move between them). A banner shows
+one state at a time: no key ("Research and watching need your Claude key on the home base. The
+briefing and the system report are free…", **Give the home base your key** → Settings), over the
+limit (which one, until when, **Change the limits**), no Claude SDK on the Core, a Core 1.0 (run
+`jarvis-core update`), unreachable / down (the tile's words, **Try again**). *Briefing*: the latest
+(`GET api/briefing`), every part as text, headlines as links only from checked addresses, the music
+suggestion as an Apple Music link, "Made 7:00 AM · free version (no Claude)" or "written with
+Claude"; `none_yet` says so; **Make a new one now** (`POST api/briefing/run`, 90 s). *Research*: a
+question (≤ 2000 characters), Quick / Deep, **Start research** (`POST api/jobs`; 409 / 402 said
+plainly), the list (status chip, summary, time, depth, cost), **Open** (`GET api/jobs/<id>`: the
+Markdown rendered by `src/lib/markdown.js` (no HTML, safe links only) and the sources), **Cancel**
+(queued/running), remove (finished). *Watching*: "Tell me when…" (≤ 300), every 6/12/24 h, **Watch
+for it**, **Check now** (`POST …/check`, "Checking…" until the next check is seen), remove.
+*Spending*: today and this month against the limits (bars; red at the limit), the last 30 days with
+spending. Live status: while the sheet is open and something runs (a job queued/running, a check
+pending), it polls every 3 s, never while the page is hidden; closing the sheet stops it.
+
+**24.4 Deep links and notifications.** `?homebase=job:<id>` (Research, that result), `briefing`,
+`watch:<id>` (Watching, that watcher highlighted); ids `[A-Za-z0-9_-]{1,80}`. Read at launch (after
+the boot; the parameter leaves the address with `history.replaceState`), and from a
+`HOMEBASE_LINK` message of the service worker. `public/sw.js` gains `push` (the payload `{ title, body,
+url, tag }` as plain lines; always a notification, as iOS requires; of the `url` only its `homebase`
+link is kept, so a notification can only ever open Jarvis itself; tag `homebase-<tag>` with
+`renotify`) and extends `notificationclick` (an open Jarvis is focused and handed the link; otherwise
+Jarvis opens at `<scope>?homebase=<link>`; the v7.0 "mission finished" behaviour is unchanged). The
+caching and update behaviour of the worker is unchanged.
+
+**24.5 The morning card.** At launch (1.2 s after the boot) and back at the front after 10 minutes,
+one `GET api/brain`; when `briefing.lastAt` is newer than the last briefing seen
+(`jarvis.ui.homebaseBriefingSeen`), `GET api/briefing`; a briefing made in the last 14 hours that
+wasn't seen goes to the top of the home (`morning-card`: the greeting, the weather in one line, three
+headlines, the overnight line, how much research finished and watchers fired). **Read the briefing**
+opens the sheet there; × dismisses it; reading it anywhere (the sheet, "brief me") marks it seen.
+
+**24.6 Chat and voice commands** (free, local: no Claude request from the device, `apiMessages`
+untouched; `appendHomeBaseTurn`, the footer "Free · Home base"; the whole sentence, like §23.4):
+"research X in the background" / "… overnight" / "home base, research X" / "have the home base
+research X" (Quick; "in depth", "deep research …" → Deep) starts a job; "what did the home base
+find?" / "home base results" lists finished research; "watch for X" / "keep an eye on X" / "home base,
+tell me when X" / "tell me when X" (only with a change worth waiting for: drops, under $…, is
+announced, back in stock…, not a question like "tell me when the next full moon is") adds a daily
+watcher; "brief me" / "morning briefing" / "what's my briefing" shows the Core's briefing (the latest
+when under 3 hours old, otherwise a new one is made). The chat text is built here: the Core's words
+escaped (`escapeMarkdown`), links only from checked addresses. Not linked: "brief me" and research go
+to Claude as before; watching and results say "Link your home base first". In Voice Mode the same
+words are said (`homeBase.command`, no turn). The Standby wake routine's "brief me" uses the home
+base's briefing, said out loud, when a home base is linked (`wake.briefing()` → `{ done }`; free);
+otherwise the paid briefing protocol as before. Old conversations, tools and prompts are unchanged.
+
+**Tests.** Unit `brain` (the views and their guards: a key-like hint, bad sources, music; failures;
+deep links; the commands and near misses (and that the v7.5 status questions stay theirs); the chat
+Markdown's escaping; the client with a fake fetch: options, the key only in the body and never in a
+failure, 204s, 409/402/404; the controller with a fake client: on-demand loads, the morning card once,
+"brief me" fresh vs stale; the service worker's `push` and `notificationclick` in a VM). E2E
+`homebase-brain.mjs` with the fake Core's brain (`core-fakes.mjs` `fakeBrain`: jobs move on as the app
+polls): `brain-settings` (iPhone: the key handed over once and never on the page or in the console,
+Remove; limits; briefing on/off, time, location rounded to 2 decimals, an unknown city, a city;
+notifications through a stand-in PushManager: the permission asked only on the tap, the subscription
+sent with the 65-byte VAPID key, a test, off), `brain-sheet` (iPhone: the morning card; Briefing with
+a hostile headline as text; Research quick/deep with live status, a result whose Markdown carries
+HTML and a `javascript:` link, rendered safely, two sources; Cancel; Watching; Spending),
+`brain-states` (no key and its call to action, over the limit, a Core 1.0, unreachable),
+`brain-desktop` (the rail; `?homebase=job:`, `briefing`, `watch:`; a `HOMEBASE_LINK` message; a forged
+link opens nothing), `brain-chat` (the four commands typed, "brief me" said in Voice Mode, the
+dismissed card stays away), `brain-wake` (two claps, "brief me": the Core's briefing said, no
+Claude request). Not testable here: a real push service (APNs/FCM) and iOS itself.

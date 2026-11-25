@@ -157,7 +157,13 @@
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  padding-bottom: calc(var(--sp-6) + var(--safe-bottom, 0px));
+  padding: var(--sp-2) var(--gutter) calc(var(--sp-8) + var(--safe-bottom, 0px));
+}
+
+/* A headline or source whose address isn't a web address: its words only, not link-coloured. */
+.hbs-text {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
 
 .hbs-banner {
