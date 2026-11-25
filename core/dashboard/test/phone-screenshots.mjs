@@ -206,6 +206,20 @@ export function remoteProblems(page, insets = {}) {
   }, insets);
 }
 
+/** The question box's hint fits in the box, or ends in "…" where it does not (never cut mid-letter). */
+export function placeholderProblems(page) {
+  return page.evaluate(() => {
+    const box = document.getElementById('ask-input');
+    const cs = getComputedStyle(box);
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const need = ctx.measureText(box.placeholder).width;
+    const room = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (need > room + 1 && cs.textOverflow !== 'ellipsis') return [`the question box's hint "${box.placeholder}" is cut (${Math.round(need)} px in ${Math.round(room)} px, no ellipsis)`];
+    return [];
+  });
+}
+
 /**
  * The owner can read the whole conversation and the whole log (run once an answer is in). The
  * newest answer starts inside the transcript, below its faded top edge; nothing above it is out of
@@ -469,6 +483,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     await page.screenshot({ path: first });
     await page.screenshot({ path: full, fullPage: true });
     checks.push(...(await talkProblems(page, { wheel: !size.touch })));
+    checks.push(...(await placeholderProblems(page)));
     if (state !== 'offline') checks.push(...(layout === 'kiosk' ? await longTextProblems(page) : await longValueProblems(page)));
     checks.push(...(await kioskBehaviourProblems(page, { night })));
     const height = await page.evaluate(() => document.scrollingElement.scrollHeight);

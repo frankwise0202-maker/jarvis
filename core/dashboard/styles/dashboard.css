@@ -1455,6 +1455,10 @@ html.cursor-hidden * {
     min-width: 44px;
   }
 }
+/* The box's hint ends in "…" where a narrow box cannot hold it (a phone, the iPad Pro's 16px). */
+html[data-view='remote'] .ask-input {
+  text-overflow: ellipsis;
+}
 /* What the kiosk shows only the newest of scrolls for a remote viewer: the transcript (an answer
    taller than the box arrives showing its start; assistant.js) and the event log (all 40 rows).
    The faded edges stay; the padding under them lets the first and the last row scroll clear. */
