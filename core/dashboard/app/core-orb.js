@@ -6,6 +6,11 @@
 // threads; packets on the data ring follow network traffic; the scanner makes one pass each time
 // the Core refreshes its network checks.
 //
+// Two layouts, chosen by the stylesheet: on the kiosk the canvas fills the core stage and leader
+// lines run out to the four corner readouts; in the remote view (a phone, a tablet, a small window)
+// the canvas is a square, the readouts sit in a grid beside or under it and no leaders are drawn.
+// The stylesheet says which with `--orb-layout: compact` on the canvas (read on every resize).
+//
 //   const orb = createOrb(canvas, { onLayout });
 //   orb.setHealth('ok' | 'warn' | 'alert' | 'offline');
 //   orb.setGauges({ cpu: { value: 0..1 | null, level }, gpu: …, ram: …, disk: … });
@@ -273,6 +278,7 @@ export function createOrb(canvas, opts = {}) {
   }
 
   // Geometry (CSS px).
+  let compact = false; // the remote view's square canvas: the whole core, no leaders
   let width = 0;
   let height = 0;
   let dpr = 1;
@@ -303,6 +309,19 @@ export function createOrb(canvas, opts = {}) {
 
   // --- layout ---------------------------------------------------------------------------------
   function computeGeometry() {
+    if (compact) {
+      // The whole core in the square: the bezel at 0.965 R, the alert bead's glow just outside it.
+      gR = Math.max(20, (Math.min(width, height) / 2) * 0.95);
+      gcx = width / 2;
+      gcy = height / 2;
+      for (const name of GAUGES) {
+        const A = anchors[name];
+        const a = GAUGE_MID[name] * DEG;
+        A.x = A.ex = A.hx = gcx + Math.cos(a) * gR * 0.93;
+        A.y = A.ey = gcy + Math.sin(a) * gR * 0.93;
+      }
+      return;
+    }
     const readoutW = opts.readoutWidth || 150;
     const lead = Math.max(24, Math.min(56, width * 0.04));
     const byHeight = (height / 2) * 0.96;
@@ -325,6 +344,14 @@ export function createOrb(canvas, opts = {}) {
     }
   }
 
+  function readCompact() {
+    try {
+      return getComputedStyle(canvas).getPropertyValue('--orb-layout').trim() === 'compact';
+    } catch {
+      return false;
+    }
+  }
+
   function measure() {
     if (destroyed) return;
     const rect = canvas.getBoundingClientRect();
@@ -333,7 +360,9 @@ export function createOrb(canvas, opts = {}) {
     const ratio = Math.min(MAX_DPR, Math.max(1, window.devicePixelRatio || 1));
     const bw = Math.max(0, Math.round(w * ratio));
     const bh = Math.max(0, Math.round(h * ratio));
-    const changed = Math.abs(w - width) > 0.01 || Math.abs(h - height) > 0.01 || ratio !== dpr;
+    const layout = readCompact();
+    const changed = Math.abs(w - width) > 0.01 || Math.abs(h - height) > 0.01 || ratio !== dpr || layout !== compact;
+    compact = layout;
     width = w;
     height = h;
     dpr = ratio;
@@ -652,6 +681,7 @@ export function createOrb(canvas, opts = {}) {
   // Leader lines from each gauge to its corner readout: a dot on the gauge, a diagonal run, an
   // elbow and a short horizontal run (the HUD leader of the app's building blocks).
   function drawLeaders(R, dim) {
+    if (compact) return; // the remote view's readouts sit in a grid beside the core
     const offline = state === 'offline';
     ctx.lineWidth = 1;
     for (let g = 0; g < 4; g++) {

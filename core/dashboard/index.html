@@ -2,7 +2,7 @@
 <html lang="en" data-health="offline" data-night="off">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#04070c">
 <meta name="robots" content="noindex">
@@ -136,11 +136,16 @@
     <!-- Centre: the living core with its four gauges, then processes and the event log -->
     <div class="col col-centre">
       <section class="core-stage" id="core-stage" aria-label="Overall health">
-        <canvas class="core-canvas" id="core-canvas" aria-hidden="true"></canvas>
-        <div class="core-label" id="core-label">
-          <span class="core-word" id="core-word">—</span>
-          <span class="core-sub" id="core-sub"></span>
+        <!-- The two wrappers make no box on the kiosk (display: contents): there the readouts sit in
+             the stage's corners. In the remote view the orb is a square and the readouts a grid. -->
+        <div class="core-orb">
+          <canvas class="core-canvas" id="core-canvas" aria-hidden="true"></canvas>
+          <div class="core-label" id="core-label">
+            <span class="core-word" id="core-word">—</span>
+            <span class="core-sub" id="core-sub"></span>
+          </div>
         </div>
+        <div class="core-readouts">
         <div class="gauge-readout" id="g-cpu" data-corner="tl" data-level="ok">
           <span class="hud-label">CPU</span><b class="mono gv" id="g-cpu-v">—</b><span class="gr-sub mono" id="g-cpu-s"></span>
         </div>
@@ -159,6 +164,7 @@
           <span class="offline-text" id="offline-text">No data from the Core. Reconnecting…</span>
         </div>
         <p class="core-summary" id="core-summary">Connecting to the Core…</p>
+        </div>
       </section>
 
       <div class="centre-bottom">
@@ -250,6 +256,7 @@
   </main>
 
 </div>
+<div class="toast" id="toast" role="status" hidden></div>
 <div class="night-veil" id="night-veil" aria-hidden="true"></div>
 </body>
 </html>

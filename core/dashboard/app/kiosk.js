@@ -4,6 +4,11 @@
 // of day is derived from the clock on each tick, never from long timers, so it survives sleep,
 // clock changes and weeks of uptime.
 //
+// Only the Alienware's own screen is a kiosk: the page loaded from this computer (localhost,
+// 127.0.0.1, [::1]). The same page on the owner's iPhone or Mac (https://<machine>.<tailnet>.ts.net/)
+// is a remote viewer: it never dims at night, never shifts, never hides the cursor, never reloads
+// itself, and typing on it does not start a question (screenFeatures below).
+//
 // Settings come from the page address (the autostart can pass them) or the Core's /api/info
 // `config`, the address winning:
 //   ?dim=23:00-07:00   night dim window (local time); ?dim=off never dims
@@ -24,6 +29,36 @@ export const DEFAULTS = Object.freeze({
   cursorIdleMs: 3000,
   wakeMs: 2 * 60 * 1000, // touching the mouse or keyboard at night lifts the dim this long
 });
+
+/**
+ * Is the page on the Alienware's own screen? The kiosk Chrome opens http://localhost:8788/; the Core
+ * only answers a Host of localhost, 127.0.0.1 or [::1] directly (anything else comes through
+ * Tailscale), so those names mean this computer and every other name a remote viewer.
+ */
+export function isKioskHost(hostname) {
+  const h = String(hostname ?? '').trim().toLowerCase().replace(/\.$/, '');
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+}
+
+/**
+ * What the page does on this screen. Every kiosk behaviour is on for the Alienware's own screen
+ * and off for a remote viewer (the iPhone or the Mac through Tailscale): no night dim, no pixel
+ * shift, no hidden cursor, no daily refresh, no reload when the Core is updated (a notice instead),
+ * and keys typed on the page stay where they are typed.
+ */
+export function screenFeatures(hostname) {
+  const kiosk = isKioskHost(hostname);
+  return Object.freeze({
+    kiosk,
+    view: kiosk ? 'kiosk' : 'remote',
+    nightDim: kiosk,
+    pixelShift: kiosk,
+    hideCursor: kiosk,
+    dailyRefresh: kiosk,
+    reloadOnUpdate: kiosk,
+    typeAnywhere: kiosk,
+  });
+}
 
 /** "23:00" → 1380, "7:05" → 425; null when not a time. */
 export function parseClock(s) {
@@ -105,9 +140,12 @@ export function shouldRefresh({ minutes, refreshAt, openedMs, nowMs, coreLive })
 /**
  * The live controller. `root` is <html>, `stage` the element that moves. Returns
  * { tick(nowMs), isNight(), isWoken(), destroy() }; main.js calls tick once a second.
+ * `kiosk: false` (a remote viewer) turns every kiosk behaviour off: the page never dims, never
+ * moves, keeps its cursor and never refreshes itself.
  */
-export function createKiosk({ root, stage, veil, settings, onNightChange, onRefresh, isCoreLive, timeZone }) {
+export function createKiosk({ root, stage, veil, settings, onNightChange, onRefresh, isCoreLive, timeZone, kiosk = true }) {
   const zone = typeof timeZone === 'function' ? timeZone : () => timeZone;
+  const on = kiosk !== false;
   let night = null;
   let wokeUntil = 0;
   let lastShift = -1;
@@ -119,7 +157,7 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
 
   function showCursor() {
     root.classList.remove('cursor-hidden');
-    if (!settings.hideCursor) return;
+    if (!on || !settings.hideCursor) return;
     if (cursorTimer) clearTimeout(cursorTimer);
     cursorTimer = setTimeout(() => {
       cursorTimer = 0;
@@ -147,15 +185,17 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
     wake();
   }
 
-  window.addEventListener('mousemove', onPointer, { passive: true });
-  window.addEventListener('pointerdown', onPointer, { passive: true });
-  window.addEventListener('keydown', onKey, true);
-  if (settings.hideCursor) showCursor();
+  if (on) {
+    window.addEventListener('mousemove', onPointer, { passive: true });
+    window.addEventListener('pointerdown', onPointer, { passive: true });
+    window.addEventListener('keydown', onKey, true);
+    if (settings.hideCursor) showCursor();
+  }
 
   function apply(nowMs) {
     lastNow = nowMs;
     const minutes = minutesOfDay(new Date(nowMs), zone());
-    const isNight = inWindow(minutes, settings.dim);
+    const isNight = on && inWindow(minutes, settings.dim);
     const dimmed = isNight && nowMs >= wokeUntil;
     if (dimmed !== night) {
       night = dimmed;
@@ -174,6 +214,7 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
   function tick(nowMs) {
     if (destroyed) return;
     apply(nowMs);
+    if (!on) return;
     if (settings.shift && stage) {
       const s = shiftOffset(nowMs);
       if (s.step !== lastShift) {
@@ -192,6 +233,7 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
   function destroy() {
     destroyed = true;
     if (cursorTimer) clearTimeout(cursorTimer);
+    if (!on) return;
     window.removeEventListener('mousemove', onPointer);
     window.removeEventListener('pointerdown', onPointer);
     window.removeEventListener('keydown', onKey, true);

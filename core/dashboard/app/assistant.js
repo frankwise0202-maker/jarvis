@@ -5,8 +5,9 @@
 // transcript keeps the last few exchanges (bounded DOM) and clears itself after a quiet spell, so
 // the kiosk never shows an old conversation to whoever walks by.
 //
-// Typing anywhere on the page starts a question (the first key lands in the box), so the owner
-// can walk up and just type. Voice can plug in later through `ask(text)`.
+// On the Alienware's own screen, typing anywhere on the page starts a question (the first key lands
+// in the box), so the owner can walk up and just type. A remote viewer (the iPhone or the Mac through
+// Tailscale) types into the box like any other page. Voice can plug in later through `ask(text)`.
 
 import { $, el, setText } from './dom.js';
 import { keepUnits } from './format.js';
@@ -16,7 +17,18 @@ const QUIET_CLEAR_MS = 15 * 60 * 1000;
 const ASK_TIMEOUT_MS = 8000;
 const BLUR_IDLE_MS = 60 * 1000;
 
-export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = {}) {
+/**
+ * Does this keydown start a question? Only on the kiosk screen (`typeAnywhere`), only for one
+ * printable character typed outside any text field, and never with Ctrl, Cmd or Alt held.
+ */
+export function startsQuestion(e, typeAnywhere) {
+  if (!typeAnywhere || !e || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const t = e.target;
+  if (t && t.closest?.('input, textarea, select, [contenteditable="true"]')) return false;
+  return typeof e.key === 'string' && e.key.length === 1;
+}
+
+export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl, typeAnywhere = true } = {}) {
   const list = $('transcript');
   const form = $('ask-form');
   const input = $('ask-input');
@@ -142,21 +154,16 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = 
     ask(b.dataset.q || b.textContent);
   });
 
-  // Type anywhere: the first printable key focuses the box and lands in it.
+  // Type anywhere (the kiosk screen only): the first printable key focuses the box and lands in it.
   function onKey(e) {
-    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
-    const t = e.target;
-    if (t && (t.closest?.('input, textarea, select, [contenteditable="true"]') || t === input)) return;
-    if (e.key === 'Escape') return;
-    if (e.key && e.key.length === 1) {
-      input.focus();
-      // The keydown happens before focus moves; add the character ourselves.
-      input.value += e.key;
-      e.preventDefault();
-      lastActivity = Date.now();
-    }
+    if (e.target === input || !startsQuestion(e, true)) return;
+    input.focus();
+    // The keydown happens before focus moves; add the character ourselves.
+    input.value += e.key;
+    e.preventDefault();
+    lastActivity = Date.now();
   }
-  window.addEventListener('keydown', onKey);
+  if (typeAnywhere) window.addEventListener('keydown', onKey);
 
   input.addEventListener('keydown', (e) => {
     lastActivity = Date.now();

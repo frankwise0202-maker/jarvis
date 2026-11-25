@@ -2,6 +2,11 @@
 // Tailscale, on the owner's other devices). Wires the data link, the view model, the panels, the
 // living core, the sparklines, the status assistant and the kiosk behaviour together.
 //
+// The kiosk behaviour (night dim, pixel shift, the hidden cursor, the daily refresh, typing
+// anywhere) belongs to the Alienware's own screen only; the iPhone and the Mac are remote viewers
+// (kiosk.js: screenFeatures). The layout follows the window's size (dashboard.css): the kiosk
+// layout where it fits, one scrolling column on a phone, two columns on a tablet or a small window.
+//
 // Rendering is coalesced: snapshots (one a second from the Core, or many a second in the
 // accelerated long-run test) go into the sparkline rings at once, and the DOM is updated at most
 // once per animation frame from the newest view model.
@@ -11,7 +16,7 @@ import { createClient } from './client.js';
 import { createOrb } from './core-orb.js';
 import { $, setData, setHidden, setText, setVar } from './dom.js';
 import { clockParts, fmtAgo, fmtDate, fmtEventTime, num } from './format.js';
-import { createKiosk, readSettings } from './kiosk.js';
+import { createKiosk, readSettings, screenFeatures } from './kiosk.js';
 import { applyTick, historyPoints, normalize, parseEvents, readInfo } from './model.js';
 import { createPanels, fullest } from './panels.js';
 import { createSpark, TimeRing } from './spark.js';
@@ -48,6 +53,9 @@ function validZone(tz) {
 
 const root = document.documentElement;
 const stage = $('stage');
+// The Alienware's own screen (localhost) or a remote viewer (the tailnet name on the iPhone or Mac).
+const screenMode = screenFeatures(location.hostname);
+setData(root, 'view', screenMode.view);
 const panels = createPanels();
 
 // --- state ------------------------------------------------------------------------------------
@@ -182,10 +190,14 @@ const client = createClient({
   onInfo(body) {
     info = body && typeof body === 'object' ? body : null;
     const inf = readInfo(info);
-    // The Core was updated (jarvis-core update): load the matching dashboard once it answers.
+    // The Core was updated (jarvis-core update): the kiosk loads the matching dashboard once it
+    // answers; a remote viewer is never reloaded under the owner's thumb, it says so instead.
     if (inf.version && loadedVersion && inf.version !== loadedVersion) {
-      location.reload();
-      return;
+      if (screenMode.reloadOnUpdate) {
+        location.reload();
+        return;
+      }
+      showToast('Jarvis Core was updated. Reload this page to see the new version.', 60000);
     }
     if (inf.version) loadedVersion = inf.version;
     if (Object.keys(inf.config).length) {
@@ -269,7 +281,7 @@ function updateBanner(now) {
   setText(bannerText, when ? `No data since ${when} (${fmtAgo(lastSampleClient, now)}). Reconnecting…` : 'No data from the Core. Reconnecting…');
 }
 
-const assistant = createAssistant({ isOnline: () => online });
+const assistant = createAssistant({ isOnline: () => online, typeAnywhere: screenMode.typeAnywhere });
 
 const kiosk = createKiosk({
   root,
@@ -284,6 +296,7 @@ const kiosk = createKiosk({
     location.reload();
   },
   isCoreLive: () => online,
+  kiosk: screenMode.kiosk,
 });
 
 function tick() {
@@ -330,7 +343,7 @@ function openJarvis() {
   const cfg = readInfo(info).config;
   const url = (typeof cfg.jarvisUrl === 'string' && /^https:\/\//.test(cfg.jarvisUrl) && cfg.jarvisUrl) || JARVIS_URL;
   window.open(url, '_blank', 'noopener,noreferrer');
-  showToast('Opening Jarvis in its own window. Close that window (Ctrl+W) to come back here.');
+  showToast(screenMode.kiosk ? 'Opening Jarvis in its own window. Close that window (Ctrl+W) to come back here.' : 'Opening Jarvis in a new tab.');
 }
 $('open-jarvis').addEventListener('click', openJarvis);
 window.addEventListener('keydown', (e) => {
@@ -361,5 +374,6 @@ window.__jarvisCore = {
     nodes: document.getElementsByTagName('*').length,
     online,
     night: kiosk.isNight(),
+    view: screenMode.view,
   }),
 };

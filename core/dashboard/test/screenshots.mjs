@@ -101,7 +101,7 @@ const SIM_START = '2026-11-25T21:47:00';
 const NIGHT_START = '2026-11-25T23:31:00';
 
 /** Layout checks inside the page: page scroll, clipped panels, overlapping readouts. */
-async function layoutProblems(page) {
+export async function layoutProblems(page) {
   return page.evaluate(() => {
     const out = [];
     // The pixel shift moves the whole stage up to 3 px; anything more is real overflow.
@@ -138,7 +138,7 @@ async function layoutProblems(page) {
  * drive name in each corner caption (a USB drive at /media/<user>/<label>). Nothing the app keeps is
  * replaced: a cloned log row, and the caption's own text node, put back afterwards.
  */
-async function longTextProblems(page) {
+export async function longTextProblems(page) {
   return page.evaluate(async () => {
     const out = [];
     const F = await import(new URL('app/format.js', location.href).href);
