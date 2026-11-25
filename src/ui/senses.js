@@ -24,7 +24,8 @@
 // turned hearing or voice on (settings homeBaseHear / homeBaseSpeak, Settings → Home base → Hearing and
 // voice (beta)), or the Settings card is open. Off, every listen and every reply is exactly as before.
 // A failure (the home base unreachable, slower than 4 s, an error) keeps this device on its own
-// recognizer and voice for a minute; the next use after that tries the home base again.
+// recognizer and voice for a minute; the next use after that tries the home base again. v7.8: so does a
+// reading of api/senses that got no answer, or has had none for 2 s, until a reading succeeds (inDoubt).
 
 import { getSenses, putSenses, hearWav, speakText } from '../platform/senses.js';
 import { sensesProblem, senseReady, encodeWav, HEAR_SAMPLE_RATE } from '../lib/senses.js';
@@ -41,6 +42,11 @@ const WARM_TIMEOUT_MS = 30000;
 // model in the background; Core 1.2.2 also restarts a loaded one's idle time). The Core allows 60 of those
 // an hour, so at most one every 3 minutes, and none within 3 minutes of George speaking.
 const WARM_VOICE_MS = 3 * 60 * 1000;
+// v7.8 integrator (R78-3): a reading the home base hasn't answered for this long (it normally takes well
+// under a second) means it may not be answering at all (Tailscale on, the Alienware asleep, a network that
+// drops packets): until a reading succeeds, this device's own recognizer and voice, instead of George's
+// first request waiting out its time limit (6 s) in silence.
+const DOUBT_MS = 2000;
 
 function safeCall(fn, fallback) {
   try {
@@ -70,6 +76,7 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
   let lastRevive = 0;
   const listeners = new Set();
   let inflight = null;
+  let inflightAt = 0;
   let lastTry = 0;
   let watchers = 0;
   let pollTimer = 0;
@@ -100,6 +107,7 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     if (inflight) return inflight;
     if (!force && now() - lastTry < MIN_LOAD_MS) return Promise.resolve(st);
     lastTry = now();
+    inflightAt = now();
     if (!st.senses) set({ phase: 'loading' });
     inflight = Promise.resolve()
       .then(() => client.getSenses(url))
@@ -139,11 +147,23 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     return !!f && now() - f.at < COOL_MS;
   }
 
+  /**
+   * v7.8 integrator (R78-3): the home base may not be answering: the last reading got no answer (unreachable,
+   * too slow), or the one under way has had none for 2 s. The last good reading isn't trusted meanwhile.
+   */
+  function inDoubt() {
+    if (inflight && now() - inflightAt > DOUBT_MS) return true;
+    const p = st.problem;
+    return st.phase === 'failed' && !!p && (p.state === 'offline' || p.state === 'slow');
+  }
+
   function usable(which) {
     const s = settings();
     const on = which === 'hear' ? s.homeBaseHear === true : s.homeBaseSpeak === true;
     if (!on || !base() || cooling(which)) return false;
-    if (!st.senses || now() - st.at > STALE_MS) load(); // read it again in the background
+    // Read it again in the background: an old reading, or the last one failed (at most every 10 s).
+    if (!st.senses || now() - st.at > STALE_MS || st.phase === 'failed') load();
+    if (inDoubt()) return false; // until a reading succeeds, this device's own recognizer and voice
     return senseReady(st.senses, which);
   }
 
@@ -151,6 +171,9 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     if (which !== 'hear' && which !== 'speak') return;
     failures[which] = { at: now(), kind: String(kind || 'error') };
     set({ failures: { ...failures } });
+    // v7.8 integrator (R78-3): no answer at all: read api/senses now, so a home base that isn't answering
+    // keeps this device on its own voice and recognizer until it does (inDoubt), not just for the minute.
+    if (kind === 'timeout' || kind === 'unreachable') load({ force: true });
   }
 
   function noteSuccess(which) {
@@ -294,6 +317,7 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
 
   return {
     getState: () => st,
+    inDoubt,
     base,
     load,
     save,
@@ -312,11 +336,13 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     /**
      * At launch with hearing or voice on: one reading, so the first listen or reply can use it.
      * { warm: true } (Voice Mode opening): then a part unused for 25 minutes is warmed up.
+     * v7.8 integrator (R78-3): Voice Mode opening and the app coming to the front always read it afresh
+     * (one at a time), so a home base that has stopped answering is noticed before the first reply.
      */
     prime({ warm: andWarm = false, voice = false } = {}) {
       const s = settings();
       if (!base() || (s.homeBaseHear !== true && s.homeBaseSpeak !== true)) return;
-      const p = load();
+      const p = load({ force: andWarm || voice });
       if (andWarm) Promise.resolve(p).then(() => warm());
       else if (voice) Promise.resolve(p).then(() => warmVoice()); // v7.8: the app came to the front
     },

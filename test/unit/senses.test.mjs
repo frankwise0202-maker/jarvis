@@ -430,6 +430,8 @@ test('senses controller: on and ready -> canHear; a failure rests it for a minut
   assert.equal(c.ctl.canSpeak(), false, 'voice is off on this device (and at the home base)');
   c.ctl.noteFailure('hear', 'timeout');
   assert.equal(c.ctl.canHear(), false, 'resting after a failure');
+  await flush();
+  assert.equal(c.calls.get, 2, 'v7.8 integrator: no answer at all: api/senses read again at once (it answered)');
   c.advance(59000);
   assert.equal(c.ctl.canHear(), false);
   c.advance(2000);

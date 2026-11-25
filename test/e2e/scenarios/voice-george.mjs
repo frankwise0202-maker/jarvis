@@ -13,6 +13,9 @@
 //                                   his); George turned off at the home base by an older Jarvis comes back
 //                                   on there from the iPhone, whose switch is still on
 //   george-fallback                 George failing mid-reply: the label changes to "iPhone voice"
+//   george-away                     the home base stops answering (Tailscale on, the Alienware asleep): the
+//                                   reply is spoken by the iPhone voice at once, not after 6 s of silence;
+//                                   George again once a reading of the home base succeeds
 //   george-no-homebase(-mac)        no home base: Jarvis's voice offers George on this device (its
 //                                   download, "may be slow on iPhone") and the better-voice tip; Test
 //   george-old-core                 a Jarvis Core 1.1 (no senses): nothing turned on, no notice
@@ -365,6 +368,57 @@ export default [
         t.assert(labels[0] === 'voice-label:George · home base:homebase' && labels.includes('voice-label:iPhone voice:device'), `in that order (${labels.join(' | ')})`);
         const said = await t.page.evaluate(() => window.__voice.said.join(' '));
         t.assert(!/^The capital of France is Paris\./.test(said), `George said the first words, the iPhone voice the rest (${said})`);
+      });
+    },
+  },
+  {
+    name: 'george-away',
+    title: 'iPhone away from home, the home base not answering (Tailscale on, the Alienware asleep: every request hangs): the reply is spoken by the iPhone voice at once instead of after 6 s of silence, nothing asked of George meanwhile; once the home base answers a reading again, George speaks again',
+    device: 'iphone13',
+    seed: { settings: { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'auto' } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 150000,
+    async run(t) {
+      await setup(t);
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'api/senses read at launch: George ready' });
+      await t.page.waitForTimeout(1500);
+      t.core.delayMs = 120000; // every request to the home base now hangs: no answer, no error
+      const n0 = t.core.requests.length;
+      await t.step('Voice Mode: the reply is heard at once, in the iPhone voice', async () => {
+        const vm = await openListening(t);
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.listens)) >= 1, { timeout: 8000, message: 'the recognizer' });
+        await t.page.evaluate((q) => window.__voice.say(q), QUESTION);
+        let shownAt = 0;
+        await t.waitFor(
+          async () => {
+            const turns = t.page.locator(tid('turn-jarvis'));
+            if (!shownAt && (await turns.count()) && /Paris/.test(await t.text(turns.last()))) shownAt = Date.now();
+            return shownAt > 0;
+          },
+          { timeout: 20000, interval: 50, message: 'the reply on screen' },
+        );
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.join(' '))).length > 0, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
+        const silence = (Date.now() - shownAt) / 1000;
+        t.assert(silence < 2, `the iPhone voice ${silence.toFixed(1)} s after the reply came (before: 6 s of silence while George's first request waited)`);
+        const label = await t.visible('voice-label', { timeout: 5000 });
+        t.assert(norm(await t.text(label)) === 'iPhone voice', `labelled (${await t.text(label)})`);
+        t.assert(!t.core.requests.slice(n0).includes('POST /api/speak'), `nothing asked of George meanwhile (${t.core.requests.slice(n0).join(', ')})`);
+        await t.screenshot('1-iphone-voice');
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking' });
+        await (await t.visible('voice-close')).click();
+      });
+      await t.step('the home base answers again: George speaks again', async () => {
+        t.core.delayMs = 0;
+        const gets = t.core.senses.gets;
+        await t.page.waitForTimeout(11000); // the app reads api/senses at most every 10 s
+        const vm = await openListening(t);
+        await t.waitFor(async () => t.core.senses.gets > gets, { timeout: 10000, message: 'a new reading of the home base' });
+        const asked = t.core.senses.speaks.length;
+        await t.page.evaluate((q) => window.__voice.say(q), QUESTION);
+        await t.waitFor(async () => t.core.senses.speaks.length > asked, { timeout: 20000, message: 'George asked again' });
+        const label = await t.visible('voice-label', { timeout: 10000 });
+        await t.waitFor(async () => norm(await t.text(label)) === 'George · home base', { timeout: 10000, message: async () => `George again (${await t.text(label)})` });
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking' });
       });
     },
   },

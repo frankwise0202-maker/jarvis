@@ -96,6 +96,9 @@ export function homeVoicePending({ settings, senses, voiceName = 'George' } = {}
   if (p.state === 'error') return { state: 'error', text: `The home base couldn’t get ${name}’s voice ready${p.error ? `: ${p.error}` : '.'}` };
   if (p.state === 'downloading') return { state: 'downloading', progress: p.progress, text: `${name} is getting ready on your Alienware (downloading${typeof p.progress === 'number' ? ` ${pct(p.progress)}` : ''}${p.sizeMb ? ` of about ${p.sizeMb} MB` : ''}, once).` };
   if (p.state !== 'ready') return { state: 'loading', text: `${name} is getting ready on your Alienware…` };
+  // v7.8 integrator (R78-3): the last reading got no answer: this device speaks until the home base answers.
+  const lost = isObj(sn.problem) && (sn.problem.state === 'offline' || sn.problem.state === 'slow') && sn.phase === 'failed';
+  if (lost) return { state: 'unreachable', text: `The home base isn’t answering right now, so this device speaks until it does.` };
   if (sn.cooling) return { state: 'resting', text: 'The home base didn’t answer in time just now, so this device speaks for a minute.' };
   return null;
 }

@@ -279,6 +279,71 @@ test('two devices on one home base: Turn off on the Mac is the Mac’s alone; th
   assert.equal(iphone.get().homeBaseSpeakBy, 'auto');
 });
 
+test('a home base that stops answering (Tailscale on, the Alienware asleep): George isn’t trusted from a reading that hangs 2 s or got no answer, until one succeeds', async () => {
+  let t = 7_000_000;
+  const pending = [];
+  let mode = 'ok';
+  const ready = () => sensesView({ ...VIEW, hear: { enabled: true, state: 'ready', model: 'base.en' }, speak: { enabled: true, state: 'ready', voice: 'bm_george' } });
+  let reads = 0;
+  const client = {
+    getSenses: () => {
+      reads += 1;
+      if (mode === 'ok') return Promise.resolve({ ok: true, senses: ready() });
+      if (mode === 'error') return Promise.resolve({ ok: false, kind: 'http', status: 500, code: 'internal', message: 'boom' });
+      return new Promise((resolve) => pending.push(resolve)); // hangs until resolved by the test
+    },
+    putSenses: async () => ({ ok: true, senses: ready() }),
+  };
+  const s = { ...LINKED, homeBaseSpeak: true, homeBaseSpeakBy: 'auto', homeBaseHear: true };
+  const ctl = createSenses({ getSettings: () => s, client, now: () => t, setTimer: () => 0, clearTimer: () => {} });
+  await ctl.load({ force: true });
+  assert.equal(ctl.canSpeak(), true, 'George ready');
+  // Voice Mode opens: a new reading, which hangs.
+  mode = 'hang';
+  t += 11_000;
+  ctl.load();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pending.length, 1, 'asked');
+  t += 1_000;
+  assert.equal(ctl.canSpeak(), true, 'a reading under way for 1 s: still George');
+  t += 1_500;
+  assert.equal(ctl.canSpeak(), false, 'no answer for 2.5 s: this device’s own voice, not 6 s of silence');
+  assert.equal(ctl.canHear(), false, 'and its own recognizer');
+  assert.equal(ctl.inDoubt(), true);
+  // The reading gives up (8 s): no answer. Still this device's voice, and Settings says why.
+  pending.shift()({ ok: false, kind: 'unreachable' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ctl.canSpeak(), false);
+  const st = ctl.getState();
+  assert.equal(homeVoicePending({ settings: s, senses: { phase: st.phase, view: st.senses, problem: st.problem } }).state, 'unreachable');
+  // The next use reads again (at most every 10 s); once a reading succeeds, George again.
+  mode = 'ok';
+  t += 10_001;
+  assert.equal(ctl.canSpeak(), false, 'this reply: still this device (the reading has just started)');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ctl.canSpeak(), true, 'the home base answered: George again');
+  // Voice Mode opening reads afresh even right after a reading (a home base that has just stopped answering
+  // is noticed before the first reply); so does a request of George's that got no answer.
+  const before = reads;
+  t += 3_000;
+  ctl.prime({ warm: true });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(reads, before + 1, 'Voice Mode: a fresh reading');
+  t += 1_000;
+  ctl.noteFailure('speak', 'timeout');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(reads, before + 2, 'no answer from George: read again at once');
+  ctl.noteFailure('speak', 'slow');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(reads, before + 2, 'slow (it answered): no extra reading');
+  // A Core that answers with an error of its own is no sign of a network gone: v7.7's behaviour.
+  mode = 'error';
+  t += 61_000;
+  await ctl.load();
+  assert.equal(ctl.getState().phase, 'failed');
+  assert.equal(ctl.canSpeak(), true);
+});
+
 // ---- the label and the voice in use ------------------------------------------------------------------------
 
 test('voice label: George · home base, George · this device, iPhone voice, built-in voice', () => {
