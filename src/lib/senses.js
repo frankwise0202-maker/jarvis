@@ -152,8 +152,10 @@ export const VAD_DEFAULTS = Object.freeze({
   riseDb: 10, // loud: this far above the room's level ...
   keepDb: 6, // ... and, once talking, still this far above it
   minDb: -60, // and never quieter than this (dBFS)
-  floorUp: 0.0008, // the room's level rises slowly (about 25 s) ...
-  floorDown: 0.25, // ... and falls fast
+  silentDb: -90, // digital silence (a microphone starting up) says nothing about the room
+  startFloorDb: -50, // the room is taken to be no louder than this until it is heard
+  floorUp: 0.03, // between utterances the room's level is followed within a second or so (it
+  floorDown: 0.06, // stands still while the owner talks)
 });
 
 function levelDb(x, from, to) {
@@ -203,9 +205,11 @@ export function createVad(options = {}) {
 
   function judge(step) {
     const db = levelDb(step, 0, step.length);
-    if (floor === null) floor = Math.min(db, -40);
+    if (db <= o.silentDb) return false;
+    if (floor === null) floor = Math.min(db, o.startFloorDb);
     const loud = db > Math.max(floor + (speaking ? o.keepDb : o.riseDb), o.minDb);
-    floor += (db - floor) * (db < floor ? o.floorDown : o.floorUp);
+    // The room's level: followed between utterances only (the owner's voice is not the room).
+    if (!speaking && !loud) floor += (db - floor) * (db < floor ? o.floorDown : o.floorUp);
     return loud;
   }
 

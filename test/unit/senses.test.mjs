@@ -179,6 +179,22 @@ test('senses: clicks and a short knock are not speech; nothing for 10 s is no sp
   assert.ok(end.samples.length / SR <= 30.001, 'never more than 30 s');
 });
 
+test('senses: a microphone that starts with digital silence, then a -61 dBFS room: only the words are an utterance', async () => {
+  const S = await import('./wake.signals.mjs');
+  const vad = createVad({ endSilenceMs: 1200 });
+  const roomTone = S.roomNoise(2.0, { rmsDb: -61 });
+  const words = S.speechLike({ seconds: 2.2, peakDb: -14 });
+  S.mixAt(words, S.roomNoise(2.2, { rmsDb: -61, seed: 5 }), 0);
+  const ev = feed(vad, concat(new Float32Array(SR / 2), roomTone, words, S.roomNoise(2.0, { rmsDb: -61, seed: 9 })));
+  assert.deepEqual(
+    ev.map((e) => e.type),
+    ['speech', 'end'],
+  );
+  const secs = ev[1].samples.length / SR;
+  assert.ok(secs > 1.8 && secs < 3.1, `the words and a little around them (${secs.toFixed(2)} s)`);
+  assert.ok(ev[0].at > 2.4, `speech starts with the words, not the room (${ev[0].at.toFixed(2)} s)`);
+});
+
 test('senses: finish() ends an utterance under way (stop); reset() starts over', () => {
   const vad = createVad({});
   feed(vad, concat(room(0.3), speech(0.8)));

@@ -35,7 +35,7 @@
 // 24 kHz WAV. hearMode / speakMode 'unreachable' drop those requests (as if Tailscale were off),
 // 'error' answers 500. A part turned on with PUT downloads over `downloadSteps` reads of api/senses.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -414,6 +414,8 @@ function sensesRoute(x, route, req, url, json) {
     const type = String(req.headers()['content-type'] || '');
     const wav = bytes.length >= 44 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WAVE';
     x.hears.push({ bytes: bytes.length, prompt: url.searchParams.get('prompt') || '', wav, type, rate: wav ? bytes.readUInt32LE(24) : 0, seconds: wav ? (bytes.length - 44) / 2 / bytes.readUInt32LE(24) : 0 });
+    // Debugging the VAD: JARVIS_E2E_HEAR_DUMP=/some/prefix keeps each WAV heard as <prefix>-<n>.wav.
+    if (process.env.JARVIS_E2E_HEAR_DUMP) writeFileSync(`${process.env.JARVIS_E2E_HEAR_DUMP}-${x.hears.length}.wav`, bytes);
     if (!/audio\/wav/.test(type) || !wav) return json(400, { error: 'bad_audio', message: 'send a WAV (16 kHz mono PCM16)' });
     if (bytes.length > 2 * 1024 * 1024) return json(413, { error: 'too_large', message: 'at most 2 MB' });
     if (!x.hear.enabled || x.hear.state !== 'ready') return json(409, { error: 'not_ready', message: 'hearing is not ready on the home base' });

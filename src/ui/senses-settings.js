@@ -70,7 +70,7 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
   const modelSel = h(
     'select',
     { class: 'select', id: 'set-homeBaseHearModel', attrs: { 'data-testid': 'senses-hear-model', 'aria-label': 'How the home base hears' }, on: { change: () => chooseModel(modelSel.value) } },
-    HEAR_MODELS.map((m) => h('option', { value: m.id, text: `${m.label} (${m.id === 'base.en' ? 'Whisper base' : 'Whisper small'})` })),
+    HEAR_MODELS.map((m) => h('option', { value: m.id, text: m.label })),
   );
   const hearStatusText = h('span', { class: 'nv-status-text' });
   const hearProgress = h('progress', { class: 'nv-progress', max: 1, value: 0, hidden: true, attrs: { 'data-testid': 'senses-hear-progress', 'aria-label': 'Whisper download on the home base' } });
@@ -93,6 +93,7 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
       h('div', { class: 'set-row-control' }, hearSw),
     ),
     h('div', { class: 'brain-row senses-model-row' }, h('label', { class: 'set-label senses-model-label', attrs: { for: 'set-homeBaseHearModel' }, text: 'How it hears' }), modelSel),
+    h('p', { class: 'set-help senses-model-help', text: 'Fast: Whisper base, about a second for a sentence. Accurate: Whisper small, hears more, a little slower.' }),
     hearStatus,
     h('div', { class: 'set-row-actions set-row-actions--start' }, hearTest),
     hearOut,
