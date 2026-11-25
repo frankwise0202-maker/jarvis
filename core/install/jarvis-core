@@ -834,10 +834,12 @@ cmd_uninstall() {
   done
   title "Removing Jarvis Core"
   if [ "$purge" = 1 ]; then
-    say "This removes Jarvis Core, its screen, its settings AND its history (--purge)."
+    say "This removes Jarvis Core, its screen, its settings (your Claude key too) AND its history and"
+    say "your devices' backups (--purge)."
   else
     say "This removes Jarvis Core and its screen, and puts your screen and login settings back."
-    say "Its history and settings stay in $DATA_DIR and $SETTINGS_DIR (add --purge to delete them)."
+    say "Its history, your devices' backups and its settings (your Claude key too) stay in $DATA_DIR"
+    say "and $SETTINGS_DIR (add --purge to delete them)."
   fi
   if [ "$yes" != 1 ]; then
     if ! (exec </dev/tty) 2>/dev/null; then
@@ -945,7 +947,7 @@ cmd_uninstall() {
   rm -rf "$STATE_DIR"
   if [ "$purge" = 1 ]; then
     rm -rf "$DATA_DIR" "$SETTINGS_DIR" "$PROFILE_DIR"
-    ok "Deleted the history, the settings and the screen's Chrome profile"
+    ok "Deleted the history, the backups, the settings, the key and the screen's Chrome profile"
   fi
   rm -f "$SELF_BIN"
   ok "Removed the jarvis-core command"

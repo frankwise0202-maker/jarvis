@@ -9,6 +9,10 @@ API key.
 Your iPhone and your Mac can see the same report through Tailscale, your private network. Nobody else
 can: it is never put on the public internet.
 
+From version 1.1 it is also Jarvis's **brain at home**: it can research a question for you, keep watch
+for something, have a morning briefing ready at 7:00 and send a notification to your iPhone, all while
+your phone is locked (see "The brain" below).
+
 ---
 
 ## Before you start (about 10 minutes, once)
@@ -65,7 +69,7 @@ then press Enter:
 wget -qO- https://raw.githubusercontent.com/frankwise0202-maker/jarvis/main/core/install/install.sh | bash
 ```
 
-It takes a few minutes. You'll see numbered steps (1 of 12, 2 of 12 ...) with a green ✓ for each thing
+It takes a few minutes. You'll see numbered steps (1 of 13, 2 of 13 ...) with a green ✓ for each thing
 that's done and a yellow ! for anything that needs you.
 
 ### What it asks you (type `y` or `n`, then Enter)
@@ -80,6 +84,10 @@ that's done and a yellow ! for anything that needs you.
 3. **"Share Jarvis Core with your iPhone and Mac through Tailscale?"** (only if Tailscale is
    connected). Yes is what you want. If Tailscale says HTTPS certificates are off, it prints a link:
    hold Ctrl, click it, click **Enable**, and the installer carries on by itself.
+4. **"Keep Jarvis Core up to date automatically?"** Yes is recommended. Every 20 minutes it looks for a
+   new version on GitHub and installs it by itself; if a new version doesn't start properly, it goes
+   back to the previous one by itself. (If you already set up an update timer by hand, it takes that
+   over without asking.)
 
 It also asks for your password once (the one you log in with), for the steps that change system
 settings. Nothing shows while you type it; that's normal.
@@ -127,12 +135,86 @@ Lost the address? On the Alienware, in Terminal: `jarvis-core url`
 
 ## "Do I need to download Claude on it?"
 
-No. Jarvis Core needs no Claude, no account and no API key: its little assistant runs on the Alienware
-itself and only talks about the computer.
+No. The system report and its little assistant need no Claude, no account and no API key: they run on
+the Alienware itself and only talk about the computer. The brain's research, watching and the full
+morning briefing do use your Claude API key, and you give it to the home base from your iPhone (see
+"Give the home base your key" below), never by typing it on the Alienware. Everything it needs is
+installed for you.
 
 The dashboard has an **Open Jarvis** button (or press **Alt+J**). It opens the regular Jarvis app in a
 normal Chrome window, on this computer. The first time, Jarvis asks for your API key there, once, like
 on any new computer. Close that window (**Ctrl+W**) to get back to the dashboard.
+
+---
+
+## The brain: Jarvis keeps working while your phone is locked
+
+Ask Jarvis on your iPhone to "research the best 27-inch monitor in the background", or "tell me when
+the LG 27GP850 drops under $300", and the home base does it while the phone is in your pocket or
+locked. When something is ready, your iPhone gets a notification; tap it to open the result. Everything
+below is in Jarvis on the iPhone (version 7.6 or later), **Settings → Home base**, under the address.
+
+### Give the home base your key (once, from the iPhone)
+
+1. Open Jarvis on the iPhone, go to **Settings → Home base**.
+2. Tap **Give the home base your key**. Jarvis sends the key this iPhone already has, once.
+3. You then see only its last four characters (like `…Ab3D`), as a check. **Remove** takes it off the
+   home base again.
+
+The key stays on the Alienware in a locked folder that only you can read
+(`~/.config/jarvis-core/secrets/`). It is never shown again, never written in a log, and only ever sent
+to Claude itself (api.anthropic.com). Without a key everything else still works: the system report, the
+free morning briefing, notifications and sync. You just see one "Give the home base your key" button.
+
+### Spending limits
+
+Work in the background costs money on your Claude account, so the home base stops itself at **$5 a
+day** and **$50 a month** (change both under **Limits**). Research that would start over a limit waits
+("blocked"); research that reaches the limit while it runs stops and keeps what it found so far. The
+morning briefing's Claude part never costs more than $0.30 a day. The home base sheet (tap the home
+base tile) shows today's and this month's spending.
+
+### The morning briefing
+
+Every day at **7:00** the home base writes a short briefing: the weather where your iPhone is, a few
+headlines (news and tech), how the home base did overnight, anything it finished for you overnight,
+what's new in Jarvis and a music suggestion. With your key, Jarvis writes it in its own voice and picks
+the top stories; without one you get the same facts in plain form.
+
+- **On the Alienware's screen** it fills the screen ("Good morning, Frank.") until 10:00. Move the
+  mouse or press a key to see the system report; after 10 quiet minutes the briefing comes back.
+- **On the iPhone** it is a card at the top of the home screen, and a notification at 7:00. "Brief me"
+  in the chat (or in Voice Mode) brings it up any time.
+- Change the time, °F or °C, and the place under **Morning briefing**. "Use this iPhone's location"
+  sends only a rounded position (to about a kilometre); you can type a city instead.
+
+### Notifications
+
+Tap **Turn on notifications** and allow them when the iPhone asks. On the iPhone this works in Jarvis
+opened from its Home Screen icon (iOS 16.4 or newer), not in a Safari tab. **Test** sends one straight
+away. The Mac's Chrome can have them too, the same way. If a device stops taking them (the app was
+removed, say), the home base forgets that device by itself.
+
+### Sync and backups
+
+With **Keep this device in sync through the home base** on (it is, once a device is linked), each
+device sends its Jarvis backup to the home base (the same backup as Settings → Backup, never with your
+key) and picks up what your other devices have: conversations and saved items it is missing are added,
+and where both have the same one, the newer copy wins. Syncing never deletes anything. The home base
+keeps each device's latest backup plus one for each of the last 14 days, on the Alienware's 1 TB drive
+(`~/.local/share/jarvis-core/sync/`). **Sync now** does it straight away.
+
+### Automatic updates
+
+If you said yes in the install, Jarvis Core looks for a new version every 20 minutes and installs it by
+itself, only when its own files changed on GitHub. If a new version doesn't answer within 90 seconds,
+it goes back to the one before by itself, says so in the event log, and doesn't try that version again.
+
+| Command | What it does |
+|---|---|
+| `jarvis-core autoupdate status` | On or off, the last check, the last update |
+| `jarvis-core autoupdate on` | Turns it on (and takes over an update timer you set up by hand) |
+| `jarvis-core autoupdate off` | Turns it off; `jarvis-core update` still works by hand |
 
 ---
 
@@ -146,6 +228,7 @@ on any new computer. Close that window (**Ctrl+W**) to get back to the dashboard
 | `jarvis-core update` | Gets the latest version, restarts, reloads the screen |
 | `jarvis-core restart` | Restarts Jarvis Core (the screen reconnects by itself) |
 | `jarvis-core logs` | Its recent messages (`jarvis-core logs -f` keeps following; Ctrl+C stops) |
+| `jarvis-core autoupdate status` | Does it update itself? When did it last check? (`on` / `off` to change) |
 | `jarvis-core uninstall` | Removes it all (see the end of this page) |
 
 ---
@@ -193,6 +276,20 @@ dashboard is behind it. `jarvis-core open` brings the dashboard back to the fron
 windows. Closing the dashboard (Alt+F4) is fine too: `jarvis-core open` brings it back, and it comes
 back by itself at the next login.
 
+**Research says "blocked".** The day's ($5) or the month's ($50) limit is used up. It starts again
+tomorrow (or next month), or raise the limit in Jarvis: Settings → Home base → Limits.
+
+**The home base says Claude "isn't installed".** Its libraries didn't download (no internet during an
+update). Run `jarvis-core update`; `jarvis-core status` says when they are there.
+
+**No notifications on the iPhone.** Open Jarvis from its Home Screen icon (not Safari), Settings → Home
+base → Turn on notifications, then **Test**. Check the iPhone's Settings → Notifications → Jarvis is
+allowed.
+
+**An update went wrong.** If a new version doesn't start, the automatic update goes back to the
+previous one by itself; `jarvis-core autoupdate status` shows it. To start over from a fresh copy:
+`jarvis-core update --force` (your old copy is kept next to it).
+
 ---
 
 ## Undo everything
@@ -201,11 +298,12 @@ back by itself at the next login.
 jarvis-core uninstall
 ```
 
-It asks once, then: stops and removes Jarvis Core, removes the dashboard from login, puts your screen
-blanking, lock and sleep settings back, turns automatic login off (if the installer turned it on),
-removes the disk-check permission and the Tailscale sharing, and removes its files. Its history stays
-in case you install it again; to delete that too, use `jarvis-core uninstall --purge`. Tailscale,
-Chrome and Node.js stay installed.
+It asks once, then: stops and removes Jarvis Core and its automatic updates, removes the dashboard from
+login, puts your screen blanking, lock and sleep settings back, turns automatic login off (if the
+installer turned it on), removes the disk-check permission and the Tailscale sharing, and removes its
+files. Its history, your devices' backups and your settings (your Claude key too) stay in case you
+install it again; to delete those as well, use `jarvis-core uninstall --purge`. Tailscale, Chrome and
+Node.js stay installed.
 
 To undo only the "screen always on" settings, paste these:
 
@@ -228,6 +326,12 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 | The 24/7 service (starts at power-on, restarts itself if it stops) | `~/.config/systemd/user/jarvis-core.service`, with lingering on |
 | The dashboard at login (Chrome, full screen, its own profile) | `~/.config/autostart/jarvis-core-screen.desktop`, profile in `~/.local/share/jarvis-core-screen` |
 | History, events (a week, saved every 5 minutes) | `~/.local/share/jarvis-core/` |
+| The brain's libraries (the Claude SDK and web-push, from npm) | `~/jarvis-core-app/core/node_modules` |
+| Your Claude key (only once you give it from the iPhone) | `~/.config/jarvis-core/secrets/` (only you can read it) |
+| Research, watchers, spending, briefings | `~/.local/share/jarvis-core/brain/` |
+| Your devices' backups (the latest of each, plus 14 days) | `~/.local/share/jarvis-core/sync/` |
+| Notification keys and the devices that get them | `~/.local/share/jarvis-core/push/` |
+| Automatic updates (only if you said yes) | `~/.config/systemd/user/jarvis-core-autoupdate.timer` and `.service`; what they did: `~/.local/share/jarvis-core/autoupdate.log` |
 | Optional settings (name, night dim hours, thresholds) | `~/.config/jarvis-core/config.json` |
 | The disk-check permission (one read-only command) | `/etc/sudoers.d/jarvis-core-smartctl` |
 | Automatic login (only if you said yes) | `/etc/gdm3/custom.conf` (the original is kept as `custom.conf.before-jarvis-core`) |
@@ -235,7 +339,9 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 
 Jarvis Core listens only on this computer (`http://localhost:8788/`); Tailscale's `serve` passes it to
 your own devices over HTTPS. It never uses Tailscale Funnel (the public internet) and refuses Funnel
-traffic.
+traffic. What it fetches from the internet: Claude (only with your key), the weather (Open-Meteo),
+news headlines (public RSS feeds), the push services of Apple and Google for your notifications, and
+GitHub for updates.
 
 Developer documentation: [server/README.md](server/README.md) (the Core and its API),
 [dashboard/README.md](dashboard/README.md) (the screen), and `install/` (the installer and its tests:
