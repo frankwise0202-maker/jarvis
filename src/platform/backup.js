@@ -19,7 +19,8 @@
 //                         (case-insensitive dedupe). Only the owner's profile, voice and
 //                         appearance settings are restored (RESTORED_SETTINGS; never limits,
 //                         models, spending or feature flags): `settings` says whether any changed
-//                         and `settingsChanged` lists those keys. Imported conversations are
+//                         and `settingsChanged` lists those keys (the home base's address only
+//                         comes back to a device with none linked: `homeBase` names it). Imported conversations are
 //                         vetted and rebuilt from known fields (see cleanConversation): only ones
 //                         Jarvis made are accepted, nothing imported can be resumed; `skipped`
 //                         counts the ones left out. Throws an Error with a user-facing message
@@ -60,6 +61,7 @@ import { cleanFrame, cleanLabelText, OPTICS_LIMITS } from '../lib/optics.js';
 import { MUSIC_SEARCH_KINDS, cleanMusicItems, cleanQuery, cleanText } from '../lib/music.js';
 import { NATURAL_CACHES } from './voice/natural/catalog.js';
 import { WAKE_CACHE } from '../lib/wake/catalog.js';
+import { normalizeHomeBaseUrl, homeBaseName } from '../lib/homebase.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -76,12 +78,16 @@ const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCam
  * (naturalVoiceId, v7.1) is restored, but never naturalVoice itself: an import never starts a
  * download. Wake Jarvis (Standby): two claps, their sensitivity and the return to Standby are
  * restored; "Hey Jarvis" (wakeWord) is carried in the file but never switched on by an import, for
- * the same reason (its models are a download).
+ * the same reason (its models are a download). The home base's address (homeBaseUrl, v7.5) is
+ * restored only on a device with none linked, and only a valid one (https on a *.ts.net name): an
+ * import never unlinks this device (a device that never linked one exports "") and never points a
+ * linked one at another address (the backup may be someone else's). importBackup() names it
+ * (`homeBase`: the machine name) when it was restored.
  */
 export const RESTORED_SETTINGS = Object.freeze([
   'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
   'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-  'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn',
+  'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn', 'homeBaseUrl',
 ]);
 
 /** What replaces an API key in exported data. */
@@ -206,6 +212,7 @@ export async function importBackup(file) {
     }
   }
   const result = { conversations, copies, replaced, memory, settings: settingsChanged.length > 0, settingsChanged, skipped };
+  if (settingsChanged.includes('homeBaseUrl')) result.homeBase = homeBaseName(getSettings().homeBaseUrl);
   // Like the registered parts: reported only when the backup has a library (older ones do not).
   if (data.library !== undefined && data.library !== null) {
     try {
@@ -297,8 +304,15 @@ function restoreSettings(raw) {
   // A backup from before v7.2 carries listenLang 'en-US', the old default: it follows the device's
   // language here too, unless the backup says how listening ends (it was saved by v7.2 or later).
   if (patch.listenLang === 'en-US' && !Object.prototype.hasOwnProperty.call(raw, 'listenWait')) patch.listenLang = '';
-  if (!Object.keys(patch).length) return [];
   const before = getSettings();
+  // The home base's address links this device: an import only fills it in when none is linked, and
+  // never with "" (that would unlink it) or an invalid address.
+  if (Object.prototype.hasOwnProperty.call(patch, 'homeBaseUrl')) {
+    const r = typeof patch.homeBaseUrl === 'string' ? normalizeHomeBaseUrl(patch.homeBaseUrl) : null;
+    if (before.homeBaseUrl || !r || !r.ok) delete patch.homeBaseUrl;
+    else patch.homeBaseUrl = r.url;
+  }
+  if (!Object.keys(patch).length) return [];
   const after = saveSettings(patch);
   return RESTORED_SETTINGS.filter((key) => before[key] !== after[key]);
 }
@@ -610,6 +624,7 @@ function turnOf(t, fallbackTime) {
   const apiStart = int(t.apiStart, 0, 1e9);
   if (apiStart !== null) turn.apiStart = apiStart;
   if (t.local === 'music') turn.local = 'music'; // a free Apple Music exchange (no model, no cost)
+  if (t.local === 'homebase') turn.local = 'homebase'; // a free home base exchange (the Jarvis Core answered)
   return turn;
 }
 

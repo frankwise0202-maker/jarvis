@@ -12,6 +12,7 @@ import { deflateSync } from 'node:zlib';
 import { canonicalJson } from '../mock/util.mjs';
 import { startTestServer, MOCK_API_KEY } from '../server.mjs';
 import { MUSIC_ORIGIN_RE, routeFakeMusic } from './music-fakes.mjs';
+import { CORE_ORIGIN, routeFakeCore } from './core-fakes.mjs';
 
 export const BAD_API_KEY = 'sk-ant-bad-0123456789abcdefghijk';
 export const SEED_MARKER = '__jarvis_e2e_seeded__';
@@ -266,12 +267,15 @@ export class TestContext {
       // the newest context's counts; musicPreviewSeconds: a longer clip, so a pause is told from its end
       this.music = await routeFakeMusic(context, { png: placeholder, delayMs: this.scenario.musicDelayMs || 0, previewSeconds: this.scenario.musicPreviewSeconds || 3 });
     }
+    // The home base (`fakeCore: true` or { mode }): the Jarvis Core over Tailscale (core-fakes.mjs).
+    const fakeCore = !!this.scenario.fakeCore;
+    if (fakeCore) this.core = await routeFakeCore(context, typeof this.scenario.fakeCore === 'object' ? this.scenario.fakeCore : {});
     context.on('request', (req) => {
       const url = req.url();
       if (!/^https?:/i.test(url)) return;
       try {
         const from = new URL(url).origin;
-        if (from !== origin && !faked.includes(from) && !(fakeMusic && MUSIC_ORIGIN_RE.test(from))) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
+        if (from !== origin && !faked.includes(from) && !(fakeMusic && MUSIC_ORIGIN_RE.test(from)) && !(fakeCore && from === CORE_ORIGIN)) this.issue(`Third-party request (SPEC §2 allows none in tests): ${req.method()} ${url}`);
       } catch {
         /* ignore */
       }

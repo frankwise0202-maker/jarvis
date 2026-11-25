@@ -35,7 +35,7 @@ and your conversations are stored only on your device.
 9. [Updates](#updates)
 10. [Troubleshooting](#troubleshooting)
 11. [Running Jarvis on your own computer (optional)](#running-jarvis-on-your-own-computer-optional)
-12. [Coming next: Raspberry Pi 5 Jarvis Core](#coming-next-raspberry-pi-5-jarvis-core)
+12. [Jarvis Core: your home base](#jarvis-core-your-home-base)
 13. [For developers](#for-developers)
 
 ---
@@ -79,6 +79,9 @@ and your conversations are stored only on your device.
   or say "Hey Jarvis", and he wakes up: "Welcome home, Frank. Shall I put on some AC/DC? Or I
   can run your evening briefing." Listening happens on your device only, and it's free. See
   [Wake Jarvis (Standby)](#wake-jarvis-standby).
+- **Keep an eye on your home base.** With the Jarvis Core running on your Alienware, the home
+  screen shows how it's doing (online, OK or a warning, CPU, graphics card, memory, disk) and you can
+  ask it "How are you?" for free. See [Jarvis Core: your home base](#jarvis-core-your-home-base).
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
@@ -783,8 +786,9 @@ Other websites (at other addresses) cannot read it.
 - **Import backup** adds the backup's conversations, memory notes and saved holograms and
   blueprints (nothing is deleted) and restores your preferences: name, style, voice (the natural
   voice's speaker too, though the natural voice stays off until you turn it on), theme and
-  sounds, and Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
-  until you turn it on, because it is a download). It never changes your models,
+  sounds, Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
+  until you turn it on, because it is a download) and your home base's address (only on a device with
+  no home base linked: an import never unlinks this device or changes its address). It never changes your models,
   agent limits or spending warning. The camera you chose in
   Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
@@ -817,6 +821,8 @@ Other websites (at other addresses) cannot read it.
 - **Memory:** everything Jarvis remembers about you; edit or delete any of it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
   level; the **Systems dashboard**.
+- **Home base:** your Jarvis Core's address (Save, Test, Remove); see
+  [Jarvis Core: your home base](#jarvis-core-your-home-base).
 - **Data:** export a backup (conversations, memory, settings, your own protocols, statistics and
   the Blueprints library),
   import one of your own (see [Backups](#backups)), or reset Jarvis on this device.
@@ -862,6 +868,9 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **The camera picture looks mirrored** | Only the live picture of a camera that faces you is mirrored, like a mirror. What Jarvis looks at, and the frozen picture with the labels, are the right way round. |
 | **The natural voice says "Too slow on this device"** | Jarvis measured that this device makes the voice more slowly than it speaks, so the built-in voice speaks instead. Tap **Try again** (for example after closing other apps). |
 | **The natural voice download stopped** | Check the connection and tap **Try again**; what was already checked isn't downloaded again. Turning it on asks the browser to keep the download; if the phone runs low on space it may still remove it. |
+| **"Can't reach the home base. Is Tailscale switched on here, and is the Alienware on?"** (**OFFLINE**) | Nothing answered. Open the Tailscale app on this iPhone or Mac and switch it on (same account as the Alienware). Check that the Alienware is on and awake, and that its screen shows the report. Then tap **Try again** on the tile. |
+| **The home base says "CORE DOWN"** | The Alienware answered, but Jarvis Core on it isn't running. This happens for a moment while it updates, restarts or starts up after a reboot, and it restarts by itself. If it lasts, type `jarvis-core restart` on the Alienware (`jarvis-core status` shows what's wrong). Rarely, it means Jarvis was opened from an unusual address: use <https://frankwise0202-maker.github.io/jarvis/>. |
+| **The home base says "REFUSED"** | The Core answered and refused this page (the tile says why). Open Jarvis from its usual address (<https://frankwise0202-maker.github.io/jarvis/>) on a device signed in to your Tailscale, and check the address in Settings → Home base. |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
 | **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key and the natural voice download. |
 
@@ -883,13 +892,50 @@ You don't need this to use Jarvis, but you can run your own copy:
 
 Press **Ctrl+C** in the terminal to stop it.
 
-## Coming next: Raspberry Pi 5 Jarvis Core
+## Jarvis Core: your home base
 
-The next step is **Jarvis Core**: a small always-on box built on a Raspberry Pi 5 with a camera,
-a microphone and a speaker, so you can talk to Jarvis anywhere in the room without picking up a
-phone. Jarvis's brain (its "engine": how it talks to Claude, runs agent missions and handles
-interruptions) is already built separately from the screen you see today, so the same engine can
-run on the Pi. Your phone and computer apps stay exactly as they are.
+Your **home base** is the Jarvis Core: your Alienware at home, running around the clock with a live
+system report on its screen and a small status assistant you can ask "How are you?". It is free (it
+never uses Claude or your API key), and only your own devices can reach it, through Tailscale, the
+private network that links your iPhone, your Mac and the Alienware.
+
+- **Install it on the Alienware:** follow the step-by-step guide in [core/README.md](core/README.md)
+  (one command to paste, then switching on Tailscale).
+- **Link Jarvis to it:**
+  1. Install the **Tailscale** app on your iPhone and Mac and sign in with the same account as on the
+     Alienware. Leave it switched on.
+  2. Find your home base's address. It ends in `.ts.net`, like
+     `https://alienware.tail1234.ts.net/`: the installer shows it when it finishes, and typing
+     `jarvis-core url` on the Alienware shows it again.
+  3. In Jarvis: **Settings → Home base**, paste the address and tap **Save**. Jarvis tests it and
+     shows the computer's name, the Core's version and its health ("health OK: All systems
+     normal"). **Test** checks it again; **Remove** unlinks it.
+- **What you see:** a **Home base** tile on the home screen (on a computer, in the panel on the
+  right): online or offline, **OK**, **WARNING** or **ALERT** with the Core's one-line summary, and
+  its CPU, graphics card temperature ("driver not loaded" until the NVIDIA driver is installed), memory
+  and free disk space. It checks every 30 seconds while the tile (or, on a computer, the **CORE**
+  reading at the top or the Systems panel) is on screen, and never shows a number the Core didn't
+  report. Back after a while away, it shows **CONNECTING** and when it last reached the home base
+  until it has fresh readings. **Try again** shows **CHECKING…** while it checks.
+- **Ask it:** tap **Ask the home base** on the tile, or type or say "How's the home base?", "How's
+  the Alienware?", "Home base status" or "Can you check the home base?" in the chat or in Voice Mode.
+  The Core answers itself: free, no Claude request.
+- **OFFLINE: "Can't reach the home base. Is Tailscale switched on here, and is the Alienware on?"**:
+  switch Tailscale on in its app on this iPhone or Mac, and check that the Alienware is on and awake.
+  If Chrome on your Mac asks whether Jarvis may access devices on your local network, choose
+  **Allow**: that is how it reaches the home base.
+- **CORE DOWN**: the Alienware answered but Jarvis Core isn't running. It restarts by itself (an
+  update or a reboot takes a moment); if it lasts, type `jarvis-core restart` on the Alienware.
+
+The address travels in your backups: importing one fills it in only on a device with no home base
+linked (it never unlinks or changes a linked one). Your phone and computer apps work exactly as
+before without a home base.
+
+**A note on security:** to reach your home base, Jarvis's security policy lets the app talk to any
+`https://….ts.net` address (Tailscale names), so the address can be pasted on any device. Jarvis
+itself only contacts the address you save (or test in Settings). The trade-off: should a bug ever let foreign
+code run inside Jarvis, that policy would not stop it from sending data to someone else's `.ts.net`
+address, as it stops other sites.
 
 ## For developers
 

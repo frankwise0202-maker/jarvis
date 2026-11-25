@@ -23,7 +23,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 
 /** The exact CSP from SPEC §2 (served as a header on every test page). */
 export const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org https://*.mzstatic.com; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org https://itunes.apple.com; worker-src 'self'; manifest-src 'self'; media-src 'self' blob: https://audio-ssl.itunes.apple.com; object-src 'none'; base-uri 'none'; form-action 'none'";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org https://*.mzstatic.com; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org https://itunes.apple.com https://*.ts.net; worker-src 'self'; manifest-src 'self'; media-src 'self' blob: https://audio-ssl.itunes.apple.com; object-src 'none'; base-uri 'none'; form-action 'none'";
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

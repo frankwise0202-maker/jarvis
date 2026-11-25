@@ -89,6 +89,8 @@ const ICONS = {
   fit: [P('M4 9V4h5'), P('M20 9V4h-5'), P('M4 15v5h5'), P('M20 15v5h-5')],
   // Standby (v7.4): a crescent moon.
   moon: [P('M19.6 14.6A7.8 7.8 0 1 1 9.4 4.4a6.2 6.2 0 0 0 10.2 10.2z')],
+  // Home base (v7.5): the Jarvis Core's tower.
+  server: [R(6.5, 3, 11, 18, 2), P('M9.5 7h5'), P('M9.5 10.2h5'), C(12, 16.2, 1.3, { fill: true })],
 };
 
 /** All available icon names. */

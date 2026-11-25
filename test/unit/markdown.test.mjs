@@ -10,7 +10,7 @@ let h;
 let page;
 
 before(async () => {
-  h = await createHarness({ markdown: 'src/lib/markdown.js' });
+  h = await createHarness({ markdown: 'src/lib/markdown.js', homebase: 'src/lib/homebase.js' });
   page = await h.newPage();
   await page.evaluate(() => {
     const { renderMarkdown } = window.__mods.markdown;
@@ -437,4 +437,24 @@ test('performance: a 20 KB answer renders in under 15 ms (median) in Chromium', 
   }, md);
   assert.ok(r.nodes > 500, 'the document is substantial');
   assert.ok(r.median < 15, `median render time ${r.median} ms`);
+});
+
+// ---- the home base's answers (v7.5, SPEC §23) -------------------------------------------------------
+
+test('home base answers render as one plain paragraph: no links, lists or formatting from the Core’s text (HB-E3)', async () => {
+  const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const answers = [
+    'All systems normal, Frank. CPU at 9 percent, graphics card at 41 °C, 2.1 TB free.',
+    'Mostly fine, Frank, but www.evil.io has kept a CPU thread busy for 21 minutes.',
+    'Your build is at https://frankwise0202-maker.github.io/jarvis/ (checked just now).',
+    '1. thing and a [link](https://x.y) and <b>bold</b> & *stars* chrome_crashpad_handler',
+    '- a dash first',
+    '# not a heading | not | a table ~~not struck~~ `not code` > not a quote',
+    'mail frank@example.com or see x.io/a_b',
+  ];
+  for (const answer of answers) {
+    const md = await page.evaluate((a) => window.__mods.homebase.escapeMarkdown(a), answer);
+    assert.equal(await html(md), `<p class="md-p">${esc(answer)}</p>`, answer);
+    assert.equal(await plain(md), answer, `copied or spoken, it reads as the Core said it: ${answer}`);
+  }
 });

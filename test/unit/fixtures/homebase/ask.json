@@ -1,0 +1,691 @@
+{
+  "ok": {
+    "How are you?": {
+      "answer": "All systems normal, Frank. CPU at 5 percent, graphics card at 40 °C, and 492 GB free on the main drive.",
+      "facts": {
+        "level": "ok",
+        "alerts": 0,
+        "warnings": 0,
+        "cpuPct": 5,
+        "cpuTempC": 43,
+        "gpuTempC": 40,
+        "diskFreeBytes": 492253466624
+      },
+      "intent": "how-are-you",
+      "suggestions": [
+        "Status report",
+        "GPU temp?",
+        "Anything wrong?"
+      ]
+    },
+    "home base status": {
+      "answer": "Here's the report, Frank: all systems normal. The processor is at 5 percent and 43 °C, the graphics card is at 3 percent and 40 °C, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet 22 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "ok",
+        "alerts": 0,
+        "warnings": 0,
+        "cpuPct": 4.6,
+        "cpuTempC": 43,
+        "gpuPct": 3,
+        "gpuTempC": 40,
+        "memUsedPct": 33.2,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "up",
+        "internetMs": 22,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274322
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Status report": {
+      "answer": "Here's the report, Frank: all systems normal. The processor is at 5 percent and 43 °C, the graphics card is at 3 percent and 40 °C, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet 22 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "ok",
+        "alerts": 0,
+        "warnings": 0,
+        "cpuPct": 4.8,
+        "cpuTempC": 43,
+        "gpuPct": 3,
+        "gpuTempC": 40,
+        "memUsedPct": 33.2,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "up",
+        "internetMs": 22,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274324
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Anything wrong?": {
+      "answer": "Nothing wrong, Frank. Every check is within normal limits. Earlier, at 13:58: graphics card running hot (81 °C), since resolved.",
+      "facts": {
+        "level": "ok",
+        "alerts": 0,
+        "warnings": 0,
+        "issues": [],
+        "earlier": 1
+      },
+      "intent": "problems",
+      "suggestions": [
+        "Status report",
+        "What happened today?"
+      ]
+    },
+    "GPU temp?": {
+      "answer": "The GTX 970 is at 40 °C, nice and cool.",
+      "facts": {
+        "status": "ok",
+        "name": "NVIDIA GeForce GTX 970",
+        "utilPct": 2,
+        "tempC": 40,
+        "memUsedMB": 471,
+        "memTotalMB": 4096,
+        "powerW": 15.5,
+        "fanPct": 22,
+        "driver": "580.95.05",
+        "topics": [
+          "gpu"
+        ],
+        "aspects": [
+          "temp"
+        ]
+      },
+      "intent": "gpu",
+      "suggestions": [
+        "GPU temp?",
+        "Status report",
+        "Anything wrong?"
+      ]
+    },
+    "what is the weather": {
+      "answer": "That's outside my remit, Frank: I only keep watch over this computer. Jarvis himself can help with that.",
+      "facts": {
+        "reason": "offtopic"
+      },
+      "intent": "unknown",
+      "suggestions": [
+        "How are you?",
+        "What can you do?"
+      ]
+    }
+  },
+  "warn": {
+    "How are you?": {
+      "answer": "Mostly fine, Frank, but 4 things need a look: the CPU is running hot at 84 °C, GNOME file indexer has kept a CPU thread busy for 21 minutes and the main drive is 88 percent full (108 GB free), and 1 more.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 4,
+        "cpuPct": 16.2,
+        "cpuTempC": 84,
+        "gpuTempC": 40,
+        "diskFreeBytes": 108351803392
+      },
+      "intent": "how-are-you",
+      "suggestions": [
+        "Anything wrong?",
+        "Status report",
+        "What happened?"
+      ]
+    },
+    "home base status": {
+      "answer": "Here's the report, Frank: 4 warnings, as the CPU is running hot at 84 °C and GNOME file indexer has kept a CPU thread busy for 22 minutes among others. The processor is at 16 percent and 84 °C, the graphics card is at 4 percent and 40 °C, memory is 33 percent used and the main drive is 88 percent full with 108 GB free. Internet 21 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 4,
+        "cpuPct": 15.9,
+        "cpuTempC": 84,
+        "gpuPct": 4,
+        "gpuTempC": 40,
+        "memUsedPct": 33.2,
+        "diskUsedPct": 88.4,
+        "diskFreeBytes": 108351803392,
+        "internet": "up",
+        "internetMs": 21,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274322
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Status report": {
+      "answer": "Here's the report, Frank: 4 warnings, as the CPU is running hot at 84 °C and GNOME file indexer has kept a CPU thread busy for 22 minutes among others. The processor is at 15 percent and 84 °C, the graphics card is at 5 percent and 40 °C, memory is 33 percent used and the main drive is 88 percent full with 108 GB free. Internet 21 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 4,
+        "cpuPct": 15.4,
+        "cpuTempC": 84,
+        "gpuPct": 5,
+        "gpuTempC": 40,
+        "memUsedPct": 33.2,
+        "diskUsedPct": 88.4,
+        "diskFreeBytes": 108351803392,
+        "internet": "up",
+        "internetMs": 21,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274324
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Anything wrong?": {
+      "answer": "4 things need attention, Frank. Warnings: the CPU is running hot at 84 °C, GNOME file indexer has kept a CPU thread busy for 22 minutes and the main drive is 88 percent full (108 GB free), and 1 more.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 4,
+        "issues": [
+          {
+            "id": "cpu.temp",
+            "level": "warn",
+            "message": "CPU running hot: 84 °C"
+          },
+          {
+            "id": "cpu.process",
+            "level": "warn",
+            "message": "GNOME file indexer has kept a CPU thread busy for 22 minutes"
+          },
+          {
+            "id": "disk:/",
+            "level": "warn",
+            "message": "Main drive 88% full (108 GB free)"
+          },
+          {
+            "id": "disk.health",
+            "level": "warn",
+            "message": "Disk wear: sda: 8 reallocated sectors, 16 pending sectors"
+          }
+        ]
+      },
+      "intent": "problems",
+      "suggestions": [
+        "Hotter than usual?",
+        "What is using the CPU?",
+        "Status report"
+      ]
+    },
+    "GPU temp?": {
+      "answer": "The GTX 970 is at 40 °C, nice and cool.",
+      "facts": {
+        "status": "ok",
+        "name": "NVIDIA GeForce GTX 970",
+        "utilPct": 2,
+        "tempC": 40,
+        "memUsedMB": 474,
+        "memTotalMB": 4096,
+        "powerW": 15,
+        "fanPct": 22,
+        "driver": "580.95.05",
+        "topics": [
+          "gpu"
+        ],
+        "aspects": [
+          "temp"
+        ]
+      },
+      "intent": "gpu",
+      "suggestions": [
+        "GPU temp?",
+        "Status report",
+        "Anything wrong?"
+      ]
+    },
+    "what is the weather": {
+      "answer": "That's outside my remit, Frank: I only keep watch over this computer. Jarvis himself can help with that.",
+      "facts": {
+        "reason": "offtopic"
+      },
+      "intent": "unknown",
+      "suggestions": [
+        "How are you?",
+        "What can you do?"
+      ]
+    }
+  },
+  "alert": {
+    "How are you?": {
+      "answer": "Not great, Frank, I'm afraid: the CPU is overheating at 91 °C, memory is nearly full (only 4 percent available) and the main drive is 96 percent full (35 GB free). Also 4 warnings: ffmpeg has been using about 7 CPU threads for 39 minutes and the graphics card is running hot at 85 °C, and 2 more.",
+      "facts": {
+        "level": "alert",
+        "alerts": 3,
+        "warnings": 4,
+        "cpuPct": 84.8,
+        "cpuTempC": 91,
+        "gpuTempC": 85,
+        "diskFreeBytes": 35494555648
+      },
+      "intent": "how-are-you",
+      "suggestions": [
+        "Anything wrong?",
+        "Status report",
+        "What happened?"
+      ]
+    },
+    "home base status": {
+      "answer": "Here's the report, Frank: 3 alerts, as the CPU is overheating at 91 °C and memory is nearly full (only 4 percent available). The processor is at 85 percent and 91 °C, the graphics card is at 96 percent and 85 °C, memory is 96 percent used and the main drive is 96 percent full with 35 GB free. Internet 22 ms, Claude API unreachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "alert",
+        "alerts": 3,
+        "warnings": 4,
+        "cpuPct": 85.1,
+        "cpuTempC": 91,
+        "gpuPct": 96,
+        "gpuTempC": 85,
+        "memUsedPct": 96,
+        "diskUsedPct": 96.2,
+        "diskFreeBytes": 35494555648,
+        "internet": "up",
+        "internetMs": 22,
+        "api": "down",
+        "tailscale": "running",
+        "uptimeSec": 274322
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Status report": {
+      "answer": "Here's the report, Frank: 3 alerts, as the CPU is overheating at 91 °C and memory is nearly full (only 4 percent available). The processor is at 85 percent and 91 °C, the graphics card is at 96 percent and 85 °C, memory is 96 percent used and the main drive is 96 percent full with 35 GB free. Internet 22 ms, Claude API unreachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "alert",
+        "alerts": 3,
+        "warnings": 4,
+        "cpuPct": 85.3,
+        "cpuTempC": 91,
+        "gpuPct": 96,
+        "gpuTempC": 85,
+        "memUsedPct": 96,
+        "diskUsedPct": 96.2,
+        "diskFreeBytes": 35494555648,
+        "internet": "up",
+        "internetMs": 22,
+        "api": "down",
+        "tailscale": "running",
+        "uptimeSec": 274324
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Anything wrong?": {
+      "answer": "7 things need attention, Frank. Alerts: the CPU is overheating at 91 °C, memory is nearly full (only 4 percent available) and the main drive is 96 percent full (35 GB free). Warnings: ffmpeg has been using about 7 CPU threads for 40 minutes, the graphics card is running hot at 85 °C and swap is heavily used (72 percent), and 1 more.",
+      "facts": {
+        "level": "alert",
+        "alerts": 3,
+        "warnings": 4,
+        "issues": [
+          {
+            "id": "cpu.temp",
+            "level": "alert",
+            "message": "CPU overheating: 91 °C"
+          },
+          {
+            "id": "memory",
+            "level": "alert",
+            "message": "Memory nearly full: 4% available"
+          },
+          {
+            "id": "disk:/",
+            "level": "alert",
+            "message": "Main drive 96% full (35 GB free)"
+          },
+          {
+            "id": "cpu.process",
+            "level": "warn",
+            "message": "ffmpeg has been using about 7 CPU threads for 40 minutes"
+          },
+          {
+            "id": "gpu.temp",
+            "level": "warn",
+            "message": "Graphics card running hot: 85 °C"
+          },
+          {
+            "id": "swap",
+            "level": "warn",
+            "message": "Heavy swap use: 72% used"
+          },
+          {
+            "id": "api",
+            "level": "warn",
+            "message": "Claude API unreachable"
+          }
+        ]
+      },
+      "intent": "problems",
+      "suggestions": [
+        "Hotter than usual?",
+        "What is using the CPU?",
+        "Status report"
+      ]
+    },
+    "GPU temp?": {
+      "answer": "The GTX 970 is at 85 °C, which is running hot.",
+      "facts": {
+        "status": "ok",
+        "name": "NVIDIA GeForce GTX 970",
+        "utilPct": 96,
+        "tempC": 85,
+        "memUsedMB": 3650,
+        "memTotalMB": 4096,
+        "powerW": 147.1,
+        "fanPct": 77,
+        "driver": "580.95.05",
+        "topics": [
+          "gpu"
+        ],
+        "aspects": [
+          "temp"
+        ]
+      },
+      "intent": "gpu",
+      "suggestions": [
+        "GPU temp?",
+        "Status report",
+        "Anything wrong?"
+      ]
+    },
+    "what is the weather": {
+      "answer": "That's outside my remit, Frank: I only keep watch over this computer. Jarvis himself can help with that.",
+      "facts": {
+        "reason": "offtopic"
+      },
+      "intent": "unknown",
+      "suggestions": [
+        "How are you?",
+        "What can you do?"
+      ]
+    }
+  },
+  "nogpu": {
+    "How are you?": {
+      "answer": "Mostly fine, Frank, but one thing needs a look: the graphics driver isn't loaded.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 1,
+        "cpuPct": 4.6,
+        "cpuTempC": 41,
+        "gpuTempC": null,
+        "diskFreeBytes": 492253466624
+      },
+      "intent": "how-are-you",
+      "suggestions": [
+        "Anything wrong?",
+        "Status report",
+        "What happened?"
+      ]
+    },
+    "home base status": {
+      "answer": "Here's the report, Frank: one warning, as the graphics driver isn't loaded. The processor is at 4 percent and 41 °C, the graphics driver is not loaded, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet 23 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 1,
+        "cpuPct": 4.3,
+        "cpuTempC": 41,
+        "gpuPct": null,
+        "gpuTempC": null,
+        "memUsedPct": 33,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "up",
+        "internetMs": 23,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274322
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Status report": {
+      "answer": "Here's the report, Frank: one warning, as the graphics driver isn't loaded. The processor is at 4 percent and 41 °C, the graphics driver is not loaded, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet 23 ms, Claude API reachable and Tailscale with 1 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 1,
+        "cpuPct": 4.4,
+        "cpuTempC": 41,
+        "gpuPct": null,
+        "gpuTempC": null,
+        "memUsedPct": 33,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "up",
+        "internetMs": 23,
+        "api": "up",
+        "tailscale": "running",
+        "uptimeSec": 274324
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Anything wrong?": {
+      "answer": "One thing needs attention, Frank: the graphics driver isn't loaded.",
+      "facts": {
+        "level": "warn",
+        "alerts": 0,
+        "warnings": 1,
+        "issues": [
+          {
+            "id": "gpu.driver",
+            "level": "warn",
+            "message": "GPU driver not loaded"
+          }
+        ]
+      },
+      "intent": "problems",
+      "suggestions": [
+        "Hotter than usual?",
+        "What is using the CPU?",
+        "Status report"
+      ]
+    },
+    "GPU temp?": {
+      "answer": "The GeForce GTX 970 is installed, but its NVIDIA driver isn't loaded, so I can't read its usage or temperature. The basic nouveau driver does report 37 °C. Installing the NVIDIA driver (580 series) would let me read it.",
+      "facts": {
+        "status": "not-installed",
+        "name": "NVIDIA GeForce GTX 970",
+        "utilPct": null,
+        "tempC": 36.7,
+        "memUsedMB": null,
+        "memTotalMB": null,
+        "powerW": null,
+        "fanPct": null,
+        "driver": null,
+        "topics": [
+          "gpu"
+        ],
+        "aspects": [
+          "temp"
+        ]
+      },
+      "intent": "gpu",
+      "suggestions": [
+        "GPU temp?",
+        "Status report",
+        "Anything wrong?"
+      ]
+    },
+    "what is the weather": {
+      "answer": "That's outside my remit, Frank: I only keep watch over this computer. Jarvis himself can help with that.",
+      "facts": {
+        "reason": "offtopic"
+      },
+      "intent": "unknown",
+      "suggestions": [
+        "How are you?",
+        "What can you do?"
+      ]
+    }
+  },
+  "offline": {
+    "How are you?": {
+      "answer": "Not great, Frank, I'm afraid: the internet is down.",
+      "facts": {
+        "level": "alert",
+        "alerts": 1,
+        "warnings": 0,
+        "cpuPct": 4.2,
+        "cpuTempC": 41,
+        "gpuTempC": 40,
+        "diskFreeBytes": 492253466624
+      },
+      "intent": "how-are-you",
+      "suggestions": [
+        "Anything wrong?",
+        "Status report",
+        "What happened?"
+      ]
+    },
+    "home base status": {
+      "answer": "Here's the report, Frank: one alert, as the internet is down. The processor is at 4 percent and 41 °C, the graphics card is at 1 percent and 40 °C, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet down and Tailscale with 0 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "alert",
+        "alerts": 1,
+        "warnings": 0,
+        "cpuPct": 4.1,
+        "cpuTempC": 41,
+        "gpuPct": 1,
+        "gpuTempC": 40,
+        "memUsedPct": 32.9,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "down",
+        "internetMs": null,
+        "api": "down",
+        "tailscale": "running",
+        "uptimeSec": 274322
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Status report": {
+      "answer": "Here's the report, Frank: one alert, as the internet is down. The processor is at 4 percent and 41 °C, the graphics card is at 2 percent and 40 °C, memory is 33 percent used and the main drive is 47 percent full with 492 GB free. Internet down and Tailscale with 0 of 2 devices online. Up 3 days, 4 hours.",
+      "facts": {
+        "level": "alert",
+        "alerts": 1,
+        "warnings": 0,
+        "cpuPct": 3.9,
+        "cpuTempC": 41,
+        "gpuPct": 2,
+        "gpuTempC": 40,
+        "memUsedPct": 32.9,
+        "diskUsedPct": 47.3,
+        "diskFreeBytes": 492253466624,
+        "internet": "down",
+        "internetMs": null,
+        "api": "down",
+        "tailscale": "running",
+        "uptimeSec": 274324
+      },
+      "intent": "status",
+      "suggestions": [
+        "Anything wrong?",
+        "Hotter than usual?",
+        "What happened today?"
+      ]
+    },
+    "Anything wrong?": {
+      "answer": "One thing needs attention, Frank: the internet is down.",
+      "facts": {
+        "level": "alert",
+        "alerts": 1,
+        "warnings": 0,
+        "issues": [
+          {
+            "id": "internet",
+            "level": "alert",
+            "message": "Internet down"
+          }
+        ]
+      },
+      "intent": "problems",
+      "suggestions": [
+        "Hotter than usual?",
+        "What is using the CPU?",
+        "Status report"
+      ]
+    },
+    "GPU temp?": {
+      "answer": "The GTX 970 is at 40 °C, nice and cool.",
+      "facts": {
+        "status": "ok",
+        "name": "NVIDIA GeForce GTX 970",
+        "utilPct": 3,
+        "tempC": 40,
+        "memUsedMB": 482,
+        "memTotalMB": 4096,
+        "powerW": 15.7,
+        "fanPct": 22,
+        "driver": "580.95.05",
+        "topics": [
+          "gpu"
+        ],
+        "aspects": [
+          "temp"
+        ]
+      },
+      "intent": "gpu",
+      "suggestions": [
+        "GPU temp?",
+        "Status report",
+        "Anything wrong?"
+      ]
+    },
+    "what is the weather": {
+      "answer": "That's outside my remit, Frank: I only keep watch over this computer. Jarvis himself can help with that.",
+      "facts": {
+        "reason": "offtopic"
+      },
+      "intent": "unknown",
+      "suggestions": [
+        "How are you?",
+        "What can you do?"
+      ]
+    }
+  }
+}

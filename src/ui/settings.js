@@ -1,5 +1,5 @@
 // Settings panel (shown in a full-screen sheet on phones, a dialog on desktop).
-// Sections: Profile, AI, Voice, Location, Memory, API key & spending, Data, Install, About.
+// Sections: Profile, AI, Voice, Location, Memory, API key & spending, Home base, Data, Install, About.
 // Every control writes through saveSettings() immediately (text fields on change and
 // after a short pause while typing) and follows changes made elsewhere.
 
@@ -21,6 +21,8 @@ import * as sounds from './sounds.js';
 import { notifyPermission, requestNotifyPermission, explainNotifyPermission } from './attention.js';
 import { getHud, saveHud, onHudChange } from './presence/hud-prefs.js';
 import { wakeWordDownloadBytes, formatMegabytes, WAKE_MODEL_SOURCE } from '../lib/wake/catalog.js';
+import { normalizeHomeBaseUrl, failureState, HOME_BASE_EXAMPLE, LEVEL_WORDS } from '../lib/homebase.js';
+import { testHomeBase } from '../platform/homebase.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -30,6 +32,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'location', label: 'Location', icon: 'pin' },
   { id: 'memory', label: 'Memory', icon: 'memory' },
   { id: 'apikey', label: 'API key & spending', short: 'API key', icon: 'key' },
+  { id: 'homebase', label: 'Home base', icon: 'server' },
   { id: 'data', label: 'Data', icon: 'layers' },
   { id: 'install', label: 'Install', icon: 'download' },
   { id: 'about', label: 'About', icon: 'info' },
@@ -119,8 +122,8 @@ function currentOs() {
 
 /**
  * The toast after a backup import, from importBackup()'s result { conversations, memory,
- * settings, settingsChanged, skipped, protocols? }: what was restored, e.g. "Restored 3
- * conversations, 5 memories and your preferences.", plus a warning when conversations were
+ * settings, settingsChanged, homeBase?, skipped, protocols? }: what was restored, e.g. "Restored 3
+ * conversations, 5 memories, your preferences and your home base’s address (alienware).", plus a warning when conversations were
  * skipped (not made by Jarvis, or damaged). Returns { message, level }.
  */
 export function importSummary(res) {
@@ -132,13 +135,17 @@ export function importSummary(res) {
   const lib = count(r.library); // saved holograms and blueprints (platform/library.js)
   const skipped = count(r.skipped);
   const copies = count(r.copies);
-  const prefs = r.settings === true || count(r.settingsChanged) > 0 || (Array.isArray(r.settings) && r.settings.length > 0);
+  // The home base's address (v7.5) is named on its own: it links this device to the Alienware.
+  const changed = Array.isArray(r.settingsChanged) ? r.settingsChanged : null;
+  const homeBase = !!changed && changed.includes('homeBaseUrl');
+  const prefs = changed ? changed.some((k) => k !== 'homeBaseUrl') || (r.settings === true && !homeBase) : r.settings === true || (Array.isArray(r.settings) && r.settings.length > 0);
   const parts = [];
   if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
   if (m) parts.push(`${m} memor${m === 1 ? 'y' : 'ies'}`);
   if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
   if (lib) parts.push(`${lib} saved ${lib === 1 ? 'hologram or blueprint' : 'holograms and blueprints'}`);
   if (prefs) parts.push('your preferences');
+  if (homeBase) parts.push(`your home base’s address${typeof r.homeBase === 'string' && r.homeBase ? ` (${r.homeBase})` : ''}`);
   let message = parts.length
     ? `Restored ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]}.`
     : skipped
@@ -1247,6 +1254,164 @@ export function createSettingsPanel(o) {
     ),
   );
 
+  // Home base (v7.5, SPEC §23): the Jarvis Core's Tailscale address, Test, Remove.
+  const hbCurrent = h('div', { class: 'key-state' });
+  const hbInput = h('input', {
+    class: 'input input--mono',
+    type: 'url',
+    id: 'set-homebase',
+    placeholder: HOME_BASE_EXAMPLE,
+    value: s.homeBaseUrl || '',
+    maxLength: 512,
+    attrs: { 'data-testid': 'homebase-url', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', inputmode: 'url', 'aria-label': 'Home base address' },
+    on: {
+      keydown: (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          hbSave();
+        }
+      },
+      input: () => hbResult(null),
+    },
+  });
+  const hbSaveBtn = h('button', { class: 'btn btn-primary', type: 'button', attrs: { 'data-testid': 'homebase-save' }, on: { click: () => hbSave() } }, icon('check', { size: 16 }), h('span', { text: 'Save' }));
+  const hbTestBtn = h('button', { class: 'btn', type: 'button', attrs: { 'data-testid': 'homebase-test' }, on: { click: () => hbTest() } }, icon('bolt', { size: 16 }), h('span', { text: 'Test' }));
+  const hbRemoveBtn = h('button', { class: 'btn btn-danger-ghost', type: 'button', attrs: { 'data-testid': 'homebase-remove' }, on: { click: () => hbRemove() } }, icon('trash', { size: 16 }), h('span', { text: 'Remove' }));
+  const hbOut = h('p', { class: 'key-result', hidden: true, attrs: { role: 'status', 'aria-live': 'polite', 'data-testid': 'homebase-result' } });
+  let hbBusy = false;
+  let hbRun = 0;
+
+  function hbResult(res) {
+    if (!res) {
+      hbOut.hidden = true;
+      return;
+    }
+    hbOut.hidden = false;
+    hbOut.dataset.tone = res.tone;
+    hbOut.replaceChildren(icon(res.tone === 'ok' ? 'check' : res.tone === 'busy' ? 'spinner' : 'alert', { size: 16 }), h('span', { text: res.text }));
+  }
+
+  function hbRenderCurrent() {
+    const url = getSettings().homeBaseUrl || '';
+    hbCurrent.replaceChildren(
+      h('span', { class: ['key-dot', url ? 'is-on' : 'is-off'], attrs: { 'aria-hidden': 'true' } }),
+      h(
+        'div',
+        { class: 'key-state-text' },
+        h('strong', { text: url ? 'Home base linked' : 'No home base linked' }),
+        h('span', { class: ['key-mask', 'hb-set-current', url && 'mono'], attrs: { 'data-testid': 'homebase-current' }, text: url || 'Paste your Jarvis Core’s Tailscale address to see it on the home screen.' }),
+      ),
+    );
+    hbRemoveBtn.hidden = !url;
+    setText(hbSaveBtn.lastChild, url ? 'Replace' : 'Save');
+  }
+
+  /** The typed address (normalized), or the saved one when the field is empty. */
+  function hbAddress() {
+    const typed = hbInput.value.trim();
+    if (!typed) return getSettings().homeBaseUrl ? { ok: true, url: getSettings().homeBaseUrl, saved: true } : { ok: false, message: 'There’s no address to test. Paste one first.' };
+    const r = normalizeHomeBaseUrl(typed);
+    return r.ok ? { ok: true, url: r.url, saved: r.url === getSettings().homeBaseUrl } : r;
+  }
+
+  async function hbRunTest(url, saved) {
+    const run = ++hbRun;
+    hbBusy = true;
+    hbTestBtn.disabled = true;
+    hbResult({ tone: 'busy', text: 'Testing…' });
+    let r;
+    try {
+      r = await testHomeBase(url);
+    } catch (err) {
+      console.error('[jarvis] home base test failed:', err);
+      r = { ok: false, kind: 'error' };
+    }
+    if (run !== hbRun) return;
+    hbBusy = false;
+    hbTestBtn.disabled = false;
+    if (r && r.ok) {
+      const health = r.level ? `health ${LEVEL_WORDS[r.level]}${r.summary ? `: ${r.summary}` : ''}` : 'health not reported';
+      hbResult({ tone: r.level === 'ok' ? 'ok' : 'warn', text: `Connected to ${r.host || 'the home base'} · Jarvis Core ${r.version || '(version unknown)'} · ${health}.${saved ? '' : ' Tap Save to keep it.'}` });
+    } else hbResult({ tone: 'err', text: failureState(r).message });
+  }
+
+  function hbSave() {
+    const typed = hbInput.value.trim();
+    if (!typed) {
+      hbResult({ tone: 'err', text: 'Paste your home base’s address first.' });
+      hbInput.focus();
+      return;
+    }
+    const r = normalizeHomeBaseUrl(typed);
+    if (!r.ok) {
+      hbResult({ tone: 'err', text: r.message });
+      return;
+    }
+    commit({ homeBaseUrl: r.url });
+    hbInput.value = r.url;
+    hbRenderCurrent();
+    o.toast('Home base linked.', { level: 'success' });
+    hbRunTest(r.url, true);
+  }
+
+  function hbTest() {
+    if (hbBusy) return;
+    const a = hbAddress();
+    if (!a.ok) {
+      hbResult({ tone: 'err', text: a.message });
+      return;
+    }
+    hbRunTest(a.url, a.saved);
+  }
+
+  function hbRemove() {
+    const old = getSettings().homeBaseUrl || '';
+    if (!old) return;
+    hbRun++;
+    hbBusy = false;
+    hbTestBtn.disabled = false;
+    commit({ homeBaseUrl: '' });
+    hbInput.value = '';
+    hbRenderCurrent();
+    hbResult(null);
+    o.toast('Home base removed from this device.', {
+      level: 'info',
+      action: {
+        label: 'Undo',
+        fn: () => {
+          commit({ homeBaseUrl: old });
+          hbInput.value = old;
+          hbRenderCurrent();
+        },
+      },
+    });
+  }
+  controls.set('homeBaseUrl', {
+    set(v) {
+      if (document.activeElement !== hbInput) hbInput.value = v || '';
+      hbRenderCurrent();
+    },
+  });
+  hbRenderCurrent();
+
+  const homebase = section(
+    'homebase',
+    card(
+      hbCurrent,
+      h('div', { class: 'key-entry hb-set-entry' }, hbInput, h('div', { class: 'key-buttons hb-set-buttons' }, hbSaveBtn, hbTestBtn)),
+      hbOut,
+      h(
+        'p',
+        { class: 'set-help' },
+        h('span', { text: 'Your home base is the Jarvis Core running on your Alienware. Its address ends in .ts.net: the Core’s installer shows it when it finishes, and typing ' }),
+        h('code', { text: 'jarvis-core url' }),
+        h('span', { text: ' on the Alienware shows it again. This phone or computer needs the Tailscale app switched on to reach it.' }),
+      ),
+      h('p', { class: 'set-help key-privacy' }, icon('lock', { size: 14 }), h('span', { text: 'Only your devices on your Tailscale network can reach it. Asking the home base is free: it answers from its own readings, never Claude.' })),
+      h('div', { class: 'set-row-actions' }, hbRemoveBtn),
+    ),
+  );
+
   // Data
   const fileInput = h('input', {
     type: 'file',
@@ -1427,7 +1592,7 @@ export function createSettingsPanel(o) {
     ),
   );
   const nav = h('nav', { class: 'set-nav', attrs: { 'aria-label': 'Settings sections' } }, navButtons);
-  const main = h('div', { class: 'set-main' }, profile, ai, voice, appearance, location, memory, apikey, data, install, about);
+  const main = h('div', { class: 'set-main' }, profile, ai, voice, appearance, location, memory, apikey, homebase, data, install, about);
   const el = h('div', { class: 'settings', attrs: { 'data-testid': 'settings-content' } }, nav, main);
 
   function markNav(id) {
