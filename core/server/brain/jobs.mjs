@@ -14,6 +14,8 @@ import { newId, iso, oneLine, usd } from './util.mjs';
 export const QUEUE_MAX = 20;
 const KEEP_FINISHED = { research: 100, 'watch-check': 40, briefing: 30 };
 const MAX_ATTEMPTS = 3;
+/** A job that failed for a passing reason (rate limit, overload, the network) tries again after these. */
+export const RETRY_DELAYS_MS = Object.freeze([60_000, 5 * 60_000]);
 const FINISHED = new Set(['done', 'failed', 'cancelled', 'blocked']);
 const LANE = (kind) => (kind === 'briefing' ? 'priority' : 'main');
 
@@ -37,6 +39,7 @@ export function publicJob(job, { withResult = false } = {}) {
   };
   if (job.watcherId) out.watcherId = job.watcherId;
   if (job.stoppedEarly) out.stoppedEarly = job.stoppedEarly;
+  if (job.status === 'queued' && job.notBefore) out.retryAt = job.notBefore;
   if (withResult) out.result = job.result ?? null;
   return out;
 }
@@ -159,9 +162,10 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
 
   function pump() {
     if (stopped) return;
+    const t = now();
     for (const lane of ['priority', 'main']) {
       if (running.has(lane)) continue;
-      const next = jobs.find((j) => j.status === 'queued' && LANE(j.kind) === lane);
+      const next = jobs.find((j) => j.status === 'queued' && LANE(j.kind) === lane && !(j.notBefore && Date.parse(j.notBefore) > t));
       if (next) start(next, lane).catch((err) => log(`a job could not start: ${err?.stack ?? err}`));
     }
   }
@@ -178,6 +182,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     job.status = 'running';
     job.startedAt = iso(now());
     job.attempts = (job.attempts ?? 0) + 1;
+    delete job.notBefore;
     changed(job);
     const extra = extras.get(job.id) ?? null;
     const budget = extra?.budgetUsd ?? budgetFor(job);
@@ -229,7 +234,16 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
       } else {
         const code = typeof err?.code === 'string' ? err.code : 'internal';
         const message = oneLine(String(err?.message ?? 'Something went wrong.'), 300);
-        finish(job, { status: code === 'spend_cap' ? 'blocked' : 'failed', summary: message, error: { code, message } });
+        const delay = RETRY_DELAYS_MS[(job.attempts ?? 1) - 1];
+        if (err?.retryable && job.kind !== 'briefing' && delay !== undefined && !stopped) {
+          // A passing problem: back in the queue, tried again in a minute (then five).
+          job.status = 'queued';
+          job.startedAt = null;
+          job.notBefore = iso(now() + delay);
+          job.summary = `Trying again soon: ${message}`;
+          changed(job);
+          log(`job ${job.id} will try again: ${code}`);
+        } else finish(job, { status: code === 'spend_cap' ? 'blocked' : 'failed', summary: message, error: { code, message } });
       }
     } finally {
       if (running.get(lane)?.job === job) running.delete(lane);

@@ -457,3 +457,34 @@ test('a watcher check cut short (max_tokens) never counts as met, even if the ha
     await fake.close();
   }
 });
+
+test('passing API problems: an output-tokens-per-minute 429 caps max_tokens; an overload is tried again later', async () => {
+  let n = 0;
+  const fake = await startFakeClaude({
+    script: (body) => {
+      n += 1;
+      if (body.max_tokens > 9000) return { status: 429, errorType: 'rate_limit_error', message: 'This request would exceed the rate limit for your organization of 10,000 output tokens per minute.' };
+      if (n <= 6) return { status: 529, errorType: "overloaded_error", message: "Overloaded" }; // 3 OTPM 429s (the SDK retries twice), then 3 overloads
+      return researchAnswer();
+    },
+  });
+  const clock = createManualClock(MORNING);
+  const { brain, logs } = makeBrain({ fake, clock });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ briefing: { enabled: false } });
+    const job = brain.createJob({ prompt: 'otpm question', depth: 'deep' });
+    await until(() => brain.getJob(job.id).status === 'queued' && brain.getJob(job.id).retryAt, { what: 'queued for a retry' });
+    const capped = fake.messageRequests.filter((r) => r.body.max_tokens === 9000);
+    assert.ok(capped.length >= 1, 'max_tokens capped to 90% of the limit');
+    assert.ok(logs.some((l) => /10000 output tokens a minute/.test(l)));
+    assert.match(brain.getJob(job.id).summary, /Trying again soon/);
+    clock.advance(61_000);
+    brain.tick();
+    await until(() => brain.getJob(job.id).status === 'done', { what: 'done on the retry' });
+    assert.equal(fake.messageRequests.at(-1).body.max_tokens, 9000, 'the cap is remembered');
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});

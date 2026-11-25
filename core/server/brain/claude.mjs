@@ -47,6 +47,31 @@ export class BrainError extends Error {
 }
 
 const SPEND_LIMIT_CODES = new Set(['enforced_spend_limit_reached', 'contract_spend_limit_reached']);
+/** Never cap max_tokens below this when pacing for an output-tokens-per-minute limit. */
+export const MIN_MAX_TOKENS = 1024;
+
+function headerOf(err, name) {
+  try {
+    const h = err?.headers;
+    if (!h) return null;
+    if (typeof h.get === 'function') return h.get(name);
+    return h[name] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The account's output-tokens-per-minute limit from a 429 ("… N output tokens per minute …", or the
+ * anthropic-ratelimit-output-tokens-limit header). OTPM is charged from max_tokens when a request starts,
+ * so on a low-tier account a large max_tokens fails every time until it is capped. Null when not said.
+ */
+export function outputTokensLimit(err) {
+  if (err?.status !== 429) return null;
+  const m = /([\d,]+)\s+output tokens per minute/i.exec(apiDetail(err));
+  const limit = m ? Number(m[1].replace(/,/g, '')) : Number(headerOf(err, 'anthropic-ratelimit-output-tokens-limit'));
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+}
 
 function apiDetail(err) {
   const body = typeof err?.error?.error?.message === 'string' ? err.error.error.message : '';
@@ -120,10 +145,12 @@ export function echoContent(content) {
   return blocks;
 }
 
-/** Web search + web fetch, the only tools the brain ever gives Claude. */
-export function webTools({ searches = 5, fetches = 3, timeZone = null, fetchMaxContentTokens = 12000 } = {}) {
+/**
+ * Web search + web fetch, the only tools the brain ever gives Claude (the same shapes as the app's field
+ * agents: src/engine/prompts.js workerTools). The owner's local time and zone go in the prompt instead.
+ */
+export function webTools({ searches = 5, fetches = 3, fetchMaxContentTokens = 12000 } = {}) {
   const search = { type: 'web_search_20260209', name: 'web_search', max_uses: searches };
-  if (timeZone) search.user_location = { type: 'approximate', timezone: timeZone };
   const tools = [search];
   if (fetches > 0) tools.push({ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: fetches, max_content_tokens: fetchMaxContentTokens });
   return tools;
@@ -211,6 +238,7 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
   let sdkPromise = null;
   let sdkState = null; // null unknown, true / false after the first import
   let fallbacksOk = true;
+  const maxTokensCap = new Map(); // model → a cap learnt from an output-tokens-per-minute 429
 
   function sdkInstalled() {
     if (sdkState !== null) return sdkState;
@@ -285,13 +313,15 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
       if (ctx.signal?.aborted) throw new BrainError('cancelled', 'Stopped.');
       const params = {
         model,
-        max_tokens: request.maxTokens ?? 16000,
+        max_tokens: Math.min(request.maxTokens ?? 16000, maxTokensCap.get(model) ?? Infinity),
         system: [{ type: 'text', text: request.system }],
         messages: [...messages],
         thinking: { type: 'adaptive' },
         output_config: { effort: request.effort ?? 'medium' },
       };
       if (request.tools?.length) params.tools = request.tools;
+      // Research continues after pause_turn with the same, growing prefix: let the API cache it.
+      if (request.cache) params.cache_control = { type: 'ephemeral' };
       if (container) params.container = container;
       if (fallbacksOk && FALLBACK_MODELS.has(model)) {
         params.fallbacks = 'default';
@@ -301,6 +331,11 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
       if (once.retryWithoutFallbacks) {
         fallbacksOk = false;
         log('this API key does not take server-side fallbacks; continuing without them');
+        continue;
+      }
+      if (once.capMaxTokens) {
+        maxTokensCap.set(model, once.capMaxTokens);
+        log(`this API key allows ${once.otpm} output tokens a minute on ${model}; asking for at most ${once.capMaxTokens}`);
         continue;
       }
       costUsd += once.costUsd;
@@ -391,6 +426,11 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
         return { message: snapshot, costUsd: partialCost, stopped };
       }
       if (!started && rejectsFallbacks(err, params)) return { retryWithoutFallbacks: true, costUsd: 0 };
+      const otpm = !started ? outputTokensLimit(err) : null;
+      if (otpm) {
+        const cap = Math.max(MIN_MAX_TOKENS, Math.floor(otpm * 0.9));
+        if (params.max_tokens > cap) return { capMaxTokens: cap, otpm, costUsd: 0 };
+      }
       if (partialCost > 0) ctx.charge?.(partialCost, { partial: true });
       if (ctx.signal?.aborted) throw new BrainError('cancelled', 'Stopped.');
       throw classifyError(err, sdk);
