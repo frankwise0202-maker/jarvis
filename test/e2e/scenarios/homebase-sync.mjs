@@ -129,6 +129,23 @@ export default [
         await shot(t, '2-mac-history', mac);
       });
 
+      await t.step('carried on on the Mac: the iPhone’s open conversation shows the new turn', async () => {
+        // The Mac has the iPhone's conversation open (from History): a follow-up there.
+        const turn = await t.send('And what is its population?', { page: mac });
+        await t.waitForTurn(turn, ['done']);
+        await mac.waitForTimeout(1200);
+        await openSync(t, mac);
+        await syncNow(t, mac);
+        await closeSettings(t, mac);
+        // The iPhone still has that conversation open: it is replaced (theirs has every turn of it) and reloaded.
+        await openSync(t, phone);
+        await syncNow(t, phone);
+        await closeSettings(t, phone);
+        await t.waitFor(async () => (await phone.locator(tid('turn-user')).allTextContents()).some((x) => /population/i.test(x)), { timeout: 10000, message: 'the follow-up asked on the Mac in the iPhone’s open conversation' });
+        t.assert((await phone.locator(tid('turn-jarvis')).count()) === 2, 'both answers show');
+        await shot(t, '2b-iphone-carried-on', phone);
+      });
+
       await t.step('a question on the Mac reaches the iPhone', async () => {
         await ask(t, mac, 'Recommend an espresso machine under $500');
         await openSync(t, mac);
