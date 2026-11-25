@@ -3570,3 +3570,18 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   says why; a reply's Speak; Test brings George back once the sound works) and `george-stuck-midway` (the clock
   stops 0.7 s into George's first sentence: the iPhone voice from the last word heard). Both fail on the v7.8
   build 1bf48408 (the reply stays silent). Not testable here: a real iPhone's audio session.
+
+**26.7 Also in v7.8.1** (§24).
+- **One total for today in Spending.** The Home base sheet's Spending tab drew today's and this month's totals
+  from the last `GET api/brain` reading, which can be minutes old, and the days below from a fresh
+  `GET api/spend`, so a home base that had spent on its own meanwhile showed two figures for today. Opening
+  the tab now also reads `api/brain` afresh (`refreshTab`, as the 402/409 path does), and the totals redraw
+  when it lands. E2E `brain-sheet` (the home base spends before the tab opens; before: "Today $1.26" above,
+  "$0.97" for today below).
+- **A paid briefing isn't called free.** "Brief me" when the latest briefing is over 3 hours old has the Core
+  make one (`POST api/briefing/run`); with a key that is the full briefing, which the home base pays for. Its
+  turn's footer now reads "Home base" (tooltip: made with your Claude key, it counts toward the home base's own
+  spending), not "Free · Home base": `latestBriefing()` answers `made: true` for a briefing it had made, the
+  turn records `homeBasePaid: true` when that one is `kind: 'full'` (kept by backups and sync, `cleanTurn`),
+  and `turnStatsLine` (shared text) says the same. A recent briefing, or a free one, stays "Free · Home base".
+  Unit `brain`, `share`, `platform.sync`; E2E `brain-chat`.

@@ -1032,9 +1032,11 @@ right). Four tabs:
   "let me know if it's cheaper to fly or drive" is answered by Jarvis as always, never turned into a
   daily check that costs money.
 - "**Brief me**" or "**Morning briefing**": the home base's briefing; in Voice Mode Jarvis reads it
-  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the home base can't
-  be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis Core 1.0, Jarvis
-  briefs you himself, as before.
+  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the last one is more
+  than 3 hours old, the home base writes a new one; with your key that's the full briefing, which the
+  home base pays for, so its reply is labelled **Home base** rather than **Free · Home base**. If the
+  home base can't be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis
+  Core 1.0, Jarvis briefs you himself, as before.
 
 With no home base linked, these commands don't exist: what you type or say goes to Jarvis as before.
 
