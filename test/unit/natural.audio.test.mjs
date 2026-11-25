@@ -111,6 +111,48 @@ test('audio out: play() schedules at the given time (never in the past); level/b
   assert.ok(bands.every((b) => b === 0));
 });
 
+test('audio out: kick() (v7.8.1) resumes a suspended context, suspends and resumes one that says it runs with its clock stopped (iOS), and never throws', async () => {
+  const log = [];
+  const nav = { audioSession: { type: 'auto' } };
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: { navigator: nav }, idleSuspendMs: 0 });
+  assert.equal(out.kick(), false, 'no context yet: nothing to kick');
+  out.unlock();
+  const ctx = out.context;
+  // Suspended (an interruption, a context never unlocked): resumed, with the playback session asked again.
+  ctx.state = 'suspended';
+  nav.audioSession.type = 'auto';
+  log.length = 0;
+  assert.equal(out.kick(), true);
+  assert.deepEqual(log, [['resume']]);
+  assert.equal(nav.audioSession.type, 'playback');
+  // Says it runs, but its clock stopped: suspended, then resumed.
+  const calls = [];
+  const suspend = ctx.suspend.bind(ctx);
+  ctx.suspend = () => {
+    calls.push('suspend');
+    return suspend();
+  };
+  ctx.state = 'running';
+  log.length = 0;
+  out.kick();
+  assert.deepEqual(calls, ['suspend']);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(log, [['resume']], 'resumed once suspended');
+  assert.equal(ctx.state, 'running');
+  // Refusals and exceptions are swallowed.
+  ctx.suspend = () => {
+    throw new Error('InvalidStateError');
+  };
+  ctx.resume = () => {
+    throw new Error('InvalidStateError');
+  };
+  assert.doesNotThrow(() => out.kick());
+  ctx.state = 'suspended';
+  ctx.resume = () => Promise.reject(new Error('NotAllowedError'));
+  assert.doesNotThrow(() => out.kick());
+  await new Promise((r) => setTimeout(r, 0));
+});
+
 test('audio math: 8 log bands from 100 Hz to 4 kHz, each with at least one FFT bin; dB and RMS mappings', () => {
   const edges = bandEdges();
   assert.equal(edges.length, 9);

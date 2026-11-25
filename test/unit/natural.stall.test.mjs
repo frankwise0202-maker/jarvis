@@ -209,7 +209,7 @@ test('stall watchdog: a blocked page or late timers with the clock moving never 
   const ctx = await setup(t);
   const r = recorder();
   const s = ctx.mod.createNaturalStream(ctx.deps, r.opts);
-  s.append(TEXT);
+  s.append(`${TEXT} ${TEXT} ${TEXT}`); // about 40 s of speech
   s.finish();
   ctx.clock.runUntil(() => r.boundaries.length >= 2, 30_000);
   // The main thread blocked for 2 s at a time (a big reply rendering, a hologram being built), five times.
@@ -220,6 +220,8 @@ test('stall watchdog: a blocked page or late timers with the clock moving never 
   for (let i = 0; i < 15; i++) ctx.clock.block(400);
   assert.equal(ctx.audio.kicks, 0);
   // The clock stopped during a 3 s block and moving again right after: one step (250 ms) counted, no kick.
+  ctx.clock.runUntil(() => ctx.audio.busy(), 30_000);
+  assert.ok(ctx.audio.busy() && r.ends.length === 0, 'a chunk is playing');
   ctx.audio.suspend();
   ctx.clock.block(3000);
   ctx.audio.resume();
