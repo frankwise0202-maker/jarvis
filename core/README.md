@@ -239,7 +239,8 @@ out of reach, the iPhone simply listens and speaks by itself, as it always has. 
 are handled in memory and never saved or written to a log.
 
 The Alienware stays quick to use: speech runs at low priority, one request at a time, and the models
-leave memory after 30 minutes without use (the next sentence then takes a few seconds longer). The
+leave memory after 30 minutes without use (opening Voice Mode on the iPhone loads them again, so your
+first sentence rarely waits; if it does, it takes a few seconds longer). The
 models live in `~/.cache/jarvis-core/models` (about 410 MB for Fast + George); deleting that folder is
 safe: they download again when needed.
 
