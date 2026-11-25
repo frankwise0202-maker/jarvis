@@ -679,6 +679,12 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(!fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')));
       assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /Off\. Turn it on: jarvis-core autoupdate on/);
       assert.match(cli(sb, ['status'], { env }).out, /Automatic updates are off/);
+      // with no update timer to try them again, out-of-date libraries point to jarvis-core update
+      const marker = path.join(app, 'core/node_modules/.jarvis-lock-sha256');
+      const kept = fs.readFileSync(marker, 'utf8');
+      fs.writeFileSync(marker, 'another version\n');
+      assert.match(cli(sb, ['status'], { env }).out, /! The brain's libraries are out of date \(this version needs new ones\)\.\n\s+Install them: jarvis-core update\n/);
+      fs.writeFileSync(marker, kept);
       // what the owner pasted by hand tonight: a script and two units with the same names
       const script = path.join(sb.home, '.local/bin/jarvis-core-autoupdate');
       fs.writeFileSync(script, '#!/bin/bash\n# hand-made: update when core/ changed\nexec jarvis-core update\n', { mode: 0o755 });

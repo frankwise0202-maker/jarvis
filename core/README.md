@@ -212,9 +212,13 @@ If you said yes in the install, Jarvis Core looks for a new version every 20 min
 itself, only when its own files changed on GitHub. If a new version doesn't answer within 90 seconds,
 it goes back to the one before by itself, says so in the event log, and doesn't try that version again.
 
+If an update couldn't download the brain's libraries (no internet, or npm's servers were down), the
+next check tries again, then every 2 hours until it works; meanwhile Jarvis Core keeps running, on
+the previous libraries if it had them. Once they are in, it restarts by itself to use them.
+
 | Command | What it does |
 |---|---|
-| `jarvis-core autoupdate status` | On or off, the last check, the last update |
+| `jarvis-core autoupdate status` | On or off, the last check, the last update, and when the libraries are tried again if they didn't install |
 | `jarvis-core autoupdate on` | Turns it on (and takes over an update timer you set up by hand) |
 | `jarvis-core autoupdate off` | Turns it off; `jarvis-core update` still works by hand |
 
@@ -323,14 +327,16 @@ back by itself at the next login.
 tomorrow (or next month), or raise the limit in Jarvis: Settings → Home base → Limits.
 
 **The home base says Claude "isn't installed".** Its libraries didn't download (no internet during an
-update). Run `jarvis-core update`; `jarvis-core status` says when they are there.
+update). Automatic updates try again by themselves (`jarvis-core autoupdate status` says when); to try
+right away, run `jarvis-core update`. `jarvis-core status` says when they are there.
 
 **No notifications on the iPhone.** Open Jarvis from its Home Screen icon (not Safari), Settings → Home
 base → Turn on notifications, then **Test**. Check the iPhone's Settings → Notifications → Jarvis is
 allowed.
 
 **Hearing and voice says "not installed".** Its speech libraries didn't download (no internet during an
-update). Run `jarvis-core update`, then turn it on again in Jarvis.
+update). Automatic updates try again by themselves; to try right away, run `jarvis-core update`, then
+turn it on again in Jarvis.
 
 **Hearing and voice says it couldn't download the model.** The Alienware was offline while it fetched
 the model. Check its internet, then turn the switch off and on again in Jarvis: it carries on.
@@ -380,7 +386,7 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 | The 24/7 service (starts at power-on, restarts itself if it stops) | `~/.config/systemd/user/jarvis-core.service`, with lingering on |
 | The dashboard at login (Chrome, full screen, its own profile) | `~/.config/autostart/jarvis-core-screen.desktop`, profile in `~/.local/share/jarvis-core-screen` |
 | History, events (a week, saved every 5 minutes) | `~/.local/share/jarvis-core/` |
-| The brain's libraries (the Claude SDK, web-push and the speech engines, from npm) | `~/jarvis-core-app/core/node_modules` |
+| The brain's libraries (the Claude SDK, web-push and the speech engines, from npm, about 460 MB) | `~/jarvis-core-app/core/node_modules` |
 | The speech models (only once you turn on Hearing and voice) | `~/.cache/jarvis-core/models` (its settings and George's measured speed: `~/.local/share/jarvis-core/senses/`) |
 | Your Claude key (only once you give it from the iPhone) | `~/.config/jarvis-core/secrets/` (only you can read it) |
 | Research, watchers, spending, briefings | `~/.local/share/jarvis-core/brain/` |
