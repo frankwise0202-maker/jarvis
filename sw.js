@@ -24,9 +24,9 @@
  *     message), or opens Jarvis at it. Never another page.
  */
 
-self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-I2T6UIOM.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-KVT35Y6D.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/hologram-M5RHAZZJ.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-4THVUPK6.js","./assets/hull-worker.js","./assets/theme-boot.js","./assets/wake-worklet.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
+self.__PRECACHE__ = ["./assets/app.css","./assets/app.js","./assets/chunks/chunk-B55IPOMJ.js","./assets/chunks/chunk-I2T6UIOM.js","./assets/chunks/chunk-KVMUXFPB.js","./assets/chunks/chunk-OOWRP336.js","./assets/chunks/chunk-YZ4XXUY3.js","./assets/chunks/hologram-M5RHAZZJ.js","./assets/chunks/node.browser-5YEBY7KY.js","./assets/chunks/node.browser-ORYVMMFZ.js","./assets/chunks/viewer-SIKXY2O5.js","./assets/hull-worker.js","./assets/theme-boot.js","./assets/wake-worklet.js","./fonts/OFL-Rajdhani.txt","./fonts/rajdhani-latin-600-normal.woff2","./fonts/rajdhani-latin-700-normal.woff2","./icons/apple-touch-icon.png","./icons/favicon-32.png","./icons/favicon.svg","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png","./index.html","./manifest.webmanifest"];
 
-const CACHE = 'jarvis-1bf48408';
+const CACHE = 'jarvis-0b065051';
 const BUILD_ID = CACHE.slice('jarvis-'.length);
 const BASE = new URL('./', self.location.href).href;
 const SHELL = new URL('index.html', BASE).href;
