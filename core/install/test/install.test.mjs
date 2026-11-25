@@ -661,6 +661,71 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
   }
 });
 
+test('upgrade from Core 1.0 with a hand-made update timer: its old `jarvis-core update` runs the new refresh', async (t) => {
+  // Tonight's path on the Alienware: the owner's timer runs the 1.0 command's update, which hands over to
+  // this version's install.sh --refresh, from inside the timer's systemd service.
+  const OLD = '916c623'; // main before the brain (Core 1.0)
+  const repoRoot = path.resolve(CORE, '..');
+  if (spawnSync('git', ['-C', repoRoot, 'cat-file', '-e', `${OLD}^{commit}`]).status !== 0) return t.skip(`commit ${OLD} is not in this clone`);
+  const sb = makeSandbox({ tsMode: 'Running', nodeVersion: 'v22.11.0', pkgs: ['git', 'curl', 'lm-sensors', 'smartmontools'] });
+  const port = await freePort();
+  const work = path.join(sb.root, 'upstream');
+  const g = (...a) => execFileSync('git', a, { cwd: work, stdio: 'pipe' }).toString();
+  const commit = (msg) => {
+    g('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'add', '-A');
+    g('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', msg);
+  };
+  const profile = path.join(sb.home, '.local/share/jarvis-core-screen');
+  let chrome = null;
+  try {
+    fs.mkdirSync(work, { recursive: true });
+    execFileSync('bash', ['-c', `git -C "$1" archive "$2" core | tar -x -C "$3"`, 'x', repoRoot, OLD, work]);
+    fs.rmSync(path.join(work, 'core/dashboard'), { recursive: true, force: true });
+    g('init', '-q', '-b', 'main');
+    commit('core 1.0');
+    g('config', 'uploadpack.allowFilter', 'true');
+    g('config', 'uploadpack.allowAnySHA1InWant', 'true');
+    const env = { JARVIS_CORE_REPO: `file://${work}`, JARVIS_CORE_PORT: String(port) };
+    let r = runScript(sb, path.join(work, 'core/install/install.sh'), [], { answers: ['n', 'n', 'n'], env });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Jarvis Core is running/);
+    // the hand-made timer the brief describes
+    const units = path.join(sb.home, '.config/systemd/user');
+    const script = path.join(sb.home, '.local/bin/jarvis-core-autoupdate');
+    fs.writeFileSync(script, '#!/bin/bash\ncd ~/jarvis-core-app && git fetch -q origin main && [ "$(git rev-parse HEAD:core)" != "$(git rev-parse FETCH_HEAD:core)" ] && exec ~/.local/bin/jarvis-core update\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(units, 'jarvis-core-autoupdate.service'), '[Service]\nType=oneshot\nExecStart=%h/.local/bin/jarvis-core-autoupdate\n');
+    fs.writeFileSync(path.join(units, 'jarvis-core-autoupdate.timer'), '[Timer]\nOnBootSec=5min\nOnUnitActiveSec=20min\n[Install]\nWantedBy=timers.target\n');
+    fs.writeFileSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer'), '');
+    // the merge lands: this working tree's core/
+    fs.rmSync(path.join(work, 'core'), { recursive: true, force: true });
+    for (const sub of ['server', 'install', 'fixtures', 'package.json', 'package-lock.json', 'whats-new.json', 'README.md']) {
+      if (fs.existsSync(path.join(CORE, sub))) fs.cpSync(path.join(CORE, sub), path.join(work, 'core', sub), { recursive: true });
+    }
+    commit('core with the brain');
+    chrome = spawn('bash', ['-c', 'trap "exit 0" TERM; sleep 60 & wait', 'google-chrome-stable', `--user-data-dir=${profile}`], { stdio: 'ignore' });
+    const cg = path.join(sb.root, 'cgroup');
+    fs.writeFileSync(cg, '0::/user.slice/user-1000.slice/user@1000.service/app.slice/jarvis-core-autoupdate.service\n');
+    r = runScript(sb, script, [], { env: { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_CGROUP_FILE: cg } });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Installed the brain's libraries/);
+    assert.match(r.out, /Took over the update timer you set up by hand/);
+    assert.match(r.out, /The dashboard on the screen reloads itself/);
+    assert.ok(fs.readFileSync(path.join(units, 'jarvis-core-autoupdate.service'), 'utf8').includes(`ExecStart="${sb.home}/.local/bin/jarvis-core" autoupdate-tick`));
+    assert.ok(!fs.existsSync(script), 'the hand-made script is gone');
+    assert.ok(fs.readFileSync(path.join(sb.home, '.local/bin/jarvis-core'), 'utf8').includes('autoupdate-tick'), 'the new command');
+    assert.doesNotThrow(() => process.kill(chrome.pid, 0), "the screen's Chrome was left alone");
+    const info = await (await fetch(`http://127.0.0.1:${port}/api/info`)).json();
+    assert.equal(info.version, JSON.parse(fs.readFileSync(path.join(CORE, 'package.json'), 'utf8')).version);
+    // and the next run of the timer is the new tick
+    r = cli(sb, ['autoupdate-tick'], { env });
+    assert.match(r.out, /Up to date/);
+  } finally {
+    chrome?.kill();
+    stopCore(sb);
+    sb.cleanup();
+  }
+});
+
 test('automatic login edit: replaces old settings in [daemon] only, adds [daemon] when missing', () => {
   const sb = makeSandbox({ tsMode: 'missing', nodeVersion: 'v22.11.0' });
   try {

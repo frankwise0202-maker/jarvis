@@ -1239,7 +1239,8 @@ refresh() {
   deps_install
   step_service
   step_screen
-  if [ "$DRY_RUN" != 1 ]; then
+  if [ "$DRY_RUN" != 1 ] && { [ -f "$AU_TIMER_FILE" ] || [ -f "$AU_SERVICE_FILE" ] || [ -f "$AU_OLD_SCRIPT" ]; }; then
+    section "Automatic updates"
     "$SELF_BIN" autoupdate refresh </dev/null 2>&1 | sed -n '/^  /p'
   fi
   if [ "$DRY_RUN" != 1 ] && pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; then
