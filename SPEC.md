@@ -3031,7 +3031,9 @@ Sync of backups through the home base (`api/sync`) is §24.7.
 "hint" longer than a few characters is never shown; sources and headlines keep only absolute
 http(s) addresses without credentials; music only `https://music.apple.com`); `brainProblem` words a
 failure (`old`, `nokey` 409, `cap` 402, `badkey` 400, `none` 404 `none_yet`, `offline`, `rate`,
-`error`); `parseHomeBaseLink` / `homeBaseLinkOf` (deep links); `matchBrainCommand` (chat commands);
+`error`); `briefingFallback` ("brief me" the Core can't answer: unreachable, aborted, down,
+starting, refused, not a Core, an unexpected error, a 1.0 Core's 404, a 5xx); `parseHomeBaseLink` /
+`homeBaseLinkOf` (deep links); `matchBrainCommand` (chat commands);
 `briefingMarkdown`, `briefingSpeech`, `resultsMarkdown`, `resultsSpeech`; `roundCoord` (2 decimals),
 `formatUsd`, `deviceLabel`. `src/platform/brain.js`: one function per route on `requestHomeBase`
 (which gains `allowEmpty` for 204 answers); the key travels only in the body of `POST api/brain/key`
@@ -3065,8 +3067,10 @@ limit (which one, until when, **Change the limits**), no Claude SDK on the Core,
 `jarvis-core update`), unreachable / down (the tile's words, **Try again**). *Briefing*: the latest
 (`GET api/briefing`), every part as text, headlines as links only from checked addresses, the music
 suggestion as an Apple Music link, "Made 7:00 AM · free version (no Claude)" or "written with
-Claude"; `none_yet` says so; **Make a new one now** (`POST api/briefing/run`, 90 s). *Research*: a
-question (≤ 2000 characters), Quick / Deep, **Start research** (`POST api/jobs`; 409 / 402 said
+Claude"; `none_yet` says so; **Make a new one now** (`POST api/briefing/run`, 90 s; hidden for a Core
+1.0, whose banner says it once, the tab then saying nothing more). *Research*: a question (≤ 2000
+characters; Enter starts it, Shift+Enter is a new line), Quick / Deep, **Start research** (`POST
+api/jobs`; 409 / 402 said
 plainly), the list (status chip, summary, time, depth, cost), **Open** (`GET api/jobs/<id>`: the
 Markdown rendered by `src/lib/markdown.js` (no HTML, safe links only) and the sources), **Cancel**
 (queued/running), remove (finished). *Watching*: "Tell me when…" (≤ 300), every 6/12/24 h, **Watch
@@ -3083,7 +3087,9 @@ url, tag }` as plain lines; always a notification, as iOS requires; of the `url`
 link is kept, so a notification can only ever open Jarvis itself; tag `homebase-<tag>` with
 `renotify`) and extends `notificationclick` (an open Jarvis is focused and handed the link; otherwise
 Jarvis opens at `<scope>?homebase=<link>`; the v7.0 "mission finished" behaviour is unchanged). The
-caching and update behaviour of the worker is unchanged.
+caching and update behaviour of the worker is unchanged. A link handed over while Standby is on
+screen leaves Standby first (`standby.exit()`: it sits above the sheets; its microphone is released);
+in Voice Mode a link is ignored.
 
 **24.5 The morning card.** At launch (1.2 s after the boot) and back at the front after 10 minutes,
 one `GET api/brain`; when `briefing.lastAt` is newer than the last briefing seen
@@ -3091,21 +3097,34 @@ one `GET api/brain`; when `briefing.lastAt` is newer than the last briefing seen
 wasn't seen goes to the top of the home (`morning-card`: the greeting, the weather in one line, three
 headlines, the overnight line, how much research finished and watchers fired). **Read the briefing**
 opens the sheet there; × dismisses it; reading it anywhere (the sheet, "brief me") marks it seen.
+While a briefing is new (the card) or under 3 hours old (`brain.briefing.lastAt`), the **Brief me**
+quick key and the rail's briefing suggestion open the sheet's Briefing (free) instead of running the
+paid briefing protocol; otherwise they run the protocol as before.
 
 **24.6 Chat and voice commands** (free, local: no Claude request from the device, `apiMessages`
 untouched; `appendHomeBaseTurn`, the footer "Free · Home base"; the whole sentence, like §23.4):
 "research X in the background" / "… overnight" / "home base, research X" / "have the home base
 research X" (Quick; "in depth", "deep research …" → Deep) starts a job; "what did the home base
-find?" / "home base results" lists finished research; "watch for X" / "keep an eye on X" / "home base,
-tell me when X" / "tell me when X" (only with a change worth waiting for: drops, under $…, is
-announced, back in stock…, not a question like "tell me when the next full moon is") adds a daily
-watcher; "brief me" / "morning briefing" / "what's my briefing" shows the Core's briefing (the latest
-when under 3 hours old, otherwise a new one is made). The chat text is built here: the Core's words
-escaped (`escapeMarkdown`), links only from checked addresses. Not linked: "brief me" and research go
-to Claude as before; watching and results say "Link your home base first". In Voice Mode the same
-words are said (`homeBase.command`, no turn). The Standby wake routine's "brief me" uses the home
-base's briefing, said out loud, when a home base is linked (`wake.briefing()` → `{ done }`; free);
-otherwise the paid briefing protocol as before. Old conversations, tools and prompts are unchanged.
+find?" / "home base results" lists finished research; a watcher (daily) needs the home base named
+("home base, keep an eye on X" / "home base, monitor X" / "have the home base watch for X" / "home
+base, tell me when (or let me know if) X"), or, without it, "watch for X" / "keep an eye out for X" /
+"tell me when X" / "let me know when X" with a clear future change (a price under an amount, back in
+stock, on sale, comes out, is released / announced / launched, becomes available), never in the past
+or a habit ("was released", "usually"), never about "this", under 120 characters, not ending in "?".
+A bare "tell me if" / "let me know if", "keep an eye on", "monitor" or "watch out for" is always a
+question for Claude, and no watch ever has a colon or a line break in it. "… overnight" / "… while
+I'm at work" after a question of its own ("look into why my sourdough is flat overnight") is that
+question, not research. "brief me" / "morning briefing" / "what's my briefing" shows the Core's
+briefing (the latest when under 3 hours old, otherwise a new one is made); when the Core can't
+answer (`briefingFallback`), the local exchange goes and the words are sent to Claude as an ordinary
+turn, as before v7.6 (if this device can send: a key, online). The chat text is built here: the
+Core's words escaped (`escapeMarkdown`), links only from checked addresses. No home base linked:
+none of these commands exist; every sentence goes to Claude as before. In Voice Mode the same words
+are said (`homeBase.command`, no turn; a briefing the Core can't give: the words are sent as a turn).
+The Standby wake routine's "brief me" uses the home base's briefing, said out loud, when a home base
+is linked (`wake.briefing()` → `{ done }`; free), and the paid briefing protocol (a chat of its own)
+when it can't answer; otherwise the protocol as before. Old conversations, tools and prompts are
+unchanged.
 
 **Tests.** Unit `brain` (the views and their guards: a key-like hint, bad sources, music; failures;
 deep links; the commands and near misses (and that the v7.5 status questions stay theirs); the chat
@@ -3121,9 +3140,15 @@ a hostile headline as text; Research quick/deep with live status, a result whose
 HTML and a `javascript:` link, rendered safely, two sources; Cancel; Watching; Spending),
 `brain-states` (no key and its call to action, over the limit, a Core 1.0, unreachable),
 `brain-desktop` (the rail; `?homebase=job:`, `briefing`, `watch:`; a `HOMEBASE_LINK` message; a forged
-link opens nothing), `brain-chat` (the four commands typed, "brief me" said in Voice Mode, the
-dismissed card stays away), `brain-wake` (two claps, "brief me": the Core's briefing said, no
-Claude request). Not testable here: a real push service (APNs/FCM) and iOS itself.
+link opens nothing; the rail's suggestion or Brief me opens the new briefing, no Claude request),
+`brain-chat` (the four commands typed, "brief me" said in Voice Mode, the dismissed card stays away),
+`brain-chat-questions` (everyday "tell me if …: …", "let me know if …", a past release, "keep an eye
+on my grammar" go to Claude with no watcher; unlinked, nothing new answers), `brain-brief-unreachable`
+("brief me" typed with the Core out of reach: one ordinary Claude turn, no dead end), `brain-wake` (a
+notification's link while Standby is on screen leaves Standby and shows the briefing; two claps, "brief
+me": the Core's briefing said, no Claude request); `standby-brief-me-unreachable` in `standby.mjs`
+(the Core out of reach: the briefing protocol). Not testable here: a real push service (APNs/FCM) and
+iOS itself.
 
 **24.7 Sync through the home base.** Each device uploads its backup to the Core and merges the
 others', so the iPhone and the Mac share conversations, saved holograms and blueprints, and remembered
@@ -3139,7 +3164,7 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   `PUT api/sync/<id>` (120 s) with `Content-Type: application/json`, `Content-Encoding: gzip`
   (CompressionStream; plain JSON where the browser has none) and `X-Jarvis-Device-Label` (the device's
   name, percent-encoded). `src/platform/backup.js`: `buildSyncBackup()` (exactly the exported file's
-  JSON, with the ids in it) and `mergeSyncedBackup(file, { from, label, known, isBusy })`.
+  JSON, with the ids in it) and `mergeSyncedBackup(file, { from, label, selfLabel, known, isBusy })`.
   `src/ui/sync.js`: `createSync()` (the controller) and `createSyncSettings()` (the card).
 - *When.* 3 s after the boot; every 10 minutes while the app is visible (a 1-minute tick; a sync that
   came due in the background runs when the app is back at the front); 2 minutes after the last change
@@ -3157,10 +3182,16 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   2,000, `mergeMemory`). Only ever adds: missing here and never on this device → added; missing here
   but this device had it (`jarvis.sync.known.v1`: every id in its uploads and merges, facts by their
   normalized text, at most 20,000 a kind) → the owner deleted it here: it stays away, and no deletion
-  ever spreads; the same id → the newer `updatedAt` wins, except that a conversation whose two copies
-  each have turns the other lacks is never overwritten: the other device's version is kept next to
+  ever spreads; the same id → the newer `updatedAt` wins, except that a conversation is never
+  overwritten when its two copies each have turns the other lacks, or a reply of the losing copy got
+  further than the winner's copy of it (`turnAhead`: finished against unfinished, or ended later; a
+  reply resumed after it was synced keeps its turn id): the other device's version is kept next to
   it, id `<id>~sync-<deviceId>`, title "<title> (from Mac)", one per device, following that device;
-  such copies are never passed on. Remembered facts only fill the room left under the 100-fact limit,
+  such copies are never passed on. A copy the owner carried on here (it has turns that device's
+  version lacks) is never written over (`mirrorAction` → `fork`): first it is kept whole under an
+  ordinary id, `<id>~kept-<device>-<its updatedAt>`, titled "<title> (from Mac, continued on
+  iPhone)", which syncs like any other conversation; then the copy follows that device again. The
+  result's `forked` ([{ from, to }]) lets the app keep the open conversation on the kept one. Remembered facts only fill the room left under the 100-fact limit,
   so a merge never pushes out a fact this device has. The same version is skipped before vetting; library items not newer
   than this device's are skipped before their specs are checked. Idempotent: a sync cut off half way
   carries on next time. The open conversation, when replaced, is reloaded; History refreshes.
@@ -3168,6 +3199,8 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   first sync, nothing changed, a change, a Core that lost the backup, a 1.0 Core, unreachable, too big,
   the Core's 413, a running conversation, the schedule, off, unlinked, stored state), `platform.sync`
   (real IndexedDB: adds, newer wins, never deletes, idempotent; diverged copies and their following;
+  a "(from Mac)" copy carried on here kept whole, the copy following the Mac again; a reply finished
+  here never replaced by the other device's cut-short copy, which reaches it as a copy too;
   deleted here never comes back (conversation, item, fact); 2,500 items; a running conversation;
   the export equals the file and has no key; the client's gzip body, headers, failures). E2E
   `homebase-sync.mjs` (the fake Core keeps backups for every context of a scenario, `t.coreSync`):
