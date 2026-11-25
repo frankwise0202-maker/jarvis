@@ -536,6 +536,7 @@ step_packages() {
   section "Software Jarvis Core needs"
   local pkgs=(git curl lm-sensors) missing=() p
   case "$WANT_SMART" in yes | keep) pkgs+=(smartmontools) ;; esac
+  find_node || have gpg || pkgs+=(gnupg) # to read NodeSource's key
   for p in "${pkgs[@]}"; do pkg_installed "$p" || missing+=("$p"); done
   if [ ${#missing[@]} -eq 0 ]; then
     ok "Already installed: ${pkgs[*]}"
@@ -979,11 +980,14 @@ step_tailscale() {
   if ! ts_https_on; then
     say "Your tailnet's HTTPS certificates are turned off, and sharing needs them. Tailscale will now"
     say "print a link: open it (hold Ctrl and click it), sign in if asked, and click Enable."
-    say "This step carries on by itself once that's done (it waits up to 10 minutes)."
+    say "This step carries on by itself once that's done (it waits up to 10 minutes;"
+    say "Ctrl+C stops waiting, and the rest of the install carries on)."
   fi
   say "Running: sudo tailscale serve --bg $PORT"
-  as_root timeout 600 "$TS_BIN" serve --bg "$PORT" </dev/null 2>&1 | sed 's/^/      /'
+  trap 'printf "\n"' INT # Ctrl+C ends only this wait, not the installer
+  as_root timeout --foreground 600 "$TS_BIN" serve --bg "$PORT" </dev/null 2>&1 | sed 's/^/      /'
   rc=${PIPESTATUS[0]}
+  trap - INT
   if ts_serving; then
     TS_URL="https://$name/"
     state_set serve enabled-by-installer

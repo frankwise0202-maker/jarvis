@@ -262,7 +262,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(o, /https:\/\/login\.tailscale\.com\/f\/serve\?node=nAbC123/);
       assert.match(o, /Success\./);
       assert.ok(o.includes(`Shared with your devices only, over HTTPS: ${URL}`));
-      assert.ok(log.some((l) => l === `sudo timeout 600 ${path.join(sb.stubs, 'tailscale')} serve --bg ${port}`), 'serve under sudo with a time limit');
+      assert.ok(log.some((l) => l === `sudo timeout --foreground 600 ${path.join(sb.stubs, 'tailscale')} serve --bg ${port}`), 'serve under sudo with a time limit');
       assert.ok(!log.some((l) => /funnel/.test(l)));
       assert.ok(o.includes(`       ${URL}`), 'the address is in the final box');
       assert.doesNotMatch(o, /Still to do by hand/);
