@@ -162,7 +162,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     for (const lane of ['priority', 'main']) {
       if (running.has(lane)) continue;
       const next = jobs.find((j) => j.status === 'queued' && LANE(j.kind) === lane);
-      if (next) start(next, lane);
+      if (next) start(next, lane).catch((err) => log(`a job could not start: ${err?.stack ?? err}`));
     }
   }
 

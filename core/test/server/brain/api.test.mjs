@@ -84,6 +84,7 @@ test('no key: jobs and watchers are refused with 409 no_key; the briefing is fre
   assert.equal(b.status, 200);
   assert.equal(b.json.kind, 'free');
   assert.equal(b.json.headlines.length, 6, 'fixture mode reads the feeds from core/fixtures/brain');
+  assert.equal(b.json.weather.label, 'Your location', 'and the weather, for a made-up location');
   assert.equal((await get('/api/briefing')).json.generatedAt, b.json.generatedAt);
 });
 
@@ -157,12 +158,18 @@ test('jobs: 202 with the job, list without results, one with its result, SSE job
     assert.ok(list.every((j) => !('result' in j)));
     assert.equal((await get('/api/jobs?kind=research')).json.jobs.length, 1);
     await until(() => frames.some((f) => f.ev === 'job' && JSON.parse(f.data).status === 'done') && frames.some((f) => f.ev === 'spend'), { what: 'SSE events' });
+    // A briefing and a watcher made while the stream is open arrive as events too.
+    await json('POST', '/api/briefing/run');
+    const wr = await json('POST', '/api/watchers', { what: 'an event watcher', every: '24h' });
+    await until(() => frames.some((f) => f.ev === 'briefing') && frames.some((f) => f.ev === 'watcher' && JSON.parse(f.data).id === wr.json.watcher.id), { what: 'briefing and watcher events' });
+    assert.deepEqual(Object.keys(JSON.parse(frames.find((f) => f.ev === 'briefing').data)), ['date', 'generatedAt', 'kind', 'greeting']);
+    assert.equal((await request(port, `/api/watchers/${wr.json.watcher.id}`, { method: 'DELETE' })).status, 204);
     const spend = JSON.parse(frames.find((f) => f.ev === 'spend').data);
     assert.deepEqual(Object.keys(spend), ['day', 'todayUsd', 'month', 'monthUsd', 'capReached']);
     assert.ok(frames.every((f) => !f.data.includes(KEY)));
     const s = (await get('/api/spend?days=7')).json;
     assert.equal(s.days.length, 7);
-    assert.ok(s.days[0].usd > 0 && s.days[0].calls === 1);
+    assert.ok(s.days[0].usd > 0 && s.days[0].calls >= 2, JSON.stringify(s.days[0])); // the research and the full briefing's call
     assert.deepEqual(s.limits, { dailyUsd: 5, monthlyUsd: 50 });
     assert.equal((await get('/api/spend?days=0')).status, 400);
     // Validation

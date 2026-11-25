@@ -62,6 +62,7 @@ export function createBrain({
   whatsNewFile = null,
   rand = Math.random,
   tickMs = TICK_MS,
+  defaultLocation = null,
 } = {}) {
   const log = safeLog(rawLog);
   const brainDir = dataDir ? path.join(dataDir, 'brain') : null;
@@ -80,6 +81,7 @@ export function createBrain({
   // ---- settings
   const settingsFile = file('settings-v1.json');
   const defaults = defaultSettings({ ownerName: config.ownerName ?? 'Frank', units: 'F' });
+  if (defaultLocation) defaults.briefing.location = { ...defaultLocation };
   let settings = normalizeSettings(settingsFile.load(), defaults);
   const getSettings = () => settings;
   const syncOwner = () => {
@@ -132,7 +134,7 @@ export function createBrain({
         const check = await runWatchCheck({ claude, watcher: w, ctx, name: settings.owner.name, localTime: localTime(), timeZone });
         const { newlyMet } = watchers.recordResult(w.id, { ...check, costUsd: job.costUsd });
         if (newlyMet) {
-          notify({ title: 'Watcher: it happened', body: `${w.what}: ${check.summary}`, url: `${APP_URL}?homebase=watch:${w.id}`, tag: `watch:${w.id}` });
+          notify({ title: `Watcher: ${oneLine(w.what, 70)}`, body: check.summary, url: `${APP_URL}?homebase=watch:${w.id}`, tag: `watch:${w.id}` });
         }
         return { summary: `${check.met ? 'Met' : 'Not yet'}: ${check.summary}`, result: { markdown: `**${check.met ? 'Met.' : 'Not yet.'}** ${check.summary}`, sources: check.sources } };
       } catch (err) {

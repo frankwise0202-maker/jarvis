@@ -159,8 +159,9 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
     secretsDir: config.persist ? config.secretsDir : null,
     claudeBase: config.claudeBase ?? undefined,
     whatsNewFile: config.whatsNewFile,
-    // A simulated home base reads its weather and headlines from core/fixtures/brain (no internet).
-    ...(config.fixture ? { fetch: createFixtureFetch() } : {}),
+    // A simulated home base reads its weather and headlines from core/fixtures/brain (no internet), for a
+    // made-up location (0, 0) unless one is set.
+    ...(config.fixture ? { fetch: createFixtureFetch(), defaultLocation: { label: 'Your location', lat: 0, lon: 0 } } : {}),
   });
 
   const server = createApiServer({ getCore: () => core, config, ask, info, fixture, log, getBrain: () => brain, getPush: () => push, getSync: () => sync });

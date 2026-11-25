@@ -297,6 +297,7 @@ test('restart survival: queued and interrupted jobs come back after a restart an
   const secrets = path.join(data, 'secrets');
   const first = makeBrain({ fake, dataDir: data, secretsDir: secrets });
   await okKey(first.brain);
+  const watcher = first.brain.createWatcher({ what: 'a watcher that survives', every: '12h' });
   const a = first.brain.createJob({ prompt: 'interrupted by a restart' });
   const b = first.brain.createJob({ prompt: 'waiting in the queue' });
   await until(() => first.brain.getJob(a.id).status === 'running', { what: 'running' });
@@ -311,6 +312,7 @@ test('restart survival: queued and interrupted jobs come back after a restart an
   try {
     assert.equal(second.brain.info().key.set, true);
     assert.equal(second.brain.getJob(a.id).status, 'queued');
+    assert.deepEqual(second.brain.listWatchers().map((w) => [w.id, w.what, w.every, w.status]), [[watcher.id, 'a watcher that survives', '12h', 'watching']]);
     second.brain.start();
     await until(() => second.brain.getJob(a.id).status === 'done' && second.brain.getJob(b.id).status === 'done', { what: 'both done after restart' });
   } finally {
@@ -371,6 +373,7 @@ test('watchers: not met keeps watching (next check 24 h ± jitter), met notifies
     await until(() => push.sent.length === 1, { what: 'push' });
     assert.equal(push.sent[0].url, `https://frankwise0202-maker.github.io/jarvis/?homebase=watch:${w.id}`);
     assert.match(push.sent[0].body, /Now \$289/);
+    assert.match(push.sent[0].title, /^Watcher: Tell me when the LG 27GP850 drops under \$300/);
     // A met watcher is not checked again.
     clock.advance(48 * 3600_000);
     brain.tick();
@@ -421,4 +424,16 @@ test('watchers without a key are paused; over a cap they are blocked; max 20', a
     await brain.stop();
     await fake.close();
   }
+});
+
+test('network fetches time out instead of hanging', async () => {
+  const { fetchText } = await import('../../../server/brain/util.mjs');
+  const hang = (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  const t0 = Date.now();
+  const r = await fetchText(hang, 'https://api.open-meteo.com/v1/forecast?x=1', { timeoutMs: 80 });
+  assert.deepEqual(r, { ok: false, error: 'timeout' });
+  assert.ok(Date.now() - t0 < 1000);
+  const big = await fetchText(async () => new Response('x'.repeat(5000)), 'https://feeds.example/', { maxBytes: 1000 });
+  assert.equal(big.ok, false);
+  assert.equal(big.error, 'too_large');
 });
