@@ -3517,3 +3517,56 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   George turned off at the home base by an older Jarvis comes back from the iPhone; `george-away` (every home
   base request hangs: the iPhone voice within 2 s of the reply instead of 6 s, nothing asked of George; George
   again once a reading succeeds); `george-off` and `senses-settings` updated (off here only).
+
+**26.6 v7.8.1: George never leaves the owner in silence.** Where this differs from 26.1-26.5, it wins.
+- **Why.** The natural stream (§18.2) drives words, chunk ends and the end of a reply from the Web Audio
+  clock (`audio.now()`). On an iPhone that clock can stop without anything failing: an audio interruption, a
+  route change, the microphone holding the audio session, a context never unlocked by a tap, or one that says
+  'running' while its clock stands still. The chunks never played, `onEnd` never came, and Voice Mode stayed in
+  "speaking". With George on by default (26.1) this is the owner's everyday path, and only `play()` throwing
+  used to hand over.
+- **The watchdog** (`natural-stream.js`; `NATURAL_TIMING.stallKickMs` 1500, `stallMs` 3500, `stallStepMs`
+  250; only streams with an `onHandoff`, i.e. the router's). While the chunk the listener waits for is on the
+  clock (scheduled or playing) and the page is visible, each 40 ms tick checks whether the clock itself moved
+  since the last tick; any movement starts the count again. It counts the wall time of ticks in which it
+  didn't, at most 250 ms a tick. At 1.5 s `audio.kick()` once (`audio-out.js`: resume; a context that says
+  it runs is suspended and resumed). At 3.5 s a stall handoff: every scheduled chunk is stopped and dropped
+  and synthesis cancelled (unlike 'slow' and failures, which let made audio play out; a pending one of those
+  becomes a stall), and `onHandoff({ from, reason: 'stall' })` from what wasn't heard: the last word boundary
+  heard, the next chunk if this one's voice had all been heard, or the start of the chunk that never started.
+  Hidden, nothing counts; a visibility change starts it again from fresh readings.
+- **Why these thresholds can't fire in normal playback.** A running context's clock moves every few
+  milliseconds (iOS buffers are 5-40 ms), so a 40 ms tick sees it move whenever audio plays; the chunk start,
+  `leadS` (60 ms) ahead, isn't what is watched. What stops it legitimately is short: our own 30 s idle
+  suspend resumed by `play()` (tens to a few hundred ms), the output starting up, a Bluetooth or route switch
+  (1-2 s): under the kick, and a kick that works costs nothing. A blocked page or late timers (the E2E runs at
+  load 7+) can't add up: the clock runs on the audio thread, so the first tick after a block sees it moved, and
+  where the page only sees the clock between tasks one late tick counts at most 250 ms; a handoff needs at
+  least 14 ticks in a row with the clock standing still.
+- **The router remembers** (`voice-router.js`). A 'stall' from George from the home base or on this device
+  goes straight to the device voice (never the on-device George: the same Web Audio), the label says "iPhone
+  voice", and the router keeps that output as stuck with its clock reading. New replies (streams and
+  `speak()`) go straight to the device voice, with no new wait, until `unlockSpeech()` (a gesture: the first
+  tap, Voice Mode opening, Test, a reply's Speak tap) or until its clock has moved 0.25 s since (the sound came
+  back by itself; checked when a reply starts). Then George speaks again; if his sound still doesn't start,
+  the watchdog hands over once more. `tts.audioStuck()`, `tts.onAudioStuck(fn)`. No setting is changed and
+  the home base doesn't rest (it isn't its fault).
+- **Settings → Voice → Jarvis's voice** (`voiceInUse({ audioStuck })`): "iPhone voice", and in the pending line
+  (`data-state="stuck"`, warning tint) "George's sound didn't start on this iPhone, so the iPhone voice is
+  speaking. Tap Test to try again." (a Mac: "this Mac", "the built-in voice").
+- **Voice Mode never hangs in "speaking":** after a stall its `onEnd` comes from the device voice, as after
+  any handoff. The wake routine's greeting goes through the same router (`speak()`), and Standby adds nothing.
+  A reply in a hidden page waits for the page: the device voice speaks 3.5 s after it is shown again.
+- **Tests.** Unit `natural.stall` (19): the stream on an audio output whose clock can stop (stopped from the
+  start; mid-chunk; in a chunk's last silence; 1 s, then moving; 2 s with a kick that works; 3 s, then moving
+  by itself; hidden, then shown; a blocked page and late timers with the clock moving; a stopped clock during
+  a block; throttled ticks with the clock stopped; normal playback at 0.2-0.95× real time and an idle-suspended
+  output resumed by `play()` after 0.3, 1.4 and 2.5 s; a pending 'slow' handoff whose audio stops; none without
+  `onHandoff`), the router with both engines on one output (every word once, in order; the label; one onEnd;
+  the next replies at once on the device voice; back after a gesture or a moving clock; a gesture while still
+  stuck; a hidden page) and the card's words; unit `natural.audio`: `kick()`. E2E (`installStuckAudio`: the
+  24 kHz voice context suspended at once, `resume()` doing nothing, so Chromium's clock stops): `george-stuck`
+  (Voice Mode: the iPhone voice within about 5 s, labelled, listening on, the next reply at once; Settings
+  says why; a reply's Speak; Test brings George back once the sound works) and `george-stuck-midway` (the clock
+  stops 0.7 s into George's first sentence: the iPhone voice from the last word heard). Both fail on the v7.8
+  build 1bf48408 (the reply stays silent). Not testable here: a real iPhone's audio session.

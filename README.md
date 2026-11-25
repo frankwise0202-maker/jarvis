@@ -535,6 +535,12 @@ runs on your own computer at home, and nothing goes to any cloud.
   the iPhone and the label changes with it. If it isn't answering at all (away from home with the
   Alienware asleep, or a bad network), the iPhone voice speaks straight away instead of after a
   silence, and George is back as soon as the home base answers again.
+- **Never left in silence.** Sometimes an iPhone stops a web app's sound without saying so (after a
+  call, when headphones connect or disconnect, or while the microphone is busy). If George's sound
+  doesn't start, the iPhone voice says the reply after about 3.5 seconds, from the word where George
+  stopped, and the label says **iPhone voice**. The next replies use the iPhone voice straight away,
+  until your next tap (for example **Test** in Settings → Voice → Jarvis's voice, or opening Voice
+  Mode); then George speaks again. Nothing is switched off.
 - **Faster first words.** George's first words come from a short first piece of the reply (the
   first part of a sentence), and the rest is made while he speaks, in pieces that each fit inside the
   one before, so there's no pause after a short "Good evening, Frank.". Opening Voice Mode, or coming
@@ -886,6 +892,7 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **A mission says "Interrupted"** | Your phone paused the app or the connection dropped. Open Jarvis and tap **Resume**. |
 | **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
 | **Jarvis doesn't speak on iPhone** | Turn off silent mode and turn the volume up. Speech starts after you have tapped once in the app. |
+| **Jarvis speaks with the iPhone voice, and Settings → Voice says "George's sound didn't start on this iPhone"** | The iPhone stopped Jarvis's sound for George (after a call, a change of headphones or speaker, or the microphone), so Jarvis switched to the iPhone voice rather than leave you in silence. Tap **Test** in Settings → Voice → Jarvis's voice: George comes back as soon as the sound works. If it keeps happening, close Jarvis completely and open it again. |
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
 | **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
