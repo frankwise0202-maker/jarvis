@@ -250,6 +250,7 @@ test('restart detection: first run, clean restart, crash, machine reboot; histor
   core.restore();
   assert.match(core.events.latest.message, /started for the first time/);
   core.runFor(5);
+  assert.equal(core.events.list({ limit: 50 }).filter((e) => e.rule === 'gpu.driver').length, 1);
   await core.saveAll({ clean: true });
   core = mk('boot-a');
   core.restore();
@@ -259,6 +260,15 @@ test('restart detection: first run, clean restart, crash, machine reboot; histor
   core = mk('boot-a');
   core.restore();
   assert.deepEqual(rules(core).slice(0, 2), ['core.start:info', 'core.crash:warn']);
+  await core.saveAll({ clean: true });
+  // standing conditions (no NVIDIA driver here) are not logged again after a restart
+  const gpuEvents = (c) => c.events.list({ limit: 50 }).filter((e) => e.rule === 'gpu.driver').length;
+  core = mk('boot-a');
+  core.restore();
+  const n = gpuEvents(core);
+  core.runFor(5);
+  assert.equal(gpuEvents(core), n);
+  assert.equal(core.snapshot.health.items.find((i) => i.id === 'gpu.driver').level, 'warn');
   await core.saveAll({ clean: true });
   core = mk('boot-b');
   core.restore();

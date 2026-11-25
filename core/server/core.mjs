@@ -233,6 +233,7 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
       startedAt,
       lastSeen: lastTickT ?? clock.now(),
       cleanShutdown: clean,
+      health: health.serialize(),
     };
   }
 
@@ -296,6 +297,9 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
     const bootTime = statLine ? Number(statLine[1]) * 1000 : null;
     if (prev?.ok && prev.value?.v === 1) {
       const p = prev.value;
+      // Conditions that held when the Core stopped (a few hours ago at most) are not logged again on start;
+      // if one cleared meanwhile, its "back to normal" is logged as usual.
+      if (Number.isFinite(p.lastSeen) && t - p.lastSeen < 6 * 3600_000) health.restore(p.health);
       if (p.bootId && bootId && p.bootId !== bootId) {
         events.add({
           t: bootTime ?? t,

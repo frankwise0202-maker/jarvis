@@ -68,6 +68,12 @@ function createTracker() {
     touch(t) {
       if (since === null) since = t;
     },
+    /** Start at a saved level (a restart), so a condition that still holds is not logged again. */
+    seed(l, s) {
+      level = l;
+      since = Number.isFinite(s) ? s : null;
+      pending = null;
+    },
   };
 }
 
@@ -417,6 +423,24 @@ export function createHealth({ thresholds = {}, gpuMissingLevel = 'warn' } = {})
     return { health: { level, summary, counts, rev, since: overallSince, items }, transitions };
   }
 
+  /** Non-ok levels, for the state file: { id: { level, since } }. */
+  function serialize() {
+    const out = {};
+    for (const [id, tr] of trackers) if (tr.level !== 'ok') out[id] = { level: tr.level, since: tr.since };
+    return out;
+  }
+
+  /** Seed saved levels after a restart. Unknown levels are ignored. */
+  function restore(saved) {
+    let n = 0;
+    for (const [id, v] of Object.entries(saved && typeof saved === 'object' ? saved : {})) {
+      if (!LEVELS.includes(v?.level) || v.level === 'ok') continue;
+      tracker(id).seed(v.level, v.since);
+      n += 1;
+    }
+    return n;
+  }
+
   /** Forget all state (fixture scenario switch). */
   function reset() {
     trackers.clear();
@@ -428,7 +452,7 @@ export function createHealth({ thresholds = {}, gpuMissingLevel = 'warn' } = {})
     rev += 1;
   }
 
-  return { evaluate, reset, thresholds: th };
+  return { evaluate, reset, serialize, restore, thresholds: th };
 }
 
 /** The event message for a transition: the item's message, or "<label> back to normal (...)". */
