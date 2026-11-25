@@ -68,6 +68,11 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // Home base (v7.5, SPEC §23): the Jarvis Core's Tailscale address, 'https://<machine>.<tailnet>.ts.net/'
   // ('' = not linked). Stored normalized (src/lib/homebase.js normalizeHomeBaseUrl); anything else is refused.
   homeBaseUrl: '',
+  // Hearing and voice through the home base (v7.7, beta, SPEC §25): Whisper and George's voice made on
+  // the home base instead of on this device. Off until the owner turns them on, per device; this
+  // device's own recognizer and voice stay the fallback (unreachable, slower than 4 s, an error).
+  homeBaseHear: false,
+  homeBaseSpeak: false,
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -190,6 +195,8 @@ const VALIDATORS = {
     const r = normalizeHomeBaseUrl(v);
     return r.ok ? r.url : fb;
   },
+  homeBaseHear: bool,
+  homeBaseSpeak: bool,
 };
 
 /**

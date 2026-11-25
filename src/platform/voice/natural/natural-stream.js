@@ -269,23 +269,27 @@ function endStream(s, reason, stopAudio = false, later = false) {
  * How long the next chunk may be. The first: its first sentence (≥ 60 characters with the next
  * sentences packed in, ≤ 140 with a long one cut at a clause), so audio starts fast. After that:
  * as long as the previous chunk can cover while this one is made, (previous length ÷ real-time
- * factor), between 100 and 260 characters: chunks grow while the voice plays, without gaps.
+ * factor), between 100 and 260 characters: chunks grow while the voice plays, without gaps. An
+ * engine whose status() names a smaller firstChunk or maxChunk (the home base's voice) gets those.
  */
 function limitFor(s) {
+  let st = null;
+  try {
+    st = s.engine.status();
+  } catch {
+    /* keep the defaults */
+  }
+  // An engine may ask for shorter chunks (the home base's voice, homebase-voice.js HOMEBASE_CHUNKS).
+  const firstChunk = st && st.firstChunk > 0 ? Math.min(T.firstChunk, st.firstChunk) : T.firstChunk;
+  const chunk = st && st.maxChunk > 0 ? Math.min(T.chunk, Math.max(T.minChunk, st.maxChunk)) : T.chunk;
   if (!s.chunks.length) {
     const sp = s.tx.spans[0];
-    const len = sp ? sp.end - sp.start : T.firstChunk;
-    return Math.max(T.firstMin, Math.min(T.firstChunk, len));
+    const len = sp ? sp.end - sp.start : firstChunk;
+    return Math.max(Math.min(T.firstMin, firstChunk), Math.min(firstChunk, len));
   }
   const prev = s.chunks[s.chunks.length - 1];
-  let rtf = T.assumedRtf;
-  try {
-    const st = s.engine.status();
-    if (st && st.rtf > 0) rtf = Math.max(0.15, st.rtf);
-  } catch {
-    /* keep the assumption */
-  }
-  return Math.max(T.minChunk, Math.min(T.chunk, Math.floor(prev.text.length / rtf)));
+  const rtf = st && st.rtf > 0 ? Math.max(0.15, st.rtf) : T.assumedRtf;
+  return Math.max(T.minChunk, Math.min(chunk, Math.floor(prev.text.length / rtf)));
 }
 
 function ahead(s) {
@@ -379,7 +383,7 @@ function dispatch(s, chunk) {
   chunk.tries += 1;
   let job;
   try {
-    job = s.engine.synth(chunk.text, { voice: s.voice, speed: s.speed });
+    job = s.engine.synth(chunk.text, { voice: s.voice, speed: s.speed, first: chunk.index === 0 }); // first: nothing plays yet
   } catch (err) {
     onSynthError(s, chunk, err);
     return;

@@ -823,7 +823,9 @@ Other websites (at other addresses) cannot read it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
   level; the **Systems dashboard**.
 - **Home base:** your Jarvis Core's address (Save, Test, Remove); see
-  [Jarvis Core: your home base](#jarvis-core-your-home-base).
+  [Jarvis Core: your home base](#jarvis-core-your-home-base). Below it, **Hearing and voice
+  (beta)**: Whisper and George's voice from the home base, each on or off for this device (see
+  [Hearing and voice from your home base](#hearing-and-voice-from-your-home-base-beta)).
 - **Data:** export a backup (conversations, memory, settings, your own protocols, statistics and
   the Blueprints library),
   import one of your own (see [Backups](#backups)), or reset Jarvis on this device.
@@ -1024,6 +1026,39 @@ last two weeks, on the Alienware's drive.
   Core 1.0 asks you to run `jarvis-core update`. A device whose backup is over 50 MB (usually many
   photos in conversations) still receives the others' conversations, but can't send its own; the card
   says so.
+
+### Hearing and voice from your home base (beta)
+
+The iPhone's own speech recognition isn't the best at catching the right sentence, and the natural
+voice can be too much work for a phone. Your Alienware can do both instead: **Whisper** hears what you
+say, and **George** (the natural voice) speaks the replies. Both are free: they run on your own
+computer at home, and nothing goes to any cloud. This is a beta, off until you turn it on.
+
+- **Turn it on:** **Settings → Home base → Hearing and voice (beta)**.
+  - **Hear me through the home base (more accurate)**, with **Fast** (Whisper base, about a second for
+    a sentence) or **Accurate** (Whisper small: hears more, a little slower).
+  - **George's voice from the home base**.
+  - Each downloads its model on the home base the first time (about 80 and 92 MB); the card shows the
+    download and then **Ready**. **Test** hears 3 seconds and shows the words, or plays one sentence.
+  - Each switch is per device: turn it on on the iPhone, the Mac, or both. Turning one off also turns
+    it off on the home base.
+- **In Voice Mode** a small **via home base** mark sits next to the status while the home base is
+  listening. Talk as usual; when you stop for about a second (two with **Wait after I stop talking:
+  Long**), what you said goes to the home base, and the words come back into the usual 2-second check
+  ("cancel", "no, I said …" and a tap on the words all work as before). The words appear when you've
+  finished, not while you talk: that's how Whisper hears whole sentences.
+- **Replies** are fetched from the home base sentence by sentence in George's voice, and played the
+  same way as the on-device natural voice.
+- **When the home base can't help**, Jarvis carries on without it:
+  - It can't be reached, or takes more than 4 seconds to hear you: Jarvis says "Say that again?" and
+    listens on the iPhone, as before. For the next minute the iPhone listens on its own, then Jarvis
+    tries the home base again.
+  - Its voice can't be reached or is too slow: the rest of the reply is said by the natural voice on
+    the iPhone (when that's on) or the built-in voice.
+  - The models sleep on the home base after 30 minutes unused; opening Voice Mode wakes them up.
+- **What's not covered yet:** the chat's microphone, the hologram viewer's and the camera's
+  microphones still use the device's own recognizer (they show your words as you talk). A home base
+  that still runs an older Jarvis Core says it needs `jarvis-core update`.
 
 ## For developers
 

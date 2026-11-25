@@ -25,6 +25,7 @@ import { normalizeHomeBaseUrl, failureState, HOME_BASE_EXAMPLE, LEVEL_WORDS } fr
 import { testHomeBase } from '../platform/homebase.js';
 import { createBrainSettings } from './brain-settings.js';
 import { createSyncSettings } from './sync.js';
+import { createSensesSettings } from './senses-settings.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -1403,6 +1404,9 @@ export function createSettingsPanel(o) {
   // v7.6 (SPEC §24.7): this device kept in sync with the others through the home base.
   const syncCard = o.sync && !o.demo ? safeCall(() => createSyncSettings(o.sync), null) : null;
   if (syncCard) cleanups.push(() => syncCard.destroy());
+  // v7.7 (beta, SPEC §25): hearing (Whisper) and George's voice made by the home base.
+  const sensesCard = o.senses && o.senses.senses && !o.demo ? safeCall(() => createSensesSettings(o.senses.senses, { audio: o.senses.audio, createCapture: o.senses.createCapture, stopSpeaking: o.senses.stopSpeaking, getSettings, commit, toast: o.toast, os: currentOs() }), null) : null;
+  if (sensesCard) cleanups.push(() => sensesCard.destroy());
 
   const homebase = section(
     'homebase',
@@ -1422,6 +1426,7 @@ export function createSettingsPanel(o) {
     ),
     brainCard ? brainCard.el : null,
     syncCard ? syncCard.el : null,
+    sensesCard ? sensesCard.el : null,
   );
 
   // Data

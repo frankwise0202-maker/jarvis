@@ -69,7 +69,9 @@ export const BACKUP_VERSION = 1;
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 // Never exported: onboarding and feature flags, and the camera chosen last in Optics (v7.1: a
 // per-browser device id and the webcam's model with its USB ids, local to this device: SPEC 18.1).
-const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCameraLabel'];
+// v7.7: hearing and voice through the home base are this device's own choice (and a download on the
+// home base): never exported, never applied from a backup.
+const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCameraLabel', 'homeBaseHear', 'homeBaseSpeak'];
 
 /**
  * The settings an import restores: the owner's profile, voice and appearance. Never limits, models,

@@ -56,6 +56,10 @@ import * as stt from '../platform/voice/stt.js';
 import * as deviceTts from '../platform/voice/tts.js';
 import { createVoiceRouter } from '../platform/voice/voice-router.js';
 import { createNaturalVoice } from '../platform/voice/natural/setup.js';
+import { createHomeBaseHearing } from '../platform/voice/homebase-hearing.js';
+import { createHomeBaseVoiceEngine } from '../platform/voice/homebase-voice.js';
+import { createSenses } from './senses.js';
+import { contextPrompt } from '../lib/senses.js';
 import { markdownToPlainText } from '../lib/markdown.js';
 import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
@@ -87,7 +91,18 @@ const { sttSupported, startListening } = stt;
 // Not in a screen window (?screen=…, src/main.js starts the screen page there, which never speaks):
 // it would only ask about the voice engine while the main window may be setting it up.
 const naturalVoice = isScreenMode() ? null : safeInit(() => createNaturalVoice({ getVoice: () => getSettings().naturalVoiceId }));
-const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, getSettings });
+// Hearing and voice through the home base (v7.7, beta, SPEC §25): Whisper and George's voice made by
+// Jarvis Core on the Alienware. Off until the owner turns each on (Settings → Home base → Hearing and
+// voice); this device's recognizer and voices stay the fallback. Not in a screen window.
+const senses = isScreenMode() ? null : safeInit(() => createSenses({ getSettings, onSettingsChange }));
+let sensesAllowed = true; // false in the demo (?demo=1: no network there), set by startApp()
+const homeBaseVoice = senses && naturalVoice ? { engine: createHomeBaseVoiceEngine({ senses }), audio: naturalVoice.audio, canSpeak: () => sensesAllowed && senses.canSpeak() } : null;
+const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, homebase: homeBaseVoice, getSettings });
+// Voice Mode's listens: stt.js, or the home base's Whisper when it is on and ready (a listen asks for
+// it with homeBase: true; every other caller keeps stt.js itself). hearPrompt: the conversation's
+// context words for Whisper (set once the app runs).
+let hearPrompt = () => '';
+const listening = senses ? safeInit(() => createHomeBaseHearing({ stt, senses, createCapture: (o) => createStandbyCapture(o), getPrompt: () => hearPrompt(), getSettings })) || stt : stt;
 // With the natural voice on, ask once which engine this device runs (a WebGPU adapter or not), so a
 // device already measured too slow speaks with the built-in voice at once (engine knownSlow()).
 if (naturalVoice && safeInit(() => getSettings().naturalVoice)) naturalVoice.choosePlan().catch(() => {});
@@ -183,6 +198,7 @@ export async function startApp(rootEl) {
   if (!root) throw new Error('Missing #app root element');
   const params = new URLSearchParams(location.search);
   const demoMode = params.get('demo') === '1';
+  if (demoMode) sensesAllowed = false; // the demo never asks the home base to hear or speak
 
   const state = {
     demo: demoMode,
@@ -1402,6 +1418,7 @@ export async function startApp(rootEl) {
    */
   function openVoice({ wake = null } = {}) {
     refreshCameraPermission();
+    if (senses && !state.demo) safe(() => senses.prime({ warm: true })); // hearing / voice through the home base: a fresh reading, warmed up
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     safe(() => composer.cancelCountdown()); // Voice Mode takes over: words waiting in the box stay there
@@ -1412,7 +1429,7 @@ export async function startApp(rootEl) {
         saveSettings,
         startTurn: startTurnForVoice,
         createCore,
-        stt,
+        stt: state.demo ? stt : listening,
         tts,
         markdownToPlainText,
         sounds,
@@ -3260,6 +3277,8 @@ export async function startApp(rootEl) {
     const panelCtl = createSettingsPanel({
       demo: state.demo,
       naturalVoice: naturalVoice ? { natural: naturalVoice, tts } : null,
+      // v7.7 (beta): Settings → Home base → Hearing and voice.
+      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()) } : null,
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),
@@ -3781,6 +3800,24 @@ export async function startApp(rootEl) {
       /* no service worker here */
     }
     if (brain.base()) setTimeout(() => safe(() => brain.checkMorning()), 1200);
+  }
+  // Hearing and voice through the home base (v7.7): one reading at launch when either is on, and the
+  // context words Whisper gets with each utterance (the owner's name, the parts of the hologram on
+  // screen, this conversation's title and the names in its latest messages).
+  if (senses && !state.demo) {
+    hearPrompt = () => {
+      const conv = state.conv;
+      const turns = conv && Array.isArray(conv.turns) ? conv.turns : [];
+      const texts = [];
+      for (let i = turns.length - 1; i >= 0 && texts.length < 2; i--) {
+        const t = turns[i];
+        if (t && t.role === 'user' && typeof t.text === 'string') texts.push(t.text);
+        else if (t && t.role === 'jarvis' && Array.isArray(t.segments)) texts.push(t.segments.filter((g) => g && g.kind === 'text' && typeof g.text === 'string').map((g) => g.text).join(' ').slice(0, 4000));
+      }
+      const parts = safe(() => voiceVisuals.vocabulary().parts, []) || [];
+      return contextPrompt({ names: ['Jarvis', getSettings().userName, ...parts], title: conv && conv.title, texts });
+    };
+    setTimeout(() => safe(() => senses.prime()), 1500);
   }
   // Sync (v7.6): a first sync a few seconds after the boot, then every 10 minutes while open.
   if (syncCtl) safe(() => syncCtl.start());

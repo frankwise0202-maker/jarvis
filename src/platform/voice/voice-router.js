@@ -2,14 +2,16 @@
 // speechSynthesis) and the natural voice (Kokoro in a Worker, natural/*). It has the same exports
 // as tts.js, so Voice Mode and the chat use it unchanged (app.js passes the router as `tts`).
 //
-//   const tts = createVoiceRouter({ device, natural, getSettings });
+//   const tts = createVoiceRouter({ device, natural, homebase, getSettings });
 //     device    the tts.js module (namespace import)
 //     natural   { engine (engine-client.js), audio (audio-out.js) } or null
+//     homebase  v7.7 (beta): George's voice made by the home base, { engine (homebase-voice.js),
+//               audio (audio-out.js), canSpeak() } or null
 //   tts.createSpeechStream(opts) / speak(text, opts) / stopSpeaking() / isSpeaking() /
 //   unlockSpeech() / toSpeech() / ttsSupported() / getVoices() / …   (tts.js contract)
 //   tts.getOutputLevel()     0..1 while the natural voice plays, else null (no real signal)
 //   tts.getOutputBands(out)  fills 8 bands and returns true while the natural voice plays
-//   tts.activeEngine()       'natural' | 'device' | null
+//   tts.activeEngine()       'homebase' | 'natural' | 'device' | null
 //
 // Which engine speaks a stream: the natural voice when settings.naturalVoice is on and the engine
 // is 'ready'. When it is still loading (the worker is stopped after 5 idle minutes and reloads
@@ -21,6 +23,12 @@
 // Mid-stream fallback: if the natural voice turns slow or fails, it lets the audio it has made
 // play out and the device voice says the rest. The router keeps the whole text (its own copy,
 // cut with the same speech-text.js rules), so offsets stay offsets into text() across the switch.
+//
+// The home base (v7.7, beta): with settings.homeBaseSpeak on and the home base's voice ready
+// (homebase.canSpeak(): known ready, not resting after a failure), a stream is spoken by the home
+// base's George through the same natural stream and audio path (each sentence fetched from api/speak,
+// queued ahead). When it fails or is too slow, the rest goes to the on-device George when that is on
+// and ready, else to the device voice, from the same offset. Off, nothing here changes.
 
 import { newText, ingest } from './speech-text.js';
 import { createNaturalStream, stopNatural } from './natural/natural-stream.js';
@@ -44,7 +52,7 @@ function call(fn, arg) {
   }
 }
 
-export function createVoiceRouter({ device, natural = null, getSettings = () => ({}), waitMs = WAIT_MS } = {}) {
+export function createVoiceRouter({ device, natural = null, homebase = null, getSettings = () => ({}), waitMs = WAIT_MS } = {}) {
   let current = null; // the router stream being spoken
 
   const settings = () => {
@@ -56,9 +64,17 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
   };
   const wantNatural = () => !!natural && settings().naturalVoice === true && natural.audio.supported();
   const engineState = () => (natural ? natural.engine.status().state : 'off');
+  const wantHomebase = () => {
+    if (!homebase || settings().homeBaseSpeak !== true) return false;
+    try {
+      return !!homebase.audio.supported() && !!homebase.canSpeak();
+    } catch {
+      return false;
+    }
+  };
 
   function naturalDeps(r) {
-    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, h.from) };
+    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, r.base + h.from) };
   }
 
   // ---- router streams -------------------------------------------------------------------
@@ -93,11 +109,13 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
   function spokenUpTo(r) {
     if (!r.backend) return 0;
     const n = r.backend.spokenUpTo();
-    return r.kind === 'device' ? (n > 0 ? r.base + n : r.base) : n;
+    return n > 0 ? r.base + n : r.base;
   }
 
   function events(r, kind) {
-    const base = () => (kind === 'device' ? r.base : 0);
+    // Offsets into text(): a stream that took over part way (the device voice, or the on-device
+    // George after the home base) starts at r.base; one that spoke from the start has r.base 0.
+    const base = () => r.base;
     const mine = () => !r.ended && r.kind === kind;
     return {
       rate: r.opts.rate,
@@ -126,6 +144,7 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
 
   function choose(r) {
     if (r.kind || r.ended) return;
+    if (wantHomebase()) return startHomebase(r);
     if (!wantNatural()) return startDevice(r, 0);
     // Known to be too slow on this device (a verdict kept across reloads): the device voice, at once.
     if (typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow() && engineState() !== 'ready') return startDevice(r, 0);
@@ -170,14 +189,11 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
     }
   }
 
-  /** The device voice says everything from `from` (an offset into mirror.norm) onwards. */
-  function startDevice(r, from) {
-    stopWaiting(r);
-    r.kind = 'device';
+  /** The text from `from` (an offset into mirror.norm) on, with its line breaks and pending space. */
+  function restFrom(r, from) {
     const t = r.mirror.norm;
     let base = Math.max(0, Math.min(from, t.length));
     while (base < t.length && t.charCodeAt(base) === 32) base += 1;
-    r.base = base;
     // Rebuild the rest with its line breaks (they end chunks and make pauses) and pending space.
     let rest = '';
     let bi = 0;
@@ -187,6 +203,58 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
       rest += t[i] === ' ' && breaks[bi] === i ? '\n' : t[i];
     }
     if (r.mirror.pendingWs) rest += r.mirror.pendingBreak ? '\n' : ' ';
+    return { base, rest };
+  }
+
+  /** The home base's George speaks the stream (v7.7): the natural stream on the home base's engine. */
+  function startHomebase(r) {
+    stopWaiting(r);
+    r.kind = 'homebase';
+    const ev = events(r, 'homebase');
+    try {
+      r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from) }, ev);
+      if (r.raw) r.backend.append(r.raw);
+      if (r.finished) r.backend.finish();
+    } catch (err) {
+      report(err);
+      afterHomebase(r, 0);
+    }
+  }
+
+  function handoffHome(r, from) {
+    if (r.ended || r.kind !== 'homebase') return;
+    afterHomebase(r, from);
+  }
+
+  /** The home base couldn't go on: the on-device George when it is on and ready, else the device voice. */
+  function afterHomebase(r, from) {
+    if (wantNatural() && engineState() === 'ready') startNaturalAt(r, from);
+    else startDevice(r, from);
+  }
+
+  /** The on-device George says everything from `from` on (after the home base's voice). */
+  function startNaturalAt(r, from) {
+    stopWaiting(r);
+    const { base, rest } = restFrom(r, from);
+    r.kind = 'natural';
+    r.base = base;
+    const ev = events(r, 'natural');
+    try {
+      r.backend = createNaturalStream(naturalDeps(r), ev);
+      if (rest) r.backend.append(rest);
+      if (r.finished) r.backend.finish();
+    } catch (err) {
+      report(err);
+      startDevice(r, from);
+    }
+  }
+
+  /** The device voice says everything from `from` (an offset into mirror.norm) onwards. */
+  function startDevice(r, from) {
+    stopWaiting(r);
+    r.kind = 'device';
+    const { base, rest } = restFrom(r, from);
+    r.base = base;
     const ev = events(r, 'device');
     try {
       const stream = device.createSpeechStream(ev);
@@ -242,12 +310,12 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
 
   function createSpeechStream(opts) {
     const r = open(opts);
-    if (!wantNatural()) startDevice(r, 0); // the device voice behaves exactly as before
+    if (!wantNatural() && !wantHomebase()) startDevice(r, 0); // the device voice behaves exactly as before
     return r.handle;
   }
 
   function speak(text, opts) {
-    if (!wantNatural()) {
+    if (!wantNatural() && !wantHomebase()) {
       // Unchanged path: tts.speak() itself (synchronous start inside a gesture on iOS).
       stopAll();
       return device.speak(text, opts);
@@ -287,6 +355,13 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
       const known = typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow();
       if (engineState() === 'off' && !known) natural.engine.start().catch(() => {});
     }
+    if (homebase && settings().homeBaseSpeak === true) {
+      try {
+        homebase.audio.unlock(); // inside the tap: iOS starts Web Audio only there
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function ttsSupported() {
@@ -296,21 +371,29 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
     } catch {
       dev = false;
     }
-    return dev || wantNatural();
+    return dev || wantNatural() || wantHomebase();
   }
 
   function activeEngine() {
     return current && !current.ended ? current.kind : null;
   }
 
+  /** The Web Audio output the active stream plays through (the natural voice's, or the home base's). */
+  function playingAudio() {
+    const kind = activeEngine();
+    const a = kind === 'natural' && natural ? natural.audio : kind === 'homebase' && homebase ? homebase.audio : null;
+    return a && a.busy() ? a : null;
+  }
+
   function getOutputLevel() {
-    if (!natural || activeEngine() !== 'natural' || !natural.audio.busy()) return null;
-    return natural.audio.level();
+    const a = playingAudio();
+    return a ? a.level() : null;
   }
 
   function getOutputBands(out) {
-    if (!natural || activeEngine() !== 'natural' || !natural.audio.busy()) return false;
-    natural.audio.bands(out);
+    const a = playingAudio();
+    if (!a) return false;
+    a.bands(out);
     return true;
   }
 
@@ -337,5 +420,6 @@ export function createVoiceRouter({ device, natural = null, getSettings = () => 
     getOutputBands,
     activeEngine,
     natural,
+    homebase,
   };
 }
