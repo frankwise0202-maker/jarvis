@@ -9,6 +9,11 @@
 //   disk activity     bytes per second (MB/s)
 
 export const NBSP = ' ';
+/**
+ * The separator between the parts of a caption ("85 °C · 3.6 GB VRAM", "35 GB free of 983 GB · /"):
+ * where the caption wraps (a phone), the dot goes down with the part after it and never ends a line.
+ */
+export const SEP = ` ·${NBSP}`;
 const THIN = ' ';
 
 /**

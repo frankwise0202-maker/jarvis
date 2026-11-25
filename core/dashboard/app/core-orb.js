@@ -219,7 +219,7 @@ const NOOP = Object.freeze({
 
 /**
  * @param {HTMLCanvasElement} canvas  fills the core stage (the readouts sit in its corners)
- * @param {{ onLayout?: (g: {w:number,h:number,cx:number,cy:number,R:number,anchors:object}) => void, readoutWidth?: number }} [opts]
+ * @param {{ onLayout?: (g: {w:number,h:number,cx:number,cy:number,R:number,anchors:object,compact:boolean}) => void, readoutWidth?: number }} [opts]
  */
 export function createOrb(canvas, opts = {}) {
   let ctx = null;
@@ -370,7 +370,7 @@ export function createOrb(canvas, opts = {}) {
     if (canvas.height !== bh) canvas.height = bh;
     if (changed && width > 1 && height > 1) {
       computeGeometry();
-      if (opts.onLayout) opts.onLayout({ w: width, h: height, cx: gcx, cy: gcy, R: gR, anchors });
+      if (opts.onLayout) opts.onLayout({ w: width, h: height, cx: gcx, cy: gcy, R: gR, anchors, compact });
     }
     updateAwake();
     if (width > 1 && height > 1) drawFrame(0); // resizing clears the canvas: never a blank frame

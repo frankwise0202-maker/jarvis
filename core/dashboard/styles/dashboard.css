@@ -1438,18 +1438,48 @@ html.cursor-hidden * {
 }
 
 /* ---- a remote viewer in the kiosk layout (a big tablet on its side, the Mac's full screen) ---- */
-/* The Alienware's own screen never matches these (its <html> says data-view="kiosk"). */
+/* The Alienware's own screen never matches these (its <html> says data-view="kiosk"). A screen that
+   can be touched (the iPad Pro on its side) gets 44px targets and a 16px question box; the Mac's
+   mouse keeps the kiosk's sizes, so its transcript keeps the kiosk's height. */
+@media (any-pointer: coarse) {
+  html[data-view='remote'] .ask-input {
+    font-size: max(16px, 1rem); /* iOS zooms the whole page into a field under 16px */
+  }
+  html[data-view='remote'] .ask-chip,
+  html[data-view='remote'] .ask-send,
+  html[data-view='remote'] .ask-input,
+  html[data-view='remote'] .open-jarvis {
+    min-height: 44px; /* touch targets */
+  }
+  html[data-view='remote'] .ask-chip {
+    min-width: 44px;
+  }
+}
+/* The box's hint ends in "…" where a narrow box cannot hold it (a phone, the iPad Pro's 16px). */
 html[data-view='remote'] .ask-input {
-  font-size: max(16px, 1rem); /* iOS zooms the whole page into a field under 16px */
+  text-overflow: ellipsis;
 }
-html[data-view='remote'] .ask-chip,
-html[data-view='remote'] .ask-send,
-html[data-view='remote'] .ask-input,
-html[data-view='remote'] .open-jarvis {
-  min-height: 44px; /* touch targets */
-}
-html[data-view='remote'] .ask-chip {
-  min-width: 44px;
+/* What the kiosk shows only the newest of scrolls for a remote viewer: the transcript (an answer
+   taller than the box arrives showing its start; assistant.js) and the event log (all 40 rows).
+   The faded edges stay; the padding under them lets the first and the last row scroll clear. */
+@media (min-width: 1366px) and (min-height: 740px) {
+  html[data-view='remote'] .transcript,
+  html[data-view='remote'] .events {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-2) transparent;
+  }
+  html[data-view='remote'] .transcript {
+    justify-content: flex-start;
+    padding-top: 1.5rem;
+  }
+  html[data-view='remote'] .transcript > :first-child {
+    margin-top: auto; /* a short talk sits at the bottom, as on the kiosk */
+  }
+  html[data-view='remote'] .events {
+    padding-bottom: 1.5rem;
+  }
 }
 /* A tap answers in the HUD's own colour (iOS flashes grey otherwise; hover never sticks). */
 html[data-view='remote'] {
@@ -1468,7 +1498,7 @@ html[data-view='remote'] .ask-send:active {
 /* The kiosk layout above needs a window of at least 1366×740 (it bottoms out at 1rem = 12px).
    Anything narrower or shorter (the iPhone, the iPad, the Mac's browser window) scrolls instead:
    the core and its four readouts on top, then the panels in two columns, or in one on a phone
-   (max-width: 480px). 1rem is 16px here, so labels stay at 12px and body text at 14px or more.
+   (max-width: 560px). 1rem is 16px here, so labels stay at 12px and body text at 14px or more.
    The order puts what the owner checks from afar first: services, then the machine, then the
    assistant, the processes and the log. Each panel lays out its insides by its own width
    (container queries), so a phone's column and a tablet's half-width column both fit. */
@@ -1970,8 +2000,41 @@ html[data-view='remote'] .ask-send:active {
   }
 }
 
-/* A phone held upright: one column, the core on top with its readouts in a 2×2 grid under it. */
-@media (max-width: 480px) {
+/* A phone on its side (under 431px tall): the top bar keeps to one line (the small orb and the
+   HOST label go, the gaps tighten), and the core sits at the top of its readouts instead of
+   centred on them, so the whole core is on the first screen. */
+@media (max-height: 430px) and (min-width: 561px) {
+  .topbar {
+    column-gap: 0.75rem;
+    padding-bottom: 0.5rem;
+  }
+  .brand-orb,
+  .brand-host .hud-label {
+    display: none;
+  }
+  .brand-host {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .open-jarvis {
+    padding: 0 0.75rem;
+  }
+  .core-stage {
+    align-items: start;
+  }
+}
+/* The narrowest (the first iPhone SE, 568px): the host name goes too (the Services panel still
+   shows the machine's tailnet name), so a long state word ("NOMINAL") leaves room for the rest. */
+@media (max-height: 430px) and (min-width: 561px) and (max-width: 640px) {
+  .brand-host {
+    display: none;
+  }
+}
+
+/* A phone held upright, a narrow window, an iPad in Split View: one column, the core on top with
+   its readouts in a 2×2 grid under it. Two columns start at 561px, where a half-width panel holds
+   the network's values ("UNREACHABLE", "999 Mb/s") and the question box keeps its room. */
+@media (max-width: 560px) {
   :root {
     --orb: min(78vw, 20rem);
     --panel-pad: 0.75rem 0.875rem 0.875rem;

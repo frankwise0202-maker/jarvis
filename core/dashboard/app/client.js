@@ -14,6 +14,10 @@ const monoNow = () => (typeof performance !== 'undefined' && performance.now ? p
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
 const EVENTS_EVERY_MS = 15000;
 const FETCH_TIMEOUT_MS = 6000;
+// The home base brain (Core 1.1.0): read with everything else, followed through the stream's
+// `job`, `watcher`, `spend` and `briefing` frames, and read again this often as a backstop.
+const BRAIN_EVERY_MS = 60000;
+const BRAIN_EVENTS = ['job', 'watcher', 'spend', 'briefing'];
 
 async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -27,6 +31,35 @@ async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   }
 }
 
+/** Like getJson, but an HTTP error is an answer ({status, body}), not a failure: a Core without a
+ *  brain answers api/brain with 404, which means "no brain UI", while a network error means "keep
+ *  what we have". */
+async function getStatusJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(() => ctrl && ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined, headers: { accept: 'application/json' } });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    return { status: res.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Does a Core of this version have the brain API (1.1.0 and later)? Unknown versions are asked. */
+export function hasBrainApi(version) {
+  const m = /^v?(\d+)\.(\d+)/.exec(String(version ?? ''));
+  if (!m) return version === undefined || version === null || version === '';
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  return major > 1 || (major === 1 && minor >= 1);
+}
+
 /**
  * @param {{
  *   onStatus: (raw: object) => void,          a full status (replaces the merged state)
@@ -35,6 +68,10 @@ async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
  *   onHistory: (body: object) => void,
  *   onEvents: (body: object) => void,         the events body, or one pushed event
  *   onLink: (online: boolean) => void,        the link went up / down
+ *   onBrain?: (body: object|null) => void,    GET api/brain (null: the Core has no brain, 404)
+ *   onJobs?: (body: object) => void, onWatchers?: (body: object) => void,
+ *   onBriefing?: (body: object|null) => void, the latest briefing (null: none yet)
+ *   onBrainEvent?: (name: string, body: object) => void,   a job/watcher/spend/briefing frame
  *   fetchImpl?: typeof fetch, EventSourceImpl?: typeof EventSource, base?: string,
  *   monoNow?: () => number,                    a monotonic clock in ms (tests)
  * }} hooks
@@ -44,6 +81,16 @@ export function createClient(hooks) {
   const mono = hooks.monoNow || monoNow;
   const fetchImpl = hooks.fetchImpl || ((...a) => fetch(...a));
   const ES = hooks.EventSourceImpl || (typeof EventSource === 'function' ? EventSource : null);
+  const noop = () => {};
+  const onBrain = hooks.onBrain || noop;
+  const onJobs = hooks.onJobs || noop;
+  const onWatchers = hooks.onWatchers || noop;
+  const onBriefing = hooks.onBriefing || noop;
+  const onBrainEvent = hooks.onBrainEvent || noop;
+  let brainTimer = 0;
+  let brainReads = 0;
+  let coreVersion; // from api/info: the brain API exists from 1.1.0
+  let briefingAt = null; // the brain's briefing.lastAt when the briefing was last read
   let es = null;
   let online = false;
   let lastMessage = 0; // monotonic
@@ -66,12 +113,66 @@ export function createClient(hooks) {
 
   async function fullRead() {
     const results = await Promise.allSettled([
-      getJson(`${base}api/info`, fetchImpl).then((b) => hooks.onInfo(b)),
+      // The brain is read once the Core has said which version it is: a 1.0 Core has none, and
+      // asking it anyway would only log a 404 in the browser's console.
+      getJson(`${base}api/info`, fetchImpl).then((b) => {
+        hooks.onInfo(b);
+        coreVersion = b && typeof b === 'object' ? b.version : undefined;
+        return hasBrainApi(coreVersion) ? readBrain() : onBrain(null);
+      }),
       getJson(`${base}api/status`, fetchImpl).then((b) => hooks.onStatus(b)),
       getJson(`${base}api/history?range=15m&series=cpu,gpu,ram,netRx,netTx`, fetchImpl).then((b) => hooks.onHistory(b)),
       getJson(`${base}api/events?limit=40`, fetchImpl).then((b) => hooks.onEvents(b)),
     ]);
     return results[1].status === 'fulfilled';
+  }
+
+  /** The latest briefing (after a `briefing` frame, which carries only its date and greeting). */
+  async function readBriefing() {
+    try {
+      const r = await getStatusJson(`${base}api/briefing`, fetchImpl);
+      if (r.status === 200) onBriefing(r.body);
+      else if (r.status === 404) onBriefing(null);
+    } catch {
+      /* the next read catches up */
+    }
+  }
+
+  /**
+   * The brain: api/brain, then its jobs, watchers and the latest briefing. A 404 means the Core
+   * has no brain (1.0.0): the page shows none of it. Any other failure keeps what is shown.
+   */
+  async function readBrain(force = false) {
+    brainReads++;
+    let r;
+    try {
+      r = await getStatusJson(`${base}api/brain`, fetchImpl);
+    } catch {
+      return;
+    }
+    if (r.status === 404) {
+      onBrain(null);
+      return;
+    }
+    if (r.status !== 200 || !r.body || typeof r.body !== 'object') return;
+    onBrain(r.body);
+    // The latest briefing only when there is one (briefing.lastAt) and it changed since the last
+    // read: before the first one the Core answers 404 none_yet, which the console would log.
+    const lastAt = r.body.briefing && typeof r.body.briefing === 'object' ? r.body.briefing.lastAt ?? null : null;
+    const reads = [getJson(`${base}api/jobs?limit=30`, fetchImpl).then((b) => onJobs(b)), getJson(`${base}api/watchers`, fetchImpl).then((b) => onWatchers(b))];
+    if (!lastAt) {
+      briefingAt = null;
+      onBriefing(null);
+    } else if (lastAt !== briefingAt || force) {
+      reads.push(readBriefing().then(() => (briefingAt = lastAt)));
+    }
+    await Promise.allSettled(reads);
+  }
+
+  async function pollBrain() {
+    if (stopped) return;
+    if (online && hasBrainApi(coreVersion)) await readBrain().catch(() => {});
+    if (!stopped) brainTimer = setTimeout(pollBrain, BRAIN_EVERY_MS);
   }
 
   async function pollEvents() {
@@ -94,6 +195,7 @@ export function createClient(hooks) {
         es.removeEventListener('event', onPushedEvent);
         es.removeEventListener('status', onPushedStatus);
         es.removeEventListener('info', onPushedInfo);
+        for (const name of BRAIN_EVENTS) es.removeEventListener(name, onPushedBrain);
       } catch {
         /* older EventSource shims */
       }
@@ -145,6 +247,14 @@ export function createClient(hooks) {
     hooks.onEvents(body);
   }
 
+  /** A brain frame (job, watcher, spend, briefing): compact objects as the Core's contract says. */
+  function onPushedBrain(e) {
+    const body = parse(e);
+    if (!body || typeof body !== 'object') return;
+    alive();
+    onBrainEvent(e.type, body);
+  }
+
   function onPushedInfo(e) {
     const body = parse(e);
     if (!body || typeof body !== 'object') return;
@@ -181,6 +291,7 @@ export function createClient(hooks) {
     source.addEventListener('status', onPushedStatus);
     source.addEventListener('event', onPushedEvent);
     source.addEventListener('info', onPushedInfo);
+    for (const name of BRAIN_EVENTS) source.addEventListener(name, onPushedBrain);
     source.onerror = () => {
       // CLOSED: the browser gave up (an HTTP error, a wrong type); CONNECTING: it will retry by
       // itself, but our watchdog still decides when the Core counts as offline.
@@ -203,6 +314,7 @@ export function createClient(hooks) {
     connect();
     watchdog = setInterval(check, 1000);
     eventsTimer = setTimeout(pollEvents, EVENTS_EVERY_MS);
+    brainTimer = setTimeout(pollBrain, BRAIN_EVERY_MS);
     return ok;
   }
 
@@ -229,6 +341,7 @@ export function createClient(hooks) {
     closeStream();
     clearTimeout(reconnectTimer);
     clearTimeout(eventsTimer);
+    clearTimeout(brainTimer);
     clearInterval(watchdog);
     reconnectTimer = 0;
   }
@@ -239,6 +352,8 @@ export function createClient(hooks) {
     resume,
     isOnline: () => online,
     lastMessageAt: () => lastMessageWall,
-    stats: () => ({ messages, reconnects, online }),
+    readBriefing,
+    readBrain,
+    stats: () => ({ messages, reconnects, online, brainReads }),
   };
 }

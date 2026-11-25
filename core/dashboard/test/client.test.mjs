@@ -2,7 +2,7 @@
 // reconnect backoff, with a fake EventSource, a fake fetch and mocked timers.
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
-import { createClient } from '../app/client.js';
+import { createClient, hasBrainApi } from '../app/client.js';
 
 class FakeES {
   static all = [];
@@ -24,7 +24,7 @@ class FakeES {
     this.readyState = 2;
   }
   send(data, type = 'message') {
-    const e = { data: JSON.stringify(data) };
+    const e = { type, data: JSON.stringify(data) };
     if (type === 'message') this.onmessage?.(e);
     else for (const fn of this.listeners[type] || []) fn(e);
   }
@@ -41,7 +41,7 @@ function setup() {
   const seen = { status: 0, snapshot: 0, info: 0, history: 0, events: 0, links: [] };
   const fetchImpl = async (url) => {
     calls.push(url);
-    const body = url.startsWith('api/info') ? { version: '1' } : url.startsWith('api/status') ? { t: 1 } : url.startsWith('api/history') ? { series: {} } : { events: [] };
+    const body = url.startsWith('api/info') ? { version: '1.1.0' } : url.startsWith('api/brain') ? { version: '1.1.0', briefing: { lastAt: '2026-11-25T07:00:00Z' } } : url.startsWith('api/status') ? { t: 1 } : url.startsWith('api/history') ? { series: {} } : { events: [] };
     return { ok: true, status: 200, json: async () => body };
   };
   const client = createClient({
@@ -82,7 +82,8 @@ test('first read, then the stream; a silent Core goes offline after 5 s and come
   t.after(() => mock.timers.reset());
   const h = setup();
   await h.client.start();
-  assert.deepEqual(h.calls.map((c) => c.split('?')[0]).sort(), ['api/events', 'api/history', 'api/info', 'api/status']);
+  // The brain (Core 1.1.0) is read with everything else: api/brain, then its jobs, watchers and briefing.
+  assert.deepEqual(h.calls.map((c) => c.split('?')[0]).sort(), ['api/brain', 'api/briefing', 'api/events', 'api/history', 'api/info', 'api/jobs', 'api/status', 'api/watchers']);
   assert.equal(FakeES.all.length, 1);
   assert.equal(FakeES.all[0].url, 'api/stream');
   FakeES.all[0].send({ t: 2 });
@@ -193,4 +194,81 @@ test('without resume, a page waking from a long sleep would first show the Core 
   h.advance(1000);
   assert.deepEqual(h.seen.links, [true, false], 'the red banner the phone used to show on unlock');
   h.client.stop();
+});
+
+test('a Core without a brain (404) gets no brain reads; a brain Core streams job/watcher/spend/briefing frames and is polled slowly', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  for (const [hasBrain, version] of [
+    [false, '1.0.0'],
+    [false, undefined],
+    [true, '1.1.0'],
+  ]) {
+    FakeES.all = [];
+    const calls = [];
+    const got = { brain: [], jobs: 0, watchers: 0, briefing: [], frames: [] };
+    const fetchImpl = async (url) => {
+      calls.push(url.split('?')[0]);
+      if (url.startsWith('api/brain') && !hasBrain) return { ok: false, status: 404, json: async () => ({ error: 'not_found', message: 'Not found' }) };
+      if (url.startsWith('api/briefing')) return { ok: false, status: 404, json: async () => ({ error: 'none_yet', message: 'No briefing yet' }) };
+      if (url.startsWith('api/info')) return { ok: true, status: 200, json: async () => ({ version: version }) };
+      const body = url.startsWith('api/brain') ? { version: '1.1.0', key: { set: false }, briefing: { lastAt: null } } : url.startsWith('api/jobs') ? { jobs: [] } : url.startsWith('api/watchers') ? { watchers: [] } : url.startsWith('api/status') ? { t: 1 } : {};
+      return { ok: true, status: 200, json: async () => body };
+    };
+    const client = createClient({
+      fetchImpl,
+      EventSourceImpl: FakeES,
+      monoNow: () => 0,
+      onStatus() {},
+      onSnapshot() {},
+      onInfo() {},
+      onHistory() {},
+      onEvents() {},
+      onLink() {},
+      onBrain: (b) => got.brain.push(b),
+      onJobs: () => got.jobs++,
+      onWatchers: () => got.watchers++,
+      onBriefing: (b) => got.briefing.push(b),
+      onBrainEvent: (name, body) => got.frames.push([name, body.id ?? body.todayUsd ?? body.date]),
+    });
+    await client.start();
+    await flush();
+    if (!hasBrain) {
+      assert.deepEqual(got.brain, [null], 'a 1.0 Core, or a 404, means no brain');
+      if (version === '1.0.0') assert.equal(calls.filter((c) => c === 'api/brain').length, 0, 'a 1.0 Core is not asked for its brain (no 404 in the console)');
+      assert.equal(calls.filter((c) => c === 'api/jobs' || c === 'api/watchers' || c === 'api/briefing').length, 0, 'nothing else of the brain is read');
+    } else {
+      assert.equal(got.brain.length, 1);
+      assert.equal(got.jobs, 1);
+      assert.equal(got.watchers, 1);
+      assert.deepEqual(got.briefing, [null], 'none yet (briefing.lastAt null)');
+      assert.equal(calls.filter((c) => c === 'api/briefing').length, 0, 'no briefing is asked for before the first one (no 404 none_yet)');
+      const es = FakeES.all[0];
+      es.send({ id: 'j_1', status: 'running' }, 'job');
+      es.send({ id: 'w_1', status: 'met' }, 'watcher');
+      es.send({ todayUsd: 0.42 }, 'spend');
+      es.send({ date: '2026-11-25' }, 'briefing');
+      assert.deepEqual(got.frames, [
+        ['job', 'j_1'],
+        ['watcher', 'w_1'],
+        ['spend', 0.42],
+        ['briefing', '2026-11-25'],
+      ]);
+      const before = calls.filter((c) => c === 'api/brain').length;
+      mock.timers.tick(60000);
+      await flush();
+      await flush();
+      assert.equal(calls.filter((c) => c === 'api/brain').length, before + 1, 'the slow poll reads api/brain again after a minute');
+    }
+    client.stop();
+  }
+});
+
+test('the brain API exists from Core 1.1.0', () => {
+  assert.equal(hasBrainApi('1.0.0'), false);
+  assert.equal(hasBrainApi('1.0.9'), false);
+  assert.equal(hasBrainApi('1.1.0'), true);
+  assert.equal(hasBrainApi('v1.2.3'), true);
+  assert.equal(hasBrainApi('2.0.0'), true);
+  assert.equal(hasBrainApi(undefined), true, 'a Core that does not say is asked (a 404 then hides the brain)');
 });

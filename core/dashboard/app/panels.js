@@ -25,6 +25,7 @@ import {
   NBSP,
   num,
   pctNumber,
+  SEP,
 } from './format.js';
 import { meterLevel, peerLabel, shortCpuName, sortPeers, stateWord, worst } from './model.js';
 
@@ -239,7 +240,7 @@ export function createPanels() {
     const c = vm.cpu;
     const name = shortCpuName(c.model);
     const shape = c.cores ? `${c.cores} cores` : c.threads ? `${c.threads} threads` : '';
-    setText(n.cpuModel, [name, shape].filter(Boolean).join(' · ') || '—');
+    setText(n.cpuModel, [name, shape].filter(Boolean).join(SEP) || '—');
     const lv = vm.levels.cpu;
     setData(n.cpuPanel, 'level', lv);
     chip(n.cpuChip, lv);
@@ -288,7 +289,7 @@ export function createPanels() {
     setData(n.gpuPanel, 'level', lv);
     chip(n.gpuChip, lv);
     const gname = g.name ? g.name.replace(/^NVIDIA\s+/i, '') : null;
-    setText(n.gpuName, [gname, g.driver ? `driver ${g.driver}` : null].filter(Boolean).join(' · ') || '—');
+    setText(n.gpuName, [gname, g.driver ? `driver ${g.driver}` : null].filter(Boolean).join(SEP) || '—');
     setPctFigure(n.gpuUtil, g.util);
     setFigure(n.gpuTemp, fmtTemp(g.temp));
     valueLevel(n.gpuTemp, vm, 'gpu.temp');
@@ -329,7 +330,7 @@ export function createPanels() {
     const model = (drv && drv.model) || h.model;
     const size = drv && drv.size ? fmtDisk(drv.size) : null;
     const kind = drv && drv.rotational !== null ? (drv.rotational ? 'hard disk' : 'SSD') : null;
-    const dev = [model ? model.replace(/-.*$/, '') : null, [size, kind].filter(Boolean).join(' ') || null].filter(Boolean).join(' · ');
+    const dev = [model ? model.replace(/-.*$/, '') : null, [size, kind].filter(Boolean).join(' ') || null].filter(Boolean).join(SEP);
     setText(n.diskDevice, dev || (vm.disks.length ? `${vm.disks.length} filesystem${vm.disks.length === 1 ? '' : 's'}` : '—'));
     // Small system partitions (the 512 MB EFI one) only show when they are filling up.
     const list = vm.disks.filter((d) => d.mount === '/' || !(d.total < 2e9) || (d.usedPct ?? 0) >= 85).slice(0, MAX_FS);
@@ -348,7 +349,7 @@ export function createPanels() {
       valueLevel(row.pct, vm, `disk:${d.mount}`);
       const free = fmtDisk(d.free);
       const total = fmtDisk(d.total);
-      setText(row.detail, free && total ? `${free} free of ${total} · ${d.mount}${d.fs ? ` · ${d.fs}` : ''}` : d.mount);
+      setText(row.detail, free && total ? `${free} free of ${total}${SEP}${d.mount}${d.fs ? `${SEP}${d.fs}` : ''}` : d.mount);
     }
     setFigure(n.ioRead, fmtRate(vm.io.readBps));
     setFigure(n.ioWrite, fmtRate(vm.io.writeBps));
@@ -375,7 +376,7 @@ export function createPanels() {
     chip(n.netChip, lvNet);
     const KIND = { ethernet: 'Ethernet', wifi: 'Wi-Fi', mobile: 'mobile', vpn: 'VPN' };
     const link = net.speedMbps ? (net.speedMbps >= 1000 ? `${net.speedMbps / 1000} Gb/s` : `${net.speedMbps} Mb/s`) : null;
-    setText(n.netIface, [net.iface, [KIND[net.kind] || net.kind, link].filter(Boolean).join(' ') || null].filter(Boolean).join(' · ') || '—');
+    setText(n.netIface, [net.iface, [KIND[net.kind] || net.kind, link].filter(Boolean).join(' ') || null].filter(Boolean).join(SEP) || '—');
     setFigure(n.netDown, fmtBits(net.rxBps));
     setFigure(n.netUp, fmtBits(net.txBps));
     setFigure(n.netInternet, checkText(vm.internet, 'online', 'DOWN'), 'not checked');
@@ -396,7 +397,7 @@ export function createPanels() {
     const s1 = svc.core;
     setData(s1.li, 'level', coreUp ? 'ok' : 'alert');
     setText(s1.state, coreUp ? 'RUNNING' : 'NOT ANSWERING');
-    setText(s1.detail, [vm.core.version ? `v${vm.core.version.replace(/^v/, '')}` : null, vm.core.uptimeS !== null ? `up ${fmtUptime(vm.core.uptimeS)}` : null].filter(Boolean).join(' · '));
+    setText(s1.detail, [vm.core.version ? `v${vm.core.version.replace(/^v/, '')}` : null, vm.core.uptimeS !== null ? `up ${fmtUptime(vm.core.uptimeS)}` : null].filter(Boolean).join(SEP));
     if (!coreUp) all = 'alert';
 
     const site = vm.site;
@@ -404,7 +405,7 @@ export function createPanels() {
     const siteLv = site.ok === false ? worst('warn', vm.levels.site) : site.ok === null ? 'unknown' : vm.levels.site;
     setData(s2.li, 'level', siteLv);
     setText(s2.state, site.ok === true ? 'LIVE' : site.ok === false ? 'UNREACHABLE' : 'NOT CHECKED');
-    setText(s2.detail, [site.build ? `build ${site.build}` : null, site.checkedAt ? `checked ${fmtAgo(site.checkedAt, ctx.now)}` : null].filter(Boolean).join(' · '));
+    setText(s2.detail, [site.build ? `build ${site.build}` : null, site.checkedAt ? `checked ${fmtAgo(site.checkedAt, ctx.now)}` : null].filter(Boolean).join(SEP));
     if (siteLv !== 'unknown') all = worst(all, siteLv);
 
     const api = vm.api;
@@ -412,7 +413,7 @@ export function createPanels() {
     const apiLv = api.ok === false ? worst('warn', vm.levels.api) : api.ok === null ? 'unknown' : vm.levels.api;
     setData(s3.li, 'level', apiLv);
     setText(s3.state, api.ok === true ? 'REACHABLE' : api.ok === false ? 'UNREACHABLE' : 'NOT CHECKED');
-    setText(s3.detail, [api.ok === true ? fmtLatency(api.latencyMs) : api.detail, api.checkedAt ? `checked ${fmtAgo(api.checkedAt, ctx.now)}` : null].filter(Boolean).join(' · '));
+    setText(s3.detail, [api.ok === true ? fmtLatency(api.latencyMs) : api.detail, api.checkedAt ? `checked ${fmtAgo(api.checkedAt, ctx.now)}` : null].filter(Boolean).join(SEP));
     if (apiLv !== 'unknown') all = worst(all, apiLv);
 
     const ts = vm.tailscale;
@@ -451,10 +452,10 @@ export function createPanels() {
       }
       setHidden(row.li, false);
       setData(row.li, 'online', p.online === true ? 'true' : 'false');
-      const kind = p.kind && p.kind !== 'device' ? ` · ${p.kind}` : '';
+      const kind = p.kind && p.kind !== 'device' ? `${SEP}${p.kind}` : '';
       const label = peerLabel(p) + (p.self ? ' (this PC)' : kind);
       // "seen 47 min ago" stays on one line when a phone wraps the pill.
-      const when = p.online === true ? '' : p.lastSeen ? ` · ${`seen ${fmtAgo(p.lastSeen, ctx.now)}`.replace(/ /g, NBSP)}` : ' · offline';
+      const when = p.online === true ? '' : p.lastSeen ? `${SEP}${`seen ${fmtAgo(p.lastSeen, ctx.now)}`.replace(/ /g, NBSP)}` : `${SEP}offline`;
       setText(row.name, label + when);
       row.li.classList.toggle('peer-self', !!p.self);
     }
@@ -495,7 +496,7 @@ export function createPanels() {
     const g = vm.gpu;
     if (g.state === 'ok') {
       const parts = [fmtTemp(g.temp), g.memUsed !== null ? `${fmtMem(g.memUsed)}${NBSP}VRAM` : null].filter(Boolean);
-      gaugeSet('gpu', { value: g.util, sub: parts.join(' · '), level: vm.levels.gpu });
+      gaugeSet('gpu', { value: g.util, sub: parts.join(SEP), level: vm.levels.gpu });
     } else {
       const words = g.state === 'nodriver' ? 'NO DRIVER' : g.state === 'pending' || g.state === 'unknown' ? 'CHECKING' : 'NO DATA';
       const sub = g.fallbackTemp ? fmtTemp(g.fallbackTemp.temp) : g.state === 'nodriver' ? "card can't be read" : 'no reading';
@@ -508,7 +509,7 @@ export function createPanels() {
     gaugeSet('disk', {
       value: d ? d.usedPct : null,
       unknownWords: 'NO DATA',
-      sub: d ? `${d.mount === '/' ? '' : `${mountShort(d.mount)} · `}${fmtDisk(d.free) ?? '?'} free` : '',
+      sub: d ? `${d.mount === '/' ? '' : `${mountShort(d.mount)}${SEP}`}${fmtDisk(d.free) ?? '?'} free` : '',
       level: vm.levels.disk,
     });
   }
