@@ -18,6 +18,7 @@ import {
   failureState,
   matchHomeBaseCommand,
   createPoller,
+  escapeMarkdown,
   UNREACHABLE_MESSAGE,
   POLL_MS,
 } from '../../src/lib/homebase.js';
@@ -26,6 +27,7 @@ import { normalizeSettings, DEFAULT_SETTINGS } from '../../src/platform/settings
 import { RESTORED_SETTINGS } from '../../src/platform/backup.js';
 import { createHomeBase, homeBaseGlance } from '../../src/ui/homebase.js';
 import { appendHomeBaseTurn } from '../../src/engine/index.js';
+import { markdownToPlainText } from '../../src/lib/markdown.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'homebase');
 const fixture = (name) => JSON.parse(readFileSync(path.join(FIX, name), 'utf8'));
@@ -230,6 +232,15 @@ test('local command: "how’s the home base" / "home base status" (the whole sen
     'x'.repeat(200),
   ];
   for (const s of no) assert.equal(matchHomeBaseCommand(s), false, String(s));
+});
+
+test('local exchange: the Core’s words render as plain text in the chat (no links, images or HTML from it)', () => {
+  const answer = "Here's [the report](https://evil.example) ![x](https://evil.example/x.png) <b>hi</b> **now** & 4% _a_ `c` | #1";
+  const md = escapeMarkdown(answer);
+  assert.equal(markdownToPlainText(md), answer, 'it reads exactly as the Core said it');
+  assert.doesNotMatch(md, /(?<!\\)\[/, 'no unescaped bracket: no link');
+  assert.equal(escapeMarkdown(ASK.ok['How are you?'].answer), ASK.ok['How are you?'].answer, 'everyday answers are unchanged');
+  assert.equal(escapeMarkdown(null), '');
 });
 
 test('local exchange: the Core’s answer is a free local turn; what Claude sees (apiMessages) is untouched', () => {

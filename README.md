@@ -35,7 +35,7 @@ and your conversations are stored only on your device.
 9. [Updates](#updates)
 10. [Troubleshooting](#troubleshooting)
 11. [Running Jarvis on your own computer (optional)](#running-jarvis-on-your-own-computer-optional)
-12. [Coming next: Raspberry Pi 5 Jarvis Core](#coming-next-raspberry-pi-5-jarvis-core)
+12. [Jarvis Core: your home base](#jarvis-core-your-home-base)
 13. [For developers](#for-developers)
 
 ---
@@ -783,8 +783,8 @@ Other websites (at other addresses) cannot read it.
 - **Import backup** adds the backup's conversations, memory notes and saved holograms and
   blueprints (nothing is deleted) and restores your preferences: name, style, voice (the natural
   voice's speaker too, though the natural voice stays off until you turn it on), theme and
-  sounds, and Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
-  until you turn it on, because it is a download). It never changes your models,
+  sounds, Wake Jarvis (two claps, their sensitivity, back to Standby; "Hey Jarvis" stays off
+  until you turn it on, because it is a download) and your home base's address. It never changes your models,
   agent limits or spending warning. The camera you chose in
   Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
@@ -817,6 +817,8 @@ Other websites (at other addresses) cannot read it.
 - **Memory:** everything Jarvis remembers about you; edit or delete any of it.
 - **API key & spending:** test, replace or remove your key; this month's estimate; warning
   level; the **Systems dashboard**.
+- **Home base:** your Jarvis Core's address (Save, Test, Remove); see
+  [Jarvis Core: your home base](#jarvis-core-your-home-base).
 - **Data:** export a backup (conversations, memory, settings, your own protocols, statistics and
   the Blueprints library),
   import one of your own (see [Backups](#backups)), or reset Jarvis on this device.
@@ -862,6 +864,8 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **The camera picture looks mirrored** | Only the live picture of a camera that faces you is mirrored, like a mirror. What Jarvis looks at, and the frozen picture with the labels, are the right way round. |
 | **The natural voice says "Too slow on this device"** | Jarvis measured that this device makes the voice more slowly than it speaks, so the built-in voice speaks instead. Tap **Try again** (for example after closing other apps). |
 | **The natural voice download stopped** | Check the connection and tap **Try again**; what was already checked isn't downloaded again. Turning it on asks the browser to keep the download; if the phone runs low on space it may still remove it. |
+| **"Can't reach the home base. Is Tailscale on on this device?"** | Open the Tailscale app on this iPhone or Mac and switch it on (same account as the Alienware). Check that the Alienware is on and its screen shows the report. Then tap **Try again** on the tile. |
+| **The home base says "REFUSED"** | Open Jarvis from its usual address (<https://frankwise0202-maker.github.io/jarvis/>), and check the address in Settings → Home base. |
 | **Something looks stuck** | Reload the page. Your conversations are saved. |
 | **Start completely fresh** | Settings → Data → **Reset Jarvis**. This deletes everything on this device, including your key and the natural voice download. |
 
@@ -883,13 +887,35 @@ You don't need this to use Jarvis, but you can run your own copy:
 
 Press **Ctrl+C** in the terminal to stop it.
 
-## Coming next: Raspberry Pi 5 Jarvis Core
+## Jarvis Core: your home base
 
-The next step is **Jarvis Core**: a small always-on box built on a Raspberry Pi 5 with a camera,
-a microphone and a speaker, so you can talk to Jarvis anywhere in the room without picking up a
-phone. Jarvis's brain (its "engine": how it talks to Claude, runs agent missions and handles
-interruptions) is already built separately from the screen you see today, so the same engine can
-run on the Pi. Your phone and computer apps stay exactly as they are.
+Your **home base** is the Jarvis Core: your Alienware at home, running around the clock with a live
+system report on its screen and a small status assistant you can ask "How are you?". It is free (it
+never uses Claude or your API key), and only your own devices can reach it, through Tailscale, the
+private network that links your iPhone, your Mac and the Alienware.
+
+- **Install it on the Alienware:** follow the step-by-step guide in [core/README.md](core/README.md)
+  (one command to paste, then switching on Tailscale).
+- **Link Jarvis to it:**
+  1. Install the **Tailscale** app on your iPhone and Mac and sign in with the same account as on the
+     Alienware. Leave it switched on.
+  2. Find your home base's address. It ends in `.ts.net`, like
+     `https://alienware.tail1234.ts.net/`; the Core's guide shows where to read it.
+  3. In Jarvis: **Settings → Home base**, paste the address and tap **Save**. Jarvis tests it and
+     shows the computer's name, the Core's version and its health ("health OK: All systems
+     normal"). **Test** checks it again; **Remove** unlinks it.
+- **What you see:** a **Home base** tile on the home screen (on a computer, in the panel on the
+  right): online or offline, **OK**, **WARNING** or **ALERT** with the Core's one-line summary, and
+  its CPU, graphics card temperature ("driver not loaded" until the NVIDIA driver is installed), memory
+  and free disk space. It checks every 30 seconds while the tile is on screen, and never shows a number
+  the Core didn't report.
+- **Ask it:** tap **Ask the home base** on the tile, or type or say "How's the home base?" or "Home
+  base status" in the chat or in Voice Mode. The Core answers itself: free, no Claude request.
+- **"Can't reach the home base. Is Tailscale on on this device?"**: switch Tailscale on in its app on
+  this iPhone or Mac, and check that the Alienware is on.
+
+The address travels in your backups. Your phone and computer apps work exactly as before without a
+home base.
 
 ## For developers
 

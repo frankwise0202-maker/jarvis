@@ -8,6 +8,7 @@
 //   homeBaseView(status)          -> what the tile shows, from GET /api/status (null: not a Core's status)
 //   failureState(failure)         -> { phase, message } for a request that failed (unreachable, refused, ...)
 //   matchHomeBaseCommand(text)    -> true for "how's the home base" / "home base status" (the whole sentence)
+//   escapeMarkdown(text)          -> the Core's answer as Markdown that renders as plain text (the chat)
 //   createPoller({ run, intervalMs }) -> the polling lifecycle (every 30 s, only while visible)
 //
 // The tile never invents a number: a value the Core doesn't report (null, missing, a GPU without its
@@ -31,6 +32,14 @@ export function cleanLine(value, max = 200) {
   // eslint-disable-next-line no-control-regex
   const s = value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
+}
+
+/**
+ * The Core's answer as Markdown that renders as exactly that text (the chat renders a text segment as
+ * Markdown): its punctuation is escaped, so an answer can't become a link, an image or HTML.
+ */
+export function escapeMarkdown(text) {
+  return String(text == null ? '' : text).replace(/[\\`*_~[\]!<>&|#]/g, '\\$&');
 }
 
 // ---- the address ---------------------------------------------------------------------------------

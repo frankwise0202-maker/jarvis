@@ -139,7 +139,8 @@ export default [
       await t.visible('awareness-rail', { message: 'The awareness rail shows on desktop' });
       await t.visible('rail-chronometer');
       const systems = await t.visible('rail-systems');
-      t.assert(/Network/.test(await t.text(systems)) && /Not paired/i.test(await t.text(systems)), 'The Systems glance lists real readings');
+      // Jarvis Core: no home base linked yet (v7.5: the row follows the Home base tile).
+      t.assert(/Network/.test(await t.text(systems)) && /Jarvis Core\s*Not set up/i.test(await t.text(systems)), 'The Systems glance lists real readings');
       t.assert(!(await t.page.locator(tid('mission-control')).first().isVisible()), 'The empty Mission Control is gone');
       const tape = await t.visible('sensor-tape', { message: 'The sensor tape shows on wide windows' });
       t.assert(/NET\s*ONLINE/.test(await t.text(tape)), 'The tape reads the network');

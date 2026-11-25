@@ -52,6 +52,7 @@ test('settings: defaults match SPEC and are frozen', async () => {
     opticsCameraId: '', opticsCameraLabel: '', // Optics: the camera chosen last on this device (v7)
     listenWait: 'normal', listenSend: 'show', // listening (v7.2): the silence window, the 2-second check
     wakeClap: true, wakeClapSensitivity: 'normal', wakeWord: false, wakeReturn: true, // Wake Jarvis (Standby, v7.4)
+    homeBaseUrl: '', // the home base (Jarvis Core) address, not linked (v7.5)
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);

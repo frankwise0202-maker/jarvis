@@ -71,7 +71,7 @@ import { createMusicPlayer } from './music/player.js';
 import { createMusicCardView, isMacDevice } from './music/card.js';
 import { createStandby } from './standby.js';
 import { createHomeBase } from './homebase.js';
-import { matchHomeBaseCommand } from '../lib/homebase.js';
+import { matchHomeBaseCommand, escapeMarkdown } from '../lib/homebase.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
@@ -1488,7 +1488,8 @@ export async function startApp(rootEl) {
     Promise.resolve(homeBase.ask(words))
       .catch(() => ({ ok: false, message: 'Something went wrong asking the home base.' }))
       .then((r) => {
-        textSegment.text = (r && r.ok ? r.answer : r && r.message) || 'No answer from the home base.';
+        // The Core's words, shown as they are (never Markdown: no links or formatting from the Core).
+        textSegment.text = escapeMarkdown((r && r.ok ? r.answer : r && r.message) || 'No answer from the home base.');
         turn.endedAt = Date.now();
         conv.updatedAt = turn.endedAt;
         if (state.conv === conv) {
