@@ -7,6 +7,8 @@
 //                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
 //                                   onWake, onExit, unlock, pauseWhenHidden, isIOS });
 //   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
+//   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
+//                         unlock({ tap: false }), so what the voice knows about stuck audio stays
 //   standby.resume()      after the wake routine (Voice Mode closed): show it again, listen again
 //   standby.exit()        leave (a tap on the screen, Escape): the microphone is released
 //   standby.isOpen() / standby.isAwaiting()   on screen / woken (Voice Mode up, coming back after)
@@ -183,12 +185,15 @@ export function createStandby(deps = {}) {
 
   // ------------------------------------------------------------------------------ lifecycle
 
-  /** Open Standby (call inside the tap that asked for it where possible). */
-  function enter() {
+  /**
+   * Open Standby (call inside the tap that asked for it where possible). `again`: entered without a tap (Voice
+   * Mode closed into Standby): the voice is told so (v7.8.1: what it knows about stuck audio stays).
+   */
+  function enter({ again = false } = {}) {
     if (phase === 'open') return;
     if (typeof createCapture !== 'function') return;
     try {
-      unlock(); // the voice that will greet the owner later is unlocked in this tap (iOS)
+      unlock({ tap: !again }); // the voice that will greet the owner later is unlocked in this tap (iOS)
     } catch {
       /* decoration */
     }

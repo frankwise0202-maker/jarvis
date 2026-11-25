@@ -4,7 +4,9 @@
 // off switch), and what it is doing (downloading, getting ready, resting). Without one: the two free ways
 // to George (link the home base; or George on this device: its download, "may be slow on iPhone"). And a
 // plain tip for a better built-in voice (iPhone: an Enhanced or Premium British voice; Jarvis already
-// prefers those by himself, platform/voice/tts.js rankVoices).
+// prefers those by himself, platform/voice/tts.js rankVoices). v7.8.1: when George's sound didn't start on
+// this device (the router's audioStuck()), it says so plainly and that the device's voice speaks until Test
+// (a tap) tries him again; the switch stays as it is.
 //
 //   const card = createJarvisVoiceCard({ tts, senses, natural, getSettings, commit, toast, os, goTo });
 //   card.el · card.sync(settings) · card.destroy()
@@ -124,7 +126,8 @@ export function createJarvisVoiceCard({ tts, senses = null, natural = null, getS
     if (destroyed) return;
     const s = settings();
     const vname = name();
-    const use = voiceInUse({ settings: s, senses: sensesInput(), natural: naturalInput(), device: deviceVoice, os, voiceName: vname });
+    const stuck = safe(() => !!(tts && typeof tts.audioStuck === 'function' && tts.audioStuck()), false);
+    const use = voiceInUse({ settings: s, senses: sensesInput(), natural: naturalInput(), device: deviceVoice, os, voiceName: vname, audioStuck: stuck });
     el.dataset.engine = use.engine;
     if (!testing) tag.set(use.engine, use.label);
     setText(where, use.where);
@@ -223,6 +226,8 @@ export function createJarvisVoiceCard({ tts, senses = null, natural = null, getS
       }),
     );
   }
+  // v7.8.1: George's sound found stuck (or working again).
+  if (tts && typeof tts.onAudioStuck === 'function') offs.push(tts.onAudioStuck(() => render()));
   if (senses) {
     offs.push(senses.subscribe(() => render()));
     const unwatch = safe(() => (senses.base() ? senses.watch() : null), null);

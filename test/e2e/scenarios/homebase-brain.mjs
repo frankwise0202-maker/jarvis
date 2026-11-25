@@ -289,12 +289,18 @@ export default [
         await t.visible('brain-watchers-empty');
       });
 
-      await t.step('Spending', async () => {
+      await t.step('Spending: today’s total and the days below agree', async () => {
+        // v7.8.1: the home base spent more on its own meanwhile (a watcher's check, say), after this device's
+        // last reading of api/brain: the tab must not show one total for today above and another below.
+        t.core.brain.spend.todayUsd = 0.97;
+        t.core.brain.spend.monthUsd = 3.65;
         await tab(t, 'spending');
         const today = t.locator('brain-spend-today');
-        await t.waitFor(async () => /of \$5\.00/.test(await t.text(today)), { timeout: 5000, message: async () => `today against the limit (${await t.text(today)})` });
-        t.assert(/This month\s*\$3\.10 of \$50/.test(await t.text(t.locator('brain-spend-month'))), `the month (${await t.text(t.locator('brain-spend-month'))})`);
         await t.waitFor(async () => (await t.locator('brain-spend-days').locator('li').count()) === 3, { timeout: 5000, message: 'the days with spending' });
+        const newest = async () => (await t.text(t.locator('brain-spend-days').locator('.hbs-day__usd').first())).trim();
+        await t.waitFor(async () => /Today\s*\$0\.97 of \$5\.00/.test(await t.text(today)), { timeout: 5000, message: async () => `today, fresh, against the limit (${await t.text(today)}; the days below say ${await newest()} for today)` });
+        t.assert((await newest()) === '$0.97', `the days below say the same for today (${await newest()})`);
+        t.assert(/This month\s*\$3\.65 of \$50/.test(await t.text(t.locator('brain-spend-month'))), `the month, fresh (${await t.text(t.locator('brain-spend-month'))})`);
         await shot(t, '6-spending');
       });
       t.assert(t.requests('lead').length === 0, 'no Claude request from this device');
@@ -495,8 +501,29 @@ export default [
         await t.waitFor(async () => /Good morning, Tony\./.test(await t.text(turn)), { timeout: 8000, message: async () => `the briefing (${await t.text(turn)})` });
         t.assert((await turn.locator('a[href="https://news.example.com/markets"]').count()) === 1, 'a headline linked');
         t.assert((await turn.locator('a[href^="javascript"]').count()) === 0, 'no javascript: link');
+        t.assert(!t.core.brain.runs, 'the recent briefing, not a new one');
+        t.assert((await t.text(turn.locator(tid('turn-stats')))).trim() === 'Free · Home base', `free: it was already made (${await t.text(turn.locator(tid('turn-stats')))})`);
         await turn.scrollIntoViewIfNeeded();
         await shot(t, '1-chat');
+      });
+
+      await t.step('brief me when the last briefing is old: the home base makes a full one with the key, and it isn’t labelled free', async () => {
+        // v7.8.1 (A3): older than 3 hours, so "brief me" has the Core make a new one; with a key that's the
+        // full (paid) briefing.
+        t.core.brain.briefing.generatedAt = new Date(Date.now() - 9 * 3600 * 1000).toISOString();
+        t.core.brain.runKind = 'full';
+        const turn = await t.send('Brief me');
+        await t.waitFor(() => t.core.brain.runs === 1, { timeout: 8000, message: 'a new briefing made by the home base' });
+        await t.waitFor(async () => /Good morning, Tony\./.test(await t.text(turn)), { timeout: 8000, message: async () => `the new briefing (${await t.text(turn)})` });
+        const stats = turn.locator(tid('turn-stats'));
+        await t.waitFor(async () => (await t.text(stats)).trim() === 'Home base', { timeout: 5000, message: async () => `“Home base”, not “Free · Home base” (${await t.text(stats)})` });
+        t.assert(/Claude key/.test((await stats.getAttribute('title')) || ''), `its tooltip says why (${await stats.getAttribute('title')})`);
+        await t.reload();
+        const again = t.page.locator(tid('turn-jarvis')).last();
+        await again.waitFor({ state: 'visible', timeout: 10000 });
+        t.assert((await t.text(again.locator(tid('turn-stats')))).trim() === 'Home base', 'still so after a reload (saved with the turn)');
+        await again.scrollIntoViewIfNeeded();
+        await shot(t, '1b-chat-paid');
       });
 
       await t.step('said in Voice Mode', async () => {

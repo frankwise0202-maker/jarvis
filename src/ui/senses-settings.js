@@ -10,19 +10,24 @@
 // base's George, so the others keep him; a device whose switch is on turns him on there again).
 // Shown only while a home base is linked; a Core without senses says it needs an update.
 //
-//   const card = createSensesSettings(senses, { audio, createCapture, getSettings, commit, toast, os, stopSpeaking });
+//   const card = createSensesSettings(senses, { audio, createCapture, getSettings, commit, toast, os, stopSpeaking,
+//                                               unlockVoice, onSilent });
 //   card.el · card.destroy()
+//   unlockVoice()   v7.8.1: the voice router's unlockSpeech(), inside the Test tap (a stuck output gets started
+//                   afresh there); onSilent(audio): the Test's sample didn't move the audio clock (nothing
+//                   played): the router keeps replies on the device voice (tts.noteAudioStuck)
 //
 // Test ids: senses-settings, senses-state, senses-retry, senses-hear (card), senses-hear-toggle,
 // senses-hear-model, senses-hear-status (data-state), senses-hear-progress, senses-hear-test,
 // senses-hear-result, senses-speak (card), senses-speak-toggle, senses-speak-status, senses-speak-progress,
 // senses-speak-test, senses-speak-result. All text goes through dom.js (textContent only).
 
-import { h, setText } from './dom.js';
+import { h, setText, watchAway } from './dom.js';
 import { icon } from './icons.js';
 import { deviceLabel } from '../lib/brain.js';
 import { HEAR_MODELS, hearModelLabel, sensesProblem, encodeWav, HEAR_SAMPLE_RATE, NO_DEPS_MESSAGE } from '../lib/senses.js';
 import { voiceById } from '../platform/voice/natural/catalog.js';
+import { samplePlayed, silentSampleText, unsureSampleText } from '../lib/voice-choice.js';
 
 const TEST_SECONDS = 3;
 const TEST_HEAR_TIMEOUT_MS = 20000; // the first test may wait for the model to load on the home base
@@ -55,7 +60,7 @@ function thisDevice(os) {
 const pct = (p) => `${Math.round(Math.min(1, Math.max(0, p)) * 100)}%`;
 const size = (mb) => (mb ? ` of about ${mb} MB` : '');
 
-export function createSensesSettings(senses, { audio = null, createCapture = null, getSettings, commit, toast, os = 'other', stopSpeaking = () => {} } = {}) {
+export function createSensesSettings(senses, { audio = null, createCapture = null, getSettings, commit, toast, os = 'other', stopSpeaking = () => {}, unlockVoice = null, onSilent = null } = {}) {
   const say = (text, opts) => safe(() => typeof toast === 'function' && toast(text, opts));
   const settings = () => safe(() => getSettings() || {}, {});
   const devWord = thisDevice(os);
@@ -372,6 +377,7 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
     setText(speakTestLabel, 'Stop');
     speakTest.disabled = false;
     stopSpeaking();
+    if (typeof unlockVoice === 'function') safe(() => unlockVoice()); // v7.8.1: a stuck output is started afresh in this tap
     if (audio) safe(() => audio.unlock()); // inside the tap (iOS)
     out(speakOut, 'Asking the home base for a sentence…', 'busy');
     const name = (settings().userName || '').trim();
@@ -399,11 +405,25 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
     }
     out(speakOut, `Playing (made in ${(r.ms / 1000).toFixed(1)} s)…`, 'ok');
     const secs = playing.duration || r.pcm.length / r.sampleRate;
+    const ctxAtPlay = safe(() => audio.context, null);
+    // Jarvis left meanwhile (iOS stops its audio in the background): no verdict, as the stall watchdog.
+    const away = watchAway();
     setTimeout(() => {
+      const wasAway = away.done();
       if (cancelled || destroyed || testing.speak !== t) return;
       testing.speak = null;
       setText(speakTestLabel, 'Test');
-      out(speakOut, `Played “${line}” (made on the home base in ${(r.ms / 1000).toFixed(1)} s).`, 'ok');
+      // v7.8.1: "Played" only when the audio clock got through the sentence's start. A stuck output (iOS after
+      // an interruption) plays nothing without failing: say so plainly, and replies use the device voice.
+      // Second review: Jarvis in the background meanwhile, or its sound restarted under the sample: the clock
+      // can't tell, so it says that (no "Played", and nothing is marked stuck).
+      const sameOutput = safe(() => audio.context, null) === ctxAtPlay;
+      if (wasAway || !sameOutput) out(speakOut, unsureSampleText({ voiceName: voiceName(), away: wasAway }), 'info');
+      else if (samplePlayed({ clock: safe(() => audio.now(), NaN), when: playing.when, duration: secs })) out(speakOut, `Played “${line}” (made on the home base in ${(r.ms / 1000).toFixed(1)} s).`, 'ok');
+      else {
+        out(speakOut, silentSampleText({ voiceName: voiceName(), os }), 'warn');
+        if (typeof onSilent === 'function') safe(() => onSilent(audio));
+      }
       render();
     }, Math.ceil(secs * 1000) + 200);
   }

@@ -315,6 +315,21 @@ test('sync merge: a big library (2,500 items) comes in whole; a conversation run
   assert.equal(r.running, 2, 'the running conversation was left alone');
 });
 
+test('sync merge: a home base exchange keeps its footer: free, or (v7.8.1) "Home base" for a full briefing the home base made and paid for', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async ({ MAC }) => {
+    const { db, backup } = window.__mods;
+    const c = conv('hb', 6000, ['Brief me', 'How is the home base?', 'What is two and two?']);
+    Object.assign(c.turns[1], { local: 'homebase', homeBasePaid: true, costUsd: 0 });
+    Object.assign(c.turns[3], { local: 'homebase', costUsd: 0 });
+    Object.assign(c.turns[5], { homeBasePaid: true }); // not a home base exchange: not kept
+    await backup.mergeSyncedBackup(backupOf({ conversations: [c] }), { from: MAC, label: 'Mac', known: known() });
+    const got = await db.getConversation('hb');
+    return got.turns.filter((t) => t.role === 'jarvis').map((t) => [t.local || '', t.homeBasePaid === true]);
+  }, { MAC });
+  assert.deepEqual(r, [['homebase', true], ['homebase', false], ['', false]]);
+});
+
 test('sync export: this device’s backup is exactly the exported file with its ids; never the API key', async () => {
   const page = await newPage();
   const r = await page.evaluate(async () => {

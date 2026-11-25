@@ -148,7 +148,8 @@
 
 .jv-pending[data-state='error'],
 .jv-pending[data-state='nodeps'],
-.jv-pending[data-state='old'] {
+.jv-pending[data-state='old'],
+.jv-pending[data-state='stuck'] {
   background: var(--warn-soft);
 }
 

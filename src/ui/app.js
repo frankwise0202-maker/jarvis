@@ -1593,7 +1593,7 @@ export async function startApp(rootEl) {
     chronometer: (d) => chronometer(d),
     onWake: ({ trigger }) => wakeUp(trigger),
     onExit: () => updateAll(),
-    unlock: () => safe(() => unlockSpeech()),
+    unlock: (o) => safe(() => unlockSpeech(o)), // v7.8.1: { tap: false } when Standby is entered again
     pauseWhenHidden: phoneLike,
     isIOS: safe(() => isIOS(), false),
   });
@@ -1622,7 +1622,7 @@ export async function startApp(rootEl) {
     closePhoneSheets();
     if (!standby) return false;
     if (again && standby.isAwaiting()) standby.resume();
-    else standby.enter();
+    else standby.enter({ again }); // v7.8.1: again = no tap behind it
     return true;
   }
 
@@ -1703,7 +1703,10 @@ export async function startApp(rootEl) {
     return safe(() => matchBrainCommand(words), null);
   }
 
-  /** What a brain command does: { line (chat Markdown), speech (what Jarvis says), ok }. */
+  /**
+   * What a brain command does: { line (chat Markdown), speech (what Jarvis says), ok, paid? }. paid (v7.8.1):
+   * the home base spent money on it with the owner's key (a full briefing it made just now).
+   */
   async function runBrainCommand(cmd) {
     const problem = (r) => {
       const p = brainProblem(r, { limits: brain.getState().brain ? brain.getState().brain.limits : null });
@@ -1715,7 +1718,9 @@ export async function startApp(rootEl) {
       if (!r || !r.ok) return { ...problem(r), fallback: briefingFallback(r) };
       safe(() => brain.dismissMorning(r.briefing));
       safe(() => presence.noteBriefing(new Date()));
-      return { line: briefingMarkdown(r.briefing), speech: briefingSpeech(r.briefing), ok: true };
+      // v7.8.1: one made just now with the key is a full (paid) briefing: its turn isn't labelled "Free".
+      const paid = r.made === true && !!r.briefing && r.briefing.kind === 'full';
+      return { line: briefingMarkdown(r.briefing), speech: briefingSpeech(r.briefing), ok: true, paid };
     }
     if (cmd.kind === 'results') {
       const r = await brain.call('listJobs');
@@ -1789,6 +1794,7 @@ export async function startApp(rootEl) {
         }
         // Built in src/lib/brain.js: the Core's words escaped, links only from checked addresses.
         textSegment.text = String((r && r.line) || escapeMarkdown('No answer from the home base.')).slice(0, 12000);
+        if (r && r.paid === true) turn.homeBasePaid = true; // v7.8.1: "Home base", not "Free · Home base"
         turn.endedAt = Date.now();
         conv.updatedAt = turn.endedAt;
         if (state.conv === conv) {
@@ -3353,7 +3359,9 @@ export async function startApp(rootEl) {
       // v7.8: Settings → Voice → Jarvis's voice (the voice in use, Test, George on or off).
       voice: { tts, natural: naturalVoice || null, senses: senses && !state.demo ? senses : null },
       // v7.7 (beta): Settings → Home base → Hearing and voice.
-      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()) } : null,
+      // v7.8.1: its Test unlocks through the voice router (a stuck output is started afresh in the tap), and
+      // a sample that didn't play marks George's sound stuck (replies use the device voice meanwhile).
+      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()), unlockVoice: () => safe(() => unlockSpeech()), onSilent: (a) => safe(() => tts.noteAudioStuck(a)) } : null,
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),

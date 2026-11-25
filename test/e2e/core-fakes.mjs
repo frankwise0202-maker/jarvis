@@ -21,6 +21,8 @@
 // subscriptions and spend. routeFakeCore(context, { brain: false }) is a 1.0 Core (404 not_found on
 // every brain route); { brain: { key: true, briefing: true, capReached: 'daily', jobSteps: 2 } } seeds
 // it. Jobs move on as the app polls: queued -> running at the first list, done after `jobSteps` more.
+// v7.8.1: t.core.brain.runKind = 'full' makes POST api/briefing/run answer a full briefing (the Core made
+// it with the key, and paid for it); t.core.brain.runs counts those runs.
 //
 // Sync (v7.6, SPEC §24.7): api/sync like the Core's sync module (PUT a device's backup, gzip allowed;
 // GET the list; GET a device's backup), kept in a store shared by every context of a scenario
@@ -277,6 +279,8 @@ function brainRoute(b, req, url, json) {
   if (p === '/api/briefing' && m === 'GET') return b.briefing ? json(200, b.briefing) : json(404, { error: 'none_yet', message: 'no briefing yet' });
   if (p === '/api/briefing/run' && m === 'POST') {
     b.briefing = fakeBriefing(Date.now());
+    if (b.runKind) b.briefing.kind = b.runKind; // v7.8.1: 'full', a briefing the Core made (and paid for) with the key
+    b.runs = (b.runs || 0) + 1;
     return json(200, b.briefing);
   }
   if (p === '/api/spend' && m === 'GET') {

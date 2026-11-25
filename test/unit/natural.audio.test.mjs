@@ -111,6 +111,141 @@ test('audio out: play() schedules at the given time (never in the past); level/b
   assert.ok(bands.every((b) => b === 0));
 });
 
+test('audio out: kick() (v7.8.1) resumes a suspended context, suspends and resumes one that says it runs with its clock stopped (iOS), and never throws', async () => {
+  const log = [];
+  const nav = { audioSession: { type: 'auto' } };
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: { navigator: nav }, idleSuspendMs: 0 });
+  assert.equal(out.kick(), false, 'no context yet: nothing to kick');
+  out.unlock();
+  const ctx = out.context;
+  // Suspended (an interruption, a context never unlocked): resumed, with the playback session asked again.
+  ctx.state = 'suspended';
+  nav.audioSession.type = 'auto';
+  log.length = 0;
+  assert.equal(out.kick(), true);
+  assert.deepEqual(log, [['resume']]);
+  assert.equal(nav.audioSession.type, 'playback');
+  // Says it runs, but its clock stopped: suspended, then resumed.
+  const calls = [];
+  const suspend = ctx.suspend.bind(ctx);
+  ctx.suspend = () => {
+    calls.push('suspend');
+    return suspend();
+  };
+  ctx.state = 'running';
+  log.length = 0;
+  out.kick();
+  assert.deepEqual(calls, ['suspend']);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(log, [['resume']], 'resumed once suspended');
+  assert.equal(ctx.state, 'running');
+  // Refusals and exceptions are swallowed.
+  ctx.suspend = () => {
+    throw new Error('InvalidStateError');
+  };
+  ctx.resume = () => {
+    throw new Error('InvalidStateError');
+  };
+  assert.doesNotThrow(() => out.kick());
+  ctx.state = 'suspended';
+  ctx.resume = () => Promise.reject(new Error('NotAllowedError'));
+  assert.doesNotThrow(() => out.kick());
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+test('audio out: revive() (v7.8.1 integrator, inside a tap for a stuck output) suspends and resumes the stuck context, closes it, and makes and starts a fresh one in the same call; never throws', async () => {
+  const log = [];
+  const nav = { audioSession: { type: 'auto' } };
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: { navigator: nav }, idleSuspendMs: 0 });
+  assert.equal(out.revive(), true, 'no context yet: the same as unlock()');
+  const first = out.context;
+  assert.equal(first.state, 'running');
+  // It says it runs (its clock stopped): suspended, resumed, closed; a fresh 24 kHz context started at once.
+  const calls = [];
+  first.suspend = () => {
+    calls.push('suspend');
+    return Promise.resolve();
+  };
+  first.resume = () => {
+    calls.push('resume');
+    return Promise.reject(new Error('InvalidStateError: closed')); // WebKit: the close won (swallowed)
+  };
+  first.close = () => {
+    calls.push('close');
+    first.state = 'closed';
+    return Promise.reject(new Error('InvalidStateError')); // swallowed too
+  };
+  log.length = 0;
+  nav.audioSession.type = 'auto';
+  assert.equal(out.revive(), true);
+  assert.deepEqual(calls, ['suspend', 'resume', 'close']);
+  const second = out.context;
+  assert.notEqual(second, first, 'a fresh context');
+  assert.equal(second.state, 'running', 'started inside the call (the tap)');
+  assert.deepEqual(log.filter((e) => e[0] === 'new' || e[0] === 'resume' || e[0] === 'start'), [['new', { sampleRate: 24000, latencyHint: 'interactive' }], ['resume'], ['start', 0]], 'made, resumed, one silent frame');
+  assert.equal(nav.audioSession.type, 'playback');
+  // Plays on the fresh one.
+  const h = out.play(new Float32Array(2400), 24000, 0.5);
+  assert.equal(h.when, 0.5);
+  await new Promise((r) => setTimeout(r, 0)); // the rejected promises above were caught
+  // A browser that can't make a context any more: false, no exception.
+  const broken = createAudioOut({
+    AudioContextImpl: class {
+      constructor() {
+        throw new Error('NotSupportedError');
+      }
+    },
+    scope: {},
+  });
+  assert.doesNotThrow(() => broken.revive());
+  assert.equal(broken.revive(), false);
+});
+
+test('audio out: probe() (v7.8.1 integrator, outside a tap) kicks a stuck output and lets it idle-suspend as usual; nothing without a context', async () => {
+  const log = [];
+  const nav = { audioSession: { type: 'auto' } };
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: { navigator: nav }, idleSuspendMs: 30 });
+  assert.equal(out.probe(), false, 'no context: nothing to ask');
+  out.unlock();
+  const ctx = out.context;
+  ctx.state = 'suspended'; // stuck after a stall; the cause has gone, so a resume() works again
+  log.length = 0;
+  assert.equal(out.probe(), true);
+  assert.deepEqual(log, [['resume']]);
+  assert.equal(ctx.state, 'running', 'running again: its clock can move');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(ctx.state, 'suspended', 'then our own idle suspend, as after any reply (nothing plays)');
+});
+
+test('audio out (v7.8.1 integrator, L1): a play() while our own idle suspend is still landing (WebKit reads "running" until it has) resumes the context, and again once the suspend has landed', async () => {
+  const log = [];
+  const out = createAudioOut({ AudioContextImpl: fakeContextClass(log), scope: {}, idleSuspendMs: 10 });
+  out.unlock();
+  const ctx = out.context;
+  let land = null;
+  ctx.suspend = () => {
+    log.push(['suspend']);
+    return new Promise((resolve) => {
+      land = () => {
+        ctx.state = 'suspended';
+        resolve();
+      };
+    });
+  };
+  const first = out.play(new Float32Array(240), 24000, 0);
+  first.stop(); // the reply ended: the idle suspend is armed
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(land, 'our idle suspend was asked');
+  assert.equal(ctx.state, 'running', 'WebKit: still reads running while it lands');
+  log.length = 0;
+  out.play(new Float32Array(2400), 24000, 0.1); // the next reply's first chunk, in that window
+  assert.deepEqual(log.filter((e) => e[0] === 'resume'), [['resume']], 'resumed although it reads running');
+  land();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(log.filter((e) => e[0] === 'resume').length, 2, 'and again once the suspend landed under the live chunk');
+  assert.equal(ctx.state, 'running');
+});
+
 test('audio math: 8 log bands from 100 Hz to 4 kHz, each with at least one FFT bin; dB and RMS mappings', () => {
   const edges = bandEdges();
   assert.equal(edges.length, 9);

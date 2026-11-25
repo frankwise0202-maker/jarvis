@@ -12,7 +12,9 @@
 //   brain.morning()           -> the briefing view the morning card shows, or null
 //   brain.checkMorning()      GET api/brain (+ api/briefing when there is a new one)
 //   brain.dismissMorning()    the card goes; this briefing is not offered again
-//   brain.latestBriefing({ fresh }) -> Promise<{ ok, briefing } | failure>: "brief me" (a fresh one when the last is old)
+//   brain.latestBriefing({ fresh }) -> Promise<{ ok, briefing, made? } | failure>: "brief me" (a fresh one when the
+//                             last is old; made: true when this call had the home base make it, v7.8.1: with a
+//                             key the Core makes a full one, which it pays for)
 //   createMorningCard(brain, { onOpen }) -> { el, destroy }
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
@@ -200,7 +202,7 @@ export function createBrain({ getSettings, onSettingsChange, client = realClient
       if (r && r.ok && (!wantFresh || isFreshBriefing(r.briefing, now()))) return r;
       if (r && !r.ok && !(r.kind === 'http' && r.status === 404 && r.code === 'none_yet')) return r;
       const made = await call('runBriefing');
-      if (made && made.ok) return made;
+      if (made && made.ok) return { ...made, made: true };
       return r && r.ok ? r : made;
     },
     destroy() {

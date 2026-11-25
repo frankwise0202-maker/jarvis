@@ -480,20 +480,24 @@ test('controller: "brief me" shows a recent briefing, makes a new one when it is
   let r = await brain.latestBriefing();
   assert.equal(r.briefing.greeting, 'Good morning, Tony.');
   assert.ok(!fc.calls.some((c) => c[0] === 'runBriefing'));
+  assert.equal(r.made, undefined, 'v7.8.1: not made for this request');
   fc = fakeClient({ briefing: stale, runs: [made] });
   brain = createBrain({ getSettings: () => ({ homeBaseUrl: BASE }), client: fc, storage: memoryStorage() });
   r = await brain.latestBriefing();
   assert.equal(r.briefing.greeting, 'Good evening, Tony.');
+  assert.equal(r.made, true, 'v7.8.1: made just now (with a key, a full briefing the home base pays for)');
   fc = fakeClient({ briefing: null, runs: [made] });
   brain = createBrain({ getSettings: () => ({ homeBaseUrl: BASE }), client: fc, storage: memoryStorage() });
   r = await brain.latestBriefing();
   assert.equal(r.briefing.greeting, 'Good evening, Tony.');
+  assert.equal(r.made, true);
   // Making one fails: the old one is better than nothing.
   fc = fakeClient({ briefing: stale, runs: [] });
   fc.runBriefing = async () => ({ ok: false, kind: 'unreachable' });
   brain = createBrain({ getSettings: () => ({ homeBaseUrl: BASE }), client: fc, storage: memoryStorage() });
   r = await brain.latestBriefing();
   assert.equal(r.briefing.greeting, 'Good morning (old).');
+  assert.equal(r.made, undefined, 'the old one was not made now');
 });
 
 // ---- the service worker: push and notification clicks ----------------------------------------------------------

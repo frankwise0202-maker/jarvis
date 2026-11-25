@@ -15,6 +15,12 @@
 //   tts.voiceNow()           v7.8: the voice speaking now, the device voice's own speak() included
 //   tts.onVoiceChange(fn)    v7.8: fn(engine | null) when it changes (a reply starts, George hands over
 //                            mid-reply, speech ends); returns unsubscribe. The voice label uses it.
+//   tts.audioStuck()         v7.8.1: true while George's audio (Web Audio) is known not to play on this
+//                            device, so replies go to the device voice
+//   tts.onAudioStuck(fn)     v7.8.1: fn(stuck) when that changes; returns unsubscribe (Settings → Voice)
+//   tts.noteAudioStuck(a)    v7.8.1: a sample played straight through audio output `a` (Settings' Test
+//                            buttons) didn't move its clock: the same as a stall
+//   tts.unlockSpeech({ tap }) v7.8.1: { tap: false } from callers that know no tap is behind the call
 //
 // Which engine speaks a stream: the natural voice when settings.naturalVoice is on and the engine
 // is 'ready'. When it is still loading (the worker is stopped after 5 idle minutes and reloads
@@ -32,11 +38,30 @@
 // base's George through the same natural stream and audio path (each sentence fetched from api/speak,
 // queued ahead). When it fails or is too slow, the rest goes to the on-device George when that is on
 // and ready, else to the device voice, from the same offset. Off, nothing here changes.
+//
+// Stuck audio (v7.8.1): when the natural stream's watchdog finds the audio clock stopped (handoff reason
+// 'stall'), the device voice says the rest at once (never the on-device George: he plays through the same
+// Web Audio), and the router remembers that this device's Web Audio is stuck, with its clock reading. New
+// replies then go straight to the device voice, without another wait, until a tap unlocks audio again
+// (unlockSpeech() in a tap: the first tap, Voice Mode opened by hand, Test, a reply's Speak tap, the chat
+// mic; each stuck output is then started afresh inside the tap, audio.revive()) or its clock is seen to have
+// moved since (the sound came back by itself: each reply sent to the device voice meanwhile asks the stuck
+// output to run again, audio.probe(), so the next reply can tell). Then George speaks again. An
+// unlockSpeech() without a tap (Standby entered again after Voice Mode, Voice Mode opened by the wake
+// routine; or navigator.userActivation saying no tap is active) keeps what is known, so a wake greeting
+// doesn't wait 3.5 s for a sound that can't start. The George settings are never changed for this.
+// After the second review: a George reply cancelled (a tap on Voice Mode's core, Stop, a new reply) once the
+// watchdog's kick has been tried with the clock still standing counts as a stall too; a tap also starts
+// afresh an output that stalled since its context was made even if its clock has moved again since (iOS can
+// leave such a context running with nothing heard), once, and never while George plays on it; and a tap
+// starts a stuck output afresh even while George is off on this device (Hearing and voice → Test).
 
 import { newText, ingest } from './speech-text.js';
-import { createNaturalStream, stopNatural } from './natural/natural-stream.js';
+import { createNaturalStream, stopNatural, NATURAL_TIMING } from './natural/natural-stream.js';
 
 const WAIT_MS = 4000;
+// v7.8.1: stuck audio counts as working again once its clock has moved this far (seconds) since the stall.
+const STUCK_MOVED_S = 0.25;
 
 function report(err) {
   try {
@@ -90,8 +115,92 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   };
 
+  // ---- v7.8.1: stuck audio ------------------------------------------------------------------
+  // The audio outputs whose clock stopped during a reply (the natural stream's 'stall' handoff), each
+  // with its clock reading then. In the app George from the home base and George on this device share
+  // one output (one AudioContext), so one stall covers both.
+  const stuck = new Map(); // audio out -> { clock }
+  // Second review: the outputs that stalled since their context was made. Their clock may have moved again since
+  // (George came back by himself), but iOS can leave such a context running with nothing heard, which no clock
+  // shows: the next tap that finds nothing playing on one starts it afresh too (unlockSpeech()).
+  const suspect = new Set();
+  const stuckListeners = new Set();
+  const clockOf = (audio) => {
+    try {
+      const t = Number(audio.now());
+      return Number.isFinite(t) ? t : null;
+    } catch {
+      return null;
+    }
+  };
+  function noteStuck(was) {
+    const now = stuck.size > 0;
+    if (now === was) return;
+    for (const fn of Array.from(stuckListeners)) call(fn, now);
+  }
+  function markStuck(audio) {
+    if (!audio) return;
+    const was = stuck.size > 0;
+    const t = clockOf(audio);
+    stuck.set(audio, { clock: t === null ? 0 : t });
+    suspect.add(audio);
+    noteStuck(was);
+  }
+  /** Is this output known stuck? Not once its clock has moved since the stall (it came back by itself). */
+  function isStuck(audio) {
+    const rec = audio ? stuck.get(audio) : null;
+    if (!rec) return false;
+    const t = clockOf(audio);
+    if (t !== null && Math.abs(t - rec.clock) >= STUCK_MOVED_S) {
+      const was = stuck.size > 0;
+      stuck.delete(audio);
+      noteStuck(was);
+      return false;
+    }
+    return true;
+  }
+  function clearStuck() {
+    const was = stuck.size > 0;
+    stuck.clear();
+    noteStuck(was);
+  }
+  /**
+   * Is this unlockSpeech() call a tap? Callers that know none is behind it say { tap: false } (Standby entered
+   * again after Voice Mode, Voice Mode opened by the wake routine). Where the browser tells
+   * (navigator.userActivation: Safari 16.4+, Chrome), a call made while no user activation is active isn't
+   * one either. Without that API, a tap, as before.
+   */
+  function isTap(opts) {
+    if (opts && opts.tap === false) return false;
+    try {
+      const ua = globalThis.navigator && globalThis.navigator.userActivation;
+      return !ua || ua.isActive !== false;
+    } catch {
+      return true;
+    }
+  }
+  /**
+   * A reply went to the device voice because George's output is stuck: ask each stuck output he would use to
+   * run again (audio.probe(): no sound), so the next reply can see its clock move and George comes back by
+   * himself. Only as a reply starts: Voice Mode's microphone is closed while Jarvis speaks.
+   */
+  function nudgeStuck() {
+    for (const audio of Array.from(stuck.keys())) {
+      const used = (!!homebase && audio === homebase.audio && wantHomebase()) || (!!natural && audio === natural.audio && wantNatural());
+      if (!used || !isStuck(audio) || typeof audio.probe !== 'function') continue;
+      try {
+        audio.probe();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  // The engines a reply may use now: wanted, and their audio not known stuck.
+  const useHomebase = () => wantHomebase() && !isStuck(homebase.audio);
+  const useNatural = () => wantNatural() && !isStuck(natural.audio);
+
   function naturalDeps(r) {
-    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, r.base + h.from) };
+    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, r.base + h.from, h.reason) };
   }
 
   // ---- router streams -------------------------------------------------------------------
@@ -161,8 +270,12 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
 
   function choose(r) {
     if (r.kind || r.ended) return;
-    if (wantHomebase()) return startHomebase(r);
-    if (!wantNatural()) return startDevice(r, 0);
+    if (useHomebase()) return startHomebase(r);
+    if (!useNatural()) {
+      startDevice(r, 0); // v7.8.1: George's audio stuck here too: at once, no wait
+      if (stuck.size) nudgeStuck();
+      return;
+    }
     // Known to be too slow on this device (a verdict kept across reloads): the device voice, at once.
     if (typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow() && engineState() !== 'ready') return startDevice(r, 0);
     const state = engineState();
@@ -231,7 +344,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     noteKind(r);
     const ev = events(r, 'homebase');
     try {
-      r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from) }, ev);
+      r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from, h.reason) }, ev);
       if (r.raw) r.backend.append(r.raw);
       if (r.finished) r.backend.finish();
     } catch (err) {
@@ -240,14 +353,20 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   }
 
-  function handoffHome(r, from) {
+  function handoffHome(r, from, reason) {
     if (r.ended || r.kind !== 'homebase') return;
+    if (reason === 'stall') {
+      // v7.8.1: the audio clock stopped: the device voice says the rest now; new replies go to it too.
+      markStuck(homebase.audio);
+      startDevice(r, from);
+      return;
+    }
     afterHomebase(r, from);
   }
 
   /** The home base couldn't go on: the on-device George when it is on and ready, else the device voice. */
   function afterHomebase(r, from) {
-    if (wantNatural() && engineState() === 'ready') startNaturalAt(r, from);
+    if (useNatural() && engineState() === 'ready') startNaturalAt(r, from);
     else startDevice(r, from);
   }
 
@@ -288,8 +407,9 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   }
 
-  function handoff(r, from) {
+  function handoff(r, from, reason) {
     if (r.ended || r.kind !== 'natural') return;
+    if (reason === 'stall') markStuck(natural.audio); // v7.8.1: new replies go to the device voice too
     startDevice(r, from);
   }
 
@@ -320,6 +440,14 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
       noteVoice(null);
     }
     if (cancelBackend && r.backend) {
+      // Second review: George cancelled (a tap on Voice Mode's core in the silence, Stop, a new reply) while his
+      // clock had stood still past the watchdog's kick: as good as a stall, so the next reply doesn't wait for him.
+      const out = r.kind === 'homebase' && homebase ? homebase.audio : r.kind === 'natural' && natural ? natural.audio : null;
+      try {
+        if (out && typeof r.backend.stalledMs === 'function' && r.backend.stalledMs() >= NATURAL_TIMING.stallKickMs) markStuck(out);
+      } catch {
+        /* ignore */
+      }
       try {
         r.backend.cancel();
       } catch {
@@ -334,12 +462,15 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
 
   function createSpeechStream(opts) {
     const r = open(opts);
-    if (!wantNatural() && !wantHomebase()) startDevice(r, 0); // the device voice behaves exactly as before
+    if (!useNatural() && !useHomebase()) {
+      startDevice(r, 0); // the device voice behaves exactly as before
+      if (stuck.size) nudgeStuck(); // v7.8.1: George's sound stuck: ask it to run again, for the next reply
+    }
     return r.handle;
   }
 
   function speak(text, opts) {
-    if (!wantNatural() && !wantHomebase()) {
+    if (!useNatural() && !useHomebase()) {
       // Unchanged path: tts.speak() itself (synchronous start inside a gesture on iOS). v7.8: the voice
       // label follows it (its onEnd is wrapped; every other option goes through as it is).
       stopAll();
@@ -354,7 +485,9 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
         }
         call(o.onEnd, info);
       };
-      return device.speak(text, { ...o, onEnd });
+      const handle = device.speak(text, { ...o, onEnd });
+      if (stuck.size) nudgeStuck(); // v7.8.1: after the device voice has started (iOS: inside the gesture)
+      return handle;
     }
     const r = open(opts);
     r.handle.append(text);
@@ -380,20 +513,54 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     return (!!current && !current.ended) || !!(device.isSpeaking && device.isSpeaking());
   }
 
-  function unlockSpeech() {
+  function unlockSpeech(opts) {
     try {
       device.unlockSpeech();
     } catch {
       /* ignore */
     }
+    // v7.8.1: a tap gives George his next chance: what is known about stuck audio is forgotten, and each stuck
+    // output is started afresh inside the tap (audio.revive(): a new context, since a resume() can't start one
+    // that says it runs with its clock stopped, and iOS starts audio only in a gesture). If his clock still
+    // doesn't move, the stream's watchdog hands over again and the output is stuck once more. Without a tap
+    // (isTap()), what is known stays: a wake greeting goes straight to the device voice.
+    // Second review: also each output that stalled since its context was made (suspect), once, when nothing plays
+    // on it: never under a reply George is speaking (his stream waits on that context's clock).
+    const playing = (audio) => (!!current && !current.ended && (current.kind === 'homebase' || current.kind === 'natural')) || (typeof audio.busy === 'function' && !!audio.busy());
+    const revive = isTap(opts) ? Array.from(new Set([...stuck.keys(), ...Array.from(suspect).filter((a) => !playing(a))])) : null;
+    if (revive) clearStuck();
+    const revived = new Set();
+    const fresh = (audio) => {
+      if (revived.has(audio)) return; // George from the home base and on this device share one
+      revived.add(audio);
+      suspect.delete(audio);
+      audio.revive();
+    };
+    const start = (audio) => {
+      if (revive && revive.includes(audio) && typeof audio.revive === 'function') {
+        fresh(audio);
+        return;
+      }
+      audio.unlock(); // inside the tap: iOS starts Web Audio only there
+    };
     if (wantNatural()) {
-      natural.audio.unlock();
+      start(natural.audio);
       const known = typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow();
       if (engineState() === 'off' && !known) natural.engine.start().catch(() => {});
     }
     if (homebase && settings().homeBaseSpeak === true) {
       try {
-        homebase.audio.unlock(); // inside the tap: iOS starts Web Audio only there
+        start(homebase.audio);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Second review: one George doesn't use right now (switched off on this device, while Hearing and voice → Test
+    // plays through it) is started afresh in the tap too, so its "Tap Test to try again" holds. Nothing plays on it.
+    for (const audio of revive || []) {
+      if (revived.has(audio) || typeof audio.revive !== 'function') continue;
+      try {
+        fresh(audio);
       } catch {
         /* ignore */
       }
@@ -419,6 +586,27 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     if (typeof fn !== 'function') return () => {};
     voiceListeners.add(fn);
     return () => voiceListeners.delete(fn);
+  }
+
+  /** v7.8.1: George's audio is known stuck on this device (replies go to the device voice meanwhile). */
+  function audioStuck() {
+    for (const audio of Array.from(stuck.keys())) isStuck(audio); // a clock that moved since: not any more
+    return stuck.size > 0;
+  }
+
+  /** v7.8.1: fn(stuck) whenever audioStuck() changes. Returns unsubscribe. */
+  function onAudioStuck(fn) {
+    if (typeof fn !== 'function') return () => {};
+    stuckListeners.add(fn);
+    return () => stuckListeners.delete(fn);
+  }
+
+  /**
+   * v7.8.1: a sample played straight through an audio output (Settings' Test buttons, no natural stream and so
+   * no watchdog) whose clock didn't move: the same as a stall, so replies don't wait for it.
+   */
+  function noteAudioStuck(audio) {
+    markStuck(audio || (homebase && homebase.audio) || (natural && natural.audio) || null);
   }
 
   /** The Web Audio output the active stream plays through (the natural voice's, or the home base's). */
@@ -464,6 +652,9 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     activeEngine,
     voiceNow: () => voiceNow,
     onVoiceChange,
+    audioStuck,
+    onAudioStuck,
+    noteAudioStuck,
     natural,
     homebase,
   };

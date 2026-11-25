@@ -803,7 +803,10 @@ function turnOf(t, fallbackTime) {
   const apiStart = int(t.apiStart, 0, 1e9);
   if (apiStart !== null) turn.apiStart = apiStart;
   if (t.local === 'music') turn.local = 'music'; // a free Apple Music exchange (no model, no cost)
-  if (t.local === 'homebase') turn.local = 'homebase'; // a free home base exchange (the Jarvis Core answered)
+  if (t.local === 'homebase') {
+    turn.local = 'homebase'; // a home base exchange (the Jarvis Core answered; free for this device)
+    if (t.homeBasePaid === true) turn.homeBasePaid = true; // v7.8.1: a full briefing the home base paid for
+  }
   return turn;
 }
 

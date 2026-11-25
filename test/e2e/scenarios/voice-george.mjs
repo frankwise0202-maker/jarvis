@@ -19,10 +19,64 @@
 //   george-no-homebase(-mac)        no home base: Jarvis's voice offers George on this device (its
 //                                   download, "may be slow on iPhone") and the better-voice tip; Test
 //   george-old-core                 a Jarvis Core 1.1 (no senses): nothing turned on, no notice
+//   george-stuck                    v7.8.1: George's sound never starts (Web Audio stuck, installStuckAudio):
+//                                   the iPhone voice says the reply within about 5 s, labelled so; Voice Mode
+//                                   listens on and its next reply starts on the iPhone voice at once;
+//                                   Settings → Voice says why; a reply's Speak tap is said too; once the
+//                                   audio works again, Test (a tap) brings George back
+//   george-stuck-midway             v7.8.1: George's sound stops mid-sentence: the iPhone voice says the rest
+//                                   from the last word heard, and Voice Mode listens again
 
 import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
 import { installFakeSpeech } from './features.mjs';
+
+/**
+ * v7.8.1, an init script: the voice's Web Audio output (audio-out.js's 24 kHz AudioContext) stuck as iOS can
+ * leave it after an interruption, a route change or the microphone taking the audio session, or as a context
+ * never unlocked by a tap is: suspended right after it is made, and resume() resolves without resuming, so in
+ * Chromium its clock (currentTime) stops. Other contexts (sounds, the microphone) are untouched.
+ * window.__stuckAudio: { on, contexts, starts: [{ when, at, duration, t }] (each chunk put on the clock; t is
+ * performance.now()), stop() (stop the clock of a running one now), lift() (resume() works again) }.
+ */
+function installStuckAudio({ on = true } = {}) {
+  const Real = window.AudioContext || window.webkitAudioContext;
+  if (!Real) return;
+  const st = { on, contexts: [], starts: [], stoppedAt: 0 };
+  window.__stuckAudio = st;
+  class StuckAudioContext extends Real {
+    constructor(opts) {
+      super(opts);
+      this.__voice = !!opts && opts.sampleRate === 24000;
+      if (!this.__voice) return;
+      st.contexts.push(this);
+      if (st.on) super.suspend().catch(() => {});
+    }
+    resume() {
+      if (this.__voice && st.on) return Promise.resolve(); // "resumed", and nothing runs
+      return super.resume();
+    }
+  }
+  window.AudioContext = StuckAudioContext;
+  if (window.webkitAudioContext) window.webkitAudioContext = StuckAudioContext;
+  st.stop = () => {
+    st.on = true;
+    st.stoppedAt = performance.now();
+    for (const c of st.contexts) c.suspend().catch(() => {});
+  };
+  st.lift = () => {
+    st.on = false;
+  };
+  const start = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function (when, ...rest) {
+    try {
+      if (this.context && this.context.__voice && this.buffer && this.buffer.length > 1) st.starts.push({ when: Number(when) || 0, at: this.context.currentTime, duration: this.buffer.duration, t: performance.now() });
+    } catch {
+      /* bookkeeping only */
+    }
+    return start.call(this, when, ...rest);
+  };
+}
 
 const QUESTION = 'What is the capital of France?';
 const FRESH_LINK = { settings: { homeBaseUrl: CORE_URL, homeBaseSpeakBy: '' } }; // never switched on this device
@@ -443,6 +497,171 @@ export default [
       const card = await settingsVoice(t);
       await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-tag')))) === 'iPhone voice', { timeout: 8000, message: 'the iPhone voice' });
       await t.screenshot('1-settings');
+    },
+  },
+  {
+    name: 'george-stuck',
+    title: 'iPhone, George’s sound never starts (Web Audio stuck: the context suspended and resume() doing nothing, as after an interruption, the microphone taking the audio session, or a context never unlocked): the reply is said by the iPhone voice within about 5 s, labelled so; Voice Mode listens on and its next reply starts on the iPhone voice at once; Settings → Voice says why and George stays on; a reply’s Speak tap is said by the iPhone voice too; once the audio works again, a tap on Test brings George back',
+    device: 'iphone13',
+    seed: { settings: { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'auto' } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 200000,
+    async run(t) {
+      await t.newPage();
+      await prepPage(t.page);
+      await t.page.addInitScript(installStuckAudio, { on: true });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'api/senses read at launch: George ready' });
+      const said = () => t.page.evaluate(() => window.__voice.said.join(' '));
+      const saidCount = () => t.page.evaluate(() => window.__voice.said.length);
+      let vm = null;
+      await t.step('Voice Mode: George is asked, his sound never starts; the iPhone voice says the reply within about 5 s, every word once, labelled', async () => {
+        vm = await openListening(t);
+        await ask(t, vm);
+        await t.waitFor(async () => t.core.senses.speaks.length >= 1, { timeout: 20000, message: 'George asked for the reply' });
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__stuckAudio.starts.length)) >= 1, { timeout: 15000, message: 'George’s first chunk put on the (stuck) clock' });
+        await t.waitFor(async () => (await saidCount()) > 0, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
+        const gap = await t.page.evaluate(() => window.__voice.log[0].at - window.__stuckAudio.starts[0].t);
+        t.assert(gap >= 3000 && gap <= 5500, `the iPhone voice ${(gap / 1000).toFixed(1)} s after George’s first words were due (about 3.5 s: a kick at 1.5 s, the handoff at 3.5 s)`);
+        t.note(`iPhone voice after ${(gap / 1000).toFixed(2)} s`);
+        const clock = await t.page.evaluate(() => window.__stuckAudio.contexts.map((c) => [c.state, c.currentTime]));
+        t.assert(clock.length === 1 && clock[0][0] !== 'running', `George’s audio really is stuck (${JSON.stringify(clock)})`);
+        const label = await t.visible('voice-label', { timeout: 5000 });
+        await t.waitFor(async () => norm(await t.text(label)) === 'iPhone voice', { timeout: 5000, message: async () => `the label: the iPhone voice (${await t.text(label)})` });
+        await t.screenshot('1-iphone-voice');
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking: Voice Mode is not left in “speaking”' });
+        const all = norm(await said());
+        t.assert(/^The capital of France is Paris\. /.test(all) && /travel brief, Tony\?$/.test(all), `the iPhone voice said the whole reply, from its first word (${all})`);
+        t.assert(all.split('Paris.').length === 2, `each word once (${all})`);
+        const labels = await t.page.evaluate(() => window.__labels.filter((x) => x.startsWith('voice-label:')));
+        t.assert(labels[0] === 'voice-label:George · home base:homebase' && labels.includes('voice-label:iPhone voice:device'), `George first, then the iPhone voice (${labels.join(' | ')})`);
+      });
+      await t.step('Voice Mode listens on; the next reply starts on the iPhone voice at once, nothing asked of George', async () => {
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening' && (await t.page.evaluate(() => window.__voice.listens)) >= 2, { timeout: 15000, message: 'listening for the next turn' });
+        const asked = t.core.senses.speaks.length;
+        const n = await saidCount();
+        await t.page.evaluate(() => window.__voice.say('What is the capital of Germany?'));
+        let shownAt = 0;
+        await t.waitFor(
+          async () => {
+            const turns = t.page.locator(tid('turn-jarvis'));
+            if (!shownAt && (await turns.count()) && /Berlin/.test(await t.text(turns.last()))) shownAt = Date.now();
+            return shownAt > 0;
+          },
+          { timeout: 20000, interval: 50, message: 'the second reply on screen' },
+        );
+        await t.waitFor(async () => (await saidCount()) > n, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
+        const silence = (Date.now() - shownAt) / 1000;
+        t.assert(silence < 2, `the iPhone voice ${silence.toFixed(1)} s after the reply came (no new 3.5 s wait)`);
+        t.note(`next reply ${silence.toFixed(2)} s`);
+        t.assert(t.core.senses.speaks.length === asked, `nothing asked of George (${JSON.stringify(t.core.senses.speaks.slice(asked))})`);
+        const label = await t.visible('voice-label', { timeout: 5000 });
+        t.assert(norm(await t.text(label)) === 'iPhone voice', `labelled (${await t.text(label)})`);
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking' });
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 15000, message: 'listening again' });
+        await (await t.visible('voice-close')).click();
+      });
+      await t.step('Settings → Voice → Jarvis’s voice says why; George’s switch stays on', async () => {
+        const card = await settingsVoice(t);
+        await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-tag')))) === 'iPhone voice', { timeout: 8000, message: async () => `the iPhone voice speaks (${await t.text(card)})` });
+        const pending = card.locator(tid('jarvis-voice-pending'));
+        t.assert((await pending.isVisible()) && (await pending.getAttribute('data-state')) === 'stuck', 'the reason is shown');
+        t.assert(norm(await t.text(pending)) === 'George’s sound didn’t start on this iPhone, so the iPhone voice is speaking. Tap Test to try again.', `in plain words (${await t.text(pending)})`);
+        t.assert(await card.locator(tid('jarvis-voice-homebase-toggle')).isChecked(), 'the switch is on');
+        const s = await stored(t);
+        t.assert(s.homeBaseSpeak === true, 'George’s setting untouched');
+        await t.screenshot('2-settings-stuck');
+        await (await t.visible('settings-close')).click();
+      });
+      await t.step('a reply’s Speak tap: George gets another chance (a tap), his sound still doesn’t start, and the iPhone voice reads it within about 5 s, labelled beside Stop', async () => {
+        const speakBtn = t.page.locator(tid('turn-speak')).last();
+        await speakBtn.waitFor({ state: 'visible', timeout: 10000 });
+        const asked = t.core.senses.speaks.length;
+        const n = await saidCount();
+        const t0 = Date.now();
+        await speakBtn.click();
+        await t.waitFor(async () => (await saidCount()) > n, { timeout: 15000, interval: 50, message: 'the iPhone voice reads it' });
+        const took = (Date.now() - t0) / 1000;
+        t.assert(took <= 6, `read by the iPhone voice ${took.toFixed(1)} s after the tap`);
+        t.note(`Speak ${took.toFixed(2)} s`);
+        t.assert(t.core.senses.speaks.length > asked, 'George was tried again (the tap unlocks audio)');
+        const tag = t.page.locator(tid('turn-speak-voice')).last();
+        await t.waitFor(async () => (await tag.isVisible()) && norm(await t.text(tag)) === 'iPhone voice', { timeout: 5000, message: async () => `the label beside Stop (${await t.text(tag)})` });
+        await t.screenshot('3-read-aloud');
+        await t.waitFor(async () => !(await tag.isVisible()), { timeout: 40000, message: 'read to the end' });
+      });
+      await t.step('the audio works again: a tap on Test brings George back by himself', async () => {
+        await t.page.evaluate(() => window.__stuckAudio.lift());
+        const card = await settingsVoice(t);
+        const asked = t.core.senses.speaks.length;
+        const n = await saidCount();
+        await card.locator(tid('jarvis-voice-test')).click();
+        await t.waitFor(async () => /This is the voice I speak with\./.test(t.core.senses.speaks.slice(asked).map((x) => x.text).join(' ')), { timeout: 15000, message: 'George asked for the test sentence' });
+        await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-test')))) === 'Test', { timeout: 20000, message: 'the test sentence ends' });
+        t.assert((await saidCount()) === n, `George said it, not the iPhone voice (${await said()})`);
+        const clock = await t.page.evaluate(() => window.__stuckAudio.contexts.map((c) => [c.state, c.currentTime]));
+        // v7.8.1 integrator (review M1): each tap while the sound is known stuck starts a fresh context inside the
+        // tap (the Speak tap above, and this Test), and closes the stuck one.
+        const newest = clock[clock.length - 1];
+        t.assert(clock.length === 3 && clock.slice(0, -1).every(([state]) => state === 'closed') && newest[0] === 'running' && newest[1] > 0, `George’s audio runs again, on the context started by this tap (${JSON.stringify(clock)})`);
+        await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-tag')))) === 'George · home base', { timeout: 8000, message: 'Jarvis’s voice: George again' });
+        t.assert(!(await card.locator(tid('jarvis-voice-pending')).isVisible()), 'the reason is gone');
+        await t.screenshot('4-george-back');
+      });
+    },
+  },
+  {
+    name: 'george-stuck-midway',
+    title: 'iPhone, Voice Mode: George’s sound stops in the middle of a sentence (Web Audio’s clock stops: an audio interruption): within about 3.5 s the iPhone voice says the rest from the last word heard, labelled so, and Voice Mode listens again',
+    device: 'iphone13',
+    seed: { settings: { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'auto' } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await prepPage(t.page);
+      await t.page.addInitScript(installStuckAudio, { on: false });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'api/senses read at launch: George ready' });
+      const vm = await openListening(t);
+      await ask(t, vm);
+      await t.step('George speaks; his clock stops 0.7 s into his first sentence', async () => {
+        // In the page, so the clock stops at once when George is that far in.
+        await t.page.waitForFunction(
+          () => {
+            const s = window.__stuckAudio;
+            const c = s.contexts[0];
+            if (!c || !s.starts.length || c.currentTime < s.starts[0].when + 0.7) return false;
+            s.stop();
+            return true;
+          },
+          null,
+          { timeout: 20000, polling: 20 },
+        );
+        const label = await t.visible('voice-label', { timeout: 5000 });
+        t.assert(norm(await t.text(label)) === 'George · home base', `George was speaking (${await t.text(label)})`);
+        t.assert((await t.page.evaluate(() => window.__voice.said.length)) === 0, 'the iPhone voice said nothing yet');
+        await t.screenshot('1-george');
+      });
+      await t.step('the iPhone voice says the rest from the last word heard, within about 3.5 s, labelled so', async () => {
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.length)) > 0, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
+        const gap = await t.page.evaluate(() => window.__voice.log[0].at - window.__stuckAudio.stoppedAt);
+        t.assert(gap >= 3000 && gap <= 5500, `the iPhone voice ${(gap / 1000).toFixed(1)} s after the clock stopped`);
+        t.note(`iPhone voice ${(gap / 1000).toFixed(2)} s after the stop`);
+        const label = t.page.locator(tid('voice-label'));
+        await t.waitFor(async () => (await label.isVisible()) && norm(await t.text(label)) === 'iPhone voice', { timeout: 5000, message: async () => `the label changed (${await t.text(label)})` });
+        await t.screenshot('2-iphone-voice');
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking' });
+        const said = norm(await t.page.evaluate(() => window.__voice.said.join(' ')));
+        const sentence = 'The capital of France is Paris.';
+        const head = said.slice(0, said.indexOf('Paris.') + 'Paris.'.length); // what the iPhone voice said of George's first sentence
+        t.assert(said.includes('Paris.') && sentence.endsWith(` ${head}`) && head !== sentence, `from a word inside George’s first sentence, not its start: the rest of it (${said})`);
+        t.assert(/travel brief, Tony\?$/.test(said) && said.split('Paris.').length === 2, `then everything after it, once (${said})`);
+        t.note(`from “${said.split(' ')[0]}”`);
+      });
+      await t.step('Voice Mode listens again', async () => {
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening' && (await t.page.evaluate(() => window.__voice.listens)) >= 2, { timeout: 15000, message: 'listening for the next turn' });
+      });
     },
   },
 ];

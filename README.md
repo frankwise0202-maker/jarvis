@@ -535,6 +535,20 @@ runs on your own computer at home, and nothing goes to any cloud.
   the iPhone and the label changes with it. If it isn't answering at all (away from home with the
   Alienware asleep, or a bad network), the iPhone voice speaks straight away instead of after a
   silence, and George is back as soon as the home base answers again.
+- **Never left in silence.** Sometimes an iPhone stops a web app's sound without saying so (after a
+  call, when headphones connect or disconnect, or while the microphone is busy). If George's sound
+  doesn't start, the iPhone voice says the reply after about 3.5 seconds, from where George stopped
+  (a word may be said twice, never lost), and the label says **iPhone voice**. If you stop that
+  silence yourself after a second or two (a tap on the core in Voice Mode, or **Stop**), Jarvis learns
+  from it just the same. The next replies use the iPhone voice straight away. George speaks again:
+  - by himself once the sound works again, from the second reply after that, with no tap;
+  - or at your next tap that starts Jarvis's voice: **Test** in Settings → Voice → Jarvis's voice, a
+    reply's **Speak**, the microphone, or opening Voice Mode. Each of these starts George's sound
+    afresh. After he has come back by himself, the first of these taps made while he isn't speaking
+    does it once more, in case the iPhone runs his sound without letting it out.
+
+  Waking Jarvis from Standby with two claps or "Hey Jarvis" isn't a tap, so while George's sound is
+  stuck the greeting comes straight away in the iPhone voice. Nothing is switched off.
 - **Faster first words.** George's first words come from a short first piece of the reply (the
   first part of a sentence), and the rest is made while he speaks, in pieces that each fit inside the
   one before, so there's no pause after a short "Good evening, Frank.". Opening Voice Mode, or coming
@@ -886,6 +900,8 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **A mission says "Interrupted"** | Your phone paused the app or the connection dropped. Open Jarvis and tap **Resume**. |
 | **"You're offline"** | Jarvis opens without internet, but needs a connection to answer. |
 | **Jarvis doesn't speak on iPhone** | Turn off silent mode and turn the volume up. Speech starts after you have tapped once in the app. |
+| **Jarvis speaks with the iPhone voice, and Settings → Voice says "George's sound didn't start on this iPhone"** | The iPhone stopped Jarvis's sound for George (after a call, a change of headphones or speaker, or the microphone), so Jarvis switched to the iPhone voice rather than leave you in silence. Tap **Test** in Settings → Voice → Jarvis's voice: the tap starts George's sound afresh, and if the iPhone lets it play, George speaks again. He also comes back by himself once the iPhone plays his sound again. If Test still ends in the iPhone voice (or the Test in Settings → Home base → Hearing and voice says "Nothing played"), the iPhone is still holding the sound back: close Jarvis completely and open it again. |
+| **The label says George, but you hear nothing** | After a call or Siri, an iPhone can keep Jarvis's sound running without letting any of it out, and Jarvis can't tell. Tap **Test** in Settings → Voice → Jarvis's voice (or **Speak** on a reply): if George's sound had stopped earlier (the iPhone voice took over), that tap starts it afresh. If you still hear nothing, close Jarvis completely (swipe it away) and open it again. |
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
 | **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
@@ -1025,9 +1041,11 @@ right). Four tabs:
   "let me know if it's cheaper to fly or drive" is answered by Jarvis as always, never turned into a
   daily check that costs money.
 - "**Brief me**" or "**Morning briefing**": the home base's briefing; in Voice Mode Jarvis reads it
-  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the home base can't
-  be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis Core 1.0, Jarvis
-  briefs you himself, as before.
+  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the last one is more
+  than 3 hours old, the home base writes a new one; with your key that's the full briefing, which the
+  home base pays for, so its reply is labelled **Home base** rather than **Free · Home base**. If the
+  home base can't be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis
+  Core 1.0, Jarvis briefs you himself, as before.
 
 With no home base linked, these commands don't exist: what you type or say goes to Jarvis as before.
 

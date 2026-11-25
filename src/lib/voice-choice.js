@@ -8,6 +8,11 @@
 //   voiceInUse({ settings, senses, natural, device, os, voiceName })
 //                                                          the voice the next reply uses, where it comes
 //                                                          from, and what is getting ready meanwhile
+//   samplePlayed({ clock, when, duration })                v7.8.1: did a Test sample played straight through
+//                                                          Web Audio actually play (its clock got past it)?
+//   silentSampleText({ voiceName, os })                    v7.8.1: what a Test says when it didn't
+//   unsureSampleText({ voiceName, away })                  v7.8.1: what it says when it can't tell (Jarvis was
+//                                                          in the background meanwhile, or the sound restarted)
 //
 // The owner never heard a difference through the voice updates: every better voice (George on the home
 // base, George on this device) was off until he found the switch. v7.8 turns George from the home base on
@@ -106,17 +111,19 @@ export function homeVoicePending({ settings, senses, voiceName = 'George' } = {}
 /**
  * The voice the next reply uses (the same choice as the voice router, platform/voice/voice-router.js),
  * where it comes from, and what is getting ready meanwhile.
- *   settings  homeBaseUrl, homeBaseSpeak, naturalVoice
- *   senses    { phase, view, problem, cooling, canSpeak } (null: no home base in this app)
- *   natural   { supported, state, knownSlow } (the on-device engine; null: none)
- *   device    { name } the device voice Jarvis picked (or the owner chose), if known
- * Returns { engine, label, where, pending } (pending: homeVoicePending's, or null).
+ *   settings    homeBaseUrl, homeBaseSpeak, naturalVoice
+ *   senses      { phase, view, problem, cooling, canSpeak } (null: no home base in this app)
+ *   natural     { supported, state, knownSlow } (the on-device engine; null: none)
+ *   device      { name } the device voice Jarvis picked (or the owner chose), if known
+ *   audioStuck  v7.8.1: George's sound (Web Audio) didn't start on this device (the router's audioStuck()):
+ *               the device voice speaks until a tap (Test) or the sound comes back
+ * Returns { engine, label, where, pending } (pending: homeVoicePending's, the stuck sound's, or null).
  */
-export function voiceInUse({ settings, senses = null, natural = null, device = null, os = 'other', voiceName = 'George' } = {}) {
+export function voiceInUse({ settings, senses = null, natural = null, device = null, os = 'other', voiceName = 'George', audioStuck = false } = {}) {
   const s = isObj(settings) ? settings : {};
   const dev = thisDevice(os);
   const sn = isObj(senses) ? senses : null;
-  const pending = sn ? homeVoicePending({ settings: s, senses: sn, voiceName }) : null;
+  let pending = sn ? homeVoicePending({ settings: s, senses: sn, voiceName }) : null;
   let engine = 'device';
   if (sn && s.homeBaseSpeak === true && sn.canSpeak === true) engine = 'homebase';
   else if (isObj(natural) && natural.supported && s.naturalVoice === true) {
@@ -124,6 +131,11 @@ export function voiceInUse({ settings, senses = null, natural = null, device = n
     if (st === 'ready') engine = 'natural';
     else if (natural.knownSlow || st === 'slow' || st === 'error' || st === 'downloading') engine = 'device';
     else engine = 'natural'; // off, starting, loading, warming: it starts (or loads) when Jarvis next speaks
+  }
+  if (audioStuck === true && engine !== 'device') {
+    // v7.8.1: George would speak, but his sound didn't start here last time: the device voice does, and says so.
+    engine = 'device';
+    pending = { state: 'stuck', text: `${voiceName}’s sound didn’t start on ${dev}, so the ${deviceVoiceWord(os)} is speaking. Tap Test to try again.` };
   }
   const label = voiceLabel(engine, { voiceName, os });
   let where;
@@ -134,4 +146,29 @@ export function voiceInUse({ settings, senses = null, natural = null, device = n
     where = `${dev.replace(/^this /, 'This ')}’s own voice${n ? ` (${n})` : ''}.`;
   }
   return { engine, label, where, pending };
+}
+
+/**
+ * v7.8.1: did a sample played straight through Web Audio (Settings' Test buttons: no natural stream, so no
+ * watchdog) actually play? Its audio clock must have got past the sample's start: a stuck output (iOS after
+ * an interruption) plays nothing without failing. `clock`: the output's clock now; `when`, `duration`: the
+ * play() handle's. A clock that can't be read counts as played (nothing to say it didn't).
+ */
+export function samplePlayed({ clock, when, duration } = {}) {
+  if (!Number.isFinite(clock) || !Number.isFinite(when)) return true;
+  const need = Math.min(0.25, Math.max(0, Number(duration) || 0) / 2);
+  return clock >= when + need;
+}
+
+/** v7.8.1: what a Test says when its sample didn't play (the device voice speaks replies meanwhile). */
+export function silentSampleText({ voiceName = 'George', os = 'other' } = {}) {
+  return `Nothing played: ${voiceName}’s sound didn’t start on ${thisDevice(os)}, so the ${deviceVoiceWord(os)} speaks for now. Tap Test to try again.`;
+}
+
+/**
+ * v7.8.1 (second review): what a Test says when its clock can't tell whether the sample played: Jarvis was in
+ * the background during it (iOS stops its audio there), or `away` false: the sound restarted under it.
+ */
+export function unsureSampleText({ voiceName = 'George', away = true } = {}) {
+  return `Couldn’t tell whether it played: ${away ? 'Jarvis was in the background during the test' : `${voiceName}’s sound restarted during the test`}. Tap Test to try again.`;
 }

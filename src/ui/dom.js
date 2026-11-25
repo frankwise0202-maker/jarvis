@@ -147,6 +147,31 @@ export function on(target, type, fn, opts) {
 }
 
 /**
+ * v7.8.1: was the page hidden at any moment from now until done()? (iOS stops a web app's audio in the
+ * background, so a sound check made across that time says nothing.) done() stops watching and answers.
+ */
+export function watchAway(doc = typeof document !== 'undefined' ? document : null) {
+  const hiddenNow = () => !!doc && (doc.hidden === true || doc.visibilityState === 'hidden');
+  let away = hiddenNow();
+  const onChange = () => {
+    if (hiddenNow()) away = true;
+  };
+  let off = () => {};
+  try {
+    if (doc && typeof doc.addEventListener === 'function') off = on(doc, 'visibilitychange', onChange);
+  } catch {
+    /* no events: the last look below still counts */
+  }
+  return {
+    done() {
+      off();
+      off = () => {};
+      return away || hiddenNow();
+    },
+  };
+}
+
+/**
  * Coalesce calls into one per animation frame.
  *   const schedule = raf(() => render()); schedule(); schedule(); // render runs once next frame
  * schedule.cancel() cancels a pending frame; schedule.flush() runs it now if pending.
