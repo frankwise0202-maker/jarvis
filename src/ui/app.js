@@ -3012,6 +3012,9 @@ export async function startApp(rootEl) {
   }
 
   function toggleSpeakTurn(turn) {
+    // Inside the tap: iOS lets George's voice (Web Audio) play only after a gesture started it (v7.8: he
+    // may have been turned on by himself after the app's first tap).
+    safe(() => unlockSpeech());
     if (state.speaking && state.speaking.turnId === turn.id) stopSpeakingNow();
     else speakTurn(turn, 'full');
   }
@@ -3695,6 +3698,7 @@ export async function startApp(rootEl) {
 
   // iOS needs speech to be started from a user gesture once. unlockSpeech() is one-shot and iOS
   // does not accept pointerdown as that gesture, so listen for click (and keydown) instead.
+  let unlockArmedFor = '';
   const unlockOnce = () => {
     safe(() => unlockSpeech());
     document.removeEventListener('click', unlockOnce, true);
@@ -3703,6 +3707,16 @@ export async function startApp(rootEl) {
   if (ttsOk) {
     document.addEventListener('click', unlockOnce, true);
     document.addEventListener('keydown', unlockOnce, true);
+    // v7.8: George's voice from the home base turned on later (by itself, or on another screen): the next
+    // tap unlocks its audio too, so a reply read aloud (Speak replies) can play it on iOS.
+    safe(() =>
+      onSettingsChange((next) => {
+        if (next.homeBaseSpeak !== true || unlockArmedFor === next.homeBaseUrl) return;
+        unlockArmedFor = next.homeBaseUrl;
+        document.addEventListener('click', unlockOnce, true);
+        document.addEventListener('keydown', unlockOnce, true);
+      }),
+    );
   }
 
   safe(() =>

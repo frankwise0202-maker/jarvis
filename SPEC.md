@@ -3394,6 +3394,9 @@ unchanged (byte-identical).
   and voice — record `homeBaseSpeakBy: 'owner'`; the app never switches it by itself again on that device.
   The Mac runs the same code with its own settings.
 - Until the home base's George is `ready`, the router keeps today's fallbacks (§25.3).
+- iOS plays Web Audio only after a gesture started it: George turned on after the app's first tap (by
+  itself, or elsewhere) re-arms the one-time unlock, so the next tap unlocks his audio too, and a reply's
+  **Speak** tap unlocks it as well (`toggleSpeakTurn`).
 
 **26.2 The voice label** (`src/ui/voice-tag.js`, `src/styles/voice-label.css`). The router (§18.2) gains
 `voiceNow()` and `onVoiceChange(fn)`: the engine actually speaking (`'homebase' | 'natural' | 'device'`, null
