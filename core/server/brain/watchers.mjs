@@ -146,6 +146,16 @@ export function createWatchers({ file, now, rand = Math.random, log = () => {}, 
     return w;
   }
 
+  /** A spending cap cleared: blocked watchers go back to watching (their next check time stays). */
+  function unblock() {
+    for (const w of list) {
+      if (w.status === 'blocked') {
+        w.status = 'watching';
+        changed(w);
+      }
+    }
+  }
+
   /** The key came back: paused watchers are due again now. */
   function resume() {
     for (const w of list) {
@@ -165,6 +175,7 @@ export function createWatchers({ file, now, rand = Math.random, log = () => {}, 
     recordResult,
     recordSkip,
     resume,
+    unblock,
     list: () => list.slice(),
     activeCount: () => list.filter((w) => w.status !== 'met').length,
     flushSync() {

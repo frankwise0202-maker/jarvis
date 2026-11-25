@@ -181,6 +181,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     changed(job);
     const extra = extras.get(job.id) ?? null;
     const budget = extra?.budgetUsd ?? budgetFor(job);
+    const base = job.costUsd ?? 0; // what earlier attempts (before a restart) already spent
     let lastEmit = 0;
     const ctx = {
       signal: ac.signal,
@@ -194,10 +195,10 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
           changed(job);
         } else save();
       },
-      /** Stop reason for a conversation whose cost (charged + live estimate) is `estimateUsd`. */
+      /** Stop reason for this attempt's conversation, whose cost so far (charged + live estimate) is `estimateUsd`. */
       check(estimateUsd) {
         if (ac.signal.aborted) return 'cancelled';
-        const total = Math.max(estimateUsd, job.costUsd ?? 0);
+        const total = base + Math.max(0, estimateUsd);
         if (budget !== null && total >= budget) return 'budget';
         return capCheck(Math.max(0, total - (job.costUsd ?? 0)), job);
       },

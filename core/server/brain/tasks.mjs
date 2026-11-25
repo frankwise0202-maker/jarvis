@@ -102,7 +102,8 @@ export async function runResearch({ claude, job, ctx, name, localTime, timeZone,
 export const REPORT_CHECK_TOOL = Object.freeze({
   name: 'report_check',
   description: 'Report whether the watched condition is met right now. Call it exactly once, after checking.',
-  strict: true,
+  // Streamed tool input arrives as it is written (eager_input_streaming); the API does not validate it
+  // then, so readCheck() does.
   eager_input_streaming: true,
   input_schema: {
     type: 'object',
@@ -162,11 +163,12 @@ export async function runWatchCheck({ claude, watcher, ctx, name, localTime, tim
     ctx,
   );
   if (result.refusal) throw new BrainError('refused', 'Claude declined to check this.');
+  // A reply cut short (a cap, the budget, max_tokens) may hold a half-written answer: never trust it.
+  if (result.stopped === 'daily' || result.stopped === 'monthly') throw new BrainError('spend_cap', 'The spending limit was reached during the check.');
+  if (result.stopped) throw new BrainError('budget', 'The check reached its budget before it finished; it will try again next time.');
+  if (result.truncated) throw new BrainError('unclear', 'The check was cut short; it will try again next time.');
   const check = readCheck(result);
-  if (!check) {
-    if (result.stopped === 'daily' || result.stopped === 'monthly') throw new BrainError('spend_cap', 'The spending limit was reached during the check.');
-    throw new BrainError('unclear', 'The check finished without a clear answer; it will try again next time.');
-  }
+  if (!check) throw new BrainError('unclear', 'The check finished without a clear answer; it will try again next time.');
   return check;
 }
 
@@ -175,7 +177,6 @@ export async function runWatchCheck({ claude, watcher, ctx, name, localTime, tim
 export const WRITE_BRIEFING_TOOL = Object.freeze({
   name: 'write_briefing',
   description: 'Hand over the finished morning briefing. Call it exactly once.',
-  strict: true,
   eager_input_streaming: true,
   input_schema: {
     type: 'object',
@@ -218,6 +219,7 @@ export async function runBriefingCall({ claude, facts, ctx, name, timeZone }) {
     ctx,
   );
   if (result.refusal) throw new BrainError('refused', 'Claude declined to write the briefing.');
+  if (result.stopped || result.truncated) throw new BrainError('unclear', 'The briefing was cut short.');
   let v = toolInput(result, 'write_briefing');
   if (!v) v = lastJsonObject(textRuns(result.contents).join('\n'));
   if (!v || typeof v.markdown !== 'string' || !v.markdown.trim()) throw new BrainError('unclear', 'The briefing came back empty.');

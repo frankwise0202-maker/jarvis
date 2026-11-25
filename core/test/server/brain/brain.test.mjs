@@ -328,7 +328,6 @@ test('watchers: not met keeps watching (next check 24 h ± jitter), met notifies
       assert.equal(body.model, 'claude-sonnet-5-5');
       assert.equal(body.output_config.effort, 'low');
       const report = body.tools.find((t) => t.name === 'report_check');
-      assert.equal(report.strict, true);
       assert.equal(report.eager_input_streaming, true);
       return {
         blocks: [...search('lg 27gp850 price', [{ url: 'https://shop.example/lg', title: 'Shop' }]), toolUse('report_check', { met, summary: met ? 'Now $289 at Shop.' : 'Still $329 at Shop.', sources: [{ title: 'Shop', url: 'https://shop.example/lg' }] })],
@@ -436,4 +435,25 @@ test('network fetches time out instead of hanging', async () => {
   const big = await fetchText(async () => new Response('x'.repeat(5000)), 'https://feeds.example/', { maxBytes: 1000 });
   assert.equal(big.ok, false);
   assert.equal(big.error, 'too_large');
+});
+
+test('a watcher check cut short (max_tokens) never counts as met, even if the half-written answer says so', async () => {
+  const fake = await startFakeClaude({ script: () => ({ blocks: [toolUse('report_check', { met: true, summary: 'Now $2', sources: [] })], stop: 'max_tokens' }) });
+  const clock = createManualClock(MORNING);
+  const { brain, push } = makeBrain({ fake, clock });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ briefing: { enabled: false } });
+    const w = brain.createWatcher({ what: 'a price under $300', every: '6h' });
+    brain.checkWatcherNow(w.id);
+    await until(() => brain.listJobs({ kind: 'watch-check' })[0]?.status === 'failed', { what: 'failed check' });
+    const cur = brain.listWatchers()[0];
+    assert.equal(cur.status, 'watching');
+    assert.equal(cur.lastResult, null);
+    assert.equal(push.sent.length, 0);
+    assert.equal(brain.listJobs({ kind: 'watch-check' })[0].error.code, 'unclear');
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
 });

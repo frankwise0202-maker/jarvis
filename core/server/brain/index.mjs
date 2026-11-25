@@ -382,9 +382,7 @@ export function createBrain({
         lastSpendDay = s.day;
         emit('spend', s);
       }
-      if (!s.capReached) {
-        for (const w of watchers.list()) if (w.status === 'blocked') watchers.recordSkip(w.id, { status: 'watching' });
-      }
+      if (!s.capReached) watchers.unblock();
       watchers.tick();
       briefings.tick();
       jobs.pump();
