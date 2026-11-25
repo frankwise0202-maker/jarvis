@@ -26,13 +26,13 @@
 # after downloading: rewrite the command, service and autostart, restart, reload the screen), --help.
 # Test-only overrides: JARVIS_CORE_REPO, JARVIS_CORE_BRANCH, JARVIS_CORE_APP_DIR, JARVIS_CORE_TTY,
 # JARVIS_CORE_OS_RELEASE, JARVIS_CORE_GDM_CONF, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_SHIM,
-# JARVIS_CORE_ALLOW_ROOT.
+# JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT.
 
 set -uo pipefail
 
 REPO="${JARVIS_CORE_REPO:-https://github.com/frankwise0202-maker/jarvis.git}"
 BRANCH="${JARVIS_CORE_BRANCH:-main}"
-PORT=8788
+PORT="${JARVIS_CORE_PORT:-8788}"
 NODE_MIN=22   # what Jarvis Core needs
 NODE_MAJOR=24 # what we install: LTS until April 2028 (Node 22 ends in April 2027)
 APP_DIR="${JARVIS_CORE_APP_DIR:-$HOME/jarvis-core-app}"
@@ -106,7 +106,9 @@ show_cmd() { # a command as you would type it
   local out="" a
   for a in "$@"; do
     case "$a" in
-      "" | *[!A-Za-z0-9_./:=@%+,-]*) out+=" '${a//\'/\'\\\'\'}'" ;;
+      *[\"\$\`\\]*) out+=" '${a//\'/\'\\\'\'}'" ;;
+      *\'*) out+=" \"$a\"" ;;
+      "" | *[!A-Za-z0-9_./:=@%+,-]*) out+=" '$a'" ;;
       *) out+=" $a" ;;
     esac
   done
@@ -288,9 +290,9 @@ ask() { # ask QUESTION y|n (the default): true for yes
 
 pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
 
-find_node() { # the first Node.js >= NODE_MIN: on PATH, then the usual places
+find_node() { # the first Node.js >= NODE_MIN: on PATH, then where NodeSource puts it
   local c v
-  for c in "$(command -v node 2>/dev/null)" /usr/bin/node /usr/local/bin/node; do
+  for c in "$(command -v node 2>/dev/null)" /usr/bin/node; do
     [ -n "$c" ] && [ -x "$c" ] || continue
     v=$("$c" --version 2>/dev/null) || continue
     v=${v#v}
