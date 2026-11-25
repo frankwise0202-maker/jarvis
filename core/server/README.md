@@ -68,10 +68,13 @@ Units are in the field names (`…Pct`, `…C`, `…Bytes`, `…Bps`, `…Ms`). 
 with `available: false` and a plain-words `message`/`detail`, never a guess. Errors are
 `{"error": code, "message": words}`.
 
-**Who may connect:** direct requests from this computer (Host must be localhost/127.0.0.1/[::1], which also
-stops DNS-rebinding pages), or requests through `tailscale serve` that carry `Tailscale-User-Login` and this
-machine's `*.ts.net` name. **Origins:** `https://frankwise0202-maker.github.io`, any localhost origin, and the
-dashboard's own origin; every other origin gets 403. **Limits:** 4 KB bodies and 300-character questions,
+**Who may connect:** direct requests from this computer (Host must be localhost/127.0.0.1/[::1] on the Core's
+own port, which also stops DNS-rebinding pages), or requests through `tailscale serve` that carry
+`Tailscale-User-Login` and this machine's `*.ts.net` name. Public Tailscale Funnel traffic
+(`Tailscale-Funnel-Request`) is always refused, although it arrives from localhost. **Origins:**
+`https://frankwise0202-maker.github.io`, any localhost origin, and the dashboard's own origin; every other origin
+gets 403. Chrome's private-network preflights (a public page calling the 100.x Tailscale address) get
+`Access-Control-Allow-Private-Network: true` for those origins only. **Limits:** 4 KB bodies and 300-character questions,
 8 questions at once then 30 a minute per client, 16 live streams.
 
 ## Health rules

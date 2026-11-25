@@ -112,7 +112,13 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
   attach(getCore());
 
   function accessOptions() {
-    return { tailscaleDnsName: getCore().snapshot?.services?.tailscale?.dnsName ?? null, tailscaleLogins: config.tailscaleLogins };
+    // The port a direct request's Host must name: the one actually bound (tests listen on port 0).
+    const address = server.address();
+    return {
+      tailscaleDnsName: getCore().snapshot?.services?.tailscale?.dnsName ?? null,
+      tailscaleLogins: config.tailscaleLogins,
+      port: address && typeof address === 'object' ? address.port : config.port,
+    };
   }
 
   // ---- handlers
