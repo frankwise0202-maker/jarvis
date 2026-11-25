@@ -419,7 +419,9 @@ function sensesRoute(x, route, req, url, json) {
     if (!/audio\/wav/.test(type) || !wav) return json(400, { error: 'bad_audio', message: 'send a WAV (16 kHz mono PCM16)' });
     if (bytes.length > 2 * 1024 * 1024) return json(413, { error: 'too_large', message: 'at most 2 MB' });
     if (!x.hear.enabled || x.hear.state !== 'ready') return json(409, { error: 'not_ready', message: 'hearing is not ready on the home base' });
-    const text = x.hearQueue.length ? x.hearQueue.shift() : x.hearText;
+    // Under half a second (the app's warm-up: 0.4 s of silence) is no words, as Whisper hears silence.
+    const short = (bytes.length - 44) / 2 / bytes.readUInt32LE(24) < 0.5;
+    const text = short ? '' : x.hearQueue.length ? x.hearQueue.shift() : x.hearText;
     return later(x.hearDelayMs, () => json(200, { text, ms: 420, model: `whisper-${x.hear.model}` }));
   }
   // /api/speak

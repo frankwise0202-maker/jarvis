@@ -3309,7 +3309,9 @@ E2E `homebase-senses.mjs` (the fake Core's `fakeSenses`: `api/hear` answers a ca
 `api/speak` a small 24 kHz WAV; Chromium's fake microphone through the real capture path):
 `senses-settings`, `senses-old-core`, `senses-voice-mode` (the mark, a 2.3 s 16 kHz WAV with the
 context words, the check, the reply in the home base's voice, no device recognizer or voice, the
-microphone released while speaking, the warm-up once), `senses-fallback` (unreachable: asked again,
+microphone released while speaking, the warm-up once), `senses-check` (the 2-second check hears
+through the home base: "Cancel." said during the countdown pauses it with "…" while the home base hears
+it, then nothing is sent), `senses-fallback` (unreachable: asked again,
 the device's recognizer, the built-in voice, the next listen on the device), `senses-slow` (over 4 s;
 a voice over 6 s), `senses-off` (nothing asked of the home base's senses). Not testable here: the real
 Core's Whisper and Kokoro (the Core's own online test), iOS Safari's microphone and audio session, a

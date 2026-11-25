@@ -5,7 +5,8 @@
 // capture's AudioWorklet, 16 kHz frames, the app's VAD). Settings → Home base → Hearing and voice
 // (beta): both switches, the downloads with their progress, Fast or Accurate, Test (3 seconds heard;
 // one sentence said); Voice Mode end to end (heard by the home base with the "via home base" mark,
-// the 2-second check, the reply in the home base's voice, no device recognizer, no device voice);
+// the 2-second check, the reply in the home base's voice, no device recognizer, no device voice; a
+// "cancel" said during the check, heard by the home base, sends nothing);
 // the home base unreachable (this iPhone's recognizer takes the listen over and the built-in voice
 // speaks); slow answers (hearing over 4 s, the voice over 6 s: the same fallbacks); and off (the
 // default): nothing asked of the home base, every listen and reply exactly as before.
@@ -205,6 +206,32 @@ export default [
         t.assert((await t.page.evaluate(() => window.__voice.listens)) === 0, 'and this iPhone’s recognizer never ran');
         await t.screenshot('3-speaking');
       });
+    },
+  },
+  {
+    name: 'senses-check',
+    title: 'The 2-second check hears through the home base too (iPhone, Voice Mode): “Set a timer for ten minutes.” is shown, then “Cancel.” said during the countdown pauses it while the home base hears it, and nothing is sent',
+    device: 'iphone13',
+    seed: ON,
+    fakeCore: { senses: { hear: 'ready', speak: 'ready', hearQueue: ['Set a timer for ten minutes.', 'Cancel.'] } },
+    timeout: 120000,
+    async run(t) {
+      await setup(t);
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'api/senses read at launch' });
+      await openListening(t);
+      await t.visible('voice-homebase-mark', { timeout: 8000 });
+      await say(t, utterance(1.8, 31));
+      await t.waitFor(async () => norm(await t.text(t.page.locator(tid('voice-review-text')))) === 'Set a timer for ten minutes.', { timeout: 10000, message: 'the check shows the words' });
+      // Said at once, during the countdown: the check pauses while the home base hears it.
+      const said = say(t, Array.from(S.concat(S.silence(0.15), S.speechLike({ seconds: 0.8, peakDb: -14, seed: 5 }), S.silence(1.6))));
+      await t.waitFor(async () => (await t.page.locator(tid('voice-review')).getAttribute('data-state')) === 'listening', { timeout: 3000, message: 'the countdown pauses while the owner talks' });
+      t.assert(norm(await t.text(t.page.locator(tid('voice-review-heard')))) === '…', 'the words are on their way');
+      await t.screenshot('1-paused');
+      await said;
+      await t.waitFor(async () => /Okay, not sent\./.test(await t.text(t.page.locator(tid('voice-captions')))), { timeout: 10000, message: async () => `"cancel" heard: not sent (captions: ${await t.text(t.page.locator(tid('voice-captions')))})` });
+      t.assert(t.core.senses.hears.filter((h) => h.seconds > 0.5).length === 2, `both utterances went to the home base (${JSON.stringify(t.core.senses.hears.map((h) => h.seconds))})`);
+      t.assert(t.requests('lead').length === 0, 'nothing sent to Jarvis');
+      t.assert((await t.page.evaluate(() => window.__voice.listens)) === 0, 'this iPhone’s recognizer never ran');
     },
   },
   {
