@@ -335,7 +335,7 @@ async function kioskBehaviourProblems(page, { night }) {
  * The longest values the panels can show, each in a clone of the value's own element (the page's
  * nodes are not touched): none may be cut or spill out of its box.
  */
-function longValueProblems(page) {
+export function longValueProblems(page) {
   return page.evaluate(() => {
     // [text, shown as words in the muted style (data-unknown) rather than as a value]
     const NB = '\u00a0';

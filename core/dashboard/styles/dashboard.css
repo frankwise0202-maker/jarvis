@@ -1498,7 +1498,7 @@ html[data-view='remote'] .ask-send:active {
 /* The kiosk layout above needs a window of at least 1366×740 (it bottoms out at 1rem = 12px).
    Anything narrower or shorter (the iPhone, the iPad, the Mac's browser window) scrolls instead:
    the core and its four readouts on top, then the panels in two columns, or in one on a phone
-   (max-width: 480px). 1rem is 16px here, so labels stay at 12px and body text at 14px or more.
+   (max-width: 560px). 1rem is 16px here, so labels stay at 12px and body text at 14px or more.
    The order puts what the owner checks from afar first: services, then the machine, then the
    assistant, the processes and the log. Each panel lays out its insides by its own width
    (container queries), so a phone's column and a tablet's half-width column both fit. */
@@ -2000,8 +2000,10 @@ html[data-view='remote'] .ask-send:active {
   }
 }
 
-/* A phone held upright: one column, the core on top with its readouts in a 2×2 grid under it. */
-@media (max-width: 480px) {
+/* A phone held upright, a narrow window, an iPad in Split View: one column, the core on top with
+   its readouts in a 2×2 grid under it. Two columns start at 561px, where a half-width panel holds
+   the network's values ("UNREACHABLE", "999 Mb/s") and the question box keeps its room. */
+@media (max-width: 560px) {
   :root {
     --orb: min(78vw, 20rem);
     --panel-pad: 0.75rem 0.875rem 0.875rem;
