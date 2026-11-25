@@ -9,6 +9,7 @@
 // can walk up and just type. Voice can plug in later through `ask(text)`.
 
 import { $, el, setText } from './dom.js';
+import { keepUnits } from './format.js';
 
 export const MAX_MESSAGES = 12; // 6 exchanges
 const QUIET_CLEAR_MS = 15 * 60 * 1000;
@@ -51,7 +52,7 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = 
   function addCore(text, cls = '') {
     const li = el('li', `msg msg-core ${cls}`.trim());
     const body = el('div', 'msg-body');
-    body.append(el('p', 'msg-text', text));
+    body.append(el('p', 'msg-text', keepUnits(text)));
     li.append(body);
     list.append(li);
     trim();
@@ -101,7 +102,7 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = 
   function finish(li, text, cls) {
     li.classList.remove('is-pending');
     if (cls) li.classList.add(cls);
-    setText(li.querySelector('.msg-text'), text);
+    setText(li.querySelector('.msg-text'), keepUnits(text));
     busy = false;
     send.disabled = false;
     lastActivity = Date.now();

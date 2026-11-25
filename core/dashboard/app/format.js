@@ -11,6 +11,16 @@
 export const NBSP = ' ';
 const THIN = ' ';
 
+/**
+ * A sentence from the Core ("back to normal (64 °C)", "35 GB free", "6 percent") with a no-break
+ * space between each number and its unit, so a wrapped line never ends on the number and starts
+ * the next with the unit. Anything that is not a string comes back as it was.
+ */
+const UNIT_GAP = /(\d) (?=(?:°C|°F|%|percent\b|[kMGT]?B\b|[kMG]?b\/s|ms\b|s\b|min\b|h\b|W\b|[MG]Hz\b))/g;
+export function keepUnits(text) {
+  return typeof text === 'string' ? text.replace(UNIT_GAP, `$1${NBSP}`) : text;
+}
+
 /** A finite number, or null. Accepts numbers and numeric strings ("41", "41.5"); rejects "", "N/A", NaN, objects. */
 export function num(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;

@@ -13,6 +13,7 @@ import {
   fmtLoad,
   fmtMem,
   fmtMemInstalled,
+  keepUnits,
   fmtPair,
   fmtPct,
   fmtRate,
@@ -138,4 +139,15 @@ test('minutes of the day in a time zone', () => {
   assert.equal(minutesOfDay(d, 'UTC'), 23 * 60 + 30);
   assert.equal(minutesOfDay(d, 'America/New_York'), 18 * 60 + 30);
   assert.equal(minutesOfDay(new Date('2026-11-26T00:05:00Z'), 'UTC'), 5);
+});
+
+test('sentences from the Core keep each number with its unit', () => {
+  const nb = '\u00a0';
+  assert.equal(keepUnits('GPU temperature back to normal (64 °C)'), `GPU temperature back to normal (64${nb}°C)`);
+  assert.equal(keepUnits('at 40 °C, and 492 GB free'), `at 40${nb}°C, and 492${nb}GB free`);
+  assert.equal(keepUnits('CPU at 6 percent, checked 5 s ago, 3.4 kb/s, 1.34 GHz, 148 W'), `CPU at 6${nb}percent, checked 5${nb}s ago, 3.4${nb}kb/s, 1.34${nb}GHz, 148${nb}W`);
+  // Words after numbers and version numbers are left alone.
+  assert.equal(keepUnits('sda: 8 reallocated sectors, 4 more, version 1.0.0 started'), 'sda: 8 reallocated sectors, 4 more, version 1.0.0 started');
+  assert.equal(keepUnits('7 things need attention'), '7 things need attention');
+  assert.equal(keepUnits(null), null);
 });

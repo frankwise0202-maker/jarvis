@@ -938,14 +938,20 @@ html[data-health='offline'] {
   color: var(--text-4);
 }
 
+/* The list fills the panel, so only a row cut off at the bottom fades (a log that fits is all
+   solid); an empty list takes no room, so "Nothing to report yet." sits under the heading. */
 .events {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
   min-height: 0;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent);
-  mask-image: linear-gradient(to bottom, #000 80%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+}
+.events:empty {
+  flex: 0 0 auto;
 }
 .ev {
   display: grid;

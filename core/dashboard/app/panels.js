@@ -21,6 +21,7 @@ import {
   fmtTemp,
   fmtUptime,
   fmtWatts,
+  keepUnits,
   num,
   pctNumber,
 } from './format.js';
@@ -220,7 +221,7 @@ export function createPanels() {
     setText(n.uptime, fmtUptime(vm.uptimeS) ?? '—');
     setText(n.coreWord, ctx.online ? sw.word : ctx.everOnline ? 'OFFLINE' : 'LINKING');
     setText(n.coreSub, ctx.online ? sw.detail : 'NO SIGNAL');
-    const line = summaryLine(vm, ctx);
+    const line = keepUnits(summaryLine(vm, ctx));
     setText(n.coreSummary, line);
     n.coreSummary.classList.toggle('is-long', line.length > 70);
   }
@@ -516,7 +517,7 @@ export function createPanels() {
       const time = el('span', 'ev-time', fmtEventTime(e.t, ctx.now, undefined, ctx.timeZone));
       const lv = el('span', 'ev-level');
       lv.append(el('i', 'lv-icon'), e.word || (e.level === 'alert' ? 'ALERT' : e.level === 'warn' ? 'WARN' : 'OK'));
-      const text = el('span', 'ev-text', e.title + (e.detail ? ` — ${e.detail}` : ''));
+      const text = el('span', 'ev-text', keepUnits(e.title + (e.detail ? ` — ${e.detail}` : '')));
       li.append(time, lv, text);
       const before = idx < evOrder.length ? evNodes.get(evOrder[idx]) : null;
       n.events.insertBefore(li, before);
