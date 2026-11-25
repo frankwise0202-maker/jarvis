@@ -59,6 +59,10 @@ function setup() {
     client,
     calls,
     seen,
+    /** The page asleep in the background: the monotonic clock moves on, its timers do not run. */
+    sleep(ms) {
+      clock += ms;
+    },
     /** Move both clocks forward, one second at a time (like the real page). */
     advance(ms) {
       while (ms > 0) {
@@ -150,5 +154,43 @@ test('malformed stream data is ignored', async (t) => {
   FakeES.all[0].onmessage({ data: 'not json' });
   assert.equal(h.seen.snapshot, 0);
   assert.deepEqual(h.seen.links, []);
+  h.client.stop();
+});
+
+test('back from the background (a phone unlocked): a new stream at once, no offline flash', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const h = setup();
+  await h.client.start();
+  FakeES.all[0].send({ t: 1 });
+  assert.deepEqual(h.seen.links, [true]);
+  const statusReads = () => h.calls.filter((c) => c.startsWith('api/status')).length;
+  const before = statusReads();
+  // The page slept for a minute: its timers did not run and the stream died silently.
+  h.sleep(60000);
+  h.client.resume();
+  assert.equal(FakeES.all.length, 2, 'a new stream right away');
+  assert.equal(FakeES.all[0].closed, true, 'the old one closed');
+  await flush();
+  assert.equal(statusReads(), before + 1, 'and one full read');
+  h.advance(4000);
+  assert.deepEqual(h.seen.links, [true], 'not called offline while the new stream connects');
+  FakeES.all[1].send({ t: 2 });
+  h.advance(4000);
+  assert.deepEqual(h.seen.links, [true], 'still online: no red banner at all');
+  h.advance(6000);
+  assert.deepEqual(h.seen.links, [true, false], 'a Core that really is gone still shows as offline');
+  h.client.stop();
+});
+
+test('without resume, a page waking from a long sleep would first show the Core offline', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const h = setup();
+  await h.client.start();
+  FakeES.all[0].send({ t: 1 });
+  h.sleep(60000);
+  h.advance(1000);
+  assert.deepEqual(h.seen.links, [true, false], 'the red banner the phone used to show on unlock');
   h.client.stop();
 });

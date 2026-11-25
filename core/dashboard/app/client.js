@@ -206,6 +206,24 @@ export function createClient(hooks) {
     return ok;
   }
 
+  /**
+   * The page is visible again after a while in the background (the phone unlocked, the tab brought
+   * back): the browser may have dropped the stream while the page slept, without telling. Open a
+   * new one at once and read everything, and give it a moment before calling the Core offline, so
+   * the phone shows fresh values instead of a red banner first.
+   */
+  function resume() {
+    if (stopped) return;
+    lastMessage = mono();
+    attempt = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = 0;
+    }
+    connect();
+    fullRead().catch(() => {});
+  }
+
   function stop() {
     stopped = true;
     closeStream();
@@ -218,6 +236,7 @@ export function createClient(hooks) {
   return {
     start,
     stop,
+    resume,
     isOnline: () => online,
     lastMessageAt: () => lastMessageWall,
     stats: () => ({ messages, reconnects, online }),

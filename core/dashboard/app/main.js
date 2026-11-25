@@ -359,6 +359,22 @@ tick();
 setInterval(tick, 1000);
 client.start();
 
+// The phone unlocked or the tab brought back after a while: the browser may have dropped the
+// stream while the page slept, so reconnect at once rather than show the Core offline first.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenAt = Date.now();
+  } else if (hiddenAt) {
+    const away = Date.now() - hiddenAt;
+    hiddenAt = 0;
+    if (away > 2000) client.resume();
+  }
+});
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) client.resume(); // restored from the back-forward cache (iOS Safari)
+});
+
 // Keep the page itself available while the Core restarts (sw.js: network first, never the API).
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});

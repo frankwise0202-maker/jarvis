@@ -132,7 +132,10 @@ behind `tailscale serve`. The contract is the Core's (`/tmp/jarvis-scratch/core/
 frames (every second, without `services` and without `health.items`) replace the sections they carry
 and keep the rest, `event` frames go to the log (with their ids, so a reconnect replays what was
 missed). Events are also polled every 15 s. Any frame proves the Core is alive; 5 s of silence on
-the monotonic clock means offline.
+the monotonic clock means offline. A page coming back from the background after more than 2 s (the
+iPhone unlocked, a tab brought back, a page restored from the back-forward cache) opens a new
+stream at once and reads everything again, so it shows fresh values instead of a red "Core
+offline" banner while the browser notices that its old stream died.
 
 The page follows **the Core's clock**: `status.t` minus the browser's clock gives an offset (about
 zero on the machine itself), so a fixture started with `--start 23:30` shows 11:30 PM and dims, and
