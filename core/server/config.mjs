@@ -270,5 +270,6 @@ Usage: node core/server/main.mjs [options]
 
 Environment variables JARVIS_CORE_PORT, JARVIS_CORE_FIXTURE, JARVIS_CORE_TIME_SCALE, JARVIS_CORE_START,
 JARVIS_CORE_DATA_DIR, JARVIS_CORE_DASHBOARD_DIR, JARVIS_CORE_OWNER and JARVIS_CORE_NIGHT do the same.
+JARVIS_CORE_SECRETS_DIR: where the brain keeps the Claude API key (default ~/.config/jarvis-core/secrets).
 Optional settings file: ~/.config/jarvis-core/config.json
 `;
