@@ -1011,6 +1011,11 @@ done_box() {
       ""
       "   Tailscale must be on there too, signed in to the same account."
       "   If Chrome asks to allow devices on your local network: Allow.")
+  elif [ "$TS_STATE" = Running ]; then
+    lines+=("1. Finish sharing through Tailscale (see above), then run"
+      "       jarvis-core url"
+      "   and paste the address it shows into Jarvis on your iPhone"
+      "   and your Mac: Settings > Home base.")
   else
     lines+=("1. Set up Tailscale (the steps are above), then run"
       "       jarvis-core url"

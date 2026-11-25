@@ -42,8 +42,13 @@ node --input-type=module -e "
   fs.writeFileSync('$work/custom.conf', (await import('$here/harness.mjs')).GDM_STOCK);
   sb.cleanup();
 "
+# sudo clears the environment, so the Tailscale stand-in gets its settings baked in
+mv "$work/stubs/tailscale" "$work/stubs/tailscale.stub"
+printf '#!/bin/bash\nexport STUB_DIR=%s STUB_LOG=%s STUB_TS=Running STUB_TS_CERTS=0 STUB_TS_ENABLES=1\nexec %s "$@"\n' \
+  "$work/state" "$work/state/stub.log" "$work/stubs/tailscale.stub" >"$work/stubs/tailscale"
+chmod 755 "$work/stubs/tailscale"
 mkdir -p "$work/state" "$work/run"
-chown -R "$user:$user" "$work/state" "$work/run"
+chown -R "$user:$user" "$work/state" "$work/run" "$work/mirror.git" # git refuses repositories owned by someone else
 chmod 700 "$work/run"
 chmod -R a+rX "$work"
 
@@ -53,6 +58,12 @@ as_user() {
     STUB_DIR="$work/state" STUB_LOG="$work/state/stub.log" STUB_CORE_LIVE=1 STUB_TS=Running STUB_TS_CERTS=0 STUB_TS_ENABLES=1 \
     JARVIS_CORE_REPO="file://$work/mirror.git" JARVIS_CORE_BRANCH="$branch" JARVIS_CORE_GDM_CONF="$work/custom.conf" \
     "$@"
+}
+refused() { # the command must fail
+  if "$@" >/dev/null 2>&1; then
+    echo "FAIL: should have been refused: $*" >&2
+    exit 1
+  fi
 }
 cleanup() {
   [ -f "$work/state/core.pid" ] && kill "$(cat "$work/state/core.pid")" 2>/dev/null || true
@@ -66,16 +77,16 @@ as_user env JARVIS_CORE_TTY="$work/answers" bash "$core/install/install.sh" 2>&1
 echo "== checks"
 h=/home/$user
 test -x "$h/.local/bin/jarvis-core"
-test "$(git -C "$h/jarvis-core-app" sparse-checkout list)" = core
-test "$(git -C "$h/jarvis-core-app" rev-parse --is-shallow-repository)" = true
+test "$(runuser -u "$user" -- git -C "$h/jarvis-core-app" sparse-checkout list)" = core
+test "$(runuser -u "$user" -- git -C "$h/jarvis-core-app" rev-parse --is-shallow-repository)" = true
 test ! -e "$h/jarvis-core-app/src"
 dpkg-query -W -f='${Status}\n' lm-sensors smartmontools | grep -c 'install ok installed' | grep -qx 2
 visudo -c -q
 runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda
 runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/nvme0n1 >/dev/null
-! runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda -s off >/dev/null 2>&1
-! runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda1 >/dev/null 2>&1
-! runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda --drivedb=/etc/shadow >/dev/null 2>&1
+refused runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda -s off
+refused runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda1
+refused runuser -u "$user" -- sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda --drivedb=/etc/shadow
 test -x /usr/local/bin/jarvis-core
 curl --noproxy '*' -fsS "http://127.0.0.1:$port/api/ping"
 echo
@@ -86,7 +97,7 @@ echo "== jarvis-core status / url / screen --print-args (through the /usr/local/
 as_user jarvis-core status 2>&1 | tee "$work/status.txt"
 as_user jarvis-core screen --print-args
 echo "== the shortcut refuses root"
-! /usr/local/bin/jarvis-core status
+refused /usr/local/bin/jarvis-core status
 
 echo "== re-run (no answers needed)"
 as_user bash "$core/install/install.sh" </dev/null 2>&1 | tee "$work/install-2.txt"
