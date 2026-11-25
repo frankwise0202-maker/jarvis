@@ -343,6 +343,14 @@ test('budget: a time in the future counts from now (and still leaves the window)
   clock.t = T0 + HOUR;
   assert.equal(createLiveBudget({ now: clock.now, storage: future }).spent(), 0.01, 'gone an hour later');
 
+  // Read once, the time it counts from is written back: a window opened later does not stretch it.
+  const lateOpen = memoryStorage({ [LIVE_SPEND_KEY]: JSON.stringify([{ t: T0 + 5 * HOUR, usd: 0.5, id: 'y.1' }]) });
+  const clock3 = fakeClock();
+  assert.equal(createLiveBudget({ now: clock3.now, storage: lateOpen }).spent(), 0.5);
+  assert.equal(storedList(lateOpen)[0].t, T0, 'fixed on the first read');
+  clock3.t = T0 + 50 * MIN;
+  assert.equal(createLiveBudget({ now: clock3.now, storage: lateOpen }).resumeAt(0.6), T0 + HOUR, 'not 50 minutes later');
+
   const huge = memoryStorage({ [LIVE_SPEND_KEY]: JSON.stringify([{ t: T0, usd: 1e300 }]) });
   const clock2 = fakeClock();
   const b = createLiveBudget({ now: clock2.now, storage: huge });

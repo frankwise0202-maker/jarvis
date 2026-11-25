@@ -60,20 +60,23 @@ const timeOf = (t) => (isNum(t) ? t : typeof t === 'string' && t.trim() ? Number
 /**
  * Entries from the stored JSON: [{ t, usd, id? }] (or { entries: [...] }). Anything that isn't one is
  * skipped, and unreadable JSON reads as no entries, but every entry that can be read counts: a
- * time in the future counts from now (so it still expires), an amount above $1,000 counts as
- * $1,000, an entry without an id gets one from its content (two budgets reading the same list agree).
+ * time in the future counts from now (so it still expires; `clamped` says the list should be written
+ * back with that time), an amount above $1,000 counts as $1,000, an entry without an id gets one from
+ * its content (two budgets reading the same list agree). Returns { list, clamped }.
  */
 function parseEntries(raw, now) {
-  if (typeof raw !== 'string' || !raw) return [];
+  const none = { list: [], clamped: false };
+  if (typeof raw !== 'string' || !raw) return none;
   let data;
   try {
     data = JSON.parse(raw);
   } catch {
-    return [];
+    return none;
   }
   const list = Array.isArray(data) ? data : Array.isArray(data?.entries) ? data.entries : [];
   const byId = new Map();
   const seen = new Map();
+  let clamped = false;
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
     const t = timeOf(item.t);
@@ -86,11 +89,12 @@ function parseEntries(raw, now) {
       seen.set(base, k + 1);
       id = `${base}:${k}`;
     }
+    if (t > now) clamped = true;
     const entry = { id, t: Math.min(t, now), nano };
     const cur = byId.get(id);
     if (!cur || entry.nano > cur.nano || (entry.nano === cur.nano && entry.t > cur.t)) byId.set(id, entry);
   }
-  return [...byId.values()];
+  return { list: [...byId.values()], clamped };
 }
 
 function defaultStorage() {
@@ -183,16 +187,20 @@ export function createLiveBudget({ capUsd = LIVE_DEFAULTS.capUsd, windowMs = LIV
     return false;
   }
 
+  // Reads storage when it changed (always with `force`). Writes only to repair: a time from the
+  // future it counted from now (any read), or this budget's spending missing there (`repair`).
   function sync(t, { force = false, repair = false } = {}) {
     const raw = read();
+    let clamped = false;
     if (raw !== undefined && (force || raw !== lastRaw)) {
       lastRaw = raw;
       const incoming = parseEntries(raw, t);
-      stored = new Map(incoming.map((e) => [e.id, { t: e.t, nano: e.nano }]));
-      for (const e of incoming) merge(e);
+      stored = new Map(incoming.list.map((e) => [e.id, { t: e.t, nano: e.nano }]));
+      for (const e of incoming.list) merge(e);
+      clamped = incoming.clamped;
     }
     prune(t);
-    if (repair && raw !== undefined && missingFromStorage()) write();
+    if (raw !== undefined && (clamped || (repair && missingFromStorage()))) write();
   }
 
   function spentNano(t) {
