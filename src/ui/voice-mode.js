@@ -2560,10 +2560,10 @@ function createVoiceMode(opts) {
         if (S.closed || S.run !== marker) return;
         S.run = null;
         if (out && typeof out.send === 'string' && out.send.trim()) {
-          const opts = { caption: text };
-          if (out.mode) opts.mode = out.mode;
-          if (newChat) opts.newChat = true;
-          const res = send(out.send, opts);
+          const sendOpts = { caption: text };
+          if (out.mode) sendOpts.mode = out.mode;
+          if (newChat) sendOpts.newChat = true;
+          const res = send(out.send, sendOpts);
           if (res && res.error) speakAck(res.error);
           return;
         }
