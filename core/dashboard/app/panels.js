@@ -260,8 +260,11 @@ export function createPanels() {
     if (g.state !== 'ok') {
       const nodriver = g.state === 'nodriver';
       const pending = g.state === 'pending' || g.state === 'unknown';
-      setData(n.gpuPanel, 'level', 'unknown');
-      chip(n.gpuChip, 'unknown', nodriver ? 'NO DRIVER' : pending ? 'CHECKING' : 'NO READING');
+      // No numbers to show, but when the Core counts it as a warning (the driver missing), the
+      // panel says so in amber like any other warning, so the eye finds where the caution is.
+      const missingLv = lv === 'warn' || lv === 'alert' ? lv : 'unknown';
+      setData(n.gpuPanel, 'level', missingLv);
+      chip(n.gpuChip, missingLv, nodriver ? 'NO DRIVER' : pending ? 'CHECKING' : 'NO READING');
       setText(n.gpuName, g.name ? g.name.replace(/^NVIDIA\s+/i, '') : 'Graphics card');
       setHidden(n.gpuLive, true);
       setHidden(n.gpuMissing, false);
@@ -490,7 +493,8 @@ export function createPanels() {
     } else {
       const words = g.state === 'nodriver' ? 'NO DRIVER' : g.state === 'pending' || g.state === 'unknown' ? 'CHECKING' : 'NO DATA';
       const sub = g.fallbackTemp ? fmtTemp(g.fallbackTemp.temp) : g.state === 'nodriver' ? "card can't be read" : 'no reading';
-      gaugeSet('gpu', { value: null, unknownWords: words, sub, level: 'unknown' });
+      const lv = vm.levels.gpu === 'warn' || vm.levels.gpu === 'alert' ? vm.levels.gpu : 'unknown';
+      gaugeSet('gpu', { value: null, unknownWords: words, sub, level: lv });
     }
     const m = vm.mem;
     gaugeSet('ram', { value: m.usedPct, sub: fmtPair(m.used, m.total) ?? '', level: vm.levels.mem });
