@@ -35,8 +35,9 @@ const NIGHT_START = '2026-11-25T23:31:00';
 export const SIZES = {
   se1: { w: 320, h: 568, touch: true, dpr: 2, label: 'iPhone SE (1st gen) 320×568' },
   se: { w: 375, h: 667, touch: true, dpr: 2, label: 'iPhone SE 375×667' },
-  13: { w: 390, h: 844, touch: true, dpr: 2, label: 'iPhone 13 390×844' },
-  '13l': { w: 844, h: 390, touch: true, dpr: 2, label: 'iPhone 13 on its side 844×390' },
+  // The notch and the home bar (viewport-fit=cover): what env(safe-area-inset-*) reports on an iPhone 13.
+  13: { w: 390, h: 844, touch: true, dpr: 2, label: 'iPhone 13 390×844', insets: { top: 47, bottom: 34 } },
+  '13l': { w: 844, h: 390, touch: true, dpr: 2, label: 'iPhone 13 on its side 844×390', insets: { left: 47, right: 47, bottom: 21 } },
   ipad: { w: 820, h: 1180, touch: true, dpr: 2, label: 'iPad Air 820×1180' },
   1280: { w: 1280, h: 800, touch: false, dpr: 1, label: 'laptop window 1280×800' },
   '1280c': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome at 1280×800 (712 tall inside)" },
@@ -69,11 +70,12 @@ function layoutOf(page) {
   });
 }
 
-/** The remote view's checks, run in the page. */
-export function remoteProblems(page) {
-  return page.evaluate(() => {
+/** The remote view's checks, run in the page. `insets`: the notch and home bar, as on the phone. */
+export function remoteProblems(page, insets = {}) {
+  return page.evaluate((insets) => {
     const out = [];
     const W = document.documentElement.clientWidth;
+    const safe = { top: insets.top || 0, right: insets.right || 0, bottom: insets.bottom || 0, left: insets.left || 0 };
     const desc = (el) => `${el.id ? `#${el.id}` : el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? `.${el.className.trim().split(/\s+/).join('.')}` : ''}`;
     const shown = (el) => {
       if (el.closest('[hidden]')) return false;
@@ -109,6 +111,16 @@ export function remoteProblems(page) {
       ...document.querySelectorAll('.panel, .core-orb, .gauge-readout, .core-summary, .offline-banner, .state-chip, .clock-block, .brand-host, .readout-block, .open-jarvis, .brand-word, .brand-orb'),
     ].filter(shown);
     const rects = blocks.map((el) => [el, el.getBoundingClientRect()]);
+    // Nothing under the notch or the rounded corners: every block inside the safe area (the page is
+    // scrolled to the top here, so the top bar must also clear the status bar and the notch).
+    for (const [el, r] of rects) {
+      if (r.left < safe.left - 0.5 || r.right > W - safe.right + 0.5) out.push(`${desc(el)} is under the notch (${Math.round(r.left)}..${Math.round(r.right)}, safe ${safe.left}..${W - safe.right})`);
+      if (r.top < safe.top - 0.5) out.push(`${desc(el)} is under the status bar (top ${Math.round(r.top)} < ${safe.top})`);
+    }
+    const lastBlock = document.querySelector('.stage').getBoundingClientRect();
+    const stagePad = parseFloat(getComputedStyle(document.querySelector('.stage')).paddingBottom);
+    if (stagePad < safe.bottom - 0.5) out.push(`the page ends under the home bar (${stagePad}px of room, ${safe.bottom} needed)`);
+    void lastBlock;
     for (let i = 0; i < rects.length; i++) {
       for (let j = i + 1; j < rects.length; j++) {
         const [a, ra] = rects[i];
@@ -185,7 +197,7 @@ export function remoteProblems(page) {
     const inputFs = parseFloat(getComputedStyle(document.getElementById('ask-input')).fontSize);
     if (inputFs < 16) out.push(`the question box is ${inputFs}px (iOS zooms the page into fields under 16 px)`);
     return { problems: out, smallest };
-  });
+  }, insets);
 }
 
 /** The kiosk's own behaviour must be off for a remote viewer (run after the page has been idle). */
@@ -289,6 +301,11 @@ async function shoot({ browser, state, sizeKey, outDir }) {
   });
   const page = await context.newPage();
   const problems = [];
+  if (size.insets) {
+    const cdp = await context.newCDPSession(page);
+    const i = { top: 0, right: 0, bottom: 0, left: 0, ...size.insets };
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: i.top, topMax: i.top, right: i.right, rightMax: i.right, bottom: i.bottom, bottomMax: i.bottom, left: i.left, leftMax: i.left } }).catch((e) => problems.push(`could not emulate the notch: ${e.message}`));
+  }
   let stopping = false;
   page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
   page.on('console', (m) => {
@@ -329,7 +346,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     if (layout === 'kiosk') {
       checks.push(...(await layoutProblems(page)));
     } else {
-      const r = await remoteProblems(page);
+      const r = await remoteProblems(page, size.insets);
       checks.push(...r.problems);
       smallest = r.smallest;
     }
