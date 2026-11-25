@@ -1,6 +1,11 @@
 [
   {
     "date": "2026-11-25",
+    "title": "Better hearing and George's voice from the home base (beta)",
+    "detail": "Turn them on in Jarvis, Settings, Home base, Hearing and voice. Whisper on the Alienware hears you, and George's voice comes from the Alienware, kept ready for six hours so his first words come quickly. Free: it all runs on your own computer."
+  },
+  {
+    "date": "2026-11-25",
     "title": "Your home base keeps working while your phone is locked",
     "detail": "Ask Jarvis to research something in the background, or to tell you when something happens (a price drop, say). Your iPhone gets a notification when it is ready."
   },
@@ -13,10 +18,5 @@
     "date": "2026-11-25",
     "title": "Your devices stay in sync",
     "detail": "Each device's Jarvis backup is kept on the home base, and your other devices pick up the conversations they are missing. Nothing is ever deleted."
-  },
-  {
-    "date": "2026-11-25",
-    "title": "Better hearing and George's voice from the home base (beta)",
-    "detail": "Turn them on in Jarvis, Settings, Home base, Hearing and voice. Whisper on the Alienware hears you, and George's voice comes from the Alienware. Free: it all runs on your own computer."
   }
 ]

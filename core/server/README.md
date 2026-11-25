@@ -68,12 +68,15 @@ Defaults, then `~/.config/jarvis-core/config.json` (optional), then environment 
 | fixture time speed, start time, seed | `JARVIS_CORE_TIME_SCALE`, `JARVIS_CORE_START`, `JARVIS_CORE_SEED` | 1, now, 1 |
 | where the brain keeps the API key | `JARVIS_CORE_SECRETS_DIR` | `~/.config/jarvis-core/secrets` |
 | a local Claude API stand-in (tests only; loopback addresses only, anything else is refused) | `JARVIS_CORE_CLAUDE_BASE_URL` | `https://api.anthropic.com` |
+| minutes an unused hearing / voice model stays in memory (`0`: until the sense is turned off) | `JARVIS_CORE_HEAR_IDLE_MINUTES`, `JARVIS_CORE_SPEAK_IDLE_MINUTES` | 30 / 360 |
+| George's model: `auto` (fp32, or q8 where it measured faster), `fp32` or `q8` | `JARVIS_CORE_SPEAK_DTYPE` | `auto` |
 
 The config file also takes `thresholds` (e.g. `{"cpuTemp": {"warn": 75}}`), `gpuMissingLevel`
 (`warn`, or `ok` to stop warning about a missing NVIDIA driver), `allowedOrigins` (extra page origins
 allowed to call the API, e.g. a developer's `"http://localhost:5173"`; always on top of the Jarvis app's),
-`tailscaleLogins` (limit which tailnet users may connect) and `smartSudo`. A broken file is reported and
-ignored.
+`tailscaleLogins` (limit which tailnet users may connect), `smartSudo`, and `senses`
+(`{"hearIdleMinutes": 30, "speakIdleMinutes": 360, "speakDtype": "auto"}`, the same three as the
+environment variables above, which win over it). A broken file is reported and ignored.
 
 ## API
 
@@ -269,10 +272,10 @@ whenever the home base is off, slow or unreachable.
 
 | | |
 |---|---|
-| `GET /api/senses` | `{hear: {enabled, model, state, progress, sizeMb, error, errorCode, downloaded, loaded, busy, queued, lastMs}, speak: {enabled, voice, dtype, …the same}, deps: {installed, missing?}}`; `state` is `off`, `downloading` (the first download and warm-up; `progress` 0-1), `ready` (on disk; `loaded` says whether it is in memory now) or `error` (`error` in plain words; `errorCode` `deps_missing`, `download_failed`, `load_failed`, `load_timeout`) |
-| `PUT /api/senses` | any of `{hear: {enabled, model: "base.en"\|"small.en"\|"tiny.en" (or "fast"\|"accurate")}, speak: {enabled, voice}}` → the same object. Turning one on downloads (once) and loads it in the background; turning it off lets the model go (the files stay). PUT with `enabled: true` again retries after an error, and warms a model the idle timer let go. Unknown keys → 400. 60 an hour. |
+| `GET /api/senses` | `{hear: {enabled, model, state, progress, sizeMb, error, errorCode, downloaded, loaded, busy, queued, lastMs, idleMinutes}, speak: {enabled, voice, …the same, dtype, rtf, measured, measuring, autoDtype}, deps: {installed, missing?}}`; `state` is `off`, `downloading` (the first download and warm-up; `progress` 0-1), `ready` (on disk; `loaded` says whether it is in memory now) or `error` (`error` in plain words; `errorCode` `deps_missing`, `download_failed`, `load_failed`, `load_timeout`). `idleMinutes`: unused this long, the model leaves memory (`0`: never). `speak.dtype`: George's model in use (`fp32` or `q8`); `speak.rtf`: its real-time factor measured on this computer (seconds of work per second of speech; null until the first warm-up timed it); `speak.measured`: every model's measured rtf here (`{fp32: 0.31, q8: 0.76}`); `speak.measuring`: the speed check is running; `speak.autoDtype`: false when `JARVIS_CORE_SPEAK_DTYPE` fixes the model |
+| `PUT /api/senses` | any of `{hear: {enabled, model: "base.en"\|"small.en"\|"tiny.en" (or "fast"\|"accurate")}, speak: {enabled, voice}}` → the same object. Turning one on downloads (once) and loads it in the background; turning it off lets the model go (the files stay). PUT with `enabled: true` again retries after an error, warms a model the idle timer let go (the app's warm-up), and restarts a loaded one's idle time. Unknown keys → 400. 60 an hour. |
 | `POST /api/hear?prompt=…` | body: a WAV, 16 kHz, mono, 16-bit PCM, 0.1-30 s, at most 2 MB (`Content-Type: audio/wav`, `audio/x-wav`, `audio/wave` or `application/octet-stream`); `prompt`: context words for Whisper (cut to 200 characters) → `{text, ms, model, seconds}` (`ms`: the Core's time, queue included). Silence (below -50 dBFS throughout) comes back as `text: ""` without running Whisper (which invents "Thank you." on silence); it is also how the app warms hearing up when Voice Mode opens, so it loads a model the idle timer let go (in the background) or starts a loaded one's idle time again. |
-| `POST /api/speak` | `{text (≤ 1000 characters), voice: "bm_george" (any Kokoro voice), speed: 0.5-2 (1)}` → `audio/wav`, 24 kHz, mono, 16-bit PCM; headers `X-Jarvis-Ms`, `X-Jarvis-Seconds`, `X-Jarvis-Sentences` (exposed to the app). Split by sentence (and long sentences at commas), spoken one at a time, joined with 120 ms pauses. |
+| `POST /api/speak` | `{text (≤ 1000 characters), voice: "bm_george" (any Kokoro voice), speed: 0.5-2 (1)}` → `audio/wav`, 24 kHz, mono, 16-bit PCM; headers `X-Jarvis-Ms`, `X-Jarvis-Seconds`, `X-Jarvis-Sentences` (exposed to the app). Split by sentence (and long sentences at commas), spoken one at a time, joined with 120 ms pauses. When the asker hangs up (the app cancels the rest of a reply the owner interrupted), a waiting request is dropped and a running one stops before its next sentence, so the next reply doesn't wait for speech nobody hears. |
 
 Errors: 409 `hear_off` / `speak_off`; 503 `not_ready` (still downloading, `Retry-After: 10`), `deps_missing`,
 `hear_unavailable` / `speak_unavailable` (the state's error), `busy` (3 already waiting, `Retry-After: 2`),
@@ -285,8 +288,11 @@ limit are the API's own.
 every thread of it (Linux keeps a nice value per thread; the process lowers its own threads at start and
 onnxruntime's inherit it), with at most 4 compute threads. One request at a time per sense, 3 more may
 wait (30 s at most); deadlines: hearing 45 s, speech 30 s + 150 ms per character, a first download and
-load 30 minutes. After **30 minutes** without a request the engine process ends, which returns all of its
-memory; the next request starts it again from the disk cache (a few seconds). A request past its deadline
+load 30 minutes. Without a request for **30 minutes** (hearing) or **6 hours** (George, about 1 GB; kept so
+the phone's first sentence never waits for a load) the engine process ends, which returns all of its
+memory; the next request, or the app's warm-up, starts it again from the disk cache (a few seconds). Both
+times are settings (`JARVIS_CORE_HEAR_IDLE_MINUTES`, `JARVIS_CORE_SPEAK_IDLE_MINUTES` or config.json
+`senses`; `0` keeps a model until the sense is turned off). A request past its deadline
 ends the process at once (onnxruntime cannot be interrupted mid-run), so does turning a sense off.
 *Why processes and not worker threads:* onnxruntime-node 1.21 aborts the whole process ("Entering the V8
 API without proper locking") when a second worker thread runs a model (hearing and voice together, or a new
@@ -303,13 +309,30 @@ again, never loaded. Once downloaded they load with no network at all.
 | hearing, Fast (default) | `onnx-community/whisper-base.en` | q8 | 80 MB |
 | hearing, Accurate | `onnx-community/whisper-small.en` | q8 | 252 MB |
 | hearing, tests | `onnx-community/whisper-tiny.en` | q8 | 44 MB |
-| voice | `onnx-community/Kokoro-82M-v1.0-ONNX` | fp32 (`JARVIS_CORE_SPEAK_DTYPE=q8` for the 92 MB one) | 326 MB |
+| voice | `onnx-community/Kokoro-82M-v1.0-ONNX` | fp32, or q8 (92 MB) where it measured faster (`JARVIS_CORE_SPEAK_DTYPE` fixes one) | 326 MB |
 
-*Why Kokoro fp32 and not q8:* on the 4-core test container (Xeon 2.1 GHz, AVX-512 VNNI) fp32 speaks a
-4.6 s sentence in 3.4 s and q8 in 5.8 s (both 4 threads): Kokoro is mostly convolutions, which the 8-bit
-build runs slowly on CPUs. The i7-6700 (AVX2, no VNNI) favours 8-bit even less, so fp32 should win there
-too. Whisper is the other way round (matrix multiplications): base.en q8 1.5 s against fp32 2.0 s for 6.6 s
-of speech.
+*Why Kokoro fp32 first:* on the 4-core test container (Xeon 2.1 GHz, AVX-512 VNNI, quiet) fp32 makes
+George at 0.25-0.31x real time and q8 at 0.76-1.1x (both 4 threads, nice 10): Kokoro is mostly
+convolutions, which the 8-bit build runs slowly on these CPUs. Whisper is the other way round (matrix
+multiplications): base.en q8 1.5 s against fp32 2.0 s for 6.6 s of speech.
+
+**George's speed check (`senses/speed.mjs`).** The i7-6700 has not been measured, so the Core measures
+itself. After each warm-up that loads George, once the engines have been idle for a second, it times one
+fixed sentence of about 5.5 s of speech (`BENCH_TEXT`, voice bm_george) and records the real-time factor
+in `<data>/senses/speed-v1.json` (`{v: 1, cpu: "<processor model> x<threads>", dtype?, measured: {fp32:
+{rtf, at}, q8: {rtf, at}}}`, file 600) and in `GET /api/senses` (`speak.rtf`, `speak.measured`). A run
+above 0.8 is timed once more (the faster of the two counts: another program may have been busy).
+- fp32 at or below 0.8x real time: kept; nothing else happens.
+- fp32 above 0.8x and the model not fixed (`JARVIS_CORE_SPEAK_DTYPE` unset or `auto`): once the phone has
+  left George alone for 30 s (a second engine loading takes the processor for a few seconds), the Core
+  loads q8 in a second engine process beside him (downloading its 92 MB once), times it the same way, and
+  keeps it when it takes at most 95 % of fp32's time (a tie keeps fp32, which sounds a touch cleaner).
+  Switching waits until George is idle, then the q8 engine takes over and the fp32 process ends (its 1 GB
+  back). The verdict (`dtype`) is kept for this processor, so after a restart q8 loads straight away; q8
+  measured slower is not tried again unless fp32 later measures slower than q8 did. Another processor
+  (the data folder on a new computer) starts afresh.
+- A q8 that cannot be downloaded or loaded leaves fp32 in place, with no error state; turning George off
+  during the trial ends it.
 
 **Timings** on the 4-core test container (Intel Xeon 2.1 GHz, 4 threads, everything at nice 10; the
 i7-6700 has 4 real cores at 3.4-4.0 GHz but no AVX-512, so expect the same order of magnitude, not these
@@ -325,18 +348,29 @@ exact numbers):
 | first download + load + warm-up: tiny.en + Kokoro q8 (136 MB) / small.en (252 MB) | 3.5 s and 6.1 s / 7.0 s (a fast link) |
 | load + warm-up from the disk cache: base.en / Kokoro fp32 | 3.3-3.8 s / 3.4 s |
 | the first request after the idle unload: hear 7 s / speak "Certainly, Frank." | 3.0 s / 2.2 s (load without the warm-up run) |
-| memory of an engine process: base.en / small.en / Kokoro fp32 | 660 MB / 1.46 GB / 1.08 GB (all of it back after 30 idle minutes) |
+| memory of an engine process: base.en / small.en / Kokoro fp32 | 660 MB / 1.46 GB / 1.08 GB (all of it back after the idle time) |
+| **Core 1.2.2, quiet container:** a reply's first sentence, 40-57 characters (4.0-5.2 s of George), warm engine, fp32 / q8 | 1.1-2.0 s (most 1.2-1.5 s) / 3.0-5.1 s (most 3.1-3.6 s) |
+| the same sentence when George was unloaded (load without the warm-up run, then speak): fp32 / q8 | 2.9-3.6 s / 5.4 s |
+| the speed check at warm-up: fp32 / q8 measured rtf | 0.25-0.31 / 0.76-1.1 (fp32 kept) |
+| the next reply's first sentence after the phone abandoned a 7 s reply 0.8 s in: before / after the cancel at the sentence boundary | 7.4 s / 3.0-3.7 s (only the sentence in progress is finished) |
 | the same round trip while other programs kept the 4 threads busy (load average 15) | hear base.en 6 s: 3.1 s; speak fp32 6 s: 13 s (nice 10 gives way, as intended) |
 
 **Tests.** `npm test` (no downloads): WAV parsing and writing, the resampler, sentence splitting, prompts,
 settings validation and the catalog (`test/server/senses/pure.test.mjs`); the engine host with a stub
 engine in the real engine process: progress, the queue, deadlines, crashes (a native abort included), the
-idle unload, cancelling, every engine thread at nice 10 (`host.test.mjs`); the routes through the runtime:
-off by default, turning on, hearing, speaking, every refusal, CORS, body limits, restarts, a failed or
-cut-short download, missing libraries and a Core without `node_modules` (`api.test.mjs`).
+idle unload, cancelling (a queued request, and a running one at its next sentence), every engine thread
+at nice 10 (`host.test.mjs`); the routes through the runtime: off by default, turning on, hearing, speaking,
+every refusal, CORS, body limits, restarts, a failed or cut-short download, missing libraries and a Core
+without `node_modules` (`api.test.mjs`); the idle times and their settings, PUT `enabled: true` warming
+George, and the speed check with the stub engine at chosen speeds per model: a fast fp32 kept, a slow fp32
+switched to a faster q8 (downloaded, requests answered throughout, kept after a restart, not on another
+processor), a slower q8 not tried again, a fixed model never switched, a q8 that fails to load, George
+turned off mid-trial, the trial held while the phone talks (`speed.test.mjs`).
 `npm run test:senses` (online, ~136 MB the first time): the real engines download whisper tiny.en and
 Kokoro q8, George says a known sentence through `/api/speak`, the WAV goes back through `/api/hear`, and
-the words must come back (`JARVIS_SENSES_TEST_MODELS=full` runs base.en and fp32 instead).
+the words must come back; George's warm-up rtf is checked too. `JARVIS_SENSES_TEST_MODELS=full` runs
+base.en and fp32 picked as on the home base, then the speed check with the real voice engine and the
+switch threshold at 0: fp32 and q8 timed (q8 downloaded if needed) and the faster kept.
 
 ## What only the real machine can verify
 

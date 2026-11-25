@@ -238,11 +238,26 @@ app shows the progress); after that it works without the internet. If the home b
 out of reach, the iPhone simply listens and speaks by itself, as it always has. Recordings and sentences
 are handled in memory and never saved or written to a log.
 
-The Alienware stays quick to use: speech runs at low priority, one request at a time, and the models
-leave memory after 30 minutes without use (opening Voice Mode on the iPhone loads them again, so your
-first sentence rarely waits; if it does, it takes a few seconds longer). The
-models live in `~/.cache/jarvis-core/models` (about 410 MB for Fast + George); deleting that folder is
-safe: they download again when needed.
+The Alienware stays quick to use: speech runs at low priority and one request at a time. Whisper leaves
+memory after 30 minutes without use; **George stays ready for 6 hours** (about 1 GB of the Alienware's
+16 GB), so his first words come quickly instead of waiting for him to load (opening Voice Mode on the
+iPhone loads whatever was let go, so your first sentence rarely waits). If you interrupt Jarvis, the
+Alienware stops making the rest of that answer at the end of its sentence, so the next answer starts
+sooner.
+
+**George picks the faster voice for your Alienware.** Each time George gets ready, the Alienware times
+him on one sentence (`jarvis-core logs` shows a line like "George speaks at 0.31x real time": under 1 is
+faster than he talks). If he is slower than 0.8x real time there, it also tries a smaller 8-bit version
+of George (a 92 MB download, once) and keeps whichever is faster on this computer, from then on. Nothing
+to do on your part.
+
+The models live in `~/.cache/jarvis-core/models` (about 410 MB for Fast + George, 92 MB more if the
+8-bit George was needed); deleting that folder is safe: they download again when needed.
+
+*To keep a model in memory longer or shorter* (most people never need this): in
+`~/.config/jarvis-core/config.json`, add `"senses": {"speakIdleMinutes": 360, "hearIdleMinutes": 30}`
+(minutes; `0` keeps it loaded until you turn it off), then `jarvis-core restart`. `"speakDtype": "fp32"`
+or `"q8"` there fixes George's version instead of letting the Alienware pick.
 
 ---
 
@@ -320,6 +335,11 @@ update). Run `jarvis-core update`, then turn it on again in Jarvis.
 **Hearing and voice says it couldn't download the model.** The Alienware was offline while it fetched
 the model. Check its internet, then turn the switch off and on again in Jarvis: it carries on.
 
+**Jarvis still speaks in the iPhone's own voice.** Check that **George's voice from the home base** is on
+(Jarvis, Settings, Home base, Hearing and voice) and says Ready. If the Alienware is slower than George
+talks, the iPhone takes over for a minute: `jarvis-core logs` shows how fast George is ("George speaks at
+…x real time"); a busy Alienware (a game, a big download) slows him down.
+
 **An update went wrong.** If a new version doesn't start, the automatic update goes back to the
 previous one by itself; `jarvis-core autoupdate status` shows it. To start over from a fresh copy:
 `jarvis-core update --force` (your old copy is kept next to it).
@@ -361,13 +381,13 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 | The dashboard at login (Chrome, full screen, its own profile) | `~/.config/autostart/jarvis-core-screen.desktop`, profile in `~/.local/share/jarvis-core-screen` |
 | History, events (a week, saved every 5 minutes) | `~/.local/share/jarvis-core/` |
 | The brain's libraries (the Claude SDK, web-push and the speech engines, from npm) | `~/jarvis-core-app/core/node_modules` |
-| The speech models (only once you turn on Hearing and voice) | `~/.cache/jarvis-core/models` (its setting: `~/.local/share/jarvis-core/senses/`) |
+| The speech models (only once you turn on Hearing and voice) | `~/.cache/jarvis-core/models` (its settings and George's measured speed: `~/.local/share/jarvis-core/senses/`) |
 | Your Claude key (only once you give it from the iPhone) | `~/.config/jarvis-core/secrets/` (only you can read it) |
 | Research, watchers, spending, briefings | `~/.local/share/jarvis-core/brain/` |
 | Your devices' backups (the latest of each, plus 14 days) | `~/.local/share/jarvis-core/sync/` |
 | Notification keys and the devices that get them | `~/.local/share/jarvis-core/push/` |
 | Automatic updates (only if you said yes) | `~/.config/systemd/user/jarvis-core-autoupdate.timer` and `.service`; what they did: `~/.local/share/jarvis-core/autoupdate.log` |
-| Optional settings (name, night dim hours, thresholds) | `~/.config/jarvis-core/config.json` |
+| Optional settings (name, night dim hours, thresholds, how long speech models stay loaded) | `~/.config/jarvis-core/config.json` |
 | The disk-check permission (one read-only command) | `/etc/sudoers.d/jarvis-core-smartctl` |
 | Automatic login (only if you said yes) | `/etc/gdm3/custom.conf` (the original is kept as `custom.conf.before-jarvis-core`) |
 | Software it may add | `git`, `curl`, `lm-sensors`, `smartmontools` (Ubuntu's own), and Node.js 24 from NodeSource if Node.js 22 or newer isn't there already (Ubuntu's own is 18, too old) |
