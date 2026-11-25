@@ -156,6 +156,11 @@ const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption tim
 const CONFIRM_MS = 60000; // "Shall I draw a blueprint of …?" waits this long for a yes
 const REVIEW_MIC_MS = 30000; // a paused 2-second check keeps listening for a correction this long
 const WAKE_WINDOW_MS = 2400; // woken: how long the microphone waits for "wake up, daddy's home" before the greeting
+// Hearing through the home base (v7.7, beta, SPEC §25): its words come once the owner has finished
+// (Whisper hears whole utterances), so a tap that says "I'm done" waits for them this long at most
+// (the home base answers within 4 s, or this device's recognizer takes over).
+const HOME_HEAR_GRACE_MS = 6000;
+const HOME_HEAR_CHECK_MS = 7000; // the 2-second check waits this long for words the home base is hearing
 const WAKE_BOOT_MS = 1700; // woken in a background tab (no listening there): the greeting follows the boot
 const WAKE_OFFER_WAIT_MS = 2500; // the Music card offered may take this long to find (else just the briefing)
 const SLEEP_SILENT_MS = 2500; // a woken session that went quiet returns to Standby after this
@@ -374,7 +379,9 @@ function createVoiceMode(opts) {
 
   const statusIconEl = h('span', { class: 'vm-status-icon', attrs: { 'aria-hidden': 'true' } });
   const statusText = h('span', { class: 'vm-status-text', attrs: { 'data-testid': 'voice-status' } });
-  const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText);
+  // v7.7 (beta): "via home base" while the home base hears this listen (Whisper on the Alienware).
+  const hbMark = h('span', { class: 'vm-hb-mark', hidden: true, attrs: { 'data-testid': 'voice-homebase-mark', title: 'Heard by your home base (Whisper on the Alienware)' } }, icon('server', { size: 12, strokeWidth: 2 }), h('span', { text: 'via home base' }));
+  const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText, hbMark);
 
   const captions = h('div', { class: 'vm-captions', attrs: { 'data-testid': 'voice-captions', 'data-kind': 'hint' } });
   // Apple Music: the Music card of a "play …" (or the cards of a reply's find_music calls, stacked)
@@ -1351,6 +1358,11 @@ function createVoiceMode(opts) {
         onFinal: (value, info) => (reviewing(L) ? reviewFinal(value) : onFinal(L, value, info)),
         onEnd: () => (reviewing(L) ? reviewMicEnded(L) : finishListening(L, 'end')),
         onError: (err) => (reviewing(L) ? reviewMicEnded(L) : onListenError(L, err)),
+        // v7.7 (beta): Voice Mode's own listens may be heard by the home base (Whisper), when the
+        // owner turned that on and it is ready (app.js's listening wraps stt.js; otherwise these two
+        // are ignored). Not the wake window (2.4 s for "wake up") or a listen while a hologram builds.
+        homeBase: !duringBuild && !wakeWindow,
+        onHomeBase: (info) => (reviewing(L) ? reviewHomeBase(L, info) : onHomeBase(L, info)),
       });
     } catch (err) {
       onListenError(L, { code: 'other', message: errorText(err) });
@@ -1363,7 +1375,7 @@ function createVoiceMode(opts) {
     }
     L.timers.push(
       setTimeout(() => {
-        if (S.listen === L && !L.text) finishListening(L, 'silence');
+        if (S.listen === L && !L.text && !L.hb) finishListening(L, 'silence');
       }, SILENCE_MS),
       setTimeout(() => requestSend(L, true), MAX_LISTEN_MS),
     );
@@ -1415,7 +1427,9 @@ function createVoiceMode(opts) {
   /** Tap while listening: stop and send what was heard (or just stop when nothing was). */
   function requestSend(L, auto) {
     if (S.listen !== L) return;
-    if (!L.text && !auto) {
+    // v7.7: words the home base is still hearing count as words (its text comes once it answers).
+    const hearing = L.hb === 'speech' || L.hb === 'sending';
+    if (!L.text && !hearing && !auto) {
       finishListening(L, 'cancel');
       return;
     }
@@ -1424,8 +1438,79 @@ function createVoiceMode(opts) {
     if (!auto) L.sendNow = true; // a tap means "I'm done, send now": no 2-second check
     stopHandle(L.handle);
     setStatus('Got it', 'check');
-    // Give the recognizer a moment to deliver its final transcript, then send what we have.
-    L.timers.push(setTimeout(() => finishListening(L, 'stop'), STOP_GRACE_MS));
+    // Give the recognizer a moment to deliver its final transcript, then send what we have. The home
+    // base's words come when it answers: they are waited for (it answers within 4 s, or falls back).
+    const since = Date.now();
+    const grace = () => {
+      if (S.listen !== L) return;
+      if (!L.text && (L.hb === 'speech' || L.hb === 'sending') && Date.now() - since < HOME_HEAR_GRACE_MS) {
+        L.timers.push(setTimeout(grace, 250));
+        return;
+      }
+      finishListening(L, 'stop');
+    };
+    L.timers.push(setTimeout(grace, STOP_GRACE_MS));
+  }
+
+  /**
+   * v7.7 (beta): what the home base's hearing is doing for this listen (no live words: Whisper hears
+   * whole utterances). 'listening' and 'speech' show "via home base"; 'sending' says the words are
+   * on their way; 'fallback' means this device's recognizer took the listen over: when the owner had
+   * already spoken, Jarvis asks for it again.
+   */
+  function onHomeBase(L, info) {
+    const phase = info && info.phase;
+    // The listen is over (sent, cancelled, closed): the mark goes, unless the check holds a newer one.
+    if (phase === 'idle' && S.listen !== L && !(S.review && S.review.L && S.review.L !== L)) showHomeBaseMark(null);
+    if (S.listen !== L || S.closed) return;
+    if (phase === 'listening' || phase === 'speech' || phase === 'sending') {
+      const wasSpeaking = L.hb === 'speech';
+      L.hb = phase;
+      showHomeBaseMark(phase);
+      if (phase === 'speech') {
+        L.heard = true;
+        if (S.sttBlocked) {
+          S.sttBlocked = false;
+          root.dataset.stt = 'ok';
+        }
+        if (!wasSpeaking) bumpLevel(0.7);
+        if (!L.stopRequested) setStatus('Listening…', 'mic');
+      } else if (phase === 'sending' && !L.stopRequested) setStatus('Hearing you…', 'mic');
+      return;
+    }
+    if (phase === 'heard') {
+      L.hb = 'heard';
+      return;
+    }
+    if (phase === 'fallback') {
+      const spoke = L.hb === 'speech' || L.hb === 'sending';
+      L.hb = null;
+      showHomeBaseMark(null);
+      if (spoke && info.reason !== 'mic') {
+        const why = info.reason === 'slow' ? 'The home base took too long.' : 'I couldn’t reach the home base.';
+        showCaption('hint', `${why} Say that again?`, 'Listening on this device for now.');
+        announce(`${why} Say that again.`);
+      }
+      // This device's recognizer listens from here: our own no-speech watchdog for it.
+      L.timers.push(
+        setTimeout(() => {
+          if (S.listen === L && !L.text) finishListening(L, 'silence');
+        }, SILENCE_MS),
+      );
+      return;
+    }
+    if (phase === 'idle') {
+      if (L.hb !== 'heard') L.hb = null;
+      showHomeBaseMark(null);
+    }
+  }
+
+  function showHomeBaseMark(phase) {
+    hbMark.hidden = !phase;
+    if (phase) hbMark.dataset.phase = phase;
+    else delete hbMark.dataset.phase;
+    if (phase) root.dataset.hear = 'homebase';
+    else delete root.dataset.hear;
   }
 
   function finishListening(L, reason) {
@@ -1754,6 +1839,50 @@ function createVoiceMode(opts) {
     R.listenTimer = setTimeout(() => {
       if (S.review === R && R.mode === 'listening') reviewResume(R);
     }, reviewListenMs(t));
+  }
+
+  /**
+   * v7.7 (beta): the home base hears the check's words (no live words: they come once the owner
+   * has finished). Talking pauses the countdown until they come (or 7 s at most); a home base that
+   * fails mid-check pauses it for good ("Ready when you are"): a "cancel" it never heard must not
+   * become a send.
+   */
+  function reviewHomeBase(L, info) {
+    const R = S.review;
+    const phase = info && info.phase;
+    if (!R || R.L !== L || R.mode === 'editing') {
+      if (phase === 'idle' || phase === 'fallback') showHomeBaseMark(null);
+      return;
+    }
+    if (phase === 'listening' || phase === 'speech' || phase === 'sending') {
+      showHomeBaseMark(phase);
+      if (phase === 'listening') {
+        if (R.mode === 'listening' && R.hb) reviewResume(R); // a noise, or no words after all
+        R.hb = false;
+        return;
+      }
+      R.hb = true;
+      setText(reviewHeard, '…');
+      reviewHeard.hidden = false;
+      if (R.mode !== 'listening') reviewPause('listening');
+      clearTimeout(R.listenTimer);
+      R.listenTimer = setTimeout(() => {
+        if (S.review === R && R.mode === 'listening') reviewResume(R);
+      }, HOME_HEAR_CHECK_MS);
+      return;
+    }
+    if (phase === 'fallback') {
+      showHomeBaseMark(null);
+      if (R.hb) {
+        R.hb = false;
+        reviewPause('paused');
+        setText(reviewHeard, 'The home base didn’t hear that. Say it again, or tap Send.');
+        reviewHeard.hidden = false;
+      }
+      return;
+    }
+    if (phase === 'idle') showHomeBaseMark(null);
+    if (phase === 'heard') R.hb = false;
   }
 
   /** The owner said nothing after all: the countdown goes on (or the check waits, when it did). */

@@ -27,6 +27,13 @@
 // (`sync`, see fakeSyncStore(); the harness passes one per scenario as t.coreSync), so two browser
 // contexts are two devices on one home base. A 1.0 Core ({ brain: false }) answers 404 there too.
 // t.coreSync.mode: 'ok' | 'toolarge' (413 to every upload, as the Core says past 50 MB).
+//
+// Hearing and voice (v7.7, beta, SPEC §25): t.core.senses is the fake's api/senses, api/hear and
+// api/speak (see fakeSenses()). routeFakeCore(context, { senses: false }) is a Core without them (404
+// not_found); { senses: { hear: 'ready', speak: 'ready', hearText, hearDelayMs, speakDelayMs } } seeds
+// it. api/hear answers a canned transcript (`hearText`, or `hearQueue` in order); api/speak a small
+// 24 kHz WAV. hearMode / speakMode 'unreachable' drop those requests (as if Tailscale were off),
+// 'error' answers 500. A part turned on with PUT downloads over `downloadSteps` reads of api/senses.
 
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -293,6 +300,142 @@ function brainRoute(b, req, url, json) {
   return json(405, { error: 'method_not_allowed', message: `${m} ${p}` });
 }
 
+// ---- hearing and voice (v7.7) ------------------------------------------------------------------------
+
+/** The senses' fake state: parts 'off' | 'ready' | 'downloading' (seeded), what it heard and said. */
+export function fakeSenses(seed = {}) {
+  const sd = seed && typeof seed === 'object' ? seed : {};
+  const part = (state, extra) => ({ enabled: state === 'ready' || state === 'downloading', state: state === 'ready' || state === 'downloading' ? state : 'off', progress: state === 'ready' ? 1 : 0, error: null, ...extra });
+  return {
+    enabled: seed !== false,
+    hear: part(sd.hear || 'off', { model: sd.model || 'base.en', sizeMb: 80 }),
+    speak: part(sd.speak || 'off', { voice: 'bm_george', sizeMb: 92 }),
+    deps: { installed: sd.deps !== false },
+    hearText: sd.hearText || 'What is the capital of France?',
+    hearQueue: Array.isArray(sd.hearQueue) ? sd.hearQueue.slice() : [],
+    hearDelayMs: sd.hearDelayMs || 0,
+    speakDelayMs: sd.speakDelayMs || 0,
+    hearMode: sd.hearMode || 'ok',
+    speakMode: sd.speakMode || 'ok',
+    downloadSteps: sd.downloadSteps || 2,
+    steps: { hear: 0, speak: 0 },
+    hears: [], // { bytes, prompt, wav: true|false }
+    speaks: [], // { text, voice, speed }
+    puts: [],
+    gets: 0,
+  };
+}
+
+function sensesObject(x) {
+  const pick = (p) => ({ ...p });
+  return { hear: pick(x.hear), speak: pick(x.speak), deps: { ...x.deps } };
+}
+
+/** A small 24 kHz mono PCM16 WAV: a soft tone about as long as the text would take to say. */
+export function fakeSpeechWav(text) {
+  const seconds = Math.min(6, Math.max(0.3, String(text || '').length * 0.05));
+  const rate = 24000;
+  const n = Math.round(seconds * rate);
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write('WAVE', 8);
+  buf.write('fmt ', 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(6000 * Math.sin((2 * Math.PI * 180 * i) / rate) * Math.min(1, i / 600, (n - i) / 600)), 44 + i * 2);
+  return buf;
+}
+
+/** api/senses, api/hear, api/speak. Answers (a Promise), or null (not one of them). */
+function sensesRoute(x, route, req, url, json) {
+  const p = url.pathname;
+  if (!/^\/api\/(?:senses|hear|speak)$/.test(p)) return null;
+  if (!x.enabled) return json(404, { error: 'not_found', message: `no such endpoint: ${p}` });
+  const m = req.method();
+  const later = (ms, fn) => (ms ? new Promise((r) => setTimeout(r, ms)).then(fn) : fn());
+  if (p === '/api/senses') {
+    if (m === 'GET') {
+      x.gets += 1;
+      for (const k of ['hear', 'speak']) {
+        const part = x[k];
+        if (part.enabled && part.state === 'downloading') {
+          x.steps[k] += 1;
+          part.progress = Math.min(1, Math.round((x.steps[k] / x.downloadSteps) * 100) / 100);
+          if (x.steps[k] >= x.downloadSteps) {
+            part.state = 'ready';
+            part.progress = 1;
+          }
+        }
+      }
+      return json(200, sensesObject(x));
+    }
+    if (m === 'PUT') {
+      let body = {};
+      try {
+        body = JSON.parse(req.postData() || '{}') || {};
+      } catch {
+        return json(400, { error: 'bad_json', message: 'the body is not valid JSON' });
+      }
+      x.puts.push(body);
+      for (const k of ['hear', 'speak']) {
+        const b = body[k];
+        if (!b || typeof b !== 'object') continue;
+        const part = x[k];
+        const newModel = k === 'hear' && typeof b.model === 'string' && b.model !== part.model;
+        if (newModel) part.model = b.model;
+        if (b.enabled === false) {
+          part.enabled = false;
+          part.state = 'off';
+          part.progress = 0;
+        } else if (b.enabled === true && (!part.enabled || newModel)) {
+          part.enabled = true;
+          part.state = 'downloading';
+          part.progress = 0;
+          x.steps[k] = 0;
+        }
+      }
+      return json(200, sensesObject(x));
+    }
+    return json(405, { error: 'method_not_allowed', message: 'GET, PUT' });
+  }
+  if (m !== 'POST') return json(405, { error: 'method_not_allowed', message: 'POST' });
+  if (p === '/api/hear') {
+    if (x.hearMode === 'unreachable') return route.abort('internetdisconnected');
+    if (x.hearMode === 'error') return json(500, { error: 'internal', message: 'whisper failed' });
+    const bytes = req.postDataBuffer() || Buffer.alloc(0);
+    const type = String(req.headers()['content-type'] || '');
+    const wav = bytes.length >= 44 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WAVE';
+    x.hears.push({ bytes: bytes.length, prompt: url.searchParams.get('prompt') || '', wav, type, rate: wav ? bytes.readUInt32LE(24) : 0, seconds: wav ? (bytes.length - 44) / 2 / bytes.readUInt32LE(24) : 0 });
+    if (!/audio\/wav/.test(type) || !wav) return json(400, { error: 'bad_audio', message: 'send a WAV (16 kHz mono PCM16)' });
+    if (bytes.length > 2 * 1024 * 1024) return json(413, { error: 'too_large', message: 'at most 2 MB' });
+    if (!x.hear.enabled || x.hear.state !== 'ready') return json(409, { error: 'not_ready', message: 'hearing is not ready on the home base' });
+    const text = x.hearQueue.length ? x.hearQueue.shift() : x.hearText;
+    return later(x.hearDelayMs, () => json(200, { text, ms: 420, model: `whisper-${x.hear.model}` }));
+  }
+  // /api/speak
+  if (x.speakMode === 'unreachable') return route.abort('internetdisconnected');
+  if (x.speakMode === 'error') return json(500, { error: 'internal', message: 'kokoro failed' });
+  let body = {};
+  try {
+    body = JSON.parse(req.postData() || '{}') || {};
+  } catch {
+    return json(400, { error: 'bad_json', message: 'the body is not valid JSON' });
+  }
+  x.speaks.push({ text: String(body.text || ''), voice: body.voice, speed: body.speed });
+  if (!x.speak.enabled || x.speak.state !== 'ready') return json(409, { error: 'not_ready', message: 'the voice is not ready on the home base' });
+  if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 1000) return json(400, { error: 'bad_text', message: 'text: 1 to 1000 characters' });
+  const cors = req.headers().origin ? { 'access-control-allow-origin': req.headers().origin, vary: 'Origin' } : {};
+  return later(x.speakDelayMs, () => route.fulfill({ status: 200, contentType: 'audio/wav', headers: { ...cors, 'cache-control': 'no-store' }, body: fakeSpeechWav(body.text) }));
+}
+
 /** One home base's sync storage: { devices: Map(id -> { id, label, updatedAt, bytes, text, encoding }), puts, gets, mode }. */
 export function fakeSyncStore() {
   return { devices: new Map(), puts: [], gets: [], lists: 0, mode: 'ok', clock: 0 };
@@ -350,9 +493,9 @@ function syncRoute(store, b, req, url, json, raw) {
   return json(405, { error: 'method_not_allowed', message: 'GET, PUT' });
 }
 
-export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore() } = {}) {
+export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore(), senses = {} } = {}) {
   const fx = coreFixtures();
-  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync };
+  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync, senses: fakeSenses(senses) };
   await context.route(`${CORE_ORIGIN}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -373,6 +516,8 @@ export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain =
     const raw = (status, text) => route.fulfill({ status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: text });
     const syncAnswer = syncRoute(state.sync, state.brain, req, url, json, raw);
     if (syncAnswer) return syncAnswer;
+    const sensesAnswer = sensesRoute(state.senses, route, req, url, json);
+    if (sensesAnswer) return sensesAnswer;
     const brainAnswer = brainRoute(state.brain, req, url, json);
     if (brainAnswer) {
       if (brainAnswer.status === 204) return route.fulfill({ status: 204, headers: { ...cors, 'cache-control': 'no-store' }, body: '' });

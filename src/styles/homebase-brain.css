@@ -840,3 +840,30 @@
 .sync-card .sync-devices {
   margin: 0;
 }
+
+/* ---- Settings → Home base → Hearing and voice (beta), v7.7 (src/ui/senses-settings.js) ----------- */
+.senses-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.senses-model-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.senses-model-row .select {
+  flex: 0 1 220px;
+  min-width: 0;
+}
+
+.senses-card .nv-status[data-state='warn'],
+.senses-card .nv-status[data-state='error'],
+.senses-card .nv-status[data-state='resting'] {
+  color: var(--warn);
+}
+
+.senses-card .nv-progress[hidden] {
+  display: none;
+}
