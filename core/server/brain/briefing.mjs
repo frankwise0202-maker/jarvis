@@ -48,9 +48,10 @@ function greetingWord(hour) {
 const deg = (units) => (units === 'C' ? '°C' : '°F');
 
 /** The free briefing's Markdown. */
-export function freeMarkdown(b, { dateWords }) {
+export function freeMarkdown(b, { dateWords, noLocation = false }) {
   const out = [`**${b.greeting}** It's ${dateWords}.`];
   const w = b.weather;
+  if (!w && noLocation) out.push('**Weather:** share your location from Jarvis (Settings, Home base, morning briefing) to see it here.');
   if (w) {
     const now = w.now.temp !== null ? `${w.now.summary}, ${w.now.temp}${deg(w.units)} now` : w.now.summary;
     const today = w.today.summary ? `${w.today.summary[0].toLowerCase()}${w.today.summary.slice(1)}` : '';
@@ -193,7 +194,7 @@ export function createBriefings({ file, now, timeZone, getSettings, fetchFn, get
         b.spoken = full.spoken || freeSpoken(b, { dateWords });
         if (full.headlines.length) b.headlines = full.headlines.slice(0, 6);
       } else {
-        b.markdown = freeMarkdown(b, { dateWords });
+        b.markdown = freeMarkdown(b, { dateWords, noLocation: !getSettings().briefing.location });
         b.spoken = freeSpoken(b, { dateWords });
       }
       state.latest = b;

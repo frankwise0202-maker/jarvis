@@ -59,9 +59,11 @@ test('free briefing (no key): weather, 6 headlines general/tech, overnight repor
     assert.deepEqual(brain.latestBriefing(), b);
     assert.equal(push.sent.length, 0, 'a briefing asked for by hand sends no notification');
     assert.equal(brain.info().briefing.lastAt, b.generatedAt);
-    // Without a location there is no weather, and nothing fails.
+    // Without a location there is no weather (and a hint where to set it), and nothing fails.
     await brain.putSettings({ briefing: { location: null } });
-    assert.equal((await brain.runBriefing()).weather, null);
+    const nl = await brain.runBriefing();
+    assert.equal(nl.weather, null);
+    assert.match(nl.markdown, /share your location from Jarvis/);
     // Feeds and weather offline: still a briefing.
     const offline = makeBrain({ core, fetchFn: createFixtureFetch({ overrides: { '.': new TypeError('fetch failed') } }) });
     await offline.brain.putSettings({ briefing: { location: LOCATION } });
