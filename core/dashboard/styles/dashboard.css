@@ -1437,6 +1437,21 @@ html.cursor-hidden * {
   }
 }
 
+/* ---- a remote viewer in the kiosk layout (a big tablet on its side, the Mac's full screen) ---- */
+/* The Alienware's own screen never matches these (its <html> says data-view="kiosk"). */
+html[data-view='remote'] .ask-input {
+  font-size: max(16px, 1rem); /* iOS zooms the whole page into a field under 16px */
+}
+html[data-view='remote'] .ask-chip,
+html[data-view='remote'] .ask-send,
+html[data-view='remote'] .ask-input,
+html[data-view='remote'] .open-jarvis {
+  min-height: 44px; /* touch targets */
+}
+html[data-view='remote'] .ask-chip {
+  min-width: 44px;
+}
+
 /* ---- the remote view: the iPhone, the iPad and laptop windows ------------------------------- */
 /* The kiosk layout above needs a window of at least 1366×740 (it bottoms out at 1rem = 12px).
    Anything narrower or shorter (the iPhone, the iPad, the Mac's browser window) scrolls instead:
@@ -1450,7 +1465,7 @@ html.cursor-hidden * {
     font-size: 16px;
     --gap: 0.75rem;
     --panel-pad: 0.875rem 1rem 1rem;
-    --orb: clamp(13rem, min(34vw, 60dvh), 20rem);
+    --orb: clamp(13rem, min(34vw, 70dvh), 20rem);
   }
   html,
   body {
@@ -1632,10 +1647,13 @@ html.cursor-hidden * {
     width: 100%;
     height: 100%;
   }
+  /* The heart is small here: the state word alone (the count is in the summary beside it). */
+  .core-word {
+    letter-spacing: 0.1em;
+    padding-left: 0.1em;
+  }
   .core-sub {
-    font-size: 0.75rem;
-    letter-spacing: 0.16em;
-    padding-left: 0.16em;
+    display: none;
   }
   .core-readouts {
     display: grid;

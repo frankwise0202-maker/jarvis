@@ -43,6 +43,7 @@ export const SIZES = {
   'mac-chrome-1280': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome on a 1280×800 screen (712 tall inside)" },
   'laptop-1440': { w: 1440, h: 900, touch: false, dpr: 1, label: 'laptop window 1440×900' },
   'mac-chrome-1440': { w: 1440, h: 812, touch: false, dpr: 1, label: "the Mac's Chrome on a 1440×900 screen (812 tall inside)" },
+  'ipad-pro-side': { w: 1366, h: 1024, touch: true, dpr: 1, label: 'iPad Pro 12.9" on its side 1366×1024 (the kiosk layout)' },
 };
 const STATES = ['ok', 'warn', 'alert', 'nogpu', 'internet', 'offline', 'night'];
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
@@ -163,6 +164,8 @@ export function remoteProblems(page, insets = {}) {
     const label = document.getElementById('core-label').getBoundingClientRect();
     const orb = document.querySelector('.core-orb').getBoundingClientRect();
     if (label.left < orb.left - 1 || label.right > orb.right + 1 || label.top < orb.top - 1 || label.bottom > orb.bottom + 1) out.push('the state word leaves the core');
+    const heart = 2 * 0.34 * window.__jarvisCore.stats().orb.R; // the dark disc the word sits on
+    if (label.width > heart + 1) out.push(`the state word (${Math.round(label.width)} px) is wider than the core's heart (${Math.round(heart)} px)`);
 
     // Text: nothing cut off or spilling out of its box; sizes.
     const BODY = '.ev-text, .msg, .ask-hello, .proc-name, .svc-name, .core-summary, .missing-text, .disk-note, .events-empty, .offline-text, .toast';
@@ -345,7 +348,21 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     const checks = [];
     let smallest = null;
     if (layout === 'kiosk') {
+      // The kiosk layout (it fits), seen by a remote viewer: the kiosk run's checks, plus the
+      // remote viewer's own rules for the question box and the touch targets.
       checks.push(...(await layoutProblems(page)));
+      checks.push(
+        ...(await page.evaluate(() => {
+          const out = [];
+          for (const el of document.querySelectorAll('.ask-chip, .ask-send, .ask-input, .open-jarvis')) {
+            const r = el.getBoundingClientRect();
+            if (r.width && (r.height < 43.5 || r.width < 43.5)) out.push(`touch target under 44 px: ${el.className} (${Math.round(r.width)}×${Math.round(r.height)})`);
+          }
+          const fs = parseFloat(getComputedStyle(document.getElementById('ask-input')).fontSize);
+          if (fs < 16) out.push(`the question box is ${fs}px (iOS zooms the page into fields under 16 px)`);
+          return out;
+        })),
+      );
     } else {
       const r = await remoteProblems(page, size.insets);
       checks.push(...r.problems);
