@@ -157,7 +157,7 @@ Everything the owner's Claude API key pays for runs here, one job at a time, whi
 |---|---|
 | `GET /api/brain` | `{version, key: {set, hint: "…Ab3D", setAt, verified}, sdk: {installed}, limits: {dailyUsd, monthlyUsd}, spend: {day, todayUsd, month, monthUsd, capReached: null\|"daily"\|"monthly"}, push: {vapidPublicKey, devices}, briefing: {enabled, time, units, location, lastAt, nextAt}, jobs: {running, queued}, watchers: {active}, owner: {name}, models}` |
 | `PUT /api/brain/settings` | any of `{limits: {dailyUsd 0-50, monthlyUsd 0-500}, briefing: {enabled, time "HH:MM", units "F"\|"C", location {lat, lon, label}\|{city}\|null}, owner: {name}}` → the brain object. A city is geocoded with Open-Meteo; coordinates are rounded to 2 decimals. Unknown keys are refused (400). |
-| `POST /api/brain/key {key}` | → `{ok, hint, verified}`; checked with the free `GET /v1/models` (offline: stored with `verified: false`); a rejected key → 400 `bad_key`. `DELETE /api/brain/key` → 204. 5 an hour. |
+| `POST /api/brain/key {key}` | → `{ok, hint, verified}`; checked with the free `GET /v1/models` (offline: stored with `verified: false`, which becomes `true` with its first accepted request); a rejected key → 400 `bad_key`. `DELETE /api/brain/key` → 204. 5 an hour. |
 | `GET /api/spend?days=30` | `{days: [{day, usd, calls}] (newest first, days without calls included), month: {month, usd}, limits}` |
 | `POST /api/jobs {kind: "research", prompt (≤ 2000), depth: "quick"\|"deep", title?}` | → 202 `{job}`; 409 `no_key`, 402 `spend_cap`, 503 `sdk_missing`, 429 `queue_full` (20 waiting). 20 an hour. |
 | `GET /api/jobs?limit=50&kind=` | `{jobs}` newest first, without `result`; `kind` (research, watch-check, briefing) is optional |
@@ -190,10 +190,21 @@ in the environment cannot redirect it).
 in `brain/prices.mjs`): Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50 per million tokens
 (input/output; cache reads and 5-minute writes too), web search $0.01 each; after a refusal fallback each
 attempt at its own model. Totals per local day and month in `brain/spend-v1.json`. Caps: $5 a day and $50
-a month by default. A job that would start over a cap is `blocked` (`POST` → 402); a running one is
-watched with a live estimate during the stream and stops when it would cross a cap or its own budget
-(quick $0.75, deep $3, watcher check $0.15), keeping what it found (`stoppedEarly`). The full briefing
-spends at most $0.30 a day. A cap of 0 means no background spending.
+a month by default. A job that would start over a cap is `blocked` (`POST` → 402). A running one never
+goes past a cap or its own budget (quick $1.25, deep $3, watcher check $0.30) by more than a rounding error:
+- before each request (the first and every continuation) its `max_tokens` is lowered to what the room
+  left (the smallest of the budget, today's and this month's cap) can pay for after its input, and a request
+  that could write fewer than 2,000 tokens is not sent; an input the API counts far above the estimate stops
+  the request at `message_start` (before it writes) and sends it again to fit;
+- during the stream a live estimate is checked on every event and every second: the input of every
+  server-tool round (each reads the whole conversation again, every result at its measured size), searches
+  at $0.01, and the time the model spends writing at 200 tokens a second (thinking streams no text on Opus /
+  Sonnet 5.5 but is billed as output), up to `max_tokens`; while a tool runs, the round its result starts is
+  counted ahead. The request stops the moment it would cross, keeping what it found (`stoppedEarly`), and is
+  charged that estimate (a finished one is charged from its `usage`). The two lanes count each other's
+  request in flight.
+
+The full briefing spends at most $0.30 a day. A cap of 0 means no background spending.
 
 **Jobs.** One at a time (the briefing has its own lane so 07:00 never waits behind a long research job);
 up to 20 waiting; kept in `brain/jobs-v1.json`. A job that was running when the Core stopped is queued
@@ -207,10 +218,16 @@ reached: `blocked` (resumes when it clears). Max 20.
 
 **Briefing.** At the configured local time (07:00, the Core's time zone, DST-safe; a Core that was down
 at that time catches up within 3 hours, and a restart never repeats it) and on `POST /api/briefing/run`.
+Right after a start (a boot at 08:00, an update at 06:59) the scheduled one waits for the first readings
+and the network: until the internet check is up and 15 s have passed, 2 minutes at most (fixture mode:
+at once). One that came out without its weather (a location is set) or without any headlines is made
+again, once, 7 minutes later, without a second notification.
 Free: greeting, Open-Meteo weather for the location from the app, up to 6 headlines from public feeds
 (NPR, BBC News; Ars Technica, The Verge; alternating general and tech, last 36 h), the overnight report
-from the Core's own history and events, research and watchers finished since the last briefing,
-`core/whats-new.json` (entries of the last 3 days), and a music suggestion (an Apple Music search link).
+from the Core's own history and events (first the night's events: an automatic update that went back,
+unexpected stops and reboots, warnings, updates, restarts; then the peaks), research and watchers finished
+since the last briefing, `core/whats-new.json` (`[{date, title, detail}]`, plain words: entries of the last
+3 days, at most 4, a day's in the file's order), and a music suggestion (an Apple Music search link).
 Full (a key and budget left): the same facts plus one Claude call that writes it (`write_briefing` tool:
 markdown, spoken, top headlines). Every fetch has an 8 s timeout and a size cap; the feed parser is a
 linear scanner that never throws. The scheduled briefing sends a notification (`?homebase=briefing`).
@@ -225,10 +242,14 @@ returned (only its hint), and anything shaped like a key is replaced by `sk-ant-
 error message and SSE frame.
 
 **Tests** (`npm test`; a local fake Messages API that streams SSE, `test/server/brain/fake-claude.mjs`, never
-the real one): key vault and leaks, cost math, research, pause_turn, caps and budgets, cancel, restart
-survival, watchers met/not met, the free and full briefing with fixtures, the scheduler across DST, settings
-and geocoding, the feed parser, the HTTP routes with their access rules, body and rate limits, SSE events,
-and a start without `node_modules`.
+the real one; like the API it never writes more than `max_tokens`): key vault and leaks, cost math,
+research, pause_turn, caps and budgets (a reply that is all silent thinking, an input far above the
+estimate, a long silent think stopped by the timer, server-tool rounds stopped before the one that would
+cross), cancel, restart survival, watchers met/not met, the free and full briefing with fixtures, the
+scheduler across DST, the catch-up after a boot and the quiet redo, the overnight report, settings and
+geocoding, the feed parser, the HTTP routes with their access rules (a page on another localhost port gets
+nothing), body and rate limits, SSE events, and a start without `node_modules`. `test/server/public-repo.test.mjs`
+checks that no file names the brief's sample place.
 
 ## What only the real machine can verify
 
