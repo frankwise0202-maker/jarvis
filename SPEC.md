@@ -3160,7 +3160,8 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   ever spreads; the same id → the newer `updatedAt` wins, except that a conversation whose two copies
   each have turns the other lacks is never overwritten: the other device's version is kept next to
   it, id `<id>~sync-<deviceId>`, title "<title> (from Mac)", one per device, following that device;
-  such copies are never passed on. The same version is skipped before vetting; library items not newer
+  such copies are never passed on. Remembered facts only fill the room left under the 100-fact limit,
+  so a merge never pushes out a fact this device has. The same version is skipped before vetting; library items not newer
   than this device's are skipped before their specs are checked. Idempotent: a sync cut off half way
   carries on next time. The open conversation, when replaced, is reloaded; History refreshes.
 - *Tests.* Unit `sync` (the rules, the words, the controller with a fake client, data and clock: the

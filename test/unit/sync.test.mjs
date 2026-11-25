@@ -343,8 +343,15 @@ test('sync controller: a 1.0 Core (404) and an unreachable home base say so and 
   assert.equal(st.problem.state, 'toobig');
   assert.match(st.problem.message, /too big to sync \(52 MB\)/);
   assert.deepEqual(b.core.calls, [`list ${BASE}`, 'get jd-mac000000000'], 'the other device’s backup still came in; nothing was sent');
+  const builds = b.data.builds;
   st = await b.sync.syncNow();
   assert.equal(st.problem && st.problem.state, 'toobig', 'it keeps saying so (never "synced")');
+  assert.equal(b.data.builds, builds, 'and doesn’t read the big history again until something changes');
+  b.data.exportText = '{"app":"jarvis","version":1,"exportedAt":"X","small":true}';
+  b.sync.noteChange(); // the owner deleted the conversations with photos
+  st = await b.sync.syncNow();
+  assert.equal(st.phase, 'done', 'small enough again: sent');
+  assert.ok(b.core.calls.some((c) => c.startsWith('put ')));
 
   const c = setup();
   c.core.uploadAnswer = { ok: false, kind: 'http', status: 413, code: 'too_large', message: 'the backup is larger than 50 MB' };

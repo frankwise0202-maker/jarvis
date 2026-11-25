@@ -995,7 +995,8 @@ last two weeks, on the Alienware's drive.
 - **It just happens.** A few seconds after Jarvis opens, then every 10 minutes while it's open, and two
   minutes after you change something. **Settings → Home base → Your devices, in sync** shows when it
   last synced, which other devices the home base has, and **Sync now**.
-- **It only ever adds.** Something new on one device appears on the other. Nothing is ever deleted by
+- **It only ever adds.** Something new on one device appears on the other (remembered facts as long
+  as there's room: Jarvis keeps 100, and syncing never pushes one out). Nothing is ever deleted by
   syncing: delete a conversation on the iPhone and it stays deleted there (it never comes back), while
   the Mac keeps its copy until you delete it there too. If you carried on the same conversation on
   both devices before they synced, you keep yours and get the other one next to it, named

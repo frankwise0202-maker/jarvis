@@ -138,6 +138,7 @@ export function createSync({
   // Something may differ from the last upload: the export is built (and hashed) only then, so an idle
   // app doesn't read a big history every 10 minutes. True at start (the first sync always checks).
   let dirty = true;
+  let changes = 0; // counts noted changes: one noted while a sync runs keeps `dirty` for the next
   let suppress = 0; // > 0 while a merge writes: its own changes are not "changes" to upload again
   let debounce = null;
   let startTimer = null;
@@ -306,22 +307,23 @@ export function createSync({
     // Ours, sent when it changed.
     const someAdded = added.conversations + added.library + added.memory > 0 ? added : null;
     const onCore = listed.devices.some((d) => d.id === selfId);
+    if (!dirty && !someAdded && rec.tooBig) {
+      fail({ kind: 'toobig', bytes: rec.tooBig }); // still too big: nothing changed since it was checked
+      return;
+    }
     if (!dirty && !someAdded && onCore && rec.upload && now() - rec.upload.at < REBUILD_MS) {
-      if (rec.tooBig) {
-        fail({ kind: 'toobig', bytes: rec.tooBig }); // still too big: nothing changed since
-        return;
-      }
       rec.lastSyncedAt = now();
       saveRec();
       set({ phase: pullProblem ? 'failed' : 'done', problem: pullProblem ? syncProblem(pullProblem) : null, lastSyncedAt: rec.lastSyncedAt, added: null });
       return;
     }
-    dirty = false; // a change from here on marks it again
+    const seenChanges = changes; // what this export covers
     const built = await data.build();
     if (stale()) return;
     addKnown(built.ids); // everything in it counts as this device's (a deletion later stays deleted)
     const bytes = byteLength(built.json);
     if (bytes > SYNC_MAX_BYTES) {
+      if (changes === seenChanges) dirty = false; // checked: not built again until something changes
       rec.tooBig = bytes;
       saveRec();
       fail({ kind: 'toobig', bytes }, { added: someAdded });
@@ -334,12 +336,12 @@ export function createSync({
       const up = await client.upload(base, selfId, built.json, { label, gzipped: gz });
       if (stale()) return;
       if (!up.ok) {
-        dirty = true; // not sent: try again next time
         fail(up, { added: someAdded });
         return;
       }
       rec.upload = { fingerprint, at: now(), bytes };
     }
+    if (changes === seenChanges) dirty = false; // everything noted so far is on the Core now
     rec.tooBig = 0;
     rec.lastSyncedAt = now();
     saveRec();
@@ -355,7 +357,6 @@ export function createSync({
         await withLock(cycle);
       } catch (err) {
         safe(() => console.warn('[jarvis] sync failed:', err && err.message));
-        dirty = true;
         fail({ kind: 'error' });
       } finally {
         running = null;
@@ -385,6 +386,7 @@ export function createSync({
   function noteChange() {
     if (suppress > 0 || destroyed) return;
     dirty = true;
+    changes++;
     pendingChange = true;
     lastChangeAt = now();
     if (debounce) timers.clearTimeout(debounce);

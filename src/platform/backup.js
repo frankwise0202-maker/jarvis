@@ -46,7 +46,7 @@
 //                         optional in a backup: older backups simply don't have them.
 
 import { DEFAULT_SETTINGS, getSettings, saveSettings, resetSettings } from './settings.js';
-import { listMemory, mergeMemory, clearMemory, memoryKey } from './memory.js';
+import { listMemory, mergeMemory, clearMemory, memoryKey, MEMORY_MAX_ITEMS } from './memory.js';
 import { getApiKey, clearApiKey } from './secrets.js';
 import { resetSpend } from './spend.js';
 import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
@@ -291,18 +291,22 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
     }
   }
 
-  // Remembered facts: added unless this device forgot them.
+  // Remembered facts: added unless this device forgot them, and only into the room left (memory keeps
+  // MEMORY_MAX_ITEMS; a merge must never push out a fact this device already has).
   if (Array.isArray(data.memory) && data.memory.length) {
+    const factKey = (m) => memoryKey(typeof m === 'string' ? m : isPlainObject(m) ? m.text : '');
     const here = new Set(listMemory().map((m) => memoryKey(m.text)));
-    const facts = data.memory.filter((m) => {
-      const k = memoryKey(typeof m === 'string' ? m : isPlainObject(m) ? m.text : '');
-      return !!k && (here.has(k) || !knownMem.has(k));
+    const fresh = data.memory.filter((m) => {
+      const k = factKey(m);
+      return !!k && !here.has(k) && !knownMem.has(k);
     });
-    if (facts.length) out.memory = mergeMemory(facts);
+    const room = Math.max(0, MEMORY_MAX_ITEMS - here.size);
+    const take = room > 0 ? fresh.slice(-room) : []; // the newest that fit (a backup lists them oldest first)
+    if (take.length) out.memory = mergeMemory(take);
     const after = new Set(listMemory().map((m) => memoryKey(m.text)));
-    for (const m of facts) {
-      const k = memoryKey(typeof m === 'string' ? m : m.text);
-      if (after.has(k)) out.written.mem.push(k);
+    for (const m of data.memory) {
+      const k = factKey(m);
+      if (k && after.has(k)) out.written.mem.push(k);
     }
   }
   return out;

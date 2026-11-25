@@ -171,6 +171,23 @@ test('sync merge: what this device deleted (a conversation, a saved item, a forg
   assert.deepEqual(r.written.mem.sort(), ['likes jazz', 'prefers tea']);
 });
 
+test('sync merge: remembered facts only fill the room left, so no fact this device has is ever pushed out', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async ({ MAC }) => {
+    const { backup, memory } = window.__mods;
+    for (let i = 0; i < 98; i++) memory.addMemory(`Local fact number ${i}`);
+    const theirs = [1, 2, 3, 4].map((i) => ({ id: `m${i}`, text: `Mac fact ${i}`, createdAt: Date.now() + i }));
+    const res = await backup.mergeSyncedBackup(backupOf({ memory: theirs }), { from: MAC, label: 'Mac', known: known() });
+    const texts = memory.listMemory().map((m) => m.text);
+    return { added: res.memory, count: texts.length, locals: texts.filter((t) => t.startsWith('Local')).length, macs: texts.filter((t) => t.startsWith('Mac')).sort(), written: res.written.mem };
+  }, { MAC });
+  assert.equal(r.added, 2);
+  assert.equal(r.count, 100);
+  assert.equal(r.locals, 98, 'every fact this device had is still there');
+  assert.deepEqual(r.macs, ['Mac fact 3', 'Mac fact 4'], 'the newest that fit');
+  assert.deepEqual(r.written.sort(), ['mac fact 3', 'mac fact 4'], 'the others are not marked as had, so they can come in later');
+});
+
 test('sync merge: a big library (2,500 items) comes in whole; a conversation running here waits; the newer saved item wins', async () => {
   const page = await newPage();
   const r = await page.evaluate(async ({ MAC }) => {

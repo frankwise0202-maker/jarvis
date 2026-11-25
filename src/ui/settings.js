@@ -1546,7 +1546,7 @@ export function createSettingsPanel(o) {
   const data = section(
     'data',
     card(
-      h('p', { class: 'set-help', text: 'Everything lives on this device. A backup carries your conversations, memory, settings, custom protocols and statistics to another device; it never includes your API key or spending.' }),
+      h('p', { class: 'set-help', text: 'Everything lives on this device (and, with a home base linked and sync on, on your other devices too: Settings → Home base). A backup carries your conversations, memory, settings, custom protocols and statistics to another device; it never includes your API key or spending.' }),
       h(
         'div',
         { class: 'set-row-actions set-row-actions--start' },
