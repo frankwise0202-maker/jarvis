@@ -373,7 +373,16 @@ gdm_autologin_on() { # print custom.conf with automatic login for USER_NAME in [
   ' "$GDM_CONF"
 }
 
-smart_allowed() { sudo -n -l "$SMARTCTL" -j -H -A -i /dev/sda >/dev/null 2>&1; }
+# May the Core read the disk's health? Ask sudo the way the Core will run it: from a session of its own
+# with no terminal. sudo remembers the password for 15 minutes per terminal (after "sudo tailscale up",
+# say), and the owner's own "%sudo ALL" rule then allows anything with -n, but only in that terminal.
+smart_allowed() {
+  if have setsid; then
+    setsid -w sudo -n -l "$SMARTCTL" -j -H -A -i /dev/sda </dev/null >/dev/null 2>&1
+  else
+    [ -e "$SUDOERS_FILE" ]
+  fi
+}
 
 # ------------------------------------------------------------------------------------------ steps
 

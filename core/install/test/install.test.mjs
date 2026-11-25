@@ -172,6 +172,42 @@ test('no terminal: the safe default for each question (no automatic login), and 
   }
 });
 
+test('a password sudo remembers in this terminal is not the disk-check permission', () => {
+  // After "sudo tailscale up", real sudo answers "sudo -n -l smartctl ..." with yes for 15 minutes in that
+  // terminal (the owner's own "%sudo ALL" rule), while the Core, started by systemd with no terminal,
+  // is still asked for a password. The installer and jarvis-core must not take one for the other.
+  const sb = makeSandbox({ tsMode: 'missing', nodeVersion: 'v22.11.0' });
+  try {
+    const env = { STUB_SUDO_CACHED: '1' };
+    const e = { ...sb.env, ...env };
+    const ask = ['-n', '-l', '/usr/sbin/smartctl', '-j', '-H', '-A', '-i', '/dev/sda'];
+    assert.equal(spawnSync('sudo', ask, { env: e }).status, 0, 'the stub sudo says yes in this terminal, like real sudo');
+    assert.equal(spawnSync('setsid', ['-w', 'sudo', ...ask], { env: e }).status, 1, 'and no from a session of its own');
+    // the question is still asked, and the rule would be written
+    let r = install(sb, ['--dry-run'], { answers: ['n', 'y'], env });
+    assert.equal(r.code, 0, r.out);
+    assert.doesNotMatch(r.out, /may already read the hard drive's health/);
+    assert.match(r.out, /Check the hard drive's health\? \[Y\/n\] y/);
+    assert.ok(r.out.includes(RULE), 'the smartctl rule is shown');
+    // jarvis-core uninstall doesn't claim to remove a permission that isn't there
+    const bin = path.join(sb.home, '.local/bin/jarvis-core');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.copyFileSync(CLI, bin);
+    fs.chmodSync(bin, 0o755);
+    r = cli(sb, ['uninstall', '--yes'], { env });
+    assert.doesNotMatch(r.out, /Removed the disk-check permission/);
+    assert.ok(!stubLog(sb).some((l) => l.includes(`rm -f ${sb.env.JARVIS_CORE_SUDOERS_FILE}`)), 'nothing to remove');
+    // once the rule is there, the question is skipped
+    fs.writeFileSync(sb.env.JARVIS_CORE_SUDOERS_FILE, `${RULE}\n`);
+    r = install(sb, ['--dry-run'], { answers: ['n'], env });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /✓ Jarvis Core may already read the hard drive's health/);
+    assert.doesNotMatch(r.out, /Check the hard drive's health\?/);
+  } finally {
+    sb.cleanup();
+  }
+});
+
 test('refuses to run as root, and outside Ubuntu', () => {
   const sb = makeSandbox();
   try {

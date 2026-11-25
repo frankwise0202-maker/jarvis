@@ -154,10 +154,11 @@ state_get() { # state_get key: a value the installer recorded
   return 1
 }
 
-# /etc/sudoers.d is not readable without the password, so ask sudo itself (or the installer's note)
+# The installer's note, the file itself, or sudo asked from a session of its own with no terminal (so a
+# password this terminal cached in the last 15 minutes does not count as the rule).
 smart_rule_present() {
   [ "$(state_get sudoers 2>/dev/null)" = installed ] || [ -e "$SUDOERS_FILE" ] ||
-    sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda >/dev/null 2>&1
+    { have setsid && setsid -w sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda </dev/null >/dev/null 2>&1; }
 }
 
 sudo_ready=0

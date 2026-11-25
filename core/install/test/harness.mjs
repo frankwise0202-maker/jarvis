@@ -19,6 +19,11 @@ export const REAL_NODE = process.execPath;
 const REAL_GIT = execFileSync('bash', ['-c', 'command -v git']).toString().trim();
 
 export const USER = 'frank-wise';
+
+/** This process's session id (field 6 of /proc/self/stat): the "terminal" the stub sudo caches for. */
+export function sessionId(stat = fs.readFileSync('/proc/self/stat', 'utf8')) {
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[3];
+}
 export const UID = 1000;
 
 // Ubuntu 24.04 / GNOME 46 defaults for the keys the installer changes.
@@ -69,12 +74,22 @@ case "$*" in
   -un|"-u -n"|"-n -u") echo ${USER} ;;
   *) exec /usr/bin/id "$@" ;;
 esac`,
+  // sudo: STUB_SUDO_CACHED=1 (the default) means the password is cached in the terminal the tests run
+  // in (as for 15 minutes after "sudo tailscale up"). Like real sudo, that only counts in the terminal's
+  // own session (STUB_TTY_SID): there the owner's "%sudo ALL" rule allows anything with -n, -l included.
+  // A process in a session of its own (setsid, or the Core started by systemd) has no terminal, so only
+  // a NOPASSWD rule counts there: the sandbox's sudoers file.
   sudo: `echo "sudo $*" >> "$STUB_LOG"
+cached() {
+  local st; read -r st < /proc/$$/stat; st=\${st##*) }
+  set -- $st
+  [ "\${STUB_SUDO_CACHED:-1}" = 1 ] && [ "$4" = "\${STUB_TTY_SID:-}" ]
+}
 if [ "$1" = -n ]; then
   shift
   case "$1" in
-    true) [ "\${STUB_SUDO_CACHED:-1}" = 1 ]; exit ;;
-    -l) [ -f "$JARVIS_CORE_SUDOERS_FILE" ]; exit ;;
+    true) cached; exit ;;
+    -l) [ -f "$JARVIS_CORE_SUDOERS_FILE" ] || cached; exit ;;
     -v) exit 0 ;;
   esac
 fi
@@ -244,6 +259,7 @@ export function makeSandbox({ tsMode = 'missing', nodeVersion = null, nodeMissin
     STUB_DIR: stubs,
     STUB_PKGS: pkgs.join(' '),
     STUB_TS: tsMode,
+    STUB_TTY_SID: sessionId(),
     JARVIS_CORE_OS_RELEASE: path.join(etc, 'os-release'),
     JARVIS_CORE_GDM_CONF: path.join(etc, 'gdm3', 'custom.conf'),
     JARVIS_CORE_SUDOERS_FILE: path.join(etc, 'sudoers.d', 'jarvis-core-smartctl'),
