@@ -39,6 +39,7 @@ import voiceListen from './scenarios/voice-listen.mjs';
 import screens from './scenarios/screens.mjs';
 import music from './scenarios/music.mjs';
 import standby from './scenarios/standby.mjs';
+import homebase from './scenarios/homebase.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -52,7 +53,7 @@ const presence = await optionalScenarios('./scenarios/presence.mjs');
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 // Optics and the natural voice (v7 senses) run last; Optics' scenarios start a Chromium of their own
 // with a fake camera (browserArgs, one such browser open at a time).
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...optics, ...opticsCamera, ...naturalVoice];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...optics, ...opticsCamera, ...naturalVoice];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

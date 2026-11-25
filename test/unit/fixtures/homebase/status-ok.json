@@ -1,0 +1,511 @@
+{
+  "v": 1,
+  "t": 1795617121000,
+  "seq": 3601,
+  "mode": "fixture",
+  "scenario": "ok",
+  "host": {
+    "hostname": "alienware",
+    "os": "Ubuntu 24.04.5 LTS",
+    "kernel": "6.14.0-37-generic",
+    "bootId": "3f1c2b9a-8e47-4d2b-9c61-5a0e7d14b2c8",
+    "bootTime": 1795342801000,
+    "uptimeSec": 274320
+  },
+  "core": {
+    "version": "1.0.0",
+    "startedAt": 1795342826000,
+    "uptimeSec": 274295,
+    "timeScale": 1
+  },
+  "cpu": {
+    "model": "Intel(R) Core(TM) i7-6700 CPU @ 3.40GHz",
+    "cores": 4,
+    "threads": 8,
+    "usagePct": 5,
+    "userPct": 3.5,
+    "systemPct": 1.5,
+    "iowaitPct": 0,
+    "perThreadPct": [
+      7.9,
+      3,
+      3,
+      5.1,
+      2.9,
+      5.9,
+      4,
+      7.9
+    ],
+    "freqMHz": 953,
+    "freqMaxMHz": 4000,
+    "load": [
+      0.48,
+      0.49,
+      0.49
+    ],
+    "temp": {
+      "available": true,
+      "packageC": 43,
+      "coresC": [
+        41,
+        41,
+        40,
+        41
+      ],
+      "maxC": 43,
+      "highC": 84,
+      "critC": 100,
+      "source": "coretemp"
+    }
+  },
+  "gpu": {
+    "status": "ok",
+    "available": true,
+    "message": null,
+    "detail": null,
+    "name": "NVIDIA GeForce GTX 970",
+    "driver": "580.95.05",
+    "utilPct": 2,
+    "memUsedMB": 471,
+    "memTotalMB": 4096,
+    "memPct": 11.5,
+    "tempC": 40,
+    "tempSource": "nvidia-smi",
+    "powerW": 14.7,
+    "powerLimitW": 151,
+    "fanPct": 22,
+    "clockMHz": 135,
+    "count": 1,
+    "adapters": [
+      "Intel HD Graphics 530",
+      "NVIDIA GeForce GTX 970"
+    ],
+    "errors": 0,
+    "checkedAt": 1795617121000
+  },
+  "memory": {
+    "totalBytes": 16695152640,
+    "availableBytes": 11147019264,
+    "usedBytes": 5548133376,
+    "usedPct": 33.2,
+    "availablePct": 66.8,
+    "cachedBytes": 4833746944,
+    "buffersBytes": 422793216,
+    "swap": {
+      "totalBytes": 4294963200,
+      "usedBytes": 0,
+      "freeBytes": 4294963200,
+      "usedPct": 0
+    }
+  },
+  "disks": {
+    "readBps": 24576,
+    "writeBps": 197632,
+    "devices": [
+      {
+        "name": "sda",
+        "model": "ST1000DM003-1SB1",
+        "sizeBytes": 1000204886016,
+        "rotational": true,
+        "readBps": 24576,
+        "writeBps": 197632,
+        "busyPct": 0.6
+      }
+    ],
+    "mounts": [
+      {
+        "mount": "/",
+        "device": "/dev/sda2",
+        "fs": "ext4",
+        "disk": "sda",
+        "totalBytes": 983228743680,
+        "usedBytes": 441813835776,
+        "freeBytes": 492253466624,
+        "usedPct": 47.3
+      },
+      {
+        "mount": "/boot/efi",
+        "device": "/dev/sda1",
+        "fs": "vfat",
+        "disk": "sda",
+        "totalBytes": 535805952,
+        "usedBytes": 32485376,
+        "freeBytes": 503320576,
+        "usedPct": 6.1
+      }
+    ],
+    "mountsCheckedAt": 1795617121000,
+    "health": {
+      "status": "ok",
+      "detail": null,
+      "devices": [
+        {
+          "name": "sda",
+          "model": "ST1000DM003-1SB102",
+          "passed": true,
+          "reallocated": 0,
+          "pending": 0,
+          "uncorrectable": 0,
+          "powerOnHours": 42211,
+          "tempC": 34
+        }
+      ],
+      "checkedAt": 1795613522000
+    }
+  },
+  "network": {
+    "interface": "enp3s0",
+    "kind": "ethernet",
+    "operstate": "up",
+    "speedMbps": 1000,
+    "ipv4": "192.168.1.42",
+    "gateway": "192.168.1.1",
+    "rxBps": 29353,
+    "txBps": 4285,
+    "rxTotalBytes": 18828870502,
+    "txTotalBytes": 2372866213,
+    "tailscaleInterface": true
+  },
+  "processes": {
+    "total": 18,
+    "running": 0,
+    "threads": 1187,
+    "topCpu": [
+      {
+        "pid": 1771,
+        "name": "chrome",
+        "label": "Dashboard (Chrome)",
+        "threadPct": 18,
+        "cpuPct": 2.3,
+        "memBytes": 356515840,
+        "memPct": 2.1
+      },
+      {
+        "pid": 1745,
+        "name": "chrome",
+        "label": "Dashboard (Chrome GPU)",
+        "threadPct": 8.5,
+        "cpuPct": 1.1,
+        "memBytes": 188743680,
+        "memPct": 1.1
+      },
+      {
+        "pid": 1188,
+        "name": "gnome-shell",
+        "label": "GNOME Shell",
+        "threadPct": 3.5,
+        "cpuPct": 0.4,
+        "memBytes": 440401920,
+        "memPct": 2.6
+      },
+      {
+        "pid": 1702,
+        "name": "chrome",
+        "label": "Dashboard (Chrome)",
+        "threadPct": 3.5,
+        "cpuPct": 0.4,
+        "memBytes": 272629760,
+        "memPct": 1.6
+      },
+      {
+        "pid": 1243,
+        "name": "Xwayland",
+        "label": "Xwayland",
+        "threadPct": 1,
+        "cpuPct": 0.1,
+        "memBytes": 115343360,
+        "memPct": 0.7
+      }
+    ],
+    "topMem": [
+      {
+        "pid": 1188,
+        "name": "gnome-shell",
+        "label": "GNOME Shell",
+        "threadPct": 3.5,
+        "cpuPct": 0.4,
+        "memBytes": 440401920,
+        "memPct": 2.6
+      },
+      {
+        "pid": 1771,
+        "name": "chrome",
+        "label": "Dashboard (Chrome)",
+        "threadPct": 18,
+        "cpuPct": 2.3,
+        "memBytes": 356515840,
+        "memPct": 2.1
+      },
+      {
+        "pid": 1702,
+        "name": "chrome",
+        "label": "Dashboard (Chrome)",
+        "threadPct": 3.5,
+        "cpuPct": 0.4,
+        "memBytes": 272629760,
+        "memPct": 1.6
+      },
+      {
+        "pid": 1745,
+        "name": "chrome",
+        "label": "Dashboard (Chrome GPU)",
+        "threadPct": 8.5,
+        "cpuPct": 1.1,
+        "memBytes": 188743680,
+        "memPct": 1.1
+      },
+      {
+        "pid": 1243,
+        "name": "Xwayland",
+        "label": "Xwayland",
+        "threadPct": 1,
+        "cpuPct": 0.1,
+        "memBytes": 115343360,
+        "memPct": 0.7
+      }
+    ]
+  },
+  "services": {
+    "rev": 121,
+    "internet": {
+      "status": "up",
+      "latencyMs": 22,
+      "dnsMs": 10,
+      "dnsOk": true,
+      "target": "https://1.1.1.1/",
+      "checkedAt": 1795617121000,
+      "detail": null,
+      "error": null,
+      "failures": 0
+    },
+    "api": {
+      "status": "up",
+      "host": "api.anthropic.com",
+      "latencyMs": 85,
+      "httpStatus": 404,
+      "checkedAt": 1795617121000,
+      "detail": null,
+      "error": null,
+      "failures": 0
+    },
+    "site": {
+      "status": "up",
+      "url": "https://frankwise0202-maker.github.io/jarvis/",
+      "buildId": "5f3c9e1a",
+      "latencyMs": 47,
+      "httpStatus": 304,
+      "checkedAt": 1795617121000,
+      "detail": null,
+      "error": null,
+      "failures": 0
+    },
+    "tailscale": {
+      "status": "running",
+      "detail": null,
+      "backendState": "Running",
+      "hostName": "alienware",
+      "dnsName": "alienware.tail4e5f6a.ts.net",
+      "url": "https://alienware.tail4e5f6a.ts.net/",
+      "serve": true,
+      "ips": [
+        "100.101.102.103",
+        "fd7a:115c:a1e0::5f01:6667"
+      ],
+      "tailnet": "owner@example.com",
+      "version": "1.90.6",
+      "peers": [
+        {
+          "name": "iphone-15",
+          "hostName": "localhost",
+          "dnsName": "iphone-15.tail4e5f6a.ts.net",
+          "os": "iOS",
+          "kind": "iPhone",
+          "online": true,
+          "lastSeen": null,
+          "active": true
+        },
+        {
+          "name": "franks-macbook-air",
+          "hostName": "Franks-MacBook-Air",
+          "dnsName": "franks-macbook-air.tail4e5f6a.ts.net",
+          "os": "macOS",
+          "kind": "Mac",
+          "online": false,
+          "lastSeen": 1795614301000,
+          "active": false
+        }
+      ],
+      "online": 1,
+      "total": 2,
+      "failures": 0,
+      "checkedAt": 1795617121000
+    }
+  },
+  "health": {
+    "level": "ok",
+    "summary": "All systems normal",
+    "counts": {
+      "ok": 14,
+      "warn": 0,
+      "alert": 0
+    },
+    "rev": 3,
+    "since": 1795615233000,
+    "items": [
+      {
+        "id": "cpu.temp",
+        "label": "CPU temperature",
+        "level": "ok",
+        "available": true,
+        "value": 43,
+        "unit": "°C",
+        "message": "CPU at 43 °C",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "cpu.load",
+        "label": "CPU load",
+        "level": "ok",
+        "available": true,
+        "value": 5,
+        "unit": "%",
+        "message": "CPU at 5%",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "cpu.process",
+        "label": "Runaway process",
+        "level": "ok",
+        "available": true,
+        "value": null,
+        "unit": "%",
+        "message": "No runaway processes",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "gpu.driver",
+        "label": "GPU driver",
+        "level": "ok",
+        "available": true,
+        "value": "580.95.05",
+        "unit": null,
+        "message": "NVIDIA driver 580.95.05",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "gpu.temp",
+        "label": "GPU temperature",
+        "level": "ok",
+        "available": true,
+        "value": 40,
+        "unit": "°C",
+        "message": "Graphics card at 40 °C",
+        "detail": null,
+        "since": 1795615233000
+      },
+      {
+        "id": "memory",
+        "label": "Memory",
+        "level": "ok",
+        "available": true,
+        "value": 66.8,
+        "unit": "%",
+        "message": "67% available",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "swap",
+        "label": "Swap",
+        "level": "ok",
+        "available": true,
+        "value": 0,
+        "unit": "%",
+        "message": "0% used",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "disk:/",
+        "label": "Main drive (/)",
+        "level": "ok",
+        "available": true,
+        "value": 47.3,
+        "unit": "%",
+        "message": "47% full, 492 GB free",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "disk:/boot/efi",
+        "label": "Drive /boot/efi",
+        "level": "ok",
+        "available": true,
+        "value": 6.1,
+        "unit": "%",
+        "message": "6% full, 503 MB free",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "disk.health",
+        "label": "Disk health",
+        "level": "ok",
+        "available": true,
+        "value": null,
+        "unit": null,
+        "message": "SMART health check passed",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "internet",
+        "label": "Internet",
+        "level": "ok",
+        "available": true,
+        "value": 22,
+        "unit": "ms",
+        "message": "Online (22 ms)",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "api",
+        "label": "Claude API",
+        "level": "ok",
+        "available": true,
+        "value": 85,
+        "unit": "ms",
+        "message": "Reachable (85 ms)",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "site",
+        "label": "Jarvis website",
+        "level": "ok",
+        "available": true,
+        "value": "5f3c9e1a",
+        "unit": null,
+        "message": "Up, build 5f3c9e1a",
+        "detail": null,
+        "since": 1795613521000
+      },
+      {
+        "id": "tailscale",
+        "label": "Tailscale",
+        "level": "ok",
+        "available": true,
+        "value": 1,
+        "unit": null,
+        "message": "Connected, 1 of 2 devices online",
+        "detail": null,
+        "since": 1795613521000
+      }
+    ]
+  }
+}

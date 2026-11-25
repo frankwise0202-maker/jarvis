@@ -1,0 +1,89 @@
+{
+  "name": "jarvis-core",
+  "version": "1.0.0",
+  "api": 1,
+  "mode": "fixture",
+  "scenario": "ok",
+  "scenarioLabel": "All systems normal",
+  "timeScale": 1,
+  "now": 1795617186000,
+  "timeZone": "UTC",
+  "hostname": "alienware",
+  "startedAt": 1795342891000,
+  "uptimeSec": 274295,
+  "machine": {
+    "bootTime": 1795342866000,
+    "uptimeSec": 274320
+  },
+  "tailscale": {
+    "status": "running",
+    "dnsName": "alienware.tail4e5f6a.ts.net",
+    "url": "https://alienware.tail4e5f6a.ts.net/",
+    "serve": true
+  },
+  "urls": {
+    "local": "http://localhost:8788/",
+    "tailscale": "https://alienware.tail4e5f6a.ts.net/",
+    "app": "https://frankwise0202-maker.github.io/jarvis/"
+  },
+  "ownerName": "Frank",
+  "night": {
+    "enabled": true,
+    "start": "23:00",
+    "end": "07:00"
+  },
+  "assistant": {
+    "intents": [
+      "greeting",
+      "how-are-you",
+      "status",
+      "problems",
+      "events",
+      "cpu",
+      "gpu",
+      "memory",
+      "disk",
+      "network",
+      "api",
+      "site",
+      "tailscale",
+      "temperature",
+      "multi",
+      "uptime",
+      "restarts",
+      "trend",
+      "time",
+      "thanks",
+      "bye",
+      "identity",
+      "capabilities",
+      "unknown"
+    ],
+    "questionMaxChars": 300,
+    "askPerMinute": 30
+  },
+  "you": {
+    "via": "local",
+    "login": null,
+    "name": null
+  },
+  "stats": {
+    "ticks": 3601,
+    "lastTickMs": 0.7263180000009015,
+    "maxTickMs": 1.916244000007282,
+    "saves": 0,
+    "saveErrors": 0,
+    "lastSaveBytes": 0,
+    "events": 4,
+    "history": {
+      "fine": 3600,
+      "coarse": 10077,
+      "fineCapacity": 3600,
+      "coarseCapacity": 10080,
+      "clockSteps": 0
+    },
+    "sseClients": 0,
+    "requests": 43,
+    "refused": 0
+  }
+}

@@ -718,6 +718,7 @@ test('backup: import restores only profile, voice and appearance settings - neve
       voiceURI: 'Daniel', voiceRate: 1.2, listenLang: 'en-GB', speakReplies: 'summary', voiceContinuous: false, followups: false,
       showThinking: false, location: 'London, UK', memoryEnabled: false, notifyOnFinish: false, naturalVoiceId: 'bm_lewis',
       listenWait: 'long', listenSend: 'now', wakeClap: false, wakeClapSensitivity: 'high', wakeReturn: false,
+      homeBaseUrl: 'https://alienware.tail4e5f6a.ts.net/',
     };
     const second = await backup.importBackup({ app: 'jarvis', version: 1, settings: { ...profile, maxAgents: 'lots', tone: 'friendly' } });
     const afterSecond = settings.getSettings();
@@ -742,8 +743,37 @@ test('backup: import restores only profile, voice and appearance settings - neve
   assert.deepEqual(r.restorable, [
     'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
     'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-    'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn',
+    'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn', 'homeBaseUrl',
   ]);
+});
+
+test('backup (v7.5): the home base address travels and comes back; an invalid one in a file is ignored', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async () => {
+    const { backup, settings } = window.__mods;
+    settings.saveSettings({ onboarded: true, homeBaseUrl: 'alienware.tail4e5f6a.ts.net/api/status' });
+    const stored = settings.getSettings().homeBaseUrl;
+    const exported = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    settings.resetSettings();
+    settings.saveSettings({ onboarded: true });
+    const result = await backup.importBackup({ app: 'jarvis', version: 1, settings: exported });
+    const after = settings.getSettings().homeBaseUrl;
+    // A hostile or broken file: plain http, another host, a port; none replaces the address.
+    const hostile = [];
+    for (const homeBaseUrl of ['http://alienware.tail4e5f6a.ts.net/', 'https://evil.example/', 'https://alienware.tail4e5f6a.ts.net:8443/', 42, { x: 1 }]) {
+      hostile.push((await backup.importBackup({ app: 'jarvis', version: 1, settings: { homeBaseUrl } })).settingsChanged);
+    }
+    // A pasted-looking address in a file is normalized like one typed in Settings.
+    const messy = await backup.importBackup({ app: 'jarvis', version: 1, settings: { homeBaseUrl: 'HTTPS://Other-PC.tail4e5f6a.ts.net/api' } });
+    return { stored, exported: exported.homeBaseUrl, result, after, hostile, kept: after, messy, final: settings.getSettings().homeBaseUrl };
+  });
+  assert.equal(r.stored, 'https://alienware.tail4e5f6a.ts.net/', 'stored normalized');
+  assert.equal(r.exported, 'https://alienware.tail4e5f6a.ts.net/', 'in the backup');
+  assert.ok(r.result.settingsChanged.includes('homeBaseUrl'));
+  assert.equal(r.after, 'https://alienware.tail4e5f6a.ts.net/', 'restored on import');
+  assert.deepEqual(r.hostile, [[], [], [], [], []], 'invalid addresses are ignored');
+  assert.deepEqual(r.messy.settingsChanged, ['homeBaseUrl']);
+  assert.equal(r.final, 'https://other-pc.tail4e5f6a.ts.net/');
 });
 
 test('backup (v7.4): the Wake Jarvis settings travel; "Hey Jarvis" stays off after an import (its models are a download)', async () => {

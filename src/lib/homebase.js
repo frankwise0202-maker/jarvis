@@ -132,6 +132,9 @@ export function gpuReading(gpu) {
   return msg ? msg.toLowerCase() : null;
 }
 
+/** "91 °C" and "4 %" never break across lines (a no-break space before the unit). */
+const keepUnits = (text) => text.replace(/(\d) (°C|%|GB|TB|MB|ms)(?=\W|$)/g, '$1\u00a0$2');
+
 /** The main drive: "/" (the Core lists it first), else the first real filesystem. */
 function mainMount(disks) {
   const mounts = isObj(disks) && Array.isArray(disks.mounts) ? disks.mounts.filter(isObj) : [];
@@ -151,7 +154,7 @@ export function homeBaseView(status) {
   return {
     level,
     word: LEVEL_WORDS[level],
-    summary: cleanLine(health.summary, 220),
+    summary: keepUnits(cleanLine(health.summary, 220)),
     host: cleanLine(isObj(status.host) ? status.host.hostname : '', 64),
     version: cleanLine(isObj(status.core) ? status.core.version : '', 24),
     cpu: pct(isObj(status.cpu) ? status.cpu.usagePct : null),
