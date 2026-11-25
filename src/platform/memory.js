@@ -27,6 +27,12 @@ function dedupeKey(text) {
   return text.toLowerCase();
 }
 
+/** The key a fact is told apart by (v7.6 sync): normalized and case-insensitive; '' for no fact. */
+export function memoryKey(text) {
+  const clean = normText(typeof text === 'string' ? text : '');
+  return clean ? dedupeKey(clean) : '';
+}
+
 /** Looser key for removal by text: also ignores punctuation, quotes and bullets. */
 function looseKey(text) {
   return text

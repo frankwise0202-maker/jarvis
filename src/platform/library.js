@@ -472,6 +472,20 @@ export async function listLibraryItems({ kind, limit } = {}) {
   return rows.sort(byNewest).slice(0, max);
 }
 
+/** Every saved item's id (v7.6 sync: what this device has, without reading the specs). */
+export async function listLibraryIds() {
+  const res = await libraryTransaction('readonly', (store, box) => {
+    const req = store.getAllKeys();
+    req.onsuccess = () => {
+      box.value = req.result || [];
+    };
+  });
+  const ids = new Set();
+  for (const id of res.ok ? res.value : []) if (typeof id === 'string' && !deleted.has(id)) ids.add(id);
+  for (const id of memoryItems.keys()) ids.add(id);
+  return Array.from(ids);
+}
+
 /**
  * The newest saved blueprint of part `partId` of the saved hologram `modelId` (partId null: of the
  * whole object), as a row, or null.

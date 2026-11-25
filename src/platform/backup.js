@@ -46,11 +46,11 @@
 //                         optional in a backup: older backups simply don't have them.
 
 import { DEFAULT_SETTINGS, getSettings, saveSettings, resetSettings } from './settings.js';
-import { listMemory, mergeMemory, clearMemory } from './memory.js';
+import { listMemory, mergeMemory, clearMemory, memoryKey } from './memory.js';
 import { getApiKey, clearApiKey } from './secrets.js';
 import { resetSpend } from './spend.js';
 import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
-import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems } from './library.js';
+import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems, listLibraryIds, IMPORT_MAX_ITEMS } from './library.js';
 import { removeItemsWithPrefix } from './storage.js';
 import { isPlainObject, reportWarning } from './util.js';
 import { DEPTHS, MODES } from '../engine/models.js';
@@ -62,6 +62,7 @@ import { MUSIC_SEARCH_KINDS, cleanMusicItems, cleanQuery, cleanText } from '../l
 import { NATURAL_CACHES } from './voice/natural/catalog.js';
 import { WAKE_CACHE } from '../lib/wake/catalog.js';
 import { normalizeHomeBaseUrl, homeBaseName } from '../lib/homebase.js';
+import { conversationAction, mirrorAction, mirrorIdOf, mirrorTitle } from '../lib/sync.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -114,6 +115,23 @@ export function registerBackupPart(name, part) {
 
 /** Everything worth keeping, as a JSON Blob. The API key and spend are never included. */
 export async function exportBackup() {
+  const { json, excluded } = await buildBackup();
+  const blob = new Blob([json], { type: 'application/json' });
+  // What was left out, so the UI can say so: [{ id }] (no titles: a title may hold the key).
+  Object.defineProperty(blob, 'excludedConversations', { value: excluded, enumerable: false });
+  return blob;
+}
+
+/**
+ * v7.6 sync (SPEC §24.7): this device's backup as JSON text (exactly what exportBackup() saves) and
+ * what is in it: { json, ids: { conv, lib, mem } } (conversation ids, saved item ids, the facts'
+ * keys), plus `excluded` (conversations left out because they hold a key).
+ */
+export async function buildSyncBackup() {
+  return buildBackup();
+}
+
+async function buildBackup() {
   const settings = {};
   const current = getSettings();
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -154,10 +172,130 @@ export async function exportBackup() {
   // like one. (The pattern never spans a JSON string boundary, so the JSON stays valid.)
   if (savedKey) json = json.split(savedKey).join(KEY_REMOVED);
   json = json.replace(KEY_LIKE_ALL, KEY_REMOVED);
-  const blob = new Blob([json], { type: 'application/json' });
-  // What was left out, so the UI can say so: [{ id }] (no titles: a title may hold the key).
-  Object.defineProperty(blob, 'excludedConversations', { value: excluded, enumerable: false });
-  return blob;
+  const ids = {
+    conv: conversations.map((c) => c.id).concat(excluded.map((c) => c.id)),
+    lib: data.library && Array.isArray(data.library.items) ? data.library.items.map((it) => it && it.id).filter((id) => typeof id === 'string') : [],
+    mem: memory.map((m) => memoryKey(m.text)).filter(Boolean),
+  };
+  return { json, excluded, ids };
+}
+
+// ---- v7.6 sync: another device's backup merged in (SPEC §24.7) -------------------------------------
+
+/**
+ * Merges another device's backup (pulled from the home base) into this device: its conversations,
+ * saved holograms and blueprints and remembered facts, never its settings, protocols or statistics.
+ * Only ever adds (src/lib/sync.js has the rules): something missing here is added unless this device
+ * had it before (`known`: { conv, lib, mem } Sets; the owner deleted it here); for the same id the
+ * newer updatedAt wins, except that a conversation that went another way on each device is never
+ * overwritten (that device's version is kept next to it, "(from <label>)"); a conversation running
+ * here (`isBusy(id)`) is left for the next sync. Everything is vetted exactly like an import.
+ * Idempotent. Returns { conversations: [ids written], mirrors, library, memory, busy, skipped,
+ * written: { conv, lib, mem } (what this device now has from it, for `known`) }.
+ * `from` is that device's id (its versions' ids), `label` its name. Throws for a file that isn't a
+ * usable Jarvis backup (like importBackup).
+ */
+export async function mergeSyncedBackup(file, { from, label = '', known = {}, isBusy = () => false } = {}) {
+  const data = await readBackup(file);
+  if (typeof from !== 'string' || !from) throw new TypeError('mergeSyncedBackup: the device id (from) is required');
+  const knownConv = known.conv instanceof Set ? known.conv : new Set();
+  const knownLib = known.lib instanceof Set ? known.lib : new Set();
+  const knownMem = known.mem instanceof Set ? known.mem : new Set();
+  const busyOf = (id) => {
+    try {
+      return !!isBusy(id);
+    } catch {
+      return false;
+    }
+  };
+  const out = { conversations: [], mirrors: 0, library: 0, memory: 0, busy: 0, skipped: 0, written: { conv: [], lib: [], mem: [] } };
+
+  // Conversations.
+  if (Array.isArray(data.conversations) && data.conversations.length) {
+    const rows = new Map((await listConversations()).map((row) => [row.id, row.updatedAt]));
+    const seen = new Set();
+    const localOf = async (id) => {
+      if (!rows.has(id)) return null;
+      const c = await getConversation(id, { track: false });
+      return c ? { updatedAt: c.updatedAt, turnIds: (Array.isArray(c.turns) ? c.turns : []).map((t) => (isPlainObject(t) ? t.id : null)) } : null;
+    };
+    for (const raw of data.conversations) {
+      const conv = cleanConversation(raw);
+      if (!conv) {
+        out.skipped++;
+        continue;
+      }
+      if (seen.has(conv.id)) continue;
+      seen.add(conv.id);
+      const remote = { id: conv.id, updatedAt: conv.updatedAt, turnIds: conv.turns.map((t) => t.id) };
+      // The same version (the usual case): decided from the history row, without reading the record.
+      const local = rows.has(conv.id) && rows.get(conv.id) === conv.updatedAt ? { updatedAt: conv.updatedAt, turnIds: [] } : await localOf(conv.id);
+      const action = conversationAction({ remote, local, known: knownConv.has(conv.id), busy: !!local && busyOf(conv.id) });
+      if (action === 'busy') {
+        out.busy++;
+        continue;
+      }
+      if (action === 'add' || action === 'replace') {
+        if (await restoreConversation(conv)) {
+          out.conversations.push(conv.id);
+          out.written.conv.push(conv.id);
+        }
+        continue;
+      }
+      if (action !== 'mirror') continue;
+      // The two went different ways: theirs is kept next to this device's own, one copy per device.
+      const id = mirrorIdOf(conv.id, from);
+      if (id.length > 200) continue;
+      const mine = await localOf(id);
+      const what = mirrorAction({ remote, mirror: mine, known: knownConv.has(id) });
+      if (what === 'add' || what === 'replace') {
+        if (mine && busyOf(id)) {
+          out.busy++;
+          continue;
+        }
+        if (await restoreConversation({ ...conv, id, title: mirrorTitle(conv.title, label) })) {
+          out.conversations.push(id);
+          out.written.conv.push(id);
+          out.mirrors++;
+        }
+      }
+    }
+  }
+
+  // Saved holograms and blueprints: what this device deleted stays away; the newer updatedAt wins.
+  const libList = isPlainObject(data.library) && Array.isArray(data.library.items) ? data.library.items : Array.isArray(data.library) ? data.library : null;
+  if (libList && libList.length) {
+    if (isPlainObject(data.library) && typeof data.library.version === 'number' && data.library.version > 1) {
+      reportWarning('Sync: the library was saved by a newer version of Jarvis and was left out');
+    } else {
+      try {
+        const here = new Set(await listLibraryIds());
+        const items = libList.filter((it) => isPlainObject(it) && typeof it.id === 'string' && (here.has(it.id) || !knownLib.has(it.id)));
+        // importLibraryItems takes up to IMPORT_MAX_ITEMS at a time: a big library goes in parts.
+        for (let i = 0; i < items.length; i += IMPORT_MAX_ITEMS) out.library += await importLibraryItems(items.slice(i, i + IMPORT_MAX_ITEMS));
+        const now = new Set(await listLibraryIds());
+        for (const it of items) if (now.has(it.id)) out.written.lib.push(it.id);
+      } catch (err) {
+        reportWarning('Sync: could not merge the saved library', err);
+      }
+    }
+  }
+
+  // Remembered facts: added unless this device forgot them.
+  if (Array.isArray(data.memory) && data.memory.length) {
+    const here = new Set(listMemory().map((m) => memoryKey(m.text)));
+    const facts = data.memory.filter((m) => {
+      const k = memoryKey(typeof m === 'string' ? m : isPlainObject(m) ? m.text : '');
+      return !!k && (here.has(k) || !knownMem.has(k));
+    });
+    if (facts.length) out.memory = mergeMemory(facts);
+    const after = new Set(listMemory().map((m) => memoryKey(m.text)));
+    for (const m of facts) {
+      const k = memoryKey(typeof m === 'string' ? m : m.text);
+      if (after.has(k)) out.written.mem.push(k);
+    }
+  }
+  return out;
 }
 
 /** Suggested file name for a backup download. */

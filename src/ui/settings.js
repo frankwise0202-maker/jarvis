@@ -24,6 +24,7 @@ import { wakeWordDownloadBytes, formatMegabytes, WAKE_MODEL_SOURCE } from '../li
 import { normalizeHomeBaseUrl, failureState, HOME_BASE_EXAMPLE, LEVEL_WORDS } from '../lib/homebase.js';
 import { testHomeBase } from '../platform/homebase.js';
 import { createBrainSettings } from './brain-settings.js';
+import { createSyncSettings } from './sync.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -1399,6 +1400,9 @@ export function createSettingsPanel(o) {
   // morning briefing, notifications). Only while a home base is linked; not in the demo.
   const brainCard = o.brain && !o.demo ? safeCall(() => createBrainSettings(o.brain, { getApiKey, toast: o.toast, requestPermission: requestNotifyPermission, os: currentOs() }), null) : null;
   if (brainCard) cleanups.push(() => brainCard.destroy());
+  // v7.6 (SPEC §24.7): this device kept in sync with the others through the home base.
+  const syncCard = o.sync && !o.demo ? safeCall(() => createSyncSettings(o.sync), null) : null;
+  if (syncCard) cleanups.push(() => syncCard.destroy());
 
   const homebase = section(
     'homebase',
@@ -1417,6 +1421,7 @@ export function createSettingsPanel(o) {
       h('div', { class: 'set-row-actions' }, hbRemoveBtn),
     ),
     brainCard ? brainCard.el : null,
+    syncCard ? syncCard.el : null,
   );
 
   // Data

@@ -3,8 +3,8 @@
 //   getHomeBaseStatus(base)   GET  api/status -> { ok: true, data } | failure
 //   testHomeBase(base)        GET  api/info, then api/status -> { ok: true, host, version, level, summary } | failure
 //   askHomeBase(base, q)      POST api/ask {q} -> { ok: true, answer, intent, suggestions } | failure
-//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal, allowEmpty })
-//   (v7.6: the brain's routes, src/platform/brain.js, use requestHomeBase too)
+//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal, allowEmpty, rawBody, headers, maxChars })
+//   (v7.6: the brain's routes, src/platform/brain.js, and sync, src/platform/sync.js, use requestHomeBase too)
 //
 // A failure is { ok: false, kind, status?, code?, message? } with kind 'unreachable' | 'down' |
 // 'refused' | 'starting' | 'rate' | 'notcore' | 'http' | 'aborted' (src/lib/homebase.js
@@ -71,13 +71,17 @@ async function answersAtAll(base, f) {
  * One request to the home base: { ok: true, data } (the JSON answer) or a failure (see the header).
  * `base` is a stored address ('https://<host>.ts.net/').
  */
-export async function requestHomeBase(base, path, { method = 'GET', body, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal, allowEmpty = false } = {}) {
+export async function requestHomeBase(base, path, { method = 'GET', body, rawBody, headers, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal, allowEmpty = false, maxChars = MAX_BODY_CHARS } = {}) {
   const f = fetchOf(fetchImpl);
   const d = deadline(timeoutMs, signal);
   const init = { method, credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', mode: 'cors', signal: d.signal };
   if (body !== undefined) {
     init.headers = { 'Content-Type': 'application/json' };
     init.body = JSON.stringify(body);
+  } else if (rawBody !== undefined) {
+    // v7.6 sync: a backup upload (gzip bytes or JSON text) with its own headers.
+    init.headers = { ...(headers || {}) };
+    init.body = rawBody;
   }
   let res;
   let text = '';
@@ -93,7 +97,7 @@ export async function requestHomeBase(base, path, { method = 'GET', body, timeou
   }
   d.done();
   let data = null;
-  if (text && text.length <= MAX_BODY_CHARS) {
+  if (text && text.length <= maxChars) {
     try {
       data = JSON.parse(text);
     } catch {

@@ -49,7 +49,7 @@ import { addSpend, getSpend, getTodaySpend, onSpendChange } from '../platform/sp
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
-import { isOnline, onOnlineChange, isIOS, isAndroid, isTouch } from '../platform/env.js';
+import { isOnline, onOnlineChange, isIOS, isAndroid, isTouch, parseUserAgent } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
@@ -73,8 +73,9 @@ import { createStandby } from './standby.js';
 import { createHomeBase } from './homebase.js';
 import { matchHomeBaseCommand, escapeMarkdown } from '../lib/homebase.js';
 import { createBrain, createMorningCard } from './brain.js';
+import { createSync } from './sync.js';
 import { createHomeBaseView } from './homebase-sheet.js';
-import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, NO_KEY_MESSAGE } from '../lib/brain.js';
+import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, NO_KEY_MESSAGE, deviceLabel } from '../lib/brain.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
@@ -225,6 +226,12 @@ export async function startApp(rootEl) {
     onChange: (fn) => onLibraryChange(fn),
   };
   const thumbs = createThumbs(lib);
+  // Sync through the home base (v7.6, SPEC §24.7): created with the home base below; every change worth
+  // backing up (a conversation saved or deleted, the library, memory, settings) tells it.
+  let syncCtl = null;
+  const noteSyncChange = () => {
+    if (syncCtl) safe(() => syncCtl.noteChange());
+  };
   // Screens (v7): created once the shell exists; the engine's open_screen tool calls it (deps.screens).
   let screensCtl = null;
   const screensDep = {
@@ -241,9 +248,18 @@ export async function startApp(rootEl) {
     store = {
       list: () => listConversations(),
       get: (id) => getConversation(id),
-      save: (c) => saveConversation(c),
-      remove: (id) => deleteConversation(id),
-      removeAll: () => deleteAllConversations(),
+      save: (c) => {
+        noteSyncChange();
+        return saveConversation(c);
+      },
+      remove: (id) => {
+        noteSyncChange();
+        return deleteConversation(id);
+      },
+      removeAll: () => {
+        noteSyncChange();
+        return deleteAllConversations();
+      },
       isPersistent: () => safe(() => isPersistent(), true),
     };
     engine = createJarvis({
@@ -262,6 +278,7 @@ export async function startApp(rootEl) {
       libraryTimeoutMs: 12000,
       persist: async (conv) => {
         await saveConversation(conv);
+        noteSyncChange();
         scheduleHistoryRefresh();
       },
       onSpend: (amount) => {
@@ -292,6 +309,26 @@ export async function startApp(rootEl) {
   // The home base's brain (v7.6, SPEC §24): research, watchers, the morning briefing and push on
   // Jarvis Core 1.1. Read when the app starts (the morning card) and when its sheet or Settings opens.
   const brain = state.demo ? null : safe(() => createBrain({ getSettings, onSettingsChange }), null);
+  // Sync through the home base (v7.6, SPEC §24.7): this device's backup goes to the home base and the
+  // other devices' come back, merged in (only ever adding). On by default once a home base is linked.
+  syncCtl = state.demo
+    ? null
+    : safe(
+        () =>
+          createSync({
+            getSettings,
+            onSettingsChange,
+            label: deviceLabel(safe(() => parseUserAgent(navigator.userAgent, navigator.maxTouchPoints).os, 'other')),
+            // A conversation running here or in another window is left for the next sync.
+            isBusy: (id) => state.runs.has(id) || runningElsewhere(id),
+            onMerged: (res) => {
+              scheduleHistoryRefresh();
+              const id = state.conv && state.conv.id;
+              if (id && res && Array.isArray(res.conversations) && res.conversations.includes(id) && !state.runs.has(id)) reloadCurrentFromStore();
+            },
+          }),
+        null,
+      );
   const morningCard = brain
     ? safe(
         () =>
@@ -3224,6 +3261,8 @@ export async function startApp(rootEl) {
       enterStandby: () => enterStandby(),
       // v7.6: Settings → Home base → what the home base does on its own (key, limits, briefing, push).
       brain,
+      // v7.6: Settings → Home base → keep this device in sync.
+      sync: syncCtl,
       toast,
     });
     const sheet = createSheet({
@@ -3554,6 +3593,14 @@ export async function startApp(rootEl) {
   }));
   // A fact undone from a chip, edited in Settings or changed in another tab: update the chips.
   safe(() => onMemoryChange(() => chat.refreshMemory()));
+  // What a backup carries changed: the sync sends it 2 minutes after the last change (v7.6).
+  if (syncCtl) {
+    safe(() => onMemoryChange(() => noteSyncChange()));
+    safe(() => onSettingsChange(() => noteSyncChange()));
+    safe(() => onLibraryChange((e) => {
+      if (!e || !e.remote) noteSyncChange();
+    }));
+  }
   // History stops reaching the device (full storage, blocked database): say so once, plainly.
   let warnedStorage = false;
   if (!state.demo) {
@@ -3684,6 +3731,8 @@ export async function startApp(rootEl) {
     }
     if (brain.base()) setTimeout(() => safe(() => brain.checkMorning()), 1200);
   }
+  // Sync (v7.6): a first sync a few seconds after the boot, then every 10 minutes while open.
+  if (syncCtl) safe(() => syncCtl.start());
 
   // Presence: the boot sequence on the home screen (once a session by default), then the scan for
   // interrupted replies in recent conversations (Needs-you).
