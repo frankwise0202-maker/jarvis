@@ -1819,8 +1819,11 @@ html[data-view='remote'] .ask-send:active {
     font-size: 1.25rem;
     line-height: 1.25;
   }
-  .fs-detail {
+  .fs-detail,
+  .svc-detail,
+  .proc-name {
     white-space: normal;
+    overflow-wrap: anywhere;
   }
   .procs {
     grid-template-columns: minmax(0, 1fr);
