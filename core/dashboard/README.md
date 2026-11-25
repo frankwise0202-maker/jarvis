@@ -265,7 +265,7 @@ nice -n 10 node core/dashboard/test/phone-screenshots.mjs          # the remote 
 nice -n 10 node core/dashboard/test/longrun.mjs --hours 48 --rate 200   # two simulated days after the warm-up, memory verdict
 nice -n 10 node core/dashboard/test/morning-screenshots.mjs        # morning mode and the brain's panels on the kiosk (stand-in Core)
 nice -n 10 node core/dashboard/test/phone-screenshots.mjs --brain ok   # the remote view with the brain's panels
-nice -n 10 node core/dashboard/test/longrun.mjs --hours 6 --brain ok --start 2026-11-25T01:00:00Z   # across 07:00 and 10:00
+nice -n 10 node core/dashboard/test/longrun.mjs --hours 24 --brain ok --start 2026-11-25T00:00:00Z   # with the brain, across 07:00 and 10:00
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
 node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy)
 ```
@@ -317,7 +317,9 @@ With `--brain <preset>` the phone run uses the stand-in Core with the brain inst
 Core 1.0, so the morning briefing, HOME BASE and missions panels get the same checks at every size,
 and the long run with `--brain ok` pushes four missions, a watcher and the spend every simulated
 hour and a new briefing at 07:00, leaves 07:00–07:12 without questions so the morning screen comes
-up (the next question closes it), and warms up until the page also keeps its 30 missions.
+up (the next question closes it), and warms up until the page also keeps its 30 missions. Its
+limits are made for long windows: over 6 hours the transcript's suggestion chips (±5 nodes) alone
+read as a slope, so judge the brain with 24 hours or more.
 
 The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain
 preset (`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a
