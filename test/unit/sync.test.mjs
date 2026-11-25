@@ -227,8 +227,9 @@ function fakeData() {
     exportText: '{"app":"jarvis","version":1,"exportedAt":"X","conversations":[{"id":"c-mine"}]}',
     ids: { conv: ['c-mine'], lib: [], mem: [] },
     merges: [],
+    builds: 0,
     mergeAnswer: () => ({ conversations: ['c-theirs'], mirrors: 0, library: 1, memory: 0, busy: 0, skipped: 0, written: { conv: ['c-theirs'], lib: ['lib_theirs0001'], mem: [] } }),
-    build: async () => ({ json: d.exportText.replace('"X"', `"${new Date().toISOString()}"`), ids: d.ids, excluded: [] }),
+    build: async () => ({ builds: ++d.builds, json: d.exportText.replace('"X"', `"${new Date().toISOString()}"`), ids: d.ids, excluded: [] }),
     merge: async (data, opts) => {
       d.merges.push({ data, from: opts.from, label: opts.label, known: { conv: [...opts.known.conv], lib: [...opts.known.lib], mem: [...opts.known.mem] } });
       return d.mergeAnswer(data, opts);
@@ -297,10 +298,17 @@ test('sync controller: nothing changed -> nothing pulled or sent; a change is se
   core.devices.set('jd-mac000000000', { label: 'Mac', updatedAt: '2026-11-25T06:59:00.000Z', json: '{"app":"jarvis","version":1}' });
   await sync.syncNow();
   core.calls.length = 0;
+  const builds = data.builds;
   await sync.syncNow();
-  assert.deepEqual(core.calls, [`list ${BASE}`], 'unchanged on both sides: one list, no download, no upload (exportedAt alone differs)');
+  assert.deepEqual(core.calls, [`list ${BASE}`], 'unchanged on both sides: one list, no download, no upload');
+  assert.equal(data.builds, builds, 'no change noted: this device’s history is not even read');
+  sync.noteChange(); // something was saved, but it comes out the same (exportedAt alone differs)
+  await sync.syncNow();
+  assert.equal(data.builds, builds + 1);
+  assert.deepEqual(core.calls, [`list ${BASE}`, `list ${BASE}`], 'the same backup is not sent again');
   data.exportText = data.exportText.replace('c-mine', 'c-mine-2');
   data.ids = { conv: ['c-mine-2'], lib: [], mem: [] };
+  sync.noteChange();
   await sync.syncNow();
   assert.equal(core.calls.filter((c) => c.startsWith('put ')).length, 1, 'a change is sent');
   core.calls.length = 0;
@@ -335,6 +343,8 @@ test('sync controller: a 1.0 Core (404) and an unreachable home base say so and 
   assert.equal(st.problem.state, 'toobig');
   assert.match(st.problem.message, /too big to sync \(52 MB\)/);
   assert.deepEqual(b.core.calls, [`list ${BASE}`, 'get jd-mac000000000'], 'the other device’s backup still came in; nothing was sent');
+  st = await b.sync.syncNow();
+  assert.equal(st.problem && st.problem.state, 'toobig', 'it keeps saying so (never "synced")');
 
   const c = setup();
   c.core.uploadAnswer = { ok: false, kind: 'http', status: 413, code: 'too_large', message: 'the backup is larger than 50 MB' };

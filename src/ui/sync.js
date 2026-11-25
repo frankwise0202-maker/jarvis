@@ -35,6 +35,7 @@ const START_DELAY_MS = 3000;
 const TICK_MS = 60 * 1000;
 const RELINK_DELAY_MS = 1500;
 const KNOWN_MAX = 20000; // ids remembered per kind (the oldest go first)
+const REBUILD_MS = 60 * 60 * 1000; // with no change noted, the export is still re-checked hourly
 
 const realClient = { list: listSyncDevices, download: downloadSyncBackup, upload: uploadSyncBackup };
 const realData = { build: buildSyncBackup, merge: mergeSyncedBackup };
@@ -134,6 +135,9 @@ export function createSync({
   let running = null;
   let pendingChange = false;
   let lastChangeAt = 0;
+  // Something may differ from the last upload: the export is built (and hashed) only then, so an idle
+  // app doesn't read a big history every 10 minutes. True at start (the first sync always checks).
+  let dirty = true;
   let suppress = 0; // > 0 while a merge writes: its own changes are not "changes" to upload again
   let debounce = null;
   let startTimer = null;
@@ -164,6 +168,7 @@ export function createSync({
       lastAttemptAt: typeof r.lastAttemptAt === 'number' ? r.lastAttemptAt : 0,
       upload: r.upload && typeof r.upload.fingerprint === 'string' ? { fingerprint: r.upload.fingerprint, at: Number(r.upload.at) || 0, bytes: Number(r.upload.bytes) || 0 } : null,
       merged: r.merged && typeof r.merged === 'object' && !Array.isArray(r.merged) ? { ...r.merged } : {},
+      tooBig: typeof r.tooBig === 'number' && r.tooBig > 0 ? r.tooBig : 0, // the size of the export that was too big
     };
   }
 
@@ -236,8 +241,14 @@ export function createSync({
       set({ phase: 'unset' });
       return;
     }
+    // Another window of this device may have synced (or switched sync off) since: they share this
+    // device's data, so start from what is stored (when anything is).
+    if (readJson(storage, SYNC_KEY)) {
+      Object.assign(rec, loadRec());
+      known = loadKnown();
+    }
     if (!rec.enabled) {
-      set({ phase: 'off' });
+      set({ phase: 'off', enabled: false });
       return;
     }
     const selfId = deviceId();
@@ -273,7 +284,9 @@ export function createSync({
         res = await data.merge(got.data, { from: d.id, label: d.label, known, isBusy });
       } catch (err) {
         safe(() => console.warn('[jarvis] sync: could not merge a backup:', err && err.message));
-        pullProblem = pullProblem || { kind: 'damaged', message: `${d.label}’s backup on the home base couldn’t be read` };
+        // Its own words (an import's: "made by a newer version of Jarvis…", "isn't a Jarvis backup").
+        const why = err && typeof err.message === 'string' ? err.message : '';
+        pullProblem = pullProblem || { kind: 'damaged', message: `${d.label}’s backup couldn’t be merged${why ? `: ${why}` : ''}` };
         rec.merged[d.id] = d.updatedAt; // not downloaded again until that device uploads a new one
         saveRec();
         continue;
@@ -291,28 +304,43 @@ export function createSync({
     if (stale()) return;
 
     // Ours, sent when it changed.
+    const someAdded = added.conversations + added.library + added.memory > 0 ? added : null;
+    const onCore = listed.devices.some((d) => d.id === selfId);
+    if (!dirty && !someAdded && onCore && rec.upload && now() - rec.upload.at < REBUILD_MS) {
+      if (rec.tooBig) {
+        fail({ kind: 'toobig', bytes: rec.tooBig }); // still too big: nothing changed since
+        return;
+      }
+      rec.lastSyncedAt = now();
+      saveRec();
+      set({ phase: pullProblem ? 'failed' : 'done', problem: pullProblem ? syncProblem(pullProblem) : null, lastSyncedAt: rec.lastSyncedAt, added: null });
+      return;
+    }
+    dirty = false; // a change from here on marks it again
     const built = await data.build();
     if (stale()) return;
     addKnown(built.ids); // everything in it counts as this device's (a deletion later stays deleted)
     const bytes = byteLength(built.json);
-    const someAdded = added.conversations + added.library + added.memory > 0 ? added : null;
     if (bytes > SYNC_MAX_BYTES) {
+      rec.tooBig = bytes;
+      saveRec();
       fail({ kind: 'toobig', bytes }, { added: someAdded });
       return;
     }
     const fingerprint = await hash(fingerprintText(built.json));
-    const onCore = listed.devices.some((d) => d.id === selfId);
     if (!(rec.upload && rec.upload.fingerprint === fingerprint && onCore)) {
       const gz = await gzip(built.json);
       if (stale()) return;
       const up = await client.upload(base, selfId, built.json, { label, gzipped: gz });
       if (stale()) return;
       if (!up.ok) {
+        dirty = true; // not sent: try again next time
         fail(up, { added: someAdded });
         return;
       }
       rec.upload = { fingerprint, at: now(), bytes };
     }
+    rec.tooBig = 0;
     rec.lastSyncedAt = now();
     saveRec();
     set({ phase: pullProblem ? 'failed' : 'done', problem: pullProblem ? syncProblem(pullProblem) : null, lastSyncedAt: rec.lastSyncedAt, added: someAdded });
@@ -327,6 +355,7 @@ export function createSync({
         await withLock(cycle);
       } catch (err) {
         safe(() => console.warn('[jarvis] sync failed:', err && err.message));
+        dirty = true;
         fail({ kind: 'error' });
       } finally {
         running = null;
@@ -355,6 +384,7 @@ export function createSync({
 
   function noteChange() {
     if (suppress > 0 || destroyed) return;
+    dirty = true;
     pendingChange = true;
     lastChangeAt = now();
     if (debounce) timers.clearTimeout(debounce);

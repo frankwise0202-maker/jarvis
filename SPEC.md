@@ -3024,7 +3024,7 @@ one), spending caps of its own and Web Push. Its API is fixed by the brain hando
 `api/spend`, `api/push/*`); the app talks to it with the §23.2 rules (no credentials, no referrer, no
 cache, a timeout; failures as `{ ok: false, kind, status, code, message }`). Nothing of it shows
 without a linked home base; a Core 1.0 (404 `not_found` on `api/brain`) says it needs an update.
-The sync of backups through the home base is a separate part (not here).
+Sync of backups through the home base (`api/sync`) is §24.7.
 
 **24.1 Modules.** `src/lib/brain.js` (pure): `brainView`, `jobView`, `watcherView`, `briefingView`,
 `spendDaysView` check every field of the Core's answers (a missing number is null, never 0; a key
@@ -3124,3 +3124,53 @@ HTML and a `javascript:` link, rendered safely, two sources; Cancel; Watching; S
 link opens nothing), `brain-chat` (the four commands typed, "brief me" said in Voice Mode, the
 dismissed card stays away), `brain-wake` (two claps, "brief me": the Core's briefing said, no
 Claude request). Not testable here: a real push service (APNs/FCM) and iOS itself.
+
+**24.7 Sync through the home base.** Each device uploads its backup to the Core and merges the
+others', so the iPhone and the Mac share conversations, saved holograms and blueprints, and remembered
+facts. Never settings (each device keeps its own), custom protocols, statistics or HUD preferences;
+never the API key. On by default once a home base is linked ("Keep this device in sync through the
+home base", Settings → Home base → *Your devices, in sync*: last synced, the other devices on the home
+base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core update`.
+- *Modules.* `src/lib/sync.js` (pure: device ids `jd-` + 24 hex, `[a-z0-9-]{8,64}`; `syncDevicesView`;
+  `devicesToPull`; `conversationAction` / `mirrorAction`, the merge rules; `fingerprintText`;
+  `syncProblem` words a failure: `old`, `toobig`, `offline`, `down`, `refused`, `starting`, `rate`,
+  `busy` 409, `full` 507, `error`). `src/platform/sync.js` on `requestHomeBase` (which gains `rawBody`,
+  `headers`, `maxChars`): `GET api/sync` (10 s), `GET api/sync/<id>` (120 s, up to 51 MB of text),
+  `PUT api/sync/<id>` (120 s) with `Content-Type: application/json`, `Content-Encoding: gzip`
+  (CompressionStream; plain JSON where the browser has none) and `X-Jarvis-Device-Label` (the device's
+  name, percent-encoded). `src/platform/backup.js`: `buildSyncBackup()` (exactly the exported file's
+  JSON, with the ids in it) and `mergeSyncedBackup(file, { from, label, known, isBusy })`.
+  `src/ui/sync.js`: `createSync()` (the controller) and `createSyncSettings()` (the card).
+- *When.* 3 s after the boot; every 10 minutes while the app is visible (a 1-minute tick; a sync that
+  came due in the background runs when the app is back at the front); 2 minutes after the last change
+  (a conversation saved or deleted, the library, memory, settings), or at once when the app goes to the
+  background with a change waiting; 1.5 s after a home base is linked; **Sync now**. One at a time,
+  also across windows (Web Locks `jarvis-sync`, `ifAvailable`); a merge's own writes are not changes.
+- *A sync.* `GET api/sync`; each other device whose `updatedAt` differs from the one last merged
+  (`jarvis.sync.v1` `merged`): `GET api/sync/<id>`, merged; then this device's export: over 50 MB it
+  is not sent (`toobig`, the pulls still happen); unchanged since the last upload (SHA-256 of the JSON
+  without `exportedAt`) and still listed on the Core: not sent; otherwise `PUT`. A device's mark moves
+  only when its backup merged whole (a conversation running here waits for the next sync); a backup
+  that can't be merged (damaged, a newer Jarvis) is said once and not downloaded again until that
+  device uploads anew.
+- *The merge* (vetted exactly like an import: `cleanConversation`, `importLibraryItems` in parts of
+  2,000, `mergeMemory`). Only ever adds: missing here and never on this device → added; missing here
+  but this device had it (`jarvis.sync.known.v1`: every id in its uploads and merges, facts by their
+  normalized text, at most 20,000 a kind) → the owner deleted it here: it stays away, and no deletion
+  ever spreads; the same id → the newer `updatedAt` wins, except that a conversation whose two copies
+  each have turns the other lacks is never overwritten: the other device's version is kept next to
+  it, id `<id>~sync-<deviceId>`, title "<title> (from Mac)", one per device, following that device;
+  such copies are never passed on. The same version is skipped before vetting; library items not newer
+  than this device's are skipped before their specs are checked. Idempotent: a sync cut off half way
+  carries on next time. The open conversation, when replaced, is reloaded; History refreshes.
+- *Tests.* Unit `sync` (the rules, the words, the controller with a fake client, data and clock: the
+  first sync, nothing changed, a change, a Core that lost the backup, a 1.0 Core, unreachable, too big,
+  the Core's 413, a running conversation, the schedule, off, unlinked, stored state), `platform.sync`
+  (real IndexedDB: adds, newer wins, never deletes, idempotent; diverged copies and their following;
+  deleted here never comes back (conversation, item, fact); 2,500 items; a running conversation;
+  the export equals the file and has no key; the client's gzip body, headers, failures). E2E
+  `homebase-sync.mjs` (the fake Core keeps backups for every context of a scenario, `t.coreSync`):
+  `sync-devices` (an iPhone and a Mac: gzip, names, no key; each sees the other's conversations; a
+  conversation deleted on the iPhone never comes back there and stays on the Mac), `sync-states` (a
+  Core 1.0, too big, unreachable, Sync now, off survives a reload). Not testable here: a real Core on
+  a real Tailscale network, iOS's background limits.

@@ -50,7 +50,7 @@ import { listMemory, mergeMemory, clearMemory, memoryKey } from './memory.js';
 import { getApiKey, clearApiKey } from './secrets.js';
 import { resetSpend } from './spend.js';
 import { listConversations, getConversation, deleteAllConversations, restoreConversation } from './db.js';
-import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems, listLibraryIds, IMPORT_MAX_ITEMS } from './library.js';
+import { deleteAllLibraryItems, exportLibraryItems, importLibraryItems, listLibraryIds, listLibraryItems, IMPORT_MAX_ITEMS } from './library.js';
 import { removeItemsWithPrefix } from './storage.js';
 import { isPlainObject, reportWarning } from './util.js';
 import { DEPTHS, MODES } from '../engine/models.js';
@@ -220,6 +220,11 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
       return c ? { updatedAt: c.updatedAt, turnIds: (Array.isArray(c.turns) ? c.turns : []).map((t) => (isPlainObject(t) ? t.id : null)) } : null;
     };
     for (const raw of data.conversations) {
+      // The same version as here (the usual case once two devices are in step): nothing to vet or do.
+      if (isPlainObject(raw) && typeof raw.id === 'string' && rows.has(raw.id) && rows.get(raw.id) === raw.updatedAt) {
+        seen.add(raw.id);
+        continue;
+      }
       const conv = cleanConversation(raw);
       if (!conv) {
         out.skipped++;
@@ -228,8 +233,7 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
       if (seen.has(conv.id)) continue;
       seen.add(conv.id);
       const remote = { id: conv.id, updatedAt: conv.updatedAt, turnIds: conv.turns.map((t) => t.id) };
-      // The same version (the usual case): decided from the history row, without reading the record.
-      const local = rows.has(conv.id) && rows.get(conv.id) === conv.updatedAt ? { updatedAt: conv.updatedAt, turnIds: [] } : await localOf(conv.id);
+      const local = await localOf(conv.id);
       const action = conversationAction({ remote, local, known: knownConv.has(conv.id), busy: !!local && busyOf(conv.id) });
       if (action === 'busy') {
         out.busy++;
@@ -270,11 +274,17 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
     } else {
       try {
         const here = new Set(await listLibraryIds());
-        const items = libList.filter((it) => isPlainObject(it) && typeof it.id === 'string' && (here.has(it.id) || !knownLib.has(it.id)));
+        // Saved times of what is here (no spec is read or checked), so an unchanged item is not re-validated.
+        const stamps = new Map((await listLibraryItems()).map((row) => [row.id, row.updatedAt]));
+        const items = libList.filter((it) => {
+          if (!isPlainObject(it) || typeof it.id !== 'string') return false;
+          if (stamps.has(it.id)) return typeof it.updatedAt === 'number' && it.updatedAt > stamps.get(it.id);
+          return here.has(it.id) || !knownLib.has(it.id);
+        });
         // importLibraryItems takes up to IMPORT_MAX_ITEMS at a time: a big library goes in parts.
         for (let i = 0; i < items.length; i += IMPORT_MAX_ITEMS) out.library += await importLibraryItems(items.slice(i, i + IMPORT_MAX_ITEMS));
         const now = new Set(await listLibraryIds());
-        for (const it of items) if (now.has(it.id)) out.written.lib.push(it.id);
+        for (const it of libList) if (isPlainObject(it) && typeof it.id === 'string' && now.has(it.id)) out.written.lib.push(it.id);
       } catch (err) {
         reportWarning('Sync: could not merge the saved library', err);
       }

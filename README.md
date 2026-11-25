@@ -985,6 +985,30 @@ right). Four tabs:
 (×), and the 7:00 notification opens it. If the home base can't be reached, or still runs Jarvis Core
 1.0, the sheet says so plainly; nothing else changes.
 
+### Your iPhone and your Mac, in sync
+
+Once a home base is linked, Jarvis keeps your devices in step through it: a conversation you had on
+the iPhone is on the Mac too (and the other way round), with your saved holograms and blueprints and
+what Jarvis remembers about you. The home base also keeps a backup of each device for every day of the
+last two weeks, on the Alienware's drive.
+
+- **It just happens.** A few seconds after Jarvis opens, then every 10 minutes while it's open, and two
+  minutes after you change something. **Settings → Home base → Your devices, in sync** shows when it
+  last synced, which other devices the home base has, and **Sync now**.
+- **It only ever adds.** Something new on one device appears on the other. Nothing is ever deleted by
+  syncing: delete a conversation on the iPhone and it stays deleted there (it never comes back), while
+  the Mac keeps its copy until you delete it there too. If you carried on the same conversation on
+  both devices before they synced, you keep yours and get the other one next to it, named
+  "… (from Mac)".
+- **Your API key never travels.** The backup is the same as **Settings → Data → Export** (which never
+  includes the key), and the home base refuses anything that looks like a key anyway. Settings stay
+  per device (each keeps its own voice, theme and limits).
+- **Off switch.** "Keep this device in sync through the home base" turns it off for that device.
+- If the home base can't be reached, Jarvis says so and tries again later. A home base still on Jarvis
+  Core 1.0 asks you to run `jarvis-core update`. A device whose backup is over 50 MB (usually many
+  photos in conversations) still receives the others' conversations, but can't send its own; the card
+  says so.
+
 ## For developers
 
 Jarvis is plain JavaScript ES modules (no framework) bundled with esbuild. The browser calls the
