@@ -7,12 +7,24 @@
 //     window each half holds whole cycles of the long run's scenario changes (every 2 h, 8-h
 //     period) and outages (every 6 h), so their effects cancel out.
 // A metric passes when both are within its limit. Shrinking always passes.
+//
+// The JS heap is judged without compiled code (jsDataMB): V8 keeps optimizing functions as they get
+// hot, some only after many simulated hours (the long run's first 48-hour window showed the heap
+// climbing 0.4 MB and levelling off; a snapshot diff put it on optimized code for the page's and
+// Playwright's own functions), and code is bounded by the program: the page's CSP has no
+// 'unsafe-eval', so it cannot make new code. The whole heap and the code are reported (INFO).
 
 export const LIMITS = Object.freeze({
   liveNodes: { slopePerDay: 1, drift: 4, unit: 'nodes' }, // nodes in the live document (tree walk)
   nodes: { slopePerDay: 4, drift: 12, unit: 'nodes' }, // every DOM node alive in the renderer (CDP)
-  heapMB: { slopePerDay: 0.1, drift: 0.25, unit: 'MB' }, // JS heap used (CDP Runtime.getHeapUsage)
+  jsDataMB: { slopePerDay: 0.1, drift: 0.25, unit: 'MB' }, // JS heap without compiled code (snapshot)
   listeners: { slopePerDay: 0.5, drift: 1, unit: 'listeners' }, // JS event listeners (CDP)
+});
+
+/** Reported with the same measures, never judged. */
+export const INFO = Object.freeze({
+  heapMB: { unit: 'MB' }, // the whole JS heap (CDP Runtime.getHeapUsage)
+  codeMB: { unit: 'MB' }, // compiled code in it (snapshot)
 });
 
 /** Least-squares slope of ys over xs (per unit of x); 0 for fewer than two points. */
@@ -39,11 +51,28 @@ const round = (v, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : v);
  * @param {object} [limits]
  * @returns {{ pass: boolean, hours: number, metrics: Record<string, object>, failures: string[] }}
  */
-export function judgeGrowth(samples, limits = LIMITS) {
+export function judgeGrowth(samples, limits = LIMITS, info = INFO) {
   const failures = [];
   const metrics = {};
   const hours = samples.length ? samples[samples.length - 1].hour - samples[0].hour : 0;
   const midpoint = samples.length ? samples[0].hour + hours / 2 : 0;
+  for (const [name, inf] of Object.entries(info)) {
+    const pts = samples.filter((s) => Number.isFinite(s[name]));
+    if (pts.length < 2) continue;
+    const ys = pts.map((s) => s[name]);
+    const firstHalf = pts.filter((s) => s.hour < midpoint).map((s) => s[name]);
+    const secondHalf = pts.filter((s) => s.hour >= midpoint).map((s) => s[name]);
+    metrics[name] = {
+      first: ys[0],
+      last: ys[ys.length - 1],
+      min: Math.min(...ys),
+      max: Math.max(...ys),
+      slopePerDay: round(slope(pts.map((s) => s.hour), ys) * 24),
+      drift: round(mean(secondHalf) - mean(firstHalf)),
+      unit: inf.unit,
+      judged: false,
+    };
+  }
   for (const [name, limit] of Object.entries(limits)) {
     const pts = samples.filter((s) => Number.isFinite(s[name]));
     if (pts.length < 4) {

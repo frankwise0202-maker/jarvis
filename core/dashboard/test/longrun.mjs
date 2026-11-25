@@ -17,10 +17,11 @@
 // Every simulated hour, on a quiet page (the stand-in drops to real time for two seconds) and after
 // three forced garbage collections (Chrome DevTools Protocol HeapProfiler.collectGarbage): nodes in
 // the live document (a tree walk), every DOM node alive in
-// the renderer (CDP Nodes: detached ones too), the JS heap, event listeners; plus layout objects
-// and the renderer's RSS for information. The verdict (test/growth.mjs) looks only at the
-// measured window after the warm-up: least-squares slope per day and second-half-minus-first-half
-// drift for each of the four, within fixed limits. One Chromium; run under `nice -n 10`.
+// the renderer (CDP Nodes: detached ones too), the JS heap's data (a heap snapshot without compiled
+// code), event listeners; plus the whole JS heap, its compiled code, layout objects and the
+// renderer's RSS for information. The verdict (test/growth.mjs) looks only at the measured window
+// after the warm-up: least-squares slope per day and second-half-minus-first-half drift for each
+// of the four, within fixed limits. One Chromium; run under `nice -n 10`.
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -68,6 +69,35 @@ function rendererRssMB() {
   return +(kb / 1024).toFixed(1);
 }
 
+/**
+ * The V8 heap from a snapshot, split into compiled code (bytecode, machine code, function and
+ * script records: bounded by the program, which cannot make new code because the page's CSP has
+ * no 'unsafe-eval') and data (objects, closures, arrays, strings: where a leak would show). The
+ * DOM's own heap (native) and the snapshot's roots (synthetic) are left out.
+ */
+async function heapSplit(cdp) {
+  const chunks = [];
+  const on = (e) => chunks.push(e.chunk);
+  cdp.on('HeapProfiler.addHeapSnapshotChunk', on);
+  await cdp.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+  cdp.off('HeapProfiler.addHeapSnapshotChunk', on);
+  const snap = JSON.parse(chunks.join(''));
+  const meta = snap.snapshot.meta;
+  const nf = meta.node_fields.length;
+  const ti = meta.node_fields.indexOf('type');
+  const si = meta.node_fields.indexOf('self_size');
+  const types = meta.node_types[0];
+  let code = 0;
+  let data = 0;
+  for (let i = 0; i < snap.nodes.length; i += nf) {
+    const t = types[snap.nodes[i + ti]];
+    if (t === 'native' || t === 'synthetic') continue;
+    if (t === 'code') code += snap.nodes[i + si];
+    else data += snap.nodes[i + si];
+  }
+  return { codeMB: +(code / 1048576).toFixed(3), dataMB: +(data / 1048576).toFixed(3) };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const pw = await loadPlaywright();
@@ -104,6 +134,7 @@ async function main() {
       await sleep(250);
     }
     const heap = await cdp.send('Runtime.getHeapUsage');
+    const split = await heapSplit(cdp);
     const { metrics } = await cdp.send('Performance.getMetrics');
     const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
     const stats = await page.evaluate(() => window.__jarvisCore.stats());
@@ -121,6 +152,8 @@ async function main() {
       liveNodes,
       nodes: m.Nodes,
       heapMB: +(heap.usedSize / 1048576).toFixed(3),
+      jsDataMB: split.dataMB,
+      codeMB: split.codeMB,
       listeners: m.JSEventListeners,
       layoutObjects: m.LayoutObjects,
       documents: m.Documents,
@@ -203,7 +236,7 @@ async function main() {
       s.hour = warmupHour === null ? null : simHour - warmupHour; // hours into the measured window
       samples.push(s);
       const tag = s.hour === null ? 'warm-up' : `+${String(s.hour).padStart(2, '0')}h`;
-      console.log(`h${String(simHour).padStart(2, '0')} ${tag.padEnd(7)} live ${s.liveNodes}  nodes ${s.nodes}  heap ${s.heapMB.toFixed(2)} MB  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  reconnects ${s.reconnects}`);
+      console.log(`h${String(simHour).padStart(2, '0')} ${tag.padEnd(7)} live ${s.liveNodes}  nodes ${s.nodes}  heap ${s.heapMB.toFixed(2)} MB (data ${s.jsDataMB.toFixed(2)}, code ${s.codeMB.toFixed(2)})  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  reconnects ${s.reconnects}`);
     }
     await sleep(250);
   }
