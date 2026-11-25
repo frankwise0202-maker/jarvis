@@ -334,7 +334,13 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
   const message = h('p', { class: 'hb-message', attrs: { 'data-testid': 'homebase-message' } });
   const setupBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-setup' }, on: { click: () => typeof onSetup === 'function' && onSetup() } }, icon('settings', { size: 14 }), h('span', { text: 'Set up' }));
   const retryLabel = h('span', { text: 'Try again' });
-  const retryBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-retry' }, on: { click: () => hb.refresh() } }, icon('refresh', { size: 14 }), retryLabel);
+  // While it checks, the button is aria-disabled (not disabled: it keeps the keyboard focus).
+  const retryBtn = h(
+    'button',
+    { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-retry' }, on: { click: () => retryBtn.getAttribute('aria-disabled') !== 'true' && hb.refresh() } },
+    icon('refresh', { size: 14 }),
+    retryLabel,
+  );
   const actions = h('div', { class: 'hb-actions' }, retryBtn, setupBtn);
   const foot = h('p', { class: 'hb-foot', attrs: { 'data-testid': 'homebase-foot' } });
 
@@ -436,15 +442,20 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
       cells.gpu.el.dataset.words = v.gpu && !/\d/.test(v.gpu) ? 'true' : 'false';
     }
     message.hidden = online;
-    setText(message, online ? '' : s.message || '');
+    // A command to type on the Alienware ("jarvis-core restart") never breaks across lines.
+    message.replaceChildren(...String(online ? '' : s.message || '').split(/(jarvis-core [a-z]+)/).filter(Boolean).map((part) => (/^jarvis-core [a-z]+$/.test(part) ? h('span', { class: 'hb-cmd', text: part }) : part)));
     message.dataset.tone = phase === 'unset' || phase === 'connecting' ? 'muted' : 'warn';
     // Set up (check the address) only where the address may be wrong; not for a Core that is down
     // (the fix is on the Alienware) or unreachable.
     setupBtn.hidden = !(phase === 'unset' || phase === 'refused' || (phase === 'error' && /isn’t a Jarvis Core/.test(s.message || '')));
     retryBtn.hidden = !FAILED.has(phase);
-    retryBtn.disabled = checking;
-    if (checking) retryBtn.setAttribute('aria-busy', 'true');
-    else retryBtn.removeAttribute('aria-busy');
+    if (checking) {
+      retryBtn.setAttribute('aria-disabled', 'true');
+      retryBtn.setAttribute('aria-busy', 'true');
+    } else {
+      retryBtn.removeAttribute('aria-disabled');
+      retryBtn.removeAttribute('aria-busy');
+    }
     setText(retryLabel, checking ? 'Checking…' : 'Try again');
     actions.hidden = setupBtn.hidden && retryBtn.hidden;
     ask.hidden = phase === 'unset';

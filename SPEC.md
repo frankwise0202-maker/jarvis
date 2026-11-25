@@ -67,7 +67,10 @@ UI-independent (no DOM access inside `src/engine/`) so it can be reused there.
 - Content Security Policy (meta tag in `index.html`, exact; v6 added exactly `https://upload.wikimedia.org` to
   img-src and `https://commons.wikimedia.org` to connect-src; Apple Music added exactly `https://*.mzstatic.com` to
   img-src, `https://itunes.apple.com` to connect-src and `https://audio-ssl.itunes.apple.com` to media-src; the home
-  base (v7.5) added exactly `https://*.ts.net` to connect-src):
+  base (v7.5) added exactly `https://*.ts.net` to connect-src: any Tailscale name, so an address can be saved or
+  tested on any device without a reload; the app itself contacts only the saved or tested address. Accepted
+  trade-off, documented in the README: an injected script could post to someone else's public Funnel `*.ts.net`
+  host, which the policy would otherwise stop):
   `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://upload.wikimedia.org https://*.mzstatic.com; font-src 'self'; connect-src 'self' https://api.anthropic.com https://commons.wikimedia.org https://itunes.apple.com https://*.ts.net; worker-src 'self'; manifest-src 'self'; media-src 'self' blob: https://audio-ssl.itunes.apple.com; object-src 'none'; base-uri 'none'; form-action 'none'`
 - **Never** use `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`document.write` with any text that
   came from the model, the web, the user, or storage. Model text is rendered only through
@@ -2932,16 +2935,21 @@ report on its screen and a small rule-based status assistant. It listens on 127.
 and Mac reach it at `https://<machine>.<tailnet>.ts.net/` through `tailscale serve`. Its API is fixed by the Core's
 handoff (§3 `GET /api/status`, §7 `POST /api/ask`, §8 `GET /api/info`, §9 access): CORS allows only
 `https://frankwise0202-maker.github.io` and localhost origins, answers private-network preflights for them, and
-refuses requests without a Tailscale identity that don't come from the machine itself (403). The app talks to it
-directly from the browser; nothing about it involves Claude.
+refuses requests without a Tailscale identity that don't come from the machine itself (403, with CORS headers for an
+allowed origin, so the app can read why). While the Core process is stopped, restarting or still starting,
+`tailscale serve` answers 502 without CORS headers. The app talks to it directly from the browser; nothing about it
+involves Claude.
 
 **23.1 The address (Settings → Home base).** Setting `homeBaseUrl` (`''` = not linked), stored like every setting.
 `normalizeHomeBaseUrl` (src/lib/homebase.js) accepts what the owner pastes, with or without `https://`, a trailing slash
 or a path (`alienware.tail4e5f6a.ts.net/api/status` → `https://alienware.tail4e5f6a.ts.net/`), and refuses, with a
 plain sentence: `http:`, any other scheme, a host that isn't `<machine>.<tailnet>.ts.net` (at least four DNS labels,
 letters, digits and hyphens), a user name or password, a port other than 443 (the CSP allows `https://*.ts.net` on 443
-only). The settings validator applies the same rule (an invalid value keeps the current one; `''` unlinks), so a
-backup carries the address and an import restores it only when valid (`RESTORED_SETTINGS` includes `homeBaseUrl`).
+only). The settings validator applies the same rule (an invalid value keeps the current one; `''` unlinks). A backup
+carries the address (`RESTORED_SETTINGS` includes `homeBaseUrl`), but an import fills it in only on a device with none
+linked and only with a valid address: never `''` (a device that never linked one exports that; it would unlink this
+one) and never over a linked address (a backup may be someone else's). `importBackup()` then names it (`homeBase`:
+the machine name) and the toast says "your home base’s address (alienware)".
 The section: the current address, the field, **Save** (normalizes, saves, then tests), **Test** (the typed address,
 or the saved one: `GET api/info` for the host name and the Core's version, then `GET api/status` for its health,
 "Connected to alienware · Jarvis Core 1.0.0 · health OK: All systems normal."), **Remove** (with Undo).
@@ -2949,42 +2957,60 @@ or the saved one: `GET api/info` for the host name and the Core's version, then 
 **23.2 The client (src/platform/homebase.js).** Every request: `credentials: 'omit'`, `referrerPolicy: 'no-referrer'`,
 `cache: 'no-store'`, a timeout (10 s; ask 12 s). `GET` needs no preflight; `POST api/ask` (JSON) is preflighted, which
 the Core answers. A failure is `{ ok: false, kind }`: `unreachable` (no answer: a timeout, or a TypeError and nothing
-answers a `no-cors` ping of `api/ping` either: Tailscale off, the machine asleep), `refused` (a TypeError while the
-`no-cors` ping is answered, i.e. CORS refused this page, or a readable 403), `starting` (503 starting), `rate` (429),
-`notcore` (no JSON object), `http` (any other status). `askHomeBase(base, q)` trims `q` to the Core's 300 characters
+answers a `no-cors` ping of `api/ping` either: Tailscale off, the machine asleep or off), `down` (a TypeError while the
+`no-cors` ping is answered: something answered that this page can't read, i.e. Tailscale serve's 502 while the Core
+isn't running), `refused` (only a readable 403: the Core refused this page and says why), `starting` (503 starting),
+`rate` (429), `notcore` (no JSON object), `http` (any other status). `askHomeBase(base, q)` trims `q` to the Core's 300 characters
 and returns `{ answer, intent, suggestions }`; all Core text is cleaned to plain lines and shown with textContent.
 
 **23.3 The tile (src/ui/homebase.js).** One controller (`createHomeBase`) polls `GET api/status` every 30 s
-(`createPoller`), only while an address is set, the page is visible (`visibilitychange`) and a tile is on screen
-(IntersectionObserver; a detached or `display: none` tile doesn't count, nor one covered by a sheet, Voice Mode or
-Standby: an `inert` ancestor, watched with a MutationObserver); becoming visible polls at once if the last
-poll is older than 30 s, never two at once; no SSE (a phone would hold a connection open for nothing). Two tiles show
+(`createPoller`), only while an address is set, the page is visible (`visibilitychange`) and something that shows the
+state is on screen (`hb.watch(el)`, an IntersectionObserver): a tile, the desktop sensor tape (its CORE reading) or the
+rail's Systems glance, so the rail's tile below the rail's fold on a laptop doesn't leave CORE at "…". A detached or
+`display: none` element doesn't count, nor one covered by a sheet, Voice Mode or Standby (an `inert` ancestor, watched
+with a MutationObserver). Becoming active polls at once if the last poll is older than 30 s, never two at once; back
+after more than two polls away (`checkedAt` older than 60 s), an online reading is not shown as current: the state
+becomes `connecting` (readings hidden, the foot says "last reached 11:42 PM", the glance and tape say Checking… / …)
+until the first poll answers. No SSE (a phone would hold a connection open for nothing). Two tiles show
 it: the Presence home (`home.homeBaseEl`, after the quick keys; phones and narrow windows) and the desktop awareness
 rail (after the Systems glance; the home's copy is hidden there). The Systems glance's "Jarvis Core" row and the
 tape's CORE reading follow it (`homeBaseGlance`). States (`data-phase`): `unset` ("NOT SET UP", Set up opens
 Settings → Home base), `connecting`, `online` (ONLINE; the level word OK / WARNING / ALERT in cyan / amber / red, the
 Core's one-line `health.summary`, and CPU %, GPU temperature, RAM %, free space on `/`), `unreachable` (OFFLINE, "Can’t
-reach the home base. Is Tailscale on on this device?", Try again), `refused` (REFUSED, what the Core said if readable,
-Try again and Set up), `starting`, `error` (not a Jarvis Core, other errors). 429 keeps the last reading. Never an
+reach the home base. Is Tailscale switched on here, and is the Alienware on?", Try again), `down` (CORE DOWN, "The
+Alienware answered, but Jarvis Core isn’t responding. It restarts by itself; if this lasts, run jarvis-core restart on
+the Alienware.", Try again, no Set up; the glance says "Core down", the tape DOWN), `refused` (REFUSED, what the Core
+said, Try again and Set up), `starting`, `error` (not a Jarvis Core, other errors). 429 keeps the last reading. **Try
+again** (`refresh()`) on a failure sets `checking`: the status reads CHECKING… and the button "Checking…" (disabled)
+until the answer, for at least 600 ms; the foot then says when it was checked ("alienware · checked 7:42 AM · last
+reached 11:42 PM"), so a repeated failure visibly updates. Never an
 invented number (`homeBaseView`): a null or missing value is "—", the GPU without its driver reads "driver not loaded"
 (never the nouveau temperature), `pending` "checking", `no-device` "no NVIDIA card", `error` "not answering"; an
 unknown level is UNKNOWN. Readings are hidden in every state but online. Disk sizes are decimal ("492 GB").
 
 **23.4 Ask the home base.** A small box on the tile (folded behind "Ask the home base" on the home, open in the rail):
 `POST api/ask {q}`, the answer under it ("Free: your home base answers, not Claude."). The same words typed or dictated
-in the chat ("How’s the home base?", "home base status", "is the home base OK?", "Jarvis Core status": the whole
-sentence, `matchHomeBaseCommand`) make a local exchange (`appendHomeBaseTurn`: `local: 'homebase'`, no model, no
-cost, apiMessages untouched; the footer reads "Free · Home base"); said or typed in Voice Mode (`opts.homeBase`), Jarvis
+in the chat ("How’s the home base?", "home base status", "is the home base OK?", "Jarvis Core status", the owner's
+"How’s the Alienware?" / "Alienware status" / "is my computer at home OK", a time at the end ("… today", "right now")
+and "can you check …": the whole sentence, `matchHomeBaseCommand`) make a local exchange (`appendHomeBaseTurn`:
+`local: 'homebase'`, no model, no cost, apiMessages untouched; the footer reads "Free · Home base"). The Core's answer
+is stored as Markdown with every ASCII punctuation character escaped (`escapeMarkdown`), so nothing in it (a process
+name like `www.x.io`, a bare address, a leading "1. " or "- ") becomes a link, a list or formatting; copied or spoken
+it reads as plain text; said or typed in Voice Mode (`opts.homeBase`), Jarvis
 says the Core's answer, no turn. Not linked: "Link your home base first: Settings → Home base."; unreachable: the
 tile's sentence.
 
 **Tests.** Unit `homebase` (the address both ways; the tile from the Core's real answers in every fixture scenario;
-missing values; failure words; the glance; the command phrases and near misses; the local turn; the poller with a fake
-clock; the client with a fake fetch: options, unreachable vs refused through the ping, 403/503/429/500, timeouts, ask,
-Test; the controller), `platform.db` (the address in backups, invalid ones ignored). E2E `homebase.mjs` with a fake
-Core (`core-fakes.mjs`, a Playwright route on `https://alienware.tail4e5f6a.ts.net/**` serving the captured JSON):
-`homebase-setup` (iPhone: not set up, the address checks, Save, Test, online, the ask box, Remove), `homebase-states`
-(iPhone: warn, alert, no GPU driver, unreachable and Try again, refused, starting, one poll per load and no stream),
-`homebase-desktop` (the rail, the glance, the open ask box, alert), `homebase-chat` (typed in the chat, said in Voice
-Mode; no Claude request). Not testable here: a real Tailscale network, Chrome's private-network rules against a 100.x
+missing values; failure words; the glance; the command phrases and near misses; the local turn and its escaping; the
+poller with a fake clock; the client with a fake fetch: options, unreachable vs down through the ping, a readable 403,
+503/429/500, timeouts, ask, Test; the controller: states, an old reading after a long time away, Try again's
+CHECKING…, the tape and glance keeping it polling), `markdown` (the Core's answers render as one plain paragraph),
+`platform.db` (the address in backups: restored only to an unlinked device, never unlinked or repointed, invalid ones
+ignored), `ui.helpers` (the import toast names it). E2E `homebase.mjs` with a fake Core (`core-fakes.mjs`, a
+Playwright route on `https://alienware.tail4e5f6a.ts.net/**` serving the captured JSON; mode `down` is an unreadable
+502): `homebase-setup` (iPhone: not set up, the address checks, Save, Test, online, the ask box, Remove),
+`homebase-states` (iPhone: warn, alert, no GPU driver, unreachable and Try again, the Core down with CHECKING… on Try
+again, refused, starting, one poll per load and no stream), `homebase-desktop` (the rail, the glance, the open ask box,
+alert), `homebase-laptop` (1280×720: the rail's tile below the fold, CORE and the glance live), `homebase-chat` (typed
+in the chat, said in Voice Mode; no Claude request). Not testable here: a real Tailscale network, Chrome's private-network rules against a 100.x
 address, and iOS Safari itself.

@@ -9,8 +9,11 @@ import { CORE_URL, coreFixtures } from '../core-fakes.mjs';
 import { installFakeSpeech } from './features.mjs';
 
 const LINKED = { settings: { homeBaseUrl: CORE_URL } };
-// A failed poll is logged by the browser ("Failed to load resource: … 403", net::ERR_…).
-const NETWORK_NOISE = [/Failed to load resource/, /ERR_INTERNET_DISCONNECTED/];
+// A failed poll is logged by the browser ("Failed to load resource: … 403", net::ERR_…, and a CORS
+// error for Tailscale's unreadable 502 while the Core is down).
+const NETWORK_NOISE = [/Failed to load resource/, /ERR_INTERNET_DISCONNECTED/, /Access-Control-Allow-Origin|CORS policy/];
+const UNREACHABLE = 'Can’t reach the home base. Is Tailscale switched on here, and is the Alienware on?';
+const DOWN = 'The Alienware answered, but Jarvis Core isn’t responding. It restarts by itself; if this lasts, run jarvis-core restart on the Alienware.';
 
 function tile(t, variant = 'home') {
   return t.page.locator(tid('homebase-tile', { 'data-variant': variant }));
@@ -132,7 +135,7 @@ export default [
 
   {
     name: 'homebase-states',
-    title: 'Home base tile on an iPhone, each state from the Core’s real answers: warn, alert, GPU driver not loaded (words, never a number), unreachable ("Is Tailscale on on this device?"), refused (403) and starting; Try again re-checks',
+    title: 'Home base tile on an iPhone, each state from the Core’s real answers: warn, alert, GPU driver not loaded (words, never a number), unreachable ("Is Tailscale switched on here, and is the Alienware on?"), the Core down behind Tailscale (an unreadable 502: CORE DOWN, jarvis-core restart, no Set up), refused (a readable 403) and starting; Try again shows CHECKING… and re-checks',
     device: 'iphone13',
     seed: LINKED,
     fakeCore: true,
@@ -178,13 +181,35 @@ export default [
       await t.step('unreachable', async () => {
         const el = await show('unreachable', 'unreachable');
         t.assert((await t.text(el.locator(tid('homebase-status')))) === 'OFFLINE', 'OFFLINE');
-        t.assert((await t.text(el.locator(tid('homebase-message')))) === 'Can’t reach the home base. Is Tailscale on on this device?', 'the message');
+        t.assert((await t.text(el.locator(tid('homebase-message')))) === UNREACHABLE, `the message (${await t.text(el.locator(tid('homebase-message')))})`);
         t.assert(!(await el.locator(tid('homebase-stats')).isVisible()), 'no readings (none are invented)');
         await t.screenshot('4-unreachable');
         // Back online: Try again re-checks at once.
         t.core.mode = 'ok';
         await el.locator(tid('homebase-retry')).click();
         await phase(t, 'home', 'online');
+      });
+
+      await t.step('the Core down behind Tailscale serve (an unreadable 502), and Try again', async () => {
+        const el = await show('down', 'down');
+        t.assert((await t.text(el.locator(tid('homebase-status')))) === 'CORE DOWN', `CORE DOWN (got "${await t.text(el.locator(tid('homebase-status')))}")`);
+        t.assert((await t.text(el.locator(tid('homebase-message')))) === DOWN, `the message points at the Alienware (got "${await t.text(el.locator(tid('homebase-message')))}")`);
+        t.assert(await el.locator(tid('homebase-retry')).isVisible(), 'Try again is offered');
+        t.assert(!(await el.locator(tid('homebase-setup')).isVisible()), 'no Set up: the address is fine, the fix is on the Alienware');
+        t.assert(t.core.requests.includes('GET /api/ping'), `the no-cors ping told it from no answer (${t.core.requests.join(', ')})`);
+        await t.screenshot('5-down');
+        // Try again: CHECKING… at once, the button busy, until the (slow) answer; then the time it was checked.
+        t.core.delayMs = 1500;
+        const retry = el.locator(tid('homebase-retry'));
+        await retry.click();
+        await t.waitFor(async () => (await t.text(el.locator(tid('homebase-status')))) === 'CHECKING…', { timeout: 1000, message: async () => `CHECKING… right after the tap (got "${await t.text(el.locator(tid('homebase-status')))}")` });
+        t.assert(await retry.isDisabled(), 'Try again is busy while it checks');
+        t.assert(/Checking/.test(await t.text(retry)), `the button says it is checking (${await t.text(retry)})`);
+        await t.waitFor(async () => (await el.getAttribute('data-checking')) === 'false', { timeout: 10000, message: 'the check to finish' });
+        t.core.delayMs = 0;
+        t.assert((await t.text(el.locator(tid('homebase-status')))) === 'CORE DOWN', 'still down');
+        t.assert(/alienware · checked \d/.test(await t.text(el.locator(tid('homebase-foot')))), `the foot says when it was checked (${await t.text(el.locator(tid('homebase-foot')))})`);
+        t.assert(!(await retry.isDisabled()), 'Try again is back');
       });
 
       await t.step('refused', async () => {
@@ -250,6 +275,37 @@ export default [
         await t.screenshot('2-rail-alert');
       });
       await t.checkNoHorizontalOverflow('desktop with the rail tile');
+    },
+  },
+
+  {
+    name: 'homebase-laptop',
+    title: 'Home base on a 1280×720 laptop: the rail’s tile sits below the rail’s fold, yet the CORE reading and the Systems glance are live (the tape and the glance keep it polling), without scrolling the rail',
+    device: 'desktop',
+    seed: LINKED,
+    fakeCore: true,
+    timeout: 90000,
+    async run(t) {
+      await t.newPage();
+      await t.page.setViewportSize({ width: 1280, height: 720 });
+      await t.goto('/');
+      await t.visible('empty-state');
+      await t.step('CORE and Systems are live with the tile out of sight', async () => {
+        const value = t.page.locator(`${tid('sensor-tape')} .hud-tape__item[data-id="core"] .hud-tape__value`);
+        await t.waitFor(async () => (await t.text(value)) === 'OK', { timeout: 10000, message: async () => `the tape's CORE reading (got "${await t.text(value)}"; requests: ${t.core.requests.join(', ') || 'none'})` });
+        const row = t.page.locator(`${tid('rail-systems')} .glance__row[data-id="core"] .glance__value`);
+        t.assert(/OK · online/i.test(await t.text(row)), `the Systems glance's Jarvis Core row (got "${await t.text(row)}")`);
+        t.assert(t.core.requests.includes('GET /api/status'), 'polled');
+        // The case that used to stall: the rail's tile is below what the rail shows (nothing scrolled).
+        const box = await t.page.evaluate(() => {
+          const rail = document.querySelector('[data-testid="awareness-rail"]').getBoundingClientRect();
+          const tileEl = document.querySelector('[data-testid="homebase-tile"][data-variant="rail"]').getBoundingClientRect();
+          return { railBottom: rail.bottom, tileTop: tileEl.top, scrolled: document.querySelector('[data-testid="awareness-rail"]').scrollTop };
+        });
+        t.assert(box.tileTop >= box.railBottom && box.scrolled === 0, `the rail's tile is out of sight (${JSON.stringify(box)})`);
+        await t.screenshot('1-laptop');
+      });
+      await t.checkNoHorizontalOverflow('a 1280×720 laptop');
     },
   },
 

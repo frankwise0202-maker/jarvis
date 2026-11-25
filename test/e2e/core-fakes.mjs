@@ -5,11 +5,14 @@
 // third-party request for the guard. Like the real Core it echoes an allowed Origin (the app's) in
 // Access-Control-Allow-Origin.
 //
-// t.core (the newest context's): { mode, requests: ['GET /api/status', …], asks: [q, …] }. Set
-// t.core.mode to change what it answers next:
+// t.core (the newest context's): { mode, delayMs, requests: ['GET /api/status', …], asks: [q, …] }.
+// Set t.core.mode to change what it answers next (t.core.delayMs: how long each answer takes):
 //   'ok' | 'warn' | 'alert' | 'nogpu' | 'offline'   that scenario's status, info and answers
 //   'unreachable'                                    no answer at all (Tailscale off on this device)
-//   'refused'                                        403 origin_not_allowed (the Core refuses this page)
+//   'down'                                           Tailscale serve's 502 while the Core is stopped or
+//                                                    restarting: no CORS headers, so the page can't read it
+//   'refused'                                        403 origin_not_allowed (the Core refuses this page;
+//                                                    readable: the Core sends CORS headers on its 403s)
 //   'starting'                                       503 starting
 
 import { readFileSync } from 'node:fs';
@@ -46,14 +49,18 @@ export function fixtureQuestion(q) {
 
 export async function routeFakeCore(context, { mode = 'ok', delayMs = 0 } = {}) {
   const fx = coreFixtures();
-  const state = { mode, requests: [], asks: [] };
+  const state = { mode, delayMs, requests: [], asks: [] };
   await context.route(`${CORE_ORIGIN}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     state.requests.push(`${req.method()} ${url.pathname}`);
-    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
     if (state.mode === 'unreachable') return route.abort('internetdisconnected');
     const origin = req.headers().origin;
+    // Tailscale serve with the Core stopped: 502 and an empty body, without CORS headers. (Playwright
+    // adds Access-Control-Allow-Origin to a fulfilled CORS request that has none, so another origin
+    // stands in for "none": the page can't read it either way; the no-cors ping gets an opaque answer.)
+    if (state.mode === 'down') return route.fulfill({ status: 502, headers: { 'access-control-allow-origin': 'https://login.tailscale.com', 'cache-control': 'no-store' }, body: '' });
     const cors = origin ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
     const json = (status, body, extra = {}) =>
       route.fulfill({ status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store', ...extra }, body: JSON.stringify(body) });
