@@ -148,6 +148,9 @@ on any new computer. Close that window (**Ctrl+W**) to get back to the dashboard
 
 ## If something's not right
 
+**I pasted the install command and nothing happened at all.** The download didn't arrive (no
+internet, or GitHub was busy). Check the internet connection and paste it again a minute later.
+
 **The screen is black or shows the desktop instead of the dashboard.**
 Move the mouse first. If the dashboard isn't there, open Terminal and run `jarvis-core open`. If Chrome
 says the page can't be reached, run `jarvis-core restart`, then `jarvis-core open`.
