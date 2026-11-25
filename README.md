@@ -525,14 +525,19 @@ runs on your own computer at home, and nothing goes to any cloud.
   **Hear him** to listen. Until he's ready, Jarvis speaks as before.
 - **Easy to turn off.** Tap **Turn off** on that notice, or the switch in **Settings → Voice →
   Jarvis's voice**. Once you've turned it off (or on) yourself, Jarvis never changes it again on
-  that device. Each device has its own switch.
+  that device. Each device has its own switch: turning George off on the Mac leaves him on for the
+  iPhone (the Alienware keeps him for your other devices). If George was turned off on the Alienware
+  itself (or by an older Jarvis), a device whose switch is on turns him back on there.
 - **You can always see which voice is speaking.** A small label shows it in Voice Mode (also when
   Jarvis wakes from Standby) and next to **Stop** when a reply is read aloud: **George · home base**,
   **George · this device** (the natural voice on the phone itself) or **iPhone voice** (on a Mac:
   **built-in voice**). If the home base stops answering in the middle of a reply, the rest is said by
-  the iPhone and the label changes with it.
+  the iPhone and the label changes with it. If it isn't answering at all (away from home with the
+  Alienware asleep, or a bad network), the iPhone voice speaks straight away instead of after a
+  silence, and George is back as soon as the home base answers again.
 - **Faster first words.** George's first words come from a short first piece of the reply (the
-  first part of a sentence), and the rest is made while he speaks. Opening Voice Mode, or coming
+  first part of a sentence), and the rest is made while he speaks, in pieces that each fit inside the
+  one before, so there's no pause after a short "Good evening, Frank.". Opening Voice Mode, or coming
   back to Jarvis, wakes George up on the Alienware so he's ready.
 - **Settings → Voice → Jarvis's voice** (at the top) shows the voice in use and where it comes
   from, with **Test** (on an iPhone that tap also lets Jarvis play sound). Without a home base it
@@ -1073,8 +1078,9 @@ computer at home, and nothing goes to any cloud. This is a beta, off until you t
   - **George's voice from the home base**.
   - Each downloads its model on the home base the first time (about 80 and 92 MB); the card shows the
     download and then **Ready**. **Test** hears 3 seconds and shows the words, or plays one sentence.
-  - Each switch is per device: turn it on on the iPhone, the Mac, or both. Turning one off also turns
-    it off on the home base.
+  - Each switch is per device: turn it on on the iPhone, the Mac, or both. Turning hearing off also
+    turns it off on the home base; turning George's voice off only stops it on that device (since
+    v7.8: the home base keeps him for your other devices).
 - **In Voice Mode** a small **via home base** mark sits next to the status while the home base is
   listening. Talk as usual; when you stop for about a second (two with **Wait after I stop talking:
   Long**), what you said goes to the home base, and the words come back into the usual 2-second check

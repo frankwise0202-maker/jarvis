@@ -3322,6 +3322,8 @@ you say goes only to your home base over Tailscale, never to any cloud."
 - Each switch is this device's setting and turns that part on or off at the home base too (`PUT
   api/senses`: on starts the download and the warm-up there). Turned on only once the home base
   accepted (else it springs back with the reason); turned off here at once, whatever the home base says.
+  v7.8 (§26.5): George's voice is turned off on this device only (the home base keeps him for the other
+  devices); hearing is still turned off at the home base too.
 - Each status (`senses-*-status`, `data-state`): off ("Turning it on downloads Whisper (Fast) (about 80
   MB) on the home base, once."), downloading with a percentage and a bar (`senses-*-progress`),
   getting ready, ready ("Ready. Voice Mode hears you through the home base."), ready but off here, off
@@ -3386,7 +3388,8 @@ unchanged (byte-identical).
   download (percentage, size, a bar; `senses.watch()` reads `api/senses` every 2 s meanwhile), then "George's
   voice is ready. Jarvis speaks with it from now on, made by your Alienware." with **Hear him** (a sentence
   through the router, inside the tap) for 15 s. **Turn off** (`setHomeBaseVoice(false)`) is always there:
-  off on this device at once and at the home base (`PUT speak enabled:false`), `homeBaseSpeakBy: 'owner'`.
+  off on this device at once, `homeBaseSpeakBy: 'owner'`; nothing is asked of the home base, which keeps
+  George for the other devices (§26.5).
   A problem (error, speech software missing, off at the home base) says so with **Settings**. Not seen to
   "ready" (the app closed meanwhile): `localStorage['jarvis.voice.georgeNotice'] = 'pending'` shows it again
   at the next launch.
@@ -3417,17 +3420,18 @@ not with reduced motion), and it goes when the voice stops.
   clause or sentence end 40-60 characters in; else the last sentence end before 40 ("Certainly, Frank.");
   else the last clause end from 16 ("Good evening, Frank,"); else the last space within 60, else a hard cut
   at 60. Never across a line break; the rest of a span stays queued.
-- The home base engine's `status()` names `firstCut: {min: 40, max: 60}`, `minChunk: 48` and `assumedRtf: 0.7`
+- The home base engine's `status()` names `firstCut: {min: 40, max: 60}`, `minChunk: 20` and `assumedRtf`
   (`HOMEBASE_FIRST`; `HOMEBASE_CHUNKS` unchanged). `natural-stream.js` takes the first chunk with
   `takeFirstClause` for an engine that names `firstCut`, releases a long first sentence still being written
-  at 60 characters, and grows the next chunks from 48 by `previous ÷ rtf` (0.7 until measured), up to 180,
-  so each is made while the previous one plays. The on-device engine names none: unchanged.
+  at 60 characters, and makes each chunk after it as long as the one before can cover while it is made
+  (`previous ÷ rtf`, from 20 characters, up to 180; §26.5), so each is made while the previous one plays.
+  The on-device engine names none: unchanged.
 - Warm-up: `senses.warmVoice()` sends `PUT api/senses {speak:{enabled:true}}` (the Core loads an unloaded
   George; Core 1.2.2 also restarts a loaded one's idle time) when Voice Mode opens (`prime({ warm: true })`,
   instead of v7.7's "Ready." sentence) and when the app comes to the front (`prime({ voice: true })`). Only
-  while this device uses George, the home base has him on and downloaded (a voice turned off there is never
-  turned back on from here), not resting, and neither warmed nor heard in the last 3 minutes (the Core allows
-  60 PUTs an hour). Hearing's warm-up (0.4 s of silence) is unchanged.
+  while this device uses George, the home base has him on and downloaded (off there while on here: §26.5),
+  not resting, and neither warmed nor heard in the last 3 minutes (the Core allows 60 PUTs an hour).
+  Hearing's warm-up (0.4 s of silence) is unchanged.
 - Today's time limits (`speakTimeoutFor`) and fallbacks are unchanged. With the short first chunk a home base
   at 2× real time now says the first words and the chunk after it shows it slower than real time: the rest
   goes to this device as before (unit `senses`, updated).
@@ -3459,10 +3463,57 @@ device voice's own speak() included; George failing mid-reply: homebase → devi
 (the harness seeds `homeBaseSpeakBy: 'owner'` so other scenarios never see the auto-enable): `george-auto`
 (iPhone) and `george-auto-mac` (Mac): PUT, recorded, the notice getting ready then ready, Hear him from the
 home base (a short first chunk), Voice Mode's reply labelled "George · home base", a reply read aloud
-labelled, a reload asks nothing more, Settings shows it; `george-off`: Turn off, off at the home base, stays
+labelled, a reload asks nothing more, Settings shows it; `george-off`: Turn off, off on this device (the home
+base keeps George), stays
 off after a reload, Voice Mode labelled "iPhone voice", Settings' switch on again as the owner's choice;
 `george-fallback`: the home base failing after the first sentence: the label goes from "George · home base" to
 "iPhone voice"; `george-no-homebase` (iPhone) and `-mac`: the offer, its download and "may be slow on
 iPhone", the tip, Test labelled; `george-old-core`: a 1.1 Core: nothing turned on, no notice.
 `senses-voice-mode` now expects the voice's warm-up as a PUT. Not testable here: iOS Safari's audio session
 and a real Alienware's speed (the chunk sizes assume 0.7× real time until measured).
+
+**26.5 After the review (v7.8 integrator).** Where this differs from 26.1-26.4, it wins.
+- **George's off switch is each device's own** (R78-1). The home base's George is shared by the iPhone and the
+  Mac, so the Mac's **Turn off** sent `PUT speak enabled:false`, turning him off for the iPhone too, which then
+  spoke with the iPhone voice for good. Now **Turn off** (the notice, Settings → Voice → Jarvis's voice,
+  Settings → Home base → George's voice) changes only this device (`homeBaseSpeak: false, homeBaseSpeakBy:
+  'owner'`, nothing asked of the home base; it keeps George, which costs it only memory, and the Core unloads
+  him after 6 hours unused). On is unchanged (`PUT speak enabled:true`, on here once accepted). And a reading
+  of `api/senses` that finds him off at the home base while this device's switch is on (turned off on the
+  Alienware, or by an older Jarvis) turns him on there again (`senses.reviveVoice()`: the same PUT, at most
+  every 3 minutes, never without the speech software); meanwhile "George's voice was turned off at the home
+  base; Jarvis is turning it on there again." Hearing's switch keeps v7.7's behaviour.
+- **No silence after a short first sentence** (R78-2). The chunk after a short first one ("Good evening,
+  Frank.") was at least 48 characters and made only once the first was (one request at a time), so a home
+  base slower than about 0.35× real time left 1-2.4 s of silence after the greeting. Now each chunk after the
+  first is as long as the one before can cover while it is made (`previous ÷ rtf`, from 20 characters, up to
+  180). `speech-text.js` `takeGrowingChunk` (home base only): a long sentence gives one piece at a time, cut at
+  the last clause end within the limit, else a word; the rest is cut again by the next, longer limit; whole
+  sentences are packed. `releasePiece`: a sentence still being written gives its next piece as soon as it can
+  no longer change, so a streamed reply's second chunk needn't wait for the sentence's end. The device voice
+  and the on-device George keep `takeChunk`. The speed planned with until this device has measured one: the
+  Core's own measurement of George (`GET api/senses` `speak.rtf`, Jarvis Core 1.2.2, kept by `sensesView`)
+  × 1.3 (0.35-1), else 0.7. The verdict "slower than real time" leaves out 0.2 s a request for the network
+  (`SLOW_ALLOWANCE_MS`), so short chunks don't make a home base that keeps up (0.9×) hand over. On the virtual
+  clock at 0.7×: the longest silence between chunks goes from 1.04 s ("Good evening, Frank."), 1.43 s
+  ("Certainly, Frank.") and up to 2.1 s (streamed at 80 characters a second) to 0.14 s, and 0.47 s after a
+  10-character "Of course." streamed. With the real Core 1.2.2 (fp32, 0.32×): 0.06-0.34 s (before: 1.98 s
+  streamed at 80 c/s, 2.38 s at 200 c/s on a busy machine).
+- **A home base that stops answering** (R78-3; Tailscale on, the Alienware asleep, a network dropping packets:
+  requests hang instead of failing). The app trusted its last good reading, so a reply went to George and
+  waited out his first request's time limit (6 s) in silence. Now `senses.inDoubt()`: a reading with no
+  answer for 2 s, or a last reading that failed for want of an answer (`offline`, `slow`), means this
+  device's own voice and recognizer until a reading succeeds (the next use reads again, at most every 10 s);
+  a Core that answers with an error of its own keeps v7.7's behaviour. Voice Mode opening and the app coming
+  to the front always read `api/senses` afresh (`prime({ warm | voice })`, one at a time), and a request of
+  George's or Whisper's that got no answer reads it again at once. Settings → Voice: "The home base isn't
+  answering right now, so this device speaks until it does."
+- **Tests.** Unit `voice-choice`: off on this device only; the revive and its limits; two devices on one fake
+  Core; the greetings at 0.7× appended at once and streamed at 80 and 200 characters a second (no silence over
+  0.5 s), and at 0.9× (still all George); `takeGrowingChunk`, `releasePiece`; the Core's speed; the verdict's
+  allowance; the 2 s doubt, the failed reading, back once a reading succeeds, the fresh readings. E2E
+  `george-two-devices` (the iPhone and the Mac on one fake home base, `fakeCore.senses.shared`): the Mac's
+  Turn off is the Mac's alone, the iPhone's next reply is George, the Mac speaks with its built-in voice, and
+  George turned off at the home base by an older Jarvis comes back from the iPhone; `george-away` (every home
+  base request hangs: the iPhone voice within 2 s of the reply instead of 6 s, nothing asked of George; George
+  again once a reading succeeds); `george-off` and `senses-settings` updated (off here only).
