@@ -15,7 +15,8 @@
 //                         starts paused); Resume works from then, back to one look a second
 //   optics-live-hidden    iPhone 13, slow replies (1.5 s): never two looks in flight; the page hidden
 //                         while one is under way: stopped, the camera released, no request after
-//   optics-live-ratelimit Mac: a 429 with retry-after 3 s, then a 529: the note, the waits, recovery
+//   optics-live-ratelimit Mac: a 429 with retry-after 3 s, then a 529: the note, the waits, recovery;
+//                         offline: paused with a note, on again once back online
 //   optics-live-look      iPhone 13: a question during the live view is a Look on the main model; the
 //                         looks pause ("Paused while you look at this"); Live resumes them; the Look's
 //                         cost counts in the hour
@@ -40,7 +41,7 @@ const SCENE = [
   { summary: 'The owner holds the battery next to an open TV remote.', worth_saying: true, line: LINE_2 },
   { summary: 'The owner puts the battery into the remote.', worth_saying: false, line: '' },
 ];
-const NETWORK_NOISE = [/Failed to load resource: the server responded with a status of (429|529)/];
+const NETWORK_NOISE = [/Failed to load resource: the server responded with a status of (429|529)/, /ERR_INTERNET_DISCONNECTED|Failed to load resource: net::/];
 
 const liveReqs = (t) => t.requests().filter((r) => r.body && typeof r.body === 'object' && isLiveRequest(r.body));
 const liveTimes = (t) => liveReqs(t).map((r) => Date.parse(r.time));
@@ -145,7 +146,8 @@ export default [
         await waitOn(t, true);
         t.assert((await page.locator(tid('optics-liveview-toggle')).getAttribute('aria-pressed')) === 'true', 'the key is pressed');
         t.assert(/^LIVE VIEW · 0 min · .+ this hour · limit \$1$/.test(await meterText(t)), `the meter (${await meterText(t)})`);
-        t.assert((await t.text(page.locator('.optics-pill-text'))) === 'LIVE VIEW', 'the LIVE pill says LIVE VIEW');
+        t.assert((await t.text(page.locator('.optics-pill-text'))) === 'VIEW', `the LIVE pill reads LIVE VIEW (${await t.text(page.locator(tid('optics-live-pill')))})`);
+        t.assert(/^Live view is on/.test(await page.locator(tid('optics-live-pill')).getAttribute('aria-label')), 'and says so to a screen reader');
         await waitRequests(t, 6);
         const times = liveTimes(t);
         const gaps = times.slice(1).map((x, i) => x - times[i]);
@@ -391,7 +393,7 @@ export default [
   },
   {
     name: 'optics-live-ratelimit',
-    title: 'Live view and the Anthropic speed limit: a 429 with retry-after 3 s, then a 529: the note, the waits, never a tight loop; the note goes when a look succeeds',
+    title: 'Live view and the Anthropic speed limit: a 429 with retry-after 3 s, then a 529: the note, the waits, never a tight loop; the note goes when a look succeeds; offline it pauses and goes on when back',
     device: 'mac',
     timeout: 90000,
     allowConsole: NETWORK_NOISE,
@@ -417,6 +419,16 @@ export default [
       t.note(`gaps: ${times.slice(1).map((x, i) => x - times[i]).join(', ')} ms`);
       await t.waitFor(async () => (await noteText(t)) === '', { timeout: 5000, message: 'the note to go once a look succeeds' });
       t.assert((await attr(page, 'liveview')) === 'on', 'still on');
+      await t.step('offline: paused with a note, no look; back online: it goes on', async () => {
+        await page.context().setOffline(true);
+        await t.waitFor(async () => (await attr(page, 'liveview-paused')) === 'offline', { timeout: 5000, message: 'the offline pause' });
+        t.assert(/offline/i.test(await noteText(t)), `the note (${await noteText(t)})`);
+        await page.waitForTimeout(300);
+        await noMoreLooks(t, 'offline', 2500);
+        await page.context().setOffline(false);
+        await t.waitFor(async () => (await attr(page, 'liveview-paused')) === '', { timeout: 5000, message: 'on again once online' });
+        await waitRequests(t, liveReqs(t).length + 2);
+      });
       await page.keyboard.press('Escape');
       await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close' });
     },

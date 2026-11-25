@@ -247,7 +247,6 @@
 .optics-liveview-meter { flex: 1; min-width: 0; color: var(--text); font-variant-numeric: tabular-nums; }
 .optics-liveview-stop { position: relative; flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 50%; background: rgba(15, 31, 48, 0.7); color: var(--text); cursor: pointer; }
 .optics-liveview-stop::before { content: ''; position: absolute; inset: -6px; } /* a 44 px target */
-.optics[data-liveview='off'] .optics-liveview-stop { display: none; }
 .optics-liveview-stop:focus-visible,
 .optics-liveview-resume:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .optics-liveview-noterow { display: flex; align-items: center; gap: 10px; }
@@ -260,8 +259,10 @@
 .optics-liveview-line:not(.is-newest) .optics-liveview-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .optics-liveview-time { flex: none; font: 500 10px/1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-3); }
 .optics-liveview-text { min-width: 0; }
-/* Phones: under a Look the frame needs the room; the list comes back with Live. */
+/* Phones: under a Look the frame needs the room; the list comes back with Live. The frozen frame
+   starts below the panel (--live-hud-h, measured by optics.js), so no label hides behind it. */
 .optics[data-layout='phone'][data-frozen='true'] .optics-liveview-lines { display: none; }
+.optics[data-layout='phone'][data-frozen='true'][data-live-hud='true'] .optics-stage { top: calc(var(--top-h) + var(--live-hud-h, 0px)); }
 .optics-liveview-caption {
   position: absolute;
   left: calc(var(--safe-left) + 16px);
@@ -534,6 +535,7 @@
   .optics:not([data-frozen='true']) .optics-watch { right: calc(var(--live-col) + var(--safe-right) + 16px); }
   .optics:not([data-frozen='true']) .optics-liveview,
   .optics:not([data-frozen='true']) .optics-liveview-caption { right: calc(var(--live-col) + var(--safe-right) + 16px); }
+  .optics[data-frozen='true'] .optics-liveview { right: calc(var(--side-w) + var(--safe-right) + 16px); }
   .optics-liveview-caption { bottom: 12px; }
   /* Four keys in the column: Live view takes the next line when they don't fit. */
   .optics-deck:not([data-frozen='true']) .optics-keys { flex-wrap: wrap; row-gap: 8px; }

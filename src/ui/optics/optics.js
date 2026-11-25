@@ -83,6 +83,9 @@ import { drawSchematic } from './schematic.js';
 
 const INTRO_KEY = 'jarvis.optics.intro.v1';
 const WATCH_DAY_KEY = 'jarvis.optics.watch.v1';
+// The live view's last real cost of a look (v8.0): the estimate before each look is never below it,
+// also after a reload or in another window (the hour's spending itself is src/lib/live-view.js's).
+const LIVE_LAST_KEY = 'jarvis.liveView.lastLook';
 // On screen a phone's cameras are BACK and FRONT, like the iPhone's own names (the frame's source
 // stays 'rear' for Claude: "the owner's rear camera").
 const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
@@ -153,6 +156,13 @@ const resumeLabel = (at) => {
     return '';
   }
 };
+
+/** "A · b c · d e" -> the spaces inside each part made non-breaking, so a line breaks only at " · ". */
+const keepParts = (text) =>
+  String(text || '')
+    .split(' · ')
+    .map((p) => p.replace(/ /g, '\u00a0'))
+    .join(' · ');
 
 /** "an hour", "20 minutes", "8 seconds": the live view's session length in words. */
 function durationWords(ms) {
@@ -294,7 +304,8 @@ export function openOptics(deps = {}) {
   // On a computer it sits at the top of the side column; on a phone under the top bar.
   const liveMeter = h('span', { class: 'optics-liveview-meter', attrs: { 'data-testid': 'optics-liveview-meter' } });
   const liveStop = h('button', { class: 'optics-liveview-stop', type: 'button', attrs: { 'data-testid': 'optics-liveview-stop', 'aria-label': 'Stop the live view' } }, icon('close', { size: 16 }));
-  liveStop.addEventListener('click', () => stopLiveView('Live view stopped.'));
+  // While on: stop. Once off (its note still showing): put the panel away.
+  liveStop.addEventListener('click', () => (liveView ? stopLiveView('Live view stopped.') : hideLiveHud()));
   const liveNote = h('p', { class: 'optics-liveview-note', hidden: true, attrs: { 'data-testid': 'optics-liveview-note', 'aria-live': 'polite' } });
   const liveResume = h('button', { class: 'btn btn-sm optics-liveview-resume', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-liveview-resume' } }, icon('play', { size: 14 }), h('span', { text: 'Resume' }));
   liveResume.addEventListener('click', () => resumeLiveView({ byOwner: true }));
@@ -541,7 +552,8 @@ export function openOptics(deps = {}) {
     const on = camera.live;
     livePill.hidden = !on;
     closeBtn.hidden = on;
-    setText(pillText, liveView ? 'LIVE VIEW' : watch ? `WATCH ${clock(watch.endsAt - Date.now())}` : 'OPTICS');
+    // The pill reads LIVE VIEW while the live view is on (LIVE is the pill's own word).
+    setText(pillText, liveView ? 'VIEW' : watch ? `WATCH ${clock(watch.endsAt - Date.now())}` : 'OPTICS');
     livePill.setAttribute('aria-label', liveView ? 'Live view is on. Turn the camera off' : watch ? 'Watch is on. Turn the camera off' : 'Camera is on. Turn it off');
     el.dataset.camera = on ? 'live' : camera.state === 'paused' ? 'paused' : 'off';
     el.dataset.mirrored = camera.mirrored ? 'true' : 'false';
@@ -1655,6 +1667,18 @@ export function openOptics(deps = {}) {
     return liveBudget;
   }
 
+  /** The last real cost of a live look in the past hour (this tab, another one, before a reload), else 0. */
+  function lastLiveCost() {
+    try {
+      const v = JSON.parse(store.get(LIVE_LAST_KEY) || 'null');
+      const usd = Number(v && v.usd);
+      const t = Number(v && v.t);
+      return Number.isFinite(usd) && usd > 0 && Number.isFinite(t) && Date.now() - t < liveOpts.windowMs ? usd : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   /** A cost asked during the live view (a Look, a follow-up) counts toward the hour's $1. */
   function countLiveSpend(usd) {
     const v = Number(usd) || 0;
@@ -1726,10 +1750,12 @@ export function openOptics(deps = {}) {
       lastSpokenAt: 0,
     };
     budget().reload();
+    liveView.lastCostUsd = lastLiveCost();
     el.dataset.liveview = 'on';
     el.dataset.liveviewPaused = '';
     el.dataset.liveviewLooks = '0';
     liveViewBtn.setAttribute('aria-pressed', 'true');
+    liveStop.setAttribute('aria-label', 'Stop the live view');
     liveHud.hidden = false;
     liveLines.replaceChildren();
     liveLines.hidden = true;
@@ -1765,23 +1791,35 @@ export function openOptics(deps = {}) {
     el.dataset.liveview = 'off';
     el.dataset.liveviewPaused = '';
     liveViewBtn.setAttribute('aria-pressed', 'false');
+    liveStop.setAttribute('aria-label', 'Close the live view panel');
     liveCaption.hidden = true;
     liveResume.hidden = true;
-    setText(liveMeter, `LIVE VIEW OFF · ${lv.looks} ${lv.looks === 1 ? 'look' : 'looks'} · ${formatUsd(budget().spent())} this hour`);
+    setText(liveMeter, keepParts(`LIVE VIEW OFF · ${lv.looks} ${lv.looks === 1 ? 'look' : 'looks'} · ${formatUsd(budget().spent())} this hour`));
     if (message) {
       setLiveNote(message, keepHud ? 'info' : '');
       announce(message);
     } else setLiveNote('');
     clearTimeout(liveHudTimer);
-    if (!keepHud) {
-      liveHudTimer = setTimeout(() => {
-        if (!liveView && !closed) {
-          liveHud.hidden = true;
-          el.dataset.liveHud = 'false';
-        }
-      }, message ? 6000 : 0);
-    }
+    if (!keepHud) liveHudTimer = setTimeout(() => !liveView && hideLiveHud(), message ? 6000 : 0);
     if (!closed) setMode(mode);
+  }
+
+  function hideLiveHud() {
+    clearTimeout(liveHudTimer);
+    if (closed) return;
+    liveHud.hidden = true;
+    el.dataset.liveHud = 'false';
+    syncLiveHudRoom();
+  }
+
+  /**
+   * Phones: a Look's frozen frame sits under the live view's panel (its labels must never hide
+   * behind it): the stage starts below the panel (--live-hud-h).
+   */
+  function syncLiveHudRoom() {
+    const phonePanel = !liveHud.hidden && el.dataset.layout !== 'desktop' && liveHud.parentNode === el;
+    const room = phonePanel ? Math.ceil(liveHud.getBoundingClientRect().height) + 8 : 0;
+    el.style.setProperty('--live-hud-h', `${room}px`);
   }
 
   /** The live view waits: a Look on screen ('look'), the hour's $1 reached ('cap'), offline. */
@@ -1893,7 +1931,6 @@ export function openOptics(deps = {}) {
       pauseLiveView('cap', { est });
       return;
     }
-    lv.lastStartAt = now;
     lv.est = est;
     lv.sent = false;
     const controller = new AbortController();
@@ -1903,6 +1940,7 @@ export function openOptics(deps = {}) {
       frame = await camera.capture({ maxEdge: liveOpts.maxEdge, quality: liveOpts.quality, previewEdge: 160 });
     } catch {
       if (lv.inflight === controller) lv.inflight = null;
+      lv.lastStartAt = Date.now(); // no frame this time: the next try waits its second
       if (liveView === lv) scheduleLive();
       return;
     }
@@ -1915,6 +1953,8 @@ export function openOptics(deps = {}) {
     }
     lv.looks += 1;
     lv.sent = true;
+    // The cadence counts from the request itself: never two requests less than a second apart.
+    lv.lastStartAt = Date.now();
     el.dataset.liveviewLooks = String(lv.looks);
     let res;
     try {
@@ -1930,6 +1970,7 @@ export function openOptics(deps = {}) {
     if (cost > 0) {
       budget().add(cost);
       lv.lastCostUsd = cost;
+      store.set(LIVE_LAST_KEY, JSON.stringify({ t: Date.now(), usd: cost }));
     }
     if (liveView !== lv) return;
     onLiveResult(lv, res || { ok: false }, cost);
@@ -2033,7 +2074,8 @@ export function openOptics(deps = {}) {
     if (!lv) return;
     const now = Date.now();
     const spent = budget().spent();
-    setText(liveMeter, liveMeterText({ elapsedMs: now - lv.startedAt, spentUsd: spent, capUsd: liveOpts.capUsd }));
+    // Breaks only between its parts ("… this hour ·" / "limit $1"), never inside one.
+    setText(liveMeter, keepParts(liveMeterText({ elapsedMs: now - lv.startedAt, spentUsd: spent, capUsd: liveOpts.capUsd })));
     liveMeter.dataset.spentUsd = spent.toFixed(6);
     liveMeter.dataset.looks = String(lv.looks);
     el.dataset.liveviewSlow = spent >= liveOpts.slowFromUsd ? 'true' : 'false';
@@ -2064,6 +2106,7 @@ export function openOptics(deps = {}) {
       else el.insertBefore(liveHud, live);
     }
     el.dataset.liveHud = liveHud.hidden ? 'false' : 'true';
+    syncLiveHudRoom();
   }
 
   const onOnline = () => {
@@ -2417,11 +2460,13 @@ export function openOptics(deps = {}) {
     // Before, it kept the frozen stage's numbers, so after Live part of the frame was hidden under the
     // top bar and the deck and the brackets sat elsewhere.
     ro = new ResizeObserver(() => {
+      syncLiveHudRoom();
       fitLive();
       layoutSoon();
     });
     ro.observe(stage);
     ro.observe(deck);
+    ro.observe(liveHud); // the live view's panel grows with its lines: a frozen frame stays clear of it
   }
   const onVisible = () => {
     if (document.visibilityState === 'visible' && resumeOnVisible && !closed && camera.state === 'paused') {
