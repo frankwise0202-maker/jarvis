@@ -1,8 +1,8 @@
 // Presence controller (SPEC 2.4): the one place that turns real app state into the HUD — the
 // header's state word, privacy pills and sensor tape, the home screen (state word, situation line,
 // Needs-you, quick keys, Full HUD readouts, the core legend), the desktop awareness rail
-// (chronometer, Needs-you, Systems glance), and the Living Core's telemetry, sensor beads and
-// alert bead. It also keeps the Needs-you ledger, runs the startup scan for interrupted replies,
+// (chronometer, Needs-you, Systems glance, the Home base tile), and the Living Core's telemetry,
+// sensor beads and alert bead. It also keeps the Needs-you ledger, runs the startup scan for interrupted replies,
 // applies the HUD preferences (Calm/Full, motion, boot) and plays the once-a-session boot.
 //
 //   const presence = createPresence({ root, demo, sttOk, getSettings, getSpend, getTodaySpend,
@@ -42,6 +42,7 @@ import {
   dayKeyOf,
 } from './model.js';
 import { createStateWord, createLivePills, createTape, createNeedsList, createQuickKeys, createReadouts, createLegend, createChronometer, createSystemsGlance } from './views.js';
+import { createHomeBaseTile, homeBaseGlance } from '../homebase.js';
 
 const BOOT_SESSION_KEY = 'jarvis.ui.booted';
 const BUILD_KEY = 'jarvis.ui.build';
@@ -104,6 +105,8 @@ function isMac() {
  * @param {object} o.actions  openConversation(id) · resume(convId) · retry(convId, turnId) ·
  *   openSettings(opts) · openSystems() · openHistory() · talk() · look(event) · brief() ·
  *   screen?() · standby?() · stopSensor(kind) · spendDismissed() → bool
+ * @param {object} [o.homeBase]  the Home base controller (src/ui/homebase.js, v7.5): a tile on the
+ *   home and one in the rail; the Systems glance's "Jarvis Core" row and the tape's CORE follow it
  */
 export function createPresence(o) {
   const actions = o.actions || {};
@@ -160,6 +163,13 @@ export function createPresence(o) {
         : null,
   });
 
+  // Home base (v7.5, SPEC §23): the Jarvis Core tile (home on phones, the rail on desktop).
+  const hb = o.homeBase || null;
+  const openHomeBaseSettings = () => safe(() => actions.openSettings && actions.openSettings({ section: 'homebase', focus: 'homebase-url' }));
+  const homeTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'home', onSetup: openHomeBaseSettings }), null) : null;
+  const railTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'rail', onSetup: openHomeBaseSettings }), null) : null;
+  const offHomeBase = hb ? safe(() => hb.subscribe(() => render()), null) : null;
+
   // Desktop rail.
   const chrono = createChronometer({ onSuggest: () => onKey('brief') });
   const railNeeds = createNeedsList({ onAction: (item) => onNeedsAction(item), onMore: () => safe(() => actions.openHistory && actions.openHistory()), testid: 'rail-needs', heading: true });
@@ -167,10 +177,11 @@ export function createPresence(o) {
   const glance = createSystemsGlance({ onOpen: () => safe(() => actions.openSystems && actions.openSystems()) });
   glance.el.classList.add('rail-panel');
   const live = h('section', { class: 'rail-live rail-panel hud-frame', attrs: { 'aria-label': 'Live', 'data-testid': 'rail-live' } }, chrono.el);
+  const railPanels = [live, railNeeds.el, glance.el, railTile ? railTile.el : null].filter(Boolean);
   const rail = {
-    el: h('div', { class: 'panel-rail hud-assemble', attrs: { 'data-testid': 'awareness-rail', role: 'region', 'aria-label': 'Awareness' } }, live, railNeeds.el, glance.el),
+    el: h('div', { class: 'panel-rail hud-assemble', attrs: { 'data-testid': 'awareness-rail', role: 'region', 'aria-label': 'Awareness' } }, ...railPanels),
   };
-  [live, railNeeds.el, glance.el].forEach((el, i) => el.style.setProperty('--i', String(i)));
+  railPanels.forEach((el, i) => el.style.setProperty('--i', String(i)));
 
   // A visually hidden live region for the state word: at most one announcement every 2 s.
   const announcer = h('p', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', 'data-testid': 'state-announcer' } });
@@ -202,6 +213,7 @@ export function createPresence(o) {
     situationEl: situation,
     needsEl: homeNeeds.el,
     keysEl: keys.el,
+    homeBaseEl: homeTile ? homeTile.el : null,
     readoutsEl: readouts.el,
     legendEl: legend.el,
     /** Hero size for the current viewport (SPEC 2.4.4). */
@@ -387,9 +399,10 @@ export function createPresence(o) {
 
     // Sensor tape (desktop header; a 24px row on phones in Full HUD).
     const clock = chronometer(now, locale);
+    const homeBase = hb ? homeBaseGlance(safe(() => hb.getState(), null)) : null;
     const readings = [
       { id: 'net', label: 'NET', value: snap.online ? 'ONLINE' : 'OFFLINE', title: `Network ${snap.online ? 'online' : 'offline'}` },
-      { id: 'core', label: 'CORE', value: '—', unknown: true, title: 'Jarvis Core: not paired' },
+      homeBase ? { id: 'core', label: 'CORE', value: homeBase.tape, unknown: homeBase.unknown, title: homeBase.title } : { id: 'core', label: 'CORE', value: '—', unknown: true, title: 'Jarvis Core: not paired' },
       { id: 'spend', label: 'SPEND', value: tele.todayUsd === null ? '—' : `${money(tele.todayUsd)} TODAY`, unknown: tele.todayUsd === null, title: tele.todayUsd === null ? 'Spend: not tracked' : `Spend today ${money(tele.todayUsd)}` },
       { id: 'time', label: '', value: `${clock.digits}${clock.period ? ` ${clock.period}` : ''}`, title: `Time ${clock.digits} ${clock.period}`.trim() },
     ];
@@ -403,7 +416,8 @@ export function createPresence(o) {
     const model = safe(() => o.modelLabel && o.modelLabel(), '');
     glance.set({
       network: snap.online,
-      core: '',
+      core: homeBase ? homeBase.text : '',
+      coreTone: homeBase ? homeBase.tone : 'muted',
       mic: sensors.mic,
       optics: sensors.optics,
       model,
@@ -695,6 +709,9 @@ export function createPresence(o) {
       window.removeEventListener('storage', onStorage);
       pills.destroy();
       homeWord.destroy();
+      if (typeof offHomeBase === 'function') safe(offHomeBase);
+      if (homeTile) safe(() => homeTile.destroy());
+      if (railTile) safe(() => railTile.destroy());
     },
   };
 }

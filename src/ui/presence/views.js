@@ -392,7 +392,7 @@ export function createChronometer({ onSuggest } = {}) {
 // ---- Systems glance (SPEC 2.4.4 desktop rail panel 3) -----------------------------------------------------
 
 /**
- * set({ network, core, mic, optics, model, spend: { today, month, alert, frac, over } }).
+ * set({ network, core, coreTone, mic, optics, model, spend: { today, month, alert, frac, over } }).
  * Every row is a real reading; a click opens the Systems sheet: onOpen().
  */
 export function createSystemsGlance({ onOpen } = {}) {
@@ -425,7 +425,7 @@ export function createSystemsGlance({ onOpen } = {}) {
         rows[id].el.dataset.tone = tone;
       };
       put('network', s.network ? 'Online' : 'Offline', s.network ? 'ok' : 'warn');
-      put('core', s.core || 'Not paired', s.core ? '' : 'muted');
+      put('core', s.core || 'Not paired', s.core ? s.coreTone || '' : 'muted');
       put('mic', s.mic, s.mic === 'live' ? 'live' : s.mic === 'off' ? 'muted' : '');
       put('optics', s.optics, s.optics === 'live' ? 'live' : s.optics === 'off' ? 'muted' : '');
       put('model', s.model || '—');
@@ -434,7 +434,7 @@ export function createSystemsGlance({ onOpen } = {}) {
       bar.hidden = !(sp.known && sp.alert > 0);
       barFill.style.width = `${Math.round(Math.max(0, Math.min(1, sp.frac || 0)) * 100)}%`;
       bar.dataset.over = sp.over ? 'true' : 'false';
-      btn.setAttribute('aria-label', `Systems: ${s.network ? 'online' : 'offline'}, mic ${s.mic}, optics ${s.optics}, ${s.model || ''}, ${sp.known ? `${money(sp.today)} today` : 'spend unknown'}. Open the dashboard`);
+      btn.setAttribute('aria-label', `Systems: ${s.network ? 'online' : 'offline'}, Jarvis Core ${s.core || 'not paired'}, mic ${s.mic}, optics ${s.optics}, ${s.model || ''}, ${sp.known ? `${money(sp.today)} today` : 'spend unknown'}. Open the dashboard`);
     },
   };
 }

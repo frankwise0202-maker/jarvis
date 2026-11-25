@@ -414,6 +414,7 @@ export function createChat(o) {
       greetEls.meta,
       home.needsEl,
       home.keysEl,
+      home.homeBaseEl || null,
       suggestions.length ? h('div', { class: 'suggestions suggestions--starters', attrs: { role: 'list', 'aria-label': 'Suggestions' } }, suggestions.map((b) => h('div', { class: 'suggestion-item', attrs: { role: 'listitem' } }, b))) : null,
     );
     const protocols = mountProtocols();
@@ -1174,6 +1175,11 @@ function createJarvisTurnView(turn, ctx) {
     if (shareBtn) shareBtn.hidden = !hasText && missionBtn.hidden;
     syncSpeak();
 
+    if (turn.local === 'homebase') {
+      setText(stats, 'Free · Home base');
+      stats.title = 'Answered by your home base (the Jarvis Core): no Claude request, no cost';
+      return;
+    }
     if (turn.local) {
       setText(stats, 'Free · Apple Music');
       stats.title = 'Searched Apple Music on this device: no Claude request, no cost';

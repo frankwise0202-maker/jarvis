@@ -10,6 +10,7 @@
 // invalid value in a patch keeps the current value. Numbers are clamped to their range.
 
 import { MODELS, DEPTHS, MODES } from '../engine/models.js';
+import { normalizeHomeBaseUrl } from '../lib/homebase.js';
 import { readItem, writeItem, removeItem, watchItem } from './storage.js';
 import { isPlainObject, clamp, toFiniteNumber, cleanLine, createEmitter, parseJson } from './util.js';
 
@@ -64,6 +65,9 @@ export const DEFAULT_SETTINGS = deepFreeze({
   wakeClapSensitivity: 'normal', // 'low' | 'normal' | 'high' (src/lib/wake/clap.js)
   wakeWord: false, // the "Hey Jarvis" models download only when the owner turns this on
   wakeReturn: true,
+  // Home base (v7.5, SPEC §23): the Jarvis Core's Tailscale address, 'https://<machine>.<tailnet>.ts.net/'
+  // ('' = not linked). Stored normalized (src/lib/homebase.js normalizeHomeBaseUrl); anything else is refused.
+  homeBaseUrl: '',
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -179,6 +183,13 @@ const VALIDATORS = {
   wakeClapSensitivity: oneOf(CLAP_SENSITIVITY_IDS),
   wakeWord: bool,
   wakeReturn: bool,
+  // '' unlinks; an address is kept only as https on a *.ts.net name, normalized (no path, no port).
+  homeBaseUrl: (v, fb) => {
+    if (typeof v !== 'string') return fb;
+    if (v.trim() === '') return '';
+    const r = normalizeHomeBaseUrl(v);
+    return r.ok ? r.url : fb;
+  },
 };
 
 /**

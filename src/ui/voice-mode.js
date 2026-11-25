@@ -98,6 +98,10 @@
 //                           commands act at once, without the check. After a card is shown
 //                           Jarvis waits for a tap instead of listening again, so the owner can tap
 //                           Preview (or Open in Apple Music: the hint says which).
+//   homeBase              Home base (v7.5, SPEC §23): command(text) -> null (not "how's the home base",
+//                           "home base status" …) or { handled: true, done: Promise<{ ack }> }: the
+//                           Jarvis Core's own assistant answers (free: no turn) and Jarvis says it. Heard
+//                           or typed here; acts at once, without the 2-second check.
 //   standby               Standby (v7.4, SPEC §22): an object (present = available). "Jarvis, standby",
 //                           "go to sleep" or "go back to sleep" (heard or typed, the whole sentence) gets
 //                           a short reply, then Voice Mode closes with onClose({ reason: 'standby' }) and
@@ -277,6 +281,7 @@ function createVoiceMode(opts) {
     createMicBands,
     screens,
     music,
+    homeBase,
     standby,
     wake,
   } = opts;
@@ -880,6 +885,8 @@ function createVoiceMode(opts) {
     }
     // Apple Music: "play Back in Black" typed here is found at once too (free: no turn).
     if (musicCommand(text)) return;
+    // Home base (v7.5): "how's the home base?" typed here: the Core answers (free: no turn).
+    if (homeBaseCommand(text)) return;
     send(text);
   }
 
@@ -2517,6 +2524,40 @@ function createVoiceMode(opts) {
   }
 
   /**
+   * Home base (v7.5, free, no turn): "how's the home base?" asks the Jarvis Core's own assistant and
+   * Jarvis says its answer. True when the words were a home base command.
+   */
+  function homeBaseCommand(text) {
+    if (!homeBase || typeof homeBase.command !== 'function') return false;
+    let res = null;
+    try {
+      res = homeBase.command(text);
+    } catch (err) {
+      console.warn('[voice] the home base command failed', err);
+      res = null;
+    }
+    if (!res || !res.handled) return false;
+    showCaption('quote', `“${text}”`);
+    const marker = { pending: true, viewer: true, homeBase: true };
+    S.run = marker;
+    setVoiceState('thinking');
+    setStatus('Asking the home base…', 'sparkle');
+    Promise.resolve(res.done).then(
+      (out) => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck(out && typeof out.ack === 'string' ? out.ack : '');
+      },
+      () => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck('I couldn’t reach the home base just now.');
+      },
+    );
+    return true;
+  }
+
+  /**
    * Apple Music (free, no turn): "play Back in Black" finds it and shows the Music card here; Jarvis
    * says one short line ("Here's Back in Black by AC/DC. Tap Open in Apple Music to play it.") and
    * then waits for a tap. "Stop the music" stops a preview. True when the words were a music command.
@@ -2601,6 +2642,8 @@ function createVoiceMode(opts) {
       // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
       // (above) and is taken here once the reply has been said.
       if (screenCommand(words)) return;
+      // Home base (v7.5): "how's the home base?" is answered by the Jarvis Core (free: no turn).
+      if (homeBaseCommand(words)) return;
       // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
       if (i === 0 && musicCommand(words)) return;
       // A 2D request heard here is cancelled by Stop while its library lookup is still running.

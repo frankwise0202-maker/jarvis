@@ -76,12 +76,13 @@ const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCam
  * (naturalVoiceId, v7.1) is restored, but never naturalVoice itself: an import never starts a
  * download. Wake Jarvis (Standby): two claps, their sensitivity and the return to Standby are
  * restored; "Hey Jarvis" (wakeWord) is carried in the file but never switched on by an import, for
- * the same reason (its models are a download).
+ * the same reason (its models are a download). The home base's address (homeBaseUrl, v7.5) is
+ * restored when it is a valid one (https on a *.ts.net name; anything else is ignored).
  */
 export const RESTORED_SETTINGS = Object.freeze([
   'userName', 'tone', 'verbosity', 'theme', 'sounds', 'soundVolume', 'haptics', 'voiceURI', 'voiceRate', 'listenLang',
   'speakReplies', 'voiceContinuous', 'followups', 'showThinking', 'location', 'memoryEnabled', 'notifyOnFinish',
-  'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn',
+  'naturalVoiceId', 'listenWait', 'listenSend', 'wakeClap', 'wakeClapSensitivity', 'wakeReturn', 'homeBaseUrl',
 ]);
 
 /** What replaces an API key in exported data. */
@@ -610,6 +611,7 @@ function turnOf(t, fallbackTime) {
   const apiStart = int(t.apiStart, 0, 1e9);
   if (apiStart !== null) turn.apiStart = apiStart;
   if (t.local === 'music') turn.local = 'music'; // a free Apple Music exchange (no model, no cost)
+  if (t.local === 'homebase') turn.local = 'homebase'; // a free home base exchange (the Jarvis Core answered)
   return turn;
 }
 

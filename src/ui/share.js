@@ -470,6 +470,7 @@ export function turnMetrics(turn) {
 export function turnStatsLine(turn, opts = {}) {
   if (!isObj(turn)) return '';
   if (turn.local === 'music') return 'Free · Apple Music'; // searched on the device, no Claude request
+  if (turn.local === 'homebase') return 'Free · Home base'; // the Jarvis Core answered, no Claude request
   const m = turnMetrics(turn);
   const parts = [];
   if (turn.status === 'stopped' && !(isObj(opts) && opts.status === false)) parts.push('Stopped');

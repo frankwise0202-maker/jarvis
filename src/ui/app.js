@@ -40,7 +40,7 @@ import { createScreens, screenAck, screenMessage } from './screens/controller.js
 import { isScreenMode } from './screens/screen-page.js';
 import { matchHologramCommand, normalizeCommandText } from '../lib/hologram-commands.js';
 import { matchScreenCommand } from '../lib/screen-commands.js';
-import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from '../engine/index.js';
+import { createJarvis, MODELS, DEPTHS, blueprintCostUsd, costLabel, blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine, appendHomeBaseTurn } from '../engine/index.js';
 import { suggestFollowups } from '../engine/followups.js';
 import { getSettings, saveSettings, onSettingsChange } from '../platform/settings.js';
 import { getApiKey, getDevApiBase } from '../platform/secrets.js';
@@ -70,6 +70,8 @@ import { appendMusicTurn, musicSegment } from '../engine/music.js';
 import { createMusicPlayer } from './music/player.js';
 import { createMusicCardView, isMacDevice } from './music/card.js';
 import { createStandby } from './standby.js';
+import { createHomeBase } from './homebase.js';
+import { matchHomeBaseCommand } from '../lib/homebase.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
@@ -281,6 +283,10 @@ export async function startApp(rootEl) {
   const live = h('div', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', role: 'status', 'data-testid': 'live-region' } });
   const sheetLayer = h('div', { class: 'sheet-layer' });
 
+  // Home base (v7.5, SPEC §23): the Jarvis Core on the owner's Alienware, over Tailscale. Polled only
+  // while its tile is on screen; not in the demo (no network there).
+  const homeBase = state.demo ? null : safe(() => createHomeBase({ getSettings, onSettingsChange }), null);
+
   // Presence (SPEC 2.4): the state word, privacy pills, sensor tape, home and awareness rail.
   const presence = createPresence({
     root,
@@ -294,6 +300,7 @@ export async function startApp(rootEl) {
     store: { list: () => store.list(), get: (id) => (state.demo ? store.get(id) : getConversation(id, { track: false })) },
     canResume: (conv) => !state.runs.has(conv.id) && !runningElsewhere(conv.id) && engine.canResume(conv),
     sounds,
+    homeBase,
     onRendered: ({ needs }) => header.setAlert(needs.length),
     onHud: () => {
       renderPanelStatsSoon();
@@ -463,7 +470,8 @@ export async function startApp(rootEl) {
     // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
     // also while Jarvis is working ("put mission control on screen 2").
     // Apple Music: "play Back in Black" is found here, free (no Claude request): a Music card.
-    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text),
+    // "How's the home base?": the Jarvis Core answers, free (a local exchange; v7.5).
+    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text) || homeBaseFromChat(text),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -1342,6 +1350,8 @@ export async function startApp(rootEl) {
             return res && res.handled ? { handled: true, done: res.done.then((o) => ({ ack: screenAck(o), outcome: o })) } : null;
           },
         },
+        // Home base (v7.5): "how's the home base?" said or typed here; Jarvis says the Core's answer (free).
+        homeBase: homeBase ? { command: (text) => homeBaseFromVoice(text) } : null,
         // Apple Music: "play Back in Black" said here is found at once (free) and shown as a Music card.
         music: {
           command: (text, extra) => musicCommand(text, { source: 'voice', spoken: true, found: (extra && extra.found) || null }),
@@ -1445,6 +1455,62 @@ export async function startApp(rootEl) {
   function standbyFromChat(text) {
     if (state.demo || !safe(() => standbyCommand(text), false)) return false;
     return enterStandby();
+  }
+
+  // ---- Home base (v7.5, SPEC §23) --------------------------------------------------------------
+  /**
+   * "How's the home base?" / "home base status" typed (or dictated) in the chat: the Jarvis Core's
+   * own assistant answers (POST api/ask; free, no Claude request), as a local exchange in the open
+   * conversation or a new one. False when the words are something else or this chat is busy (they
+   * wait like any message).
+   */
+  function homeBaseFromChat(text) {
+    const words = String(text || '').trim();
+    if (!homeBase || !words || !safe(() => matchHomeBaseCommand(words), false)) return false;
+    let conv = state.conv;
+    if (conv && (state.runs.has(conv.id) || runningElsewhere(conv.id))) return false;
+    const fresh = !conv;
+    if (!conv) conv = engine.newConversation();
+    clearFollowups();
+    let added;
+    try {
+      added = appendHomeBaseTurn(conv, { text: words, line: 'Asking the home base…', mode: composer.getMode() });
+    } catch (err) {
+      console.error('[jarvis] the home base turn failed:', err);
+      return false;
+    }
+    const { turn, textSegment } = added;
+    if (fresh || state.conv !== conv) setConversation(conv);
+    else chat.sync();
+    chat.scrollToBottom(false);
+    safe(() => sounds.cue('send'));
+    if (state.layout === 'phone') composer.blur();
+    Promise.resolve(homeBase.ask(words))
+      .catch(() => ({ ok: false, message: 'Something went wrong asking the home base.' }))
+      .then((r) => {
+        textSegment.text = (r && r.ok ? r.answer : r && r.message) || 'No answer from the home base.';
+        turn.endedAt = Date.now();
+        conv.updatedAt = turn.endedAt;
+        if (state.conv === conv) {
+          chat.refresh(turn.id);
+          chat.scrollToBottom(false);
+        }
+        Promise.resolve(store.save(conv))
+          .then(() => scheduleHistoryRefresh())
+          .catch((err) => console.error('[jarvis] saving the home base turn failed:', err));
+      });
+    updateAll();
+    return true;
+  }
+
+  /** The same words said in Voice Mode: Jarvis says the home base's answer (free, no turn). */
+  function homeBaseFromVoice(text) {
+    const words = String(text || '').trim();
+    if (!homeBase || !words || !safe(() => matchHomeBaseCommand(words), false)) return null;
+    const done = Promise.resolve(homeBase.ask(words))
+      .catch(() => ({ ok: false, message: 'Something went wrong asking the home base.' }))
+      .then((r) => ({ ack: (r && r.ok ? r.answer : r && r.message) || 'No answer from the home base.' }));
+    return { handled: true, done };
   }
 
   /** Two claps or "Hey Jarvis" in Standby (its microphone is already released): the routine. */

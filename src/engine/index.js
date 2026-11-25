@@ -8,3 +8,5 @@ export { MODELS, DEPTHS, MODES, DEFAULT_LEAD_MODEL, DEFAULT_WORKER_MODEL, costOf
 export { blueprintRequestText, hasVisualTools, isVisualSegment, visualExportLine } from './visuals.js';
 // Apple Music (lead tools version 6): the music segment of a local "play X" turn, and the card check.
 export { appendMusicTurn, isMusicSegment, musicSegment } from './music.js';
+// Home base (v7.5): a local "how's the home base" exchange (the Jarvis Core answers, free).
+export { appendHomeBaseTurn } from './homebase.js';

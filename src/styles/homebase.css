@@ -1,0 +1,334 @@
+/* Home base (v7.5, SPEC §23): the Jarvis Core tile on the Presence home (phones, narrow windows) and
+   in the desktop awareness rail. Calm HUD styling: the level word in its colour (ok cyan, warn
+   amber, alert red), four mono readings, the Core's one-line summary. */
+
+.hb-tile {
+  --hb-tone: var(--accent);
+  width: 100%;
+  padding: 10px 12px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  text-align: left;
+}
+
+.hb-tile--home {
+  max-width: 560px;
+  margin-top: var(--sp-4);
+}
+
+/* Desktop: the rail carries the tile; the home's copy steps aside (like Needs-you). */
+@media (min-width: 900px) {
+  .app[data-layout='desktop'] .hb-tile--home {
+    display: none;
+  }
+}
+
+.hb-tile[data-level='warn'] {
+  --hb-tone: var(--warn);
+}
+
+.hb-tile[data-level='alert'] {
+  --hb-tone: var(--err);
+}
+
+.hb-tile[data-level='alert'],
+.hb-tile[data-level='warn'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hb-tone) 45%, var(--line));
+}
+
+.hb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 24px;
+}
+
+.hb-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-wide);
+}
+
+.hb-title .icon {
+  color: var(--accent);
+}
+
+.hb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  white-space: nowrap;
+}
+
+.hb-status__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+
+.hb-status[data-tone='ok'] .hb-status__dot {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.hb-status[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.hb-status[data-tone='warn'] .hb-status__dot {
+  background: var(--warn);
+}
+
+.hb-health {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 8px 0 0;
+  min-width: 0;
+}
+
+.hb-health[hidden],
+.hb-stats[hidden],
+.hb-message[hidden],
+.hb-actions[hidden],
+.hb-foot[hidden],
+.hb-ask[hidden],
+.hb-ask__body[hidden],
+.hb-answer[hidden] {
+  display: none;
+}
+
+.hb-word {
+  flex: none;
+  color: var(--hb-tone);
+  font-family: var(--font-hud);
+  font-size: var(--fs-hud-md, 18px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.hb-summary {
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.hb-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+@media (min-width: 520px) {
+  .hb-tile--home .hb-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.hb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.hb-stat__label {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.hb-stat__value {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hb-stat[data-unknown='true'] .hb-stat__value {
+  color: var(--text-3);
+}
+
+.hb-stat[data-words='true'] .hb-stat__value {
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
+.hb-message {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.hb-message[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.hb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: 8px;
+}
+
+.hb-actions .btn[hidden] {
+  display: none;
+}
+
+.hb-ask {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.hb-ask__toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hb-ask__toggle .icon {
+  color: var(--accent);
+}
+
+.hb-ask__toggle .hb-ask__chev {
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.hb-ask__toggle[aria-expanded='true'] .hb-ask__chev {
+  transform: rotate(180deg);
+}
+
+.hb-ask__toggle:focus {
+  outline: none;
+}
+
+.hb-ask__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hb-ask__body {
+  padding-top: 4px;
+}
+
+.hb-ask__form {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.hb-ask__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+}
+
+.hb-ask__send {
+  flex: none;
+  min-height: 40px;
+}
+
+.hb-answer {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.hb-answer[data-tone='err'] {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+
+.hb-answer[data-tone='busy'] {
+  color: var(--text-3);
+}
+
+.hb-ask__note {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+}
+
+.hb-foot {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.04em;
+}
+
+/* The home tile follows the boot like the rest of the home. */
+.presence-home.is-booting .hb-tile--home {
+  opacity: 0;
+}
+
+.presence-home.is-booted .hb-tile--home {
+  transition: opacity 600ms var(--ease);
+}
+
+/* Settings → Home base. */
+.hb-set-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.hb-set-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.hb-set-buttons .btn[hidden] {
+  display: none;
+}
+
+.hb-set-current {
+  overflow-wrap: anywhere;
+}
