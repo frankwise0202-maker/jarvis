@@ -44,7 +44,7 @@ nvidia-smi
   link: hold **Ctrl** and click it, sign in, and come back.
 
   ```
-  curl -fsSL https://tailscale.com/install.sh | sh
+  wget -qO- https://tailscale.com/install.sh | sh
   sudo tailscale up
   ```
 
