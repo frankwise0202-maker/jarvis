@@ -1,17 +1,19 @@
-// The Core's side of one speech engine (hearing or voice): a worker thread (senses/worker.mjs) started on
-// demand, one request at a time with at most `queueMax` waiting, a deadline for each request, and the
-// worker (and with it the model's memory) let go after `idleMs` without a request.
+// The Core's side of one speech engine (hearing or voice): an engine process (senses/worker.mjs, forked on
+// demand, at nice 10), one request at a time with at most `queueMax` waiting, a deadline for each request,
+// and the process (and with it all of the model's memory) let go after `idleMs` without a request.
 //
 //   const host = createSenseHost({ kind: 'hear', getModel: () => HEAR_MODELS['base.en'], cacheDir, … });
 //   await host.load();                                    // download if needed, load, warm up
 //   await host.run(input, { timeoutMs, signal })          // → { output, ms, waitedMs }
 //   host.status()                                         // { loaded, loading, busy, queued, progress, nice, lastError }
-//   await host.unload(); await host.stop();
+//   host.unload(); await host.stop();
 //
-// A request whose deadline passes ends the worker (onnxruntime cannot be interrupted mid-run); the next
-// request starts a fresh one. A worker that crashes rejects its request and is replaced the same way.
+// A request whose deadline passes ends the engine process at once (onnxruntime cannot be interrupted
+// mid-run); the next request starts a fresh one. An engine that crashes, even inside onnxruntime's native
+// code, only ends its own process: its request fails and the next request starts a fresh one.
 
-import { Worker } from 'node:worker_threads';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 export class SenseError extends Error {
   constructor(status, code, message, headers = {}) {
@@ -22,7 +24,7 @@ export class SenseError extends Error {
   }
 }
 
-const WORKER_FILE = new URL('./worker.mjs', import.meta.url);
+const WORKER_FILE = fileURLToPath(new URL('./worker.mjs', import.meta.url));
 
 export function createSenseHost({
   kind,
@@ -41,7 +43,7 @@ export function createSenseHost({
   onChange = () => {},
   log = () => {},
 }) {
-  let worker = null;
+  let worker = null; // the engine's child process
   let workerModelKey = null;
   let loaded = false;
   let loadingPromise = null;
@@ -55,6 +57,7 @@ export function createSenseHost({
   let running = null;
   let stopped = false;
   const timings = { loadMs: null, warmMs: null };
+  const label = kind === 'hear' ? 'hearing' : 'voice';
 
   const modelKey = (m) => `${m.repo}@${m.revision}:${JSON.stringify(m.dtype)}`;
 
@@ -69,7 +72,7 @@ export function createSenseHost({
     idleTimer = setTimeout(() => {
       idleTimer = null;
       if (running || queue.length) return;
-      log(`${kind}: unloading the model after ${Math.round(idleMs / 60_000)} minutes without a request`);
+      log(`${label}: unloading the model after ${Math.round(idleMs / 60_000)} minutes without a request`);
       killWorker('idle');
     }, idleMs);
     idleTimer.unref?.();
@@ -78,6 +81,21 @@ export function createSenseHost({
   function rejectPending(err) {
     for (const p of pending.values()) p.reject(err);
     pending.clear();
+  }
+
+  /** Hold the Core's event loop open only while a reply is due: an idle engine never keeps anything alive. */
+  function hold(child, on) {
+    try {
+      if (on) {
+        child.ref();
+        child.channel?.ref?.();
+      } else {
+        child.unref();
+        child.channel?.unref?.();
+      }
+    } catch {
+      // the process already ended
+    }
   }
 
   function killWorker(reason) {
@@ -90,19 +108,33 @@ export function createSenseHost({
       w.removeAllListeners('message');
       w.removeAllListeners('exit');
       w.on('error', () => {});
-      w.terminate().catch(() => {});
+      hold(w, false);
+      try {
+        w.kill('SIGKILL'); // a model in memory has nothing to save: free it at once
+      } catch {
+        // already gone
+      }
     }
-    rejectPending(new SenseError(503, 'engine_stopped', `the ${kind === 'hear' ? 'hearing' : 'voice'} engine was stopped (${reason})`));
+    rejectPending(new SenseError(503, 'engine_stopped', `the ${label} engine was stopped (${reason})`));
     onChange();
   }
 
   function spawn(model) {
-    const w = new Worker(workerFile, {
-      workerData: { kind, engineUrl, model: { repo: model.repo, revision: model.revision, dtype: model.dtype, files: model.files }, cacheDir, nice, threads, options: engineOptions },
-      stdout: false,
-      stderr: false,
+    const tail = []; // the engine's last lines of output, for the log when it fails
+    const w = fork(workerFile, [], {
+      execArgv: [], // never the Core's own flags (a test runner's --test, an inspector)
+      serialization: 'advanced', // Float32Array audio crosses as it is
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
-    w.unref(); // an idle engine never keeps the Core (or a test) alive; call() holds it while a reply is due
+    for (const stream of [w.stdout, w.stderr]) {
+      stream?.setEncoding('utf8');
+      stream?.on('data', (chunk) => {
+        for (const line of String(chunk).split('\n')) if (line.trim()) tail.push(line.slice(0, 300));
+        tail.splice(0, Math.max(0, tail.length - 12));
+      });
+      stream?.unref?.();
+    }
+    hold(w, false);
     w.on('message', (msg) => {
       if (msg?.type === 'progress') {
         progress = { loaded: msg.loaded, total: msg.total };
@@ -116,40 +148,48 @@ export function createSenseHost({
       const p = pending.get(msg?.id);
       if (!p) return;
       pending.delete(msg.id);
-      if (!pending.size) w.unref();
+      if (!pending.size) hold(w, false);
       if (msg.type === 'error') p.reject(new SenseError(500, 'engine_failed', msg.message || 'the speech engine failed'));
       else p.resolve(msg);
     });
     w.on('error', (err) => {
-      log(`${kind}: the engine stopped with an error: ${err?.message ?? err}`);
+      log(`${label}: the engine process failed: ${err?.message ?? err}`);
       if (worker === w) {
         lastError = String(err?.message ?? err);
-        killWorker('crashed');
+        killWorker('failed');
       }
     });
-    w.on('exit', (code) => {
+    w.on('exit', (code, signal) => {
       if (worker === w) {
-        log(`${kind}: the engine exited (${code})`);
-        killWorker(`exited with code ${code}`);
+        const why = signal ? `signal ${signal}` : `code ${code}`;
+        log(`${label}: the engine process ended (${why})${tail.length ? `: ${tail.slice(-3).join(' | ')}` : ''}`);
+        lastError = `the engine process ended (${why})`;
+        killWorker(`ended with ${why}`);
       }
     });
+    w.send({ type: 'init', kind, engineUrl, model: { repo: model.repo, revision: model.revision, dtype: model.dtype, files: model.files }, cacheDir, nice, threads, options: engineOptions });
     worker = w;
     workerModelKey = modelKey(model);
     return w;
   }
 
-  function call(type, payload = {}, transfer = []) {
+  function call(type, payload = {}) {
     const w = worker;
     if (!w) return Promise.reject(new SenseError(503, 'engine_stopped', 'the speech engine is not running'));
     const id = ++seq;
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
-      w.ref();
+      hold(w, true);
       try {
-        w.postMessage({ type, id, ...payload }, transfer);
+        w.send({ type, id, ...payload }, (err) => {
+          if (!err || !pending.has(id)) return;
+          pending.delete(id);
+          if (!pending.size) hold(w, false);
+          reject(new SenseError(503, 'engine_stopped', `the ${label} engine could not be reached`));
+        });
       } catch (err) {
         pending.delete(id);
-        if (!pending.size) w.unref();
+        if (!pending.size) hold(w, false);
         reject(err);
       }
     });
@@ -167,7 +207,7 @@ export function createSenseHost({
     const w = worker;
     let timer = null;
     const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new SenseError(504, 'load_timeout', `loading the ${kind === 'hear' ? 'hearing' : 'voice'} model took longer than ${Math.round(loadTimeoutMs / 60_000)} minutes`)), loadTimeoutMs);
+      timer = setTimeout(() => reject(new SenseError(504, 'load_timeout', `loading the ${label} model took longer than ${Math.round(loadTimeoutMs / 60_000)} minutes`)), loadTimeoutMs);
       timer.unref?.();
     });
     onChange();
@@ -204,11 +244,11 @@ export function createSenseHost({
     });
     try {
       await Promise.race([load(), deadline]);
-      const r = await Promise.race([call('run', { input: job.input }, job.transfer), deadline]);
+      const r = await Promise.race([call('run', { input: job.input }), deadline]);
       return { output: r.output, ms: r.ms };
     } catch (err) {
       if (err?.code === 'timeout') {
-        log(`${kind}: a request passed its deadline; restarting the engine`);
+        log(`${label}: a request passed its deadline; the engine is restarted for the next one`);
         killWorker('deadline passed');
       }
       throw err;
@@ -238,12 +278,12 @@ export function createSenseHost({
   }
 
   /** Queue one request. Rejects with 503 busy when queueMax are already waiting. */
-  function run(input, { timeoutMs = 60_000, signal, transfer = [] } = {}) {
+  function run(input, { timeoutMs = 60_000, signal } = {}) {
     if (stopped) return Promise.reject(new SenseError(503, 'stopped', 'the Core is stopping'));
     if (queue.length >= queueMax) return Promise.reject(new SenseError(503, 'busy', `the home base is busy with other ${kind === 'hear' ? 'transcriptions' : 'speech'}; try again in a moment`, { 'Retry-After': '2' }));
     return new Promise((resolve, reject) => {
       const now = Date.now();
-      const job = { input, transfer, queuedAt: now, deadline: now + timeoutMs, resolve, reject };
+      const job = { input, queuedAt: now, deadline: now + timeoutMs, resolve, reject };
       queue.push(job);
       // Waiting too long in the queue, or the asker went away: drop it before it uses the engine.
       const waitTimer = setTimeout(() => {
@@ -286,12 +326,13 @@ export function createSenseHost({
     run,
     /** Let the model go (memory back to the system); the next request loads it again. */
     unload(reason = 'turned off') {
-      for (const job of queue.splice(0)) job.reject(new SenseError(503, 'engine_stopped', `the ${kind === 'hear' ? 'hearing' : 'voice'} engine was ${reason}`));
+      for (const job of queue.splice(0)) job.reject(new SenseError(503, 'engine_stopped', `the ${label} engine was ${reason}`));
       killWorker(reason);
     },
     status() {
       return {
         loaded: loaded && !!worker,
+        pid: worker?.pid ?? null,
         loading: !!loadingPromise,
         busy: !!running,
         queued: queue.length,
@@ -305,9 +346,7 @@ export function createSenseHost({
     async stop() {
       stopped = true;
       for (const job of queue.splice(0)) job.reject(new SenseError(503, 'stopped', 'the Core is stopping'));
-      const w = worker;
       killWorker('Core stopping');
-      if (w) await w.terminate().catch(() => {});
     },
   };
 }

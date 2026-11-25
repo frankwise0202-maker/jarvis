@@ -721,7 +721,8 @@ deps_install() {
     return 0
   fi
   say "Installing the brain's libraries (npm ci: the Claude SDK and web-push, a minute or two)..."
-  if (cd "$stage" && timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
+  # ONNXRUNTIME_NODE_INSTALL_CUDA=skip: the speech engines run on the CPU; never fetch onnxruntime's CUDA build.
+  if (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
     printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
     if { [ ! -e "$core/node_modules" ] || mv -T "$core/node_modules" "$core/node_modules.old"; } &&
       mv -T "$stage/node_modules" "$core/node_modules"; then

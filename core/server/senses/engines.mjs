@@ -1,5 +1,5 @@
 // The real speech engines: Whisper (hearing) through transformers.js and Kokoro (George's voice) through
-// kokoro-js, both on onnxruntime-node's CPU backend. Loaded ONLY inside the senses worker thread
+// kokoro-js, both on onnxruntime-node's CPU backend. Loaded ONLY inside an engine process
 // (senses/worker.mjs), so the Core's own process never imports the libraries, and a missing
 // core/node_modules only ever fails here, as a plain error the Core reports.
 //

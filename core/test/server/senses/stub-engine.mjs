@@ -1,12 +1,25 @@
 // A stand-in speech engine for the senses' unit tests: same interface as server/senses/engines.mjs, no
-// libraries and no downloads. It runs inside the real worker thread, so the tests cover the worker, the
-// queue, the deadlines and the idle unload for real. Behaviour comes from the options the test passes:
-//   { delayMs, loadMs, failLoad: 'message', crashOnRun: true, hangMs, writeFiles: true, text }
+// libraries and no downloads. It runs inside the real engine process (server/senses/worker.mjs), so the
+// tests cover the process, the queue, the deadlines and the idle unload for real. Behaviour comes from the
+// options the test passes:
+//   { delayMs, loadMs, failLoad: 'message', crashOnRun: true, abortOnRun: true, hangMs, writeFiles: true, text }
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** The nice value of every thread of this process (Linux), e.g. [10, 10, 10, …]. */
+function threadNice() {
+  try {
+    return fs.readdirSync('/proc/self/task').map((tid) => {
+      const stat = fs.readFileSync(`/proc/self/task/${tid}/stat`, 'utf8');
+      return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[16]);
+    });
+  } catch {
+    return null;
+  }
+}
 
 export async function createEngine(kind, { repo, revision, files, cacheDir, onProgress, options = {} }) {
   const loadMs = options.loadMs ?? 20;
@@ -41,11 +54,12 @@ export async function createEngine(kind, { repo, revision, files, cacheDir, onPr
     async warmUp() {},
     async run(input) {
       if (options.crashOnRun) process.exit(3);
+      if (options.abortOnRun) process.abort(); // what a native crash inside onnxruntime looks like
       if (options.hangMs) await sleep(options.hangMs);
       await sleep(options.delayMs ?? 10);
       if (kind === 'hear') {
         const words = options.text ?? 'hello from the stub';
-        return { text: `${words} (${input.audio.length} samples${input.prompt ? `; prompt: ${input.prompt}` : ''})` };
+        return { text: `${words} (${input.audio.length} samples${input.prompt ? `; prompt: ${input.prompt}` : ''})`, threadNice: threadNice() };
       }
       const sentences = input.sentences ?? [input.text];
       const rate = 24000;

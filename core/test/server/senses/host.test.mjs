@@ -1,6 +1,6 @@
-// The engine host: a real worker thread (server/senses/worker.mjs) running the stub engine. Covers loading
-// with progress, one request at a time with a queue of 3, deadlines, crashes, cancelling, the idle unload
-// and the low CPU priority.
+// The engine host: a real engine process (server/senses/worker.mjs) running the stub engine. Covers loading
+// with progress, one request at a time with a queue of 3, deadlines, crashes (a native abort included: the
+// Core survives), cancelling, the idle unload and the low CPU priority of every engine thread.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +38,7 @@ function makeHost(t, { kind = 'hear', model = HEAR_MODELS['tiny.en'], options = 
 
 const audio = (sec = 1) => new Float32Array(16000 * sec);
 
-test('load downloads into the cache with progress, warms up, runs on the low-priority thread', async (t) => {
+test('load downloads into the cache with progress, warms up, runs in a process whose every thread is at nice 10', async (t) => {
   const { host, progress, cacheDir } = makeHost(t, { options: { loadMs: 40 } });
   assert.equal(host.status().loaded, false);
   const r = await host.load();
@@ -53,6 +53,11 @@ test('load downloads into the cache with progress, warms up, runs on the low-pri
   if (process.platform === 'linux') assert.equal(st.nice, 10, 'the engine thread runs at nice 10');
   const out = await host.run({ audio: audio(1), prompt: 'Frank' });
   assert.equal(out.output.text, 'hello from the stub (16000 samples; prompt: Frank)');
+  if (process.platform === 'linux') {
+    assert.ok(out.output.threadNice.length >= 4, 'the engine process has its threads');
+    assert.ok(out.output.threadNice.every((n) => n === 10), `every engine thread at nice 10: ${out.output.threadNice}`);
+    assert.equal(os.getPriority(0), 0, 'the Core itself keeps its priority');
+  }
   assert.ok(out.ms >= 0 && out.waitedMs >= 0);
   // loading again is free
   assert.deepEqual(await host.load(), { ms: 0, warmMs: 0 });
@@ -93,11 +98,22 @@ test('an engine that crashes fails its request and the next request starts a fre
   const { host, logs } = makeHost(t, { options: { crashOnRun: true } });
   await host.load();
   await assert.rejects(host.run({ audio: audio() }), (e) => e.status === 503 && e.code === 'engine_stopped');
-  assert.ok(logs.some((l) => /exited \(3\)/.test(l)), logs.join('\n'));
+  assert.ok(logs.some((l) => /engine process ended \(code 3\)/.test(l)), logs.join('\n'));
   assert.equal(host.status().loaded, false);
   await assert.rejects(host.run({ audio: audio() }), (e) => e.code === 'engine_stopped'); // the stub crashes every time
   await host.load(); // and loading again works
   assert.equal(host.status().loaded, true);
+});
+
+test('a native crash inside the engine (SIGABRT) only ends the engine process; the Core carries on', async (t) => {
+  const { host, logs } = makeHost(t, { options: { abortOnRun: true } });
+  await host.load();
+  await assert.rejects(host.run({ audio: audio() }), (e) => e.status === 503 && e.code === 'engine_stopped');
+  assert.ok(logs.some((l) => /engine process ended \(signal SIGABRT\)/.test(l)), logs.join('\n'));
+  assert.match(host.status().lastError, /SIGABRT/);
+  assert.equal(host.status().loaded, false);
+  await host.load();
+  assert.equal(host.status().loaded, true, 'a fresh engine starts');
 });
 
 test('a failed load reports the reason and leaves no engine behind', async (t) => {
@@ -159,7 +175,7 @@ test('changing the model replaces the engine; unload rejects what waits; stop en
   await assert.rejects(host.load(), (e) => e.code === 'stopped');
 });
 
-test('the voice engine returns its audio across the thread (transferred, not copied twice)', async (t) => {
+test('the voice engine returns its audio across the process boundary as a Float32Array', async (t) => {
   const { host } = makeHost(t, { kind: 'speak', model: SPEAK_MODELS.q8 });
   const r = await host.run({ sentences: ['Hello there.', 'How are you?'], voice: 'bm_george', speed: 1 });
   assert.ok(r.output.audio instanceof Float32Array);

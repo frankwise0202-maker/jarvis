@@ -1,35 +1,64 @@
-// One speech engine in its own worker thread, at low CPU priority, so a transcription or a sentence of
-// George's voice never slows the Core's own second-by-second work or the owner's desktop.
+// One speech engine in its own low-priority process (started by senses/host.mjs with child_process.fork),
+// so a transcription or a sentence of George's voice never slows the Core's own second-by-second work or the
+// owner's desktop, and nothing the engine does can take the Core down with it.
 //
-// workerData: { kind: 'hear'|'speak', engineUrl, model: { repo, revision, dtype, files }, cacheDir, nice, threads, options }
-// messages in:  { type: 'load', id } · { type: 'run', id, input }
-// messages out: { type: 'progress', loaded, total } · { type: 'loaded', id, ms, warmMs } · { type: 'result', id, output, ms }
-//               { type: 'error', id, message } · { type: 'nice', value }
+// Why a process and not a worker thread: onnxruntime-node 1.21 keeps per-process state tied to the first
+// JavaScript thread that loads it; a second engine thread (hearing and voice at once), or a new thread after
+// an idle unload, aborts the whole process ("Entering the V8 API without proper locking"). A process per
+// engine is immune, returns all of its memory when it ends, and can be stopped at once at a deadline.
 //
-// The nice value is per thread on Linux, and the threads onnxruntime starts for this engine are made by this
-// thread after the call below, so they inherit it. The engine (senses/engines.mjs, or a test stub) is
-// imported only here.
+// messages in:  { type: 'init', kind, engineUrl, model: { repo, revision, dtype, files }, cacheDir, nice, threads, options }
+//               { type: 'load', id } · { type: 'run', id, input }
+// messages out: { type: 'nice', value } · { type: 'progress', loaded, total } · { type: 'loaded', id, ms, warmMs }
+//               { type: 'result', id, output, ms } · { type: 'error', id, message }
+//
+// Linux keeps a nice value per thread: this process lowers every thread it already has, and the threads
+// onnxruntime starts later inherit the main thread's.
 
-import { parentPort, workerData } from 'node:worker_threads';
 import os from 'node:os';
+import fs from 'node:fs';
 
-const { kind, engineUrl, model, cacheDir, nice = 10, threads, options = {} } = workerData;
+const send = (msg) => {
+  try {
+    process.send?.(msg);
+  } catch {
+    // the Core went away; 'disconnect' below ends this process
+  }
+};
 
-let niceValue = null;
-try {
-  os.setPriority(0, nice); // 0 = this thread (Linux keeps a nice value per thread)
-  niceValue = os.getPriority(0);
-} catch {
-  niceValue = null; // not fatal: the engine still runs, at the Core's own priority
+function lowerPriority(nice) {
+  try {
+    os.setPriority(0, nice);
+  } catch {
+    return null; // not fatal: the engine still runs, at the Core's own priority
+  }
+  try {
+    for (const tid of fs.readdirSync('/proc/self/task')) {
+      try {
+        os.setPriority(Number(tid), nice);
+      } catch {
+        // a thread that just ended
+      }
+    }
+  } catch {
+    // not Linux: the main thread is enough
+  }
+  try {
+    return os.getPriority(0);
+  } catch {
+    return null;
+  }
 }
-parentPort.postMessage({ type: 'nice', value: niceValue });
 
-const total = model.files.reduce((n, [, size]) => n + size, 0);
+let cfg = null;
+let engine = null;
+let loading = null;
 const perFile = new Map();
 let lastPost = 0;
 
 function onProgress({ file, loaded, total: fileTotal, done }) {
-  const expected = model.files.find(([f]) => file === f || file.endsWith(`/${f}`) || f.endsWith(file))?.[1] ?? fileTotal ?? 0;
+  const total = cfg.model.files.reduce((n, [, size]) => n + size, 0);
+  const expected = cfg.model.files.find(([f]) => f === file)?.[1] ?? fileTotal ?? 0;
   const value = done ? expected : Math.min(expected || loaded, loaded);
   perFile.set(file, Math.max(perFile.get(file) ?? 0, value));
   const now = Date.now();
@@ -37,18 +66,15 @@ function onProgress({ file, loaded, total: fileTotal, done }) {
   lastPost = now;
   let sum = 0;
   for (const v of perFile.values()) sum += v;
-  parentPort.postMessage({ type: 'progress', loaded: Math.min(sum, total), total });
+  send({ type: 'progress', loaded: Math.min(sum, total), total });
 }
-
-let engine = null;
-let loading = null;
 
 async function load() {
   if (engine) return { ms: 0, warmMs: 0 };
   loading ??= (async () => {
     const started = performance.now();
-    const { createEngine } = await import(engineUrl);
-    const e = await createEngine(kind, { ...model, cacheDir, onProgress, threads, options });
+    const { createEngine } = await import(cfg.engineUrl);
+    const e = await createEngine(cfg.kind, { ...cfg.model, cacheDir: cfg.cacheDir, onProgress, threads: cfg.threads, options: cfg.options ?? {} });
     const loadedAt = performance.now();
     await e.warmUp?.();
     engine = e;
@@ -61,34 +87,29 @@ async function load() {
   }
 }
 
-function transferables(output) {
-  const out = [];
-  if (output?.audio instanceof Float32Array) {
-    const copy = new Float32Array(output.audio); // its own buffer, safe to hand over
-    output.audio = copy;
-    out.push(copy.buffer);
-  }
-  return out;
-}
-
-parentPort.on('message', async (msg) => {
+process.on('disconnect', () => process.exit(0)); // the Core stopped or restarted: never linger
+process.on('message', async (msg) => {
   const id = msg?.id;
   try {
+    if (msg?.type === 'init') {
+      cfg = msg;
+      send({ type: 'nice', value: lowerPriority(Number.isInteger(msg.nice) ? msg.nice : 10) });
+      return;
+    }
+    if (!cfg) throw new Error('the engine was not initialised');
     if (msg?.type === 'load') {
-      const r = await load();
-      parentPort.postMessage({ type: 'loaded', id, ...r });
+      send({ type: 'loaded', id, ...(await load()) });
       return;
     }
     if (msg?.type === 'run') {
       await load();
       const started = performance.now();
       const output = await engine.run(msg.input);
-      const list = transferables(output);
-      parentPort.postMessage({ type: 'result', id, output, ms: Math.round(performance.now() - started) }, list);
+      send({ type: 'result', id, output, ms: Math.round(performance.now() - started) });
       return;
     }
-    parentPort.postMessage({ type: 'error', id, message: `unknown message: ${msg?.type}` });
+    send({ type: 'error', id, message: `unknown message: ${msg?.type}` });
   } catch (err) {
-    parentPort.postMessage({ type: 'error', id, message: String(err?.message ?? err).slice(0, 500), code: err?.code ?? null });
+    send({ type: 'error', id, message: String(err?.message ?? err).slice(0, 500) });
   }
 });

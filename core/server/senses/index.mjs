@@ -10,8 +10,8 @@
 //
 // Both are off until the owner turns them on (Jarvis > Settings > Home base > Hearing and voice). Settings live
 // in <dataDir>/senses/settings-v1.json, models in ~/.cache/jarvis-core/models. The speech libraries
-// (@huggingface/transformers, kokoro-js) are only ever imported inside the engines' worker threads; without
-// core/node_modules the Core runs as before and reports deps.installed false.
+// (@huggingface/transformers, kokoro-js) are only ever imported inside the engines' own processes
+// (senses/worker.mjs); without core/node_modules the Core runs as before and reports deps.installed false.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,7 +28,7 @@ export { defaultModelsDir } from './models.mjs';
 const DEPENDENCIES = ['@huggingface/transformers', 'kokoro-js', 'onnxruntime-node'];
 const MODEL_ALIASES = { fast: 'base.en', accurate: 'small.en' };
 
-/** Whether the speech libraries can be found (resolved, not loaded: loading happens in the workers). */
+/** Whether the speech libraries can be found (resolved, not loaded: loading happens in the engine processes). */
 export function checkDeps(resolve = (s) => import.meta.resolve(s)) {
   const missing = [];
   for (const name of DEPENDENCIES) {
@@ -266,7 +266,7 @@ export function createSenses({
     const wav = readHearingWav(buf, { maxSec: 30 });
     if (!wav.ok) throw new SenseError(400, wav.code, wav.message);
     const started = Date.now();
-    const r = await hosts.hear.run({ audio: wav.audio, prompt: cleanPrompt(prompt) }, { timeoutMs: hearTimeoutMs, signal, transfer: [wav.audio.buffer] });
+    const r = await hosts.hear.run({ audio: wav.audio, prompt: cleanPrompt(prompt) }, { timeoutMs: hearTimeoutMs, signal });
     const ms = Date.now() - started;
     sense.hear.lastMs = ms;
     return { text: typeof r.output?.text === 'string' ? r.output.text.trim() : '', ms, model: settings.hear.model, seconds: Math.round(wav.seconds * 100) / 100 };
