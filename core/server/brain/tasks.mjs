@@ -3,7 +3,7 @@
 // every prompt says so, and every answer is shown to the owner as plain text or Markdown only.
 
 import { BRAIN_MODELS, webTools, collectSources, textRuns, toolInput, lastJsonObject, BrainError } from './claude.mjs';
-import { oneLine, cleanText, httpUrl } from './util.mjs';
+import { oneLine, cleanText, httpUrl, redact } from './util.mjs';
 
 /** Per-kind settings: model, effort, max_tokens, web tool uses per request, continuations, hard budget. */
 export const PROFILES = Object.freeze({
@@ -56,7 +56,7 @@ export function readResearch(result) {
     summary = oneLine(m[1].replace(/\*\*/g, ''), 200);
     markdown = body.slice(0, m.index) + body.slice(m.index + m[0].length);
   }
-  markdown = cleanText(markdown.replace(/^\s+/, ''), 60_000);
+  markdown = redact(cleanText(markdown.replace(/^\s+/, ''), 60_000));
   if (!summary) summary = oneLine(markdown.replace(/[#*_>`[\]()]/g, ' '), 160);
   return { summary, markdown, sources: collectSources(result.contents) };
 }

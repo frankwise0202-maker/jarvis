@@ -507,3 +507,22 @@ test('unreadable brain files are moved aside and the brain starts fresh', async 
     await brain.stop();
   }
 });
+
+test('a key pasted into a question or a watcher is never stored or returned', async () => {
+  const fake = await startFakeClaude({ script: () => researchAnswer() });
+  const { brain } = makeBrain({ fake });
+  try {
+    await okKey(brain);
+    const job = brain.createJob({ prompt: `is ${KEY} a valid key?`, title: `about ${KEY}` });
+    assert.ok(!JSON.stringify(job).includes(KEY));
+    assert.match(job.prompt, /sk-ant-…/);
+    await brain.putSettings({ briefing: { enabled: false } });
+    const w = brain.createWatcher({ what: `tell me if ${KEY} leaks`, every: '24h' });
+    assert.ok(!JSON.stringify(w).includes(KEY));
+    await until(() => brain.getJob(job.id).status === 'done', { what: 'done' });
+    assert.ok(!JSON.stringify(brain.getJob(job.id)).includes(KEY));
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});

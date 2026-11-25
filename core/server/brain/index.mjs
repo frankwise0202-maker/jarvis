@@ -309,7 +309,8 @@ export function createBrain({
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BrainHttpError(400, 'bad_job', 'send {"kind": "research", "prompt": "…", "depth": "quick"}');
     const kind = body.kind ?? 'research';
     if (kind !== 'research') throw new BrainHttpError(400, 'bad_kind', 'kind must be "research"');
-    const prompt = typeof body.prompt === 'string' ? body.prompt.replace(/\r\n?/g, '\n').trim() : '';
+    // Anything shaped like a key is never stored or returned, even inside a question.
+    const prompt = typeof body.prompt === 'string' ? redact(body.prompt.replace(/\r\n?/g, '\n').trim()) : '';
     if (!prompt) throw new BrainHttpError(400, 'bad_prompt', 'prompt must be the question to research');
     if (prompt.length > PROMPT_MAX) throw new BrainHttpError(400, 'prompt_too_long', `prompts can be up to ${PROMPT_MAX} characters`);
     const depth = body.depth ?? 'quick';
@@ -320,7 +321,7 @@ export function createBrain({
     const cap = spend.capReached();
     if (cap) throw new BrainHttpError(402, 'spend_cap', capWords(cap, settings.limits));
     try {
-      return publicJob(jobs.create({ kind, prompt, title: body.title, depth }), { withResult: true });
+      return publicJob(jobs.create({ kind, prompt, title: typeof body.title === 'string' ? redact(body.title) : undefined, depth }), { withResult: true });
     } catch (err) {
       if (err?.code === 'queue_full') throw new BrainHttpError(429, 'queue_full', err.message, { 'Retry-After': '600' });
       throw err;
@@ -336,7 +337,7 @@ export function createBrain({
   // ---- watchers (routes)
   function createWatcher(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BrainHttpError(400, 'bad_watcher', 'send {"what": "…", "every": "24h"}');
-    const what = typeof body.what === 'string' ? oneLine(body.what, 10_000) : '';
+    const what = typeof body.what === 'string' ? redact(oneLine(body.what, 10_000)) : '';
     if (!what) throw new BrainHttpError(400, 'bad_what', 'what must say what to watch for');
     if (what.length > WHAT_MAX) throw new BrainHttpError(400, 'what_too_long', `what can be up to ${WHAT_MAX} characters`);
     const every = body.every ?? '24h';
