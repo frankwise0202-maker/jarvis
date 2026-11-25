@@ -526,3 +526,23 @@ test('a key pasted into a question or a watcher is never stored or returned', as
     await fake.close();
   }
 });
+
+test('removing the key stops a running job at once', async () => {
+  const fake = await startFakeClaude({ script: () => ({ ...researchAnswer('y'.repeat(4000)), slowMs: 20 }) });
+  const { brain } = makeBrain({ fake });
+  try {
+    await okKey(brain);
+    const job = brain.createJob({ prompt: 'long one' });
+    await until(() => brain.getJob(job.id).status === 'running', { what: 'running' });
+    brain.deleteKey();
+    const j = brain.getJob(job.id);
+    assert.equal(j.status, 'failed');
+    assert.equal(j.error.code, 'no_key');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(brain.getJob(job.id).status, 'failed', 'the aborted request does not change it afterwards');
+    assert.equal(brain.info().jobs.running, 0);
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});

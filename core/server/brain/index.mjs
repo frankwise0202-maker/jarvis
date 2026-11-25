@@ -301,6 +301,8 @@ export function createBrain({
 
   function deleteKey() {
     vault.remove();
+    // Nothing keeps using a key the owner took back.
+    jobs.failRunning('no_key', 'Stopped: the API key was removed from the home base.');
     log('the Claude API key was removed');
   }
 

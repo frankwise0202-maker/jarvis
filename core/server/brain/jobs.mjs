@@ -210,7 +210,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     };
     try {
       const out = await runners[job.kind](job, ctx, extra);
-      if (job.status === 'cancelled') return;
+      if (job.status === 'cancelled' || job.finishedAt) return;
       finish(
         job,
         {
@@ -223,7 +223,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
         out.output ?? null,
       );
     } catch (err) {
-      if (job.status === 'cancelled') return;
+      if (job.status === 'cancelled' || (job.finishedAt && job.status !== 'running')) return;
       if (err?.code === 'cancelled' || ac.signal.aborted) {
         if (stopped) {
           // The Core is stopping: the job goes back to the queue (see the constructor).
@@ -269,6 +269,15 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     return { found: true, removed: true, job };
   }
 
+  /** Stop every running job now (the key was removed): failed with this code and message. */
+  function failRunning(code, message) {
+    for (const [, r] of running) {
+      const job = r.job;
+      r.ac.abort();
+      finish(job, { status: 'failed', summary: message, error: { code, message } });
+    }
+  }
+
   /** Resolves { status, error, output, job } when the job finishes. */
   function waitFor(id) {
     const job = jobs.find((j) => j.id === id);
@@ -294,6 +303,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     },
     all: () => jobs.slice(),
     cancelOrRemove,
+    failRunning,
     counts() {
       return { running: running.size, queued: queued().length };
     },
