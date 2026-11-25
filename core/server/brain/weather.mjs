@@ -86,7 +86,7 @@ export async function fetchWeather(fetchFn, { lat, lon, units = 'F', label = 'Yo
   return parseForecast(parseJson(res.text), { label, units });
 }
 
-/** "Atlanta" → { label: "Atlanta, Georgia", lat, lon } (2 decimals), null when not found, or { error }. */
+/** "Wellington" → { label: "Wellington, New Zealand", lat, lon } (2 decimals; a US place gets its state), null when not found, or { error }. */
 export async function geocodeCity(fetchFn, name, { timeoutMs = 8000 } = {}) {
   const q = new URLSearchParams({ name, count: '1', language: 'en', format: 'json' });
   const res = await fetchText(fetchFn, `${GEOCODING_URL}?${q}`, { timeoutMs, maxBytes: 200_000 });
