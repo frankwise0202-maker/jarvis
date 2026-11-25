@@ -243,7 +243,7 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
   function updateSettings(next) {
     settings = next;
     root.style.setProperty('--night-dim', String(settings.dimLevel));
-    if (!settings.shift && stage) {
+    if (on && !settings.shift && stage) {
       stage.style.setProperty('--shift-x', '0px');
       stage.style.setProperty('--shift-y', '0px');
       lastShift = -1;
