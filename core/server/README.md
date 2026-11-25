@@ -75,7 +75,9 @@ own port, which also stops DNS-rebinding pages), or requests through `tailscale 
 (`Tailscale-Funnel-Request`) is always refused, although it arrives from localhost. **Origins:**
 `https://frankwise0202-maker.github.io`, any localhost origin, and the dashboard's own origin; every other origin
 gets 403. Chrome's private-network preflights (a public page calling the 100.x Tailscale address) get
-`Access-Control-Allow-Private-Network: true` for those origins only. **Limits:** 4 KB bodies and 300-character questions,
+`Access-Control-Allow-Private-Network: true` for those origins only. A refused API request (403) still carries
+CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
+`tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
 8 questions at once then 30 a minute per client, 16 live streams.
 
 ## Health rules

@@ -151,6 +151,21 @@ test('server: Tailscale serve requests are allowed; Funnel requests are refused 
   assert.equal(ask.status, 403);
 });
 
+test('server: a refused API request is readable by the Jarvis app (CORS on the 403), not by other pages', async () => {
+  // Proxied by Tailscale serve but without a tailnet identity (e.g. a tagged device): refused.
+  const noLogin = { host: OUR_NAME, 'x-forwarded-for': '100.88.21.7', 'x-forwarded-host': OUR_NAME, 'x-forwarded-proto': 'https' };
+  const app = await request(port, '/api/status', { headers: { ...noLogin, origin: APP } });
+  assert.equal(app.status, 403);
+  assert.equal(app.json.error, 'forbidden');
+  assert.equal(app.headers['access-control-allow-origin'], APP);
+  const other = await request(port, '/api/status', { headers: { ...noLogin, origin: 'https://evil.example' } });
+  assert.equal(other.status, 403);
+  assert.equal(other.headers['access-control-allow-origin'], undefined);
+  const page = await request(port, '/', { headers: { ...noLogin, origin: APP } });
+  assert.equal(page.status, 403);
+  assert.equal(page.headers['access-control-allow-origin'], undefined);
+});
+
 test('server: private-network preflights are answered for allowed origins only', async () => {
   const preflight = (origin, extra = {}, pathName = '/api/status', method = 'GET') => request(port, pathName, {
     method: 'OPTIONS',

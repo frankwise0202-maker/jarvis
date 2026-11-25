@@ -230,6 +230,22 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     throw new HttpError(404, 'not_found', `no such endpoint: ${route}`);
   }
 
+  // A refused API request still carries CORS headers for an allowed page (the Jarvis app), so the app can
+  // read "refused" (403) and tell it apart from a Core that isn't running behind `tailscale serve` (Tailscale
+  // then answers 502 without CORS headers). Other origins, pages and public Funnel traffic get nothing readable.
+  function refusalCors(req) {
+    if (req.headers?.['tailscale-funnel-request'] !== undefined) return {};
+    let pathname;
+    try {
+      pathname = new URL(req.url ?? '/', 'http://core.local').pathname;
+    } catch {
+      return {};
+    }
+    if (pathname !== '/api' && !pathname.startsWith('/api/')) return {};
+    const origin = checkOrigin(req, null, { allowedOrigins: config.allowedOrigins });
+    return origin.ok && origin.allow ? corsHeaders(origin.allow, req) : {};
+  }
+
   async function handler(req, res) {
     counters.requests += 1;
     let cors = {};
@@ -237,6 +253,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       const access = checkAccess(req, accessOptions());
       if (!access.ok) {
         counters.refused += 1;
+        cors = refusalCors(req);
         throw new HttpError(403, 'forbidden', access.reason);
       }
       let url;
