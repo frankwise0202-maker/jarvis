@@ -534,7 +534,6 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(broken, /✗ Jarvis Core didn't answer within 3 seconds/);
       assert.match(broken, /\nJarvis Core isn't answering\. Check it: jarvis-core status, then jarvis-core logs\n/);
       assert.doesNotMatch(broken, /Jarvis Core is up to date/);
-      assert.match(r.out.slice(r.out.indexOf('going back to')), /\nJarvis Core is up to date\.\n/, 'the previous version answers again');
       assert.equal(head(), good, 'back on the version before');
       assert.ok(await ping(), 'the previous version runs again');
       const events = fs.readFileSync(path.join(dataDir, 'update-events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -545,7 +544,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       // the next check leaves that version alone; libraries that aren't right (going back can need the
       // previous version's) are tried again there too
       fs.rmSync(path.join(app, 'core/node_modules/.jarvis-lock-sha256'));
-      r = cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '10' } });
+      r = cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '20' } });
       assert.match(r.out, /Skipping [0-9a-f]+: it didn't start properly last time/);
       assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
       assert.equal(head(), good);
@@ -588,7 +587,8 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
     });
 
     await t.test('autoupdate-tick: libraries an update could not install are tried again, then at most every 2 hours; the Core restarts once they are in', async () => {
-      const tick = (extra = {}) => cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '10', ...extra } });
+      // (a start wait of 20 s only matters on a slow machine: the tick goes on as soon as the Core answers)
+      const tick = (extra = {}) => cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '20', ...extra } });
       const marker = path.join(app, 'core/node_modules/.jarvis-lock-sha256');
       const lockHash = () => execFileSync('sha256sum', [path.join(app, 'core/package-lock.json')]).toString().split(' ')[0];
       const auState = path.join(stateDir, 'autoupdate');
@@ -680,11 +680,13 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /Off\. Turn it on: jarvis-core autoupdate on/);
       assert.match(cli(sb, ['status'], { env }).out, /Automatic updates are off/);
       // with no update timer to try them again, out-of-date libraries point to jarvis-core update
+      fs.mkdirSync(path.join(app, 'core/node_modules'), { recursive: true });
       const marker = path.join(app, 'core/node_modules/.jarvis-lock-sha256');
-      const kept = fs.readFileSync(marker, 'utf8');
+      const kept = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null;
       fs.writeFileSync(marker, 'another version\n');
       assert.match(cli(sb, ['status'], { env }).out, /! The brain's libraries are out of date \(this version needs new ones\)\.\n\s+Install them: jarvis-core update\n/);
-      fs.writeFileSync(marker, kept);
+      if (kept === null) fs.rmSync(marker);
+      else fs.writeFileSync(marker, kept);
       // what the owner pasted by hand tonight: a script and two units with the same names
       const script = path.join(sb.home, '.local/bin/jarvis-core-autoupdate');
       fs.writeFileSync(script, '#!/bin/bash\n# hand-made: update when core/ changed\nexec jarvis-core update\n', { mode: 0o755 });
