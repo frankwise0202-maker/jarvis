@@ -37,7 +37,7 @@ test('dry run on a fresh machine: every step shown, nothing changed', () => {
     assert.equal(r.code, 0, r.out);
     const o = r.out;
     assert.match(o, /Dry run: every step is shown, nothing is changed/);
-    assert.match(o, /1 of 12 · Checking this computer/);
+    assert.match(o, /1 of 13 · Checking this computer/);
     assert.match(o, /✓ Ubuntu 24\.04/);
     assert.match(o, /Google Chrome 142\.0\.7444\.175 is installed/);
     assert.match(o, /GPU driver not loaded".*\n.*sudo ubuntu-drivers install/);
@@ -73,6 +73,18 @@ test('dry run on a fresh machine: every step shown, nothing changed', () => {
     assert.match(o, /would run: gsettings set org\.gnome\.settings-daemon\.plugins\.power sleep-inactive-ac-type "'nothing'"|sleep-inactive-ac-type ''"'"'nothing'"'"''/);
     assert.match(o, /\(org\.gnome\.desktop\.session idle-delay is uint32 300 now\)/);
     assert.match(o, /gsettings reset org\.gnome\.desktop\.session idle-delay/);
+    // the brain's libraries, in the downloaded core/
+    assert.match(o, /would run in \S+\/jarvis-core-app\/core: npm ci --omit=dev --no-audit --no-fund/);
+    // automatic updates: asked (Enter = yes), then the exact units and commands
+    assert.match(o, /Keep Jarvis Core up to date automatically\? \[Y\/n\]/);
+    assert.match(o, /13 of 13 · Automatic updates/);
+    assert.match(o, /would write \S+\/\.config\/systemd\/user\/jarvis-core-autoupdate\.service:/);
+    assert.match(o, /ExecStart="\S+\/\.local\/bin\/jarvis-core" autoupdate-tick/);
+    assert.match(o, /Type=oneshot/);
+    assert.match(o, /would write \S+\/\.config\/systemd\/user\/jarvis-core-autoupdate\.timer:/);
+    assert.match(o, /OnUnitActiveSec=20min/);
+    assert.match(o, /would run: systemctl --user enable --now jarvis-core-autoupdate\.timer/);
+    assert.match(o, /goes back to the previous one by itself/);
     // automatic login, Tailscale's three commands, the final box
     assert.match(o, /set AutomaticLoginEnable=true and AutomaticLogin=frank-wise in the \[daemon\] section/);
     assert.match(o, /wget -qO- https:\/\/tailscale\.com\/install\.sh \| sh\n.*sudo tailscale up\n.*sudo tailscale serve --bg 8788/);
@@ -90,8 +102,11 @@ test('dry run: Ubuntu\'s old Node 18 is replaced, a logged-out Tailscale gets "t
   const sb = makeSandbox({ tsMode: 'NeedsLogin', nodeVersion: 'v18.19.1', pkgs: ['git', 'curl'] });
   try {
     const before = snap(sb);
-    const r = install(sb, ['--dry-run'], { answers: ['n', 'n'] });
+    const r = install(sb, ['--dry-run'], { answers: ['n', 'n', 'n'] });
     assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Keep Jarvis Core up to date automatically\? \[Y\/n\] n/);
+    assert.match(r.out, /Off \(you said no\)\. To turn it on later: jarvis-core autoupdate on/);
+    assert.doesNotMatch(r.out, /jarvis-core-autoupdate\.(service|timer):/);
     assert.match(r.out, /Node\.js v18\.19\.1 is too old: Jarvis Core needs 22 or newer/);
     assert.match(r.out, /install -y --no-install-recommends lm-sensors\n/);
     assert.doesNotMatch(r.out, /no-install-recommends.*smartmontools/);
@@ -164,6 +179,7 @@ test('no terminal: the safe default for each question (no automatic login), and 
     assert.match(r.out, /Log in automatically when the computer starts\? \[y\/N\] \(no terminal to answer in: no\)/);
     assert.match(r.out, /Check the hard drive's health\? \[Y\/n\] \(no terminal to answer in: yes\)/);
     assert.match(r.out, /Share Jarvis Core with your iPhone and Mac through Tailscale\? \[Y\/n\] \(no terminal to answer in: yes\)/);
+    assert.match(r.out, /Keep Jarvis Core up to date automatically\? \[Y\/n\] \(no terminal to answer in: yes\)/);
     assert.match(r.out, /Left as it is: after a restart, log in once/);
     assert.doesNotMatch(r.out, /AutomaticLoginEnable=true/);
     assertNoChanges(sb, before);
@@ -248,10 +264,21 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
   const unitFile = path.join(sb.home, '.config/systemd/user/jarvis-core.service');
   const autostart = path.join(sb.home, '.config/autostart/jarvis-core-screen.desktop');
   const stateDir = path.join(sb.home, '.config/jarvis-core/install');
+  const auService = path.join(sb.home, '.config/systemd/user/jarvis-core-autoupdate.service');
+  const auTimer = path.join(sb.home, '.config/systemd/user/jarvis-core-autoupdate.timer');
+  const dataDir = path.join(sb.home, '.local/share/jarvis-core');
+  const head = () => execFileSync('git', ['-C', app, 'rev-parse', 'HEAD']).toString().trim();
+  const ping = async () => {
+    try {
+      return (await fetch(`http://127.0.0.1:${port}/api/ping`)).ok;
+    } catch {
+      return false;
+    }
+  };
   const db = () => Object.fromEntries(fs.readFileSync(path.join(sb.stubs, 'gsettings.db'), 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   try {
-    await t.test('first install: answers yes, yes, yes', () => {
-      const r = install(sb, [], { answers: ['y', 'y', 'y'], env });
+    await t.test('first install: answers yes, yes, yes, yes', () => {
+      const r = install(sb, [], { answers: ['y', 'y', 'y', 'y'], env });
       assert.equal(r.code, 0, r.out);
       const o = r.out;
       assert.doesNotMatch(o, /dry run/);
@@ -314,6 +341,22 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       for (const kv of ['sudoers=installed', 'linger=enabled-by-installer', 'autologin=enabled-by-installer', 'serve=enabled-by-installer']) {
         assert.ok(state.includes(kv), `state has ${kv}`);
       }
+      // the brain's libraries: npm ci in a fresh folder, swapped in, stamped with the lockfile's hash
+      assert.ok(log.includes(`npm ci --omit=dev --no-audit --no-fund (in ${app}/core/.npm-install)`), log.filter((l) => l.startsWith('npm')).join('\n'));
+      assert.ok(fs.existsSync(path.join(app, 'core/node_modules/.stub-npm-ci')));
+      assert.ok(!fs.existsSync(path.join(app, 'core/.npm-install')), 'the staging folder is gone');
+      const lockHash = execFileSync('sha256sum', [path.join(app, 'core/package-lock.json')]).toString().split(' ')[0];
+      assert.equal(fs.readFileSync(path.join(app, 'core/node_modules/.jarvis-lock-sha256'), 'utf8').trim(), lockHash);
+      assert.match(o, /Installed the brain's libraries/);
+      // automatic updates: the timer and its service, enabled
+      const svc = fs.readFileSync(auService, 'utf8');
+      assert.ok(svc.includes(`ExecStart="${sb.home}/.local/bin/jarvis-core" autoupdate-tick`), svc);
+      assert.match(svc, /Type=oneshot/);
+      assert.match(fs.readFileSync(auTimer, 'utf8'), /OnBootSec=5min\nOnUnitActiveSec=20min/);
+      assert.ok(fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')), 'the timer is enabled');
+      assert.ok(log.includes('systemctl --user enable --now --quiet jarvis-core-autoupdate.timer'));
+      assert.match(o, /On: every 20 minutes Jarvis Core looks for a new version on GitHub/);
+      assert.match(o, /It keeps itself up to date \(jarvis-core autoupdate status\)/);
     });
 
     await t.test('a dry run after installing: everything already in place', () => {
@@ -325,6 +368,8 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(r.out, /Automatic login is already on for frank-wise/);
       assert.match(r.out, /Jarvis Core may already read the hard drive's health/);
       assert.match(r.out, /Tailscale already passes Jarvis Core to your devices/);
+      assert.match(r.out, /Jarvis Core already keeps itself up to date/);
+      assert.match(r.out, /The brain's libraries are installed/);
       assert.doesNotMatch(r.out, /\? .*\[[yY]\/[nN]\]/, 'no questions left to ask');
       assert.match(r.out, /would update \S+ to the latest version: git pull --ff-only/);
       assert.match(r.out, /The service is already set up/);
@@ -355,6 +400,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(!log.some((l) => /^apt-get/.test(l)), 'no apt when nothing is missing');
       assert.ok(!log.some((l) => /^gsettings set/.test(l)), 'no settings changed again');
       assert.ok(!log.some((l) => /^tailscale serve --bg/.test(l)), 'serve not run again');
+      assert.ok(!log.some((l) => /^npm ci/.test(l)), 'npm ci only when the lockfile changed');
       assert.ok(log.includes('systemctl --user restart jarvis-core.service'), 'the Core restarts to load the latest code');
       assert.match(r.out, new RegExp(`Jarvis Core is running: http://localhost:${port}/`));
     });
@@ -400,6 +446,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(r.out, /✓ Running/);
       assert.match(r.out, /✓ Health: All systems normal/);
       assert.match(r.out, /Starts by itself when the computer starts/);
+      assert.match(r.out, /Keeps itself up to date/);
       assert.ok(r.out.includes(URL));
     });
 
@@ -435,6 +482,118 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       fs.rmSync(path.join(sb.home, backups[0]), { recursive: true, force: true });
     });
 
+    await t.test('autoupdate-tick: nothing new, a change outside core/, then a real update that answers', async () => {
+      const tick = (extra = {}) => cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '10', ...extra } });
+      fs.writeFileSync(sb.log, '');
+      let r = tick();
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Up to date: GitHub's core\/ is the same as this copy's/);
+      assert.ok(!stubLog(sb).some((l) => /restart jarvis-core/.test(l)), 'nothing restarted');
+      // the app changes on GitHub, core/ does not: no update
+      const before = head();
+      fs.appendFileSync(path.join(repo.work, 'src/app.js'), '// the app moved on\n');
+      repo.commit('app only');
+      r = tick();
+      assert.match(r.out, /Up to date/);
+      assert.equal(head(), before);
+      // core/ changes: update, 1 s later it answers, logged for the event log
+      fs.appendFileSync(path.join(repo.work, 'core/server/README.md'), '\nTick update.\n');
+      repo.commit('core change');
+      r = tick();
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /A new version is on GitHub \([0-9a-f]+\): updating from [0-9a-f]+/);
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers/);
+      assert.notEqual(head(), before);
+      assert.match(fs.readFileSync(path.join(app, 'core/server/README.md'), 'utf8'), /Tick update\./);
+      assert.ok(await ping());
+      const events = fs.readFileSync(path.join(dataDir, 'update-events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      assert.equal(events.at(-1).rule, 'core.update');
+      assert.equal(events.at(-1).level, 'info');
+      assert.match(events.at(-1).message, /^Jarvis Core updated itself to [0-9a-f]+ \(from [0-9a-f]+\)$/);
+      assert.ok(Number.isFinite(events.at(-1).t));
+      assert.match(fs.readFileSync(path.join(dataDir, 'autoupdate.log'), 'utf8'), /Updated to/);
+      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /On: every 20 minutes[\s\S]*Last check: [\s\S]*Last update: /);
+    });
+
+    await t.test('autoupdate-tick: a new version that does not answer is rolled back, logged, and not tried again', async () => {
+      const tick = () => cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '3' } });
+      const good = head();
+      const mainFile = path.join(repo.work, 'core/server/main.mjs');
+      const original = fs.readFileSync(mainFile, 'utf8');
+      fs.writeFileSync(mainFile, original.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nthrow new Error("broken on purpose");\n'));
+      repo.commit('a broken version');
+      let r = tick();
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /isn't answering 1 seconds after the update: going back to [0-9a-f]+/);
+      assert.match(r.out, /Back on [0-9a-f]+, and it answers/);
+      assert.equal(head(), good, 'back on the version before');
+      assert.ok(await ping(), 'the previous version runs again');
+      const events = fs.readFileSync(path.join(dataDir, 'update-events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      assert.equal(events.at(-1).rule, 'core.rollback');
+      assert.equal(events.at(-1).level, 'warn');
+      assert.match(events.at(-1).message, /didn't start properly, so Jarvis Core went back to/);
+      assert.match(fs.readFileSync(path.join(stateDir, 'autoupdate'), 'utf8'), /^bad_tree=[0-9a-f]{40}$/m);
+      // the next check leaves that version alone
+      r = tick();
+      assert.match(r.out, /Skipping [0-9a-f]+: it didn't start properly last time/);
+      assert.equal(head(), good);
+      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /Went back to the previous version once/);
+      // the fixed version is taken
+      fs.writeFileSync(mainFile, original);
+      fs.appendFileSync(path.join(repo.work, 'core/server/README.md'), '\nFixed.\n');
+      repo.commit('fixed');
+      r = tick();
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers/);
+      assert.ok(await ping());
+    });
+
+    await t.test('an update whose npm ci fails still completes, keeps the old libraries and the Core running', async () => {
+      fs.rmSync(path.join(app, 'core/node_modules/.jarvis-lock-sha256'));
+      fs.appendFileSync(path.join(repo.work, 'core/server/README.md'), '\nOffline npm.\n');
+      repo.commit('needs npm');
+      const r = cli(sb, ['update'], { env: { ...env, STUB_NPM_FAIL: '1' } });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Couldn't install the brain's libraries \(npm ci failed: no internet\?\)/);
+      assert.match(r.out, /EAI_AGAIN/);
+      assert.match(r.out, new RegExp(`Jarvis Core is running: http://localhost:${port}/`));
+      assert.match(r.out, /Jarvis Core is up to date\./);
+      assert.ok(fs.existsSync(path.join(app, 'core/node_modules/.stub-npm-ci')), 'the libraries that were there stay');
+      assert.ok(!fs.existsSync(path.join(app, 'core/.npm-install')));
+      assert.ok(await ping());
+      // the next update with the internet back installs them
+      const r2 = cli(sb, ['update'], { env });
+      assert.match(r2.out, /Installed the brain's libraries/);
+    });
+
+    await t.test('autoupdate off and on; a timer set up by hand is taken over by the next update', () => {
+      let r = cli(sb, ['autoupdate', 'off'], { env });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Off: Jarvis Core no longer updates itself/);
+      assert.ok(!fs.existsSync(auService) && !fs.existsSync(auTimer));
+      assert.ok(!fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')));
+      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /Off\. Turn it on: jarvis-core autoupdate on/);
+      assert.match(cli(sb, ['status'], { env }).out, /Automatic updates are off/);
+      // what the owner pasted by hand tonight: a script and two units with the same names
+      const script = path.join(sb.home, '.local/bin/jarvis-core-autoupdate');
+      fs.writeFileSync(script, '#!/bin/bash\n# hand-made: update when core/ changed\nexec jarvis-core update\n', { mode: 0o755 });
+      fs.writeFileSync(auService, '[Unit]\nDescription=Jarvis Core auto-update\n\n[Service]\nType=oneshot\nExecStart=%h/.local/bin/jarvis-core-autoupdate\n');
+      fs.writeFileSync(auTimer, '[Timer]\nOnBootSec=5min\nOnUnitActiveSec=20min\n\n[Install]\nWantedBy=timers.target\n');
+      fs.writeFileSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer'), '');
+      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /On, with the timer you set up by hand/);
+      r = install(sb, ['--refresh'], { env });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Took over the update timer you set up by hand/);
+      assert.ok(!fs.existsSync(script), 'the hand-made script is gone');
+      assert.match(fs.readFileSync(auService, 'utf8'), /ExecStart="\S+\/\.local\/bin\/jarvis-core" autoupdate-tick/);
+      assert.match(fs.readFileSync(auTimer, 'utf8'), /RandomizedDelaySec=60/);
+      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /On: every 20 minutes/);
+      // and on by hand again
+      cli(sb, ['autoupdate', 'off'], { env });
+      r = cli(sb, ['autoupdate', 'on'], { env });
+      assert.equal(r.code, 0, r.out);
+      assert.ok(fs.existsSync(auService) && fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')));
+    });
+
     await t.test('uninstall puts everything back and keeps the history', () => {
       const data = path.join(sb.home, '.local/share/jarvis-core');
       fs.mkdirSync(data, { recursive: true });
@@ -454,6 +613,10 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(fs.readFileSync(sb.env.JARVIS_CORE_GDM_CONF, 'utf8'), /\[daemon\]\nAutomaticLoginEnable=false\n/);
       assert.equal(fs.readFileSync(path.join(sb.stubs, 'linger'), 'utf8').trim(), 'no');
       assert.ok(fs.existsSync(path.join(data, 'events-v1.json')), 'history kept without --purge');
+      assert.ok(!fs.existsSync(auService) && !fs.existsSync(auTimer), 'the update timer is gone');
+      assert.ok(!fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')));
+      assert.ok(stubLog(sb).includes('systemctl --user disable --now --quiet jarvis-core-autoupdate.timer'));
+      assert.match(r.out, /Stopped the automatic updates and removed their timer/);
       assert.match(r.out, /Jarvis Core is uninstalled/);
     });
   } finally {

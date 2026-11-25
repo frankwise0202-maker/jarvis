@@ -755,7 +755,7 @@ cmd_autoupdate_tick() {
   prev_short=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null)
   au_log "A new version is on GitHub ($there_rev): updating from $prev_short"
   export JARVIS_CORE_UNATTENDED=1 # the refresh then leaves the screen's Chrome alone (it reloads itself)
-  (cmd_update) </dev/null
+  (cmd_update) </dev/null 9>&- # the lock stays with this check, never with a process it starts
   after=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || after=""
   if [ "$after" = "$prev" ]; then
     au_set last_result "update failed"
@@ -783,7 +783,7 @@ cmd_autoupdate_tick() {
     au_event warn core.rollback "An automatic update to $now_short didn't start properly, and going back failed: run jarvis-core update --force"
     return 1
   fi
-  bash "$APP_DIR/core/install/install.sh" --refresh </dev/null
+  bash "$APP_DIR/core/install/install.sh" --refresh </dev/null 9>&-
   if wait_core "${JARVIS_CORE_START_WAIT_SEC:-30}"; then
     au_log "Back on $prev_short, and it answers"
   else
