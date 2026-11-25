@@ -594,6 +594,42 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(fs.existsSync(auService) && fs.existsSync(path.join(sb.stubs, 'enabled@jarvis-core-autoupdate.timer')));
     });
 
+    await t.test('a refresh run by the update timer leaves the screen\'s Chrome alone; from a terminal it reopens it', async () => {
+      // A Chrome started from inside the timer's service would be stopped with it at the end of the job,
+      // leaving the screen without its dashboard: the refresh must not touch it there.
+      const profile = path.join(sb.home, '.local/share/jarvis-core-screen');
+      // a stand-in that keeps its command line (bash would exec a lone `sleep` and lose the arguments)
+      const chrome = spawn('bash', ['-c', 'trap "exit 0" TERM; sleep 60 & wait', 'google-chrome-stable', `--user-data-dir=${profile}`], { stdio: 'ignore' });
+      const alive = () => {
+        try {
+          process.kill(chrome.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const cg = path.join(sb.root, 'cgroup');
+      try {
+        await new Promise((r) => setTimeout(r, 100));
+        const asOwner = { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_CGROUP_FILE: cg };
+        fs.writeFileSync(cg, '0::/user.slice/user-1000.slice/user@1000.service/app.slice/jarvis-core-autoupdate.service\n');
+        let r = install(sb, ['--refresh'], { env: asOwner });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /The dashboard on the screen reloads itself when it sees the new version/);
+        assert.ok(alive(), 'Chrome was left alone');
+        // the same from a terminal in the desktop (a scope, not a service): it reopens the dashboard
+        fs.writeFileSync(cg, '0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.gnome.Terminal.slice/vte-spawn-1.scope\n');
+        r = install(sb, ['--refresh'], { env: asOwner });
+        assert.doesNotMatch(r.out, /reloads itself when it sees the new version/);
+        assert.match(r.out, /No desktop session found/, 'it went to reopen the screen (no desktop in the sandbox)');
+        // the update tick says so explicitly, whatever the cgroup looks like
+        r = install(sb, ['--refresh'], { env: { ...asOwner, JARVIS_CORE_UNATTENDED: '1' } });
+        assert.match(r.out, /reloads itself when it sees the new version/);
+      } finally {
+        chrome.kill();
+      }
+    });
+
     await t.test('uninstall puts everything back and keeps the history', () => {
       const data = path.join(sb.home, '.local/share/jarvis-core');
       fs.mkdirSync(data, { recursive: true });

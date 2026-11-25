@@ -30,7 +30,7 @@
 # the screen), --help.
 # Test-only overrides: JARVIS_CORE_REPO, JARVIS_CORE_BRANCH, JARVIS_CORE_APP_DIR, JARVIS_CORE_TTY,
 # JARVIS_CORE_OS_RELEASE, JARVIS_CORE_GDM_CONF, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_SHIM,
-# JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT, JARVIS_CORE_START_WAIT_SEC.
+# JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT, JARVIS_CORE_START_WAIT_SEC, JARVIS_CORE_CGROUP_FILE.
 
 set -uo pipefail
 
@@ -522,6 +522,7 @@ step_questions() {
   fi
 
   printf '\n'
+  ensure_user_bus
   if [ -f "$AU_SERVICE_FILE" ] && grep -q 'autoupdate-tick' "$AU_SERVICE_FILE" 2>/dev/null && systemctl --user is-enabled --quiet "$AU_TIMER" 2>/dev/null; then
     ok "Jarvis Core already keeps itself up to date (every 20 minutes)"
     WANT_AUTOUPDATE=keep
@@ -710,6 +711,10 @@ deps_install() {
   tmpdir
   log="$TMP/npm-ci.log"
   stage="$core/.npm-install"
+  # A swap cut short (power cut) may have left the only copy aside: put it back before anything else.
+  if [ ! -e "$core/node_modules" ] && [ -d "$core/node_modules.old" ]; then
+    mv -T "$core/node_modules.old" "$core/node_modules" 2>/dev/null || true
+  fi
   rm -rf "$stage" "$core/node_modules.old"
   if ! { mkdir -p "$stage" && cp "$core/package.json" "$core/package-lock.json" "$stage/"; }; then
     note "Couldn't prepare the libraries' folder; keeping what is there"
@@ -718,13 +723,13 @@ deps_install() {
   say "Installing the brain's libraries (npm ci: the Claude SDK and web-push, a minute or two)..."
   if (cd "$stage" && timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
     printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
-    [ -d "$core/node_modules" ] && mv "$core/node_modules" "$core/node_modules.old"
-    if mv "$stage/node_modules" "$core/node_modules"; then
+    if { [ ! -e "$core/node_modules" ] || mv -T "$core/node_modules" "$core/node_modules.old"; } &&
+      mv -T "$stage/node_modules" "$core/node_modules"; then
       rm -rf "$core/node_modules.old" "$stage"
       ok "Installed the brain's libraries (the Claude SDK and web-push)"
       return 0
     fi
-    [ -d "$core/node_modules.old" ] && mv "$core/node_modules.old" "$core/node_modules"
+    [ ! -e "$core/node_modules" ] && [ -d "$core/node_modules.old" ] && mv -T "$core/node_modules.old" "$core/node_modules"
     note "Couldn't put the new libraries in place; keeping the ones that were there"
   else
     note "Couldn't install the brain's libraries (npm ci failed: no internet?). Jarvis Core runs without"
@@ -1251,7 +1256,7 @@ refresh() {
 in_service() { # run by a systemd service (an update timer): whatever it starts is stopped with it
   [ -n "${JARVIS_CORE_UNATTENDED:-}" ] && return 0
   local cg
-  cg=$(tail -n 1 /proc/self/cgroup 2>/dev/null) || return 1
+  cg=$(tail -n 1 "${JARVIS_CORE_CGROUP_FILE:-/proc/self/cgroup}" 2>/dev/null) || return 1
   case "${cg##*/}" in *.service) return 0 ;; esac
   return 1
 }
