@@ -10,6 +10,9 @@
 //   out.bands(outArray)              8 bands, 100 Hz–4 kHz on a log scale, −90…−30 dB -> 0…1
 //                                    (the Living Core v2 voice band, report §2.4.13)
 //   out.stopAll(), out.busy(), out.ready(), out.close()
+//   out.kick()                       v7.8.1: the clock stopped while audio waits to play (natural-stream.js's
+//                                    watchdog): resume the context; one that says it runs is suspended and
+//                                    resumed (iOS can report 'running' with its clock stopped). Never throws.
 //
 // Chain: every chunk is an AudioBufferSourceNode -> one GainNode -> one AnalyserNode
 // (fftSize 512, smoothing 0.6) -> destination. Chunks are scheduled back to back on the audio
@@ -175,6 +178,26 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     return true;
   }
 
+  /**
+   * v7.8.1: the clock hasn't moved while a chunk waits to play (an audio interruption, a route change, the
+   * microphone holding the audio session, a context never unlocked by a tap): try to start it once more. A
+   * context that says it is running but whose clock stopped (iOS) is suspended and resumed.
+   */
+  function kick() {
+    if (!ctx) return false;
+    setSession('playback');
+    try {
+      if (ctx.state === 'running' && typeof ctx.suspend === 'function') {
+        const p = ctx.suspend();
+        if (p && typeof p.then === 'function') p.then(resume, resume);
+        else resume();
+      } else resume();
+    } catch {
+      resume();
+    }
+    return true;
+  }
+
   function ready() {
     return !!ctx && ctx.state === 'running';
   }
@@ -306,6 +329,7 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     now,
     latency,
     play,
+    kick,
     stopAll,
     level,
     bands,

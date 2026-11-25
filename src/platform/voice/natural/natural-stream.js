@@ -36,6 +36,19 @@
 // onHandoff(offset) with the text() offset where the rest begins; the router speaks the rest
 // with the device voice. Without onHandoff a failed chunk is skipped and two failures in a row
 // end the stream with 'error'.
+//
+// v7.8.1, the stall watchdog (with onHandoff): words, chunk ends and the end of the reply follow the
+// audio clock, so a clock that stops (iOS: an audio interruption, a route change, the microphone holding
+// the audio session; a context never unlocked by a tap) would leave the owner in silence with no end.
+// While a chunk is on the clock (scheduled or playing) and the page is visible, each tick checks that the
+// clock itself moved since the last one. It counts only the wall time of ticks in which it did not, each
+// tick at most stallStepMs: a late timer or a blocked page, after which the clock has moved on, counts
+// nothing, and one long gap counts no more than a short one. Stopped for stallKickMs: the audio output
+// is kicked once (audio.kick(): resume). Still stopped at stallMs: the stream stops and drops its audio
+// and synthesis now (unlike a 'slow' handoff, nothing made can play any more) and calls
+// onHandoff({ reason: 'stall' }) from what wasn't heard: the last word boundary heard, or the start of
+// the chunk that never started. Hidden, it never counts; back in view it starts again from fresh
+// readings. Without onHandoff there is no watchdog: the stream waits for the clock, as before.
 
 import { newText, ingest, segment, takeChunk, takeFirstClause, takeGrowingChunk, releasePiece } from '../speech-text.js';
 
@@ -56,6 +69,10 @@ export const NATURAL_TIMING = Object.freeze({
   keepHeadS: 0.02,
   keepTailS: 0.05,
   deadChunks: 2,
+  // v7.8.1, the stall watchdog: the clock stopped this long (wall time of ticks in which it didn't move) …
+  stallKickMs: 1500, // … kick the audio output once (resume);
+  stallMs: 3500, // … hand what wasn't heard to the device voice;
+  stallStepMs: 250, // one tick counts at most this much (a late timer or a blocked page never adds up)
 });
 const T = NATURAL_TIMING;
 
@@ -201,11 +218,13 @@ function open(deps, options) {
     hold: 0,
     spokenUpTo: 0,
     failures: 0,
-    handoff: null, // { from } once the device voice is to take over
+    handoff: null, // { reason, cut, from? } once the device voice is to take over
     handedOff: false,
     timer: 0,
     pumping: false,
     again: false,
+    wd: null, // v7.8.1, the stall watchdog: { clock, wall, stalled, kicked } while it watches, else null
+    onVisibility: null,
   };
   const user = (fn) => (arg) => {
     userDepth += 1;
@@ -226,6 +245,19 @@ function open(deps, options) {
   for (let guard = 0; current && guard < 8; guard++) current.handle.cancel(); // one stream at a time
   current = s;
   s.timer = setInterval(() => tick(s), T.tickMs);
+  if (deps.onHandoff) {
+    // The watchdog starts again from fresh readings whenever the page is hidden or shown (iOS stops
+    // Web Audio in the background; that is not a stall).
+    s.onVisibility = () => {
+      s.wd = null;
+    };
+    try {
+      const d = globalThis.document;
+      if (d && typeof d.addEventListener === 'function') d.addEventListener('visibilitychange', s.onVisibility);
+    } catch {
+      /* no document: ticks still check document.hidden */
+    }
+  }
   return s;
 }
 
@@ -272,6 +304,16 @@ function endStream(s, reason, stopAudio = false, later = false) {
   if (s.ended) return;
   s.ended = true;
   clearInterval(s.timer);
+  s.wd = null;
+  if (s.onVisibility) {
+    try {
+      const d = globalThis.document;
+      if (d && typeof d.removeEventListener === 'function') d.removeEventListener('visibilitychange', s.onVisibility);
+    } catch {
+      /* ignore */
+    }
+    s.onVisibility = null;
+  }
   const ids = [];
   for (const c of s.chunks) {
     if (c.job && c.state === 'synth') ids.push(c.job.id);
@@ -512,12 +554,126 @@ function requestHandoff(s, reason) {
 }
 
 function doHandoff(s) {
-  // Everything before the cut has been heard: the device voice says the rest, from `from`.
-  const cut = s.handoff.cut;
-  const from = cut < s.chunks.length ? s.chunks[cut].start : s.chunks.length ? s.chunks[s.chunks.length - 1].end : 0;
+  // Everything before the cut has been heard: the device voice says the rest, from `from` (a stall
+  // names its own: the last word heard).
+  const h = s.handoff;
+  const cut = h.cut;
+  const from = typeof h.from === 'number' ? h.from : cut < s.chunks.length ? s.chunks[cut].start : s.chunks.length ? s.chunks[s.chunks.length - 1].end : 0;
   s.handedOff = true;
   endStream(s, null);
-  call(s.deps.onHandoff, { from, reason: s.handoff.reason, stream: s.handle });
+  call(s.deps.onHandoff, { from, reason: h.reason, stream: s.handle });
+}
+
+// ---- v7.8.1: the stall watchdog -----------------------------------------------------------------
+
+function pageHidden() {
+  try {
+    const d = globalThis.document;
+    return !!d && (d.hidden === true || d.visibilityState === 'hidden');
+  } catch {
+    return false;
+  }
+}
+
+/** The chunk the listener is waiting for is on the audio clock (scheduled, or playing). */
+function onTheClock(s) {
+  const c = s.chunks[s.playIdx];
+  return !!c && (c.state === 'scheduled' || c.state === 'playing');
+}
+
+/**
+ * Once a tick: has the audio clock moved since the last tick? Counts the wall time of ticks in which it
+ * didn't (each at most stallStepMs), kicks the output at stallKickMs, hands off at stallMs.
+ */
+function watch(s) {
+  if (!s.deps.onHandoff || s.ended || (s.handoff && s.handoff.reason === 'stall')) return;
+  if (!onTheClock(s) || pageHidden()) {
+    s.wd = null; // nothing waits on the clock (or the page is hidden): fresh readings next time
+    return;
+  }
+  let clock = NaN;
+  try {
+    clock = Number(s.audio.now());
+  } catch {
+    clock = NaN;
+  }
+  const wall = Date.now();
+  const w = s.wd;
+  if (!w || !Number.isFinite(clock)) {
+    s.wd = Number.isFinite(clock) ? { clock, wall, stalled: 0, kicked: false } : null;
+    return;
+  }
+  const step = wall - w.wall;
+  w.wall = wall;
+  if (clock !== w.clock) {
+    // It moves (a late tick after a blocked page included: the clock moved on meanwhile).
+    w.clock = clock;
+    w.stalled = 0;
+    w.kicked = false;
+    return;
+  }
+  w.stalled += Math.min(T.stallStepMs, Math.max(0, step));
+  if (w.stalled >= T.stallMs) {
+    stallHandoff(s);
+    return;
+  }
+  if (!w.kicked && w.stalled >= T.stallKickMs) {
+    w.kicked = true;
+    try {
+      if (typeof s.audio.kick === 'function') s.audio.kick();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * The clock stopped for good: nothing scheduled will play. Unlike requestHandoff (which lets the audio
+ * already made play out), everything stops now; the device voice says what wasn't heard: from the last
+ * word boundary heard (the clock stopped mid-chunk; the next chunk if its voice had all been heard), or
+ * from the start of the chunk that never started.
+ */
+function stallHandoff(s) {
+  if (s.ended) return;
+  const cut = s.playIdx;
+  const c = s.chunks[cut];
+  let from = c ? c.start : s.tx.norm.length;
+  if (c && c.state === 'playing') {
+    let t = NaN;
+    try {
+      t = s.audio.now() - s.audio.latency();
+    } catch {
+      t = NaN;
+    }
+    if (Number.isFinite(t) && t >= c.startAt + c.voicedTo) from = c.end;
+    else if (c.words && c.wordIdx > 0) from = c.start + c.words[c.wordIdx - 1].ci;
+  }
+  s.handoff = { reason: 'stall', cut, from };
+  s.wd = null;
+  const ids = [];
+  for (let i = cut; i < s.chunks.length; i++) {
+    const x = s.chunks[i];
+    if (x.job && x.state === 'synth') ids.push(x.job.id);
+    if (x.handle) {
+      try {
+        x.handle.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    x.job = null;
+    x.handle = null;
+    x.pcm = null;
+    x.state = 'dropped';
+  }
+  if (ids.length) {
+    try {
+      s.engine.cancel(ids);
+    } catch {
+      /* ignore */
+    }
+  }
+  doHandoff(s);
 }
 
 function schedule(s) {
@@ -613,4 +769,5 @@ function tick(s) {
     changed = true;
   }
   if (changed) pump(s);
+  if (!s.ended) watch(s);
 }

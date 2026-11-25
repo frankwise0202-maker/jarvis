@@ -15,6 +15,9 @@
 //   tts.voiceNow()           v7.8: the voice speaking now, the device voice's own speak() included
 //   tts.onVoiceChange(fn)    v7.8: fn(engine | null) when it changes (a reply starts, George hands over
 //                            mid-reply, speech ends); returns unsubscribe. The voice label uses it.
+//   tts.audioStuck()         v7.8.1: true while George's audio (Web Audio) is known not to play on this
+//                            device, so replies go to the device voice
+//   tts.onAudioStuck(fn)     v7.8.1: fn(stuck) when that changes; returns unsubscribe (Settings → Voice)
 //
 // Which engine speaks a stream: the natural voice when settings.naturalVoice is on and the engine
 // is 'ready'. When it is still loading (the worker is stopped after 5 idle minutes and reloads
@@ -32,11 +35,21 @@
 // base's George through the same natural stream and audio path (each sentence fetched from api/speak,
 // queued ahead). When it fails or is too slow, the rest goes to the on-device George when that is on
 // and ready, else to the device voice, from the same offset. Off, nothing here changes.
+//
+// Stuck audio (v7.8.1): when the natural stream's watchdog finds the audio clock stopped (handoff reason
+// 'stall'), the device voice says the rest at once (never the on-device George: he plays through the same
+// Web Audio), and the router remembers that this device's Web Audio is stuck, with its clock reading. New
+// replies then go straight to the device voice, without another wait, until a gesture unlocks audio
+// again (unlockSpeech(): the first tap, Voice Mode opening, Test, a reply's Speak tap) or the clock is seen
+// to have moved since (the audio came back by itself). Then George speaks again. The George settings are
+// never changed for this.
 
 import { newText, ingest } from './speech-text.js';
 import { createNaturalStream, stopNatural } from './natural/natural-stream.js';
 
 const WAIT_MS = 4000;
+// v7.8.1: stuck audio counts as working again once its clock has moved this far (seconds) since the stall.
+const STUCK_MOVED_S = 0.25;
 
 function report(err) {
   try {
@@ -90,8 +103,56 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   };
 
+  // ---- v7.8.1: stuck audio ------------------------------------------------------------------
+  // The audio outputs whose clock stopped during a reply (the natural stream's 'stall' handoff), each
+  // with its clock reading then. In the app George from the home base and George on this device share
+  // one output (one AudioContext), so one stall covers both.
+  const stuck = new Map(); // audio out -> { clock }
+  const stuckListeners = new Set();
+  const clockOf = (audio) => {
+    try {
+      const t = Number(audio.now());
+      return Number.isFinite(t) ? t : null;
+    } catch {
+      return null;
+    }
+  };
+  function noteStuck(was) {
+    const now = stuck.size > 0;
+    if (now === was) return;
+    for (const fn of Array.from(stuckListeners)) call(fn, now);
+  }
+  function markStuck(audio) {
+    if (!audio) return;
+    const was = stuck.size > 0;
+    const t = clockOf(audio);
+    stuck.set(audio, { clock: t === null ? 0 : t });
+    noteStuck(was);
+  }
+  /** Is this output known stuck? Not once its clock has moved since the stall (it came back by itself). */
+  function isStuck(audio) {
+    const rec = audio ? stuck.get(audio) : null;
+    if (!rec) return false;
+    const t = clockOf(audio);
+    if (t !== null && Math.abs(t - rec.clock) >= STUCK_MOVED_S) {
+      const was = stuck.size > 0;
+      stuck.delete(audio);
+      noteStuck(was);
+      return false;
+    }
+    return true;
+  }
+  function clearStuck() {
+    const was = stuck.size > 0;
+    stuck.clear();
+    noteStuck(was);
+  }
+  // The engines a reply may use now: wanted, and their audio not known stuck.
+  const useHomebase = () => wantHomebase() && !isStuck(homebase.audio);
+  const useNatural = () => wantNatural() && !isStuck(natural.audio);
+
   function naturalDeps(r) {
-    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, r.base + h.from) };
+    return { engine: natural.engine, audio: natural.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoff(r, r.base + h.from, h.reason) };
   }
 
   // ---- router streams -------------------------------------------------------------------
@@ -161,8 +222,8 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
 
   function choose(r) {
     if (r.kind || r.ended) return;
-    if (wantHomebase()) return startHomebase(r);
-    if (!wantNatural()) return startDevice(r, 0);
+    if (useHomebase()) return startHomebase(r);
+    if (!useNatural()) return startDevice(r, 0); // v7.8.1: George's audio stuck here too: at once, no wait
     // Known to be too slow on this device (a verdict kept across reloads): the device voice, at once.
     if (typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow() && engineState() !== 'ready') return startDevice(r, 0);
     const state = engineState();
@@ -231,7 +292,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     noteKind(r);
     const ev = events(r, 'homebase');
     try {
-      r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from) }, ev);
+      r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from, h.reason) }, ev);
       if (r.raw) r.backend.append(r.raw);
       if (r.finished) r.backend.finish();
     } catch (err) {
@@ -240,14 +301,20 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   }
 
-  function handoffHome(r, from) {
+  function handoffHome(r, from, reason) {
     if (r.ended || r.kind !== 'homebase') return;
+    if (reason === 'stall') {
+      // v7.8.1: the audio clock stopped: the device voice says the rest now; new replies go to it too.
+      markStuck(homebase.audio);
+      startDevice(r, from);
+      return;
+    }
     afterHomebase(r, from);
   }
 
   /** The home base couldn't go on: the on-device George when it is on and ready, else the device voice. */
   function afterHomebase(r, from) {
-    if (wantNatural() && engineState() === 'ready') startNaturalAt(r, from);
+    if (useNatural() && engineState() === 'ready') startNaturalAt(r, from);
     else startDevice(r, from);
   }
 
@@ -288,8 +355,9 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     }
   }
 
-  function handoff(r, from) {
+  function handoff(r, from, reason) {
     if (r.ended || r.kind !== 'natural') return;
+    if (reason === 'stall') markStuck(natural.audio); // v7.8.1: new replies go to the device voice too
     startDevice(r, from);
   }
 
@@ -334,12 +402,12 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
 
   function createSpeechStream(opts) {
     const r = open(opts);
-    if (!wantNatural() && !wantHomebase()) startDevice(r, 0); // the device voice behaves exactly as before
+    if (!useNatural() && !useHomebase()) startDevice(r, 0); // the device voice behaves exactly as before
     return r.handle;
   }
 
   function speak(text, opts) {
-    if (!wantNatural() && !wantHomebase()) {
+    if (!useNatural() && !useHomebase()) {
       // Unchanged path: tts.speak() itself (synchronous start inside a gesture on iOS). v7.8: the voice
       // label follows it (its onEnd is wrapped; every other option goes through as it is).
       stopAll();
@@ -386,6 +454,9 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     } catch {
       /* ignore */
     }
+    // v7.8.1: a gesture unlocks Web Audio again (below): George gets his next chance (if his clock still
+    // doesn't move, the stream's watchdog hands over again and the audio is stuck once more).
+    clearStuck();
     if (wantNatural()) {
       natural.audio.unlock();
       const known = typeof natural.engine.knownSlow === 'function' && natural.engine.knownSlow();
@@ -419,6 +490,19 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     if (typeof fn !== 'function') return () => {};
     voiceListeners.add(fn);
     return () => voiceListeners.delete(fn);
+  }
+
+  /** v7.8.1: George's audio is known stuck on this device (replies go to the device voice meanwhile). */
+  function audioStuck() {
+    for (const audio of Array.from(stuck.keys())) isStuck(audio); // a clock that moved since: not any more
+    return stuck.size > 0;
+  }
+
+  /** v7.8.1: fn(stuck) whenever audioStuck() changes. Returns unsubscribe. */
+  function onAudioStuck(fn) {
+    if (typeof fn !== 'function') return () => {};
+    stuckListeners.add(fn);
+    return () => stuckListeners.delete(fn);
   }
 
   /** The Web Audio output the active stream plays through (the natural voice's, or the home base's). */
@@ -464,6 +548,8 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     activeEngine,
     voiceNow: () => voiceNow,
     onVoiceChange,
+    audioStuck,
+    onAudioStuck,
     natural,
     homebase,
   };
