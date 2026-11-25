@@ -117,9 +117,12 @@ async function run() {
     }
   } finally {
     await browser.close();
+    // The live Core saves its history when stopped: wait for both to exit before removing its folder.
+    const exited = (c) => (c.exitCode !== null || c.signalCode ? Promise.resolve() : new Promise((r) => c.once('exit', r)));
     live.kill('SIGTERM');
     fixture.kill('SIGTERM');
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    await Promise.race([Promise.all([exited(live), exited(fixture)]), new Promise((r) => setTimeout(r, 10_000))]);
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3 });
   }
   fs.writeFileSync(path.join(OUT, 'transcript.json'), JSON.stringify(transcript, null, 2));
   if (problems.length) {
