@@ -419,6 +419,7 @@ step_check() {
       wayland) session=Wayland ;;
       x11) session=Xorg ;;
     esac
+    desktop=${desktop##*:} # Ubuntu says "ubuntu:GNOME"
     ok "Desktop: ${desktop:-unknown}${session:+ on $session}"
   else
     note "Not running inside the desktop (ssh?): the screen parts take effect at the next login"
