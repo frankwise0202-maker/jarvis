@@ -1,0 +1,650 @@
+#!/usr/bin/env bash
+# jarvis-core: look after Jarvis Core, the home base's 24/7 system report.
+#
+#   jarvis-core status               is it running, is everything OK, which addresses
+#   jarvis-core url                  the address to paste into Jarvis on the iPhone and the Mac
+#   jarvis-core update [--force]     download the latest version, restart, reload the screen
+#   jarvis-core restart              restart the Core (the screen reconnects by itself)
+#   jarvis-core logs [-f]            the Core's recent log (-f: keep following it)
+#   jarvis-core open                 (re)start the full-screen dashboard on this computer's screen
+#   jarvis-core uninstall [--purge]  remove Jarvis Core; keeps its history unless --purge
+#
+# Installed by core/install/install.sh as ~/.local/bin/jarvis-core. `jarvis-core screen` is what
+# the login autostart runs: it waits for the Core, then starts Chrome full screen.
+# Test-only overrides: JARVIS_CORE_APP_DIR, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_GDM_CONF,
+# JARVIS_CORE_SHIM, JARVIS_CORE_PORT.
+
+set -uo pipefail
+
+PORT="${JARVIS_CORE_PORT:-8788}"
+APP_DIR="${JARVIS_CORE_APP_DIR:-$HOME/jarvis-core-app}"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+SELF_BIN="$HOME/.local/bin/jarvis-core"
+UNIT_NAME=jarvis-core.service
+UNIT_FILE="$CONFIG_HOME/systemd/user/$UNIT_NAME"
+AUTOSTART_FILE="$CONFIG_HOME/autostart/jarvis-core-screen.desktop"
+PROFILE_DIR="$DATA_HOME/jarvis-core-screen" # Chrome's own profile; "jarvis-core" in the path labels it on the dashboard
+DATA_DIR="$DATA_HOME/jarvis-core"
+SETTINGS_DIR="$CONFIG_HOME/jarvis-core"
+STATE_DIR="$SETTINGS_DIR/install"
+LOCAL_URL="http://localhost:$PORT/"
+PING_URL="http://127.0.0.1:$PORT/api/ping"
+SUDOERS_FILE="${JARVIS_CORE_SUDOERS_FILE:-/etc/sudoers.d/jarvis-core-smartctl}"
+GDM_CONF="${JARVIS_CORE_GDM_CONF:-/etc/gdm3/custom.conf}"
+SHIM="${JARVIS_CORE_SHIM:-/usr/local/bin/jarvis-core}"
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  B=$'\e[1m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' D=$'\e[2m' N=$'\e[0m'
+else
+  B='' G='' Y='' R='' D='' N=''
+fi
+ok() { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
+note() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+bad() { printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
+say() { printf '    %s\n' "$*"; }
+title() { printf '\n%s%s%s\n' "$B" "$*" "$N"; }
+die() {
+  bad "$*"
+  exit 1
+}
+
+# ------------------------------------------------------------------------------------------ helpers
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+http_get() { # URL [timeout seconds]: print the body; fails on errors (never through a proxy)
+  if have curl; then
+    curl --noproxy '*' -fsS -m "${2:-3}" "$1" 2>/dev/null
+  elif have node; then
+    node -e 'fetch(process.argv[1], { signal: AbortSignal.timeout(process.argv[2] * 1000) })
+      .then(async (r) => { if (!r.ok) process.exit(1); process.stdout.write(await r.text()); })
+      .catch(() => process.exit(1));' "$1" "${2:-3}" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+core_up() { http_get "$PING_URL" 2 >/dev/null; }
+
+wait_core() { # seconds: wait until the Core answers
+  local i
+  for ((i = 0; i < $1; i++)); do
+    core_up && return 0
+    sleep 1
+  done
+  return 1
+}
+
+json_get() { # json_get a.b.c < json: strings as is, arrays one item a line, objects their keys
+  if have node; then
+    node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let v; try { v = JSON.parse(s); } catch { process.exit(2); }
+      for (const k of process.argv[1].split(".").filter(Boolean)) {
+        if (v === null || typeof v !== "object") process.exit(1);
+        v = v[k];
+      }
+      if (v === undefined || v === null) process.exit(1);
+      if (Array.isArray(v)) v = v.join("\n"); else if (typeof v === "object") v = Object.keys(v).join("\n");
+      process.stdout.write(String(v) + "\n");
+    });' "$1"
+  elif have python3; then
+    python3 -I -c 'import json, sys
+try:
+    v = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+for k in [k for k in sys.argv[1].split(".") if k]:
+    if not isinstance(v, dict):
+        sys.exit(1)
+    v = v.get(k)
+if v is None:
+    sys.exit(1)
+if isinstance(v, bool):
+    v = "true" if v else "false"
+elif isinstance(v, list):
+    v = "\n".join(str(x) for x in v)
+elif isinstance(v, dict):
+    v = "\n".join(v.keys())
+print(v)' "$1"
+  else
+    return 1
+  fi
+}
+
+user_systemctl() { systemctl --user "$@"; }
+
+ensure_user_bus() { # systemctl --user and gsettings need the session bus, also from ssh
+  if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    export XDG_RUNTIME_DIR
+  fi
+  if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  fi
+}
+
+ensure_graphical_env() { # find the desktop session's display, also when run from ssh or a tty
+  ensure_user_bus
+  if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
+    local line key value
+    while IFS= read -r line; do
+      key=${line%%=*}
+      value=${line#*=}
+      case "$key" in
+        DISPLAY | WAYLAND_DISPLAY | XAUTHORITY | XDG_SESSION_TYPE | XDG_CURRENT_DESKTOP)
+          case "$value" in *[!A-Za-z0-9_.:/@=+-]*) ;; *) export "$key=$value" ;; esac
+          ;;
+      esac
+    done < <(user_systemctl show-environment 2>/dev/null)
+  fi
+  [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]
+}
+
+state_get() { # state_get key: a value the installer recorded
+  [ -f "$STATE_DIR/state" ] || return 1
+  local line
+  while IFS= read -r line; do
+    case "$line" in "$1="*)
+      printf '%s\n' "${line#*=}"
+      return 0
+      ;;
+    esac
+  done <"$STATE_DIR/state"
+  return 1
+}
+
+sudo_ready=0
+need_sudo() { # ask for the password once, if there is a terminal to ask in
+  [ "$(id -u)" = 0 ] && return 0
+  [ "$sudo_ready" = 1 ] && return 0
+  if sudo -n true 2>/dev/null; then
+    sudo_ready=1
+    return 0
+  fi
+  if (exec </dev/tty) 2>/dev/null; then
+    say "This needs your password (the one you log in with). Nothing shows while you type; that's normal."
+    if sudo -v; then
+      sudo_ready=1
+      return 0
+    fi
+  fi
+  return 1
+}
+
+as_root() {
+  if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+# ------------------------------------------------------------------------------------------ Tailscale
+
+TS_BIN=""
+TS_JSON=""
+ts_load() { # read `tailscale status --json` once; fails when Tailscale is missing or not running
+  TS_BIN=$(command -v tailscale 2>/dev/null) || TS_BIN=""
+  [ -n "$TS_BIN" ] || return 1
+  TS_JSON=$(timeout 10 "$TS_BIN" status --json 2>/dev/null) || TS_JSON=""
+  [ -n "$TS_JSON" ]
+}
+ts_state() { # not-installed | not-running | Running | NeedsLogin | Stopped | ...
+  if [ -z "$TS_BIN" ]; then
+    echo not-installed
+  elif [ -z "$TS_JSON" ]; then
+    echo not-running
+  else
+    printf '%s' "$TS_JSON" | json_get BackendState 2>/dev/null || echo unknown
+  fi
+}
+ts_dns_name() { # this machine's name on the tailnet, without the final dot
+  local name
+  name=$(printf '%s' "$TS_JSON" | json_get Self.DNSName 2>/dev/null) || return 1
+  name=${name%.}
+  [ -n "$name" ] && printf '%s\n' "$name"
+}
+ts_serving() { # true when `tailscale serve` passes HTTPS on to this Core
+  [ -n "$TS_BIN" ] || return 1
+  timeout 10 "$TS_BIN" serve status --json 2>/dev/null |
+    grep -Eq "\"Proxy\": *\"(https?://)?(127\\.0\\.0\\.1|localhost|\\[::1\\])?:?$PORT/?\""
+}
+ts_url() { # the https address on the tailnet, when serve is set up
+  local name
+  name=$(ts_dns_name) || return 1
+  ts_serving || return 1
+  printf 'https://%s/\n' "$name"
+}
+
+# ------------------------------------------------------------------------------------------ the screen
+
+chrome_bin() {
+  local c
+  for c in google-chrome-stable google-chrome chromium chromium-browser; do
+    if have "$c"; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Why --app and not --kiosk: an app window is full screen with no tabs or address bar, yet F11
+# still leaves full screen, and the dashboard's "Open Jarvis" opens the regular app in a normal
+# Chrome window that Ctrl+W closes, back to the dashboard. --kiosk traps the owner (no F11), opens
+# Jarvis as an invisible full-screen tab, and can show Chrome's "What's new" tab after an update.
+screen_args() {
+  # shellcheck disable=SC2054 # the comma in --disable-features is part of one argument
+  SCREEN_ARGS=(
+    "--user-data-dir=$PROFILE_DIR"
+    "--app=$LOCAL_URL"
+    --start-fullscreen
+    --no-first-run
+    --no-default-browser-check
+    --password-store=basic # with automatic login, the GNOME keyring would put an unlock dialog over the screen
+    --hide-crash-restore-bubble
+    --disable-features=Translate,TranslateUI
+    --noerrdialogs
+  )
+}
+
+mark_clean_exit() { # no "Restore pages?" after a power cut, no translate bar, no first-run pages
+  mkdir -p "$PROFILE_DIR/Default" || return 1
+  : >>"$PROFILE_DIR/First Run"
+  have node || return 0
+  node -e 'const fs = require("fs");
+    const file = process.argv[1];
+    let p = {};
+    try { p = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+    if (!p || typeof p !== "object" || Array.isArray(p)) p = {};
+    p.profile = Object.assign({}, p.profile, { exit_type: "Normal", exited_cleanly: true });
+    p.translate = Object.assign({}, p.translate, { enabled: false });
+    p.browser = Object.assign({}, p.browser, { has_seen_welcome_page: true });
+    fs.writeFileSync(file + ".jarvis-core.tmp", JSON.stringify(p));
+    fs.renameSync(file + ".jarvis-core.tmp", file);' "$PROFILE_DIR/Default/Preferences" 2>/dev/null || true
+}
+
+screen_pids() { pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" 2>/dev/null; }
+screen_running() { [ -n "$(screen_pids)" ]; }
+
+stop_screen() {
+  screen_running || return 0
+  pkill -TERM -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" 2>/dev/null
+  local i
+  for ((i = 0; i < 50; i++)); do
+    screen_running || return 0
+    sleep 0.1
+  done
+  pkill -KILL -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" 2>/dev/null
+  sleep 0.5
+}
+
+cmd_screen() { # what the login autostart runs: wait for the Core, then Chrome full screen
+  local print=0 wait_s=60 arg chrome
+  for arg in "$@"; do
+    case "$arg" in
+      --print-args) print=1 ;;
+      --no-wait) wait_s=0 ;;
+    esac
+  done
+  screen_args
+  chrome=$(chrome_bin) || chrome=""
+  if [ "$print" = 1 ]; then
+    printf '%s\n' "${chrome:-google-chrome-stable}" "${SCREEN_ARGS[@]}"
+    return 0
+  fi
+  [ -n "$chrome" ] || {
+    echo "jarvis-core: Google Chrome is not installed (https://www.google.com/chrome/)" >&2
+    return 1
+  }
+  # Up to a minute after login for the Core; after that Chrome starts anyway, the dashboard's
+  # offline banner shows and it reconnects by itself.
+  wait_core "$wait_s" || true
+  if screen_running; then
+    return 0 # already on the screen
+  fi
+  mark_clean_exit
+  exec "$chrome" "${SCREEN_ARGS[@]}"
+}
+
+cmd_open() {
+  title "Jarvis Core screen"
+  chrome_bin >/dev/null || die "Google Chrome is not installed. Install it from https://www.google.com/chrome/ and run: jarvis-core open"
+  ensure_graphical_env || die "No desktop session found. Log in on the computer's screen first, then run: jarvis-core open"
+  if screen_running; then
+    stop_screen
+    ok "Closed the dashboard window"
+  fi
+  core_up || note "Jarvis Core isn't answering yet; the dashboard will connect as soon as it does (jarvis-core status)."
+  if have setsid; then
+    setsid -f "$SELF_PATH" screen </dev/null >/dev/null 2>&1
+  else
+    nohup "$SELF_PATH" screen </dev/null >/dev/null 2>&1 &
+  fi
+  local i
+  for ((i = 0; i < 100; i++)); do
+    screen_running && break
+    sleep 0.1
+  done
+  if screen_running; then
+    ok "The dashboard is opening full screen. Press F11 to leave full screen, F11 again to go back."
+  else
+    ok "The dashboard is starting (it waits up to a minute for Jarvis Core)."
+  fi
+}
+
+# ------------------------------------------------------------------------------------------ status, url
+
+cmd_url() {
+  title "Jarvis Core addresses"
+  say "On this computer:        $LOCAL_URL"
+  ts_load
+  local url name
+  if url=$(ts_url); then
+    say "On your iPhone and Mac:  ${B}${url}${N}"
+    say "Paste that into Jarvis on the iPhone and on the Mac: Settings > Home base."
+    return 0
+  fi
+  case "$(ts_state)" in
+    not-installed)
+      note "Tailscale isn't installed, so your iPhone and Mac can't reach Jarvis Core yet. Run:"
+      say "  curl -fsSL https://tailscale.com/install.sh | sh"
+      say "  sudo tailscale up"
+      say "  sudo tailscale serve --bg $PORT"
+      ;;
+    Running)
+      name=$(ts_dns_name) || name=""
+      note "Tailscale is on, but it doesn't pass Jarvis Core to your devices yet. Run:"
+      say "  sudo tailscale serve --bg $PORT"
+      [ -n "$name" ] && say "Then the address will be https://$name/"
+      ;;
+    *)
+      note "Tailscale is installed but not connected. Run:"
+      say "  sudo tailscale up"
+      say "  sudo tailscale serve --bg $PORT"
+      ;;
+  esac
+  say "Then run: jarvis-core url"
+  return 1
+}
+
+cmd_status() {
+  ensure_user_bus
+  title "Jarvis Core"
+  local active enabled since status summary level linger
+  active=$(user_systemctl is-active "$UNIT_NAME" 2>/dev/null) || true
+  enabled=$(user_systemctl is-enabled "$UNIT_NAME" 2>/dev/null) || true
+  if [ "$active" = active ]; then
+    since=$(user_systemctl show "$UNIT_NAME" -p ActiveEnterTimestamp --value 2>/dev/null) || since=""
+    ok "Running${since:+ since $since}"
+  elif [ -f "$UNIT_FILE" ]; then
+    bad "Not running (${active:-unknown}). Try: jarvis-core restart, then jarvis-core logs"
+  else
+    bad "Not installed. Run the install command again."
+  fi
+  if status=$(http_get "http://127.0.0.1:$PORT/api/status" 5); then
+    level=$(printf '%s' "$status" | json_get health.level 2>/dev/null) || level=""
+    summary=$(printf '%s' "$status" | json_get health.summary 2>/dev/null) || summary=""
+    case "$level" in
+      ok) ok "Health: $summary" ;;
+      warn) note "Health: $summary" ;;
+      alert) bad "Health: $summary" ;;
+      *) note "Answering, health not known yet" ;;
+    esac
+  else
+    bad "Not answering on $LOCAL_URL"
+  fi
+  if [ "$enabled" = enabled ]; then
+    ok "Starts by itself when the computer starts"
+  else
+    note "Not set to start by itself (run the install command again)"
+  fi
+  linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null) || linger=""
+  [ "$linger" = yes ] || note "Runs only while you're logged in (lingering is off)"
+  if screen_running; then
+    ok "The dashboard is on the screen"
+  elif [ -f "$AUTOSTART_FILE" ]; then
+    note "The dashboard isn't on the screen right now (start it: jarvis-core open)"
+  fi
+  cmd_url || true
+  if [ -d "$APP_DIR/.git" ]; then
+    local rev when
+    rev=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null) || rev="?"
+    when=$(git -C "$APP_DIR" log -1 --format=%cd --date=format:'%d %b %Y' 2>/dev/null) || when=""
+    printf '\n    %sVersion %s from %s, in %s%s\n' "$D" "$rev" "$when" "$APP_DIR" "$N"
+  fi
+}
+
+# ------------------------------------------------------------------------------------------ restart, logs
+
+cmd_restart() {
+  ensure_user_bus
+  title "Restarting Jarvis Core"
+  user_systemctl daemon-reload 2>/dev/null || true
+  user_systemctl restart "$UNIT_NAME" || die "Could not restart it. See: jarvis-core logs"
+  if wait_core 30; then
+    ok "Jarvis Core is running again. The screen reconnects by itself."
+  else
+    bad "It hasn't answered within 30 seconds. See: jarvis-core logs"
+    return 1
+  fi
+}
+
+cmd_logs() {
+  ensure_user_bus
+  local follow=()
+  case "${1:-}" in -f | --follow) follow=(-f) ;; esac
+  journalctl --user -u "$UNIT_NAME" -n 200 --no-pager -o short-iso "${follow[@]}"
+}
+
+# ------------------------------------------------------------------------------------------ update
+
+cmd_update() {
+  local force=0 arg
+  for arg in "$@"; do [ "$arg" = --force ] && force=1; done
+  title "Updating Jarvis Core"
+  [ -d "$APP_DIR/.git" ] || die "$APP_DIR is missing. Run the install command again."
+  local changes before after
+  changes=$(git -C "$APP_DIR" status --porcelain --untracked-files=no 2>/dev/null) || changes=""
+  before=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || before=""
+  if [ "$force" = 1 ]; then
+    local repo branch backup
+    repo=$(git -C "$APP_DIR" remote get-url origin 2>/dev/null) || die "No download address in $APP_DIR"
+    branch=$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=main
+    backup="$APP_DIR.old-$(date +%Y%m%d-%H%M%S)"
+    mv "$APP_DIR" "$backup" || die "Could not move $APP_DIR aside"
+    say "Your previous copy is kept in $backup"
+    if ! git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$branch" "$repo" "$APP_DIR" ||
+      ! git -C "$APP_DIR" sparse-checkout set core; then
+      rm -rf "$APP_DIR"
+      mv "$backup" "$APP_DIR"
+      die "Could not download a fresh copy (is the internet up?). Nothing changed."
+    fi
+    ok "Downloaded a fresh copy"
+  else
+    if [ -n "$changes" ]; then
+      bad "Files in $APP_DIR were changed on this computer, so I won't overwrite them:"
+      printf '%s\n' "$changes" | sed 's/^/      /'
+      say "To keep them, copy them somewhere else first. To replace them with the latest version, run:"
+      say "  jarvis-core update --force    (your copy is kept as $APP_DIR.old-<date>)"
+      return 1
+    fi
+    if ! git -C "$APP_DIR" pull --ff-only --quiet; then
+      bad "Could not update: the latest version doesn't follow on from this copy (or the internet is down)."
+      say "To replace this copy with the latest version, run: jarvis-core update --force"
+      return 1
+    fi
+  fi
+  after=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || after=""
+  if [ "$before" = "$after" ]; then
+    ok "Already up to date ($(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null))"
+  else
+    ok "Updated to $(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null)"
+  fi
+  # The installer, in refresh mode, rewrites this command, the service and the autostart from the new
+  # version, restarts the Core and reloads the screen. No questions, no password.
+  exec bash "$APP_DIR/core/install/install.sh" --refresh
+}
+
+# ------------------------------------------------------------------------------------------ uninstall
+
+gdm_autologin_off() { # print custom.conf with automatic login turned off for the [daemon] section
+  awk '
+    /^[ \t]*\[/ { insec = ($0 ~ /^[ \t]*\[daemon\][ \t]*$/); print; if (insec) print "AutomaticLoginEnable=false"; next }
+    insec && /^[ \t]*AutomaticLogin(Enable)?[ \t]*=/ { next }
+    { print }
+  ' "$1"
+}
+
+cmd_uninstall() {
+  local purge=0 yes=0 arg ans
+  for arg in "$@"; do
+    case "$arg" in
+      --purge) purge=1 ;;
+      --yes | -y) yes=1 ;;
+    esac
+  done
+  title "Removing Jarvis Core"
+  if [ "$purge" = 1 ]; then
+    say "This removes Jarvis Core, its screen, its settings AND its history (--purge)."
+  else
+    say "This removes Jarvis Core and its screen, and puts your screen and login settings back."
+    say "Its history and settings stay in $DATA_DIR and $SETTINGS_DIR (add --purge to delete them)."
+  fi
+  if [ "$yes" != 1 ]; then
+    if ! (exec </dev/tty) 2>/dev/null; then
+      die "No terminal to confirm in. Run: jarvis-core uninstall --yes"
+    fi
+    printf '  ? Remove Jarvis Core now? [y/N] '
+    IFS= read -r ans </dev/tty || ans=""
+    case "$ans" in y | Y | yes | YES | Yes) ;; *)
+      say "Nothing was changed."
+      return 0
+      ;;
+    esac
+  fi
+  ensure_user_bus
+
+  # The service
+  if [ -f "$UNIT_FILE" ] || user_systemctl is-enabled "$UNIT_NAME" >/dev/null 2>&1; then
+    user_systemctl disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
+    rm -f "$UNIT_FILE"
+    user_systemctl daemon-reload 2>/dev/null || true
+    ok "Stopped the Jarvis Core service and removed it"
+  fi
+
+  # The screen
+  stop_screen
+  if [ -f "$AUTOSTART_FILE" ]; then
+    rm -f "$AUTOSTART_FILE"
+    ok "The dashboard no longer starts at login"
+  fi
+
+  # Screen blanking, lock and suspend: back to what they were
+  if have gsettings && [ -f "$STATE_DIR/gsettings-before" ]; then
+    local schema key value restored=0
+    while IFS=$'\t' read -r schema key value; do
+      [ -n "$schema" ] && [ -n "$key" ] || continue
+      if [ -n "$value" ]; then
+        gsettings set "$schema" "$key" "$value" 2>/dev/null && restored=$((restored + 1))
+      else
+        gsettings reset "$schema" "$key" 2>/dev/null && restored=$((restored + 1))
+      fi
+    done <"$STATE_DIR/gsettings-before"
+    ok "Screen blanking, lock and sleep settings put back ($restored settings)"
+  fi
+
+  # Things that need the password: automatic login, the disk-check permission, Tailscale serve,
+  # the command shortcut, lingering.
+  local need_root=0
+  [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && need_root=1
+  [ -e "$SUDOERS_FILE" ] && need_root=1
+  [ -e "$SHIM" ] && need_root=1
+  ts_load || true
+  ts_serving && need_root=1
+  if [ "$need_root" = 1 ] && ! need_sudo; then
+    note "Without your password I can't undo these; run them yourself:"
+    [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && say "  turn off automatic login in Settings > System > Users"
+    [ -e "$SUDOERS_FILE" ] && say "  sudo rm $SUDOERS_FILE"
+    ts_serving && say "  sudo tailscale serve --https=443 off"
+    [ -e "$SHIM" ] && say "  sudo rm $SHIM"
+  elif [ "$need_root" = 1 ]; then
+    if [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && [ -f "$GDM_CONF" ]; then
+      local tmp
+      tmp=$(mktemp) && gdm_autologin_off "$GDM_CONF" >"$tmp" && as_root install -m 0644 "$tmp" "$GDM_CONF" &&
+        ok "Automatic login is off again (from the next restart)"
+      rm -f "$tmp"
+    fi
+    if [ -e "$SUDOERS_FILE" ]; then
+      as_root rm -f "$SUDOERS_FILE" && ok "Removed the disk-check permission"
+    fi
+    if ts_serving; then
+      as_root "$TS_BIN" serve --https=443 off >/dev/null 2>&1 && ok "Tailscale no longer passes this computer's port $PORT to your devices"
+    fi
+    if [ -e "$SHIM" ]; then
+      as_root rm -f "$SHIM" && ok "Removed $SHIM"
+    fi
+  fi
+  if [ "$(state_get linger 2>/dev/null)" = enabled-by-installer ]; then
+    loginctl disable-linger "$(id -un)" 2>/dev/null || { need_sudo && as_root loginctl disable-linger "$(id -un)"; } || true
+  fi
+
+  # The program itself
+  if [ -d "$APP_DIR/.git" ]; then
+    if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      note "Kept $APP_DIR because files in it were changed on this computer"
+    else
+      rm -rf "$APP_DIR" && ok "Removed $APP_DIR"
+    fi
+  fi
+  rm -rf "$STATE_DIR"
+  if [ "$purge" = 1 ]; then
+    rm -rf "$DATA_DIR" "$SETTINGS_DIR" "$PROFILE_DIR"
+    ok "Deleted the history, the settings and the screen's Chrome profile"
+  fi
+  rm -f "$SELF_BIN"
+  ok "Removed the jarvis-core command"
+  printf '\n  %sJarvis Core is uninstalled.%s Tailscale, Chrome and Node.js stay installed.\n' "$B" "$N"
+}
+
+# ------------------------------------------------------------------------------------------ main
+
+usage() {
+  cat <<EOF
+${B}jarvis-core${N}: look after Jarvis Core, the home base's 24/7 system report.
+
+  jarvis-core status               is it running, is everything OK, which addresses
+  jarvis-core url                  the address to paste into Jarvis on the iPhone and the Mac
+  jarvis-core update               download the latest version, restart, reload the screen
+  jarvis-core restart              restart the Core (the screen reconnects by itself)
+  jarvis-core logs [-f]            the Core's recent log (-f: keep following it)
+  jarvis-core open                 (re)start the full-screen dashboard on this screen
+  jarvis-core uninstall [--purge]  remove Jarvis Core (keeps its history unless --purge)
+EOF
+}
+
+main() {
+  if [ "$(id -u)" = 0 ] && [ -z "${JARVIS_CORE_ALLOW_ROOT:-}" ]; then
+    die "Run jarvis-core as yourself, without sudo."
+  fi
+  SELF_PATH=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || SELF_PATH="$SELF_BIN"
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    status) cmd_status "$@" ;;
+    url) cmd_url "$@" ;;
+    update) cmd_update "$@" ;;
+    restart) cmd_restart "$@" ;;
+    logs | log) cmd_logs "$@" ;;
+    open) cmd_open "$@" ;;
+    screen) cmd_screen "$@" ;;
+    uninstall | remove) cmd_uninstall "$@" ;;
+    help | -h | --help) usage ;;
+    version | --version) git -C "$APP_DIR" log -1 --format='%h %cd' --date=short 2>/dev/null || echo unknown ;;
+    *)
+      usage
+      return 2
+      ;;
+  esac
+}
+
+# The whole file is read before anything runs, so `update` can safely replace it.
+main "$@"
+exit $?
