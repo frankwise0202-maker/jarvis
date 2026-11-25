@@ -195,8 +195,11 @@ export function createSenseHost({
     });
   }
 
-  /** Make sure the current model is loaded (downloading it first if needed). */
-  function load() {
+  /**
+   * Make sure the current model is loaded (downloading it first if needed). warm: false skips the warm-up run
+   * when a real request is waiting to be the first run anyway (the first request after an idle unload).
+   */
+  function load({ warm = true } = {}) {
     if (stopped) return Promise.reject(new SenseError(503, 'stopped', 'the Core is stopping'));
     const model = getModel();
     if (worker && workerModelKey !== modelKey(model)) killWorker('model changed');
@@ -211,7 +214,7 @@ export function createSenseHost({
       timer.unref?.();
     });
     onChange();
-    loadingPromise = Promise.race([call('load'), timeout])
+    loadingPromise = Promise.race([call('load', { warm }), timeout])
       .then((r) => {
         if (worker !== w) throw new SenseError(503, 'engine_stopped', 'the speech engine was stopped while loading');
         loaded = true;
@@ -243,7 +246,7 @@ export function createSenseHost({
       timer.unref?.();
     });
     try {
-      await Promise.race([load(), deadline]);
+      await Promise.race([load({ warm: false }), deadline]);
       const r = await Promise.race([call('run', { input: job.input }), deadline]);
       return { output: r.output, ms: r.ms };
     } catch (err) {

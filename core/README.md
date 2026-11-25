@@ -218,6 +218,31 @@ it goes back to the one before by itself, says so in the event log, and doesn't 
 
 ---
 
+## Hearing and voice (beta): the Alienware listens and speaks for your iPhone
+
+Two extras, both **off** until you turn them on, both free (they run on the Alienware's own processor;
+nothing goes to any cloud service). In Jarvis on the iPhone: **Settings → Home base → Hearing and voice
+(beta)**.
+
+- **Hear me through the home base (more accurate).** When you talk to Jarvis, the iPhone sends the short
+  recording to the Alienware, where Whisper (a speech recognizer) writes down what you said. Choose
+  **Fast** (an 80 MB download; about 1.5 seconds for a 6-second sentence) or **Accurate** (250 MB; slower,
+  better with names and noise).
+- **George's voice from the home base.** The Alienware makes Jarvis's natural voice (George) and the
+  iPhone plays it, so the voice stays natural even when the iPhone is busy. One 330 MB download.
+
+The first time you turn one on, the Alienware downloads its speech model once from huggingface.co (the
+app shows the progress); after that it works without the internet. If the home base is slow, asleep or
+out of reach, the iPhone simply listens and speaks by itself, as it always has. Recordings and sentences
+are handled in memory and never saved or written to a log.
+
+The Alienware stays quick to use: speech runs at low priority, one request at a time, and the models
+leave memory after 30 minutes without use (the next sentence then takes a few seconds longer). The
+models live in `~/.cache/jarvis-core/models` (about 410 MB for Fast + George); deleting that folder is
+safe: they download again when needed.
+
+---
+
 ## Everyday commands (in Terminal)
 
 | Command | What it does |
@@ -286,6 +311,12 @@ update). Run `jarvis-core update`; `jarvis-core status` says when they are there
 base → Turn on notifications, then **Test**. Check the iPhone's Settings → Notifications → Jarvis is
 allowed.
 
+**Hearing and voice says "not installed".** Its speech libraries didn't download (no internet during an
+update). Run `jarvis-core update`, then turn it on again in Jarvis.
+
+**Hearing and voice says it couldn't download the model.** The Alienware was offline while it fetched
+the model. Check its internet, then turn the switch off and on again in Jarvis: it carries on.
+
 **An update went wrong.** If a new version doesn't start, the automatic update goes back to the
 previous one by itself; `jarvis-core autoupdate status` shows it. To start over from a fresh copy:
 `jarvis-core update --force` (your old copy is kept next to it).
@@ -326,7 +357,8 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 | The 24/7 service (starts at power-on, restarts itself if it stops) | `~/.config/systemd/user/jarvis-core.service`, with lingering on |
 | The dashboard at login (Chrome, full screen, its own profile) | `~/.config/autostart/jarvis-core-screen.desktop`, profile in `~/.local/share/jarvis-core-screen` |
 | History, events (a week, saved every 5 minutes) | `~/.local/share/jarvis-core/` |
-| The brain's libraries (the Claude SDK and web-push, from npm) | `~/jarvis-core-app/core/node_modules` |
+| The brain's libraries (the Claude SDK, web-push and the speech engines, from npm) | `~/jarvis-core-app/core/node_modules` |
+| The speech models (only once you turn on Hearing and voice) | `~/.cache/jarvis-core/models` (its setting: `~/.local/share/jarvis-core/senses/`) |
 | Your Claude key (only once you give it from the iPhone) | `~/.config/jarvis-core/secrets/` (only you can read it) |
 | Research, watchers, spending, briefings | `~/.local/share/jarvis-core/brain/` |
 | Your devices' backups (the latest of each, plus 14 days) | `~/.local/share/jarvis-core/sync/` |
@@ -340,8 +372,8 @@ gsettings reset org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 Jarvis Core listens only on this computer (`http://localhost:8788/`); Tailscale's `serve` passes it to
 your own devices over HTTPS. It never uses Tailscale Funnel (the public internet) and refuses Funnel
 traffic. What it fetches from the internet: Claude (only with your key), the weather (Open-Meteo),
-news headlines (public RSS feeds), the push services of Apple and Google for your notifications, and
-GitHub for updates.
+news headlines (public RSS feeds), the push services of Apple and Google for your notifications,
+GitHub for updates, and huggingface.co once for each speech model you turn on.
 
 Developer documentation: [server/README.md](server/README.md) (the Core and its API),
 [dashboard/README.md](dashboard/README.md) (the screen), and `install/` (the installer and its tests:

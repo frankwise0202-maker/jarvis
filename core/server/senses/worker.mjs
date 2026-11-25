@@ -8,7 +8,7 @@
 // engine is immune, returns all of its memory when it ends, and can be stopped at once at a deadline.
 //
 // messages in:  { type: 'init', kind, engineUrl, model: { repo, revision, dtype, files }, cacheDir, nice, threads, options }
-//               { type: 'load', id } · { type: 'run', id, input }
+//               { type: 'load', id, warm } · { type: 'run', id, input }
 // messages out: { type: 'nice', value } · { type: 'progress', loaded, total } · { type: 'loaded', id, ms, warmMs }
 //               { type: 'result', id, output, ms } · { type: 'error', id, message }
 //
@@ -69,14 +69,15 @@ function onProgress({ file, loaded, total: fileTotal, done }) {
   send({ type: 'progress', loaded: Math.min(sum, total), total });
 }
 
-async function load() {
+/** Load the model; warm it up with one tiny run unless a real request is about to do that anyway. */
+async function load({ warm = true } = {}) {
   if (engine) return { ms: 0, warmMs: 0 };
   loading ??= (async () => {
     const started = performance.now();
     const { createEngine } = await import(cfg.engineUrl);
     const e = await createEngine(cfg.kind, { ...cfg.model, cacheDir: cfg.cacheDir, onProgress, threads: cfg.threads, options: cfg.options ?? {} });
     const loadedAt = performance.now();
-    await e.warmUp?.();
+    if (warm) await e.warmUp?.();
     engine = e;
     return { ms: Math.round(loadedAt - started), warmMs: Math.round(performance.now() - loadedAt) };
   })();
@@ -98,11 +99,11 @@ process.on('message', async (msg) => {
     }
     if (!cfg) throw new Error('the engine was not initialised');
     if (msg?.type === 'load') {
-      send({ type: 'loaded', id, ...(await load()) });
+      send({ type: 'loaded', id, ...(await load({ warm: msg.warm !== false })) });
       return;
     }
     if (msg?.type === 'run') {
-      await load();
+      await load({ warm: false });
       const started = performance.now();
       const output = await engine.run(msg.input);
       send({ type: 'result', id, output, ms: Math.round(performance.now() - started) });

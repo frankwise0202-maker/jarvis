@@ -9,7 +9,10 @@ brain" below). It listens on **127.0.0.1:8788 only**; other devices reach it thr
 The system report uses Node built-ins only. The brain has two pinned dependencies, `@anthropic-ai/sdk`
 (1.10.0, the app's version) and `web-push` (3.6.7), installed by `npm ci` in `core/` and **imported lazily**:
 without `core/node_modules` the Core still starts and serves the system report, the free briefing and sync,
-and `GET /api/brain` says `sdk.installed: false`.
+and `GET /api/brain` says `sdk.installed: false`. The senses (opt-in hearing and voice for the phone, see
+"Hearing and voice" below) add `kokoro-js` 1.2.1 and `@huggingface/transformers` 3.8.1 (the app's versions;
+onnxruntime-node 1.21 comes with them), loaded only inside their own engine processes; without them
+`GET /api/senses` says `deps.installed: false`.
 
 ```bash
 node core/server/main.mjs                  # the live machine
@@ -39,6 +42,9 @@ brain/     index.mjs (createBrain), vault.mjs (the key), spend.mjs + prices.mjs 
 push/      Web Push (VAPID) to the owner's iPhone and Chrome        (brain-io)
 sync/      device backups, latest per device + 14 daily snapshots   (brain-io)
 http/brain-routes.mjs  the routes of the three above
+senses/    index.mjs (createSenses: settings, states, hear, speak), host.mjs (one engine: queue, deadlines,
+           idle unload), worker.mjs (the engine process, nice 10), engines.mjs (Whisper, Kokoro), models.mjs
+           (pinned models and sizes), wav.mjs, text.mjs; http/senses-routes.mjs: their routes
 ```
 
 Everything slow or external is asynchronous with a timeout, and never more than one of each check runs at a
@@ -80,6 +86,7 @@ which tailnet users may connect) and `smartSudo`. A broken file is reported and 
 | `GET /api/ping` | liveness |
 | `GET /api/fixture`, `POST /api/fixture {"scenario"}` | fixture mode only |
 | `/api/brain`, `/api/spend`, `/api/jobs`, `/api/watchers`, `/api/briefing`, `/api/push/*`, `/api/sync/*` | the brain, push and sync (below); SSE gains `job`, `watcher`, `briefing`, `spend` |
+| `/api/senses`, `/api/hear`, `/api/speak` | hearing and George's voice for the phone (below; off until turned on) |
 
 Units are in the field names (`…Pct`, `…C`, `…Bytes`, `…Bps`, `…Ms`). Values that cannot be read are `null`
 with `available: false` and a plain-words `message`/`detail`, never a guess. Errors are
@@ -94,7 +101,8 @@ gets 403. Chrome's private-network preflights (a public page calling the 100.x T
 `Access-Control-Allow-Private-Network: true` for those origins only. A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
-8 questions at once then 30 a minute per client, 16 live streams.
+8 questions at once then 30 a minute per client, 16 live streams. (The brain's and the senses' own body
+limits are in their sections.)
 
 ## Health rules
 
@@ -224,6 +232,84 @@ survival, watchers met/not met, the free and full briefing with fixtures, the sc
 and geocoding, the feed parser, the HTTP routes with their access rules, body and rate limits, SSE events,
 and a start without `node_modules`.
 
+## Hearing and voice (the senses, opt-in beta)
+
+The phone can hand its listening and George's voice to the home base: Whisper hears better than the
+iPhone's recognizer, and the Alienware makes Kokoro's George for the phone. Both are **off** until the owner
+turns them on (`PUT /api/senses`), run on this computer's CPU only, and keep nothing: audio and text live in
+memory for the one request and are never logged. The app falls back to the iPhone's own recognizer and voice
+whenever the home base is off, slow or unreachable.
+
+| | |
+|---|---|
+| `GET /api/senses` | `{hear: {enabled, model, state, progress, sizeMb, error, errorCode, downloaded, loaded, busy, queued, lastMs}, speak: {enabled, voice, dtype, …the same}, deps: {installed, missing?}}`; `state` is `off`, `downloading` (the first download and warm-up; `progress` 0-1), `ready` (on disk; `loaded` says whether it is in memory now) or `error` (`error` in plain words; `errorCode` `deps_missing`, `download_failed`, `load_failed`, `load_timeout`) |
+| `PUT /api/senses` | any of `{hear: {enabled, model: "base.en"\|"small.en"\|"tiny.en" (or "fast"\|"accurate")}, speak: {enabled, voice}}` → the same object. Turning one on downloads (once) and loads it in the background; turning it off lets the model go (the files stay). PUT with `enabled: true` again retries after an error, and warms a model the idle timer let go. Unknown keys → 400. 60 an hour. |
+| `POST /api/hear?prompt=…` | body: a WAV, 16 kHz, mono, 16-bit PCM, 0.1-30 s, at most 2 MB (`Content-Type: audio/wav`, `audio/x-wav`, `audio/wave` or `application/octet-stream`); `prompt`: context words for Whisper (cut to 200 characters) → `{text, ms, model, seconds}` (`ms`: the Core's time, queue included) |
+| `POST /api/speak` | `{text (≤ 1000 characters), voice: "bm_george" (any Kokoro voice), speed: 0.5-2 (1)}` → `audio/wav`, 24 kHz, mono, 16-bit PCM; headers `X-Jarvis-Ms`, `X-Jarvis-Seconds`, `X-Jarvis-Sentences` (exposed to the app). Split by sentence (and long sentences at commas), spoken one at a time, joined with 120 ms pauses. |
+
+Errors: 409 `hear_off` / `speak_off`; 503 `not_ready` (still downloading, `Retry-After: 10`), `deps_missing`,
+`hear_unavailable` / `speak_unavailable` (the state's error), `busy` (3 already waiting, `Retry-After: 2`),
+`engine_stopped` (turned off or crashed mid-request); 504 `timeout`; 400 `bad_audio`, `audio_too_long`,
+`audio_too_short`, `bad_text`, `text_too_long`, `bad_voice`, `bad_speed`, `bad_request`; 413 over 2 MB
+(hear) or 4 KB (speak, settings); 415 a wrong `Content-Type`. Access, origins, CORS and the general rate
+limit are the API's own.
+
+**Engines.** Each sense runs in **its own process** (`senses/worker.mjs`, forked on demand) at **nice 10**,
+every thread of it (Linux keeps a nice value per thread; the process lowers its own threads at start and
+onnxruntime's inherit it), with at most 4 compute threads. One request at a time per sense, 3 more may
+wait (30 s at most); deadlines: hearing 45 s, speech 30 s + 150 ms per character, a first download and
+load 30 minutes. After **30 minutes** without a request the engine process ends, which returns all of its
+memory; the next request starts it again from the disk cache (a few seconds). A request past its deadline
+ends the process at once (onnxruntime cannot be interrupted mid-run), so does turning a sense off.
+*Why processes and not worker threads:* onnxruntime-node 1.21 aborts the whole process ("Entering the V8
+API without proper locking") when a second worker thread runs a model (hearing and voice together, or a new
+thread after an idle unload); in a worker thread that abort would take the Core down with it. Here a
+crashed engine only fails its request, and the next request starts a fresh one.
+
+**Models**, from huggingface.co at pinned commits (`senses/models.mjs`), cached in
+`~/.cache/jarvis-core/models/<repo>/<commit>/` (`JARVIS_CORE_MODELS_DIR` moves it; settings in
+`<data>/senses/settings-v1.json`). A file counts only at its exact size, so a download cut short is fetched
+again, never loaded. Once downloaded they load with no network at all.
+
+| sense | model | dtype | download |
+|---|---|---|---|
+| hearing, Fast (default) | `onnx-community/whisper-base.en` | q8 | 80 MB |
+| hearing, Accurate | `onnx-community/whisper-small.en` | q8 | 252 MB |
+| hearing, tests | `onnx-community/whisper-tiny.en` | q8 | 44 MB |
+| voice | `onnx-community/Kokoro-82M-v1.0-ONNX` | fp32 (`JARVIS_CORE_SPEAK_DTYPE=q8` for the 92 MB one) | 326 MB |
+
+*Why Kokoro fp32 and not q8:* on the 4-core test container (Xeon 2.1 GHz, AVX-512 VNNI) fp32 speaks a
+4.6 s sentence in 3.4 s and q8 in 5.8 s (both 4 threads): Kokoro is mostly convolutions, which the 8-bit
+build runs slowly on CPUs. The i7-6700 (AVX2, no VNNI) favours 8-bit even less, so fp32 should win there
+too. Whisper is the other way round (matrix multiplications): base.en q8 1.5 s against fp32 2.0 s for 6.6 s
+of speech.
+
+**Timings** on the 4-core test container (Intel Xeon 2.1 GHz, 4 threads, everything at nice 10; the
+i7-6700 has 4 real cores at 3.4-4.0 GHz but no AVX-512, so expect the same order of magnitude, not these
+exact numbers):
+
+| what | time |
+|---|---|
+| hear, base.en (Fast): a 6-7 s sentence / 25 s of speech | 1.1-1.6 s / 4.0 s |
+| hear, small.en (Accurate): 6 s / 25 s | 3.3 s / 5.7 s |
+| hear, tiny.en (tests): 6 s | 0.6 s |
+| speak, fp32: "Certainly, Frank." (2 s of audio) / two sentences (6 s) / 738 characters, 6 sentences (54 s) | 1.1-1.2 s / 4.7 s / 33 s (0.6-0.8 × real time) |
+| speak, q8: two sentences (6 s of audio) | 6.2-10.3 s (1.0-1.7 × real time) |
+| first download + load + warm-up: tiny.en + Kokoro q8 (136 MB) / small.en (252 MB) | 3.5 s and 6.1 s / 7.0 s (a fast link) |
+| load + warm-up from the disk cache: base.en / Kokoro fp32 | 3.3-3.8 s / 3.4 s |
+| the first request after the idle unload: hear 7 s / speak "Certainly, Frank." | 3.0 s / 2.2 s (load without the warm-up run) |
+| memory of an engine process: base.en / small.en / Kokoro fp32 | 660 MB / 1.46 GB / 1.08 GB (all of it back after 30 idle minutes) |
+
+**Tests.** `npm test` (no downloads): WAV parsing and writing, the resampler, sentence splitting, prompts,
+settings validation and the catalog (`test/server/senses/pure.test.mjs`); the engine host with a stub
+engine in the real engine process: progress, the queue, deadlines, crashes (a native abort included), the
+idle unload, cancelling, every engine thread at nice 10 (`host.test.mjs`); the routes through the runtime:
+off by default, turning on, hearing, speaking, every refusal, CORS, body limits, restarts, a failed or
+cut-short download, missing libraries and a Core without `node_modules` (`api.test.mjs`).
+`npm run test:senses` (online, ~136 MB the first time): the real engines download whisper tiny.en and
+Kokoro q8, George says a known sentence through `/api/speak`, the WAV goes back through `/api/hear`, and
+the words must come back (`JARVIS_SENSES_TEST_MODELS=full` runs base.en and fp32 instead).
+
 ## What only the real machine can verify
 
 NVIDIA GTX 970 readings through the 580 driver, coretemp on the i7-6700, `tailscale serve` headers end to end,
@@ -231,4 +317,6 @@ smartctl with a sudoers rule, the systemd user service and the GNOME kiosk. The 
 formats (see `core/fixtures/`), and the live code path was smoke-tested on a Linux VM without those devices.
 The brain's calls to the real Claude API (tested against a local fake of its streaming format), real Web
 Push to an iPhone, and real Open-Meteo and news-feed answers (tested with recorded fixtures) are verified
-only on the Alienware.
+only on the Alienware. The senses ran for real here (downloads, Whisper, Kokoro, nice 10), on a 4-core
+container that is not an i7-6700: their speed on the Alienware itself, and a real iPhone's recordings, are
+measured only there.
