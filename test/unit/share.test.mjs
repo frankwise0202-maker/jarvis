@@ -574,3 +574,12 @@ describe('downloadText', () => {
     assert.equal(downloadText('a.md', 'x'), false);
   });
 });
+
+describe('turnStatsLine: home base exchanges (v7.8.1)', () => {
+  test('free when the Core answered at no cost; "Home base" for a full briefing it made just now with the key', () => {
+    assert.equal(turnStatsLine({ role: 'jarvis', local: 'homebase' }), 'Free · Home base');
+    assert.equal(turnStatsLine({ role: 'jarvis', local: 'homebase', homeBasePaid: true }), 'Home base');
+    assert.equal(turnStatsLine({ role: 'jarvis', local: 'homebase', homeBasePaid: 'yes' }), 'Free · Home base', 'only true counts');
+    assert.equal(turnStatsLine({ role: 'jarvis', local: 'music', homeBasePaid: true }), 'Free · Apple Music');
+  });
+});

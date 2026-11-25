@@ -1188,8 +1188,10 @@ function createJarvisTurnView(turn, ctx) {
     syncSpeak();
 
     if (turn.local === 'homebase') {
-      setText(stats, 'Free · Home base');
-      stats.title = 'Answered by your home base (the Jarvis Core): no Claude request, no cost';
+      // v7.8.1: a full briefing the home base made for this (with your key) cost the home base money.
+      const paid = turn.homeBasePaid === true;
+      setText(stats, paid ? 'Home base' : 'Free · Home base');
+      stats.title = paid ? 'Made by your home base with your Claude key: it counts toward the home base’s own spending (Home base → Spending), not this device’s' : 'Answered by your home base (the Jarvis Core): no Claude request, no cost';
       return;
     }
     if (turn.local) {
