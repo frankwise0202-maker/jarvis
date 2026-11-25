@@ -12,6 +12,8 @@
 //   segment(tx, limit)           move complete sentences / lines into tx.spans
 //   takeChunk(tx, limit)         the next chunk { start, end } (offsets into tx.norm) or null
 //   firstCut(t, s, b, limit)     where to cut a sentence that is longer than `limit`
+//   takeFirstClause(tx, opts)    v7.8: a short first chunk for a voice made far away (the home base):
+//                                cut at the first clause or sentence end 40-60 characters in
 
 const SENTENCE_END_RE = /[.!?…]+["'”’)\]]*(?= |$)/g;
 
@@ -146,4 +148,72 @@ function firstCut(t, s, b, limit) {
   return [pieceEnd, next];
 }
 
-export { SENTENCE_END_RE, newText, ingest, segment, takeChunk, splitFirst, firstCut };
+const CLAUSE_END_RE = /[,;:](?=\s)|\s[—–](?=\s)/g;
+const ENDS_SENTENCE_RE = /[.!?…]+["'”’)\]]*$/;
+const ENDS_CLAUSE_RE = /(?:[,;:]|\s[—–])$/;
+
+/**
+ * v7.8 (SPEC §26): the first chunk of a reply spoken by a voice that is made far away and slower than
+ * the device's (George from the home base): short, so its audio comes back quickly, and cut where a
+ * speaker pauses anyway. From the queued spans (complete sentences or lines, never across a line break):
+ *   1. the first clause or sentence end at `min`..`max` characters (40-60);
+ *   2. else the last sentence end before `min` (a short sentence such as "Certainly, Frank.");
+ *   3. else the last clause end at `floor`..`min` ("Good evening, Frank,");
+ *   4. else the last space within `max`, else a hard cut at `max` (never inside a surrogate pair).
+ * The spans it covers are taken; the rest of a span it cuts stays queued. Returns { start, end } or null.
+ */
+function takeFirstClause(tx, { min = 40, max = 60, floor = 16 } = {}) {
+  const q = tx.spans;
+  if (!q.length) return null;
+  const t = tx.norm;
+  const start = q[0].start;
+  const cands = []; // { at, kind: 'sentence' | 'clause' | 'piece', span }
+  for (let i = 0; i < q.length; i++) {
+    const sp = q[i];
+    if (sp.start - start > max) break;
+    const seg = t.slice(sp.start, sp.end);
+    CLAUSE_END_RE.lastIndex = 0;
+    let m;
+    while ((m = CLAUSE_END_RE.exec(seg))) {
+      const at = sp.start + m.index + m[0].length;
+      if (at - start > max) break;
+      if (at < sp.end) cands.push({ at, kind: 'clause', span: i });
+    }
+    if (sp.end - start <= max) {
+      const kind = sp.breakAfter || ENDS_SENTENCE_RE.test(seg) ? 'sentence' : ENDS_CLAUSE_RE.test(seg) ? 'clause' : 'piece';
+      cands.push({ at: sp.end, kind, span: i });
+    }
+    if (sp.breakAfter) break;
+  }
+  const len = (c) => c.at - start;
+  let pick = cands.find((c) => c.kind !== 'piece' && len(c) >= min);
+  if (!pick) pick = cands.filter((c) => c.kind === 'sentence' && len(c) < min).pop();
+  if (!pick) pick = cands.filter((c) => c.kind === 'clause' && len(c) >= floor && len(c) < min).pop();
+  if (!pick) pick = cands.filter((c) => c.kind === 'piece').pop();
+  if (pick) return cutSpans(tx, pick.span, pick.at);
+  // One long stretch without a pause: at the last space within `max`, else hard.
+  const sp = q[0];
+  const rest = t.slice(sp.start, sp.end);
+  let cut = rest.lastIndexOf(' ', max);
+  if (cut < floor) cut = Math.min(rest.length, max);
+  const code = rest.charCodeAt(cut);
+  if (code >= 0xdc00 && code <= 0xdfff) cut -= 1;
+  return cutSpans(tx, 0, sp.start + cut);
+}
+
+/** Take spans 0..k-1 and span k up to `at`; what is left of span k stays first in the queue. */
+function cutSpans(tx, k, at) {
+  const q = tx.spans;
+  const t = tx.norm;
+  const start = q[0].start;
+  const sp = q[k];
+  let end = at;
+  while (end > start && t.charCodeAt(end - 1) === 32) end -= 1;
+  let next = at;
+  while (next < sp.end && t.charCodeAt(next) === 32) next += 1;
+  if (next >= sp.end) q.splice(0, k + 1);
+  else q.splice(0, k + 1, { start: next, end: sp.end, breakAfter: sp.breakAfter });
+  return { start, end };
+}
+
+export { SENTENCE_END_RE, newText, ingest, segment, takeChunk, splitFirst, firstCut, takeFirstClause };

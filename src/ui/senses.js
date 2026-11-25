@@ -12,6 +12,9 @@
 //   senses.noteFailure(which, kind) / noteSuccess(which)
 //   senses.watch()           keep it fresh while something shows it (polls every 2 s while a model
 //                            downloads or gets ready); returns a function that stops watching
+//   senses.warmVoice()       v7.8: PUT api/senses { speak: { enabled: true } } so the Core loads George
+//                            (or keeps him loaded) before the first reply: when Voice Mode opens and when
+//                            the app comes to the front; at most every 3 minutes, never when just used
 //   senses.subscribe(fn)     fn(state) on every change; returns unsubscribe
 //
 // Opt-in twice over: nothing is asked of the home base unless a home base is linked AND this device
@@ -31,6 +34,10 @@ const POLL_MS = 2000;
 // when Voice Mode opens (a moment of silence to hear, one word to say), so the first words fit in 4 s.
 const WARM_AFTER_MS = 25 * 60 * 1000;
 const WARM_TIMEOUT_MS = 30000;
+// v7.8: the voice is warmed with the Core's own warm-up path (PUT speak enabled:true: it loads an unloaded
+// model in the background; Core 1.2.2 also restarts a loaded one's idle time). The Core allows 60 of those
+// an hour, so at most one every 3 minutes, and none within 3 minutes of George speaking.
+const WARM_VOICE_MS = 3 * 60 * 1000;
 
 function safeCall(fn, fallback) {
   try {
@@ -55,6 +62,7 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
   const failures = { hear: null, speak: null };
   const lastOk = { hear: 0, speak: 0 };
   const warming = { hear: null, speak: null };
+  let lastVoiceWarm = 0;
   const listeners = new Set();
   let inflight = null;
   let lastTry = 0;
@@ -203,15 +211,19 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     };
   }
 
-  /** Voice Mode opened: a part that is on and ready but unused for 25 minutes loads on the home base. */
+  /**
+   * Voice Mode opened: hearing, when on and ready but unused for 25 minutes, hears a moment of silence
+   * (the Core loads Whisper again); the voice is warmed with warmVoice() (v7.8: before, one word was said).
+   */
   function warm() {
     const s = settings();
     const url = base();
     if (!url) return;
-    for (const which of ['hear', 'speak']) {
-      const on = which === 'hear' ? s.homeBaseHear === true : s.homeBaseSpeak === true;
+    warmVoice();
+    for (const which of ['hear']) {
+      const on = s.homeBaseHear === true;
       if (!on || warming[which] || cooling(which) || !senseReady(st.senses, which) || (lastOk[which] && now() - lastOk[which] < WARM_AFTER_MS)) continue;
-      const ask = which === 'hear' ? () => client.hearWav(url, encodeWav(new Float32Array(Math.round(HEAR_SAMPLE_RATE * 0.4)), HEAR_SAMPLE_RATE), { timeoutMs: WARM_TIMEOUT_MS }) : () => client.speakText(url, { text: 'Ready.', voice: s.naturalVoiceId || 'bm_george', speed: 1 }, { timeoutMs: WARM_TIMEOUT_MS });
+      const ask = () => client.hearWav(url, encodeWav(new Float32Array(Math.round(HEAR_SAMPLE_RATE * 0.4)), HEAR_SAMPLE_RATE), { timeoutMs: WARM_TIMEOUT_MS });
       warming[which] = Promise.resolve()
         .then(ask)
         .then((r) => {
@@ -222,6 +234,31 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
           warming[which] = null;
         });
     }
+  }
+
+  /**
+   * v7.8: have the home base load George before he is needed (Voice Mode opening, the app coming to the
+   * front). Only while this device uses him, the home base has him on and downloaded (a voice turned off
+   * there, or on another device, is never turned back on from here), not resting after a failure, and
+   * neither warmed nor heard in the last 3 minutes. Returns whether it asked.
+   */
+  function warmVoice() {
+    const s = settings();
+    const url = base();
+    if (!url || s.homeBaseSpeak !== true || warming.speak || cooling('speak')) return false;
+    if (!senseReady(st.senses, 'speak')) return false;
+    if ((lastVoiceWarm && now() - lastVoiceWarm < WARM_VOICE_MS) || (lastOk.speak && now() - lastOk.speak < WARM_VOICE_MS)) return false;
+    lastVoiceWarm = now();
+    warming.speak = Promise.resolve()
+      .then(() => client.putSenses(url, { speak: { enabled: true } }, { timeoutMs: WARM_TIMEOUT_MS }))
+      .then((r) => {
+        if (r && r.ok && base() === url) set({ phase: 'ready', senses: r.senses, problem: null, at: now() });
+      })
+      .catch(() => {})
+      .then(() => {
+        warming.speak = null;
+      });
+    return true;
   }
 
   return {
@@ -245,12 +282,14 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
      * At launch with hearing or voice on: one reading, so the first listen or reply can use it.
      * { warm: true } (Voice Mode opening): then a part unused for 25 minutes is warmed up.
      */
-    prime({ warm: andWarm = false } = {}) {
+    prime({ warm: andWarm = false, voice = false } = {}) {
       const s = settings();
       if (!base() || (s.homeBaseHear !== true && s.homeBaseSpeak !== true)) return;
       const p = load();
       if (andWarm) Promise.resolve(p).then(() => warm());
+      else if (voice) Promise.resolve(p).then(() => warmVoice()); // v7.8: the app came to the front
     },
     warm,
+    warmVoice,
   };
 }

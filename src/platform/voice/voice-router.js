@@ -12,6 +12,9 @@
 //   tts.getOutputLevel()     0..1 while the natural voice plays, else null (no real signal)
 //   tts.getOutputBands(out)  fills 8 bands and returns true while the natural voice plays
 //   tts.activeEngine()       'homebase' | 'natural' | 'device' | null
+//   tts.voiceNow()           v7.8: the voice speaking now, the device voice's own speak() included
+//   tts.onVoiceChange(fn)    v7.8: fn(engine | null) when it changes (a reply starts, George hands over
+//                            mid-reply, speech ends); returns unsubscribe. The voice label uses it.
 //
 // Which engine speaks a stream: the natural voice when settings.naturalVoice is on and the engine
 // is 'ready'. When it is still loading (the worker is stopped after 5 idle minutes and reloads
@@ -54,6 +57,20 @@ function call(fn, arg) {
 
 export function createVoiceRouter({ device, natural = null, homebase = null, getSettings = () => ({}), waitMs = WAIT_MS } = {}) {
   let current = null; // the router stream being spoken
+  // v7.8: the voice speaking now (for the voice label), and who wants to know when it changes.
+  let voiceNow = null;
+  let direct = 0; // the device voice's own speak() (the unchanged path) is speaking: its token
+  let directSeq = 0;
+  const voiceListeners = new Set();
+  function noteVoice(kind) {
+    const next = kind || (direct ? 'device' : null);
+    if (next === voiceNow) return;
+    voiceNow = next;
+    for (const fn of Array.from(voiceListeners)) call(fn, next);
+  }
+  const noteKind = (r) => {
+    if (current === r && !r.ended) noteVoice(r.kind);
+  };
 
   const settings = () => {
     try {
@@ -178,6 +195,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
   function startNatural(r) {
     stopWaiting(r);
     r.kind = 'natural';
+    noteKind(r);
     const ev = events(r, 'natural');
     try {
       r.backend = createNaturalStream(naturalDeps(r), ev);
@@ -210,6 +228,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
   function startHomebase(r) {
     stopWaiting(r);
     r.kind = 'homebase';
+    noteKind(r);
     const ev = events(r, 'homebase');
     try {
       r.backend = createNaturalStream({ engine: homebase.engine, audio: homebase.audio, voice: settings().naturalVoiceId || 'bm_george', onHandoff: (h) => handoffHome(r, h.from) }, ev);
@@ -238,6 +257,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     const { base, rest } = restFrom(r, from);
     r.kind = 'natural';
     r.base = base;
+    noteKind(r);
     const ev = events(r, 'natural');
     try {
       r.backend = createNaturalStream(naturalDeps(r), ev);
@@ -255,6 +275,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     r.kind = 'device';
     const { base, rest } = restFrom(r, from);
     r.base = base;
+    noteKind(r);
     const ev = events(r, 'device');
     try {
       const stream = device.createSpeechStream(ev);
@@ -294,7 +315,10 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     if (r.ended) return;
     r.ended = true;
     stopWaiting(r);
-    if (current === r) current = null;
+    if (current === r) {
+      current = null;
+      noteVoice(null);
+    }
     if (cancelBackend && r.backend) {
       try {
         r.backend.cancel();
@@ -316,9 +340,21 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
 
   function speak(text, opts) {
     if (!wantNatural() && !wantHomebase()) {
-      // Unchanged path: tts.speak() itself (synchronous start inside a gesture on iOS).
+      // Unchanged path: tts.speak() itself (synchronous start inside a gesture on iOS). v7.8: the voice
+      // label follows it (its onEnd is wrapped; every other option goes through as it is).
       stopAll();
-      return device.speak(text, opts);
+      const o = opts && typeof opts === 'object' ? opts : {};
+      const token = ++directSeq;
+      direct = token;
+      noteVoice('device');
+      const onEnd = (info) => {
+        if (direct === token) {
+          direct = 0;
+          noteVoice(current && !current.ended ? current.kind : null);
+        }
+        call(o.onEnd, info);
+      };
+      return device.speak(text, { ...o, onEnd });
     }
     const r = open(opts);
     r.handle.append(text);
@@ -378,6 +414,13 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     return current && !current.ended ? current.kind : null;
   }
 
+  /** v7.8: fn(engine | null) whenever the voice speaking changes. Returns unsubscribe. */
+  function onVoiceChange(fn) {
+    if (typeof fn !== 'function') return () => {};
+    voiceListeners.add(fn);
+    return () => voiceListeners.delete(fn);
+  }
+
   /** The Web Audio output the active stream plays through (the natural voice's, or the home base's). */
   function playingAudio() {
     const kind = activeEngine();
@@ -419,6 +462,8 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     getOutputLevel,
     getOutputBands,
     activeEngine,
+    voiceNow: () => voiceNow,
+    onVoiceChange,
     natural,
     homebase,
   };

@@ -14,6 +14,7 @@ import { createProtocolGrid, createProtocolBubble } from './protocols.js';
 import { createAttachmentStrip } from './attachments.js';
 import { createFrameSegmentView, createOpticsTurnCard, createPinsSegmentView } from './optics/chat-views.js';
 import { createMusicCardView } from './music/card.js';
+import { createVoiceTag } from './voice-tag.js';
 import { loadHologramRenderer } from './hologram/viewer.js';
 import { loadBlueprintModule } from './blueprint/open.js';
 import { MODELS } from '../engine/index.js';
@@ -726,6 +727,14 @@ export function createChat(o) {
         return false;
       }
     },
+    // v7.8: the voice reading a reply aloud: { engine, label } or null.
+    speakingVoice: (turnId) => {
+      try {
+        return typeof o.speakingVoice === 'function' ? o.speakingVoice(turnId) || null : null;
+      } catch {
+        return null;
+      }
+    },
     ttsSupported: !!o.ttsSupported,
     o,
   };
@@ -973,7 +982,9 @@ function createJarvisTurnView(turn, ctx) {
         )
       : null;
   const stats = h('div', { class: 'turn-stats', attrs: { 'data-testid': 'turn-stats' } });
-  const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, missionBtn, shareBtn);
+  // v7.8: while it is read aloud, the voice reading it ("George · home base", "iPhone voice"…).
+  const speakVoice = speakBtn ? createVoiceTag({ testid: 'turn-speak-voice' }) : null;
+  const actions = h('div', { class: 'turn-actions' }, copyBtn, speakBtn, speakVoice ? speakVoice.el : null, missionBtn, shareBtn);
   const footer = h('div', { class: 'turn-footer', hidden: true }, footerNotice, h('div', { class: 'turn-foot-row' }, actions, stats));
 
   const el = h('article', { class: 'turn turn--jarvis', attrs: { 'data-testid': 'turn-jarvis', 'data-status': txt(turn.status) || 'running', 'data-turn-id': txt(turn.id), 'aria-label': 'Jarvis reply' } }, head, segsEl, pending, footer);
@@ -1206,6 +1217,10 @@ function createJarvisTurnView(turn, ctx) {
     setText(speakLabel, speaking ? 'Stop' : 'Speak');
     speakBtn.setAttribute('aria-label', speaking ? 'Stop reading' : 'Read reply aloud');
     speakIcon.replaceChildren(icon(speaking ? 'speaker-off' : 'speaker', { size: 16 }));
+    if (speakVoice) {
+      const v = speaking ? ctx.speakingVoice(turn.id) : null;
+      speakVoice.set(v && v.engine, v && v.label);
+    }
   }
 
   /** Re-check the memory chips (memory changed: a fact was undone or edited in Settings). */

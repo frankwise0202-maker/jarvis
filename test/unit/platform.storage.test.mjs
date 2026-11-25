@@ -54,6 +54,7 @@ test('settings: defaults match SPEC and are frozen', async () => {
     wakeClap: true, wakeClapSensitivity: 'normal', wakeWord: false, wakeReturn: true, // Wake Jarvis (Standby, v7.4)
     homeBaseUrl: '', // the home base (Jarvis Core) address, not linked (v7.5)
     homeBaseHear: false, homeBaseSpeak: false, // hearing and voice through the home base, off (v7.7 beta)
+    homeBaseSpeakBy: '', // nobody has set George's voice from the home base on this device yet (v7.8)
   };
   assert.deepEqual(r.s, expected);
   assert.deepEqual(r.d, expected);

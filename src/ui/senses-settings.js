@@ -241,13 +241,14 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
     busy.speak = true;
     speakSw.disabled = true;
     out(speakOut, on ? 'Turning it on at the home base…' : '', 'busy');
-    if (!on) safe(() => commit({ homeBaseSpeak: false }));
+    // v7.8: the owner's own choice from now on (homeBaseSpeakBy 'owner'): never switched by itself again.
+    if (!on) safe(() => commit({ homeBaseSpeak: false, homeBaseSpeakBy: 'owner' }));
     const r = await senses.save({ speak: { enabled: on } });
     busy.speak = false;
     speakSw.disabled = false;
     if (destroyed) return;
     if (r && r.ok) {
-      if (on) safe(() => commit({ homeBaseSpeak: true }));
+      if (on) safe(() => commit({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' }));
       out(speakOut, on ? 'On. The home base gets the voice ready; until then replies sound as before.' : `Off. Replies use ${devWord}’s voices.`, 'ok');
     } else if (on) {
       speakSw.checked = false;

@@ -26,6 +26,7 @@ import { testHomeBase } from '../platform/homebase.js';
 import { createBrainSettings } from './brain-settings.js';
 import { createSyncSettings } from './sync.js';
 import { createSensesSettings } from './senses-settings.js';
+import { createJarvisVoiceCard } from './voice-card.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -649,8 +650,33 @@ export function createSettingsPanel(o) {
       naturalCard = null;
     }
   }
+  // v7.8: "Jarvis's voice" at the top: the voice in use and where it comes from, Test, George's voice
+  // from the home base on or off, the ways to George without one, and a better built-in voice.
+  let jarvisVoice = null;
+  if (o.voice && o.voice.tts) {
+    jarvisVoice = safeCall(
+      () =>
+        createJarvisVoiceCard({
+          tts: o.voice.tts,
+          senses: o.voice.senses || null,
+          natural: o.voice.natural || null,
+          getSettings,
+          commit,
+          toast: o.toast,
+          os: currentOs(),
+          goTo: (id) => scrollToSection(id, true),
+        }),
+      null,
+    );
+    if (jarvisVoice) {
+      cleanups.push(() => jarvisVoice.destroy());
+      const offChange = safeCall(() => onSettingsChange((st) => jarvisVoice.sync(st)), null);
+      if (typeof offChange === 'function') cleanups.push(offChange);
+    }
+  }
   const voice = section(
     'voice',
+    jarvisVoice ? jarvisVoice.el : null,
     card(
       row({
         label: 'Speak replies',

@@ -73,6 +73,10 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // device's own recognizer and voice stay the fallback (unreachable, slower than 4 s, an error).
   homeBaseHear: false,
   homeBaseSpeak: false,
+  // v7.8: who set "George's voice from the home base" on this device: '' nobody yet, 'auto' the app turned
+  // it on by itself (once, when a home base with a voice was linked and reachable), 'owner' the owner
+  // switched it himself (on or off). The app never turns it on again once the owner has chosen.
+  homeBaseSpeakBy: '',
 });
 
 /** Valid ranges, exported so the Settings UI can use the same bounds for its inputs. */
@@ -197,6 +201,7 @@ const VALIDATORS = {
   },
   homeBaseHear: bool,
   homeBaseSpeak: bool,
+  homeBaseSpeakBy: oneOf(['', 'auto', 'owner']),
 };
 
 /**

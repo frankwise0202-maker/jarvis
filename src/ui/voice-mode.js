@@ -141,6 +141,7 @@ import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from './voice-visuals.js';
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
 import { openingIntent, standbyCommand, routineReply, answerParts, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
+import { createVoiceTag } from './voice-tag.js';
 
 export { splitSentences };
 
@@ -292,6 +293,7 @@ function createVoiceMode(opts) {
     homeBase,
     standby,
     wake,
+    voiceLabel,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -382,6 +384,11 @@ function createVoiceMode(opts) {
   // v7.7 (beta): "via home base" while the home base hears this listen (Whisper on the Alienware).
   const hbMark = h('span', { class: 'vm-hb-mark', hidden: true, attrs: { 'data-testid': 'voice-homebase-mark', title: 'Heard by your home base (Whisper on the Alienware)' } }, icon('server', { size: 12, strokeWidth: 2 }), h('span', { text: 'via home base' }));
   const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText, hbMark);
+  // v7.8: the voice speaking now, under the status line: "George · home base", "George · this device",
+  // "iPhone voice" / "built-in voice". It changes when George hands over mid-reply (the router's
+  // onVoiceChange), and goes when the voice stops.
+  const voiceTag = createVoiceTag({ testid: 'voice-label' });
+  const voiceRow = h('div', { class: 'vm-voice-row' }, voiceTag.el);
 
   const captions = h('div', { class: 'vm-captions', attrs: { 'data-testid': 'voice-captions', 'data-kind': 'hint' } });
   // Apple Music: the Music card of a "play …" (or the cards of a reply's find_music calls, stacked)
@@ -504,7 +511,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, voiceRow, captions, reviewEl, capSub, musicEl, missionEl, readFull),
     h(
       'div',
       { class: 'vm-bottom' },
@@ -572,6 +579,24 @@ function createVoiceMode(opts) {
     on(window, 'online', onConnectivity),
     on(window, 'offline', onConnectivity),
   ];
+  // v7.8: the voice label follows the voice that actually speaks.
+  const valueOf = (fn) => {
+    try {
+      return fn();
+    } catch {
+      return null;
+    }
+  };
+  const showVoice = (engine) => {
+    const words = engine && typeof voiceLabel === 'function' ? String(valueOf(() => voiceLabel(engine)) || '') : '';
+    voiceTag.set(engine && words ? engine : null, words);
+    root.dataset.voice = engine && words ? engine : '';
+  };
+  if (tts && typeof tts.onVoiceChange === 'function') {
+    const offVoice = valueOf(() => tts.onVoiceChange((engine) => !S.closed && showVoice(engine)));
+    if (typeof offVoice === 'function') offs.push(offVoice);
+    if (typeof tts.voiceNow === 'function') showVoice(valueOf(() => tts.voiceNow()) || null);
+  }
   // A hologram or blueprint viewer over Voice Mode makes it inert (overlay.js): the core's level
   // animation stops while it is covered and starts again once it shows.
   let inertObserver = null;

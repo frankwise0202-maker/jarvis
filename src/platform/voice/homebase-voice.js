@@ -27,6 +27,11 @@ const TIMEOUT_PER_AUDIO = 1.5; // … plus 1.5 × the audio the text makes (1 ×
 const MAX_TIMEOUT_MS = 45000;
 const CHARS_PER_SECOND = 13; // George at speed 1 (measured: 197 characters = 15.1 s, 258 = 21.1 s)
 export const HOMEBASE_CHUNKS = Object.freeze({ firstChunk: 80, maxChunk: 180 });
+// v7.8: the first words sooner. The first chunk is cut at the first clause or sentence end 40-60
+// characters in (natural-stream.js, speech-text.js takeFirstClause), and the chunks after it grow from
+// 40 characters by the measured speed (0.7 × real time assumed until measured: an i7's George plus the
+// network), so the next one is made while the previous one plays.
+export const HOMEBASE_FIRST = Object.freeze({ firstCut: Object.freeze({ min: 40, max: 60 }), minChunk: 40, assumedRtf: 0.7 });
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
 const SLOW_RTF = 1.0;
@@ -46,7 +51,7 @@ export function speakTimeoutFor(text, speed = 1, { first = false } = {}) {
 }
 
 export function createHomeBaseVoiceEngine({ senses, timeoutFor = speakTimeoutFor, now = perfNow } = {}) {
-  let st = { state: 'ready', rtf: null, underruns: 0, device: 'homebase', ...HOMEBASE_CHUNKS };
+  let st = { state: 'ready', rtf: null, underruns: 0, device: 'homebase', ...HOMEBASE_CHUNKS, ...HOMEBASE_FIRST };
   const listeners = new Set();
   const queue = [];
   let busy = null; // { id, ctl }

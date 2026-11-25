@@ -60,6 +60,10 @@ import { createHomeBaseHearing } from '../platform/voice/homebase-hearing.js';
 import { createHomeBaseVoiceEngine } from '../platform/voice/homebase-voice.js';
 import { createSenses } from './senses.js';
 import { contextPrompt } from '../lib/senses.js';
+import { createVoiceAuto, setHomeBaseVoice } from './voice-auto.js';
+import { createVoiceNotice } from './voice-notice.js';
+import { voiceLabel } from '../lib/voice-choice.js';
+import { voiceById } from '../platform/voice/natural/catalog.js';
 import { markdownToPlainText } from '../lib/markdown.js';
 import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
@@ -514,6 +518,8 @@ export async function startApp(rootEl) {
     onForgetMemory: state.demo ? null : (fact) => forgetMemory(fact),
     onSpeak: (turn) => toggleSpeakTurn(turn),
     isSpeaking: (turnId) => !!(state.speaking && state.speaking.turnId === turnId),
+    // v7.8: the voice reading it aloud ("George · home base", "iPhone voice"…), beside its Stop.
+    speakingVoice: (turnId) => (state.speaking && state.speaking.turnId === turnId ? labelOfVoiceNow() : null),
     onOpenMission: (turn, missionId) => openMission(turn, missionId),
     onOpenSettings: (section) => openSettings({ section, focus: section === 'apikey' ? 'apikey-input' : null }),
     onNewChat: () => newChat(),
@@ -598,6 +604,67 @@ export async function startApp(rootEl) {
   initSheets({ layer: sheetLayer, shell });
 
   const toast = (msg, opts) => toasts.show(msg, opts);
+
+  // ---- Jarvis's voice (v7.8, SPEC §26) ----------------------------------------------------------
+  // The voice label (Voice Mode, a reply read aloud, Settings' Test) names the voice that actually
+  // speaks; George from the home base is turned on once by itself (voice-auto.js) with a notice.
+  const deviceOs = safe(() => parseUserAgent(navigator.userAgent, navigator.maxTouchPoints).os, 'other') || 'other';
+  const speakerName = () => (voiceById(getSettings().naturalVoiceId) || voiceById('bm_george') || { name: 'George' }).name;
+  const labelFor = (engine) => voiceLabel(engine, { voiceName: speakerName(), os: deviceOs });
+  /** The sample a notice or Settings plays: through the router, inside the owner's tap (iOS). */
+  function testVoice({ onVoice } = {}) {
+    safe(() => unlockSpeech());
+    const s = getSettings();
+    const hr = new Date().getHours();
+    const line = `Good ${hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening'}, ${s.userName || 'sir'}. This is my voice, made on your home base.`;
+    return new Promise((resolve) => {
+      const off = typeof tts.onVoiceChange === 'function' ? tts.onVoiceChange((engine) => engine && typeof onVoice === 'function' && safe(() => onVoice(engine, labelFor(engine)))) : () => {};
+      const done = () => {
+        safe(() => off());
+        resolve();
+      };
+      try {
+        stopSpeakingNow();
+        speak(line, { voiceURI: s.voiceURI, rate: s.voiceRate, onEnd: done });
+      } catch {
+        done();
+      }
+    });
+  }
+  const voiceNotice =
+    senses && !state.demo
+      ? safe(
+          () =>
+            createVoiceNotice({
+              senses,
+              getSettings,
+              os: deviceOs,
+              voiceName: speakerName,
+              turnOff: () => setHomeBaseVoice(senses, false, { commit: saveSettings }),
+              test: (o) => testVoice(o),
+              openSettings: () => openSettings({ section: 'voice' }),
+            }),
+          null,
+        )
+      : null;
+  if (voiceNotice) toasts.el.prepend(voiceNotice.el);
+  const voiceAuto = senses
+    ? createVoiceAuto({
+        senses,
+        getSettings,
+        saveSettings,
+        demo: () => state.demo || !sensesAllowed,
+        onEnabled: () => voiceNotice && voiceNotice.show(),
+      })
+    : null;
+  const checkVoiceAuto = (opts) => voiceAuto && safe(() => voiceAuto.check(opts));
+  /** The voice speaking now, as the label shows it: { engine, label } or null. */
+  function labelOfVoiceNow() {
+    const engine = typeof tts.voiceNow === 'function' ? safe(() => tts.voiceNow(), null) : null;
+    return engine ? { engine, label: labelFor(engine) } : null;
+  }
+  // A reply read aloud shows its voice beside Stop; it changes when George hands over mid-reply.
+  if (typeof tts.onVoiceChange === 'function') safe(() => tts.onVoiceChange(() => state.speaking && chat.refreshSpeaking()));
 
   // ---- Screens (v7): another monitor, a floating panel, a window ---------------------------------
   // src/ui/screens/controller.js places things; this part tells it what the app shows and how to
@@ -1419,6 +1486,7 @@ export async function startApp(rootEl) {
   function openVoice({ wake = null } = {}) {
     refreshCameraPermission();
     if (senses && !state.demo) safe(() => senses.prime({ warm: true })); // hearing / voice through the home base: a fresh reading, warmed up
+    checkVoiceAuto(); // v7.8: George from the home base, on once by itself (when it couldn't be asked at launch)
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     safe(() => composer.cancelCountdown()); // Voice Mode takes over: words waiting in the box stay there
@@ -1457,6 +1525,8 @@ export async function startApp(rootEl) {
         },
         // Home base (v7.5): "how's the home base?" said or typed here; Jarvis says the Core's answer (free).
         homeBase: homeBase ? { command: (text) => homeBaseFromVoice(text) } : null,
+        // v7.8: the label of the voice speaking ("George · home base", "iPhone voice"…).
+        voiceLabel: (engine) => labelFor(engine),
         // Apple Music: "play Back in Black" said here is found at once (free) and shown as a Music card.
         music: {
           command: (text, extra) => musicCommand(text, { source: 'voice', spoken: true, found: (extra && extra.found) || null }),
@@ -3277,6 +3347,8 @@ export async function startApp(rootEl) {
     const panelCtl = createSettingsPanel({
       demo: state.demo,
       naturalVoice: naturalVoice ? { natural: naturalVoice, tts } : null,
+      // v7.8: Settings → Voice → Jarvis's voice (the voice in use, Test, George on or off).
+      voice: { tts, natural: naturalVoice || null, senses: senses && !state.demo ? senses : null },
       // v7.7 (beta): Settings → Home base → Hearing and voice.
       senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()) } : null,
       testApiKey: (key) => engine.testApiKey(key),
@@ -3653,6 +3725,8 @@ export async function startApp(rootEl) {
       if (s.followups === false && prev.followups !== false) clearFollowups();
       if (s.userName !== prev.userName || s.leadModel !== prev.leadModel || s.depth !== prev.depth || s.maxAgents !== prev.maxAgents) chat.refreshEmpty();
       if (s.speakReplies === 'off' && prev.speakReplies !== 'off' && state.speaking) stopSpeakingNow();
+      // v7.8: a home base linked (or another one): George from it, on once by itself.
+      if (s.homeBaseUrl && s.homeBaseUrl !== prev.homeBaseUrl && prev.homeBaseUrl !== undefined) setTimeout(() => checkVoiceAuto({ force: true }), 600);
       updateAll();
     }),
   );
@@ -3703,6 +3777,10 @@ export async function startApp(rootEl) {
     if (!document.hidden) {
       chat.refresh();
       updateAll();
+      // v7.8: back in front: have the home base load George before the next reply, and turn him on
+      // once if that couldn't be done at launch (the home base didn't answer then).
+      if (senses && !state.demo) safe(() => senses.prime({ voice: true }));
+      checkVoiceAuto();
     }
   });
 
@@ -3818,6 +3896,11 @@ export async function startApp(rootEl) {
       return contextPrompt({ names: ['Jarvis', getSettings().userName, ...parts], title: conv && conv.title, texts });
     };
     setTimeout(() => safe(() => senses.prime()), 1500);
+    // v7.8: George from the home base, on once by itself; a notice left from the last launch comes back.
+    setTimeout(() => {
+      if (voiceNotice) safe(() => voiceNotice.resume());
+      checkVoiceAuto();
+    }, 1700);
   }
   // Sync (v7.6): a first sync a few seconds after the boot, then every 10 minutes while open.
   if (syncCtl) safe(() => syncCtl.start());
