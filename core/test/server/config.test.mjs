@@ -102,19 +102,30 @@ test('access: direct localhost; Tailscale serve with a login; everything else re
   assert.equal(hostnameOf('LOCALHOST:8788'), 'localhost');
 });
 
-test('CORS: github.io, any localhost, same origin; others refused; preflight with private network', () => {
+test('CORS: github.io and the Core\'s own pages only (not other localhost ports); others refused; preflight with private network', () => {
   const local = checkAccess(req({ host: 'localhost:8788' }));
   const allow = (origin, access = local, extra = {}) => checkOrigin(req({ origin, ...extra }), access, { allowedOrigins: ['https://frankwise0202-maker.github.io'] });
   assert.equal(allow('https://frankwise0202-maker.github.io').allow, 'https://frankwise0202-maker.github.io');
-  assert.equal(allow('http://localhost:5173').ok, true);
-  assert.equal(allow('http://127.0.0.1:8788').ok, true);
+  assert.equal(allow('http://localhost:8788').ok, true, 'the dashboard on this computer');
+  assert.equal(allow('http://127.0.0.1:8788').ok, true, 'the same page under another loopback name');
+  assert.equal(allow('http://[::1]:8788').ok, true);
+  assert.equal(allow('http://localhost:5173').ok, false, 'a page another program serves on this computer');
+  assert.equal(allow('http://127.0.0.1:3000').ok, false);
+  assert.equal(allow('https://localhost:8788').ok, false);
+  // A developer's dev server, added in config.json, is allowed.
+  assert.equal(checkOrigin(req({ origin: 'http://localhost:5173' }), local, { allowedOrigins: ['https://frankwise0202-maker.github.io', 'http://localhost:5173'] }).ok, true);
   assert.equal(allow('https://evil.example').ok, false);
   assert.equal(allow('https://frankwise0202-maker.github.io.evil.example').ok, false);
   assert.equal(allow('null').ok, false);
   assert.equal(allow('not a url').ok, false);
   const ts = checkAccess(req(TS));
   assert.equal(allow('https://alienware.tail4e5f6a.ts.net', ts).ok, true); // the dashboard opened through Tailscale
+  assert.equal(allow('https://frankwise0202-maker.github.io', ts).ok, true);
+  // Through the tailnet, a localhost page on the viewer's device is never this Core's.
+  for (const o of ['http://localhost:5173', 'http://localhost:8788', 'http://127.0.0.1:8788', 'https://other.tail4e5f6a.ts.net']) assert.equal(allow(o, ts).ok, false, o);
   assert.equal(checkOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors' }), local, {}).ok, false);
+  assert.equal(checkOrigin(req({ 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors' }), local, {}).ok, false, 'another port of this computer, no-cors');
+  assert.equal(checkOrigin(req({ 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' }), local, {}).ok, true);
   assert.equal(checkOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' }), local, {}).ok, true);
   assert.equal(checkOrigin(req({}), local, {}).allow, null);
   const pre = corsHeaders('https://frankwise0202-maker.github.io', req({ 'access-control-request-private-network': 'true' }), { preflight: true });

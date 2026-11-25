@@ -64,8 +64,10 @@ Defaults, then `~/.config/jarvis-core/config.json` (optional), then environment 
 | a local Claude API stand-in (tests only; loopback addresses only, anything else is refused) | `JARVIS_CORE_CLAUDE_BASE_URL` | `https://api.anthropic.com` |
 
 The config file also takes `thresholds` (e.g. `{"cpuTemp": {"warn": 75}}`), `gpuMissingLevel`
-(`warn`, or `ok` to stop warning about a missing NVIDIA driver), `allowedOrigins`, `tailscaleLogins` (limit
-which tailnet users may connect) and `smartSudo`. A broken file is reported and ignored.
+(`warn`, or `ok` to stop warning about a missing NVIDIA driver), `allowedOrigins` (extra page origins
+allowed to call the API, e.g. a developer's `"http://localhost:5173"`; always on top of the Jarvis app's),
+`tailscaleLogins` (limit which tailnet users may connect) and `smartSudo`. A broken file is reported and
+ignored.
 
 ## API
 
@@ -89,8 +91,12 @@ with `available: false` and a plain-words `message`/`detail`, never a guess. Err
 own port, which also stops DNS-rebinding pages), or requests through `tailscale serve` that carry
 `Tailscale-User-Login` and this machine's `*.ts.net` name. Public Tailscale Funnel traffic
 (`Tailscale-Funnel-Request`) is always refused, although it arrives from localhost. **Origins:**
-`https://frankwise0202-maker.github.io`, any localhost origin, and the dashboard's own origin; every other origin
-gets 403. Chrome's private-network preflights (a public page calling the 100.x Tailscale address) get
+`https://frankwise0202-maker.github.io` (plus any `allowedOrigins` from the config file) and the Core's own
+pages (the dashboard through the tailnet name, or at localhost / 127.0.0.1 / [::1] on the Core's port);
+every other origin gets 403, pages on other localhost ports too (directly or through the tailnet, so a page
+some other program serves cannot reach the brain, the key or the backups), and so do no-cors requests from
+another site or another port (`Sec-Fetch-Site` cross-site / same-site). Chrome's private-network
+preflights (a public page calling the 100.x Tailscale address) get
 `Access-Control-Allow-Private-Network: true` for those origins only. A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
