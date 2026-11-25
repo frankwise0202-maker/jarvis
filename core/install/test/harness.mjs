@@ -107,11 +107,26 @@ case "$1" in
   disable-linger) echo no > "$f" ;;
 esac`,
   // systemctl --user: start/restart runs the unit's ExecStart (the real Core, in fixture mode on the
-  // sandbox port), stop/disable --now stops it.
+  // sandbox port), stop/disable --now stops it. Any other unit (the update timer) is only flags:
+  // enabled@<unit>, active@<unit>. "show jarvis-core.service -p NRestarts" reads $STUB_DIR/nrestarts.
   systemctl: `echo "systemctl $*" >> "$STUB_LOG"
 [ "$1" = --user ] && shift
 unit="$HOME/.config/systemd/user/jarvis-core.service"
 pidf="$STUB_DIR/core.pid"
+other=""
+for a in "$@"; do case "$a" in jarvis-core.service) ;; *.service|*.timer) other=$a ;; esac; done
+if [ -n "$other" ]; then
+  q=0; now=0; for a in "$@"; do [ "$a" = --quiet ] && q=1; [ "$a" = --now ] && now=1; done
+  case "$1" in
+    is-enabled) if [ -f "$STUB_DIR/enabled@$other" ]; then [ $q = 1 ] || echo enabled; exit 0; else [ $q = 1 ] || echo disabled; exit 1; fi ;;
+    is-active) if [ -f "$STUB_DIR/active@$other" ]; then [ $q = 1 ] || echo active; exit 0; else [ $q = 1 ] || echo inactive; exit 3; fi ;;
+    enable) touch "$STUB_DIR/enabled@$other"; [ $now = 1 ] && touch "$STUB_DIR/active@$other"; exit 0 ;;
+    disable) rm -f "$STUB_DIR/enabled@$other"; [ $now = 1 ] && rm -f "$STUB_DIR/active@$other"; exit 0 ;;
+    start) touch "$STUB_DIR/active@$other"; exit 0 ;;
+    stop) rm -f "$STUB_DIR/active@$other"; exit 0 ;;
+    *) exit 0 ;;
+  esac
+fi
 stop() { [ -f "$pidf" ] && kill "$(cat "$pidf")" 2>/dev/null; rm -f "$pidf" "$STUB_DIR/active"; sleep 0.3; }
 start() {
   line=$(grep '^ExecStart=' "$unit") || exit 1
@@ -121,6 +136,7 @@ start() {
   echo $! > "$pidf"; touch "$STUB_DIR/active"
 }
 case "$1" in
+  show) case "$*" in *NRestarts*) cat "$STUB_DIR/nrestarts" 2>/dev/null || echo 0 ;; esac; exit 0 ;;
   is-active) q=0; for x in "$@"; do [ "$x" = --quiet ] && q=1; done
     if [ -f "$STUB_DIR/active" ]; then [ $q = 1 ] || echo active; exit 0; else [ $q = 1 ] || echo inactive; exit 3; fi ;;
   is-enabled) [ -f "$STUB_DIR/enabled" ] && echo enabled || { echo disabled; exit 1; } ;;
@@ -153,6 +169,15 @@ esac`,
 [ "$1" = --version ] && { echo "Google Chrome 142.0.7444.175"; exit 0; }
 exit 0`,
   git: `echo "git $*" >> "$STUB_LOG"; exec ${REAL_GIT} "$@"`,
+  // npm: "npm ci" makes node_modules in the folder it runs in (a marker, nothing importable) unless
+  // STUB_NPM_FAIL=1 (no internet); never touches the network.
+  npm: `echo "npm $* (in $PWD)" >> "$STUB_LOG"
+if [ "$1" = ci ]; then
+  if [ "\${STUB_NPM_FAIL:-0}" = 1 ]; then echo "npm error code EAI_AGAIN" >&2; echo "npm error request to https://registry.npmjs.org/web-push failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org" >&2; exit 1; fi
+  [ -f package-lock.json ] || { echo "npm error The npm ci command can only install with an existing package-lock.json" >&2; exit 1; }
+  mkdir -p node_modules && echo stub > node_modules/.stub-npm-ci
+fi
+exit 0`,
 };
 
 // tailscale: STUB_TS = not-running | NeedsLogin | Stopped | Running; STUB_TS_CERTS=0 for a tailnet
@@ -210,7 +235,7 @@ export async function freePort() {
 export function makeRepo(root) {
   const work = path.join(root, 'upstream');
   fs.mkdirSync(path.join(work, 'core'), { recursive: true });
-  for (const sub of ['server', 'install', 'fixtures', 'package.json', 'README.md']) {
+  for (const sub of ['server', 'install', 'fixtures', 'package.json', 'package-lock.json', 'whats-new.json', 'README.md']) {
     const src = path.join(CORE, sub);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(work, 'core', sub), { recursive: true });
   }

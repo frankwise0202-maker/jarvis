@@ -14,6 +14,8 @@
 #   - installs git, curl, lm-sensors (and smartmontools for the disk check) with apt
 #   - installs Node.js 24 LTS from NodeSource, unless Node.js 22 or newer is already there
 #   - downloads only the core/ folder of the Jarvis repository into ~/jarvis-core-app
+#   - installs the brain's libraries there (npm ci: the Claude SDK and web-push); without them the
+#     Core still runs, and the brain says its SDK is missing
 #   - installs the jarvis-core command (~/.local/bin/jarvis-core)
 #   - optionally lets Jarvis Core read the hard drive's health (one narrow sudo rule)
 #   - runs Jarvis Core 24/7 as a systemd user service, also before anyone logs in (lingering)
@@ -21,12 +23,14 @@
 #   - keeps the screen on: no blanking, lock, dimming or suspend on AC power (and says how to undo it)
 #   - optionally logs in automatically, so the dashboard comes back after a power cut
 #   - shares it with your iPhone and Mac with `tailscale serve` (your devices only; never funnel)
+#   - optionally keeps itself up to date: a timer checks GitHub every 20 minutes (jarvis-core autoupdate)
 #
 # Options: --dry-run (show every step, change nothing), --refresh (what `jarvis-core update` runs
-# after downloading: rewrite the command, service and autostart, restart, reload the screen), --help.
+# after downloading: rewrite the command, service and autostart, install the libraries, restart, reload
+# the screen), --help.
 # Test-only overrides: JARVIS_CORE_REPO, JARVIS_CORE_BRANCH, JARVIS_CORE_APP_DIR, JARVIS_CORE_TTY,
 # JARVIS_CORE_OS_RELEASE, JARVIS_CORE_GDM_CONF, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_SHIM,
-# JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT.
+# JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT, JARVIS_CORE_START_WAIT_SEC.
 
 set -uo pipefail
 
@@ -52,6 +56,12 @@ SUDOERS_FILE="${JARVIS_CORE_SUDOERS_FILE:-/etc/sudoers.d/jarvis-core-smartctl}"
 SHIM="${JARVIS_CORE_SHIM:-/usr/local/bin/jarvis-core}"
 TTY_DEV="${JARVIS_CORE_TTY:-/dev/tty}"
 SMARTCTL=/usr/sbin/smartctl
+AU_TIMER=jarvis-core-autoupdate.timer # the unit names of the owner's hand-made update timer, adopted
+AU_SERVICE_FILE="$CONFIG_HOME/systemd/user/jarvis-core-autoupdate.service"
+AU_TIMER_FILE="$CONFIG_HOME/systemd/user/$AU_TIMER"
+AU_OLD_SCRIPT="$HOME/.local/bin/jarvis-core-autoupdate"
+START_WAIT="${JARVIS_CORE_START_WAIT_SEC:-30}"
+NPM_CI=(ci --omit=dev --no-audit --no-fund)
 INSTALL_CMD="wget -qO- https://raw.githubusercontent.com/frankwise0202-maker/jarvis/main/core/install/install.sh | bash"
 
 DRY_RUN=0
@@ -59,7 +69,7 @@ REFRESH=0
 HAVE_TTY=0
 SUDO_OK=0
 STEP=0
-STEPS=12
+STEPS=13
 USER_NAME=$(id -un)
 NODE_BIN=""
 NODE_VERSION=""
@@ -70,6 +80,7 @@ TS_URL=""
 WANT_AUTOLOGIN=no
 WANT_SMART=no
 WANT_SERVE=later
+WANT_AUTOUPDATE=no
 MANUAL=()
 TMP=""
 SCRIPT_DIR="" # where this file is, when it is run from a file (empty when piped)
@@ -509,6 +520,19 @@ step_questions() {
     say "Tailscale isn't connected yet, so nothing to ask about sharing: the steps are at the end."
     WANT_SERVE=later
   fi
+
+  printf '\n'
+  if [ -f "$AU_SERVICE_FILE" ] && grep -q 'autoupdate-tick' "$AU_SERVICE_FILE" 2>/dev/null && systemctl --user is-enabled --quiet "$AU_TIMER" 2>/dev/null; then
+    ok "Jarvis Core already keeps itself up to date (every 20 minutes)"
+    WANT_AUTOUPDATE=keep
+  elif [ -f "$AU_TIMER_FILE" ] || [ -f "$AU_SERVICE_FILE" ] || [ -f "$AU_OLD_SCRIPT" ]; then
+    ok "Found the update timer you set up by hand: Jarvis Core takes it over (same names)"
+    WANT_AUTOUPDATE=adopt
+  else
+    say "Automatic updates: every 20 minutes Jarvis Core can look for a new version of itself on GitHub"
+    say "and install it. If a new version doesn't start properly, it goes back to the one before by itself."
+    if ask "Keep Jarvis Core up to date automatically?" y; then WANT_AUTOUPDATE=yes; else WANT_AUTOUPDATE=no; fi
+  fi
 }
 
 setup_sudo() {
@@ -650,6 +674,66 @@ step_app() {
   if [ "$DRY_RUN" != 1 ] && [ ! -f "$APP_DIR/core/server/main.mjs" ]; then
     die "$APP_DIR/core/server/main.mjs is missing, so the download is incomplete. Delete $APP_DIR and run the install command again."
   fi
+  deps_install
+}
+
+# The brain's libraries (the Claude SDK, web-push) with npm ci, into a fresh folder that is swapped in only
+# when it is complete: a failed install (no internet) leaves the libraries that were there, and the running
+# Core never sees half a node_modules. Without them the Core still starts; the brain reports its SDK missing.
+deps_install() {
+  local core="$APP_DIR/core" want have_sha npm_bin stage log
+  if [ ! -f "$core/package-lock.json" ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+      would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: the Claude SDK and web-push)"
+    else
+      note "No package-lock.json in $core, so there are no libraries to install"
+    fi
+    return 0
+  fi
+  want=$(sha256sum "$core/package-lock.json" 2>/dev/null) || want=""
+  want=${want%% *}
+  have_sha=$(cat "$core/node_modules/.jarvis-lock-sha256" 2>/dev/null) || have_sha=""
+  if [ -n "$want" ] && [ "$want" = "$have_sha" ]; then
+    ok "The brain's libraries are installed (the Claude SDK and web-push)"
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: the Claude SDK and web-push)"
+    return 0
+  fi
+  npm_bin=$(command -v npm 2>/dev/null) || npm_bin=""
+  if [ -z "$npm_bin" ]; then
+    note "npm isn't installed, so the brain's libraries (Claude, notifications) can't be added; Jarvis Core runs without them"
+    [ "$REFRESH" = 1 ] || manual "Install npm (it comes with Node.js from NodeSource), then run: jarvis-core update"
+    return 0
+  fi
+  tmpdir
+  log="$TMP/npm-ci.log"
+  stage="$core/.npm-install"
+  rm -rf "$stage" "$core/node_modules.old"
+  if ! { mkdir -p "$stage" && cp "$core/package.json" "$core/package-lock.json" "$stage/"; }; then
+    note "Couldn't prepare the libraries' folder; keeping what is there"
+    return 0
+  fi
+  say "Installing the brain's libraries (npm ci: the Claude SDK and web-push, a minute or two)..."
+  if (cd "$stage" && timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
+    printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
+    [ -d "$core/node_modules" ] && mv "$core/node_modules" "$core/node_modules.old"
+    if mv "$stage/node_modules" "$core/node_modules"; then
+      rm -rf "$core/node_modules.old" "$stage"
+      ok "Installed the brain's libraries (the Claude SDK and web-push)"
+      return 0
+    fi
+    [ -d "$core/node_modules.old" ] && mv "$core/node_modules.old" "$core/node_modules"
+    note "Couldn't put the new libraries in place; keeping the ones that were there"
+  else
+    note "Couldn't install the brain's libraries (npm ci failed: no internet?). Jarvis Core runs without"
+    say "them; its Claude work and notifications wait for the next update. npm said:"
+    tail -n 4 "$log" 2>/dev/null | sed 's/^/      /'
+    [ "$REFRESH" = 1 ] || manual "Install the brain's libraries: jarvis-core update"
+  fi
+  rm -rf "$stage"
+  return 0
 }
 
 step_cli() {
@@ -791,10 +875,10 @@ step_service() {
   else
     systemctl --user start "$UNIT_NAME" </dev/null
   fi
-  if wait_core 30; then
+  if wait_core "$START_WAIT"; then
     ok "Jarvis Core is running: $LOCAL_URL"
   else
-    bad "Jarvis Core didn't answer within 30 seconds. Its last messages:"
+    bad "Jarvis Core didn't answer within $START_WAIT seconds. Its last messages:"
     journalctl --user -u "$UNIT_NAME" -n 15 --no-pager 2>/dev/null | sed 's/^/      /'
     manual "Check Jarvis Core: jarvis-core status, then jarvis-core logs"
   fi
@@ -1014,6 +1098,49 @@ step_tailscale() {
   fi
 }
 
+# The update timer itself is written by the jarvis-core command (one place for its units): turned on
+# here when the owner said yes, or taken over when a hand-made timer with the same names is there.
+step_autoupdate() {
+  section "Automatic updates"
+  local cli="$APP_DIR/core/install/jarvis-core" line rc
+  [ -f "$cli" ] || cli="$SCRIPT_DIR/jarvis-core"
+  case "$WANT_AUTOUPDATE" in
+    no)
+      say "Off (you said no). To turn it on later: jarvis-core autoupdate on"
+      return 0
+      ;;
+    keep)
+      [ "$DRY_RUN" = 1 ] || "$SELF_BIN" autoupdate refresh </dev/null >/dev/null 2>&1
+      ok "On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself"
+      return 0
+      ;;
+  esac
+  if [ "$DRY_RUN" = 1 ]; then
+    if [ -f "$cli" ]; then
+      while IFS= read -r line; do
+        case "$line" in
+          "# /"*) would "write ${line#\# }:" ;;
+          *) printf '      %s|%s %s\n' "$D" "$N" "$line" ;;
+        esac
+      done < <(bash "$cli" autoupdate print-units 2>/dev/null)
+    else
+      would "write $AU_SERVICE_FILE and $AU_TIMER_FILE (they run jarvis-core autoupdate-tick every 20 minutes)"
+    fi
+    [ -f "$AU_OLD_SCRIPT" ] && would "remove $AU_OLD_SCRIPT (the hand-made update script; the timer no longer needs it)"
+    would "run: systemctl --user daemon-reload"
+    would "run: systemctl --user enable --now $AU_TIMER"
+    say "Each check updates only when GitHub's core/ folder changed. If the new version doesn't answer 90"
+    say "seconds after an update, it goes back to the previous one by itself and logs it."
+    return 0
+  fi
+  "$SELF_BIN" autoupdate on </dev/null 2>&1 | sed -n '/^  /p'
+  rc=${PIPESTATUS[0]}
+  if [ "$rc" != 0 ]; then
+    note "Automatic updates couldn't be turned on here; run this later: jarvis-core autoupdate on"
+    manual "Turn on automatic updates: jarvis-core autoupdate on"
+  fi
+}
+
 done_box() {
   local lines=() width=0 line top
   lines+=("Done. Here's what to do next" "")
@@ -1043,6 +1170,9 @@ done_box() {
     "3. Check on it any time:  jarvis-core status"
     "   Get the latest version:  jarvis-core update"
     "   Undo everything:  jarvis-core uninstall")
+  case "$WANT_AUTOUPDATE" in
+    yes | keep | adopt) lines+=("" "It keeps itself up to date (jarvis-core autoupdate status).") ;;
+  esac
   case "$WANT_AUTOLOGIN" in
     yes | keep) lines+=("" "Automatic login is on: after a power cut it comes back by itself.") ;;
     *) lines+=("" "After a restart, log in once and the dashboard comes back.") ;;
@@ -1100,12 +1230,30 @@ refresh() {
   [ "$(id -u)" != 0 ] || [ -n "${JARVIS_CORE_ALLOW_ROOT:-}" ] || die "Run it as yourself, not as root."
   find_node || die "Node.js $NODE_MIN or newer is missing. Run the install command again."
   step_cli
+  section "The brain's libraries"
+  deps_install
   step_service
   step_screen
+  if [ "$DRY_RUN" != 1 ]; then
+    "$SELF_BIN" autoupdate refresh </dev/null 2>&1 | sed -n '/^  /p'
+  fi
   if [ "$DRY_RUN" != 1 ] && pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; then
-    "$SELF_BIN" open
+    if in_service; then
+      # Run by the update timer: a Chrome started from here would be stopped with the timer's job.
+      say "The dashboard on the screen reloads itself when it sees the new version."
+    else
+      "$SELF_BIN" open
+    fi
   fi
   printf '\n%sJarvis Core is up to date.%s\n' "$B" "$N"
+}
+
+in_service() { # run by a systemd service (an update timer): whatever it starts is stopped with it
+  [ -n "${JARVIS_CORE_UNATTENDED:-}" ] && return 0
+  local cg
+  cg=$(tail -n 1 /proc/self/cgroup 2>/dev/null) || return 1
+  case "${cg##*/}" in *.service) return 0 ;; esac
+  return 1
 }
 
 main() {
@@ -1150,6 +1298,7 @@ main() {
   step_power
   step_autologin
   step_tailscale
+  step_autoupdate
   finish
 }
 
