@@ -20,6 +20,7 @@ import {
   createPoller,
   escapeMarkdown,
   UNREACHABLE_MESSAGE,
+  DOWN_MESSAGE,
   POLL_MS,
 } from '../../src/lib/homebase.js';
 import { requestHomeBase, getHomeBaseStatus, testHomeBase, askHomeBase } from '../../src/platform/homebase.js';
@@ -162,8 +163,16 @@ test('tile: never invents a number (missing, null, first-sample and GPU states)'
 });
 
 test('tile: failures map to clear states and words', () => {
-  assert.deepEqual(failureState({ kind: 'unreachable' }), { phase: 'unreachable', message: 'Can’t reach the home base. Is Tailscale on on this device?' });
-  assert.equal(UNREACHABLE_MESSAGE, 'Can’t reach the home base. Is Tailscale on on this device?');
+  // No answer at all: this device's Tailscale, or the Alienware itself (asleep, off) — not only this device (HU-4).
+  assert.deepEqual(failureState({ kind: 'unreachable' }), { phase: 'unreachable', message: 'Can’t reach the home base. Is Tailscale switched on here, and is the Alienware on?' });
+  assert.equal(UNREACHABLE_MESSAGE, 'Can’t reach the home base. Is Tailscale switched on here, and is the Alienware on?');
+  assert.doesNotMatch(UNREACHABLE_MESSAGE, /\bon on\b/);
+  // Something answered that this page can't read (Tailscale's 502 while the Core is stopped or
+  // restarting): the Core isn't responding; the fix is on the Alienware, not the address (HB-E1, HU-1).
+  const down = failureState({ kind: 'down' });
+  assert.deepEqual(down, { phase: 'down', message: DOWN_MESSAGE });
+  assert.equal(DOWN_MESSAGE, 'The Alienware answered, but Jarvis Core isn’t responding. It restarts by itself; if this lasts, run jarvis-core restart on the Alienware.');
+  assert.doesNotMatch(down.message, /refused/);
   const refused = failureState({ kind: 'refused', status: 403, message: 'origin https://evil.example is not allowed' });
   assert.equal(refused.phase, 'refused');
   assert.match(refused.message, /refused the connection/);
@@ -186,6 +195,9 @@ test('glance and tape: the Systems glance row and the CORE reading follow the ti
   assert.deepEqual([homeBaseGlance({ phase: 'unset' }).text, homeBaseGlance({ phase: 'unset' }).tape], ['Not set up', '—']);
   assert.deepEqual([homeBaseGlance({ phase: 'unreachable', message: 'x' }).text, homeBaseGlance({ phase: 'unreachable', message: 'x' }).tape], ['Offline', 'OFFLINE']);
   assert.equal(homeBaseGlance({ phase: 'refused', message: 'x' }).tape, 'REFUSED');
+  const down = homeBaseGlance({ phase: 'down', message: DOWN_MESSAGE });
+  assert.deepEqual([down.text, down.tape, down.tone], ['Core down', 'DOWN', 'warn']);
+  assert.match(down.title, /jarvis-core restart/);
   assert.equal(homeBaseGlance(null).text, 'Not set up');
 });
 
@@ -213,6 +225,19 @@ test('local command: "how’s the home base" / "home base status" (the whole sen
     'Jarvis Core status',
     'how’s jarvis core',
     'home-base status',
+    // The owner's own words for it, a time at the end, and "can you check …" (HU-5).
+    'How’s the Alienware?',
+    'how is the alienware doing',
+    'Alienware status',
+    'is the alienware ok',
+    'how’s the alien ware',
+    'How is the home base doing today?',
+    'how’s the home base right now',
+    'Can you check the home base?',
+    'could you check on my alienware please',
+    'can you ping the home base',
+    'is my computer at home ok',
+    'how is my computer at home doing',
   ];
   for (const s of yes) assert.equal(matchHomeBaseCommand(s), true, s);
   const no = [
@@ -227,6 +252,11 @@ test('local command: "how’s the home base" / "home base status" (the whole sen
     'how is the core of the earth',
     'move my home base to the garage',
     'home base status and then search the web for GPU prices',
+    'can you check the weather',
+    'how much did the alienware cost',
+    'alienware',
+    'can you check the home base and then order a pizza',
+    'is my computer at home worth upgrading',
     null,
     42,
     'x'.repeat(200),
@@ -234,12 +264,32 @@ test('local command: "how’s the home base" / "home base status" (the whole sen
   for (const s of no) assert.equal(matchHomeBaseCommand(s), false, String(s));
 });
 
-test('local exchange: the Core’s words render as plain text in the chat (no links, images or HTML from it)', () => {
+/** The ASCII punctuation in `md` that isn't backslash-escaped ('' when every one is). */
+function unescapedPunctuation(md) {
+  const punct = (c) => /[!-/:-@[-`{-~]/.test(c);
+  let out = '';
+  for (let i = 0; i < md.length; i++) {
+    if (md[i] === '\\' && i + 1 < md.length && punct(md[i + 1])) i++;
+    else if (punct(md[i])) out += md[i];
+  }
+  return out;
+}
+
+test('local exchange: the Core’s words render as plain text in the chat (no links, lists, images or HTML from it)', () => {
   const answer = "Here's [the report](https://evil.example) ![x](https://evil.example/x.png) <b>hi</b> **now** & 4% _a_ `c` | #1";
   const md = escapeMarkdown(answer);
   assert.equal(markdownToPlainText(md), answer, 'it reads exactly as the Core said it');
   assert.doesNotMatch(md, /(?<!\\)\[/, 'no unescaped bracket: no link');
-  assert.equal(escapeMarkdown(ASK.ok['How are you?'].answer), ASK.ok['How are you?'].answer, 'everyday answers are unchanged');
+  // Every ASCII punctuation character is escaped, so nothing in the Core's text (a process name like
+  // www.x.io, a bare https:// address, a leading "1. " or "- ") can become a link or a list (HB-E3).
+  // The rendering itself is checked in markdown.test.mjs.
+  const everyday = ASK.ok['How are you?'].answer;
+  for (const text of [everyday, 'Mostly fine, Frank, but www.evil.io has kept a CPU thread busy.', 'Your build is at https://frankwise0202-maker.github.io/jarvis/', '1. thing', '- a dash first', '+ plus', '9) nine', '> quote', '|a|b|', '~~~', '***']) {
+    const esc = escapeMarkdown(text);
+    assert.equal(unescapedPunctuation(esc), '', `every ASCII punctuation character is escaped: ${esc}`);
+    assert.doesNotMatch(esc, /www\.|https?:\/\//, 'no bare address survives');
+    assert.equal(markdownToPlainText(esc), text, `it still reads exactly as the Core said it: ${text}`);
+  }
   assert.equal(escapeMarkdown(null), '');
 });
 
@@ -403,23 +453,30 @@ test('client: GET api/status with credentials omitted, no referrer, no cache; th
   assert.equal(init.headers, undefined, 'a simple GET: no preflight needed');
 });
 
-test('client: unreachable vs refused (a no-cors ping tells a CORS refusal from no answer), 403, 503, 429, other errors', async () => {
-  // The browser can't read the answer (TypeError) but something answers the no-cors ping: refused.
+test('client: unreachable vs the Core down (a no-cors ping tells an unreadable answer from no answer), 403, 503, 429, other errors', async () => {
+  // The browser can't read the answer (TypeError) but something answers the no-cors ping: Tailscale
+  // serve's 502 while the Core is stopped or restarting (it has no CORS headers). Not "refused": the
+  // Core's own refusals are readable (HB-E1, HU-1).
   let f = fakeFetch((url, init) => (init.mode === 'no-cors' ? { type: 'opaque', status: 0 } : new TypeError('Failed to fetch')));
   let r = await requestHomeBase(BASE, 'status', { fetchImpl: f });
-  assert.equal(r.kind, 'refused');
+  assert.equal(r.kind, 'down');
+  assert.deepEqual(failureState(r), { phase: 'down', message: DOWN_MESSAGE });
   assert.equal(f.calls[1].url, 'https://alienware.tail4e5f6a.ts.net/api/ping');
   assert.equal(f.calls[1].init.credentials, 'omit');
+  // Settings → Test and the ask box say the same.
+  assert.equal((await testHomeBase(BASE, { fetchImpl: f })).kind, 'down');
+  assert.equal((await askHomeBase(BASE, 'How are you?', { fetchImpl: f })).kind, 'down');
   // Nothing answers at all: unreachable (Tailscale off on this device).
   f = fakeFetch(() => new TypeError('Load failed'));
   r = await requestHomeBase(BASE, 'status', { fetchImpl: f });
   assert.equal(r.kind, 'unreachable');
   assert.equal(failureState(r).message, UNREACHABLE_MESSAGE);
-  // A readable 403 (forbidden / origin_not_allowed).
+  // A readable 403 (forbidden / origin_not_allowed): the Core refused this page. Only this is "refused".
   f = fakeFetch(() => jsonResponse(403, { error: 'forbidden', message: 'requests from other devices must come through Tailscale serve' }));
   r = await requestHomeBase(BASE, 'status', { fetchImpl: f });
   assert.deepEqual([r.kind, r.status, r.code], ['refused', 403, 'forbidden']);
   assert.match(r.message, /Tailscale serve/);
+  assert.match(failureState(r).message, /refused the connection.*It said: requests from other devices must come through Tailscale serve/);
   f = fakeFetch(() => jsonResponse(503, { error: 'starting', message: 'the Core is starting, try again in a second' }));
   assert.equal((await requestHomeBase(BASE, 'status', { fetchImpl: f })).kind, 'starting');
   f = fakeFetch(() => jsonResponse(429, { error: 'rate_limited', message: 'too many requests, slow down' }));
@@ -512,7 +569,7 @@ test('controller: not set up asks nothing; once linked and on screen it polls an
     },
     ask: async (base, q) => ({ ok: true, answer: `answer to ${q}`, suggestions: [] }),
   };
-  const hb = createHomeBase({ ...settings, client });
+  const hb = createHomeBase({ ...settings, client, minCheckingMs: 0 });
   const seen = [];
   hb.subscribe((s) => seen.push(s.phase));
   hb.setViewShown('t1', shownEl, true);
@@ -537,6 +594,11 @@ test('controller: not set up asks nothing; once linked and on screen it polls an
   hb.refresh();
   await tick();
   assert.equal(hb.getState().phase, 'refused');
+
+  answer = { ok: false, kind: 'down' };
+  hb.refresh();
+  await tick();
+  assert.deepEqual([hb.getState().phase, hb.getState().message], ['down', DOWN_MESSAGE]);
 
   answer = { ok: true, data: { hello: 'world' } };
   hb.refresh();
@@ -597,5 +659,153 @@ test('controller: no tile on screen, no polling; unlinking stops it; a new addre
   assert.equal(hb.name(), 'other-pc');
   hb.forgetView('t1');
   hb.forgetView('t2');
+  hb.destroy();
+});
+
+test('controller: back after hours away, last night’s readings are not shown as current; connecting until the first poll answers (HB-E4)', async () => {
+  const listeners = {};
+  const doc = { visibilityState: 'visible', addEventListener: (type, fn) => (listeners[type] = fn), removeEventListener() {}, documentElement: {} };
+  globalThis.document = doc;
+  try {
+    let clock = Date.parse('2026-11-24T23:42:00');
+    const answers = [];
+    const client = {
+      status: () =>
+        new Promise((resolve) => {
+          answers.push(resolve);
+        }),
+      ask: async () => ({ ok: false }),
+    };
+    const hb = createHomeBase({ ...fakeSettings(BASE), client, now: () => clock });
+    hb.setViewShown('t', shownEl, true);
+    await tick();
+    answers.shift()({ ok: true, data: STATUS.ok });
+    await tick();
+    assert.equal(hb.getState().phase, 'online');
+    const lastOk = hb.getState().lastOkAt;
+    // Night: the phone is locked (the page hidden); 8 hours later Jarvis is opened again, and the
+    // Alienware has been switched off (the first poll hangs until its timeout).
+    doc.visibilityState = 'hidden';
+    listeners.visibilitychange();
+    clock += 8 * 3600e3;
+    doc.visibilityState = 'visible';
+    listeners.visibilitychange();
+    await tick();
+    assert.equal(answers.length, 1, 'polled at once');
+    const s = hb.getState();
+    assert.equal(s.phase, 'connecting', 'not ONLINE with last night’s numbers');
+    assert.equal(s.view, null, 'the old readings are not shown');
+    assert.equal(s.lastOkAt, lastOk, 'when it was last reached is kept (the tile’s "last reached 11:42 PM")');
+    assert.deepEqual([homeBaseGlance(s).text, homeBaseGlance(s).tape], ['Checking…', '…'], 'the Systems glance and the CORE reading say checking');
+    answers.shift()({ ok: true, data: STATUS.warn });
+    await tick();
+    assert.deepEqual([hb.getState().phase, hb.getState().view.level], ['online', 'warn']);
+    // Away for less than two polls (40 s): the reading stays while the next poll runs.
+    doc.visibilityState = 'hidden';
+    listeners.visibilitychange();
+    clock += 40000;
+    doc.visibilityState = 'visible';
+    listeners.visibilitychange();
+    await tick();
+    assert.equal(answers.length, 1, 'polled at once');
+    assert.deepEqual([hb.getState().phase, hb.getState().view.level], ['online', 'warn'], 'a 40-second-old reading stays');
+    answers.shift()({ ok: false, kind: 'unreachable' });
+    await tick();
+    assert.equal(hb.getState().phase, 'unreachable');
+    // The same when the tile was only scrolled away for a long time.
+    answers.length = 0;
+    hb.setViewShown('t', shownEl, false);
+    hb.refresh();
+    await tick();
+    assert.equal(answers.length, 0);
+    hb.destroy();
+  } finally {
+    delete globalThis.document;
+  }
+});
+
+test('controller: Try again shows that it is checking, and a repeated failure still updates when it was checked (HU-3)', async () => {
+  let clock = Date.parse('2026-11-25T07:42:00');
+  const answers = [];
+  const client = { status: () => new Promise((resolve) => answers.push(resolve)), ask: async () => ({ ok: false }) };
+  const hb = createHomeBase({ ...fakeSettings(BASE), client, now: () => clock, minCheckingMs: 0 });
+  hb.setViewShown('t', shownEl, true);
+  await tick();
+  assert.equal(hb.getState().checking, false, 'the first check is CONNECTING, not "checking again"');
+  answers.shift()({ ok: false, kind: 'unreachable' });
+  await tick();
+  const first = hb.getState();
+  assert.deepEqual([first.phase, first.checking, first.checkedAt], ['unreachable', false, clock]);
+  clock += 60000;
+  hb.refresh();
+  assert.equal(hb.getState().checking, true, 'Try again: checking at once');
+  assert.equal(hb.getState().phase, 'unreachable', 'the failure is still what it last was');
+  await tick();
+  assert.equal(answers.length, 1, 'one request');
+  assert.equal(hb.getState().checking, true, 'still checking while the request is out');
+  answers.shift()({ ok: false, kind: 'unreachable' });
+  await tick();
+  const again = hb.getState();
+  assert.deepEqual([again.phase, again.checking], ['unreachable', false]);
+  assert.equal(again.checkedAt, clock, 'the same failure, checked again: the time moves on');
+  // Online, Try again isn't offered: refresh() polls but shows no "checking".
+  hb.refresh();
+  await tick();
+  answers.shift()({ ok: true, data: STATUS.ok });
+  await tick();
+  assert.equal(hb.getState().phase, 'online');
+  hb.refresh();
+  assert.equal(hb.getState().checking, false);
+  await tick();
+  answers.shift()({ ok: true, data: STATUS.ok });
+  await tick();
+  // Not on screen: nothing will run, so it never claims to be checking.
+  hb.setViewShown('t', shownEl, false);
+  answers.length = 0;
+  hb.refresh();
+  assert.equal(hb.getState().checking, false);
+  hb.destroy();
+});
+
+test('controller: a short check stays visible for a moment (Try again never looks like it did nothing)', async () => {
+  const client = { status: async () => ({ ok: false, kind: 'down' }), ask: async () => ({ ok: false }) };
+  const hb = createHomeBase({ ...fakeSettings(BASE), client, minCheckingMs: 120 });
+  hb.setViewShown('t', shownEl, true);
+  await tick();
+  assert.equal(hb.getState().phase, 'down');
+  const t0 = Date.now();
+  hb.refresh();
+  await tick();
+  assert.equal(hb.getState().checking, true, 'the answer came at once, but CHECKING… shows for a moment');
+  await new Promise((r) => setTimeout(r, 200));
+  await tick();
+  assert.equal(hb.getState().checking, false);
+  assert.ok(Date.now() - t0 >= 120);
+  hb.destroy();
+});
+
+test('controller: the desktop tape’s CORE reading and the Systems glance keep it polling, not only a tile on screen (HU-2)', async () => {
+  const calls = [];
+  const client = { status: async (b) => (calls.push(b), { ok: true, data: STATUS.ok }), ask: async () => ({ ok: true, answer: 'x' }) };
+  const hb = createHomeBase({ ...fakeSettings(BASE), client });
+  hb.setViewShown('rail-tile', shownEl, false); // the rail's tile, below the rail's fold
+  await tick();
+  assert.equal(calls.length, 0);
+  // The tape (no IntersectionObserver in Node: a watched element counts while attached).
+  const stop = hb.watch(shownEl);
+  await tick();
+  assert.equal(calls.length, 1, 'polled for the CORE reading');
+  assert.equal(hb.getState().phase, 'online');
+  assert.deepEqual([homeBaseGlance(hb.getState()).tape, homeBaseGlance(hb.getState()).text], ['OK', 'OK · online']);
+  stop();
+  hb.refresh();
+  await tick();
+  assert.equal(calls.length, 1, 'unwatched: nothing on screen shows it, so nothing polls');
+  // A hidden tape (display: none: a phone, or Calm below 1280 px) doesn't count.
+  const stopHidden = hb.watch({ isConnected: true, getClientRects: () => [] });
+  hb.refresh();
+  await tick();
+  assert.equal(calls.length, 1);
+  stopHidden();
   hb.destroy();
 });

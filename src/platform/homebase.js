@@ -5,12 +5,14 @@
 //   askHomeBase(base, q)      POST api/ask {q} -> { ok: true, answer, intent, suggestions } | failure
 //   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal })
 //
-// A failure is { ok: false, kind, status?, code?, message? } with kind 'unreachable' | 'refused' |
-// 'starting' | 'rate' | 'notcore' | 'http' | 'aborted' (src/lib/homebase.js failureState() words it).
-// Every request: credentials omitted, no referrer, never cached, a timeout. The Core allows this
-// app's origin (CORS); a request the browser can't read (a TypeError: the network, or CORS refusing
-// this page) is told apart by a no-cors ping: an (opaque) answer means the home base is there but
-// refused this page; no answer means it can't be reached (Tailscale off, the machine asleep).
+// A failure is { ok: false, kind, status?, code?, message? } with kind 'unreachable' | 'down' |
+// 'refused' | 'starting' | 'rate' | 'notcore' | 'http' | 'aborted' (src/lib/homebase.js
+// failureState() words it). Every request: credentials omitted, no referrer, never cached, a timeout.
+// The Core allows this app's origin (CORS), its refusals (403) included, so "refused" is only ever a
+// readable 403 that says why. A request the browser can't read (a TypeError) is told apart by a
+// no-cors ping: an (opaque) answer means the Alienware answered but the Core didn't ('down': Tailscale
+// serve answers 502 without CORS headers while the Core is stopped, restarting or still starting);
+// no answer means it can't be reached at all ('unreachable': Tailscale off, the machine asleep or off).
 // Asking the home base is free: the Core answers from its own rules, never Claude.
 
 import { homeBaseApi, cleanLine, ASK_MAX_CHARS } from '../lib/homebase.js';
@@ -86,7 +88,7 @@ export async function requestHomeBase(base, path, { method = 'GET', body, timeou
     d.done();
     if (signal && signal.aborted) return { ok: false, kind: 'aborted' };
     if (timedOut || res) return { ok: false, kind: 'unreachable' }; // no answer in time (or the answer stopped halfway)
-    return { ok: false, kind: (await answersAtAll(base, f)) ? 'refused' : 'unreachable' };
+    return { ok: false, kind: (await answersAtAll(base, f)) ? 'down' : 'unreachable' };
   }
   d.done();
   let data = null;

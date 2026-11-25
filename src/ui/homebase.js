@@ -1,14 +1,18 @@
 // Home base (v7.5, SPEC §23): the Jarvis Core tile. One controller polls the Core's api/status every
-// 30 s, only while a tile is on screen and the page is visible (no live stream: phones would keep a
-// connection open for nothing); a tile covered by a sheet, Voice Mode or Standby (made `inert`)
-// doesn't count. The tiles (the Presence home on phones, the desktop awareness rail) show what it
-// last read. "Ask the home base" posts api/ask {q}: the Core's own rules answer, free
-// (no Claude request).
+// 30 s, only while the page is visible and something showing its state is on screen: a tile, the
+// desktop sensor tape (its CORE reading) or the rail's Systems glance (no live stream: phones would
+// keep a connection open for nothing). Anything covered by a sheet, Voice Mode or Standby (made
+// `inert`) doesn't count. The tiles (the Presence home on phones, the desktop awareness rail) show
+// what it last read; back after more than two polls away, an old reading is not shown as current
+// (CONNECTING, "last reached …") until the first poll answers. "Ask the home base" posts api/ask {q}:
+// the Core's own rules answer, free (no Claude request).
 //
 //   const hb = createHomeBase({ getSettings, onSettingsChange });
-//   hb.getState() -> { phase, url, view, message, checkedAt, lastOkAt }
-//     phase: 'unset' | 'connecting' | 'online' | 'unreachable' | 'refused' | 'starting' | 'error'
+//   hb.getState() -> { phase, url, view, message, checkedAt, lastOkAt, checking }
+//     phase: 'unset' | 'connecting' | 'online' | 'unreachable' | 'down' | 'refused' | 'starting' | 'error'
+//     checking: true while "Try again" re-checks a failure (CHECKING…, shown for at least a moment)
 //   hb.subscribe(fn) · hb.refresh() · hb.ask(q) -> Promise<{ ok, answer } | { ok: false, message }>
+//   hb.watch(el) -> stop(): poll while `el` (the tape, the glance) is on screen
 //   const tile = createHomeBaseTile(hb, { variant: 'home' | 'rail', onSetup });   tile.el
 //   homeBaseGlance(state) -> { text, tone, tape } for the Systems glance row and the sensor tape
 //
@@ -24,10 +28,15 @@ const PHASE_WORDS = {
   connecting: 'CONNECTING',
   online: 'ONLINE',
   unreachable: 'OFFLINE',
+  down: 'CORE DOWN',
   refused: 'REFUSED',
   starting: 'STARTING',
   error: 'ERROR',
 };
+// The phases "Try again" is offered in (a failure).
+const FAILED = new Set(['unreachable', 'down', 'refused', 'starting', 'error']);
+// "Try again": CHECKING… shows at least this long, even when the answer comes at once.
+const MIN_CHECKING_MS = 600;
 
 function safe(fn, fallback) {
   try {
@@ -59,10 +68,12 @@ function clockTime(ms) {
   }
 }
 
+let watchSeq = 0;
+
 /**
  * The controller. `client` (tests) replaces the network: { status(base), ask(base, q) }.
  */
-export function createHomeBase({ getSettings, onSettingsChange, client = null, intervalMs = POLL_MS, now = () => Date.now() } = {}) {
+export function createHomeBase({ getSettings, onSettingsChange, client = null, intervalMs = POLL_MS, now = () => Date.now(), minCheckingMs = MIN_CHECKING_MS } = {}) {
   const api = client || { status: (base) => getHomeBaseStatus(base), ask: (base, q) => askHomeBase(base, q) };
   const listeners = new Set();
   const views = new Map(); // id -> { shown: bool, el }
@@ -70,6 +81,8 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
   let state = fresh(url);
   let poller = null;
   let destroyed = false;
+  let active = false; // polling (something on screen shows the state, the page is visible, linked)
+  let checkingSince = 0; // "Try again": when CHECKING… started (real time)
 
   function currentUrl() {
     const s = safe(() => getSettings(), null);
@@ -77,7 +90,9 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
   }
 
   function fresh(u) {
-    return u ? { phase: 'connecting', url: u, view: null, message: 'Checking the home base…', checkedAt: 0, lastOkAt: 0 } : { phase: 'unset', url: '', view: null, message: UNSET_MESSAGE, checkedAt: 0, lastOkAt: 0 };
+    return u
+      ? { phase: 'connecting', url: u, view: null, message: 'Checking the home base…', checkedAt: 0, lastOkAt: 0, checking: false }
+      : { phase: 'unset', url: '', view: null, message: UNSET_MESSAGE, checkedAt: 0, lastOkAt: 0, checking: false };
   }
 
   function emit() {
@@ -105,35 +120,66 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
 
   function sync() {
     if (!poller) return;
-    poller.setActive(!destroyed && !!url && !pageHidden() && anyShown());
+    const next = !destroyed && !!url && !pageHidden() && anyShown();
+    // Back after more than two polls away (the phone was locked overnight, the tab hidden, the tile
+    // scrolled away): the last reading is old, so it isn't shown as current while the first poll
+    // runs (that can take 15 s when the Alienware is off). When it was last reached stays.
+    if (next && !active && state.phase === 'online' && state.checkedAt && now() - state.checkedAt > 2 * intervalMs) {
+      set({ phase: 'connecting', view: null, message: 'Checking the home base…' });
+    }
+    active = next;
+    poller.setActive(next);
+  }
+
+  /** "Try again" is done: CHECKING… goes (after showing for at least minCheckingMs). */
+  async function endChecking(base) {
+    if (!state.checking) return true;
+    const left = checkingSince + minCheckingMs - Date.now();
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
+    return base === url && !destroyed;
   }
 
   async function poll() {
     const base = url;
     if (!base || destroyed) return;
     if (!anyShown() || pageHidden()) {
+      if (state.checking) set({ checking: false });
       sync();
       return;
     }
     const r = await api.status(base);
     if (base !== url || destroyed) return; // the address changed meanwhile
+    if (!(await endChecking(base))) return;
     const t = now();
     if (r && r.ok) {
       const view = homeBaseView(r.data);
-      if (view) set({ phase: 'online', view, message: '', checkedAt: t, lastOkAt: t });
-      else set({ phase: 'error', view: null, message: failureState({ kind: 'notcore' }).message, checkedAt: t });
+      if (view) set({ phase: 'online', view, message: '', checkedAt: t, lastOkAt: t, checking: false });
+      else set({ phase: 'error', view: null, message: failureState({ kind: 'notcore' }).message, checkedAt: t, checking: false });
       return;
     }
-    if (!r || r.kind === 'aborted') return;
-    // Asked to slow down: keep the last reading; the next poll comes in 30 s anyway.
-    if (r.kind === 'rate' && state.view) return;
+    // Aborted, or asked to slow down with a reading on screen (it stays; the next poll comes in 30 s).
+    if (!r || r.kind === 'aborted' || (r.kind === 'rate' && state.view)) {
+      if (state.checking) set({ checking: false });
+      return;
+    }
     const f = failureState(r);
-    set({ phase: f.phase, view: null, message: f.message, checkedAt: t });
+    set({ phase: f.phase, view: null, message: f.message, checkedAt: t, checking: false });
   }
 
   function restart() {
     if (poller) poller.destroy();
     poller = createPoller({ run: poll, intervalMs, now });
+    active = false;
+    sync();
+  }
+
+  function setViewShown(id, el, shown) {
+    views.set(id, { el, shown: !!shown });
+    sync();
+  }
+
+  function forgetView(id) {
+    views.delete(id);
     sync();
   }
   restart();
@@ -174,18 +220,40 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
       return () => listeners.delete(fn);
     },
     /** A tile reports whether it is on screen (IntersectionObserver). */
-    setViewShown(id, el, shown) {
-      views.set(id, { el, shown: !!shown });
-      sync();
+    setViewShown,
+    forgetView,
+    /**
+     * Poll while `el` is on screen (an IntersectionObserver; without one, while it is attached and
+     * laid out): the tiles, the desktop tape's CORE reading, the rail's Systems glance. -> stop().
+     */
+    watch(el, id = `hb-watch-${++watchSeq}`) {
+      let io = null;
+      try {
+        io = new IntersectionObserver((entries) => {
+          for (const entry of entries) setViewShown(id, el, entry.isIntersecting);
+        });
+        io.observe(el);
+      } catch {
+        io = null;
+        setViewShown(id, el, true);
+      }
+      return () => {
+        if (io) io.disconnect();
+        forgetView(id);
+      };
     },
-    forgetView(id) {
-      views.delete(id);
-      sync();
-    },
-    /** Check now ("Try again"; the first sight of a tile). */
+    /**
+     * Check now ("Try again"). A failure on screen shows CHECKING… until the answer (and for at
+     * least a moment), so a tap never looks like it did nothing.
+     */
     refresh() {
       sync();
-      if (poller) poller.poke();
+      if (!poller) return;
+      if (active && FAILED.has(state.phase) && !state.checking) {
+        checkingSince = Date.now();
+        set({ checking: true });
+      }
+      poller.poke();
     },
     /**
      * Ask the home base (free: the Core's own rules answer). { ok: true, answer, suggestions } or
@@ -232,6 +300,7 @@ export function homeBaseGlance(state) {
   if (s.phase === 'unset') return { text: 'Not set up', tone: 'muted', tape: '—', unknown: true, title: 'Jarvis Core: not set up (Settings → Home base)' };
   if (s.phase === 'connecting') return { text: 'Checking…', tone: 'muted', tape: '…', unknown: true, title: 'Jarvis Core: checking' };
   if (s.phase === 'unreachable') return { text: 'Offline', tone: 'warn', tape: 'OFFLINE', unknown: false, title: `Jarvis Core: ${s.message}` };
+  if (s.phase === 'down') return { text: 'Core down', tone: 'warn', tape: 'DOWN', unknown: false, title: `Jarvis Core: ${s.message}` };
   return { text: PHASE_WORDS[s.phase] ? PHASE_WORDS[s.phase].toLowerCase().replace(/^./, (c) => c.toUpperCase()) : 'Unknown', tone: 'warn', tape: PHASE_WORDS[s.phase] || '—', unknown: false, title: `Jarvis Core: ${s.message || ''}` };
 }
 
@@ -264,7 +333,8 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
 
   const message = h('p', { class: 'hb-message', attrs: { 'data-testid': 'homebase-message' } });
   const setupBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-setup' }, on: { click: () => typeof onSetup === 'function' && onSetup() } }, icon('settings', { size: 14 }), h('span', { text: 'Set up' }));
-  const retryBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-retry' }, on: { click: () => hb.refresh() } }, icon('refresh', { size: 14 }), h('span', { text: 'Try again' }));
+  const retryLabel = h('span', { text: 'Try again' });
+  const retryBtn = h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'homebase-retry' }, on: { click: () => hb.refresh() } }, icon('refresh', { size: 14 }), retryLabel);
   const actions = h('div', { class: 'hb-actions' }, retryBtn, setupBtn);
   const foot = h('p', { class: 'hb-foot', attrs: { 'data-testid': 'homebase-foot' } });
 
@@ -340,10 +410,12 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
 
   function render(s) {
     const phase = s.phase;
+    const checking = !!s.checking && FAILED.has(phase);
     el.dataset.phase = phase;
     el.dataset.level = s.view ? s.view.level : '';
-    setText(statusText, PHASE_WORDS[phase] || phase.toUpperCase());
-    status.dataset.tone = phase === 'online' ? 'ok' : phase === 'unset' || phase === 'connecting' ? 'muted' : 'warn';
+    el.dataset.checking = checking ? 'true' : 'false';
+    setText(statusText, checking ? 'CHECKING…' : PHASE_WORDS[phase] || phase.toUpperCase());
+    status.dataset.tone = phase === 'online' ? 'ok' : checking || phase === 'unset' || phase === 'connecting' ? 'muted' : 'warn';
 
     const online = phase === 'online' && s.view;
     health.hidden = !online;
@@ -366,16 +438,27 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
     message.hidden = online;
     setText(message, online ? '' : s.message || '');
     message.dataset.tone = phase === 'unset' || phase === 'connecting' ? 'muted' : 'warn';
+    // Set up (check the address) only where the address may be wrong; not for a Core that is down
+    // (the fix is on the Alienware) or unreachable.
     setupBtn.hidden = !(phase === 'unset' || phase === 'refused' || (phase === 'error' && /isn’t a Jarvis Core/.test(s.message || '')));
-    retryBtn.hidden = !(phase === 'unreachable' || phase === 'refused' || phase === 'starting' || phase === 'error');
+    retryBtn.hidden = !FAILED.has(phase);
+    retryBtn.disabled = checking;
+    if (checking) retryBtn.setAttribute('aria-busy', 'true');
+    else retryBtn.removeAttribute('aria-busy');
+    setText(retryLabel, checking ? 'Checking…' : 'Try again');
     actions.hidden = setupBtn.hidden && retryBtn.hidden;
     ask.hidden = phase === 'unset';
 
+    // "alienware · checked 7:42 AM" (online, and after each failed check, so a repeated failure still
+    // shows the check happened) · "last reached 11:42 PM" when it isn't online.
     const name = s.view && s.view.host ? s.view.host : hb.name();
-    let footText = '';
-    if (online) footText = `${name ? `${name} · ` : ''}checked ${clockTime(s.checkedAt)}`;
-    else if (phase !== 'unset' && s.lastOkAt) footText = `${name ? `${name} · ` : ''}last reached ${clockTime(s.lastOkAt)}`;
-    else if (phase !== 'unset' && name) footText = name;
+    const parts = [];
+    if (phase !== 'unset') {
+      if (name) parts.push(name);
+      if ((online || FAILED.has(phase)) && s.checkedAt) parts.push(`checked ${clockTime(s.checkedAt)}`);
+      if (!online && s.lastOkAt) parts.push(`last reached ${clockTime(s.lastOkAt)}`);
+    }
+    const footText = parts.join(' · ');
     setText(foot, footText);
     foot.hidden = !footText;
   }
@@ -384,22 +467,13 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
   render(hb.getState());
 
   // On screen? (display: none — the other layout's tile — and detached tiles never intersect.)
-  let io = null;
-  try {
-    io = new IntersectionObserver((entries) => {
-      for (const entry of entries) hb.setViewShown(id, el, entry.isIntersecting);
-    });
-    io.observe(el);
-  } catch {
-    hb.setViewShown(id, el, true); // no IntersectionObserver: count it as shown while attached
-  }
+  const unwatch = hb.watch(el, id);
 
   return {
     el,
     open: () => setOpen(true),
     destroy() {
-      if (io) io.disconnect();
-      hb.forgetView(id);
+      unwatch();
       if (typeof off === 'function') off();
     },
   };

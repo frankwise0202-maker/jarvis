@@ -182,6 +182,10 @@ export function createPresence(o) {
     el: h('div', { class: 'panel-rail hud-assemble', attrs: { 'data-testid': 'awareness-rail', role: 'region', 'aria-label': 'Awareness' } }, ...railPanels),
   };
   railPanels.forEach((el, i) => el.style.setProperty('--i', String(i)));
+  // The desktop tape's CORE reading and the rail's Systems glance show the home base too, so it is
+  // polled while either is on screen, not only while a tile is (the rail's tile can sit below the
+  // rail's fold on a laptop).
+  const unwatchHomeBase = hb ? [tape.el, glance.el].map((el) => safe(() => hb.watch(el), null)).filter((f) => typeof f === 'function') : [];
 
   // A visually hidden live region for the state word: at most one announcement every 2 s.
   const announcer = h('p', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', 'data-testid': 'state-announcer' } });
@@ -710,6 +714,7 @@ export function createPresence(o) {
       pills.destroy();
       homeWord.destroy();
       if (typeof offHomeBase === 'function') safe(offHomeBase);
+      for (const unwatch of unwatchHomeBase) safe(unwatch);
       if (homeTile) safe(() => homeTile.destroy());
       if (railTile) safe(() => railTile.destroy());
     },

@@ -78,6 +78,13 @@ test('importSummary says what a backup import restored, copied and skipped', () 
   assert.deepEqual(importSummary({ settings: false, settingsChanged: ['theme'] }), ok('Restored your preferences.'));
   assert.deepEqual(importSummary({ conversations: 1, library: 2 }), ok('Restored 1 conversation and 2 saved holograms and blueprints.'));
   assert.deepEqual(importSummary({ library: 1 }), ok('Restored 1 saved hologram or blueprint.'));
+  // The home base's address (v7.5): named on its own, only when it was restored (a device had none linked).
+  assert.deepEqual(importSummary({ settings: true, settingsChanged: ['homeBaseUrl'], homeBase: 'alienware' }), ok('Restored your home base’s address (alienware).'));
+  assert.deepEqual(
+    importSummary({ conversations: 2, settings: true, settingsChanged: ['theme', 'homeBaseUrl'], homeBase: 'alienware' }),
+    ok('Restored 2 conversations, your preferences and your home base’s address (alienware).'),
+  );
+  assert.deepEqual(importSummary({ settings: true, settingsChanged: ['homeBaseUrl'] }), ok('Restored your home base’s address.'));
   const nothing = ok('Nothing new to restore: this device already has everything in that backup.');
   assert.deepEqual(importSummary({}), nothing);
   assert.deepEqual(importSummary(null), nothing);

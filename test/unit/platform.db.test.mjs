@@ -747,32 +747,52 @@ test('backup: import restores only profile, voice and appearance settings - neve
   ]);
 });
 
-test('backup (v7.5): the home base address travels and comes back; an invalid one in a file is ignored', async () => {
+test('backup (v7.5): the home base address travels to a device with none linked; an import never unlinks or changes a linked one; an invalid one is ignored', async () => {
   const page = await newPage();
   const r = await page.evaluate(async () => {
     const { backup, settings } = window.__mods;
     settings.saveSettings({ onboarded: true, homeBaseUrl: 'alienware.tail4e5f6a.ts.net/api/status' });
     const stored = settings.getSettings().homeBaseUrl;
     const exported = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    // A device that never linked one (the Mac) exports "" for it.
     settings.resetSettings();
-    settings.saveSettings({ onboarded: true });
+    settings.saveSettings({ onboarded: true, userName: 'Frank' });
+    const unlinkedExport = JSON.parse(await (await backup.exportBackup()).text()).settings;
+    // Restored on a device with none linked, and named in the result.
     const result = await backup.importBackup({ app: 'jarvis', version: 1, settings: exported });
     const after = settings.getSettings().homeBaseUrl;
-    // A hostile or broken file: plain http, another host, a port; none replaces the address.
+    // The Mac's backup imported on this (now linked) iPhone: the link stays (HB-E2).
+    const fromMac = await backup.importBackup({ app: 'jarvis', version: 1, settings: { ...unlinkedExport, userName: 'Tony' } });
+    const afterMac = settings.getSettings().homeBaseUrl;
+    // Someone else's backup with another *.ts.net address: it doesn't repoint a linked device.
+    const foreign = await backup.importBackup({ app: 'jarvis', version: 1, settings: { homeBaseUrl: 'https://catcher.tail9f9f9f.ts.net/' } });
+    const afterForeign = settings.getSettings().homeBaseUrl;
+    // A hostile or broken file: plain http, another host, a port; none is restored (even with none linked).
+    settings.saveSettings({ homeBaseUrl: '' });
     const hostile = [];
-    for (const homeBaseUrl of ['http://alienware.tail4e5f6a.ts.net/', 'https://evil.example/', 'https://alienware.tail4e5f6a.ts.net:8443/', 42, { x: 1 }]) {
+    for (const homeBaseUrl of ['http://alienware.tail4e5f6a.ts.net/', 'https://evil.example/', 'https://alienware.tail4e5f6a.ts.net:8443/', 42, { x: 1 }, '']) {
       hostile.push((await backup.importBackup({ app: 'jarvis', version: 1, settings: { homeBaseUrl } })).settingsChanged);
     }
+    const afterHostile = settings.getSettings().homeBaseUrl;
     // A pasted-looking address in a file is normalized like one typed in Settings.
     const messy = await backup.importBackup({ app: 'jarvis', version: 1, settings: { homeBaseUrl: 'HTTPS://Other-PC.tail4e5f6a.ts.net/api' } });
-    return { stored, exported: exported.homeBaseUrl, result, after, hostile, kept: after, messy, final: settings.getSettings().homeBaseUrl };
+    return { stored, exported: exported.homeBaseUrl, unlinked: unlinkedExport.homeBaseUrl, result, after, fromMac, afterMac, foreign, afterForeign, hostile, afterHostile, messy, final: settings.getSettings().homeBaseUrl };
   });
   assert.equal(r.stored, 'https://alienware.tail4e5f6a.ts.net/', 'stored normalized');
   assert.equal(r.exported, 'https://alienware.tail4e5f6a.ts.net/', 'in the backup');
+  assert.equal(r.unlinked, '', 'a device with none linked exports ""');
   assert.ok(r.result.settingsChanged.includes('homeBaseUrl'));
-  assert.equal(r.after, 'https://alienware.tail4e5f6a.ts.net/', 'restored on import');
-  assert.deepEqual(r.hostile, [[], [], [], [], []], 'invalid addresses are ignored');
+  assert.equal(r.result.homeBase, 'alienware', 'the import result names it (the toast says so)');
+  assert.equal(r.after, 'https://alienware.tail4e5f6a.ts.net/', 'restored on a device with none linked');
+  assert.deepEqual(r.fromMac.settingsChanged, ['userName'], 'the other preferences still come back');
+  assert.equal(r.fromMac.homeBase, undefined);
+  assert.equal(r.afterMac, 'https://alienware.tail4e5f6a.ts.net/', 'an import never unlinks this device');
+  assert.deepEqual(r.foreign.settingsChanged, [], 'nothing changed');
+  assert.equal(r.afterForeign, 'https://alienware.tail4e5f6a.ts.net/', 'an import never points a linked device at another address');
+  assert.deepEqual(r.hostile, [[], [], [], [], [], []], 'invalid addresses are ignored');
+  assert.equal(r.afterHostile, '');
   assert.deepEqual(r.messy.settingsChanged, ['homeBaseUrl']);
+  assert.equal(r.messy.homeBase, 'other-pc');
   assert.equal(r.final, 'https://other-pc.tail4e5f6a.ts.net/');
 });
 

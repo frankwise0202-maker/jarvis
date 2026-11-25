@@ -6,8 +6,8 @@
 //   isHomeBaseUrl(url)            -> true for an address normalizeHomeBaseUrl() made (what Settings store)
 //   homeBaseApi(base, path)       -> 'https://<host>.ts.net/api/<path>'
 //   homeBaseView(status)          -> what the tile shows, from GET /api/status (null: not a Core's status)
-//   failureState(failure)         -> { phase, message } for a request that failed (unreachable, refused, ...)
-//   matchHomeBaseCommand(text)    -> true for "how's the home base" / "home base status" (the whole sentence)
+//   failureState(failure)         -> { phase, message } for a request that failed (unreachable, down, refused, ...)
+//   matchHomeBaseCommand(text)    -> true for "how's the home base" / "Alienware status" (the whole sentence)
 //   escapeMarkdown(text)          -> the Core's answer as Markdown that renders as plain text (the chat)
 //   createPoller({ run, intervalMs }) -> the polling lifecycle (every 30 s, only while visible)
 //
@@ -18,7 +18,12 @@ export const HOME_BASE_EXAMPLE = 'https://alienware.tail1234.ts.net/';
 export const POLL_MS = 30000;
 export const ASK_MAX_CHARS = 300; // the Core's question limit (handoff §7)
 
-export const UNREACHABLE_MESSAGE = 'Can’t reach the home base. Is Tailscale on on this device?';
+// Nothing answered: Tailscale is off on this device, or the Alienware is asleep or off.
+export const UNREACHABLE_MESSAGE = 'Can’t reach the home base. Is Tailscale switched on here, and is the Alienware on?';
+// Something answered that this page can't read: Tailscale serve's 502 (no CORS headers) while the
+// Jarvis Core is stopped, restarting (an update) or not yet started at boot. The Core's own refusals
+// carry CORS headers for this app, so they are readable (REFUSED_MESSAGE).
+export const DOWN_MESSAGE = 'The Alienware answered, but Jarvis Core isn’t responding. It restarts by itself; if this lasts, run jarvis-core restart on the Alienware.';
 export const REFUSED_MESSAGE = 'The home base refused the connection. Open Jarvis from its usual address, on a device signed in to your Tailscale.';
 export const UNSET_MESSAGE = 'Link your Jarvis Core to see how it’s doing here.';
 
@@ -36,10 +41,12 @@ export function cleanLine(value, max = 200) {
 
 /**
  * The Core's answer as Markdown that renders as exactly that text (the chat renders a text segment as
- * Markdown): its punctuation is escaped, so an answer can't become a link, an image or HTML.
+ * Markdown): every ASCII punctuation character is escaped, so nothing in it (a process or device name
+ * like www.x.io, a bare https:// address, a leading "1. " or "- ") can become a link, a list, an image
+ * or HTML. Copying or speaking the turn reads it back as plain text (markdownToPlainText).
  */
 export function escapeMarkdown(text) {
-  return String(text == null ? '' : text).replace(/[\\`*_~[\]!<>&|#]/g, '\\$&');
+  return String(text == null ? '' : text).replace(/[!-/:-@[-`{-~]/g, '\\$&');
 }
 
 // ---- the address ---------------------------------------------------------------------------------
@@ -176,8 +183,9 @@ export function homeBaseView(status) {
 
 /**
  * A failed request (platform/homebase.js) -> { phase, message }:
- *   unreachable   no answer (Tailscale off, the machine asleep, a timeout)
- *   refused       an answer this page may not read (CORS) or 403
+ *   unreachable   no answer (Tailscale off, the machine asleep or off, a timeout)
+ *   down          an answer this page can't read (Tailscale serve's 502: the Core isn't running)
+ *   refused       the Core's own 403 (readable: it says why)
  *   starting      503 while the Core starts
  *   notcore       an answer that isn't a Jarvis Core's
  *   error         any other HTTP error (429 included)
@@ -188,6 +196,8 @@ export function failureState(failure) {
   switch (f.kind) {
     case 'unreachable':
       return { phase: 'unreachable', message: UNREACHABLE_MESSAGE };
+    case 'down':
+      return { phase: 'down', message: DOWN_MESSAGE };
     case 'refused':
       return { phase: 'refused', message: detail ? `${REFUSED_MESSAGE} (It said: ${detail})` : REFUSED_MESSAGE };
     case 'starting':
@@ -205,20 +215,24 @@ export function failureState(failure) {
 
 // ---- "how's the home base" ------------------------------------------------------------------------
 
-const HOME = '(?:home ?base|home-base|jarvis core)';
+// The home base by any of the owner's names for it: "home base", "Jarvis Core", "the Alienware"
+// ("alien ware", as speech recognition may write it), "my computer at home".
+const HOME = '(?:home ?base|home-base|jarvis core|alien ?ware|(?:computer|pc) at home|home (?:computer|pc))';
 const OWN = '(?:the |my |our )?';
+const WHEN = '(?: (?:today|tonight|right now|now|at the moment|this morning|this evening))?';
 const COMMANDS = [
-  new RegExp(`^(?:hows|how is|how are things at|how are things with|hows it going at|hows it going with|hows everything at|how is everything at) ${OWN}${HOME}(?: doing| holding up| looking)?$`),
-  new RegExp(`^${OWN}${HOME} (?:status|status report|report|check|health|health check)$`),
-  new RegExp(`^(?:whats|what is) ${OWN}${HOME} status$`),
-  new RegExp(`^(?:(?:give me|get me|show me|whats|what is) )?(?:the )?(?:status|report|status report) (?:of|on|from|for) ${OWN}${HOME}$`),
-  new RegExp(`^(?:check|check on|ping) ${OWN}${HOME}$`),
-  new RegExp(`^is ${OWN}${HOME} (?:ok|okay|alright|all right|fine|good|up|online|running|working)$`),
+  new RegExp(`^(?:hows|how is|how are things at|how are things with|hows it going at|hows it going with|hows everything at|how is everything at) ${OWN}${HOME}(?: doing| holding up| looking)?${WHEN}$`),
+  new RegExp(`^${OWN}${HOME} (?:status|status report|report|check|health|health check)${WHEN}$`),
+  new RegExp(`^(?:whats|what is) ${OWN}${HOME} status${WHEN}$`),
+  new RegExp(`^(?:(?:give me|get me|show me|whats|what is) )?(?:the )?(?:status|report|status report) (?:of|on|from|for) ${OWN}${HOME}${WHEN}$`),
+  new RegExp(`^(?:check|check on|ping) ${OWN}${HOME}${WHEN}$`),
+  new RegExp(`^is ${OWN}${HOME} (?:ok|okay|alright|all right|fine|good|up|online|running|working)${WHEN}$`),
 ];
 
 /**
  * "How's the home base?", "home base status", "status of my home base", "is the home base ok?",
- * "Jarvis Core status": the whole sentence (with "Jarvis," before it or "please" after it), so a
+ * "Jarvis Core status", "How's the Alienware?", "Can you check the home base?", "how is the home base
+ * doing today": the whole sentence (with "Jarvis," or "can you" before it, "please" after it), so a
  * longer request that merely mentions the home base still goes to Claude.
  */
 export function matchHomeBaseCommand(text) {
@@ -231,6 +245,7 @@ export function matchHomeBaseCommand(text) {
     .replace(/\s+/g, ' ')
     .trim();
   s = s.replace(/^(?:hey |ok |okay )?jarvis (?!core\b)/, '').replace(/ (?:please|jarvis|thanks|thank you)$/, '').trim();
+  s = s.replace(/^(?:please |(?:can|could|would|will) you (?:please )?)/, '').trim();
   return COMMANDS.some((re) => re.test(s));
 }
 

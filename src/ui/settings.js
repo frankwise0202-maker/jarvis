@@ -122,8 +122,8 @@ function currentOs() {
 
 /**
  * The toast after a backup import, from importBackup()'s result { conversations, memory,
- * settings, settingsChanged, skipped, protocols? }: what was restored, e.g. "Restored 3
- * conversations, 5 memories and your preferences.", plus a warning when conversations were
+ * settings, settingsChanged, homeBase?, skipped, protocols? }: what was restored, e.g. "Restored 3
+ * conversations, 5 memories, your preferences and your home base’s address (alienware).", plus a warning when conversations were
  * skipped (not made by Jarvis, or damaged). Returns { message, level }.
  */
 export function importSummary(res) {
@@ -135,13 +135,17 @@ export function importSummary(res) {
   const lib = count(r.library); // saved holograms and blueprints (platform/library.js)
   const skipped = count(r.skipped);
   const copies = count(r.copies);
-  const prefs = r.settings === true || count(r.settingsChanged) > 0 || (Array.isArray(r.settings) && r.settings.length > 0);
+  // The home base's address (v7.5) is named on its own: it links this device to the Alienware.
+  const changed = Array.isArray(r.settingsChanged) ? r.settingsChanged : null;
+  const homeBase = !!changed && changed.includes('homeBaseUrl');
+  const prefs = changed ? changed.some((k) => k !== 'homeBaseUrl') || (r.settings === true && !homeBase) : r.settings === true || (Array.isArray(r.settings) && r.settings.length > 0);
   const parts = [];
   if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
   if (m) parts.push(`${m} memor${m === 1 ? 'y' : 'ies'}`);
   if (p) parts.push(`${p} protocol${p === 1 ? '' : 's'}`);
   if (lib) parts.push(`${lib} saved ${lib === 1 ? 'hologram or blueprint' : 'holograms and blueprints'}`);
   if (prefs) parts.push('your preferences');
+  if (homeBase) parts.push(`your home base’s address${typeof r.homeBase === 'string' && r.homeBase ? ` (${r.homeBase})` : ''}`);
   let message = parts.length
     ? `Restored ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]}.`
     : skipped
