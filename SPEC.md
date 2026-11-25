@@ -3242,7 +3242,8 @@ to the home base's senses, every listen and reply exactly as in §21 and §18.2)
   Settings card) reads every 2 s while a model downloads or gets ready. `prime()` at launch (1.5 s after
   the boot) and when Voice Mode opens, only with a switch on; `prime({ warm: true })` (Voice Mode) also
   warms up a part unused for 25 minutes (0.4 s of silence to hear, "Ready." to say, 30 s timeout; a
-  failed warm-up rests nothing), because the Core unloads its models after 30 minutes idle.
+  failed warm-up rests nothing), because the Core unloads its models after 30 minutes idle (that silence
+  makes the Core load Whisper again, or restart its idle time, in the background).
 - `src/platform/voice/homebase-hearing.js` `createHomeBaseHearing({ stt, senses, createCapture,
   getPrompt, getSettings })`: stt.js's API (§21) with `startListening` wrapped. Only a listen that asks
   for it (`homeBase: true`) and only while `senses.canHear()` goes to the home base; anything else is
