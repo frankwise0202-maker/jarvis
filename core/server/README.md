@@ -43,6 +43,7 @@ Defaults, then `~/.config/jarvis-core/config.json` (optional), then environment 
 | data folder | `JARVIS_CORE_DATA_DIR`, `--data-dir` | `~/.local/share/jarvis-core` |
 | dashboard folder | `JARVIS_CORE_DASHBOARD_DIR`, `--dashboard-dir` | `core/dashboard` |
 | owner's name | `JARVIS_CORE_OWNER`, `--owner` | Frank |
+| times and dates (12 or 24 hours, date order; in English) | `JARVIS_CORE_LOCALE`, `--locale` | the system's (`en-US`: 4:47 PM; `en-GB`: 16:47) |
 | night dim window (reported to the dashboard) | `JARVIS_CORE_NIGHT`, `--night` | `23:00-07:00` (`off` to disable) |
 | fixture scenario | `JARVIS_CORE_FIXTURE`, `--fixture` | none (live) |
 | fixture time speed, start time, seed | `JARVIS_CORE_TIME_SCALE`, `JARVIS_CORE_START`, `JARVIS_CORE_SEED` | 1, now, 1 |

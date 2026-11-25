@@ -23,7 +23,10 @@ serve makes the same page reachable from the owner's iPhone and Mac.
   meter, read/write activity, drive health or "not checked"), Network (down/up with sparklines,
   internet and Claude API latency, tailnet devices online), Services (Jarvis Core, the Jarvis site
   and its build, Claude API, Tailscale, then each tailnet device), Top processes (by CPU and by
-  memory), the Event log (newest first, colored by level, 40 rows at most) and the Status assistant.
+  memory), the Event log (newest first, colored by level, 40 rows at most; a row's time is "9:47:03 PM"
+  today, "Sat 9:47 PM" in the last six days and "Nov 14" before that) and the Status assistant. The
+  DISK corner names a drive other than the system one by its last path segment ("BACKUP" for
+  /media/frank-wise/BACKUP) and cuts a long name with an ellipsis.
 - **Status assistant**: a question box (the Alienware has no microphone) with chips ("How are you?",
   "Anything wrong?", "GPU temp?", "Status report"). Questions go to the Core's local rule-based
   assistant (`POST api/ask`); it only reports on the machine. Typing anywhere on the page starts a
@@ -71,6 +74,7 @@ The autostart can pass these (or the Core can send them in `api/info` → `confi
 | `refresh=04:00` | 04:00 | daily refresh time; `refresh=off` never |
 | `cursor=show` | hide | never hide the cursor |
 | `tz=Europe/London` | system | time zone for the clock (tests) |
+| `locale=en-GB` | the Core's | 12 or 24 hours and date order for the clock and the log (tests) |
 | `nosw` | | do not register the service worker |
 
 Core config keys read from `api/info` → `config`: `nightDim` (`"23:00-07:00"` or `{start, end}`),
@@ -98,7 +102,9 @@ the monotonic clock means offline.
 The page follows **the Core's clock**: `status.t` minus the browser's clock gives an offset (about
 zero on the machine itself), so a fixture started with `--start 23:30` shows 11:30 PM and dims, and
 "checked 5 s ago" and the event times are always measured on the Core's clock. The clock's time
-zone is the Core's (`api/info.timeZone`) unless `?tz=` says otherwise. From `api/info` the page also
+zone is the Core's (`api/info.timeZone`) unless `?tz=` says otherwise, and so is its locale
+(`api/info.locale`, e.g. `en-US` for "4:47 PM"), so the clock, the log and the assistant's answers
+write times the same way. From `api/info` the page also
 takes the night window (`night {enabled, start, end}`) and the regular app's address (`urls.app`).
 
 `app/model.js` is the one adapter from the Core's JSON to what the panels draw: it reads the Core's
@@ -151,7 +157,9 @@ The screenshot run starts a fresh real Core in fixture mode for every shot (`ok`
 `nogpu`, `internet` = the Core's `offline` fixture, `night` = `ok` at 23:31) and kills it for the
 `offline` shot (the Core itself gone); `--mock` uses the stand-in. It fails on page scrolling, a
 panel whose content is cut off, a value that does not fit its box, readouts that leave the core
-stage or overlap the summary, console errors and CSP violations. Screenshots land in
+stage or overlap the summary, console errors and CSP violations. After each screenshot it also puts
+the longest event time (two weeks of hours, in the page's locale, en-US and en-GB) in a cloned log
+row and a long drive name in each corner caption, and fails if either runs out of its column. Screenshots land in
 `core/dashboard/test/artifacts/` (ignored by git).
 
 The long run plays the stand-in Core at 200× (a simulated day in about eight minutes): one
