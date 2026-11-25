@@ -196,6 +196,12 @@ export function createPanels() {
   // --- renderers ----------------------------------------------------------------------------
 
   /** A big percentage with the % set small: "9" + "%". */
+  /** The value a health item is about wears that item's color when it warns or alerts; ok stays plain. */
+  function valueLevel(node, vm, id) {
+    const lv = (vm.itemLevels && vm.itemLevels[id]) || 'ok';
+    setData(node, 'level', lv === 'warn' || lv === 'alert' ? lv : null);
+  }
+
   function setPctFigure(node, value, unknownWords) {
     const s = pctNumber(value);
     if (s === null) {
@@ -236,6 +242,8 @@ export function createPanels() {
     chip(n.cpuChip, lv);
     setPctFigure(n.cpuUsage, c.usage);
     setFigure(n.cpuTemp, fmtTemp(c.temp), 'no sensor');
+    valueLevel(n.cpuUsage, vm, 'cpu.load');
+    valueLevel(n.cpuTemp, vm, 'cpu.temp');
     setFigure(n.cpuFreq, fmtFreq(c.freqMHz));
     setFigure(n.cpuLoad, fmtLoad(c.load));
     if (c.perThread.length) buildThreads(c.perThread.length);
@@ -277,6 +285,7 @@ export function createPanels() {
     setText(n.gpuName, [gname, g.driver ? `driver ${g.driver}` : null].filter(Boolean).join(' · ') || '—');
     setPctFigure(n.gpuUtil, g.util);
     setFigure(n.gpuTemp, fmtTemp(g.temp));
+    valueLevel(n.gpuTemp, vm, 'gpu.temp');
     setFigure(n.gpuPower, fmtWatts(g.power));
     const pl = fmtWatts(g.powerLimit);
     setText(n.gpuPowerNote, pl ? `of ${pl}` : '');
@@ -294,6 +303,8 @@ export function createPanels() {
     setPctFigure(n.memPct, m.usedPct);
     setFigure(n.memUsed, fmtMem(m.used));
     setFigure(n.memAvail, fmtMem(m.available));
+    valueLevel(n.memPct, vm, 'memory');
+    valueLevel(n.memAvail, vm, 'memory');
     if (m.swapTotal === 0) {
       setText(n.memSwap, 'no swap');
       meter(n.memSwapMeter, 0, 'ok');
@@ -328,6 +339,7 @@ export function createPanels() {
       const l = meterLevel('disk', d.usedPct);
       meter(row.meter, d.usedPct, l);
       setText(row.pct, fmtPct(d.usedPct) ?? '—');
+      valueLevel(row.pct, vm, `disk:${d.mount}`);
       const free = fmtDisk(d.free);
       const total = fmtDisk(d.total);
       setText(row.detail, free && total ? `${free} free of ${total} · ${d.mount}${d.fs ? ` · ${d.fs}` : ''}` : d.mount);

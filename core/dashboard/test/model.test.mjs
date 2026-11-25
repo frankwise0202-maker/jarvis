@@ -126,6 +126,12 @@ test('health items set the level of their subsystem; the worst wins overall', ()
   assert.equal(vm.levels.net, 'ok');
   assert.equal(vm.levels.gpu, 'ok');
   assert.equal(normalize(makeStatus('offline', T)).levels.net, 'alert');
+  // Each item's own level, for the value it is about (the CPU temperature, the root filesystem).
+  assert.equal(vm.itemLevels['cpu.temp'], 'alert');
+  assert.equal(vm.itemLevels['disk:/'], 'alert');
+  assert.equal(vm.itemLevels.memory, 'alert');
+  assert.equal(vm.itemLevels['cpu.load'], 'ok');
+  assert.equal(normalize(makeStatus('warn', T)).itemLevels['disk.health'], 'warn');
   // An item can raise the overall level even when the Core's own level lags.
   const lag = normalize({ health: { level: 'ok', items: [{ id: 'disk:/', level: 'warn', title: 'x' }] } });
   assert.equal(lag.health.level, 'warn');

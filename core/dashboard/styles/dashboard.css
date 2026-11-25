@@ -734,6 +734,17 @@ html[data-health='offline'] .brand-orb {
 #disk-health[data-level] {
   color: var(--text);
 }
+/* The value a warning or an alert is about wears its color (the panel chip says it in words). */
+.fig b[data-level='warn'],
+.fs-pct[data-level='warn'],
+#disk-health[data-level='warn'] {
+  color: var(--warn);
+}
+.fig b[data-level='alert'],
+.fs-pct[data-level='alert'],
+#disk-health[data-level='alert'] {
+  color: var(--err);
+}
 
 /* ---- the core stage ---------------------------------------------------------------------- */
 

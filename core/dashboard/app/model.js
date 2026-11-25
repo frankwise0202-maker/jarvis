@@ -435,11 +435,14 @@ export function normalize(raw, info = null) {
   };
   // Per-subsystem levels from the Core's health items (the gauges and panel chips use them).
   const sub = { cpu: 'ok', gpu: 'ok', mem: 'ok', disk: 'ok', net: 'ok', api: 'ok', site: 'ok', tailscale: 'ok', other: 'ok' };
+  const byId = {}; // item id → level ('cpu.temp', 'memory', 'disk:/', 'disk.health', …), for the values they are about
   for (const it of health.items) {
     const k = subsystemOf(it.id);
     sub[k] = worst(sub[k], it.level);
+    if (it.id) byId[it.id] = worst(byId[it.id] || 'ok', it.level);
   }
   vm.levels = sub;
+  vm.itemLevels = byId;
   return vm;
 }
 
