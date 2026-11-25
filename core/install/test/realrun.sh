@@ -71,8 +71,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== install (answers: automatic login yes, disk health yes, Tailscale yes)"
-printf 'y\ny\ny\n' >"$work/answers"
+echo "== install (answers: automatic login yes, disk health yes, Tailscale yes, automatic updates yes)"
+printf 'y\ny\ny\ny\n' >"$work/answers"
 as_user env JARVIS_CORE_TTY="$work/answers" bash "$core/install/install.sh" 2>&1 | tee "$work/install-1.txt"
 
 echo "== checks"
@@ -92,6 +92,8 @@ test -x /usr/local/bin/jarvis-core
 curl --noproxy '*' -fsS "http://127.0.0.1:$port/api/ping"
 echo
 grep -q '^AutomaticLoginEnable=true$' "$work/custom.conf"
+grep -q 'autoupdate-tick' "$h/.config/systemd/user/jarvis-core-autoupdate.service"
+test -e "$work/state/enabled@jarvis-core-autoupdate.timer"
 echo "checks passed"
 
 echo "== jarvis-core status / url / screen --print-args (through the /usr/local/bin shortcut)"
@@ -109,6 +111,7 @@ if [ "${KEEP:-0}" != 1 ]; then
   test ! -e /etc/sudoers.d/jarvis-core-smartctl
   test ! -e /usr/local/bin/jarvis-core
   test ! -e "$h/jarvis-core-app"
+  test ! -e "$h/.config/systemd/user/jarvis-core-autoupdate.timer"
   grep -q '^AutomaticLoginEnable=false$' "$work/custom.conf"
   visudo -c -q
   echo "uninstall checks passed"
