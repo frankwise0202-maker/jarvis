@@ -246,13 +246,13 @@ Alienware stops making the rest of that answer at the end of its sentence, so th
 sooner.
 
 **George picks the faster voice for your Alienware.** Each time George gets ready, the Alienware times
-him on one sentence (`jarvis-core logs` shows a line like "George speaks at 0.31x real time": under 1 is
-faster than he talks). If he is slower than 0.8x real time there, it also tries a smaller 8-bit version
-of George (a 92 MB download, once) and keeps whichever is faster on this computer, from then on. Nothing
-to do on your part.
+him on one sentence (`jarvis-core logs` shows a line like "George speaks at 0.31x real time": it takes
+0.31 seconds to make each second of his speech; under 1 is faster than he talks). If it takes more than
+0.8 seconds there, it also tries a smaller 8-bit version of George (a 92 MB download, once) and keeps
+whichever is faster on this computer, from then on. Nothing to do on your part.
 
 The models live in `~/.cache/jarvis-core/models` (about 410 MB for Fast + George, 92 MB more if the
-8-bit George was needed); deleting that folder is safe: they download again when needed.
+Alienware tried the 8-bit George); deleting that folder is safe: they download again when needed.
 
 *To keep a model in memory longer or shorter* (most people never need this): in
 `~/.config/jarvis-core/config.json`, add `"senses": {"speakIdleMinutes": 360, "hearIdleMinutes": 30}`
