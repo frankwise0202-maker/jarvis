@@ -53,7 +53,8 @@ export function freeMarkdown(b, { dateWords }) {
   const w = b.weather;
   if (w) {
     const now = w.now.temp !== null ? `${w.now.summary}, ${w.now.temp}${deg(w.units)} now` : w.now.summary;
-    out.push(`**Weather${w.label && w.label !== 'Your location' ? ` in ${w.label}` : ''}:** ${now}; ${w.today.summary}.`);
+    const today = w.today.summary ? `${w.today.summary[0].toLowerCase()}${w.today.summary.slice(1)}` : '';
+    out.push(`**Weather${w.label && w.label !== 'Your location' ? ` in ${w.label}` : ''}:** ${now}${today ? `; ${today}` : ''}.`);
   }
   if (b.headlines.length) out.push(`**Headlines**\n${b.headlines.map((h) => `- [${h.title}](${h.url}) (${h.source})`).join('\n')}`);
   out.push(`**Home base:** ${b.homebase.summary}${b.homebase.notes.length ? ` ${b.homebase.notes.slice(0, 2).join('. ')}.` : ''}`);
