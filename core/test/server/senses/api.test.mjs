@@ -182,6 +182,16 @@ test('POST /api/hear: a WAV in, {text, ms, model} out; the prompt reaches Whispe
   assert.equal((await core.get('/api/senses')).json.hear.lastMs >= 0, true);
 });
 
+test('POST /api/hear: silence comes back as no words, without running Whisper (which would invent "Thank you.")', async () => {
+  const before = core.rt.senses.hosts.hear.status();
+  const r = await hear(core.port, encodeWav(Float32Array.from({ length: 32000 }, (_, i) => (i % 2 ? 0.001 : -0.001)), 16000));
+  assert.equal(r.status, 200);
+  assert.equal(r.json.text, '');
+  assert.equal(r.json.seconds, 2);
+  assert.equal(core.rt.senses.hosts.hear.status().busy, false);
+  assert.equal(before.loaded, core.rt.senses.hosts.hear.status().loaded);
+});
+
 test('POST /api/hear refuses wrong audio, wrong types and bodies over 2 MB', async () => {
   const wrongRate = await hear(core.port, encodeWav(new Float32Array(44100), 44100));
   assert.equal(wrongRate.status, 400);

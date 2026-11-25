@@ -26,6 +26,7 @@ export { SenseError } from './host.mjs';
 export { defaultModelsDir } from './models.mjs';
 
 const DEPENDENCIES = ['@huggingface/transformers', 'kokoro-js', 'onnxruntime-node'];
+const SILENCE_PEAK = 0.003; // about -50 dBFS: far below any voice the phone's microphone picks up
 const MODEL_ALIASES = { fast: 'base.en', accurate: 'small.en' };
 
 /** Whether the speech libraries can be found (resolved, not loaded: loading happens in the engine processes). */
@@ -270,6 +271,10 @@ export function createSenses({
     const wav = readHearingWav(buf, { maxSec: 30 });
     if (!wav.ok) throw new SenseError(400, wav.code, wav.message);
     const started = Date.now();
+    // Silence (below -50 dBFS throughout): nothing to hear. Whisper would make up "Thank you." or "you".
+    let peak = 0;
+    for (let i = 0; i < wav.audio.length; i++) peak = Math.max(peak, Math.abs(wav.audio[i]));
+    if (peak < SILENCE_PEAK) return { text: '', ms: Date.now() - started, model: settings.hear.model, seconds: Math.round(wav.seconds * 100) / 100 };
     const r = await hosts.hear.run({ audio: wav.audio, prompt: cleanPrompt(prompt) }, { timeoutMs: hearTimeoutMs, signal });
     const ms = Date.now() - started;
     sense.hear.lastMs = ms;
