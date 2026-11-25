@@ -494,7 +494,7 @@ export function createPanels() {
     gaugeSet('cpu', { value: c.usage, sub: c.temp !== null ? fmtTemp(c.temp) : 'temp n/a', level: vm.levels.cpu });
     const g = vm.gpu;
     if (g.state === 'ok') {
-      const parts = [fmtTemp(g.temp), g.memUsed !== null ? `${fmtMem(g.memUsed)} VRAM` : null].filter(Boolean);
+      const parts = [fmtTemp(g.temp), g.memUsed !== null ? `${fmtMem(g.memUsed)}${NBSP}VRAM` : null].filter(Boolean);
       gaugeSet('gpu', { value: g.util, sub: parts.join(' · '), level: vm.levels.gpu });
     } else {
       const words = g.state === 'nodriver' ? 'NO DRIVER' : g.state === 'pending' || g.state === 'unknown' ? 'CHECKING' : 'NO DATA';

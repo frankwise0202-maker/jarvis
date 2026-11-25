@@ -4,7 +4,9 @@ The 24/7 system report on the Alienware's screen: a JARVIS-style live view of th
 graphics card, memory, storage, network, services, top processes, an event log) around the living
 core, plus a small typed status assistant. Static files only (HTML, CSS, ES modules, Canvas 2D), no
 frameworks and no build step. The Core serves this folder at `/` on `127.0.0.1:8788`; Tailscale
-serve makes the same page reachable from the owner's iPhone and Mac.
+serve makes the same page reachable from the owner's iPhone and Mac, where it becomes the remote
+view: a scrolling layout sized for the phone, the tablet or the laptop window, without the kiosk's
+night dim, pixel shift, hidden cursor or self-reloads (see "The remote view" below).
 
 ## What is on the screen
 
@@ -41,9 +43,15 @@ the summary, answers) keep each number with its unit on one line.
 
 ## Kiosk behaviour
 
+Everything in this section except the layout belongs to the Alienware's own screen only: the page
+loaded from `localhost`, `127.0.0.1` or `[::1]` (`app/kiosk.js`: `screenFeatures`). A remote viewer
+(the tailnet name, `https://<machine>.<tailnet>.ts.net/`) never dims at night, never shifts, never
+hides the cursor and never reloads itself; keys typed on its page stay where they are typed.
+
 - **Full screen, no scrolling** at 1920×1080. The root size follows the viewport, so 2560×1440 is
   the same layout scaled up; at 1366×768 and other small screens details drop (sparkline captions,
-  gaps) and the text keeps a 12 px floor.
+  gaps) and the text keeps a 12 px floor. Any window narrower than 1366 or shorter than 740 gets
+  the remote view's layout instead (below), on the Alienware too.
 - **Cursor** hides after 3 s without movement.
 - **Pixel shift**: the whole page moves to one of eight positions within 3 px every 3 minutes
   (derived from the clock, so it survives reloads).
@@ -55,12 +63,39 @@ the summary, answers) keep each number with its unit on one line.
   word, a banner under the core says since when, and the last values stay up at 42 % opacity
   (stale data never looks live). The link reconnects on its own (1 → 10 s backoff) and catches up
   with one full read.
-- **Updates**: when `api/info` reports a new version after a restart, the page reloads itself.
+- **Updates**: when `api/info` reports a new version after a restart, the page reloads itself (a
+  remote viewer gets a notice instead: "Jarvis Core was updated. Reload this page…").
 - **Daily refresh** at 04:00 (only if the page has been open an hour and the Core answers), as a
   safety net against browser-level growth; the page itself does not grow (see the long-run test).
 - **Service worker** (`sw.js`): network first for the page's own files, so a kiosk that reloads
   while the Core restarts still shows the dashboard ("Connecting…") instead of a browser error. The
   API is never cached.
+
+## The remote view (iPhone, iPad, Mac)
+
+The same page, laid out by the window's size (`styles/dashboard.css`, after the kiosk's rules); the
+kiosk layout itself is unchanged and is used wherever it fits (1366×740 and up, e.g. the Mac's
+Chrome at 1440×900):
+
+- **A phone held upright (up to 480 px wide)**: one column that scrolls. A compact top bar (the
+  state word and the clock; the host, the uptime and a small Open Jarvis button under them), the
+  living core at about `min(78vw, 320px)` with its four readouts (CPU, GPU, RAM, DISK) in a 2×2
+  grid under it instead of leader lines, the Core's summary sentence, then the panels in this
+  order: Services, CPU, GPU, Memory, Storage, Network, Status assistant, Top processes, Event log.
+- **A phone on its side, a tablet, a laptop window (481–1365 px wide, or under 740 px tall)**: the
+  core with its readouts beside it on top (the four in one row from 1024 px), then the panels two
+  by two in the same order, the event log across both columns.
+- Each panel lays out its insides by its own width (CSS container queries): the big figure beside
+  or above the others, the process lists stacked, a log row's text under its time, so the
+  phone's column and a tablet's half-width column both fit. Nothing is cut: subtitles, captions,
+  the event text and the transcript wrap instead of ending in "…", and the log and the
+  transcript show everything they keep.
+- 1rem is 16 px: labels 12 px, sentences 14 px and up, the question box 16 px (iOS zooms the
+  whole page into a smaller field). Buttons and suggestion chips are 44 px tall; hover effects only
+  where a pointer can hover, so a tapped chip does not stay lit.
+- iOS: `viewport-fit=cover` with the safe-area insets around the page (the notch on its side, the
+  home bar), `100dvh` heights, `-webkit-text-size-adjust: 100%`.
+- The panels' index numbers (01–09) belong to the kiosk's columns and are hidden here.
 
 ### Settings in the address
 
@@ -140,15 +175,16 @@ connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; 
 | `app/core-orb.js` | the living core (Canvas 2D, no allocation per frame, 30 fps, 15 at night) |
 | `app/spark.js` | the sparkline ring buffer (one slot a second) and renderer |
 | `app/assistant.js` | the status assistant panel |
-| `app/kiosk.js` | cursor, pixel shift, night dim, daily refresh, settings |
+| `app/kiosk.js` | which screen is the kiosk (`screenFeatures`); cursor, pixel shift, night dim, daily refresh, settings |
 | `sw.js` | the network-first service worker for the page's own files |
 | `test/` | unit tests, fixtures, a mock Core, the screenshot run and the long-run check |
 
 ## Tests
 
 ```bash
-node --test core/dashboard/test/*.test.mjs                         # unit tests (format, model, kiosk, ring, data link)
+node --test core/dashboard/test/*.test.mjs                         # unit tests (format, model, kiosk, ring, data link, kiosk vs remote)
 nice -n 10 node core/dashboard/test/screenshots.mjs                # every state at 1920×1080, 2560×1440, 1366×768 (real Core, fixture mode)
+nice -n 10 node core/dashboard/test/phone-screenshots.mjs          # the remote view: iPhone, iPad, laptop windows, every state
 nice -n 10 node core/dashboard/test/longrun.mjs --hours 48 --rate 200   # two simulated days after the warm-up, memory verdict
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
 ```
@@ -161,6 +197,18 @@ stage or overlap the summary, console errors and CSP violations. After each scre
 the longest event time (two weeks of hours, in the page's locale, en-US and en-GB) in a cloned log
 row and a long drive name in each corner caption, and fails if either runs out of its column. Screenshots land in
 `core/dashboard/test/artifacts/` (ignored by git).
+
+The phone run (`phone-screenshots.mjs`) loads the page the way the iPhone does, through the
+fixture's tailnet name (`alienware.tail4e5f6a.ts.net`, resolved to this computer, with the headers
+Tailscale serve adds), at 320×568, 375×667 (iPhone SE), 390×844 and 844×390 (iPhone 13, with its
+notch and home bar emulated), 820×1180 (iPad), 1280×800 and 1440×900 and the same two minus
+Chrome's tabs and address bar, in every state (`night` included: a remote viewer must not dim).
+It saves the first screen and the whole page, and fails on: sideways scrolling or anything past
+the screen's edges or under the notch, overlapping panels, readouts or pieces of a row, text cut
+off or spilling out of its box (also with the longest values each figure can show), text under
+12 px or sentences under 14 px, touch targets under 44 px, a question box under 16 px, and any
+kiosk behaviour (dimming, shifting, a hidden cursor, typed keys pulled into the question box).
+Windows big enough for the kiosk layout get the kiosk run's checks instead.
 
 The long run plays the stand-in Core at 200× (a simulated day in about eight minutes): one
 snapshot per simulated second, the scenarios cycling every two hours, an event every ten minutes,

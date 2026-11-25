@@ -5,12 +5,12 @@
 // carries the header Tailscale serve adds (Tailscale-User-Login), so the page is a remote viewer
 // exactly as on the phone: no night dim, no pixel shift, no hidden cursor, no typing anywhere.
 //
-//   node core/dashboard/test/phone-screenshots.mjs [--out DIR] [--only ok,night] [--sizes se,13,13l]
+//   node core/dashboard/test/phone-screenshots.mjs [--out DIR] [--only ok,night] [--sizes iphone-13,ipad]
 //
-// Sizes (--sizes takes the keys): se1 iPhone SE (1st gen) 320×568, se iPhone SE 375×667, 13 iPhone 13
-// 390×844, 13l the same on its side 844×390, ipad iPad Air 820×1180, 1280 / 1440 laptop windows
-// 1280×800 and 1440×900, 1280c / 1440c the same minus the browser's tabs and address bar (712 and
-// 812 tall). States: ok, warn, alert, nogpu, internet (the Core's `offline` fixture: the internet is
+// Sizes (--sizes takes the keys): iphone-se1 320×568, iphone-se 375×667, iphone-13 390×844 and
+// iphone-13-side 844×390 (with the notch and the home bar), ipad 820×1180, laptop-1280 1280×800 and
+// laptop-1440 1440×900, mac-chrome-1280 / mac-chrome-1440 the same screens minus Chrome's tabs and
+// address bar (712 and 812 tall). States: ok, warn, alert, nogpu, internet (the Core's `offline` fixture: the internet is
 // down), offline (the Core itself stops), night (23:31). Each shot is saved twice: the first screen
 // (<state>-<size>.png) and the whole page (<state>-<size>-full.png).
 //
@@ -33,16 +33,16 @@ const SIM_START = '2026-11-25T21:47:00';
 const NIGHT_START = '2026-11-25T23:31:00';
 
 export const SIZES = {
-  se1: { w: 320, h: 568, touch: true, dpr: 2, label: 'iPhone SE (1st gen) 320×568' },
-  se: { w: 375, h: 667, touch: true, dpr: 2, label: 'iPhone SE 375×667' },
+  'iphone-se1': { w: 320, h: 568, touch: true, dpr: 2, label: 'iPhone SE (1st gen) 320×568' },
+  'iphone-se': { w: 375, h: 667, touch: true, dpr: 2, label: 'iPhone SE 375×667' },
   // The notch and the home bar (viewport-fit=cover): what env(safe-area-inset-*) reports on an iPhone 13.
-  13: { w: 390, h: 844, touch: true, dpr: 2, label: 'iPhone 13 390×844', insets: { top: 47, bottom: 34 } },
-  '13l': { w: 844, h: 390, touch: true, dpr: 2, label: 'iPhone 13 on its side 844×390', insets: { left: 47, right: 47, bottom: 21 } },
+  'iphone-13': { w: 390, h: 844, touch: true, dpr: 2, label: 'iPhone 13 390×844', insets: { top: 47, bottom: 34 } },
+  'iphone-13-side': { w: 844, h: 390, touch: true, dpr: 2, label: 'iPhone 13 on its side 844×390', insets: { left: 47, right: 47, bottom: 21 } },
   ipad: { w: 820, h: 1180, touch: true, dpr: 2, label: 'iPad Air 820×1180' },
-  1280: { w: 1280, h: 800, touch: false, dpr: 1, label: 'laptop window 1280×800' },
-  '1280c': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome at 1280×800 (712 tall inside)" },
-  1440: { w: 1440, h: 900, touch: false, dpr: 1, label: 'laptop window 1440×900' },
-  '1440c': { w: 1440, h: 812, touch: false, dpr: 1, label: "the Mac's Chrome at 1440×900 (812 tall inside)" },
+  'laptop-1280': { w: 1280, h: 800, touch: false, dpr: 1, label: 'laptop window 1280×800' },
+  'mac-chrome-1280': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome on a 1280×800 screen (712 tall inside)" },
+  'laptop-1440': { w: 1440, h: 900, touch: false, dpr: 1, label: 'laptop window 1440×900' },
+  'mac-chrome-1440': { w: 1440, h: 812, touch: false, dpr: 1, label: "the Mac's Chrome on a 1440×900 screen (812 tall inside)" },
 };
 const STATES = ['ok', 'warn', 'alert', 'nogpu', 'internet', 'offline', 'night'];
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
@@ -111,11 +111,11 @@ export function remoteProblems(page, insets = {}) {
       ...document.querySelectorAll('.panel, .core-orb, .gauge-readout, .core-summary, .offline-banner, .state-chip, .clock-block, .brand-host, .readout-block, .open-jarvis, .brand-word, .brand-orb'),
     ].filter(shown);
     const rects = blocks.map((el) => [el, el.getBoundingClientRect()]);
-    // Nothing under the notch or the rounded corners: every block inside the safe area (the page is
-    // scrolled to the top here, so the top bar must also clear the status bar and the notch).
+    // Nothing under the notch or the rounded corners: every block inside the safe area, and at the
+    // top of the page nothing under the status bar.
     for (const [el, r] of rects) {
       if (r.left < safe.left - 0.5 || r.right > W - safe.right + 0.5) out.push(`${desc(el)} is under the notch (${Math.round(r.left)}..${Math.round(r.right)}, safe ${safe.left}..${W - safe.right})`);
-      if (r.top < safe.top - 0.5) out.push(`${desc(el)} is under the status bar (top ${Math.round(r.top)} < ${safe.top})`);
+      if (r.top + window.scrollY < safe.top - 0.5) out.push(`${desc(el)} is under the status bar (top ${Math.round(r.top + window.scrollY)} < ${safe.top})`);
     }
     const lastBlock = document.querySelector('.stage').getBoundingClientRect();
     const stagePad = parseFloat(getComputedStyle(document.querySelector('.stage')).paddingBottom);
@@ -340,6 +340,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     }
     if (night) await page.waitForTimeout(4000); // the kiosk would be dimming by now
     await page.waitForTimeout(1500); // a cursor would have hidden by now (3 s)
+    await page.evaluate(() => window.scrollTo(0, 0));
     const layout = await layoutOf(page);
     const checks = [];
     let smallest = null;
@@ -350,7 +351,6 @@ async function shoot({ browser, state, sizeKey, outDir }) {
       checks.push(...r.problems);
       smallest = r.smallest;
     }
-    await page.evaluate(() => window.scrollTo(0, 0));
     const first = path.join(outDir, `${name}.png`);
     const full = path.join(outDir, `${name}-full.png`);
     await page.screenshot({ path: first });
@@ -378,7 +378,7 @@ async function main() {
       for (const sizeKey of opts.sizes) {
         const r = await shoot({ browser, state, sizeKey, outDir: opts.out });
         if (r.problems.length) failed++;
-        console.log(`${(r.problems.length ? 'PROBLEMS' : 'ok').padEnd(8)} ${r.name.padEnd(16)} ${r.layout.padEnd(10)} page ${r.height}px${r.smallest ? `, smallest text ${r.smallest}px` : ''}  ${r.first}`);
+        console.log(`${(r.problems.length ? 'PROBLEMS' : 'ok').padEnd(8)} ${r.name.padEnd(26)} ${r.layout.padEnd(10)} page ${r.height}px${r.smallest ? `, smallest text ${r.smallest}px` : ''}  ${r.first}`);
         for (const p of r.problems) console.log(`         - ${p}`);
       }
     }
