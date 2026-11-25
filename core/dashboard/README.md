@@ -31,7 +31,10 @@ serve makes the same page reachable from the owner's iPhone and Mac.
 
 Values that are not known say so ("not available", "not checked", "driver not loaded", "no
 sensor"); nothing is ever invented. Status is never color alone: every level has an icon shape
-(circle ok, triangle warn, diamond alert, ring offline/unknown) and a word.
+(circle ok, triangle warn, diamond alert, ring offline/unknown) and a word. The value a warning or
+an alert is about (the CPU temperature, memory in use, a filesystem's percentage, the drive health)
+also turns amber or red, so the cause reads from across the room. Sentences from the Core (events,
+the summary, answers) keep each number with its unit on one line.
 
 ## Kiosk behaviour
 
