@@ -701,7 +701,8 @@ step_app() {
 # One at a time: jarvis-core update, the installer and the update timer's retry all use core/.npm-install, so each
 # holds LIBS_LOCK through its swap. A second one waits for the first (then usually finds them in place); the
 # timer's --libraries never waits, it steps aside. JARVIS_CORE_LIBS_LOCKED=1: the caller (the update timer) holds
-# the lock on fd 8 for this whole run. The lock is never handed to npm or to anything that outlives this step.
+# the lock on fd 8 for this whole run. npm holds it too, while it runs: an npm that outlives this step (its terminal
+# was closed) keeps it until it ends, at most 16 minutes later, so nothing else starts in the folder it writes in.
 LIBS_WHAT="the Claude SDK, web-push and the speech libraries"
 deps_install() {
   if [ "$DRY_RUN" = 1 ] || [ -n "${JARVIS_CORE_LIBS_LOCKED:-}" ] || ! have flock ||
@@ -828,8 +829,10 @@ deps_install_now() {
   say "Installing the brain's libraries with npm ci: $LIBS_WHAT,"
   say "about 460 MB. The first time this can take several minutes..."
   # ONNXRUNTIME_NODE_INSTALL_CUDA=skip: the speech engines run on the CPU; never fetch onnxruntime's CUDA build.
-  # 8>&-: npm (and anything it leaves running) never holds the libraries lock.
-  (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null 8>&-) >"$log" 2>&1
+  # npm keeps the libraries lock (fd 8) for as long as it runs. `timeout` gives it a process group of its own, so a
+  # closed terminal or a dropped ssh session ends this script but not npm, which goes on writing in $stage; while it
+  # does, no other libraries step may start there. -k 60: one that ignores the 15 minutes' SIGTERM is killed.
+  (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout -k 60 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1
   rc=$?
   if [ "$rc" = 0 ] && [ -d "$stage/node_modules" ]; then
     printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
@@ -1445,8 +1448,8 @@ refresh_screen() {
     fi
   elif in_service && screen_env_ready && have systemd-run; then
     # jarvis-core screen waits for the Core, then becomes Chrome: the unit lasts as long as the dashboard is open.
-    # Started is not shown: it counts as back only once Chrome is up (Chrome missing, or a display left over from a
-    # session that ended, would stop it), as jarvis-core open waits for it.
+    # Started is not shown: it counts as back only if Chrome is up and still up 10 seconds later (Chrome missing never
+    # comes up; one that can't reach a display left over from a session that ended exits within moments).
     if systemd-run --user --collect --quiet --unit="jarvis-core-screen-$(date +%s)" --description="Jarvis Core screen" "$SELF_BIN" screen </dev/null >/dev/null 2>&1; then
       if screen_appears 10; then
         ok "Put the dashboard back on the screen"
@@ -1465,13 +1468,18 @@ refresh_screen() {
 
 screen_up() { pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; }
 
-screen_appears() { # seconds: wait until the dashboard's Chrome is up
-  local i
+screen_appears() { # seconds: the dashboard's Chrome came up and is still up at the end of them (seen once isn't
+  # enough: a Chrome that can't reach the display lives 0.1 s warm, about 5 s cold, then exits)
+  local i seen=0
   for ((i = 0; i < $1 * 10; i++)); do
-    screen_up && return 0
+    if screen_up; then
+      seen=1
+    elif [ "$seen" = 1 ]; then
+      return 1 # it came up and went again
+    fi
     sleep 0.1
   done
-  return 1
+  screen_up
 }
 
 # --libraries: only the libraries step. The update timer runs it when an update couldn't install them and GitHub

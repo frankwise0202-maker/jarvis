@@ -217,9 +217,10 @@ next check tries again, then every 2 hours until it works; meanwhile Jarvis Core
 the previous libraries if it had them. When the reason isn't the internet (a full disk, say), it tries
 less often, up to once a day; `jarvis-core autoupdate status` says why and when. Once the libraries are
 in, Jarvis Core restarts by itself to use them, and keeps them only if it still answers 90 seconds
-later; if it doesn't, it goes back to the previous ones and waits for a newer version. It doesn't
-start a Jarvis Core you stopped. If you run `jarvis-core update` while it is installing them, the
-update says so and waits for it.
+later; if it doesn't, it goes back to the previous ones and waits for a newer version. Trying the
+libraries again never starts a Jarvis Core you stopped: they wait until it runs again (installing a
+new version does start it). If you run `jarvis-core update` while it is installing them, the update
+says so and waits for it.
 
 | Command | What it does |
 |---|---|

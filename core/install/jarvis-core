@@ -636,7 +636,7 @@ core_stopped() {
 }
 
 libs_hint() { # how libraries that aren't right get their next try, in one sentence
-  local after failed last="" bad bad_at why sha out
+  local after failed last="" lead=The bad bad_at why sha out
   if ! { au_enabled && [ -f "$AU_TIMER_FILE" ]; }; then
     echo "Install them: jarvis-core update"
     return 0
@@ -654,10 +654,6 @@ libs_hint() { # how libraries that aren't right get their next try, in one sente
     echo "This version's new libraries made Jarvis Core fail$bad_at, so it $out; a newer version tries again."
     return 0
   fi
-  if core_stopped; then
-    echo "Jarvis Core isn't running; the next automatic update check after it starts tries again."
-    return 0
-  fi
   after=$(libs_retry_after)
   if failed=$(au_get libs_failed); then
     why=$(libs_error 1) || why=""
@@ -665,19 +661,28 @@ libs_hint() { # how libraries that aren't right get their next try, in one sente
     # no time from the future after the clock went back
     if [ -n "$failed" ] && [ "$failed" -le "$(date +%s)" ]; then failed=$(au_clock "$failed"); else failed=""; fi
     if [ -n "$failed" ] && [ -n "$why" ]; then
-      last="The last try failed ($failed: $why); the"
+      last="The last try failed ($failed: $why)"
     elif [ -n "$failed$why" ]; then
-      last="The last try failed ($failed$why); the"
+      last="The last try failed ($failed$why)"
     else
-      last="The last try failed; the"
+      last="The last try failed"
     fi
-  else
-    last="The"
+    lead="$last; the"
+  fi
+  # A Core the owner stopped: the first check after it starts tries them, but not before the wait is over (as the
+  # check itself decides: the wait first, then the stopped Core).
+  if core_stopped; then
+    if [ -n "$after" ]; then
+      echo "$lead next automatic update check after $(au_clock "$after") tries again, if Jarvis Core is running then (it isn't now)."
+    else
+      echo "${last:+$last. }Jarvis Core isn't running; the next automatic update check after it starts tries again."
+    fi
+    return 0
   fi
   if [ -n "$after" ]; then
-    echo "$last next automatic update check after $(au_clock "$after") tries again."
+    echo "$lead next automatic update check after $(au_clock "$after") tries again."
   else
-    echo "$last next automatic update check tries again."
+    echo "$lead next automatic update check tries again."
   fi
 }
 
@@ -749,13 +754,20 @@ au_units_ours() { # both units are this version's
     [ "$(cat "$AU_SERVICE_FILE")" = "$(au_service_content)" ] && [ "$(cat "$AU_TIMER_FILE")" = "$(au_timer_content)" ]
 }
 
+# Units the owner set up by hand: their own script, or a service that doesn't run this command's autoupdate-tick.
+# Units another version of Jarvis Core wrote (they differ only in their settings) are not.
+au_units_hand() {
+  au_units_ours && return 1
+  [ -f "$AU_OLD_SCRIPT" ] || ! grep -qxF "ExecStart=\"$SELF_BIN\" autoupdate-tick" "$AU_SERVICE_FILE" 2>/dev/null
+}
+
 au_enabled() { user_systemctl is-enabled "$AU_TIMER" >/dev/null 2>&1; }
 
 cmd_autoupdate_on() {
   ensure_user_bus
   title "Automatic updates"
   local adopted=0
-  if [ -f "$AU_OLD_SCRIPT" ] || { [ -f "$AU_SERVICE_FILE" ] && ! au_units_ours; }; then adopted=1; fi
+  if [ -f "$AU_OLD_SCRIPT" ] || { [ -f "$AU_SERVICE_FILE" ] && au_units_hand; }; then adopted=1; fi
   au_write_units
   [ $? -eq 2 ] && die "Couldn't write $AU_SERVICE_FILE"
   if [ -f "$AU_OLD_SCRIPT" ]; then
@@ -813,10 +825,10 @@ cmd_autoupdate_status() {
   title "Automatic updates"
   local v next
   if au_enabled && [ -f "$AU_TIMER_FILE" ]; then
-    if au_units_ours; then
-      ok "On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself"
-    else
+    if au_units_hand; then
       ok "On, with the timer you set up by hand (jarvis-core autoupdate on takes it over and adds the safety net)"
+    else
+      ok "On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself"
     fi
     next=$(user_systemctl show "$AU_TIMER" -p NextElapseUSecRealtime --value 2>/dev/null) || next=""
     [ -n "$next" ] && [ "$next" != n/a ] && say "Next check: $next"
@@ -899,6 +911,10 @@ au_libs_retry_locked() { # holding the libraries lock on fd 8: it goes to instal
   trying=$(au_get libs_trying) || trying=""
   if [ -n "$trying" ]; then
     if [ "$st" = ok ] && [ "$trying" = "$sha" ]; then
+      if core_stopped; then # nothing to check them on yet: the journal says so, not autoupdate.log at every check
+        echo "Jarvis Core isn't running, so the brain's new libraries are checked once it runs again."
+        return 0
+      fi
       au_log "The check of the brain's new libraries was cut short: checking them now"
       au_libs_check "$sha"
       return 0
@@ -966,8 +982,9 @@ au_libs_retry_locked() { # holding the libraries lock on fd 8: it goes to instal
 # New libraries are in place, the previous ones (if any) in node_modules.old, and libs_trying says so: restart the
 # Core to load them and keep them only if it holds up; otherwise put back what was there (nothing, if nothing was)
 # and restart. If it answers then, these libraries broke it, and this lockfile's are left alone (libs_bad) until a
-# newer version; if it doesn't, they aren't to blame and get another try later. A Core the owner stopped meanwhile
-# is left alone, and its next check after it starts does this.
+# newer version; if it doesn't, they aren't to blame and get another try later. A Core the owner stopped, before or
+# during the check, is left alone with them (that says nothing about them), and its next check after it starts does
+# this.
 au_libs_check() { # au_libs_check LOCKFILE_SHA
   local sha="$1" core="$APP_DIR/core" had=0 back
   [ -d "$core/node_modules.old" ] && had=1
@@ -983,6 +1000,10 @@ au_libs_check() { # au_libs_check LOCKFILE_SHA
     au_set last_result "installed the brain's libraries"
     au_log "Installed the brain's libraries; Jarvis Core restarted to load them, and it answers"
     au_event info core.update "Jarvis Core installed the brain's libraries that couldn't be downloaded before, and restarted to load them"
+    return 0
+  fi
+  if core_stopped; then # the owner stopped it during the check: libs_trying stays, the previous ones stay aside
+    au_log "Jarvis Core was stopped during the check of the brain's new libraries; they are checked once it runs again"
     return 0
   fi
   rm -rf "$core/.npm-install"
@@ -1034,6 +1055,12 @@ cmd_autoupdate_tick() {
     }
   fi
   au_set last_check "$(date -Is)"
+  # Units another version wrote (an update or a rollback cut short before its refresh rewrote them): made this
+  # version's, as the refresh does. Hand-made ones are left to jarvis-core autoupdate on.
+  if [ -f "$AU_SERVICE_FILE" ] && ! au_units_ours && ! au_units_hand && au_write_units; then
+    user_systemctl daemon-reload 2>/dev/null || true
+    au_log "Updated the automatic update timer to this version's (another version had written it)"
+  fi
   local branch here there there_rev bad prev prev_short after now_short n0 n1
   branch=$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=main
   if ! timeout 120 git -C "$APP_DIR" fetch --quiet origin "$branch" </dev/null >/dev/null 2>&1; then
