@@ -8,7 +8,7 @@
 // the 2-second check, the reply in the home base's voice, no device recognizer, no device voice; a
 // "cancel" said during the check, heard by the home base, sends nothing);
 // the home base unreachable (this iPhone's recognizer takes the listen over and the built-in voice
-// speaks); slow answers (hearing over 4 s, the voice over 6 s: the same fallbacks); and off (the
+// speaks); slow answers (hearing over 4 s, the voice over its time limit: the same fallbacks); and off (the
 // default): nothing asked of the home base, every listen and reply exactly as before.
 
 import { tid } from '../harness.mjs';
