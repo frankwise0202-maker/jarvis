@@ -199,6 +199,10 @@ export function createSync({ dir, log = () => {}, now = () => Date.now(), maxByt
     for (const f of fs.readdirSync(devDir)) {
       if (f.startsWith('.upload-') || f.includes('.tmp-')) fs.rmSync(path.join(devDir, f), { force: true }); // an upload cut off by a restart
     }
+    const dailyDir = path.join(devDir, 'daily');
+    if (fs.existsSync(dailyDir)) {
+      for (const f of fs.readdirSync(dailyDir)) if (f.startsWith('.link-')) fs.rmSync(path.join(dailyDir, f), { force: true });
+    }
     const latest = path.join(devDir, 'latest.json.gz');
     if (!fs.existsSync(latest)) continue;
     let meta = null;

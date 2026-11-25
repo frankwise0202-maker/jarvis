@@ -369,6 +369,7 @@ test('a restart reads the index back and clears uploads it cut off', async () =>
     s.clock.t += 60_000;
     assert.equal((await s.put(ID2, backup(), { 'X-Jarvis-Device-Label': 'Mac' })).status, 200);
     fs.writeFileSync(path.join(s.dir, ID, '.upload-deadbeef.tmp'), 'half');
+    fs.writeFileSync(path.join(s.dir, ID, 'daily', '.link-deadbeef'), 'half');
     fs.mkdirSync(path.join(s.dir, 'not-a-device!'));
     // a device whose description was lost: rebuilt from the file
     fs.rmSync(path.join(s.dir, ID2, 'meta.json'));
@@ -378,6 +379,7 @@ test('a restart reads the index back and clears uploads it cut off', async () =>
     assert.equal(list.find((d) => d.id === ID).label, 'iPhone');
     assert.equal(list.find((d) => d.id === ID2).label, 'Device');
     assert.ok(!fs.existsSync(path.join(s.dir, ID, '.upload-deadbeef.tmp')));
+    assert.ok(!fs.existsSync(path.join(s.dir, ID, 'daily', '.link-deadbeef')));
     // a label sent later replaces it; no label keeps the one there is
     assert.equal((await s.put(ID, backup())).status, 200);
     assert.equal(s.sync.list().devices.find((d) => d.id === ID).label, 'iPhone');
