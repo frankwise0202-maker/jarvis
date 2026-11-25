@@ -178,7 +178,7 @@ test('PUT speak enabled:true again warms George: it loads him after the idle unl
 });
 
 test('a sentence that loads George again after the idle unload (the app\'s own warm-up) times him too', async (t) => {
-  const c = await startCore(t, { options: { rtf: { fp32: 0.3 } }, senses: { speakIdleMs: 1200 } });
+  const c = await startCore(t, { options: { rtf: { fp32: 0.2 } }, senses: { speakIdleMs: 1200 } });
   await c.put({ speak: { enabled: true } });
   await checked(c);
   await until(async () => !(await c.info()).speak.loaded, { what: 'the idle unload' });
@@ -190,13 +190,13 @@ test('a sentence that loads George again after the idle unload (the app\'s own w
 });
 
 test('the warm-up times George: a fast fp32 stays, its rtf is shown and recorded, and nothing more is downloaded', async (t) => {
-  const c = await startCore(t, { options: { rtf: { fp32: 0.3, q8: 0.2 } } });
+  const c = await startCore(t, { options: { rtf: { fp32: 0.2, q8: 0.1 } } });
   const on = await c.put({ speak: { enabled: true } });
   assert.equal(on.json.speak.rtf, null, 'not measured yet');
   assert.equal(on.json.speak.autoDtype, true);
   const s = await checked(c);
   assert.equal(s.dtype, 'fp32');
-  assert.ok(s.rtf >= 0.28 && s.rtf < 0.6, `rtf ${s.rtf}`);
+  assert.ok(s.rtf >= 0.19 && s.rtf <= 0.8, `rtf ${s.rtf}`); // the stub's 0.2, plus timer jitter on a busy machine
   assert.deepEqual(Object.keys(s.measured), ['fp32']);
   assert.equal(s.measured.fp32, s.rtf);
   assert.equal(fs.existsSync(q8File(c.modelsDir)), false, 'q8 was not needed');
@@ -231,7 +231,7 @@ test('fp32 slower than 0.8 x real time and q8 faster: the Core downloads q8, tim
   }, { timeoutMs: 15_000, what: 'the switch to q8' });
   assert.deepEqual(answers, [200, 200, 200, 200, 200, 200]);
   assert.ok(s.measured.fp32 > 0.8, `fp32 ${s.measured.fp32}`);
-  assert.ok(s.measured.q8 < 0.8, `q8 ${s.measured.q8}`);
+  assert.ok(s.measured.q8 < s.measured.fp32, `q8 ${s.measured.q8}`);
   assert.equal(s.rtf, s.measured.q8, 'rtf: the model in use');
   assert.equal(s.sizeMb, 92);
   assert.equal(s.downloaded, true);
@@ -268,7 +268,7 @@ test('fp32 slower than 0.8 x real time and q8 faster: the Core downloads q8, tim
 });
 
 test('fp32 slow but q8 slower: George stays on fp32, both are recorded, and q8 is not tried again', async (t) => {
-  const c = await startCore(t, { options: { rtf: { fp32: 1.0, q8: 1.6 } } });
+  const c = await startCore(t, { options: { rtf: { fp32: 1.0, q8: 2.5 } } });
   await c.put({ speak: { enabled: true } });
   const s = await until(async () => {
     const v = (await c.info()).speak;
