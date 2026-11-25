@@ -214,7 +214,9 @@ export class TestContext {
       values = {
         'jarvis.dev.apiBase': s.apiBase ?? origin,
         'jarvis.apiKey': s.apiKey ?? MOCK_API_KEY,
-        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', ...(s.settings || {}), ...settings }),
+        // v7.8: a set-up device whose owner already chose George's voice from the home base (on or off), so
+        // a linked fake Core doesn't turn it on by itself; the auto-enable scenarios seed homeBaseSpeakBy ''.
+        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', homeBaseSpeakBy: 'owner', ...(s.settings || {}), ...settings }),
       };
     } else if (seed === 'fresh') {
       values = { 'jarvis.dev.apiBase': origin };

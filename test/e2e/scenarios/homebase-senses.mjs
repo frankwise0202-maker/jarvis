@@ -189,7 +189,8 @@ export default [
         const h = heardWords(t)[0];
         const warm = t.core.senses.hears.filter((x) => x.seconds <= 1);
         t.assert(warm.length === 1 && Math.abs(warm[0].seconds - 0.4) < 0.01, `warmed up once when Voice Mode opened (${JSON.stringify(warm)})`);
-        t.assert(t.core.senses.speaks.some((x) => x.text === 'Ready.'), 'the voice too');
+        // v7.8: the voice is warmed with the Core's own warm-up path (PUT speak enabled), not a word said.
+        t.assert(t.core.senses.puts.some((p) => p.speak && p.speak.enabled === true) && !t.core.senses.speaks.some((x) => x.text === 'Ready.'), `the voice too (${JSON.stringify(t.core.senses.puts)})`);
         t.assert(h.wav && h.type === 'audio/wav' && h.rate === 16000 && h.seconds > 1.8 && h.seconds < 3.2, `a 16 kHz WAV of what was said, not the silence after it (${JSON.stringify(h)})`);
         t.assert(/^Jarvis, Tony/.test(h.prompt), `the context words (${h.prompt})`);
         await t.waitFor(async () => norm(await t.text(t.page.locator(tid('voice-review-text')))) === QUESTION, { timeout: 10000, message: 'the 2-second check shows the words' });

@@ -316,7 +316,7 @@ test('home base engine: asks for the short first chunk; the v7.7 chunk limits st
   const engine = createHomeBaseVoiceEngine({ senses: { speak: async () => ({ ok: false }), noteFailure: () => {} } });
   const st = engine.status();
   assert.deepEqual(st.firstCut, { min: 40, max: 60 });
-  assert.equal(st.minChunk, 40);
+  assert.equal(st.minChunk, 48);
   assert.equal(st.assumedRtf, 0.7);
   assert.equal(st.firstChunk, 80);
   assert.equal(st.maxChunk, 180);

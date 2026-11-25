@@ -64,7 +64,7 @@ export function createJarvisVoiceCard({ tts, senses = null, natural = null, getS
   let testing = null; // { cancel }
   let deviceVoice = null; // { name } the built-in voice Jarvis uses
   let busy = false;
-  let naturalSize = natural && natural.plan ? formatMegabytes(natural.plan.bytes) : 'about 117 MB';
+  let naturalSize = natural && natural.plan ? formatMegabytes(natural.plan.bytes) : '117 MB';
   const offs = [];
 
   const tag = createVoiceTag({ testid: 'jarvis-voice-tag' });
@@ -151,7 +151,7 @@ export function createJarvisVoiceCard({ tts, senses = null, natural = null, getS
     if (natSupported) {
       const on = s.naturalVoice === true;
       naturalBtn.hidden = on;
-      setText(naturalHelp, on ? `On: ${vname} is made on ${dev} itself (its download and state are under Natural voice below). It can be slow on iPhone; then Jarvis uses the ${voiceLabel('device', { os })}.` : `Free: downloads ${naturalSize} once and runs on ${dev}. It may be slow on iPhone; then Jarvis uses the ${voiceLabel('device', { os })}.`);
+      setText(naturalHelp, on ? `On: ${vname} is made on ${dev} itself (its download and state are under Natural voice below). It can be slow on iPhone; then Jarvis uses the ${voiceLabel('device', { os })}.` : `Free: downloads about ${naturalSize} once and runs on ${dev}. It may be slow on iPhone; then Jarvis uses the ${voiceLabel('device', { os })}.`);
     }
   }
 
