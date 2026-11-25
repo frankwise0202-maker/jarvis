@@ -95,7 +95,8 @@ const naturalVoice = isScreenMode() ? null : safeInit(() => createNaturalVoice({
 // Jarvis Core on the Alienware. Off until the owner turns each on (Settings → Home base → Hearing and
 // voice); this device's recognizer and voices stay the fallback. Not in a screen window.
 const senses = isScreenMode() ? null : safeInit(() => createSenses({ getSettings, onSettingsChange }));
-const homeBaseVoice = senses && naturalVoice ? { engine: createHomeBaseVoiceEngine({ senses }), audio: naturalVoice.audio, canSpeak: () => senses.canSpeak() } : null;
+let sensesAllowed = true; // false in the demo (?demo=1: no network there), set by startApp()
+const homeBaseVoice = senses && naturalVoice ? { engine: createHomeBaseVoiceEngine({ senses }), audio: naturalVoice.audio, canSpeak: () => sensesAllowed && senses.canSpeak() } : null;
 const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, homebase: homeBaseVoice, getSettings });
 // Voice Mode's listens: stt.js, or the home base's Whisper when it is on and ready (a listen asks for
 // it with homeBase: true; every other caller keeps stt.js itself). hearPrompt: the conversation's
@@ -197,6 +198,7 @@ export async function startApp(rootEl) {
   if (!root) throw new Error('Missing #app root element');
   const params = new URLSearchParams(location.search);
   const demoMode = params.get('demo') === '1';
+  if (demoMode) sensesAllowed = false; // the demo never asks the home base to hear or speak
 
   const state = {
     demo: demoMode,
@@ -1411,7 +1413,7 @@ export async function startApp(rootEl) {
         saveSettings,
         startTurn: startTurnForVoice,
         createCore,
-        stt: listening,
+        stt: state.demo ? stt : listening,
         tts,
         markdownToPlainText,
         sounds,
