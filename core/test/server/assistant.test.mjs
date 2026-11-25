@@ -6,6 +6,8 @@ import { ask, classify, INTENTS } from '../../server/assistant/index.mjs';
 import { normalize, editDistance, correctTypos } from '../../server/assistant/normalize.mjs';
 import { VOCAB } from '../../server/assistant/intents.mjs';
 import { fixtureCore, askCtx } from './helpers.mjs';
+import { fmtBits } from '../../server/format.mjs';
+import * as dash from '../../dashboard/app/format.js';
 
 const ok = fixtureCore('ok');
 const warn = fixtureCore('warn');
@@ -18,20 +20,20 @@ const PHRASINGS = {
   greeting: ['hi', 'Hello!', 'hey jarvis', 'hiya', 'good morning', 'Good evening Jarvis', 'yo', 'sup', 'howdy', "what's up"],
   'how-are-you': ['How are you?', 'how are you doing', 'you good?', 'u ok?', 'are you ok', 'how r u', 'hows it going', "how's everything", 'everything ok?', 'all good?', 'are you alright', 'how is the machine', 'how is the computer doing', 'how are things', 'how do you feel', 'Hi Jarvis, how are you?', 'are you healthy', 'hello, you doing ok?'],
   status: ['status report', 'Status', 'give me a summary', 'system report', 'sitrep', 'full report please', 'overview', 'stats', 'brief me', 'what are the numbers', 'diagnostics', 'run down'],
-  problems: ['anything wrong?', 'any problems', 'Any issues?', 'any warnings', 'what is wrong', "what's wrong", 'is anything broken', 'any alerts?', 'errors?', 'does anything need attention', 'is something wrong with you'],
+  problems: ['anything wrong?', 'any problems', 'Any issues?', 'any warnings', 'what is wrong', "what's wrong", 'is anything broken', 'any alerts?', 'errors?', 'does anything need attention', 'is something wrong with you', "what's the warning", 'why caution', "what's the caution about", 'why are you red', 'why are you amber', 'why is it yellow', 'what does alert mean', 'what should i do', 'how do i fix it', 'do i need to do anything', 'why is it slow', 'is the pc slow', 'why?'],
   events: ['what happened today', 'any events?', 'what did I miss', 'show me the log', 'what happened overnight', 'recent events'],
   cpu: ['cpu?', 'How is the CPU', 'processor usage', 'how hot is the cpu', 'cpu temp', 'CPU temperature?', "what's eating my cpu", 'what is using the cpu', 'which app is hogging the processor', 'how busy is the processor', 'cpu load', 'cpu speed?', 'how fast is the cpu running', 'core temps', 'what is using the most', 'top processes'],
-  gpu: ['gpu?', 'GPU temp?', 'graphics card temperature', 'how is the graphics card', 'nvidia driver?', 'vram?', 'how much video memory is used', 'gpu fan', 'gpu fan speed', 'gpu power draw', 'is the gtx 970 ok', 'gpu usage', 'temprature of the grpahics card', 'whats the graphcis card doing', 'video card?', 'driver?'],
+  gpu: ['gpu?', 'GPU temp?', 'graphics card temperature', 'how is the graphics card', 'nvidia driver?', 'vram?', 'how much video memory is used', 'gpu fan', 'gpu fan speed', 'gpu power draw', 'is the gtx 970 ok', 'gpu usage', 'temprature of the grpahics card', 'whats the graphcis card doing', 'video card?', 'driver?', 'how many watts'],
   memory: ['memory?', 'how much ram is free', 'RAM usage', 'how much memory is used', 'what is using the memory', 'memroy usage', 'swap?', 'is it swapping', 'free ram?', 'memory pressure'],
   disk: ['disk?', 'how full is the hard drive', 'how much space is left', 'disk space', 'storage?', 'is the disk healthy', 'drive health', 'is the hard drive failing', 'disk activity', 'free space?', 'is the hdd ok', 'storgae left?'],
-  network: ['is the internet working', 'internet?', "what's my ping", 'latency?', 'how fast is the internet', 'download speed', 'network traffic', 'what is my ip address', 'are we online', 'is the connection ok', 'bandwidth?', 'is the internet down'],
+  network: ['is the internet working', 'internet?', "what's my ping", 'latency?', 'how fast is the internet', 'download speed', 'network traffic', 'what is my ip address', "what's my ip", 'are we online', 'is the connection ok', 'bandwidth?', 'is the internet down', 'is the internet slow'],
   api: ['can you reach claude?', 'is the api up', 'is anthropic down', 'claude api?', 'is claude working'],
   site: ['is the website up', 'what build is the site on', 'is the jarvis site ok', 'github pages?', 'which build is deployed', 'website?'],
-  tailscale: ['is my iphone connected', 'is my phone online', 'which devices are online', 'tailscale?', 'is the mac connected', 'devices?', 'is tailscale working', 'is my laptop on the tailnet', 'vpn?'],
+  tailscale: ['is my iphone connected', 'is my phone online', 'which devices are online', 'tailscale?', 'is the mac connected', 'devices?', 'is tailscale working', 'is my laptop on the tailnet', 'vpn?', 'is anyone online', 'who is online', 'is anyone connected', "what's my jarvis address", "what's the url for my iphone", 'how do i connect my iphone'],
   temperature: ['temperature?', 'how hot is it running', 'temps?', 'are you overheating', 'is it hot', 'how warm are you'],
   multi: ['cpu and gpu temps', 'how are the cpu and memory', 'cpu, gpu and ram?'],
   uptime: ['how long have you been up', 'uptime?', 'since when?', 'how long has the computer been on', 'how long have you been running'],
-  restarts: ['when did you last restart', 'did you reboot', 'any crashes?', 'have you crashed', 'when was the last boot', 'was there a power cut'],
+  restarts: ['when did you last restart', 'did you reboot', 'any crashes?', 'have you crashed', 'when was the last boot', 'was there a power cut', 'did it lose power', 'did it lose power last night', 'when did it turn on', 'when was it switched on'],
   trend: ['hotter than usual?', 'is the gpu hotter than usual', 'busier than usual?', 'is the cpu warmer than normal for it', 'is memory usage higher than average', 'is the disk filling up compared to last week', 'how does today compare to the weekly average'],
   time: ['what time is it', 'time?', "what's the date", 'what day is it', 'current time'],
   thanks: ['thanks', 'thank you', 'thx', 'cheers', 'ty', 'great job', 'nice one'],
@@ -144,8 +146,8 @@ test('network, Claude API, website, Tailscale', () => {
 test('uptime, restarts, trends, time', () => {
   assert.equal(A('how long have you been up').answer, 'The computer and I have been up 3 days, 4 hours, since Sunday at 10:20.');
   assert.equal(A('when did you last restart').answer, 'The computer last started Sunday at 10:20 (3 days ago). No unexpected restarts this week.');
-  assert.match(A('hotter than usual?', warn).answer, /^Yes, the CPU is about 4\d °C hotter than usual: 8\d °C against a 7-day average of 4\d °C; and the graphics card is about normal/);
-  assert.match(A('hotter than usual?').answer, /^The CPU is about normal: 4\d °C against a 7-day average of 4\d °C/);
+  assert.match(A('hotter than usual?', warn).answer, /^Yes, the CPU is about 4\d °C hotter than usual: averaging 8\d °C over the last 5 minutes, against 4\d °C over 7 days; and the graphics card is about normal/);
+  assert.match(A('hotter than usual?').answer, /^The CPU is about normal: averaging 4\d °C over the last 5 minutes, against 4\d °C over 7 days/);
   assert.match(A('is the disk filling up compared to last week', warn).answer, /main drive/);
   assert.equal(A('what time is it').answer, "It's 14:32 on Wednesday 25 November.");
   // without enough history it says so instead of guessing
@@ -153,6 +155,75 @@ test('uptime, restarts, trends, time', () => {
   young.core.history.clear();
   young.core.runFor(30);
   assert.match(A('hotter than usual?', young).answer, /I haven't been watching long enough to know what's usual/);
+});
+
+test('the screen\'s state, what to do about it, and "slow" (UX-1, UX-3)', () => {
+  // state words and colours explain the state
+  for (const q of ["what's the warning", 'why caution', 'why is it yellow', 'why are you amber']) assert.match(A(q, warn).answer, /^4 things need attention, Frank\. Warnings: the CPU is running hot/, q);
+  for (const q of ['why are you red', 'what does alert mean']) assert.match(A(q, alert).answer, /^7 things need attention, Frank\. Alerts: the CPU is overheating/, q);
+  assert.match(A('why caution').answer, /^Nothing wrong, Frank\. Every check is within normal limits\./);
+  // what to do: one practical step per item, the same step once
+  const f = A('how do i fix it', alert);
+  assert.equal(f.intent, 'problems');
+  assert.match(f.answer, /^Here's what would help, Frank\. The CPU is overheating at 9\d °C: check that the fans are spinning and nothing blocks the vents; closing ffmpeg would cool it down\. Memory is nearly full \(only 4 percent available\): close programs you aren't using\. The main drive is 96 percent full \(35 GB free\): empty the Trash and delete big files you no longer need, such as old downloads\. Ask me what's wrong for the other 4\.$/);
+  assert.equal(f.facts.issues.length, 7);
+  assert.ok(f.facts.issues.every((i) => typeof i.step === 'string' && i.step.length > 10), 'every item has a step');
+  assert.equal(A('what should i do', nogpu).answer, 'Here\'s what would help, Frank. The graphics driver isn\'t loaded: run "sudo ubuntu-drivers install" in Terminal to install it, then restart the computer.');
+  assert.match(A('do i need to do anything', offline).answer, /The internet is down: check the router and the network cable/);
+  assert.equal(A('what should i do').answer, 'Nothing to do, Frank: all systems normal.');
+  // never says a question about the computer isn't about the computer
+  for (const c of [ok, warn, alert]) for (const q of ['asdfgh', 'what does the blinking mean', 'hmm']) assert.doesNotMatch(A(q, c).answer, /only know about this computer/, q);
+  // slow: the CPU, memory, swap and heat, not the internet
+  const slow = A('why is it slow', alert);
+  assert.equal(slow.intent, 'problems');
+  assert.match(slow.answer, /^Likely reasons, Frank: the CPU is at \d+ percent, mostly ffmpeg; memory is 9\d percent used; swap is \d+ percent used, which is slow on a hard drive; and the CPU is overheating at 9\d °C, so it slows itself down\.$/);
+  assert.match(A('is the pc slow').answer, /^Nothing here should slow it down, Frank: the CPU is at \d+ percent, memory is \d+ percent used and swap isn't in use\./);
+  assert.match(A('why is it slow', offline).answer, /The internet is down, though/);
+  assert.equal(A('is the internet slow').intent, 'network');
+  // power: restarts unless measured; anyone online: the devices
+  assert.equal(A('did it lose power').answer, A('when did you last restart').answer);
+  assert.equal(A('when did it turn on').answer, A('when did you last restart').answer);
+  assert.match(A('how many watts').answer, /^I can only measure the graphics card's power: it's drawing \d+ W of its \d+ W limit\.$/);
+  assert.match(A('gpu power draw').answer, /^The graphics card is drawing \d+ W/);
+  for (const q of ['who is online', 'is anyone online', 'is anyone connected']) assert.match(A(q).answer, /^Tailscale is connected: 1 of 2 devices online\. Your iPhone \(iphone-15\) is online/, q);
+});
+
+test('network speed uses the dashboard\'s units and numbers (UX-2)', () => {
+  const s = ok.core.snapshot;
+  const same = (v) => dash.fmtBits(v).replace(dash.NBSP, ' ');
+  for (let v = 0; v < 3e9; v = v * 1.37 + 1) assert.equal(fmtBits(v), same(v), `rxBps ${v}`);
+  for (const v of [124.9, 125, 124_937, 124_938, 124_999_999, 22_687]) assert.equal(fmtBits(v), same(v), `rxBps ${v}`);
+  assert.equal(fmtBits(22_687), '181 kb/s');
+  const a = A('internet speed?').answer;
+  assert.ok(a.includes(`${same(s.network.rxBps)} down and ${same(s.network.txBps)} up`), a);
+  assert.ok(A('is the internet working').answer.includes(`${same(s.network.rxBps)} down`));
+  assert.doesNotMatch(a, /[KMG]?B\/s/);
+  assert.match(A('is the download traffic higher than usual').answer, /averaging [\d.]+ [kMG]?b\/s over the last 5 minutes, against [\d.]+ [kMG]?b\/s over 7 days/);
+});
+
+test('the address for the iPhone and Mac (UX-4)', () => {
+  const s = ok.core.snapshot;
+  const at = (ts) => ask("what's my jarvis address", { ...askCtx(ok.core), s: { ...s, services: { ...s.services, tailscale: { ...s.services.tailscale, ...ts } } } });
+  for (const q of ["what's my jarvis address", "what's the url for my iphone", 'how do i connect my iphone', 'what is the address', 'link for the mac?']) {
+    const r = A(q);
+    assert.equal(r.intent, 'tailscale', q);
+    assert.equal(r.answer, 'My address is https://alienware.tail4e5f6a.ts.net/, Frank. In Jarvis on your iPhone or Mac, paste it into Settings > Home base.', q);
+  }
+  assert.match(at({ serve: false }).answer, /^Tailscale isn't sharing me with your devices yet, so your iPhone and Mac can't reach me yet\. Run "jarvis-core url" in Terminal/);
+  assert.match(at({ status: 'not-installed', url: null, serve: null }).answer, /^Tailscale isn't installed yet, .* Run "jarvis-core url" in Terminal/);
+  assert.match(at({ status: 'logged-out' }).answer, /^Tailscale isn't connected, .* "jarvis-core url"/);
+  for (const r of [A("what's my jarvis address"), at({ serve: false })]) assert.doesNotMatch(r.answer, /192\.168|100\.101/);
+  // only an IP question gets the IP addresses
+  assert.equal(A("what's my ip").answer, "On your home network I'm 192.168.1.42, and on Tailscale I'm 100.101.102.103.");
+});
+
+test('the trend answer labels its 5-minute average, so it never contradicts "how are you" (UX-8)', () => {
+  const ctx = askCtx(alert.core);
+  const r = A('are you hotter than usual', alert);
+  const avg = Math.round(alert.core.history.recent('cpuTemp', 300, ctx.now));
+  assert.ok(r.answer.includes(`averaging ${avg} °C over the last 5 minutes`), r.answer);
+  assert.equal(r.facts.cpuTemp.average5m, Math.round(alert.core.history.recent('cpuTemp', 300, ctx.now) * 10) / 10);
+  assert.doesNotMatch(r.answer, /: \d+ °C against/);
 });
 
 test('scope: polite refusals, never a claim to have done something', () => {
@@ -163,10 +234,10 @@ test('scope: polite refusals, never a claim to have done something', () => {
   }
   assert.equal(A('restart the computer').answer, "I can't do that, Frank; I only report on how this computer is doing. For that, open Jarvis.");
   assert.match(A('open jarvis').answer, /The Open Jarvis button opens the full app\.$/);
-  assert.match(A('fix it', warn).answer, /^I can't fix things myself, Frank; I only report\. What needs attention: the CPU is running hot/);
+  assert.match(A('fix it', warn).answer, /^I can't fix things myself, Frank; I only report\. Here's what would help\. The CPU is running hot at \d+ °C: check that the fans are spinning/);
   assert.equal(A('fix it').answer, "I can't fix things myself, Frank, but there's nothing to fix: all systems normal.");
   assert.match(A('how hot is it outside').answer, /^I can't feel the room, Frank, only the inside of the case: the CPU is at \d+ °C\.$/);
-  assert.match(A('asdfgh').answer, /^I'm afraid I only know about this computer, Frank\. Try "How are you\?"/);
+  assert.equal(A('asdfgh').answer, 'I didn\'t catch that, Frank. I can tell you how this computer is doing: try "How are you?", "Anything wrong?" or "GPU temp?".');
   assert.equal(A('').answer, 'Ask me how the computer is doing.');
   assert.equal(A('who are you').answer, "I'm the Jarvis Core status reporter, Frank. I watch this computer around the clock and tell you how it's doing. For anything else, open Jarvis.");
 });

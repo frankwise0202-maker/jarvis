@@ -38,6 +38,28 @@ export function fmtRate(bps) {
   return `${fmtBytes(bps)}/s`;
 }
 
+/**
+ * Bytes per second → bits per second, like an internet plan and the dashboard's Network panel:
+ * 22_687 → "181 kb/s", 300_000 → "2.4 Mb/s". The same steps and rounding as fmtBits in
+ * dashboard/app/format.js, with a plain space (the dashboard keeps number and unit together itself).
+ */
+export function fmtBits(bytesPerSec) {
+  if (!isNum(bytesPerSec) || bytesPerSec < 0) return null;
+  const units = ['b/s', 'kb/s', 'Mb/s', 'Gb/s'];
+  let v = bytesPerSec * 8;
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000;
+    i += 1;
+  }
+  if (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i += 1;
+  }
+  const n = i === 0 ? String(Math.round(v)) : v === 0 ? '0' : Math.abs(v) < 10 ? v.toFixed(1) : String(Math.round(v));
+  return `${n} ${units[i]}`;
+}
+
 /** 41.2 → "41 °C". */
 export const fmtTemp = (c) => (isNum(c) ? `${Math.round(c)} °C` : null);
 

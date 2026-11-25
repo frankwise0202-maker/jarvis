@@ -7,7 +7,7 @@
 //   cls: the classification from intents.mjs (topics, aspects, device, greeted, reason)
 
 import { isNum } from '../util.mjs';
-import { fmtBytes, fmtRate, fmtTemp, fmtPercentWords, fmtMs, fmtDuration, fmtClock, fmtDate, fmtWhen, fmtAgo, joinWords, cap, localHour } from '../format.mjs';
+import { fmtBytes, fmtRate, fmtBits, fmtTemp, fmtPercentWords, fmtMs, fmtDuration, fmtClock, fmtDate, fmtWhen, fmtAgo, joinWords, cap, localHour } from '../format.mjs';
 
 const r1 = (v) => (isNum(v) ? Math.round(v * 10) / 10 : null);
 const r0 = (v) => (isNum(v) ? Math.round(v) : null);
@@ -65,6 +65,57 @@ function spoken(item, s) {
     return m[item.message] ?? lowerFirst(item.message);
   }
   return item.message;
+}
+
+/** The program using the most CPU or memory right now ("ffmpeg"), or null; never this dashboard itself. */
+function topLabel(s, list, key) {
+  const label = grouped((s.processes?.[list] ?? []).filter((p) => isNum(p[key])), key)[0]?.label ?? null;
+  return label && !/^Dashboard\b/.test(label) ? label : null;
+}
+
+/** "a; b; and c": a list whose items have commas of their own. */
+const joinClauses = (list) => (list.length <= 1 ? list[0] ?? '' : `${list.slice(0, -1).join('; ')}; and ${list[list.length - 1]}`);
+
+/** One practical step the owner can take himself for a health item, or null. */
+function remedy(item, s) {
+  const id = item.id;
+  const cpuTop = topLabel(s, 'topCpu', 'cpuPct');
+  if (id === 'cpu.temp') return `check that the fans are spinning and nothing blocks the vents${cpuTop ? `; closing ${cpuTop} would cool it down` : ''}`;
+  if (id === 'gpu.temp') return "close any game or video program, and check the graphics card's fan and the airflow around the case";
+  if (id === 'cpu.load' || id === 'cpu.process') {
+    const who = id === 'cpu.process' ? String(item.message).replace(/ has (been using|kept) .*$/, '') : cpuTop;
+    return who ? `close ${who} if you don't need it` : "close programs you don't need";
+  }
+  if (id === 'memory' || id === 'swap') {
+    const memTop = topLabel(s, 'topMem', 'memBytes');
+    return `close programs you aren't using${memTop ? `, starting with ${memTop}` : ''}`;
+  }
+  if (id.startsWith('disk:')) return id === 'disk:/' ? 'empty the Trash and delete big files you no longer need, such as old downloads' : 'delete files you no longer need from that drive';
+  if (id === 'disk.health') return item.level === 'alert' ? 'copy anything important to another drive now; the drive needs replacing' : 'keep your files backed up, and plan to replace the drive';
+  if (id === 'gpu.driver') return 'run "sudo ubuntu-drivers install" in Terminal to install it, then restart the computer';
+  if (id === 'internet') return 'check the router and the network cable; restarting the router often helps';
+  if (id === 'api') return "nothing to do on this computer: it's usually on Anthropic's side and clears by itself";
+  if (id === 'site') return 'nothing to do on this computer: GitHub Pages usually comes back by itself';
+  if (id === 'tailscale') {
+    if (/service not running/i.test(item.message)) return 'run "sudo systemctl start tailscaled" in Terminal';
+    if (/approval/i.test(item.message)) return 'approve this computer in the Tailscale admin console';
+    return 'run "sudo tailscale up" in Terminal';
+  }
+  return null;
+}
+
+/** "The CPU is overheating at 91 °C: check that the fans ...", one per item, the same step only once. */
+function remedyLines(list, s, max = 3) {
+  const seen = new Set();
+  const lines = [];
+  for (const item of list) {
+    const step = remedy(item, s);
+    if (!step || seen.has(step)) continue;
+    seen.add(step);
+    lines.push(`${cap(spoken(item, s))}: ${step}.`);
+    if (lines.length >= max) break;
+  }
+  return lines;
 }
 
 /** An event message as prose: "Graphics card running hot: 81 °C" → "graphics card running hot (81 °C)". */
@@ -189,9 +240,16 @@ export function status(ctx, cls) {
   };
 }
 
-export function problemsAnswer(ctx) {
+export function problemsAnswer(ctx, cls = {}) {
   const s = ctx.s;
+  if (cls.slow) return slowAnswer(ctx);
   const bad = problems(s);
+  if (cls.fix) {
+    if (!bad.length) return { answer: `Nothing to do${named(ctx)}: all systems normal.`, facts: { ...levelFacts(s), issues: [] }, suggestions: ['Status report'] };
+    const lines = remedyLines(bad, s);
+    const more = bad.length > lines.length ? ` Ask me what's wrong for the other ${bad.length - lines.length === 1 ? 'one' : bad.length - lines.length}.` : '';
+    return { answer: `Here's what would help${named(ctx)}. ${lines.join(' ')}${more}`, facts: { ...levelFacts(s), issues: bad.map((i) => ({ id: i.id, level: i.level, message: i.message, step: remedy(i, s) })) }, suggestions: ['Anything wrong?', 'What is using the CPU?'] };
+  }
   const day = ctx.events.between(ctx.now - 86_400_000).filter((e) => e.kind === 'health' && e.level !== 'ok');
   if (!bad.length) {
     let tail = '';
@@ -213,6 +271,31 @@ export function problemsAnswer(ctx) {
     answer = `${n} things need attention${named(ctx)}. ${parts.join(' ')}`;
   }
   return { answer, facts: { ...levelFacts(s), issues: bad.map((i) => ({ id: i.id, level: i.level, message: i.message })) }, suggestions: ['Hotter than usual?', 'What is using the CPU?', 'Status report'] };
+}
+
+/** "Why is it slow?": the CPU, memory, swap, the drive and heat, from the live numbers. */
+function slowAnswer(ctx) {
+  const s = ctx.s;
+  const c = s.cpu?.usagePct;
+  const m = s.memory;
+  const sw = m?.swap;
+  const io = (s.disks?.readBps ?? 0) + (s.disks?.writeBps ?? 0);
+  const t = s.cpu?.temp?.packageC;
+  const cpuTop = topLabel(s, 'topCpu', 'cpuPct');
+  const memTop = topLabel(s, 'topMem', 'memBytes');
+  const reasons = [];
+  if (isNum(c) && c >= 70) reasons.push(`the CPU is at ${fmtPercentWords(c)}${cpuTop ? `, mostly ${cpuTop}` : ''}`);
+  if (m && isNum(m.availablePct) && m.availablePct < 15) reasons.push(`memory is ${fmtPercentWords(m.usedPct)} used${memTop ? `, mostly by ${memTop}` : ''}`);
+  if (sw?.totalBytes > 0 && sw.usedPct >= 25) reasons.push(`swap is ${fmtPercentWords(sw.usedPct)} used, which is slow on a hard drive`);
+  if (io >= 20e6) reasons.push(`the hard drive is busy (${fmtRate(io)})`);
+  if (isNum(t) && t >= 90) reasons.push(`the CPU is overheating at ${fmtTemp(t)}, so it slows itself down`);
+  const facts = { cpuPct: r1(c), memUsedPct: m?.usedPct ?? null, swapUsedPct: sw?.usedPct ?? null, diskBps: io, cpuTempC: t ?? null, reasons: reasons.length };
+  if (!reasons.length) {
+    const parts = [isNum(c) ? `the CPU is at ${fmtPercentWords(c)}` : null, m ? `memory is ${fmtPercentWords(m.usedPct)} used` : null, sw?.totalBytes > 0 ? (sw.usedBytes > 0 ? `swap is ${fmtPercentWords(sw.usedPct)} used` : "swap isn't in use") : null];
+    const net = s.services?.internet?.status === 'down' ? ' The internet is down, though, so websites and online apps will stall.' : " If one program or website is slow, it's more likely that program or the internet.";
+    return { answer: `Nothing here should slow it down${named(ctx)}: ${joinWords(parts)}.${net}`, facts, suggestions: ['Is the internet working?', 'What is using the CPU?'] };
+  }
+  return { answer: `${reasons.length === 1 ? 'The likely reason' : 'Likely reasons'}${named(ctx)}: ${joinClauses(reasons)}.`, facts, suggestions: ['What should I do?', 'What is using the CPU?', 'What is using the memory?'] };
 }
 
 export function eventsAnswer(ctx) {
@@ -285,6 +368,7 @@ export function gpu(ctx, cls) {
   }
   if (a.has('driver')) return { answer: `The NVIDIA driver ${g.driver} is loaded and working.`, facts, suggestions: sugg };
   if (a.has('fan')) return { answer: isNum(g.fanPct) ? `The graphics card's fan is at ${fmtPercentWords(g.fanPct)}.` : "The graphics card doesn't report its fan speed.", facts, suggestions: sugg };
+  if (a.has('power') && !cls.topics.includes('gpu')) return { answer: isNum(g.powerW) ? `I can only measure the graphics card's power: it's drawing ${Math.round(g.powerW)} W${isNum(g.powerLimitW) ? ` of its ${Math.round(g.powerLimitW)} W limit` : ''}.` : "I can't measure the computer's power; the graphics card doesn't report its own either.", facts, suggestions: sugg };
   if (a.has('power')) return { answer: isNum(g.powerW) ? `The graphics card is drawing ${Math.round(g.powerW)} W${isNum(g.powerLimitW) ? ` of its ${Math.round(g.powerLimitW)} W limit` : ''}.` : "The graphics card doesn't report its power draw.", facts, suggestions: sugg };
   const mem = isNum(g.memUsedMB) && isNum(g.memTotalMB) ? `, using ${fmtBytes(g.memUsedMB * 1048576, { binary: true })} of its ${fmtBytes(g.memTotalMB * 1048576, { binary: true })} memory` : '';
   return { answer: `The ${short} is at ${fmtPercentWords(g.utilPct ?? 0)}${isNum(g.tempC) ? ` and ${fmtTemp(g.tempC)}` : ''}${mem}.`, facts, suggestions: sugg };
@@ -360,7 +444,7 @@ export function network(ctx, cls) {
     return { answer: `The internet is down${named(ctx)}${since ? `, since ${fmtClock(since.t, ctx.tz)}` : ''}. I'm checking again every 30 seconds.`, facts, suggestions: ['Status report'] };
   }
   if (i.status !== 'up') return { answer: "I haven't finished checking the internet yet; give me a moment.", facts, suggestions: sugg };
-  const traffic = isNum(n.rxBps) ? `${fmtRate(n.rxBps)} down and ${fmtRate(n.txBps)} up` : 'traffic still being measured';
+  const traffic = isNum(n.rxBps) ? `${fmtBits(n.rxBps)} down and ${fmtBits(n.txBps)} up` : 'traffic still being measured';
   const link = n.kind === 'ethernet' ? ` on ${isNum(n.speedMbps) ? `a ${n.speedMbps >= 1000 ? `${n.speedMbps / 1000} Gbit/s` : `${n.speedMbps} Mbit/s`} ` : ''}Ethernet link` : n.kind === 'wifi' ? ' on Wi-Fi' : '';
   if (a.has('latency')) return { answer: `Latency is ${fmtMs(i.latencyMs)}${isNum(i.dnsMs) ? ` (DNS answers in ${fmtMs(i.dnsMs)})` : ''}.`, facts, suggestions: sugg };
   if (a.has('speed')) return { answer: `I don't run speed tests, but right now it's ${traffic}${link}, with ${fmtMs(i.latencyMs)} latency.`, facts, suggestions: sugg };
@@ -413,14 +497,25 @@ function deviceLine(p, ctx) {
   return p.online ? `${kind} (${p.name}) is online` : `${kind} (${p.name}) was last seen ${p.lastSeen ? fmtAgo(p.lastSeen, ctx.now) : 'a while ago'}`;
 }
 
+/** "What's my Jarvis address?": the one address that works in Jarvis on the iPhone and Mac. */
+function addressAnswer(ctx, ts, facts) {
+  if (ts.status === 'running' && ts.serve && ts.url) {
+    return { answer: `My address is ${ts.url}${named(ctx)}. In Jarvis on your iPhone or Mac, paste it into Settings > Home base.`, facts, suggestions: ['Is my phone connected?', 'Status report'] };
+  }
+  const why = ts.status === 'not-installed' ? "Tailscale isn't installed yet" : ts.status === 'running' ? "Tailscale isn't sharing me with your devices yet" : ts.status ? "Tailscale isn't connected" : "I haven't checked Tailscale yet";
+  return { answer: `${why}, so your iPhone and Mac can't reach me yet. Run "jarvis-core url" in Terminal on this computer: it shows what to do, and then the address to paste into Jarvis.`, facts, suggestions: ['Is Tailscale working?', 'Status report'] };
+}
+
 export function tailscale(ctx, cls) {
   const ts = ctx.s.services?.tailscale ?? {};
   const facts = { status: ts.status ?? null, online: ts.online ?? null, total: ts.total ?? null, url: ts.url ?? null, dnsName: ts.dnsName ?? null };
+  if (cls.address && ts.status !== 'running') return addressAnswer(ctx, ts, facts);
   if (ts.status === 'not-installed') return { answer: "Tailscale isn't installed yet, so your phone can't reach me from outside the house. The install steps print how to add it.", facts, suggestions: ['Status report'] };
   if (ts.status === 'logged-out') return { answer: 'Tailscale is logged out. Running "sudo tailscale up" on this computer signs it back in.', facts, suggestions: ['Status report'] };
   if (ts.status === 'stopped') return { answer: 'Tailscale is switched off on this computer. "sudo tailscale up" turns it back on.', facts, suggestions: ['Status report'] };
   if (ts.status === 'not-running') return { answer: 'The Tailscale service isn\'t running on this computer. "sudo systemctl start tailscaled" starts it.', facts, suggestions: ['Status report'] };
   if (ts.status !== 'running') return { answer: "I haven't checked Tailscale yet; give me a moment.", facts, suggestions: ['Status report'] };
+  if (cls.address) return addressAnswer(ctx, ts, facts);
   const peers = ts.peers ?? [];
   facts.devices = peers.map((p) => ({ name: p.name, kind: p.kind, online: p.online, lastSeen: p.lastSeen }));
   const wanted = cls.device;
@@ -468,7 +563,7 @@ const TREND_SERIES = {
   gpu: { label: 'graphics card use', unit: '%', word: ['busier', 'quieter'], fmt: (v) => fmtPercentWords(v), margin: 5 },
   ram: { label: 'memory use', unit: '%', word: ['higher', 'lower'], fmt: (v) => fmtPercentWords(v), margin: 5 },
   disk: { label: 'the main drive', unit: '%', word: ['fuller', 'emptier'], fmt: (v) => `${fmtPercentWords(v)} full`, margin: 1 },
-  netRx: { label: 'download traffic', unit: 'B/s', word: ['higher', 'lower'], fmt: fmtRate, margin: null },
+  netRx: { label: 'download traffic', unit: 'b/s', word: ['higher', 'lower'], fmt: fmtBits, margin: null },
 };
 
 export function trend(ctx, cls) {
@@ -493,23 +588,23 @@ export function trend(ctx, cls) {
     const spec = TREND_SERIES[key];
     const base = ctx.history.stats(key, { from, to });
     const nowV = ctx.history.recent(key, 300, ctx.now);
-    facts[key] = { now: r1(nowV), average7d: r1(base?.avg), max7d: r1(base?.max), minutes: base?.count ?? 0 };
+    facts[key] = { average5m: r1(nowV), average7d: r1(base?.avg), max7d: r1(base?.max), minutes: base?.count ?? 0 };
     if (!isNum(nowV)) {
       lines.push(`I have no current reading for ${spec.label}`);
       continue;
     }
     if (!base || base.count < 60) {
-      lines.push(`${spec.label} is at ${spec.fmt(nowV)}, but I haven't been watching long enough to know what's usual; ask me again tomorrow`);
+      lines.push(`${spec.label} has averaged ${spec.fmt(nowV)} over the last 5 minutes, but I haven't been watching long enough to know what's usual; ask me again tomorrow`);
       continue;
     }
     const diff = nowV - base.avg;
     const margin = spec.margin ?? Math.max(50_000, base.avg * 0.5);
     if (Math.abs(diff) < margin) {
-      lines.push(`${spec.label} is about normal: ${spec.fmt(nowV)} against a 7-day average of ${spec.fmt(base.avg)}`);
+      lines.push(`${spec.label} is about normal: averaging ${spec.fmt(nowV)} over the last 5 minutes, against ${spec.fmt(base.avg)} over 7 days`);
     } else {
       const more = diff > 0;
       const amount = spec.unit === '°C' ? `about ${Math.round(Math.abs(diff))} °C ${more ? spec.word[0] : spec.word[1]} than` : `${more ? spec.word[0] : spec.word[1]} than`;
-      lines.push(`${more ? 'yes, ' : ''}${spec.label} is ${amount} usual: ${spec.fmt(nowV)} against a 7-day average of ${spec.fmt(base.avg)}`);
+      lines.push(`${more ? 'yes, ' : ''}${spec.label} is ${amount} usual: averaging ${spec.fmt(nowV)} over the last 5 minutes, against ${spec.fmt(base.avg)} over 7 days`);
     }
   }
   return { answer: `${cap(lines.join('; and '))}.`.replace(/^Yes, (\w)/, (m, c) => `Yes, ${c}`), facts, suggestions: ['What is using the CPU?', 'Status report'] };
@@ -552,7 +647,7 @@ export function unknown(ctx, cls) {
     if (cls.verb === 'fix') {
       const bad = problems(s);
       return {
-        answer: bad.length ? `I can't fix things myself${named(ctx)}; I only report. What needs attention: ${joinWords(bad.slice(0, 3).map((i) => spoken(i, s)))}.` : `I can't fix things myself${named(ctx)}, but there's nothing to fix: all systems normal.`,
+        answer: bad.length ? `I can't fix things myself${named(ctx)}; I only report. Here's what would help. ${remedyLines(bad, s).join(' ')}` : `I can't fix things myself${named(ctx)}, but there's nothing to fix: all systems normal.`,
         facts: { reason: 'action', verb: 'fix' },
         suggestions: ['Anything wrong?'],
       };
@@ -563,5 +658,5 @@ export function unknown(ctx, cls) {
   if (cls.reason === 'offtopic') {
     return { answer: `That's outside my remit${named(ctx)}: I only keep watch over this computer. Jarvis himself can help with that.`, facts: { reason: 'offtopic' }, suggestions: ['How are you?', 'What can you do?'] };
   }
-  return { answer: `I'm afraid I only know about this computer${named(ctx)}. Try "How are you?", "Anything wrong?" or "GPU temp?".`, facts: { reason: cls.reason ?? 'no-match' }, suggestions: ['How are you?', 'Anything wrong?', 'GPU temp?'] };
+  return { answer: `I didn't catch that${named(ctx)}. I can tell you how this computer is doing: try "How are you?", "Anything wrong?" or "GPU temp?".`, facts: { reason: cls.reason ?? 'no-match' }, suggestions: ['How are you?', 'Anything wrong?', 'GPU temp?'] };
 }

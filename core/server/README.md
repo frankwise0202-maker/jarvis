@@ -105,6 +105,15 @@ log. It answers only about this machine and never claims to do anything. Intents
 status, problems, events, cpu, gpu, memory, disk, network, api, site, tailscale, temperature, multi, uptime,
 restarts, trend, time, thanks, bye, identity, capabilities, unknown.
 
+- Questions about the screen's state ("why caution", "why are you red", "what does alert mean") go to
+  problems; "how do I fix it" and "what should I do" get one practical step per item (close ffmpeg, empty
+  the Trash, install the driver), and "why is it slow" gets the CPU, memory, swap, drive and heat readings.
+- Network speed is in bits per second (kb/s, Mb/s) with the dashboard's rounding, so both show the same
+  figure. "What's my Jarvis address" gives the Tailscale address to paste into Jarvis > Settings > Home
+  base (or says to run `jarvis-core url`); only an explicit "IP" question gets the IP addresses.
+- "Hotter than usual?" compares the last 5 minutes' average with the 7-day one and says so.
+- A question it can't place gets "I didn't catch that", with examples, never "that isn't about this computer".
+
 ## Persistence and restarts
 
 `~/.local/share/jarvis-core/` holds `history-v1.json.gz`, `events-v1.json` and `state-v1.json` (folder 700,

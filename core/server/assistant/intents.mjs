@@ -76,12 +76,25 @@ const P = {
   events: /\b(what happened|anything happen|any events|recent events|event log|the log|log|history|what did i miss|while i was (away|out|gone|asleep)|overnight|last night|so far today|happened)\b/,
   uptime:
     /\b(uptime|up time|how long (have|has) (you|it|the (computer|machine|system|pc|core)) been (up|on|running|awake|going)|how long (are|is) (you|it) (up|on|running)|running since|since when|been running|been on|been up|how long have you been)\b/,
-  restarts: /\b(restart|restarted|restarts|reboot|rebooted|reboots|crash|crashed|crashes|last boot|booted|power cut|power outage|went down|shut down|shutdown|turned off|switched off)\b/,
+  restarts:
+    /\b(restart|restarted|restarts|reboot|rebooted|reboots|crash|crashed|crashes|last boot|booted|power cut|power outage|power failure|power loss|lose power|lost power|losing power|blackout|went down|shut down|shutdown|turned off|switched off|turn on|turned on|switch on|switched on|powered on|powered up|start up|started up|came on|came back on)\b/,
   time: /\b(what time|the time|time is it|what is the time|current time|what day|what date|the date|date today|today s date|what is today|clock)\b|^(time|date|day|today)$/,
   thanks: /\b(thanks|thank you|cheers|appreciate it|appreciated|nice one|great job|good job|well done|ta|brilliant|perfect|awesome|cool thanks)\b/,
   bye: /\b(bye|goodbye|good bye|see you|see ya|later|good night|goodnight|night night|catch you later|that is all|that is it|nothing else|signing off)\b/,
   identity: /\b(who are you|what are you|your name|what is your name|who am i talking to|who is this|are you jarvis|are you (a|an) (ai|bot|robot|person|human))\b/,
   capabilities: /\b(what can you do|what do you do|help|what can i ask|what should i ask|what do you know|commands|options|how do you work|what are you for|what are you good at|menu)\b/,
+  // The screen's state word and colour ("why caution", "why are you red", "what does alert mean").
+  state: /\b(warning|caution|alert|attention|nominal|amber|yellow|orange|red)\b/,
+  // What the owner can do about it himself ("how do I fix it", "what should I do", "do I need to do anything").
+  fix: /\b(how (do|can|should|would) (i|we) (fix|sort|solve|resolve|repair|deal with|handle|stop|clear|free)|how to (fix|sort|solve|resolve|repair)|what (should|do|can|must) (i|we) do|what do (i|we) need to do|do (i|we) (need|have) to (do|worry|fix|change)|(should|must) (i|we) (do|worry|fix|change)|anything (i|we) (should|can|need to|must) do|what needs doing|what now)\b/,
+  // The computer feels slow: CPU, memory, swap and the drive, not the internet.
+  slow: /\b(slow|slower|slowly|sluggish|frozen|hanging|stuttering|unresponsive)\b/,
+  slowNet: /\b(internet|wifi|ethernet|network|download|downloading|downloads|upload|uploading|connection|online|ping|latency|bandwidth|website|site|page|pages|streaming|stream|video call)\b/,
+  // "Who is online", "is anyone connected": the owner's devices on Tailscale, not the internet.
+  anyone: /\b(anyone|anybody|someone|somebody|who)\b/,
+  present: /\b(online|connected|on the tailnet|on tailscale|on the network|logged in)\b/,
+  // The home base's address for the iPhone and Mac ("what's my jarvis address", "how do I connect my iPhone").
+  address: /\b(address|url|link|web address|weblink)\b|\bhow (do|can|should) (i|we) (connect|reach|open|get to|access|use) (it|you|this|jarvis|the core|the dashboard|my|from|on)\b|\bconnect (my|the) (iphone|phone|ipad|mac|macbook|laptop)\b/,
   // Requests for things the assistant cannot do (it only reports).
   action:
     /^(please )?(can you |could you |would you |will you |go |just |jarvis )?(please )?(restart|reboot|shut ?down|turn (off|on)|power (off|down|on)|kill|close|quit|open|launch|start|stop|run|install|uninstall|update the|upgrade|delete|remove|clean|clear|free up|play|pause|search|google|look up|send|email|text|call|order|buy|set|change|fix|lower|raise|increase|decrease|speed up|overclock|cool down|end|terminate|wake|sleep|suspend|lock|unlock|log ?out|sign ?out|mute|unmute)\b/,
@@ -90,6 +103,9 @@ const P = {
 };
 
 const DEVICE = /\b(iphone|phone|ipad|tablet|mac|macbook|laptop|android)\b/;
+
+// "Power" alone is not the graphics card ("did it lose power"): only a measurement is.
+const POWER_DRAW = /\b(watts|watt|wattage|how much power|power (draw|usage|use|consumption|limit)|drawing)\b/;
 
 /** Every single word the patterns use: the vocabulary for typo correction. */
 export const VOCAB = (() => {
@@ -102,7 +118,7 @@ export const VOCAB = (() => {
   for (const re of [...Object.values(TOPICS), ...Object.values(ASPECTS), ...Object.values(P), DEVICE]) add(re);
   for (const w of ['temperature', 'graphics', 'memory', 'processor', 'internet', 'tailscale', 'website', 'restart', 'warnings', 'problems', 'status', 'report', 'usage', 'healthy', 'storage', 'utilization', 'utilisation', 'average', 'hello', 'thanks', 'goodbye', 'running', 'normal', 'anything', 'wrong', 'connected']) words.add(w);
   // Ordinary words that must never be "corrected" into keywords.
-  for (const w of ['main', 'hold', 'holding', 'told', 'mail', 'gain', 'hear', 'near', 'role', 'cars', 'fold', 'bold', 'gold', 'mind', 'kind', 'find', 'fire', 'hire', 'wire', 'rest', 'test', 'best', 'tired', 'drove', 'river', 'diver', 'sorry', 'hey', 'yes', 'yeah', 'nope', 'the', 'and', 'what', 'how', 'are', 'you', 'your', 'this', 'that', 'there', 'with', 'have', 'been', 'much', 'many', 'tell', 'give', 'show', 'about', 'right', 'now', 'today', 'still', 'doing', 'good', 'some', 'like', 'more', 'less', 'than', 'very', 'really', 'feel', 'feeling', 'mine', 'here', 'look', 'looks', 'looking', 'check', 'jarvis', 'home', 'base', 'please', 'does', 'will', 'would', 'could', 'should', 'when', 'where', 'which', 'last', 'week', 'month', 'hour', 'hours', 'minute', 'minutes', 'second', 'seconds', 'everything', 'something', 'nothing', 'things', 'thing', 'computer', 'machine', 'system', 'everyone', 'okay', 'well', 'fine', 'alright', 'great', 'nice', 'cool', 'reach', 'working', 'work', 'going', 'getting', 'make', 'sure', 'quick', 'quickly', 'currently', 'current', 'temps', 'stat', 'stats', 'note', 'mean']) words.add(w);
+  for (const w of ['main', 'hold', 'holding', 'told', 'mail', 'gain', 'hear', 'near', 'role', 'cars', 'fold', 'bold', 'gold', 'mind', 'kind', 'find', 'fire', 'hire', 'wire', 'rest', 'test', 'best', 'tired', 'drove', 'river', 'diver', 'sorry', 'hey', 'yes', 'yeah', 'nope', 'the', 'and', 'what', 'how', 'are', 'you', 'your', 'this', 'that', 'there', 'with', 'have', 'been', 'much', 'many', 'tell', 'give', 'show', 'about', 'right', 'now', 'today', 'still', 'doing', 'good', 'some', 'like', 'more', 'less', 'than', 'very', 'really', 'feel', 'feeling', 'mine', 'here', 'look', 'looks', 'looking', 'check', 'jarvis', 'home', 'base', 'please', 'does', 'will', 'would', 'could', 'should', 'when', 'where', 'which', 'last', 'week', 'month', 'hour', 'hours', 'minute', 'minutes', 'second', 'seconds', 'everything', 'something', 'nothing', 'things', 'thing', 'computer', 'machine', 'system', 'everyone', 'okay', 'well', 'fine', 'alright', 'great', 'nice', 'cool', 'reach', 'working', 'work', 'going', 'getting', 'make', 'sure', 'quick', 'quickly', 'currently', 'current', 'temps', 'stat', 'stats', 'note', 'mean', 'fellow', 'mellow', 'range', 'ranges', 'read', 'reed', 'fixed']) words.add(w);
   return words;
 })();
 
@@ -127,6 +143,11 @@ export function classify(text) {
     if (!topics.includes('gpu')) topics.push('gpu');
   }
   if (topics.includes('site') && topics.includes('api') && /\bbuild\b/.test(n) && !/\b(claude|anthropic)\b/.test(n)) topics.splice(topics.indexOf('api'), 1);
+  // "who is online", "is anyone connected": the owner's devices
+  if (has(P.anyone) && has(P.present) && !/\b(internet|wifi|ethernet|ping|latency)\b/.test(n)) {
+    if (topics.includes('network')) topics.splice(topics.indexOf('network'), 1);
+    if (!topics.includes('tailscale')) topics.push('tailscale');
+  }
 
   // Out of scope first: requests to do things, then off-topic subjects (unless they also ask about the machine).
   if (has(P.action) && !has(P.status)) {
@@ -138,6 +159,8 @@ export function classify(text) {
 
   if (has(P.identity)) return out('identity');
   if (has(P.capabilities) && !topics.length) return out('capabilities');
+  // the address for the iPhone and Mac (an "IP" question gets the IP addresses)
+  if (has(P.address) && !/\bip\b/.test(n) && !topics.some((t) => t !== 'tailscale')) return out('tailscale', { address: true });
   if (aspects.includes('trend') && !topics.some((t) => ['api', 'site', 'tailscale'].includes(t))) return out('trend');
   if (has(P.uptime)) return out('uptime');
   if (has(P.restarts) && !topics.some((t) => ['gpu', 'api', 'site', 'tailscale'].includes(t))) return out('restarts');
@@ -149,11 +172,13 @@ export function classify(text) {
   if (hardware.length >= 2) return out('multi');
   if (topics.length > 1) return out(topics[0]);
 
-  if (has(P.problems)) return out('problems');
+  if (has(P.fix)) return out('problems', { fix: true });
+  if (has(P.slow) && !has(P.slowNet)) return out('problems', { slow: true });
+  if (has(P.problems) || has(P.state)) return out('problems');
   if (has(P.status)) return out('status');
   // No topic named: infer it from the aspect.
   if (aspects.includes('temp')) return out('temperature');
-  if (aspects.includes('vram') || aspects.includes('driver') || aspects.includes('fan') || aspects.includes('power')) return out('gpu');
+  if (aspects.includes('vram') || aspects.includes('driver') || aspects.includes('fan') || (aspects.includes('power') && POWER_DRAW.test(n))) return out('gpu');
   if (aspects.includes('swap')) return out('memory');
   if (aspects.includes('processes')) return out('cpu');
   if (aspects.includes('latency') || aspects.includes('ip')) return out('network');
@@ -167,5 +192,6 @@ export function classify(text) {
   if (has(P.bye)) return out('bye');
   if (greeted) return out('greeting');
   if (aspects.includes('health')) return out('how-are-you');
+  if (/^why\b/.test(n)) return out('problems');
   return out('unknown', { reason: 'no-match' });
 }
