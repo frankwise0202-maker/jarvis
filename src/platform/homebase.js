@@ -3,7 +3,8 @@
 //   getHomeBaseStatus(base)   GET  api/status -> { ok: true, data } | failure
 //   testHomeBase(base)        GET  api/info, then api/status -> { ok: true, host, version, level, summary } | failure
 //   askHomeBase(base, q)      POST api/ask {q} -> { ok: true, answer, intent, suggestions } | failure
-//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal })
+//   requestHomeBase(base, path, { method, body, timeoutMs, fetchImpl, signal, allowEmpty })
+//   (v7.6: the brain's routes, src/platform/brain.js, use requestHomeBase too)
 //
 // A failure is { ok: false, kind, status?, code?, message? } with kind 'unreachable' | 'down' |
 // 'refused' | 'starting' | 'rate' | 'notcore' | 'http' | 'aborted' (src/lib/homebase.js
@@ -70,7 +71,7 @@ async function answersAtAll(base, f) {
  * One request to the home base: { ok: true, data } (the JSON answer) or a failure (see the header).
  * `base` is a stored address ('https://<host>.ts.net/').
  */
-export async function requestHomeBase(base, path, { method = 'GET', body, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal } = {}) {
+export async function requestHomeBase(base, path, { method = 'GET', body, timeoutMs = STATUS_TIMEOUT_MS, fetchImpl, signal, allowEmpty = false } = {}) {
   const f = fetchOf(fetchImpl);
   const d = deadline(timeoutMs, signal);
   const init = { method, credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', mode: 'cors', signal: d.signal };
@@ -106,6 +107,8 @@ export async function requestHomeBase(base, path, { method = 'GET', body, timeou
   if (status === 503 && code === 'starting') return { ok: false, kind: 'starting', status, code, message };
   if (status === 429) return { ok: false, kind: 'rate', status, code, message };
   if (status < 200 || status > 299) return { ok: false, kind: 'http', status, code, message };
+  // v7.6: a request that answers nothing (DELETE api/brain/key: 204) is fine when the caller says so.
+  if (allowEmpty && (status === 204 || !text)) return { ok: true, data: null, status };
   if (!isObj(data)) return { ok: false, kind: 'notcore', status };
   return { ok: true, data };
 }
