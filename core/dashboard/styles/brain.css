@@ -372,8 +372,9 @@ a.brief-hl-title:hover {
   gap: 0.5rem;
   min-width: 0;
 }
+/* The icon sits on the title's first line (a title can wrap to two). */
 .m-done-head .lv-icon {
-  align-self: center;
+  align-self: baseline;
 }
 .m-done-item[data-level='unknown'] .lv-icon {
   background: transparent;
@@ -1011,6 +1012,10 @@ html[data-morning='on'] .stage > .grid {
   font-size: 1.3125rem;
   line-height: 1.4;
   color: var(--text-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3; /* core/whats-new.json details can be long; three items always fit */
+  -webkit-box-orient: vertical;
 }
 .m-music {
   font-size: 1.5rem;
