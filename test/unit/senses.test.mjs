@@ -785,6 +785,59 @@ test('hearing: the microphone not opening -> this device’s recognizer; a home 
   assert.equal(l2.ends, 1);
 });
 
+test('hearing: a capture whose AudioContext could not start (no tap on iOS) -> this device listens; hearing on but not ready still starts it inside the tap', async () => {
+  const stt = fakeStt();
+  const cap = fakeCapture();
+  const create = cap.create;
+  cap.create = (opts) => Object.assign(create(opts), { context: { state: 'suspended' } });
+  const gate = fakeSensesGate();
+  const h = hearing({ gate, cap, stt });
+  const l = listener();
+  h.startListening(l.opts);
+  await flush();
+  assert.ok(l.phases.includes('fallback:mic'), l.phases.join(','));
+  assert.equal(stt.calls.length, 1);
+  // Not usable this time (not ready yet), but turned on: the context starts inside this tap anyway.
+  const stt2 = fakeStt();
+  const cap2 = fakeCapture();
+  const h2 = createHomeBaseHearing({ stt: stt2.mod, senses: fakeSensesGate({ can: false }).api, createCapture: cap2.create, getSettings: () => ({ homeBaseHear: true }) });
+  h2.startListening({ ...listener().opts });
+  assert.equal(cap2.prepared, 1, 'prepared inside the tap');
+  assert.equal(cap2.starts, 0, 'but no microphone');
+  assert.equal(stt2.calls.length, 1);
+  const stt3 = fakeStt();
+  const cap3 = fakeCapture();
+  createHomeBaseHearing({ stt: stt3.mod, senses: fakeSensesGate({ can: false }).api, createCapture: cap3.create, getSettings: () => ({ homeBaseHear: false }) }).startListening({ ...listener().opts });
+  assert.equal(cap3.prepared, 0, 'hearing off: nothing at all');
+});
+
+test('senses controller: Voice Mode opening warms up a part unused for 25 minutes (silence to hear, one word to say), once', async () => {
+  const c = controller({ settings: { homeBaseHear: true, homeBaseSpeak: true }, senses: { ...SENSES, speak: { ...SENSES.speak, enabled: true, state: 'ready' } } });
+  c.ctl.prime({ warm: true });
+  await flush();
+  assert.equal(c.calls.hear, 1, 'a moment of silence heard');
+  assert.equal(c.calls.speak, 1, 'one word said');
+  c.ctl.prime({ warm: true });
+  await flush();
+  assert.equal(c.calls.hear, 1, 'not again: just used');
+  c.advance(26 * 60 * 1000);
+  c.ctl.prime({ warm: true });
+  await flush();
+  assert.equal(c.calls.hear, 2, 'again after 25 minutes unused');
+  // Off: no warm-up.
+  const off = controller({ settings: { homeBaseHear: false, homeBaseSpeak: false } });
+  off.ctl.prime({ warm: true });
+  off.ctl.warm();
+  await flush();
+  assert.equal(off.calls.hear + off.calls.speak + off.calls.get, 0);
+  // A failed warm-up rests nothing.
+  const bad = controller({ settings: { homeBaseHear: true }, hear: () => ({ ok: false, kind: 'timeout' }) });
+  bad.ctl.prime({ warm: true });
+  await flush();
+  assert.equal(bad.calls.hear, 1);
+  assert.equal(bad.ctl.canHear(), true);
+});
+
 // ---- the home base's voice engine ------------------------------------------------------------------------
 
 test('voice engine: one request at a time, in order; a failure drains the queue as not-ready; cancel aborts', async () => {

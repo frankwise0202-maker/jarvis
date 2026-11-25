@@ -77,7 +77,12 @@ export function createHomeBaseHearing({ stt, senses, createCapture, getPrompt = 
     const o = options && typeof options === 'object' ? options : {};
     const { homeBase, onHomeBase, ...rest } = o;
     const usable = homeBase === true && !!senses && !!safe(() => senses.canHear(), false) && !!cap() && safe(() => capture.supported(), false);
-    if (!usable) return stt.startListening(rest);
+    if (!usable) {
+      // Hearing is on but not usable this time (not ready yet, resting): the capture's AudioContext
+      // still starts inside this tap, so a later hands-free listen can use the home base (iOS).
+      if (homeBase === true && senses && safe(() => getSettings().homeBaseHear === true, false) && cap()) safe(() => capture.prepare());
+      return stt.startListening(rest);
+    }
     if (current) abort(current); // one listen at a time, like a recognizer
     const L = {
       o: rest,
@@ -118,7 +123,10 @@ export function createHomeBaseHearing({ stt, senses, createCapture, getPrompt = 
       if (current !== L || L.ended) safeStopCapture(L);
       return;
     }
-    const port = r && r.ok ? safe(() => capture.wordPort(), null) : null;
+    // A context that couldn't start (iOS: no tap ever started it) hears nothing: this device listens.
+    const ctx = safe(() => capture.context, null);
+    const running = !ctx || typeof ctx.state !== 'string' || ctx.state === 'running';
+    const port = r && r.ok && running ? safe(() => capture.wordPort(), null) : null;
     if (!port) {
       fallback(L, 'mic');
       return;

@@ -32,6 +32,8 @@ function utterance(seconds = 2.2, seed = 21) {
 }
 
 const say = (t, samples) => t.page.evaluate((x) => window.__fakeMic.play(x), samples);
+/** What the owner said, as the home base got it (not the 0.4 s of silence that warms it up). */
+const heardWords = (t) => t.core.senses.hears.filter((h) => h.seconds > 1);
 const sensesReqs = (t) => t.core.requests.filter((r) => /\/api\/(?:senses|hear|speak)$/.test(r));
 
 /** The owner's words in every request Jarvis got: the newest user message's last text block. */
@@ -182,8 +184,11 @@ export default [
       });
       await t.step('said, heard by the home base, checked, sent', async () => {
         await say(t, utterance());
-        await t.waitFor(async () => t.core.senses.hears.length === 1, { timeout: 10000, message: 'POST api/hear once the owner stopped' });
-        const h = t.core.senses.hears[0];
+        await t.waitFor(async () => heardWords(t).length === 1, { timeout: 10000, message: 'POST api/hear once the owner stopped' });
+        const h = heardWords(t)[0];
+        const warm = t.core.senses.hears.filter((x) => x.seconds <= 1);
+        t.assert(warm.length === 1 && Math.abs(warm[0].seconds - 0.4) < 0.01, `warmed up once when Voice Mode opened (${JSON.stringify(warm)})`);
+        t.assert(t.core.senses.speaks.some((x) => x.text === 'Ready.'), 'the voice too');
         t.assert(h.wav && h.type === 'audio/wav' && h.rate === 16000 && h.seconds > 1.8 && h.seconds < 3.2, `a 16 kHz WAV of what was said, not the silence after it (${JSON.stringify(h)})`);
         t.assert(/^Jarvis, Tony/.test(h.prompt), `the context words (${h.prompt})`);
         await t.waitFor(async () => norm(await t.text(t.page.locator(tid('voice-review-text')))) === QUESTION, { timeout: 10000, message: 'the 2-second check shows the words' });
@@ -192,6 +197,7 @@ export default [
       });
       await t.step('the reply in George’s voice from the home base', async () => {
         await t.waitFor(async () => t.core.senses.speaks.length >= 1, { timeout: 20000, message: 'POST api/speak for the reply' });
+        await t.waitFor(async () => t.core.senses.speaks.filter((x) => x.text !== 'Ready.').length >= 1, { timeout: 20000, message: 'the reply’s sentences' });
         t.assert(t.core.senses.speaks.every((x) => x.voice === 'bm_george' && x.text.length > 0 && x.text.length <= 1000), 'sentences, George');
         await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'speaking' || t.core.senses.speaks.length >= 2, { timeout: 15000, message: 'speaking' });
         t.assert((await t.page.evaluate(() => window.__voice.said.length)) === 0, 'not the built-in voice');
@@ -232,11 +238,11 @@ export default [
         t.assert(t.core.senses.speaks.length === 0, 'nothing reached the home base’s voice');
       });
       await t.step('the next listen: this iPhone at once', async () => {
-        const hears = t.core.senses.hears.length;
+        const hears = heardWords(t).length;
         const listens = await t.page.evaluate(() => window.__voice.listens);
         await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening' && (await t.page.evaluate(() => window.__voice.listens)) > listens, { timeout: 30000, message: 'listening again (Continuous) on this iPhone' });
         t.assert(!(await t.page.locator(tid('voice-homebase-mark')).isVisible()), 'no mark');
-        t.assert(t.core.senses.hears.length === hears, 'no new request to the home base');
+        t.assert(heardWords(t).length === hears, 'no new request to the home base');
       });
     },
   },
@@ -254,7 +260,7 @@ export default [
       await openListening(t);
       await t.step('hearing slower than 4 s', async () => {
         await say(t, utterance());
-        await t.waitFor(async () => t.core.senses.hears.length === 1, { timeout: 10000, message: 'POST api/hear' });
+        await t.waitFor(async () => heardWords(t).length === 1, { timeout: 10000, message: 'POST api/hear' });
         const sent = Date.now();
         await t.waitFor(async () => /The home base took too long\. Say that again\?/.test(await t.text(t.page.locator(tid('voice-captions')))), { timeout: 10000, message: 'took too long' });
         const waited = Date.now() - sent;
@@ -264,7 +270,7 @@ export default [
         await t.waitFor(async () => sentTexts(t).some((x) => x.includes(QUESTION)), { timeout: 15000, message: 'sent' });
       });
       await t.step('a voice slower than 6 s: the built-in voice says the reply', async () => {
-        await t.waitFor(async () => t.core.senses.speaks.length >= 1, { timeout: 20000, message: 'POST api/speak' });
+        await t.waitFor(async () => t.core.senses.speaks.filter((x) => x.text !== 'Ready.').length >= 1, { timeout: 20000, message: 'POST api/speak for the reply' });
         await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.join(' '))).length > 0, { timeout: 25000, message: 'the built-in voice took over' });
       });
     },

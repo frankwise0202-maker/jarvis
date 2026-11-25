@@ -1400,7 +1400,7 @@ export async function startApp(rootEl) {
    */
   function openVoice({ wake = null } = {}) {
     refreshCameraPermission();
-    if (senses && !state.demo) safe(() => senses.prime()); // hearing / voice through the home base: a fresh reading
+    if (senses && !state.demo) safe(() => senses.prime({ warm: true })); // hearing / voice through the home base: a fresh reading, warmed up
     stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     safe(() => composer.cancelCountdown()); // Voice Mode takes over: words waiting in the box stay there

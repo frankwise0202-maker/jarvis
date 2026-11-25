@@ -21,12 +21,16 @@
 // recognizer and voice for a minute; the next use after that tries the home base again.
 
 import { getSenses, putSenses, hearWav, speakText } from '../platform/senses.js';
-import { sensesProblem, senseReady } from '../lib/senses.js';
+import { sensesProblem, senseReady, encodeWav, HEAR_SAMPLE_RATE } from '../lib/senses.js';
 
 const MIN_LOAD_MS = 10000;
 const STALE_MS = 5 * 60 * 1000; // an older reading is used, but read again in the background
 const COOL_MS = 60 * 1000; // after a failure, this device's own recognizer / voice for this long
 const POLL_MS = 2000;
+// The home base unloads its models after 30 minutes idle: a part not used for this long is warmed up
+// when Voice Mode opens (a moment of silence to hear, one word to say), so the first words fit in 4 s.
+const WARM_AFTER_MS = 25 * 60 * 1000;
+const WARM_TIMEOUT_MS = 30000;
 
 function safeCall(fn, fallback) {
   try {
@@ -49,6 +53,8 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
   };
   let st = { phase: base() ? 'idle' : 'unset', senses: null, problem: null, at: 0, url: base() };
   const failures = { hear: null, speak: null };
+  const lastOk = { hear: 0, speak: 0 };
+  const warming = { hear: null, speak: null };
   const listeners = new Set();
   let inflight = null;
   let lastTry = 0;
@@ -144,8 +150,10 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     const r = await Promise.resolve()
       .then(() => client.hearWav(url, wav, opts))
       .catch(() => ({ ok: false, kind: 'error' }));
-    if (r && r.ok) noteSuccess('hear');
-    else if (r && r.kind !== 'aborted') noteFailure('hear', r.kind);
+    if (r && r.ok) {
+      lastOk.hear = now();
+      noteSuccess('hear');
+    } else if (r && r.kind !== 'aborted') noteFailure('hear', r.kind);
     return r;
   }
 
@@ -155,8 +163,10 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     const r = await Promise.resolve()
       .then(() => client.speakText(url, args, opts))
       .catch(() => ({ ok: false, kind: 'error' }));
-    if (r && r.ok) noteSuccess('speak');
-    else if (r && r.kind !== 'aborted' && r.kind !== 'empty') noteFailure('speak', r.kind);
+    if (r && r.ok) {
+      lastOk.speak = now();
+      noteSuccess('speak');
+    } else if (r && r.kind !== 'aborted' && r.kind !== 'empty') noteFailure('speak', r.kind);
     return r;
   }
 
@@ -193,6 +203,27 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     };
   }
 
+  /** Voice Mode opened: a part that is on and ready but unused for 25 minutes loads on the home base. */
+  function warm() {
+    const s = settings();
+    const url = base();
+    if (!url) return;
+    for (const which of ['hear', 'speak']) {
+      const on = which === 'hear' ? s.homeBaseHear === true : s.homeBaseSpeak === true;
+      if (!on || warming[which] || cooling(which) || !senseReady(st.senses, which) || (lastOk[which] && now() - lastOk[which] < WARM_AFTER_MS)) continue;
+      const ask = which === 'hear' ? () => client.hearWav(url, encodeWav(new Float32Array(Math.round(HEAR_SAMPLE_RATE * 0.4)), HEAR_SAMPLE_RATE), { timeoutMs: WARM_TIMEOUT_MS }) : () => client.speakText(url, { text: 'Ready.', voice: s.naturalVoiceId || 'bm_george', speed: 1 }, { timeoutMs: WARM_TIMEOUT_MS });
+      warming[which] = Promise.resolve()
+        .then(ask)
+        .then((r) => {
+          if (r && r.ok) lastOk[which] = now(); // a failed warm-up rests nothing: the real request decides
+        })
+        .catch(() => {})
+        .then(() => {
+          warming[which] = null;
+        });
+    }
+  }
+
   return {
     getState: () => st,
     base,
@@ -210,10 +241,16 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
-    /** At launch with hearing or voice on: one reading, so the first listen or reply can use it. */
-    prime() {
+    /**
+     * At launch with hearing or voice on: one reading, so the first listen or reply can use it.
+     * { warm: true } (Voice Mode opening): then a part unused for 25 minutes is warmed up.
+     */
+    prime({ warm: andWarm = false } = {}) {
       const s = settings();
-      if (base() && (s.homeBaseHear === true || s.homeBaseSpeak === true)) load();
+      if (!base() || (s.homeBaseHear !== true && s.homeBaseSpeak !== true)) return;
+      const p = load();
+      if (andWarm) Promise.resolve(p).then(() => warm());
     },
+    warm,
   };
 }
