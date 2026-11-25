@@ -990,7 +990,7 @@ right). Four tabs:
   be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis Core 1.0, Jarvis
   briefs you himself, as before.
 
-With no home base linked, none of this applies: everything you type or say goes to Jarvis as before.
+With no home base linked, these commands don't exist: what you type or say goes to Jarvis as before.
 
 **In the morning** the briefing waits at the top of the home screen until you read it or close it
 (×), and the 7:00 notification opens it (also when Jarvis is in Standby: Standby makes way). While
