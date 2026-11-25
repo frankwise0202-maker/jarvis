@@ -280,7 +280,8 @@ export function textRuns(contents) {
 // ------------------------------------------------------------------------------------------- the client
 
 /**
- * createClaude({ getKey, baseURL, importSdk, log, outputTokensPerSecond, checkEveryMs }) →
+ * createClaude({ getKey, baseURL, importSdk, log, outputTokensPerSecond, checkEveryMs, onKeyCheck }) →
+ *   onKeyCheck(works, key): a request with that key was accepted (true) or Anthropic rejected it (false)
  *   sdkInstalled()                      (best guess without importing it)
  *   await loadSdk()                     the module or null
  *   await verifyKey(key)                'valid' | 'invalid' | 'unknown' (offline, no SDK)
@@ -294,6 +295,7 @@ export function createClaude({
   clientOptions = {},
   outputTokensPerSecond = OUTPUT_TOKENS_PER_SECOND,
   checkEveryMs = 1000,
+  onKeyCheck = () => {},
 } = {}) {
   const base = allowedBase(baseURL);
   if (!base) throw new Error('the Claude API base must be https://api.anthropic.com or a loopback address');
@@ -411,7 +413,13 @@ export function createClaude({
         }
         if (resends < 2) fitted = { usd: room.usd, inputTokens };
       }
-      const once = await streamOnce({ sdk, client, params, ctx, spentSoFar: costUsd, fitted });
+      let once;
+      try {
+        once = await streamOnce({ sdk, client, params, ctx, spentSoFar: costUsd, fitted, key });
+      } catch (err) {
+        if (err?.code === 'bad_key') noteKey(false, key);
+        throw err;
+      }
       if (once.resendWithInput) {
         // The input was far larger than estimated, so max_tokens did not fit: stopped before it wrote
         // anything, and sent again with what the input really is.
@@ -462,7 +470,15 @@ export function createClaude({
    * `checkEveryMs`; the check also counts the round a running server tool will start (its result read
    * with everything before it), so a request stops before that round rather than after it.
    */
-  async function streamOnce({ sdk, client, params, ctx, spentSoFar, fitted = null }) {
+  function noteKey(works, key) {
+    try {
+      onKeyCheck(works, key);
+    } catch {
+      // never breaks a request
+    }
+  }
+
+  async function streamOnce({ sdk, client, params, ctx, spentSoFar, fitted = null, key = null }) {
     const model = params.model;
     const price = priceOf(model);
     const inUsd = price.inPerM / 1e6;
@@ -514,6 +530,7 @@ export function createClaude({
           const u = event.message?.usage ?? null;
           prompt = u ? { input_tokens: u.input_tokens, cache_creation_input_tokens: u.cache_creation_input_tokens, cache_read_input_tokens: u.cache_read_input_tokens } : null;
           writingSince = Date.now();
+          noteKey(true, key); // the API accepted the key
           const tokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((sum, k) => sum + (Number.isFinite(u?.[k]) && u[k] > 0 ? u[k] : 0), 0);
           if (fitted && !stopped && tokens > fitted.inputTokens && promptUsd() + params.max_tokens * outUsd > fitted.usd + 0.002) {
             resend = tokens;

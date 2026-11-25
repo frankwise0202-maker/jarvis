@@ -92,8 +92,14 @@ export function createBrain({
 
   // ---- key vault, Claude, spending
   const vault = createVault({ dir: secretsDir, log, now });
+  // A key saved while offline is verified by its first request (and one Anthropic rejects is not).
+  function onKeyCheck(works, key) {
+    if (!key || vault.get() !== key || vault.status().verified === works) return;
+    vault.markVerified(works);
+    log(works ? 'the API key works (its first request was accepted)' : 'Anthropic rejected the API key');
+  }
   // claudeTuning (tests only): { outputTokensPerSecond, checkEveryMs } of the live cost estimate.
-  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log, ...claudeTuning });
+  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log, onKeyCheck, ...claudeTuning });
   const spend = createSpend({ file: file('spend-v1.json'), timeZone, now, limits: () => settings.limits, log });
   let lastSpendEmit = 0;
   let spendTimer = null;

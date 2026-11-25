@@ -94,6 +94,31 @@ test('key vault offline: the key is stored with verified false', async () => {
   }
 });
 
+test('a key saved while offline is marked verified by its first accepted request; a key Anthropic rejects is not', async () => {
+  const fake = await startFakeClaude({ script: () => researchAnswer(), validKeys: [KEY] });
+  const secrets = path.join(tmp(), 'secrets');
+  const { brain, logs } = makeBrain({ fake, secretsDir: secrets });
+  try {
+    brain.vault.set(KEY, { verified: false }); // what POST /api/brain/key stores when the models check is offline
+    assert.equal(brain.info().key.verified, false);
+    const job = brain.createJob({ prompt: 'the first job with this key' });
+    await until(() => brain.getJob(job.id).status === 'done', { what: 'job done' });
+    assert.equal(brain.info().key.verified, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(secrets, 'anthropic.json'), 'utf8')).verified, true, 'kept across restarts');
+    // A key Anthropic does not accept (revoked, say): the job fails with bad_key and the key is no longer verified.
+    const other = 'sk-ant-api03-OTHERKEY_0123456789abcdefghijklmnopqrstuvwxyzZz9Y';
+    brain.vault.set(other, { verified: true });
+    const j2 = brain.createJob({ prompt: 'with a key that stopped working' });
+    const f2 = await until(() => (brain.getJob(j2.id).status === 'failed' ? brain.getJob(j2.id) : null), { what: 'bad key' });
+    assert.equal(f2.error.code, 'bad_key');
+    assert.equal(brain.info().key.verified, false);
+    assert.ok(logs.every((l) => !l.includes(KEY) && !l.includes('OTHERKEY')), 'no key in the logs');
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});
+
 test('research: streamed with the SDK, web tools at the 20260209 versions, adaptive thinking, result with sources, cost, push', async () => {
   const fake = await startFakeClaude({ script: () => researchAnswer() });
   const { brain, push } = makeBrain({ fake });
