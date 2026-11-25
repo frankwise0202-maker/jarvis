@@ -51,6 +51,16 @@ test('stream: a full status at least every 30 simulated seconds (services refres
   assert.ok(statuses[1].data.services.rev > statuses[0].data.services.rev || statuses[1].data.t - statuses[0].data.t >= 30_000);
 });
 
+test('stream: every connection carries an info frame with the version, so a page that missed a quick restart reloads into the new one', async () => {
+  const { frames } = await readSse(port, { until: (f) => f.some((x) => x.event === 'info') });
+  const infoFrame = frames.find((f) => f.event === 'info');
+  assert.ok(infoFrame, 'an info frame arrives on connect');
+  const { readFileSync } = await import('node:fs');
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.equal(infoFrame.data.version, pkg.version);
+  assert.equal(frames.find((f) => f.event).event, 'status'); // the status frame still comes first
+});
+
 test('stream: Last-Event-ID replays the events missed while away', async () => {
   const { frames } = await readSse(port, { headers: { 'Last-Event-ID': '1' }, until: (f) => f.some((x) => x.event === 'tick') });
   const events = frames.filter((f) => f.event === 'event');

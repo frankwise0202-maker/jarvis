@@ -191,6 +191,10 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       const snap = core.snapshot;
       const initial = [];
       if (snap) initial.push({ event: 'status', data: JSON.stringify(snap) });
+      // The Core's version on every (re)connection: a dashboard that missed a quick restart into a new
+      // version (its stream came back within the browser's own retry, so it never read api/info) sees
+      // it here and the kiosk reloads into the matching dashboard. Pages of every version handle 'info'.
+      initial.push({ event: 'info', data: JSON.stringify(info(access)) });
       const lastId = Number(req.headers['last-event-id']);
       if (Number.isFinite(lastId)) {
         for (const ev of core.events.list({ limit: 50, sinceId: lastId }).reverse()) initial.push({ event: 'event', data: JSON.stringify(ev), id: ev.id });
