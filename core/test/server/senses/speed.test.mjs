@@ -330,6 +330,7 @@ test('the q8 trial (a second engine loading beside George) waits until the phone
   const t0 = Date.now();
   while (Date.now() - t0 < 3000) {
     assert.equal((await c.speak()).status, 200);
+    assert.equal((await c.info()).speak.measuring, false, 'waiting for a quiet spell is not measuring');
     await sleep(400);
   }
   assert.ok(!c.logs.some((l) => /trying Kokoro's 8-bit/.test(l)), 'no trial while the phone is talking');

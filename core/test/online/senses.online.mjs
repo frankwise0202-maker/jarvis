@@ -191,7 +191,7 @@ test('the speed check with the real voice engine: George timed at warm-up, q8 tr
     for (let i = 0; i < 25 * 240 && !s; i++) {
       const v = (await request(port, '/api/senses')).json.speak;
       assert.notEqual(v.state, 'error', v.error);
-      if (v.measured.fp32 && v.measured.q8 && !v.measuring) s = v;
+      if (v.measured.fp32 && v.measured.q8 && !v.measuring && rt.senses.speed?.dtype) s = v; // decided (and switched, if q8 won)
       else await sleep(250);
     }
     assert.ok(s, 'fp32 and q8 both timed');

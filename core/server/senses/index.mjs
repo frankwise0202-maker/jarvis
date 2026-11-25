@@ -145,7 +145,9 @@ export function createSenses({
   let speedRecord = normalizeSpeedRecord(speedFile.load());
   const configuredDtype = SPEAK_MODELS[speakDtype] ? speakDtype : DEFAULT_SPEAK_DTYPE;
   let speakModel = SPEAK_MODELS[pickDtype({ configured: configuredDtype, auto: autoDtype, record: speedRecord, cpu })];
-  const check = { running: false, trial: null, next: null }; // the speed check after a warm-up; the q8 engine it tries
+  // The speed check after a warm-up: running (from the warm-up until it ends, quiet spells included), active (timing
+  // George or loading the 8-bit model right now: GET /api/senses speak.measuring), the q8 engine it tries.
+  const check = { running: false, active: 0, trial: null, next: null };
   const sense = {
     hear: { error: null, firstDownload: false, lastMs: null, gen: 0 },
     speak: { error: null, firstDownload: false, lastMs: null, gen: 0 },
@@ -217,7 +219,7 @@ export function createSenses({
       out.dtype = model.dtype;
       out.rtf = mine[model.dtype]?.rtf ?? null; // seconds of work per second of George, measured on this computer
       out.measured = Object.fromEntries(Object.entries(mine).map(([d, m]) => [d, m.rtf]));
-      out.measuring = check.running;
+      out.measuring = check.active > 0;
       out.autoDtype = autoDtype;
     }
     return out;
@@ -322,8 +324,13 @@ export function createSenses({
   /** Time the fixed sentence once on a loaded engine: its real-time factor, or null when it could not run. */
   async function timeOnce(host, stale) {
     if (!(await whenIdle(() => [hosts.hear, hosts.speak, host], stale)) || !host.status().loaded) return null;
-    const r = await host.run({ sentences: [BENCH_TEXT], voice: BENCH_VOICE, speed: 1 }, { timeoutMs: BENCH_TIMEOUT_MS });
-    return rtfOf({ ms: r.ms, samples: r.output?.audio?.length, sampleRate: r.output?.sampleRate });
+    check.active += 1;
+    try {
+      const r = await host.run({ sentences: [BENCH_TEXT], voice: BENCH_VOICE, speed: 1 }, { timeoutMs: BENCH_TIMEOUT_MS });
+      return rtfOf({ ms: r.ms, samples: r.output?.audio?.length, sampleRate: r.output?.sampleRate });
+    } finally {
+      check.active -= 1;
+    }
   }
 
   /** Twice when the first one is slow (another program may have been busy for a moment): the faster counts. */
@@ -390,11 +397,14 @@ export function createSenses({
     log(`voice: slower than ${rtfSwitch}x real time with fp32; trying Kokoro's 8-bit model${download ? ` (downloading ${q8.repo} q8, about ${sizeMb(q8)} MB)` : ''}`);
     const trial = createSenseHost({ ...common, idleMs: speakIdleMs, kind: 'speak', getModel: () => q8 });
     check.trial = trial;
+    check.active += 1;
     try {
       await trial.load();
     } catch (err) {
       if (!stale()) log(`voice: the 8-bit model could not be loaded (${String(err?.message ?? err).slice(0, 200)}); keeping fp32`);
       return;
+    } finally {
+      check.active -= 1;
     }
     if (stale() || check.trial !== trial) return;
     const q8Rtf = await timeEngine(trial, stale);
