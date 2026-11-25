@@ -283,6 +283,9 @@ test('chat commands: research in the background, what did it find, watch for / t
     'Tell me when Apple usually releases new iPhones',
     'Tell me when the iPhone 18 comes out?',
     'Tell me when this drops under $300',
+    'Tell me when it comes out',
+    'Let me know when they go on sale',
+    'Watch for that to drop under $300',
     'Tell me when the LG 27GP850 drops under $300 and also explain how monitor refresh rates work, what HDR really means and whether I need it',
     // Research: "overnight" / "while I'm at work" that belong to the question.
     'Look into why my sourdough is flat overnight',

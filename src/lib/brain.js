@@ -470,6 +470,8 @@ const CLEAR_CHANGE = new RegExp(
 // What a bare watch must not be: the past ("was released"), a habit ("usually comes out"), or about
 // something only this chat knows ("this", "these": the home base can't see the chat).
 const NOT_A_WATCH = /\b(?:was|were|had|did|has been|have been|already|usually|typically|normally|generally|always|ever|often|first|originally|used to|this|these)\b/i;
+// "Tell me when it comes out": what "it" is lives in the chat, which the home base never sees.
+const CHAT_PRONOUN = /^(?:it|its|it's|that|those|they|them|he|she|one)\b/i;
 const WATCH_BARE_MAX = 120;
 const VAGUE = /^(?:it|this|that|them|changes|anything|something|everything|me|you|done|ready|finished)$/i;
 const RESULTS = [
@@ -538,7 +540,7 @@ export function matchBrainCommand(text) {
     if (bare) {
       // Without the home base named: only a clear future change, said as a request, not a question.
       if (s.length > WATCH_BARE_MAX || /\?\s*$/.test(text.trim())) return null;
-      if (!CLEAR_CHANGE.test(what) || NOT_A_WATCH.test(what)) return null;
+      if (!CLEAR_CHANGE.test(what) || NOT_A_WATCH.test(what) || CHAT_PRONOUN.test(what)) return null;
     }
     const lead = m[1] ? `${m[1].toLowerCase() === 'if' ? 'If' : 'When'} ` : '';
     return { kind: 'watch', what: `${lead}${what}`.slice(0, WATCH_WHAT_MAX) };

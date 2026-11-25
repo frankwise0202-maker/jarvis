@@ -3110,7 +3110,8 @@ find?" / "home base results" lists finished research; a watcher (daily) needs th
 base, tell me when (or let me know if) X"), or, without it, "watch for X" / "keep an eye out for X" /
 "tell me when X" / "let me know when X" with a clear future change (a price under an amount, back in
 stock, on sale, comes out, is released / announced / launched, becomes available), never in the past
-or a habit ("was released", "usually"), never about "this", under 120 characters, not ending in "?".
+or a habit ("was released", "usually"), never about "this" or a word only the chat explains ("it",
+"that", "they" first: the home base never sees the chat), under 120 characters, not ending in "?".
 A bare "tell me if" / "let me know if", "keep an eye on", "monitor" or "watch out for" is always a
 question for Claude, and no watch ever has a colon or a line break in it. "… overnight" / "… while
 I'm at work" after a question of its own ("look into why my sourdough is flat overnight") is that
