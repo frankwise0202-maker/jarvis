@@ -63,7 +63,8 @@ export const GDM_STOCK = `# GDM configuration storage
 
 const STUBS = {
   // id: pretend to be the owner (uid 1000), whoever runs the tests
-  id: `case "$*" in
+  id: `[ "\${STUB_REAL_UID:-0}" = 1 ] && exec /usr/bin/id "$@"
+case "$*" in
   -u) echo ${UID} ;;
   -un|"-u -n"|"-n -u") echo ${USER} ;;
   *) exec /usr/bin/id "$@" ;;

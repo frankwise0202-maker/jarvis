@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import {
   makeSandbox, makeRepo, install, cli, runScript, stubLog, snapshot, freePort, stopCore, CLI,
   GSETTINGS_DEFAULTS, GDM_STOCK, USER,
@@ -448,5 +448,49 @@ test('jarvis-core refuses root and explains its commands', () => {
   } else {
     assert.equal(r.code, 0);
     assert.match(r.out, /jarvis-core status/);
+  }
+});
+
+test('jarvis-core open: starts the screen on its own, and restarts it when it is already up', async () => {
+  const sb = makeSandbox({ tsMode: 'missing', nodeVersion: 'v22.11.0' });
+  // a stand-in Core that answers /api/ping, so the launcher does not wait (a child process: the
+  // tests run the CLI synchronously, which would block a server in this process)
+  const corePort = await freePort();
+  const core = spawn(process.execPath, ['-e', `require('http').createServer((q, s) => s.end('{"ok":true}')).listen(${corePort}, '127.0.0.1', () => console.log('up'))`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise((r) => core.stdout.once('data', r));
+  const profile = path.join(sb.home, '.local/share/jarvis-core-screen');
+  const pattern = `--user-data-dir=${profile}( |$)`;
+  const pids = () => (spawnSync('pgrep', ['-f', '--', pattern], { encoding: 'utf8' }).stdout || '').trim().split('\n').filter(Boolean);
+  try {
+    const bin = path.join(sb.home, '.local/bin/jarvis-core');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.copyFileSync(CLI, bin);
+    fs.chmodSync(bin, 0o755);
+    // a Chrome stand-in that stays up, like the real one
+    fs.writeFileSync(path.join(sb.stubs, 'google-chrome-stable'),
+      '#!/bin/bash\necho "google-chrome-stable $*" >> "$STUB_LOG"\n[ "$1" = --version ] && { echo "Google Chrome 142"; exit 0; }\ntrap \'kill $! 2>/dev/null; exit 0\' TERM\nsleep 60 & wait\n', { mode: 0o755 });
+    const env = { DISPLAY: ':0', STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_PORT: String(corePort) };
+    let r = cli(sb, ['open'], { env });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /The dashboard is opening full screen/);
+    const first = pids();
+    assert.equal(first.length, 1, 'one Chrome with the screen profile');
+    assert.ok(fs.existsSync(path.join(profile, 'Default/Preferences')), 'the profile was marked clean before launch');
+    r = cli(sb, ['open'], { env });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Closed the dashboard window/);
+    const second = pids();
+    assert.equal(second.length, 1, 'still exactly one');
+    assert.notEqual(second[0], first[0], 'a fresh Chrome');
+    // without a desktop session it says what to do instead of failing obscurely
+    r = cli(sb, ['open'], { env: { ...env, DISPLAY: '' } });
+    assert.equal(r.code, 1);
+    assert.match(r.out, /No desktop session found\. Log in on the computer's screen first/);
+  } finally {
+    for (const pid of pids()) {
+      try { process.kill(Number(pid), 'SIGTERM'); } catch {}
+    }
+    core.kill();
+    sb.cleanup();
   }
 });
