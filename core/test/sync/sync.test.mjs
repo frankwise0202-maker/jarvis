@@ -70,7 +70,7 @@ test('helpers: device ids, labels, Accept-Encoding', () => {
   for (const bad of ['abcdefg', 'a'.repeat(65), 'ABCDEFGH', '../../etc', '..%2f..%2fetc', 'abcd/efgh', 'abcd.efgh', 'abcdefgh\n', ' abcdefgh', '', null, 12345678]) assert.ok(!validDeviceId(bad), String(bad));
   assert.equal(cleanLabel('iPhone'), 'iPhone');
   assert.equal(cleanLabel(encodeURIComponent('Frank’s iPhone')), 'Frank’s iPhone');
-  assert.equal(cleanLabel('  Mac\u0000 ‮Chrome  '), 'Mac Chrome');
+  assert.equal(cleanLabel('  Mac\u0000 \u202eChrome  '), 'Mac Chrome');
   assert.equal(cleanLabel('x'.repeat(200)).length, 60);
   assert.equal(cleanLabel('   '), null);
   assert.equal(cleanLabel(undefined), null);
