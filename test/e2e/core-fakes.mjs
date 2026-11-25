@@ -34,6 +34,9 @@
 // it. api/hear answers a canned transcript (`hearText`, or `hearQueue` in order); api/speak a small
 // 24 kHz WAV. hearMode / speakMode 'unreachable' drop those requests (as if Tailscale were off),
 // 'error' answers 500. A part turned on with PUT downloads over `downloadSteps` reads of api/senses.
+// One home base for two devices: { senses: { …, shared: true } } has the harness hand every context of
+// the scenario the same senses state (t.coreSenses, passed here as `sensesState`), as the real Core's
+// api/senses is one for every device.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -497,9 +500,9 @@ function syncRoute(store, b, req, url, json, raw) {
   return json(405, { error: 'method_not_allowed', message: 'GET, PUT' });
 }
 
-export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore(), senses = {} } = {}) {
+export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore(), senses = {}, sensesState = null } = {}) {
   const fx = coreFixtures();
-  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync, senses: fakeSenses(senses) };
+  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync, senses: sensesState || fakeSenses(senses) };
   await context.route(`${CORE_ORIGIN}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());

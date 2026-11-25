@@ -12,7 +12,9 @@
 //   const auto = createVoiceAuto({ senses, getSettings, saveSettings, demo, onEnabled });
 //   auto.check({ force }) -> Promise<{ act, why }>   at launch, when the app comes to the front, when a
 //                                                    home base is linked, when Voice Mode opens
-//   setHomeBaseVoice(senses, on, { commit })         the owner's own switch (Settings, the notice)
+//   setHomeBaseVoice(senses, on, { commit })         the owner's own switch (Settings, the notice): on turns
+//                                                    George on at the home base too; off is this device's
+//                                                    alone (the home base keeps him for the other devices)
 
 import { autoSpeakDecision } from '../lib/voice-choice.js';
 
@@ -26,18 +28,25 @@ function report(err) {
 
 /**
  * The owner switches George's voice from the home base on or off himself. Off: this device stops using
- * it at once, whatever the home base answers. On: only once the home base accepts. Either way it is
- * now his choice (homeBaseSpeakBy 'owner'): the app never switches it by itself again.
+ * it at once, and only this device: the home base's George is shared by every device (the iPhone and
+ * the Mac each have their own switch), so he stays on there for the others (it costs the home base only
+ * memory, and the Core unloads him after hours unused). On: PUT speak enabled:true (the home base starts
+ * the download and the warm-up if he isn't on there yet), switched on here only once the home base
+ * accepts. Either way it is now his choice (homeBaseSpeakBy 'owner'): the app never switches it by itself
+ * again on this device.
  */
 export async function setHomeBaseVoice(senses, on, { commit }) {
-  if (!on) commit({ homeBaseSpeak: false, homeBaseSpeakBy: 'owner' });
+  if (!on) {
+    commit({ homeBaseSpeak: false, homeBaseSpeakBy: 'owner' });
+    return { ok: true, here: true };
+  }
   let r;
   try {
-    r = await senses.save({ speak: { enabled: !!on } });
+    r = await senses.save({ speak: { enabled: true } });
   } catch {
     r = { ok: false, kind: 'error' };
   }
-  if (on && r && r.ok) commit({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' });
+  if (r && r.ok) commit({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' });
   return r;
 }
 

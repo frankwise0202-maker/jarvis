@@ -5,8 +5,13 @@
 //                                   enabled, the notice ("Getting it ready…", then ready, Hear him), the
 //                                   label "George · home base" in Voice Mode and on a reply read aloud;
 //                                   a reload asks nothing again
-//   george-off                      the notice's Turn off: off here and at the home base, and it stays
-//                                   off (a reload, Voice Mode: "iPhone voice"); Settings → Voice shows it
+//   george-off                      the notice's Turn off: off on this device (the home base keeps George
+//                                   for the others), and it stays off (a reload, Voice Mode: "iPhone
+//                                   voice"); Settings → Voice shows it
+//   george-two-devices              the iPhone and the Mac on one home base: Turn off on the Mac is the
+//                                   Mac's alone (the home base keeps George; the iPhone's next reply is
+//                                   his); George turned off at the home base by an older Jarvis comes back
+//                                   on there from the iPhone, whose switch is still on
 //   george-fallback                 George failing mid-reply: the label changes to "iPhone voice"
 //   george-no-homebase(-mac)        no home base: Jarvis's voice offers George on this device (its
 //                                   download, "may be slow on iPhone") and the better-voice tip; Test
@@ -24,8 +29,14 @@ const speakPuts = (t) => t.core.senses.puts.filter((p) => p.speak);
 
 async function setup(t) {
   await t.newPage();
-  await t.page.addInitScript(installFakeSpeech, { noSpeechMs: 900 });
-  await t.page.addInitScript(() => {
+  await prepPage(t.page);
+  await t.goto('/');
+}
+
+/** The fake recognizer and voice, and a record of every voice label the page showed. */
+async function prepPage(page) {
+  await page.addInitScript(installFakeSpeech, { noSpeechMs: 900 });
+  await page.addInitScript(() => {
     window.__voice.queue = []; // the recognizer hears only what a step says
     // Every voice label the page showed, in order (Voice Mode's and a reply's read aloud).
     window.__labels = [];
@@ -41,7 +52,25 @@ async function setup(t) {
     };
     new MutationObserver(note).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   });
-  await t.goto('/');
+}
+
+const storedOn = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1') || '{}'));
+
+/** A question in Voice Mode on `page`; resolves once the reply has been spoken. Returns its labels and what the device voice said. */
+async function voiceReply(t, page) {
+  await page.bringToFront();
+  await page.locator(tid('voice-open')).click();
+  const vm = page.locator(tid('voice-mode'));
+  await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 10000, message: 'Voice Mode to listen' });
+  await t.waitFor(async () => (await page.evaluate(() => window.__voice.listens)) >= 1, { timeout: 8000, message: 'the recognizer' });
+  const before = await page.evaluate(() => window.__labels.length);
+  await page.evaluate((q) => window.__voice.say(q), QUESTION);
+  await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'speaking', { timeout: 20000, message: 'the reply to be spoken' });
+  await t.waitFor(async () => (await vm.getAttribute('data-state')) !== 'speaking', { timeout: 40000, message: 'done speaking' });
+  const labels = await page.evaluate((n) => window.__labels.slice(n).filter((x) => x.startsWith('voice-label:')), before);
+  const said = await page.evaluate(() => window.__voice.said.join(' '));
+  await page.locator(tid('voice-close')).click();
+  return { labels, said };
 }
 
 async function openListening(t) {
@@ -185,7 +214,7 @@ export default [
   autoScenario('mac'),
   {
     name: 'george-off',
-    title: 'iPhone: George turned on by himself, then the owner taps Turn off on the notice: off here and at the home base, and it stays off (a reload asks nothing; Voice Mode speaks with the iPhone voice and says so); Settings → Voice shows the iPhone voice with the switch off, and turning it on there is the owner’s choice',
+    title: 'iPhone: George turned on by himself, then the owner taps Turn off on the notice: off on this iPhone (nothing asked of the home base, which keeps George for the other devices), and it stays off (a reload asks nothing; Voice Mode speaks with the iPhone voice and says so); Settings → Voice shows the iPhone voice with the switch off, and turning it on there is the owner’s choice',
     device: 'iphone13',
     seed: FRESH_LINK,
     fakeCore: { senses: { downloadSteps: 2 } },
@@ -195,9 +224,11 @@ export default [
       await t.step('turned on, then off from the notice', async () => {
         await t.visible('voice-notice', { timeout: 10000 });
         await t.page.locator(tid('voice-notice-off')).click();
-        await t.waitFor(async () => speakPuts(t).some((p) => p.speak.enabled === false), { timeout: 10000, message: 'PUT speak enabled:false' });
+        await t.waitFor(async () => (await stored(t)).homeBaseSpeak === false, { timeout: 10000, message: 'off on this iPhone' });
         const s = await stored(t);
         t.assert(s.homeBaseSpeak === false && s.homeBaseSpeakBy === 'owner', `off, the owner’s choice (${s.homeBaseSpeak}, ${s.homeBaseSpeakBy})`);
+        await t.page.waitForTimeout(1000);
+        t.assert(!speakPuts(t).some((p) => p.speak.enabled === false) && t.core.senses.speak.enabled === true, `the home base keeps George for the other devices (${JSON.stringify(t.core.senses.puts)})`);
         t.assert(/Off\. Jarvis speaks with the iPhone voice\./.test(await t.text(t.page.locator(tid('voice-notice-text')))), 'said so');
         await t.screenshot('1-off');
       });
@@ -229,6 +260,78 @@ export default [
         t.assert((await stored(t)).homeBaseSpeakBy === 'owner', 'the owner’s choice');
         t.assert(JSON.stringify(speakPuts(t).at(-1)) === JSON.stringify({ speak: { enabled: true } }), 'on at the home base');
         await t.waitFor(async () => /getting ready on your Alienware|George · home base/.test(await t.text(card)), { timeout: 10000, message: 'getting ready, or ready' });
+      });
+    },
+  },
+  {
+    name: 'george-two-devices',
+    title: 'The iPhone and the Mac on one home base: George turns on by himself on both; Turn off on the Mac’s notice turns him off on the Mac only — the home base keeps him and the iPhone’s next reply is George; when an older Jarvis turns him off at the home base, the iPhone (still on) turns him on there again',
+    device: 'iphone13',
+    seed: FRESH_LINK,
+    fakeCore: { senses: { downloadSteps: 2, shared: true } },
+    timeout: 200000,
+    async run(t) {
+      const phone = await t.newPage({ device: 'iphone13' });
+      await prepPage(phone);
+      await t.goto('/', { page: phone });
+      const phoneCore = t.core; // the iPhone's own requests
+      const home = phoneCore.senses; // the one home base
+      await t.step('iPhone: George on by himself, then ready', async () => {
+        await t.waitFor(async () => speakPuts(t).length === 1, { timeout: 10000, message: 'the auto-enable PUT' });
+        await phone.locator(tid('voice-notice')).waitFor({ state: 'visible', timeout: 10000 });
+        await t.waitFor(async () => (await phone.locator(tid('voice-notice')).getAttribute('data-state')) === 'ready', { timeout: 30000, message: 'the ready notice' });
+        const s = await storedOn(phone);
+        t.assert(s.homeBaseSpeak === true && s.homeBaseSpeakBy === 'auto', `on, by itself (${s.homeBaseSpeak}, ${s.homeBaseSpeakBy})`);
+      });
+      const mac = await t.newPage({ device: 'mac' });
+      await prepPage(mac);
+      await t.goto('/', { page: mac });
+      const macCore = t.core;
+      t.assert(macCore !== phoneCore && macCore.senses === home, 'two devices, one home base');
+      await t.step('Mac: on by itself; Turn off on its notice is the Mac’s alone', async () => {
+        await t.waitFor(async () => (await storedOn(mac)).homeBaseSpeakBy === 'auto', { timeout: 15000, message: 'the Mac turned George on by itself' });
+        const notice = mac.locator(tid('voice-notice'));
+        await notice.waitFor({ state: 'visible', timeout: 10000 });
+        await t.waitFor(async () => (await notice.getAttribute('data-state')) === 'ready', { timeout: 30000, message: 'the Mac’s ready notice' });
+        await mac.locator(tid('voice-notice-off')).click();
+        await t.waitFor(async () => (await storedOn(mac)).homeBaseSpeak === false, { timeout: 10000, message: 'off on the Mac' });
+        t.assert((await storedOn(mac)).homeBaseSpeakBy === 'owner', 'the owner’s choice');
+        t.assert(/Off\. Jarvis speaks with the built-in voice\./.test(await t.text(mac.locator(tid('voice-notice-text')))), 'the Mac says so');
+        await mac.waitForTimeout(1500);
+        t.assert(!speakPuts(t).some((p) => p.speak.enabled === false), `the home base keeps George (${JSON.stringify(home.puts)})`);
+        t.assert(home.speak.enabled === true && home.speak.state === 'ready', `George still on and ready at the home base (${JSON.stringify(home.speak)})`);
+        const s = await storedOn(phone);
+        t.assert(s.homeBaseSpeak === true && s.homeBaseSpeakBy === 'auto', `the iPhone unchanged (${s.homeBaseSpeak}, ${s.homeBaseSpeakBy})`);
+        await t.screenshot('1-mac-off', mac);
+      });
+      await t.step('iPhone: the next reply is George from the home base', async () => {
+        const asked = home.speaks.length;
+        const { labels, said } = await voiceReply(t, phone);
+        t.assert(labels[0] === 'voice-label:George · home base:homebase', `labelled George (${labels.join(' | ')})`);
+        t.assert(home.speaks.length > asked && phoneCore.requests.includes('POST /api/speak'), 'made by the home base for the iPhone');
+        t.assert(!said, `the iPhone voice said nothing (${said})`);
+      });
+      await t.step('Mac: its own built-in voice', async () => {
+        const { labels } = await voiceReply(t, mac);
+        t.assert(labels[0] === 'voice-label:built-in voice:device', `labelled built-in voice (${labels.join(' | ')})`);
+        t.assert(!macCore.requests.includes('POST /api/speak'), 'nothing asked of the home base’s voice from the Mac');
+      });
+      await t.step('an older Jarvis turns George off at the home base: the iPhone, still on, turns him on there again', async () => {
+        Object.assign(home.speak, { enabled: false, state: 'off', progress: 0 });
+        const n = phoneCore.requests.length;
+        const m = macCore.requests.length;
+        const puts = home.puts.length;
+        await phone.bringToFront();
+        await phone.locator(tid('settings-button')).click();
+        const card = phone.locator(tid('jarvis-voice'));
+        await card.waitFor({ state: 'visible', timeout: 10000 });
+        await card.scrollIntoViewIfNeeded();
+        await t.waitFor(async () => phoneCore.requests.slice(n).includes('PUT /api/senses'), { timeout: 10000, message: 'the iPhone turned George on at the home base again' });
+        t.assert(JSON.stringify(home.puts.slice(puts)) === JSON.stringify([{ speak: { enabled: true } }]), `one PUT speak enabled:true (${JSON.stringify(home.puts.slice(puts))})`);
+        t.assert(!macCore.requests.slice(m).includes('PUT /api/senses'), 'not the Mac (off there)');
+        await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-tag')))) === 'George · home base', { timeout: 20000, message: 'George ready again on the iPhone' });
+        t.assert(home.speak.enabled === true && home.speak.state === 'ready', 'on and ready at the home base');
+        await t.screenshot('2-iphone-back-on', phone);
       });
     },
   },

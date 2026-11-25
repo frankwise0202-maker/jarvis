@@ -81,7 +81,7 @@ async function statusOf(t, which) {
 export default [
   {
     name: 'senses-settings',
-    title: 'Settings → Home base → Hearing and voice (beta) on an iPhone: off by default; hearing turned on downloads Whisper on the home base with its progress, then Ready; Accurate; Test hears 3 seconds and shows the words; George’s voice turned on, Test plays one sentence made by the home base; off again; a Core without senses says it needs an update',
+    title: 'Settings → Home base → Hearing and voice (beta) on an iPhone: off by default; hearing turned on downloads Whisper on the home base with its progress, then Ready; Accurate; Test hears 3 seconds and shows the words; George’s voice turned on, Test plays one sentence made by the home base; hearing off again (here and at the home base); George’s voice off on this iPhone only (the home base keeps him); a Core without senses says it needs an update',
     device: 'iphone13',
     seed: LINKED,
     fakeCore: { senses: { downloadSteps: 2 } },
@@ -147,6 +147,15 @@ export default [
         await t.waitFor(async () => (await statusOf(t, 'hear')).state === 'off', { timeout: 10000, message: 'off' });
         t.assert(JSON.stringify(t.core.senses.puts.at(-1)) === JSON.stringify({ hear: { enabled: false } }), 'turned off at the home base');
         t.assert(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1')).homeBaseHear === false), 'off for this iPhone');
+      });
+      await t.step('George’s voice off: this iPhone’s alone (the home base keeps him for the other devices)', async () => {
+        const puts = t.core.senses.puts.length;
+        await card.locator(tid('senses-speak-toggle')).click();
+        await t.waitFor(async () => (await statusOf(t, 'speak')).state === 'ready-elsewhere', { timeout: 10000, message: 'ready there, off here' });
+        t.assert(t.core.senses.puts.length === puts, `nothing asked of the home base (${JSON.stringify(t.core.senses.puts.slice(puts))})`);
+        t.assert(t.core.senses.speak.enabled === true && t.core.senses.speak.state === 'ready', 'still on at the home base');
+        t.assert(/Off on this iPhone: replies use its own voices\. The home base keeps George for your other devices\./.test(await t.text(card.locator(tid('senses-speak-result')))), 'said so');
+        t.assert(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1')).homeBaseSpeak === false), 'off for this iPhone');
       });
     },
   },

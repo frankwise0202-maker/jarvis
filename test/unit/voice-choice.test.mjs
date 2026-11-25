@@ -125,20 +125,24 @@ test('auto-enable: turns George on once (this device and the home base), records
   assert.equal(x.calls.put.length, 1);
 });
 
-test('auto-enable: the owner turns it off, and it stays off (here and at the home base)', async () => {
+test('auto-enable: the owner turns it off on this device only (the home base keeps George for the others), and it stays off here', async () => {
   const x = sensesWith();
   const auto = createVoiceAuto({ senses: x.ctl, getSettings: x.get, saveSettings: x.save });
   await auto.check();
-  await setHomeBaseVoice(x.ctl, false, { commit: x.save });
+  const off = await setHomeBaseVoice(x.ctl, false, { commit: x.save });
+  assert.equal(off.ok, true);
   assert.equal(x.get().homeBaseSpeak, false);
   assert.equal(x.get().homeBaseSpeakBy, 'owner');
-  assert.deepEqual(x.calls.put.at(-1), { speak: { enabled: false } }, 'off at the home base too');
+  assert.deepEqual(x.calls.put, [{ speak: { enabled: true } }], 'nothing asked of the home base: George stays on there for the other devices');
+  assert.notEqual(x.core.speak, 'off');
   for (let i = 0; i < 3; i++) {
     x.advance(60_000);
     const r = await auto.check({ force: true });
     assert.equal(r.why, 'owner');
+    await x.ctl.load({ force: true });
+    assert.equal(x.ctl.canSpeak(), false, 'off here');
   }
-  assert.equal(x.calls.put.length, 2, 'never turned on again');
+  assert.equal(x.calls.put.length, 1, 'never turned on again');
   // The owner's own on is his choice too.
   const r = await setHomeBaseVoice(x.ctl, true, { commit: x.save });
   assert.equal(r.ok, true);
@@ -196,15 +200,83 @@ test('voice warm-up: PUT speak enabled:true when the app comes to the front, at 
   assert.equal(x.ctl.warmVoice(), false, 'not again within 3 minutes');
   x.advance(3 * 60 * 1000 + 1);
   assert.equal(x.ctl.warmVoice(), true);
-  // Off at the home base (turned off on another device): never turned back on from here.
-  const there = sensesWith({ settings: { ...LINKED, homeBaseSpeak: true }, core: { speak: 'off' } });
-  await there.ctl.load({ force: true });
-  assert.equal(there.ctl.warmVoice(), false);
   // Off on this device: nothing.
   const here = sensesWith({ settings: { ...LINKED, homeBaseSpeak: false }, core: { speak: 'ready' } });
   await here.ctl.load({ force: true });
   assert.equal(here.ctl.warmVoice(), false);
-  assert.equal(there.calls.put.length + here.calls.put.length, 0);
+  assert.equal(here.calls.put.length, 0);
+});
+
+test('George off at the home base while on here (turned off there, or by an older Jarvis): the reading turns him on there again, at most every 3 minutes', async () => {
+  const there = sensesWith({ settings: { ...LINKED, homeBaseSpeak: true, homeBaseSpeakBy: 'auto' }, core: { speak: 'off' } });
+  await there.ctl.load({ force: true });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(there.calls.put, [{ speak: { enabled: true } }], 'on at the home base again');
+  assert.equal(there.ctl.getState().senses.speak.enabled, true, 'the answer is the new reading');
+  assert.equal(there.ctl.warmVoice(), false, 'not ready yet: no warm-up on top');
+  // Turned off there again at once: not again within 3 minutes (never a tug of war), then once more.
+  there.core.speak = 'off';
+  there.advance(11_000);
+  await there.ctl.load({ force: true });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(there.calls.put.length, 1);
+  there.advance(3 * 60 * 1000);
+  await there.ctl.load({ force: true });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(there.calls.put.length, 2);
+  // Off on this device, a Core without its speech software, a Core that doesn't answer: nothing.
+  const offHere = sensesWith({ settings: { ...LINKED, homeBaseSpeak: false, homeBaseSpeakBy: 'owner' }, core: { speak: 'off' } });
+  await offHere.ctl.load({ force: true });
+  const unreachable = sensesWith({ settings: { ...LINKED, homeBaseSpeak: true }, core: { speak: 'off', offline: true } });
+  await unreachable.ctl.load({ force: true });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(offHere.calls.put.length + unreachable.calls.put.length, 0);
+  assert.equal(offHere.ctl.reviveVoice(), false);
+});
+
+test('two devices on one home base: Turn off on the Mac is the Mac’s alone; the iPhone keeps George', async () => {
+  // One fake Core, two devices (each with its own settings and senses controller).
+  const core = { speak: 'off' };
+  const puts = [];
+  const view = () =>
+    sensesView({
+      hear: { enabled: false, state: 'off', model: 'base.en', sizeMb: 80 },
+      speak: { enabled: core.speak !== 'off', state: core.speak, voice: 'bm_george', sizeMb: 326, progress: core.speak === 'ready' ? 1 : 0.3 },
+      deps: { installed: true },
+    });
+  const client = {
+    getSenses: async () => ({ ok: true, senses: view() }),
+    putSenses: async (base, patch) => {
+      puts.push(patch);
+      if (patch.speak) core.speak = patch.speak.enabled ? (core.speak === 'off' ? 'ready' : core.speak) : 'off';
+      return { ok: true, senses: view() };
+    },
+    hearWav: async () => ({ ok: true, text: '' }),
+    speakText: async () => ({ ok: true, pcm: new Float32Array(10), sampleRate: 24000 }),
+  };
+  let t = 9_000_000;
+  const device = () => {
+    let s = { ...LINKED };
+    const ctl = createSenses({ getSettings: () => s, client, now: () => t, setTimer: () => 0, clearTimer: () => {} });
+    const save = (p) => (s = normalizeSettings({ ...s, ...p }));
+    return { ctl, get: () => s, save, auto: createVoiceAuto({ senses: ctl, getSettings: () => s, saveSettings: save }) };
+  };
+  const iphone = device();
+  const mac = device();
+  assert.equal((await iphone.auto.check()).act, true);
+  assert.equal((await mac.auto.check()).act, true);
+  await setHomeBaseVoice(mac.ctl, false, { commit: mac.save });
+  assert.equal(mac.get().homeBaseSpeak, false);
+  assert.equal(core.speak, 'ready', 'George still on at the home base');
+  assert.ok(!puts.some((p) => p.speak && p.speak.enabled === false), 'never turned off there');
+  t += 11_000;
+  await iphone.ctl.load({ force: true });
+  assert.equal(iphone.ctl.canSpeak(), true, 'the iPhone speaks with George');
+  assert.equal(mac.ctl.canSpeak(), false, 'the Mac with its own voice');
+  // The Mac turns him on again: its own choice, and the iPhone is unaffected.
+  assert.equal((await setHomeBaseVoice(mac.ctl, true, { commit: mac.save })).ok, true);
+  assert.equal(mac.get().homeBaseSpeakBy, 'owner');
+  assert.equal(iphone.get().homeBaseSpeakBy, 'auto');
 });
 
 // ---- the label and the voice in use ------------------------------------------------------------------------

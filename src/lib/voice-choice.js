@@ -90,7 +90,9 @@ export function homeVoicePending({ settings, senses, voiceName = 'George' } = {}
   }
   if (view.deps && view.deps.installed === false) return { state: 'nodeps', text: 'The home base is missing its speech software: run jarvis-core update on the Alienware.' };
   const p = isObj(view.speak) ? view.speak : {};
-  if (!p.enabled) return { state: 'off-there', text: `${name}’s voice is off at the home base (turned off there or on another device).` };
+  // Off there while on here: turned off on the Alienware, or by an older Jarvis on another device (v7.8's own
+  // switches turn George off only on their device); this device turns him on there again (senses.js reviveVoice).
+  if (!p.enabled) return { state: 'off-there', text: `${name}’s voice was turned off at the home base; Jarvis is turning it on there again.` };
   if (p.state === 'error') return { state: 'error', text: `The home base couldn’t get ${name}’s voice ready${p.error ? `: ${p.error}` : '.'}` };
   if (p.state === 'downloading') return { state: 'downloading', progress: p.progress, text: `${name} is getting ready on your Alienware (downloading${typeof p.progress === 'number' ? ` ${pct(p.progress)}` : ''}${p.sizeMb ? ` of about ${p.sizeMb} MB` : ''}, once).` };
   if (p.state !== 'ready') return { state: 'loading', text: `${name} is getting ready on your Alienware…` };

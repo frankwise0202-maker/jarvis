@@ -15,6 +15,9 @@
 //   senses.warmVoice()       v7.8: PUT api/senses { speak: { enabled: true } } so the Core loads George
 //                            (or keeps him loaded) before the first reply: when Voice Mode opens and when
 //                            the app comes to the front; at most every 3 minutes, never when just used
+//                            v7.8: a reading that finds George off at the home base while this device's
+//                            switch is on turns him on there again (the same PUT; at most every 3 minutes):
+//                            each device's off switch is its own, so only something else turned him off
 //   senses.subscribe(fn)     fn(state) on every change; returns unsubscribe
 //
 // Opt-in twice over: nothing is asked of the home base unless a home base is linked AND this device
@@ -63,6 +66,8 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
   const lastOk = { hear: 0, speak: 0 };
   const warming = { hear: null, speak: null };
   let lastVoiceWarm = 0;
+  let reviving = null;
+  let lastRevive = 0;
   const listeners = new Set();
   let inflight = null;
   let lastTry = 0;
@@ -102,8 +107,10 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
       .then((r) => {
         inflight = null;
         if (base() !== url) return st; // the address changed meanwhile
-        if (r && r.ok) set({ phase: 'ready', senses: r.senses, problem: null, at: now() });
-        else set({ phase: 'failed', problem: sensesProblem(r), ...(r && r.kind === 'http' && r.status === 404 ? { senses: null } : {}) });
+        if (r && r.ok) {
+          set({ phase: 'ready', senses: r.senses, problem: null, at: now() });
+          reviveVoice();
+        } else set({ phase: 'failed', problem: sensesProblem(r), ...(r && r.kind === 'http' && r.status === 404 ? { senses: null } : {}) });
         armPoll();
         return st;
       });
@@ -237,10 +244,34 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
   }
 
   /**
+   * v7.8: this device's switch is on (the owner wants George here), but the home base's reading says his
+   * voice is off there: turned off on the Alienware, or by an older Jarvis on another device (v7.8's own
+   * switches turn him off only on their device; the home base's George is shared). Turn him on there
+   * again (PUT speak enabled:true: the Core loads him, downloading only if he isn't on disk), at most once
+   * every 3 minutes, never for a Core without its speech software. Until he is ready, this device's own
+   * voices speak. Returns whether it asked.
+   */
+  function reviveVoice() {
+    const s = settings();
+    const url = base();
+    const v = st.senses;
+    if (!url || s.homeBaseSpeak !== true || reviving || !v || !v.speak || v.speak.enabled !== false) return false;
+    if (v.deps && v.deps.installed === false) return false;
+    if (lastRevive && now() - lastRevive < WARM_VOICE_MS) return false;
+    lastRevive = now();
+    reviving = save({ speak: { enabled: true } })
+      .catch(() => {})
+      .then(() => {
+        reviving = null;
+      });
+    return true;
+  }
+
+  /**
    * v7.8: have the home base load George before he is needed (Voice Mode opening, the app coming to the
-   * front). Only while this device uses him, the home base has him on and downloaded (a voice turned off
-   * there, or on another device, is never turned back on from here), not resting after a failure, and
-   * neither warmed nor heard in the last 3 minutes. Returns whether it asked.
+   * front). Only while this device uses him, the home base has him on and downloaded (off there, the
+   * reading turns him on again: reviveVoice), not resting after a failure, and neither warmed nor heard in
+   * the last 3 minutes. Returns whether it asked.
    */
   function warmVoice() {
     const s = settings();
@@ -291,5 +322,6 @@ export function createSenses({ getSettings, onSettingsChange, client = { getSens
     },
     warm,
     warmVoice,
+    reviveVoice,
   };
 }
