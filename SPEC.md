@@ -3175,3 +3175,142 @@ base, **Sync now**); a Core 1.0 (404 on `GET api/sync`) says to run `jarvis-core
   conversation deleted on the iPhone never comes back there and stays on the Mac), `sync-states` (a
   Core 1.0, too big, unreachable, Sync now, off survives a reload). Not testable here: a real Core on
   a real Tailscale network, iOS's background limits.
+
+## 25. v7.7: home base hearing and voice (beta)
+
+The owner: the iPhone's microphone "is not the greatest at picking up the right sentence", and the
+natural voice (Kokoro "George", §18.2) falls back to the built-in voice when the device is too slow.
+Jarvis Core on the Alienware (its senses module) hears with Whisper and speaks with Kokoro (its API: `GET|PUT
+api/senses`, `POST api/hear`, `POST api/speak`); the app uses them instead of the device's own, opt-in
+and per device. Free: both run on the owner's computer; nothing goes to any cloud. Everything here is
+off by default, and every path falls back to what the app did before; off, nothing changes (no request
+to the home base's senses, every listen and reply exactly as in §21 and §18.2). The CSP is unchanged
+(the home base is already `https://*.ts.net`). Where this section differs from an earlier one, it wins.
+
+**25.1 Modules.**
+- `src/lib/senses.js` (pure): `encodeWav` (mono PCM16) / `decodeWav` (PCM 8/16/24/32-bit and float,
+  any channels mixed to mono, a streamed data chunk read to the end); `createVad` (below);
+  `sensesView` (`GET api/senses` checked: a missing number is null, an unknown state is `loading`, the
+  error a clean line), `senseReady(view, 'hear' | 'speak')` (on at the home base, `ready`, its speech
+  software installed); `sensesProblem` (`old` for a 404, `offline`, `slow`, the Core's own words);
+  `hearText` (Whisper's sound notes such as `[BLANK_AUDIO]` or `(music)` dropped, '' for no words);
+  `contextPrompt` (≤ 200 characters); `hearEndSilenceMs`; `HEAR_TIMEOUT_MS` 4000.
+- `src/platform/senses.js`: `getSenses`, `putSenses`, `hearWav` (`POST api/hear?prompt=…`, body
+  `audio/wav`, 4 s; slower is `{ kind: 'timeout' }`), `speakText` (`POST api/speak {text ≤ 1000, voice,
+  speed}`, the WAV decoded to floats). On `requestHomeBase` (§23.2), which gains `binary` (a 2xx that
+  isn't JSON is read as bytes) and `probe: false` (a request that fails is `unreachable` at once,
+  without the no-cors ping; the device takes over straight away). Every other caller is unchanged.
+- `src/ui/senses.js` `createSenses()`: the app's one view of `api/senses` and the gate. `canHear()` /
+  `canSpeak()` decide synchronously (inside the owner's tap): this device's switch is on, a home base is
+  linked, the last reading says that part is ready, and it isn't resting. A failed hear or speak (not an
+  abort) rests that part for 60 s; then the home base is tried again. A reading older than 5 minutes is
+  used but read again in the background; reads at most every 10 s, one at a time; `watch()` (the
+  Settings card) reads every 2 s while a model downloads or gets ready. `prime()` at launch (1.5 s after
+  the boot) and when Voice Mode opens, only with a switch on; `prime({ warm: true })` (Voice Mode) also
+  warms up a part unused for 25 minutes (0.4 s of silence to hear, "Ready." to say, 30 s timeout; a
+  failed warm-up rests nothing), because the Core unloads its models after 30 minutes idle.
+- `src/platform/voice/homebase-hearing.js` `createHomeBaseHearing({ stt, senses, createCapture,
+  getPrompt, getSettings })`: stt.js's API (§21) with `startListening` wrapped. Only a listen that asks
+  for it (`homeBase: true`) and only while `senses.canHear()` goes to the home base; anything else is
+  `stt.startListening(options)` with exactly its own options (`homeBase` and `onHomeBase` removed).
+- `src/platform/voice/homebase-voice.js` `createHomeBaseVoiceEngine({ senses })`: the natural voice's
+  engine interface (`synth`, `cancel`, `noteTiming`, `status`, `subscribe`) over `api/speak`.
+- `src/ui/senses-settings.js` `createSensesSettings()` and `src/styles/homebase-brain.css` (the card).
+- Settings `homeBaseHear: false`, `homeBaseSpeak: false` (booleans; per device: never exported in a
+  backup nor applied from one, `EXCLUDED_SETTINGS`). `createStandbyCapture({ processed })` (§22): the
+  home base path asks for the browser's processed sound (echo cancellation, noise suppression, auto
+  gain); Standby keeps the raw sound (the default).
+
+**25.2 Hearing.** Voice Mode passes `homeBase: true` for its own listens (not the 2.4 s wake window, not
+a listen while a hologram builds). The wrapper:
+- opens the microphone through the Standby capture (§22; its AudioContext starts inside the tap, and
+  inside every Voice Mode tap while hearing is on, so a hands-free listen later can use it; a context
+  that isn't running hands the listen to the device's recognizer) and takes its 16 kHz frames (the
+  worklet's word port: 80 ms frames, the page's main thread does only the VAD);
+- finds the end of what was said with an energy VAD (`createVad`): 20 ms steps; speech starts with 4
+  loud steps among 6 (a click or a knock is shorter), loud being 10 dB over the room's level (6 dB once
+  talking) and over -60 dBFS; the room's level is followed only between utterances (frozen while the
+  owner talks; digital silence is ignored; it starts at no more than -50 dBFS); the utterance ends after
+  1.2 s without a loud step (2.2 s with Settings → Voice → Wait: Long), keeps 300 ms before the speech
+  and 300 ms after it, is at most 30 s, and fewer than 6 loud steps in all is a noise (the listen goes
+  on); nothing at all for 10 s is `no-speech`, as stt.js says it;
+- sends a WAV (16 kHz mono PCM16) with the context words (`?prompt=`: "Jarvis", the owner's name, the
+  open hologram's part names, the conversation's title and the names and model numbers in its latest
+  two messages, each once, ≤ 200 characters; they go only to the home base), one request at a time (at
+  most three utterances waiting);
+- delivers the words as the turn's final: `onFinal(text, { alternatives: [], reason, turn })`, then
+  `onEnd()` (exactly once, never inside `startListening()`). No words while the owner talks: instead
+  `onHomeBase({ phase })`: `listening`, `speech`, `sending`, `heard` ({ ms }), `fallback` ({ reason:
+  'unreachable' | 'slow' | 'error' | 'mic' }), `idle`. Empty words (a cough) are as if nothing had been
+  heard. `keepListening` (the 2-second check) hears the next utterances as turns 2, 3, …; `stop()`
+  delivers what was said so far (when the home base answers); `abort()` delivers nothing.
+- **Fallback.** The home base unreachable, slower than 4 s or failing, or the microphone not opening:
+  the capture is released first (never two captures at once), the home base rests for a minute
+  (`senses.noteFailure`; not for the microphone), and stt.js takes over the same listen with the same
+  options and callbacks; the owner says it again. After `stop()` there is nothing to listen for: it ends.
+- **Voice Mode.** The status line shows **via home base** (`voice-homebase-mark`, `data-phase`; the
+  root's `data-hear="homebase"`) while the home base hears the listen, "Hearing you…" while the words are
+  on their way. Speech heard counts against the 12 s no-speech watchdog; a tap while the owner talks or
+  the words are on their way sends them once they come (the grace waits up to 6 s). A fallback after
+  speech says "I couldn’t reach the home base. Say that again?" (or "The home base took too long.")
+  with "Listening on this device for now." The 2-second check: speech heard during it pauses the
+  countdown ("…" under the words) until the words come (7 s at most); a home base that fails during the
+  check pauses it for good ("The home base didn’t hear that. Say it again, or tap Send."): a "cancel" it
+  never heard must not become a send. Local commands, corrections, alternatives (none here) and the
+  rest of §21 apply to the words as they come.
+- The chat's microphone, the hologram viewer's and Optics' keep stt.js (they show the words live).
+
+**25.3 Voice.** The voice router (§18.2) gains the engine `homebase`: with `homeBaseSpeak` on and
+`canSpeak()`, a stream is spoken by `createNaturalStream` on the home base's engine through the natural
+voice's audio output (audio-out.js): sentences cut by speech-text.js, a short first chunk, then chunks
+that grow with the measured speed, two queued ahead, gapless on the audio clock, word boundaries
+estimated, the speaker `naturalVoiceId` (George by default) at the owner's speed; the core follows its
+real output level and bands. One `api/speak` request at a time (6 s each). A request that fails rejects
+`not-ready` (no retry) and the rest of the reply goes, from the same offset into `text()`, to the
+on-device George when it is on and ready, else to the built-in voice; slower than real time over 3 s of
+audio (the network included) does the same, and either rests the home base's voice for a minute.
+`unlockSpeech()` unlocks the audio output inside the tap. Off, not ready or resting: exactly the router
+of §18.2 (the device voice is chosen at once, `speak()` keeps tts.js's synchronous path).
+
+**25.4 Settings → Home base → Hearing and voice (beta)** (`senses-settings`, below sync, only while
+linked; not in the demo): "Free: Whisper and the natural voice run on your own computer at home. What
+you say goes only to your home base over Tailscale, never to any cloud."
+- **Hear me through the home base (more accurate)** (`senses-hear-toggle`), **How it hears**: Fast
+  (`base.en`) or Accurate (`small.en`) (`senses-hear-model`); **George's voice from the home base**
+  (`senses-speak-toggle`; the speaker's name follows `naturalVoiceId`).
+- Each switch is this device's setting and turns that part on or off at the home base too (`PUT
+  api/senses`: on starts the download and the warm-up there). Turned on only once the home base
+  accepted (else it springs back with the reason); turned off here at once, whatever the home base says.
+- Each status (`senses-*-status`, `data-state`): off ("Turning it on downloads Whisper (Fast) (about 80
+  MB) on the home base, once."), downloading with a percentage and a bar (`senses-*-progress`),
+  getting ready, ready ("Ready. Voice Mode hears you through the home base."), ready but off here, off
+  at the home base while on here (turned off elsewhere), resting after a failure, error (the Core's
+  words; switch off and on to try again), the speech software missing (`jarvis-core update`).
+- **Test** (`senses-hear-test`): 3 seconds from this device's microphone, sent to the home base (20 s),
+  "Heard in 0.4 s: “…”" (`senses-hear-result`). **Test** (`senses-speak-test`): one sentence ("Good
+  evening, Frank. This is my voice, made on your home base.") made by the home base and played here.
+- A Core without senses (404): "Your home base needs an update for hearing and voice: run jarvis-core
+  update on the Alienware." Unreachable: the tile's words and **Try again** (`senses-retry`).
+
+**Tests.** Unit `senses` (the WAV round trip and odd WAVs; the VAD: the end after 1.2 s, a 0.6 s pause
+inside a sentence, Long, clicks and a knock, no speech, 30 s, a microphone that starts with digital
+silence then a -61 dBFS room, `finish()`; the views; the problems; `hearText`; `contextPrompt`; the
+client with a fake fetch (options, the WAV and its type, the prompt, timeout without a ping,
+unreachable at once, 503, the voice decoded, a JSON error, caps); the controller (off asks nothing,
+ready, resting and back, not ready, one read at a time, polling while downloading, save, the warm-up
+once and again after 25 minutes); the settings; the hearing wrapper with a fake capture, stt.js and
+senses (off and not asked: stt.js with exactly its options; on: the WAV, the prompt, the phases, one
+onEnd; unreachable, slow and an error hand over to stt.js after the microphone is released; keepListening
+and empty words; stop, abort, no speech; the microphone failing; a context that isn't running; the
+context started inside the tap); the voice engine (one at a time, in order, not-ready drains the queue,
+cancel, slow rests it); the router (the home base speaks; off, not ready or resting: as before; a
+failure mid-reply to the on-device George, else the built-in voice, offsets intact; the output level)).
+E2E `homebase-senses.mjs` (the fake Core's `fakeSenses`: `api/hear` answers a canned transcript,
+`api/speak` a small 24 kHz WAV; Chromium's fake microphone through the real capture path):
+`senses-settings`, `senses-old-core`, `senses-voice-mode` (the mark, a 2.3 s 16 kHz WAV with the
+context words, the check, the reply in the home base's voice, no device recognizer or voice, the
+microphone released while speaking, the warm-up once), `senses-fallback` (unreachable: asked again,
+the device's recognizer, the built-in voice, the next listen on the device), `senses-slow` (over 4 s;
+a voice over 6 s), `senses-off` (nothing asked of the home base's senses). Not testable here: the real
+Core's Whisper and Kokoro (the Core's own online test), iOS Safari's microphone and audio session, a
+real Tailscale network.
