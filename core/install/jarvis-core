@@ -14,6 +14,8 @@
 # the login autostart runs: it waits for the Core, then starts Chrome full screen.
 # `jarvis-core autoupdate-tick` is what the update timer runs: it updates only when GitHub's core/
 # folder changed, and goes back to the previous version if the new one doesn't answer 90 s later.
+# With nothing to update, it tries again the brain's libraries an update couldn't install (at its next
+# check, then at most every 2 hours), and restarts the Core once they are in.
 # Test-only overrides: JARVIS_CORE_APP_DIR, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_GDM_CONF,
 # JARVIS_CORE_SHIM, JARVIS_CORE_PORT, JARVIS_CORE_UPDATE_CHECK_SEC.
 
@@ -46,6 +48,7 @@ AU_STATE="$STATE_DIR/autoupdate"
 AU_LOG="$DATA_DIR/autoupdate.log"
 AU_EVENTS="$DATA_DIR/update-events.jsonl" # the Core adds these lines to its event log, then removes the file
 AU_CHECK_SEC="${JARVIS_CORE_UPDATE_CHECK_SEC:-90}" # how long a new version gets before it must answer
+LIBS_RETRY_SEC=7200 # after a failed try at the brain's libraries, the update timer waits 2 hours for the next
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   B=$'\e[1m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' D=$'\e[2m' N=$'\e[0m'
@@ -424,11 +427,19 @@ cmd_status() {
     note "Automatic updates are off (turn them on: jarvis-core autoupdate on)"
   fi
   if [ -d "$APP_DIR/core" ]; then
-    if [ -d "$APP_DIR/core/node_modules/@anthropic-ai/sdk" ] && [ -d "$APP_DIR/core/node_modules/web-push" ]; then
-      ok "The brain's libraries are installed (Claude and notifications)"
-    else
-      note "The brain's libraries are missing, so its Claude work and notifications are off. Try: jarvis-core update"
-    fi
+    # By the lockfile's hash that install.sh writes once npm ci has finished: libraries from an earlier
+    # version, kept when an update couldn't install this one's, are out of date, not "installed".
+    case "$(libs_state)" in
+      ok) ok "The brain's libraries are installed (Claude, notifications and speech)" ;;
+      missing)
+        note "The brain's libraries are missing, so Claude work, notifications and speech are off."
+        say "$(libs_hint)"
+        ;;
+      stale)
+        note "The brain's libraries are out of date (this version needs new ones)."
+        say "$(libs_hint)"
+        ;;
+    esac
   fi
   if screen_running; then
     ok "The dashboard is on the screen"
@@ -539,6 +550,66 @@ au_set() { # au_set key value
     done <"$AU_STATE"
   fi
   printf '%s%s=%s\n' "$out" "$1" "$2" >"$AU_STATE.tmp" && mv -f "$AU_STATE.tmp" "$AU_STATE"
+}
+
+au_unset() { # au_unset key
+  au_get "$1" >/dev/null || return 0
+  local line out=""
+  while IFS= read -r line; do
+    case "$line" in "$1="*) ;; *) out+="$line"$'\n' ;; esac
+  done <"$AU_STATE"
+  printf '%s' "$out" >"$AU_STATE.tmp" && mv -f "$AU_STATE.tmp" "$AU_STATE"
+}
+
+au_clock() { # epoch seconds -> "Nov 25 3:20 PM"
+  date -d "@$1" '+%b %-d %-I:%M %p' 2>/dev/null || printf '%s\n' "$1"
+}
+
+# The brain's libraries against this copy's package-lock.json (install.sh writes the lockfile's sha256 into
+# node_modules once npm ci has finished there): ok (they match), missing (no node_modules), stale (another
+# version's libraries, or not from a finished install), none (no lockfile, so nothing to install).
+libs_state() {
+  local core="$APP_DIR/core" want have
+  [ -f "$core/package-lock.json" ] || { echo none; return 0; }
+  [ -d "$core/node_modules" ] || { echo missing; return 0; }
+  want=$(sha256sum "$core/package-lock.json" 2>/dev/null) || want=""
+  want=${want%% *}
+  have=$(cat "$core/node_modules/.jarvis-lock-sha256" 2>/dev/null) || have=""
+  if [ -n "$want" ] && [ "$want" = "$have" ]; then echo ok; else echo stale; fi
+}
+
+libs_words() { # missing | stale, as the owner reads it
+  case "$1" in
+    missing) echo "missing" ;;
+    *) echo "out of date (this version needs new ones)" ;;
+  esac
+}
+
+# The time (epoch seconds) before which the update timer leaves the libraries alone, after its last try failed;
+# nothing when its next check tries them. A clock that went back since then counts as due.
+libs_retry_after() {
+  local failed now
+  failed=$(au_get libs_failed) || return 0
+  case "$failed" in '' | *[!0-9]*) return 0 ;; esac
+  now=$(date +%s)
+  if [ "$failed" -le "$now" ] && [ $((now - failed)) -lt "$LIBS_RETRY_SEC" ]; then
+    echo $((failed + LIBS_RETRY_SEC))
+  fi
+}
+
+libs_hint() { # how libraries that aren't right get their next try, in one sentence
+  local after failed last=""
+  if ! { au_enabled && [ -f "$AU_TIMER_FILE" ]; }; then
+    echo "Install them: jarvis-core update"
+    return 0
+  fi
+  after=$(libs_retry_after)
+  if failed=$(au_get libs_failed); then last="The last try failed ($(au_clock "$failed")); the"; else last="The"; fi
+  if [ -n "$after" ]; then
+    echo "$last next automatic update check after $(au_clock "$after") tries again."
+  else
+    echo "$last next automatic update check tries again."
+  fi
 }
 
 au_log() { # a line for the journal and for ~/.local/share/jarvis-core/autoupdate.log (its last 500 lines)
@@ -686,6 +757,13 @@ cmd_autoupdate_status() {
   if v=$(au_get last_check); then say "Last check: $(au_when "$v") ($(au_get last_result || echo '?'))"; fi
   if v=$(au_get last_update); then say "Last update: $v"; fi
   if v=$(au_get last_rollback); then note "Went back to the previous version once: $v"; fi
+  v=$(libs_state)
+  case "$v" in
+    missing | stale)
+      note "The brain's libraries are $(libs_words "$v")."
+      say "$(libs_hint)"
+      ;;
+  esac
   [ -f "$AU_LOG" ] && say "Its log: $AU_LOG"
   return 0
 }
@@ -699,6 +777,47 @@ core_answers() { # three tries, two seconds apart
     [ "$i" = 3 ] || sleep 2
   done
   return 1
+}
+
+# The brain's libraries that an update couldn't install (its npm ci failed: no internet, npm's registry down),
+# tried again by a check that has no update to do: at the first check after that update, then at most every
+# LIBS_RETRY_SEC while they keep failing. Only the installer's libraries step runs (it does nothing when they
+# already match the lockfile). Once they are in, the Core restarts to load them: its brain doesn't pick up a
+# Claude SDK that was missing when it started. A try that fails restarts nothing.
+au_libs_retry() {
+  local st after now
+  st=$(libs_state)
+  case "$st" in
+    ok | none)
+      au_unset libs_failed
+      return 0
+      ;;
+  esac
+  after=$(libs_retry_after)
+  if [ -n "$after" ]; then
+    echo "The brain's libraries are $(libs_words "$st"): the next try is at the first check after $(au_clock "$after")."
+    return 0
+  fi
+  now=$(date +%s)
+  au_log "The brain's libraries are $(libs_words "$st"): installing them again"
+  bash "$APP_DIR/core/install/install.sh" --libraries </dev/null 9>&-
+  if [ "$(libs_state)" != ok ]; then
+    au_set libs_failed "$now"
+    au_set last_result "the brain's libraries didn't install"
+    au_log "The brain's libraries still didn't install; the next try is at the first check after $(au_clock $((now + LIBS_RETRY_SEC)))"
+    return 0
+  fi
+  au_unset libs_failed
+  user_systemctl restart "$UNIT_NAME" </dev/null 2>/dev/null 9>&- # like every process this check starts: not the lock
+  if wait_core "${JARVIS_CORE_START_WAIT_SEC:-30}"; then
+    au_set last_result "installed the brain's libraries"
+    au_log "Installed the brain's libraries; Jarvis Core restarted to load them, and it answers"
+    au_event info core.update "Jarvis Core installed the brain's libraries that an update couldn't, and restarted to load them"
+  else
+    au_set last_result "installed the brain's libraries, but Jarvis Core isn't answering"
+    au_log "Installed the brain's libraries, but Jarvis Core isn't answering since it restarted to load them (jarvis-core logs)"
+    au_event warn core.update "Jarvis Core installed the brain's libraries that an update couldn't, but it isn't answering since it restarted to load them"
+  fi
 }
 
 # What the timer runs every 20 minutes. Updates only when GitHub's core/ folder differs from this copy's;
@@ -738,12 +857,14 @@ cmd_autoupdate_tick() {
   if [ "$here" = "$there" ]; then
     au_set last_result "up to date"
     echo "Up to date: GitHub's core/ is the same as this copy's."
+    au_libs_retry
     return 0
   fi
   bad=$(au_get bad_tree) || bad=""
   if [ "$there" = "$bad" ]; then
     au_set last_result "skipped $there_rev (it failed before)"
     echo "Skipping $there_rev: it didn't start properly last time. Waiting for a newer version."
+    au_libs_retry # going back may have needed the previous version's libraries
     return 0
   fi
   if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
@@ -754,6 +875,7 @@ cmd_autoupdate_tick() {
   prev=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || return 1
   prev_short=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null)
   au_log "A new version is on GitHub ($there_rev): updating from $prev_short"
+  au_unset libs_failed # the update's refresh tries the libraries itself; if that fails, the next check tries again
   export JARVIS_CORE_UNATTENDED=1 # the refresh then leaves the screen's Chrome alone (it reloads itself)
   (cmd_update) </dev/null 9>&- # the lock stays with this check, never with a process it starts
   after=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || after=""
@@ -769,10 +891,19 @@ cmd_autoupdate_tick() {
   case "$n0" in '' | *[!0-9]*) n0=0 n1=0 ;; esac # no restart counter: the answer alone decides
   case "$n1" in '' | *[!0-9]*) n1=$n0 ;; esac
   if core_answers && [ "$n1" -le "$n0" ]; then
-    au_set last_result "updated to $now_short"
     au_set last_update "$(date -Is) $prev_short -> $now_short"
-    au_log "Updated to $now_short; it answers"
-    au_event info core.update "Jarvis Core updated itself to $now_short (from $prev_short)"
+    case "$(libs_state)" in
+      ok | none)
+        au_set last_result "updated to $now_short"
+        au_log "Updated to $now_short; it answers"
+        au_event info core.update "Jarvis Core updated itself to $now_short (from $prev_short)"
+        ;;
+      *)
+        au_set last_result "updated to $now_short, but its libraries didn't install"
+        au_log "Updated to $now_short; it answers, but the brain's libraries didn't install (the next check tries again)"
+        au_event info core.update "Jarvis Core updated itself to $now_short (from $prev_short), but couldn't install the brain's libraries yet; it tries again by itself"
+        ;;
+    esac
     return 0
   fi
   au_log "The new version ($now_short) isn't answering ${AU_CHECK_SEC} seconds after the update: going back to $prev_short"

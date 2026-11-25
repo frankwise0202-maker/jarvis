@@ -14,8 +14,8 @@
 #   - installs git, curl, lm-sensors (and smartmontools for the disk check) with apt
 #   - installs Node.js 24 LTS from NodeSource, unless Node.js 22 or newer is already there
 #   - downloads only the core/ folder of the Jarvis repository into ~/jarvis-core-app
-#   - installs the brain's libraries there (npm ci: the Claude SDK and web-push); without them the
-#     Core still runs, and the brain says its SDK is missing
+#   - installs the brain's libraries there (npm ci: the Claude SDK, web-push and the speech libraries,
+#     about 460 MB); without them the Core still runs, and the brain says its SDK is missing
 #   - installs the jarvis-core command (~/.local/bin/jarvis-core)
 #   - optionally lets Jarvis Core read the hard drive's health (one narrow sudo rule)
 #   - runs Jarvis Core 24/7 as a systemd user service, also before anyone logs in (lingering)
@@ -27,7 +27,8 @@
 #
 # Options: --dry-run (show every step, change nothing), --refresh (what `jarvis-core update` runs
 # after downloading: rewrite the command, service and autostart, install the libraries, restart, reload
-# the screen), --help.
+# the screen), --libraries (only the libraries step: what the update timer runs when an update couldn't
+# install them), --help.
 # Test-only overrides: JARVIS_CORE_REPO, JARVIS_CORE_BRANCH, JARVIS_CORE_APP_DIR, JARVIS_CORE_TTY,
 # JARVIS_CORE_OS_RELEASE, JARVIS_CORE_GDM_CONF, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_SHIM,
 # JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT, JARVIS_CORE_START_WAIT_SEC, JARVIS_CORE_CGROUP_FILE.
@@ -66,6 +67,9 @@ INSTALL_CMD="wget -qO- https://raw.githubusercontent.com/frankwise0202-maker/jar
 
 DRY_RUN=0
 REFRESH=0
+LIBS_ONLY=0
+DEPS_RESULT="" # what the libraries step did: none current installed failed (or dry-run)
+CORE_DOWN=0    # the Core didn't answer after it was (re)started
 HAVE_TTY=0
 SUDO_OK=0
 STEP=0
@@ -678,14 +682,18 @@ step_app() {
   deps_install
 }
 
-# The brain's libraries (the Claude SDK, web-push) with npm ci, into a fresh folder that is swapped in only
-# when it is complete: a failed install (no internet) leaves the libraries that were there, and the running
-# Core never sees half a node_modules. Without them the Core still starts; the brain reports its SDK missing.
+# The brain's libraries (the Claude SDK, web-push and the speech libraries, about 460 MB) with npm ci, into a
+# fresh folder that is swapped in only when it is complete: a failed install (no internet) leaves the libraries
+# that were there, and the running Core never sees half a node_modules. Without them the Core still starts; the
+# brain reports its SDK missing. DEPS_RESULT says how it went: none (no lockfile, nothing to install), current
+# (they already match the lockfile), installed, failed (whatever was there before is still there), dry-run.
+LIBS_WHAT="the Claude SDK, web-push and the speech libraries"
 deps_install() {
-  local core="$APP_DIR/core" want have_sha npm_bin stage log
+  local core="$APP_DIR/core" want have_sha npm_bin stage log had=0
   if [ ! -f "$core/package-lock.json" ]; then
+    DEPS_RESULT=none
     if [ "$DRY_RUN" = 1 ]; then
-      would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: the Claude SDK and web-push)"
+      would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: $LIBS_WHAT)"
     else
       note "No package-lock.json in $core, so there are no libraries to install"
     fi
@@ -695,51 +703,96 @@ deps_install() {
   want=${want%% *}
   have_sha=$(cat "$core/node_modules/.jarvis-lock-sha256" 2>/dev/null) || have_sha=""
   if [ -n "$want" ] && [ "$want" = "$have_sha" ]; then
-    ok "The brain's libraries are installed (the Claude SDK and web-push)"
+    DEPS_RESULT=current
+    ok "The brain's libraries are installed ($LIBS_WHAT)"
     return 0
   fi
   if [ "$DRY_RUN" = 1 ]; then
-    would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: the Claude SDK and web-push)"
+    DEPS_RESULT=dry-run
+    would "run in $core: npm $(show_cmd "${NPM_CI[@]}")   (the brain's libraries: $LIBS_WHAT, about 460 MB)"
     return 0
   fi
+  DEPS_RESULT=failed
+  # A swap cut short (power cut) may have left the only copy aside: put it back before anything else.
+  if [ ! -e "$core/node_modules" ] && [ -d "$core/node_modules.old" ]; then
+    mv -T "$core/node_modules.old" "$core/node_modules" 2>/dev/null || true
+  fi
+  [ -d "$core/node_modules" ] && had=1 # the previous version's libraries, still used if this fails
   npm_bin=$(command -v npm 2>/dev/null) || npm_bin=""
   if [ -z "$npm_bin" ]; then
-    note "npm isn't installed, so the brain's libraries (Claude, notifications) can't be added; Jarvis Core runs without them"
+    if [ "$had" = 1 ]; then
+      note "npm isn't installed, so this version's libraries can't be installed; the previous ones are still in use"
+    else
+      note "npm isn't installed, so the brain's libraries can't be installed; Jarvis Core runs without them"
+    fi
+    say "Install npm (it comes with Node.js from NodeSource), then run: jarvis-core update"
     [ "$REFRESH" = 1 ] || manual "Install npm (it comes with Node.js from NodeSource), then run: jarvis-core update"
     return 0
   fi
   tmpdir
   log="$TMP/npm-ci.log"
   stage="$core/.npm-install"
-  # A swap cut short (power cut) may have left the only copy aside: put it back before anything else.
-  if [ ! -e "$core/node_modules" ] && [ -d "$core/node_modules.old" ]; then
-    mv -T "$core/node_modules.old" "$core/node_modules" 2>/dev/null || true
-  fi
   rm -rf "$stage" "$core/node_modules.old"
   if ! { mkdir -p "$stage" && cp "$core/package.json" "$core/package-lock.json" "$stage/"; }; then
-    note "Couldn't prepare the libraries' folder; keeping what is there"
+    if [ "$had" = 1 ]; then
+      note "Couldn't prepare the libraries' folder; the previous libraries are still in use"
+    else
+      note "Couldn't prepare the libraries' folder, so Jarvis Core runs without them"
+    fi
+    deps_retry_hint
     return 0
   fi
-  say "Installing the brain's libraries (npm ci: the Claude SDK and web-push, a minute or two)..."
+  say "Installing the brain's libraries with npm ci: $LIBS_WHAT,"
+  say "about 460 MB. The first time this can take several minutes..."
   # ONNXRUNTIME_NODE_INSTALL_CUDA=skip: the speech engines run on the CPU; never fetch onnxruntime's CUDA build.
   if (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
     printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
     if { [ ! -e "$core/node_modules" ] || mv -T "$core/node_modules" "$core/node_modules.old"; } &&
       mv -T "$stage/node_modules" "$core/node_modules"; then
       rm -rf "$core/node_modules.old" "$stage"
-      ok "Installed the brain's libraries (the Claude SDK and web-push)"
+      DEPS_RESULT=installed
+      ok "Installed the brain's libraries ($LIBS_WHAT)"
       return 0
     fi
     [ ! -e "$core/node_modules" ] && [ -d "$core/node_modules.old" ] && mv -T "$core/node_modules.old" "$core/node_modules"
-    note "Couldn't put the new libraries in place; keeping the ones that were there"
+    if [ "$had" = 1 ]; then
+      note "Couldn't put the new libraries in place; the previous ones are still in use"
+    else
+      note "Couldn't put the libraries in place, so Jarvis Core runs without them"
+    fi
+  elif [ "$had" = 1 ]; then
+    note "Couldn't install this version's libraries (npm ci failed: no internet?). The previous ones are"
+    say "still in use. npm said:"
+    tail -n 4 "$log" 2>/dev/null | sed 's/^/      /'
   else
     note "Couldn't install the brain's libraries (npm ci failed: no internet?). Jarvis Core runs without"
-    say "them; its Claude work and notifications wait for the next update. npm said:"
+    say "them for now: its Claude work, notifications and speech are off. npm said:"
     tail -n 4 "$log" 2>/dev/null | sed 's/^/      /'
-    [ "$REFRESH" = 1 ] || manual "Install the brain's libraries: jarvis-core update"
   fi
+  deps_retry_hint
   rm -rf "$stage"
   return 0
+}
+
+# After the libraries didn't go in: the update timer tries them again by itself (jarvis-core autoupdate-tick:
+# at its next check, then at most every 2 hours); without it, jarvis-core update does.
+deps_retry_hint() {
+  if autoupdate_on; then
+    say "Automatic updates try again by themselves (jarvis-core autoupdate status says when)."
+  else
+    say "To try again: jarvis-core update"
+    [ "$REFRESH" = 1 ] || manual "Install the brain's libraries: jarvis-core update"
+  fi
+}
+
+autoupdate_on() { # does (or will, once this install is done) the update timer check by itself?
+  if [ "$REFRESH" != 1 ]; then
+    case "$WANT_AUTOUPDATE" in yes | keep | adopt) return 0 ;; esac
+    return 1
+  fi
+  [ -f "$AU_TIMER_FILE" ] || return 1
+  ensure_user_bus
+  systemctl --user is-enabled --quiet "$AU_TIMER" 2>/dev/null
 }
 
 step_cli() {
@@ -884,6 +937,7 @@ step_service() {
   if wait_core "$START_WAIT"; then
     ok "Jarvis Core is running: $LOCAL_URL"
   else
+    CORE_DOWN=1
     bad "Jarvis Core didn't answer within $START_WAIT seconds. Its last messages:"
     journalctl --user -u "$UNIT_NAME" -n 15 --no-pager 2>/dev/null | sed 's/^/      /'
     manual "Check Jarvis Core: jarvis-core status, then jarvis-core logs"
@@ -908,12 +962,16 @@ step_screen() {
   local desktop
   desktop=$(autostart_content)
   if same_content "$AUTOSTART_FILE" "$desktop"; then
-    ok "The dashboard already starts at every login"
+    # In a refresh, what is on the screen right now is what matters (refresh_screen says it).
+    [ "$REFRESH" = 1 ] || ok "The dashboard already starts at every login"
   else
     write_file "$AUTOSTART_FILE" 0644 "$desktop" || die "Couldn't write $AUTOSTART_FILE"
     [ "$DRY_RUN" = 1 ] || ok "The dashboard starts full screen at every login"
   fi
-  if [ "$REFRESH" = 1 ]; then return 0; fi
+  if [ "$REFRESH" = 1 ]; then
+    refresh_screen
+    return 0
+  fi
   say "It opens in Chrome as a full-screen app window with its own profile ($PROFILE_DIR),"
   say "so it never mixes with your own browsing. F11 leaves full screen; \"Open Jarvis\" on it opens"
   say "the regular Jarvis app in a normal Chrome window, and closing that (Ctrl+W) brings you back."
@@ -1228,6 +1286,7 @@ Jarvis Core installer for Ubuntu 24.04.
   bash install.sh             install, or update and repair (safe to run again)
   bash install.sh --dry-run   show every step, change nothing
   bash install.sh --refresh   what 'jarvis-core update' runs after downloading
+  bash install.sh --libraries only the brain's libraries (the update timer tries them again with this)
 EOF
 }
 
@@ -1244,24 +1303,56 @@ refresh() {
     section "Automatic updates"
     "$SELF_BIN" autoupdate refresh </dev/null 2>&1 | sed -n '/^  /p'
   fi
-  if [ "$DRY_RUN" != 1 ] && pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; then
+  # The last line says how it went, never "up to date" after something above failed.
+  if [ "$CORE_DOWN" = 1 ]; then
+    printf '\n%sJarvis Core isn'"'"'t answering. Check it: jarvis-core status, then jarvis-core logs%s\n' "$B" "$N"
+    return 1
+  fi
+  if [ "$DEPS_RESULT" = failed ]; then
+    printf '\n%sJarvis Core is up to date, except for the brain'"'"'s libraries (see above).%s\n' "$B" "$N"
+  else
+    printf '\n%sJarvis Core is up to date.%s\n' "$B" "$N"
+  fi
+}
+
+# The screen after a refresh, said as it is. From a terminal, a dashboard on the screen is restarted with the new
+# version (jarvis-core open). From the update timer it is left alone: it reloads itself when it sees the new
+# version, and a Chrome started from the timer's job would be stopped with the job. A dashboard missing while the
+# desktop is up (an earlier update could have stopped it with its own job) is put back by the update timer, as a
+# user unit of its own; from a terminal it is only reported (the owner may have closed it).
+refresh_screen() {
+  if [ "$DRY_RUN" = 1 ]; then
+    would "check the dashboard on the screen (an update run by the timer puts it back if it is missing)"
+    return 0
+  fi
+  if pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; then
     if in_service; then
-      # Run by the update timer: a Chrome started from here would be stopped with the timer's job.
-      say "The dashboard on the screen reloads itself when it sees the new version."
+      ok "The dashboard is on the screen; it reloads itself when it sees the new version"
     else
-      "$SELF_BIN" open
+      "$SELF_BIN" open </dev/null 2>&1 | sed -n '/^  /p'
     fi
-  elif [ "$DRY_RUN" != 1 ] && in_service && [ -f "$AUTOSTART_FILE" ] && have systemd-run && screen_env_ready; then
-    # No dashboard on the screen while the desktop is up: an earlier update could have stopped it along with
-    # its own job. Start it again as a user unit of its own, so it outlives this job (jarvis-core screen
-    # waits for the Core, then becomes Chrome, so the unit lasts as long as the dashboard is open).
+  elif in_service && screen_env_ready && have systemd-run; then
+    # jarvis-core screen waits for the Core, then becomes Chrome: the unit lasts as long as the dashboard is open.
     if systemd-run --user --collect --quiet --unit="jarvis-core-screen-$(date +%s)" --description="Jarvis Core screen" "$SELF_BIN" screen </dev/null >/dev/null 2>&1; then
       ok "Put the dashboard back on the screen"
     else
-      note "Couldn't put the dashboard back on the screen; log out and back in, or run: jarvis-core open"
+      note "The dashboard isn't on the screen and couldn't be put back: log out and back in, or run: jarvis-core open"
     fi
+  elif [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || screen_env_ready; then
+    note "The dashboard isn't on the screen right now. Start it: jarvis-core open (it also starts at every login)"
+  else
+    note "The dashboard isn't on the screen: you aren't logged in there right now (it starts when you log in)"
   fi
-  printf '\n%sJarvis Core is up to date.%s\n' "$B" "$N"
+}
+
+# --libraries: only the libraries step. The update timer runs it when an update couldn't install them and GitHub
+# has nothing newer to update to; it restarts the Core itself once they are in. True when they are in place.
+refresh_libraries() {
+  [ "$(id -u)" != 0 ] || [ -n "${JARVIS_CORE_ALLOW_ROOT:-}" ] || die "Run it as yourself, not as root."
+  section "The brain's libraries"
+  deps_install
+  case "$DEPS_RESULT" in current | installed | none | dry-run) return 0 ;; esac
+  return 1
 }
 
 screen_env_ready() { # the desktop session's display is known to the user manager (GNOME exports it at login)
@@ -1282,6 +1373,7 @@ main() {
     case "$arg" in
       --dry-run | -n) DRY_RUN=1 ;;
       --refresh) REFRESH=1 ;;
+      --libraries) REFRESH=1 LIBS_ONLY=1 ;;
       --help | -h)
         usage
         return 0
@@ -1293,6 +1385,10 @@ main() {
     esac
   done
   trap '[ -n "$TMP" ] && rm -rf "$TMP"' EXIT
+  if [ "$LIBS_ONLY" = 1 ]; then
+    refresh_libraries
+    return
+  fi
   if [ "$REFRESH" = 1 ]; then
     refresh
     return
