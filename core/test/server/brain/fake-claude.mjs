@@ -9,6 +9,12 @@
 //            usage: { input_tokens, output_tokens, cache_read_input_tokens, ... }, model?, container?,
 //            status?: 429 | 500 | 401 ..., errorType?, slowMs?, dropAfter? (cut the stream after N events) }
 //   fake.url, fake.requests (each { headers, body, path }), fake.violations, await fake.close()
+//
+// Standalone, for trying the whole Core with no real API (any sk-ant-… key is accepted):
+//   node core/test/server/brain/fake-claude.mjs --port 8791
+//   JARVIS_CORE_CLAUDE_BASE_URL=http://127.0.0.1:8791 node core/server/main.mjs --fixture ok
+// It then answers research with a short cited report, watcher checks with "not met" (or "met" when the
+// condition contains "[[met]]"), and the full briefing with a write_briefing call built from its facts.
 
 import http from 'node:http';
 
@@ -102,7 +108,7 @@ function* events(turn, model) {
   yield ['message_stop', { type: 'message_stop' }];
 }
 
-export async function startFakeClaude({ script, validKeys = null } = {}) {
+export async function startFakeClaude({ script = defaultScript, validKeys = null, port: listenPort = 0 } = {}) {
   const state = { requests: [], violations: [], script, conversations: new Map() };
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -176,7 +182,7 @@ export async function startFakeClaude({ script, validKeys = null } = {}) {
       res.end();
     });
   });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => server.listen(listenPort, '127.0.0.1', r));
   const { port } = server.address();
   return {
     url: `http://127.0.0.1:${port}`,
@@ -197,4 +203,46 @@ export async function startFakeClaude({ script, validKeys = null } = {}) {
       return new Promise((r) => server.close(() => r()));
     },
   };
+}
+
+/** A sensible answer for whatever the brain asks (the standalone server's script). */
+export function defaultScript(body) {
+  const tools = (body.tools ?? []).map((t) => t.name);
+  const user = JSON.stringify(body.messages?.[0]?.content ?? '');
+  if (tools.includes('report_check')) {
+    const met = user.includes('[[met]]');
+    return {
+      blocks: [...search('price check', [{ url: 'https://shop.example.com/item', title: 'Example Shop' }]), toolUse('report_check', { met, summary: met ? 'Now $279 at Example Shop, in stock.' : 'Still $329 at Example Shop.', sources: [{ title: 'Example Shop', url: 'https://shop.example.com/item' }] })],
+      stop: 'tool_use',
+      usage: { input_tokens: 4000, output_tokens: 300 },
+    };
+  }
+  if (tools.includes('write_briefing')) {
+    const greeting = /"greeting":\s*"([^"]+)"/.exec(user)?.[1]?.replace(/\\"/g, '"') ?? 'Good morning.';
+    return {
+      blocks: [toolUse('write_briefing', {
+        markdown: `**${greeting}** A calm start to the day.\n\n- [A headline from the fake API](https://news.example.com/1)\n\nThe home base had a quiet night.`,
+        spoken: `${greeting} A calm start to the day, and the home base had a quiet night.`,
+        headlines: [{ title: 'A headline from the fake API', source: 'Example News', url: 'https://news.example.com/1' }],
+      })],
+      stop: 'tool_use',
+      usage: { input_tokens: 6000, output_tokens: 600 },
+    };
+  }
+  return {
+    blocks: [
+      ...search('research', [{ url: 'https://www.example.com/report', title: 'Example report' }]),
+      text('Summary: This answer comes from the local fake Claude API.\n\n## Findings\n- A cited finding [Example report](https://www.example.com/report)\n\n## Sources and confidence\nFake data, for testing only.', [cite('https://www.example.com/report', 'Example report')]),
+    ],
+    stop: 'end_turn',
+    usage: { input_tokens: 8000, output_tokens: 900 },
+    slowMs: 15,
+  };
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const i = process.argv.indexOf('--port');
+  const port = i > 0 ? Number(process.argv[i + 1]) : 8791;
+  const fake = await startFakeClaude({ script: defaultScript, port });
+  process.stdout.write(`fake Claude API on ${fake.url}\n`);
 }
