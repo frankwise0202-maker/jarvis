@@ -68,7 +68,21 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl, typ
     li.append(body);
     list.append(li);
     trim();
+    follow(li);
     return li;
+  }
+
+  /**
+   * Where the transcript scrolls (a remote viewer's kiosk layout: the Mac's full-screen window),
+   * keep the newest message in view: scroll to the bottom, but never past the message's first line,
+   * so an answer taller than the box shows its start under the faded top edge. On the kiosk the box
+   * keeps its newest lines and in the remote view it shows everything; there this does nothing.
+   */
+  function follow(li) {
+    const cs = getComputedStyle(list);
+    if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') return;
+    const top = list.scrollTop + li.getBoundingClientRect().top - list.getBoundingClientRect().top - (parseFloat(cs.paddingTop) || 0);
+    list.scrollTop = Math.max(0, Math.min(list.scrollHeight - list.clientHeight, top));
   }
 
   async function ask(raw) {
@@ -115,6 +129,7 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl, typ
     li.classList.remove('is-pending');
     if (cls) li.classList.add(cls);
     setText(li.querySelector('.msg-text'), keepUnits(text));
+    follow(li);
     busy = false;
     send.disabled = false;
     lastActivity = Date.now();

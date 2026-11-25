@@ -43,6 +43,9 @@ export const SIZES = {
   'mac-chrome-1280': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome on a 1280×800 screen (712 tall inside)" },
   'laptop-1440': { w: 1440, h: 900, touch: false, dpr: 1, label: 'laptop window 1440×900' },
   'mac-chrome-1440': { w: 1440, h: 812, touch: false, dpr: 1, label: "the Mac's Chrome on a 1440×900 screen (812 tall inside)" },
+  'mac-chrome-1440-bar': { w: 1440, h: 789, touch: false, dpr: 1, label: "the Mac's Chrome with its bookmarks bar on a 1440×900 screen (789 tall inside)" },
+  'window-1366': { w: 1366, h: 740, touch: false, dpr: 1, label: 'the smallest window that gets the kiosk layout 1366×740' },
+  'window-500': { w: 500, h: 800, touch: false, dpr: 1, label: 'a window dragged narrow, or an iPad in Split View 500×800' },
   'ipad-pro-side': { w: 1366, h: 1024, touch: true, dpr: 1, label: 'iPad Pro 12.9" on its side 1366×1024 (the kiosk layout)' },
 };
 const STATES = ['ok', 'warn', 'alert', 'nogpu', 'internet', 'offline', 'night'];
@@ -203,6 +206,95 @@ export function remoteProblems(page, insets = {}) {
   }, insets);
 }
 
+/**
+ * The owner can read the whole conversation and the whole log (run once an answer is in). The
+ * newest answer starts inside the transcript, below its faded top edge; nothing above it is out of
+ * reach (a box that keeps only its newest lines and cannot scroll loses the start of the answer);
+ * and a transcript or a log longer than its box scrolls, by the mouse wheel where there is a mouse
+ * (`wheel`), as far as the oldest row, which ends clear of the log's faded bottom edge.
+ */
+export async function talkProblems(page, { wheel = false } = {}) {
+  const geometry = () =>
+    page.evaluate(() => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const fadeOf = (cs) => ((cs.maskImage || cs.webkitMaskImage || 'none') !== 'none' ? 1.5 * rem : 0);
+      const box = (id) => {
+        const n = document.getElementById(id);
+        const cs = getComputedStyle(n);
+        const r = n.getBoundingClientRect();
+        const kids = [...n.children].filter((k) => k.getClientRects().length);
+        const first = kids[0]?.getBoundingClientRect();
+        const last = kids[kids.length - 1]?.getBoundingClientRect();
+        return {
+          top: r.top,
+          bottom: r.bottom,
+          fade: fadeOf(cs),
+          scrolls: cs.overflowY === 'auto' || cs.overflowY === 'scroll',
+          overflowY: cs.overflowY,
+          over: n.scrollHeight - n.clientHeight,
+          scrollTop: n.scrollTop,
+          rows: kids.length,
+          firstTop: first ? first.top : null,
+          lastBottom: last ? last.bottom : null,
+          readable: kids.filter((k) => {
+            const b = k.getBoundingClientRect();
+            return b.top >= r.top - 1 && b.bottom <= r.bottom + 1;
+          }).length,
+        };
+      };
+      const t = box('transcript');
+      const answers = document.querySelectorAll('#transcript .msg-core:not(.is-pending)');
+      const ans = answers[answers.length - 1];
+      if (ans) {
+        const a = ans.getBoundingClientRect();
+        t.answer = { top: a.top, bottom: a.bottom, line: parseFloat(getComputedStyle(ans).lineHeight) || 20, text: ans.textContent.trim().slice(0, 60) };
+      }
+      return { t, log: box('events') };
+    });
+  const out = [];
+  const { t, log } = await geometry();
+  if (t.answer) {
+    const hidden = t.top + t.fade - t.answer.top;
+    if (hidden > 1) out.push(`the newest answer starts ${Math.round(hidden)} px above the transcript's readable area ("${t.answer.text}…")`);
+    if (t.answer.top + t.answer.line > t.bottom + 1) out.push('the newest answer starts below the transcript');
+  }
+  // Out of reach: content above the box's top at its scroll origin, or past its end with no scrolling.
+  const reach = (name, b) => {
+    if (b.firstTop !== null && b.firstTop < b.top - 1 && b.scrollTop === 0) out.push(`the ${name}'s first ${Math.round(b.top - b.firstTop)} px are out of reach above its top (overflow-y ${b.overflowY}; no scrolling goes there)`);
+    if (b.over > 1 && !b.scrolls) out.push(`the ${name} is ${b.over} px taller than its box and cannot be scrolled (overflow-y ${b.overflowY}; ${b.readable} of ${b.rows} rows readable)`);
+  };
+  reach('transcript', t);
+  reach('event log', log);
+  const centre = async (id) => {
+    const b = await page.locator(`#${id}`).boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  };
+  if (log.rows && log.scrolls && log.over > 1) {
+    // Scroll the log to its end (with the wheel where there is a mouse) and read the oldest row.
+    if (wheel) {
+      await centre('events');
+      await page.mouse.wheel(0, 5000);
+      await page.waitForTimeout(500);
+    } else await page.evaluate(() => (document.getElementById('events').scrollTop = 1e6));
+    const end = (await geometry()).log;
+    if (end.lastBottom > end.bottom - end.fade + 1) out.push(`the event log's oldest row stays ${Math.round(end.lastBottom - (end.bottom - end.fade))} px under its faded edge at the end of the scroll${wheel ? ' (mouse wheel)' : ''}`);
+    await page.evaluate(() => (document.getElementById('events').scrollTop = 0));
+  }
+  if (t.rows && t.scrolls && t.over > 1) {
+    // Back to the start of the conversation: the first message readable below the faded edge.
+    if (wheel) {
+      await centre('transcript');
+      await page.mouse.wheel(0, -5000);
+      await page.waitForTimeout(500);
+    } else await page.evaluate(() => (document.getElementById('transcript').scrollTop = 0));
+    const start = (await geometry()).t;
+    if (start.firstTop < start.top + start.fade - 1) out.push(`the transcript's first message stays ${Math.round(start.top + start.fade - start.firstTop)} px under its faded edge at the top of the scroll${wheel ? ' (mouse wheel)' : ''}`);
+    await page.evaluate((s) => (document.getElementById('transcript').scrollTop = s), t.scrollTop);
+  }
+  if (wheel) await page.mouse.move(5, 5);
+  return out;
+}
+
 /** The kiosk's own behaviour must be off for a remote viewer (run after the page has been idle). */
 async function kioskBehaviourProblems(page, { night }) {
   const out = [];
@@ -348,12 +440,16 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     const checks = [];
     let smallest = null;
     if (layout === 'kiosk') {
-      // The kiosk layout (it fits), seen by a remote viewer: the kiosk run's checks, plus the
-      // remote viewer's own rules for the question box and the touch targets.
+      // The kiosk layout (it fits), seen by a remote viewer: the kiosk run's checks, plus, on a
+      // screen that can be touched (the iPad Pro), the touch targets and the 16 px question box.
+      // The Mac's mouse keeps the kiosk's sizes, so the transcript keeps the kiosk's height.
       checks.push(...(await layoutProblems(page)));
       checks.push(
-        ...(await page.evaluate(() => {
+        ...(await page.evaluate((touch) => {
           const out = [];
+          const coarse = matchMedia('(any-pointer: coarse)').matches;
+          if (coarse !== touch) out.push(`the page sees ${coarse ? 'a touch screen' : 'no touch screen'} on a ${touch ? 'touch' : 'mouse'} device`);
+          if (!coarse) return out;
           for (const el of document.querySelectorAll('.ask-chip, .ask-send, .ask-input, .open-jarvis')) {
             const r = el.getBoundingClientRect();
             if (r.width && (r.height < 43.5 || r.width < 43.5)) out.push(`touch target under 44 px: ${el.className} (${Math.round(r.width)}×${Math.round(r.height)})`);
@@ -361,7 +457,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
           const fs = parseFloat(getComputedStyle(document.getElementById('ask-input')).fontSize);
           if (fs < 16) out.push(`the question box is ${fs}px (iOS zooms the page into fields under 16 px)`);
           return out;
-        })),
+        }, size.touch)),
       );
     } else {
       const r = await remoteProblems(page, size.insets);
@@ -372,6 +468,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     const full = path.join(outDir, `${name}-full.png`);
     await page.screenshot({ path: first });
     await page.screenshot({ path: full, fullPage: true });
+    checks.push(...(await talkProblems(page, { wheel: !size.touch })));
     if (state !== 'offline') checks.push(...(layout === 'kiosk' ? await longTextProblems(page) : await longValueProblems(page)));
     checks.push(...(await kioskBehaviourProblems(page, { night })));
     const height = await page.evaluate(() => document.scrollingElement.scrollHeight);

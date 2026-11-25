@@ -1438,18 +1438,44 @@ html.cursor-hidden * {
 }
 
 /* ---- a remote viewer in the kiosk layout (a big tablet on its side, the Mac's full screen) ---- */
-/* The Alienware's own screen never matches these (its <html> says data-view="kiosk"). */
-html[data-view='remote'] .ask-input {
-  font-size: max(16px, 1rem); /* iOS zooms the whole page into a field under 16px */
+/* The Alienware's own screen never matches these (its <html> says data-view="kiosk"). A screen that
+   can be touched (the iPad Pro on its side) gets 44px targets and a 16px question box; the Mac's
+   mouse keeps the kiosk's sizes, so its transcript keeps the kiosk's height. */
+@media (any-pointer: coarse) {
+  html[data-view='remote'] .ask-input {
+    font-size: max(16px, 1rem); /* iOS zooms the whole page into a field under 16px */
+  }
+  html[data-view='remote'] .ask-chip,
+  html[data-view='remote'] .ask-send,
+  html[data-view='remote'] .ask-input,
+  html[data-view='remote'] .open-jarvis {
+    min-height: 44px; /* touch targets */
+  }
+  html[data-view='remote'] .ask-chip {
+    min-width: 44px;
+  }
 }
-html[data-view='remote'] .ask-chip,
-html[data-view='remote'] .ask-send,
-html[data-view='remote'] .ask-input,
-html[data-view='remote'] .open-jarvis {
-  min-height: 44px; /* touch targets */
-}
-html[data-view='remote'] .ask-chip {
-  min-width: 44px;
+/* What the kiosk shows only the newest of scrolls for a remote viewer: the transcript (an answer
+   taller than the box arrives showing its start; assistant.js) and the event log (all 40 rows).
+   The faded edges stay; the padding under them lets the first and the last row scroll clear. */
+@media (min-width: 1366px) and (min-height: 740px) {
+  html[data-view='remote'] .transcript,
+  html[data-view='remote'] .events {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-2) transparent;
+  }
+  html[data-view='remote'] .transcript {
+    justify-content: flex-start;
+    padding-top: 1.5rem;
+  }
+  html[data-view='remote'] .transcript > :first-child {
+    margin-top: auto; /* a short talk sits at the bottom, as on the kiosk */
+  }
+  html[data-view='remote'] .events {
+    padding-bottom: 1.5rem;
+  }
 }
 /* A tap answers in the HUD's own colour (iOS flashes grey otherwise; hover never sticks). */
 html[data-view='remote'] {
