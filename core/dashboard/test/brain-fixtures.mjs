@@ -4,7 +4,7 @@
 // SDK missing, no location (no weather), a long headline list, no briefing yet, and an old Core
 // without a brain at all (`none`: api/brain answers 404).
 
-export const BRAIN_PRESETS = ['none', 'ok', 'nokey', 'overcap', 'sdk', 'noweather', 'long', 'waiting', 'full', 'busy', 'night'];
+export const BRAIN_PRESETS = ['none', 'ok', 'nokey', 'overcap', 'sdk', 'noweather', 'long', 'waiting', 'full', 'busy', 'night', 'night2'];
 
 const iso = (ms) => new Date(ms).toISOString();
 const HOUR = 3600000;
@@ -90,20 +90,21 @@ export function makeBriefing(p, now, { timeZone = 'UTC', ownerName = 'Frank', ke
     weather: located ? { label: 'Your location', units: 'F', now: { temp: 41, summary: 'Partly cloudy', code: 2 }, today: { high: 52, low: 38, rainChancePct: 20, summary: 'Partly cloudy, a light breeze' } } : null,
     headlines: p === 'long' ? LONG_HEADLINES : HEADLINES,
     // `night`: a busy night (the most the Core sends): five research results (one failed), three
-    // met watchers and the overnight report's six notes at their real length.
+    // met watchers and the overnight report's six notes at their real length. `night2`: the same
+    // night with two research results and no watcher (the roomier layout at its longest).
     homebase:
-      p === 'night'
+      p === 'night' || p === 'night2'
         ? { level: 'ok', summary: 'All clear now, after 2 things overnight.', notes: ['2:14 AM: The computer started at 2:13 AM (it had stopped unexpectedly)', '3:02 AM: Internet down: no answer from the gateway for 4 minutes', '6:40 AM: Jarvis Core updated itself to 3f9c2a1 (from c0d5801)', 'CPU peaked at 97% at 6:41 AM', 'Warmest CPU reading 71 °C at 6:41 AM', 'Graphics card peaked at 58 °C'] }
         : { level: 'ok', summary: 'All systems normal overnight.', notes: ['CPU peaked at 12% at 3:10 AM', 'Warmest CPU reading 48 °C at 3:10 AM', 'No restarts overnight'] },
     jobs:
-      p === 'night'
-        ? [1, 2, 3, 4, 5].map((i) => ({ id: `j_n${i}`, title: `Overnight research number ${i}: compare the best options and prices for a quiet mechanical keyboard`, status: i === 3 ? 'failed' : 'done', summary: 'A long one-line summary of what the research found, with the top pick, the price and where to buy it today.' }))
+      p === 'night' || p === 'night2'
+        ? [1, 2, 3, 4, 5].slice(0, p === 'night2' ? 2 : 5).map((i) => ({ id: `j_n${i}`, title: `Overnight research number ${i}: compare the best options and prices for a quiet mechanical keyboard`, status: i === 3 ? 'failed' : 'done', summary: 'A long one-line summary of what the research found, with the top pick, the price and where to buy it today.' }))
         : keySet
           ? [{ id: 'j_5', title: 'Best 27-inch monitor for a Mac and a PC under $400', status: 'done', summary: 'The LG 27GP850 is the pick: 1440p at 165 Hz, USB-C to the Mac, about $330.' }]
           : [],
     watchers:
-      p === 'night'
-        ? [1, 2, 3].map((i) => ({ id: `w_n${i}`, what: `Watcher ${i}: the LG 27GP850 monitor under $300 at a big store`, status: 'met', summary: 'Down to $289 at Best Buy (was $329), in stock for pickup today.' }))
+      p === 'night' || p === 'night2'
+        ? [1, 2, 3].slice(0, p === 'night2' ? 0 : 3).map((i) => ({ id: `w_n${i}`, what: `Watcher ${i}: the LG 27GP850 monitor under $300 at a big store`, status: 'met', summary: 'Down to $289 at Best Buy (was $329), in stock for pickup today.' }))
         : keySet
           ? [{ id: 'w_1', what: 'LG 27GP850 under $300', status: 'met', summary: 'Down to $289 at Best Buy (was $329).' }]
           : [],

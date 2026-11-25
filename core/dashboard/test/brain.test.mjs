@@ -202,3 +202,21 @@ test('DST: the morning follows the wall clock on the days the clocks change', ()
   assert.equal(inMorning(at('2026-03-08T06:59:00Z'), NY, early), false, '01:59 EST');
   assert.equal(inMorning(at('2026-03-08T07:00:00Z'), NY, early), true, '03:00 EDT, the first minute after 01:59');
 });
+
+test('the morning card fits a busy night: the research first, three items, the rest counted', async () => {
+  const { morningFinished } = await import('../app/brain-view.js');
+  const job = (i, status = 'done') => ({ id: `j_${i}`, title: `Research ${i}`, status, summary: `Found ${i}` });
+  const watcher = (i, status = 'met') => ({ id: `w_${i}`, what: `Watcher ${i}`, status, summary: `Met ${i}` });
+  const busy = morningFinished({ jobs: [1, 2, 3, 4, 5].map((i) => job(i, i === 3 ? 'failed' : 'done')), watchers: [1, 2, 3].map((i) => watcher(i)) });
+  assert.deepEqual(busy.shown.map((x) => x.title), ['Research 1', 'Research 2', 'Research 3']);
+  assert.equal(busy.more, 5);
+  assert.equal(busy.busy, true);
+  const calm = morningFinished({ jobs: [job(1)], watchers: [watcher(1, 'watching'), { ...watcher(2), summary: '' , status: 'watching' }] });
+  assert.deepEqual(calm.shown.map((x) => x.title), ['Research 1', 'Watcher 1'], 'a watcher still watching shows only with something to say');
+  assert.equal(calm.more, 0);
+  assert.equal(calm.busy, false);
+  const three = morningFinished({ jobs: [], watchers: [watcher(2, 'watching'), watcher(1)].concat([watcher(3)]) });
+  assert.deepEqual(three.shown.map((x) => x.title), ['Watcher 1', 'Watcher 3', 'Watcher 2'], 'met watchers first');
+  assert.equal(three.busy, true);
+  assert.equal(three.more, 0);
+});

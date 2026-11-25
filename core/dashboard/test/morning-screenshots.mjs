@@ -34,6 +34,7 @@ export const SHOTS = {
   'morning-nokey': { scenario: 'ok', brain: 'nokey', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-long': { scenario: 'ok', brain: 'long', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-night': { scenario: 'ok', brain: 'night', at: '2026-11-25T07:05:00Z', morning: true },
+  'morning-night2': { scenario: 'ok', brain: 'night2', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-full': { scenario: 'ok', brain: 'full', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-waiting': { scenario: 'ok', brain: 'waiting', at: '2026-11-25T07:00:10Z', morning: true, arrive: true },
   'morning-alert': { scenario: 'alert', brain: 'ok', at: '2026-11-25T07:05:00Z', morning: true },

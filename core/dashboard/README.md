@@ -80,9 +80,10 @@ shows a full-screen "Good morning, Frank." (the owner's name from `api/brain` �
   Claude) adds its first lines under the greeting;
 - three cards: the headlines (up to 6, two lines each), the night at the home base and what finished
   while he slept, and what's new with the music suggestion. The middle card always fits: the
-  research first, then the watchers, three at most (the title on one line, the summary on one
-  line) and "+N more on your phone" for the rest; two of the night's notes when something
-  finished, three otherwise; the status dot on the summary's first line;
+  research first, then the watchers, three at most and "+N more on your phone" for the rest; on a
+  busy night (three or more) each keeps to one line for its title and one for its summary and the
+  night shows two of its notes (two lines each and three notes otherwise); the status dot sits on
+  the summary's first line;
 - without a key, one line at the bottom: "Give the home base your key from Jarvis on your iPhone to
   unlock background research."; when something needs a look (a warning, an alert, the Core
   offline), the Core's own sentence in its color above it;
@@ -276,7 +277,7 @@ nice -n 10 node core/dashboard/test/morning-screenshots.mjs        # morning mod
 nice -n 10 node core/dashboard/test/phone-screenshots.mjs --brain ok   # the remote view with the brain's panels
 nice -n 10 node core/dashboard/test/longrun.mjs --hours 24 --brain ok --start 2026-11-25T00:00:00Z   # with the brain, across 07:00 and 10:00
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
-node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy, night)
+node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy, night, night2)
 ```
 
 The screenshot run starts a fresh real Core in fixture mode for every shot (`ok`, `warn`, `alert`,
@@ -333,13 +334,14 @@ read as a slope, so judge the brain with 24 hours or more.
 The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain preset
 (`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a long
 headline list, a busy night (`night`: five research results, three met watchers, the overnight
-report's six long notes), the full briefing, the alert scenario, and no briefing yet at 07:00 (then
-one arrives over the stream and must show at once); the system report with the brain in the ok, warn
-and alert scenarios, without a key, over the cap, with the SDK missing, busy, and an old Core
-without a brain (no brain UI at all). It fails on anything cut off or spilling out of the morning
-screen or its cards, a strip on two lines, the night's status dot off the summary's first line, the
-night dim over the morning, a key press that does not return to the system report (or lands in the
-question box), the brain UI on an old Core, and the kiosk run's own layout checks.
+report's six long notes; `night2`: two long research results), the full briefing, the alert
+scenario, and no briefing yet at 07:00 (then one arrives over the stream and must show at once); the
+system report with the brain in the ok, warn and alert scenarios, without a key, over the cap, with
+the SDK missing, busy, and an old Core without a brain (no brain UI at all). It fails on anything
+cut off or spilling out of the morning screen or its cards, a strip on two lines, the night's status
+dot off the summary's first line, the night dim over the morning, a key press that does not return
+to the system report (or lands in the question box), the brain UI on an old Core, and the kiosk
+run's own layout checks.
 
 What cannot be tested here: real NVIDIA readings, a GNOME session, Chrome's kiosk window and the
 Open Jarvis window behaviour, a physical monitor (burn-in, brightness), Tailscale.
