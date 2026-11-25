@@ -79,6 +79,9 @@ and your conversations are stored only on your device.
   or say "Hey Jarvis", and he wakes up: "Welcome home, Frank. Shall I put on some AC/DC? Or I
   can run your evening briefing." Listening happens on your device only, and it's free. See
   [Wake Jarvis (Standby)](#wake-jarvis-standby).
+- **Keep an eye on your home base.** With the Jarvis Core running on your Alienware, the home
+  screen shows how it's doing (online, OK or a warning, CPU, graphics card, memory, disk) and you can
+  ask it "How are you?" for free. See [Jarvis Core: your home base](#jarvis-core-your-home-base).
 - **Talk and listen.** Tap the microphone to dictate, have Jarvis read any answer aloud, or open
   **Voice Mode** for a hands-free spoken conversation: Jarvis answers in a few natural sentences
   and starts talking while it is still writing.
@@ -900,7 +903,8 @@ private network that links your iPhone, your Mac and the Alienware.
   1. Install the **Tailscale** app on your iPhone and Mac and sign in with the same account as on the
      Alienware. Leave it switched on.
   2. Find your home base's address. It ends in `.ts.net`, like
-     `https://alienware.tail1234.ts.net/`; the Core's guide shows where to read it.
+     `https://alienware.tail1234.ts.net/`: the installer shows it when it finishes, and typing
+     `jarvis-core url` on the Alienware shows it again.
   3. In Jarvis: **Settings → Home base**, paste the address and tap **Save**. Jarvis tests it and
      shows the computer's name, the Core's version and its health ("health OK: All systems
      normal"). **Test** checks it again; **Remove** unlinks it.
@@ -912,7 +916,8 @@ private network that links your iPhone, your Mac and the Alienware.
 - **Ask it:** tap **Ask the home base** on the tile, or type or say "How's the home base?" or "Home
   base status" in the chat or in Voice Mode. The Core answers itself: free, no Claude request.
 - **"Can't reach the home base. Is Tailscale on on this device?"**: switch Tailscale on in its app on
-  this iPhone or Mac, and check that the Alienware is on.
+  this iPhone or Mac, and check that the Alienware is on. If Chrome on your Mac asks whether Jarvis may
+  access devices on your local network, choose **Allow**: that is how it reaches the home base.
 
 The address travels in your backups. Your phone and computer apps work exactly as before without a
 home base.

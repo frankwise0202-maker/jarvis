@@ -1399,9 +1399,9 @@ export function createSettingsPanel(o) {
       h(
         'p',
         { class: 'set-help' },
-        h('span', { text: 'Your home base is the Jarvis Core running on your Alienware. Its address ends in .ts.net: it is shown on the Core’s own screen (and by ' }),
-        h('code', { text: 'tailscale serve status' }),
-        h('span', { text: ' on the Alienware). This phone or computer needs the Tailscale app switched on to reach it.' }),
+        h('span', { text: 'Your home base is the Jarvis Core running on your Alienware. Its address ends in .ts.net: the Core’s installer shows it when it finishes, and typing ' }),
+        h('code', { text: 'jarvis-core url' }),
+        h('span', { text: ' on the Alienware shows it again. This phone or computer needs the Tailscale app switched on to reach it.' }),
       ),
       h('p', { class: 'set-help key-privacy' }, icon('lock', { size: 14 }), h('span', { text: 'Only your devices on your Tailscale network can reach it. Asking the home base is free: it answers from its own readings, never Claude.' })),
       h('div', { class: 'set-row-actions' }, hbRemoveBtn),
