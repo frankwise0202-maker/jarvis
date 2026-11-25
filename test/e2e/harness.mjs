@@ -12,7 +12,7 @@ import { deflateSync } from 'node:zlib';
 import { canonicalJson } from '../mock/util.mjs';
 import { startTestServer, MOCK_API_KEY } from '../server.mjs';
 import { MUSIC_ORIGIN_RE, routeFakeMusic } from './music-fakes.mjs';
-import { CORE_ORIGIN, routeFakeCore, fakeSyncStore } from './core-fakes.mjs';
+import { CORE_ORIGIN, routeFakeCore, fakeSyncStore, fakeSenses } from './core-fakes.mjs';
 
 export const BAD_API_KEY = 'sk-ant-bad-0123456789abcdefghijk';
 export const SEED_MARKER = '__jarvis_e2e_seeded__';
@@ -214,7 +214,9 @@ export class TestContext {
       values = {
         'jarvis.dev.apiBase': s.apiBase ?? origin,
         'jarvis.apiKey': s.apiKey ?? MOCK_API_KEY,
-        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', ...(s.settings || {}), ...settings }),
+        // v7.8: a set-up device whose owner already chose George's voice from the home base (on or off), so
+        // a linked fake Core doesn't turn it on by itself; the auto-enable scenarios seed homeBaseSpeakBy ''.
+        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', homeBaseSpeakBy: 'owner', ...(s.settings || {}), ...settings }),
       };
     } else if (seed === 'fresh') {
       values = { 'jarvis.dev.apiBase': origin };
@@ -272,7 +274,10 @@ export class TestContext {
     if (fakeCore) {
       // One home base per scenario: every context (device) shares its sync storage (t.coreSync).
       if (!this.coreSync) this.coreSync = fakeSyncStore();
-      this.core = await routeFakeCore(context, { ...(typeof this.scenario.fakeCore === 'object' ? this.scenario.fakeCore : {}), sync: this.coreSync });
+      const fc = typeof this.scenario.fakeCore === 'object' ? this.scenario.fakeCore : {};
+      // One home base's hearing and voice for every device too, when the scenario asks (senses.shared).
+      if (fc.senses && fc.senses.shared && !this.coreSenses) this.coreSenses = fakeSenses(fc.senses);
+      this.core = await routeFakeCore(context, { ...fc, sync: this.coreSync, sensesState: fc.senses && fc.senses.shared ? this.coreSenses : null });
     }
     context.on('request', (req) => {
       const url = req.url();

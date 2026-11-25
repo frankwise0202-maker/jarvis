@@ -20,6 +20,7 @@
 @import './standby.css';
 @import './homebase.css';
 @import './homebase-brain.css';
+@import './voice-label.css'; /* v7.8: the voice label, Jarvis's voice card, the George notice */
 @import './themes.css';
 
 /* ---- shell ---------------------------------------------------------------------------- */

@@ -14,6 +14,12 @@
 // sentences, never across a line break, a too-long sentence at a clause. Chunk sizes adapt
 // (limitFor): a short first chunk so the first audio comes fast, then chunks that grow with the
 // measured real-time factor up to 260 characters, so each one is ready before the previous ends.
+// v7.8: an engine whose status() names `firstCut` ({ min, max }: the home base's voice, made far away)
+// gets an even shorter first chunk, cut at the first clause or sentence end 40-60 characters in
+// (speech-text.js takeFirstClause; a long first sentence still being written is released at 60), and
+// may name `minChunk` and `assumedRtf` so the chunks after it grow from there without a gap: each one as
+// long as the one before can cover while it is made (takeGrowingChunk: a long sentence gives one piece at a
+// time; releasePiece: a sentence still being written gives its next piece as soon as it can't change).
 //
 // Pipeline: a chunk is sent to the worker as soon as it is complete, at most `prefetch` (2)
 // chunks ahead of the one playing. Each result is trimmed of its leading/trailing silence and
@@ -31,7 +37,7 @@
 // with the device voice. Without onHandoff a failed chunk is skipped and two failures in a row
 // end the stream with 'error'.
 
-import { newText, ingest, segment, takeChunk } from '../speech-text.js';
+import { newText, ingest, segment, takeChunk, takeFirstClause, takeGrowingChunk, releasePiece } from '../speech-text.js';
 
 export const NATURAL_TIMING = Object.freeze({
   firstMin: 60, // the first chunk: the first sentence, packed with the next ones up to 60 characters,
@@ -228,14 +234,33 @@ function append(s, text) {
   const str = typeof text === 'string' ? text : text === null || text === undefined ? '' : String(text);
   if (!str) return;
   ingest(s.tx, str);
-  segment(s.tx, T.chunk);
+  segment(s.tx, segmentLimit(s));
   pump(s);
+}
+
+/** v7.8: what the engine asks of the first chunk ({ min, max }), or null. */
+function firstCutOf(s) {
+  let st = null;
+  try {
+    st = s.engine.status();
+  } catch {
+    return null;
+  }
+  const fc = st && st.firstCut;
+  return fc && fc.max > 0 && fc.min > 0 && fc.min <= fc.max ? fc : null;
+}
+
+/** Until the first chunk is out, a long first sentence still being written is released at firstCut.max. */
+function segmentLimit(s) {
+  if (s.chunks.length) return T.chunk;
+  const fc = firstCutOf(s);
+  return fc ? Math.min(T.chunk, fc.max) : T.chunk;
 }
 
 function finish(s) {
   if (s.ended || s.tx.finished) return;
   s.tx.finished = true;
-  segment(s.tx, T.chunk);
+  segment(s.tx, segmentLimit(s));
   if (!s.tx.norm) {
     endStream(s, 'empty', false, true);
     return;
@@ -281,15 +306,18 @@ function limitFor(s) {
   }
   // An engine may ask for shorter chunks (the home base's voice, homebase-voice.js HOMEBASE_CHUNKS).
   const firstChunk = st && st.firstChunk > 0 ? Math.min(T.firstChunk, st.firstChunk) : T.firstChunk;
-  const chunk = st && st.maxChunk > 0 ? Math.min(T.chunk, Math.max(T.minChunk, st.maxChunk)) : T.chunk;
+  // v7.8: and grow them from a shorter first one (minChunk), assuming a slower voice until measured.
+  const minChunk = st && st.minChunk > 0 ? Math.min(T.minChunk, st.minChunk) : T.minChunk;
+  const assumed = st && st.assumedRtf > 0 ? st.assumedRtf : T.assumedRtf;
+  const chunk = st && st.maxChunk > 0 ? Math.min(T.chunk, Math.max(minChunk, st.maxChunk)) : T.chunk;
   if (!s.chunks.length) {
     const sp = s.tx.spans[0];
     const len = sp ? sp.end - sp.start : firstChunk;
     return Math.max(Math.min(T.firstMin, firstChunk), Math.min(firstChunk, len));
   }
   const prev = s.chunks[s.chunks.length - 1];
-  const rtf = st && st.rtf > 0 ? Math.max(0.15, st.rtf) : T.assumedRtf;
-  return Math.max(T.minChunk, Math.min(chunk, Math.floor(prev.text.length / rtf)));
+  const rtf = st && st.rtf > 0 ? Math.max(0.15, st.rtf) : assumed;
+  return Math.max(minChunk, Math.min(chunk, Math.floor(prev.text.length / rtf)));
 }
 
 function ahead(s) {
@@ -323,7 +351,16 @@ function pumpOnce(s) {
   if (!s.handoff) {
     const playing = s.playIdx < s.chunks.length && s.chunks[s.playIdx].state === 'playing';
     while (ahead(s) < T.prefetch + (playing ? 0 : 1)) {
-      const range = takeChunk(s.tx, limitFor(s));
+      const fc = firstCutOf(s);
+      let range;
+      if (fc && !s.chunks.length) range = takeFirstClause(s.tx, fc);
+      else if (fc) {
+        // v7.8 (R78-2): a voice made far away (the home base), after its short first chunk: each chunk as
+        // long as the previous one can cover while it is made, a sentence still being written included.
+        const limit = limitFor(s);
+        releasePiece(s.tx, limit);
+        range = takeGrowingChunk(s.tx, limit);
+      } else range = takeChunk(s.tx, limitFor(s));
       if (!range) break;
       const chunk = {
         index: s.chunks.length,

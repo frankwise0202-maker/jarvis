@@ -81,7 +81,7 @@ async function statusOf(t, which) {
 export default [
   {
     name: 'senses-settings',
-    title: 'Settings → Home base → Hearing and voice (beta) on an iPhone: off by default; hearing turned on downloads Whisper on the home base with its progress, then Ready; Accurate; Test hears 3 seconds and shows the words; George’s voice turned on, Test plays one sentence made by the home base; off again; a Core without senses says it needs an update',
+    title: 'Settings → Home base → Hearing and voice (beta) on an iPhone: off by default; hearing turned on downloads Whisper on the home base with its progress, then Ready; Accurate; Test hears 3 seconds and shows the words; George’s voice turned on, Test plays one sentence made by the home base; hearing off again (here and at the home base); George’s voice off on this iPhone only (the home base keeps him); a Core without senses says it needs an update',
     device: 'iphone13',
     seed: LINKED,
     fakeCore: { senses: { downloadSteps: 2 } },
@@ -148,6 +148,15 @@ export default [
         t.assert(JSON.stringify(t.core.senses.puts.at(-1)) === JSON.stringify({ hear: { enabled: false } }), 'turned off at the home base');
         t.assert(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1')).homeBaseHear === false), 'off for this iPhone');
       });
+      await t.step('George’s voice off: this iPhone’s alone (the home base keeps him for the other devices)', async () => {
+        const puts = t.core.senses.puts.length;
+        await card.locator(tid('senses-speak-toggle')).click();
+        await t.waitFor(async () => (await statusOf(t, 'speak')).state === 'ready-elsewhere', { timeout: 10000, message: 'ready there, off here' });
+        t.assert(t.core.senses.puts.length === puts, `nothing asked of the home base (${JSON.stringify(t.core.senses.puts.slice(puts))})`);
+        t.assert(t.core.senses.speak.enabled === true && t.core.senses.speak.state === 'ready', 'still on at the home base');
+        t.assert(/Off on this iPhone: replies use its own voices\. The home base keeps George for your other devices\./.test(await t.text(card.locator(tid('senses-speak-result')))), 'said so');
+        t.assert(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.settings.v1')).homeBaseSpeak === false), 'off for this iPhone');
+      });
     },
   },
   {
@@ -189,7 +198,8 @@ export default [
         const h = heardWords(t)[0];
         const warm = t.core.senses.hears.filter((x) => x.seconds <= 1);
         t.assert(warm.length === 1 && Math.abs(warm[0].seconds - 0.4) < 0.01, `warmed up once when Voice Mode opened (${JSON.stringify(warm)})`);
-        t.assert(t.core.senses.speaks.some((x) => x.text === 'Ready.'), 'the voice too');
+        // v7.8: the voice is warmed with the Core's own warm-up path (PUT speak enabled), not a word said.
+        t.assert(t.core.senses.puts.some((p) => p.speak && p.speak.enabled === true) && !t.core.senses.speaks.some((x) => x.text === 'Ready.'), `the voice too (${JSON.stringify(t.core.senses.puts)})`);
         t.assert(h.wav && h.type === 'audio/wav' && h.rate === 16000 && h.seconds > 1.8 && h.seconds < 3.2, `a 16 kHz WAV of what was said, not the silence after it (${JSON.stringify(h)})`);
         t.assert(/^Jarvis, Tony/.test(h.prompt), `the context words (${h.prompt})`);
         await t.waitFor(async () => norm(await t.text(t.page.locator(tid('voice-review-text')))) === QUESTION, { timeout: 10000, message: 'the 2-second check shows the words' });

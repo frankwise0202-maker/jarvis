@@ -4,8 +4,10 @@
 //   · "Hear me through the home base (more accurate)": on/off, Fast or Accurate, its download and
 //     state on the home base, and Test (records 3 seconds and shows what the home base heard).
 //   · "George's voice from the home base": on/off, its download and state, and Test (one sentence).
-// Each switch is this device's (settings homeBaseHear / homeBaseSpeak) and turns that part on or off
-// on the home base too (PUT api/senses: on starts the download and the warm-up there).
+// Each switch is this device's (settings homeBaseHear / homeBaseSpeak) and turns that part on at the
+// home base too (PUT api/senses: on starts the download and the warm-up there). Off: hearing is turned
+// off at the home base too; George's voice only on this device (v7.8: every device shares the home
+// base's George, so the others keep him; a device whose switch is on turns him on there again).
 // Shown only while a home base is linked; a Core without senses says it needs an update.
 //
 //   const card = createSensesSettings(senses, { audio, createCapture, getSettings, commit, toast, os, stopSpeaking });
@@ -140,7 +142,8 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
     if (view && view.deps && view.deps.installed === false) return { state: 'error', text: NO_DEPS_MESSAGE };
     if (p.state === 'error') return { state: 'error', text: `The home base couldn’t get ${what} ready${p.error ? `: ${p.error}` : '.'} Switch it off and on to try again.` };
     if (!p.enabled) {
-      if (on) return { state: 'warn', text: `Off at the home base (it was turned off there or on another device). Switch it off and on to start it again. Until then ${devWord} uses its own ${which === 'hear' ? 'recognizer' : 'voice'}.` };
+      if (on && which === 'speak') return { state: 'warn', text: `Off at the home base (it was turned off there). Jarvis turns it on there again for ${devWord}; until it’s ready, ${devWord} uses its own voice.` };
+      if (on) return { state: 'warn', text: `Off at the home base (it was turned off there or on another device). Switch it off and on to start it again. Until then ${devWord} uses its own recognizer.` };
       return { state: 'off', text: `Off. Turning it on downloads ${what}${p.sizeMb ? ` (about ${p.sizeMb} MB)` : ''} on the home base, once.` };
     }
     if (p.state === 'downloading') return { state: 'downloading', text: `Downloading ${what} on the home base…${p.progress !== null ? ` ${pct(p.progress)}` : ''}${size(p.sizeMb)}` };
@@ -238,21 +241,29 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
 
   async function toggleSpeak(on) {
     if (busy.speak) return;
+    // v7.8: the owner's own choice from now on (homeBaseSpeakBy 'owner'): never switched by itself again.
+    // Off is this device's alone: the home base keeps George for the other devices (the iPhone and the
+    // Mac each have their own switch), so nothing is asked of it.
+    if (!on) {
+      safe(() => commit({ homeBaseSpeak: false, homeBaseSpeakBy: 'owner' }));
+      out(speakOut, `Off on ${devWord}: replies use its own voices. The home base keeps ${voiceName()} for your other devices.`, 'ok');
+      render();
+      return;
+    }
     busy.speak = true;
     speakSw.disabled = true;
-    out(speakOut, on ? 'Turning it on at the home base…' : '', 'busy');
-    if (!on) safe(() => commit({ homeBaseSpeak: false }));
-    const r = await senses.save({ speak: { enabled: on } });
+    out(speakOut, 'Turning it on at the home base…', 'busy');
+    const r = await senses.save({ speak: { enabled: true } });
     busy.speak = false;
     speakSw.disabled = false;
     if (destroyed) return;
     if (r && r.ok) {
-      if (on) safe(() => commit({ homeBaseSpeak: true }));
-      out(speakOut, on ? 'On. The home base gets the voice ready; until then replies sound as before.' : `Off. Replies use ${devWord}’s voices.`, 'ok');
-    } else if (on) {
+      safe(() => commit({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' }));
+      out(speakOut, 'On. The home base gets the voice ready; until then replies sound as before.', 'ok');
+    } else {
       speakSw.checked = false;
       out(speakOut, `Couldn’t turn it on: ${sensesProblem(r).message}`, 'err');
-    } else out(speakOut, `Off on ${devWord}. (The home base didn’t answer, so it may still have the voice on.)`, 'warn');
+    }
     render();
   }
 

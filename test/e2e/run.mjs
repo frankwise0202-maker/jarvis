@@ -43,6 +43,7 @@ import homebase from './scenarios/homebase.mjs';
 import homebaseBrain from './scenarios/homebase-brain.mjs';
 import homebaseSync from './scenarios/homebase-sync.mjs';
 import homebaseSenses from './scenarios/homebase-senses.mjs';
+import voiceGeorge from './scenarios/voice-george.mjs';
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -56,7 +57,7 @@ const presence = await optionalScenarios('./scenarios/presence.mjs');
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 // Optics and the natural voice (v7 senses) run last; Optics' scenarios start a Chromium of their own
 // with a fake camera (browserArgs, one such browser open at a time).
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...optics, ...opticsCamera, ...naturalVoice];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...optics, ...opticsCamera, ...naturalVoice];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

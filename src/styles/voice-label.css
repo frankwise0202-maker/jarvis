@@ -1,0 +1,264 @@
+/* v7.8 (SPEC §26): the voice label, the "Jarvis's voice" card in Settings → Voice, and the notice
+   that George's voice from the home base was turned on. Presence style: monospace capitals on a
+   hairline, a steady dot coloured by the voice (home base: the accent; this device: violet; the
+   device's own voice: grey). Calm: nothing blinks; a change of voice mid-reply brightens it once. */
+
+.voice-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 1px 9px 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.voice-tag[hidden] {
+  display: none;
+}
+
+.voice-tag-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voice-tag-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+
+.voice-tag[data-engine='homebase'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-2);
+}
+
+.voice-tag[data-engine='homebase'] .voice-tag-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.voice-tag[data-engine='natural'] {
+  border-color: color-mix(in srgb, var(--violet) 55%, transparent);
+  color: var(--violet);
+}
+
+.voice-tag[data-engine='natural'] .voice-tag-dot {
+  background: var(--violet);
+}
+
+.voice-tag[data-engine='device'] {
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .voice-tag.is-changed {
+    animation: voice-tag-changed 1.6s var(--ease-out) 1;
+  }
+}
+
+@keyframes voice-tag-changed {
+  0% {
+    box-shadow: 0 0 0 0 var(--warn-soft);
+    border-color: var(--warn);
+  }
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* Voice Mode: on the status line, beside "Speaking" (it never moves the layout). */
+.vm-status .vm-voice-tag {
+  flex: none;
+  max-width: 62%;
+  margin-inline-start: 2px;
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+}
+
+/* The chat: beside a reply's Speak / Stop while it is read aloud. */
+.turn-actions .voice-tag {
+  align-self: center;
+  margin-inline-start: 2px;
+}
+
+/* ---- Settings → Voice → Jarvis's voice -------------------------------------------------------- */
+
+.jv-card {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.jv-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.jv-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.jv-now .voice-tag {
+  font-size: var(--fs-xs);
+  min-height: 24px;
+  padding: 2px 11px 2px 9px;
+}
+
+.jv-where {
+  margin: 0;
+}
+
+.jv-pending {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.jv-pending[hidden],
+.jv-offer[hidden],
+.jv-switch-row[hidden] {
+  display: none;
+}
+
+.jv-pending[data-state='error'],
+.jv-pending[data-state='nodeps'],
+.jv-pending[data-state='old'] {
+  background: var(--warn-soft);
+}
+
+.jv-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.jv-offer {
+  display: grid;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.jv-offer-row {
+  display: grid;
+  gap: 6px;
+}
+
+.jv-offer-row .set-help {
+  margin: 0;
+}
+
+.jv-tip {
+  margin: 0;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.jv-tip-title {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- the notice: George's voice from the home base was turned on ------------------------------- */
+
+.voice-notice {
+  pointer-events: auto;
+  display: grid;
+  gap: var(--sp-2);
+  width: min(100%, 460px);
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--r-lg);
+  background: var(--surface-3);
+  box-shadow: var(--shadow-2), 0 0 24px var(--accent-soft);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  animation: toast-in var(--dur-3) var(--ease-out) both;
+}
+
+.voice-notice[hidden] {
+  display: none;
+}
+
+.vm-open .voice-notice {
+  display: none;
+}
+
+.voice-notice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.voice-notice-text {
+  margin: 0;
+}
+
+.voice-notice-progress {
+  width: 100%;
+  height: 4px;
+}
+
+.voice-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.voice-notice-close {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px -6px 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.voice-notice-close:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.jv-head > .btn {
+  margin-inline-start: auto;
+}

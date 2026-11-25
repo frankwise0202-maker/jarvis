@@ -430,6 +430,8 @@ test('senses controller: on and ready -> canHear; a failure rests it for a minut
   assert.equal(c.ctl.canSpeak(), false, 'voice is off on this device (and at the home base)');
   c.ctl.noteFailure('hear', 'timeout');
   assert.equal(c.ctl.canHear(), false, 'resting after a failure');
+  await flush();
+  assert.equal(c.calls.get, 2, 'v7.8 integrator: no answer at all: api/senses read again at once (it answered)');
   c.advance(59000);
   assert.equal(c.ctl.canHear(), false);
   c.advance(2000);
@@ -811,12 +813,13 @@ test('hearing: a capture whose AudioContext could not start (no tap on iOS) -> t
   assert.equal(cap3.prepared, 0, 'hearing off: nothing at all');
 });
 
-test('senses controller: Voice Mode opening warms up a part unused for 25 minutes (silence to hear, one word to say), once', async () => {
+test('senses controller: Voice Mode opening warms up a part unused for 25 minutes (silence to hear; v7.8: the voice through PUT speak enabled), once', async () => {
   const c = controller({ settings: { homeBaseHear: true, homeBaseSpeak: true }, senses: { ...SENSES, speak: { ...SENSES.speak, enabled: true, state: 'ready' } } });
   c.ctl.prime({ warm: true });
   await flush();
   assert.equal(c.calls.hear, 1, 'a moment of silence heard');
-  assert.equal(c.calls.speak, 1, 'one word said');
+  assert.equal(c.calls.speak, 0, 'nothing said (v7.8)');
+  assert.deepEqual(c.calls.put, [{ speak: { enabled: true } }], 'the Core’s own warm-up for the voice');
   c.ctl.prime({ warm: true });
   await flush();
   assert.equal(c.calls.hear, 1, 'not again: just used');
@@ -1076,8 +1079,14 @@ test('router: a 600-character reply at a real-time factor of 0.5 is all George f
 
 test('router: a home base clearly slower than its own audio (real-time factor 2) still hands over to this device', async (t) => {
   const { r, requests, failures, speech } = await homeBaseReply(t, 2, LONG_REPLY);
+  const diag = requests.map((q) => `${q.chars}c/${Math.round(q.synthMs)}ms/${q.timeoutMs}/${q.result}`).join(' ');
   assert.deepEqual(r.ends, ['done']);
-  assert.equal(requests[0].result, 'timeout');
-  assert.deepEqual(failures, ['speak:timeout']);
-  assert.equal(speech.completed().join(' ').replace(/\s+/g, ' '), LONG_REPLY.replace(/\s+/g, ' '), 'the built-in voice said all of it');
+  // v7.8: the first chunk is short ("Good evening, Frank,"), so even this home base makes it in time;
+  // the chunk after it shows it is slower than real time, and the rest goes to the built-in voice.
+  assert.equal(failures.length, 1, diag);
+  assert.match(failures[0], /^speak:(?:timeout|slow)$/, diag);
+  const said = speech.completed().join(' ').replace(/\s+/g, ' ');
+  const all = LONG_REPLY.replace(/\s+/g, ' ');
+  assert.ok(said.length > all.length / 2 && all.endsWith(said), `the built-in voice said the rest (${said.slice(0, 60)}…) ${diag}`);
+  assert.equal(r.chunks.map((c) => c.text).join(' ').replace(/\s+/g, ' '), all, 'every word once, in order, across the switch');
 });

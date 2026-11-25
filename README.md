@@ -512,6 +512,41 @@ like any other. Everyday requests that only sound like music ("find the record l
 A title with "new", "best", "top" or "latest" in it is free when you name the artist too ("play
 New Rules by Dua Lipa"); without one, Jarvis looks it up like a recommendation.
 
+### Jarvis's voice
+
+Jarvis now speaks with **George**, a natural British voice, instead of the iPhone's robot voice.
+George is made by your Alienware (the home base) and played on your iPhone or Mac. It's free: it
+runs on your own computer at home, and nothing goes to any cloud.
+
+- **It turns itself on, once.** When your iPhone (or your Mac) finds your home base running Jarvis
+  Core 1.2 or later, Jarvis switches George on by himself and says so: "Jarvis now speaks with
+  George's natural voice, made by your Alienware. Getting it ready…". The Alienware downloads George
+  the first time (a few hundred MB, once); the notice shows the download, then says he's ready, with
+  **Hear him** to listen. Until he's ready, Jarvis speaks as before.
+- **Easy to turn off.** Tap **Turn off** on that notice, or the switch in **Settings → Voice →
+  Jarvis's voice**. Once you've turned it off (or on) yourself, Jarvis never changes it again on
+  that device. Each device has its own switch: turning George off on the Mac leaves him on for the
+  iPhone (the Alienware keeps him for your other devices). If George was turned off on the Alienware
+  itself (or by an older Jarvis), a device whose switch is on turns him back on there.
+- **You can always see which voice is speaking.** A small label shows it in Voice Mode (also when
+  Jarvis wakes from Standby) and next to **Stop** when a reply is read aloud: **George · home base**,
+  **George · this device** (the natural voice on the phone itself) or **iPhone voice** (on a Mac:
+  **built-in voice**). If the home base stops answering in the middle of a reply, the rest is said by
+  the iPhone and the label changes with it. If it isn't answering at all (away from home with the
+  Alienware asleep, or a bad network), the iPhone voice speaks straight away instead of after a
+  silence, and George is back as soon as the home base answers again.
+- **Faster first words.** George's first words come from a short first piece of the reply (the
+  first part of a sentence), and the rest is made while he speaks, in pieces that each fit inside the
+  one before, so there's no pause after a short "Good evening, Frank.". Opening Voice Mode, or coming
+  back to Jarvis, wakes George up on the Alienware so he's ready.
+- **Settings → Voice → Jarvis's voice** (at the top) shows the voice in use and where it comes
+  from, with **Test** (on an iPhone that tap also lets Jarvis play sound). Without a home base it
+  offers George on the iPhone itself (free, about 117 MB once; it may be slow on an iPhone, and then
+  Jarvis uses the iPhone voice).
+- **A better iPhone voice for when George isn't speaking** (free): on the iPhone, open Settings >
+  Accessibility > Spoken Content > Voices > English, pick a British voice (Daniel or Arthur, for
+  example) and download its Enhanced or Premium version. Jarvis already prefers those automatically.
+
 ### A more natural voice
 
 Jarvis speaks with the voices your device and browser already have, so it costs nothing extra.
@@ -806,7 +841,9 @@ Other websites (at other addresses) cannot read it.
   Sonnet can lead, and agents can also use the cheaper Claude Haiku), research depth (Fast,
   Balanced, Deep), default mode, agents per wave, how many work at once, how many follow-up
   waves, whether to show Jarvis's thinking, and follow-up suggestions.
-- **Voice:** whether answers in the chat are read out (**Off**, **Short summary** or **Whole
+- **Voice:** at the top, **Jarvis's voice**: the voice in use and where it comes from, **Test**,
+  George's voice from the home base on or off, and the ways to a better voice (see
+  [Jarvis's voice](#jarviss-voice)). Then whether answers in the chat are read out (**Off**, **Short summary** or **Whole
   reply**), the voice (best first, marked Premium, Enhanced, Natural or online) and its speed, a
   tip for getting a more natural voice on your device, the free **natural voice** (on or off, the
   speaker, Test, its download; the camera is chosen in Optics itself), the language you speak in
@@ -1034,14 +1071,16 @@ voice can be too much work for a phone. Your Alienware can do both instead: **Wh
 say, and **George** (the natural voice) speaks the replies. Both are free: they run on your own
 computer at home, and nothing goes to any cloud. This is a beta, off until you turn it on.
 
-- **Turn it on:** **Settings → Home base → Hearing and voice (beta)**.
+- **Turn it on:** **Settings → Home base → Hearing and voice (beta)**. (Since v7.8 George's voice from
+  the home base turns itself on once; see [Jarvis's voice](#jarviss-voice).)
   - **Hear me through the home base (more accurate)**, with **Fast** (Whisper base, about a second for
     a sentence) or **Accurate** (Whisper small: hears more, a little slower).
   - **George's voice from the home base**.
   - Each downloads its model on the home base the first time (about 80 and 92 MB); the card shows the
     download and then **Ready**. **Test** hears 3 seconds and shows the words, or plays one sentence.
-  - Each switch is per device: turn it on on the iPhone, the Mac, or both. Turning one off also turns
-    it off on the home base.
+  - Each switch is per device: turn it on on the iPhone, the Mac, or both. Turning hearing off also
+    turns it off on the home base; turning George's voice off only stops it on that device (since
+    v7.8: the home base keeps him for your other devices).
 - **In Voice Mode** a small **via home base** mark sits next to the status while the home base is
   listening. Talk as usual; when you stop for about a second (two with **Wait after I stop talking:
   Long**), what you said goes to the home base, and the words come back into the usual 2-second check
@@ -1055,7 +1094,8 @@ computer at home, and nothing goes to any cloud. This is a beta, off until you t
     tries the home base again.
   - Its voice can't be reached or is too slow: the rest of the reply is said by the natural voice on
     the iPhone (when that's on) or the built-in voice.
-  - The models sleep on the home base after 30 minutes unused; opening Voice Mode wakes them up.
+  - The models sleep on the home base after a while unused; opening Voice Mode (and, for the voice,
+    coming back to Jarvis) wakes them up.
 - **What's not covered yet:** the chat's microphone, the hologram viewer's and the camera's
   microphones still use the device's own recognizer (they show your words as you talk). A home base
   that still runs an older Jarvis Core says it needs `jarvis-core update`.
