@@ -106,10 +106,11 @@ test(`George speaks, Whisper hears it back (whisper ${HEAR_MODEL}, Kokoro ${SPEA
       const hearThreads = threadNice(rt.senses.hosts.hear.status().pid);
       const speakThreads = threadNice(rt.senses.hosts.speak.status().pid);
       timings.threads = { core: core.length, coreAtNice0: core.filter((n) => n === 0).length, hearEngine: hearThreads, speakEngine: speakThreads };
-      assert.ok(core.every((n) => n === 0), `the Core itself keeps its priority (${core})`);
+      const own = os.getPriority(0); // 0 normally; 10 when the test itself runs under nice -n 10
+      assert.ok(core.every((n) => n === own), `the Core itself keeps its priority (${core})`);
       for (const list of [hearThreads, speakThreads]) {
         assert.ok(list && list.length >= 4, 'an engine process with its onnxruntime threads');
-        assert.ok(list.every((n) => n === 10), `every engine thread at nice 10 (${list})`);
+        assert.ok(list.every((n) => n === Math.max(10, own)), `every engine thread at nice 10 (${list})`);
       }
     }
 

@@ -123,8 +123,8 @@ export function createSenses({
   let settings = normalize(settingsFile.load());
   const speakModel = SPEAK_MODELS[speakDtype] ?? SPEAK_MODELS[DEFAULT_SPEAK_DTYPE];
   const sense = {
-    hear: { error: null, firstDownload: false, lastMs: null },
-    speak: { error: null, firstDownload: false, lastMs: null },
+    hear: { error: null, firstDownload: false, lastMs: null, gen: 0 },
+    speak: { error: null, firstDownload: false, lastMs: null, gen: 0 },
   };
   let deps = depsCheck();
   let depsCheckedAt = Date.now();
@@ -210,15 +210,18 @@ export function createSenses({
       }
     }
     const complete = onDisk(fsApi, modelsDir, model).complete;
+    const gen = ++sense[name].gen; // a later warm-up (another model, off and on) owns the state from then on
     sense[name].firstDownload = !complete;
     if (!complete) log(`${name === 'hear' ? 'hearing' : 'voice'}: downloading ${model.repo} (${model.dtype}, about ${sizeMb(model)} MB) into ${modelsDir}`);
     const started = Date.now();
     hosts[name].load().then(
       (r) => {
+        if (gen !== sense[name].gen) return;
         sense[name].firstDownload = false;
         log(`${name === 'hear' ? 'hearing' : 'voice'}: ready (${model.repo} ${model.dtype}; ${Date.now() - started} ms, load ${r?.ms ?? 0} ms, warm-up ${r?.warmMs ?? 0} ms)`);
       },
       (err) => {
+        if (gen !== sense[name].gen) return;
         sense[name].firstDownload = false;
         if (!settings[name].enabled || err?.code === 'engine_stopped' || err?.code === 'stopped') return; // turned off or changed meanwhile
         const offline = /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|network/i.test(String(err?.message ?? ''));
@@ -232,6 +235,7 @@ export function createSenses({
 
   function reconcile(name, changed) {
     if (!settings[name].enabled) {
+      sense[name].gen += 1;
       hosts[name].unload('turned off');
       sense[name].error = null;
       sense[name].firstDownload = false;

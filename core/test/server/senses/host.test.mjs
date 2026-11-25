@@ -11,6 +11,7 @@ import { createSenseHost } from '../../../server/senses/host.mjs';
 import { HEAR_MODELS, SPEAK_MODELS } from '../../../server/senses/models.mjs';
 
 const STUB = new URL('./stub-engine.mjs', import.meta.url).href;
+const OWN_NICE = os.getPriority(0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function until(fn, { timeoutMs = 5000, what = 'condition' } = {}) {
@@ -50,13 +51,14 @@ test('load downloads into the cache with progress, warms up, runs in a process w
   assert.ok(progress.length >= 1, 'progress reported');
   assert.ok(progress.every((p) => p.loaded <= p.total));
   assert.ok(fs.existsSync(path.join(cacheDir, 'onnx-community/whisper-tiny.en', HEAR_MODELS['tiny.en'].revision, 'onnx/encoder_model_quantized.onnx')));
-  if (process.platform === 'linux') assert.equal(st.nice, 10, 'the engine thread runs at nice 10');
+  if (process.platform === 'linux') assert.equal(st.nice, Math.max(10, OWN_NICE), 'the engine runs at nice 10');
   const out = await host.run({ audio: audio(1), prompt: 'Frank' });
   assert.equal(out.output.text, 'hello from the stub (16000 samples; prompt: Frank)');
   if (process.platform === 'linux') {
+    const own = os.getPriority(0); // 0 normally; 10 when the tests themselves run under nice -n 10
     assert.ok(out.output.threadNice.length >= 4, 'the engine process has its threads');
-    assert.ok(out.output.threadNice.every((n) => n === 10), `every engine thread at nice 10: ${out.output.threadNice}`);
-    assert.equal(os.getPriority(0), 0, 'the Core itself keeps its priority');
+    assert.ok(out.output.threadNice.every((n) => n === Math.max(10, own)), `every engine thread at nice 10: ${out.output.threadNice}`);
+    assert.equal(OWN_NICE, own, 'the Core itself keeps its priority');
   }
   assert.ok(out.ms >= 0 && out.waitedMs >= 0);
   // loading again is free
