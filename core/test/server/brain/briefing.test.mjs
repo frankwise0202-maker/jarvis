@@ -12,6 +12,7 @@ import { createFixtureFetch } from '../../../server/brain/fixture-fetch.mjs';
 import { parseFeed, mergeHeadlines } from '../../../server/brain/rss.mjs';
 import { parseForecast } from '../../../server/brain/weather.mjs';
 import { nextDailyAt } from '../../../server/brain/schedule.mjs';
+import { overnightReport } from '../../../server/brain/homebase.mjs';
 import { fixtureCore } from '../helpers.mjs';
 import { setLocale } from '../../../server/format.mjs';
 
@@ -280,6 +281,34 @@ test('a scheduled briefing made while the feeds and the weather fail is made aga
   } finally {
     await brain.stop();
   }
+});
+
+test('overnight report: tonight\'s update, a rollback and restarts are told; a rollback is something to look at', () => {
+  setLocale('en-US');
+  const t = MORNING;
+  const report = (evs, level = 'ok') => overnightReport({
+    core: { snapshot: { health: { level, summary: 'All systems normal' } }, history: { query: () => ({ t: [], series: {} }) }, events: { between: (a, b) => evs.filter((e) => e.t >= a && e.t <= b) } },
+    now: t,
+    fromMs: t - 12 * 3600_000,
+    timeZone: TZ,
+  });
+  const update = { t: t - 7.5 * 3600_000, level: 'info', kind: 'system', rule: 'core.update', message: 'Jarvis Core updated itself to a1b2c3d' };
+  const start = { t: t - 7.4 * 3600_000, level: 'info', kind: 'system', rule: 'core.start', message: 'Jarvis Core started (version 1.1.0)' };
+  const rollback = { t: t - 3 * 3600_000, level: 'warn', kind: 'system', rule: 'core.rollback', message: 'An automatic update to d4e5f6a didn\'t start properly, so Jarvis Core went back to a1b2c3d' };
+  const all = report([update, start, rollback]);
+  assert.equal(all.summary, 'All clear now, after one thing overnight.');
+  assert.deepEqual(all.notes, ['11:30 PM: Jarvis Core updated itself to a1b2c3d', "4:00 AM: An automatic update to d4e5f6a didn't start properly, so Jarvis Core went back to a1b2c3d"]);
+  // An update and its restart: a normal night, and it says so.
+  const updated = report([update, start]);
+  assert.equal(updated.summary, 'All systems normal overnight.');
+  assert.deepEqual(updated.notes, ['11:30 PM: Jarvis Core updated itself to a1b2c3d']);
+  // A restart by hand is told too; a quiet night says there were no restarts.
+  const restarted = report([{ ...start, t: t - 2 * 3600_000 }]);
+  assert.deepEqual(restarted.notes, ['5:00 AM: Jarvis Core started (version 1.1.0)']);
+  assert.deepEqual(report([]).notes, ['No restarts overnight']);
+  const crashed = report([{ t: t - 3600_000, level: 'warn', kind: 'system', rule: 'core.crash', message: 'Jarvis Core restarted after an unexpected stop' }, { ...start, t: t - 3600_000 + 1000 }]);
+  assert.equal(crashed.summary, 'All clear now, after one thing overnight.');
+  assert.deepEqual(crashed.notes, ['6:00 AM: Jarvis Core restarted after an unexpected stop']);
 });
 
 test('settings: limits, time, units, owner; a city is geocoded (Open-Meteo); coordinates rounded to 2 decimals; bad input refused', async () => {
