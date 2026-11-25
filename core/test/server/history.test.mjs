@@ -28,6 +28,21 @@ test('time never goes backwards in the ring', () => {
   assert.equal(h.query({ range: '1h', series: ['cpu'], now: T0 }).count, 1);
 });
 
+test('a clock corrected backwards (RTC ahead, then NTP) does not stall recording', () => {
+  const h = createHistory();
+  const ahead = T0 + 3600_000; // the clock was an hour fast
+  for (let i = 0; i < 300; i += 1) h.push(ahead + i * 1000, { cpu: 50 });
+  // corrected: real time is an hour earlier; small jitter is still ignored...
+  assert.equal(h.push(ahead + 299_000 - 5000, { cpu: 1 }), false);
+  // ...but a big step back drops the "future" points and recording carries on
+  assert.equal(h.push(T0, { cpu: 10 }), true);
+  assert.equal(h.push(T0 + 1000, { cpu: 11 }), true);
+  const q = h.query({ range: '1h', series: ['cpu'], now: T0 + 1000 });
+  assert.deepEqual(q.series.cpu, [10, 11]);
+  assert.equal(h.sizes.clockSteps, 1);
+  assert.equal(h.query({ range: '24h', series: ['cpu'], now: T0 + 7200_000 }).count, 0); // the future minutes are gone
+});
+
 test('bucketed query: averages, maxima, empty buckets are null', () => {
   const h = createHistory();
   for (let i = 0; i < 60; i += 1) h.push(T0 + i * 1000, { cpu: i < 30 ? 10 : 30 });

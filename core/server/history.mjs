@@ -83,11 +83,22 @@ class Ring {
     return lo;
   }
 
+  /** Forget the newest points with t >= from (a clock that was ahead and got corrected). */
+  dropFrom(from) {
+    while (this.size && this.t[this.slot(this.size - 1)] >= from) {
+      this.head = (this.head - 1 + this.capacity) % this.capacity;
+      this.size -= 1;
+    }
+  }
+
   clear() {
     this.head = 0;
     this.size = 0;
   }
 }
+
+/** A step back in wall time bigger than this is a clock correction, not jitter. */
+const CLOCK_STEP_MS = 120_000;
 
 export function createHistory({ fineCapacity = 3600, coarseCapacity = 10080 } = {}) {
   const W = SERIES.length;
@@ -95,6 +106,7 @@ export function createHistory({ fineCapacity = 3600, coarseCapacity = 10080 } = 
   const coarse = new Ring(coarseCapacity, W, true);
   // The minute being accumulated for the coarse ring.
   let minute = null;
+  let clockSteps = 0;
   const sum = new Float64Array(W);
   const cnt = new Uint32Array(W);
   const mx = new Float64Array(W).fill(-Infinity);
@@ -119,7 +131,18 @@ export function createHistory({ fineCapacity = 3600, coarseCapacity = 10080 } = 
   /** Add one sample: values is { cpu: 9.1, cpuTemp: 45, ... } (missing or null → NaN). */
   function push(t, values) {
     const lastFine = fine.lastT();
-    if (lastFine !== null && t <= lastFine) return false; // time never goes backwards in a ring
+    if (lastFine !== null && t <= lastFine) {
+      // Small steps back are dropped. A big one means the clock was ahead and has been corrected (an RTC
+      // set wrong, then NTP): forget the "future" points so recording carries on instead of stalling.
+      if (lastFine - t < CLOCK_STEP_MS) return false;
+      fine.dropFrom(t);
+      coarse.dropFrom(Math.floor(t / 60_000) * 60_000);
+      minute = null;
+      sum.fill(0);
+      cnt.fill(0);
+      mx.fill(-Infinity);
+      clockSteps += 1;
+    }
     for (let k = 0; k < W; k += 1) {
       const v = values[SERIES_NAMES[k]];
       row[k] = isNum(v) ? v : NaN;
@@ -343,7 +366,7 @@ export function createHistory({ fineCapacity = 3600, coarseCapacity = 10080 } = 
     restore,
     clear,
     get sizes() {
-      return { fine: fine.size, coarse: coarse.size, fineCapacity, coarseCapacity };
+      return { fine: fine.size, coarse: coarse.size, fineCapacity, coarseCapacity, clockSteps };
     },
     get lastT() {
       return fine.lastT();
