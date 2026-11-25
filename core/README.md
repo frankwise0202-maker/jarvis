@@ -214,11 +214,16 @@ it goes back to the one before by itself, says so in the event log, and doesn't 
 
 If an update couldn't download the brain's libraries (no internet, or npm's servers were down), the
 next check tries again, then every 2 hours until it works; meanwhile Jarvis Core keeps running, on
-the previous libraries if it had them. Once they are in, it restarts by itself to use them.
+the previous libraries if it had them. When the reason isn't the internet (a full disk, say), it tries
+less often, up to once a day; `jarvis-core autoupdate status` says why and when. Once the libraries are
+in, Jarvis Core restarts by itself to use them, and keeps them only if it still answers 90 seconds
+later; if it doesn't, it goes back to the previous ones and waits for a newer version. It doesn't
+start a Jarvis Core you stopped. If you run `jarvis-core update` while it is installing them, the
+update says so and waits for it.
 
 | Command | What it does |
 |---|---|
-| `jarvis-core autoupdate status` | On or off, the last check, the last update, and when the libraries are tried again if they didn't install |
+| `jarvis-core autoupdate status` | On or off, the last check, the last update, and, if the libraries didn't install, why and when they are tried again |
 | `jarvis-core autoupdate on` | Turns it on (and takes over an update timer you set up by hand) |
 | `jarvis-core autoupdate off` | Turns it off; `jarvis-core update` still works by hand |
 
@@ -327,8 +332,8 @@ back by itself at the next login.
 tomorrow (or next month), or raise the limit in Jarvis: Settings → Home base → Limits.
 
 **The home base says Claude "isn't installed".** Its libraries didn't download (no internet during an
-update). Automatic updates try again by themselves (`jarvis-core autoupdate status` says when); to try
-right away, run `jarvis-core update`. `jarvis-core status` says when they are there.
+update). Automatic updates try again by themselves (`jarvis-core autoupdate status` says when, and what
+npm said); to try right away, run `jarvis-core update`. `jarvis-core status` says when they are there.
 
 **No notifications on the iPhone.** Open Jarvis from its Home Screen icon (not Safari), Settings → Home
 base → Turn on notifications, then **Test**. Check the iPhone's Settings → Notifications → Jarvis is

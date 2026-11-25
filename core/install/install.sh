@@ -28,7 +28,12 @@
 # Options: --dry-run (show every step, change nothing), --refresh (what `jarvis-core update` runs
 # after downloading: rewrite the command, service and autostart, install the libraries, restart, reload
 # the screen), --libraries (only the libraries step: what the update timer runs when an update couldn't
-# install them), --help.
+# install them; with --keep-old it leaves the previous ones aside for the timer to go back to), --help.
+# One libraries step runs at a time (a lock in ~/.config/jarvis-core/install): the others wait for it, and
+# --libraries steps aside. --libraries exits 0 (installed), 3 (already in place), 4 (another install is
+# running), 5 (npm couldn't reach its registry) or 1 (failed otherwise).
+# From jarvis-core autoupdate-tick: JARVIS_CORE_UNATTENDED=1 (run by the update timer), JARVIS_CORE_LIBS_LOCKED=1
+# (it holds the libraries lock for this run), JARVIS_CORE_ROLLBACK_FROM=<version> (this refresh goes back from it).
 # Test-only overrides: JARVIS_CORE_REPO, JARVIS_CORE_BRANCH, JARVIS_CORE_APP_DIR, JARVIS_CORE_TTY,
 # JARVIS_CORE_OS_RELEASE, JARVIS_CORE_GDM_CONF, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_SHIM,
 # JARVIS_CORE_PORT, JARVIS_CORE_ALLOW_ROOT, JARVIS_CORE_START_WAIT_SEC, JARVIS_CORE_CGROUP_FILE.
@@ -49,6 +54,8 @@ UNIT_FILE="$CONFIG_HOME/systemd/user/$UNIT_NAME"
 AUTOSTART_FILE="$CONFIG_HOME/autostart/jarvis-core-screen.desktop"
 PROFILE_DIR="$DATA_HOME/jarvis-core-screen"
 STATE_DIR="$CONFIG_HOME/jarvis-core/install"
+LIBS_LOCK="$STATE_DIR/libraries.lock"   # held by whatever installs the brain's libraries (jarvis-core knows it too)
+LIBS_ERROR="$STATE_DIR/libraries-error" # why the last libraries step failed, for jarvis-core status (gone once they are in)
 LOCAL_URL="http://localhost:$PORT/"
 PING_URL="http://127.0.0.1:$PORT/api/ping"
 OS_RELEASE="${JARVIS_CORE_OS_RELEASE:-/etc/os-release}"
@@ -68,7 +75,9 @@ INSTALL_CMD="wget -qO- https://raw.githubusercontent.com/frankwise0202-maker/jar
 DRY_RUN=0
 REFRESH=0
 LIBS_ONLY=0
-DEPS_RESULT="" # what the libraries step did: none current installed failed (or dry-run)
+KEEP_OLD=0     # --keep-old: the libraries step leaves the previous libraries in node_modules.old
+DEPS_RESULT="" # what the libraries step did: none current installed failed busy (or dry-run)
+DEPS_NET=0     # it failed because npm couldn't reach its registry
 CORE_DOWN=0    # the Core didn't answer after it was (re)started
 HAVE_TTY=0
 SUDO_OK=0
@@ -686,10 +695,81 @@ step_app() {
 # fresh folder that is swapped in only when it is complete: a failed install (no internet) leaves the libraries
 # that were there, and the running Core never sees half a node_modules. Without them the Core still starts; the
 # brain reports its SDK missing. DEPS_RESULT says how it went: none (no lockfile, nothing to install), current
-# (they already match the lockfile), installed, failed (whatever was there before is still there), dry-run.
+# (they already match the lockfile), installed, failed (whatever was there before is still there), busy (another
+# install of them is running), dry-run.
+#
+# One at a time: jarvis-core update, the installer and the update timer's retry all use core/.npm-install, so each
+# holds LIBS_LOCK through its swap. A second one waits for the first (then usually finds them in place); the
+# timer's --libraries never waits, it steps aside. JARVIS_CORE_LIBS_LOCKED=1: the caller (the update timer) holds
+# the lock on fd 8 for this whole run. The lock is never handed to npm or to anything that outlives this step.
 LIBS_WHAT="the Claude SDK, web-push and the speech libraries"
 deps_install() {
-  local core="$APP_DIR/core" want have_sha npm_bin stage log had=0
+  if [ "$DRY_RUN" = 1 ] || [ -n "${JARVIS_CORE_LIBS_LOCKED:-}" ] || ! have flock ||
+    ! { mkdir -p "$STATE_DIR" && : >>"$LIBS_LOCK"; } 2>/dev/null; then
+    deps_install_now
+    return 0
+  fi
+  {
+    if flock -n 8; then
+      deps_install_now
+    elif [ "$LIBS_ONLY" = 1 ]; then
+      DEPS_RESULT=busy
+      note "The brain's libraries are being installed right now (by jarvis-core update or the update timer); leaving it to that"
+    else
+      say "Another install of the brain's libraries is running (the update timer, or jarvis-core update); waiting for it..."
+      if flock -w 1200 8; then
+        deps_install_now
+      else
+        DEPS_RESULT=busy
+        note "The other install of the brain's libraries is still running after 20 minutes; leaving it to finish"
+        say "(jarvis-core status says when they are in)"
+      fi
+    fi
+  } 8>>"$LIBS_LOCK"
+  return 0
+}
+
+# Why npm ci failed, in a few words, from what it printed and from its own debug log (npm 10 can print only "Exit
+# handler never called!" when its downloads fail; the reason is in the log it names). Sets NPM_WHY (empty when
+# unknown), NPM_NET=1 when it couldn't reach its registry (worth trying again soon), and NPM_SAID (the line that
+# shows it) with NPM_SAID_LOG=1 when that line is from the debug log.
+npm_why() { # npm_why LOG EXIT_STATUS
+  local log="$1" rc="$2" dbg said dbg_text=""
+  NPM_WHY="" NPM_NET=0 NPM_SAID="" NPM_SAID_LOG=0
+  # npm's own lines only: an install script's output can say anything
+  said=$(grep -E '^npm (error|ERR!|warn|WARN)' "$log" 2>/dev/null)
+  dbg=$(sed -n 's/^.*A complete log of this run can be found in: *//p' "$log" 2>/dev/null | tail -n 1)
+  if [ -n "$dbg" ] && [ -f "$dbg" ]; then dbg_text=$(grep -E 'error|fail|ERR' "$dbg" 2>/dev/null | tail -n 400); fi
+  if [ "$rc" = 124 ]; then
+    NPM_WHY="it took longer than 15 minutes: a slow connection?" NPM_NET=1
+  elif npm_find "$said" "$dbg_text" 'ENOSPC|no space left on device'; then
+    NPM_WHY="the disk is full"
+  elif npm_find "$said" "$dbg_text" 'EUSAGE|in sync|EJSONPARSE|[Ii]nvalid package-lock|with an existing package-lock'; then
+    NPM_WHY="this version's lockfile is broken"
+  elif npm_find "$said" "$dbg_text" 'EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|ERR_SOCKET_TIMEOUT|network timeout|socket hang up'; then
+    NPM_WHY="no internet?" NPM_NET=1
+  elif npm_find "$said" "$dbg_text" 'code E5[0-9][0-9]'; then
+    NPM_WHY="npm's registry had a problem" NPM_NET=1
+  else # an install script's own error says most ("Error: Failed to download ..."), else npm's first error line
+    NPM_SAID=$(printf '%s\n' "$said" | grep -m 1 -E '^npm (error|ERR!) +([A-Za-z]*Error|Error \[[A-Z_]+\]): ') ||
+      NPM_SAID=$(printf '%s\n' "$said" | grep -E '^npm (error|ERR!)' | grep -v -E 'complete log of this run|an error with npm itself|github\.com/npm/cli/issues' | head -n 1)
+  fi
+  [ "$NPM_SAID_LOG" = 1 ] && NPM_SAID=$(printf '%s' "$NPM_SAID" | sed -E 's/^[0-9]+ //')
+  NPM_SAID=$(printf '%s' "$NPM_SAID" | tr -d '\r' | tr -c '[:print:]' ' ' | cut -c 1-200)
+}
+
+npm_find() { # npm_find NPM_LINES DEBUG_LOG_LINES REGEX: the first match, in what npm printed, else in its debug log
+  NPM_SAID=$(printf '%s\n' "$1" | grep -m 1 -E "$3") && return 0
+  NPM_SAID=$(printf '%s\n' "$2" | grep -m 1 -E "$3") && NPM_SAID_LOG=1
+}
+
+libs_error_set() { # libs_error_set WORDS [NPM_LINE]: why the libraries didn't go in, for jarvis-core status
+  [ "$DRY_RUN" = 1 ] && return 0
+  { mkdir -p "$STATE_DIR" && printf '%s\n%s\n' "$1" "${2:-}" >"$LIBS_ERROR.tmp" && mv -f "$LIBS_ERROR.tmp" "$LIBS_ERROR"; } 2>/dev/null || true
+}
+
+deps_install_now() {
+  local core="$APP_DIR/core" want have_sha npm_bin stage log had=0 rc
   if [ ! -f "$core/package-lock.json" ]; then
     DEPS_RESULT=none
     if [ "$DRY_RUN" = 1 ]; then
@@ -704,6 +784,7 @@ deps_install() {
   have_sha=$(cat "$core/node_modules/.jarvis-lock-sha256" 2>/dev/null) || have_sha=""
   if [ -n "$want" ] && [ "$want" = "$have_sha" ]; then
     DEPS_RESULT=current
+    [ "$DRY_RUN" = 1 ] || rm -f "$LIBS_ERROR"
     ok "The brain's libraries are installed ($LIBS_WHAT)"
     return 0
   fi
@@ -727,6 +808,7 @@ deps_install() {
     fi
     say "Install npm (it comes with Node.js from NodeSource), then run: jarvis-core update"
     [ "$REFRESH" = 1 ] || manual "Install npm (it comes with Node.js from NodeSource), then run: jarvis-core update"
+    libs_error_set "npm isn't installed"
     return 0
   fi
   tmpdir
@@ -739,17 +821,24 @@ deps_install() {
     else
       note "Couldn't prepare the libraries' folder, so Jarvis Core runs without them"
     fi
+    libs_error_set "their folder couldn't be prepared (is the disk full?)"
     deps_retry_hint
     return 0
   fi
   say "Installing the brain's libraries with npm ci: $LIBS_WHAT,"
   say "about 460 MB. The first time this can take several minutes..."
   # ONNXRUNTIME_NODE_INSTALL_CUDA=skip: the speech engines run on the CPU; never fetch onnxruntime's CUDA build.
-  if (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null) >"$log" 2>&1 && [ -d "$stage/node_modules" ]; then
+  # 8>&-: npm (and anything it leaves running) never holds the libraries lock.
+  (cd "$stage" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip timeout 900 "$npm_bin" "${NPM_CI[@]}" </dev/null 8>&-) >"$log" 2>&1
+  rc=$?
+  if [ "$rc" = 0 ] && [ -d "$stage/node_modules" ]; then
     printf '%s\n' "$want" >"$stage/node_modules/.jarvis-lock-sha256"
     if { [ ! -e "$core/node_modules" ] || mv -T "$core/node_modules" "$core/node_modules.old"; } &&
       mv -T "$stage/node_modules" "$core/node_modules"; then
-      rm -rf "$core/node_modules.old" "$stage"
+      # --keep-old (the update timer): the previous libraries stay aside until the Core has held up with these.
+      rm -rf "$stage"
+      [ "$KEEP_OLD" = 1 ] || rm -rf "$core/node_modules.old"
+      rm -f "$LIBS_ERROR"
       DEPS_RESULT=installed
       ok "Installed the brain's libraries ($LIBS_WHAT)"
       return 0
@@ -760,14 +849,27 @@ deps_install() {
     else
       note "Couldn't put the libraries in place, so Jarvis Core runs without them"
     fi
-  elif [ "$had" = 1 ]; then
-    note "Couldn't install this version's libraries (npm ci failed: no internet?). The previous ones are"
-    say "still in use. npm said:"
-    tail -n 4 "$log" 2>/dev/null | sed 's/^/      /'
+    libs_error_set "they couldn't be put in place"
   else
-    note "Couldn't install the brain's libraries (npm ci failed: no internet?). Jarvis Core runs without"
-    say "them for now: its Claude work, notifications and speech are off. npm said:"
+    npm_why "$log" "$rc"
+    DEPS_NET=$NPM_NET
+    if [ "$had" = 1 ]; then
+      note "Couldn't install this version's libraries (npm ci failed${NPM_WHY:+: $NPM_WHY})."
+      say "The previous ones are still in use. npm said:"
+    else
+      note "Couldn't install the brain's libraries (npm ci failed${NPM_WHY:+: $NPM_WHY})."
+      say "Jarvis Core runs without them for now: its Claude work, notifications and speech are off."
+      say "npm said:"
+    fi
+    # the line that shows why, when npm's last lines don't (then those)
+    if [ "$NPM_SAID_LOG" = 1 ]; then
+      say "  npm's own log: $NPM_SAID"
+    elif [ -n "$NPM_SAID" ] && ! tail -n 4 "$log" 2>/dev/null | grep -qF -- "$NPM_SAID"; then
+      say "  $NPM_SAID"
+      say "  ..."
+    fi
     tail -n 4 "$log" 2>/dev/null | sed 's/^/      /'
+    libs_error_set "$NPM_WHY" "$NPM_SAID"
   fi
   deps_retry_hint
   rm -rf "$stage"
@@ -775,7 +877,8 @@ deps_install() {
 }
 
 # After the libraries didn't go in: the update timer tries them again by itself (jarvis-core autoupdate-tick:
-# at its next check, then at most every 2 hours); without it, jarvis-core update does.
+# at its next check, then every 2 hours, or less often when the cause isn't the network); without it,
+# jarvis-core update does.
 deps_retry_hint() {
   if autoupdate_on; then
     say "Automatic updates try again by themselves (jarvis-core autoupdate status says when)."
@@ -1290,6 +1393,24 @@ Jarvis Core installer for Ubuntu 24.04.
 EOF
 }
 
+# The refresh's last line: how it went, never "up to date" after something above failed. After a rollback by the
+# update timer (JARVIS_CORE_ROLLBACK_FROM), it says which version it went back to and why.
+refresh_last_line() {
+  local from="${JARVIS_CORE_ROLLBACK_FROM:-}" rev except=""
+  case "$from" in *[!0-9a-f]*) from="" ;; esac # a short commit id, nothing else
+  if [ "$CORE_DOWN" = 1 ]; then
+    printf '\n%sJarvis Core isn'"'"'t answering. Check it: jarvis-core status, then jarvis-core logs%s\n' "$B" "$N"
+    return 1
+  fi
+  case "$DEPS_RESULT" in failed | busy) except=", except for the brain's libraries (see above)" ;; esac
+  if [ -n "$from" ]; then
+    rev=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null) || rev="the previous version"
+    printf '\n%sJarvis Core is back on %s%s; %s didn'"'"'t start properly, so it is skipped until a newer version.%s\n' "$B" "$rev" "$except" "$from" "$N"
+  else
+    printf '\n%sJarvis Core is up to date%s.%s\n' "$B" "$except" "$N"
+  fi
+}
+
 refresh() {
   printf '%sRefreshing Jarvis Core%s\n' "$B" "$N"
   [ "$(id -u)" != 0 ] || [ -n "${JARVIS_CORE_ALLOW_ROOT:-}" ] || die "Run it as yourself, not as root."
@@ -1303,16 +1424,7 @@ refresh() {
     section "Automatic updates"
     "$SELF_BIN" autoupdate refresh </dev/null 2>&1 | sed -n '/^  /p'
   fi
-  # The last line says how it went, never "up to date" after something above failed.
-  if [ "$CORE_DOWN" = 1 ]; then
-    printf '\n%sJarvis Core isn'"'"'t answering. Check it: jarvis-core status, then jarvis-core logs%s\n' "$B" "$N"
-    return 1
-  fi
-  if [ "$DEPS_RESULT" = failed ]; then
-    printf '\n%sJarvis Core is up to date, except for the brain'"'"'s libraries (see above).%s\n' "$B" "$N"
-  else
-    printf '\n%sJarvis Core is up to date.%s\n' "$B" "$N"
-  fi
+  refresh_last_line
 }
 
 # The screen after a refresh, said as it is. From a terminal, a dashboard on the screen is restarted with the new
@@ -1325,7 +1437,7 @@ refresh_screen() {
     would "check the dashboard on the screen (an update run by the timer puts it back if it is missing)"
     return 0
   fi
-  if pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; then
+  if screen_up; then
     if in_service; then
       ok "The dashboard is on the screen; it reloads itself when it sees the new version"
     else
@@ -1333,8 +1445,14 @@ refresh_screen() {
     fi
   elif in_service && screen_env_ready && have systemd-run; then
     # jarvis-core screen waits for the Core, then becomes Chrome: the unit lasts as long as the dashboard is open.
+    # Started is not shown: it counts as back only once Chrome is up (Chrome missing, or a display left over from a
+    # session that ended, would stop it), as jarvis-core open waits for it.
     if systemd-run --user --collect --quiet --unit="jarvis-core-screen-$(date +%s)" --description="Jarvis Core screen" "$SELF_BIN" screen </dev/null >/dev/null 2>&1; then
-      ok "Put the dashboard back on the screen"
+      if screen_appears 10; then
+        ok "Put the dashboard back on the screen"
+      else
+        note "Started the dashboard, but it isn't on the screen yet (log out and back in, or run: jarvis-core open)"
+      fi
     else
       note "The dashboard isn't on the screen and couldn't be put back: log out and back in, or run: jarvis-core open"
     fi
@@ -1345,13 +1463,31 @@ refresh_screen() {
   fi
 }
 
+screen_up() { pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE_DIR( |$)" >/dev/null 2>&1; }
+
+screen_appears() { # seconds: wait until the dashboard's Chrome is up
+  local i
+  for ((i = 0; i < $1 * 10; i++)); do
+    screen_up && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 # --libraries: only the libraries step. The update timer runs it when an update couldn't install them and GitHub
-# has nothing newer to update to; it restarts the Core itself once they are in. True when they are in place.
+# has nothing newer to update to; it restarts the Core itself once they are in, and checks it. Exit status: 0 this
+# run installed them, 3 they were already in place (nothing to do), 4 another install of them is running (left to
+# it), 5 npm couldn't reach its registry, 1 any other failure. The previous libraries are still in use after 1 or 5.
 refresh_libraries() {
   [ "$(id -u)" != 0 ] || [ -n "${JARVIS_CORE_ALLOW_ROOT:-}" ] || die "Run it as yourself, not as root."
   section "The brain's libraries"
   deps_install
-  case "$DEPS_RESULT" in current | installed | none | dry-run) return 0 ;; esac
+  case "$DEPS_RESULT" in
+    installed | dry-run) return 0 ;;
+    current | none) return 3 ;;
+    busy) return 4 ;;
+  esac
+  [ "$DEPS_NET" = 1 ] && return 5
   return 1
 }
 
@@ -1374,6 +1510,7 @@ main() {
       --dry-run | -n) DRY_RUN=1 ;;
       --refresh) REFRESH=1 ;;
       --libraries) REFRESH=1 LIBS_ONLY=1 ;;
+      --keep-old) KEEP_OLD=1 ;;
       --help | -h)
         usage
         return 0
@@ -1384,6 +1521,10 @@ main() {
         ;;
     esac
   done
+  if [ "$KEEP_OLD" = 1 ] && [ "$LIBS_ONLY" != 1 ]; then # only the update timer's libraries step keeps them aside
+    usage
+    return 2
+  fi
   trap '[ -n "$TMP" ] && rm -rf "$TMP"' EXIT
   if [ "$LIBS_ONLY" = 1 ]; then
     refresh_libraries

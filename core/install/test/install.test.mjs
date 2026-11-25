@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import {
   makeSandbox, makeRepo, install, cli, runScript, stubLog, snapshot, freePort, stopCore, CLI,
-  GSETTINGS_DEFAULTS, GDM_STOCK, USER, CORE,
+  GSETTINGS_DEFAULTS, GDM_STOCK, USER, CORE, installAsync, cliAsync,
 } from './harness.mjs';
 
 const RULE = `${USER} ALL=(root) NOPASSWD: /usr/sbin/smartctl -j -H -A -i /dev/sd[a-z], /usr/sbin/smartctl -j -H -A -i /dev/nvme[0-9]n[0-9]`;
@@ -534,6 +534,11 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.match(broken, /✗ Jarvis Core didn't answer within 3 seconds/);
       assert.match(broken, /\nJarvis Core isn't answering\. Check it: jarvis-core status, then jarvis-core logs\n/);
       assert.doesNotMatch(broken, /Jarvis Core is up to date/);
+      // the refresh that goes back says so, never "up to date" (whether or not the previous version answers within
+      // this test's short start wait)
+      const back = r.out.slice(r.out.indexOf('going back to'));
+      assert.doesNotMatch(back, /Jarvis Core is up to date/);
+      assert.match(back, /\nJarvis Core is back on [0-9a-f]+; [0-9a-f]+ didn't start properly, so it is skipped until a newer version\.\n|\nJarvis Core isn't answering\. Check it/);
       assert.equal(head(), good, 'back on the version before');
       assert.ok(await ping(), 'the previous version runs again');
       const events = fs.readFileSync(path.join(dataDir, 'update-events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -565,7 +570,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       const r = cli(sb, ['update'], { env: { ...env, STUB_NPM_FAIL: '1' } });
       assert.equal(r.code, 0, r.out);
       // the libraries that were there are still the ones in use, and it says so (not "runs without them")
-      assert.match(r.out, /! Couldn't install this version's libraries \(npm ci failed: no internet\?\)\. The previous ones are\n\s+still in use\. npm said:/);
+      assert.match(r.out, /! Couldn't install this version's libraries \(npm ci failed: no internet\?\)\.\n\s+The previous ones are still in use\. npm said:/);
       assert.doesNotMatch(r.out, /runs without/);
       assert.match(r.out, /EAI_AGAIN/);
       assert.match(r.out, /Automatic updates try again by themselves \(jarvis-core autoupdate status says when\)\./);
@@ -578,7 +583,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       fs.rmSync(path.join(app, 'core/node_modules'), { recursive: true, force: true });
       const r1 = cli(sb, ['update'], { env: { ...env, STUB_NPM_FAIL: '1' } });
       assert.equal(r1.code, 0, r1.out);
-      assert.match(r1.out, /! Couldn't install the brain's libraries \(npm ci failed: no internet\?\)\. Jarvis Core runs without\n\s+them for now: its Claude work, notifications and speech are off\. npm said:/);
+      assert.match(r1.out, /! Couldn't install the brain's libraries \(npm ci failed: no internet\?\)\.\n\s+Jarvis Core runs without them for now: its Claude work, notifications and speech are off\.\n\s+npm said:/);
       assert.doesNotMatch(r1.out, /still in use/);
       assert.ok(!fs.existsSync(path.join(app, 'core/node_modules')));
       // the next update with the internet back installs them
@@ -593,7 +598,7 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       const lockHash = () => execFileSync('sha256sum', [path.join(app, 'core/package-lock.json')]).toString().split(' ')[0];
       const auState = path.join(stateDir, 'autoupdate');
       const npmRuns = () => stubLog(sb).filter((l) => l.startsWith('npm ci')).length;
-      const restarts = () => stubLog(sb).filter((l) => l === 'systemctl --user restart jarvis-core.service').length;
+      const restarts = () => stubLog(sb).filter((l) => /^systemctl --user (try-)?restart jarvis-core\.service$/.test(l)).length;
       const lastEvent = () => JSON.parse(fs.readFileSync(path.join(dataDir, 'update-events.jsonl'), 'utf8').trim().split('\n').at(-1));
       // a version with new libraries arrives while npm's registry is down: the update goes ahead, the old libraries stay
       fs.appendFileSync(path.join(repo.work, 'core/package-lock.json'), '\n');
@@ -618,7 +623,8 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.equal(restarts(), 0, 'a try that fails restarts nothing');
       assert.match(r.out, /The brain's libraries still didn't install; the next try is at the first check after \w+ \d+ \d+:\d\d [AP]M/);
       assert.match(fs.readFileSync(auState, 'utf8'), /^libs_failed=\d+$/m);
-      assert.match(cli(sb, ['autoupdate', 'status'], { env }).out, /The last try failed \(\w+ \d+ \d+:\d\d [AP]M\); the next automatic update check after \w+ \d+ \d+:\d\d [AP]M tries again\./);
+      s = cli(sb, ['autoupdate', 'status'], { env }).out;
+      assert.match(s, /The last try failed \(\w+ \d+ \d+:\d\d [AP]M: no internet\?\); the next automatic update check after \w+ \d+ \d+:\d\d [AP]M tries again\.\n\s+npm said: npm error code EAI_AGAIN\n/);
       assert.match(cli(sb, ['status'], { env }).out, /the next automatic update check after \w+ \d+ \d+:\d\d [AP]M tries again/);
       // the checks of the next 2 hours leave npm alone, even with the internet back
       fs.writeFileSync(sb.log, '');
@@ -639,7 +645,9 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(await ping());
       assert.doesNotMatch(fs.readFileSync(auState, 'utf8'), /libs_failed/);
       assert.deepEqual([lastEvent().rule, lastEvent().level], ['core.update', 'info']);
-      assert.match(lastEvent().message, /installed the brain's libraries/);
+      // true after a fresh install too, where no update happened
+      assert.equal(lastEvent().message, "Jarvis Core installed the brain's libraries that couldn't be downloaded before, and restarted to load them");
+      assert.ok(!fs.existsSync(path.join(app, 'core/node_modules.old')), 'the previous libraries go once the Core holds up');
       assert.match(cli(sb, ['status'], { env }).out, /✓ The brain's libraries are installed \(Claude, notifications and speech\)/);
       assert.doesNotMatch(cli(sb, ['autoupdate', 'status'], { env }).out, /! The brain's libraries/);
       // from then on a check is a plain "up to date"
@@ -657,18 +665,24 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.equal(restarts(), 1);
       assert.equal(fs.readFileSync(marker, 'utf8').trim(), lockHash());
       assert.ok(await ping());
-      // the installer's libraries step on its own: true when they are in place, false (old ones kept) when not
+      // the installer's libraries step on its own: 3 when they were already in place, 5 when npm couldn't reach
+      // its registry (old ones kept), 1 for any other failure, 0 when this run installed them
       r = install(sb, ['--libraries'], { env });
-      assert.equal(r.code, 0, r.out);
+      assert.equal(r.code, 3, r.out);
       assert.match(r.out, /━━ The brain's libraries\n  ✓ The brain's libraries are installed \(the Claude SDK, web-push and the speech libraries\)\n/);
       fs.rmSync(marker);
       r = install(sb, ['--libraries'], { env: { ...env, STUB_NPM_FAIL: '1' } });
-      assert.equal(r.code, 1, r.out);
-      assert.match(r.out, /The previous ones are\n\s+still in use/);
+      assert.equal(r.code, 5, r.out);
+      assert.match(r.out, /\n\s+The previous ones are still in use\. npm said:/);
       assert.ok(fs.existsSync(path.join(app, 'core/node_modules/.stub-npm-ci')));
+      r = install(sb, ['--libraries'], { env: { ...env, STUB_NPM_FAIL: 'script' } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /! Couldn't install this version's libraries \(npm ci failed\)\.\n\s+The previous ones are still in use\. npm said:\n\s+npm error code 1/);
       r = install(sb, ['--libraries'], { env });
       assert.equal(r.code, 0, r.out);
       assert.equal(fs.readFileSync(marker, 'utf8').trim(), lockHash());
+      assert.ok(!fs.existsSync(path.join(app, 'core/node_modules.old')), 'without --keep-old the previous libraries go');
+      assert.equal(install(sb, ['--keep-old'], { env }).code, 2, '--keep-old only goes with --libraries');
     });
 
     await t.test('autoupdate off and on; a timer set up by hand is taken over by the next update', () => {
@@ -757,13 +771,29 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(!fs.existsSync(marker), 'no systemd-run without a desktop session');
       assert.match(r.out, /━━ The screen\n  ! The dashboard isn't on the screen: you aren't logged in there right now \(it starts when you log in\)\n/);
       assert.doesNotMatch(r.out, /already starts at every login/);
-      // the desktop is up (GNOME exported its display) and no dashboard is on the screen: it comes back
-      r = install(sb, ['--refresh'], { env: { ...asOwner, STUB_SHOW_ENV: 'XDG_RUNTIME_DIR=/run/user/1000\nWAYLAND_DISPLAY=wayland-0' } });
-      assert.equal(r.code, 0, r.out);
-      assert.match(r.out, /━━ The screen\n  ✓ Put the dashboard back on the screen\n/);
+      // the desktop is up (GNOME exported its display) and no dashboard is on the screen: it comes back, and it
+      // says so once Chrome is up
+      const chromeStub = path.join(sb.stubs, 'google-chrome-stable');
+      const plainChrome = fs.readFileSync(chromeStub, 'utf8');
+      const profile = path.join(sb.home, '.local/share/jarvis-core-screen');
+      const showEnv = 'XDG_RUNTIME_DIR=/run/user/1000\nWAYLAND_DISPLAY=wayland-0';
+      fs.writeFileSync(chromeStub, '#!/bin/bash\necho "google-chrome-stable $*" >> "$STUB_LOG"\n[ "$1" = --version ] && { echo "Google Chrome 142"; exit 0; }\ntrap \'kill $! 2>/dev/null; exit 0\' TERM\nsleep 60 & wait\n', { mode: 0o755 });
+      try {
+        r = install(sb, ['--refresh'], { env: { ...asOwner, STUB_SHOW_ENV: showEnv, STUB_SYSTEMD_RUN_EXEC: '1' } });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /━━ The screen\n  ✓ Put the dashboard back on the screen\n/);
+      } finally {
+        spawnSync('pkill', ['-f', '--', `--user-data-dir=${profile}( |$)`]);
+        fs.writeFileSync(chromeStub, plainChrome, { mode: 0o755 });
+      }
       const log = stubLog(sb);
       const call = (Array.isArray(log) ? log : String(log).split('\n')).filter((l) => l.startsWith('systemd-run ')).pop();
       assert.match(call, /^systemd-run --user --collect --quiet --unit=jarvis-core-screen-\d+ --description=Jarvis Core screen \S+\/jarvis-core screen$/);
+      // started, but Chrome doesn't come up (missing, or a display left over from a session that ended): not "put back"
+      r = install(sb, ['--refresh'], { env: { ...asOwner, STUB_SHOW_ENV: showEnv } });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /━━ The screen\n  ! Started the dashboard, but it isn't on the screen yet \(log out and back in, or run: jarvis-core open\)\n/);
+      assert.doesNotMatch(r.out, /Put the dashboard back/);
       // from a terminal (not the timer), a refresh with no dashboard on the screen starts nothing either
       fs.rmSync(marker, { force: true });
       r = install(sb, ['--refresh'], { env: { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_CGROUP_FILE: path.join(sb.root, 'no-such-cgroup'), STUB_SHOW_ENV: 'WAYLAND_DISPLAY=wayland-0' } });
@@ -796,6 +826,318 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.ok(stubLog(sb).includes('systemctl --user disable --now --quiet jarvis-core-autoupdate.timer'));
       assert.match(r.out, /Stopped the automatic updates and removed their timer/);
       assert.match(r.out, /Jarvis Core is uninstalled/);
+    });
+  } finally {
+    stopCore(sb);
+    sb.cleanup();
+  }
+});
+
+// ------------------------------------------------------------------------------------------ the brain's libraries
+
+// A fault that shows only with this version's own libraries: the Core stops 2 seconds after it starts (after its
+// first answers), once node_modules matches its lockfile (a stand-in for a release whose new libraries break it).
+const FAULT_WITH_OWN_LIBRARIES = `import { readFileSync as __faultRead } from 'node:fs';
+import { createHash as __faultHash } from 'node:crypto';
+setTimeout(() => {
+  try {
+    const lock = __faultRead(new URL('../package-lock.json', import.meta.url));
+    const have = __faultRead(new URL('../node_modules/.jarvis-lock-sha256', import.meta.url), 'utf8').trim();
+    if (__faultHash('sha256').update(lock).digest('hex') === have) process.exit(1);
+  } catch {}
+}, 2000);
+`;
+
+test("the brain's libraries: one install at a time; a retry that breaks the Core is taken out again", async (t) => {
+  const sb = makeSandbox({ tsMode: 'Running', nodeVersion: 'v22.11.0', pkgs: ['git', 'curl', 'lm-sensors', 'smartmontools'] });
+  const repo = makeRepo(sb.root);
+  const port = await freePort();
+  const env = { JARVIS_CORE_REPO: repo.url, JARVIS_CORE_PORT: String(port), JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '20' };
+  const app = path.join(sb.home, 'jarvis-core-app');
+  const core = path.join(app, 'core');
+  const stage = path.join(core, '.npm-install');
+  const old = path.join(core, 'node_modules.old');
+  const marker = path.join(core, 'node_modules/.jarvis-lock-sha256');
+  const auState = path.join(sb.home, '.config/jarvis-core/install/autoupdate');
+  const events = path.join(sb.home, '.local/share/jarvis-core/update-events.jsonl');
+  const lockHash = () => execFileSync('sha256sum', [path.join(core, 'package-lock.json')]).toString().split(' ')[0];
+  const markerOk = () => fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim() === lockHash();
+  const pkgs = () => (fs.existsSync(path.join(core, 'node_modules')) ? fs.readdirSync(path.join(core, 'node_modules')).filter((n) => /^pkg\d+$/.test(n)).length : -1);
+  const npmRuns = () => stubLog(sb).filter((l) => l.startsWith('npm ci')).length;
+  const restarts = () => stubLog(sb).filter((l) => /^systemctl --user (try-)?restart jarvis-core\.service$/.test(l)).length;
+  const auGet = (key) => {
+    const m = fs.existsSync(auState) ? new RegExp(`^${key}=(.*)$`, 'm').exec(fs.readFileSync(auState, 'utf8')) : null;
+    return m ? m[1] : null;
+  };
+  const auShift = (key, by) => fs.writeFileSync(auState, fs.readFileSync(auState, 'utf8').replace(new RegExp(`^${key}=(\\d+)$`, 'm'), (_, v) => `${key}=${Number(v) - by}`));
+  const lastEvent = () => JSON.parse(fs.readFileSync(events, 'utf8').trim().split('\n').at(-1));
+  const ping = async () => {
+    try {
+      return (await fetch(`http://127.0.0.1:${port}/api/ping`)).ok;
+    } catch {
+      return false;
+    }
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const npmWriting = async () => {
+    for (let i = 0; i < 600 && !fs.existsSync(path.join(stage, 'node_modules')); i++) await sleep(25);
+    assert.ok(fs.existsSync(path.join(stage, 'node_modules')), 'npm ci started writing');
+  };
+  const tick = (extra = {}) => cliAsync(sb, ['autoupdate-tick'], { env: { ...env, ...extra } });
+  const newRelease = (msg) => {
+    fs.appendFileSync(path.join(repo.work, 'core/package-lock.json'), '\n');
+    repo.commit(msg);
+  };
+  const clean = () => assert.ok(!fs.existsSync(stage) && !fs.existsSync(old), 'no staging folder, no previous libraries left aside');
+  try {
+    const r0 = install(sb, [], { answers: ['n', 'n', 'n', 'y'], env });
+    assert.equal(r0.code, 0, r0.out);
+    assert.ok(markerOk());
+
+    await t.test('jarvis-core update and a timer check at once: one npm ci, and the check steps aside', async () => {
+      newRelease('a release with new libraries');
+      fs.writeFileSync(sb.log, '');
+      const update = cliAsync(sb, ['update'], { env: { ...env, STUB_NPM_SLOW: '3' } });
+      await npmWriting();
+      await sleep(1000);
+      const check = await tick({ STUB_NPM_SLOW: '3' });
+      const u = await update;
+      assert.equal(u.code, 0, u.out);
+      assert.equal(check.code, 0, check.out);
+      assert.match(check.out, /The brain's libraries are being installed right now \(jarvis-core update\?\); the next check looks again\./);
+      assert.doesNotMatch(check.out, /installing them again|Couldn't install|Installed the brain's libraries/);
+      assert.equal(npmRuns(), 1, 'one npm ci');
+      assert.match(u.out, /✓ Installed the brain's libraries/);
+      assert.doesNotMatch(u.out, /Couldn't install|no internet/);
+      assert.match(u.out, /\nJarvis Core is up to date\.\n/);
+      assert.ok(markerOk(), 'the libraries match the lockfile');
+      assert.equal(pkgs(), 30, 'a complete tree');
+      clean();
+      assert.equal(auGet('libs_failed'), null, 'no back-off');
+      assert.equal(restarts(), 1, "only the update's own restart");
+      assert.ok(await ping());
+    });
+
+    await t.test('a timer check installing them while the owner types jarvis-core update: it waits, then finds them in place', async () => {
+      newRelease('another release with new libraries');
+      let r = await tick({ STUB_NPM_FAIL: '1' });
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers, but the brain's libraries didn't install/);
+      assert.ok(!markerOk());
+      fs.writeFileSync(sb.log, '');
+      const check = tick({ STUB_NPM_SLOW: '3' });
+      await npmWriting();
+      // meanwhile both status commands say what is going on
+      for (const args of [['status'], ['autoupdate', 'status']]) {
+        assert.match(cli(sb, args, { env }).out, /! The brain's libraries are out of date \(this version needs new ones\)\.\n\s+They are being installed right now\.\n/);
+      }
+      await sleep(500);
+      const u = await cliAsync(sb, ['update'], { env: { ...env, STUB_NPM_SLOW: '3' } });
+      r = await check;
+      assert.equal(r.code, 0, r.out);
+      assert.equal(u.code, 0, u.out);
+      assert.equal(npmRuns(), 1, 'one npm ci');
+      assert.match(u.out, /Another install of the brain's libraries is running \(the update timer, or jarvis-core update\); waiting for it\.\.\.\n\s+✓ The brain's libraries are installed/);
+      assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+      assert.doesNotMatch(r.out + u.out, /Couldn't install|no internet/);
+      assert.ok(markerOk());
+      assert.equal(pkgs(), 30);
+      clean();
+      assert.equal(auGet('libs_failed'), null);
+      assert.ok(await ping());
+    });
+
+    await t.test('two install.sh --libraries at once: the second steps aside (exit 4), the first finishes', async () => {
+      fs.writeFileSync(marker, 'another version\n');
+      fs.writeFileSync(sb.log, '');
+      const first = installAsync(sb, ['--libraries'], { env: { ...env, STUB_NPM_SLOW: '3' } });
+      await npmWriting();
+      await sleep(500);
+      const second = install(sb, ['--libraries'], { env: { ...env, STUB_NPM_SLOW: '3' } });
+      const f = await first;
+      assert.equal(f.code, 0, f.out);
+      assert.match(f.out, /✓ Installed the brain's libraries/);
+      assert.equal(second.code, 4, second.out);
+      assert.match(second.out, /The brain's libraries are being installed right now \(by jarvis-core update or the update timer\); leaving it to that/);
+      assert.equal(npmRuns(), 1);
+      assert.ok(markerOk());
+      assert.equal(pkgs(), 30);
+      clean();
+      // already in place: exit 3 (nothing to do)
+      const r = install(sb, ['--libraries'], { env });
+      assert.equal(r.code, 3, r.out);
+    });
+
+    await t.test('new libraries that make the Core fail are taken out again, and left alone until a newer version', async () => {
+      const mainFile = path.join(repo.work, 'core/server/main.mjs');
+      const original = fs.readFileSync(mainFile, 'utf8');
+      fs.writeFileSync(mainFile, original.replace('#!/usr/bin/env node\n', `#!/usr/bin/env node\n${FAULT_WITH_OWN_LIBRARIES}`));
+      newRelease('release X: new libraries, and a fault that shows only with them');
+      // the timer takes X while npm's registry is down: X answers on the previous libraries
+      let r = await tick({ STUB_NPM_FAIL: '1', JARVIS_CORE_UPDATE_CHECK_SEC: '3' });
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers, but the brain's libraries didn't install/);
+      const previous = fs.readFileSync(marker, 'utf8');
+      // the next check installs them and restarts the Core; X stops within the check, so they come out again
+      fs.writeFileSync(sb.log, '');
+      r = await tick({ JARVIS_CORE_UPDATE_CHECK_SEC: '3' });
+      assert.equal(r.code, 0, r.out);
+      assert.equal(npmRuns(), 1);
+      assert.match(r.out, /The brain's new libraries made Jarvis Core fail: went back to the previous ones, and it answers/);
+      assert.doesNotMatch(r.out, /Jarvis Core restarted to load them, and it answers/);
+      assert.ok(await ping(), 'the Core answers on the previous libraries');
+      await sleep(2500);
+      assert.ok(await ping(), 'and keeps answering');
+      assert.equal(fs.readFileSync(marker, 'utf8'), previous, 'the previous libraries are back');
+      clean();
+      assert.equal(auGet('libs_bad'), lockHash());
+      assert.deepEqual([lastEvent().rule, lastEvent().level], ['core.rollback', 'warn']);
+      assert.equal(lastEvent().message, "The brain's new libraries made Jarvis Core fail, so it went back to the previous ones");
+      // the next check leaves this version's libraries alone, and the status commands say why
+      fs.writeFileSync(sb.log, '');
+      r = await tick();
+      assert.match(r.out, /^Up to date: GitHub's core\/ is the same as this copy's\.\nThe brain's libraries are out of date \(this version needs new ones\): this version's own made Jarvis Core fail, so they wait for a newer version\.\n$/);
+      assert.equal(npmRuns() + restarts(), 0, 'no npm, no restart');
+      for (const args of [['status'], ['autoupdate', 'status']]) {
+        assert.match(cli(sb, args, { env }).out, /! The brain's libraries are out of date \(this version needs new ones\)\.\n\s+This version's new libraries made Jarvis Core fail \(\w+ \d+ \d+:\d\d [AP]M\), so it went back to the previous ones; a newer version tries again\./);
+      }
+      // with no libraries at all before, they are taken out again and the Core runs without them, as before
+      newRelease('release X2: the same fault');
+      fs.rmSync(path.join(core, 'node_modules'), { recursive: true, force: true });
+      r = await tick({ STUB_NPM_FAIL: '1', JARVIS_CORE_UPDATE_CHECK_SEC: '3' });
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers, but the brain's libraries didn't install/);
+      r = await tick({ JARVIS_CORE_UPDATE_CHECK_SEC: '3' });
+      assert.match(r.out, /The brain's new libraries made Jarvis Core fail: took them out again, and it answers/);
+      assert.ok(!fs.existsSync(path.join(core, 'node_modules')), 'no libraries, as before');
+      clean();
+      assert.equal(lastEvent().message, "The brain's new libraries made Jarvis Core fail, so it took them out again and runs without them");
+      assert.ok(await ping());
+      // a newer version without the fault: its update installs its libraries, and they stay
+      fs.writeFileSync(mainFile, original);
+      newRelease('release Y: fixed');
+      r = await tick({ JARVIS_CORE_UPDATE_CHECK_SEC: '3' });
+      assert.match(r.out, /Updated to [0-9a-f]+; it answers\n/);
+      assert.ok(markerOk());
+      await sleep(1500);
+      assert.ok(await ping());
+      assert.equal(auGet('libs_bad'), null, 'forgotten once the libraries are right');
+    });
+
+    await t.test('a check of new libraries that was cut short (a shutdown) is finished by the next check; leftovers are tidied', async () => {
+      // new libraries in place, the previous ones still aside, and the check never finished
+      fs.mkdirSync(old, { recursive: true });
+      fs.writeFileSync(path.join(old, '.jarvis-lock-sha256'), 'another version\n');
+      fs.appendFileSync(auState, `libs_trying=${lockHash()}\n`);
+      fs.writeFileSync(sb.log, '');
+      let r = await tick();
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /The check of the brain's new libraries was cut short: checking them now/);
+      assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+      assert.equal(restarts(), 1);
+      assert.equal(npmRuns(), 0);
+      clean();
+      assert.equal(auGet('libs_trying'), null);
+      // a staging folder left by a check stopped during npm ci (up to 460 MB) is removed by the next check
+      fs.mkdirSync(path.join(stage, 'node_modules'), { recursive: true });
+      r = await tick();
+      assert.equal(r.code, 0, r.out);
+      clean();
+    });
+
+    await t.test('a Core the owner stopped stays stopped: the libraries wait until it runs again', async () => {
+      fs.writeFileSync(marker, 'another version\n');
+      execFileSync('systemctl', ['--user', 'stop', 'jarvis-core.service'], { env: { ...sb.env } });
+      assert.ok(!(await ping()));
+      fs.writeFileSync(sb.log, '');
+      let r = await tick();
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /The brain's libraries are out of date \(this version needs new ones\), and Jarvis Core isn't running: they wait until it runs again\./);
+      assert.equal(npmRuns() + restarts(), 0);
+      assert.ok(!(await ping()), 'still stopped');
+      assert.match(cli(sb, ['status'], { env }).out, /! The brain's libraries are out of date \(this version needs new ones\)\.\n\s+Jarvis Core isn't running; the next automatic update check after it starts tries again\./);
+      // started again: the next check installs them
+      assert.equal(cli(sb, ['restart'], { env }).code, 0);
+      r = await tick();
+      assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+      assert.ok(markerOk());
+    });
+
+    await t.test("a Core that doesn't come back without the new libraries either: they aren't blamed, and get another try later", async () => {
+      const unit = path.join(sb.home, '.config/systemd/user/jarvis-core.service');
+      const good = fs.readFileSync(unit, 'utf8');
+      fs.writeFileSync(marker, 'another version\n');
+      fs.writeFileSync(unit, good.replace(/^ExecStart=.*$/m, 'ExecStart=/bin/false')); // it can't start at all
+      try {
+        fs.writeFileSync(sb.log, '');
+        const r = await tick({ JARVIS_CORE_START_WAIT_SEC: '3' });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Jarvis Core isn't answering, with the brain's new libraries or without them: went back to the previous ones \(jarvis-core logs\); they are tried again later/);
+        assert.equal(fs.readFileSync(marker, 'utf8'), 'another version\n', 'the previous libraries are back');
+        clean();
+        assert.equal(auGet('libs_bad'), null, 'the libraries are not blamed');
+        assert.match(auGet('libs_failed') ?? '', /^\d+$/);
+        assert.deepEqual([lastEvent().rule, lastEvent().level], ['core.rollback', 'warn']);
+        assert.match(lastEvent().message, /^Jarvis Core stopped answering after it restarted to load the brain's new libraries, and going back didn't help/);
+      } finally {
+        fs.writeFileSync(unit, good);
+      }
+      assert.equal(cli(sb, ['restart'], { env }).code, 0);
+      // 2 hours later, with the Core answering again, they go in
+      auShift('libs_failed', 7200);
+      const r = await tick();
+      assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+      assert.ok(markerOk());
+    });
+
+    await t.test("npm's own words decide the message and the wait: a full disk waits longer each time, no internet stays at 2 hours", async () => {
+      fs.writeFileSync(marker, 'another version\n');
+      fs.writeFileSync(sb.log, '');
+      let r = await tick({ STUB_NPM_FAIL: 'enospc' });
+      assert.match(r.out, /! Couldn't install this version's libraries \(npm ci failed: the disk is full\)\.\n\s+The previous ones are still in use\. npm said:\n[\s\S]*ENOSPC/);
+      assert.doesNotMatch(r.out, /no internet/);
+      assert.equal(restarts(), 0);
+      const first = Number(auGet('libs_failed'));
+      assert.match(r.out, /The brain's libraries still didn't install; the next try is at the first check after/);
+      assert.equal(Number(auGet('libs_wait')), 7200);
+      let s = cli(sb, ['autoupdate', 'status'], { env }).out;
+      assert.match(s, /The last try failed \(\w+ \d+ \d+:\d\d [AP]M: the disk is full\); the next automatic update check after \w+ \d+ \d+:\d\d [AP]M tries again\./);
+      assert.match(s, /npm said: npm error nospc ENOSPC: no space left on device, write|npm said: npm error code ENOSPC/);
+      // 2 hours later, full again: the next wait is 4 hours, then 8, up to a day
+      auShift('libs_failed', 7200);
+      r = await tick({ STUB_NPM_FAIL: 'enospc' });
+      assert.equal(Number(auGet('libs_wait')), 14400);
+      assert.ok(Number(auGet('libs_failed')) >= first);
+      auShift('libs_failed', 7199);
+      fs.writeFileSync(sb.log, '');
+      r = await tick();
+      assert.equal(npmRuns(), 0, 'not before 4 hours');
+      assert.match(r.out, /the next try is at the first check after/);
+      // a broken lockfile says so
+      auShift('libs_failed', 14400);
+      r = await tick({ STUB_NPM_FAIL: 'lockfile' });
+      assert.match(r.out, /\(npm ci failed: this version's lockfile is broken\)/);
+      assert.equal(Number(auGet('libs_wait')), 28800);
+      // no internet: what a real npm 10 printed (only "Exit handler never called!"), with the reason in its own log
+      auShift('libs_failed', 28800);
+      r = await tick({ STUB_NPM_FAIL: 'exit-handler' });
+      assert.match(r.out, /\(npm ci failed: no internet\?\)/);
+      assert.match(r.out, /npm's own log: .*failed with ECONNREFUSED/);
+      assert.equal(auGet('libs_wait'), null, 'a network failure waits the usual 2 hours');
+      // the clock went back since the last try: no time from the future, and the next check tries
+      auShift('libs_failed', -3600);
+      s = cli(sb, ['autoupdate', 'status'], { env }).out;
+      assert.match(s, /The last try failed \(no internet\?\); the next automatic update check tries again\./);
+      // GitHub out of reach: the libraries are tried anyway (npm's registry is somewhere else)
+      fs.renameSync(repo.work, `${repo.work}.away`);
+      try {
+        fs.writeFileSync(sb.log, '');
+        r = await tick();
+        assert.match(r.out, /Couldn't reach GitHub; the next check is in 20 minutes\./);
+        assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+      } finally {
+        fs.renameSync(`${repo.work}.away`, repo.work);
+      }
+      assert.ok(markerOk());
+      assert.equal(auGet('libs_failed'), null);
+      assert.doesNotMatch(cli(sb, ['autoupdate', 'status'], { env }).out, /npm said/);
     });
   } finally {
     stopCore(sb);

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -95,7 +95,14 @@ if [ "$1" = -n ]; then
 fi
 [ "$1" = -v ] && exit 0
 exec "$@"`,
-  'systemd-run': `echo "systemd-run $*" >> "$STUB_LOG"; touch "$STUB_DIR/systemd-run-called"; exit 0`,
+  // systemd-run: only logs, unless STUB_SYSTEMD_RUN_EXEC=1: then it also starts the command, detached, as a
+  // unit of its own would run it.
+  'systemd-run': `echo "systemd-run $*" >> "$STUB_LOG"; touch "$STUB_DIR/systemd-run-called"
+if [ "\${STUB_SYSTEMD_RUN_EXEC:-0}" = 1 ]; then
+  while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done
+  setsid "$@" </dev/null >/dev/null 2>&1 &
+fi
+exit 0`,
   'apt-get': `echo "apt-get $*" >> "$STUB_LOG"; exit 0`,
   'dpkg-query': `pkg="\${@: -1}"
 case " \${STUB_PKGS:-} " in *" $pkg "*) printf 'install ok installed' ;; *) exit 1 ;; esac`,
@@ -145,6 +152,7 @@ case "$1" in
   disable) rm -f "$STUB_DIR/enabled"; for a in "$@"; do [ "$a" = --now ] && stop; done; exit 0 ;;
   start) start ;;
   restart) stop; start ;;
+  try-restart) [ -f "$STUB_DIR/active" ] && { stop; start; }; exit 0 ;;
   stop) stop ;;
   show-environment) [ -n "\${STUB_SHOW_ENV:-}" ] && printf '%s\n' "$STUB_SHOW_ENV"; exit 0 ;;
   *) exit 0 ;;
@@ -170,13 +178,35 @@ esac`,
 [ "$1" = --version ] && { echo "Google Chrome 142.0.7444.175"; exit 0; }
 exit 0`,
   git: `echo "git $*" >> "$STUB_LOG"; exec ${REAL_GIT} "$@"`,
-  // npm: "npm ci" makes node_modules in the folder it runs in (a marker, nothing importable) unless
-  // STUB_NPM_FAIL=1 (no internet); never touches the network.
+  // npm: "npm ci" makes node_modules in the folder it runs in (a marker, nothing importable); never touches the
+  // network. STUB_NPM_FAIL: 1 (no internet), enospc (a full disk), lockfile (out of sync with package.json),
+  // exit-handler (what a real npm 10 printed against an unreachable registry: only "Exit handler never called!",
+  // with the network errors in its debug log), script (an install script that fails). STUB_NPM_SLOW=<s>: it
+  // writes 10 packages a second for that long, like a real install, and fails as npm does if its folder goes
+  // away meanwhile.
   npm: `echo "npm $* (in $PWD)" >> "$STUB_LOG"
 if [ "$1" = ci ]; then
-  if [ "\${STUB_NPM_FAIL:-0}" = 1 ]; then echo "npm error code EAI_AGAIN" >&2; echo "npm error request to https://registry.npmjs.org/web-push failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org" >&2; exit 1; fi
-  [ -f package-lock.json ] || { echo "npm error The npm ci command can only install with an existing package-lock.json" >&2; exit 1; }
-  mkdir -p node_modules && echo stub > node_modules/.stub-npm-ci
+  case "\${STUB_NPM_FAIL:-0}" in
+    1) echo "npm error code EAI_AGAIN" >&2; echo "npm error request to https://registry.npmjs.org/web-push failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org" >&2; exit 1 ;;
+    enospc) printf '%s\\n' "npm error code ENOSPC" "npm error syscall write" "npm error errno -28" "npm error nospc ENOSPC: no space left on device, write" "npm error nospc There appears to be insufficient space on your system to finish." >&2; exit 1 ;;
+    lockfile) printf '%s\\n' "npm error code EUSAGE" "npm error" "npm error \\\`npm ci\\\` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with \\\`npm install\\\` before continuing." >&2; exit 1 ;;
+    exit-handler)
+      dbg="$STUB_DIR/npm-debug-$$.log"
+      printf '%s\\n' "12 http fetch GET http://127.0.0.1:9/npm attempt 1 failed with ECONNREFUSED" "231 http fetch GET http://127.0.0.1:9/web-push/-/web-push-3.6.7.tgz attempt 1 failed with ECONNREFUSED" "255 error Exit handler never called!" > "$dbg"
+      printf '%s\\n' "npm error Exit handler never called!" "npm error This is an error with npm itself. Please report this error at:" "npm error   <https://github.com/npm/cli/issues>" "npm error A complete log of this run can be found in: $dbg" >&2; exit 1 ;;
+    script) printf '%s\\n' "npm error code 1" "npm error path $PWD/node_modules/onnxruntime-node" "npm error command failed" "npm error command sh -c node ./script/install" >&2; exit 1 ;;
+  esac
+  [ -f package-lock.json ] || { echo "npm error code ENOENT" >&2; echo "npm error enoent Could not read package.json" >&2; exit 254; }
+  rm -rf node_modules
+  mkdir -p node_modules || exit 254
+  i=0
+  while [ "$i" -lt $(( \${STUB_NPM_SLOW:-0} * 10 )) ]; do
+    { mkdir -p "node_modules/pkg$i" && echo "module.exports = $i;" > "node_modules/pkg$i/index.js"; } 2>/dev/null || { echo "npm error code ENOENT" >&2; echo "npm error enoent ENOENT: no such file or directory, mkdir 'node_modules/pkg$i'" >&2; exit 254; }
+    i=$((i + 1))
+    sleep 0.1
+  done
+  echo stub > node_modules/.stub-npm-ci || exit 254
+  echo "added $i packages"
 fi
 exit 0`,
 };
@@ -315,6 +345,27 @@ export function runScript(sb, script, args = [], { answers = null, noTty = false
 
 export const install = (sb, args, opts) => runScript(sb, INSTALL_SH, args, opts);
 export const cli = (sb, args, opts) => runScript(sb, path.join(sb.home, '.local', 'bin', 'jarvis-core'), args, opts);
+
+// The same, without waiting: for two runs at once (the update timer's check while the owner types an update).
+export function runScriptAsync(sb, script, args = [], { env = {}, noTty = false, timeout = 180_000 } = {}) {
+  const e = { ...sb.env, ...env };
+  if (!noTty) e.JARVIS_CORE_TTY = '/nonexistent/tty';
+  const cmd = noTty ? 'setsid' : 'bash';
+  const argv = noTty ? ['-w', 'bash', script, ...args] : [script, ...args];
+  return new Promise((resolve) => {
+    const p = spawn(cmd, argv, { env: e, cwd: sb.home, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (out += d));
+    const timer = setTimeout(() => p.kill('SIGKILL'), timeout);
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, out });
+    });
+  });
+}
+export const installAsync = (sb, args, opts) => runScriptAsync(sb, INSTALL_SH, args, opts);
+export const cliAsync = (sb, args, opts) => runScriptAsync(sb, path.join(sb.home, '.local', 'bin', 'jarvis-core'), args, opts);
 
 export function stubLog(sb) {
   return fs.readFileSync(sb.log, 'utf8').split('\n').filter(Boolean);
