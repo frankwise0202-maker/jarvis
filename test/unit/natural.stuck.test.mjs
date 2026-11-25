@@ -10,6 +10,12 @@
 //   M2  an unlockSpeech() without a tap (Standby entered again, Voice Mode opened by the wake routine, or
 //       navigator.userActivation saying so) keeps what is known: the wake greeting at once on the device voice
 //   L2  Settings' Test buttons say "Played" only when the audio clock got past the sample
+// The second review's findings (each test failed on aa0b53b):
+//   stuck-1   George came back by himself on the context that stalled: the next tap with nothing playing on it
+//             starts it afresh (iOS can leave it running but silent), once, never under a reply he is speaking
+//   stuck-2   a George reply cancelled after the watchdog's kick counts as a stall
+//   normal-1  George switched off on this device: Hearing and voice → Test's tap still starts a stuck output afresh
+//   normal-2  the words a Test says when it can't tell (Jarvis in the background, the sound restarted meanwhile)
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +23,7 @@ import { installClock, createFakeEngine, createFakeAudio } from './natural.fakes
 import { createFakeSpeech } from './platform.voice.fakeengine.test.mjs';
 import { createAudioOut } from '../../src/platform/voice/natural/audio-out.js';
 import { createHomeBaseVoiceEngine } from '../../src/platform/voice/homebase-voice.js';
-import { samplePlayed, silentSampleText } from '../../src/lib/voice-choice.js';
+import { samplePlayed, silentSampleText, unsureSampleText } from '../../src/lib/voice-choice.js';
 import { watchAway } from '../../src/ui/dom.js';
 
 let loads = 0;
@@ -32,6 +38,8 @@ let loads = 0;
  *     'gesture-start'   any resume() that starts audio, a new context's first one included
  *   model.reviveNeedsGesture: the cure counts only inside a tap (model.gestureUntil)
  * model.canResume(): false = resume() resolves and nothing runs (the E2E's stuck patch).
+ * ctx._deaf (second review): this context runs, its clock moving, but nothing it plays is heard (iOS can leave a
+ * context the interruption stopped like that); model.heard records, for each sample as it begins, whether it was.
  */
 function webkitLikeContext(model) {
   return class Ctx {
@@ -41,6 +49,8 @@ function webkitLikeContext(model) {
       this.destination = { kind: 'destination' };
       this.outputLatency = 0;
       this._zombie = false;
+      this._deaf = false;
+      this._index = model.contexts.length;
       this._acc = 0;
       this._since = null;
       this._sources = new Set();
@@ -143,8 +153,9 @@ function webkitLikeContext(model) {
         disconnect() {},
         start(when) {
           src.when = when;
+          src.begun = false;
           ctx._sources.add(src);
-          model.starts.push({ when, at: ctx.currentTime, wall: Date.now(), duration: src.buffer ? src.buffer.duration : 0 });
+          model.starts.push({ when, at: ctx.currentTime, wall: Date.now(), duration: src.buffer ? src.buffer.duration : 0, ctx: ctx._index });
         },
         stop() {
           if (ctx._sources.delete(src) && src.onended) src.onended();
@@ -155,6 +166,10 @@ function webkitLikeContext(model) {
     _ended() {
       const t = this.currentTime;
       for (const src of Array.from(this._sources)) {
+        if (!src.begun && src.buffer && src.buffer.length > 1 && t >= src.when) {
+          src.begun = true;
+          model.heard.push({ heard: !this._deaf, ctx: this._index });
+        }
         if (src.buffer && t >= src.when + src.buffer.duration) {
           this._sources.delete(src);
           if (src.onended) src.onended();
@@ -165,7 +180,7 @@ function webkitLikeContext(model) {
 }
 
 function newModel(extra = {}) {
-  return { contexts: [], log: [], starts: [], suspendDelayMs: 0, resumeDelayMs: 20, zombie: false, cure: 'suspend-resume', reviveNeedsGesture: false, gestureUntil: 0, ...extra };
+  return { contexts: [], log: [], starts: [], heard: [], suspendDelayMs: 0, resumeDelayMs: 20, zombie: false, cure: 'suspend-resume', reviveNeedsGesture: false, gestureUntil: 0, ...extra };
 }
 
 /** A document whose visibility never changes (visible), with addEventListener. */
@@ -503,4 +518,140 @@ test('Settings Test (L2): leaving Jarvis during the sample (iOS stops its audio 
   flip(true); // after done(): no longer watched
   flip(false);
   assert.equal(watchAway(null).done(), false, 'no document: nothing to say it was away');
+});
+
+test('Settings Test (second review, normal-2): Jarvis in the background during the sample, or its sound restarted meanwhile: words that claim nothing', () => {
+  assert.equal(unsureSampleText({ away: true }), 'Couldn’t tell whether it played: Jarvis was in the background during the test. Tap Test to try again.');
+  assert.equal(unsureSampleText({ voiceName: 'George', away: false }), 'Couldn’t tell whether it played: George’s sound restarted during the test. Tap Test to try again.');
+});
+
+// ---- the second review of v7.8.1 -----------------------------------------------------------------------------------
+
+test('router + audio out (second review, stuck-1): George came back by himself on the context that stalled; iOS can leave such a context running with nothing heard, so the next tap with nothing playing on it starts his sound afresh, once; a tap while he speaks never does', async (t) => {
+  const clock = installClock();
+  const model = newModel({ resumeDelayMs: 20 });
+  const out = createAudioOut({ AudioContextImpl: webkitLikeContext(model), scope: { navigator: {} } });
+  const ctx = await routerWith(t, { audio: out, clock });
+  const tap = () => {
+    model.gestureUntil = clock.now + 1000;
+    ctx.router.unlockSpeech();
+  };
+  /** One reply: 'device', 'George heard' or 'George SILENT' (his clock ran, nothing came out). */
+  const reply = async (text) => {
+    const n = model.heard.length;
+    const r = await ctx.reply(text);
+    const plays = model.heard.slice(n);
+    if (r.voice !== 'george') return r.voice;
+    return plays.length && plays.every((p) => p.heard) ? 'George heard' : 'George SILENT';
+  };
+  tap(); // the first tap of the session
+  clock.advance(200);
+  assert.equal(await reply('George works at first.'), 'George heard');
+  const c0 = model.contexts[0];
+  c0._zombie = true; // a call: the context says it runs, its clock stands still
+  c0._sync();
+  assert.equal(await reply('The reply during the call stalls.'), 'device');
+  c0._zombie = false; // the call is over: iOS runs the context again, and nothing it plays comes out
+  c0._deaf = true;
+  c0._sync();
+  assert.equal(await reply('Right after the call: the iPhone voice, which asks George’s output to run.'), 'device');
+  assert.equal(await reply('George is back by himself, on the context the call stopped.'), 'George SILENT', 'its clock moves: the code can’t tell (the residue until the next tap)');
+  // A tap while George speaks never replaces the context under him (his stream waits on its clock).
+  const ends = [];
+  const s0 = model.starts.length;
+  const h = ctx.router.createSpeechStream({ onEnd: (e) => ends.push(e.reason) });
+  h.append('A longer reply George is speaking when the owner taps. It has a second sentence, too.');
+  h.finish();
+  await ctx.run(() => model.starts.length > s0);
+  tap();
+  assert.equal(model.contexts.length, 1, 'never under George');
+  await ctx.run(() => ends.length > 0);
+  assert.deepEqual(ends, ['done']);
+  // The next tap with nothing playing (Speak, Test, the microphone, Voice Mode opened by hand): afresh.
+  clock.advance(2000);
+  tap();
+  assert.equal(model.contexts.length, 2, 'the context that stalled is replaced at the next idle tap (before the fix: kept for good)');
+  assert.equal(c0.state, 'closed');
+  assert.equal(await reply('After the tap, George is heard again.'), 'George heard');
+  tap(); // once: a later tap keeps the fresh context
+  assert.equal(model.contexts.length, 2);
+  assert.equal(await reply('And again.'), 'George heard');
+});
+
+test('router (second review, stuck-2): a George reply cancelled after the watchdog’s kick (the core tapped in the silence, Stop, a new reply) counts as a stall: the next reply goes to the device voice at once; before the kick, nothing is learned', async (t) => {
+  const ctx = await routerWith(t, { frozen: true });
+  /** A reply cancelled `ms` after George's first chunk was put on the (stopped) clock. */
+  const cancelled = async (text, ms) => {
+    const ends = [];
+    const p0 = ctx.audio.played.length;
+    const h = ctx.router.createSpeechStream({ onEnd: (e) => ends.push(e.reason) });
+    h.append(text);
+    h.finish();
+    await ctx.run(() => ctx.audio.played.length > p0);
+    const at = ctx.clock.now;
+    await ctx.run(() => ctx.clock.now - at >= ms);
+    h.cancel();
+    return ends;
+  };
+  assert.deepEqual(await cancelled('Tapped one second into the silence.', 1000), ['cancelled']);
+  assert.equal(ctx.router.audioStuck(), false, 'before the kick: nothing learned (a route change can take that long)');
+  assert.deepEqual(await cancelled('Tapped two and a half seconds into the silence.', 2500), ['cancelled']);
+  assert.equal(ctx.audio.kicks, 1, 'the second one was kicked at 1.5 s, which did nothing');
+  assert.equal(ctx.router.audioStuck(), true, 'after the kick, which did nothing: as good as a stall (before the fix: nothing learned)');
+  assert.equal(ctx.speech.submitted.length, 0, 'the cancelled replies weren’t said');
+  const next = await ctx.reply('The next question’s answer.');
+  assert.equal(next.voice, 'device');
+  assert.ok(next.silenceMs < 100 && !next.georgeAsked, `at once, George not tried (${JSON.stringify(next)}; before the fix: George tried again, 3.5 s of silence)`);
+});
+
+test('router (second review, stuck-2): a George reply stopped while he plays teaches nothing', async (t) => {
+  const ctx = await routerWith(t, { frozen: false });
+  const ends = [];
+  const h = ctx.router.createSpeechStream({ onEnd: (e) => ends.push(e.reason) });
+  h.append('George speaks a long reply here. The owner taps Stop in the middle of this second sentence of it.');
+  h.finish();
+  await ctx.run(() => ctx.audio.played.length > 0);
+  const at = ctx.clock.now;
+  await ctx.run(() => ctx.clock.now - at >= 2500);
+  h.cancel();
+  assert.deepEqual(ends, ['cancelled']);
+  assert.equal(ctx.router.audioStuck(), false);
+  assert.equal((await ctx.reply('The next one.')).voice, 'george');
+});
+
+test('router + audio out (second review, normal-1): George switched off on this iPhone after a stall; Hearing and voice → Test’s tap still starts the stuck sound afresh, once, so “Tap Test to try again” holds', async (t) => {
+  const clock = installClock();
+  const model = newModel({ resumeDelayMs: 20, reviveNeedsGesture: true });
+  const out = createAudioOut({ AudioContextImpl: webkitLikeContext(model), scope: { navigator: {} } });
+  const ctx = await routerWith(t, { audio: out, clock });
+  model.gestureUntil = clock.now + 1000;
+  ctx.router.unlockSpeech(); // the first tap
+  clock.advance(200);
+  assert.equal((await ctx.reply('George works at first.')).voice, 'george');
+  model.contexts[0]._zombie = true; // it says it runs, its clock stopped; only a fresh context plays
+  model.contexts[0]._sync();
+  assert.equal((await ctx.reply('This reply stalls.')).voice, 'device');
+  assert.equal(ctx.router.audioStuck(), true);
+  ctx.settings.homeBaseSpeak = false; // George off on this iPhone (the home base keeps him for the other devices)
+  // Settings → Home base → Hearing and voice → Test, as senses-settings.js does it: inside the tap the router's
+  // unlock (unlockVoice), then the card's own; the sentence; the sample judged by its clock; "Nothing played"
+  // marks the output stuck (onSilent).
+  const senseTest = () => {
+    model.gestureUntil = clock.now + 1000;
+    ctx.router.unlockSpeech();
+    out.unlock();
+    clock.advance(1500); // the home base makes the sentence
+    const playing = out.play(new Float32Array(24000 * 3).fill(0.1), 24000, out.now() + 0.05);
+    const ctxAtPlay = out.context;
+    clock.advance(3200);
+    if (out.context !== ctxAtPlay) return 'no verdict';
+    if (samplePlayed({ clock: out.now(), when: playing.when, duration: playing.duration })) return 'Played';
+    ctx.router.noteAudioStuck(out);
+    return 'Nothing played';
+  };
+  const tests = [senseTest(), senseTest(), senseTest()];
+  assert.deepEqual(tests, ['Played', 'Played', 'Played'], 'with George off here too (before the fix: Nothing played ×3, the stuck context kept)');
+  assert.equal(model.contexts.length, 2, 'one fresh context, in the first Test’s tap (not one per Test)');
+  assert.equal(model.contexts[0].state, 'closed');
+  assert.equal(ctx.router.audioStuck(), false);
 });

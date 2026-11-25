@@ -244,6 +244,9 @@ function open(deps, options) {
     text: () => s.tx.norm,
     spokenUpTo: () => s.spokenUpTo,
     active: () => !s.ended,
+    // v7.8.1 (second review): how long (ms) the watchdog has counted the clock standing still while the listener
+    // waits on it, now; 0 when it moves or nothing waits. The router counts a cancel past the kick as a stall.
+    stalledMs: () => (s.wd ? s.wd.stalled : 0),
   };
   for (let guard = 0; current && guard < 8; guard++) current.handle.cancel(); // one stream at a time
   current = s;
@@ -635,29 +638,34 @@ function watch(s) {
  * already made play out), everything stops now; the device voice says what wasn't heard: from the last
  * word boundary heard (the clock stopped mid-chunk; one boundary further back when that one came less
  * than stallBackS before the stop; the next chunk if its voice had all been heard), or from the start of
- * the chunk that never started.
+ * the chunk that never started. Second review: a chunk whose voice ended by the clock less than stallBackS
+ * before the stop (the stop in its kept silence, in the pause after it, or as the next chunk's first word
+ * began) may not have reached the owner either: from its last word.
  */
 function stallHandoff(s) {
   if (s.ended) return;
   const cut = s.playIdx;
   const c = s.chunks[cut];
   let from = c ? c.start : s.tx.norm.length;
+  let t = NaN;
+  try {
+    t = s.audio.now() - s.audio.latency();
+  } catch {
+    t = NaN;
+  }
+  // A chunk's last word, when its voice ended (by the clock) less than stallBackS before the stop; else null.
+  const lastWordIfJustEnded = (x) => (x && x.words && x.words.length && Number.isFinite(t) && t - (x.startAt + x.voicedTo) < T.stallBackS ? x.start + x.words[x.words.length - 1].ci : null);
+  const prev = cut > 0 && s.chunks[cut - 1].state === 'done' ? s.chunks[cut - 1] : null;
   if (c && c.state === 'playing') {
-    let t = NaN;
-    try {
-      t = s.audio.now() - s.audio.latency();
-    } catch {
-      t = NaN;
-    }
-    if (Number.isFinite(t) && t >= c.startAt + c.voicedTo) from = c.end;
+    if (Number.isFinite(t) && t >= c.startAt + c.voicedTo) from = lastWordIfJustEnded(c) ?? c.end;
     else if (c.words && c.wordIdx > 0) {
       let k = c.wordIdx - 1; // the last word boundary heard, by the clock
       // Only just begun (or not yet heard: a speaker lagging the clock more than latency() says, the end of
-      // the word before it possibly cut): from the word before it.
-      if (k > 0 && Number.isFinite(t) && t - c.words[k].at < T.stallBackS) k -= 1;
-      from = c.start + c.words[k].ci;
+      // the word before it possibly cut): from the word before it, the chunk before's last one included.
+      if (Number.isFinite(t) && t - c.words[k].at < T.stallBackS) k -= 1;
+      from = k >= 0 ? c.start + c.words[k].ci : (lastWordIfJustEnded(prev) ?? c.start + c.words[0].ci);
     }
-  }
+  } else if (c && c.state === 'scheduled') from = lastWordIfJustEnded(prev) ?? from; // in the pause before it
   s.handoff = { reason: 'stall', cut, from };
   s.wd = null;
   const ids = [];

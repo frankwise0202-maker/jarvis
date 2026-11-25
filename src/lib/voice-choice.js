@@ -11,6 +11,8 @@
 //   samplePlayed({ clock, when, duration })                v7.8.1: did a Test sample played straight through
 //                                                          Web Audio actually play (its clock got past it)?
 //   silentSampleText({ voiceName, os })                    v7.8.1: what a Test says when it didn't
+//   unsureSampleText({ voiceName, away })                  v7.8.1: what it says when it can't tell (Jarvis was
+//                                                          in the background meanwhile, or the sound restarted)
 //
 // The owner never heard a difference through the voice updates: every better voice (George on the home
 // base, George on this device) was off until he found the switch. v7.8 turns George from the home base on
@@ -161,4 +163,12 @@ export function samplePlayed({ clock, when, duration } = {}) {
 /** v7.8.1: what a Test says when its sample didn't play (the device voice speaks replies meanwhile). */
 export function silentSampleText({ voiceName = 'George', os = 'other' } = {}) {
   return `Nothing played: ${voiceName}’s sound didn’t start on ${thisDevice(os)}, so the ${deviceVoiceWord(os)} speaks for now. Tap Test to try again.`;
+}
+
+/**
+ * v7.8.1 (second review): what a Test says when its clock can't tell whether the sample played: Jarvis was in
+ * the background during it (iOS stops its audio there), or `away` false: the sound restarted under it.
+ */
+export function unsureSampleText({ voiceName = 'George', away = true } = {}) {
+  return `Couldn’t tell whether it played: ${away ? 'Jarvis was in the background during the test' : `${voiceName}’s sound restarted during the test`}. Tap Test to try again.`;
 }

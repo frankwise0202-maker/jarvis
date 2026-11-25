@@ -137,21 +137,37 @@ test('stall watchdog: a clock that stops mid-chunk — the device voice starts a
   assert.equal(ctx2.handoffs[0].from, prev.charIndex, `from the word before the last boundary (“${s2.text().slice(prev.charIndex, prev.charIndex + prev.charLength)}”): one word said twice rather than one lost`);
 });
 
-test('stall watchdog: a clock that stops after a chunk’s voice was all heard (in its last silence) — the device voice starts at the next chunk', async (t) => {
-  const ctx = await setup(t);
-  const r = recorder();
-  const s = ctx.mod.createNaturalStream(ctx.deps, r.opts);
-  s.append(TEXT);
-  s.finish();
-  ctx.clock.runUntil(() => ctx.audio.played.length > 0, 30_000);
-  const p0 = ctx.audio.played[0];
-  // The chunk keeps 50 ms of silence after its voice: stop the clock in the middle of it.
-  const target = ctx.audioZero + (p0.when + p0.duration - 0.025) * 1000;
-  ctx.clock.advance(Math.ceil(target - ctx.clock.now));
-  ctx.audio.suspend();
-  ctx.clock.runUntil(() => ctx.handoffs.length > 0, 30_000);
-  assert.equal(r.chunks.length, 1);
-  assert.equal(ctx.handoffs[0].from, r.chunks[0].end, 'not a word of the first chunk again');
+test('stall watchdog: a clock that stops just after a chunk’s voice ended — less than 0.3 s after (in its last silence, in the pause after it, in the first moment of the next chunk): that chunk’s last word again (second review: the L3 step back there too); later: from the next chunk, nothing of the first again', async (t) => {
+  // TEXT's first chunk is “Good evening, sir. The forecast for tonight is mild,”; a 60 ms pause, then the next.
+  const stopAt = async (where) => {
+    const ctx = await setup(t);
+    const r = recorder();
+    const s = ctx.mod.createNaturalStream(ctx.deps, r.opts);
+    s.append(TEXT);
+    s.finish();
+    ctx.clock.runUntil(() => ctx.audio.played.length > 1, 30_000);
+    const [p0, p1] = ctx.audio.played;
+    // The fake audio keeps 50 ms of silence after a chunk's voice and 20 ms before it.
+    const at = { voiceEnd0: p0.when + p0.duration - 0.05, voice1: p1.when + 0.02 };
+    const x = where(at);
+    ctx.clock.advance(Math.ceil(ctx.audioZero + x * 1000 - ctx.clock.now));
+    ctx.audio.suspend();
+    ctx.clock.runUntil(() => ctx.handoffs.length > 0, 30_000);
+    return { from: ctx.handoffs[0].from, text: s.text(), chunks: r.chunks.length, after: x - at.voiceEnd0 };
+  };
+  const lastWord = TEXT.indexOf('mild,');
+  const tail = await stopAt((a) => a.voiceEnd0 + 0.025); // in its kept silence
+  assert.equal(tail.chunks, 1);
+  assert.equal(tail.from, lastWord, `stopped 25 ms after its voice ended: from its last word (“${tail.text.slice(tail.from, tail.from + 12)}”; before: the next chunk)`);
+  const pause = await stopAt((a) => a.voice1 - 0.03); // in the pause, the next chunk not started
+  assert.equal(pause.chunks, 1);
+  assert.equal(pause.from, lastWord, `stopped in the pause ${Math.round(pause.after * 1000)} ms after its voice ended: from its last word (“${pause.text.slice(pause.from, pause.from + 12)}”)`);
+  const next = await stopAt((a) => a.voice1 + 0.02); // the next chunk's first word just begun
+  assert.equal(next.chunks, 2);
+  assert.equal(next.from, lastWord, `stopped ${Math.round(next.after * 1000)} ms after its voice ended, 20 ms into the next chunk: from its last word (“${next.text.slice(next.from, next.from + 12)}”)`);
+  const later = await stopAt((a) => a.voice1 + 0.2);
+  assert.ok(later.after >= 0.3, `${later.after} s after its voice ended`);
+  assert.equal(later.from, TEXT.indexOf('with light'), `0.3 s or more after its voice ended: from the next chunk (“${later.text.slice(later.from, later.from + 12)}”), not a word of the first again`);
 });
 
 test('stall watchdog: stopped 1 s, then moving — nothing happens; stopped 2 s — one kick, which works, and George carries on', async (t) => {

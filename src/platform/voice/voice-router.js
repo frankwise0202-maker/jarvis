@@ -50,9 +50,14 @@
 // unlockSpeech() without a tap (Standby entered again after Voice Mode, Voice Mode opened by the wake
 // routine; or navigator.userActivation saying no tap is active) keeps what is known, so a wake greeting
 // doesn't wait 3.5 s for a sound that can't start. The George settings are never changed for this.
+// After the second review: a George reply cancelled (a tap on Voice Mode's core, Stop, a new reply) once the
+// watchdog's kick has been tried with the clock still standing counts as a stall too; a tap also starts
+// afresh an output that stalled since its context was made even if its clock has moved again since (iOS can
+// leave such a context running with nothing heard), once, and never while George plays on it; and a tap
+// starts a stuck output afresh even while George is off on this device (Hearing and voice → Test).
 
 import { newText, ingest } from './speech-text.js';
-import { createNaturalStream, stopNatural } from './natural/natural-stream.js';
+import { createNaturalStream, stopNatural, NATURAL_TIMING } from './natural/natural-stream.js';
 
 const WAIT_MS = 4000;
 // v7.8.1: stuck audio counts as working again once its clock has moved this far (seconds) since the stall.
@@ -115,6 +120,10 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
   // with its clock reading then. In the app George from the home base and George on this device share
   // one output (one AudioContext), so one stall covers both.
   const stuck = new Map(); // audio out -> { clock }
+  // Second review: the outputs that stalled since their context was made. Their clock may have moved again since
+  // (George came back by himself), but iOS can leave such a context running with nothing heard, which no clock
+  // shows: the next tap that finds nothing playing on one starts it afresh too (unlockSpeech()).
+  const suspect = new Set();
   const stuckListeners = new Set();
   const clockOf = (audio) => {
     try {
@@ -134,6 +143,7 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     const was = stuck.size > 0;
     const t = clockOf(audio);
     stuck.set(audio, { clock: t === null ? 0 : t });
+    suspect.add(audio);
     noteStuck(was);
   }
   /** Is this output known stuck? Not once its clock has moved since the stall (it came back by itself). */
@@ -430,6 +440,14 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
       noteVoice(null);
     }
     if (cancelBackend && r.backend) {
+      // Second review: George cancelled (a tap on Voice Mode's core in the silence, Stop, a new reply) while his
+      // clock had stood still past the watchdog's kick: as good as a stall, so the next reply doesn't wait for him.
+      const out = r.kind === 'homebase' && homebase ? homebase.audio : r.kind === 'natural' && natural ? natural.audio : null;
+      try {
+        if (out && typeof r.backend.stalledMs === 'function' && r.backend.stalledMs() >= NATURAL_TIMING.stallKickMs) markStuck(out);
+      } catch {
+        /* ignore */
+      }
       try {
         r.backend.cancel();
       } catch {
@@ -506,13 +524,21 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     // that says it runs with its clock stopped, and iOS starts audio only in a gesture). If his clock still
     // doesn't move, the stream's watchdog hands over again and the output is stuck once more. Without a tap
     // (isTap()), what is known stays: a wake greeting goes straight to the device voice.
-    const revive = isTap(opts) ? Array.from(stuck.keys()) : null;
+    // Second review: also each output that stalled since its context was made (suspect), once, when nothing plays
+    // on it: never under a reply George is speaking (his stream waits on that context's clock).
+    const playing = (audio) => (!!current && !current.ended && (current.kind === 'homebase' || current.kind === 'natural')) || (typeof audio.busy === 'function' && !!audio.busy());
+    const revive = isTap(opts) ? Array.from(new Set([...stuck.keys(), ...Array.from(suspect).filter((a) => !playing(a))])) : null;
     if (revive) clearStuck();
     const revived = new Set();
+    const fresh = (audio) => {
+      if (revived.has(audio)) return; // George from the home base and on this device share one
+      revived.add(audio);
+      suspect.delete(audio);
+      audio.revive();
+    };
     const start = (audio) => {
       if (revive && revive.includes(audio) && typeof audio.revive === 'function') {
-        if (!revived.has(audio)) audio.revive(); // George from the home base and on this device share one
-        revived.add(audio);
+        fresh(audio);
         return;
       }
       audio.unlock(); // inside the tap: iOS starts Web Audio only there
@@ -525,6 +551,16 @@ export function createVoiceRouter({ device, natural = null, homebase = null, get
     if (homebase && settings().homeBaseSpeak === true) {
       try {
         start(homebase.audio);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Second review: one George doesn't use right now (switched off on this device, while Hearing and voice → Test
+    // plays through it) is started afresh in the tap too, so its "Tap Test to try again" holds. Nothing plays on it.
+    for (const audio of revive || []) {
+      if (revived.has(audio) || typeof audio.revive !== 'function') continue;
+      try {
+        fresh(audio);
       } catch {
         /* ignore */
       }

@@ -12,6 +12,19 @@
 //   george-stuck-wake      George's sound stuck in Voice Mode, "Jarvis, standby", two wakes with no tap since:
 //                          each greeting on the iPhone voice at once (review M2; before, each waited 3.5 s
 //                          for George first)
+//
+// The second review's probes, kept as scenarios (each failed on aa0b53b, build 2f785fe1):
+//   george-stuck-tap-early  Voice Mode, George's sound stuck: the core tapped 2.5 s into the silence, before the
+//                          3.5 s handover, counts as a stall: the next reply on the iPhone voice at once (before,
+//                          George was tried again, 3.5 s of silence, until a reply was left alone)
+//   george-stuck-replaced  after a stall the sound works again and George comes back by himself on the context
+//                          that stalled; the next idle tap (Speak) starts his sound afresh (before, no tap ever
+//                          replaced that context: if iOS leaves it running but silent, George stays silent)
+//   george-test-george-off George's sound stuck in its first context (a fresh one plays), George switched off on
+//                          this iPhone: Hearing and voice → Test starts it afresh and plays (before, "Nothing
+//                          played" at every tap until George was switched back on)
+//   george-test-hidden     Hearing and voice → Test with Jarvis in the background for the whole sample: no
+//                          verdict, in words (before, "Played …"), and George isn't marked stuck
 
 import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
@@ -27,10 +40,11 @@ const GEORGE = { settings: { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBas
 
 /**
  * Init script: the voice's 24 kHz AudioContexts, logged (suspend/resume calls with their state and clock, chunk
- * starts) and optionally stuck (suspended at birth; resume() resolves and nothing runs until lift()).
+ * starts with the index of their context) and optionally stuck (suspended at birth; resume() resolves and nothing
+ * runs): every one until lift() (`stuck`), or only the first one, for good (`stuckFirst`: a fresh one plays).
  * window.__audio: { on, contexts (every one made, newest last), starts, log, lift() }.
  */
-function installAudioProbe({ stuck = false } = {}) {
+function installAudioProbe({ stuck = false, stuckFirst = false } = {}) {
   const Real = window.AudioContext || window.webkitAudioContext;
   if (!Real) return;
   const st = { on: stuck, contexts: [], starts: [], log: [] };
@@ -40,17 +54,18 @@ function installAudioProbe({ stuck = false } = {}) {
       super(opts);
       this.__voice = !!opts && opts.sampleRate === 24000;
       if (!this.__voice) return;
+      this.__stuck = stuckFirst && st.contexts.length === 0;
       st.contexts.push(this);
       this.addEventListener('statechange', () => st.log.push({ t: performance.now(), ev: 'state', state: this.state, cur: this.currentTime }));
-      if (st.on) super.suspend().catch(() => {});
+      if (st.on || this.__stuck) super.suspend().catch(() => {});
     }
     suspend() {
       if (this.__voice) st.log.push({ t: performance.now(), ev: 'suspend', state: this.state, cur: this.currentTime });
       return super.suspend();
     }
     resume() {
-      if (this.__voice) st.log.push({ t: performance.now(), ev: 'resume', state: this.state, cur: this.currentTime, stuck: st.on });
-      if (this.__voice && st.on) return Promise.resolve();
+      if (this.__voice) st.log.push({ t: performance.now(), ev: 'resume', state: this.state, cur: this.currentTime, stuck: st.on || !!this.__stuck });
+      if (this.__voice && (st.on || this.__stuck)) return Promise.resolve();
       return super.resume();
     }
   }
@@ -62,7 +77,7 @@ function installAudioProbe({ stuck = false } = {}) {
   const start = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function (when, ...rest) {
     try {
-      if (this.context && this.context.__voice && this.buffer && this.buffer.length > 1) st.starts.push({ when: Number(when) || 0, at: this.context.currentTime, duration: this.buffer.duration, t: performance.now() });
+      if (this.context && this.context.__voice && this.buffer && this.buffer.length > 1) st.starts.push({ when: Number(when) || 0, at: this.context.currentTime, duration: this.buffer.duration, t: performance.now(), ctx: st.contexts.indexOf(this.context) });
     } catch {
       /* bookkeeping only */
     }
@@ -70,7 +85,7 @@ function installAudioProbe({ stuck = false } = {}) {
   };
 }
 
-async function prep(page, { stuck = false, mic = false } = {}) {
+async function prep(page, { stuck = false, stuckFirst = false, mic = false } = {}) {
   await page.addInitScript(installFakeSpeech, { noSpeechMs: 900 });
   if (mic) await page.addInitScript(installFakeMic, { wakeLock: true });
   await page.addInitScript(() => {
@@ -88,7 +103,7 @@ async function prep(page, { stuck = false, mic = false } = {}) {
     };
     new MutationObserver(note).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   });
-  await page.addInitScript(installAudioProbe, { stuck });
+  await page.addInitScript(installAudioProbe, { stuck, stuckFirst });
 }
 
 async function openListening(t) {
@@ -100,6 +115,29 @@ async function openListening(t) {
 }
 
 const probe = (t) => t.page.evaluate(() => ({ starts: window.__audio.starts.slice(), log: window.__audio.log.slice(), said: window.__voice.said.slice(), saidLog: window.__voice.log.map((e) => ({ at: e.at, text: e.text })), labels: window.__labels.slice(), now: performance.now(), ctx: window.__audio.contexts.map((c) => ({ state: c.state, cur: c.currentTime })) }));
+
+/** Settings → Home base → Hearing and voice (the card). */
+async function openHearingAndVoice(t) {
+  await (await t.visible('settings-button')).click();
+  await t.visible('settings-sheet');
+  await t.page.evaluate(() => document.querySelector('#settings-homebase')?.scrollIntoView());
+  const card = await t.visible('senses-settings');
+  await card.scrollIntoViewIfNeeded();
+  return card;
+}
+
+/** A question in the chat, its answer read aloud (Speak replies on): which voice said it, and on which contexts. */
+async function readTurn(t, q) {
+  const before = await probe(t);
+  const asked = t.core.senses.speaks.length;
+  const turn = await t.send(q);
+  await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+  await t.page.waitForTimeout(6000);
+  await t.waitFor(async () => !(await t.page.locator(tid('turn-speak-voice')).last().isVisible()), { timeout: 40000, message: 'read to the end' });
+  const p = await probe(t);
+  const on = [...new Set(p.starts.slice(before.starts.length).map((s) => s.ctx))];
+  return `${p.said.length > before.said.length ? `iPhone voice (George asked ${t.core.senses.speaks.length - asked})` : 'George'} (George’s chunks on contexts ${JSON.stringify(on)})`;
+}
 
 export default [
   {
@@ -299,6 +337,172 @@ export default [
       t.assert(greetings.every((g) => !g.georgeTried), `with no tap since the stall, each wake greets on the iPhone voice at once (${JSON.stringify(greetings)}; before the fix: George tried first each time, 3.5 s of silence)`);
       t.assert(greetings.every((g) => g.sinceOpen < 2500), `promptly (${JSON.stringify(greetings)})`);
       t.assert(greetings.every((g) => g.contexts === 1), `no context replaced without a tap (${JSON.stringify(greetings)})`);
+    },
+  },
+  {
+    name: 'george-stuck-tap-early',
+    title: 'Voice Mode, George’s sound stuck: the core tapped 2.5 s into the silence (before the 3.5 s handover) counts as a stall: the next reply on the iPhone voice at once',
+    device: 'iphone13',
+    seed: GEORGE,
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 200000,
+    async run(t) {
+      await t.newPage();
+      await prep(t.page, { stuck: true });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      const vm = await openListening(t);
+      const rows = [];
+      const turn = async (q, { tapAfterMs = null } = {}) => {
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening', { timeout: 40000, message: 'listening' });
+        const listens = await t.page.evaluate(() => window.__voice.listens);
+        const before = await probe(t);
+        const asked = t.core.senses.speaks.length;
+        await t.page.evaluate((x) => window.__voice.say(x), q);
+        await t.waitFor(
+          async () => {
+            const p = await probe(t);
+            return p.starts.length > before.starts.length || p.said.length > before.said.length;
+          },
+          { timeout: 30000, interval: 50, message: 'George’s first chunk on the clock, or the iPhone voice' },
+        );
+        const p1 = await probe(t);
+        const chunk = p1.starts.length > before.starts.length ? p1.starts[before.starts.length] : null;
+        let tapped = false;
+        if (chunk && tapAfterMs !== null) {
+          await t.page.waitForTimeout(Math.max(0, chunk.t + tapAfterMs - p1.now));
+          if ((await probe(t)).said.length === before.said.length) {
+            await t.page.locator(tid('voice-core')).click(); // "try again": the reply stops and Voice Mode listens
+            tapped = true;
+          }
+        }
+        if (!tapped) await t.waitFor(async () => (await probe(t)).said.length > before.said.length, { timeout: 15000, interval: 50, message: 'the iPhone voice' });
+        await t.waitFor(async () => (await vm.getAttribute('data-state')) === 'listening' && (await t.page.evaluate(() => window.__voice.listens)) > listens, { timeout: 40000, message: 'listening again' });
+        const p3 = await probe(t);
+        const firstSaid = p3.saidLog[before.saidLog.length];
+        const row = { q, georgeAsked: t.core.senses.speaks.length - asked, georgeTried: !!chunk, tapped, iPhoneVoice: firstSaid ? (chunk ? `${((firstSaid.at - chunk.t) / 1000).toFixed(2)} s after George’s chunk was due` : 'at once') : 'nothing (cancelled by the tap)' };
+        rows.push(row);
+        return row;
+      };
+      const first = await turn(QUESTION, { tapAfterMs: 2500 });
+      const second = await turn('What is the capital of Germany?');
+      t.note(rows.map((r) => `${r.q} George asked ${r.georgeAsked}, tried ${r.georgeTried}, tapped ${r.tapped}, iPhone voice: ${r.iPhoneVoice}`).join(' | '));
+      t.assert(first.georgeTried && first.tapped, `the first reply was tapped in George’s silence, before the handover (${JSON.stringify(first)})`);
+      t.assert(!second.georgeTried && second.georgeAsked === 0 && second.iPhoneVoice === 'at once', `the next reply on the iPhone voice at once, George not tried (${JSON.stringify(second)}; before the fix: George tried again, 3.5 s of silence)`);
+    },
+  },
+  {
+    name: 'george-stuck-replaced',
+    title: 'After a stall the sound works again and George comes back by himself on the context that stalled; the next idle tap (Speak) starts his sound afresh',
+    device: 'iphone13',
+    seed: { settings: { ...GEORGE.settings, speakReplies: 'summary' } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await prep(t.page, { stuck: true });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      const notes = [];
+      const q1 = await readTurn(t, QUESTION);
+      notes.push(`Q1 (stuck): ${q1}`);
+      t.assert(/^iPhone voice/.test(q1), `the stall hands over (${q1})`);
+      await t.page.evaluate(() => window.__audio.lift()); // the sound works again
+      const q2 = await readTurn(t, 'What is the capital of Germany?');
+      const q3 = await readTurn(t, 'What is the capital of Spain?');
+      notes.push(`Q2: ${q2}`, `Q3: ${q3}`);
+      t.assert(q3 === 'George (George’s chunks on contexts [0])', `George back by himself, on the context that stalled (${q3})`);
+      // An idle tap: Speak on the first reply (nothing is being said).
+      const before = await probe(t);
+      await t.page.locator(tid('turn-speak')).first().click();
+      await t.waitFor(async () => (await probe(t)).starts.length > before.starts.length, { timeout: 15000, message: 'George reads it' });
+      await t.page.waitForTimeout(4000);
+      const p = await probe(t);
+      const on = [...new Set(p.starts.slice(before.starts.length).map((s) => s.ctx))];
+      notes.push(`after an idle Speak tap: George’s chunks on contexts ${JSON.stringify(on)}; contexts ${JSON.stringify(p.ctx.map((c) => c.state))}; iPhone voice ${p.said.length - before.said.length}`);
+      t.note(notes.join(' | '));
+      t.assert(p.ctx.length === 2 && p.ctx[0].state === 'closed', `the tap replaced the context that had stalled (${JSON.stringify(p.ctx)}; before the fix: kept for good, so if iOS left it running but silent, George stayed silent)`);
+      t.assert(on.length === 1 && on[0] === 1, `George read it on the fresh context (${JSON.stringify(on)})`);
+      t.assert(p.said.length === before.said.length, 'George, not the iPhone voice');
+    },
+  },
+  {
+    name: 'george-test-george-off',
+    title: 'George’s sound stuck in its first context (a fresh one plays), George switched off on this iPhone: Hearing and voice → Test starts it afresh and plays',
+    device: 'iphone13',
+    seed: { settings: { ...GEORGE.settings, speakReplies: 'summary' } },
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 200000,
+    async run(t) {
+      await t.newPage();
+      await prep(t.page, { stuckFirst: true });
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      const rows = [];
+      const q1 = await readTurn(t, QUESTION);
+      rows.push(`first reply: ${q1}`);
+      t.assert(/^iPhone voice/.test(q1), `the stall hands over (${q1})`);
+      const card = await openHearingAndVoice(t);
+      const result = card.locator(tid('senses-speak-result'));
+      const status = () => t.page.evaluate(() => document.querySelector('[data-testid="senses-speak-status"]')?.dataset.state || '');
+      await card.locator(tid('senses-speak-toggle')).click(); // George off on this iPhone; the home base keeps him
+      await t.waitFor(async () => (await status()) === 'ready-elsewhere', { timeout: 10000, message: 'off here' });
+      const test = async (label) => {
+        const btn = card.locator(tid('senses-speak-test'));
+        await t.waitFor(async () => !(await btn.isDisabled()), { timeout: 10000, message: 'Test enabled' });
+        const asked = t.core.senses.speaks.length;
+        await btn.click();
+        await t.waitFor(async () => t.core.senses.speaks.length > asked, { timeout: 10000, message: 'POST api/speak' });
+        await t.waitFor(async () => /^(Played|Nothing played|Couldn)/.test(await t.text(result)), { timeout: 25000, message: 'the verdict' });
+        const text = await t.text(result);
+        const p = await probe(t);
+        rows.push(`${label}: “${text.slice(0, 24)}…” (contexts ${JSON.stringify(p.ctx.map((c) => c.state))})`);
+        return { text, ctx: p.ctx };
+      };
+      const one = await test('George off, Test 1');
+      const two = await test('George off, Test 2');
+      t.note(rows.join(' | '));
+      t.assert(/^Played/.test(one.text), `the Test’s tap starts the stuck sound afresh with George off here too (${rows.join(' | ')}; before the fix: “Nothing played” at every tap)`);
+      t.assert(one.ctx.length === 2 && one.ctx[0].state === 'closed', `one fresh context (${JSON.stringify(one.ctx)})`);
+      t.assert(/^Played/.test(two.text) && two.ctx.length === 2, `again, on the same fresh context (${JSON.stringify(two.ctx)})`);
+    },
+  },
+  {
+    name: 'george-test-hidden',
+    title: 'Hearing and voice → Test with Jarvis in the background for the whole sample (its voice context stopped, as iOS does): no verdict, said in words, and George isn’t marked stuck',
+    device: 'iphone13',
+    seed: GEORGE,
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await prep(t.page);
+      await t.goto('/');
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      const card = await openHearingAndVoice(t);
+      const result = card.locator(tid('senses-speak-result'));
+      await card.locator(tid('senses-speak-test')).click();
+      await t.waitFor(async () => /^Playing/.test(await t.text(result)), { timeout: 10000, message: 'playing' });
+      const at = await t.page.evaluate(() => {
+        const c = window.__audio.contexts[window.__audio.contexts.length - 1];
+        Object.getPrototypeOf(Object.getPrototypeOf(c)).suspend.call(c); // iOS stops Jarvis's audio as it leaves
+        return c.currentTime;
+      });
+      await setHidden(t.page, true);
+      await t.page.waitForTimeout(6000);
+      const whileHidden = await t.text(result);
+      const tone = await result.getAttribute('data-tone');
+      const clock = await t.page.evaluate(() => window.__audio.contexts[window.__audio.contexts.length - 1].currentTime);
+      await setHidden(t.page, false);
+      await t.page.waitForTimeout(500);
+      const card2 = await t.page.evaluate(() => {
+        const el = document.querySelector('[data-testid="jarvis-voice-pending"]');
+        return { found: !!el, stuck: !!el && !el.hidden && el.dataset.state === 'stuck' };
+      });
+      t.note(`clock ${at.toFixed(2)} → ${clock.toFixed(2)} s while hidden; the card: “${whileHidden}” (${tone}); Jarvis’s voice says George is stuck: ${card2.stuck}`);
+      t.assert(whileHidden === 'Couldn’t tell whether it played: Jarvis was in the background during the test. Tap Test to try again.', `no claim either way (“${whileHidden}”; before the fix: “Played …”, though nothing played)`);
+      t.assert(tone === 'info', `as information (${tone})`);
+      t.assert(card2.found && !card2.stuck, `and George isn’t marked stuck for it (${JSON.stringify(card2)})`);
     },
   },
 ];

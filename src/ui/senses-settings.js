@@ -27,7 +27,7 @@ import { icon } from './icons.js';
 import { deviceLabel } from '../lib/brain.js';
 import { HEAR_MODELS, hearModelLabel, sensesProblem, encodeWav, HEAR_SAMPLE_RATE, NO_DEPS_MESSAGE } from '../lib/senses.js';
 import { voiceById } from '../platform/voice/natural/catalog.js';
-import { samplePlayed, silentSampleText } from '../lib/voice-choice.js';
+import { samplePlayed, silentSampleText, unsureSampleText } from '../lib/voice-choice.js';
 
 const TEST_SECONDS = 3;
 const TEST_HEAR_TIMEOUT_MS = 20000; // the first test may wait for the model to load on the home base
@@ -415,9 +415,11 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
       setText(speakTestLabel, 'Test');
       // v7.8.1: "Played" only when the audio clock got through the sentence's start. A stuck output (iOS after
       // an interruption) plays nothing without failing: say so plainly, and replies use the device voice.
+      // Second review: Jarvis in the background meanwhile, or its sound restarted under the sample: the clock
+      // can't tell, so it says that (no "Played", and nothing is marked stuck).
       const sameOutput = safe(() => audio.context, null) === ctxAtPlay;
-      const played = wasAway || !sameOutput || samplePlayed({ clock: safe(() => audio.now(), NaN), when: playing.when, duration: secs });
-      if (played) out(speakOut, `Played “${line}” (made on the home base in ${(r.ms / 1000).toFixed(1)} s).`, 'ok');
+      if (wasAway || !sameOutput) out(speakOut, unsureSampleText({ voiceName: voiceName(), away: wasAway }), 'info');
+      else if (samplePlayed({ clock: safe(() => audio.now(), NaN), when: playing.when, duration: secs })) out(speakOut, `Played “${line}” (made on the home base in ${(r.ms / 1000).toFixed(1)} s).`, 'ok');
       else {
         out(speakOut, silentSampleText({ voiceName: voiceName(), os }), 'warn');
         if (typeof onSilent === 'function') safe(() => onSilent(audio));
