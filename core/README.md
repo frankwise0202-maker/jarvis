@@ -176,9 +176,9 @@ base tile) shows today's and this month's spending.
 
 ### The morning briefing
 
-Every day at **7:00** the home base writes a short briefing: the weather where your iPhone is, a few
-headlines (news and tech), how the home base did overnight, anything it finished for you overnight,
-what's new in Jarvis and a music suggestion. With your key, Jarvis writes it in its own voice and picks
+Every day at **7:00** the home base writes a short briefing: the weather for your place, a few headlines
+(news and tech), how the home base did overnight, anything it finished for you overnight, what's new
+in Jarvis and a music suggestion. With your key, Jarvis writes it in its own voice and picks
 the top stories; without one you get the same facts in plain form.
 
 - **On the Alienware's screen** it fills the screen ("Good morning, Frank.") until 10:00. Move the
@@ -186,7 +186,7 @@ the top stories; without one you get the same facts in plain form.
 - **On the iPhone** it is a card at the top of the home screen, and a notification at 7:00. "Brief me"
   in the chat (or in Voice Mode) brings it up any time.
 - Change the time, °F or °C, and the place under **Morning briefing**. "Use this iPhone's location"
-  sends only a rounded position (to about a kilometre); you can type a city instead.
+  sends your position once, rounded to about a kilometre (it is not followed); or type a city instead.
 
 ### Notifications
 
