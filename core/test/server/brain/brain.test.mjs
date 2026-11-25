@@ -488,3 +488,22 @@ test('passing API problems: an output-tokens-per-minute 429 caps max_tokens; an 
     await fake.close();
   }
 });
+
+test('unreadable brain files are moved aside and the brain starts fresh', async () => {
+  const data = tmp();
+  fs.mkdirSync(path.join(data, 'brain'), { recursive: true });
+  for (const f of ['jobs-v1.json', 'watchers-v1.json', 'spend-v1.json', 'settings-v1.json', 'briefing-v1.json']) fs.writeFileSync(path.join(data, 'brain', f), '{ not json');
+  const logs = [];
+  const { brain } = makeBrain({ dataDir: data, logs });
+  try {
+    assert.deepEqual(brain.listJobs({}), []);
+    assert.deepEqual(brain.listWatchers(), []);
+    assert.equal(brain.info().limits.dailyUsd, 5);
+    assert.equal(brain.latestBriefing(), null);
+    const aside = fs.readdirSync(path.join(data, 'brain')).filter((f) => f.includes('.corrupt-'));
+    assert.equal(aside.length, 5);
+    assert.ok(logs.some((l) => /moved it to/.test(l)));
+  } finally {
+    await brain.stop();
+  }
+});

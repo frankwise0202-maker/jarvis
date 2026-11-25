@@ -222,7 +222,9 @@ test('settings over HTTP: 4 KB body limit, validation errors are 400 {error, mes
 
 test('push routes: subscribe 201 {id}, listed as a device, unsubscribe; test with no devices', async () => {
   const ecdh = crypto.createECDH('prime256v1');
-  const sub = { endpoint: 'https://web.push.apple.com/QTEST123', keys: { p256dh: ecdh.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } };
+  // A reserved, never-resolving host (RFC 2606): even if a notification went out during this test, it
+  // could never reach a real push service.
+  const sub = { endpoint: 'https://push.invalid/QTEST123', keys: { p256dh: ecdh.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } };
   const r = await json('POST', '/api/push/subscribe', { subscription: sub, label: 'iPhone' });
   assert.equal(r.status, 201, r.body);
   assert.match(r.json.id, /^p_/);
