@@ -18,6 +18,10 @@
  *   - On activate, caches of older builds (jarvis-*) are deleted.
  *   - { type: 'SKIP_WAITING' } activates a waiting update; { type: 'GET_VERSION' } replies
  *     { type: 'VERSION', buildId }.
+ *   - Home base (v7.6, SPEC §24): a push from the Jarvis Core ({ title, body, url, tag }) is shown as a
+ *     notification. Of its url only the home base link is kept (?homebase=job:<id> | briefing |
+ *     watch:<id>); tapping the notification focuses Jarvis and hands it the link (a HOMEBASE_LINK
+ *     message), or opens Jarvis at it. Never another page.
  */
 
 self.__PRECACHE__ = /*__PRECACHE__*/[];
@@ -99,21 +103,87 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Home base (v7.6): ?homebase=job:<id> | briefing | watch:<id>, the only part of a push's url kept.
+const HOME_LINK = /^(?:briefing|(?:job|watch):[A-Za-z0-9_-]{1,80})$/;
+
+function homeBaseLink(url) {
+  try {
+    const v = new URL(String(url || ''), BASE).searchParams.get('homebase') || '';
+    return HOME_LINK.test(v) ? v : '';
+  } catch {
+    return '';
+  }
+}
+
+function pushLine(value, max) {
+  if (typeof value !== 'string') return '';
+  // eslint-disable-next-line no-control-regex
+  const s = value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
+}
+
+// Home base (v7.6): the Jarvis Core's push ({ title, body, url, tag }): research done, a watcher
+// fired, the morning briefing. Always shown (iOS ends a subscription that receives silent pushes).
+self.addEventListener('push', (event) => {
+  let data = null;
+  try {
+    data = event.data ? event.data.json() : null;
+  } catch {
+    data = null;
+  }
+  if (!data || typeof data !== 'object') {
+    let text = '';
+    try {
+      text = event.data ? event.data.text() : '';
+    } catch {
+      text = '';
+    }
+    data = { body: text };
+  }
+  const link = homeBaseLink(data.url);
+  const tag = pushLine(data.tag, 64).replace(/[^\w:.-]/g, '');
+  const options = {
+    body: pushLine(data.body, 300),
+    icon: new URL('icons/icon-192.png', BASE).href,
+    data: { url: link ? `${BASE}?homebase=${link}` : BASE, homebase: link },
+    timestamp: Date.now(),
+  };
+  if (tag) {
+    options.tag = `homebase-${tag}`;
+    options.renotify = true;
+  }
+  event.waitUntil(self.registration.showNotification(pushLine(data.title, 80) || 'Jarvis', options));
+});
+
 // Ambience (SPEC 14.3): tapping a "mission finished" notification focuses Jarvis (or opens it).
+// A home base notification (v7.6) also hands Jarvis its link: an open Jarvis gets a HOMEBASE_LINK
+// message (it opens the Home base sheet there); otherwise Jarvis opens at ?homebase=<link>.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const scope = self.registration.scope;
   const data = event.notification.data;
+  const link = data && typeof data.homebase === 'string' && HOME_LINK.test(data.homebase) ? data.homebase : '';
   let target = scope;
   try {
     // Only ever open a page of this app.
-    if (data && typeof data.url === 'string' && new URL(data.url, scope).href.startsWith(scope)) target = new URL(data.url, scope).href;
+    if (link) target = `${scope}?homebase=${link}`;
+    else if (data && typeof data.url === 'string' && new URL(data.url, scope).href.startsWith(scope)) target = new URL(data.url, scope).href;
   } catch {
     target = scope;
   }
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const client of list) if (client.url.startsWith(scope) && 'focus' in client) return client.focus();
+      for (const client of list) {
+        if (!client.url.startsWith(scope) || !('focus' in client)) continue;
+        if (link) {
+          try {
+            client.postMessage({ type: 'HOMEBASE_LINK', link });
+          } catch {
+            /* the page reads it from the address next time */
+          }
+        }
+        return client.focus();
+      }
       return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
     }),
   );

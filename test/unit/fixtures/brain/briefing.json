@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-25",
+  "generatedAt": "2026-11-25T12:00:04.000Z",
+  "kind": "free",
+  "greeting": "Good morning, Tony.",
+  "weather": {
+    "label": "Springfield",
+    "units": "F",
+    "now": { "temp": 41, "summary": "Partly cloudy", "code": 2 },
+    "today": { "high": 52, "low": 38, "rainChancePct": 20, "summary": "Clouds clearing by noon." }
+  },
+  "headlines": [
+    { "title": "Markets open higher as chip stocks rally", "source": "Example News", "url": "https://news.example.com/markets" },
+    { "title": "New battery chemistry promises faster charging", "source": "Example Tech", "url": "https://tech.example.com/battery" },
+    { "title": "City council approves the riverfront park", "source": "Example News", "url": "https://news.example.com/park" },
+    { "title": "<script>alert(1)</script> [click](javascript:alert(2))", "source": "Odd Feed", "url": "javascript:alert(3)" }
+  ],
+  "homebase": { "level": "ok", "summary": "All systems normal overnight.", "notes": ["CPU peaked at 12% at 3:10 AM", "1 TB drive: 492 GB free"] },
+  "jobs": [{ "id": "j_brief1", "title": "Best espresso machines under $500", "status": "done", "summary": "The Breville Bambino Plus is the best value; the Gaggia Classic Pro is the tinkerer's pick." }],
+  "watchers": [{ "id": "w_brief1", "what": "the LG 27GP850 drops under $300", "status": "watching", "summary": "Still $329 at the usual stores." }],
+  "whatsNew": [{ "title": "Your home base can work for you", "detail": "Research, watching and this briefing, while your phone is locked." }],
+  "music": { "suggestion": "Back in Black by AC/DC", "appleMusicUrl": "https://music.apple.com/us/album/back-in-black/574050396?i=574050602" },
+  "markdown": "Good morning, Tony.",
+  "spoken": "Good morning, Tony. It's 41 degrees and partly cloudy in Springfield, with a high of 52. All systems were normal overnight, and your espresso research is ready."
+}

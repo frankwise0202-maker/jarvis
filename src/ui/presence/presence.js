@@ -107,6 +107,8 @@ function isMac() {
  *   screen?() · standby?() · stopSensor(kind) · spendDismissed() → bool
  * @param {object} [o.homeBase]  the Home base controller (src/ui/homebase.js, v7.5): a tile on the
  *   home and one in the rail; the Systems glance's "Jarvis Core" row and the tape's CORE follow it
+ *   (v7.6: actions.openHomeBase() opens the Home base sheet from either tile)
+ * @param {HTMLElement} [o.morningEl]  v7.6: the morning briefing card, placed at the top of the home
  */
 export function createPresence(o) {
   const actions = o.actions || {};
@@ -166,8 +168,10 @@ export function createPresence(o) {
   // Home base (v7.5, SPEC §23): the Jarvis Core tile (home on phones, the rail on desktop).
   const hb = o.homeBase || null;
   const openHomeBaseSettings = () => safe(() => actions.openSettings && actions.openSettings({ section: 'homebase', focus: 'homebase-url' }));
-  const homeTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'home', onSetup: openHomeBaseSettings }), null) : null;
-  const railTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'rail', onSetup: openHomeBaseSettings }), null) : null;
+  // v7.6 (SPEC §24): the tiles open the Home base sheet (Briefing · Research · Watching · Spending).
+  const openHomeBase = typeof actions.openHomeBase === 'function' ? () => safe(() => actions.openHomeBase()) : null;
+  const homeTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'home', onSetup: openHomeBaseSettings, onOpen: openHomeBase }), null) : null;
+  const railTile = hb ? safe(() => createHomeBaseTile(hb, { variant: 'rail', onSetup: openHomeBaseSettings, onOpen: openHomeBase }), null) : null;
   const offHomeBase = hb ? safe(() => hb.subscribe(() => render()), null) : null;
 
   // Desktop rail.
@@ -218,6 +222,8 @@ export function createPresence(o) {
     needsEl: homeNeeds.el,
     keysEl: keys.el,
     homeBaseEl: homeTile ? homeTile.el : null,
+    // v7.6: the morning briefing card, at the top of the home after a new briefing (src/ui/brain.js).
+    morningEl: o.morningEl || null,
     readoutsEl: readouts.el,
     legendEl: legend.el,
     /** Hero size for the current viewport (SPEC 2.4.4). */

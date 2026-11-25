@@ -343,7 +343,8 @@ Jarvis's home screen now tells you what is going on before you ask.
   and on the small core at the top. Once you have a habit of running your morning or evening
   briefing, it appears there too when it is due (**Run**).
 - **Quick keys**: **Look** (the camera: Optics, below), **Talk** (Voice Mode) and **Brief me** (the
-  briefing for this time of day, in a new chat); on a Mac also **Screen** (Jarvis looks at your
+  briefing for this time of day, in a new chat; while your home base's morning briefing is new, it
+  opens that one instead, free); on a Mac also **Screen** (Jarvis looks at your
   screen). The suggestion cards under them are there for your first few chats; after that your
   Protocols take their place.
 - **What the rings mean**: press and hold the core (right-click on a computer). **SPEND** is
@@ -936,6 +937,93 @@ before without a home base.
 itself only contacts the address you save (or test in Settings). The trade-off: should a bug ever let foreign
 code run inside Jarvis, that policy would not stop it from sending data to someone else's `.ts.net`
 address, as it stops other sites.
+
+### Your home base can now work for you
+
+With Jarvis Core 1.1 on the Alienware (it updates itself, or type `jarvis-core update` there), your
+home base does things for you while your phone is locked: it researches questions, keeps an eye on
+things you're waiting for, and has a **morning briefing** ready when you wake up.
+
+**Set it up once (Settings → Home base, below the address):**
+
+1. **Give the home base your key.** One tap sends the Claude key this iPhone already has to your home
+   base, over Tailscale. It is kept there in a private file, never shown again (you only see its last
+   four characters, like `…Ab3D`), never written to any log, and only ever sent to Anthropic. **Remove**
+   takes it off the home base. Without a key the free parts still work: the briefing (weather,
+   headlines, how the night went) and the system report.
+2. **Spending limits.** What the home base may spend on its own: **$5 a day** and **$50 a month** to
+   start. It won't start anything new past a limit, and research that reaches one stops with what it
+   has. This is separate from what Jarvis spends on your phone.
+3. **Morning briefing.** On at **7:00**. Tap **Use this iPhone's location** for the weather (it is
+   rounded to about a kilometre before it leaves the phone), or type a city. °F or °C.
+4. **Notifications.** Tap **Turn on notifications** and allow them: the home base then tells this
+   iPhone when research is done, something you're watching happens, or your briefing is ready, even
+   with Jarvis closed. **Send a test** shows one. On an iPhone this works in the Jarvis app on your
+   Home Screen (Share → Add to Home Screen), not in a Safari tab.
+
+**Using it.** Tap **Briefing & research** on the home base tile (on a computer, in the panel on the
+right). Four tabs:
+
+- **Briefing:** this morning's briefing, with links to the headlines. **Make a new one now** if you
+  want a fresh one.
+- **Research:** type a question, pick **Quick** (a few minutes) or **Deep** (reads more, costs
+  more), tap **Start research** (or the keyboard's send key). You can lock your phone: the home base
+  keeps going and notifies you.
+  Tap **Open** on a finished one to read it with its sources; **Cancel** stops one that's running.
+- **Watching:** "Tell me when… the LG 27GP850 drops under $300". Choose how often it checks (every 6
+  or 12 hours, or once a day). It notifies you once, when it happens. **Check now**, or the bin to stop.
+- **Spending:** today and this month against your limits, and the last 30 days.
+
+**Or just say it,** typed in the chat or said in Voice Mode (free, no Claude request from your phone):
+
+- "Research the best espresso machines under $500 **in the background**" (or "home base, research …";
+  add "in depth" for deep research)
+- "**What did the home base find?**"
+- "**Watch for** the LG 27GP850 dropping under $300", "**Tell me when** the PS6 is announced" or
+  "**Home base, keep an eye on** …". Without the words "home base", Jarvis only takes it as a watch
+  for something clear to wait for (a price under an amount, back in stock, on sale, comes out, is
+  released or announced), so an everyday question like "tell me if this email sounds rude: …" or
+  "let me know if it's cheaper to fly or drive" is answered by Jarvis as always, never turned into a
+  daily check that costs money.
+- "**Brief me**" or "**Morning briefing**": the home base's briefing; in Voice Mode Jarvis reads it
+  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the home base can't
+  be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis Core 1.0, Jarvis
+  briefs you himself, as before.
+
+With no home base linked, these commands don't exist: what you type or say goes to Jarvis as before.
+
+**In the morning** the briefing waits at the top of the home screen until you read it or close it
+(×), and the 7:00 notification opens it (also when Jarvis is in Standby: Standby makes way). While
+that briefing is new, the **Brief me** key and the rail's suggestion open it too, free, instead of
+writing another. If the home base can't be reached, or still runs Jarvis Core 1.0, the sheet says so
+plainly; nothing else changes.
+
+### Your iPhone and your Mac, in sync
+
+Once a home base is linked, Jarvis keeps your devices in step through it: a conversation you had on
+the iPhone is on the Mac too (and the other way round), with your saved holograms and blueprints and
+what Jarvis remembers about you. The home base also keeps a backup of each device for every day of the
+last two weeks, on the Alienware's drive.
+
+- **It just happens.** A few seconds after Jarvis opens, then every 10 minutes while it's open, and two
+  minutes after you change something. **Settings → Home base → Your devices, in sync** shows when it
+  last synced, which other devices the home base has, and **Sync now**.
+- **It only ever adds.** Something new on one device appears on the other (remembered facts as long
+  as there's room: Jarvis keeps 100, and syncing never pushes one out). Nothing is ever deleted by
+  syncing: delete a conversation on the iPhone and it stays deleted there (it never comes back), while
+  the Mac keeps its copy until you delete it there too. If you carried on the same conversation on
+  both devices before they synced (or a reply that was cut off finished on one of them), you keep
+  yours and get the other one next to it, named "… (from Mac)". That copy follows the Mac; if you
+  carry it on here, your new turns are never lost: at the next sync it becomes a conversation of its
+  own, "… (from Mac, continued on iPhone)", which syncs like any other.
+- **Your API key never travels.** The backup is the same as **Settings → Data → Export** (which never
+  includes the key), and the home base refuses anything that looks like a key anyway. Settings stay
+  per device (each keeps its own voice, theme and limits).
+- **Off switch.** "Keep this device in sync through the home base" turns it off for that device.
+- If the home base can't be reached, Jarvis says so and tries again later. A home base still on Jarvis
+  Core 1.0 asks you to run `jarvis-core update`. A device whose backup is over 50 MB (usually many
+  photos in conversations) still receives the others' conversations, but can't send its own; the card
+  says so.
 
 ## For developers
 

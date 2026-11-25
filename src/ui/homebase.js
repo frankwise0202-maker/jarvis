@@ -13,7 +13,8 @@
 //     checking: true while "Try again" re-checks a failure (CHECKING…, shown for at least a moment)
 //   hb.subscribe(fn) · hb.refresh() · hb.ask(q) -> Promise<{ ok, answer } | { ok: false, message }>
 //   hb.watch(el) -> stop(): poll while `el` (the tape, the glance) is on screen
-//   const tile = createHomeBaseTile(hb, { variant: 'home' | 'rail', onSetup });   tile.el
+//   const tile = createHomeBaseTile(hb, { variant: 'home' | 'rail', onSetup, onOpen });   tile.el
+//     (v7.6: onOpen() opens the Home base sheet: "Briefing & research", while a home base is linked)
 //   homeBaseGlance(state) -> { text, tone, tape } for the Systems glance row and the sensor tape
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
@@ -311,7 +312,7 @@ let tileSeq = 0;
  * with a tap) or 'rail' (the desktop awareness rail: the ask box is always there). onSetup() opens
  * Settings → Home base.
  */
-export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
+export function createHomeBaseTile(hb, { variant = 'home', onSetup, onOpen } = {}) {
   const id = `hb-${variant}-${++tileSeq}`;
   const compactAsk = variant !== 'rail';
   const statusText = h('span', { class: 'hb-status__text' });
@@ -343,6 +344,17 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
   );
   const actions = h('div', { class: 'hb-actions' }, retryBtn, setupBtn);
   const foot = h('p', { class: 'hb-foot', attrs: { 'data-testid': 'homebase-foot' } });
+  // v7.6 (SPEC §24): the Home base sheet (Briefing · Research · Watching · Spending).
+  const openBtn =
+    typeof onOpen === 'function'
+      ? h(
+          'button',
+          { class: 'hb-open', type: 'button', attrs: { 'data-testid': 'homebase-open', 'aria-haspopup': 'dialog' }, on: { click: () => onOpen() } },
+          icon('sparkle', { size: 14 }),
+          h('span', { class: 'hb-open__label', text: 'Briefing & research' }),
+          icon('chevron-right', { size: 14, class: 'hb-open__chev' }),
+        )
+      : null;
 
   // Ask the home base.
   const input = h('input', {
@@ -376,6 +388,7 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
     stats,
     message,
     actions,
+    openBtn,
     ask,
     foot,
   );
@@ -459,6 +472,7 @@ export function createHomeBaseTile(hb, { variant = 'home', onSetup } = {}) {
     setText(retryLabel, checking ? 'Checking…' : 'Try again');
     actions.hidden = setupBtn.hidden && retryBtn.hidden;
     ask.hidden = phase === 'unset';
+    if (openBtn) openBtn.hidden = phase === 'unset';
 
     // "alienware · checked 7:42 AM" (online, and after each failed check, so a repeated failure still
     // shows the check happened) · "last reached 11:42 PM" when it isn't online.
