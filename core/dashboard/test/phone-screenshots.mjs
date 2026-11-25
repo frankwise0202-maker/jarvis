@@ -38,6 +38,9 @@ export const SIZES = {
   // The notch and the home bar (viewport-fit=cover): what env(safe-area-inset-*) reports on an iPhone 13.
   'iphone-13': { w: 390, h: 844, touch: true, dpr: 2, label: 'iPhone 13 390×844', insets: { top: 47, bottom: 34 } },
   'iphone-13-side': { w: 844, h: 390, touch: true, dpr: 2, label: 'iPhone 13 on its side 844×390', insets: { left: 47, right: 47, bottom: 21 } },
+  'iphone-se-side': { w: 667, h: 375, touch: true, dpr: 2, label: 'iPhone SE on its side 667×375' },
+  'iphone-se1-side': { w: 568, h: 320, touch: true, dpr: 2, label: 'iPhone SE (1st gen) on its side 568×320 (the smallest core)' },
+  'window-640': { w: 640, h: 900, touch: false, dpr: 1, label: 'a 640 px window (two columns, the smallest core)' },
   ipad: { w: 820, h: 1180, touch: true, dpr: 2, label: 'iPad Air 820×1180' },
   'laptop-1280': { w: 1280, h: 800, touch: false, dpr: 1, label: 'laptop window 1280×800' },
   'mac-chrome-1280': { w: 1280, h: 712, touch: false, dpr: 1, label: "the Mac's Chrome on a 1280×800 screen (712 tall inside)" },
@@ -169,6 +172,17 @@ export function remoteProblems(page, insets = {}) {
     if (label.left < orb.left - 1 || label.right > orb.right + 1 || label.top < orb.top - 1 || label.bottom > orb.bottom + 1) out.push('the state word leaves the core');
     const heart = 2 * 0.34 * window.__jarvisCore.stats().orb.R; // the dark disc the word sits on
     if (label.width > heart + 1) out.push(`the state word (${Math.round(label.width)} px) is wider than the core's heart (${Math.round(heart)} px)`);
+    // The first screen shows the whole core (the page is read from the top, scrolled to 0), and a
+    // phone on its side (under 431 px tall) keeps the top bar to one line so the core fits under it.
+    const orbBottom = orb.bottom + window.scrollY;
+    if (orbBottom > innerHeight - safe.bottom + 1) out.push(`the core ends ${Math.round(orbBottom - (innerHeight - safe.bottom))} px below the first screen`);
+    if (innerHeight < 431) {
+      const bar = [...document.querySelectorAll('.topbar > *, .topbar .brand > *, .topbar .topbar-right > *')].filter((n) => shown(n) && getComputedStyle(n).display !== 'contents');
+      const tops = bar.map((n) => n.getBoundingClientRect());
+      const first = Math.min(...tops.map((r) => r.bottom));
+      const below = bar.filter((n, i) => tops[i].top >= first - 1);
+      if (below.length) out.push(`the top bar takes two lines on a screen ${innerHeight} px tall (${below.map(desc).join(', ')} on the second)`);
+    }
 
     // Text: nothing cut off or spilling out of its box; sizes.
     const BODY = '.ev-text, .msg, .ask-hello, .proc-name, .svc-name, .core-summary, .missing-text, .disk-note, .events-empty, .offline-text, .toast';
@@ -204,6 +218,33 @@ export function remoteProblems(page, insets = {}) {
     if (inputFs < 16) out.push(`the question box is ${inputFs}px (iOS zooms the page into fields under 16 px)`);
     return { problems: out, smallest };
   }, insets);
+}
+
+/** Where a caption wraps, its separator dot goes down with the value after it, never ends a line. */
+export function separatorProblems(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const walker = document.createTreeWalker(document.querySelector('.stage'), NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      const s = t.data;
+      const el = t.parentElement;
+      if (!s.includes('·') || !el.getClientRects().length || el.closest('[hidden], .hud-sr')) continue;
+      for (let i = s.indexOf('·'); i !== -1; i = s.indexOf('·', i + 1)) {
+        let j = i + 1;
+        while (j < s.length && /\s/.test(s[j])) j++;
+        if (j >= s.length) continue;
+        range.setStart(t, i);
+        range.setEnd(t, i + 1);
+        const dot = range.getBoundingClientRect();
+        range.setStart(t, j);
+        range.setEnd(t, j + 1);
+        const next = range.getBoundingClientRect();
+        if (dot.height && next.top > dot.bottom - 2) out.push(`a line ends with its separator: #${el.id || el.className} "${s.slice(Math.max(0, i - 14), i + 1)}" / "${s.slice(j, j + 16)}"`);
+      }
+    }
+    return out;
+  });
 }
 
 /** The question box's hint fits in the box, or ends in "…" where it does not (never cut mid-letter). */
@@ -475,7 +516,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
       );
     } else {
       const r = await remoteProblems(page, size.insets);
-      checks.push(...r.problems);
+      checks.push(...r.problems, ...(await separatorProblems(page)));
       smallest = r.smallest;
     }
     const first = path.join(outDir, `${name}.png`);

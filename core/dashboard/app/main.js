@@ -93,10 +93,12 @@ const coreLabel = $('core-label');
 const readouts = { cpu: $('g-cpu'), gpu: $('g-gpu'), ram: $('g-ram'), disk: $('g-disk') };
 const orb = createOrb($('core-canvas'), {
   readoutWidth: 150,
-  onLayout({ cx, cy, R, anchors }) {
+  onLayout({ cx, cy, R, anchors, compact }) {
     setVar(coreLabel, '--cx', `${cx}px`);
     setVar(coreLabel, '--cy', `${cy}px`);
-    setVar(coreLabel, '--core-word', `${Math.max(16, Math.min(48, R * 0.13)).toFixed(1)}px`);
+    // The state word grows with the core. The remote view's smaller core keeps it in proportion
+    // (12 px at the least, 13 px at its 13rem minimum), so the word always fits inside the heart.
+    setVar(coreLabel, '--core-word', `${Math.max(compact ? 12 : 16, Math.min(48, R * 0.13)).toFixed(1)}px`);
     for (const [name, node] of Object.entries(readouts)) {
       const a = anchors[name];
       const left = name === 'cpu' || name === 'ram';

@@ -2000,6 +2000,37 @@ html[data-view='remote'] .ask-send:active {
   }
 }
 
+/* A phone on its side (under 431px tall): the top bar keeps to one line (the small orb and the
+   HOST label go, the gaps tighten), and the core sits at the top of its readouts instead of
+   centred on them, so the whole core is on the first screen. */
+@media (max-height: 430px) and (min-width: 561px) {
+  .topbar {
+    column-gap: 0.75rem;
+    padding-bottom: 0.5rem;
+  }
+  .brand-orb,
+  .brand-host .hud-label {
+    display: none;
+  }
+  .brand-host {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .open-jarvis {
+    padding: 0 0.75rem;
+  }
+  .core-stage {
+    align-items: start;
+  }
+}
+/* The narrowest (the first iPhone SE, 568px): the host name goes too (the Services panel still
+   shows the machine's tailnet name), so a long state word ("NOMINAL") leaves room for the rest. */
+@media (max-height: 430px) and (min-width: 561px) and (max-width: 640px) {
+  .brand-host {
+    display: none;
+  }
+}
+
 /* A phone held upright, a narrow window, an iPad in Split View: one column, the core on top with
    its readouts in a 2×2 grid under it. Two columns start at 561px, where a half-width panel holds
    the network's values ("UNREACHABLE", "999 Mb/s") and the question box keeps its room. */
