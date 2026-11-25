@@ -106,17 +106,19 @@ export function homeVoicePending({ settings, senses, voiceName = 'George' } = {}
 /**
  * The voice the next reply uses (the same choice as the voice router, platform/voice/voice-router.js),
  * where it comes from, and what is getting ready meanwhile.
- *   settings  homeBaseUrl, homeBaseSpeak, naturalVoice
- *   senses    { phase, view, problem, cooling, canSpeak } (null: no home base in this app)
- *   natural   { supported, state, knownSlow } (the on-device engine; null: none)
- *   device    { name } the device voice Jarvis picked (or the owner chose), if known
- * Returns { engine, label, where, pending } (pending: homeVoicePending's, or null).
+ *   settings    homeBaseUrl, homeBaseSpeak, naturalVoice
+ *   senses      { phase, view, problem, cooling, canSpeak } (null: no home base in this app)
+ *   natural     { supported, state, knownSlow } (the on-device engine; null: none)
+ *   device      { name } the device voice Jarvis picked (or the owner chose), if known
+ *   audioStuck  v7.8.1: George's sound (Web Audio) didn't start on this device (the router's audioStuck()):
+ *               the device voice speaks until a tap (Test) or the sound comes back
+ * Returns { engine, label, where, pending } (pending: homeVoicePending's, the stuck sound's, or null).
  */
-export function voiceInUse({ settings, senses = null, natural = null, device = null, os = 'other', voiceName = 'George' } = {}) {
+export function voiceInUse({ settings, senses = null, natural = null, device = null, os = 'other', voiceName = 'George', audioStuck = false } = {}) {
   const s = isObj(settings) ? settings : {};
   const dev = thisDevice(os);
   const sn = isObj(senses) ? senses : null;
-  const pending = sn ? homeVoicePending({ settings: s, senses: sn, voiceName }) : null;
+  let pending = sn ? homeVoicePending({ settings: s, senses: sn, voiceName }) : null;
   let engine = 'device';
   if (sn && s.homeBaseSpeak === true && sn.canSpeak === true) engine = 'homebase';
   else if (isObj(natural) && natural.supported && s.naturalVoice === true) {
@@ -124,6 +126,11 @@ export function voiceInUse({ settings, senses = null, natural = null, device = n
     if (st === 'ready') engine = 'natural';
     else if (natural.knownSlow || st === 'slow' || st === 'error' || st === 'downloading') engine = 'device';
     else engine = 'natural'; // off, starting, loading, warming: it starts (or loads) when Jarvis next speaks
+  }
+  if (audioStuck === true && engine !== 'device') {
+    // v7.8.1: George would speak, but his sound didn't start here last time: the device voice does, and says so.
+    engine = 'device';
+    pending = { state: 'stuck', text: `${voiceName}’s sound didn’t start on ${dev}, so the ${deviceVoiceWord(os)} is speaking. Tap Test to try again.` };
   }
   const label = voiceLabel(engine, { voiceName, os });
   let where;

@@ -3,8 +3,15 @@
 //   createFakeEngine(clock, { rtf, failOn, state })   engine-client.js stand-in: synthesis takes
 //                       rtf × the audio's duration of virtual time, one job at a time like the
 //                       worker; audio = 0.1 s silence + voiced samples + 0.15 s silence at 24 kHz
-//   createFakeAudio(clock)                            audio-out.js stand-in on the virtual clock
+//   createFakeAudio(clock, { latency, frozen })        audio-out.js stand-in on the virtual clock.
+//                       suspend() / resume() stop and restart its clock (frozen: stopped from the
+//                       start). v7.8.1: kick() counts in `kicks` and calls onKick (null: the kick
+//                       does nothing, the stuck case); autoResumeMs: play() on a stopped clock
+//                       restarts it that much later (the real play() resuming a suspended context)
 //   createFakeWorker()                                a Worker for engine-client.js
+//   installClock().block(ms)                          v7.8.1: the main thread blocked for `ms`: no timer
+//                       runs meanwhile, then each overdue one runs once (an interval once, not ms/period
+//                       times), as in a browser; the fake audio clock (another thread) moved on
 //
 // Results are delivered through a synchronous thenable (not a Promise), so they arrive at the
 // exact virtual time inside clock.advance() (Promise callbacks would wait for the microtask
@@ -148,17 +155,30 @@ export function createFakeEngine(clock, { rtf = 0.4, failOn = () => false, state
   return fake;
 }
 
-export function createFakeAudio(clock, { latency = 0 } = {}) {
+export function createFakeAudio(clock, { latency = 0, frozen = false } = {}) {
   const t0 = clock.now;
-  let suspendedAt = -1;
+  let suspendedAt = frozen ? clock.now : -1;
   let pausedTotal = 0;
   const fake = {
     played: [], // { when, duration, samples, stopped }
     unlocked: 0,
+    kicks: 0,
+    kickTimes: [], // clock.now of each kick
+    onKick: null, // fake => void: what a kick does (null: nothing, the clock stays stopped)
+    autoResumeMs: null,
     supported: () => true,
     unlock() {
       fake.unlocked += 1;
       return true;
+    },
+    kick() {
+      fake.kicks += 1;
+      fake.kickTimes.push(clock.now);
+      if (typeof fake.onKick === 'function') fake.onKick(fake);
+      return true;
+    },
+    get frozen() {
+      return suspendedAt >= 0;
     },
     ready: () => suspendedAt < 0,
     now() {
@@ -174,6 +194,7 @@ export function createFakeAudio(clock, { latency = 0 } = {}) {
       suspendedAt = -1;
     },
     play(pcm, sampleRate, when) {
+      if (suspendedAt >= 0 && fake.autoResumeMs !== null) setTimeout(() => fake.resume(), fake.autoResumeMs);
       const at = Math.max(when, fake.now());
       const rec = { when: at, duration: pcm.length / sampleRate, samples: pcm.length, stopped: false, stoppedAt: null };
       fake.played.push(rec);
@@ -294,6 +315,12 @@ export function installClock(start = 1_800_000_000_000) {
       const t0 = now;
       if (!runTo(now + maxMs, stop)) throw new Error(`runUntil: condition not met within ${maxMs} ms`);
       return now - t0;
+    },
+    /** The main thread blocked for `ms`: no timer runs meanwhile; then each overdue timer runs once. */
+    block(ms) {
+      now += Math.max(0, Number(ms) || 0);
+      for (const t of timers.values()) if (t.at < now) t.at = now;
+      runTo(now);
     },
     restore() {
       Object.assign(globalThis, { setTimeout: saved.setTimeout, clearTimeout: saved.clearTimeout, setInterval: saved.setInterval, clearInterval: saved.clearInterval });
