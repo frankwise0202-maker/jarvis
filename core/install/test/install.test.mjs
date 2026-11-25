@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import {
   makeSandbox, makeRepo, install, cli, runScript, stubLog, snapshot, freePort, stopCore, CLI,
-  GSETTINGS_DEFAULTS, GDM_STOCK, USER, CORE, installAsync, cliAsync,
+  GSETTINGS_DEFAULTS, GDM_STOCK, USER, CORE, installAsync, cliAsync, INSTALL_SH,
 } from './harness.mjs';
 
 const RULE = `${USER} ALL=(root) NOPASSWD: /usr/sbin/smartctl -j -H -A -i /dev/sd[a-z], /usr/sbin/smartctl -j -H -A -i /dev/nvme[0-9]n[0-9]`;
@@ -685,6 +685,36 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.equal(install(sb, ['--keep-old'], { env }).code, 2, '--keep-old only goes with --libraries');
     });
 
+    await t.test("a timer unit an earlier version wrote (an update cut short before it rewrote it) isn't \"set up by hand\", and the next check makes it this version's", () => {
+      // what Core 1.2.2 wrote: the same unit, with a 30-minute limit
+      const ours = fs.readFileSync(auService, 'utf8');
+      assert.match(ours, /^TimeoutStartSec=60min$/m);
+      const earlier = ours.replace(/^TimeoutStartSec=60min$/m, 'TimeoutStartSec=30min');
+      fs.writeFileSync(auService, earlier);
+      const s = cli(sb, ['autoupdate', 'status'], { env }).out;
+      assert.match(s, /✓ On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself\n/);
+      assert.doesNotMatch(s, /set up by hand/);
+      const tick = () => cli(sb, ['autoupdate-tick'], { env: { ...env, JARVIS_CORE_UPDATE_CHECK_SEC: '1', JARVIS_CORE_START_WAIT_SEC: '10' } });
+      fs.writeFileSync(sb.log, '');
+      let r = tick();
+      assert.equal(r.code, 0, r.out);
+      assert.equal(fs.readFileSync(auService, 'utf8'), ours, "the check wrote this version's unit");
+      assert.ok(stubLog(sb).includes('systemctl --user daemon-reload'), 'and reloaded it');
+      assert.match(r.out, /Updated the automatic update timer to this version's \(another version had written it\)/);
+      // nothing to do the next time
+      fs.writeFileSync(sb.log, '');
+      r = tick();
+      assert.equal(r.code, 0, r.out);
+      assert.ok(!stubLog(sb).includes('systemctl --user daemon-reload'));
+      assert.doesNotMatch(r.out, /Updated the automatic update timer/);
+      // jarvis-core autoupdate on doesn't call an earlier version's unit hand-made either
+      fs.writeFileSync(auService, earlier);
+      r = cli(sb, ['autoupdate', 'on'], { env });
+      assert.equal(r.code, 0, r.out);
+      assert.doesNotMatch(r.out, /set up by hand/);
+      assert.equal(fs.readFileSync(auService, 'utf8'), ours);
+    });
+
     await t.test('autoupdate off and on; a timer set up by hand is taken over by the next update', () => {
       let r = cli(sb, ['autoupdate', 'off'], { env });
       assert.equal(r.code, 0, r.out);
@@ -794,6 +824,17 @@ test('install, re-run, CLI and uninstall in a sandbox (stubbed system, real Core
       assert.equal(r.code, 0, r.out);
       assert.match(r.out, /━━ The screen\n  ! Started the dashboard, but it isn't on the screen yet \(log out and back in, or run: jarvis-core open\)\n/);
       assert.doesNotMatch(r.out, /Put the dashboard back/);
+      // Chrome starts, then can't reach the display (a desktop session that ended, its display still named by the user
+      // manager) and exits: a real one lived 0.1 s warm, 5 s cold. Seen once is not on the screen: not "put back"
+      fs.writeFileSync(chromeStub, '#!/bin/bash\necho "google-chrome-stable $*" >> "$STUB_LOG"\n[ "$1" = --version ] && { echo "Google Chrome 142"; exit 0; }\nsleep 0.3\necho "Missing X server or \\$DISPLAY" >&2\nexit 1\n', { mode: 0o755 });
+      try {
+        r = install(sb, ['--refresh'], { env: { ...asOwner, STUB_SHOW_ENV: showEnv, STUB_SYSTEMD_RUN_EXEC: '1' } });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /━━ The screen\n  ! Started the dashboard, but it isn't on the screen yet \(log out and back in, or run: jarvis-core open\)\n/);
+        assert.doesNotMatch(r.out, /Put the dashboard back/);
+      } finally {
+        fs.writeFileSync(chromeStub, plainChrome, { mode: 0o755 });
+      }
       // from a terminal (not the timer), a refresh with no dashboard on the screen starts nothing either
       fs.rmSync(marker, { force: true });
       r = install(sb, ['--refresh'], { env: { ...env, STUB_REAL_UID: '1', JARVIS_CORE_ALLOW_ROOT: '1', JARVIS_CORE_CGROUP_FILE: path.join(sb.root, 'no-such-cgroup'), STUB_SHOW_ENV: 'WAYLAND_DISPLAY=wayland-0' } });
@@ -884,11 +925,23 @@ test("the brain's libraries: one install at a time; a retry that breaks the Core
     assert.ok(fs.existsSync(path.join(stage, 'node_modules')), 'npm ci started writing');
   };
   const tick = (extra = {}) => cliAsync(sb, ['autoupdate-tick'], { env: { ...env, ...extra } });
+  const auLog = path.join(sb.home, '.local/share/jarvis-core/autoupdate.log');
+  const libsLock = path.join(sb.home, '.config/jarvis-core/install/libraries.lock');
+  const lockFree = () => spawnSync('flock', ['-n', libsLock, 'true']).status === 0;
   const newRelease = (msg) => {
     fs.appendFileSync(path.join(repo.work, 'core/package-lock.json'), '\n');
     repo.commit(msg);
   };
   const clean = () => assert.ok(!fs.existsSync(stage) && !fs.existsSync(old), 'no staging folder, no previous libraries left aside');
+  const stopCoreByHand = () => execFileSync('systemctl', ['--user', 'stop', 'jarvis-core.service'], { env: { ...sb.env } });
+  // After the subtests that stop the Core (only matters when one of them fails): a Core that answers, this version's
+  // libraries in place, and no retry pending, for the next one.
+  const settle = async () => {
+    if (!(await ping())) cli(sb, ['restart'], { env });
+    if (fs.existsSync(auState)) fs.writeFileSync(auState, fs.readFileSync(auState, 'utf8').replace(/^libs_\w+=.*\n/gm, ''));
+    fs.rmSync(old, { recursive: true, force: true });
+    if (!markerOk()) install(sb, ['--libraries'], { env });
+  };
   try {
     const r0 = install(sb, [], { answers: ['n', 'n', 'n', 'y'], env });
     assert.equal(r0.code, 0, r0.out);
@@ -965,6 +1018,36 @@ test("the brain's libraries: one install at a time; a retry that breaks the Core
       // already in place: exit 3 (nothing to do)
       const r = install(sb, ['--libraries'], { env });
       assert.equal(r.code, 3, r.out);
+    });
+
+    await t.test('an install cut off by a closed terminal: its npm keeps the lock while it still writes, and a check steps aside', async () => {
+      try {
+        // The terminal closing sends SIGHUP to the job's process group: install.sh dies, but `timeout` put npm in a group
+        // of its own, so npm goes on writing in core/.npm-install with nobody to swap its work in.
+        fs.writeFileSync(marker, 'another version\n');
+        fs.writeFileSync(sb.log, '');
+        const job = spawn('setsid', ['-w', 'bash', INSTALL_SH, '--libraries'], { env: { ...sb.env, ...env, STUB_NPM_SLOW: '3', JARVIS_CORE_TTY: '/nonexistent/tty' }, cwd: sb.home, stdio: 'ignore' });
+        const gone = new Promise((r) => job.on('close', r));
+        await npmWriting();
+        process.kill(-job.pid, 'SIGHUP');
+        await gone;
+        const check = await tick();
+        assert.equal(check.code, 0, check.out);
+        assert.match(check.out, /The brain's libraries are being installed right now \(jarvis-core update\?\); the next check looks again\./);
+        assert.equal(npmRuns(), 1, 'no second npm ci in the folder the first one still writes in');
+        assert.equal(auGet('libs_failed'), null, 'no back-off');
+        // once it has ended (its work is never swapped in), the lock is free, and the next check installs them
+        for (let i = 0; i < 300 && !lockFree(); i++) await sleep(100);
+        assert.ok(lockFree(), 'the lock is free once that npm has ended');
+        const r = await tick({ STUB_NPM_SLOW: '3' });
+        assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+        assert.ok(markerOk());
+        assert.equal(pkgs(), 30);
+        clean();
+      } finally {
+        // whatever happened, no npm of this subtest is left writing for the next one
+        for (let i = 0; i < 300 && !lockFree(); i++) await sleep(100);
+      }
     });
 
     await t.test('new libraries that make the Core fail are taken out again, and left alone until a newer version', async () => {
@@ -1138,6 +1221,112 @@ test("the brain's libraries: one install at a time; a retry that breaks the Core
       assert.ok(markerOk());
       assert.equal(auGet('libs_failed'), null);
       assert.doesNotMatch(cli(sb, ['autoupdate', 'status'], { env }).out, /npm said/);
+    });
+
+    await t.test('a stopped Core while the libraries wait out a back-off: status names the real next try, and why', async () => {
+      try {
+        // the timer's try fails because the disk is full (it waits 2 hours), then the owner stops the Core for a while
+        fs.writeFileSync(marker, 'another version\n');
+        let r = await tick({ STUB_NPM_FAIL: 'enospc' });
+        assert.equal(r.code, 0, r.out);
+        const nextTry = /The brain's libraries still didn't install; the next try is at the first check after (\w+ \d+ \d+:\d\d [AP]M)/.exec(r.out)?.[1];
+        assert.ok(nextTry, r.out);
+        stopCoreByHand();
+        const waits = new RegExp(`The last try failed \\(\\w+ \\d+ \\d+:\\d\\d [AP]M: the disk is full\\); the next automatic update check after ${nextTry} tries again, if Jarvis Core is running then \\(it isn't now\\)\\.\\n`);
+        for (const args of [['status'], ['autoupdate', 'status']]) {
+          const s = cli(sb, args, { env }).out;
+          assert.doesNotMatch(s, /the next automatic update check after it starts tries again/, `jarvis-core ${args.join(' ')}:\n${s}`);
+          assert.match(s, waits, `jarvis-core ${args.join(' ')}:\n${s}`);
+        }
+        // started again: the check that follows doesn't try before that time, as status said
+        assert.equal(cli(sb, ['restart'], { env }).code, 0);
+        fs.writeFileSync(sb.log, '');
+        r = await tick();
+        assert.equal(r.code, 0, r.out);
+        assert.equal(npmRuns(), 0);
+        assert.match(r.out, new RegExp(`the next try is at the first check after ${nextTry}\\.`));
+        // once the wait is over, with the Core stopped: the first check after it starts tries, and the reason stays
+        auShift('libs_failed', 7200);
+        stopCoreByHand();
+        assert.match(cli(sb, ['status'], { env }).out, /The last try failed \(\w+ \d+ \d+:\d\d [AP]M: the disk is full\)\. Jarvis Core isn't running; the next automatic update check after it starts tries again\.\n/);
+        assert.equal(cli(sb, ['restart'], { env }).code, 0);
+        r = await tick();
+        assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+        assert.ok(markerOk());
+        assert.equal(auGet('libs_failed'), null);
+      } finally {
+        await settle();
+      }
+    });
+
+    await t.test('a check of new libraries left pending while the Core is stopped: no line in autoupdate.log at every check', async () => {
+      try {
+        // new libraries in place, the previous ones still aside, the check not done yet; the owner keeps the Core stopped
+        assert.ok(markerOk());
+        fs.mkdirSync(old, { recursive: true });
+        fs.writeFileSync(path.join(old, '.jarvis-lock-sha256'), 'another version\n');
+        fs.appendFileSync(auState, `libs_trying=${lockHash()}\n`);
+        stopCoreByHand();
+        const logBefore = fs.existsSync(auLog) ? fs.readFileSync(auLog, 'utf8') : '';
+        fs.writeFileSync(sb.log, '');
+        for (let n = 0; n < 2; n++) {
+          const r = await tick();
+          assert.equal(r.code, 0, r.out);
+          assert.match(r.out, /Jarvis Core isn't running, so the brain's new libraries are checked once it runs again\./);
+          assert.doesNotMatch(r.out, /cut short: checking them now/);
+        }
+        assert.equal(fs.existsSync(auLog) ? fs.readFileSync(auLog, 'utf8') : '', logBefore, 'nothing written to autoupdate.log');
+        assert.equal(npmRuns() + restarts(), 0);
+        assert.ok(!(await ping()), 'still stopped');
+        // started again: the next check finishes it
+        assert.equal(cli(sb, ['restart'], { env }).code, 0);
+        const r = await tick();
+        assert.match(r.out, /The check of the brain's new libraries was cut short: checking them now/);
+        assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+        clean();
+        assert.equal(auGet('libs_trying'), null);
+      } finally {
+        await settle();
+      }
+    });
+
+    await t.test('a Core the owner stops during the check of new libraries: they stay, nothing is blamed, and the check finishes once it runs again', async () => {
+      try {
+        fs.writeFileSync(marker, 'another version\n');
+        const eventsBefore = fs.existsSync(events) ? fs.readFileSync(events, 'utf8') : '';
+        const pidFile = path.join(sb.stubs, 'core.pid');
+        const pid = () => (fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8').trim() : '');
+        const before = pid();
+        fs.writeFileSync(sb.log, '');
+        // the check lasts 6 s here (90 s on the Alienware); the owner stops the Core 2 s after it answers with them
+        const check = tick({ JARVIS_CORE_UPDATE_CHECK_SEC: '6' });
+        for (let i = 0; i < 2400 && !(pid() && pid() !== before); i++) await sleep(25);
+        for (let i = 0; i < 400 && !(await ping()); i++) await sleep(25);
+        await sleep(2000);
+        stopCoreByHand();
+        let r = await check;
+        assert.equal(r.code, 0, r.out);
+        assert.equal(npmRuns(), 1, r.out);
+        assert.match(r.out, /Jarvis Core was stopped during the check of the brain's new libraries; they are checked once it runs again/);
+        assert.doesNotMatch(r.out, /isn't answering|went back|took them out/);
+        assert.ok(markerOk(), 'the new libraries stay');
+        assert.ok(fs.existsSync(old), 'the previous ones stay aside until the check is done');
+        assert.equal(auGet('libs_trying'), lockHash());
+        assert.equal(auGet('libs_failed'), null, 'no back-off');
+        assert.equal(auGet('libs_bad'), null, 'not blamed');
+        assert.equal(fs.existsSync(events) ? fs.readFileSync(events, 'utf8') : '', eventsBefore, 'no warning in the event log');
+        assert.ok(!(await ping()), 'still stopped');
+        // started again: the next check finishes the check that was cut short
+        assert.equal(cli(sb, ['restart'], { env }).code, 0);
+        r = await tick();
+        assert.match(r.out, /The check of the brain's new libraries was cut short: checking them now/);
+        assert.match(r.out, /Installed the brain's libraries; Jarvis Core restarted to load them, and it answers/);
+        assert.ok(markerOk());
+        clean();
+        assert.equal(auGet('libs_trying'), null);
+      } finally {
+        await settle();
+      }
     });
   } finally {
     stopCore(sb);
