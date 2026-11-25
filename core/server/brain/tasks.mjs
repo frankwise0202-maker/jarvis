@@ -5,11 +5,15 @@
 import { BRAIN_MODELS, webTools, collectSources, textRuns, toolInput, lastJsonObject, BrainError } from './claude.mjs';
 import { oneLine, cleanText, httpUrl, redact } from './util.mjs';
 
-/** Per-kind settings: model, effort, max_tokens, web tool uses per request, continuations, hard budget. */
+/**
+ * Per-kind settings: model, effort, max_tokens, web tool uses per request, continuations, hard budget.
+ * The budgets leave room for the live estimate, which counts high (every server-tool round reading the
+ * conversation again, thinking at 200 tokens a second): an ordinary request must finish inside them.
+ */
 export const PROFILES = Object.freeze({
-  quick: Object.freeze({ model: BRAIN_MODELS.quickResearch, effort: 'medium', maxTokens: 16000, searches: 5, fetches: 3, maxContinuations: 4, budgetUsd: 0.75 }),
+  quick: Object.freeze({ model: BRAIN_MODELS.quickResearch, effort: 'medium', maxTokens: 16000, searches: 5, fetches: 3, maxContinuations: 4, budgetUsd: 1.25 }),
   deep: Object.freeze({ model: BRAIN_MODELS.deepResearch, effort: 'high', maxTokens: 32000, searches: 12, fetches: 6, maxContinuations: 8, budgetUsd: 3.0 }),
-  watch: Object.freeze({ model: BRAIN_MODELS.watchCheck, effort: 'low', maxTokens: 4000, searches: 3, fetches: 1, maxContinuations: 2, budgetUsd: 0.15 }),
+  watch: Object.freeze({ model: BRAIN_MODELS.watchCheck, effort: 'low', maxTokens: 4000, searches: 3, fetches: 1, maxContinuations: 2, budgetUsd: 0.3 }),
   briefing: Object.freeze({ model: BRAIN_MODELS.briefing, effort: 'low', maxTokens: 6000, searches: 3, fetches: 0, maxContinuations: 2, budgetUsd: 0.3 }),
 });
 

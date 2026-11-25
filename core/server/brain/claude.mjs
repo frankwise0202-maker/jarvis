@@ -11,9 +11,10 @@
 //   - during the stream a live estimate is checked on every event and every second, and the request is
 //     stopped the moment it would cross ("finish with what it has"). Thinking streams no text on Opus /
 //     Sonnet 5.5 (display "omitted") but is billed as output, so the estimate counts the time the model
-//     spends writing at a generous OUTPUT_TOKENS_PER_SECOND (up to max_tokens), every server-tool round
-//     reading the whole conversation again, a search result as SEARCH_RESULT_TOKENS and a fetched page as
-//     its max_content_tokens.
+//     spends writing at a generous OUTPUT_TOKENS_PER_SECOND (up to max_tokens), and every server-tool
+//     round reading the whole conversation again, each result at its measured size (at least
+//     SEARCH_RESULT_MIN_TOKENS for a search); while a tool runs, the round its result starts is counted
+//     ahead (a search as SEARCH_EXPECTED_TOKENS, a page as up to its max_content_tokens).
 //
 // The key goes only to https://api.anthropic.com (or, for tests, a loopback address the caller names).
 
@@ -63,8 +64,11 @@ export const MIN_MAX_TOKENS = 1024;
 export const MIN_REQUEST_TOKENS = 2000;
 /** The live estimate's writing speed (thinking streams no text but is billed): above what the models do. */
 export const OUTPUT_TOKENS_PER_SECOND = 200;
-/** A web search result as input tokens, at least (its content is encrypted; pages run long). */
-export const SEARCH_RESULT_TOKENS = 10_000;
+/** A web search result's input tokens, at least (its snippets come encrypted); and what one is expected to add. */
+export const SEARCH_RESULT_MIN_TOKENS = 2000;
+export const SEARCH_EXPECTED_TOKENS = 4000;
+const FETCH_MIN_TOKENS = 1000;
+const FETCH_EXPECTED_MAX = 10_000;
 const FETCH_DEFAULT_TOKENS = 25_000;
 
 /** A request's input in tokens before it is sent: its JSON at 3 characters a token, plus what the API adds. */
@@ -85,7 +89,7 @@ function fetchTokensOf(tools) {
   return Number.isFinite(n) && n > 0 ? n : FETCH_DEFAULT_TOKENS;
 }
 
-/** Input tokens a server tool's result adds to the context: its size, and for a search or a page at least the most it can hold. */
+/** Input tokens a server tool's result adds to the context: its size (4 characters a token; encrypted snippets count high), with a floor. */
 function resultTokensOf(block, fetchTokens) {
   let size = 0;
   try {
@@ -96,13 +100,13 @@ function resultTokensOf(block, fetchTokens) {
   const c = block?.content;
   const failed = c && typeof c === 'object' && !Array.isArray(c) && (typeof c.error_code === 'string' || /error/.test(String(c.type ?? '')));
   if (failed) return size;
-  if (block.type === 'web_search_tool_result') return Math.max(SEARCH_RESULT_TOKENS, size);
-  if (block.type === 'web_fetch_tool_result') return Math.max(fetchTokens, size);
+  if (block.type === 'web_search_tool_result') return Math.max(SEARCH_RESULT_MIN_TOKENS, size);
+  if (block.type === 'web_fetch_tool_result') return Math.max(FETCH_MIN_TOKENS, Math.min(size, fetchTokens + 500));
   return size;
 }
 
 /** What a result of this server tool is expected to add, before it arrives. */
-const expectedResultTokens = (name, fetchTokens) => (name === 'web_search' ? SEARCH_RESULT_TOKENS : name === 'web_fetch' ? fetchTokens : 1000);
+const expectedResultTokens = (name, fetchTokens) => (name === 'web_search' ? SEARCH_EXPECTED_TOKENS : name === 'web_fetch' ? Math.min(fetchTokens, FETCH_EXPECTED_MAX) : 1000);
 
 function headerOf(err, name) {
   try {

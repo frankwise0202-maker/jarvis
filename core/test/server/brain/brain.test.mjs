@@ -367,7 +367,8 @@ test('caps: the estimate grows while the model thinks in silence, and a timer st
 });
 
 test('caps: every server-tool round reads the conversation again; the request stops before the round that would cross', async () => {
-  const hit = (q) => [{ url: `https://d.example/${q}`, title: `D ${q}` }];
+  // Each search brings back about 10,000 tokens of (encrypted) snippets.
+  const hit = (q) => [{ url: `https://d.example/${q}`, title: `D ${q}`, contentChars: 40_000 }];
   const fake = await startFakeClaude({
     script: () => ({
       blocks: [text('Summary: What the first searches found.\n\nDetails.'), ...search('one', hit(1)), ...search('two', hit(2)), ...search('three', hit(3)), ...search('four', hit(4)), text('\n\nThe end of the answer.')],
@@ -395,7 +396,7 @@ test('caps: every server-tool round reads the conversation again; the request st
   }
 });
 
-test('per-job budget: a quick research job never spends more than its budget', async () => {
+test('per-job budget: an endless quick research job stops at its budget', async () => {
   const fake = await startFakeClaude({
     script: () => ({ blocks: [...search('q', [{ url: 'https://b.example/', title: 'B' }])], stop: 'pause_turn', usage: { input_tokens: 150_000, output_tokens: 1000 } }),
   });
@@ -404,9 +405,11 @@ test('per-job budget: a quick research job never spends more than its budget', a
     await okKey(brain);
     const job = brain.createJob({ prompt: 'endless' });
     const done = await until(() => (['done', 'failed'].includes(brain.getJob(job.id).status) ? brain.getJob(job.id) : null), { what: 'budget stop' });
-    // Each paused response costs 0.30 + 0.01 + 0.01; the budget ($0.75) stops it after the third.
-    assert.ok(done.costUsd <= 0.75 + 0.33, `cost ${done.costUsd}`);
-    assert.ok(fake.messageRequests.length <= 3);
+    // Each paused response costs 0.30 + 0.01 + 0.01. After the third ($0.96 of the $1.25 budget) the
+    // fourth stops as soon as its 150k-token prompt shows it cannot fit in the $0.29 left (that prompt
+    // is counted), and nothing more is sent.
+    assert.ok(done.costUsd <= 1.25 + 0.31, `cost ${done.costUsd}`);
+    assert.ok(fake.messageRequests.length <= 4);
     assert.equal(done.status, 'failed');
     assert.equal(done.error.code, 'budget');
   } finally {
