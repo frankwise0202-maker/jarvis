@@ -81,6 +81,20 @@ function finishedItems(b) {
   return [...w, ...j].slice(0, 5);
 }
 
+/**
+ * The morning card's share of it: the research first (the most valuable part), then the
+ * watchers, at most MORNING_DONE_MAX; the rest is counted in a "+N more on your phone" line, so a
+ * busy night never runs past the card's edge.
+ */
+const MORNING_DONE_MAX = 3;
+function morningFinished(b) {
+  const j = b.jobs.map((x) => ({ title: x.title, status: x.status, summary: x.summary }));
+  const w = b.watchers.filter((x) => x.status === 'met' || x.summary).map((x) => ({ title: x.what, status: x.status, summary: x.summary }));
+  w.sort((a, c) => (c.status === 'met' ? 1 : 0) - (a.status === 'met' ? 1 : 0));
+  const all = [...j, ...w];
+  return { shown: all.slice(0, MORNING_DONE_MAX), more: Math.max(0, all.length - MORNING_DONE_MAX) };
+}
+
 function weatherLine(w) {
   if (!w) return null;
   const now = [fmtDegrees(w.temp, w.units), w.summary].filter(Boolean).join(' ');
@@ -487,10 +501,12 @@ export function createBrainView({ kiosk }) {
     const hb = b.homebase;
     setData(n.mHb, 'level', hb ? hb.level : 'unknown');
     setText(n.mHbText, hb ? keepUnits(hb.summary || '') : 'The overnight report is not available.');
-    fillList(n.mHbNotes, hb ? hb.notes.slice(0, 3) : [], (t) => el('li', '', keepUnits(t)));
-    const done = finishedItems(b);
-    fillList(n.mDone, done, doneItem);
-    if (!done.length) n.mDone.append(el('li', 'm-done-none', brain && !brain.key.set ? 'Nothing ran overnight: background research needs your key.' : 'Nothing finished overnight.'));
+    const done = morningFinished(b);
+    // Two of the night's notes when something finished overnight (the phone has them all), else three.
+    fillList(n.mHbNotes, hb ? hb.notes.slice(0, done.shown.length ? 2 : 3) : [], (t) => el('li', '', keepUnits(t)));
+    fillList(n.mDone, done.shown, doneItem);
+    if (done.more) n.mDone.append(el('li', 'm-done-more', `+${done.more} more on your phone`));
+    if (!done.shown.length) n.mDone.append(el('li', 'm-done-none', brain && !brain.key.set ? 'Nothing ran overnight: background research needs your key.' : 'Nothing finished overnight.'));
     fillList(n.mWhatsNew, b.whatsNew.slice(0, 3), (x) => {
       const li = el('li', 'm-new');
       li.append(el('b', '', x.title));

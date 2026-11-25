@@ -33,6 +33,7 @@ export const SHOTS = {
   'morning-noweather': { scenario: 'ok', brain: 'noweather', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-nokey': { scenario: 'ok', brain: 'nokey', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-long': { scenario: 'ok', brain: 'long', at: '2026-11-25T07:05:00Z', morning: true },
+  'morning-night': { scenario: 'ok', brain: 'night', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-full': { scenario: 'ok', brain: 'full', at: '2026-11-25T07:05:00Z', morning: true },
   'morning-waiting': { scenario: 'ok', brain: 'waiting', at: '2026-11-25T07:00:10Z', morning: true, arrive: true },
   'morning-alert': { scenario: 'alert', brain: 'ok', at: '2026-11-25T07:05:00Z', morning: true },
@@ -80,6 +81,16 @@ async function morningProblems(page) {
     const parts = [...m.querySelector('.m-strip').children].map((c) => c.getBoundingClientRect()).filter((r) => r.height);
     const mid = (r) => r.top + r.height / 2;
     if (parts.some((r) => Math.abs(mid(r) - mid(parts[0])) > r.height / 2)) out.push('the strip wraps onto two lines');
+    // The night's status dot sits on the summary's first line, also when the summary wraps.
+    const hb = document.getElementById('m-hb');
+    const hbText = document.getElementById('m-hb-text');
+    if (hb && !hb.closest('[hidden]') && hbText.textContent) {
+      const range = document.createRange();
+      range.selectNodeContents(hbText);
+      const first = range.getClientRects()[0];
+      const dot = hb.querySelector('.lv-icon').getBoundingClientRect();
+      if (first && Math.abs(dot.top + dot.height / 2 - (first.top + first.height / 2)) > first.height / 4) out.push(`the night's status dot is not on the summary's first line (${Math.round(dot.top + dot.height / 2 - first.top)}px down a ${Math.round(first.height)}px line)`);
+    }
     // Every card's last item must end inside the card (a line-clamped title is fine; a whole item under the edge is not).
     for (const card of m.querySelectorAll('.m-card')) {
       if (card.closest('[hidden]')) continue;
