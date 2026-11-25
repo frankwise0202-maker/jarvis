@@ -702,7 +702,7 @@ step_app() {
 # holds LIBS_LOCK through its swap. A second one waits for the first (then usually finds them in place); the
 # timer's --libraries never waits, it steps aside. JARVIS_CORE_LIBS_LOCKED=1: the caller (the update timer) holds
 # the lock on fd 8 for this whole run. npm holds it too, while it runs: an npm that outlives this step (its terminal
-# was closed) keeps it until it ends, at most 16 minutes later, so nothing else starts in the folder it writes in.
+# was closed) keeps it until it ends (at most 16 minutes after it started), so nothing else starts in its folder.
 LIBS_WHAT="the Claude SDK, web-push and the speech libraries"
 deps_install() {
   if [ "$DRY_RUN" = 1 ] || [ -n "${JARVIS_CORE_LIBS_LOCKED:-}" ] || ! have flock ||
