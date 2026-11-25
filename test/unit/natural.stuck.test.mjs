@@ -18,6 +18,7 @@ import { createFakeSpeech } from './platform.voice.fakeengine.test.mjs';
 import { createAudioOut } from '../../src/platform/voice/natural/audio-out.js';
 import { createHomeBaseVoiceEngine } from '../../src/platform/voice/homebase-voice.js';
 import { samplePlayed, silentSampleText } from '../../src/lib/voice-choice.js';
+import { watchAway } from '../../src/ui/dom.js';
 
 let loads = 0;
 
@@ -476,4 +477,30 @@ test('Settings Test (L2): "Played" only when the audio clock got past the sample
   assert.equal(samplePlayed({ clock: NaN, when: 0.05, duration: 4 }), true, 'a clock that can’t be read: no claim either way');
   assert.equal(silentSampleText({ voiceName: 'George', os: 'ios' }), 'Nothing played: George’s sound didn’t start on this iPhone, so the iPhone voice speaks for now. Tap Test to try again.');
   assert.equal(silentSampleText({ voiceName: 'George', os: 'mac' }), 'Nothing played: George’s sound didn’t start on this Mac, so the built-in voice speaks for now. Tap Test to try again.');
+});
+
+test('Settings Test (L2): leaving Jarvis during the sample (iOS stops its audio in the background) gives no verdict', () => {
+  const doc = new EventTarget();
+  doc.hidden = false;
+  doc.visibilityState = 'visible';
+  const flip = (hidden) => {
+    doc.hidden = hidden;
+    doc.visibilityState = hidden ? 'hidden' : 'visible';
+    doc.dispatchEvent(new Event('visibilitychange'));
+  };
+  const stayed = watchAway(doc);
+  assert.equal(stayed.done(), false, 'in view all along');
+  const left = watchAway(doc);
+  flip(true);
+  flip(false);
+  assert.equal(left.done(), true, 'hidden for a moment, back by the check');
+  flip(true);
+  const startedHidden = watchAway(doc);
+  assert.equal(startedHidden.done(), true);
+  flip(false);
+  const after = watchAway(doc);
+  after.done();
+  flip(true); // after done(): no longer watched
+  flip(false);
+  assert.equal(watchAway(null).done(), false, 'no document: nothing to say it was away');
 });

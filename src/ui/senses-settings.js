@@ -22,7 +22,7 @@
 // senses-hear-result, senses-speak (card), senses-speak-toggle, senses-speak-status, senses-speak-progress,
 // senses-speak-test, senses-speak-result. All text goes through dom.js (textContent only).
 
-import { h, setText } from './dom.js';
+import { h, setText, watchAway } from './dom.js';
 import { icon } from './icons.js';
 import { deviceLabel } from '../lib/brain.js';
 import { HEAR_MODELS, hearModelLabel, sensesProblem, encodeWav, HEAR_SAMPLE_RATE, NO_DEPS_MESSAGE } from '../lib/senses.js';
@@ -406,14 +406,17 @@ export function createSensesSettings(senses, { audio = null, createCapture = nul
     out(speakOut, `Playing (made in ${(r.ms / 1000).toFixed(1)} s)…`, 'ok');
     const secs = playing.duration || r.pcm.length / r.sampleRate;
     const ctxAtPlay = safe(() => audio.context, null);
+    // Jarvis left meanwhile (iOS stops its audio in the background): no verdict, as the stall watchdog.
+    const away = watchAway();
     setTimeout(() => {
+      const wasAway = away.done();
       if (cancelled || destroyed || testing.speak !== t) return;
       testing.speak = null;
       setText(speakTestLabel, 'Test');
       // v7.8.1: "Played" only when the audio clock got through the sentence's start. A stuck output (iOS after
       // an interruption) plays nothing without failing: say so plainly, and replies use the device voice.
       const sameOutput = safe(() => audio.context, null) === ctxAtPlay;
-      const played = !sameOutput || samplePlayed({ clock: safe(() => audio.now(), NaN), when: playing.when, duration: secs });
+      const played = wasAway || !sameOutput || samplePlayed({ clock: safe(() => audio.now(), NaN), when: playing.when, duration: secs });
       if (played) out(speakOut, `Played “${line}” (made on the home base in ${(r.ms / 1000).toFixed(1)} s).`, 'ok');
       else {
         out(speakOut, silentSampleText({ voiceName: voiceName(), os }), 'warn');

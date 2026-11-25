@@ -3533,12 +3533,15 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   it runs is suspended and resumed). At 3.5 s a stall handoff: every scheduled chunk is stopped and dropped
   and synthesis cancelled (unlike 'slow' and failures, which let made audio play out; a pending one of those
   becomes a stall), and `onHandoff({ from, reason: 'stall' })` from what wasn't heard: the last word boundary
-  heard, the next chunk if this one's voice had all been heard, or the start of the chunk that never started.
-  Hidden, nothing counts; a visibility change starts it again from fresh readings.
+  heard (or the one before it when that one came less than `stallBackS`, 0.3 s, before the stop: the speaker
+  can lag the clock by more than `latency()` says, Bluetooth with no `outputLatency` above all, so a word said
+  twice beats a word lost), the next chunk if this one's voice had all been heard, or the start of the chunk
+  that never started. Hidden, nothing counts; a visibility change starts it again from fresh readings.
 - **Why these thresholds can't fire in normal playback.** A running context's clock moves every few
   milliseconds (iOS buffers are 5-40 ms), so a 40 ms tick sees it move whenever audio plays; the chunk start,
   `leadS` (60 ms) ahead, isn't what is watched. What stops it legitimately is short: our own 30 s idle
-  suspend resumed by `play()` (tens to a few hundred ms), the output starting up, a Bluetooth or route switch
+  suspend resumed by `play()` (tens to a few hundred ms; `play()` also resumes while that suspend is still
+  landing, since WebKit reads 'running' until it has), the output starting up, a Bluetooth or route switch
   (1-2 s): under the kick, and a kick that works costs nothing. A blocked page or late timers (the E2E runs at
   load 7+) can't add up: the clock runs on the audio thread, so the first tick after a block sees it moved, and
   where the page only sees the clock between tasks one late tick counts at most 250 ms; a handoff needs at
@@ -3546,17 +3549,39 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
 - **The router remembers** (`voice-router.js`). A 'stall' from George from the home base or on this device
   goes straight to the device voice (never the on-device George: the same Web Audio), the label says "iPhone
   voice", and the router keeps that output as stuck with its clock reading. New replies (streams and
-  `speak()`) go straight to the device voice, with no new wait, until `unlockSpeech()` (a gesture: the first
-  tap, Voice Mode opening, Test, a reply's Speak tap) or until its clock has moved 0.25 s since (the sound came
-  back by itself; checked when a reply starts). Then George speaks again; if his sound still doesn't start,
-  the watchdog hands over once more. `tts.audioStuck()`, `tts.onAudioStuck(fn)`. No setting is changed and
-  the home base doesn't rest (it isn't its fault).
+  `speak()`) go straight to the device voice, with no new wait, until one of these. Then George speaks again;
+  if his sound still doesn't start, the watchdog hands over once more. `tts.audioStuck()`,
+  `tts.onAudioStuck(fn)`. No setting is changed and the home base doesn't rest (it isn't its fault).
+  - **A tap:** `unlockSpeech()` inside a tap (the first tap, Voice Mode opened by hand, Test, a reply's Speak,
+    the chat mic, Standby's key). Each stuck output is started afresh inside the tap (`audio.revive()`: the
+    stuck context is suspended and resumed, then closed, and a fresh one made and started, as at the very first
+    unlock; a `resume()` alone does nothing to a context that says 'running' with its clock stopped, and iOS
+    starts audio only in a gesture). Nothing plays on a stuck output meanwhile, so nothing is cut.
+  - **The sound coming back by itself:** its clock has moved 0.25 s since the stall (checked when a reply
+    starts and when Settings asks). Each reply sent to the device voice because of it asks the stuck output to
+    run again (`audio.probe()`: the watchdog's kick, no sound, then the usual idle suspend), only as a reply
+    starts (Voice Mode's microphone is closed then) and only for an output George would use; so once the
+    sound can play again (an interruption ended, a Mac's output device came back) George is back by the
+    second reply, with no tap.
+  - **Not without a tap.** `unlockSpeech({ tap: false })` keeps what is known: Standby entered again when Voice
+    Mode closes into it (`standby.enter({ again: true })`), and Voice Mode opened by the wake routine (claps or
+    "Hey Jarvis"), whose one-shot unlock then waits for its first real tap. Where the browser tells
+    (`navigator.userActivation`, Safari 16.4+ and Chrome), an unlock while no user activation is active isn't a
+    tap either. So a wake greeting after a stall goes straight to the device voice instead of waiting 3.5 s.
+  - **Settings' Test buttons** that play a sample straight through Web Audio (Settings → Home base → Hearing and
+    voice → Test; the on-device voice's Test) say "Played" only when the audio clock got past the sample
+    (`samplePlayed()`; no verdict when Jarvis was hidden meanwhile, `watchAway()` in `dom.js`, since iOS
+    stops audio in the background); otherwise "Nothing played: George's sound didn't start on this iPhone, so the iPhone
+    voice speaks for now. Tap Test to try again." (`silentSampleText()`), and the output is marked stuck
+    (`tts.noteAudioStuck(audio)`). Hearing and voice's Test unlocks through the router first, so it is a tap
+    like the others.
 - **Settings → Voice → Jarvis's voice** (`voiceInUse({ audioStuck })`): "iPhone voice", and in the pending line
   (`data-state="stuck"`, warning tint) "George's sound didn't start on this iPhone, so the iPhone voice is
   speaking. Tap Test to try again." (a Mac: "this Mac", "the built-in voice").
 - **Voice Mode never hangs in "speaking":** after a stall its `onEnd` comes from the device voice, as after
-  any handoff. The wake routine's greeting goes through the same router (`speak()`), and Standby adds nothing.
-  A reply in a hidden page waits for the page: the device voice speaks 3.5 s after it is shown again.
+  any handoff. The wake routine's greeting goes through the same router (`speak()`); Standby and the wake's
+  Voice Mode only unlock with `{ tap: false }` (above). A reply in a hidden page waits for the page: the device
+  voice speaks 3.5 s after it is shown again.
 - **Tests.** Unit `natural.stall` (19): the stream on an audio output whose clock can stop (stopped from the
   start; mid-chunk; in a chunk's last silence; 1 s, then moving; 2 s with a kick that works; 3 s, then moving
   by itself; hidden, then shown; a blocked page and late timers with the clock moving; a stopped clock during
@@ -3570,6 +3595,23 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   says why; a reply's Speak; Test brings George back once the sound works) and `george-stuck-midway` (the clock
   stops 0.7 s into George's first sentence: the iPhone voice from the last word heard). Both fail on the v7.8
   build 1bf48408 (the reply stays silent). Not testable here: a real iPhone's audio session.
+- **Tests added after the review** (each new one failed on the builder's head a94a0cb, apart from two guards:
+  no probe with George off, no verdict with Jarvis hidden). Unit `natural.stuck`
+  (11; the review's probes kept): a reply landing on our own idle suspend starts at once; George back by the
+  second reply once the sound works again, with one probe per reply meanwhile, and none with George off; a tap
+  brings George back under three models of iOS's stopped clock (the page's audio needing a suspend and resume
+  in a tap, one context needing replacing, the page's audio needing any start in a tap); no new context without
+  a stuck one or without a tap; wake greetings at once after `{ tap: false }` and with `userActivation` saying
+  no tap; the Test wording, and no verdict when Jarvis was hidden meanwhile. Unit `natural.audio`: `revive()`,
+  `probe()`, the idle-suspend race. Unit
+  `natural.stall`: the step back of 0.3 s (stopped 0.32 s into a word: from that word; right after a boundary:
+  from the word before). E2E (`voice-george-stuck.mjs`, the review's E2E probes): `george-busy` (the main thread
+  blocked twice for 3 s and the page hidden 1.5 s while George speaks: no handover, no kick) and
+  `george-idle-resume` (a reply after our own idle suspend: no handover, no kick), both guards against false
+  handovers; `george-stuck-recover` (Hearing and voice's Test says nothing played; once the sound works, no
+  tap, George is back by the second reply; a Speak tap: George) and `george-stuck-wake` ("Jarvis, standby" and
+  two wakes with no tap since the stall: each greeting at once on the iPhone voice); `george-stuck` now also
+  checks that each tap while stuck started a fresh context.
 
 **26.7 Also in v7.8.1** (§24).
 - **One total for today in Spending.** The Home base sheet's Spending tab drew today's and this month's totals

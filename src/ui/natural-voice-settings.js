@@ -14,7 +14,7 @@
 // natural-voice-progress, natural-voice-test, natural-voice-retry, natural-voice-remove.
 // Text goes through dom.js h()/setText (textContent only).
 
-import { h, setText } from './dom.js';
+import { h, setText, watchAway } from './dom.js';
 import { icon } from './icons.js';
 import { VOICES, RUNTIME, voiceById, voiceLabel, formatMegabytes } from '../platform/voice/natural/catalog.js';
 import { samplePlayed, silentSampleText } from '../lib/voice-choice.js';
@@ -300,11 +300,13 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
           if (cancelled) return;
           const played = natural.audio.play(pcm, sampleRate, natural.audio.now() + 0.05);
           const ctxAtPlay = natural.audio.context;
+          const away = watchAway(); // Jarvis left meanwhile (iOS stops its audio in the background): no verdict
           setTimeout(() => {
+            const wasAway = away.done();
             if (cancelled) return;
             // v7.8.1: a stuck output (iOS after an interruption) plays nothing without failing: say so, and
             // replies use the built-in voice meanwhile (the router's stuck state, as after a stall).
-            const silent = natural.audio.context === ctxAtPlay && !samplePlayed({ clock: natural.audio.now(), when: played.when, duration: played.duration });
+            const silent = !wasAway && natural.audio.context === ctxAtPlay && !samplePlayed({ clock: natural.audio.now(), when: played.when, duration: played.duration });
             if (silent) {
               toast(silentSampleText({ voiceName: speakerName(s.naturalVoiceId) }), { level: 'warn' });
               if (typeof tts.noteAudioStuck === 'function') tts.noteAudioStuck(natural.audio);

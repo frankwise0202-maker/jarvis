@@ -14,8 +14,8 @@
 //                                    watchdog): resume the context; one that says it runs is suspended and
 //                                    resumed (iOS can report 'running' with its clock stopped). Never throws.
 //   out.revive()                     v7.8.1: inside a tap, for an output known stuck (voice-router.js): the
-//                                    stuck context is closed and a fresh one made and started in the tap,
-//                                    as at the very first unlock
+//                                    stuck context is suspended and resumed, then closed, and a fresh one
+//                                    made and started in the tap, as at the very first unlock
 //   out.probe()                      v7.8.1: outside a tap, while replies avoid this stuck output: kick it
 //                                    (no sound) and let it idle-suspend as usual, so the next reply can see
 //                                    whether its clock moves

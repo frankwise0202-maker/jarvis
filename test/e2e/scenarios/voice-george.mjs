@@ -600,7 +600,10 @@ export default [
         await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-test')))) === 'Test', { timeout: 20000, message: 'the test sentence ends' });
         t.assert((await saidCount()) === n, `George said it, not the iPhone voice (${await said()})`);
         const clock = await t.page.evaluate(() => window.__stuckAudio.contexts.map((c) => [c.state, c.currentTime]));
-        t.assert(clock[0][0] === 'running' && clock[0][1] > 0, `George’s audio runs again (${JSON.stringify(clock)})`);
+        // v7.8.1 integrator (review M1): each tap while the sound is known stuck starts a fresh context inside the
+        // tap (the Speak tap above, and this Test), and closes the stuck one.
+        const newest = clock[clock.length - 1];
+        t.assert(clock.length === 3 && clock.slice(0, -1).every(([state]) => state === 'closed') && newest[0] === 'running' && newest[1] > 0, `George’s audio runs again, on the context started by this tap (${JSON.stringify(clock)})`);
         await t.waitFor(async () => norm(await t.text(card.locator(tid('jarvis-voice-tag')))) === 'George · home base', { timeout: 8000, message: 'Jarvis’s voice: George again' });
         t.assert(!(await card.locator(tid('jarvis-voice-pending')).isVisible()), 'the reason is gone');
         await t.screenshot('4-george-back');
