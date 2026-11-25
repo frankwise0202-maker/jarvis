@@ -481,7 +481,10 @@ export function createSenses({
     const req = speechRequest(body);
     ensureUsable('speak');
     const started = Date.now();
+    const before = hosts.speak.status();
     const r = await hosts.speak.run({ sentences: req.sentences, voice: req.voice, speed: req.speed }, { timeoutMs: speakTimeoutMs(req.text.length), signal });
+    // This request loaded George (the app's warm-up after the idle unload, say): time him too, as a warm-up does.
+    if (!before.loaded && !before.loading && hosts.speak.status().loaded) checkSpeed(sense.speak.gen);
     const audio = r.output?.audio;
     const rate = r.output?.sampleRate ?? 24000;
     if (!(audio instanceof Float32Array) || !audio.length) throw new SenseError(500, 'engine_failed', 'the voice engine returned no audio');

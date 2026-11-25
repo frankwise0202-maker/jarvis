@@ -177,6 +177,18 @@ test('PUT speak enabled:true again warms George: it loads him after the idle unl
   assert.equal((await c.speak()).status, 200);
 });
 
+test('a sentence that loads George again after the idle unload (the app\'s own warm-up) times him too', async (t) => {
+  const c = await startCore(t, { options: { rtf: { fp32: 0.3 } }, senses: { speakIdleMs: 1200 } });
+  await c.put({ speak: { enabled: true } });
+  await checked(c);
+  await until(async () => !(await c.info()).speak.loaded, { what: 'the idle unload' });
+  assert.equal((await c.speak('Ready.')).status, 200);
+  await until(() => c.logs.filter((l) => /George speaks at/.test(l)).length === 2, { what: 'the second timing' });
+  assert.equal((await c.speak()).status, 200, 'loaded: no timing for an ordinary sentence');
+  await sleep(300);
+  assert.equal(c.logs.filter((l) => /George speaks at/.test(l)).length, 2);
+});
+
 test('the warm-up times George: a fast fp32 stays, its rtf is shown and recorded, and nothing more is downloaded', async (t) => {
   const c = await startCore(t, { options: { rtf: { fp32: 0.3, q8: 0.2 } } });
   const on = await c.put({ speak: { enabled: true } });

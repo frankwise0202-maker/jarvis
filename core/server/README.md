@@ -317,7 +317,8 @@ convolutions, which the 8-bit build runs slowly on these CPUs. Whisper is the ot
 multiplications): base.en q8 1.5 s against fp32 2.0 s for 6.6 s of speech.
 
 **George's speed check (`senses/speed.mjs`).** The i7-6700 has not been measured, so the Core measures
-itself. After each warm-up that loads George, once the engines have been idle for a second, it times one
+itself. Each time it loads George (turning him on, the Core starting, PUT `enabled: true` or a sentence
+after the idle unload), once the engines have been idle for a second, it times one
 fixed sentence of about 5.5 s of speech (`BENCH_TEXT`, voice bm_george) and records the real-time factor
 in `<data>/senses/speed-v1.json` (`{v: 1, cpu: "<processor model> x<threads>", dtype?, measured: {fp32:
 {rtf, at}, q8: {rtf, at}}}`, file 600) and in `GET /api/senses` (`speak.rtf`, `speak.measured`). A run
@@ -362,7 +363,8 @@ idle unload, cancelling (a queued request, and a running one at its next sentenc
 at nice 10 (`host.test.mjs`); the routes through the runtime: off by default, turning on, hearing, speaking,
 every refusal, CORS, body limits, restarts, a failed or cut-short download, missing libraries and a Core
 without `node_modules` (`api.test.mjs`); the idle times and their settings, PUT `enabled: true` warming
-George, and the speed check with the stub engine at chosen speeds per model: a fast fp32 kept, a slow fp32
+George, and the speed check with the stub engine at chosen speeds per model: timed at each load (a
+sentence that reloads George included), a fast fp32 kept, a slow fp32
 switched to a faster q8 (downloaded, requests answered throughout, kept after a restart, not on another
 processor), a slower q8 not tried again, a fixed model never switched, a q8 that fails to load, George
 turned off mid-trial, the trial held while the phone talks (`speed.test.mjs`).
