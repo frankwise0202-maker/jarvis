@@ -19,6 +19,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.10.0",
+    "@huggingface/transformers": "3.8.1",
+    "kokoro-js": "1.2.1",
     "web-push": "3.6.7"
   }
 }

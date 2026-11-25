@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createBrain } from './brain/index.mjs';
 import { createFixtureFetch } from './brain/fixture-fetch.mjs';
+import { createSenses, defaultModelsDir } from './senses/index.mjs';
 
 /** An optional module's factory, or null when it is missing or fails to load (never fatal). */
 async function optionalFactory(spec, name, log) {
@@ -164,7 +165,9 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
     ...(config.fixture ? { fetch: createFixtureFetch(), defaultLocation: { label: 'Your location', lat: 0, lon: 0 } } : {}),
   });
 
-  const server = createApiServer({ getCore: () => core, config, ask, info, fixture, log, getBrain: () => brain, getPush: () => push, getSync: () => sync });
+  // Hearing and George's voice for the phone (opt-in, off by default; config.senses: tests' stub engines).
+  const senses = createSenses({ dataDir, modelsDir: defaultModelsDir(process.env), speakDtype: process.env.JARVIS_CORE_SPEAK_DTYPE || undefined, log, ...(config.senses ?? {}) });
+  const server = createApiServer({ getCore: () => core, config, ask, info, fixture, log, getBrain: () => brain, getPush: () => push, getSync: () => sync, getSenses: () => senses });
   let running = false;
   let updateTimer = null;
   const updateEventsFile = dataDir && !config.fixture ? path.join(dataDir, 'update-events.jsonl') : null;
@@ -178,11 +181,13 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
     brain,
     push,
     sync,
+    senses,
     async start({ port = config.port, host = config.host } = {}) {
       const address = await server.listen(port, host);
       core.start();
       running = true;
       brain.start();
+      senses.start();
       if (updateEventsFile) {
         importUpdateEvents(updateEventsFile, core.events, log);
         updateTimer = setInterval(() => importUpdateEvents(updateEventsFile, core.events, log), 60_000);
@@ -200,6 +205,7 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
       } catch (err) {
         log(`stopping the brain failed: ${err?.message ?? err}`);
       }
+      await senses.stop().catch((err) => log(`stopping hearing and voice failed: ${err?.message ?? err}`));
       await core.saveAll({ clean: true });
       await server.close();
     },
