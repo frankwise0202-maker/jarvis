@@ -104,6 +104,9 @@ export function createClient(hooks) {
   let reconnects = 0;
   let openedAt = 0; // when the current stream was opened (a silent stream is replaced)
   let everConnected = false;
+  let everOpened = false; // the first stream open follows start()'s own full read
+  let infoOk = false; // api/info has been read (a page loaded while the Core was down has not)
+  let reopenReads = 0;
 
   function setOnline(v) {
     if (v === online) return;
@@ -116,6 +119,7 @@ export function createClient(hooks) {
       // The brain is read once the Core has said which version it is: a 1.0 Core has none, and
       // asking it anyway would only log a 404 in the browser's console.
       getJson(`${base}api/info`, fetchImpl).then((b) => {
+        infoOk = true;
         hooks.onInfo(b);
         coreVersion = b && typeof b === 'object' ? b.version : undefined;
         return hasBrainApi(coreVersion) ? readBrain() : onBrain(null);
@@ -212,8 +216,9 @@ export function createClient(hooks) {
     attempt = 0;
     if (!online) {
       setOnline(true);
-      // Back after an outage (or the first frame): one full read fills what the stream leaves out.
-      if (everConnected) fullRead().catch(() => {});
+      // Back after an outage (or the first frame of a page loaded while the Core was down): one
+      // full read fills what the stream leaves out, api/info's version among it.
+      if (everConnected || !infoOk) fullRead().catch(() => {});
     }
     everConnected = true;
   }
@@ -258,6 +263,7 @@ export function createClient(hooks) {
   function onPushedInfo(e) {
     const body = parse(e);
     if (!body || typeof body !== 'object') return;
+    if (body.version !== undefined) coreVersion = body.version;
     hooks.onInfo(body);
   }
 
@@ -273,7 +279,10 @@ export function createClient(hooks) {
     }, delay);
   }
 
-  function connect() {
+  /**
+   * @param {boolean} [readOnOpen] false when the caller reads everything itself (resume)
+   */
+  function connect(readOnOpen = true) {
     if (stopped) return;
     closeStream();
     if (!ES) return;
@@ -286,6 +295,23 @@ export function createClient(hooks) {
       return;
     }
     es = source;
+    let opened = false;
+    // The stream (re)opened. A restarted Core (systemctl restart, an update) is back within the
+    // browser's own 3 s retry, before the watchdog calls it offline, so this is where a restart
+    // shows: read everything again. api/info's new version then reloads the kiosk and tells the
+    // brain reads which Core this is. While offline, the first frame's full read does it (alive).
+    source.onopen = () => {
+      const first = !opened;
+      opened = true;
+      if (!everOpened) {
+        everOpened = true; // start() has just read everything
+        return;
+      }
+      if (first && !readOnOpen) return;
+      if (!online) return;
+      reopenReads++;
+      fullRead().catch(() => {});
+    };
     source.onmessage = onTick; // an unnamed frame is a tick too
     source.addEventListener('tick', onTick);
     source.addEventListener('status', onPushedStatus);
@@ -332,7 +358,7 @@ export function createClient(hooks) {
       clearTimeout(reconnectTimer);
       reconnectTimer = 0;
     }
-    connect();
+    connect(false);
     fullRead().catch(() => {});
   }
 
@@ -354,6 +380,6 @@ export function createClient(hooks) {
     lastMessageAt: () => lastMessageWall,
     readBriefing,
     readBrain,
-    stats: () => ({ messages, reconnects, online, brainReads }),
+    stats: () => ({ messages, reconnects, online, brainReads, reopenReads }),
   };
 }
