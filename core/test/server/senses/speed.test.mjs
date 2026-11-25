@@ -46,7 +46,7 @@ async function startCore(t, { dataDir = null, options = {}, senses = {} } = {}) 
     config.dataDir = dataDir;
     config.secretsDir = path.join(dataDir, 'secrets');
   }
-  config.senses = { engineUrl: STUB, engineOptions: options, modelsDir, startDelayMs: 0, quietMs: 20, cpu: CPU, depsCheck: () => ({ installed: true, missing: [] }), ...senses };
+  config.senses = { engineUrl: STUB, engineOptions: options, modelsDir, startDelayMs: 0, quietMs: 20, trialQuietMs: 300, cpu: CPU, depsCheck: () => ({ installed: true, missing: [] }), ...senses };
   const logs = [];
   const rt = await createRuntime(config, { log: (m) => logs.push(m) });
   const { port } = await rt.start({ port: 0 });
@@ -308,4 +308,19 @@ test('the 8-bit model failing to download keeps fp32 without an error; turning G
   const v = (await d.info()).speak;
   assert.equal(v.dtype, 'fp32', 'no switch after the owner turned George off');
   assert.ok(!d.logs.some((l) => /switched to/.test(l)));
+});
+
+test('the q8 trial (a second engine loading beside George) waits until the phone has been quiet for a while', async (t) => {
+  const c = await startCore(t, { options: { rtf: { fp32: 1.2, q8: 0.4 } }, senses: { trialQuietMs: 900 } });
+  await c.put({ speak: { enabled: true } });
+  await until(() => c.logs.some((l) => /George speaks at/.test(l)), { what: 'fp32 timed' });
+  // A conversation: a sentence every 0.4 s for 3 s. The trial must not start meanwhile.
+  const t0 = Date.now();
+  while (Date.now() - t0 < 3000) {
+    assert.equal((await c.speak()).status, 200);
+    await sleep(400);
+  }
+  assert.ok(!c.logs.some((l) => /trying Kokoro's 8-bit/.test(l)), 'no trial while the phone is talking');
+  await until(() => c.logs.some((l) => /trying Kokoro's 8-bit/.test(l)), { what: 'the trial after the quiet spell' });
+  await until(async () => (await c.info()).speak.dtype === 'q8', { timeoutMs: 15_000, what: 'the switch' });
 });

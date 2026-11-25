@@ -179,7 +179,7 @@ test('the speed check with the real voice engine: George timed at warm-up, q8 tr
   const config = testConfig(['--fixture', 'ok', '--port', '0']);
   const logs = [];
   // rtfSwitch 0: always try q8 after timing fp32, so the whole path runs on any machine.
-  config.senses = { modelsDir: MODELS, startDelayMs: 0, rtfSwitch: 0 };
+  config.senses = { modelsDir: MODELS, startDelayMs: 0, rtfSwitch: 0, trialQuietMs: 2000 };
   const rt = await createRuntime(config, { log: (m) => logs.push(m) });
   const { port } = await rt.start({ port: 0 });
   try {

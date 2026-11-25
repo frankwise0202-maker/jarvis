@@ -131,7 +131,8 @@ export function createSenses({
   queueMax = 3,
   speedCheck = true, // time George at each warm-up that loads him (and try q8 when fp32 is slow)
   rtfSwitch = RTF_SWITCH,
-  quietMs = 1000, // the speed check waits until the voice engine has had nothing to do for this long
+  quietMs = 1000, // the speed check waits until the voice engine has had nothing to do for this long …
+  trialQuietMs = 30_000, // … and the q8 trial (a second engine loading beside George) until the phone has been quiet
   cpu = processorId(),
   depsCheck = () => checkDeps(),
   fsApi = fs,
@@ -382,6 +383,8 @@ export function createSenses({
   /** fp32 is slower than rtfSwitch here: load the 8-bit model beside it (downloading it once), time it, keep the faster. */
   async function tryQ8(fp32Rtf, stale) {
     const q8 = SPEAK_MODELS.q8;
+    // Loading a second engine takes the processor for a few seconds: not while the phone is talking to George.
+    if (!(await whenIdle(() => [hosts.hear, hosts.speak], stale, trialQuietMs, 6 * 3600_000))) return;
     clearStray(q8);
     const download = !onDisk(fsApi, modelsDir, q8).complete;
     log(`voice: slower than ${rtfSwitch}x real time with fp32; trying Kokoro's 8-bit model${download ? ` (downloading ${q8.repo} q8, about ${sizeMb(q8)} MB)` : ''}`);
