@@ -1,0 +1,163 @@
+/* Copied from src/styles/tokens.css (app v7.4, main cfff39d) so the Core dashboard wears the
+   same Presence look. Keep in sync by copying again; do not edit the values here. */
+
+/* Jarvis design tokens. Every stylesheet uses these custom properties for color,
+   type, spacing, radii, motion and layering. Do not hard-code colors elsewhere. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #04070c;
+  --bg-2: #070d15;
+  --bg-3: #0a1420;
+  --surface: rgba(11, 23, 36, 0.74);
+  --surface-2: rgba(15, 31, 48, 0.86);
+  --surface-3: rgba(20, 40, 61, 0.92);
+  --surface-solid: #0b1622;
+  --overlay: rgba(2, 5, 9, 0.66);
+
+  /* Lines */
+  --line: rgba(78, 196, 255, 0.14);
+  --line-2: rgba(78, 196, 255, 0.26);
+  --line-3: rgba(98, 220, 255, 0.46);
+
+  /* Text */
+  --text: #e1f6ff;
+  --text-2: #abc8d9;
+  /* Every text token passes WCAG AA (4.5:1) on every surface it sits on, down to the lightest
+     (the selected History row, rgb(33,43,55)): --text-3 5.76:1, --text-4 4.90:1. */
+  --text-3: #8ca8bc;
+  --text-4: #7d9bb0;
+
+  /* Accent (HUD cyan) */
+  --accent: #3ee0ff;
+  --accent-2: #8af3ff;
+  --accent-3: #1aa8d6;
+  --accent-ink: #00141b;
+  --accent-soft: rgba(62, 224, 255, 0.12);
+  --accent-glow: rgba(62, 224, 255, 0.38);
+
+  /* Status */
+  --violet: #a796ff;          /* thinking */
+  --violet-soft: rgba(167, 150, 255, 0.14);
+  --ok: #3dffb0;              /* done */
+  --ok-soft: rgba(61, 255, 176, 0.13);
+  --warn: #ffc457;            /* stopped / interrupted / rate limits */
+  --warn-soft: rgba(255, 196, 87, 0.14);
+  --err: #ff5c72;             /* error */
+  --err-soft: rgba(255, 92, 114, 0.14);
+
+  /* Presence (SPEC 2.4.16). Like the status colors, the same in every theme. --live marks a live
+     sensor (always beside the word LIVE or a sensor name, so it never reads as "error"). */
+  --live: #ff5c72;            /* LIVE dot and border: 6.75:1 on --bg */
+  --live-solid: #c8283e;      /* Stop buttons with white text or icon: 5.48:1 */
+  --live-soft: rgba(255, 92, 114, 0.16); /* privacy pill fill */
+  --scrim-hud: rgba(4, 7, 12, 0.72);     /* label plates over camera video: --text stays >= 7:1 on white */
+  --grid: rgba(78, 196, 255, 0.06);      /* decorative background grid */
+
+  /* Type */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Display face (SPEC 2.4.15): the wordmark, mode titles (18px and up) and big numbers only;
+     never sentences or text below 16px. Its digits are proportional (no tnum): numbers that change
+     every second stay in --font-mono. */
+  --font-hud: "Rajdhani", var(--font-display);
+  --fs-hud-md: 18px;
+  --fs-hud-lg: 28px;
+  --fs-hud-xl: 44px;
+  --fs-hud-2xl: clamp(64px, 15vmin, 160px);
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-input: 16px;           /* inputs never below 16px (iOS zoom) */
+  --fs-lg: 17px;
+  --fs-xl: 21px;
+  --fs-2xl: 27px;
+  --fs-3xl: 34px;
+  --lh-tight: 1.25;
+  --lh: 1.55;
+  --tracking-label: 0.14em;
+  --tracking-wide: 0.22em;
+
+  /* Spacing */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* Radii */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* Effects */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px rgba(0, 0, 0, 0.38);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 48px rgba(0, 0, 0, 0.5);
+  --glow: 0 0 0 1px var(--line-2), 0 0 22px var(--accent-soft);
+  --glow-strong: 0 0 0 1px var(--line-3), 0 0 28px var(--accent-glow);
+  --blur: saturate(140%) blur(16px);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 420ms;
+  --dur-mode: 320ms;          /* mode change: brackets draw in, content fades up 4px */
+  --stagger: 40ms;            /* between panels assembling (at most 6) */
+  --dur-boot: 1600ms;         /* the core's boot sequence */
+  --ease-breath: cubic-bezier(0.37, 0, 0.63, 1);
+
+  /* Layout */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --header-h: 56px;
+  --tap: 44px;
+  --chat-max: 780px;
+  --sidebar-w: 268px;
+  --panel-w: 400px;
+  --gutter: 16px;
+
+  /* Layers */
+  --z-base: 1;
+  --z-header: 20;
+  --z-composer: 20;
+  --z-banner: 30;
+  --z-sheet: 50;
+  --z-toast: 70;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+    --dur-mode: 0ms;
+    --stagger: 0ms;
+    --dur-boot: 0ms;
+  }
+}
+
+/* HUD motion "Still" (Settings → HUD): static even when the system setting is off. */
+:root[data-motion='still'] {
+  --dur-1: 0ms;
+  --dur-2: 0ms;
+  --dur-3: 0ms;
+  --dur-mode: 0ms;
+  --stagger: 0ms;
+  --dur-boot: 0ms;
+}

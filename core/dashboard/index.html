@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en" data-health="offline" data-night="off">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#04070c">
+<meta name="robots" content="noindex">
+<title>Jarvis Core</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/rajdhani-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/hud.css">
+<link rel="stylesheet" href="styles/dashboard.css">
+<script type="module" src="app/main.js"></script>
+</head>
+<body>
+<div class="stage" id="stage">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-orb" aria-hidden="true"></span>
+      <h1 class="brand-word">JARVIS <span>CORE</span></h1>
+      <span class="brand-host"><span class="hud-label">HOST</span> <b id="host-name">—</b></span>
+    </div>
+    <div class="state-chip" id="state-chip" data-level="offline" role="status" aria-live="polite">
+      <span class="state-icon" aria-hidden="true"></span>
+      <span class="state-word" id="state-word">CONNECTING</span>
+      <span class="state-detail" id="state-detail">TO THE CORE</span>
+    </div>
+    <div class="topbar-right">
+      <div class="readout-block">
+        <span class="hud-label">UPTIME</span>
+        <b class="mono" id="uptime">—</b>
+      </div>
+      <div class="clock-block">
+        <time class="clock" id="clock"><span id="clock-time">--:--</span><span class="clock-period" id="clock-period"></span></time>
+        <span class="clock-date" id="clock-date"></span>
+      </div>
+      <button type="button" class="open-jarvis" id="open-jarvis" title="Open the regular Jarvis app in a new window (Alt+J). Close it to come back here.">
+        <span>OPEN JARVIS</span><kbd>ALT J</kbd>
+      </button>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- Left column: CPU, GPU, memory, storage -->
+    <div class="col col-left">
+
+      <section class="panel hud-frame" id="p-cpu" aria-labelledby="h-cpu" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-cpu"><span class="idx">01</span>CPU</h2>
+          <p class="panel-sub" id="cpu-model">—</p>
+          <span class="chip" id="cpu-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <div class="figures">
+          <div class="fig fig-big"><span class="hud-label">USAGE</span><b class="mono" id="cpu-usage">—</b></div>
+          <div class="fig"><span class="hud-label">PACKAGE</span><b class="mono" id="cpu-temp">—</b></div>
+          <div class="fig"><span class="hud-label">CLOCK</span><b class="mono" id="cpu-freq">—</b></div>
+        </div>
+        <div class="threads" id="cpu-threads" aria-label="Per-thread usage"></div>
+        <div class="spark-row">
+          <div class="spark-head"><span class="hud-label spark-cap">USAGE · LAST 10 MIN</span><span class="spark-aside"><span class="hud-label">LOAD</span><b class="mono" id="cpu-load">—</b></span></div>
+          <canvas class="spark" id="spark-cpu" aria-hidden="true"></canvas>
+        </div>
+      </section>
+
+      <section class="panel hud-frame" id="p-gpu" aria-labelledby="h-gpu" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-gpu"><span class="idx">02</span>GPU</h2>
+          <p class="panel-sub" id="gpu-name">—</p>
+          <span class="chip" id="gpu-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <div class="gpu-live" id="gpu-live">
+          <div class="figures">
+            <div class="fig fig-big"><span class="hud-label">LOAD</span><b class="mono" id="gpu-util">—</b></div>
+            <div class="fig"><span class="hud-label">TEMP</span><b class="mono" id="gpu-temp">—</b></div>
+            <div class="fig"><span class="hud-label">POWER</span><b class="mono" id="gpu-power">—</b><span class="fig-note mono" id="gpu-power-note"></span></div>
+            <div class="fig"><span class="hud-label">FAN</span><b class="mono" id="gpu-fan">—</b></div>
+          </div>
+          <div class="meter-row">
+            <span class="hud-label">VRAM</span>
+            <span class="meter" id="gpu-vram-meter" data-level="ok"><i></i></span>
+            <span class="mono meter-val" id="gpu-vram">—</span>
+          </div>
+          <div class="spark-row">
+            <div class="spark-head"><span class="hud-label spark-cap">LOAD · LAST 10 MIN</span></div>
+            <canvas class="spark" id="spark-gpu" aria-hidden="true"></canvas>
+          </div>
+        </div>
+        <div class="gpu-missing" id="gpu-missing" hidden>
+          <p class="missing-title" id="gpu-missing-title">GPU DRIVER NOT LOADED</p>
+          <p class="missing-text" id="gpu-missing-text">The NVIDIA driver isn't running, so the graphics card can't be read. Its numbers appear here once the driver is installed.</p>
+        </div>
+      </section>
+
+      <section class="panel hud-frame" id="p-mem" aria-labelledby="h-mem" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-mem"><span class="idx">03</span>MEMORY</h2>
+          <p class="panel-sub" id="mem-total">—</p>
+          <span class="chip" id="mem-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <div class="figures">
+          <div class="fig fig-big"><span class="hud-label">IN USE</span><b class="mono" id="mem-pct">—</b></div>
+          <div class="fig"><span class="hud-label">USED</span><b class="mono" id="mem-used">—</b></div>
+          <div class="fig"><span class="hud-label">AVAILABLE</span><b class="mono" id="mem-avail">—</b></div>
+        </div>
+        <div class="meter-row">
+          <span class="hud-label">SWAP</span>
+          <span class="meter" id="mem-swap-meter" data-level="ok"><i></i></span>
+          <span class="mono meter-val" id="mem-swap">—</span>
+        </div>
+        <div class="spark-row">
+          <div class="spark-head"><span class="hud-label spark-cap">IN USE · LAST 10 MIN</span></div>
+          <canvas class="spark" id="spark-mem" aria-hidden="true"></canvas>
+        </div>
+      </section>
+
+      <section class="panel hud-frame" id="p-disk" aria-labelledby="h-disk" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-disk"><span class="idx">04</span>STORAGE</h2>
+          <p class="panel-sub" id="disk-device">—</p>
+          <span class="chip" id="disk-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <ul class="fs-list" id="fs-list"></ul>
+        <div class="io-row">
+          <div class="fig"><span class="hud-label">READ</span><b class="mono" id="io-read">—</b></div>
+          <div class="fig"><span class="hud-label">WRITE</span><b class="mono" id="io-write">—</b></div>
+          <div class="fig"><span class="hud-label">DRIVE HEALTH</span><b id="disk-health">—</b></div>
+        </div>
+        <p class="disk-note" id="disk-health-note" hidden></p>
+      </section>
+    </div>
+
+    <!-- Centre: the living core with its four gauges, then processes and the event log -->
+    <div class="col col-centre">
+      <section class="core-stage" id="core-stage" aria-label="Overall health">
+        <canvas class="core-canvas" id="core-canvas" aria-hidden="true"></canvas>
+        <div class="core-label" id="core-label">
+          <span class="core-word" id="core-word">—</span>
+          <span class="core-sub" id="core-sub"></span>
+        </div>
+        <div class="gauge-readout" id="g-cpu" data-corner="tl" data-level="ok">
+          <span class="hud-label">CPU</span><b class="mono gv" id="g-cpu-v">—</b><span class="gr-sub mono" id="g-cpu-s"></span>
+        </div>
+        <div class="gauge-readout" id="g-gpu" data-corner="tr" data-level="ok">
+          <span class="hud-label">GPU</span><b class="mono gv" id="g-gpu-v">—</b><span class="gr-sub mono" id="g-gpu-s"></span>
+        </div>
+        <div class="gauge-readout" id="g-ram" data-corner="bl" data-level="ok">
+          <span class="hud-label">RAM</span><b class="mono gv" id="g-ram-v">—</b><span class="gr-sub mono" id="g-ram-s"></span>
+        </div>
+        <div class="gauge-readout" id="g-disk" data-corner="br" data-level="ok">
+          <span class="hud-label">DISK</span><b class="mono gv" id="g-disk-v">—</b><span class="gr-sub mono" id="g-disk-s"></span>
+        </div>
+        <div class="offline-banner" id="offline-banner" role="alert" hidden>
+          <span class="offline-icon" aria-hidden="true"></span>
+          <span class="offline-title">CORE OFFLINE</span>
+          <span class="offline-text" id="offline-text">No data from the Core. Reconnecting…</span>
+        </div>
+        <p class="core-summary" id="core-summary">Connecting to the Core…</p>
+      </section>
+
+      <div class="centre-bottom">
+        <section class="panel hud-frame" id="p-procs" aria-labelledby="h-procs">
+          <header class="panel-head">
+            <h2 id="h-procs"><span class="idx">08</span>TOP PROCESSES</h2>
+          </header>
+          <div class="procs">
+            <div class="proc-col">
+              <p class="hud-label proc-cap">BY CPU</p>
+              <ol class="proc-list" id="procs-cpu"></ol>
+            </div>
+            <div class="proc-col">
+              <p class="hud-label proc-cap">BY MEMORY</p>
+              <ol class="proc-list" id="procs-mem"></ol>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel hud-frame" id="p-events" aria-labelledby="h-events">
+          <header class="panel-head">
+            <h2 id="h-events"><span class="idx">09</span>EVENT LOG</h2>
+            <p class="panel-sub">NEWEST FIRST</p>
+          </header>
+          <ol class="events" id="events" aria-live="off"></ol>
+          <p class="events-empty" id="events-empty">Nothing to report yet.</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- Right column: network, services, the status assistant -->
+    <div class="col col-right">
+      <section class="panel hud-frame" id="p-net" aria-labelledby="h-net" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-net"><span class="idx">05</span>NETWORK</h2>
+          <p class="panel-sub" id="net-iface">—</p>
+          <span class="chip" id="net-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <div class="net-rates">
+          <div class="net-rate">
+            <div class="fig"><span class="hud-label">DOWN</span><b class="mono" id="net-down">—</b></div>
+            <canvas class="spark" id="spark-down" aria-hidden="true"></canvas>
+          </div>
+          <div class="net-rate">
+            <div class="fig"><span class="hud-label">UP</span><b class="mono" id="net-up">—</b></div>
+            <canvas class="spark" id="spark-up" aria-hidden="true"></canvas>
+          </div>
+        </div>
+        <div class="net-checks">
+          <div class="fig"><span class="hud-label">INTERNET</span><b class="mono" id="net-internet">—</b></div>
+          <div class="fig"><span class="hud-label">CLAUDE API</span><b class="mono" id="net-api">—</b></div>
+          <div class="fig"><span class="hud-label">TAILNET</span><b class="mono" id="net-tail">—</b></div>
+        </div>
+      </section>
+
+      <section class="panel hud-frame" id="p-svc" aria-labelledby="h-svc" data-level="ok">
+        <header class="panel-head">
+          <h2 id="h-svc"><span class="idx">06</span>SERVICES</h2>
+          <span class="chip" id="svc-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>OK</span></span>
+        </header>
+        <ul class="svc-list">
+          <li class="svc" id="svc-core" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span class="svc-name">Jarvis Core</span><span class="svc-state" id="svc-core-state">—</span><span class="svc-detail mono" id="svc-core-detail"></span></li>
+          <li class="svc" id="svc-site" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span class="svc-name">Jarvis app (site)</span><span class="svc-state" id="svc-site-state">—</span><span class="svc-detail mono" id="svc-site-detail"></span></li>
+          <li class="svc" id="svc-api" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span class="svc-name">Claude API</span><span class="svc-state" id="svc-api-state">—</span><span class="svc-detail mono" id="svc-api-detail"></span></li>
+          <li class="svc" id="svc-ts" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span class="svc-name">Tailscale</span><span class="svc-state" id="svc-ts-state">—</span><span class="svc-detail mono" id="svc-ts-detail"></span></li>
+        </ul>
+        <ul class="peers" id="peers" aria-label="Devices on the tailnet"></ul>
+      </section>
+
+      <section class="panel hud-frame assistant" id="p-ask" aria-labelledby="h-ask">
+        <header class="panel-head">
+          <h2 id="h-ask"><span class="idx">07</span>STATUS ASSISTANT</h2>
+          <p class="panel-sub">LOCAL · STATUS ONLY</p>
+        </header>
+        <ol class="transcript" id="transcript" role="log" aria-live="polite" aria-label="Status assistant conversation"></ol>
+        <div class="chips" id="ask-chips">
+          <button type="button" class="ask-chip" data-q="How are you?">How are you?</button>
+          <button type="button" class="ask-chip" data-q="Anything wrong?">Anything wrong?</button>
+          <button type="button" class="ask-chip" data-q="GPU temp?">GPU temp?</button>
+          <button type="button" class="ask-chip" data-q="Status report">Status report</button>
+        </div>
+        <form class="ask-form" id="ask-form" autocomplete="off">
+          <label class="hud-sr" for="ask-input">Ask the Core how it is doing</label>
+          <input class="ask-input" id="ask-input" name="q" type="text" maxlength="200" placeholder="Ask how the system is doing…" spellcheck="false" enterkeyhint="send">
+          <button type="submit" class="ask-send" id="ask-send" aria-label="Ask">ASK</button>
+        </form>
+      </section>
+    </div>
+  </main>
+
+</div>
+<div class="night-veil" id="night-veil" aria-hidden="true"></div>
+</body>
+</html>

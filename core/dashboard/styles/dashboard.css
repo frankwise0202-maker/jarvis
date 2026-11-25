@@ -1,0 +1,1395 @@
+/* Jarvis Core: the 24/7 system report. One screen, no scrolling. Designed at 1920×1080 where
+   1rem = 16px; the root size follows the viewport, so 2560×1440 and 1366×768 keep the same
+   proportions (with a floor so text stays legible on small screens). Colors, fonts and motion come
+   from tokens.css; the building blocks from hud.css. Values that change every second are mono;
+   Rajdhani is for the wordmark, titles, the state word and once-a-minute numbers (app rule). */
+
+:root {
+  font-size: max(12px, min(calc(100vw / 120), calc(100vh / 67.5)));
+  --gap: 0.875rem;
+  --panel-pad: 0.875rem 1rem 0.875rem;
+  --panel-bg: linear-gradient(180deg, rgba(11, 23, 36, 0.62), rgba(7, 13, 21, 0.42));
+  --label: var(--text-3);
+  --lv: var(--accent);
+  --lv-soft: var(--accent-soft);
+  --spark-wash: rgba(62, 224, 255, 0.1);
+  --spark-grid: rgba(78, 196, 255, 0.13);
+  --spark-surface: #08111b;
+  --night-dim: 0.55;
+  --shift-x: 0px;
+  --shift-y: 0px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(60rem 42rem at 50% 42%, rgba(62, 224, 255, 0.055), transparent 70%),
+    radial-gradient(120rem 70rem at 50% 120%, rgba(26, 168, 214, 0.06), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+h1,
+h2,
+p,
+ol,
+ul {
+  margin: 0;
+  padding: 0;
+}
+ol,
+ul {
+  list-style: none;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-label {
+  font-size: 0.75rem;
+  color: var(--label);
+}
+
+/* Level colors: every element with data-level gets --lv / --lv-soft. Status is never color
+   alone: each carries an icon shape and a word. */
+[data-level='ok'] {
+  --lv: var(--accent);
+  --lv-soft: var(--accent-soft);
+}
+[data-level='warn'] {
+  --lv: var(--warn);
+  --lv-soft: var(--warn-soft);
+}
+[data-level='alert'] {
+  --lv: var(--err);
+  --lv-soft: var(--err-soft);
+}
+[data-level='off'],
+[data-level='offline'],
+[data-level='unknown'] {
+  --lv: var(--text-4);
+  --lv-soft: rgba(125, 155, 176, 0.1);
+}
+
+/* ---- stage ------------------------------------------------------------------------------- */
+
+.stage {
+  position: relative;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--gap);
+  padding: 0.875rem 1.25rem 1.125rem;
+  transform: translate(var(--shift-x), var(--shift-y));
+  transition: transform 4s var(--ease);
+}
+
+/* The background grid, faint, only behind the centre (the app's .hud-grid). */
+.stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 1.5rem 1.5rem;
+  background-position: 50% 50%;
+  -webkit-mask-image: radial-gradient(52rem 34rem at 50% 44%, #000 30%, transparent 75%);
+  mask-image: radial-gradient(52rem 34rem at 50% 44%, #000 30%, transparent 75%);
+}
+
+/* ---- top bar ----------------------------------------------------------------------------- */
+
+.topbar {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 1.5rem;
+  min-height: 3.75rem;
+  padding: 0 0.25rem 0.625rem;
+}
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-2) 12%, var(--line-3) 50%, var(--line-2) 88%, transparent);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  min-width: 0;
+}
+.brand-orb {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  background: radial-gradient(circle, var(--accent-2) 0 18%, rgba(62, 224, 255, 0.35) 32%, transparent 62%);
+  box-shadow: 0 0 1rem var(--accent-soft);
+}
+html[data-health='warn'] .brand-orb {
+  background: radial-gradient(circle, #ffe2a8 0 18%, rgba(255, 196, 87, 0.4) 32%, transparent 62%);
+}
+html[data-health='alert'] .brand-orb {
+  background: radial-gradient(circle, #ffc2ca 0 18%, rgba(255, 92, 114, 0.45) 32%, transparent 62%);
+}
+html[data-health='offline'] .brand-orb {
+  background: radial-gradient(circle, var(--text-4) 0 14%, transparent 50%);
+  box-shadow: none;
+}
+.brand-word {
+  font-family: var(--font-hud);
+  font-size: 1.625rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.brand-word span {
+  color: var(--accent);
+}
+.brand-host {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  padding-left: 0.875rem;
+  border-left: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+.brand-host b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+/* The state chip: the word everyone reads first. */
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.75rem;
+  padding: 0 1.25rem 0 1rem;
+  border: 1px solid color-mix(in srgb, var(--lv) 55%, transparent);
+  border-radius: var(--r-pill);
+  background: var(--lv-soft);
+  white-space: nowrap;
+  transition: border-color var(--dur-3) var(--ease), background-color var(--dur-3) var(--ease);
+}
+.state-word {
+  font-family: var(--font-hud);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  color: var(--text);
+}
+.state-detail {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-2);
+}
+
+/* Level icons: ok a filled circle, warn a triangle, alert a diamond, offline/unknown a hollow ring.
+   Only the icon elements wear these shapes (never a meter's fill, which is also an <i>). */
+.state-icon,
+.lv-icon {
+  flex: none;
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  background: var(--lv);
+  border-radius: 50%;
+}
+.state-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  box-shadow: 0 0 0.75rem var(--lv);
+}
+[data-level='warn'] > .state-icon,
+[data-level='warn'] > .lv-icon,
+[data-level='warn'] .ev-level > .lv-icon,
+[data-level='warn'] .gr-flag > .lv-icon {
+  border-radius: 0;
+  clip-path: polygon(50% 4%, 98% 94%, 2% 94%);
+}
+[data-level='alert'] > .state-icon,
+[data-level='alert'] > .lv-icon,
+[data-level='alert'] .ev-level > .lv-icon,
+[data-level='alert'] .gr-flag > .lv-icon {
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+[data-level='offline'] > .state-icon,
+[data-level='off'] > .lv-icon,
+[data-level='unknown'] > .lv-icon {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--lv);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.5rem;
+  min-width: 0;
+}
+.readout-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
+}
+.readout-block b {
+  font-size: 1.125rem;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+}
+.clock-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
+}
+.clock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-family: var(--font-hud);
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+.clock-period {
+  font-size: 0.42em;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+.clock-date {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.open-jarvis {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  height: 2.5rem;
+  margin: 0;
+  padding: 0 0.875rem 0 1rem;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.open-jarvis::before,
+.open-jarvis::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  clip-path: polygon(0.625rem 0, 100% 0, 100% calc(100% - 0.625rem), calc(100% - 0.625rem) 100%, 0 100%, 0 0.625rem);
+}
+.open-jarvis::before {
+  inset: 0;
+  background: var(--line-3);
+}
+.open-jarvis::after {
+  inset: 1px;
+  background: var(--surface-2);
+}
+.open-jarvis:hover::after,
+.open-jarvis:focus-visible::after {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface-2);
+}
+.open-jarvis:focus {
+  outline: none;
+}
+.open-jarvis:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.open-jarvis kbd {
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-3);
+}
+
+/* ---- grid -------------------------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: 29rem minmax(0, 1fr) 29rem;
+  gap: var(--gap);
+  min-height: 0;
+}
+.col {
+  display: grid;
+  gap: var(--gap);
+  min-height: 0;
+  min-width: 0;
+}
+.col-left {
+  grid-template-rows: auto auto auto auto;
+  align-content: stretch;
+}
+.col-right {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.col-centre {
+  grid-template-rows: minmax(0, 1fr) 17.25rem;
+}
+
+/* ---- panels ------------------------------------------------------------------------------ */
+
+.panel {
+  --frame-arm: 0.75rem;
+  --frame-inset: -1px;
+  --frame-color: color-mix(in srgb, var(--accent-2) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--panel-pad);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--panel-bg);
+}
+.panel[data-level='warn'] {
+  --frame-color: color-mix(in srgb, var(--warn) 70%, transparent);
+  border-color: rgba(255, 196, 87, 0.28);
+}
+.panel[data-level='alert'] {
+  --frame-color: color-mix(in srgb, var(--err) 75%, transparent);
+  border-color: rgba(255, 92, 114, 0.34);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 1.75rem;
+}
+.panel-head h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  flex: none;
+  font-family: var(--font-hud);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.panel-head .idx {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+.panel-sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  height: 1.5rem;
+  margin-left: auto;
+  padding: 0 0.625rem 0 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--lv-soft);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--text);
+  white-space: nowrap;
+}
+.chip .lv-icon {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+/* Figures: a label over a value. The first one in a row is the panel's big number. */
+.figures {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 0.25rem 1.25rem;
+}
+.fig {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  min-width: 0;
+}
+.fig b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.375rem;
+  font-weight: 400;
+  line-height: 1.1;
+  color: var(--text);
+}
+.fig b.fig-sm {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.fig-big b {
+  font-size: 2.75rem;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  min-width: 4.2ch;
+}
+/* The small values line up with the top of the big number's digits. */
+.figures .fig:not(.fig-big) b {
+  margin-top: 0.125rem;
+}
+.fig b[data-unknown='true'] {
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.fig-big b[data-unknown='true'] {
+  font-size: 1.125rem;
+}
+.fig-note {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+/* Per-thread bars: one bar per CPU thread, filling from the baseline. */
+.threads {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  min-height: 3.75rem;
+}
+.thread {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.thread-track {
+  position: relative;
+  height: 2.5rem;
+  overflow: hidden;
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--spark-grid), var(--spark-grid)) 0 50% / 100% 1px no-repeat,
+    rgba(62, 224, 255, 0.06);
+}
+.thread-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(to top, rgba(62, 224, 255, 0.55), var(--accent));
+  transform: scaleY(0);
+  transform-origin: 50% 100%;
+  transition: transform 0.6s var(--ease);
+}
+.thread-name {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: var(--text-3);
+}
+
+/* Sparklines. */
+.spark-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 0;
+  margin-top: 0.125rem;
+}
+.spark {
+  display: block;
+  width: 100%;
+  height: 3rem;
+}
+.spark-cap {
+  font-size: 0.6875rem;
+}
+.spark-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.spark-aside {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+.spark-aside .hud-label {
+  font-size: 0.6875rem;
+}
+.spark-aside b {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+/* Meters: the fill carries the level; the track is a lighter step of the same hue. */
+.meter-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+.meter {
+  position: relative;
+  display: block;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--lv) 16%, transparent);
+}
+.meter > i {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.25rem;
+  background: var(--lv);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 0.6s var(--ease);
+}
+.meter-val {
+  font-size: 0.9375rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* GPU missing. */
+.gpu-missing {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 9rem;
+  padding: 0.5rem 0.25rem;
+}
+.missing-title {
+  font-family: var(--font-hud);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--text-2);
+}
+.missing-text {
+  max-width: 34ch;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+/* Storage. */
+.fs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.fs {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+}
+.fs-mount {
+  grid-row: 1 / span 2;
+  font-size: 1rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-pct {
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  color: var(--text);
+  text-align: right;
+}
+.fs .meter {
+  grid-column: 2;
+  grid-row: 1;
+}
+.fs-detail {
+  grid-column: 2 / span 2;
+  grid-row: 2;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.io-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.io-row .fig b {
+  font-size: 1.125rem;
+}
+.disk-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+#disk-health {
+  font-family: var(--font-mono);
+}
+#disk-health[data-level] {
+  color: var(--text);
+}
+
+/* ---- the core stage ---------------------------------------------------------------------- */
+
+.core-stage {
+  position: relative;
+  min-height: 0;
+}
+.core-canvas {
+  position: absolute;
+  inset: 0 0 3.5rem;
+  width: 100%;
+  height: calc(100% - 3.5rem);
+  display: block;
+}
+.core-label {
+  position: absolute;
+  left: var(--cx, 50%);
+  top: var(--cy, 50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  text-align: center;
+}
+.core-word {
+  font-family: var(--font-hud);
+  font-size: var(--core-word, 2.5rem);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  padding-left: 0.16em; /* the tracking after the last letter, so the word sits centred */
+  color: var(--text);
+}
+.core-sub {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  padding-left: var(--tracking-wide);
+  color: color-mix(in srgb, var(--hl, var(--accent)) 80%, var(--text));
+}
+html[data-health='ok'] {
+  --hl: var(--accent);
+}
+html[data-health='warn'] {
+  --hl: var(--warn);
+}
+html[data-health='alert'] {
+  --hl: var(--err);
+}
+html[data-health='offline'] {
+  --hl: var(--text-4);
+}
+
+.gauge-readout {
+  position: absolute;
+  left: var(--x, 0);
+  top: var(--y, 0);
+  display: grid;
+  grid-template-columns: auto;
+  gap: 0.125rem;
+  width: var(--w, 9rem);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.gauge-readout[data-corner='tl'],
+.gauge-readout[data-corner='bl'] {
+  justify-items: end;
+  text-align: right;
+}
+.gauge-readout[data-corner='tl'] .gr-flag,
+.gauge-readout[data-corner='bl'] .gr-flag {
+  justify-self: end;
+}
+.gauge-readout .hud-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  font-size: 0.875rem;
+  letter-spacing: 0.2em;
+  color: var(--text-2);
+}
+.gauge-readout .gv {
+  font-size: 3rem;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.gauge-readout .gv small {
+  margin-left: 0.08em;
+  font-size: 0.45em;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+.gauge-readout .gv[data-unknown='true'] {
+  font-family: var(--font-hud);
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.gr-sub {
+  font-size: 0.8125rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.gauge-readout[data-level='warn'] .gr-sub,
+.gauge-readout[data-level='alert'] .gr-sub {
+  color: var(--text);
+}
+.gauge-readout .gr-flag .lv-icon {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.gauge-readout .gr-flag {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+  padding: 0.125rem 0.5rem 0.125rem 0.375rem;
+  border-radius: var(--r-pill);
+  background: var(--lv-soft);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--text);
+}
+
+.core-summary {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.25rem;
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1.5rem;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--text-2);
+}
+.core-summary.is-long {
+  font-size: 1.0625rem;
+}
+
+/* ---- centre bottom ----------------------------------------------------------------------- */
+
+.centre-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: var(--gap);
+  min-height: 0;
+}
+
+.procs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  min-height: 0;
+}
+.proc-cap {
+  margin-bottom: 0.25rem;
+  font-size: 0.6875rem;
+}
+.proc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+.proc {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.125rem 0;
+  border-bottom: 1px solid rgba(78, 196, 255, 0.07);
+}
+.proc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  color: var(--text-2);
+}
+.proc-val {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  color: var(--text);
+  text-align: right;
+}
+.proc.is-empty .proc-name {
+  color: var(--text-4);
+}
+
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-height: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent);
+  mask-image: linear-gradient(to bottom, #000 80%, transparent);
+}
+.ev {
+  display: grid;
+  grid-template-columns: 6.5rem 4.75rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.625rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid rgba(78, 196, 255, 0.07);
+}
+.ev-time {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.ev-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-2);
+}
+.ev-level .lv-icon {
+  width: 0.5625rem;
+  height: 0.5625rem;
+}
+.ev-text {
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: var(--text-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ev[data-level='warn'] .ev-text,
+.ev[data-level='alert'] .ev-text {
+  color: var(--text);
+}
+/* System events (INFO: a start, a boot) are neutral: a hollow ring, quieter words. */
+.ev[data-info='true'] .lv-icon {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+.ev[data-info='true'] .ev-level,
+.ev[data-info='true'] .ev-text {
+  color: var(--text-3);
+}
+.events-empty {
+  font-size: 0.875rem;
+  color: var(--text-3);
+}
+
+/* ---- network ----------------------------------------------------------------------------- */
+
+.net-rates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+.net-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.net-rate .fig b {
+  font-size: 1.75rem;
+}
+.net-rate .spark {
+  height: 3rem;
+}
+.net-checks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.net-checks .fig b {
+  font-size: 1.125rem;
+}
+
+/* ---- services ---------------------------------------------------------------------------- */
+
+.svc-list {
+  display: flex;
+  flex-direction: column;
+}
+.svc {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0 0.625rem;
+  padding: 0.3125rem 0;
+  border-bottom: 1px solid rgba(78, 196, 255, 0.07);
+}
+.svc .lv-icon {
+  grid-row: 1 / span 2;
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.svc-name {
+  font-size: 0.9375rem;
+  color: var(--text);
+}
+.svc-state {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+.svc-detail {
+  grid-column: 2 / span 2;
+  font-size: 0.75rem;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.svc-detail:empty {
+  display: none;
+}
+
+.peers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.peer {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  max-width: 100%;
+  height: 1.625rem;
+  padding: 0 0.625rem 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.peer i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.peer[data-online='false'] {
+  color: var(--text-4);
+}
+.peer[data-online='false'] i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-4);
+}
+.peer-self {
+  color: var(--text-3);
+}
+
+/* ---- the status assistant ---------------------------------------------------------------- */
+
+.assistant {
+  gap: 0.75rem;
+}
+.transcript {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  min-height: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.5rem);
+  mask-image: linear-gradient(to bottom, transparent, #000 1.5rem);
+}
+.msg {
+  flex: none;
+  max-width: 92%;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.msg-you {
+  align-self: flex-end;
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--r-md) var(--r-md) var(--r-xs) var(--r-md);
+  background: var(--surface-3);
+  color: var(--text);
+}
+.msg-core {
+  align-self: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.625rem;
+  color: var(--text);
+}
+.msg-core::before {
+  content: '';
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-top: 0.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  background: radial-gradient(circle, var(--accent-2) 0 22%, transparent 60%);
+}
+.msg-core.is-error {
+  color: var(--text-2);
+}
+.msg-core.is-pending {
+  color: var(--text-3);
+}
+.ask-hello {
+  color: var(--text-3);
+  font-size: 0.9375rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.ask-chip {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 1.875rem;
+  margin: 0;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ask-chip:hover,
+.ask-chip:focus-visible {
+  border-color: var(--line-3);
+  color: var(--text);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.ask-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+.ask-input {
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: rgba(4, 7, 12, 0.6);
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+}
+.ask-input::placeholder {
+  color: var(--text-4);
+}
+.ask-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ask-send {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2.75rem;
+  padding: 0 1.125rem;
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  cursor: pointer;
+}
+.ask-send:hover,
+.ask-send:focus-visible {
+  background: rgba(62, 224, 255, 0.22);
+  outline: none;
+}
+.ask-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- toast (Open Jarvis) ------------------------------------------------------------------ */
+
+.toast {
+  position: absolute;
+  right: 1.25rem;
+  top: 4.75rem;
+  z-index: 20;
+  max-width: 26rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-md);
+  background: rgba(15, 31, 48, 0.96);
+  box-shadow: var(--shadow-2);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+/* ---- offline ----------------------------------------------------------------------------- */
+
+/* The banner takes the summary line's place under the core (the summary hides meanwhile). */
+.offline-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.875rem;
+  max-width: calc(100% - 2rem);
+  padding: 0.6875rem 1.375rem 0.6875rem 1.125rem;
+  border: 1px solid rgba(255, 92, 114, 0.55);
+  border-radius: var(--r-md);
+  background: rgba(30, 8, 14, 0.92);
+  box-shadow: 0 0 2.5rem rgba(255, 92, 114, 0.16);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.offline-banner:not([hidden]) ~ .core-summary {
+  visibility: hidden;
+}
+.offline-icon {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--err), 0 0 0.75rem rgba(255, 92, 114, 0.5);
+}
+.offline-title {
+  font-family: var(--font-hud);
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--text);
+}
+.offline-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 1rem;
+  color: var(--text-2);
+}
+
+/* While the Core is offline the last values stay up, dimmed: stale data never looks live. */
+html[data-health='offline'] .grid .panel:not(.assistant),
+html[data-health='offline'] .gauge-readout,
+html[data-health='offline'] .core-summary {
+  opacity: 0.42;
+  transition: opacity 1s var(--ease);
+}
+html[data-health='offline'] .panel .chip {
+  visibility: hidden;
+}
+
+/* ---- kiosk: night dim, cursor, reduced motion -------------------------------------------- */
+
+.night-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background: #000;
+  opacity: 0;
+  transition: opacity 8s var(--ease);
+}
+html[data-night='on'] .night-veil {
+  opacity: var(--night-dim);
+}
+html[data-night='on'] .state-icon {
+  box-shadow: none;
+}
+html[data-night='on'] .thread-fill,
+html[data-night='on'] .meter > i {
+  transition: none;
+}
+
+html.cursor-hidden,
+html.cursor-hidden * {
+  cursor: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage,
+  .thread-fill,
+  .meter > i,
+  .night-veil,
+  .state-chip {
+    transition: none !important;
+  }
+}
+
+/* ---- smaller screens (1366×768 and the like): keep the essentials, drop details ------------ */
+
+@media (max-height: 860px), (max-width: 1500px) {
+  :root {
+    --gap: 0.625rem;
+    --panel-pad: 0.625rem 0.75rem 0.625rem;
+  }
+  .grid {
+    grid-template-columns: 26rem minmax(0, 1fr) 26rem;
+  }
+  .panel {
+    gap: 0.5rem;
+  }
+  .spark-cap,
+  .fig-note {
+    display: none;
+  }
+  .fig-big b {
+    font-size: 2.25rem;
+  }
+  .spark {
+    height: 2.5rem;
+  }
+  .thread-track {
+    height: 2.25rem;
+  }
+  .threads {
+    min-height: 3rem;
+  }
+  .col-centre {
+    grid-template-rows: minmax(0, 1fr) 16.5rem;
+  }
+  .gauge-readout .gv {
+    font-size: 2.5rem;
+  }
+  .clock {
+    font-size: 2.125rem;
+  }
+}

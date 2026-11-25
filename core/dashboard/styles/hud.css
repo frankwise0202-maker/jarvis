@@ -1,0 +1,74 @@
+/* Presence building blocks for the Core dashboard: a trimmed copy of the app's
+   src/styles/hud.css (v7.4) and the Rajdhani faces from src/styles/presence.css. Same names, same
+   look: .hud-frame corner brackets, .hud-label, .hud-sr, .hud-grid. Colors come from tokens.css. */
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/rajdhani-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/rajdhani-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Corner brackets. The custom property is declared again on the pseudo-element that draws it so
+   each frame's own --frame-arm, --frame-color and --frame-weight apply (see the app's hud.css). */
+.hud-frame {
+  position: relative;
+  isolation: isolate;
+}
+.hud-frame::before {
+  --frame-brackets:
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right top / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) left bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-arm, 12px) var(--frame-weight, 1px) no-repeat,
+    linear-gradient(var(--frame-color, var(--line-3)), var(--frame-color, var(--line-3))) right bottom / var(--frame-weight, 1px) var(--frame-arm, 12px) no-repeat;
+  content: '';
+  position: absolute;
+  inset: var(--frame-inset, 5px);
+  z-index: -1;
+  pointer-events: none;
+  background: var(--frame-brackets);
+}
+
+.hud-label {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.hud-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hud-grid {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 50% 50%;
+}
