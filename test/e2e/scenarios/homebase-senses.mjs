@@ -275,7 +275,7 @@ export default [
   },
   {
     name: 'senses-slow',
-    title: 'Slow answers (iPhone, Voice Mode): the home base hearing for more than 4 s hands the listen to this iPhone’s recognizer ("took too long"); a voice slower than 6 s a sentence hands the reply to the built-in voice',
+    title: 'Slow answers (iPhone, Voice Mode): the home base hearing for more than 4 s hands the listen to this iPhone’s recognizer ("took too long"); a voice slower than its time limit (9 s for a first chunk that has 8 s at most) hands the reply to the built-in voice',
     device: 'iphone13',
     seed: ON,
     fakeCore: { senses: { hear: 'ready', speak: 'ready', hearDelayMs: 6500, speakDelayMs: 9000 } },
@@ -296,7 +296,7 @@ export default [
         await t.page.evaluate((q) => window.__voice.say(q), QUESTION);
         await t.waitFor(async () => sentTexts(t).some((x) => x.includes(QUESTION)), { timeout: 15000, message: 'sent' });
       });
-      await t.step('a voice slower than 6 s: the built-in voice says the reply', async () => {
+      await t.step('a voice slower than its time limit: the built-in voice says the reply', async () => {
         await t.waitFor(async () => t.core.senses.speaks.filter((x) => x.text !== 'Ready.').length >= 1, { timeout: 20000, message: 'POST api/speak for the reply' });
         await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.join(' '))).length > 0, { timeout: 25000, message: 'the built-in voice took over' });
       });

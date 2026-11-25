@@ -3299,7 +3299,13 @@ a listen while a hologram builds). The wrapper:
 voice's audio output (audio-out.js): sentences cut by speech-text.js, a short first chunk, then chunks
 that grow with the measured speed, two queued ahead, gapless on the audio clock, word boundaries
 estimated, the speaker `naturalVoiceId` (George by default) at the owner's speed; the core follows its
-real output level and bands. One `api/speak` request at a time (6 s each). A request that fails rejects
+real output level and bands. One `api/speak` request at a time, each with a time limit that follows its
+text (`speakTimeoutFor`: 6 s for a short sentence, else 2 s + 1.5 × the audio the text makes, at 13
+characters a second at speed 1, at most 45 s; a reply's first chunk, which the owner waits for in
+silence, 2 s + 1 × its audio), so a long chunk is never cut off while a healthy home base makes it.
+The home base engine's `status()` asks the stream for chunks of at most 80 characters first and 180
+later (`firstChunk`, `maxChunk`; natural-stream.js `limitFor` takes a smaller size an engine names):
+the first words come sooner and a home base that stops answering is noticed sooner. A request that fails rejects
 `not-ready` (no retry) and the rest of the reply goes, from the same offset into `text()`, to the
 on-device George when it is on and ready, else to the built-in voice; slower than real time over 3 s of
 audio (the network included) does the same, and either rests the home base's voice for a minute.
@@ -3347,6 +3353,6 @@ microphone released while speaking, the warm-up once), `senses-check` (the 2-sec
 through the home base: "Cancel." said during the countdown pauses it with "…" while the home base hears
 it, then nothing is sent), `senses-fallback` (unreachable: asked again,
 the device's recognizer, the built-in voice, the next listen on the device), `senses-slow` (over 4 s;
-a voice over 6 s), `senses-off` (nothing asked of the home base's senses). Not testable here: the real
+a voice slower than its time limit, 9 s for the reply's first chunk), `senses-off` (nothing asked of the home base's senses). Not testable here: the real
 Core's Whisper and Kokoro (the Core's own online test), iOS Safari's microphone and audio session, a
 real Tailscale network.

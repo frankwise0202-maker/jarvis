@@ -981,3 +981,103 @@ test('router: while the home base’s voice plays, the core follows its real out
   ctx.clock.runUntil(() => r.ends.length > 0, 60_000);
   assert.equal(ctx.router.getOutputLevel(), null);
 });
+
+// ---- RS-2: the home base's real voice engine on long replies ------------------------------------------
+
+import { speakTimeoutFor, HOMEBASE_CHUNKS } from '../../src/platform/voice/homebase-voice.js';
+
+test('voice engine: each request’s time limit follows its text (6 s for a short one, 2 s + 1.5 × its audio, at most 45 s)', () => {
+  assert.equal(speakTimeoutFor('Certainly, Frank.'), 6000);
+  assert.equal(speakTimeoutFor('x'.repeat(260)), 32000, '260 characters = 20 s of George');
+  assert.equal(speakTimeoutFor('x'.repeat(130), 2), 9500, 'twice as fast: half the audio');
+  assert.equal(speakTimeoutFor('x'.repeat(1000), 0.5), 45000);
+  assert.equal(speakTimeoutFor(''), 6000);
+  assert.equal(speakTimeoutFor('x'.repeat(78), 1, { first: true }), 8000, 'a reply’s first chunk: 2 s + 1 × its audio');
+  assert.equal(speakTimeoutFor('x'.repeat(40), 1, { first: true }), 6000);
+  assert.deepEqual(HOMEBASE_CHUNKS, { firstChunk: 80, maxChunk: 180 });
+});
+
+const LONG_REPLY =
+  'Good evening, Frank, I looked into the monitor you asked about this morning and found that the LG 27GP850 is listed at most of the large retailers. ' +
+  'The LG 27GP850 is listed at three hundred and twenty nine dollars at most of the large retailers today, which is a little above the price you wanted to pay for it. ' +
+  'Best Buy had it for two hundred and ninety nine dollars for a few days last week, so a sale at that level is quite likely to come back before the holidays. ' +
+  'I would suggest keeping a watcher on it rather than buying it today, and I can tell you the moment it drops under three hundred dollars. Shall I set that up for you?';
+
+/** The real router, natural stream and home base engine, with api/speak made at `rtf` (George: 13 characters a second). */
+async function homeBaseReply(t, rtf, text) {
+  const clock = installClock();
+  const speech = createFakeSpeech(clock, {}).install();
+  const device = await import(`../../src/platform/voice/tts.js?senses=${++loads}`);
+  const { createVoiceRouter } = await import(`../../src/platform/voice/voice-router.js?senses=${loads}`);
+  t.after(() => {
+    speech.uninstall();
+    clock.restore();
+  });
+  const requests = [];
+  const failures = [];
+  const senses = {
+    speak({ text: said }, { timeoutMs, signal }) {
+      const synthMs = (rtf * said.length * 1000) / 13;
+      const req = { chars: said.length, synthMs, timeoutMs, result: null };
+      requests.push(req);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          if (synthMs > timeoutMs) {
+            req.result = 'timeout';
+            failures.push('speak:timeout'); // what src/ui/senses.js does with a failed request: rest a minute
+            resolve({ ok: false, kind: 'timeout' });
+            return;
+          }
+          req.result = 'ok';
+          resolve({ ok: true, pcm: new Float32Array(Math.round((said.length / 13) * 24000)).fill(0.1), sampleRate: 24000 });
+        }, Math.min(synthMs, timeoutMs));
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve({ ok: false, kind: 'aborted' });
+        });
+      });
+    },
+    noteFailure: (w, k) => failures.push(`${w}:${k}`),
+  };
+  const engine = createHomeBaseVoiceEngine({ senses, now: () => Date.now() });
+  const audio = createFakeAudio(clock);
+  const t0 = clock.now;
+  let firstAudio = null;
+  const play = audio.play;
+  audio.play = (...a) => {
+    if (firstAudio === null) firstAudio = clock.now - t0;
+    return play(...a);
+  };
+  const router = createVoiceRouter({ device, natural: null, homebase: { engine, audio, canSpeak: () => true }, getSettings: () => ({ homeBaseSpeak: true, naturalVoiceId: 'bm_george' }) });
+  const r = rec();
+  const s = router.createSpeechStream(r.opts);
+  s.append(text);
+  s.finish();
+  for (let i = 0; i < 20000 && !r.ends.length; i++) {
+    clock.advance(20);
+    await new Promise((done) => setImmediate(done));
+  }
+  return { r, requests, failures, speech, firstAudio };
+}
+
+test('router: a 600-character reply at a real-time factor of 0.5 is all George from the home base, with the real engine’s time limits', async (t) => {
+  const { r, requests, failures, speech, firstAudio } = await homeBaseReply(t, 0.5, LONG_REPLY);
+  assert.ok(LONG_REPLY.length > 500);
+  assert.deepEqual(r.ends, ['done']);
+  assert.deepEqual(failures, [], requests.map((q) => `${q.chars}c/${Math.round(q.synthMs)}ms/${q.timeoutMs}/${q.result}`).join(' '));
+  assert.equal(speech.submitted.length, 0, 'the built-in voice never spoke');
+  assert.equal(r.chunks.map((c) => c.text).join(' ').replace(/\s+/g, ' '), LONG_REPLY.replace(/\s+/g, ' '), 'every word, in order');
+  assert.ok(requests[0].chars <= HOMEBASE_CHUNKS.firstChunk, `first chunk ${requests[0].chars}`);
+  assert.ok(requests.every((q) => q.chars <= HOMEBASE_CHUNKS.maxChunk), requests.map((q) => q.chars).join(','));
+  assert.ok(requests.every((q) => q.timeoutMs >= 2 * q.synthMs), 'each limit leaves room for a home base twice as slow');
+  assert.equal(requests[0].timeoutMs, speakTimeoutFor('x'.repeat(requests[0].chars), 1, { first: true }), 'the first chunk: the tighter limit');
+  assert.ok(firstAudio !== null && firstAudio < 4000, `first audio after ${firstAudio} ms`);
+});
+
+test('router: a home base clearly slower than its own audio (real-time factor 2) still hands over to this device', async (t) => {
+  const { r, requests, failures, speech } = await homeBaseReply(t, 2, LONG_REPLY);
+  assert.deepEqual(r.ends, ['done']);
+  assert.equal(requests[0].result, 'timeout');
+  assert.deepEqual(failures, ['speak:timeout']);
+  assert.equal(speech.completed().join(' ').replace(/\s+/g, ' '), LONG_REPLY.replace(/\s+/g, ' '), 'the built-in voice said all of it');
+});
