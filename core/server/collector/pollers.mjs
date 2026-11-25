@@ -86,8 +86,28 @@ export function createPollers({ io, config, collector, now = () => Date.now(), l
 
   function finishService(name) {
     busy.services -= 1;
-    if (busy.services === 0) state.services.rev += 1;
+    if (busy.services === 0) {
+      reconcileInternet();
+      state.services.rev += 1;
+    }
     return name;
+  }
+
+  /**
+   * 1.1.1.1 and 8.8.8.8 can be blocked or intercepted on some networks while everything else works. If the
+   * Claude API or the Jarvis site answered in the same round, the internet is up.
+   */
+  function reconcileInternet() {
+    const { internet: i, api: a, site: w } = state.services;
+    if (i.status !== 'down') return;
+    const answered = [a, w].filter((x) => x.status === 'up' && Number.isFinite(x.latencyMs));
+    if (!answered.length) return;
+    const best = answered.reduce((x, y) => (y.latencyMs < x.latencyMs ? y : x));
+    i.status = 'up';
+    i.latencyMs = best.latencyMs;
+    i.target = best === a ? config.apiUrl : config.siteSwUrl;
+    i.detail = `${hostOf(config.internetUrls[0])} did not answer (${humanError(i.error)}), but other sites did`;
+    i.failures = 0;
   }
 
   function checkInternet() {

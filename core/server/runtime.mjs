@@ -70,7 +70,7 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
         get: () => ({ scenario: core.sim.scenario, label: SCENARIOS[core.sim.scenario].label, scenarios: SCENARIO_NAMES, timeScale: core.clock.scale, now: core.snapshot?.t ?? null }),
         set(name) {
           if (!SCENARIO_NAMES.includes(name)) return { ok: false, error: `scenario must be one of ${SCENARIO_NAMES.join(', ')}` };
-          const t = Math.round(core.clock.now());
+          const t = Math.floor(core.clock.now() / 1000) * 1000;
           const wasRunning = running;
           core.stop();
           core = buildCore(name, t);

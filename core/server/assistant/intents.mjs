@@ -69,7 +69,7 @@ const ASPECTS = {
 const P = {
   greeting: /^(hi|hello|hey|hiya|howdy|yo|greetings|good (morning|afternoon|evening|day)|morning|afternoon|evening|what is up)\b/,
   howAreYou:
-    /\b(how are you|how are you doing|how you doing|how do you do|how is it going|how are things|how are we|how are you feeling|how do you feel|how have you been|how is life|how are you holding up|how is the (machine|computer|system|pc|box|rig|home base|base|core)|how is everything|everything (ok|good|fine|alright|all right)|all good|you (are )?(ok|good|alright|all right|well|fine|alive|healthy)|are you (ok|good|alright|all right|well|fine|alive|healthy|there|awake|working|running)|feeling (ok|good|alright))\b/,
+    /\b(how are you|how are you doing|how you doing|how do you do|how is it going|how are things|how are we|how are you feeling|how do you feel|how have you been|how is life|how are you holding up|how is the (machine|computer|system|pc|box|rig|home base|base|core)|how is everything|everything (ok|good|fine|alright|all right)|all good|you (are )?(ok|good|alright|all right|well|fine|alive|healthy)|are you (ok|good|alright|all right|well|fine|alive|healthy|there|awake|working|running)|feeling (ok|good|alright)|(are )?you doing (ok|okay|alright|all right|well|good|fine))\b/,
   status: /\b(status|report|summary|summarise|summarize|overview|sitrep|rundown|run down|stats|statistics|diagnostics|full report|system report|update me|brief me|briefing|readout|numbers|vitals)\b/,
   problems:
     /\b(anything wrong|something wrong|what is wrong|wrong with|any (problems|problem|issues|issue|warnings|warning|alerts|alert|errors|error|trouble|concerns)|problems|problem|issues|warnings|alerts|errors|trouble|broken|is anything (broken|wrong|off)|concerns|need attention|needs attention|worry|worried|red flags|is it bad)\b/,
@@ -77,7 +77,7 @@ const P = {
   uptime:
     /\b(uptime|up time|how long (have|has) (you|it|the (computer|machine|system|pc|core)) been (up|on|running|awake|going)|how long (are|is) (you|it) (up|on|running)|running since|since when|been running|been on|been up|how long have you been)\b/,
   restarts: /\b(restart|restarted|restarts|reboot|rebooted|reboots|crash|crashed|crashes|last boot|booted|power cut|power outage|went down|shut down|shutdown|turned off|switched off)\b/,
-  time: /\b(what time|the time|time is it|what is the time|current time|what day|what date|the date|date today|today s date|what is today|clock)\b/,
+  time: /\b(what time|the time|time is it|what is the time|current time|what day|what date|the date|date today|today s date|what is today|clock)\b|^(time|date|day|today)$/,
   thanks: /\b(thanks|thank you|cheers|appreciate it|appreciated|nice one|great job|good job|well done|ta|brilliant|perfect|awesome|cool thanks)\b/,
   bye: /\b(bye|goodbye|good bye|see you|see ya|later|good night|goodnight|night night|catch you later|that is all|that is it|nothing else|signing off)\b/,
   identity: /\b(who are you|what are you|your name|what is your name|who am i talking to|who is this|are you jarvis|are you (a|an) (ai|bot|robot|person|human))\b/,
@@ -121,7 +121,11 @@ export function classify(text) {
 
   // "space" alone means disk space; "up/down" alone does not make a network question.
   if (topics.includes('tailscale') && topics.includes('network') && !/\b(internet|wifi|ethernet|ping|latency|ip)\b/.test(n)) topics.splice(topics.indexOf('network'), 1);
-  if (topics.includes('gpu') && topics.includes('memory') && aspects.includes('vram')) topics.splice(topics.indexOf('memory'), 1);
+  if (aspects.includes('vram')) {
+    // "video memory" is the graphics card's, not the computer's RAM
+    if (topics.includes('memory')) topics.splice(topics.indexOf('memory'), 1);
+    if (!topics.includes('gpu')) topics.push('gpu');
+  }
   if (topics.includes('site') && topics.includes('api') && /\bbuild\b/.test(n) && !/\b(claude|anthropic)\b/.test(n)) topics.splice(topics.indexOf('api'), 1);
 
   // Out of scope first: requests to do things, then off-topic subjects (unless they also ask about the machine).
@@ -146,6 +150,7 @@ export function classify(text) {
   if (topics.length > 1) return out(topics[0]);
 
   if (has(P.problems)) return out('problems');
+  if (has(P.status)) return out('status');
   // No topic named: infer it from the aspect.
   if (aspects.includes('temp')) return out('temperature');
   if (aspects.includes('vram') || aspects.includes('driver') || aspects.includes('fan') || aspects.includes('power')) return out('gpu');

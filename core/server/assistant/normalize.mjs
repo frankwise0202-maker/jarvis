@@ -34,8 +34,13 @@ const SHORTHAND = [
   [/\bgonna\b/g, 'going to'],
   [/\bhd\b/g, 'hard drive'],
   [/\bwi ?-?fi\b/g, 'wifi'],
-  [/\bgpus?'?\b/g, 'gpu'],
-  [/\bcpus?'?\b/g, 'cpu'],
+];
+
+// After contractions are expanded, possessives and plurals of the main nouns are folded ("the GPU's" → "gpu").
+const FOLD = [
+  [/([a-z0-9])'s\b/g, '$1'],
+  [/\bgpus\b/g, 'gpu'],
+  [/\bcpus\b/g, 'cpu'],
   [/\btemps\b/g, 'temp'],
 ];
 
@@ -48,6 +53,7 @@ export function normalize(text) {
     .replace(/[‘’ʼ`´]/g, "'")
     .replace(/°\s*c\b/g, ' degrees ');
   for (const [re, to] of SHORTHAND) s = s.replace(re, to);
+  for (const [re, to] of FOLD) s = s.replace(re, to);
   return s
     .replace(/'/g, '')
     .replace(/[^a-z0-9%]+/g, ' ')

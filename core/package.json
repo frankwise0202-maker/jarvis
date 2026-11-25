@@ -11,8 +11,8 @@
     "start": "node server/main.mjs",
     "fixture": "node server/main.mjs --fixture ok",
     "once": "node server/main.mjs --once",
-    "test": "node --test \"test/server/**/*.test.mjs\"",
-    "test:server": "node --test \"test/server/**/*.test.mjs\"",
-    "test:longrun": "node test/server/longrun.mjs"
+    "test": "JARVIS_CORE_LONGRUN_HOURS=6 node --test \"test/server/**/*.test.mjs\"",
+    "test:server": "JARVIS_CORE_LONGRUN_HOURS=6 node --test \"test/server/**/*.test.mjs\"",
+    "test:longrun": "JARVIS_CORE_LONGRUN_HOURS=24 node --test test/server/longrun.test.mjs"
   }
 }

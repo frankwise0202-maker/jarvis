@@ -25,13 +25,14 @@ async function once(config) {
     return core.snapshot;
   }
   const core = createCore({ config, io: createLiveIO(), clock: createRealClock(), mode: 'live' });
+  const started = Date.now();
   core.tick(Date.now(), performance.now(), { quiet: true });
-  // Rates need a second sample; the GPU and the 30-second checks answer asynchronously.
-  const deadline = Date.now() + 9000;
+  // Rates need a second sample, process CPU a second scan 2 s later; the GPU and the 30-second checks
+  // answer asynchronously.
+  const deadline = started + 9000;
   await sleep(1100);
   core.tick(Date.now(), performance.now(), { quiet: true });
-  while (Date.now() < deadline && core.snapshot.services.rev < 1) await sleep(250);
-  await sleep(300);
+  while (Date.now() < deadline && (core.snapshot.services.rev < 1 || Date.now() - started < config.intervals.processesMs + 100)) await sleep(100);
   core.tick(Date.now(), performance.now(), { quiet: true });
   return core.snapshot;
 }
@@ -82,11 +83,13 @@ async function main() {
     log(`${signal}: saving and stopping`);
     const timer = setTimeout(() => process.exit(1), 10_000);
     timer.unref();
+    const started = Date.now();
     try {
       await rt.stop();
     } catch (err) {
       log(`stop failed: ${err?.message ?? err}`);
     }
+    log(`stopped cleanly in ${Date.now() - started} ms`);
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

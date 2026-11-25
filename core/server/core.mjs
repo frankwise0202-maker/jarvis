@@ -51,6 +51,7 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
   let lastHistorySave = null;
   let lastEventsSave = null;
   let saving = false;
+  let pendingSave = Promise.resolve();
   let timer = null;
   let running = false;
   const stats = { ticks: 0, lastTickMs: 0, maxTickMs: 0, saves: 0, saveErrors: 0, lastSaveBytes: 0 };
@@ -242,10 +243,10 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
     if (t - lastHistorySave >= config.intervals.saveMs) {
       lastHistorySave = t;
       lastEventsSave = t;
-      void saveAll({ clean: false });
+      pendingSave = saveAll({ clean: false });
     } else if (events.dirty && t - lastEventsSave >= config.intervals.eventsSaveDelayMs) {
       lastEventsSave = t;
-      store.saveEvents(events.serialize()).catch((err) => log(`saving events failed: ${err?.message ?? err}`));
+      pendingSave = store.saveEvents(events.serialize()).catch((err) => log(`saving events failed: ${err?.message ?? err}`));
     }
   }
 
@@ -322,7 +323,8 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
     if (!sim) return;
     const t0 = sim.startMs;
     const warmStart = t0 - warmupSec * 1000;
-    for (let m = Math.floor((t0 - 7 * 86400_000) / 60_000) * 60_000; m < warmStart - 60_000; m += 60_000) {
+    const firstWarmMinute = Math.floor(warmStart / 60_000) * 60_000;
+    for (let m = Math.floor((t0 - 7 * 86400_000) / 60_000) * 60_000; m < firstWarmMinute; m += 60_000) {
       const a = sim.seriesAt(m + 10_000);
       const b = sim.seriesAt(m + 30_000);
       const c = sim.seriesAt(m + 50_000);
@@ -415,6 +417,10 @@ export function createCore({ config, io, clock, store = null, log = () => {}, mo
     pollers,
     get startedAt() {
       return startedAt;
+    },
+    /** The save in progress (or a resolved promise). */
+    get pendingSave() {
+      return pendingSave;
     },
     get stats() {
       return { ...stats, events: events.size, history: history.sizes };

@@ -363,7 +363,7 @@ export function createCollector({ io, processIntervalMs = 2000, selfPid = null, 
       };
     };
     const topCpu = withCpu
-      .filter((r) => isNum(r.threadPct))
+      .filter((r) => isNum(r.threadPct) && r.threadPct > 0)
       .sort((a, b) => b.threadPct - a.threadPct || a.st.pid - b.st.pid)
       .slice(0, topN)
       .map(shape);
