@@ -352,7 +352,7 @@ cmd_url() {
   case "$(ts_state)" in
     not-installed)
       note "Tailscale isn't installed, so your iPhone and Mac can't reach Jarvis Core yet. Run:"
-      say "  curl -fsSL https://tailscale.com/install.sh | sh"
+      say "  wget -qO- https://tailscale.com/install.sh | sh"
       say "  sudo tailscale up"
       say "  sudo tailscale serve --bg $PORT"
       ;;

@@ -538,3 +538,12 @@ test('jarvis-core open: starts the screen on its own, and restarts it when it is
     sb.cleanup();
   }
 });
+
+test('the Tailscale steps it prints use wget, which a fresh Ubuntu desktop has (curl may be missing)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const f of ['install.sh', 'jarvis-core']) {
+    const text = await readFile(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.ok(text.includes('wget -qO- https://tailscale.com/install.sh | sh'), `${f} prints the wget form`);
+    assert.ok(!text.includes('curl -fsSL https://tailscale.com/install.sh'), `${f} never prints the curl form`);
+  }
+});

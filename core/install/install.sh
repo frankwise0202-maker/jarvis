@@ -922,7 +922,7 @@ step_autologin() {
 }
 
 ts_commands() {
-  say "  curl -fsSL https://tailscale.com/install.sh | sh"
+  say "  wget -qO- https://tailscale.com/install.sh | sh"
   say "  sudo tailscale up"
   say "  sudo tailscale serve --bg $PORT"
 }
@@ -937,7 +937,7 @@ step_tailscale() {
       say "shows a sign-in link: use the same account as on your iPhone and Mac):"
       ts_commands
       say "Then run: jarvis-core url   (it shows the address for Jarvis)"
-      manual "Set up Tailscale: curl -fsSL https://tailscale.com/install.sh | sh; sudo tailscale up; sudo tailscale serve --bg $PORT"
+      manual "Set up Tailscale: wget -qO- https://tailscale.com/install.sh | sh; sudo tailscale up; sudo tailscale serve --bg $PORT"
       return 0
       ;;
     not-running)
