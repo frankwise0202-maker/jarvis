@@ -1593,7 +1593,7 @@ export async function startApp(rootEl) {
     chronometer: (d) => chronometer(d),
     onWake: ({ trigger }) => wakeUp(trigger),
     onExit: () => updateAll(),
-    unlock: () => safe(() => unlockSpeech()),
+    unlock: (o) => safe(() => unlockSpeech(o)), // v7.8.1: { tap: false } when Standby is entered again
     pauseWhenHidden: phoneLike,
     isIOS: safe(() => isIOS(), false),
   });
@@ -1622,7 +1622,7 @@ export async function startApp(rootEl) {
     closePhoneSheets();
     if (!standby) return false;
     if (again && standby.isAwaiting()) standby.resume();
-    else standby.enter();
+    else standby.enter({ again }); // v7.8.1: again = no tap behind it
     return true;
   }
 
@@ -3359,7 +3359,9 @@ export async function startApp(rootEl) {
       // v7.8: Settings → Voice → Jarvis's voice (the voice in use, Test, George on or off).
       voice: { tts, natural: naturalVoice || null, senses: senses && !state.demo ? senses : null },
       // v7.7 (beta): Settings → Home base → Hearing and voice.
-      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()) } : null,
+      // v7.8.1: its Test unlocks through the voice router (a stuck output is started afresh in the tap), and
+      // a sample that didn't play marks George's sound stuck (replies use the device voice meanwhile).
+      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()), unlockVoice: () => safe(() => unlockSpeech()), onSilent: (a) => safe(() => tts.noteAudioStuck(a)) } : null,
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),

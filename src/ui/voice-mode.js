@@ -608,7 +608,10 @@ function createVoiceMode(opts) {
     inertObserver = null;
   }
 
-  unlockSpeech(); // inside the opening gesture (iOS)
+  // Inside the opening gesture (iOS). v7.8.1: opened by the wake routine (claps or "Hey Jarvis") there is no
+  // gesture: the router is told so (what it knows about George's stuck sound stays, and the greeting doesn't
+  // wait for it), and the one-shot unlock waits for the first real tap in Voice Mode.
+  unlockSpeech({ tap: !(wake && typeof wake === 'object') });
   keepAwake();
 
   const api = {
@@ -3830,11 +3833,15 @@ function createVoiceMode(opts) {
     return Number.isFinite(r) && r > 0 ? Math.min(2, Math.max(0.5, r)) : 1;
   }
 
-  function unlockSpeech() {
+  /** Once per Voice Mode, inside a tap. `tap: false` (opened by the wake routine): said so, and not used up. */
+  function unlockSpeech({ tap = true } = {}) {
     if (S.unlocked || !S.ttsOk) return;
-    S.unlocked = true;
+    if (tap) S.unlocked = true;
     try {
-      if (typeof tts.unlockSpeech === 'function') tts.unlockSpeech();
+      if (typeof tts.unlockSpeech === 'function') {
+        if (tap) tts.unlockSpeech();
+        else tts.unlockSpeech({ tap: false });
+      }
     } catch {
       /* ignore */
     }

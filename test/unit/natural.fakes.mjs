@@ -7,7 +7,9 @@
 //                       suspend() / resume() stop and restart its clock (frozen: stopped from the
 //                       start). v7.8.1: kick() counts in `kicks` and calls onKick (null: the kick
 //                       does nothing, the stuck case); autoResumeMs: play() on a stopped clock
-//                       restarts it that much later (the real play() resuming a suspended context)
+//                       restarts it that much later (the real play() resuming a suspended context);
+//                       probe() (the router asking a stuck output to run again) counts in `probes` and
+//                       calls onKick too
 //   createFakeWorker()                                a Worker for engine-client.js
 //   installClock().block(ms)                          v7.8.1: the main thread blocked for `ms`: no timer
 //                       runs meanwhile, then each overdue one runs once (an interval once, not ms/period
@@ -174,6 +176,12 @@ export function createFakeAudio(clock, { latency = 0, frozen = false } = {}) {
     kick() {
       fake.kicks += 1;
       fake.kickTimes.push(clock.now);
+      if (typeof fake.onKick === 'function') fake.onKick(fake);
+      return true;
+    },
+    probes: 0,
+    probe() {
+      fake.probes += 1;
       if (typeof fake.onKick === 'function') fake.onKick(fake);
       return true;
     },

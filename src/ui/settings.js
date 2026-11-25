@@ -1431,7 +1431,7 @@ export function createSettingsPanel(o) {
   const syncCard = o.sync && !o.demo ? safeCall(() => createSyncSettings(o.sync), null) : null;
   if (syncCard) cleanups.push(() => syncCard.destroy());
   // v7.7 (beta, SPEC §25): hearing (Whisper) and George's voice made by the home base.
-  const sensesCard = o.senses && o.senses.senses && !o.demo ? safeCall(() => createSensesSettings(o.senses.senses, { audio: o.senses.audio, createCapture: o.senses.createCapture, stopSpeaking: o.senses.stopSpeaking, getSettings, commit, toast: o.toast, os: currentOs() }), null) : null;
+  const sensesCard = o.senses && o.senses.senses && !o.demo ? safeCall(() => createSensesSettings(o.senses.senses, { audio: o.senses.audio, createCapture: o.senses.createCapture, stopSpeaking: o.senses.stopSpeaking, unlockVoice: o.senses.unlockVoice, onSilent: o.senses.onSilent, getSettings, commit, toast: o.toast, os: currentOs() }), null) : null;
   if (sensesCard) cleanups.push(() => sensesCard.destroy());
 
   const homebase = section(

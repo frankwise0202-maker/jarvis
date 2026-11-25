@@ -8,6 +8,9 @@
 //   voiceInUse({ settings, senses, natural, device, os, voiceName })
 //                                                          the voice the next reply uses, where it comes
 //                                                          from, and what is getting ready meanwhile
+//   samplePlayed({ clock, when, duration })                v7.8.1: did a Test sample played straight through
+//                                                          Web Audio actually play (its clock got past it)?
+//   silentSampleText({ voiceName, os })                    v7.8.1: what a Test says when it didn't
 //
 // The owner never heard a difference through the voice updates: every better voice (George on the home
 // base, George on this device) was off until he found the switch. v7.8 turns George from the home base on
@@ -141,4 +144,21 @@ export function voiceInUse({ settings, senses = null, natural = null, device = n
     where = `${dev.replace(/^this /, 'This ')}’s own voice${n ? ` (${n})` : ''}.`;
   }
   return { engine, label, where, pending };
+}
+
+/**
+ * v7.8.1: did a sample played straight through Web Audio (Settings' Test buttons: no natural stream, so no
+ * watchdog) actually play? Its audio clock must have got past the sample's start: a stuck output (iOS after
+ * an interruption) plays nothing without failing. `clock`: the output's clock now; `when`, `duration`: the
+ * play() handle's. A clock that can't be read counts as played (nothing to say it didn't).
+ */
+export function samplePlayed({ clock, when, duration } = {}) {
+  if (!Number.isFinite(clock) || !Number.isFinite(when)) return true;
+  const need = Math.min(0.25, Math.max(0, Number(duration) || 0) / 2);
+  return clock >= when + need;
+}
+
+/** v7.8.1: what a Test says when its sample didn't play (the device voice speaks replies meanwhile). */
+export function silentSampleText({ voiceName = 'George', os = 'other' } = {}) {
+  return `Nothing played: ${voiceName}’s sound didn’t start on ${thisDevice(os)}, so the ${deviceVoiceWord(os)} speaks for now. Tap Test to try again.`;
 }

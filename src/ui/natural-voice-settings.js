@@ -17,6 +17,7 @@
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import { VOICES, RUNTIME, voiceById, voiceLabel, formatMegabytes } from '../platform/voice/natural/catalog.js';
+import { samplePlayed, silentSampleText } from '../lib/voice-choice.js';
 
 // A speaker's file that could not be had (the engine's synthesis error codes for a download).
 const SPEAKER_DOWNLOAD = new Set(['network', 'integrity', 'blocked-host']);
@@ -298,7 +299,18 @@ export function createNaturalVoiceCard({ natural, tts, getSettings, commit, toas
         ({ pcm, sampleRate }) => {
           if (cancelled) return;
           const played = natural.audio.play(pcm, sampleRate, natural.audio.now() + 0.05);
-          setTimeout(() => !cancelled && finish(), Math.ceil(played.duration * 1000) + 100);
+          const ctxAtPlay = natural.audio.context;
+          setTimeout(() => {
+            if (cancelled) return;
+            // v7.8.1: a stuck output (iOS after an interruption) plays nothing without failing: say so, and
+            // replies use the built-in voice meanwhile (the router's stuck state, as after a stall).
+            const silent = natural.audio.context === ctxAtPlay && !samplePlayed({ clock: natural.audio.now(), when: played.when, duration: played.duration });
+            if (silent) {
+              toast(silentSampleText({ voiceName: speakerName(s.naturalVoiceId) }), { level: 'warn' });
+              if (typeof tts.noteAudioStuck === 'function') tts.noteAudioStuck(natural.audio);
+            }
+            finish();
+          }, Math.ceil(played.duration * 1000) + 100);
         },
         (err) => {
           if (cancelled) return;

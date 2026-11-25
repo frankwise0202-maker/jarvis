@@ -46,9 +46,11 @@
 // nothing, and one long gap counts no more than a short one. Stopped for stallKickMs: the audio output
 // is kicked once (audio.kick(): resume). Still stopped at stallMs: the stream stops and drops its audio
 // and synthesis now (unlike a 'slow' handoff, nothing made can play any more) and calls
-// onHandoff({ reason: 'stall' }) from what wasn't heard: the last word boundary heard, or the start of
-// the chunk that never started. Hidden, it never counts; back in view it starts again from fresh
-// readings. Without onHandoff there is no watchdog: the stream waits for the clock, as before.
+// onHandoff({ reason: 'stall' }) from what wasn't heard: the last word boundary heard (or the one before
+// it when that one came less than stallBackS before the stop: the speaker can lag the clock by more than
+// latency() says, e.g. Bluetooth where outputLatency isn't reported, and a word said twice beats a word
+// lost), or the start of the chunk that never started. Hidden, it never counts; back in view it starts
+// again from fresh readings. Without onHandoff there is no watchdog: the stream waits for the clock, as before.
 
 import { newText, ingest, segment, takeChunk, takeFirstClause, takeGrowingChunk, releasePiece } from '../speech-text.js';
 
@@ -73,6 +75,7 @@ export const NATURAL_TIMING = Object.freeze({
   stallKickMs: 1500, // … kick the audio output once (resume);
   stallMs: 3500, // … hand what wasn't heard to the device voice;
   stallStepMs: 250, // one tick counts at most this much (a late timer or a blocked page never adds up)
+  stallBackS: 0.3, // a word boundary this recent when the clock stopped may not have been heard yet: one more back
 });
 const T = NATURAL_TIMING;
 
@@ -630,8 +633,9 @@ function watch(s) {
 /**
  * The clock stopped for good: nothing scheduled will play. Unlike requestHandoff (which lets the audio
  * already made play out), everything stops now; the device voice says what wasn't heard: from the last
- * word boundary heard (the clock stopped mid-chunk; the next chunk if its voice had all been heard), or
- * from the start of the chunk that never started.
+ * word boundary heard (the clock stopped mid-chunk; one boundary further back when that one came less
+ * than stallBackS before the stop; the next chunk if its voice had all been heard), or from the start of
+ * the chunk that never started.
  */
 function stallHandoff(s) {
   if (s.ended) return;
@@ -646,7 +650,13 @@ function stallHandoff(s) {
       t = NaN;
     }
     if (Number.isFinite(t) && t >= c.startAt + c.voicedTo) from = c.end;
-    else if (c.words && c.wordIdx > 0) from = c.start + c.words[c.wordIdx - 1].ci;
+    else if (c.words && c.wordIdx > 0) {
+      let k = c.wordIdx - 1; // the last word boundary heard, by the clock
+      // Only just begun (or not yet heard: a speaker lagging the clock more than latency() says, the end of
+      // the word before it possibly cut): from the word before it.
+      if (k > 0 && Number.isFinite(t) && t - c.words[k].at < T.stallBackS) k -= 1;
+      from = c.start + c.words[k].ci;
+    }
   }
   s.handoff = { reason: 'stall', cut, from };
   s.wd = null;

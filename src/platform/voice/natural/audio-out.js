@@ -13,6 +13,12 @@
 //   out.kick()                       v7.8.1: the clock stopped while audio waits to play (natural-stream.js's
 //                                    watchdog): resume the context; one that says it runs is suspended and
 //                                    resumed (iOS can report 'running' with its clock stopped). Never throws.
+//   out.revive()                     v7.8.1: inside a tap, for an output known stuck (voice-router.js): the
+//                                    stuck context is closed and a fresh one made and started in the tap,
+//                                    as at the very first unlock
+//   out.probe()                      v7.8.1: outside a tap, while replies avoid this stuck output: kick it
+//                                    (no sound) and let it idle-suspend as usual, so the next reply can see
+//                                    whether its clock moves
 //
 // Chain: every chunk is an AudioBufferSourceNode -> one GainNode -> one AnalyserNode
 // (fftSize 512, smoothing 0.6) -> destination. Chunks are scheduled back to back on the audio
@@ -99,6 +105,9 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
   let idleTimer = 0;
   let sessionTimer = 0;
   let watching = false;
+  // v7.8.1: our own idle suspend is still landing. WebKit sets `state` only once it has, so a play() in
+  // that window would see 'running', skip resume(), and the suspend would then stop the clock under it.
+  let suspending = false;
 
   function supported() {
     return typeof Ctor === 'function';
@@ -198,6 +207,48 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     return true;
   }
 
+  /**
+   * v7.8.1: inside a tap, for an output the router knows is stuck (its clock stopped during a reply and the
+   * watchdog's kick didn't start it; iOS can leave a context that says it runs with its clock stopped, and
+   * lets audio start only in a gesture). A resume() inside the tap does nothing to a context that says it
+   * runs. So, all inside this tap: the stuck context is suspended and resumed (the lighter cure, should the
+   * audio session need just that), then closed, and a fresh one is made and started, as at the very first
+   * unlock. Nothing of ours plays on it meanwhile: replies avoid a stuck output. Never throws.
+   */
+  function revive() {
+    if (!supported()) return false;
+    const quiet = (p) => {
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    };
+    try {
+      const old = ctx;
+      if (old) {
+        try {
+          if (old.state === 'running' && typeof old.suspend === 'function') quiet(old.suspend());
+          if (typeof old.resume === 'function') quiet(old.resume());
+        } catch {
+          /* closed below anyway */
+        }
+        close();
+      }
+      return unlock();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * v7.8.1: outside a tap, while the router keeps replies off this stuck output: ask it to run again (no
+   * sound), as the watchdog's kick does, then let it idle-suspend as usual, so the next reply can see whether
+   * its clock moves (the sound came back: an interruption ended, a Mac's output device returned).
+   */
+  function probe() {
+    if (!ctx) return false;
+    kick();
+    if (!live.size) idleSoon();
+    return true;
+  }
+
   function ready() {
     return !!ctx && ctx.state === 'running';
   }
@@ -218,7 +269,7 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     clearTimeout(idleTimer);
     clearTimeout(sessionTimer);
     setSession('playback');
-    if (c.state !== 'running') resume();
+    if (c.state !== 'running' || suspending) resume(); // v7.8.1: also while our own idle suspend is landing
     const buffer = c.createBuffer(1, pcm.length, sampleRate);
     if (typeof buffer.copyToChannel === 'function') buffer.copyToChannel(pcm, 0);
     else buffer.getChannelData(0).set(pcm);
@@ -258,12 +309,20 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     clearTimeout(idleTimer);
     if (idleSuspendMs > 0) {
       idleTimer = setTimeout(() => {
-        if (!live.size && ctx && ctx.state === 'running' && typeof ctx.suspend === 'function') {
+        const c = ctx;
+        if (!live.size && c && c.state === 'running' && typeof c.suspend === 'function') {
+          suspending = true;
+          const landed = () => {
+            if (ctx !== c) return; // closed or replaced meanwhile
+            suspending = false;
+            if (live.size) resume(); // a chunk came while it landed: run again
+          };
           try {
-            const p = ctx.suspend();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
+            const p = c.suspend();
+            if (p && typeof p.then === 'function') p.then(landed, landed);
+            else landed();
           } catch {
-            /* ignore */
+            suspending = false;
           }
         }
       }, idleSuspendMs);
@@ -315,11 +374,13 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     clearTimeout(sessionTimer);
     setSession('auto');
     try {
-      if (ctx && typeof ctx.close === 'function') ctx.close();
+      const p = ctx && typeof ctx.close === 'function' ? ctx.close() : null;
+      if (p && typeof p.catch === 'function') p.catch(() => {});
     } catch {
       /* ignore */
     }
     ctx = null;
+    suspending = false;
   }
 
   return {
@@ -330,6 +391,8 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     latency,
     play,
     kick,
+    revive,
+    probe,
     stopAll,
     level,
     bands,

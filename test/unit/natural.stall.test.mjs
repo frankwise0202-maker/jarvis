@@ -95,13 +95,22 @@ test('stall watchdog: a clock stopped from the start (a context never unlocked) 
   assert.equal(ctx.audio.kicks, 1);
 });
 
-test('stall watchdog: a clock that stops mid-chunk — the device voice starts at the last word heard', async (t) => {
+test('stall watchdog: a clock that stops mid-chunk — the device voice starts at the last word heard (integrator, L3: at the one before it when that word had only just begun)', async (t) => {
+  // Stopped well inside a word (0.32 s after its boundary, before the next): from that word.
   const ctx = await setup(t);
   const r = recorder();
   const s = ctx.mod.createNaturalStream(ctx.deps, r.opts);
   s.append(TEXT);
   s.finish();
-  ctx.clock.runUntil(() => r.boundaries.length >= 6, 30_000);
+  ctx.clock.runUntil(() => r.boundaries.length >= 3, 30_000);
+  let found = false;
+  for (let guard = 0; guard < 40 && !found; guard++) {
+    const n = r.boundaries.length;
+    const firedAt = ctx.clock.now; // the boundary fires within one 40 ms tick of its estimated time
+    ctx.clock.runUntil(() => r.boundaries.length > n || ctx.clock.now - firedAt >= 320, 5_000);
+    found = r.boundaries.length === n; // 0.32 s into this word and the next hasn't begun: stop here
+  }
+  assert.ok(found, 'a word longer than 0.32 s');
   ctx.audio.suspend(); // the clock stops (an audio interruption)
   const heard = r.boundaries.length;
   const last = r.boundaries.at(-1);
@@ -113,6 +122,19 @@ test('stall watchdog: a clock that stops mid-chunk — the device voice starts a
   assert.ok(h.from > 0 && h.from < r.chunks.at(-1).end, 'inside the chunk that was playing');
   assert.equal(ctx.audio.kicks, 1);
   assert.ok(ctx.audio.played.every((p) => p.stopped || p.when + p.duration <= ctx.audio.now()), 'nothing left to play');
+
+  // Stopped right after a boundary (within 0.3 s: with a speaker lagging the clock, e.g. Bluetooth, that word
+  // may not be heard yet and the end of the one before it may be cut): from the word before it.
+  const ctx2 = await setup(t);
+  const r2 = recorder();
+  const s2 = ctx2.mod.createNaturalStream(ctx2.deps, r2.opts);
+  s2.append(TEXT);
+  s2.finish();
+  ctx2.clock.runUntil(() => r2.boundaries.length >= 6, 30_000);
+  ctx2.audio.suspend();
+  const prev = r2.boundaries.at(-2);
+  ctx2.clock.runUntil(() => ctx2.handoffs.length > 0, 30_000);
+  assert.equal(ctx2.handoffs[0].from, prev.charIndex, `from the word before the last boundary (“${s2.text().slice(prev.charIndex, prev.charIndex + prev.charLength)}”): one word said twice rather than one lost`);
 });
 
 test('stall watchdog: a clock that stops after a chunk’s voice was all heard (in its last silence) — the device voice starts at the next chunk', async (t) => {
@@ -466,15 +488,15 @@ test('router, George on this device (the on-device engine), the clock stopping m
   const ctx = await routerWith(t, { home: false, natural: true });
   const rec = await ctx.reply(TEXT);
   await ctx.run(() => rec.boundaries.length >= 5);
-  ctx.audio.suspend();
-  const last = rec.boundaries.at(-1);
+  ctx.audio.suspend(); // within 60 ms of the 5th boundary: that word had only just begun (integrator, L3)
+  const from = rec.boundaries.at(-2);
   await rec.done();
   assert.deepEqual(rec.ends, ['done']);
   const said = ctx.speech.completed().join(' ');
   const full = rec.text();
-  assert.equal(words(said).join(' '), words(full.slice(last.charIndex)).join(' '), 'the device voice: from the last word heard to the end');
-  const georgeWords = rec.boundaries.filter((b) => b.charIndex < last.charIndex).length;
-  assert.equal(georgeWords + words(said).length, words(full).length, 'every word said (the last one heard is said again, from its start)');
+  assert.equal(words(said).join(' '), words(full.slice(from.charIndex)).join(' '), 'the device voice: from the word before the one just begun, to the end');
+  const georgeWords = rec.boundaries.filter((b) => b.charIndex < from.charIndex).length;
+  assert.equal(georgeWords + words(said).length, words(full).length, 'every word said (the last two George began are said again, from the first one’s start)');
   assert.deepEqual(ctx.voices, ['natural', 'device', null]);
   assert.equal(ctx.router.audioStuck(), true);
   const asked = ctx.nEngine.requests.length;
