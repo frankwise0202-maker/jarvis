@@ -12,6 +12,11 @@
 //                         the frame it returned (when the turn context says the camera is live)
 //   Watch: a structured request whose system prompt is Jarvis Watch's gets a realistic
 //     { worth_saying, line, summary }: the first frame sets the scene, later ones report a change.
+//   Live view (v8.0): a structured request whose system prompt starts "You are Jarvis Live view"
+//     gets { summary, worth_saying, line } with usage, scripted per test (configureLive): a scene
+//     (one answer per look, the last one repeated), a cost per look, 429s with retry-after, 529s, a
+//     refusal, a reply cut short, and slow replies. Without a script: a desk scene where the owner
+//     holds up an AA battery on the third look.
 //   Follow-ups in a conversation with an Optics frame (Optics' chips and words):
 //     "Show me a hologram of the AA battery."  show_hologram with the battery sample (alternator /
 //                         Camry when named), spoken lines in Voice Mode
@@ -171,6 +176,69 @@ export function watchAnswer(body) {
     ? { worth_saying: false, line: '', summary: 'A desk with a coffee mug, an AA battery, a pothos, a notebook and a screwdriver.' }
     : { worth_saying: true, line: 'Your mug has moved next to the pothos, the notebook is gone, and a phone has appeared.', summary: 'The mug is beside the pothos; a phone lies where the notebook was.' };
   return JSON.stringify(answer);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Live view (one-off structured requests on Claude Haiku 5.5, about once a second)
+
+export function isLiveRequest(body) {
+  const system = typeof body.system === 'string' ? body.system : Array.isArray(body.system) ? body.system.map((b) => b?.text || '').join('\n') : '';
+  return /^You are Jarvis Live view\b/.test(system);
+}
+
+/** The default scene: the desk, then the owner holds up an AA battery, then puts it down. */
+export const LIVE_DEFAULT_SCENE = Object.freeze([
+  { summary: 'A desk with a coffee mug, an AA battery, a pothos, a notebook and a screwdriver.', worth_saying: false, line: '' },
+  { summary: 'The same desk; nothing has moved.', worth_saying: false, line: '' },
+  { summary: 'The owner holds up an AA battery to the camera.', worth_saying: true, line: 'That’s a Duracell AA, 1.5 volts.' },
+  { summary: 'The owner puts the battery back on the desk.', worth_saying: false, line: '' },
+]);
+
+/**
+ * Per-test script for the live view (E2E: configureLive(t.mock, { … }) after the mock's reset):
+ *   scene: [{ summary, worth_saying, line }]   one per look; the last is repeated
+ *   costUsd: n                                  the usage of each answer is sized to cost about n on Haiku 5.5
+ *   delayMs: n                                  each answer waits n ms (a slow reply)
+ *   errors: { [look#]: { status: 429|529, retryAfter?: seconds } | 'refusal' | 'cut' }   look# from 1
+ */
+export function configureLive(mock, config = {}) {
+  mock.state.live = { scene: Array.isArray(config.scene) && config.scene.length ? config.scene : LIVE_DEFAULT_SCENE, costUsd: Number(config.costUsd) || 0, delayMs: Number(config.delayMs) || 0, errors: config.errors || {} };
+  mock.state.liveLooks = 0;
+  return mock.state.live;
+}
+
+/**
+ * A live look: { error } (a scripted 429 / 529) or { plan } whose text is the scripted JSON. The
+ * look number counts every live request this test (rate-limited ones too).
+ */
+export function liveLookPlan(body, state) {
+  const cfg = state.live || { scene: LIVE_DEFAULT_SCENE, costUsd: 0, delayMs: 0, errors: {} };
+  state.liveLooks = (state.liveLooks || 0) + 1;
+  const n = state.liveLooks;
+  const err = cfg.errors && cfg.errors[n];
+  if (err && typeof err === 'object' && (err.status === 429 || err.status === 529)) {
+    const retryAfter = err.retryAfter;
+    const headers = { 'x-should-retry': 'true' };
+    if (retryAfter !== undefined && retryAfter !== null) headers['retry-after'] = String(retryAfter);
+    return err.status === 429
+      ? { error: { status: 429, type: 'rate_limit_error', message: "This request would exceed your organization's rate limit of 50 requests per minute (model: claude-haiku-5-5). Please try again later.", headers } }
+      : { error: { status: 529, type: 'overloaded_error', message: 'Overloaded', headers } };
+  }
+  const answered = (state.liveAnswered = (state.liveAnswered || 0) + 1);
+  const pick = cfg.scene[Math.min(answered, cfg.scene.length) - 1] || cfg.scene[cfg.scene.length - 1];
+  const answer = { summary: String(pick.summary || ''), worth_saying: pick.worth_saying === true, line: pick.worth_saying === true ? String(pick.line || '') : '' };
+  const plan = { blocks: [text(JSON.stringify(answer))], stop_reason: 'end_turn', pace: 'quick' };
+  if (err === 'refusal') {
+    plan.blocks = [];
+    plan.stop_reason = 'refusal';
+  } else if (err === 'cut') {
+    plan.blocks = [text(JSON.stringify(answer).slice(0, 30))];
+    plan.stop_reason = 'max_tokens';
+  }
+  // Haiku 5.5: $0.10 per million input tokens. The usage is sized so the look costs about costUsd.
+  if (cfg.costUsd > 0) plan.usage = { input_tokens: Math.round(cfg.costUsd / 1e-7), cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 };
+  if (cfg.delayMs > 0) plan.delayMs = cfg.delayMs;
+  return { plan };
 }
 
 // ---------------------------------------------------------------------------------------------

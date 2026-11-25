@@ -15,6 +15,9 @@
 //     hologram  "hologram of this", "make a hologram of the battery" (subject: 'battery' or null)
 //     part      "what's this part?", "what part is that?" (the pin the owner tapped)
 //     watch     "watch this" / "stop watching" (on: true | false)
+//     liveview  (v8.0) "live view", "start live view", "turn on live view", "watch me", "keep
+//               watching" (on: true); "stop live view", "turn off live view", "that's enough"
+//               (on: false). "Stop watching" stays a watch command: it stops whichever is on.
 //   Anything else is null: it goes to Jarvis as a normal message (in Voice Mode, a spoken turn).
 //
 //   isCameraRequest(text)             words plainly about seeing ("what am I looking at?", "look at
@@ -29,6 +32,13 @@
 //                                     hologram or blueprint is on screen, so "what is this?" is about
 //                                     it), 'need-tap' (iPhone, or the camera not allowed yet: "Tap
 //                                     Look") or 'look' (open the camera and look)
+//
+//   isLiveViewRequest(text)           (v8.0) whole sentences that start the live view ("live view",
+//                                     "watch me", "keep watching"): Voice Mode opens the camera for
+//                                     them while it is closed, by the same rule as a Look
+//   voiceLiveViewRequest(text, { cameraAllowed, ios })
+//                                     null, 'need-tap' (iPhone, or the camera not allowed yet) or
+//                                     'start' (open the camera and start the live view)
 //
 //   hologramRequest(subject)          "Show me a hologram of the AA battery." (the chip's message)
 //   partQuestion(pin, frameId)        "What's this part? (the AA battery you pinned on frame f1, at 316, 844)"
@@ -78,6 +88,9 @@ const MORE = /^(?:tell me more|more|go on|keep going|more about (?:it|this|that)
 const PART = /^(?:what(?:'s| is) (?:this|that) part|whats (?:this|that) part|what part is (?:this|that|it)|what is (?:this|that) piece|what's (?:this|that) piece)\b/;
 const WATCH_ON = /^(?:start )?watch(?:ing)?(?: (?:this|it|that|for changes))?$/;
 const WATCH_OFF = /^(?:stop|end|turn off) watch(?:ing)?$/;
+// v8.0 Live view (Jarvis watches, live, for up to an hour): whole sentences only.
+const LIVE_VIEW_ON = /^(?:(?:start|begin|turn on|switch on|use)(?: the)? live view|live view(?: on| please)?|turn(?: the)? live view on|watch me|keep watching(?: me)?)$/;
+const LIVE_VIEW_OFF = /^(?:(?:stop|end|turn off|switch off)(?: the)? live view|live view off|turn(?: the)? live view off|that's enough|thats enough|that is enough)$/;
 
 function hologramOf(n) {
   if (!/\bholo ?grams?\b|\bhollow ?grams?\b/.test(n)) return null;
@@ -108,6 +121,22 @@ const CAMERA_REQUEST = [
   /^what (?:brand|model|make) (?:is|are) (?:this|these)$/,
 ];
 
+/** v8.0: words that start the live view (see the header). */
+export function isLiveViewRequest(text) {
+  const n = normalizeOpticsText(text);
+  return !!n && n.length <= 60 && LIVE_VIEW_ON.test(n);
+}
+
+/**
+ * Voice Mode, Optics closed: "live view" (or "watch me", "keep watching") opens the camera by the
+ * same rule as "what am I looking at?": by voice alone only on a computer where the camera is
+ * already allowed ('start'); else Jarvis asks for the tap ('need-tap'). Null for other words.
+ */
+export function voiceLiveViewRequest(text, { cameraAllowed = 'unknown', ios = false } = {}) {
+  if (!isLiveViewRequest(text)) return null;
+  return cameraAllowed === 'granted' && !ios ? 'start' : 'need-tap';
+}
+
 /** Words that ask Jarvis to look even while the camera is closed (see the header). */
 export function isCameraRequest(text) {
   const n = normalizeOpticsText(text);
@@ -137,6 +166,8 @@ export function matchOpticsCommand(text, { frozen = false } = {}) {
   if (holo) return holo;
   if (PART.test(n)) return { action: 'part', question: words };
   if (MORE.test(n)) return { action: 'more', question: words };
+  if (LIVE_VIEW_OFF.test(n)) return { action: 'liveview', on: false };
+  if (LIVE_VIEW_ON.test(n)) return { action: 'liveview', on: true };
   if (WATCH_OFF.test(n)) return { action: 'watch', on: false };
   if (WATCH_ON.test(n)) return { action: 'watch', on: true };
   for (const re of CLOSE) if (re.test(n)) return { action: 'close' };
