@@ -1,9 +1,15 @@
 # Jarvis Core server
 
-One Node 22 process, `jarvis-core`, with **no npm dependencies**. It watches the Alienware around the clock,
-keeps a week of history, decides whether things are ok, warn or alert, serves the 24/7 dashboard, and answers
-simple questions about the machine's health. It listens on **127.0.0.1:8788 only**; other devices reach it
-through `tailscale serve`.
+One Node 22 process, `jarvis-core`. It watches the Alienware around the clock, keeps a week of history,
+decides whether things are ok, warn or alert, serves the 24/7 dashboard, and answers simple questions about
+the machine's health. Since 1.1.0 it is also the home base's **brain**: background research with the owner's
+Claude API key, watchers, the morning briefing, spending caps, push notifications and device sync (see "The
+brain" below). It listens on **127.0.0.1:8788 only**; other devices reach it through `tailscale serve`.
+
+The system report uses Node built-ins only. The brain has two pinned dependencies, `@anthropic-ai/sdk`
+(1.10.0, the app's version) and `web-push` (3.6.7), installed by `npm ci` in `core/` and **imported lazily**:
+without `core/node_modules` the Core still starts and serves the system report, the free briefing and sync,
+and `GET /api/brain` says `sdk.installed: false`.
 
 ```bash
 node core/server/main.mjs                  # the live machine
@@ -26,6 +32,13 @@ http/      server.mjs (routes), access.mjs (who may connect, CORS), sse.mjs, rat
 assistant/ normalize.mjs, intents.mjs, answers.mjs: the local, rule-based status assistant
 sim/       simulator.mjs + scenarios.mjs: fixture mode renders real-format /proc, nvidia-smi and tailscale
            output, so the very same collector, rules and API run without the hardware
+brain/     index.mjs (createBrain), vault.mjs (the key), spend.mjs + prices.mjs (cost and caps),
+           settings.mjs, claude.mjs (the SDK client), tasks.mjs (prompts: research, watcher check,
+           briefing), jobs.mjs (the queue), watchers.mjs, briefing.mjs + weather.mjs + rss.mjs +
+           homebase.mjs + music.mjs, schedule.mjs (local time, DST), fixture-fetch.mjs
+push/      Web Push (VAPID) to the owner's iPhone and Chrome        (brain-io)
+sync/      device backups, latest per device + 14 daily snapshots   (brain-io)
+http/brain-routes.mjs  the routes of the three above
 ```
 
 Everything slow or external is asynchronous with a timeout, and never more than one of each check runs at a
@@ -47,10 +60,14 @@ Defaults, then `~/.config/jarvis-core/config.json` (optional), then environment 
 | night dim window (reported to the dashboard) | `JARVIS_CORE_NIGHT`, `--night` | `23:00-07:00` (`off` to disable) |
 | fixture scenario | `JARVIS_CORE_FIXTURE`, `--fixture` | none (live) |
 | fixture time speed, start time, seed | `JARVIS_CORE_TIME_SCALE`, `JARVIS_CORE_START`, `JARVIS_CORE_SEED` | 1, now, 1 |
+| where the brain keeps the API key | `JARVIS_CORE_SECRETS_DIR` | `~/.config/jarvis-core/secrets` |
+| a local Claude API stand-in (tests only; loopback addresses only, anything else is refused) | `JARVIS_CORE_CLAUDE_BASE_URL` | `https://api.anthropic.com` |
 
 The config file also takes `thresholds` (e.g. `{"cpuTemp": {"warn": 75}}`), `gpuMissingLevel`
-(`warn`, or `ok` to stop warning about a missing NVIDIA driver), `allowedOrigins`, `tailscaleLogins` (limit
-which tailnet users may connect) and `smartSudo`. A broken file is reported and ignored.
+(`warn`, or `ok` to stop warning about a missing NVIDIA driver), `allowedOrigins` (extra page origins
+allowed to call the API, e.g. a developer's `"http://localhost:5173"`; always on top of the Jarvis app's),
+`tailscaleLogins` (limit which tailnet users may connect) and `smartSudo`. A broken file is reported and
+ignored.
 
 ## API
 
@@ -64,6 +81,7 @@ which tailnet users may connect) and `smartSudo`. A broken file is reported and 
 | `GET /api/info` | version, uptimes, Tailscale URL, night window, who you are |
 | `GET /api/ping` | liveness |
 | `GET /api/fixture`, `POST /api/fixture {"scenario"}` | fixture mode only |
+| `/api/brain`, `/api/spend`, `/api/jobs`, `/api/watchers`, `/api/briefing`, `/api/push/*`, `/api/sync/*` | the brain, push and sync (below); SSE gains `job`, `watcher`, `briefing`, `spend` |
 
 Units are in the field names (`…Pct`, `…C`, `…Bytes`, `…Bps`, `…Ms`). Values that cannot be read are `null`
 with `available: false` and a plain-words `message`/`detail`, never a guess. Errors are
@@ -73,8 +91,12 @@ with `available: false` and a plain-words `message`/`detail`, never a guess. Err
 own port, which also stops DNS-rebinding pages), or requests through `tailscale serve` that carry
 `Tailscale-User-Login` and this machine's `*.ts.net` name. Public Tailscale Funnel traffic
 (`Tailscale-Funnel-Request`) is always refused, although it arrives from localhost. **Origins:**
-`https://frankwise0202-maker.github.io`, any localhost origin, and the dashboard's own origin; every other origin
-gets 403. Chrome's private-network preflights (a public page calling the 100.x Tailscale address) get
+`https://frankwise0202-maker.github.io` (plus any `allowedOrigins` from the config file) and the Core's own
+pages (the dashboard through the tailnet name, or at localhost / 127.0.0.1 / [::1] on the Core's port);
+every other origin gets 403, pages on other localhost ports too (directly or through the tailnet, so a page
+some other program serves cannot reach the brain, the key or the backups), and so do no-cors requests from
+another site or another port (`Sec-Fetch-Site` cross-site / same-site). Chrome's private-network
+preflights (a public page calling the 100.x Tailscale address) get
 `Access-Control-Allow-Private-Network: true` for those origins only. A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
@@ -120,13 +142,120 @@ restarts, trend, time, thanks, bye, identity, capabilities, unknown.
 ## Persistence and restarts
 
 `~/.local/share/jarvis-core/` holds `history-v1.json.gz`, `events-v1.json` and `state-v1.json` (folder 700,
-files 600), written atomically (temporary file, fsync, rename). SIGTERM saves everything and exits; after a
+files 600), written atomically (temporary file, fsync, rename), plus the brain's `brain/`, `push/` and `sync/`
+folders. Lines that `jarvis-core autoupdate-tick` writes to `update-events.jsonl` become `core.update` /
+`core.rollback` events once (then the file is removed). SIGTERM saves everything and exits; after a
 crash the next start logs "restarted after an unexpected stop", and a new boot id logs the reboot. Health levels
 that were not ok are kept in the state file, so a restart does not log a standing condition (a missing driver,
 a full drive) again. An unreadable file is moved aside (`*.corrupt-<time>`) and the Core starts fresh.
+
+## The brain
+
+Everything the owner's Claude API key pays for runs here, one job at a time, while the phone is locked.
+
+| | |
+|---|---|
+| `GET /api/brain` | `{version, key: {set, hint: "…Ab3D", setAt, verified}, sdk: {installed}, limits: {dailyUsd, monthlyUsd}, spend: {day, todayUsd, month, monthUsd, capReached: null\|"daily"\|"monthly"}, push: {vapidPublicKey, devices}, briefing: {enabled, time, units, location, lastAt, nextAt}, jobs: {running, queued}, watchers: {active}, owner: {name}, models}` |
+| `PUT /api/brain/settings` | any of `{limits: {dailyUsd 0-50, monthlyUsd 0-500}, briefing: {enabled, time "HH:MM", units "F"\|"C", location {lat, lon, label}\|{city}\|null}, owner: {name}}` → the brain object. A city is geocoded with Open-Meteo; coordinates are rounded to 2 decimals. Unknown keys are refused (400). |
+| `POST /api/brain/key {key}` | → `{ok, hint, verified}`; checked with the free `GET /v1/models` (offline: stored with `verified: false`, which becomes `true` with its first accepted request); a rejected key → 400 `bad_key`. `DELETE /api/brain/key` → 204. 5 an hour. |
+| `GET /api/spend?days=30` | `{days: [{day, usd, calls}] (newest first, days without calls included), month: {month, usd}, limits}` |
+| `POST /api/jobs {kind: "research", prompt (≤ 2000), depth: "quick"\|"deep", title?}` | → 202 `{job}`; 409 `no_key`, 402 `spend_cap`, 503 `sdk_missing`, 429 `queue_full` (20 waiting). 20 an hour. |
+| `GET /api/jobs?limit=50&kind=` | `{jobs}` newest first, without `result`; `kind` (research, watch-check, briefing) is optional |
+| `GET /api/jobs/<id>` | `{job}` with `result: {markdown, sources: [{title, url}]}` |
+| `DELETE /api/jobs/<id>` | a queued or running job → 200 `{job}` (cancelled; a running request is aborted); a finished one → 204 (removed) |
+| `POST /api/watchers {what (≤ 300), every: "6h"\|"12h"\|"24h"}` | → 201 `{watcher}` (first check within a minute); 409 `no_key` / `too_many_watchers` (20) |
+| `GET /api/watchers`, `DELETE /api/watchers/<id>` (204), `POST /api/watchers/<id>/check` | the last → 202 `{watcher, job}`; 409 `check_pending`, 402 `spend_cap` |
+| `GET /api/briefing`, `POST /api/briefing/run` | the latest briefing (404 `none_yet`); make one now (12 an hour) |
+| `POST /api/push/subscribe`, `DELETE /api/push/subscribe`, `POST /api/push/test` | push (core/server/push) |
+| `PUT /api/sync/<device>`, `GET /api/sync`, `GET /api/sync/<device>` | sync (core/server/sync; 503 `sync_unavailable` without a data folder) |
+
+Job: `{id: "j_…", kind: research|watch-check|briefing, title, prompt, depth, status: queued|running|done|failed|cancelled|blocked, createdAt, startedAt, finishedAt, costUsd, summary, error: null|{code, message}, result, watcherId?, stoppedEarly?: budget|daily|monthly|continuations}`.
+Watcher: `{id: "w_…", what, every, status: watching|met|paused|blocked, createdAt, lastCheckAt, nextCheckAt, lastResult: {met, summary, sources}|null, costUsd, checks}`.
+Briefing: `{date, generatedAt, kind: free|full, greeting, weather: {label, units, now: {temp, summary, code}, today: {high, low, rainChancePct, summary}}|null, headlines: [{title, source, url}], homebase: {level, summary, notes}, jobs: [{id, title, status, summary}], watchers: [{id, what, status, summary}], whatsNew: [{title, detail}], music: {suggestion, appleMusicUrl}|null, markdown, spoken}`.
+SSE: `job` (a job without its result, on every change), `watcher`, `briefing` (`{date, generatedAt, kind, greeting}`), `spend` (the `spend` object).
+
+**Claude.** The official SDK, imported on first use; every request is streamed and read with
+`finalMessage()`, with adaptive thinking, server-side refusal fallbacks (`fallbacks: "default"`, dropped for
+an account that refuses the beta) and only two tools, `web_search_20260209` and `web_fetch_20260209` (no
+local tools: no shell, no files). `pause_turn` is continued append-only (the paused content is sent back
+as the assistant turn, with the code-execution container), at most 4 times (deep: 8). Models, in
+`brain/claude.mjs` `BRAIN_MODELS`: deep research `claude-opus-5-5` (effort high), quick research, watcher
+checks and the briefing `claude-sonnet-5-5` (medium, low, low). The system prompts say web text is data,
+never instructions; results are shown as Markdown/plain text only. `stop_reason` refusal → the job fails
+(`refused`); max_tokens → the answer is kept with a note; a watcher check or briefing cut short is never
+trusted. The key goes only to `https://api.anthropic.com` (always passed explicitly, so `ANTHROPIC_BASE_URL`
+in the environment cannot redirect it).
+
+**Spending.** Each response is priced from its `usage` with the app's table (`src/engine/models.js`, copied
+in `brain/prices.mjs`): Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50 per million tokens
+(input/output; cache reads and 5-minute writes too), web search $0.01 each; after a refusal fallback each
+attempt at its own model. Totals per local day and month in `brain/spend-v1.json`. Caps: $5 a day and $50
+a month by default. A job that would start over a cap is `blocked` (`POST` → 402). A running one never
+goes past a cap or its own budget (quick $1.25, deep $3, watcher check $0.30) by more than a rounding error:
+- before each request (the first and every continuation) its `max_tokens` is lowered to what the room
+  left (the smallest of the budget, today's and this month's cap) can pay for after its input, and a request
+  that could write fewer than 2,000 tokens is not sent; an input the API counts far above the estimate stops
+  the request at `message_start` (before it writes) and sends it again to fit;
+- during the stream a live estimate is checked on every event and every second: the input of every
+  server-tool round (each reads the whole conversation again, every result at its measured size), searches
+  at $0.01, and the time the model spends writing at 200 tokens a second (thinking streams no text on Opus /
+  Sonnet 5.5 but is billed as output), up to `max_tokens`; while a tool runs, the round its result starts is
+  counted ahead. The request stops the moment it would cross, keeping what it found (`stoppedEarly`), and is
+  charged that estimate (a finished one is charged from its `usage`). The two lanes count each other's
+  request in flight.
+
+The full briefing spends at most $0.30 a day. A cap of 0 means no background spending.
+
+**Jobs.** One at a time (the briefing has its own lane so 07:00 never waits behind a long research job);
+up to 20 waiting; kept in `brain/jobs-v1.json`. A job that was running when the Core stopped is queued
+again at the next start (3 attempts at most). Finished: research `Research ready` notification
+(`?homebase=job:<id>`), and `Research stopped` when it failed or was blocked.
+
+**Watchers.** Checked every 6/12/24 h ± 5 % (at most ± 20 min) with one small call (web search ≤ 3,
+fetch ≤ 1) that ends with a `report_check` tool call `{met, summary, sources}`. Met → notification
+(`?homebase=watch:<id>`) and the watcher stops. No key: `paused` (resumes when a key comes back); a cap
+reached: `blocked` (resumes when it clears). Max 20.
+
+**Briefing.** At the configured local time (07:00, the Core's time zone, DST-safe; a Core that was down
+at that time catches up within 3 hours, and a restart never repeats it) and on `POST /api/briefing/run`.
+Right after a start (a boot at 08:00, an update at 06:59) the scheduled one waits for the first readings
+and the network: until the internet check is up and 15 s have passed, 2 minutes at most (fixture mode:
+at once). One that came out without its weather (a location is set) or without any headlines is made
+again, once, 7 minutes later, without a second notification.
+Free: greeting, Open-Meteo weather for the location from the app, up to 6 headlines from public feeds
+(NPR, BBC News; Ars Technica, The Verge; alternating general and tech, last 36 h), the overnight report
+from the Core's own history and events (first the night's events: an automatic update that went back,
+unexpected stops and reboots, warnings, updates, restarts; then the peaks), research and watchers finished
+since the last briefing, `core/whats-new.json` (`[{date, title, detail}]`, plain words: entries of the last
+3 days, at most 4, a day's in the file's order), and a music suggestion (an Apple Music search link).
+Full (a key and budget left): the same facts plus one Claude call that writes it (`write_briefing` tool:
+markdown, spoken, top headlines). Every fetch has an 8 s timeout and a size cap; the feed parser is a
+linear scanner that never throws. The scheduled briefing sends a notification (`?homebase=briefing`).
+In fixture mode weather and feeds come from `core/fixtures/brain/` (a made-up location), never the
+internet.
+
+**Files** (folders 700, files 600, written atomically): `~/.config/jarvis-core/secrets/anthropic.key` and
+`anthropic.json` (`{setAt, verified}`, no key), `~/.local/share/jarvis-core/brain/` (`settings-v1.json`,
+`spend-v1.json`, `jobs-v1.json`, `watchers-v1.json`, `briefing-v1.json`), `push/`, `sync/`. With
+persistence off (fixture mode) the brain keeps everything in memory. The key is never logged, never
+returned (only its hint), and anything shaped like a key is replaced by `sk-ant-…` in every log line,
+error message and SSE frame.
+
+**Tests** (`npm test`; a local fake Messages API that streams SSE, `test/server/brain/fake-claude.mjs`, never
+the real one; like the API it never writes more than `max_tokens`): key vault and leaks, cost math,
+research, pause_turn, caps and budgets (a reply that is all silent thinking, an input far above the
+estimate, a long silent think stopped by the timer, server-tool rounds stopped before the one that would
+cross), cancel, restart survival, watchers met/not met, the free and full briefing with fixtures, the
+scheduler across DST, the catch-up after a boot and the quiet redo, the overnight report, settings and
+geocoding, the feed parser, the HTTP routes with their access rules (a page on another localhost port gets
+nothing), body and rate limits, SSE events, and a start without `node_modules`. `test/server/public-repo.test.mjs`
+checks that no file names the brief's sample place.
 
 ## What only the real machine can verify
 
 NVIDIA GTX 970 readings through the 580 driver, coretemp on the i7-6700, `tailscale serve` headers end to end,
 smartctl with a sudoers rule, the systemd user service and the GNOME kiosk. The fixtures reproduce their
 formats (see `core/fixtures/`), and the live code path was smoke-tested on a Linux VM without those devices.
+The brain's calls to the real Claude API (tested against a local fake of its streaming format), real Web
+Push to an iPhone, and real Open-Meteo and news-feed answers (tested with recorded fixtures) are verified
+only on the Alienware.

@@ -7,12 +7,15 @@
 #   jarvis-core restart              restart the Core (the screen reconnects by itself)
 #   jarvis-core logs [-f]            the Core's recent log (-f: keep following it)
 #   jarvis-core open                 (re)start the full-screen dashboard on this computer's screen
+#   jarvis-core autoupdate on|off|status   keep it up to date by itself (every 20 minutes)
 #   jarvis-core uninstall [--purge]  remove Jarvis Core; keeps its history unless --purge
 #
 # Installed by core/install/install.sh as ~/.local/bin/jarvis-core. `jarvis-core screen` is what
 # the login autostart runs: it waits for the Core, then starts Chrome full screen.
+# `jarvis-core autoupdate-tick` is what the update timer runs: it updates only when GitHub's core/
+# folder changed, and goes back to the previous version if the new one doesn't answer 90 s later.
 # Test-only overrides: JARVIS_CORE_APP_DIR, JARVIS_CORE_SUDOERS_FILE, JARVIS_CORE_GDM_CONF,
-# JARVIS_CORE_SHIM, JARVIS_CORE_PORT.
+# JARVIS_CORE_SHIM, JARVIS_CORE_PORT, JARVIS_CORE_UPDATE_CHECK_SEC.
 
 set -uo pipefail
 
@@ -33,6 +36,16 @@ PING_URL="http://127.0.0.1:$PORT/api/ping"
 SUDOERS_FILE="${JARVIS_CORE_SUDOERS_FILE:-/etc/sudoers.d/jarvis-core-smartctl}"
 GDM_CONF="${JARVIS_CORE_GDM_CONF:-/etc/gdm3/custom.conf}"
 SHIM="${JARVIS_CORE_SHIM:-/usr/local/bin/jarvis-core}"
+# Automatic updates: the unit names the owner's hand-made timer used (adopted as they are)
+AU_SERVICE=jarvis-core-autoupdate.service
+AU_TIMER=jarvis-core-autoupdate.timer
+AU_SERVICE_FILE="$CONFIG_HOME/systemd/user/$AU_SERVICE"
+AU_TIMER_FILE="$CONFIG_HOME/systemd/user/$AU_TIMER"
+AU_OLD_SCRIPT="$HOME/.local/bin/jarvis-core-autoupdate" # the hand-made script those units ran
+AU_STATE="$STATE_DIR/autoupdate"
+AU_LOG="$DATA_DIR/autoupdate.log"
+AU_EVENTS="$DATA_DIR/update-events.jsonl" # the Core adds these lines to its event log, then removes the file
+AU_CHECK_SEC="${JARVIS_CORE_UPDATE_CHECK_SEC:-90}" # how long a new version gets before it must answer
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   B=$'\e[1m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' D=$'\e[2m' N=$'\e[0m'
@@ -405,6 +418,18 @@ cmd_status() {
   fi
   linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null) || linger=""
   [ "$linger" = yes ] || note "Runs only while you're logged in (lingering is off)"
+  if au_enabled && [ -f "$AU_TIMER_FILE" ]; then
+    ok "Keeps itself up to date (jarvis-core autoupdate status)"
+  else
+    note "Automatic updates are off (turn them on: jarvis-core autoupdate on)"
+  fi
+  if [ -d "$APP_DIR/core" ]; then
+    if [ -d "$APP_DIR/core/node_modules/@anthropic-ai/sdk" ] && [ -d "$APP_DIR/core/node_modules/web-push" ]; then
+      ok "The brain's libraries are installed (Claude and notifications)"
+    else
+      note "The brain's libraries are missing, so its Claude work and notifications are off. Try: jarvis-core update"
+    fi
+  fi
   if screen_running; then
     ok "The dashboard is on the screen"
   elif [ -f "$AUTOSTART_FILE" ]; then
@@ -490,6 +515,305 @@ cmd_update() {
   exec bash "$APP_DIR/core/install/install.sh" --refresh
 }
 
+# ------------------------------------------------------------------------------------------ automatic updates
+
+au_get() { # au_get key: what the update timer last recorded
+  [ -f "$AU_STATE" ] || return 1
+  local line
+  while IFS= read -r line; do
+    case "$line" in "$1="*)
+      printf '%s\n' "${line#*=}"
+      return 0
+      ;;
+    esac
+  done <"$AU_STATE"
+  return 1
+}
+
+au_set() { # au_set key value
+  mkdir -p "$STATE_DIR" || return 1
+  local line out=""
+  if [ -f "$AU_STATE" ]; then
+    while IFS= read -r line; do
+      case "$line" in "$1="*) ;; *) out+="$line"$'\n' ;; esac
+    done <"$AU_STATE"
+  fi
+  printf '%s%s=%s\n' "$out" "$1" "$2" >"$AU_STATE.tmp" && mv -f "$AU_STATE.tmp" "$AU_STATE"
+}
+
+au_log() { # a line for the journal and for ~/.local/share/jarvis-core/autoupdate.log (its last 500 lines)
+  local line n
+  line="$(date '+%Y-%m-%d %H:%M:%S') $*"
+  printf '%s\n' "$line"
+  mkdir -p "$DATA_DIR" 2>/dev/null || return 0
+  printf '%s\n' "$line" >>"$AU_LOG" 2>/dev/null || return 0
+  n=$(wc -l <"$AU_LOG" 2>/dev/null) || n=0
+  if [ "${n:-0}" -gt 600 ]; then
+    tail -n 500 "$AU_LOG" >"$AU_LOG.tmp" 2>/dev/null && mv -f "$AU_LOG.tmp" "$AU_LOG"
+  fi
+}
+
+au_event() { # au_event info|warn core.update|core.rollback MESSAGE: a line for the Core's event log
+  local msg=${3//\\/\\\\}
+  msg=${msg//\"/\\\"}
+  mkdir -p "$DATA_DIR" 2>/dev/null || return 0
+  printf '{"t":%s000,"level":"%s","rule":"%s","message":"%s"}\n' "$(date +%s)" "$1" "$2" "$msg" >>"$AU_EVENTS" 2>/dev/null || true
+}
+
+au_service_content() {
+  printf '%s\n' \
+    "# Jarvis Core: looks for a new version on GitHub and installs it when core/ changed; goes back to" \
+    "# the previous version if the new one doesn't answer. Installed by jarvis-core autoupdate on;" \
+    "# jarvis-core autoupdate off removes it." \
+    "[Unit]" \
+    "Description=Jarvis Core automatic update check" \
+    "" \
+    "[Service]" \
+    "Type=oneshot" \
+    "ExecStart=\"$SELF_BIN\" autoupdate-tick" \
+    "TimeoutStartSec=30min" \
+    "Nice=10"
+}
+
+au_timer_content() {
+  printf '%s\n' \
+    "# Jarvis Core: when to look for a new version (jarvis-core autoupdate on|off|status)." \
+    "[Unit]" \
+    "Description=Jarvis Core automatic update check, every 20 minutes" \
+    "" \
+    "[Timer]" \
+    "OnBootSec=5min" \
+    "OnUnitActiveSec=20min" \
+    "RandomizedDelaySec=60" \
+    "" \
+    "[Install]" \
+    "WantedBy=timers.target"
+}
+
+au_write_units() { # true when something changed
+  local changed=1 file content
+  mkdir -p "$(dirname "$AU_SERVICE_FILE")" || return 2
+  for file in "$AU_SERVICE_FILE" "$AU_TIMER_FILE"; do
+    if [ "$file" = "$AU_SERVICE_FILE" ]; then content=$(au_service_content); else content=$(au_timer_content); fi
+    if [ -f "$file" ] && [ "$(cat "$file" 2>/dev/null)" = "$content" ]; then continue; fi
+    printf '%s\n' "$content" >"$file.tmp.$$" && chmod 0644 "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file" || return 2
+    changed=0
+  done
+  return "$changed"
+}
+
+au_units_ours() { # both units are this version's
+  [ -f "$AU_SERVICE_FILE" ] && [ -f "$AU_TIMER_FILE" ] &&
+    [ "$(cat "$AU_SERVICE_FILE")" = "$(au_service_content)" ] && [ "$(cat "$AU_TIMER_FILE")" = "$(au_timer_content)" ]
+}
+
+au_enabled() { user_systemctl is-enabled "$AU_TIMER" >/dev/null 2>&1; }
+
+cmd_autoupdate_on() {
+  ensure_user_bus
+  title "Automatic updates"
+  local adopted=0
+  if [ -f "$AU_OLD_SCRIPT" ] || { [ -f "$AU_SERVICE_FILE" ] && ! au_units_ours; }; then adopted=1; fi
+  au_write_units
+  [ $? -eq 2 ] && die "Couldn't write $AU_SERVICE_FILE"
+  if [ -f "$AU_OLD_SCRIPT" ]; then
+    rm -f "$AU_OLD_SCRIPT"
+  fi
+  user_systemctl daemon-reload 2>/dev/null || true
+  if ! user_systemctl enable --now --quiet "$AU_TIMER" 2>/dev/null; then
+    bad "Couldn't turn on the update timer (systemctl --user enable --now $AU_TIMER)"
+    return 1
+  fi
+  [ "$adopted" = 1 ] && ok "Took over the update timer you set up by hand (same names; it now runs jarvis-core autoupdate-tick)"
+  ok "On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself."
+  say "If a new version doesn't answer within 90 seconds, it goes back to the one before."
+  say "Turn it off: jarvis-core autoupdate off. See what it did: jarvis-core autoupdate status"
+}
+
+cmd_autoupdate_off() {
+  ensure_user_bus
+  title "Automatic updates"
+  user_systemctl disable --now --quiet "$AU_TIMER" >/dev/null 2>&1 || true
+  user_systemctl stop "$AU_SERVICE" >/dev/null 2>&1 || true
+  rm -f "$AU_TIMER_FILE" "$AU_SERVICE_FILE" "$AU_OLD_SCRIPT"
+  user_systemctl daemon-reload 2>/dev/null || true
+  ok "Off: Jarvis Core no longer updates itself. Get the latest version by hand: jarvis-core update"
+}
+
+# What the installer's refresh runs: keeps the units current and takes over hand-made ones; never
+# turns automatic updates on by itself.
+cmd_autoupdate_refresh() {
+  [ -f "$AU_TIMER_FILE" ] || [ -f "$AU_SERVICE_FILE" ] || [ -f "$AU_OLD_SCRIPT" ] || return 0
+  ensure_user_bus
+  local hand=0 rc
+  [ -f "$AU_OLD_SCRIPT" ] && hand=1
+  au_write_units
+  rc=$?
+  [ "$rc" = 2 ] && { note "Couldn't update $AU_SERVICE_FILE"; return 0; }
+  rm -f "$AU_OLD_SCRIPT"
+  [ "$rc" = 0 ] && user_systemctl daemon-reload 2>/dev/null
+  au_enabled || user_systemctl enable --now --quiet "$AU_TIMER" 2>/dev/null || true
+  if [ "$hand" = 1 ]; then
+    ok "Took over the update timer you set up by hand: it now updates and goes back if a new version fails"
+  elif [ "$rc" = 0 ]; then
+    ok "Updated the automatic update timer"
+  else
+    ok "Automatic updates are on"
+  fi
+}
+
+au_when() { # 2026-11-25T03:20:11-05:00 -> "Nov 25 3:20 AM" (what date can do; else as is)
+  date -d "$1" '+%b %-d %-I:%M %p' 2>/dev/null || printf '%s\n' "$1"
+}
+
+cmd_autoupdate_status() {
+  ensure_user_bus
+  title "Automatic updates"
+  local v next
+  if au_enabled && [ -f "$AU_TIMER_FILE" ]; then
+    if au_units_ours; then
+      ok "On: every 20 minutes Jarvis Core looks for a new version on GitHub and installs it by itself"
+    else
+      ok "On, with the timer you set up by hand (jarvis-core autoupdate on takes it over and adds the safety net)"
+    fi
+    next=$(user_systemctl show "$AU_TIMER" -p NextElapseUSecRealtime --value 2>/dev/null) || next=""
+    [ -n "$next" ] && [ "$next" != n/a ] && say "Next check: $next"
+  elif [ -f "$AU_TIMER_FILE" ]; then
+    note "Set up but not running. Turn it on: jarvis-core autoupdate on"
+  else
+    note "Off. Turn it on: jarvis-core autoupdate on   (or update by hand: jarvis-core update)"
+  fi
+  if v=$(au_get last_check); then say "Last check: $(au_when "$v") ($(au_get last_result || echo '?'))"; fi
+  if v=$(au_get last_update); then say "Last update: $v"; fi
+  if v=$(au_get last_rollback); then note "Went back to the previous version once: $v"; fi
+  [ -f "$AU_LOG" ] && say "Its log: $AU_LOG"
+  return 0
+}
+
+core_restarts() { user_systemctl show "$UNIT_NAME" -p NRestarts --value 2>/dev/null; }
+
+core_answers() { # three tries, two seconds apart
+  local i
+  for i in 1 2 3; do
+    core_up && return 0
+    [ "$i" = 3 ] || sleep 2
+  done
+  return 1
+}
+
+# What the timer runs every 20 minutes. Updates only when GitHub's core/ folder differs from this copy's;
+# gives the new version AU_CHECK_SEC seconds, and if it doesn't answer then (or kept restarting), goes back
+# to the previous version, refreshes, remembers not to try that one again, and says so in the event log.
+cmd_autoupdate_tick() {
+  umask 077
+  ensure_user_bus
+  [ -d "$APP_DIR/.git" ] || {
+    echo "Jarvis Core isn't installed in $APP_DIR, so there is nothing to update."
+    return 0
+  }
+  mkdir -p "$STATE_DIR" || return 1
+  if have flock; then
+    exec 9>"$STATE_DIR/autoupdate.lock"
+    flock -n 9 || {
+      echo "Another update check is still running."
+      return 0
+    }
+  fi
+  au_set last_check "$(date -Is)"
+  local branch here there there_rev bad prev prev_short after now_short n0 n1
+  branch=$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=main
+  if ! timeout 120 git -C "$APP_DIR" fetch --quiet origin "$branch" </dev/null >/dev/null 2>&1; then
+    au_set last_result "GitHub not reachable"
+    echo "Couldn't reach GitHub; the next check is in 20 minutes."
+    return 0
+  fi
+  here=$(git -C "$APP_DIR" rev-parse -q --verify "HEAD:core" 2>/dev/null) || here=""
+  there=$(git -C "$APP_DIR" rev-parse -q --verify "FETCH_HEAD:core" 2>/dev/null) || there=""
+  there_rev=$(git -C "$APP_DIR" rev-parse --short FETCH_HEAD 2>/dev/null) || there_rev="?"
+  if [ -z "$there" ]; then
+    au_set last_result "no core/ on GitHub"
+    au_log "GitHub's copy ($there_rev) has no core/ folder; not updating"
+    return 0
+  fi
+  if [ "$here" = "$there" ]; then
+    au_set last_result "up to date"
+    echo "Up to date: GitHub's core/ is the same as this copy's."
+    return 0
+  fi
+  bad=$(au_get bad_tree) || bad=""
+  if [ "$there" = "$bad" ]; then
+    au_set last_result "skipped $there_rev (it failed before)"
+    echo "Skipping $there_rev: it didn't start properly last time. Waiting for a newer version."
+    return 0
+  fi
+  if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    au_set last_result "files changed on this computer"
+    au_log "Not updating: files in $APP_DIR were changed on this computer (jarvis-core update --force replaces them)"
+    return 0
+  fi
+  prev=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || return 1
+  prev_short=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null)
+  au_log "A new version is on GitHub ($there_rev): updating from $prev_short"
+  export JARVIS_CORE_UNATTENDED=1 # the refresh then leaves the screen's Chrome alone (it reloads itself)
+  (cmd_update) </dev/null 9>&- # the lock stays with this check, never with a process it starts
+  after=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null) || after=""
+  if [ "$after" = "$prev" ]; then
+    au_set last_result "update failed"
+    au_log "The update didn't download; still on $prev_short (the next check is in 20 minutes)"
+    return 0
+  fi
+  now_short=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null)
+  n0=$(core_restarts) || n0=""
+  sleep "$AU_CHECK_SEC"
+  n1=$(core_restarts) || n1=""
+  case "$n0" in '' | *[!0-9]*) n0=0 n1=0 ;; esac # no restart counter: the answer alone decides
+  case "$n1" in '' | *[!0-9]*) n1=$n0 ;; esac
+  if core_answers && [ "$n1" -le "$n0" ]; then
+    au_set last_result "updated to $now_short"
+    au_set last_update "$(date -Is) $prev_short -> $now_short"
+    au_log "Updated to $now_short; it answers"
+    au_event info core.update "Jarvis Core updated itself to $now_short (from $prev_short)"
+    return 0
+  fi
+  au_log "The new version ($now_short) isn't answering ${AU_CHECK_SEC} seconds after the update: going back to $prev_short"
+  au_set bad_tree "$there"
+  if ! git -C "$APP_DIR" reset --hard --quiet "$prev" </dev/null; then
+    au_set last_result "rollback failed"
+    au_log "Couldn't go back to $prev_short (git reset failed). Run: jarvis-core update --force"
+    au_event warn core.rollback "An automatic update to $now_short didn't start properly, and going back failed: run jarvis-core update --force"
+    return 1
+  fi
+  bash "$APP_DIR/core/install/install.sh" --refresh </dev/null 9>&-
+  if wait_core "${JARVIS_CORE_START_WAIT_SEC:-30}"; then
+    au_log "Back on $prev_short, and it answers"
+  else
+    au_log "Back on $prev_short, but Jarvis Core still isn't answering (jarvis-core logs)"
+  fi
+  au_set last_rollback "$(date -Is) $now_short -> $prev_short"
+  au_set last_result "went back to $prev_short ($now_short didn't start)"
+  au_event warn core.rollback "An automatic update to $now_short didn't start properly, so Jarvis Core went back to $prev_short"
+  return 0
+}
+
+cmd_autoupdate() {
+  case "${1:-status}" in
+    on | enable) cmd_autoupdate_on ;;
+    off | disable) cmd_autoupdate_off ;;
+    status) cmd_autoupdate_status ;;
+    refresh) cmd_autoupdate_refresh ;;
+    print-units)
+      printf '%s\n' "# $AU_SERVICE_FILE"
+      au_service_content
+      printf '%s\n' "# $AU_TIMER_FILE"
+      au_timer_content
+      ;;
+    *)
+      echo "Usage: jarvis-core autoupdate on|off|status" >&2
+      return 2
+      ;;
+  esac
+}
+
 # ------------------------------------------------------------------------------------------ uninstall
 
 gdm_autologin_off() { # print custom.conf with automatic login turned off for the [daemon] section
@@ -510,10 +834,12 @@ cmd_uninstall() {
   done
   title "Removing Jarvis Core"
   if [ "$purge" = 1 ]; then
-    say "This removes Jarvis Core, its screen, its settings AND its history (--purge)."
+    say "This removes Jarvis Core, its screen, its settings (your Claude key too) AND its history and"
+    say "your devices' backups (--purge)."
   else
     say "This removes Jarvis Core and its screen, and puts your screen and login settings back."
-    say "Its history and settings stay in $DATA_DIR and $SETTINGS_DIR (add --purge to delete them)."
+    say "Its history, your devices' backups and its settings (your Claude key too) stay in $DATA_DIR"
+    say "and $SETTINGS_DIR (add --purge to delete them)."
   fi
   if [ "$yes" != 1 ]; then
     if ! (exec </dev/tty) 2>/dev/null; then
@@ -528,6 +854,15 @@ cmd_uninstall() {
     esac
   fi
   ensure_user_bus
+
+  # Automatic updates (also a timer set up by hand under the same names)
+  if [ -f "$AU_TIMER_FILE" ] || [ -f "$AU_SERVICE_FILE" ] || [ -f "$AU_OLD_SCRIPT" ] || au_enabled; then
+    user_systemctl disable --now --quiet "$AU_TIMER" >/dev/null 2>&1 || true
+    user_systemctl stop "$AU_SERVICE" >/dev/null 2>&1 || true
+    rm -f "$AU_TIMER_FILE" "$AU_SERVICE_FILE" "$AU_OLD_SCRIPT"
+    user_systemctl daemon-reload 2>/dev/null || true
+    ok "Stopped the automatic updates and removed their timer"
+  fi
 
   # The service
   if [ -f "$UNIT_FILE" ] || user_systemctl is-enabled "$UNIT_NAME" >/dev/null 2>&1; then
@@ -612,7 +947,7 @@ cmd_uninstall() {
   rm -rf "$STATE_DIR"
   if [ "$purge" = 1 ]; then
     rm -rf "$DATA_DIR" "$SETTINGS_DIR" "$PROFILE_DIR"
-    ok "Deleted the history, the settings and the screen's Chrome profile"
+    ok "Deleted the history, the backups, the settings, the key and the screen's Chrome profile"
   fi
   rm -f "$SELF_BIN"
   ok "Removed the jarvis-core command"
@@ -631,6 +966,7 @@ ${B}jarvis-core${N}: look after Jarvis Core, the home base's 24/7 system report.
   jarvis-core restart              restart the Core (the screen reconnects by itself)
   jarvis-core logs [-f]            the Core's recent log (-f: keep following it)
   jarvis-core open                 (re)start the full-screen dashboard on this screen
+  jarvis-core autoupdate on|off|status   keep Jarvis Core up to date by itself (every 20 minutes)
   jarvis-core uninstall [--purge]  remove Jarvis Core (keeps its history unless --purge)
 EOF
 }
@@ -650,6 +986,8 @@ main() {
     logs | log) cmd_logs "$@" ;;
     open) cmd_open "$@" ;;
     screen) cmd_screen "$@" ;;
+    autoupdate | auto-update) cmd_autoupdate "$@" ;;
+    autoupdate-tick) cmd_autoupdate_tick "$@" ;;
     uninstall | remove) cmd_uninstall "$@" ;;
     help | -h | --help) usage ;;
     version | --version) git -C "$APP_DIR" log -1 --format='%h %cd' --date=short 2>/dev/null || echo unknown ;;

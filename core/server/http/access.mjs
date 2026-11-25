@@ -10,11 +10,14 @@
 // even though they arrive from localhost: the Core is private to the tailnet.
 // Anything else is refused with 403.
 //
-// Browser origins (CORS): https://frankwise0202-maker.github.io (the Jarvis app), any localhost origin,
-// and the page's own origin (the dashboard opened through the Tailscale URL). Requests from any other
-// origin are refused, as are cross-site no-cors requests to the API (Sec-Fetch-Site). Preflights that ask
-// for private-network access (Chrome, when a public page calls a 100.x Tailscale address) get
-// Access-Control-Allow-Private-Network: true, for allowed origins only.
+// Browser origins (CORS): the configured allowedOrigins (by default only https://frankwise0202-maker.github.io,
+// the Jarvis app; a developer adds a dev server's origin in config.json) and the Core's own origin: the
+// dashboard opened through the Tailscale URL, or on this computer at localhost / 127.0.0.1 / [::1] on the
+// Core's port. Every other origin is refused, other localhost ports too: a page that some other program
+// serves on this computer or on a tailnet device must not reach the brain, the key or the backups.
+// No-cors requests from another site or another port (Sec-Fetch-Site cross-site / same-site) are refused
+// as well. Preflights that ask for private-network access (Chrome, when a public page calls a 100.x
+// Tailscale address) get Access-Control-Allow-Private-Network: true, for allowed origins only.
 
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -111,6 +114,21 @@ export function checkAccess(req, { tailscaleDnsName = null, tailscaleLogins = []
 }
 
 /**
+ * The Core's own origins for this request: the page's own (`<scheme>://<Host>`), and for a direct request
+ * on this computer the same port under each loopback name (the dashboard at http://127.0.0.1:8788 calling
+ * http://localhost:8788).
+ */
+export function ownOrigins(access) {
+  if (!access?.host) return [];
+  const own = [`${access.scheme}://${access.host}`];
+  if (access.via === 'local') {
+    const { port } = parseHost(access.host);
+    for (const name of ['localhost', '127.0.0.1', '[::1]']) own.push(`http://${name}${port ? `:${port}` : ''}`);
+  }
+  return own;
+}
+
+/**
  * Browser origin check: { ok, allow } where allow is the origin to echo in Access-Control-Allow-Origin
  * (null when the request has no Origin header).
  */
@@ -120,21 +138,20 @@ export function checkOrigin(req, access, { allowedOrigins = [] } = {}) {
   const site = String(one(h['sec-fetch-site']) ?? '').toLowerCase();
   const mode = String(one(h['sec-fetch-mode']) ?? '').toLowerCase();
   if (!origin) {
-    // A cross-site page may still try an <img>/<script> no-cors request at the API; refuse those.
-    if (site === 'cross-site' && mode && mode !== 'navigate') return { ok: false, allow: null, reason: 'cross-site request without an allowed origin' };
+    // A page on another site, or on another port of this one, may still try an <img>/<script> no-cors
+    // request; refuse those.
+    if ((site === 'cross-site' || site === 'same-site') && mode && mode !== 'navigate') return { ok: false, allow: null, reason: `${site} request without an allowed origin` };
     return { ok: true, allow: null };
   }
   if (origin === 'null') return { ok: false, allow: null, reason: 'opaque origin' };
-  let u;
   try {
-    u = new URL(origin);
+    new URL(origin); // eslint-disable-line no-new
   } catch {
     return { ok: false, allow: null, reason: 'malformed origin' };
   }
   if (allowedOrigins.includes(origin)) return { ok: true, allow: origin };
-  if ((u.protocol === 'http:' || u.protocol === 'https:') && isLocalHostname(u.hostname)) return { ok: true, allow: origin };
-  if (access?.host && origin === `${access.scheme}://${access.host}`) return { ok: true, allow: origin };
-  return { ok: false, allow: null, reason: `origin ${origin} is not allowed` };
+  if (ownOrigins(access).includes(origin)) return { ok: true, allow: origin };
+  return { ok: false, allow: null, reason: `origin ${origin} is not allowed (only the Jarvis app and this Core's own pages; add others to allowedOrigins in config.json)` };
 }
 
 /** CORS response headers for an allowed origin. */
@@ -142,8 +159,8 @@ export function corsHeaders(allow, req, { preflight = false } = {}) {
   if (!allow) return {};
   const out = { 'Access-Control-Allow-Origin': allow, Vary: 'Origin' };
   if (preflight) {
-    out['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
-    out['Access-Control-Allow-Headers'] = 'Content-Type, Last-Event-ID';
+    out['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+    out['Access-Control-Allow-Headers'] = 'Content-Type, Content-Encoding, Last-Event-ID, X-Jarvis-Device-Label';
     out['Access-Control-Max-Age'] = '600';
     out.Vary = 'Origin, Access-Control-Request-Headers, Access-Control-Request-Private-Network';
     if (String(req.headers?.['access-control-request-private-network'] ?? '').toLowerCase() === 'true') {

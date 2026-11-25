@@ -16,6 +16,11 @@
 //   JARVIS_CORE_START              --start ISO          fixture only: the simulated "now" at start
 //   JARVIS_CORE_SEED               --seed N             fixture only: noise seed (default 1)
 //   JARVIS_CORE_CONFIG             --config FILE        config file path
+//   JARVIS_CORE_SECRETS_DIR                             where the brain keeps the Claude API key
+//                                                       (default ~/.config/jarvis-core/secrets)
+//   JARVIS_CORE_CLAUDE_BASE_URL                         tests only: a loopback Claude API stand-in
+//                                                       (anything but https://api.anthropic.com or a
+//                                                       127.0.0.1 / localhost address is refused)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,6 +30,7 @@ import { deepMerge, isObj, parseHm } from './util.mjs';
 import { defaultDataDir } from './store.mjs';
 import { SCENARIO_NAMES } from './sim/scenarios.mjs';
 import { resolveLocale, systemLocale } from './format.mjs';
+import { allowedBase } from './brain/claude.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const CORE_DIR = path.resolve(HERE, '..');
@@ -73,6 +79,9 @@ export const DEFAULTS = Object.freeze({
     sseClients: 16,
     eventsMax: 1000,
   },
+  secretsDir: null,
+  claudeBase: null,
+  whatsNewFile: path.join(CORE_DIR, 'whats-new.json'),
   fixture: null,
   timeScale: 1,
   startMs: null,
@@ -218,7 +227,8 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   }
   if (!['ok', 'warn', 'alert'].includes(cfg.gpuMissingLevel)) cfg.gpuMissingLevel = 'warn';
   if (!Array.isArray(cfg.allowedOrigins)) cfg.allowedOrigins = [...DEFAULTS.allowedOrigins];
-  cfg.allowedOrigins = cfg.allowedOrigins.filter((o) => typeof o === 'string' && /^https?:\/\/[^/]+$/.test(o));
+  // Origins added in config.json (a developer's dev server) come on top of the Jarvis app's, never instead.
+  cfg.allowedOrigins = [...new Set([...DEFAULTS.allowedOrigins, ...cfg.allowedOrigins.filter((o) => typeof o === 'string' && /^https?:\/\/[^/]+$/.test(o))])];
   if (!Array.isArray(cfg.tailscaleLogins)) cfg.tailscaleLogins = [];
   if (!cfg.ownerName) cfg.ownerName = null;
   if (cfg.locale !== null && cfg.locale !== undefined && cfg.locale !== '') {
@@ -230,6 +240,13 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   // Fixture mode keeps its history in memory unless a data directory was asked for explicitly.
   if (cfg.fixture && over.dataDir === undefined && fileCfg.dataDir === undefined) cfg.persist = false;
   if (!cfg.dataDir) cfg.dataDir = defaultDataDir(env);
+  const configHome = env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(os.homedir(), '.config');
+  cfg.secretsDir = env.JARVIS_CORE_SECRETS_DIR ? path.resolve(env.JARVIS_CORE_SECRETS_DIR) : path.join(configHome, 'jarvis-core', 'secrets');
+  if (env.JARVIS_CORE_CLAUDE_BASE_URL) {
+    const base = allowedBase(env.JARVIS_CORE_CLAUDE_BASE_URL);
+    if (base) cfg.claudeBase = base;
+    else warnings.push('JARVIS_CORE_CLAUDE_BASE_URL must be https://api.anthropic.com or a 127.0.0.1 / localhost address (ignored)');
+  }
 
   return { config: cfg, warnings, errors, help: !!flags.help, version: !!flags.version, configFile };
 }
@@ -254,5 +271,6 @@ Usage: node core/server/main.mjs [options]
 
 Environment variables JARVIS_CORE_PORT, JARVIS_CORE_FIXTURE, JARVIS_CORE_TIME_SCALE, JARVIS_CORE_START,
 JARVIS_CORE_DATA_DIR, JARVIS_CORE_DASHBOARD_DIR, JARVIS_CORE_OWNER and JARVIS_CORE_NIGHT do the same.
+JARVIS_CORE_SECRETS_DIR: where the brain keeps the Claude API key (default ~/.config/jarvis-core/secrets).
 Optional settings file: ~/.config/jarvis-core/config.json
 `;

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en-US">
+  <title type="html">The Verge</title>
+  <entry>
+    <published>2026-11-25T06:30:00-05:00</published>
+    <updated>2026-11-25T06:31:00-05:00</updated>
+    <title type="html">Apple&#8217;s next iPhone update fixes the alarm bug</title>
+    <link rel="alternate" type="text/html" href="https://www.theverge.com/2026/11/25/iphone-alarm-fix"/>
+    <link rel="replies" href="https://www.theverge.com/2026/11/25/iphone-alarm-fix#comments"/>
+    <id>https://www.theverge.com/2026/11/25/iphone-alarm-fix</id>
+  </entry>
+  <entry>
+    <published>2026-11-25T05:00:00-05:00</published>
+    <title type="html">A tiny e-ink laptop is surprisingly good</title>
+    <link href="https://www.theverge.com/2026/11/25/eink-laptop"/>
+  </entry>
+</feed>
