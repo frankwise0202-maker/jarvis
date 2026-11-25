@@ -21,6 +21,7 @@ import { getLocale } from './format.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createBrain } from './brain/index.mjs';
+import { createFixtureFetch } from './brain/fixture-fetch.mjs';
 
 /** An optional module's factory, or null when it is missing or fails to load (never fatal). */
 async function optionalFactory(spec, name, log) {
@@ -158,6 +159,8 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
     secretsDir: config.persist ? config.secretsDir : null,
     claudeBase: config.claudeBase ?? undefined,
     whatsNewFile: config.whatsNewFile,
+    // A simulated home base reads its weather and headlines from core/fixtures/brain (no internet).
+    ...(config.fixture ? { fetch: createFixtureFetch() } : {}),
   });
 
   const server = createApiServer({ getCore: () => core, config, ask, info, fixture, log, getBrain: () => brain, getPush: () => push, getSync: () => sync });
