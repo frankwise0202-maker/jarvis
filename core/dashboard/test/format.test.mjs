@@ -23,6 +23,7 @@ import {
   minutesOfDay,
   num,
   pctNumber,
+  SEP,
 } from '../app/format.js';
 
 const S = ' ';
@@ -160,4 +161,12 @@ test('sentences from the Core keep each number with its unit', () => {
   assert.equal(keepUnits('sda: 8 reallocated sectors, 4 more, version 1.0.0 started'), 'sda: 8 reallocated sectors, 4 more, version 1.0.0 started');
   assert.equal(keepUnits('7 things need attention'), '7 things need attention');
   assert.equal(keepUnits(null), null);
+});
+
+test("a caption's separator stays with the part after it, so a wrapped line never ends on the dot", () => {
+  const nb = '\u00a0';
+  assert.equal(SEP, ` ·${nb}`);
+  // The only break is before the dot: "85 °C" / "· 3.6 GB VRAM" on a narrow phone.
+  const caption = [fmtTemp(85), `3.6${nb}GB${nb}VRAM`].join(SEP);
+  assert.deepEqual(caption.split(' '), [`85${nb}°C`, `·${nb}3.6${nb}GB${nb}VRAM`]);
 });
