@@ -143,7 +143,7 @@ connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; 
 ```bash
 node --test core/dashboard/test/*.test.mjs                         # unit tests (format, model, kiosk, ring, data link)
 nice -n 10 node core/dashboard/test/screenshots.mjs                # every state at 1920×1080, 2560×1440, 1366×768 (real Core, fixture mode)
-nice -n 10 node core/dashboard/test/longrun.mjs --hours 24 --rate 200   # a simulated day, memory verdict
+nice -n 10 node core/dashboard/test/longrun.mjs --hours 48 --rate 200   # two simulated days after the warm-up, memory verdict
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
 ```
 
@@ -153,6 +153,20 @@ The screenshot run starts a fresh real Core in fixture mode for every shot (`ok`
 panel whose content is cut off, a value that does not fit its box, readouts that leave the core
 stage or overlap the summary, console errors and CSP violations. Screenshots land in
 `core/dashboard/test/artifacts/` (ignored by git).
+
+The long run plays the stand-in Core at 200× (a simulated day in about eight minutes): one
+snapshot per simulated second, the scenarios cycling every two hours, an event every ten minutes,
+an outage every six hours, a question every two real seconds asked five different ways, and the
+page's clock following the simulated one (night dim, pixel shift, the transcript's quiet clear);
+the daily refresh is off, so any growth would show. It warms up until the event log (40) and the
+transcript (12 messages) are full, then measures every simulated hour on a quiet page (the
+stand-in drops to real time for two seconds) after three forced collections, and judges the slope
+per day and the drift between the two halves of the window for: nodes in the live document, every
+DOM node alive in the renderer (CDP, detached ones too), the JS heap's data (a heap snapshot
+without compiled code) and event listeners. The whole JS heap, its compiled code and the
+renderer's RSS are reported beside them: V8 keeps optimizing functions as they get hot, so code
+climbs for about a simulated day and then levels off, and the page cannot make new code (its CSP
+has no `'unsafe-eval'`). See `test/growth.mjs` for the limits.
 
 What cannot be tested here: real NVIDIA readings, a GNOME session, Chrome's kiosk window and the
 Open Jarvis window behaviour, a physical monitor (burn-in, brightness), Tailscale.
