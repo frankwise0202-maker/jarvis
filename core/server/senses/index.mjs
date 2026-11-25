@@ -234,6 +234,13 @@ export function createSenses({
     );
   }
 
+  /** A request is coming (the app's warm-up): load a model the idle timer let go, or restart its idle time. */
+  function keepWarm(name) {
+    const st = hosts[name].status();
+    if (st.loaded) hosts[name].touch();
+    else if (!st.loading) warm(name);
+  }
+
   function reconcile(name, changed) {
     if (!settings[name].enabled) {
       sense[name].gen += 1;
@@ -274,7 +281,13 @@ export function createSenses({
     // Silence (below -50 dBFS throughout): nothing to hear. Whisper would make up "Thank you." or "you".
     let peak = 0;
     for (let i = 0; i < wav.audio.length; i++) peak = Math.max(peak, Math.abs(wav.audio[i]));
-    if (peak < SILENCE_PEAK) return { text: '', ms: Date.now() - started, model: settings.hear.model, seconds: Math.round(wav.seconds * 100) / 100 };
+    if (peak < SILENCE_PEAK) {
+      // Nothing to hear. But a short silence is also how the app warms hearing up when Voice Mode opens: have
+      // Whisper loaded (the idle timer lets it go) and its idle time restarted, so the words that follow
+      // meet a warm engine.
+      keepWarm('hear');
+      return { text: '', ms: Date.now() - started, model: settings.hear.model, seconds: Math.round(wav.seconds * 100) / 100 };
+    }
     const r = await hosts.hear.run({ audio: wav.audio, prompt: cleanPrompt(prompt) }, { timeoutMs: hearTimeoutMs, signal });
     const ms = Date.now() - started;
     sense.hear.lastMs = ms;

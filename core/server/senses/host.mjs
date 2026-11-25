@@ -6,6 +6,7 @@
 //   await host.load();                                    // download if needed, load, warm up
 //   await host.run(input, { timeoutMs, signal })          // → { output, ms, waitedMs }
 //   host.status()                                         // { loaded, loading, busy, queued, progress, nice, lastError }
+//   host.touch()                                          // start the idle time again (a request is coming)
 //   host.unload(); await host.stop();
 //
 // A request whose deadline passes ends the engine process at once (onnxruntime cannot be interrupted
@@ -331,6 +332,10 @@ export function createSenseHost({
     unload(reason = 'turned off') {
       for (const job of queue.splice(0)) job.reject(new SenseError(503, 'engine_stopped', `the ${label} engine was ${reason}`));
       killWorker(reason);
+    },
+    /** Start the idle time again for a loaded engine (a request is coming). */
+    touch() {
+      if (loaded && worker) armIdle();
     },
     status() {
       return {

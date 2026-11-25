@@ -192,6 +192,34 @@ test('POST /api/hear: silence comes back as no words, without running Whisper (w
   assert.equal(before.loaded, core.rt.senses.hosts.hear.status().loaded);
 });
 
+test("the app's warm-up (a short silence when Voice Mode opens) loads Whisper again after the idle unload, and restarts a loaded one's idle time", async () => {
+  const dir = tmpDir('jarvis-senses-models-');
+  const c = await startCore({ modelsDir: dir, options: { loadMs: 60 }, senses: { idleMs: 1500 } });
+  const host = c.rt.senses.hosts.hear;
+  const warmUp = () => hear(c.port, encodeWav(new Float32Array(Math.round(16000 * 0.4)), 16000)); // what src/ui/senses.js sends
+  try {
+    assert.equal((await c.json('PUT', '/api/senses', { hear: { enabled: true } })).status, 200);
+    await until(() => host.status().loaded, { what: 'hearing loaded' });
+    await until(() => !host.status().loaded && !host.status().loading, { what: 'the idle unload' });
+    assert.equal((await c.get('/api/senses')).json.hear.state, 'ready');
+    const w = await warmUp();
+    assert.equal(w.status, 200);
+    assert.equal(w.json.text, '');
+    await until(() => host.status().loaded, { what: 'loaded again by the warm-up' });
+    // Loaded and idle: each warm-up starts the idle time again (here every 0.5 s for 2.5 s, idle time 1.5 s).
+    const pid = host.status().pid;
+    for (let i = 0; i < 5; i++) {
+      await sleep(500);
+      assert.equal((await warmUp()).status, 200);
+    }
+    assert.equal(host.status().loaded, true);
+    assert.equal(host.status().pid, pid);
+  } finally {
+    await c.rt.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('POST /api/hear refuses wrong audio, wrong types and bodies over 2 MB', async () => {
   const wrongRate = await hear(core.port, encodeWav(new Float32Array(44100), 44100));
   assert.equal(wrongRate.status, 400);
