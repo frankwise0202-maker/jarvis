@@ -8,7 +8,11 @@ export function setText(el, text) {
   const s = text === null || text === undefined ? '' : String(text);
   if (el.__text === s) return;
   el.__text = s;
-  el.textContent = s;
+  // Reuse the element's one text node: a value that changes every second for weeks then makes no
+  // new DOM node (textContent would replace the node each time and leave the old one to the GC).
+  const t = el.firstChild;
+  if (s && t && t === el.lastChild && t.nodeType === 3) t.data = s;
+  else el.textContent = s;
 }
 
 export function setData(el, key, value) {

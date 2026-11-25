@@ -14,8 +14,9 @@
 // a correction, typing anywhere on the page, a suggestion chip, and typing then Escape; the daily
 // refresh is off (?refresh=off) so the page is never reloaded: any growth would show.
 //
-// Every simulated hour, after two forced garbage collections (Chrome DevTools Protocol
-// HeapProfiler.collectGarbage): nodes in the live document (a tree walk), every DOM node alive in
+// Every simulated hour, on a quiet page (the stand-in drops to real time for two seconds) and after
+// three forced garbage collections (Chrome DevTools Protocol HeapProfiler.collectGarbage): nodes in
+// the live document (a tree walk), every DOM node alive in
 // the renderer (CDP Nodes: detached ones too), the JS heap, event listeners; plus layout objects
 // and the renderer's RSS for information. The verdict (test/growth.mjs) looks only at the
 // measured window after the warm-up: least-squares slope per day and second-half-minus-first-half
@@ -92,10 +93,16 @@ async function main() {
   await cdp.send('Performance.enable');
 
   async function measure(simHour) {
-    // Two full collections (V8 and the DOM's heap together), so only what is retained is counted.
-    await cdp.send('HeapProfiler.collectGarbage');
-    await sleep(200);
-    await cdp.send('HeapProfiler.collectGarbage');
+    // Measure a quiet page: the stand-in Core drops to real time for a moment and any answer in
+    // flight lands, so the count is what the page keeps, not the frames it is in the middle of
+    // drawing. Then three full collections (V8 and the DOM's heap together) with pauses, so the
+    // DOM nodes the previous one found dead are swept before CDP counts them.
+    await mock.control({ rate: 1 });
+    await sleep(1500);
+    for (let i = 0; i < 3; i++) {
+      await cdp.send('HeapProfiler.collectGarbage');
+      await sleep(250);
+    }
     const heap = await cdp.send('Runtime.getHeapUsage');
     const { metrics } = await cdp.send('Performance.getMetrics');
     const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
@@ -108,6 +115,7 @@ async function main() {
       while (w.nextNode()) n++;
       return n;
     });
+    if (!downNow) await mock.control({ rate: opts.rate });
     return {
       simHour,
       liveNodes,
