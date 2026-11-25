@@ -106,8 +106,9 @@ restarts, trend, time, thanks, bye, identity, capabilities, unknown.
 
 `~/.local/share/jarvis-core/` holds `history-v1.json.gz`, `events-v1.json` and `state-v1.json` (folder 700,
 files 600), written atomically (temporary file, fsync, rename). SIGTERM saves everything and exits; after a
-crash the next start logs "restarted after an unexpected stop", and a new boot id logs the reboot. An
-unreadable file is moved aside (`*.corrupt-<time>`) and the Core starts fresh.
+crash the next start logs "restarted after an unexpected stop", and a new boot id logs the reboot. Health levels
+that were not ok are kept in the state file, so a restart does not log a standing condition (a missing driver,
+a full drive) again. An unreadable file is moved aside (`*.corrupt-<time>`) and the Core starts fresh.
 
 ## What only the real machine can verify
 
