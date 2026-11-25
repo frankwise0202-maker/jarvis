@@ -90,7 +90,7 @@ function fetchTokensOf(tools) {
 }
 
 /** Input tokens a server tool's result adds to the context: its size (4 characters a token; encrypted snippets count high), with a floor. */
-function resultTokensOf(block, fetchTokens) {
+function resultTokensOf(block) {
   let size = 0;
   try {
     size = JSON.stringify(block).length / 4;
@@ -101,7 +101,8 @@ function resultTokensOf(block, fetchTokens) {
   const failed = c && typeof c === 'object' && !Array.isArray(c) && (typeof c.error_code === 'string' || /error/.test(String(c.type ?? '')));
   if (failed) return size;
   if (block.type === 'web_search_tool_result') return Math.max(SEARCH_RESULT_MIN_TOKENS, size);
-  if (block.type === 'web_fetch_tool_result') return Math.max(FETCH_MIN_TOKENS, Math.min(size, fetchTokens + 500));
+  // A page's text is capped at max_content_tokens by the API, but a PDF is not: its measured size counts.
+  if (block.type === 'web_fetch_tool_result') return Math.max(FETCH_MIN_TOKENS, size);
   return size;
 }
 
@@ -549,7 +550,7 @@ export function createClaude({
           if (type.endsWith('_tool_result')) {
             // A server tool answered: the next round reads everything so far again, the result included.
             pendingTokens = 0;
-            resultTokens += resultTokensOf(b, fetchTokens);
+            resultTokens += resultTokensOf(b);
             rereadUsd += promptUsd() + (writtenTokens() + resultTokens) * inUsd;
           } else if (type === 'server_tool_use' && b.name === 'web_search') searches += 1;
           if (writingSince === null) writingSince = Date.now();
