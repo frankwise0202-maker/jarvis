@@ -146,8 +146,8 @@ test('network, Claude API, website, Tailscale', () => {
 test('uptime, restarts, trends, time', () => {
   assert.equal(A('how long have you been up').answer, 'The computer and I have been up 3 days, 4 hours, since Sunday at 10:20.');
   assert.equal(A('when did you last restart').answer, 'The computer last started Sunday at 10:20 (3 days ago). No unexpected restarts this week.');
-  assert.match(A('hotter than usual?', warn).answer, /^Yes, the CPU is about 4\d °C hotter than usual: averaging 8\d °C over the last 5 minutes, against 4\d °C over 7 days; and the graphics card is about normal/);
-  assert.match(A('hotter than usual?').answer, /^The CPU is about normal: averaging 4\d °C over the last 5 minutes, against 4\d °C over 7 days/);
+  assert.match(A('hotter than usual?', warn).answer, /^Yes, the CPU is about 4\d °C hotter than usual: averaging 8\d °C over the last 5 minutes, against a 7-day average of 4\d °C; and the graphics card is about normal/);
+  assert.match(A('hotter than usual?').answer, /^The CPU is about normal: averaging 4\d °C over the last 5 minutes, against a 7-day average of 4\d °C/);
   assert.match(A('is the disk filling up compared to last week', warn).answer, /main drive/);
   assert.equal(A('what time is it').answer, "It's 14:32 on Wednesday 25 November.");
   // without enough history it says so instead of guessing
@@ -198,7 +198,7 @@ test('network speed uses the dashboard\'s units and numbers (UX-2)', () => {
   assert.ok(a.includes(`${same(s.network.rxBps)} down and ${same(s.network.txBps)} up`), a);
   assert.ok(A('is the internet working').answer.includes(`${same(s.network.rxBps)} down`));
   assert.doesNotMatch(a, /[KMG]?B\/s/);
-  assert.match(A('is the download traffic higher than usual').answer, /averaging [\d.]+ [kMG]?b\/s over the last 5 minutes, against [\d.]+ [kMG]?b\/s over 7 days/);
+  assert.match(A('is the download traffic higher than usual').answer, /averaging [\d.]+ [kMG]?b\/s over the last 5 minutes, against a 7-day average of [\d.]+ [kMG]?b\/s/);
 });
 
 test('the address for the iPhone and Mac (UX-4)', () => {

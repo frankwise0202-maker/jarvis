@@ -600,11 +600,11 @@ export function trend(ctx, cls) {
     const diff = nowV - base.avg;
     const margin = spec.margin ?? Math.max(50_000, base.avg * 0.5);
     if (Math.abs(diff) < margin) {
-      lines.push(`${spec.label} is about normal: averaging ${spec.fmt(nowV)} over the last 5 minutes, against ${spec.fmt(base.avg)} over 7 days`);
+      lines.push(`${spec.label} is about normal: averaging ${spec.fmt(nowV)} over the last 5 minutes, against a 7-day average of ${spec.fmt(base.avg)}`);
     } else {
       const more = diff > 0;
       const amount = spec.unit === '°C' ? `about ${Math.round(Math.abs(diff))} °C ${more ? spec.word[0] : spec.word[1]} than` : `${more ? spec.word[0] : spec.word[1]} than`;
-      lines.push(`${more ? 'yes, ' : ''}${spec.label} is ${amount} usual: averaging ${spec.fmt(nowV)} over the last 5 minutes, against ${spec.fmt(base.avg)} over 7 days`);
+      lines.push(`${more ? 'yes, ' : ''}${spec.label} is ${amount} usual: averaging ${spec.fmt(nowV)} over the last 5 minutes, against a 7-day average of ${spec.fmt(base.avg)}`);
     }
   }
   return { answer: `${cap(lines.join('; and '))}.`.replace(/^Yes, (\w)/, (m, c) => `Yes, ${c}`), facts, suggestions: ['What is using the CPU?', 'Status report'] };
