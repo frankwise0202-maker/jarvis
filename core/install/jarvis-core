@@ -154,6 +154,12 @@ state_get() { # state_get key: a value the installer recorded
   return 1
 }
 
+# /etc/sudoers.d is not readable without the password, so ask sudo itself (or the installer's note)
+smart_rule_present() {
+  [ "$(state_get sudoers 2>/dev/null)" = installed ] || [ -e "$SUDOERS_FILE" ] ||
+    sudo -n -l /usr/sbin/smartctl -j -H -A -i /dev/sda >/dev/null 2>&1
+}
+
 sudo_ready=0
 need_sudo() { # ask for the password once, if there is a terminal to ask in
   [ "$(id -u)" = 0 ] && return 0
@@ -555,31 +561,39 @@ cmd_uninstall() {
   # the command shortcut, lingering.
   local need_root=0
   [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && need_root=1
-  [ -e "$SUDOERS_FILE" ] && need_root=1
+  smart_rule_present && need_root=1
   [ -e "$SHIM" ] && need_root=1
   ts_load || true
   ts_serving && need_root=1
   if [ "$need_root" = 1 ] && ! need_sudo; then
     note "Without your password I can't undo these; run them yourself:"
     [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && say "  turn off automatic login in Settings > System > Users"
-    [ -e "$SUDOERS_FILE" ] && say "  sudo rm $SUDOERS_FILE"
+    smart_rule_present && say "  sudo rm $SUDOERS_FILE"
     ts_serving && say "  sudo tailscale serve --https=443 off"
     [ -e "$SHIM" ] && say "  sudo rm $SHIM"
   elif [ "$need_root" = 1 ]; then
     if [ "$(state_get autologin 2>/dev/null)" = enabled-by-installer ] && [ -f "$GDM_CONF" ]; then
       local tmp
-      tmp=$(mktemp) && gdm_autologin_off "$GDM_CONF" >"$tmp" && as_root install -m 0644 "$tmp" "$GDM_CONF" &&
+      tmp=$(mktemp)
+      if gdm_autologin_off "$GDM_CONF" >"$tmp" && as_root install -m 0644 "$tmp" "$GDM_CONF"; then
         ok "Automatic login is off again (from the next restart)"
+      else
+        note "Couldn't turn automatic login off: use Settings > System > Users > Automatic Login"
+      fi
       rm -f "$tmp"
     fi
-    if [ -e "$SUDOERS_FILE" ]; then
-      as_root rm -f "$SUDOERS_FILE" && ok "Removed the disk-check permission"
+    if smart_rule_present; then
+      if as_root rm -f "$SUDOERS_FILE"; then ok "Removed the disk-check permission"; else note "Couldn't remove it: sudo rm $SUDOERS_FILE"; fi
     fi
     if ts_serving; then
-      as_root "$TS_BIN" serve --https=443 off >/dev/null 2>&1 && ok "Tailscale no longer passes this computer's port $PORT to your devices"
+      if as_root "$TS_BIN" serve --https=443 off >/dev/null 2>&1 && ! ts_serving; then
+        ok "Tailscale no longer passes Jarvis Core to your devices"
+      else
+        note "Couldn't turn off Tailscale's sharing: run sudo tailscale serve --https=443 off"
+      fi
     fi
     if [ -e "$SHIM" ]; then
-      as_root rm -f "$SHIM" && ok "Removed $SHIM"
+      if as_root rm -f "$SHIM"; then ok "Removed $SHIM"; else note "Couldn't remove it: sudo rm $SHIM"; fi
     fi
   fi
   if [ "$(state_get linger 2>/dev/null)" = enabled-by-installer ]; then

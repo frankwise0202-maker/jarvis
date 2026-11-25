@@ -19,8 +19,9 @@ port=8788
 rm -rf "$work"
 mkdir -p "$work"
 echo "== user $user with password-protected sudo, credentials cached (sudo -n true works, smartctl is NOT allowed)"
-id "$user" >/dev/null 2>&1 || useradd -m -s /bin/bash "$user"
-printf '%s\n' "$user ALL=(ALL) NOPASSWD: /usr/bin/true, /usr/bin/env, /usr/bin/install, /usr/sbin/visudo, /usr/bin/rm, /usr/bin/cp, /usr/bin/timeout, /usr/bin/loginctl" >/etc/sudoers.d/zz-jarvis-core-realrun
+if id "$user" >/dev/null 2>&1; then userdel -r "$user" 2>/dev/null || true; fi # a fresh machine every time
+useradd -m -s /bin/bash "$user"
+printf '%s\n' "$user ALL=(ALL) NOPASSWD: /usr/bin/true, /usr/bin/env, /usr/bin/install, /usr/sbin/visudo, /usr/bin/rm, /usr/bin/cp, /usr/bin/timeout, /usr/bin/loginctl, $work/stubs/tailscale" >/etc/sudoers.d/zz-jarvis-core-realrun
 chmod 0440 /etc/sudoers.d/zz-jarvis-core-realrun
 visudo -c -q
 

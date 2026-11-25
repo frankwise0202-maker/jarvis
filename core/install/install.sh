@@ -426,7 +426,7 @@ step_check() {
 
   local chrome
   if chrome=$(chrome_bin); then
-    ok "$("$chrome" --version 2>/dev/null | head -n 1 || echo Chrome) is installed"
+    ok "$("$chrome" --version 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//' || echo Chrome) is installed"
   else
     note "Google Chrome isn't installed. The dashboard needs it: get it from https://www.google.com/chrome/"
     say "(Download Chrome > 64 bit .deb), then run: jarvis-core open"
