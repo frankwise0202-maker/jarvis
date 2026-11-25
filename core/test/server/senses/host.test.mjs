@@ -184,3 +184,28 @@ test('the voice engine returns its audio across the process boundary as a Float3
   assert.equal(r.output.audio.length, 12000);
   assert.equal(r.output.sampleRate, 24000);
 });
+
+test('a running speech request whose asker went away stops at its next sentence: the next reply starts at once', async (t) => {
+  const { host } = makeHost(t, { kind: 'speak', model: SPEAK_MODELS.fp32, options: { sentenceMs: 250 } });
+  await host.load();
+  const pid = host.status().pid;
+  const ac = new AbortController();
+  const long = host.run({ sentences: Array.from({ length: 12 }, (_, i) => `Sentence ${i + 1}.`), voice: 'bm_george', speed: 1 }, { signal: ac.signal }); // 3 s of work
+  await until(() => host.status().busy, { what: 'running' });
+  await sleep(300);
+  const t0 = Date.now();
+  ac.abort(); // the phone moved on to its next reply
+  const next = host.run({ sentences: ['Certainly, Frank.'], voice: 'bm_george', speed: 1 });
+  await assert.rejects(long, (e) => e.status === 499 && e.code === 'cancelled');
+  const r = await next;
+  const waited = Date.now() - t0;
+  assert.ok(waited < 1200, `the next reply waited ${waited} ms, not the 2.7 s left of the abandoned one`);
+  assert.equal(r.output.audio.length, 6000);
+  assert.equal(host.status().pid, pid, 'the same engine: nothing reloaded');
+  // Finished before the cancel got there: its audio simply comes back.
+  const ac2 = new AbortController();
+  const short = host.run({ sentences: ['One.'], voice: 'bm_george', speed: 1 }, { signal: ac2.signal });
+  await sleep(320);
+  ac2.abort();
+  assert.equal((await short).output.audio.length, 6000);
+});

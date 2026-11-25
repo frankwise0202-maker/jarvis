@@ -6,7 +6,8 @@
 //   const engine = await createEngine('hear', { repo, revision, dtype, cacheDir, onProgress });
 //   await engine.run({ audio: Float32Array (16 kHz), prompt: 'words' })   → { text }
 //   const engine = await createEngine('speak', { ... });
-//   await engine.run({ text, voice: 'bm_george', speed: 1 })              → { audio: Float32Array, sampleRate: 24000 }
+//   await engine.run({ text, voice: 'bm_george', speed: 1 }, { cancelled }) → { audio: Float32Array, sampleRate: 24000 }
+//                                         (cancelled() true: stops before its next sentence, code 'cancelled')
 //   await engine.dispose();
 //
 // Models come from huggingface.co at a pinned revision (senses/models.mjs) and are cached in cacheDir
@@ -91,12 +92,16 @@ async function createSpeakEngine({ repo, revision, dtype, cacheDir, onProgress, 
   ]);
   const tts = new KokoroTTS(model, tokenizer);
 
-  /** One sentence at a time (Kokoro reads at most ~510 phonemes at once), joined with a short pause. */
-  async function run({ text, sentences, voice = 'bm_george', speed = 1 }) {
+  /**
+   * One sentence at a time (Kokoro reads at most ~510 phonemes at once), joined with a short pause. A request
+   * whose asker went away stops before its next sentence, so the phone's next reply doesn't wait for it.
+   */
+  async function run({ text, sentences, voice = 'bm_george', speed = 1 }, { cancelled = () => false } = {}) {
     const list = Array.isArray(sentences) && sentences.length ? sentences : [text];
     const parts = [];
     let rate = 24000;
     for (const s of list) {
+      if (cancelled()) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       const raw = await tts.generate(s, { voice, speed });
       rate = raw.sampling_rate;
       parts.push(raw.audio);

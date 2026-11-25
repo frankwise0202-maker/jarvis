@@ -8,9 +8,10 @@
 // engine is immune, returns all of its memory when it ends, and can be stopped at once at a deadline.
 //
 // messages in:  { type: 'init', kind, engineUrl, model: { repo, revision, dtype, files }, cacheDir, nice, threads, options }
-//               { type: 'load', id, warm } · { type: 'run', id, input }
+//               { type: 'load', id, warm } · { type: 'run', id, input } · { type: 'cancel', id } (the asker went away:
+//               the run stops at its next sentence)
 // messages out: { type: 'nice', value } · { type: 'progress', loaded, total } · { type: 'loaded', id, ms, warmMs }
-//               { type: 'result', id, output, ms } · { type: 'error', id, message }
+//               { type: 'result', id, output, ms } · { type: 'error', id, message, code? } (code 'cancelled')
 //
 // Linux keeps a nice value per thread: this process lowers every thread it already has, and the threads
 // onnxruntime starts later inherit the main thread's.
@@ -53,6 +54,8 @@ function lowerPriority(nice) {
 let cfg = null;
 let engine = null;
 let loading = null;
+const running = new Set(); // ids of the runs in progress
+const cancelled = new Set(); // … and of those whose asker went away
 const perFile = new Map();
 let lastPost = 0;
 
@@ -102,15 +105,25 @@ process.on('message', async (msg) => {
       send({ type: 'loaded', id, ...(await load({ warm: msg.warm !== false })) });
       return;
     }
+    if (msg?.type === 'cancel') {
+      if (running.has(id)) cancelled.add(id);
+      return;
+    }
     if (msg?.type === 'run') {
-      await load({ warm: false });
-      const started = performance.now();
-      const output = await engine.run(msg.input);
-      send({ type: 'result', id, output, ms: Math.round(performance.now() - started) });
+      running.add(id);
+      try {
+        await load({ warm: false });
+        const started = performance.now();
+        const output = await engine.run(msg.input, { cancelled: () => cancelled.has(id) });
+        send({ type: 'result', id, output, ms: Math.round(performance.now() - started) });
+      } finally {
+        running.delete(id);
+        cancelled.delete(id);
+      }
       return;
     }
     send({ type: 'error', id, message: `unknown message: ${msg?.type}` });
   } catch (err) {
-    send({ type: 'error', id, message: String(err?.message ?? err).slice(0, 500) });
+    send({ type: 'error', id, message: String(err?.message ?? err).slice(0, 500), ...(err?.code === 'cancelled' ? { code: 'cancelled' } : {}) });
   }
 });

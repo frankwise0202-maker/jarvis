@@ -1,9 +1,12 @@
 // The online round trip (npm run test:senses; not part of npm test): the real engines download real models
 // from huggingface.co, George says a known sentence through POST /api/speak, that WAV goes back to
-// POST /api/hear, and the words must come back. Prints the timings.
+// POST /api/hear, and the words must come back. Prints the timings. Then the speed check with the real
+// voice engine: George timed at warm-up, and (with the switch threshold at 0, so it always happens) the
+// 8-bit model downloaded if needed, timed, and the faster one kept.
 //
 //   npm run test:senses                         whisper tiny.en + Kokoro q8 (the smallest: ~136 MB)
-//   JARVIS_SENSES_TEST_MODELS=full npm run test:senses   what the home base uses: base.en + Kokoro fp32 (~406 MB)
+//   JARVIS_SENSES_TEST_MODELS=full npm run test:senses   what the home base uses: base.en + Kokoro fp32,
+//                                               picked automatically (~406 MB; the speed check needs it)
 //   JARVIS_CORE_MODELS_DIR=/path                where the models go (default: <tmp>/jarvis-core-senses-test-models,
 //                                               kept between runs so only the first one downloads)
 
@@ -14,6 +17,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRuntime } from '../../server/runtime.mjs';
 import { parseWav, encodeWav, resample, HEAR_RATE } from '../../server/senses/wav.mjs';
+import { SPEAK_MODELS, onDisk } from '../../server/senses/models.mjs';
+import { prefersQ8 } from '../../server/senses/speed.mjs';
 import { request, testConfig } from '../server/helpers.mjs';
 
 const FULL = process.env.JARVIS_SENSES_TEST_MODELS === 'full';
@@ -55,7 +60,8 @@ test(`George speaks, Whisper hears it back (whisper ${HEAR_MODEL}, Kokoro ${SPEA
   fs.mkdirSync(MODELS, { recursive: true });
   const config = testConfig(['--fixture', 'ok', '--port', '0']);
   const logs = [];
-  config.senses = { modelsDir: MODELS, speakDtype: SPEAK_DTYPE, startDelayMs: 0 };
+  // Full: George's model picked as on the home base (fp32 unless q8 measured faster); else q8, fixed.
+  config.senses = { modelsDir: MODELS, speakDtype: FULL ? undefined : SPEAK_DTYPE, startDelayMs: 0 };
   const rt = await createRuntime(config, { log: (m) => logs.push(m) });
   const { port } = await rt.start({ port: 0 });
   const timings = { container: `${os.cpus()[0]?.model ?? 'cpu'} x${os.availableParallelism?.() ?? os.cpus().length}`, hearModel: HEAR_MODEL, speakDtype: SPEAK_DTYPE };
@@ -85,6 +91,21 @@ test(`George speaks, Whisper hears it back (whisper ${HEAR_MODEL}, Kokoro ${SPEA
     }
     assert.ok(ready, `both senses ready (last: ${progress.at(-1)})`);
     timings.readyMs = readyAt;
+    // The warm-up times George on a fixed sentence: wait for it, so it doesn't share the processor below.
+    const timed = await (async () => {
+      for (let i = 0; i < 600; i++) {
+        const s = (await request(port, '/api/senses')).json.speak;
+        if (s.rtf !== null && !s.measuring) return s;
+        await sleep(250);
+      }
+      return null;
+    })();
+    assert.ok(timed, 'George was timed at warm-up');
+    // q8 is tried only when fp32 is slower than 0.8 x real time here (a busy machine), and kept only if faster.
+    const triedQ8 = FULL && timed.measured.q8 !== undefined;
+    assert.equal(timed.dtype, triedQ8 && prefersQ8(timed.measured.fp32, timed.measured.q8) ? 'q8' : SPEAK_DTYPE);
+    assert.ok(timed.rtf > 0 && timed.rtf < 10, `rtf ${timed.rtf}`);
+    timings.warmUpRtf = { dtype: timed.dtype, rtf: timed.rtf, measured: timed.measured };
     timings.progressSamples = [...new Set(progress)].slice(0, 12);
     timings.loads = { hear: rt.senses.hosts.hear.status(), speak: rt.senses.hosts.speak.status() };
     for (const k of ['hear', 'speak']) timings.loads[k] = { loadMs: timings.loads[k].loadMs, warmMs: timings.loads[k].warmMs, nice: timings.loads[k].nice };
@@ -149,5 +170,45 @@ test(`George speaks, Whisper hears it back (whisper ${HEAR_MODEL}, Kokoro ${SPEA
     console.log(line);
     if (process.env.JARVIS_SENSES_TIMINGS_FILE) fs.appendFileSync(process.env.JARVIS_SENSES_TIMINGS_FILE, `${line}\n`);
     for (const l of logs.filter((x) => /hearing|voice/.test(x))) t.diagnostic(l);
+  }
+});
+
+const fp32Here = () => onDisk(fs, MODELS, SPEAK_MODELS.fp32).complete;
+
+test('the speed check with the real voice engine: George timed at warm-up, q8 tried (downloaded if needed), the faster kept', { timeout: 30 * 60_000, skip: FULL || fp32Here() ? false : 'needs Kokoro fp32 on disk: JARVIS_SENSES_TEST_MODELS=full' }, async (t) => {
+  const config = testConfig(['--fixture', 'ok', '--port', '0']);
+  const logs = [];
+  // rtfSwitch 0: always try q8 after timing fp32, so the whole path runs on any machine.
+  config.senses = { modelsDir: MODELS, startDelayMs: 0, rtfSwitch: 0 };
+  const rt = await createRuntime(config, { log: (m) => logs.push(m) });
+  const { port } = await rt.start({ port: 0 });
+  try {
+    const put = await request(port, '/api/senses', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ speak: { enabled: true } }) });
+    assert.equal(put.status, 200);
+    assert.equal(put.json.speak.dtype, 'fp32', 'the default model first');
+    assert.equal(put.json.speak.autoDtype, true);
+    let s = null;
+    for (let i = 0; i < 25 * 240 && !s; i++) {
+      const v = (await request(port, '/api/senses')).json.speak;
+      assert.notEqual(v.state, 'error', v.error);
+      if (v.measured.fp32 && v.measured.q8 && !v.measuring) s = v;
+      else await sleep(250);
+    }
+    assert.ok(s, 'fp32 and q8 both timed');
+    const want = prefersQ8(s.measured.fp32, s.measured.q8) ? 'q8' : 'fp32';
+    assert.equal(s.dtype, want, `fp32 ${s.measured.fp32}x, q8 ${s.measured.q8}x real time`);
+    assert.equal(s.rtf, s.measured[want]);
+    assert.equal(rt.senses.speed.dtype, want);
+    const r = await post(port, '/api/speak', Buffer.from(JSON.stringify({ text: 'Certainly, Frank. The monitor is on sale today.' })), 'application/json');
+    assert.equal(r.status, 200);
+    const line = `SENSES_SPEED ${JSON.stringify({ measured: s.measured, kept: s.dtype, firstSentenceMs: Number(r.headers['x-jarvis-ms']), firstSentenceAudioSec: Number(r.headers['x-jarvis-seconds']) })}`;
+    t.diagnostic(line);
+    console.log(line);
+    if (process.env.JARVIS_SENSES_TIMINGS_FILE) fs.appendFileSync(process.env.JARVIS_SENSES_TIMINGS_FILE, `${line}\n`);
+    assert.ok(logs.some((l) => /voice: George speaks at [\d.]+x real time on this computer \(fp32/.test(l)), logs.join('\n'));
+    assert.ok(logs.some((l) => (want === 'q8' ? /switched to Kokoro's 8-bit model/ : /keeping fp32/).test(l)), logs.join('\n'));
+  } finally {
+    await rt.stop();
+    for (const l of logs.filter((x) => /voice/.test(x))) t.diagnostic(l);
   }
 });

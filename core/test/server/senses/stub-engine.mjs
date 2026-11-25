@@ -4,7 +4,8 @@
 // options the test passes:
 //   { delayMs, loadMs, failLoad: 'message', crashOnRun: true, abortOnRun: true, hangMs, writeFiles: true, text,
 //     rtf: 0.5 | { fp32: 1.2, q8: 0.5 } (speak: take this long per second of audio, by model dtype),
-//     failLoadFor: { q8: 'fetch failed' } (fail loading only that dtype) }
+//     failLoadFor: { q8: 'fetch failed' } (fail loading only that dtype),
+//     sentenceMs (speak: this long per sentence, stopping early when the asker went away, as the real engine) }
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,12 +57,17 @@ export async function createEngine(kind, { repo, revision, dtype, files, cacheDi
   await sleep(loadMs);
   return {
     async warmUp() {},
-    async run(input) {
+    async run(input, { cancelled = () => false } = {}) {
       if (options.crashOnRun) process.exit(3);
       if (options.abortOnRun) process.abort(); // what a native crash inside onnxruntime looks like
       if (options.hangMs) await sleep(options.hangMs);
       const sentenceCount = kind === 'speak' ? (input.sentences ?? [input.text]).length : 0;
-      await sleep(kind === 'speak' && Number.isFinite(rtf) ? rtf * 250 * sentenceCount : options.delayMs ?? 10);
+      if (kind === 'speak' && options.sentenceMs) {
+        for (let i = 0; i < sentenceCount; i++) {
+          if (cancelled()) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+          await sleep(options.sentenceMs);
+        }
+      } else await sleep(kind === 'speak' && Number.isFinite(rtf) ? rtf * 250 * sentenceCount : options.delayMs ?? 10);
       if (kind === 'hear') {
         const words = options.text ?? 'hello from the stub';
         return { text: `${words} (${input.audio.length} samples${input.prompt ? `; prompt: ${input.prompt}` : ''})`, threadNice: threadNice() };

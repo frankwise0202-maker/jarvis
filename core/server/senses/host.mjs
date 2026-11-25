@@ -10,8 +10,10 @@
 //   host.unload(); await host.stop();
 //
 // A request whose deadline passes ends the engine process at once (onnxruntime cannot be interrupted
-// mid-run); the next request starts a fresh one. An engine that crashes, even inside onnxruntime's native
-// code, only ends its own process: its request fails and the next request starts a fresh one.
+// mid-run); the next request starts a fresh one. A request whose asker goes away is dropped from the queue,
+// or, while it runs, stops at the engine's next sentence (the voice), so the phone's next reply never waits
+// for speech nobody will hear. An engine that crashes, even inside onnxruntime's native code, only ends its
+// own process: its request fails and the next request starts a fresh one.
 
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -150,7 +152,8 @@ export function createSenseHost({
       if (!p) return;
       pending.delete(msg.id);
       if (!pending.size) hold(w, false);
-      if (msg.type === 'error') p.reject(new SenseError(500, 'engine_failed', msg.message || 'the speech engine failed'));
+      if (msg.type === 'error' && msg.code === 'cancelled') p.reject(new SenseError(499, 'cancelled', 'the request was cancelled'));
+      else if (msg.type === 'error') p.reject(new SenseError(500, 'engine_failed', msg.message || 'the speech engine failed'));
       else p.resolve(msg);
     });
     w.on('error', (err) => {
@@ -174,10 +177,11 @@ export function createSenseHost({
     return w;
   }
 
-  function call(type, payload = {}) {
+  function call(type, payload = {}, onId = null) {
     const w = worker;
     if (!w) return Promise.reject(new SenseError(503, 'engine_stopped', 'the speech engine is not running'));
     const id = ++seq;
+    onId?.(id);
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
       hold(w, true);
@@ -248,7 +252,8 @@ export function createSenseHost({
     });
     try {
       await Promise.race([load({ warm: false }), deadline]);
-      const r = await Promise.race([call('run', { input: job.input }), deadline]);
+      if (job.cancelled) throw new SenseError(499, 'cancelled', 'the request was cancelled');
+      const r = await Promise.race([call('run', { input: job.input }, (id) => (job.callId = id)), deadline]);
       return { output: r.output, ms: r.ms };
     } catch (err) {
       if (err?.code === 'timeout') {
@@ -312,6 +317,16 @@ export function createSenseHost({
           queue.splice(i, 1);
           job.reject(new SenseError(499, 'cancelled', 'the request was cancelled'));
           onChange();
+        } else if (running === job) {
+          // Running: the engine stops at its next sentence (the voice; hearing finishes its one run).
+          job.cancelled = true;
+          if (job.callId && worker) {
+            try {
+              worker.send({ type: 'cancel', id: job.callId });
+            } catch {
+              // the engine already ended; its request fails anyway
+            }
+          }
         }
       };
       if (signal?.aborted) {
