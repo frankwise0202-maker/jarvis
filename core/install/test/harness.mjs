@@ -100,7 +100,8 @@ stop() { [ -f "$pidf" ] && kill "$(cat "$pidf")" 2>/dev/null; rm -f "$pidf" "$ST
 start() {
   line=$(grep '^ExecStart=' "$unit") || exit 1
   eval "set -- \${line#ExecStart=}"
-  JARVIS_CORE_FIXTURE=ok JARVIS_CORE_NO_PERSIST=1 setsid "$@" >> "$STUB_DIR/core.log" 2>&1 < /dev/null &
+  if [ "\${STUB_CORE_LIVE:-0}" = 1 ]; then setsid "$@" >> "$STUB_DIR/core.log" 2>&1 < /dev/null &
+  else JARVIS_CORE_FIXTURE=ok JARVIS_CORE_NO_PERSIST=1 setsid "$@" >> "$STUB_DIR/core.log" 2>&1 < /dev/null & fi
   echo $! > "$pidf"; touch "$STUB_DIR/active"
 }
 case "$1" in
