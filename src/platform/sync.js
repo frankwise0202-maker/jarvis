@@ -6,7 +6,7 @@
 //   downloadSyncBackup(base, deviceId, opts)  GET api/sync/<deviceId> -> { ok: true, data } | failure
 //   uploadSyncBackup(base, deviceId, json, { label, gzipped, ...opts })
 //                                             PUT api/sync/<deviceId> -> { ok: true, bytes, storedAt, gzip } | failure
-//   gzipText(text)   -> Promise<Blob | null>  (CompressionStream; null where the browser has none)
+//   gzipText(text)   -> Promise<Uint8Array | null>  (CompressionStream; null where the browser has none)
 //   sha256Hex(text)  -> Promise<string>       (what tells an unchanged backup apart)
 //
 // The backup is this device's own export (src/platform/backup.js: never the API key; the Core also
@@ -55,12 +55,12 @@ export async function uploadSyncBackup(base, deviceId, json, { label = '', gzipp
   return { ok: true, bytes: typeof r.data.bytes === 'number' ? r.data.bytes : null, storedAt: Number.isFinite(storedAt) ? storedAt : null, gzip };
 }
 
-/** The text gzip-compressed (a Blob), or null where the browser can't (then it travels as it is). */
+/** The text gzip-compressed (bytes), or null where the browser can't (then it travels as it is). */
 export async function gzipText(text) {
   if (typeof globalThis.CompressionStream !== 'function' || typeof Blob !== 'function' || typeof Response !== 'function') return null;
   try {
     const stream = new Blob([text]).stream().pipeThrough(new globalThis.CompressionStream('gzip'));
-    return await new Response(stream).blob();
+    return new Uint8Array(await new Response(stream).arrayBuffer());
   } catch {
     return null;
   }

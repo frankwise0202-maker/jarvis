@@ -827,3 +827,16 @@
 .brain-card .key-result[hidden] {
   display: none;
 }
+
+/* v7.6 sync (SPEC §24.7): the sync card follows the brain's cards, spaced like them. */
+.sync-card {
+  margin-top: var(--sp-3);
+}
+
+.sync-card[hidden] {
+  display: none;
+}
+
+.sync-card .sync-devices {
+  margin: 0;
+}

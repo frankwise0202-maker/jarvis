@@ -230,7 +230,7 @@ test('sync client: the upload is gzip with the device’s name and no credential
     const answer = (status, body) => new Response(body === undefined ? '' : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
     let next = () => answer(200, { ok: true, bytes: 42, storedAt: '2026-11-25T07:00:00.000Z' });
     const fetchImpl = async (url, init) => {
-      const body = init.body instanceof Blob ? Array.from(new Uint8Array(await init.body.arrayBuffer())) : init.body;
+      const body = init.body instanceof Uint8Array ? Array.from(init.body) : init.body;
       seen.push({ url, method: init.method, headers: init.headers, credentials: init.credentials, referrerPolicy: init.referrerPolicy, cache: init.cache, body });
       return next();
     };

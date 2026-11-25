@@ -12,7 +12,7 @@ import { deflateSync } from 'node:zlib';
 import { canonicalJson } from '../mock/util.mjs';
 import { startTestServer, MOCK_API_KEY } from '../server.mjs';
 import { MUSIC_ORIGIN_RE, routeFakeMusic } from './music-fakes.mjs';
-import { CORE_ORIGIN, routeFakeCore } from './core-fakes.mjs';
+import { CORE_ORIGIN, routeFakeCore, fakeSyncStore } from './core-fakes.mjs';
 
 export const BAD_API_KEY = 'sk-ant-bad-0123456789abcdefghijk';
 export const SEED_MARKER = '__jarvis_e2e_seeded__';
@@ -269,7 +269,11 @@ export class TestContext {
     }
     // The home base (`fakeCore: true` or { mode }): the Jarvis Core over Tailscale (core-fakes.mjs).
     const fakeCore = !!this.scenario.fakeCore;
-    if (fakeCore) this.core = await routeFakeCore(context, typeof this.scenario.fakeCore === 'object' ? this.scenario.fakeCore : {});
+    if (fakeCore) {
+      // One home base per scenario: every context (device) shares its sync storage (t.coreSync).
+      if (!this.coreSync) this.coreSync = fakeSyncStore();
+      this.core = await routeFakeCore(context, { ...(typeof this.scenario.fakeCore === 'object' ? this.scenario.fakeCore : {}), sync: this.coreSync });
+    }
     context.on('request', (req) => {
       const url = req.url();
       if (!/^https?:/i.test(url)) return;

@@ -21,8 +21,15 @@
 // subscriptions and spend. routeFakeCore(context, { brain: false }) is a 1.0 Core (404 not_found on
 // every brain route); { brain: { key: true, briefing: true, capReached: 'daily', jobSteps: 2 } } seeds
 // it. Jobs move on as the app polls: queued -> running at the first list, done after `jobSteps` more.
+//
+// Sync (v7.6, SPEC §24.7): api/sync like the Core's sync module (PUT a device's backup, gzip allowed;
+// GET the list; GET a device's backup), kept in a store shared by every context of a scenario
+// (`sync`, see fakeSyncStore(); the harness passes one per scenario as t.coreSync), so two browser
+// contexts are two devices on one home base. A 1.0 Core ({ brain: false }) answers 404 there too.
+// t.coreSync.mode: 'ok' | 'toolarge' (413 to every upload, as the Core says past 50 MB).
 
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -286,9 +293,66 @@ function brainRoute(b, req, url, json) {
   return json(405, { error: 'method_not_allowed', message: `${m} ${p}` });
 }
 
-export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {} } = {}) {
+/** One home base's sync storage: { devices: Map(id -> { id, label, updatedAt, bytes, text, encoding }), puts, gets, mode }. */
+export function fakeSyncStore() {
+  return { devices: new Map(), puts: [], gets: [], lists: 0, mode: 'ok', clock: 0 };
+}
+
+const KEY_LIKE = /sk-ant-[A-Za-z0-9_-]{20,}/i;
+
+/** api/sync (Jarvis Core 1.1's sync module). Answers, or null (not one of its routes). */
+function syncRoute(store, b, req, url, json, raw) {
+  const p = url.pathname;
+  if (!/^\/api\/sync(?:\/|$)/.test(p)) return null;
+  if (!b.enabled) return json(404, { error: 'not_found', message: `no such endpoint: ${p}` });
+  const m = req.method();
+  if (p === '/api/sync') {
+    if (m !== 'GET') return json(405, { error: 'method_not_allowed', message: 'GET, HEAD' });
+    store.lists += 1;
+    const devices = [...store.devices.values()].map(({ id, label, updatedAt, bytes }) => ({ id, label, updatedAt, bytes })).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
+    return json(200, { devices });
+  }
+  const id = p.slice('/api/sync/'.length);
+  if (!/^[a-z0-9-]{8,64}$/.test(id)) return json(400, { error: 'bad_device', message: 'the device id must be 8-64 characters: a-z, 0-9 and -' });
+  if (m === 'PUT') {
+    const headers = req.headers();
+    const encoding = String(headers['content-encoding'] || 'identity').toLowerCase();
+    if (store.mode === 'toolarge') return json(413, { error: 'too_large', message: 'the backup is larger than 50 MB' });
+    let buf = req.postDataBuffer() || Buffer.alloc(0);
+    try {
+      if (encoding === 'gzip') buf = gunzipSync(buf);
+    } catch {
+      return json(400, { error: 'bad_gzip', message: 'the upload says it is gzip but could not be unpacked' });
+    }
+    const text = buf.toString('utf8');
+    if (KEY_LIKE.test(text)) return json(400, { error: 'key_in_backup', message: 'the backup contains something shaped like an API key (sk-ant-…), so it was not stored' });
+    if (!/^\s*\{/.test(text) || !/"app"\s*:\s*"jarvis"/.test(text.slice(0, 1024))) return json(400, { error: 'bad_backup', message: "that isn't a Jarvis backup" });
+    let label = headers['x-jarvis-device-label'] || '';
+    try {
+      label = decodeURIComponent(label);
+    } catch {
+      /* as it is */
+    }
+    const prev = store.devices.get(id);
+    // Strictly increasing times, even for two uploads in one millisecond.
+    store.clock = Math.max(Date.now(), store.clock + 1);
+    const updatedAt = new Date(store.clock).toISOString();
+    store.devices.set(id, { id, label: label || (prev && prev.label) || 'Device', updatedAt, bytes: buf.length, text, encoding });
+    store.puts.push({ id, label, encoding, bytes: buf.length });
+    return json(200, { ok: true, bytes: buf.length, storedAt: updatedAt });
+  }
+  if (m === 'GET') {
+    store.gets.push(id);
+    const d = store.devices.get(id);
+    if (!d) return json(404, { error: 'not_found', message: 'no backup from that device yet' });
+    return raw(200, d.text);
+  }
+  return json(405, { error: 'method_not_allowed', message: 'GET, PUT' });
+}
+
+export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore() } = {}) {
   const fx = coreFixtures();
-  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain) };
+  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync };
   await context.route(`${CORE_ORIGIN}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -306,6 +370,9 @@ export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain =
     if (state.mode === 'refused') return json(403, { error: 'forbidden', message: 'requests from other devices must come through Tailscale serve' });
     if (state.mode === 'starting') return json(503, { error: 'starting', message: 'the Core is starting, try again in a second' }, { 'retry-after': '1' });
     const scenario = CORE_SCENARIOS.includes(state.mode) ? state.mode : 'ok';
+    const raw = (status, text) => route.fulfill({ status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: text });
+    const syncAnswer = syncRoute(state.sync, state.brain, req, url, json, raw);
+    if (syncAnswer) return syncAnswer;
     const brainAnswer = brainRoute(state.brain, req, url, json);
     if (brainAnswer) {
       if (brainAnswer.status === 204) return route.fulfill({ status: 204, headers: { ...cors, 'cache-control': 'no-store' }, body: '' });
