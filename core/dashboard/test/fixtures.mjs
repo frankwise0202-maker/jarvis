@@ -154,7 +154,7 @@ export function makeStatus(scenario, tMs, startMs = tMs, seq = 1) {
       url: 'https://alienware.tail4b2c1.ts.net/',
       serve: { enabled: true },
       ips: ['100.101.12.7'],
-      tailnet: 'frankwise0202@',
+      tailnet: 'owner@example.com',
       version: '1.90.4',
       peers: [
         { name: 'franks-iphone', hostName: 'Franks-iPhone', dnsName: 'franks-iphone.tail4b2c1.ts.net', os: 'iOS', kind: 'iPhone', online: !netDown, lastSeen: netDown ? tMs - 6 * 60000 : null, active: !netDown },

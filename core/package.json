@@ -1,6 +1,6 @@
 {
   "name": "jarvis-core",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Jarvis Core: the home base. System report (collector, health rules, history, events, a JSON API with live updates, a small local status assistant) on Node built-ins only, plus the brain (background research, watchers, morning briefing, push, sync), whose two dependencies are loaded lazily.",
   "type": "module",

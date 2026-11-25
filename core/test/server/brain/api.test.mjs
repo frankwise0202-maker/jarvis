@@ -13,6 +13,7 @@ import { createRuntime } from '../../../server/runtime.mjs';
 import { request, testConfig, tmpDir, START } from '../helpers.mjs';
 import { startFakeClaude, text, search, cite } from './fake-claude.mjs';
 import { KEY, until } from './helpers.mjs';
+const CORE_VERSION = JSON.parse((await import('node:fs')).readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version; // the brain shipped in 1.1.0; later versions keep the contract
 
 const CORE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 let rt;
@@ -60,7 +61,7 @@ test('GET /api/brain: the contract shape, version 1.1.0, no key yet', async () =
   assert.equal(r.status, 200);
   const b = r.json;
   for (const k of ['version', 'key', 'sdk', 'limits', 'spend', 'push', 'briefing', 'jobs', 'watchers', 'owner']) assert.ok(k in b, k);
-  assert.equal(b.version, '1.1.0');
+  assert.equal(b.version, CORE_VERSION);
   assert.deepEqual(b.key, { set: false, hint: null, setAt: null, verified: false });
   assert.deepEqual(b.sdk, { installed: true });
   assert.deepEqual(b.limits, { dailyUsd: 5, monthlyUsd: 50 });
@@ -73,7 +74,7 @@ test('GET /api/brain: the contract shape, version 1.1.0, no key yet', async () =
   assert.deepEqual(b.jobs, { running: 0, queued: 0 });
   assert.deepEqual(b.watchers, { active: 0 });
   assert.deepEqual(b.owner, { name: 'Frank' });
-  assert.equal((await get('/api/info')).json.version, '1.1.0');
+  assert.equal((await get('/api/info')).json.version, CORE_VERSION);
 });
 
 test('no key: jobs and watchers are refused with 409 no_key; the briefing is free', async () => {
@@ -358,7 +359,7 @@ test('zero-dependency start: without node_modules the Core serves the system rep
     assert.equal((await request(p, '/api/status')).status, 200);
     const b = (await request(p, '/api/brain')).json;
     assert.deepEqual(b.sdk, { installed: false });
-    assert.equal(b.version, '1.1.0');
+    assert.equal(b.version, CORE_VERSION);
     const k = await request(p, '/api/brain/key', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: KEY }) });
     assert.deepEqual(k.json, { ok: true, hint: '…Ab3D', verified: false });
     const j = await request(p, '/api/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'x' }) });
