@@ -572,6 +572,16 @@ test('controller: no tile on screen, no polling; unlinking stops it; a new addre
   hb.setViewShown('t1', { isConnected: true, getClientRects: () => [] }, true);
   await tick();
   assert.equal(calls.length, 0, 'a display: none tile does not count');
+  // Covered by a sheet, Voice Mode or Standby (inert): not on screen.
+  let covered = true;
+  const coverable = { isConnected: true, getClientRects: () => [1], closest: (sel) => (sel === '[inert]' && covered ? {} : null) };
+  hb.setViewShown('t1', coverable, true);
+  await tick();
+  assert.equal(calls.length, 0, 'a covered tile does not count');
+  covered = false;
+  hb.refresh(); // what the inert observer does when the cover goes
+  await tick();
+  assert.equal(calls.length, 1, 'uncovered: polled at once');
   hb.setViewShown('t1', shownEl, true);
   await tick();
   assert.equal(calls.length, 1);

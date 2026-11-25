@@ -1,7 +1,8 @@
 // Home base (v7.5, SPEC §23): the Jarvis Core tile. One controller polls the Core's api/status every
 // 30 s, only while a tile is on screen and the page is visible (no live stream: phones would keep a
-// connection open for nothing); the tiles (the Presence home on phones, the desktop awareness rail)
-// show what it last read. "Ask the home base" posts api/ask {q}: the Core's own rules answer, free
+// connection open for nothing); a tile covered by a sheet, Voice Mode or Standby (made `inert`)
+// doesn't count. The tiles (the Presence home on phones, the desktop awareness rail) show what it
+// last read. "Ask the home base" posts api/ask {q}: the Core's own rules answer, free
 // (no Claude request).
 //
 //   const hb = createHomeBase({ getSettings, onSettingsChange });
@@ -88,10 +89,16 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
     emit();
   }
 
-  /** A tile is on screen: in the document, laid out (not display: none) and intersecting. */
+  /**
+   * A tile is on screen: in the document, laid out (not display: none), intersecting, and not
+   * covered (sheets, Voice Mode and Standby make what is behind them `inert`).
+   */
   function anyShown() {
     for (const v of views.values()) {
-      if (v.shown && v.el && v.el.isConnected && safe(() => v.el.getClientRects().length > 0, false)) return true;
+      if (!v.shown || !v.el || !v.el.isConnected) continue;
+      if (!safe(() => v.el.getClientRects().length > 0, false)) continue;
+      if (safe(() => (typeof v.el.closest === 'function' ? !!v.el.closest('[inert]') : false), false)) continue;
+      return true;
     }
     return false;
   }
@@ -149,6 +156,16 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
   } catch {
     /* no document (tests) */
   }
+  // Covered or uncovered (an element's `inert` changed): poll again, or stop, at once.
+  let coverObserver = null;
+  try {
+    if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
+      coverObserver = new MutationObserver(() => sync());
+      coverObserver.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['inert'] });
+    }
+  } catch {
+    coverObserver = null;
+  }
 
   return {
     getState: () => state,
@@ -196,6 +213,7 @@ export function createHomeBase({ getSettings, onSettingsChange, client = null, i
       } catch {
         /* ignore */
       }
+      if (coverObserver) coverObserver.disconnect();
       listeners.clear();
     },
   };

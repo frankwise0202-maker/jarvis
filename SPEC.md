@@ -2956,7 +2956,8 @@ and returns `{ answer, intent, suggestions }`; all Core text is cleaned to plain
 
 **23.3 The tile (src/ui/homebase.js).** One controller (`createHomeBase`) polls `GET api/status` every 30 s
 (`createPoller`), only while an address is set, the page is visible (`visibilitychange`) and a tile is on screen
-(IntersectionObserver; a detached or `display: none` tile doesn't count); becoming visible polls at once if the last
+(IntersectionObserver; a detached or `display: none` tile doesn't count, nor one covered by a sheet, Voice Mode or
+Standby: an `inert` ancestor, watched with a MutationObserver); becoming visible polls at once if the last
 poll is older than 30 s, never two at once; no SSE (a phone would hold a connection open for nothing). Two tiles show
 it: the Presence home (`home.homeBaseEl`, after the quick keys; phones and narrow windows) and the desktop awareness
 rail (after the Systems glance; the home's copy is hidden there). The Systems glance's "Jarvis Core" row and the
