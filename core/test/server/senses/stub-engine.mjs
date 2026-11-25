@@ -2,7 +2,9 @@
 // libraries and no downloads. It runs inside the real engine process (server/senses/worker.mjs), so the
 // tests cover the process, the queue, the deadlines and the idle unload for real. Behaviour comes from the
 // options the test passes:
-//   { delayMs, loadMs, failLoad: 'message', crashOnRun: true, abortOnRun: true, hangMs, writeFiles: true, text }
+//   { delayMs, loadMs, failLoad: 'message', crashOnRun: true, abortOnRun: true, hangMs, writeFiles: true, text,
+//     rtf: 0.5 | { fp32: 1.2, q8: 0.5 } (speak: take this long per second of audio, by model dtype),
+//     failLoadFor: { q8: 'fetch failed' } (fail loading only that dtype) }
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,12 +23,14 @@ function threadNice() {
   }
 }
 
-export async function createEngine(kind, { repo, revision, files, cacheDir, onProgress, options = {} }) {
+export async function createEngine(kind, { repo, revision, dtype, files, cacheDir, onProgress, options = {} }) {
   const loadMs = options.loadMs ?? 20;
-  if (options.failLoad) {
+  const failure = options.failLoad ?? options.failLoadFor?.[dtype];
+  if (failure) {
     await sleep(loadMs);
-    throw new Error(options.failLoad);
+    throw new Error(failure);
   }
+  const rtf = typeof options.rtf === 'number' ? options.rtf : options.rtf?.[dtype];
   // "Download": write each file at its catalog size, reporting progress, unless it is already there.
   if (options.writeFiles !== false) {
     const dir = path.join(cacheDir, ...repo.split('/'), revision);
@@ -56,7 +60,8 @@ export async function createEngine(kind, { repo, revision, files, cacheDir, onPr
       if (options.crashOnRun) process.exit(3);
       if (options.abortOnRun) process.abort(); // what a native crash inside onnxruntime looks like
       if (options.hangMs) await sleep(options.hangMs);
-      await sleep(options.delayMs ?? 10);
+      const sentenceCount = kind === 'speak' ? (input.sentences ?? [input.text]).length : 0;
+      await sleep(kind === 'speak' && Number.isFinite(rtf) ? rtf * 250 * sentenceCount : options.delayMs ?? 10);
       if (kind === 'hear') {
         const words = options.text ?? 'hello from the stub';
         return { text: `${words} (${input.audio.length} samples${input.prompt ? `; prompt: ${input.prompt}` : ''})`, threadNice: threadNice() };
@@ -65,7 +70,7 @@ export async function createEngine(kind, { repo, revision, files, cacheDir, onPr
       const rate = 24000;
       const audio = new Float32Array(Math.round(rate * 0.25 * sentences.length));
       for (let i = 0; i < audio.length; i++) audio[i] = 0.25 * Math.sin((2 * Math.PI * 440 * i) / rate);
-      return { audio, sampleRate: rate, voice: input.voice, speed: input.speed };
+      return { audio, sampleRate: rate, voice: input.voice, speed: input.speed, dtype, pid: process.pid };
     },
     async dispose() {},
   };

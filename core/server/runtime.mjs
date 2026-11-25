@@ -165,8 +165,9 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
     ...(config.fixture ? { fetch: createFixtureFetch(), defaultLocation: { label: 'Your location', lat: 0, lon: 0 } } : {}),
   });
 
-  // Hearing and George's voice for the phone (opt-in, off by default; config.senses: tests' stub engines).
-  const senses = createSenses({ dataDir, modelsDir: defaultModelsDir(process.env), speakDtype: process.env.JARVIS_CORE_SPEAK_DTYPE || undefined, log, ...(config.senses ?? {}) });
+  // Hearing and George's voice for the phone (opt-in, off by default). config.senses: the idle times and George's
+  // model from config.json or the environment (config.mjs sensesConfig), or tests' stub engines.
+  const senses = createSenses({ dataDir, modelsDir: defaultModelsDir(process.env), log, ...(config.senses ?? {}) });
   const server = createApiServer({ getCore: () => core, config, ask, info, fixture, log, getBrain: () => brain, getPush: () => push, getSync: () => sync, getSenses: () => senses });
   let running = false;
   let updateTimer = null;

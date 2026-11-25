@@ -5,7 +5,7 @@
 //   const host = createSenseHost({ kind: 'hear', getModel: () => HEAR_MODELS['base.en'], cacheDir, … });
 //   await host.load();                                    // download if needed, load, warm up
 //   await host.run(input, { timeoutMs, signal })          // → { output, ms, waitedMs }
-//   host.status()                                         // { loaded, loading, busy, queued, progress, nice, lastError }
+//   host.status()                                         // { loaded, loading, busy, queued, progress, nice, lastError, idleMs }
 //   host.touch()                                          // start the idle time again (a request is coming)
 //   host.unload(); await host.stop();
 //
@@ -349,6 +349,7 @@ export function createSenseHost({
         lastError,
         loadMs: timings.loadMs,
         warmMs: timings.warmMs,
+        idleMs: Number.isFinite(idleMs) && idleMs > 0 ? idleMs : 0, // 0: stays loaded until turned off
       };
     },
     async stop() {

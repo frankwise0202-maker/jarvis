@@ -9,7 +9,11 @@
 //   senses.start(); await senses.stop();
 //
 // Both are off until the owner turns them on (Jarvis > Settings > Home base > Hearing and voice). Settings live
-// in <dataDir>/senses/settings-v1.json, models in ~/.cache/jarvis-core/models. The speech libraries
+// in <dataDir>/senses/settings-v1.json, models in ~/.cache/jarvis-core/models. An unused model leaves memory
+// after 30 minutes (hearing) or 6 hours (George: about 1 GB, kept so the phone's first sentence never waits for
+// a load). Each warm-up that loads George times one sentence and records how fast he is here; when the default
+// fp32 model is slower than 0.8 x real time, the 8-bit one is tried and kept if it is faster (senses/speed.mjs).
+// The speech libraries
 // (@huggingface/transformers, kokoro-js) are only ever imported inside the engines' own processes
 // (senses/worker.mjs); without core/node_modules the Core runs as before and reports deps.installed false.
 
@@ -21,11 +25,16 @@ import { createSenseHost, SenseError } from './host.mjs';
 import { HEAR_MODELS, DEFAULT_HEAR_MODEL, SPEAK_MODELS, DEFAULT_SPEAK_DTYPE, VOICES, DEFAULT_VOICE, sizeMb, totalBytes, onDisk, strayFiles, defaultModelsDir } from './models.mjs';
 import { readHearingWav, encodeWav } from './wav.mjs';
 import { splitSentences, cleanPrompt, cleanSpeech, SPEAK_MAX } from './text.mjs';
+import { RTF_SWITCH, BENCH_TEXT, BENCH_VOICE, rtfOf, processorId, pickDtype, shouldTryQ8, prefersQ8, normalizeSpeedRecord, withMeasurement } from './speed.mjs';
 
 export { SenseError } from './host.mjs';
 export { defaultModelsDir } from './models.mjs';
 
 const DEPENDENCIES = ['@huggingface/transformers', 'kokoro-js', 'onnxruntime-node'];
+/** How long an unused model stays in memory (config.json "senses" or JARVIS_CORE_*_IDLE_MINUTES change it). */
+export const HEAR_IDLE_MS = 30 * 60_000;
+export const SPEAK_IDLE_MS = 6 * 3600_000;
+const BENCH_TIMEOUT_MS = 60_000;
 const SILENCE_PEAK = 0.003; // about -50 dBFS: far below any voice the phone's microphone picks up
 const MODEL_ALIASES = { fast: 'base.en', accurate: 'small.en' };
 
@@ -107,22 +116,35 @@ export function createSenses({
   dataDir = null,
   modelsDir = defaultModelsDir(),
   log = () => {},
-  speakDtype = DEFAULT_SPEAK_DTYPE,
+  speakDtype, // 'fp32' or 'q8' fixes George's model; undefined (the default): fp32, or q8 where it measured faster
+  autoDtype = !SPEAK_MODELS[speakDtype],
   engineUrl, // tests: a stub engine module
   engineOptions = {},
   nice = 10,
   threads = defaultThreads(),
-  idleMs = 30 * 60_000,
+  idleMs, // tests: one idle time for both senses
+  hearIdleMs = idleMs ?? HEAR_IDLE_MS,
+  speakIdleMs = idleMs ?? SPEAK_IDLE_MS,
   startDelayMs = 20_000,
   hearTimeoutMs = 45_000,
   speakTimeoutMs = (chars) => 30_000 + 150 * chars,
   queueMax = 3,
+  speedCheck = true, // time George at each warm-up that loads him (and try q8 when fp32 is slow)
+  rtfSwitch = RTF_SWITCH,
+  quietMs = 1000, // the speed check waits until the voice engine has had nothing to do for this long
+  cpu = processorId(),
   depsCheck = () => checkDeps(),
   fsApi = fs,
 } = {}) {
-  const settingsFile = createJsonFile({ dir: dataDir ? path.join(dataDir, 'senses') : null, name: 'settings-v1.json', log });
+  const sensesDir = dataDir ? path.join(dataDir, 'senses') : null;
+  const settingsFile = createJsonFile({ dir: sensesDir, name: 'settings-v1.json', log });
   let settings = normalize(settingsFile.load());
-  const speakModel = SPEAK_MODELS[speakDtype] ?? SPEAK_MODELS[DEFAULT_SPEAK_DTYPE];
+  // How fast George is here, per model, and the model picked for this processor (senses/speed.mjs).
+  const speedFile = createJsonFile({ dir: sensesDir, name: 'speed-v1.json', log });
+  let speedRecord = normalizeSpeedRecord(speedFile.load());
+  const configuredDtype = SPEAK_MODELS[speakDtype] ? speakDtype : DEFAULT_SPEAK_DTYPE;
+  let speakModel = SPEAK_MODELS[pickDtype({ configured: configuredDtype, auto: autoDtype, record: speedRecord, cpu })];
+  const check = { running: false, trial: null, next: null }; // the speed check after a warm-up; the q8 engine it tries
   const sense = {
     hear: { error: null, firstDownload: false, lastMs: null, gen: 0 },
     speak: { error: null, firstDownload: false, lastMs: null, gen: 0 },
@@ -134,10 +156,10 @@ export function createSenses({
 
   const modelFor = (name) => (name === 'hear' ? HEAR_MODELS[settings.hear.model] : speakModel);
 
-  const common = { cacheDir: modelsDir, engineUrl, engineOptions, nice, threads, idleMs, queueMax, log };
+  const common = { cacheDir: modelsDir, engineUrl, engineOptions, nice, threads, queueMax, log };
   const hosts = {
-    hear: createSenseHost({ ...common, kind: 'hear', getModel: () => modelFor('hear') }),
-    speak: createSenseHost({ ...common, kind: 'speak', getModel: () => modelFor('speak') }),
+    hear: createSenseHost({ ...common, idleMs: hearIdleMs, kind: 'hear', getModel: () => modelFor('hear') }),
+    speak: createSenseHost({ ...common, idleMs: speakIdleMs, kind: 'speak', getModel: () => modelFor('speak') }),
   };
 
   function currentDeps() {
@@ -187,8 +209,16 @@ export function createSenses({
       busy: st.busy,
       queued: st.queued,
       lastMs: sense[name].lastMs,
+      idleMinutes: Math.round((st.idleMs / 60_000) * 100) / 100, // unused this long, the model leaves memory (0: never)
     };
-    if (name === 'speak') out.dtype = model.dtype;
+    if (name === 'speak') {
+      const mine = speedRecord && speedRecord.cpu === cpu ? speedRecord.measured : {};
+      out.dtype = model.dtype;
+      out.rtf = mine[model.dtype]?.rtf ?? null; // seconds of work per second of George, measured on this computer
+      out.measured = Object.fromEntries(Object.entries(mine).map(([d, m]) => [d, m.rtf]));
+      out.measuring = check.running;
+      out.autoDtype = autoDtype;
+    }
     return out;
   }
 
@@ -197,19 +227,24 @@ export function createSenses({
     return { hear: stateOf('hear'), speak: stateOf('speak'), deps: { installed: d.installed, ...(d.missing.length ? { missing: d.missing } : {}) } };
   }
 
+  /** Remove a model's files that are on disk at the wrong size (a download cut short): fetched again, never loaded. */
+  function clearStray(model) {
+    for (const f of strayFiles(fsApi, modelsDir, model)) {
+      try {
+        fsApi.rmSync(f, { force: true });
+      } catch {
+        // the load reports it
+      }
+    }
+  }
+
   /** Download (when needed), load and warm up one sense in the background. */
   function warm(name) {
     if (stopped || !settings[name].enabled) return;
     if (!currentDeps().installed) return;
     const model = modelFor(name);
     sense[name].error = null;
-    for (const f of strayFiles(fsApi, modelsDir, model)) {
-      try {
-        fsApi.rmSync(f, { force: true }); // a download cut short: fetch it again rather than load a broken file
-      } catch {
-        // the load reports it
-      }
-    }
+    clearStray(model);
     const complete = onDisk(fsApi, modelsDir, model).complete;
     const gen = ++sense[name].gen; // a later warm-up (another model, off and on) owns the state from then on
     sense[name].firstDownload = !complete;
@@ -220,6 +255,7 @@ export function createSenses({
         if (gen !== sense[name].gen) return;
         sense[name].firstDownload = false;
         log(`${name === 'hear' ? 'hearing' : 'voice'}: ready (${model.repo} ${model.dtype}; ${Date.now() - started} ms, load ${r?.ms ?? 0} ms, warm-up ${r?.warmMs ?? 0} ms)`);
+        if (name === 'speak' && (r?.ms || r?.warmMs)) checkSpeed(gen); // a fresh engine: time George here
       },
       (err) => {
         if (gen !== sense[name].gen) return;
@@ -244,6 +280,7 @@ export function createSenses({
   function reconcile(name, changed) {
     if (!settings[name].enabled) {
       sense[name].gen += 1;
+      if (name === 'speak') stopTrial();
       hosts[name].unload('turned off');
       sense[name].error = null;
       sense[name].firstDownload = false;
@@ -251,6 +288,132 @@ export function createSenses({
     }
     const st = hosts[name].status();
     if (changed || sense[name].error || (!st.loaded && !st.loading)) warm(name);
+    else if (st.loaded) hosts[name].touch(); // already warm (the app warming up): its idle time starts again
+  }
+
+  // ── How fast George is here (senses/speed.mjs) ──────────────────────────────────────────────────────────
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
+
+  const idle = (host) => {
+    const st = host.status();
+    return !st.busy && !st.queued && !st.loading;
+  };
+
+  /**
+   * Resolve true once every engine in `getHosts()` has had nothing to do (no request running, waiting or
+   * loading) for `quiet` ms, so a measurement never makes the phone wait and nothing else skews it; false
+   * when it went stale or took too long.
+   */
+  async function whenIdle(getHosts, stale, quiet = quietMs, maxWaitMs = 10 * 60_000) {
+    const t0 = Date.now();
+    let idleSince = null;
+    for (;;) {
+      if (stale()) return false;
+      if (getHosts().every(idle)) {
+        idleSince ??= Date.now();
+        if (Date.now() - idleSince >= quiet) return true;
+      } else idleSince = null;
+      if (Date.now() - t0 > maxWaitMs) return false;
+      await sleep(Math.max(10, Math.min(200, quiet || 10)));
+    }
+  }
+
+  /** Time the fixed sentence once on a loaded engine: its real-time factor, or null when it could not run. */
+  async function timeOnce(host, stale) {
+    if (!(await whenIdle(() => [hosts.hear, hosts.speak, host], stale)) || !host.status().loaded) return null;
+    const r = await host.run({ sentences: [BENCH_TEXT], voice: BENCH_VOICE, speed: 1 }, { timeoutMs: BENCH_TIMEOUT_MS });
+    return rtfOf({ ms: r.ms, samples: r.output?.audio?.length, sampleRate: r.output?.sampleRate });
+  }
+
+  /** Twice when the first one is slow (another program may have been busy for a moment): the faster counts. */
+  async function timeEngine(host, stale) {
+    const first = await timeOnce(host, stale);
+    if (first === null || first <= rtfSwitch || stale()) return first;
+    const second = await timeOnce(host, stale);
+    return second === null ? first : Math.min(first, second);
+  }
+
+  function record(dtype, rtf) {
+    speedRecord = withMeasurement(speedRecord, cpu, dtype, rtf);
+    speedFile.save(speedRecord);
+  }
+
+  /** The model picked for this processor: loaded straight away after a restart. */
+  function decide(dtype) {
+    speedRecord = { ...(speedRecord?.cpu === cpu ? structuredClone(speedRecord) : { v: 1, cpu, measured: {} }), dtype };
+    speedFile.save(speedRecord);
+  }
+
+  function stopTrial() {
+    const t = check.trial;
+    check.trial = null;
+    if (t) t.stop().catch(() => {});
+  }
+
+  /** After a warm-up that loaded George: time him, and when fp32 is slow here, see whether q8 is faster. */
+  async function checkSpeed(gen) {
+    if (!speedCheck) return;
+    if (check.running) {
+      check.next = gen; // a newer warm-up while an older check winds down: it runs next
+      return;
+    }
+    const stale = () => stopped || gen !== sense.speak.gen || !settings.speak.enabled;
+    check.running = true;
+    check.next = null;
+    try {
+      const dtype = speakModel.dtype;
+      const rtf = await timeEngine(hosts.speak, stale);
+      if (rtf === null || stale()) return;
+      record(dtype, rtf);
+      log(`voice: George speaks at ${rtf}x real time on this computer (${dtype}; under 1 is faster than he talks)`);
+      if (!shouldTryQ8({ auto: autoDtype, dtype, rtf, record: speedRecord, cpu, threshold: rtfSwitch })) return;
+      await tryQ8(rtf, stale);
+    } catch (err) {
+      if (!stale()) log(`voice: timing George failed: ${String(err?.message ?? err).slice(0, 200)}`);
+    } finally {
+      stopTrial();
+      check.running = false;
+      const next = check.next;
+      check.next = null;
+      if (next !== null && next === sense.speak.gen && !stopped) checkSpeed(next);
+    }
+  }
+
+  /** fp32 is slower than rtfSwitch here: load the 8-bit model beside it (downloading it once), time it, keep the faster. */
+  async function tryQ8(fp32Rtf, stale) {
+    const q8 = SPEAK_MODELS.q8;
+    clearStray(q8);
+    const download = !onDisk(fsApi, modelsDir, q8).complete;
+    log(`voice: slower than ${rtfSwitch}x real time with fp32; trying Kokoro's 8-bit model${download ? ` (downloading ${q8.repo} q8, about ${sizeMb(q8)} MB)` : ''}`);
+    const trial = createSenseHost({ ...common, idleMs: speakIdleMs, kind: 'speak', getModel: () => q8 });
+    check.trial = trial;
+    try {
+      await trial.load();
+    } catch (err) {
+      if (!stale()) log(`voice: the 8-bit model could not be loaded (${String(err?.message ?? err).slice(0, 200)}); keeping fp32`);
+      return;
+    }
+    if (stale() || check.trial !== trial) return;
+    const q8Rtf = await timeEngine(trial, stale);
+    if (q8Rtf === null || stale()) return;
+    record('q8', q8Rtf);
+    if (!prefersQ8(fp32Rtf, q8Rtf)) {
+      decide('fp32');
+      log(`voice: keeping fp32: the 8-bit model is not faster on this computer (${q8Rtf}x against ${fp32Rtf}x real time)`);
+      return;
+    }
+    // Hand George over once the fp32 engine is idle (a sentence in progress finishes first). From the check on,
+    // nothing runs in between: a request that comes later goes to the 8-bit engine.
+    do {
+      if (!(await whenIdle(() => [hosts.speak], stale, 0))) return;
+    } while (!idle(hosts.speak));
+    const old = hosts.speak;
+    hosts.speak = trial;
+    check.trial = null;
+    speakModel = q8;
+    decide('q8');
+    old.stop().catch(() => {});
+    log(`voice: switched to Kokoro's 8-bit model (q8): ${q8Rtf}x real time against ${fp32Rtf}x for fp32; it stays George's model on this computer`);
   }
 
   async function put(body) {
@@ -343,11 +506,17 @@ export function createSenses({
       }, startDelayMs);
       startTimer.unref?.();
     },
+    /** How fast George is on this computer: { cpu, dtype?, measured: { fp32?: {rtf, at}, q8?: {rtf, at} } } or null. */
+    get speed() {
+      return speedRecord ? structuredClone(speedRecord) : null;
+    },
     async stop() {
       stopped = true;
       if (startTimer) clearTimeout(startTimer);
-      await Promise.all([hosts.hear.stop(), hosts.speak.stop()]);
-      await settingsFile.flush();
+      const trial = check.trial;
+      check.trial = null;
+      await Promise.all([hosts.hear.stop(), hosts.speak.stop(), trial?.stop()]);
+      await Promise.all([settingsFile.flush(), speedFile.flush()]);
     },
   };
 }

@@ -21,6 +21,12 @@
 //   JARVIS_CORE_CLAUDE_BASE_URL                         tests only: a loopback Claude API stand-in
 //                                                       (anything but https://api.anthropic.com or a
 //                                                       127.0.0.1 / localhost address is refused)
+//   JARVIS_CORE_HEAR_IDLE_MINUTES                       hearing: minutes an unused model stays in memory
+//                                                       (default 30; 0 = until it is turned off)
+//   JARVIS_CORE_SPEAK_IDLE_MINUTES                      George's voice: the same (default 360, 6 hours)
+//   JARVIS_CORE_SPEAK_DTYPE                             George's model: auto (default: fp32, or q8 where it
+//                                                       measured faster), fp32 or q8
+//   (the config file's "senses": {"hearIdleMinutes", "speakIdleMinutes", "speakDtype"} does the same)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -139,6 +145,45 @@ function parseNight(v) {
   return m ? { enabled: true, start: m[1], end: m[2] } : { invalid: String(v) };
 }
 
+const IDLE_MAX_MINUTES = 7 * 24 * 60;
+
+/**
+ * Hearing and voice: how long an unused model stays in memory (minutes; 0 keeps it until the sense is turned
+ * off) and George's model (auto, fp32 or q8). From the config file's "senses" object, then the environment.
+ * Returns only what was set, as createSenses() options ({ hearIdleMs, speakIdleMs, speakDtype }).
+ */
+export function sensesConfig(fileSenses, env = {}, warnings = []) {
+  const out = {};
+  if (fileSenses !== undefined && !isObj(fileSenses)) warnings.push('config file key "senses" should be an object like {"speakIdleMinutes": 360} (ignored)');
+  const file = isObj(fileSenses) ? fileSenses : {};
+  for (const k of Object.keys(file)) if (!['hearIdleMinutes', 'speakIdleMinutes', 'speakDtype'].includes(k)) warnings.push(`config file key "senses.${k}" is not supported (ignored)`);
+  // The environment wins over the file; a value that doesn't fit is reported and the next one is used.
+  const candidates = (envName, fileKey) => [
+    ...(env[envName] !== undefined && env[envName] !== '' ? [[env[envName], envName]] : []),
+    ...(file[fileKey] !== undefined ? [[file[fileKey], `senses.${fileKey}`]] : []),
+  ];
+  for (const [option, envName, fileKey] of [['hearIdleMs', 'JARVIS_CORE_HEAR_IDLE_MINUTES', 'hearIdleMinutes'], ['speakIdleMs', 'JARVIS_CORE_SPEAK_IDLE_MINUTES', 'speakIdleMinutes']]) {
+    for (const [value, name] of candidates(envName, fileKey)) {
+      const n = typeof value === 'number' ? value : String(value).trim() === '' ? NaN : Number(String(value).trim());
+      if (Number.isFinite(n) && n >= 0 && n <= IDLE_MAX_MINUTES) {
+        out[option] = Math.round(n * 60_000);
+        break;
+      }
+      warnings.push(`${name} "${value}" should be minutes from 0 to ${IDLE_MAX_MINUTES} (0 keeps the model in memory) (ignored)`);
+    }
+  }
+  for (const [value, name] of candidates('JARVIS_CORE_SPEAK_DTYPE', 'speakDtype')) {
+    const v = String(value).trim().toLowerCase();
+    if (v === 'fp32' || v === 'q8') out.speakDtype = v;
+    else if (v !== 'auto') {
+      warnings.push(`${name} "${value}" should be auto, fp32 or q8 (ignored)`);
+      continue;
+    }
+    break;
+  }
+  return out;
+}
+
 /**
  * Build the configuration. Returns { config, warnings, errors, help, version }. `errors` are fatal
  * (e.g. a non-loopback host); warnings are printed and ignored.
@@ -160,13 +205,15 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   } catch (err) {
     if (err?.code !== 'ENOENT') warnings.push(`could not read ${configFile}: ${err?.message ?? err} (using defaults)`);
   }
-  const allowedFileKeys = new Set(['ownerName', 'locale', 'port', 'dataDir', 'dashboardDir', 'night', 'allowedOrigins', 'tailscaleLogins', 'thresholds', 'gpuMissingLevel', 'smartSudo', 'limits', 'intervals', 'siteUrl', 'siteSwUrl', 'apiUrl', 'internetUrls', 'dnsHost', 'persist']);
+  const allowedFileKeys = new Set(['ownerName', 'locale', 'port', 'dataDir', 'dashboardDir', 'night', 'allowedOrigins', 'tailscaleLogins', 'thresholds', 'gpuMissingLevel', 'smartSudo', 'limits', 'intervals', 'siteUrl', 'siteSwUrl', 'apiUrl', 'internetUrls', 'dnsHost', 'persist', 'senses']);
   for (const k of Object.keys(fileCfg)) {
     if (!allowedFileKeys.has(k)) {
       warnings.push(`config file key "${k}" is not supported (ignored)`);
       delete fileCfg[k];
     }
   }
+  const fileSenses = fileCfg.senses;
+  delete fileCfg.senses; // checked below, key by key
   let cfg = deepMerge(structuredClone(DEFAULTS), fileCfg);
 
   // 2. environment, 3. flags (flags win)
@@ -247,6 +294,7 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
     if (base) cfg.claudeBase = base;
     else warnings.push('JARVIS_CORE_CLAUDE_BASE_URL must be https://api.anthropic.com or a 127.0.0.1 / localhost address (ignored)');
   }
+  cfg.senses = sensesConfig(fileSenses, env, warnings);
 
   return { config: cfg, warnings, errors, help: !!flags.help, version: !!flags.version, configFile };
 }
@@ -272,5 +320,7 @@ Usage: node core/server/main.mjs [options]
 Environment variables JARVIS_CORE_PORT, JARVIS_CORE_FIXTURE, JARVIS_CORE_TIME_SCALE, JARVIS_CORE_START,
 JARVIS_CORE_DATA_DIR, JARVIS_CORE_DASHBOARD_DIR, JARVIS_CORE_OWNER and JARVIS_CORE_NIGHT do the same.
 JARVIS_CORE_SECRETS_DIR: where the brain keeps the Claude API key (default ~/.config/jarvis-core/secrets).
+JARVIS_CORE_HEAR_IDLE_MINUTES / JARVIS_CORE_SPEAK_IDLE_MINUTES: how long an unused hearing / voice model stays
+in memory (default 30 / 360; 0 keeps it). JARVIS_CORE_SPEAK_DTYPE: George's model, auto (default), fp32 or q8.
 Optional settings file: ~/.config/jarvis-core/config.json
 `;
