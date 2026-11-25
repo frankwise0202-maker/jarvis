@@ -102,7 +102,7 @@ export function createSenseHost({
       stdout: false,
       stderr: false,
     });
-    w.unref(); // never keeps the Core (or a test) alive by itself
+    w.unref(); // an idle engine never keeps the Core (or a test) alive; call() holds it while a reply is due
     w.on('message', (msg) => {
       if (msg?.type === 'progress') {
         progress = { loaded: msg.loaded, total: msg.total };
@@ -116,6 +116,7 @@ export function createSenseHost({
       const p = pending.get(msg?.id);
       if (!p) return;
       pending.delete(msg.id);
+      if (!pending.size) w.unref();
       if (msg.type === 'error') p.reject(new SenseError(500, 'engine_failed', msg.message || 'the speech engine failed'));
       else p.resolve(msg);
     });
@@ -143,10 +144,12 @@ export function createSenseHost({
     const id = ++seq;
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
+      w.ref();
       try {
         w.postMessage({ type, id, ...payload }, transfer);
       } catch (err) {
         pending.delete(id);
+        if (!pending.size) w.unref();
         reject(err);
       }
     });
