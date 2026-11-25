@@ -721,6 +721,9 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     else if (current === 'watching') loadWatchers().then(() => schedulePoll());
     else if (current === 'spending') {
       renderSpend();
+      // v7.8.1: today's and this month's totals from a fresh reading too (they re-render when it lands), so
+      // they agree with the days below, which loadSpend() reads fresh: the snapshot can be minutes old.
+      brain.load({ force: true });
       loadSpend();
     }
   }
