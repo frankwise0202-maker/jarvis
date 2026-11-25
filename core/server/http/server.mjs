@@ -10,6 +10,7 @@
 //   GET  /api/fixture, POST /api/fixture { scenario }   fixture mode only: see or switch the scenario
 //   /api/brain, /api/spend, /api/jobs, /api/watchers, /api/briefing, /api/push, /api/sync
 //                                       the home base brain, push and sync: http/brain-routes.mjs
+//   /api/senses, /api/hear, /api/speak  hearing and George's voice (opt-in): http/senses-routes.mjs
 //   GET  /*                             static files (the dashboard)
 //
 // Every request passes the access check (http/access.mjs) and the origin check first. The SSE stream also
@@ -22,6 +23,7 @@ import { createSseHub } from './sse.mjs';
 import { createStatic } from './static.mjs';
 import { RANGES, SERIES_NAMES } from '../history.mjs';
 import { createBrainRoutes, isBrainRoute } from './brain-routes.mjs';
+import { createSensesRoutes, isSensesRoute } from './senses-routes.mjs';
 import { redact } from '../brain/util.mjs';
 
 /** How long a request may take to arrive (headers and body); an upload to PUT /api/sync/* gets longer. */
@@ -100,7 +102,7 @@ function readBody(req, limit) {
  *   info(access)       the /api/info body
  *   fixture            { get(), set(name) } in fixture mode, else null
  */
-export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {}, getBrain = () => null, getPush = () => null, getSync = () => null }) {
+export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {}, getBrain = () => null, getPush = () => null, getSync = () => null, getSenses = () => null }) {
   const limits = config.limits;
   const askLimiter = createRateLimiter({ capacity: limits.askBurst, refillPerSec: limits.askPerMinute / 60 });
   const apiLimiter = createRateLimiter({ capacity: limits.apiBurst, refillPerSec: limits.apiPerSecond });
@@ -127,6 +129,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     for (const name of ['job', 'watcher', 'briefing', 'spend']) brainDetach.push(brain.on(name, (payload) => sse.broadcast(name, () => redact(JSON.stringify(payload)))));
   }
   const brainRoutes = createBrainRoutes({ getBrain, getPush, getSync, readBody, sendJson, HttpError, log });
+  const sensesRoutes = createSensesRoutes({ getSenses, readBody, sendJson, HttpError, log });
 
   function accessOptions() {
     // The port a direct request's Host must name: the one actually bound (tests listen on port 0).
@@ -247,6 +250,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     }
 
     if (isBrainRoute(route)) return brainRoutes.handle(req, res, { route, method, url, access, cors });
+    if (isSensesRoute(route)) return sensesRoutes.handle(req, res, { route, method, url, access, cors });
 
     const known = ['/api/ping', '/api/status', '/api/history', '/api/events', '/api/stream', '/api/info', '/api/ask'];
     if (known.includes(route)) throw new HttpError(405, 'method_not_allowed', `${req.method} is not supported here`, { Allow: route === '/api/ask' ? 'POST, OPTIONS' : 'GET, HEAD, OPTIONS' });
