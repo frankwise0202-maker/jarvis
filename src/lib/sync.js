@@ -9,9 +9,13 @@
 //   · missing here but this device had it before (the owner deleted it here): left out, so a
 //     deletion is never undone by another device's copy (and never spreads to it either);
 //   · on both: the newer updatedAt wins, except that a conversation never loses turns: when the two
-//     copies went different ways (each has turns the other lacks), this device keeps its own and
-//     the other device's version is kept next to it as "<title> (from <device>)", one copy per
-//     device (MIRROR_MARK), updated as that device goes on. Those copies are never passed on.
+//     copies went different ways (each has turns the other lacks, or a reply finished or resumed
+//     on one is still cut short in the other's copy), this device keeps its own and the other
+//     device's version is kept next to it as "<title> (from <device>)", one copy per device
+//     (MIRROR_MARK), updated as that device goes on. Those copies are never passed on. One the
+//     owner carried on here is never written over: at the next sync it becomes an ordinary
+//     conversation of its own ("<title> (from <device>, continued on <this device>)", synced like
+//     any other) and the "(from <device>)" copy follows that device again.
 // Every step is idempotent (the same backup merged twice changes nothing), so a sync cut off half
 // way (the app closed) just carries on next time.
 
@@ -22,6 +26,8 @@ export const SYNC_MAX_BYTES = 50 * 1024 * 1024;
 export const DEVICE_ID_RE = /^[a-z0-9-]{8,64}$/;
 /** A conversation id with this in it is another device's version of a conversation (see the header). */
 export const MIRROR_MARK = '~sync-';
+/** The id of such a copy carried on here, once it is a conversation of its own: never a mirror. */
+export const FORK_MARK = '~kept-';
 /** While the app is open: a sync every 10 minutes, and 2 minutes after the last change. */
 export const SYNC_INTERVAL_MS = 10 * 60 * 1000;
 export const SYNC_DEBOUNCE_MS = 2 * 60 * 1000;
@@ -56,6 +62,25 @@ export function mirrorIdOf(id, deviceId) {
 export function mirrorTitle(title, label) {
   const t = typeof title === 'string' && title.trim() ? title.trim() : 'Conversation';
   return `${t} (from ${cleanLine(label, LABEL_MAX) || 'another device'})`;
+}
+
+/**
+ * The id that copy (`mirrorId`, as it was at `at`) takes once the owner carried it on here and it
+ * becomes a conversation of its own: ordinary (never MIRROR_MARK, so it syncs like any other) and
+ * the same for the same copy (a sync cut off half way writes the same one again). '' when too long.
+ */
+export function forkIdOf(id, deviceId, at) {
+  const dev = typeof deviceId === 'string' ? deviceId.replace(/[^a-z0-9]/g, '').slice(-8) : '';
+  const out = `${id}${FORK_MARK}${dev || 'device'}-${Number.isFinite(at) ? Math.max(0, Math.round(at)) : 0}`;
+  return typeof id === 'string' && id && out.length <= 200 && !isMirrorId(out) ? out : '';
+}
+
+/** Its title: "<title> (from Mac, continued on iPhone)". */
+export function forkTitle(title, label, selfLabel) {
+  const t = typeof title === 'string' && title.trim() ? title.trim() : 'Conversation';
+  const from = cleanLine(label, LABEL_MAX) || 'another device';
+  const here = cleanLine(selfLabel, LABEL_MAX);
+  return here ? `${t} (from ${from}, continued on ${here})` : `${t} (from ${from}, continued)`;
 }
 
 /**
@@ -129,17 +154,43 @@ function turnIds(c) {
 }
 
 /**
- * What to do with another device's conversation. remote: { id, updatedAt, turnIds }; local: the
- * same for this device's copy, or null; known: this device had that id before; busy: it is running
- * here (or in another window) right now.
+ * Did Jarvis's reply `a` get further than `b`, another copy of the same turn? A reply cut short and
+ * later resumed keeps its turn id, so the ids alone can't tell (an import is never resumable, so a
+ * turn only ever finishes on the device that started it): finished against unfinished, or ended
+ * later. Turns are { id, role, status, endedAt }.
+ */
+export function turnAhead(a, b) {
+  if (!isObj(a) || !isObj(b) || a.role === 'user' || b.role === 'user') return false;
+  if (a.status === 'done' && b.status !== 'done') return true;
+  if (b.status === 'done' && a.status !== 'done') return false;
+  const ea = typeof a.endedAt === 'number' && Number.isFinite(a.endedAt) ? a.endedAt : null;
+  const eb = typeof b.endedAt === 'number' && Number.isFinite(b.endedAt) ? b.endedAt : null;
+  return ea !== null && eb !== null && ea > eb;
+}
+
+/** Has copy `x` a turn that got further than `y`'s copy of it? (Both { turns: [...] }; none: no.) */
+function aheadOf(x, y) {
+  if (!x || !y || !Array.isArray(x.turns) || !Array.isArray(y.turns)) return false;
+  const theirs = new Map();
+  for (const t of y.turns) if (isObj(t) && typeof t.id === 'string') theirs.set(t.id, t);
+  for (const t of x.turns) if (isObj(t) && typeof t.id === 'string' && theirs.has(t.id) && turnAhead(t, theirs.get(t.id))) return true;
+  return false;
+}
+
+/**
+ * What to do with another device's conversation. remote: { id, updatedAt, turnIds, turns? } (turns:
+ * [{ id, role, status, endedAt }]); local: the same for this device's copy, or null; known: this
+ * device had that id before; busy: it is running here (or in another window) right now.
  *   'pass'      another device's version of a conversation (MIRROR_MARK): never passed on
  *   'deleted'   missing here, but this device had it: the owner deleted it here, so it stays away
  *   'add'       missing here: added
  *   'busy'      running here: left for the next sync
  *   'same'      the same version
- *   'replace'   the other device's is newer and has every turn this one has: it replaces it
+ *   'replace'   the other device's is newer, has every turn this one has, and none of this one's
+ *               replies got further here (finished or resumed): it replaces it
  *   'mirror'    the two went different ways: theirs is kept next to this device's own
- *   'older'     this device's is newer and has every turn of theirs: nothing to do
+ *   'older'     this device's is newer, has every turn of theirs and none of theirs got further
+ *               there: nothing to do
  */
 export function conversationAction({ remote, local, known = false, busy = false } = {}) {
   if (!isObj(remote) || typeof remote.id !== 'string' || !remote.id) return 'pass';
@@ -151,19 +202,29 @@ export function conversationAction({ remote, local, known = false, busy = false 
   const theirs = turnIds(remote);
   if (remote.updatedAt > local.updatedAt) {
     for (const id of mine) if (!theirs.has(id)) return 'mirror';
+    // A reply finished here after the other device took its copy (resumed under the same turn id).
+    if (aheadOf(local, remote)) return 'mirror';
     return 'replace';
   }
   for (const id of theirs) if (!mine.has(id)) return 'mirror';
+  if (aheadOf(remote, local)) return 'mirror';
   return 'older';
 }
 
 /**
  * What to do with another device's version of a conversation that went a different way (see
- * 'mirror' above), given this device's copy of that version (null when there is none yet).
+ * 'mirror' above), given this device's copy of that version (null when there is none yet):
+ *   'add' | 'deleted' (as above) | 'same' | 'replace' (theirs is newer: the copy follows it) |
+ *   'fork'  the owner carried the copy on here (it has turns theirs lacks): it is never written
+ *           over, but kept whole as a conversation of its own (forkIdOf), and the copy follows
+ *           that device again.
  */
 export function mirrorAction({ remote, mirror, known = false } = {}) {
   if (!isObj(mirror)) return known ? 'deleted' : 'add';
-  return remote && remote.updatedAt > mirror.updatedAt ? 'replace' : 'same';
+  if (!isObj(remote) || remote.updatedAt === mirror.updatedAt) return 'same';
+  const theirs = turnIds(remote);
+  for (const id of turnIds(mirror)) if (!theirs.has(id)) return 'fork';
+  return remote.updatedAt > mirror.updatedAt ? 'replace' : 'same';
 }
 
 // ---- words ---------------------------------------------------------------------------------------

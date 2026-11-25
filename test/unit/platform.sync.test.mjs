@@ -134,6 +134,103 @@ test('sync merge: two devices that went different ways keep both versions, the o
   assert.deepEqual(r.ids, ['x', `x~sync-${MAC}`]);
 });
 
+test('sync merge: turns the owner typed into a "(from Mac)" copy here are never written over; that copy becomes a conversation of its own and syncs like any other (SYNC-1)', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async ({ MAC }) => {
+    const { db, backup } = window.__mods;
+    // Asked on both devices after the last sync: the two went different ways.
+    await db.saveConversation(conv('x', 5000, ['Plan the trip', 'Asked on this iPhone']));
+    const theirs = conv('x', 6000, ['Plan the trip', 'Asked on the Mac']);
+    theirs.turns[2].id = 'x-u-mac';
+    theirs.turns[3].id = 'x-j-mac';
+    const first = await backup.mergeSyncedBackup(backupOf({ conversations: [theirs] }), { from: MAC, label: 'Mac', selfLabel: 'iPhone', known: known({ conv: ['x'] }) });
+    const mirrorId = `x~sync-${MAC}`;
+    // The owner opens "Plan the trip (from Mac)" in History here and asks a follow-up in it.
+    const copy = await db.getConversation(mirrorId);
+    copy.turns.push({ id: 'x-u-phone-in-copy', role: 'user', text: 'Typed on the iPhone in the Mac copy', mode: 'auto', createdAt: 7000 }, { ...copy.turns[1], id: 'x-j-phone-in-copy', segments: [{ id: 's', kind: 'text', text: 'Answer only this iPhone has', req: 0, citations: [] }] });
+    copy.updatedAt = 7000;
+    await db.saveConversation(copy);
+    // Later the Mac goes on with its own version and uploads it.
+    const later = JSON.parse(JSON.stringify(theirs));
+    later.updatedAt = 8000;
+    later.turns.push({ id: 'x-u-mac2', role: 'user', text: 'More on the Mac', mode: 'auto', createdAt: 7900 }, { ...theirs.turns[1], id: 'x-j-mac2' });
+    const knownNow = ['x', ...first.written.conv];
+    const second = await backup.mergeSyncedBackup(backupOf({ conversations: [later] }), { from: MAC, label: 'Mac', selfLabel: 'iPhone', known: known({ conv: knownNow }) });
+    const again = await backup.mergeSyncedBackup(backupOf({ conversations: [later] }), { from: MAC, label: 'Mac', selfLabel: 'iPhone', known: known({ conv: [...knownNow, ...second.written.conv] }) });
+    const userTexts = async (id) => ((await db.getConversation(id)) || { turns: [] }).turns.filter((t) => t.role === 'user').map((t) => t.text);
+    const forkId = second.forked.length ? second.forked[0].to : '';
+    const fork = forkId ? await db.getConversation(forkId) : null;
+    // The fork is an ordinary conversation: this device's next backup carries it to the Mac, which adds it.
+    const out = await backup.buildSyncBackup();
+    const exported = JSON.parse(out.json).conversations.map((c) => c.id);
+    return {
+      second: second.conversations,
+      forked: second.forked,
+      written: second.written.conv,
+      again: again.conversations,
+      own: await userTexts('x'),
+      mirror: await userTexts(mirrorId),
+      fork: fork ? { title: fork.title, userTexts: await userTexts(forkId), updatedAt: fork.updatedAt, answer: fork.turns[fork.turns.length - 1].segments[0].text } : null,
+      exported,
+      ids: await ids(),
+    };
+  }, { MAC });
+  const mirrorId = `x~sync-${MAC}`;
+  assert.ok(r.fork, `the copy carried on here was kept: ${JSON.stringify(r)}`);
+  assert.deepEqual(r.fork.userTexts, ['Plan the trip', 'Asked on the Mac', 'Typed on the iPhone in the Mac copy'], 'the iPhone’s turns in the copy survive');
+  assert.equal(r.fork.answer, 'Answer only this iPhone has');
+  assert.equal(r.fork.title, 'Plan the trip (from Mac, continued on iPhone)');
+  assert.equal(r.fork.updatedAt, 7000);
+  assert.deepEqual(r.forked, [{ from: mirrorId, to: r.forked[0].to }]);
+  assert.ok(!r.forked[0].to.includes('~sync-'), 'an ordinary conversation: synced like any other');
+  assert.deepEqual(r.mirror, ['Plan the trip', 'Asked on the Mac', 'More on the Mac'], 'the "(from Mac)" copy follows the Mac again');
+  assert.deepEqual(r.own, ['Plan the trip', 'Asked on this iPhone'], 'this device’s own version is untouched');
+  assert.deepEqual(r.written.sort(), [mirrorId, r.forked[0].to].sort(), 'both known, so a later deletion here stays deleted');
+  assert.deepEqual(r.again, [], 'the same backup again changes nothing');
+  assert.ok(r.exported.includes(r.forked[0].to), 'the fork goes out in this device’s backup');
+  assert.deepEqual(r.ids, ['x', r.forked[0].to, mirrorId].sort());
+});
+
+test('sync merge: a reply finished here after it was synced cut short is never replaced by the other device’s cut-short copy; each device keeps the other’s version (SYNC-2)', async () => {
+  const page = await newPage();
+  const r = await page.evaluate(async ({ MAC }) => {
+    const { db, backup } = window.__mods;
+    // This iPhone: the second reply was cut short, synced, then resumed here and finished.
+    const mine = conv('y', 7000, ['Compare two cars', 'Which is safer?']);
+    mine.turns[3].segments = [{ id: 's', kind: 'text', text: 'FULL ANSWER FINISHED ON THE IPHONE', req: 0, citations: [] }];
+    await db.saveConversation(mine);
+    // The Mac had pulled the cut-short copy and asked something new (before pulling the finished one).
+    const theirs = conv('y', 8000, ['Compare two cars', 'Which is safer?', 'And cheaper to insure?']);
+    theirs.turns[3].status = 'interrupted';
+    theirs.turns[3].endedAt = 6000;
+    theirs.turns[3].segments = [{ id: 's', kind: 'text', text: 'Partial…', req: 0, citations: [] }];
+    const res = await backup.mergeSyncedBackup(backupOf({ conversations: [theirs] }), { from: MAC, label: 'Mac', known: known({ conv: ['y'] }) });
+    const own = await db.getConversation('y');
+    const kept = await db.getConversation(`y~sync-${MAC}`);
+    return { written: res.conversations, mirrors: res.mirrors, j1: own.turns[3].segments.map((s) => s.text).join(' '), j1Status: own.turns[3].status, kept: kept ? { title: kept.title, users: kept.turns.filter((t) => t.role === 'user').length } : null };
+  }, { MAC });
+  assert.equal(r.j1, 'FULL ANSWER FINISHED ON THE IPHONE', `the finished reply was replaced: ${JSON.stringify(r)}`);
+  assert.equal(r.j1Status, 'done');
+  assert.deepEqual(r.kept, { title: 'Compare two cars (from Mac)', users: 3 }, 'the Mac’s new question is kept next to it');
+  // The Mac's side: the iPhone's finished copy (older by its time) still comes in, next to the Mac's own.
+  const mac = await newPage();
+  const m = await mac.evaluate(async ({ IPHONE }) => {
+    const { db, backup } = window.__mods;
+    const macs = conv('y', 8000, ['Compare two cars', 'Which is safer?', 'And cheaper to insure?']);
+    macs.turns[3].status = 'stopped';
+    macs.turns[3].endedAt = 6000;
+    macs.turns[3].segments = [{ id: 's', kind: 'text', text: 'Partial…', req: 0, citations: [] }];
+    await db.saveConversation(macs);
+    const iphones = conv('y', 7000, ['Compare two cars', 'Which is safer?']);
+    iphones.turns[3].segments = [{ id: 's', kind: 'text', text: 'FULL ANSWER FINISHED ON THE IPHONE', req: 0, citations: [] }];
+    const res = await backup.mergeSyncedBackup(backupOf({ conversations: [iphones] }), { from: IPHONE, label: 'iPhone', known: known({ conv: ['y'] }) });
+    const kept = await db.getConversation(`y~sync-${IPHONE}`);
+    return { written: res.conversations, own: (await db.getConversation('y')).turns.length, kept: kept ? kept.turns[3].segments.map((s) => s.text).join(' ') : null };
+  }, { IPHONE: 'jd-iphone0000001' });
+  assert.equal(m.own, 6, 'the Mac’s own version is untouched');
+  assert.equal(m.kept, 'FULL ANSWER FINISHED ON THE IPHONE', 'the finished answer reaches the Mac too');
+});
+
 test('sync merge: what this device deleted (a conversation, a saved item, a forgotten fact) is never brought back; their deletions never delete here', async () => {
   const page = await newPage();
   const r = await page.evaluate(async ({ MAC }) => {

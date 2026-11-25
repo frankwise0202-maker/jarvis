@@ -16,6 +16,9 @@ import {
   devicesToPull,
   conversationAction,
   mirrorAction,
+  turnAhead,
+  forkIdOf,
+  forkTitle,
   syncProblem,
   lastSyncedText,
   formatMegabytes,
@@ -118,6 +121,52 @@ test('sync: conversation conflicts — the newer wins, a conversation never lose
   assert.equal(mirrorAction({ remote: r(7, []), mirror: null, known: true }), 'deleted');
   assert.equal(mirrorAction({ remote: r(7, []), mirror: r(6, []) }), 'replace');
   assert.equal(mirrorAction({ remote: r(7, []), mirror: r(7, []) }), 'same');
+});
+
+test('sync: a "(from Mac)" copy the owner carried on here is never written over: it becomes a conversation of its own (SYNC-1)', () => {
+  const r = (updatedAt, turnIds, id = 'c1') => ({ id, updatedAt, turnIds });
+  // The copy has turns the Mac's version lacks (typed into it here): never replaced, whichever is newer.
+  assert.equal(mirrorAction({ remote: r(8, ['a', 'mac', 'mac2']), mirror: r(7, ['a', 'mac', 'phone']) }), 'fork');
+  assert.equal(mirrorAction({ remote: r(6, ['a', 'mac']), mirror: r(7, ['a', 'mac', 'phone']) }), 'fork');
+  assert.equal(mirrorAction({ remote: r(7, ['a', 'mac']), mirror: r(7, ['a', 'mac', 'phone']) }), 'same', 'the same version: nothing to do');
+  // Only the Mac's version moved on: the copy follows it.
+  assert.equal(mirrorAction({ remote: r(8, ['a', 'mac', 'mac2']), mirror: r(7, ['a', 'mac']) }), 'replace');
+  assert.equal(mirrorAction({ remote: r(6, ['a']), mirror: r(7, ['a']) }), 'same');
+  // Its id: ordinary (synced like any other, never a mirror), the same for the same copy, bounded.
+  const id = forkIdOf('x', 'jd-mac0000000001', 7000);
+  assert.equal(id, 'x~kept-00000001-7000');
+  assert.equal(isMirrorId(id), false);
+  assert.equal(forkIdOf('x', 'jd-mac0000000001', 7000), id);
+  assert.notEqual(forkIdOf('x', 'jd-mac0000000001', 7001), id);
+  assert.equal(forkIdOf('x'.repeat(199), 'jd-mac0000000001', 7000), '', 'too long: no id');
+  assert.equal(forkTitle('Plan the trip', 'Mac', 'iPhone'), 'Plan the trip (from Mac, continued on iPhone)');
+  assert.equal(forkTitle('', 'Mac', ''), 'Conversation (from Mac, continued)');
+});
+
+test('sync: a reply finished (resumed) on one device is never replaced by the other’s cut-short copy of it (SYNC-2)', () => {
+  const t = (id, status, endedAt, role = 'jarvis') => ({ id, role, status, endedAt });
+  const c = (updatedAt, turns, id = 'y') => ({ id, updatedAt, turnIds: turns.map((x) => x.id), turns });
+  // Finished against unfinished, or ended later: further. User turns never count.
+  assert.equal(turnAhead(t('j1', 'done', 7000), t('j1', 'stopped', 5000)), true);
+  assert.equal(turnAhead(t('j1', 'done', 5000), t('j1', 'interrupted', 6000)), true, 'finished beats cut short, whatever the times');
+  assert.equal(turnAhead(t('j1', 'stopped', 5000), t('j1', 'done', 7000)), false);
+  assert.equal(turnAhead(t('j1', 'stopped', 6000), t('j1', 'stopped', 5000)), true, 'resumed and cut short again later');
+  assert.equal(turnAhead(t('j1', 'done', 5000), t('j1', 'done', 5000)), false);
+  assert.equal(turnAhead(t('u1', undefined, undefined, 'user'), t('u1', undefined, undefined, 'user')), false);
+  assert.equal(turnAhead(t('j1', 'done', 5000), t('j1', 'done', undefined)), false, 'no time: not further');
+  // The iPhone finished j1 after the Mac took its cut-short copy; the Mac then asked something new.
+  const iphone = c(7000, [t('u0', null, null, 'user'), t('j0', 'done', 1000), t('u1', null, null, 'user'), t('j1', 'done', 6900)]);
+  const mac = c(8000, [t('u0', null, null, 'user'), t('j0', 'done', 1000), t('u1', null, null, 'user'), t('j1', 'stopped', 5000), t('u2', null, null, 'user'), t('j2', 'done', 7900)]);
+  assert.equal(conversationAction({ remote: mac, local: iphone }), 'mirror', 'on the iPhone: its finished answer stays, the Mac’s version is kept next to it');
+  assert.equal(conversationAction({ remote: iphone, local: mac }), 'mirror', 'on the Mac: the iPhone’s finished answer is kept next to its own');
+  // The usual case: the Mac finished nothing here and simply moved on: replaced as before.
+  const macLater = c(8000, [t('u0', null, null, 'user'), t('j0', 'done', 1000), t('u1', null, null, 'user'), t('j1', 'done', 6900), t('u2', null, null, 'user'), t('j2', 'done', 7900)]);
+  assert.equal(conversationAction({ remote: macLater, local: iphone }), 'replace');
+  assert.equal(conversationAction({ remote: iphone, local: macLater }), 'older');
+  // The other device's copy of a reply that finished there later (it started it): replaced as before.
+  const iphoneCut = c(7000, [t('u0', null, null, 'user'), t('j0', 'stopped', 1000)]);
+  const macDone = c(8000, [t('u0', null, null, 'user'), t('j0', 'done', 7500)]);
+  assert.equal(conversationAction({ remote: macDone, local: iphoneCut }), 'replace');
 });
 
 test('sync: every failure in a sentence (a 1.0 Core, too big, unreachable, down, refused, busy, full, rate)', () => {

@@ -282,7 +282,7 @@ export function createSync({
       let res = null;
       suppress++;
       try {
-        res = await data.merge(got.data, { from: d.id, label: d.label, known, isBusy });
+        res = await data.merge(got.data, { from: d.id, label: d.label, selfLabel: label, known, isBusy });
       } catch (err) {
         safe(() => console.warn('[jarvis] sync: could not merge a backup:', err && err.message));
         // Its own words (an import's: "made by a newer version of Jarvis…", "isn't a Jarvis backup").

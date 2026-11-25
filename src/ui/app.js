@@ -324,6 +324,17 @@ export async function startApp(rootEl) {
             onMerged: (res) => {
               scheduleHistoryRefresh();
               const id = state.conv && state.conv.id;
+              // A "(from Mac)" copy the owner carried on here became a conversation of its own: the
+              // open one goes on showing it (the copy itself follows the Mac again).
+              const moved = id && res && Array.isArray(res.forked) ? res.forked.find((f) => f && f.from === id) : null;
+              if (moved && !state.runs.has(id)) {
+                Promise.resolve(store.get(moved.to))
+                  .then((fresh) => {
+                    if (fresh && state.conv && state.conv.id === id && !state.runs.has(id)) setConversation(fresh);
+                  })
+                  .catch((err) => console.error('[jarvis] opening the kept conversation failed:', err));
+                return;
+              }
               if (id && res && Array.isArray(res.conversations) && res.conversations.includes(id) && !state.runs.has(id)) reloadCurrentFromStore();
             },
           }),

@@ -62,7 +62,7 @@ import { MUSIC_SEARCH_KINDS, cleanMusicItems, cleanQuery, cleanText } from '../l
 import { NATURAL_CACHES } from './voice/natural/catalog.js';
 import { WAKE_CACHE } from '../lib/wake/catalog.js';
 import { normalizeHomeBaseUrl, homeBaseName } from '../lib/homebase.js';
-import { conversationAction, mirrorAction, mirrorIdOf, mirrorTitle } from '../lib/sync.js';
+import { conversationAction, mirrorAction, mirrorIdOf, mirrorTitle, forkIdOf, forkTitle } from '../lib/sync.js';
 
 export const BACKUP_APP = 'jarvis';
 export const BACKUP_VERSION = 1;
@@ -188,14 +188,17 @@ async function buildBackup() {
  * Only ever adds (src/lib/sync.js has the rules): something missing here is added unless this device
  * had it before (`known`: { conv, lib, mem } Sets; the owner deleted it here); for the same id the
  * newer updatedAt wins, except that a conversation that went another way on each device is never
- * overwritten (that device's version is kept next to it, "(from <label>)"); a conversation running
- * here (`isBusy(id)`) is left for the next sync. Everything is vetted exactly like an import.
- * Idempotent. Returns { conversations: [ids written], mirrors, library, memory, busy, skipped,
- * written: { conv, lib, mem } (what this device now has from it, for `known`) }.
- * `from` is that device's id (its versions' ids), `label` its name. Throws for a file that isn't a
- * usable Jarvis backup (like importBackup).
+ * overwritten (that device's version is kept next to it, "(from <label>)"); such a copy the owner
+ * carried on here is never written over either: it is kept whole as a conversation of its own
+ * ("(from <label>, continued on <selfLabel>)", an ordinary id, synced like any other) before the
+ * copy follows that device again (`forked`: [{ from: the copy's id, to: the new id }], so the app can
+ * keep showing it); a conversation running here (`isBusy(id)`) is left for the next sync.
+ * Everything is vetted exactly like an import. Idempotent. Returns { conversations: [ids written],
+ * mirrors, forked, library, memory, busy, skipped, written: { conv, lib, mem } (what this device now
+ * has from it, for `known`) }. `from` is that device's id (its versions' ids), `label` its name,
+ * `selfLabel` this device's. Throws for a file that isn't a usable Jarvis backup (like importBackup).
  */
-export async function mergeSyncedBackup(file, { from, label = '', known = {}, isBusy = () => false } = {}) {
+export async function mergeSyncedBackup(file, { from, label = '', selfLabel = '', known = {}, isBusy = () => false } = {}) {
   const data = await readBackup(file);
   if (typeof from !== 'string' || !from) throw new TypeError('mergeSyncedBackup: the device id (from) is required');
   const knownConv = known.conv instanceof Set ? known.conv : new Set();
@@ -208,16 +211,20 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
       return false;
     }
   };
-  const out = { conversations: [], mirrors: 0, library: 0, memory: 0, busy: 0, skipped: 0, written: { conv: [], lib: [], mem: [] } };
+  const out = { conversations: [], mirrors: 0, forked: [], library: 0, memory: 0, busy: 0, skipped: 0, written: { conv: [], lib: [], mem: [] } };
 
   // Conversations.
   if (Array.isArray(data.conversations) && data.conversations.length) {
     const rows = new Map((await listConversations()).map((row) => [row.id, row.updatedAt]));
     const seen = new Set();
-    const localOf = async (id) => {
+    // How far each turn got (a reply resumed later keeps its id: SYNC-2), for the rules in src/lib/sync.js.
+    const turnsOf = (c) => (Array.isArray(c.turns) ? c.turns : []).filter(isPlainObject).map((t) => ({ id: t.id, role: t.role, status: t.status, endedAt: t.endedAt }));
+    const localOf = async (id, { full = false } = {}) => {
       if (!rows.has(id)) return null;
       const c = await getConversation(id, { track: false });
-      return c ? { updatedAt: c.updatedAt, turnIds: (Array.isArray(c.turns) ? c.turns : []).map((t) => (isPlainObject(t) ? t.id : null)) } : null;
+      if (!c) return null;
+      const turns = turnsOf(c);
+      return { updatedAt: c.updatedAt, turnIds: turns.map((t) => t.id), turns, conv: full ? c : null };
     };
     for (const raw of data.conversations) {
       // The same version as here (the usual case once two devices are in step): nothing to vet or do.
@@ -232,7 +239,7 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
       }
       if (seen.has(conv.id)) continue;
       seen.add(conv.id);
-      const remote = { id: conv.id, updatedAt: conv.updatedAt, turnIds: conv.turns.map((t) => t.id) };
+      const remote = { id: conv.id, updatedAt: conv.updatedAt, turnIds: conv.turns.map((t) => t.id), turns: turnsOf(conv) };
       const local = await localOf(conv.id);
       const action = conversationAction({ remote, local, known: knownConv.has(conv.id), busy: !!local && busyOf(conv.id) });
       if (action === 'busy') {
@@ -250,12 +257,30 @@ export async function mergeSyncedBackup(file, { from, label = '', known = {}, is
       // The two went different ways: theirs is kept next to this device's own, one copy per device.
       const id = mirrorIdOf(conv.id, from);
       if (id.length > 200) continue;
-      const mine = await localOf(id);
+      const mine = await localOf(id, { full: true });
       const what = mirrorAction({ remote, mirror: mine, known: knownConv.has(id) });
-      if (what === 'add' || what === 'replace') {
+      if (what === 'add' || what === 'replace' || what === 'fork') {
         if (mine && busyOf(id)) {
           out.busy++;
           continue;
+        }
+        if (what === 'fork') {
+          // The owner carried this copy on here: kept whole under an ordinary id of its own first
+          // (the same id for the same copy), and the copy is only written over once that worked.
+          // Already there (a sync cut off half way): left as it is, since the owner may have gone
+          // on in it; deleted here since: not brought back.
+          const forkId = forkIdOf(conv.id, from, mine.updatedAt);
+          if (!forkId || !mine.conv) continue; // can't be kept: the copy stays as it is
+          if (!rows.has(forkId) && !knownConv.has(forkId)) {
+            const kept = { ...mine.conv, id: forkId, title: forkTitle(conv.title, label, selfLabel) };
+            if (!(await restoreConversation(kept))) continue;
+            rows.set(forkId, kept.updatedAt);
+            out.conversations.push(forkId);
+          }
+          if (rows.has(forkId)) {
+            out.written.conv.push(forkId);
+            out.forked.push({ from: id, to: forkId });
+          }
         }
         if (await restoreConversation({ ...conv, id, title: mirrorTitle(conv.title, label) })) {
           out.conversations.push(id);
