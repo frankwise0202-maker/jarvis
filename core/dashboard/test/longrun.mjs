@@ -1,73 +1,74 @@
 #!/usr/bin/env node
-// The long-run check: a simulated day at accelerated time, then a verdict on memory growth.
+// The long-run check: the dashboard against the stand-in Core at accelerated time, first until
+// everything bounded is full (the event log's 40 rows and the transcript's 6 exchanges), then for
+// at least 48 more simulated hours, with a verdict on growth.
 //
-//   nice -n 10 node core/dashboard/test/longrun.mjs [--hours 24] [--rate 200] [--json out.json]
+//   nice -n 10 node core/dashboard/test/longrun.mjs [--hours 48] [--rate 200] [--json out.json]
 //
 // The mock Core streams one snapshot per simulated second at --rate snapshots per real second
 // (200: a day in about seven minutes, 200 times the real load on the page), cycling the scenarios
 // ok → warn → alert → nogpu every two simulated hours, adding an event every ten simulated
 // minutes, and going offline for a few seconds every six simulated hours. The page's wall clock
-// follows the simulated clock (night dim at 23:00, the pixel shift, minute ticks), the assistant is
-// asked a question every two real seconds, and the daily refresh is off (?refresh=off) so the page
-// is never reloaded: any growth would show.
+// follows the simulated clock (night dim at 23:00, the pixel shift, minute ticks, the transcript's
+// quiet clear), a question is asked every two real seconds in turn by filling the box, typing with
+// a correction, typing anywhere on the page, a suggestion chip, and typing then Escape; the daily
+// refresh is off (?refresh=off) so the page is never reloaded: any growth would show.
 //
-// Measured once per simulated hour after a forced garbage collection (Chrome DevTools Protocol):
-// JS heap used, DOM nodes, event listeners, layout objects, documents; plus the renderer's RSS.
-// Pass: after an eight-hour warm-up (the event log fills to its 40 rows at one event per ten
-// simulated minutes; the rings and the transcript fill sooner) the heap stays within 2 MB with no
-// upward trend, and nodes and listeners are flat. One Chromium; run under `nice -n 10`.
+// Every simulated hour, after two forced garbage collections (Chrome DevTools Protocol
+// HeapProfiler.collectGarbage): nodes in the live document (a tree walk), every DOM node alive in
+// the renderer (CDP Nodes: detached ones too), the JS heap, event listeners; plus layout objects
+// and the renderer's RSS for information. The verdict (test/growth.mjs) looks only at the
+// measured window after the warm-up: least-squares slope per day and second-half-minus-first-half
+// drift for each of the four, within fixed limits. One Chromium; run under `nice -n 10`.
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { judgeGrowth } from './growth.mjs';
 import { startMockCore } from './mock-server.mjs';
 import { loadPlaywright } from './screenshots.mjs';
 
-const args = process.argv.slice(2);
-const opt = (name, fallback) => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
-};
-const HOURS = Number(opt('hours', 24));
-const RATE = Number(opt('rate', 200));
-const JSON_OUT = opt('json', null);
-const START = Date.parse('2026-11-25T06:00:00Z'); // a whole day: morning, evening, night dim, morning
+const START = Date.parse('2026-11-25T06:00:00Z'); // morning, evening, night dim, morning, …
 const HOUR = 3600 * 1000;
 const SCENARIO_CYCLE = ['ok', 'warn', 'alert', 'nogpu'];
+const QUESTIONS = ['How are you?', 'Anything wrong?', 'GPU temp?', 'Status report', 'thanks', 'how hot is the cpu', 'is the internet working'];
+const WAYS = ['fill', 'type', 'anywhere', 'chip', 'escape'];
+const MAX_EVENTS = 40;
+const MAX_MESSAGES = 12;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** RSS (kB) of the Chromium renderer processes, from /proc (Linux). */
-function rendererRssKb() {
-  let total = 0;
+function parseArgs(argv) {
+  const opt = (name, fallback) => {
+    const i = argv.indexOf(`--${name}`);
+    return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : fallback;
+  };
+  return {
+    hours: Number(opt('hours', 48)), // measured after the warm-up
+    rate: Number(opt('rate', 200)),
+    maxWarmup: Number(opt('max-warmup', 16)), // simulated hours allowed to fill the bounded things
+    json: opt('json', null),
+  };
+}
+
+/** RSS (MB) of the Chromium renderer processes, from /proc (Linux); information only. */
+function rendererRssMB() {
+  let kb = 0;
   for (const pid of readdirSync('/proc').filter((d) => /^\d+$/.test(d))) {
     try {
       const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
       if (!cmd.includes('--type=renderer') || !/chrom/i.test(cmd)) continue;
       const m = /VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
-      if (m) total += Number(m[1]);
+      if (m) kb += Number(m[1]);
     } catch {
       /* the process ended */
     }
   }
-  return total;
-}
-
-/** Least-squares slope of y over x (per unit of x). */
-function slope(xs, ys) {
-  const n = xs.length;
-  const mx = xs.reduce((a, b) => a + b, 0) / n;
-  const my = ys.reduce((a, b) => a + b, 0) / n;
-  let num = 0;
-  let den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (xs[i] - mx) * (ys[i] - my);
-    den += (xs[i] - mx) ** 2;
-  }
-  return den ? num / den : 0;
+  return +(kb / 1024).toFixed(1);
 }
 
 async function main() {
+  const opts = parseArgs(process.argv.slice(2));
   const pw = await loadPlaywright();
   const mock = await startMockCore({ port: 0, scenario: 'ok', rate: 1, start: START });
   const browser = await pw.chromium.launch();
@@ -91,6 +92,7 @@ async function main() {
   await cdp.send('Performance.enable');
 
   async function measure(simHour) {
+    // Two full collections (V8 and the DOM's heap together), so only what is retained is counted.
     await cdp.send('HeapProfiler.collectGarbage');
     await sleep(200);
     await cdp.send('HeapProfiler.collectGarbage');
@@ -98,23 +100,23 @@ async function main() {
     const { metrics } = await cdp.send('Performance.getMetrics');
     const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
     const stats = await page.evaluate(() => window.__jarvisCore.stats());
-    // Nodes in the live document (elements, text, comments) vs. every Node object alive (CDP): a
-    // gap that grows means detached nodes are being kept alive somewhere.
-    const live = await page.evaluate(() => {
+    // Nodes in the live document (elements, text, comments; shadow trees excluded) vs. every Node
+    // object alive (CDP): a gap that grows means detached nodes are being kept alive somewhere.
+    const liveNodes = await page.evaluate(() => {
       const w = document.createTreeWalker(document, NodeFilter.SHOW_ALL);
       let n = 1;
       while (w.nextNode()) n++;
       return n;
     });
     return {
-      liveNodes: live,
       simHour,
-      heapMB: +(heap.usedSize / 1048576).toFixed(3),
+      liveNodes,
       nodes: m.Nodes,
+      heapMB: +(heap.usedSize / 1048576).toFixed(3),
       listeners: m.JSEventListeners,
       layoutObjects: m.LayoutObjects,
       documents: m.Documents,
-      rssMB: +(rendererRssKb() / 1024).toFixed(1),
+      rssMB: rendererRssMB(),
       events: stats.events,
       messages: stats.messages,
       streamMessages: stats.client.messages,
@@ -124,18 +126,49 @@ async function main() {
     };
   }
 
+  /**
+   * One question, asked one of five ways in turn (the box must end up empty every time). Clicks
+   * skip Playwright's "stable" wait: at 200x the pixel shift glides the whole page every second.
+   */
+  async function askOnce(k) {
+    const q = QUESTIONS[k % QUESTIONS.length];
+    const way = WAYS[k % WAYS.length];
+    if (way === 'fill') {
+      await page.fill('#ask-input', q);
+      await page.press('#ask-input', 'Enter');
+    } else if (way === 'type') {
+      await page.click('#ask-input', { force: true });
+      await page.keyboard.type(`${q}x`);
+      await page.keyboard.press('Backspace');
+      await page.keyboard.press('Enter');
+    } else if (way === 'anywhere') {
+      await page.locator('#ask-input').blur();
+      await page.keyboard.type(q); // the first key lands in the box, the rest follow it there
+      await page.keyboard.press('Enter');
+    } else if (way === 'chip') {
+      await page.click(`.ask-chip >> nth=${k % 4}`, { force: true });
+    } else {
+      await page.click('#ask-input', { force: true });
+      await page.keyboard.type('never mind');
+      await page.keyboard.press('Escape');
+    }
+    return way;
+  }
+
   const samples = [];
   const t0 = Date.now();
-  await mock.control({ rate: RATE });
+  await mock.control({ rate: opts.rate });
   let lastHour = -1;
   let lastAsk = 0;
   let asks = 0;
   let outages = 0;
-  const questions = ['How are you?', 'Anything wrong?', 'GPU temp?', 'Status report', 'thanks'];
+  let warmupHour = null;
+  let boxLeftFull = 0;
   for (;;) {
     const simMs = mock.state.simT - START;
     const simHour = Math.floor(simMs / HOUR);
-    if (simHour >= HOURS) break;
+    if (warmupHour !== null && simHour > warmupHour + opts.hours) break;
+    if (warmupHour === null && simHour > opts.maxWarmup) break;
     // The page's wall clock follows the simulated one (night dim, pixel shift, minute ticks).
     await page.clock.setSystemTime(mock.state.simT);
     // Scenario cycle and outages.
@@ -152,56 +185,81 @@ async function main() {
     }
     if (Date.now() - lastAsk > 2000) {
       lastAsk = Date.now();
-      const q = questions[asks++ % questions.length];
-      await page.fill('#ask-input', q);
-      await page.press('#ask-input', 'Enter');
+      await askOnce(asks++);
+      if ((await page.inputValue('#ask-input')) !== '') boxLeftFull++;
     }
     if (simHour !== lastHour) {
       lastHour = simHour;
       const s = await measure(simHour);
+      if (warmupHour === null && s.events >= MAX_EVENTS && s.messages >= MAX_MESSAGES) warmupHour = simHour;
+      s.hour = warmupHour === null ? null : simHour - warmupHour; // hours into the measured window
       samples.push(s);
-      console.log(`h${String(simHour).padStart(2, '0')}  heap ${s.heapMB.toFixed(2)} MB  nodes ${s.nodes} (live ${s.liveNodes})  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  stream ${s.streamMessages}  reconnects ${s.reconnects}`);
+      const tag = s.hour === null ? 'warm-up' : `+${String(s.hour).padStart(2, '0')}h`;
+      console.log(`h${String(simHour).padStart(2, '0')} ${tag.padEnd(7)} live ${s.liveNodes}  nodes ${s.nodes}  heap ${s.heapMB.toFixed(2)} MB  listeners ${s.listeners}  layout ${s.layoutObjects}  rss ${s.rssMB} MB  events ${s.events}  msgs ${s.messages}  night ${s.night}  reconnects ${s.reconnects}`);
     }
     await sleep(250);
   }
-  const final = await measure(HOURS);
-  samples.push(final);
-  const realS = (Date.now() - t0) / 1000;
-  console.log(`h${HOURS}  heap ${final.heapMB.toFixed(2)} MB  nodes ${final.nodes}  listeners ${final.listeners}  rss ${final.rssMB} MB  (end)`);
+  const realS = Math.round((Date.now() - t0) / 1000);
+  const final = samples[samples.length - 1];
+
+  // Chrome's own undo history for the question box (blink::UndoStep objects, visible when the
+  // build names its C++ objects in heap snapshots, as Playwright's Chromium does).
+  let undoSteps = null;
+  try {
+    const chunks = [];
+    cdp.on('HeapProfiler.addHeapSnapshotChunk', (e) => chunks.push(e.chunk));
+    await cdp.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+    const snap = JSON.parse(chunks.join(''));
+    const nf = snap.snapshot.meta.node_fields.length;
+    const ni = snap.snapshot.meta.node_fields.indexOf('name');
+    let named = false;
+    let count = 0;
+    for (let i = 0; i < snap.nodes.length; i += nf) {
+      const nm = snap.strings[snap.nodes[i + ni]];
+      if (nm.startsWith('blink::')) named = true;
+      if (nm === 'blink::UndoStep') count++;
+    }
+    undoSteps = named ? count : null;
+  } catch {
+    /* information only */
+  }
 
   await browser.close();
   await mock.close();
 
-  // Verdict: after the warm-up (rings, event log and transcript reach their bounds) nothing grows.
-  const WARMUP_H = Math.min(8, Math.max(0, HOURS - 4));
-  const steady = samples.filter((s) => s.simHour >= WARMUP_H);
-  const heaps = steady.map((s) => s.heapMB);
-  const heapRange = Math.max(...heaps) - Math.min(...heaps);
-  const heapSlopePerDay = slope(steady.map((s) => s.simHour), heaps) * 24;
-  const nodeRange = Math.max(...steady.map((s) => s.nodes)) - Math.min(...steady.map((s) => s.nodes));
-  const listenerRange = Math.max(...steady.map((s) => s.listeners)) - Math.min(...steady.map((s) => s.listeners));
-  const rss = steady.map((s) => s.rssMB);
+  const measured = samples.filter((s) => s.hour !== null);
+  const growth = judgeGrowth(measured);
+  const problems = [...growth.failures];
+  if (warmupHour === null) problems.push(`the event log and transcript were not full after ${opts.maxWarmup} simulated hours`);
+  if (warmupHour !== null && growth.hours < opts.hours) problems.push(`only ${growth.hours} hours measured after the warm-up`);
+  if (navigations !== 1) problems.push(`the page reloaded ${navigations - 1} time(s)`);
+  if (errors.length) problems.push(`${errors.length} page error(s)`);
+  if (boxLeftFull) problems.push(`the question box was left with text ${boxLeftFull} time(s)`);
+  if (measured.some((s) => s.events > MAX_EVENTS || s.messages > MAX_MESSAGES)) problems.push('the event log or the transcript went past its bound');
+  if (undoSteps !== null && undoSteps > 5) problems.push(`Chrome kept ${undoSteps} undo steps for the question box`);
+  const pass = problems.length === 0;
+
   const result = {
-    simulatedHours: HOURS,
-    warmupHours: WARMUP_H,
-    realSeconds: Math.round(realS),
-    rate: RATE,
-    snapshots: final.streamMessages,
+    pass,
+    problems,
+    simulatedHours: final ? final.simHour : 0,
+    warmupHours: warmupHour,
+    measuredHours: growth.hours,
+    rate: opts.rate,
+    realSeconds: realS,
+    snapshots: final ? final.streamMessages : 0,
     questionsAsked: asks,
     outages,
     navigations: navigations - 1,
+    undoSteps,
     errors,
-    heapMB: { first: heaps[0], last: heaps[heaps.length - 1], min: Math.min(...heaps), max: Math.max(...heaps), range: +heapRange.toFixed(3), slopePerDay: +heapSlopePerDay.toFixed(3) },
-    nodes: { min: Math.min(...steady.map((s) => s.nodes)), max: Math.max(...steady.map((s) => s.nodes)), range: nodeRange },
-    listeners: { range: listenerRange },
-    rendererRssMB: { first: rss[0], last: rss[rss.length - 1], min: Math.min(...rss), max: Math.max(...rss) },
+    growth: growth.metrics,
+    rendererRssMB: measured.length ? { first: measured[0].rssMB, last: measured[measured.length - 1].rssMB, min: Math.min(...measured.map((s) => s.rssMB)), max: Math.max(...measured.map((s) => s.rssMB)) } : null,
     samples,
   };
-  const pass = heapRange < 2 && heapSlopePerDay < 1 && nodeRange <= 80 && listenerRange <= 10 && navigations === 1 && errors.length === 0;
-  result.pass = pass;
-  if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify(result, null, 2));
+  if (opts.json) writeFileSync(opts.json, JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ ...result, samples: undefined }, null, 2));
-  console.log(pass ? 'PASS: no growth over the simulated day' : 'FAIL');
+  console.log(pass ? `PASS: nothing grows over ${growth.hours} simulated hours after the warm-up` : `FAIL: ${problems.join('; ')}`);
   process.exitCode = pass ? 0 : 1;
 }
 

@@ -107,10 +107,31 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = 
     lastActivity = Date.now();
   }
 
+  /**
+   * Empty the question box. Chrome keeps one undo step for every typed question, each holding the
+   * text node that was typed into, for as long as the page lives (up to 1000 steps): a box that is
+   * only ever emptied by `value = ''` makes the page grow by a node per question. Undoing the
+   * typing instead moves those steps to the redo list, which the next typed key throws away, so
+   * the box keeps no history. The box is the page's only editable field, so every undo step is its
+   * own; if undo is unavailable the box is simply emptied as before.
+   */
+  function clearBox() {
+    for (let i = 0; i < 50; i++) {
+      let undone = false;
+      try {
+        undone = document.execCommand('undo');
+      } catch {
+        undone = false;
+      }
+      if (!undone) break;
+    }
+    input.value = '';
+  }
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const v = input.value;
-    input.value = '';
+    clearBox();
     ask(v);
   });
 
@@ -139,7 +160,7 @@ export function createAssistant({ endpoint = 'api/ask', isOnline, fetchImpl } = 
   input.addEventListener('keydown', (e) => {
     lastActivity = Date.now();
     if (e.key === 'Escape') {
-      input.value = '';
+      clearBox();
       input.blur();
     }
   });
