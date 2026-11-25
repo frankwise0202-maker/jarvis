@@ -1,0 +1,18 @@
+{
+  "name": "jarvis-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jarvis Core: the home base's 24/7 system report. Collector, health rules, history, events, a JSON API with live updates, and a small local status assistant. Node built-ins only.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/main.mjs",
+    "fixture": "node server/main.mjs --fixture ok",
+    "once": "node server/main.mjs --once",
+    "test": "node --test \"test/server/**/*.test.mjs\"",
+    "test:server": "node --test \"test/server/**/*.test.mjs\"",
+    "test:longrun": "node test/server/longrun.mjs"
+  }
+}

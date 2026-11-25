@@ -1,0 +1,30 @@
+{
+  "Version": "1.90.6-t3b2f1a8c4-g1e2d3c4b5",
+  "TUN": true,
+  "BackendState": "Stopped",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": [
+    "100.101.102.103"
+  ],
+  "Self": {
+    "ID": "nQ7rT2xCNTRL",
+    "HostName": "alienware",
+    "DNSName": "alienware.tail4e5f6a.ts.net.",
+    "OS": "linux",
+    "Online": false,
+    "LastSeen": "0001-01-01T00:00:00Z"
+  },
+  "Health": [
+    "Tailscale is stopped."
+  ],
+  "MagicDNSSuffix": "tail4e5f6a.ts.net",
+  "CurrentTailnet": {
+    "Name": "owner@example.com",
+    "MagicDNSSuffix": "tail4e5f6a.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "Peer": {},
+  "User": null,
+  "ClientVersion": null
+}

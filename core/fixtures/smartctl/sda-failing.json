@@ -1,0 +1,203 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "pre_release": false,
+    "svn_revision": "5530",
+    "platform_info": "x86_64-linux-6.14.0-37-generic",
+    "build_info": "(local build)",
+    "argv": [
+      "smartctl",
+      "-j",
+      "-H",
+      "-A",
+      "-i",
+      "/dev/sda"
+    ],
+    "drive_database_version": {
+      "string": "7.3/5528"
+    },
+    "exit_status": 8
+  },
+  "local_time": {
+    "time_t": 1796170929,
+    "asctime": "Wed Nov 25 14:32:09 2026 EST"
+  },
+  "device": {
+    "name": "/dev/sda",
+    "info_name": "/dev/sda [SAT]",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "model_family": "Seagate BarraCuda 3.5 (SMR)",
+  "model_name": "ST1000DM003-1SB102",
+  "firmware_version": "CC43",
+  "user_capacity": {
+    "blocks": 1953525168,
+    "bytes": 1000204886016
+  },
+  "logical_block_size": 512,
+  "physical_block_size": 4096,
+  "rotation_rate": 7200,
+  "smart_support": {
+    "available": true,
+    "enabled": true
+  },
+  "smart_status": {
+    "passed": false
+  },
+  "ata_smart_attributes": {
+    "revision": 10,
+    "table": [
+      {
+        "id": 1,
+        "name": "Raw_Read_Error_Rate",
+        "value": 117,
+        "worst": 99,
+        "thresh": 6,
+        "when_failed": "",
+        "flags": {
+          "value": 15,
+          "string": "POSR-- ",
+          "prefailure": true
+        },
+        "raw": {
+          "value": 154112840,
+          "string": "154112840"
+        }
+      },
+      {
+        "id": 3,
+        "name": "Spin_Up_Time",
+        "value": 97,
+        "worst": 96,
+        "thresh": 0,
+        "when_failed": "",
+        "flags": {
+          "value": 3,
+          "string": "PO---- ",
+          "prefailure": true
+        },
+        "raw": {
+          "value": 0,
+          "string": "0"
+        }
+      },
+      {
+        "id": 4,
+        "name": "Start_Stop_Count",
+        "value": 92,
+        "worst": 92,
+        "thresh": 20,
+        "when_failed": "",
+        "flags": {
+          "value": 50,
+          "string": "-O--CK ",
+          "prefailure": false
+        },
+        "raw": {
+          "value": 8811,
+          "string": "8811"
+        }
+      },
+      {
+        "id": 5,
+        "name": "Reallocated_Sector_Ct",
+        "value": 3,
+        "worst": 100,
+        "thresh": 10,
+        "when_failed": "now",
+        "flags": {
+          "value": 51,
+          "string": "PO--CK ",
+          "prefailure": true
+        },
+        "raw": {
+          "value": 2712,
+          "string": "2712"
+        }
+      },
+      {
+        "id": 9,
+        "name": "Power_On_Hours",
+        "value": 52,
+        "worst": 52,
+        "thresh": 0,
+        "when_failed": "",
+        "flags": {
+          "value": 50,
+          "string": "-O--CK ",
+          "prefailure": false
+        },
+        "raw": {
+          "value": 42211,
+          "string": "42211 (213 118 0)"
+        }
+      },
+      {
+        "id": 194,
+        "name": "Temperature_Celsius",
+        "value": 34,
+        "worst": 49,
+        "thresh": 0,
+        "when_failed": "",
+        "flags": {
+          "value": 34,
+          "string": "-O---K ",
+          "prefailure": false
+        },
+        "raw": {
+          "value": 34,
+          "string": "34 (0 16 0 0 0)"
+        }
+      },
+      {
+        "id": 197,
+        "name": "Current_Pending_Sector",
+        "value": 100,
+        "worst": 100,
+        "thresh": 0,
+        "when_failed": "",
+        "flags": {
+          "value": 18,
+          "string": "-O--C- ",
+          "prefailure": false
+        },
+        "raw": {
+          "value": 344,
+          "string": "344"
+        }
+      },
+      {
+        "id": 198,
+        "name": "Offline_Uncorrectable",
+        "value": 100,
+        "worst": 100,
+        "thresh": 0,
+        "when_failed": "",
+        "flags": {
+          "value": 16,
+          "string": "----C- ",
+          "prefailure": false
+        },
+        "raw": {
+          "value": 0,
+          "string": "0"
+        }
+      }
+    ]
+  },
+  "power_on_time": {
+    "hours": 42211
+  },
+  "power_cycle_count": 8790,
+  "temperature": {
+    "current": 34
+  }
+}
