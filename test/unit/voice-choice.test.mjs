@@ -9,8 +9,8 @@ import { autoSpeakDecision, voiceLabel, deviceVoiceWord, voiceInUse, homeVoicePe
 import { createVoiceAuto, setHomeBaseVoice } from '../../src/ui/voice-auto.js';
 import { createSenses } from '../../src/ui/senses.js';
 import { sensesView } from '../../src/lib/senses.js';
-import { newText, ingest, segment, takeFirstClause, takeChunk } from '../../src/platform/voice/speech-text.js';
-import { HOMEBASE_CHUNKS, HOMEBASE_FIRST, createHomeBaseVoiceEngine } from '../../src/platform/voice/homebase-voice.js';
+import { newText, ingest, segment, takeFirstClause, takeChunk, takeGrowingChunk, releasePiece } from '../../src/platform/voice/speech-text.js';
+import { HOMEBASE_CHUNKS, HOMEBASE_FIRST, createHomeBaseVoiceEngine, assumedRtfFrom } from '../../src/platform/voice/homebase-voice.js';
 import { normalizeSettings, DEFAULT_SETTINGS } from '../../src/platform/settings.js';
 import { RESTORED_SETTINGS } from '../../src/platform/backup.js';
 import { betterVoiceTip } from '../../src/ui/voice-card.js';
@@ -382,14 +382,73 @@ test('first chunk: nothing lost or repeated, and the rest stays queued in order'
   assert.ok(parts[0].length <= 60);
 });
 
+test('home base engine: plans with the Core’s own measurement of George when it has one (× 1.3, 0.35-1), else 0.7', () => {
+  assert.equal(assumedRtfFrom(0.28), 0.36);
+  assert.equal(assumedRtfFrom(0.1), 0.35);
+  assert.equal(assumedRtfFrom(0.9), 1);
+  assert.equal(assumedRtfFrom(null), null);
+  assert.equal(assumedRtfFrom(0), null);
+  let view = sensesView({ ...VIEW, speak: { enabled: true, state: 'ready', rtf: 0.32 } });
+  assert.equal(view.speak.rtf, 0.32, 'kept from GET api/senses');
+  assert.equal(sensesView({ ...VIEW, speak: { enabled: true, state: 'ready', rtf: 'fast' } }).speak.rtf, null);
+  const engine = createHomeBaseVoiceEngine({ senses: { getState: () => ({ senses: view }), speak: async () => ({ ok: false }), noteFailure: () => {} } });
+  assert.equal(engine.status().assumedRtf, 0.42);
+  view = sensesView({ ...VIEW, speak: { enabled: true, state: 'ready' } }); // a Core 1.2.1: not timed
+  assert.equal(engine.status().assumedRtf, 0.7);
+});
+
+test('growing chunks: a long sentence gives one piece at a time (the rest is cut again by a longer limit); whole sentences are packed', () => {
+  const tx = newText();
+  ingest(tx, 'The LG 27GP850 is listed at three hundred and twenty nine dollars at most of the large retailers today, which is a little above the price you wanted. Best Buy had it. Shall I watch it?');
+  tx.finished = true;
+  segment(tx, 260);
+  const cut = (limit) => {
+    const r = takeGrowingChunk(tx, limit);
+    return r ? tx.norm.slice(r.start, r.end) : null;
+  };
+  assert.equal(cut(28), 'The LG 27GP850 is listed at');
+  assert.equal(cut(40), 'three hundred and twenty nine dollars at', 'cut again with the longer limit, not in pieces of 28');
+  assert.equal(cut(57), 'most of the large retailers today,', 'at a clause end');
+  assert.equal(cut(70), 'which is a little above the price you wanted. Best Buy had it.', 'whole sentences packed');
+  assert.equal(cut(70), 'Shall I watch it?');
+  assert.equal(cut(80), null);
+  // The device voice's own takeChunk is unchanged: it splits the whole sentence at the first limit.
+  const t2 = newText();
+  ingest(t2, 'The LG 27GP850 is listed at three hundred and twenty nine dollars at most of the large retailers today.');
+  t2.finished = true;
+  segment(t2, 260);
+  const r = takeChunk(t2, 28);
+  assert.equal(t2.norm.slice(r.start, r.end), 'The LG 27GP850 is listed at');
+  assert.ok(t2.spans.length > 2);
+});
+
+test('releasePiece: a sentence still being written gives its next piece once it can no longer change, one at a time', () => {
+  const tx = newText();
+  ingest(tx, 'Good evening, Frank. The LG 27GP850 is listed at three');
+  segment(tx, 260);
+  assert.equal(tx.spans.length, 1, 'the greeting');
+  assert.equal(releasePiece(tx, 28), false, 'a sentence is queued: nothing more yet');
+  tx.spans.shift();
+  assert.equal(releasePiece(tx, 40), false, 'not enough of the sentence yet');
+  assert.equal(releasePiece(tx, 28), true);
+  assert.equal(tx.norm.slice(tx.spans[0].start, tx.spans[0].end), 'The LG 27GP850 is listed at');
+  assert.equal(releasePiece(tx, 28), false, 'one piece at a time');
+  tx.spans.shift();
+  ingest(tx, ' hundred dollars today. ');
+  segment(tx, 260);
+  assert.equal(tx.norm.slice(tx.spans[0].start, tx.spans[0].end), 'three hundred dollars today.', 'the rest of the sentence, whole');
+  tx.finished = true;
+  assert.equal(releasePiece(tx, 10), false, 'finished: segment() has it all');
+});
+
 test('home base engine: asks for the short first chunk; the v7.7 chunk limits stay', () => {
   assert.deepEqual(HOMEBASE_CHUNKS, { firstChunk: 80, maxChunk: 180 });
   assert.deepEqual(HOMEBASE_FIRST.firstCut, { min: 40, max: 60 });
   const engine = createHomeBaseVoiceEngine({ senses: { speak: async () => ({ ok: false }), noteFailure: () => {} } });
   const st = engine.status();
   assert.deepEqual(st.firstCut, { min: 40, max: 60 });
-  assert.equal(st.minChunk, 48);
-  assert.equal(st.assumedRtf, 0.7);
+  assert.equal(st.minChunk, 20, 'v7.8 integrator (R78-2): the chunk after a short first one may be short too');
+  assert.equal(st.assumedRtf, 0.7, 'until measured');
   assert.equal(st.firstChunk, 80);
   assert.equal(st.maxChunk, 180);
 });
@@ -423,6 +482,7 @@ async function routerWith(t, { rtf = 0.6, settings = {}, natural = false } = {})
     noteFailure: (w, k) => failures.push(`${w}:${k}`),
   };
   const engine = createHomeBaseVoiceEngine({ senses, now: () => Date.now() });
+  const audioStart = clock.now; // the fake audio clock's zero
   const audio = createFakeAudio(clock);
   const plays = [];
   const play = audio.play;
@@ -440,8 +500,52 @@ async function routerWith(t, { rtf = 0.6, settings = {}, natural = false } = {})
       await new Promise((done) => setImmediate(done));
     }
   };
-  return { clock, speech, router, requests, failures, plays, run, setSettings: (p) => (s = { ...s, ...p }) };
+  return { clock, speech, router, requests, failures, plays, run, audioStart, setSettings: (p) => (s = { ...s, ...p }) };
 }
+
+/**
+ * One reply spoken by George from the home base on the virtual clock: appended at once (cps 0) or streamed
+ * in at `cps` characters a second (50 ms slices, as a reply comes in from the API). Returns the chunks,
+ * the first audio (ms after the reply's first text) and the silences between chunks (s; the planned pause
+ * between two chunks, 0.03-0.28 s, included).
+ */
+async function speakReply(t, text, { rtf = 0.7, cps = 0 } = {}) {
+  const ctx = await routerWith(t, { rtf });
+  const ends = [];
+  const s = ctx.router.createSpeechStream({ onEnd: (e) => ends.push(e.reason) });
+  const t0 = ctx.clock.now;
+  if (!cps) {
+    s.append(text);
+    s.finish();
+  } else {
+    const per = Math.max(1, Math.round(cps / 20));
+    let i = 0;
+    const feed = () => {
+      if (i >= text.length) return s.finish();
+      s.append(text.slice(i, i + per));
+      i += per;
+      setTimeout(feed, 50);
+    };
+    feed();
+  }
+  await ctx.run(() => ends.length > 0);
+  const gaps = ctx.plays.slice(1).map((p, i) => p.at - ctx.plays[i].end);
+  return {
+    ends,
+    failures: ctx.failures,
+    device: ctx.speech.submitted.length,
+    chunks: ctx.requests.map((r) => r.text),
+    firstAudio: ctx.plays.length ? ctx.plays[0].at * 1000 - (t0 - ctx.audioStart) : Infinity,
+    gaps,
+  };
+}
+
+const GREETINGS = [
+  'Good evening, Frank. The LG 27GP850 is listed at three hundred and twenty nine dollars at most of the large retailers today, which is a little above the price you wanted. Best Buy had it for two hundred and ninety nine dollars last week.',
+  'Certainly, Frank. It is forty one degrees outside with light rain, and it should clear up by the afternoon.',
+  'Very good, sir. The Alienware is running well, and nothing needs you tonight.',
+  'Of course. I have checked three shops this morning, and Best Buy is the cheapest by about twenty dollars.',
+];
 
 const REPLY =
   'Good evening, Frank. The LG 27GP850 is listed at three hundred and twenty nine dollars at most of the large retailers today, which is a little above the price you wanted. ' +
@@ -459,12 +563,51 @@ test('router: George’s first words come sooner (a short first chunk) and the c
   assert.deepEqual(ctx.failures, []);
   assert.equal(ctx.speech.submitted.length, 0, 'all George');
   assert.ok(ctx.requests[0].chars <= 60, `first chunk ${ctx.requests[0].chars}: ${ctx.requests[0].text}`);
-  const firstAudio = ctx.plays[0].at * 1000 - t0;
-  assert.ok(firstAudio < 2000, `first words after ${Math.round(firstAudio)} ms`);
+  const firstAudio = ctx.plays[0].at * 1000 - (t0 - ctx.audioStart); // the audio clock counts from routerWith
+  assert.ok(firstAudio > 0 && firstAudio < 2000, `first words after ${Math.round(firstAudio)} ms`);
   // The v7.7 first chunk (up to 80 characters) at the same speed: 3.8 s of silence first.
   assert.ok((ctx.requests[0].chars / 13) * 0.6 * 1000 < ((80 / 13) * 0.6 * 1000) / 1.3);
   const gaps = ctx.plays.slice(1).map((p, i) => p.at - ctx.plays[i].end);
   assert.ok(gaps.every((g) => g < 0.8), `no long silence between chunks: ${gaps.map((g) => g.toFixed(2)).join(', ')} s`);
+});
+
+test('router: after a short first sentence (“Good evening, Frank.”) the next chunk is made while it plays — at 0.7× real time, the reply appended at once or streamed in', async (t) => {
+  for (const text of GREETINGS) {
+    for (const cps of [0, 80, 200]) {
+      const r = await speakReply(t, text, { rtf: 0.7, cps });
+      const what = `${cps ? `streamed at ${cps} c/s` : 'at once'}: ${r.chunks.map((c) => `“${c}”`).join(' + ')} | gaps ${r.gaps.map((g) => g.toFixed(2)).join(', ')} s | first ${Math.round(r.firstAudio)} ms`;
+      assert.deepEqual(r.ends, ['done'], what);
+      assert.deepEqual(r.failures, [], what);
+      assert.equal(r.device, 0, `all George (${what})`);
+      assert.equal(r.chunks.join(' '), text, `every word once, in order (${what})`);
+      assert.ok(r.chunks[0].length <= 60 && r.firstAudio < 0.15 * 1000 + (0.7 * 1000 * 60) / 13 + 200, `a short first chunk, its words first (${what})`);
+      // Before (v7.8 builder): 1.04 s after “Good evening, Frank.”, 1.43 s after “Certainly, Frank.”, up to 2.1 s streamed.
+      assert.ok(Math.max(...r.gaps) <= 0.5, `no silence over 0.5 s between chunks (${what})`);
+    }
+  }
+  // At 0.9 × real time the short chunks still keep George speaking (the network isn't counted against him).
+  for (const text of GREETINGS.slice(0, 2)) {
+    const r = await speakReply(t, text, { rtf: 0.9, cps: 80 });
+    const what = `${r.chunks.map((c) => `“${c}”`).join(' + ')} | gaps ${r.gaps.map((g) => g.toFixed(2)).join(', ')} s`;
+    assert.deepEqual(r.failures, [], what);
+    assert.equal(r.device, 0, `all George (${what})`);
+    assert.ok(Math.max(...r.gaps) <= 0.8, `no silence over 0.8 s (${what})`);
+  }
+});
+
+test('home base engine: “slower than real time” leaves out 0.2 s a request for the network, so short chunks don’t hand George over', () => {
+  const failures = [];
+  const eng = createHomeBaseVoiceEngine({ senses: { speak: async () => ({ ok: false }), noteFailure: (w, k) => failures.push(`${w}:${k}`) } });
+  // George at 0.9 × real time plus 0.15 s of network on two short chunks: 0.99 × real time in all.
+  eng.noteTiming(150 + 0.9 * 1310, 1.31);
+  eng.noteTiming(150 + 0.9 * 1850, 1.85);
+  assert.equal(eng.status().state, 'ready');
+  assert.ok(eng.status().rtf > 0.95 && eng.status().rtf < 1, `measured with the network (${eng.status().rtf})`);
+  // Slower than real time by himself: slow, and the home base rests.
+  eng.noteTiming(150 + 1.2 * 1850, 1.85);
+  eng.noteTiming(150 + 1.2 * 1850, 1.85);
+  assert.equal(eng.status().state, 'slow');
+  assert.deepEqual(failures, ['speak:slow']);
 });
 
 test('router: the voice-change events follow the voice actually speaking, George handing over included', async (t) => {

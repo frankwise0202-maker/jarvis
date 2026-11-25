@@ -358,7 +358,9 @@ const VOICE_ID = /^[a-z]{2}_[a-z]{2,20}$/;
 export function sensesView(json) {
   if (!isObj(json) || !isObj(json.hear) || !isObj(json.speak)) return null;
   const hear = part(json.hear, (p) => ({ model: typeof p.model === 'string' && MODEL_ID.test(p.model) ? p.model : 'base.en' }));
-  const speak = part(json.speak, (p) => ({ voice: typeof p.voice === 'string' && VOICE_ID.test(p.voice) ? p.voice : 'bm_george' }));
+  // rtf (Jarvis Core 1.2.2): George's own measured speed on the home base (seconds to make one second of
+  // speech, the network not included), or null before he is timed and on an older Core.
+  const speak = part(json.speak, (p) => ({ voice: typeof p.voice === 'string' && VOICE_ID.test(p.voice) ? p.voice : 'bm_george', rtf: num(p.rtf) !== null && num(p.rtf) > 0 && num(p.rtf) < 20 ? num(p.rtf) : null }));
   const deps = { installed: !(isObj(json.deps) && json.deps.installed === false) };
   return { hear, speak, deps };
 }

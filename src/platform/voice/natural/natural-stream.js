@@ -17,7 +17,9 @@
 // v7.8: an engine whose status() names `firstCut` ({ min, max }: the home base's voice, made far away)
 // gets an even shorter first chunk, cut at the first clause or sentence end 40-60 characters in
 // (speech-text.js takeFirstClause; a long first sentence still being written is released at 60), and
-// may name `minChunk` and `assumedRtf` so the chunks after it grow from there without a gap.
+// may name `minChunk` and `assumedRtf` so the chunks after it grow from there without a gap: each one as
+// long as the one before can cover while it is made (takeGrowingChunk: a long sentence gives one piece at a
+// time; releasePiece: a sentence still being written gives its next piece as soon as it can't change).
 //
 // Pipeline: a chunk is sent to the worker as soon as it is complete, at most `prefetch` (2)
 // chunks ahead of the one playing. Each result is trimmed of its leading/trailing silence and
@@ -35,7 +37,7 @@
 // with the device voice. Without onHandoff a failed chunk is skipped and two failures in a row
 // end the stream with 'error'.
 
-import { newText, ingest, segment, takeChunk, takeFirstClause } from '../speech-text.js';
+import { newText, ingest, segment, takeChunk, takeFirstClause, takeGrowingChunk, releasePiece } from '../speech-text.js';
 
 export const NATURAL_TIMING = Object.freeze({
   firstMin: 60, // the first chunk: the first sentence, packed with the next ones up to 60 characters,
@@ -349,8 +351,16 @@ function pumpOnce(s) {
   if (!s.handoff) {
     const playing = s.playIdx < s.chunks.length && s.chunks[s.playIdx].state === 'playing';
     while (ahead(s) < T.prefetch + (playing ? 0 : 1)) {
-      const fc = s.chunks.length ? null : firstCutOf(s);
-      const range = fc ? takeFirstClause(s.tx, fc) : takeChunk(s.tx, limitFor(s));
+      const fc = firstCutOf(s);
+      let range;
+      if (fc && !s.chunks.length) range = takeFirstClause(s.tx, fc);
+      else if (fc) {
+        // v7.8 (R78-2): a voice made far away (the home base), after its short first chunk: each chunk as
+        // long as the previous one can cover while it is made, a sentence still being written included.
+        const limit = limitFor(s);
+        releasePiece(s.tx, limit);
+        range = takeGrowingChunk(s.tx, limit);
+      } else range = takeChunk(s.tx, limitFor(s));
       if (!range) break;
       const chunk = {
         index: s.chunks.length,

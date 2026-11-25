@@ -14,6 +14,11 @@
 //   firstCut(t, s, b, limit)     where to cut a sentence that is longer than `limit`
 //   takeFirstClause(tx, opts)    v7.8: a short first chunk for a voice made far away (the home base):
 //                                cut at the first clause or sentence end 40-60 characters in
+//   takeGrowingChunk(tx, limit)  v7.8: the chunks after it, which grow from a short first one: like
+//                                takeChunk, but a long sentence gives only its first piece (the rest is
+//                                cut again by the next, longer chunk), and whole sentences are packed
+//   releasePiece(tx, limit)      v7.8: one piece of a sentence still being written, once it can no
+//                                longer change, so the next chunk needn't wait for the sentence's end
 
 const SENTENCE_END_RE = /[.!?…]+["'”’)\]]*(?= |$)/g;
 
@@ -216,4 +221,56 @@ function cutSpans(tx, k, at) {
   return { start, end };
 }
 
-export { SENTENCE_END_RE, newText, ingest, segment, takeChunk, splitFirst, firstCut, takeFirstClause };
+/**
+ * v7.8 (R78-2): the next chunk for a voice made far away whose chunks grow from a short first one (George
+ * from the home base: each chunk must be made while the one before it plays, so the second may be only a
+ * little longer than a short first sentence). Whole spans (sentences, lines) packed up to `limit`, never
+ * across a line break. A span longer than `limit` gives only its first piece (cut at the last clause end
+ * within `limit`, else the last space; firstCut): the rest stays one span, cut again by the next chunk's
+ * longer limit, so a long sentence isn't chopped into pieces the size of the shortest chunk. Returns
+ * { start, end } or null.
+ */
+function takeGrowingChunk(tx, limit) {
+  const q = tx.spans;
+  if (!q.length) return null;
+  const sp = q[0];
+  if (sp.end - sp.start > limit) {
+    const [pieceEnd, next] = firstCut(tx.norm, sp.start, sp.end, limit);
+    if (pieceEnd > sp.start && next < sp.end) {
+      q.splice(0, 1, { start: next, end: sp.end, breakAfter: sp.breakAfter });
+      return { start: sp.start, end: pieceEnd };
+    }
+  }
+  const first = q.shift();
+  const start = first.start;
+  let end = first.end;
+  let brk = first.breakAfter;
+  while (!brk && q.length && q[0].end - start <= limit) {
+    end = q[0].end;
+    brk = q[0].breakAfter;
+    q.shift();
+  }
+  return { start, end };
+}
+
+/**
+ * v7.8 (R78-2): nothing complete is queued, but a sentence is still being written (a reply streaming in):
+ * release its first piece of at most `limit` characters once more than `limit + 1` are there (the cut
+ * depends only on those, so it can no longer change), so the next chunk goes out without waiting for the
+ * sentence's end. One piece at a time; segment() stays the only other way text becomes spans. Returns
+ * whether it released one.
+ */
+function releasePiece(tx, limit) {
+  if (tx.finished || tx.spans.length) return false;
+  const t = tx.norm;
+  let pos = tx.scan;
+  if (t.charCodeAt(pos) === 32) pos += 1;
+  if (t.length - pos <= limit + 1) return false;
+  const [pieceEnd, next] = firstCut(t, pos, t.length, limit);
+  if (pieceEnd <= pos) return false;
+  tx.spans.push({ start: pos, end: pieceEnd, breakAfter: false });
+  tx.scan = next;
+  return true;
+}
+
+export { SENTENCE_END_RE, newText, ingest, segment, takeChunk, splitFirst, firstCut, takeFirstClause, takeGrowingChunk, releasePiece };

@@ -11,7 +11,8 @@
 // sentences while one plays. A request that fails (the home base unreachable, too slow, an error)
 // is rejected with code 'not-ready': the stream hands the rest to the on-device George when it is
 // on and ready, else to the built-in voice (voice-router.js), and the home base rests for a minute
-// (senses.noteFailure). Slower than real time over 3 s of audio: 'slow', the same handoff.
+// (senses.noteFailure). Slower than real time over 3 s of audio (less 0.2 s a request for the network):
+// 'slow', the same handoff.
 //
 // Each request's time limit follows its text (speakTimeoutFor): 6 s for a short sentence, else
 // 2 s plus 1.5 × the audio the text makes, so only a home base clearly slower than its own audio
@@ -28,13 +29,27 @@ const MAX_TIMEOUT_MS = 45000;
 const CHARS_PER_SECOND = 13; // George at speed 1 (measured: 197 characters = 15.1 s, 258 = 21.1 s)
 export const HOMEBASE_CHUNKS = Object.freeze({ firstChunk: 80, maxChunk: 180 });
 // v7.8: the first words sooner. The first chunk is cut at the first clause or sentence end 40-60
-// characters in (natural-stream.js, speech-text.js takeFirstClause), and the chunks after it grow from
-// 48 characters by the measured speed (0.7 × real time assumed until measured: an i7's George plus the
-// network), so the next one is made while the previous one plays, in whole clauses.
-export const HOMEBASE_FIRST = Object.freeze({ firstCut: Object.freeze({ min: 40, max: 60 }), minChunk: 48, assumedRtf: 0.7 });
+// characters in (natural-stream.js, speech-text.js takeFirstClause), and each chunk after it is as long
+// as the one before can cover while it is made (previous ÷ real-time factor, from 20 characters, up to
+// 180; speech-text.js takeGrowingChunk), so a short first sentence ("Good evening, Frank.") is followed by
+// a short second chunk instead of a silence, and the chunks grow from there. The real-time factor until
+// this device has measured one: the Core's own measurement of George (GET api/senses speak.rtf, Jarvis Core
+// 1.2.2; × 1.3 for the network and a busy home base, 0.35-1), else 0.7 (an i7's George plus the network).
+export const HOMEBASE_FIRST = Object.freeze({ firstCut: Object.freeze({ min: 40, max: 60 }), minChunk: 20, assumedRtf: 0.7 });
+const CORE_RTF_MARGIN = 1.3;
+
+/** The real-time factor to plan with from the Core's own measurement of George (null: none). */
+export function assumedRtfFrom(coreRtf) {
+  if (typeof coreRtf !== 'number' || !Number.isFinite(coreRtf) || coreRtf <= 0) return null;
+  return Math.round(Math.min(1, Math.max(0.35, coreRtf * CORE_RTF_MARGIN)) * 100) / 100;
+}
 const RTF_WINDOW = 6;
 const MIN_AUDIO_FOR_VERDICT = 3; // seconds
 const SLOW_RTF = 1.0;
+// v7.8 integrator (R78-2): the verdict "slower than real time" leaves out 0.2 s a request (the network and
+// the Core's own work on each request), so short chunks, which can't spread that over much audio, don't
+// make a home base that keeps up (George at 0.9 × real time) look slow and hand over to this device.
+const SLOW_ALLOWANCE_MS = 200;
 
 const perfNow = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -126,7 +141,8 @@ export function createHomeBaseVoiceEngine({ senses, timeoutFor = speakTimeoutFor
     if (timings.length > RTF_WINDOW) timings.shift();
     const audioMs = timings.reduce((n, t) => n + t.audioMs, 0);
     const rtf = timings.reduce((n, t) => n + t.synthMs, 0) / audioMs;
-    const slow = audioMs >= MIN_AUDIO_FOR_VERDICT * 1000 && rtf > SLOW_RTF;
+    const own = timings.reduce((n, t) => n + Math.max(0, t.synthMs - SLOW_ALLOWANCE_MS), 0) / audioMs;
+    const slow = audioMs >= MIN_AUDIO_FOR_VERDICT * 1000 && own > SLOW_RTF;
     set({ rtf: Math.round(rtf * 1000) / 1000, underruns: st.underruns + (underrun ? 1 : 0), state: slow ? 'slow' : 'ready' });
     if (slow) {
       // This reply hands over; the next ones use this device's voice for a minute, then try again.
@@ -142,11 +158,24 @@ export function createHomeBaseVoiceEngine({ senses, timeoutFor = speakTimeoutFor
     }
   }
 
+  /** The Core's own measurement of George, when the last reading of api/senses has one. */
+  function coreAssumedRtf() {
+    try {
+      const view = typeof senses.getState === 'function' ? senses.getState().senses : null;
+      return assumedRtfFrom(view && view.speak ? view.speak.rtf : null);
+    } catch {
+      return null;
+    }
+  }
+
   return {
     synth,
     cancel,
     noteTiming,
-    status: () => st,
+    status() {
+      const assumed = coreAssumedRtf();
+      return assumed ? { ...st, assumedRtf: assumed } : st;
+    },
     ready: () => st.state === 'ready',
     subscribe(fn) {
       listeners.add(fn);
