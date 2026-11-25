@@ -3357,3 +3357,109 @@ the device's recognizer, the built-in voice, the next listen on the device), `se
 a voice slower than its time limit, 9 s for the reply's first chunk), `senses-off` (nothing asked of the home base's senses). Not testable here: the real
 Core's Whisper and Kokoro (the Core's own online test), iOS Safari's microphone and audio session, a
 real Tailscale network.
+
+## 26. v7.8: Jarvis speaks with George
+
+The owner: "I didn't see any difference on the iPhone … it was always still the same robot voice. It never
+changed through all the voice updates." Every better voice existed but was off by default and hard to find:
+`naturalVoice` (George on the device, §18.2) and `homeBaseSpeak` (George made by the home base, §25) both
+defaulted to false, so the router (§18.2, §25.3: home base → on-device natural → device) always used the
+iPhone's compact built-in voice. On an iPhone the on-device George is likely too slow (GitHub Pages can't
+send COOP/COEP, so its WASM runs on one thread): George from the Alienware is the real fix. Free voices
+only. Where this section differs from an earlier one, it wins; old conversations, tools and prompts are
+unchanged (byte-identical).
+
+**26.1 George from the home base, on by default, once** (`src/lib/voice-choice.js` `autoSpeakDecision`,
+`src/ui/voice-auto.js` `createVoiceAuto`, `setHomeBaseVoice`).
+- Setting `homeBaseSpeakBy: ''` (`''` nobody yet, `'auto'` the app turned it on, `'owner'` the owner switched
+  it himself, on or off; per device: in `EXCLUDED_SETTINGS`, never in a backup nor applied from one).
+- `check({ force })` runs 1.7 s after launch, when the app comes to the front, when a home base is linked
+  (`homeBaseUrl` changes) and when Voice Mode opens. It asks nothing when not linked, in the demo, when
+  `homeBaseSpeak` is already on, or when `homeBaseSpeakBy` is set ('owner': his choice; 'auto': once only).
+  Else it reads `GET api/senses` and acts only when the home base answers with senses (Jarvis Core 1.2+),
+  its speech software is installed and its voice isn't in error: `PUT api/senses {speak:{enabled:true}}`
+  (the Core starts George's download and warm-up), then, only once the Core accepted and if the owner didn't
+  choose meanwhile, `homeBaseSpeak: true, homeBaseSpeakBy: 'auto'`. A Core without senses (404), no answer,
+  or a refused PUT (the Core's 60-an-hour limit) changes nothing; a later launch or return tries again.
+- **The notice** (`src/ui/voice-notice.js`, in the toasts' layer; hidden under Voice Mode): "Jarvis now
+  speaks with George's natural voice, made by your Alienware. Getting it ready…" with the home base's
+  download (percentage, size, a bar; `senses.watch()` reads `api/senses` every 2 s meanwhile), then "George's
+  voice is ready. Jarvis speaks with it from now on, made by your Alienware." with **Hear him** (a sentence
+  through the router, inside the tap) for 15 s. **Turn off** (`setHomeBaseVoice(false)`) is always there:
+  off on this device at once and at the home base (`PUT speak enabled:false`), `homeBaseSpeakBy: 'owner'`.
+  A problem (error, speech software missing, off at the home base) says so with **Settings**. Not seen to
+  "ready" (the app closed meanwhile): `localStorage['jarvis.voice.georgeNotice'] = 'pending'` shows it again
+  at the next launch.
+- The owner's own switches — this notice, Settings → Voice → Jarvis's voice, Settings → Home base → Hearing
+  and voice — record `homeBaseSpeakBy: 'owner'`; the app never switches it by itself again on that device.
+  The Mac runs the same code with its own settings.
+- Until the home base's George is `ready`, the router keeps today's fallbacks (§25.3).
+
+**26.2 The voice label** (`src/ui/voice-tag.js`, `src/styles/voice-label.css`). The router (§18.2) gains
+`voiceNow()` and `onVoiceChange(fn)`: the engine actually speaking (`'homebase' | 'natural' | 'device'`, null
+when nothing speaks), the device voice's own `speak()` included (its `onEnd` is wrapped; every other option
+passes unchanged, and it still starts synchronously). `voiceLabel(engine, { voiceName, os })`: "George ·
+home base", "George · this device", "iPhone voice" (iPad: "iPad voice"; elsewhere "built-in voice"); the
+speaker's name follows `naturalVoiceId`. Shown as a small pill in the Presence style (monospace capitals on a
+hairline, a steady dot: the accent for the home base, violet on the device, grey for the device's own voice):
+- Voice Mode: on the status line beside "Speaking" (`voice-label`, `data-engine`; the root's `data-voice`),
+  the wake routine's greeting included (it speaks through Voice Mode);
+- a reply read aloud (Speak, Speak replies): beside its Stop (`turn-speak-voice`);
+- Settings → Voice → Jarvis's voice (`jarvis-voice-tag`) and the notice (`voice-notice-tag`).
+When George hands over mid-reply (§25.3) the label changes with the voice and brightens once (no blinking;
+not with reduced motion), and it goes when the voice stops.
+
+**26.3 Faster first words from the home base.**
+- `speech-text.js` `takeFirstClause(tx, { min: 40, max: 60, floor: 16 })`: the first chunk ends at the first
+  clause or sentence end 40-60 characters in; else the last sentence end before 40 ("Certainly, Frank.");
+  else the last clause end from 16 ("Good evening, Frank,"); else the last space within 60, else a hard cut
+  at 60. Never across a line break; the rest of a span stays queued.
+- The home base engine's `status()` names `firstCut: {min: 40, max: 60}`, `minChunk: 48` and `assumedRtf: 0.7`
+  (`HOMEBASE_FIRST`; `HOMEBASE_CHUNKS` unchanged). `natural-stream.js` takes the first chunk with
+  `takeFirstClause` for an engine that names `firstCut`, releases a long first sentence still being written
+  at 60 characters, and grows the next chunks from 48 by `previous ÷ rtf` (0.7 until measured), up to 180,
+  so each is made while the previous one plays. The on-device engine names none: unchanged.
+- Warm-up: `senses.warmVoice()` sends `PUT api/senses {speak:{enabled:true}}` (the Core loads an unloaded
+  George; Core 1.2.2 also restarts a loaded one's idle time) when Voice Mode opens (`prime({ warm: true })`,
+  instead of v7.7's "Ready." sentence) and when the app comes to the front (`prime({ voice: true })`). Only
+  while this device uses George, the home base has him on and downloaded (a voice turned off there is never
+  turned back on from here), not resting, and neither warmed nor heard in the last 3 minutes (the Core allows
+  60 PUTs an hour). Hearing's warm-up (0.4 s of silence) is unchanged.
+- Today's time limits (`speakTimeoutFor`) and fallbacks are unchanged. With the short first chunk a home base
+  at 2× real time now says the first words and the chunk after it shows it slower than real time: the rest
+  goes to this device as before (unit `senses`, updated).
+
+**26.4 Settings → Voice → Jarvis's voice** (`src/ui/voice-card.js`, at the top of Voice; `jarvis-voice`,
+`data-engine`). `voiceInUse({ settings, senses, natural, device, os })` (the router's choice) gives the label,
+where it comes from ("George's natural voice, made by your Alienware and played on this iPhone. Free…",
+"This iPhone's own voice (Daniel)") and what is getting ready (`homeVoicePending`: downloading with its
+percentage and size, getting ready, resting, off at the home base, an old Core, no speech software,
+unreachable; `jarvis-voice-pending`). **Test** (`jarvis-voice-test`) speaks one sentence through the router
+inside the tap (it also unlocks audio on iOS); the label follows the voice that speaks it.
+- With a home base: "George's voice from the home base" on/off (`jarvis-voice-homebase-toggle`).
+- Without one (`jarvis-voice-offer`): George from the home base (**Link your home base**, to Settings → Home
+  base) and George on this device (`jarvis-voice-natural`: "Free: downloads about 117 MB once …. It may be
+  slow on iPhone; then Jarvis uses the iPhone voice."; **Use George on this iPhone** turns the natural voice
+  on and starts its download, §18.2).
+- The tip (`jarvis-voice-tip`, `betterVoiceTip(os)`): "On the iPhone: Settings > Accessibility > Spoken
+  Content > Voices > English > pick a British voice (for example Daniel or Arthur) > download its Enhanced or
+  Premium version. Jarvis already prefers those automatically" (tts.js `rankVoices` already ranks them first);
+  the Mac's and other devices' own steps.
+
+**Tests.** Unit `voice-choice` (the setting; the auto-enable rules and the controller: once, recorded, the
+notice; off stays off here and at the home base; a 1.1 Core, unreachable then back, a refused PUT, unlinked,
+the demo, one check at a time; the voice warm-up's PUT and its limits; the labels; the voice in use and what
+is pending; the tip; the first-chunk split; the home base engine's status; the router end to end at 0.6×
+real time plus 150 ms of network: first words in under 2 s, no gap over 0.8 s; the voice-change events, the
+device voice's own speak() included; George failing mid-reply: homebase → device → null), and `senses`
+(updated: the warm-up through PUT; the 2× real-time hand-over). E2E `voice-george.mjs` with the fake Core
+(the harness seeds `homeBaseSpeakBy: 'owner'` so other scenarios never see the auto-enable): `george-auto`
+(iPhone) and `george-auto-mac` (Mac): PUT, recorded, the notice getting ready then ready, Hear him from the
+home base (a short first chunk), Voice Mode's reply labelled "George · home base", a reply read aloud
+labelled, a reload asks nothing more, Settings shows it; `george-off`: Turn off, off at the home base, stays
+off after a reload, Voice Mode labelled "iPhone voice", Settings' switch on again as the owner's choice;
+`george-fallback`: the home base failing after the first sentence: the label goes from "George · home base" to
+"iPhone voice"; `george-no-homebase` (iPhone) and `-mac`: the offer, its download and "may be slow on
+iPhone", the tip, Test labelled; `george-old-core`: a 1.1 Core: nothing turned on, no notice.
+`senses-voice-mode` now expects the voice's warm-up as a PUT. Not testable here: iOS Safari's audio session
+and a real Alienware's speed (the chunk sizes assume 0.7× real time until measured).

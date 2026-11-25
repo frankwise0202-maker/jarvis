@@ -81,17 +81,13 @@
   }
 }
 
-/* Voice Mode: under the status line, centred. */
-.vm-voice-row {
+/* Voice Mode: on the status line, beside "Speaking" (it never moves the layout). */
+.vm-status .vm-voice-tag {
   flex: none;
-  display: flex;
-  justify-content: center;
-  min-height: 22px;
-  margin-top: calc(-1 * var(--sp-1));
-}
-
-.vm-voice-row .voice-tag {
+  max-width: 62%;
+  margin-inline-start: 2px;
   font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
 }
 
 /* The chat: beside a reply's Speak / Stop while it is read aloud. */

@@ -383,12 +383,11 @@ function createVoiceMode(opts) {
   const statusText = h('span', { class: 'vm-status-text', attrs: { 'data-testid': 'voice-status' } });
   // v7.7 (beta): "via home base" while the home base hears this listen (Whisper on the Alienware).
   const hbMark = h('span', { class: 'vm-hb-mark', hidden: true, attrs: { 'data-testid': 'voice-homebase-mark', title: 'Heard by your home base (Whisper on the Alienware)' } }, icon('server', { size: 12, strokeWidth: 2 }), h('span', { text: 'via home base' }));
-  const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText, hbMark);
-  // v7.8: the voice speaking now, under the status line: "George · home base", "George · this device",
-  // "iPhone voice" / "built-in voice". It changes when George hands over mid-reply (the router's
-  // onVoiceChange), and goes when the voice stops.
-  const voiceTag = createVoiceTag({ testid: 'voice-label' });
-  const voiceRow = h('div', { class: 'vm-voice-row' }, voiceTag.el);
+  // v7.8: the voice speaking now, on the status line beside "Speaking": "George · home base", "George ·
+  // this device", "iPhone voice" / "built-in voice". It changes when George hands over mid-reply (the
+  // router's onVoiceChange) and goes when the voice stops. On the status line, it never moves the layout.
+  const voiceTag = createVoiceTag({ testid: 'voice-label', className: 'vm-voice-tag' });
+  const statusEl = h('div', { class: 'vm-status' }, statusIconEl, statusText, hbMark, voiceTag.el);
 
   const captions = h('div', { class: 'vm-captions', attrs: { 'data-testid': 'voice-captions', 'data-kind': 'hint' } });
   // Apple Music: the Music card of a "play …" (or the cards of a reply's find_music calls, stacked)
@@ -511,7 +510,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, voiceRow, captions, reviewEl, capSub, musicEl, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, missionEl, readFull),
     h(
       'div',
       { class: 'vm-bottom' },
