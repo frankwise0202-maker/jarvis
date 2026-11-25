@@ -170,6 +170,9 @@ test('failures: a 1.0 Core (404 not_found), no key (409), over the limit (402), 
   assert.equal(brainProblem({ ok: false, kind: 'unreachable' }).state, 'offline');
   assert.equal(brainProblem({ ok: false, kind: 'down' }).state, 'offline');
   assert.match(brainProblem({ ok: false, kind: 'http', status: 500, message: 'boom' }).message, /error \(500\): boom/);
+  // The Core's own words for its other refusals.
+  assert.deepEqual(brainProblem({ ok: false, kind: 'http', status: 400, code: 'city_not_found', message: 'I couldn’t find a place called "Nowhere".' }), { state: 'said', message: 'I couldn’t find a place called "Nowhere".' });
+  assert.equal(brainProblem({ ok: false, kind: 'http', status: 503, code: 'sdk_missing', message: 'the Claude SDK is not installed' }).message, 'The Claude SDK is not installed');
 });
 
 test('little helpers: coordinates to 2 decimals, dollars, the device’s name', () => {

@@ -181,7 +181,7 @@ function brainRoute(b, req, url, json) {
       if (br.units === 'F' || br.units === 'C') b.briefingSettings.units = br.units;
       if (br.location === null) b.briefingSettings.location = null;
       else if (br.location && typeof br.location.city === 'string') {
-        if (/nowhere/i.test(br.location.city)) return json(400, { error: 'unknown_city', message: 'no such city' });
+        if (/nowhere/i.test(br.location.city)) return json(400, { error: 'city_not_found', message: `I couldn't find a place called "${br.location.city}". Try "City, State" or use this iPhone's location.` });
         b.briefingSettings.location = { label: br.location.city, lat: 39.8, lon: -89.64 };
       } else if (br.location) b.briefingSettings.location = { label: br.location.label || 'Your location', lat: Math.round(br.location.lat * 100) / 100, lon: Math.round(br.location.lon * 100) / 100 };
     }

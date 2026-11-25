@@ -159,7 +159,7 @@ export default [
         await t.waitFor(async () => /Your location \(51\.51, -0\.13\)/.test(await t.text(b.locator(tid('brain-location')))), { timeout: 5000, message: 'shown' });
         await b.locator(tid('brain-city')).fill('Nowhere Special');
         await b.locator(tid('brain-city-save')).click();
-        await t.waitFor(async () => /no such city/.test(await t.text(b.locator(tid('brain-briefing-result')))), { timeout: 5000, message: 'an unknown city said so' });
+        await t.waitFor(async () => /couldn't find a place called "Nowhere Special"/.test(await t.text(b.locator(tid('brain-briefing-result')))), { timeout: 5000, message: 'an unknown city said so, in the Core’s words' });
         await b.locator(tid('brain-city')).fill('Springfield');
         await b.locator(tid('brain-city-save')).click();
         await t.waitFor(async () => (await t.text(b.locator(tid('brain-location')))) === 'Springfield', { timeout: 5000, message: 'the city shown' });

@@ -292,7 +292,19 @@ export async function startApp(rootEl) {
   // The home base's brain (v7.6, SPEC §24): research, watchers, the morning briefing and push on
   // Jarvis Core 1.1. Read when the app starts (the morning card) and when its sheet or Settings opens.
   const brain = state.demo ? null : safe(() => createBrain({ getSettings, onSettingsChange }), null);
-  const morningCard = brain ? safe(() => createMorningCard(brain, { onOpen: () => openHomeBase({ tab: 'briefing' }) }), null) : null;
+  const morningCard = brain
+    ? safe(
+        () =>
+          createMorningCard(brain, {
+            onOpen: () => {
+              // Read: the rail stops suggesting the (paid) briefing protocol this morning.
+              safe(() => presence.noteBriefing(new Date()));
+              openHomeBase({ tab: 'briefing' });
+            },
+          }),
+        null,
+      )
+    : null;
 
   // Presence (SPEC 2.4): the state word, privacy pills, sensor tape, home and awareness rail.
   const presence = createPresence({
@@ -1556,6 +1568,7 @@ export async function startApp(rootEl) {
       const r = await brain.latestBriefing({ fresh: true });
       if (!r || !r.ok) return problem(r);
       safe(() => brain.dismissMorning(r.briefing));
+      safe(() => presence.noteBriefing(new Date()));
       return { line: briefingMarkdown(r.briefing), speech: briefingSpeech(r.briefing), ok: true };
     }
     if (cmd.kind === 'results') {
@@ -3663,6 +3676,8 @@ export async function startApp(rootEl) {
           if (!data || typeof data !== 'object' || data.type !== 'HOMEBASE_LINK' || typeof data.link !== 'string') return;
           safe(() => openHomeBaseLink(data.link));
         });
+        // Messages from the worker wait until the page says it listens.
+        if (typeof navigator.serviceWorker.startMessages === 'function') navigator.serviceWorker.startMessages();
       }
     } catch {
       /* no service worker here */

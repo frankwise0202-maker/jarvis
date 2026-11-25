@@ -349,6 +349,9 @@ export function brainProblem(f, { limits } = {}) {
   if (r.kind === 'refused') return { state: 'error', message: `The home base refused the connection${said ? ` (It said: ${said})` : '.'}` };
   if (r.kind === 'unset') return { state: 'unset', message: 'Link your home base first: Settings → Home base.' };
   if (r.kind === 'notcore') return { state: 'error', message: 'The home base gave an answer Jarvis couldn’t read.' };
+  // The Core words its other refusals for the owner (a city it couldn't find, a full queue, its
+  // Claude software missing): say them as they are.
+  if (r.kind === 'http' && said && r.code && r.code !== 'internal' && r.status >= 400 && r.status < 600) return { state: 'said', message: said.replace(/^./, (c) => c.toUpperCase()) };
   const code = num(r.status);
   return { state: 'error', message: `The home base answered with an error${code ? ` (${code})` : ''}${said ? `: ${said}` : '.'}` };
 }
