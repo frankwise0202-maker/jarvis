@@ -72,6 +72,9 @@ import { createMusicCardView, isMacDevice } from './music/card.js';
 import { createStandby } from './standby.js';
 import { createHomeBase } from './homebase.js';
 import { matchHomeBaseCommand, escapeMarkdown } from '../lib/homebase.js';
+import { createBrain, createMorningCard } from './brain.js';
+import { createHomeBaseView } from './homebase-sheet.js';
+import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, NO_KEY_MESSAGE } from '../lib/brain.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
@@ -286,6 +289,10 @@ export async function startApp(rootEl) {
   // Home base (v7.5, SPEC §23): the Jarvis Core on the owner's Alienware, over Tailscale. Polled only
   // while its tile is on screen; not in the demo (no network there).
   const homeBase = state.demo ? null : safe(() => createHomeBase({ getSettings, onSettingsChange }), null);
+  // The home base's brain (v7.6, SPEC §24): research, watchers, the morning briefing and push on
+  // Jarvis Core 1.1. Read when the app starts (the morning card) and when its sheet or Settings opens.
+  const brain = state.demo ? null : safe(() => createBrain({ getSettings, onSettingsChange }), null);
+  const morningCard = brain ? safe(() => createMorningCard(brain, { onOpen: () => openHomeBase({ tab: 'briefing' }) }), null) : null;
 
   // Presence (SPEC 2.4): the state word, privacy pills, sensor tape, home and awareness rail.
   const presence = createPresence({
@@ -301,6 +308,7 @@ export async function startApp(rootEl) {
     canResume: (conv) => !state.runs.has(conv.id) && !runningElsewhere(conv.id) && engine.canResume(conv),
     sounds,
     homeBase,
+    morningEl: morningCard ? morningCard.el : null,
     onRendered: ({ needs }) => header.setAlert(needs.length),
     onHud: () => {
       renderPanelStatsSoon();
@@ -323,6 +331,8 @@ export async function startApp(rootEl) {
       openSettings: (opts) => openSettings(opts),
       openSystems: () => openSystems(),
       openHistory: () => openHistory(),
+      // v7.6: the home base tiles open the Home base sheet.
+      openHomeBase: brain ? () => openHomeBase() : undefined,
       stopSensor: (kind) => {
         if ((kind === 'mic' || kind === 'all') && state.listening) {
           safe(() => state.listening.stop());
@@ -471,7 +481,9 @@ export async function startApp(rootEl) {
     // also while Jarvis is working ("put mission control on screen 2").
     // Apple Music: "play Back in Black" is found here, free (no Claude request): a Music card.
     // "How's the home base?": the Jarvis Core answers, free (a local exchange; v7.5).
-    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text) || homeBaseFromChat(text),
+    // v7.6: "research … in the background", "what did the home base find?", "watch for …", "brief me":
+    // the home base acts (free, local exchanges) while one is linked.
+    onCommand: (text) => !!screenCommand(text, null, 'typed') || !!musicCommand(text, { source: 'typed' }) || standbyFromChat(text) || homeBaseFromChat(text) || brainFromChat(text),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
@@ -1504,13 +1516,126 @@ export async function startApp(rootEl) {
     return true;
   }
 
-  /** The same words said in Voice Mode: Jarvis says the home base's answer (free, no turn). */
+  /**
+   * The same words said in Voice Mode: Jarvis says the home base's answer (free, no turn). v7.6: and
+   * "brief me", "research … in the background", "what did the home base find?", "watch for …".
+   */
   function homeBaseFromVoice(text) {
     const words = String(text || '').trim();
-    if (!homeBase || !words || !safe(() => matchHomeBaseCommand(words), false)) return null;
+    if (!homeBase || !words) return null;
+    if (!safe(() => matchHomeBaseCommand(words), false)) return brainFromVoice(words);
     const done = Promise.resolve(homeBase.ask(words))
       .catch(() => ({ ok: false, message: 'Something went wrong asking the home base.' }))
       .then((r) => ({ ack: (r && r.ok ? r.answer : r && r.message) || 'No answer from the home base.' }));
+    return { handled: true, done };
+  }
+
+  // ---- the home base's brain from the chat and Voice Mode (v7.6, SPEC §24) ------------------------
+  /** A brain command for the linked home base, or null ("brief me" without one goes on as usual). */
+  function brainCommandOf(words) {
+    if (!brain) return null;
+    const cmd = safe(() => matchBrainCommand(words), null);
+    if (!cmd) return null;
+    // Not linked: a briefing or research goes to Claude as before; watching and "what did it find"
+    // need a home base, so Jarvis says how to link one.
+    if (!brain.base()) return cmd.kind === 'brief' || cmd.kind === 'research' ? null : { ...cmd, unlinked: true };
+    return cmd;
+  }
+
+  /** What a brain command does: { line (chat Markdown), speech (what Jarvis says), ok }. */
+  async function runBrainCommand(cmd) {
+    if (cmd.unlinked) {
+      const m = 'Link your home base first: Settings → Home base.';
+      return { line: escapeMarkdown(m), speech: m, ok: false };
+    }
+    const problem = (r) => {
+      const p = brainProblem(r, { limits: brain.getState().brain ? brain.getState().brain.limits : null });
+      return { line: escapeMarkdown(p.message), speech: p.state === 'nokey' ? 'The home base needs your Claude key for that. You can give it the key in Settings, under Home base.' : p.message, ok: false, state: p.state };
+    };
+    if (cmd.kind === 'brief') {
+      const r = await brain.latestBriefing({ fresh: true });
+      if (!r || !r.ok) return problem(r);
+      safe(() => brain.dismissMorning(r.briefing));
+      return { line: briefingMarkdown(r.briefing), speech: briefingSpeech(r.briefing), ok: true };
+    }
+    if (cmd.kind === 'results') {
+      const r = await brain.call('listJobs');
+      if (!r || !r.ok) return problem(r);
+      return { line: resultsMarkdown(r.jobs), speech: resultsSpeech(r.jobs), ok: true };
+    }
+    if (cmd.kind === 'research') {
+      const r = await brain.call('startJob', { prompt: cmd.prompt, depth: cmd.depth });
+      if (!r || !r.ok) return problem(r);
+      safe(() => brain.refresh());
+      const deep = cmd.depth === 'deep';
+      const m = `The home base is researching it${deep ? ' in depth' : ''}: “${r.job.title}”. It keeps going while your phone is locked and lets you know when it’s done. Ask “what did the home base find?” any time.`;
+      return { line: escapeMarkdown(m), speech: `Very good. The home base is researching ${r.job.title}${deep ? ', in depth' : ''}. I’ll let you know when it’s done.`, ok: true, jobId: r.job.id };
+    }
+    if (cmd.kind === 'watch') {
+      const r = await brain.call('addWatcher', { what: cmd.what, every: '24h' });
+      if (!r || !r.ok) return problem(r);
+      safe(() => brain.refresh());
+      const m = `The home base is watching for it: “${r.watcher.what}”. It checks once a day and lets you know when it happens (change how often in Home base → Watching).`;
+      return { line: escapeMarkdown(m), speech: `Certainly. The home base will keep an eye out and let you know when it happens.`, ok: true };
+    }
+    return { line: escapeMarkdown(NO_KEY_MESSAGE), speech: '', ok: false };
+  }
+
+  /**
+   * "Research … in the background", "what did the home base find?", "watch for …", "brief me" typed
+   * (or dictated) in the chat: a free, local exchange (no Claude request from this device), like
+   * "how's the home base?". False when the words are something else or this chat is busy.
+   */
+  function brainFromChat(text) {
+    const words = String(text || '').trim();
+    if (!words || !homeBase) return false;
+    const cmd = brainCommandOf(words);
+    if (!cmd) return false;
+    let conv = state.conv;
+    if (conv && (state.runs.has(conv.id) || runningElsewhere(conv.id))) return false;
+    const fresh = !conv;
+    if (!conv) conv = engine.newConversation();
+    clearFollowups();
+    const waiting = { brief: 'Getting your briefing from the home base…', results: 'Asking the home base what it found…', research: 'Handing it to the home base…', watch: 'Telling the home base…' }[cmd.kind];
+    let added;
+    try {
+      added = appendHomeBaseTurn(conv, { text: words, line: waiting, mode: composer.getMode() });
+    } catch (err) {
+      console.error('[jarvis] the home base turn failed:', err);
+      return false;
+    }
+    const { turn, textSegment } = added;
+    if (fresh || state.conv !== conv) setConversation(conv);
+    else chat.sync();
+    chat.scrollToBottom(false);
+    safe(() => sounds.cue('send'));
+    if (state.layout === 'phone') composer.blur();
+    Promise.resolve(runBrainCommand(cmd))
+      .catch(() => ({ line: escapeMarkdown('Something went wrong asking the home base.'), ok: false }))
+      .then((r) => {
+        // Built in src/lib/brain.js: the Core's words escaped, links only from checked addresses.
+        textSegment.text = String((r && r.line) || escapeMarkdown('No answer from the home base.')).slice(0, 12000);
+        turn.endedAt = Date.now();
+        conv.updatedAt = turn.endedAt;
+        if (state.conv === conv) {
+          chat.refresh(turn.id);
+          chat.scrollToBottom(false);
+        }
+        Promise.resolve(store.save(conv))
+          .then(() => scheduleHistoryRefresh())
+          .catch((err) => console.error('[jarvis] saving the home base turn failed:', err));
+      });
+    updateAll();
+    return true;
+  }
+
+  /** The same, said in Voice Mode: Jarvis says it (free, no turn). */
+  function brainFromVoice(words) {
+    const cmd = brainCommandOf(words);
+    if (!cmd) return null;
+    const done = Promise.resolve(runBrainCommand(cmd))
+      .catch(() => ({ speech: 'I couldn’t reach the home base just now.' }))
+      .then((r) => ({ ack: (r && r.speech) || 'No answer from the home base.' }));
     return { handled: true, done };
   }
 
@@ -1560,8 +1685,18 @@ export async function startApp(rootEl) {
     return { artist: pick.artist, segment, playText, found: outcome };
   }
 
-  /** "Brief me": the briefing protocol for the time of day (a chat of its own; a paid request). */
+  /**
+   * "Brief me": the briefing protocol for the time of day (a chat of its own; a paid request). v7.6:
+   * with a home base linked, the home base's own briefing instead, said out loud (free: { done }).
+   */
   function wakeBriefing() {
+    if (brain && brain.base()) {
+      safe(() => presence.noteBriefing(new Date()));
+      const done = Promise.resolve(runBrainCommand({ kind: 'brief' }))
+        .catch(() => ({ speech: 'I couldn’t reach the home base just now.' }))
+        .then((r) => ({ ack: (r && r.speech) || 'No briefing from the home base just now.' }));
+      return { done };
+    }
     const p = safe(() => getProtocol('morning-briefing'), null);
     if (!p) return null;
     const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
@@ -3020,6 +3155,7 @@ export async function startApp(rootEl) {
     if (settingsSheet) {
       if (opts.section && settingsPanel) settingsPanel.scrollToSection(opts.section, true);
       if (opts.focus && settingsPanel) settingsPanel.focus(opts.focus);
+      if (opts.brain && settingsPanel) safe(() => settingsPanel.revealBrain(opts.brain));
       return;
     }
     closePhoneSheets();
@@ -3073,6 +3209,8 @@ export async function startApp(rootEl) {
       },
       // Voice → Wake Jarvis → Go to Standby (inside the tap: iOS starts the microphone's audio there).
       enterStandby: () => enterStandby(),
+      // v7.6: Settings → Home base → what the home base does on its own (key, limits, briefing, push).
+      brain,
       toast,
     });
     const sheet = createSheet({
@@ -3098,6 +3236,63 @@ export async function startApp(rootEl) {
     sheet.open();
     if (opts.section) requestAnimationFrame(() => panelCtl.scrollToSection(opts.section, false));
     if (opts.focus) setTimeout(() => panelCtl.focus(opts.focus), 380);
+    if (opts.brain) setTimeout(() => safe(() => panelCtl.revealBrain(opts.brain)), 420);
+  }
+
+  // ---- Home base sheet (v7.6, SPEC §24) ---------------------------------------------------------
+  let homeBaseSheet = null;
+  /**
+   * The Home base sheet: Briefing · Research · Watching · Spending. { tab, jobId, watchId } opens it
+   * there (a deep link, a notification, the morning card, the chat); already open, it switches.
+   */
+  function openHomeBase({ tab = 'briefing', jobId = '', watchId = '' } = {}) {
+    if (!brain) return false;
+    if (homeBaseSheet) {
+      safe(() => homeBaseSheet.view.show(tab, { jobId, watchId }));
+      return true;
+    }
+    let view;
+    try {
+      view = createHomeBaseView(brain, {
+        tab,
+        jobId,
+        watchId,
+        toast,
+        onSettings: (focus) => {
+          if (homeBaseSheet) homeBaseSheet.sheet.close('navigate');
+          setTimeout(() => openSettings({ section: 'homebase', brain: focus === 'url' ? null : focus || 'key', focus: focus === 'url' ? 'homebase-url' : null }), 340);
+        },
+      });
+    } catch (err) {
+      console.error('[jarvis] the Home base sheet failed:', err);
+      toast('The Home base sheet couldn’t open.', { level: 'error' });
+      return false;
+    }
+    const sheet = createSheet({
+      kind: 'full',
+      title: 'Home base',
+      testid: 'brain-sheet',
+      closeTestid: 'brain-close',
+      className: 'sheet--homebase',
+      onClose: () => {
+        safe(() => view.destroy());
+        if (homeBaseSheet && homeBaseSheet.sheet === sheet) homeBaseSheet = null;
+      },
+    });
+    sheet.body.appendChild(view.el);
+    homeBaseSheet = { sheet, view };
+    sheet.open();
+    return true;
+  }
+
+  /** ?homebase=job:<id> | briefing | watch:<id> (a notification's link): the Home base sheet there. */
+  function openHomeBaseLink(value) {
+    const link = parseHomeBaseLink(value);
+    if (!link || !brain || !brain.base()) return false;
+    if (isVoiceModeOpen()) return false;
+    if (link.kind === 'job') return openHomeBase({ tab: 'research', jobId: link.id });
+    if (link.kind === 'watch') return openHomeBase({ tab: 'watching', watchId: link.id });
+    return openHomeBase({ tab: 'briefing' });
   }
 
   // ---- records (SPEC §14.4): share & export, Systems dashboard ----------------------------
@@ -3444,6 +3639,36 @@ export async function startApp(rootEl) {
   root.setAttribute('aria-busy', 'false');
   // ?optics=1 opens Optics at start (a bookmark on the Mac; tests). Phones open it from a tap.
   if (params.get('optics') === '1' && opticsAvailable()) setTimeout(() => openOpticsScreen(), 0);
+
+  // Home base (v7.6): ?homebase=job:<id> | briefing | watch:<id> (a notification opened Jarvis) opens
+  // the Home base sheet there; the link leaves the address (a reload doesn't reopen it). A tapped
+  // notification while Jarvis is open arrives from the service worker (HOMEBASE_LINK). At start, a
+  // new morning briefing puts its card at the top of the home.
+  if (brain) {
+    const link = params.get('homebase');
+    if (link) {
+      try {
+        const u = new URL(location.href);
+        u.searchParams.delete('homebase');
+        history.replaceState(history.state, '', `${u.pathname}${u.search}${u.hash}`);
+      } catch {
+        /* keep the address */
+      }
+      if (!onboardingSheet) setTimeout(() => safe(() => openHomeBaseLink(link)), 0);
+    }
+    try {
+      if (navigator.serviceWorker && typeof navigator.serviceWorker.addEventListener === 'function') {
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          const data = event && event.data;
+          if (!data || typeof data !== 'object' || data.type !== 'HOMEBASE_LINK' || typeof data.link !== 'string') return;
+          safe(() => openHomeBaseLink(data.link));
+        });
+      }
+    } catch {
+      /* no service worker here */
+    }
+    if (brain.base()) setTimeout(() => safe(() => brain.checkMorning()), 1200);
+  }
 
   // Presence: the boot sequence on the home screen (once a session by default), then the scan for
   // interrupted replies in recent conversations (Needs-you).

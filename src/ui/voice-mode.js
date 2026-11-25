@@ -101,7 +101,9 @@
 //   homeBase              Home base (v7.5, SPEC §23): command(text) -> null (not "how's the home base",
 //                           "home base status" …) or { handled: true, done: Promise<{ ack }> }: the
 //                           Jarvis Core's own assistant answers (free: no turn) and Jarvis says it. Heard
-//                           or typed here; acts at once, without the 2-second check.
+//                           or typed here; acts at once, without the 2-second check. v7.6 (SPEC §24):
+//                           also "brief me", "research … in the background", "what did the home base
+//                           find?", "watch for …" (the home base's brain; said, no turn).
 //   standby               Standby (v7.4, SPEC §22): an object (present = available). "Jarvis, standby",
 //                           "go to sleep" or "go back to sleep" (heard or typed, the whole sentence) gets
 //                           a short reply, then Voice Mode closes with onClose({ reason: 'standby' }) and
@@ -110,7 +112,8 @@
 //                           "Hey Jarvis" in Standby: { trigger: 'clap'|'word', name() -> the greeting
 //                           name, offer() -> Promise<{ artist, segment, playText, found } | null> (the
 //                           Music card offered: Apple Music, free; `found` is shown again on "yes",
-//                           without a second search), briefing() -> { text, mode, part } | null,
+//                           without a second search), briefing() -> { text, mode, part } | { done:
+//                           Promise<{ ack }> } (v7.6: the home base's briefing, said; free) | null,
 //                           returnToStandby() -> boolean (Settings), canSleep() -> boolean (no preview
 //                           playing), onAwake({ line, hidden }) }. The core boots with the wake sound
 //                           while the microphone listens a moment for "wake up", "daddy's home", "I'm
@@ -2537,12 +2540,18 @@ function createVoiceMode(opts) {
       res = null;
     }
     if (!res || !res.handled) return false;
+    sayLocal(text, res.done, 'Asking the home base…', 'I couldn’t reach the home base just now.');
+    return true;
+  }
+
+  /** A free local answer (the home base): the caption, "thinking" until `done` gives { ack }, then said. */
+  function sayLocal(text, done, status, failLine) {
     showCaption('quote', `“${text}”`);
     const marker = { pending: true, viewer: true, homeBase: true };
     S.run = marker;
     setVoiceState('thinking');
-    setStatus('Asking the home base…', 'sparkle');
-    Promise.resolve(res.done).then(
+    setStatus(status, 'sparkle');
+    Promise.resolve(done).then(
       (out) => {
         if (S.closed || S.run !== marker) return;
         S.run = null;
@@ -2551,10 +2560,9 @@ function createVoiceMode(opts) {
       () => {
         if (S.closed || S.run !== marker) return;
         S.run = null;
-        speakAck('I couldn’t reach the home base just now.');
+        speakAck(failLine);
       },
     );
-    return true;
   }
 
   /**
@@ -2993,6 +3001,11 @@ function createVoiceMode(opts) {
       if (reply === 'brief') {
         const b = typeof wake.briefing === 'function' ? wake.briefing() : null;
         clearMusicCard();
+        // v7.6: with a home base linked, its own briefing, said out loud (free: no turn).
+        if (b && b.done && typeof b.done.then === 'function') {
+          sayLocal(words, b.done, 'Getting your briefing from the home base…', 'I couldn’t reach the home base just now.');
+          return true;
+        }
         if (!b || !b.text) {
           showCaption('quote', `“${words}”`);
           speakAck('I can’t run the briefing just now.');

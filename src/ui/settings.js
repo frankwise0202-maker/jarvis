@@ -23,6 +23,7 @@ import { getHud, saveHud, onHudChange } from './presence/hud-prefs.js';
 import { wakeWordDownloadBytes, formatMegabytes, WAKE_MODEL_SOURCE } from '../lib/wake/catalog.js';
 import { normalizeHomeBaseUrl, failureState, HOME_BASE_EXAMPLE, LEVEL_WORDS } from '../lib/homebase.js';
 import { testHomeBase } from '../platform/homebase.js';
+import { createBrainSettings } from './brain-settings.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -1394,6 +1395,11 @@ export function createSettingsPanel(o) {
   });
   hbRenderCurrent();
 
+  // v7.6 (SPEC §24): below the address, what the home base does on its own (the key, limits, the
+  // morning briefing, notifications). Only while a home base is linked; not in the demo.
+  const brainCard = o.brain && !o.demo ? safeCall(() => createBrainSettings(o.brain, { getApiKey, toast: o.toast, requestPermission: requestNotifyPermission, os: currentOs() }), null) : null;
+  if (brainCard) cleanups.push(() => brainCard.destroy());
+
   const homebase = section(
     'homebase',
     card(
@@ -1410,6 +1416,7 @@ export function createSettingsPanel(o) {
       h('p', { class: 'set-help key-privacy' }, icon('lock', { size: 14 }), h('span', { text: 'Only your devices on your Tailscale network can reach it. Asking the home base is free: it answers from its own readings, never Claude.' })),
       h('div', { class: 'set-row-actions' }, hbRemoveBtn),
     ),
+    brainCard ? brainCard.el : null,
   );
 
   // Data
@@ -1674,6 +1681,10 @@ export function createSettingsPanel(o) {
       cleanups.push(() => root.removeEventListener('scroll', onScroll));
     },
     scrollToSection,
+    /** Settings → Home base: scroll to a part of the home base card ('key' | 'limits' | 'briefing' | 'push'). */
+    revealBrain(part) {
+      if (brainCard) safeCall(() => brainCard.reveal(part));
+    },
     focus(testid) {
       const target = el.querySelector(`[data-testid="${testid}"]`);
       if (target) {

@@ -406,6 +406,7 @@ export function createChat(o) {
     const fold = h(
       'div',
       { class: 'empty-fold presence-fold' },
+      home.morningEl || null,
       h('div', { class: 'hero' }, core, home.readoutsEl, home.legendEl),
       home.stateWordEl,
       greetEls.title,
