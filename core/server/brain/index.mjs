@@ -45,7 +45,7 @@ const capWords = (cap, limits) =>
 
 /**
  * createBrain({ config, getCore, now, log, timeZone, fetch, push, dataDir, secretsDir, claudeBase,
- *               importSdk, whatsNewFile, rand })
+ *               importSdk, whatsNewFile, rand, tickMs, defaultLocation, claudeTuning })
  */
 export function createBrain({
   config = {},
@@ -63,6 +63,7 @@ export function createBrain({
   rand = Math.random,
   tickMs = TICK_MS,
   defaultLocation = null,
+  claudeTuning = {},
 } = {}) {
   const log = safeLog(rawLog);
   const brainDir = dataDir ? path.join(dataDir, 'brain') : null;
@@ -91,7 +92,8 @@ export function createBrain({
 
   // ---- key vault, Claude, spending
   const vault = createVault({ dir: secretsDir, log, now });
-  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log });
+  // claudeTuning (tests only): { outputTokensPerSecond, checkEveryMs } of the live cost estimate.
+  const claude = createClaude({ getKey: () => vault.get(), baseURL: claudeBase, importSdk, log, ...claudeTuning });
   const spend = createSpend({ file: file('spend-v1.json'), timeZone, now, limits: () => settings.limits, log });
   let lastSpendEmit = 0;
   let spendTimer = null;
@@ -171,6 +173,7 @@ export function createBrain({
       emitSpend();
     },
     capCheck: (extra) => spend.capReached(extra),
+    capRoom: (extra) => spend.headroom(extra),
     onChange: (j) => emit('job', j),
     onFinish: (job) => {
       if (job.kind === 'research' && ['done', 'failed', 'blocked'].includes(job.status)) {

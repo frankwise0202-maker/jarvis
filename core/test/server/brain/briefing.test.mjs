@@ -89,7 +89,6 @@ test('full briefing (key set): one Claude call with web search (3 uses), Jarvis 
       assert.match(body.system[0].text, /calm, warm, understated British voice/);
       return {
         blocks: [
-          ...search('top news today', [{ url: 'https://www.npr.org/2026/11/25/holiday-travel-record', title: 'NPR' }]),
           toolUse('write_briefing', {
             markdown: '**Good morning, Frank.** A grey, mild start.\n\n- [Holiday travel hits a record](https://www.npr.org/2026/11/25/holiday-travel-record)',
             spoken: 'Good morning, Frank. A grey, mild start to the day.',
@@ -100,7 +99,7 @@ test('full briefing (key set): one Claude call with web search (3 uses), Jarvis 
           }),
         ],
         stop: 'tool_use',
-        usage: { input_tokens: 60_000, output_tokens: 16_000 },
+        usage: { input_tokens: 115_000, output_tokens: 6_000 },
       };
     },
   });
@@ -119,7 +118,7 @@ test('full briefing (key set): one Claude call with web search (3 uses), Jarvis 
     const jobs = brain.listJobs({ kind: 'briefing' });
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].status, 'done');
-    // 60k in, 16k out on Sonnet 5.5 + 1 search = 0.12 + 0.16 + 0.01 = 0.29: under $0.02 is left today.
+    // 115k in, 6k out (its max_tokens) on Sonnet 5.5 = 0.23 + 0.06 = 0.29: under $0.02 is left today.
     assert.equal(jobs[0].costUsd, 0.29);
     const again = await brain.runBriefing();
     assert.equal(again.kind, 'free');

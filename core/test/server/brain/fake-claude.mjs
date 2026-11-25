@@ -7,7 +7,11 @@
 //   turn = { blocks: [text('…'), ...search('q', [{ url, title }]), toolUse('report_check', {...})],
 //            stop: 'end_turn' | 'pause_turn' | 'tool_use' | 'max_tokens' | 'refusal',
 //            usage: { input_tokens, output_tokens, cache_read_input_tokens, ... }, model?, container?,
-//            status?: 429 | 500 | 401 ..., errorType?, slowMs?, dropAfter? (cut the stream after N events) }
+//            status?: 429 | 500 | 401 ..., errorType?, slowMs?, dropAfter? (cut the stream after N events),
+//            startInputTokens? (message_start's input: the first round only, when usage has every round's) }
+//   thinking('', { pauseMs }) streams an empty thinking block (display "omitted", as on Opus / Sonnet 5.5)
+//   that stays open, silent, for pauseMs. Like the real API, output_tokens never exceeds the request's
+//   max_tokens: a turn scripted with more output ends there, with stop_reason max_tokens.
 //   fake.url, fake.requests (each { headers, body, path }), fake.violations, await fake.close()
 //
 // Standalone, for trying the whole Core with no real API (any sk-ant-… key is accepted):
@@ -22,7 +26,7 @@ let seq = 0;
 const id = (p) => `${p}_${(++seq).toString(36).padStart(8, '0')}`;
 
 export const text = (t, citations = []) => ({ type: 'text', text: t, citations });
-export const thinking = (t = '') => ({ type: 'thinking', thinking: t, signature: `sig_${id('t')}` });
+export const thinking = (t = '', { pauseMs = 0 } = {}) => ({ type: 'thinking', thinking: t, signature: `sig_${id('t')}`, ...(pauseMs > 0 ? { pauseMs } : {}) });
 export function search(query, results) {
   const useId = id('srvtoolu');
   return [
@@ -75,10 +79,12 @@ function validate(body, headers, previous) {
   return v;
 }
 
-function* events(turn, model) {
+function* events(turn, model, maxTokens = Infinity) {
   const usage = { input_tokens: 1200, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, ...(turn.usage ?? {}) };
+  const clipped = Number.isFinite(maxTokens) && usage.output_tokens > maxTokens;
+  if (clipped) usage.output_tokens = maxTokens;
   const searches = turn.blocks.filter((b) => b.type === 'server_tool_use' && b.name === 'web_search').length;
-  yield ['message_start', { type: 'message_start', message: { id: id('msg'), type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: usage.input_tokens, output_tokens: 1, cache_creation_input_tokens: usage.cache_creation_input_tokens, cache_read_input_tokens: usage.cache_read_input_tokens } } }];
+  yield ['message_start', { type: 'message_start', message: { id: id('msg'), type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: turn.startInputTokens ?? usage.input_tokens, output_tokens: 1, cache_creation_input_tokens: usage.cache_creation_input_tokens, cache_read_input_tokens: usage.cache_read_input_tokens } } }];
   let index = 0;
   for (const b of turn.blocks) {
     if (b.type === 'text') {
@@ -87,6 +93,7 @@ function* events(turn, model) {
       for (const c of b.citations ?? []) yield ['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'citations_delta', citation: c } }];
     } else if (b.type === 'thinking') {
       yield ['content_block_start', { type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '', signature: '' } }];
+      if (b.pauseMs) yield ['__pause', b.pauseMs];
       if (b.thinking) yield ['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: b.thinking } }];
       yield ['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: b.signature } }];
     } else if (b.type === 'server_tool_use' || b.type === 'tool_use') {
@@ -99,7 +106,7 @@ function* events(turn, model) {
     yield ['content_block_stop', { type: 'content_block_stop', index }];
     index += 1;
   }
-  const delta = { stop_reason: turn.stop ?? 'end_turn', stop_sequence: null };
+  const delta = { stop_reason: clipped && turn.stop !== 'refusal' ? 'max_tokens' : turn.stop ?? 'end_turn', stop_sequence: null };
   if (turn.stop === 'refusal') delta.stop_details = { type: 'refusal', category: turn.category ?? 'cyber', explanation: 'declined' };
   if (turn.container) delta.container = { id: turn.container, expires_at: new Date(Date.now() + 3600_000).toISOString() };
   const finalUsage = { output_tokens: usage.output_tokens, input_tokens: usage.input_tokens, server_tool_use: { web_search_requests: searches, web_fetch_requests: 0 } };
@@ -169,7 +176,11 @@ export async function startFakeClaude({ script = defaultScript, validKeys = null
       }
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
       let i = 0;
-      for (const [name, data] of events(turn, turn.model ?? body.model)) {
+      for (const [name, data] of events(turn, turn.model ?? body.model, body.max_tokens)) {
+        if (name === '__pause') {
+          await new Promise((r) => setTimeout(r, data));
+          continue;
+        }
         if (turn.dropAfter !== undefined && i >= turn.dropAfter) {
           res.destroy();
           return;

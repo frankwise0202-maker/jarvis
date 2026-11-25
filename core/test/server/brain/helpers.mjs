@@ -32,7 +32,7 @@ export function fakePush() {
   };
 }
 
-export function makeBrain({ fake = null, clock = createManualClock(MORNING), dataDir = null, secretsDir = null, push = fakePush(), core = null, whatsNewFile = null, fetchFn = createFixtureFetch(), importSdk, logs = [], rand = () => 0.5 } = {}) {
+export function makeBrain({ fake = null, clock = createManualClock(MORNING), dataDir = null, secretsDir = null, push = fakePush(), core = null, whatsNewFile = null, fetchFn = createFixtureFetch(), importSdk, logs = [], rand = () => 0.5, claudeTuning = {} } = {}) {
   const brain = createBrain({
     config: { ownerName: 'Frank' },
     getCore: () => core,
@@ -48,6 +48,7 @@ export function makeBrain({ fake = null, clock = createManualClock(MORNING), dat
     whatsNewFile,
     rand,
     tickMs: 3600_000,
+    claudeTuning,
   });
   return { brain, clock, push, logs, fetchFn };
 }

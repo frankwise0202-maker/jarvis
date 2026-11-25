@@ -56,6 +56,15 @@ export function createSpend({ file, timeZone, now, limits, log = () => {} }) {
     return null;
   }
 
+  /** What may still be spent before a cap, counting `extraUsd` not recorded yet: { usd, reason: 'daily' | 'monthly' }. */
+  function headroom(extraUsd = 0) {
+    const t = totals();
+    const l = limits();
+    const monthly = l.monthlyUsd - t.monthUsd - extraUsd;
+    const daily = l.dailyUsd - t.todayUsd - extraUsd;
+    return monthly <= daily ? { usd: monthly, reason: 'monthly' } : { usd: daily, reason: 'daily' };
+  }
+
   /** Record one call's cost (`calls` 0 for a top-up of a call already counted). */
   function add(amount, { calls = 1, briefing = false } = {}) {
     const v = Number.isFinite(amount) && amount > 0 ? amount : 0;
@@ -101,6 +110,7 @@ export function createSpend({ file, timeZone, now, limits, log = () => {} }) {
     add,
     totals,
     capReached,
+    headroom,
     summary,
     report,
     flush() {

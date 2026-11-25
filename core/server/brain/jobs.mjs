@@ -54,13 +54,22 @@ export function titleFrom(prompt) {
  * createJobs({ file, now, log, runners, gate, onChange, onFinish }):
  *   runners[kind](job, ctx) → Promise<{ summary, result, stoppedEarly?, status?, error? }>   (throws BrainError)
  *   gate(job) → null | { status: 'blocked' | 'failed', code, message }   (checked when a job would start)
- *   ctx: { signal, charge(usd, opts), check(estimateUsd) → null | reason }  built with budgetFor/charge/capCheck
+ *   ctx: { signal, charge(usd, opts), check(estimateUsd) → null | reason,
+ *          room(estimateUsd) → null | { usd, reason: 'budget' | 'daily' | 'monthly' } }
+ *        built with budgetFor / charge / capCheck(extraUsd) / capRoom(extraUsd) → { usd, reason }
+ * Both lanes count each other's request in flight (not charged yet) against the caps.
  */
-export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor, charge, capCheck, onChange = () => {}, onFinish = () => {} }) {
+export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor, charge, capCheck, capRoom = null, onChange = () => {}, onFinish = () => {} }) {
   let jobs = [];
   const running = new Map(); // lane → { job, ac }
   const extras = new Map(); // job id → { facts, budgetUsd } (memory only: what a briefing job needs)
   const waiters = new Map(); // job id → [resolve]
+  const inFlight = new Map(); // job id → the live estimate of its request in flight (not charged yet)
+  const othersInFlight = (id) => {
+    let sum = 0;
+    for (const [jid, v] of inFlight) if (jid !== id) sum += v;
+    return sum;
+  };
   let saveTimer = null;
   let stopped = false;
 
@@ -188,10 +197,17 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
     const budget = extra?.budgetUsd ?? budgetFor(job);
     const base = job.costUsd ?? 0; // what earlier attempts (before a restart) already spent
     let lastEmit = 0;
+    /** Of this attempt's conversation cost `estimateUsd` (charged + live estimate): the part not charged yet. */
+    const unchargedOf = (estimateUsd) => {
+      const v = Math.max(0, base + Math.max(0, estimateUsd) - (job.costUsd ?? 0));
+      inFlight.set(job.id, v);
+      return v;
+    };
     const ctx = {
       signal: ac.signal,
       charge(amount, opts = {}) {
         const v = Number.isFinite(amount) && amount > 0 ? amount : 0;
+        inFlight.delete(job.id);
         job.costUsd = (job.costUsd ?? 0) + v;
         charge(v, job, opts);
         const t = Date.now();
@@ -205,7 +221,15 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
         if (ac.signal.aborted) return 'cancelled';
         const total = base + Math.max(0, estimateUsd);
         if (budget !== null && total >= budget) return 'budget';
-        return capCheck(Math.max(0, total - (job.costUsd ?? 0)), job);
+        return capCheck(unchargedOf(estimateUsd) + othersInFlight(job.id), job);
+      },
+      /** What is left before the budget or a cap, and which one is nearest: { usd, reason } (null: no limit). */
+      room(estimateUsd) {
+        const spent = base + Math.max(0, estimateUsd);
+        let best = budget !== null ? { usd: budget - spent, reason: 'budget' } : null;
+        const cap = capRoom ? capRoom(unchargedOf(estimateUsd) + othersInFlight(job.id), job) : null;
+        if (cap && Number.isFinite(cap.usd) && (best === null || cap.usd < best.usd)) best = { usd: cap.usd, reason: cap.reason };
+        return best;
       },
     };
     try {
@@ -246,6 +270,7 @@ export function createJobs({ file, now, log = () => {}, runners, gate, budgetFor
         } else finish(job, { status: code === 'spend_cap' ? 'blocked' : 'failed', summary: message, error: { code, message } });
       }
     } finally {
+      inFlight.delete(job.id);
       if (running.get(lane)?.job === job) running.delete(lane);
       queueMicrotask(pump);
     }

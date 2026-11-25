@@ -217,7 +217,7 @@ test('caps: a job over the daily cap is refused (402), a running job stops at th
   const { brain } = makeBrain({ fake });
   try {
     await okKey(brain);
-    await brain.putSettings({ limits: { dailyUsd: 0.06 } });
+    await brain.putSettings({ limits: { dailyUsd: 0.2 } });
     const a = brain.createJob({ prompt: 'first' });
     await until(() => brain.getJob(a.id).status === 'done', { what: 'first job' });
     assert.equal(brain.info().spend.todayUsd, 0.05);
@@ -229,6 +229,9 @@ test('caps: a job over the daily cap is refused (402), a running job stops at th
     assert.equal(fb.stoppedEarly, 'daily');
     assert.match(fb.result.markdown, /today's spending limit/);
     assert.equal(fb.summary, 'Partial findings so far.');
+    // The second request was sent with only what the $0.15 left can pay for.
+    assert.ok(fake.messageRequests[1].body.max_tokens < 16_000, `max_tokens ${fake.messageRequests[1].body.max_tokens}`);
+    assert.ok(brain.info().spend.todayUsd <= 0.2 + 0.002, `spent ${brain.info().spend.todayUsd}`);
     const fc = await until(() => (brain.getJob(c.id).status === 'blocked' ? brain.getJob(c.id) : null), { what: 'blocked job' });
     assert.equal(fc.error.code, 'spend_cap');
     assert.equal(brain.info().spend.capReached, 'daily');
@@ -239,6 +242,128 @@ test('caps: a job over the daily cap is refused (402), a running job stops at th
     // A cap of 0 means no background spending at all.
     await brain.putSettings({ limits: { dailyUsd: 0, monthlyUsd: 50 } });
     assert.throws(() => brain.createJob({ prompt: 'fifth' }), (e) => e.code === 'spend_cap');
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});
+
+const finished = (j) => ['done', 'failed', 'blocked', 'cancelled'].includes(j?.status);
+
+test('caps: a reply that is mostly thinking (no text on the stream) still stays under the cap: max_tokens fits the room', async () => {
+  const fake = await startFakeClaude({
+    script: (body) => ({
+      // Opus 5.5 thinks with display "omitted": an empty thinking block, billed in full as output.
+      blocks: [thinking(''), text('Summary: The answer, briefly.\n\nFindings.')],
+      stop: 'end_turn',
+      usage: { input_tokens: Math.ceil(JSON.stringify(body).length / 4), output_tokens: 32_000 },
+    }),
+  });
+  const { brain } = makeBrain({ fake });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ limits: { dailyUsd: 0.25 } });
+    const a = brain.createJob({ prompt: 'deep question', depth: 'deep' });
+    const ja = await until(() => (finished(brain.getJob(a.id)) ? brain.getJob(a.id) : null), { what: 'deep job' });
+    const sent = fake.messageRequests[0].body.max_tokens;
+    assert.ok(sent >= 2000 && sent < 32_000, `max_tokens ${sent} is what the $0.25 left can pay for`);
+    assert.ok(brain.info().spend.todayUsd <= 0.25, `spent ${brain.info().spend.todayUsd} of the $0.25 cap`);
+    assert.equal(ja.status, 'done');
+    assert.equal(ja.stoppedEarly, 'daily');
+    assert.match(ja.result.markdown, /today's spending limit/);
+    // Less room left than a useful request: nothing is sent and the job is blocked.
+    const b = brain.createJob({ prompt: 'another deep question', depth: 'deep' });
+    const jb = await until(() => (finished(brain.getJob(b.id)) ? brain.getJob(b.id) : null), { what: 'second job' });
+    assert.equal(jb.status, 'blocked');
+    assert.equal(jb.error.code, 'spend_cap');
+    assert.equal(fake.messageRequests.length, 1);
+    assert.deepEqual(fake.violations, []);
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});
+
+test('caps: an input far larger than estimated stops the request before it writes; it is sent again to fit the cap', async () => {
+  const fake = await startFakeClaude({
+    script: () => ({
+      blocks: [thinking(''), text('Summary: The answer, briefly.\n\nFindings.')],
+      stop: 'end_turn',
+      usage: { input_tokens: 20_000, output_tokens: 32_000 },
+      slowMs: 5,
+    }),
+  });
+  const { brain, logs } = makeBrain({ fake });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ limits: { dailyUsd: 0.25 } });
+    const job = brain.createJob({ prompt: 'deep question', depth: 'deep' });
+    const done = await until(() => (finished(brain.getJob(job.id)) ? brain.getJob(job.id) : null), { what: 'deep job' });
+    const [first, second] = fake.messageRequests.map((r) => r.body.max_tokens);
+    assert.equal(fake.messageRequests.length, 2);
+    assert.ok(second < first, `sent again with a smaller max_tokens (${first} → ${second})`);
+    assert.ok(brain.info().spend.todayUsd <= 0.25 + 0.001, `spent ${brain.info().spend.todayUsd} of the $0.25 cap`);
+    assert.equal(done.status, 'done');
+    assert.equal(done.stoppedEarly, 'daily');
+    assert.ok(logs.some((l) => /more than estimated/.test(l)));
+    assert.deepEqual(fake.violations, []);
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});
+
+test('caps: the estimate grows while the model thinks in silence, and a timer stops the request at the cap', async () => {
+  const fake = await startFakeClaude({
+    script: () => ({
+      blocks: [text('Summary: Early findings.\n\nThe first source says yes.'), ...search('more', [{ url: 'https://c.example/', title: 'C' }]), thinking('', { pauseMs: 4000 }), text('\n\nA long-thought conclusion.')],
+      stop: 'end_turn',
+      usage: { input_tokens: 1000, output_tokens: 9000 },
+    }),
+  });
+  // 20,000 tokens a second stands in for a long silent think at 200 a second; checked every 50 ms.
+  const { brain } = makeBrain({ fake, claudeTuning: { outputTokensPerSecond: 20_000, checkEveryMs: 50 } });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ limits: { dailyUsd: 0.1 } });
+    const t0 = Date.now();
+    const job = brain.createJob({ prompt: 'think hard about this' });
+    const done = await until(() => (finished(brain.getJob(job.id)) ? brain.getJob(job.id) : null), { what: 'stopped while thinking', timeoutMs: 10_000 });
+    assert.ok(Date.now() - t0 < 3000, `stopped during the 4 s think, not after it (${Date.now() - t0} ms)`);
+    assert.equal(done.status, 'done');
+    assert.equal(done.stoppedEarly, 'daily');
+    assert.equal(done.summary, 'Early findings.');
+    assert.ok(!done.result.markdown.includes('long-thought conclusion'));
+    assert.ok(brain.info().spend.todayUsd <= 0.1 + 0.015, `spent ${brain.info().spend.todayUsd}`);
+  } finally {
+    await brain.stop();
+    await fake.close();
+  }
+});
+
+test('caps: every server-tool round reads the conversation again; the request stops before the round that would cross', async () => {
+  const hit = (q) => [{ url: `https://d.example/${q}`, title: `D ${q}` }];
+  const fake = await startFakeClaude({
+    script: () => ({
+      blocks: [text('Summary: What the first searches found.\n\nDetails.'), ...search('one', hit(1)), ...search('two', hit(2)), ...search('three', hit(3)), ...search('four', hit(4)), text('\n\nThe end of the answer.')],
+      stop: 'end_turn',
+      // Five rounds, each reading the prompt and every result before it again: what the API bills.
+      usage: { input_tokens: 5 * 3000 + 10 * 10_000, output_tokens: 1500 },
+      startInputTokens: 3000,
+      slowMs: 5,
+    }),
+  });
+  const { brain } = makeBrain({ fake });
+  try {
+    await okKey(brain);
+    await brain.putSettings({ limits: { dailyUsd: 0.15 } });
+    const job = brain.createJob({ prompt: 'search a lot' });
+    const done = await until(() => (finished(brain.getJob(job.id)) ? brain.getJob(job.id) : null), { what: 'stopped between rounds' });
+    assert.equal(done.status, 'done');
+    assert.equal(done.stoppedEarly, 'daily');
+    assert.ok(!done.result.markdown.includes('The end of the answer'));
+    assert.ok(brain.info().spend.todayUsd <= 0.15, `spent ${brain.info().spend.todayUsd} of the $0.15 cap`);
+    assert.ok(brain.info().spend.todayUsd >= 0.05, 'the rounds that ran are counted');
   } finally {
     await brain.stop();
     await fake.close();

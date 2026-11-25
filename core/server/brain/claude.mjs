@@ -2,8 +2,18 @@
 // serves the system report without core/node_modules), one streamed request at a time with
 // finalMessage(), the server tools web_search_20260209 / web_fetch_20260209, adaptive thinking, pause_turn
 // continuations, refusal and max_tokens handling, server-side refusal fallbacks, and the cost of every
-// response from its usage. A live estimate during the stream lets a job stop the moment it would cross
-// its budget or a spending cap ("finish with what it has"). No local tools: web search and fetch only.
+// response from its usage. No local tools: web search and fetch only.
+//
+// Spending never runs past a cap or a job's budget by more than a rounding error:
+//   - before each request (the first and every pause_turn continuation) its max_tokens is lowered to what
+//     the room left (the smallest of the budget, today's and this month's cap) can pay for after its input,
+//     and a request that could write fewer than MIN_REQUEST_TOKENS is not sent;
+//   - during the stream a live estimate is checked on every event and every second, and the request is
+//     stopped the moment it would cross ("finish with what it has"). Thinking streams no text on Opus /
+//     Sonnet 5.5 (display "omitted") but is billed as output, so the estimate counts the time the model
+//     spends writing at a generous OUTPUT_TOKENS_PER_SECOND (up to max_tokens), every server-tool round
+//     reading the whole conversation again, a search result as SEARCH_RESULT_TOKENS and a fetched page as
+//     its max_content_tokens.
 //
 // The key goes only to https://api.anthropic.com (or, for tests, a loopback address the caller names).
 
@@ -49,6 +59,50 @@ export class BrainError extends Error {
 const SPEND_LIMIT_CODES = new Set(['enforced_spend_limit_reached', 'contract_spend_limit_reached']);
 /** Never cap max_tokens below this when pacing for an output-tokens-per-minute limit. */
 export const MIN_MAX_TOKENS = 1024;
+/** A request whose room (budget, caps) pays for fewer output tokens than this is not sent. */
+export const MIN_REQUEST_TOKENS = 2000;
+/** The live estimate's writing speed (thinking streams no text but is billed): above what the models do. */
+export const OUTPUT_TOKENS_PER_SECOND = 200;
+/** A web search result as input tokens, at least (its content is encrypted; pages run long). */
+export const SEARCH_RESULT_TOKENS = 10_000;
+const FETCH_DEFAULT_TOKENS = 25_000;
+
+/** A request's input in tokens before it is sent: its JSON at 3 characters a token, plus what the API adds. */
+export function estimateInputTokens(params) {
+  let chars = 0;
+  try {
+    chars = JSON.stringify([params.system ?? null, params.messages ?? null, params.tools ?? null]).length;
+  } catch {
+    chars = 0;
+  }
+  return Math.ceil(chars / 3) + (params.tools?.length ? 2500 : 500);
+}
+
+/** The most a web fetch can put into the context (its max_content_tokens). */
+function fetchTokensOf(tools) {
+  const t = (Array.isArray(tools) ? tools : []).find((x) => typeof x?.type === 'string' && x.type.startsWith('web_fetch'));
+  const n = Number(t?.max_content_tokens);
+  return Number.isFinite(n) && n > 0 ? n : FETCH_DEFAULT_TOKENS;
+}
+
+/** Input tokens a server tool's result adds to the context: its size, and for a search or a page at least the most it can hold. */
+function resultTokensOf(block, fetchTokens) {
+  let size = 0;
+  try {
+    size = JSON.stringify(block).length / 4;
+  } catch {
+    size = 0;
+  }
+  const c = block?.content;
+  const failed = c && typeof c === 'object' && !Array.isArray(c) && (typeof c.error_code === 'string' || /error/.test(String(c.type ?? '')));
+  if (failed) return size;
+  if (block.type === 'web_search_tool_result') return Math.max(SEARCH_RESULT_TOKENS, size);
+  if (block.type === 'web_fetch_tool_result') return Math.max(fetchTokens, size);
+  return size;
+}
+
+/** What a result of this server tool is expected to add, before it arrives. */
+const expectedResultTokens = (name, fetchTokens) => (name === 'web_search' ? SEARCH_RESULT_TOKENS : name === 'web_fetch' ? fetchTokens : 1000);
 
 function headerOf(err, name) {
   try {
@@ -226,19 +280,29 @@ export function textRuns(contents) {
 // ------------------------------------------------------------------------------------------- the client
 
 /**
- * createClaude({ getKey, baseURL, importSdk, log }) →
+ * createClaude({ getKey, baseURL, importSdk, log, outputTokensPerSecond, checkEveryMs }) →
  *   sdkInstalled()                      (best guess without importing it)
  *   await loadSdk()                     the module or null
  *   await verifyKey(key)                'valid' | 'invalid' | 'unknown' (offline, no SDK)
  *   await run(request, ctx)             one conversation: a request plus its pause_turn continuations
  */
-export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => import('@anthropic-ai/sdk'), log = () => {}, clientOptions = {} } = {}) {
+export function createClaude({
+  getKey,
+  baseURL = API_BASE,
+  importSdk = () => import('@anthropic-ai/sdk'),
+  log = () => {},
+  clientOptions = {},
+  outputTokensPerSecond = OUTPUT_TOKENS_PER_SECOND,
+  checkEveryMs = 1000,
+} = {}) {
   const base = allowedBase(baseURL);
   if (!base) throw new Error('the Claude API base must be https://api.anthropic.com or a loopback address');
   let sdkPromise = null;
   let sdkState = null; // null unknown, true / false after the first import
   let fallbacksOk = true;
   const maxTokensCap = new Map(); // model → a cap learnt from an output-tokens-per-minute 429
+  const inputOverhead = new Map(); // model → input tokens the API adds beyond our estimate (learnt from message_start)
+  const inputTokensFor = (params) => estimateInputTokens(params) + (inputOverhead.get(params.model) ?? 0);
 
   function sdkInstalled() {
     if (sdkState !== null) return sdkState;
@@ -292,7 +356,8 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
 
   /**
    * One conversation. request: { model, system, user, tools, maxTokens, effort, maxContinuations }.
-   * ctx: { signal, charge(usd, { partial }), check(estimateUsd) -> null | stop reason }.
+   * ctx: { signal, charge(usd, { partial }), check(estimateUsd) -> null | stop reason,
+   *        room(estimateUsd) -> null | { usd, reason } (what is left under the budget and the caps) }.
    * Resolves { stopReason, stopped, contents, messages, costUsd, refusal, truncated }; rejects with a
    * BrainError (code 'cancelled' when ctx.signal aborted).
    */
@@ -307,6 +372,7 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
     let costUsd = 0;
     let container = null;
     let continuations = 0;
+    let resends = 0;
     const maxContinuations = request.maxContinuations ?? 4;
 
     for (;;) {
@@ -327,7 +393,34 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
         params.fallbacks = 'default';
         params.betas = [BETA_FALLBACK];
       }
-      const once = await streamOnce({ sdk, client, params, ctx, spentSoFar: costUsd });
+      // The request may cost at most the room left under the budget and the caps: its input, then what
+      // max_tokens lets it write (thinking included). Too little room for a useful answer: not sent.
+      let limitedBy = null;
+      let fitted = null;
+      const room = typeof ctx.room === 'function' ? ctx.room(costUsd) : null;
+      if (room && Number.isFinite(room.usd)) {
+        const price = priceOf(model);
+        const inputTokens = inputTokensFor(params);
+        const fit = Math.floor(((room.usd - (inputTokens * price.inPerM) / 1e6) * 1e6) / price.outPerM);
+        if (!(fit >= MIN_REQUEST_TOKENS)) {
+          return { stopReason: null, stopped: room.reason, contents, messages: finals, costUsd, refusal: null, truncated: false };
+        }
+        if (fit < params.max_tokens) {
+          params.max_tokens = fit;
+          limitedBy = room.reason;
+        }
+        if (resends < 2) fitted = { usd: room.usd, inputTokens };
+      }
+      const once = await streamOnce({ sdk, client, params, ctx, spentSoFar: costUsd, fitted });
+      if (once.resendWithInput) {
+        // The input was far larger than estimated, so max_tokens did not fit: stopped before it wrote
+        // anything, and sent again with what the input really is.
+        costUsd += once.costUsd;
+        resends += 1;
+        inputOverhead.set(model, Math.max(inputOverhead.get(model) ?? 0, once.resendWithInput - fitted.inputTokens));
+        log(`a request to ${model} had ${once.resendWithInput} input tokens, more than estimated; sending it again with a max_tokens that fits the spending limits`);
+        continue;
+      }
       if (once.retryWithoutFallbacks) {
         fallbacksOk = false;
         log('this API key does not take server-side fallbacks; continuing without them');
@@ -357,49 +450,106 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
         if (content.length) messages.push({ role: 'assistant', content });
         continue;
       }
+      // Cut short by a max_tokens lowered to fit the room: it stopped at the cap or the budget.
+      if (stop === 'max_tokens' && limitedBy) return { stopReason: stop, stopped: limitedBy, contents, messages: finals, costUsd, refusal: null, truncated: false };
       return { stopReason: stop, stopped: null, contents, messages: finals, costUsd, refusal: null, truncated: stop === 'max_tokens' };
     }
   }
 
-  /** One streamed request. Charges its cost (or the estimate of a request cut short) through ctx. */
-  async function streamOnce({ sdk, client, params, ctx, spentSoFar }) {
+  /**
+   * One streamed request. Charges its cost (or, for a request cut short, the estimate of what it spent)
+   * through ctx. The live estimate (see the top of this file) is checked on every event and every
+   * `checkEveryMs`; the check also counts the round a running server tool will start (its result read
+   * with everything before it), so a request stops before that round rather than after it.
+   */
+  async function streamOnce({ sdk, client, params, ctx, spentSoFar, fitted = null }) {
     const model = params.model;
     const price = priceOf(model);
-    let startUsage = null;
+    const inUsd = price.inPerM / 1e6;
+    const outUsd = price.outPerM / 1e6;
+    const fetchTokens = fetchTokensOf(params.tools);
+    let prompt = null; // the first round's input from message_start (uncached, cache writes, cache reads)
     let chars = 0;
     let searches = 0;
-    let results = 0;
+    let resultTokens = 0;
+    let rereadUsd = 0; // every later round reads the prompt, what was written and the results again
+    let pendingTokens = 0; // a server tool is running: its result, about to be read
+    let writingMs = 0;
+    let writingSince = null; // the model is writing (or thinking) since then; null while a tool runs
+    const open = new Map(); // block index → { type, name }
     let started = false;
     let stopped = null;
+    let resend = 0;
     let sinceCheck = 0;
     const stream = client.beta.messages.stream(params, { signal: ctx.signal });
-    const estimate = () => tokenCost(model, startUsage) + (chars / 4) * (price.outPerM / 1e6) + searches * WEB_SEARCH_USD + results * 2500 * (price.inPerM / 1e6);
+    const promptUsd = () => tokenCost(model, prompt);
+    const writtenTokens = () => {
+      const seconds = (writingMs + (writingSince === null ? 0 : Date.now() - writingSince)) / 1000;
+      return Math.max(chars / 4, Math.min(params.max_tokens, seconds * outputTokensPerSecond));
+    };
+    /** What the request has cost so far, on the high side. */
+    const spent = () => promptUsd() + rereadUsd + writtenTokens() * outUsd + searches * WEB_SEARCH_USD;
+    /** …and what it is committed to: the round a running server tool starts. */
+    const committed = () => spent() + (pendingTokens > 0 ? promptUsd() + (writtenTokens() + resultTokens + pendingTokens) * inUsd : 0);
     const check = () => {
-      if (stopped) return;
-      const reason = ctx.check?.(spentSoFar + estimate());
+      if (stopped || resend || !started) return;
+      const reason = ctx.check?.(spentSoFar + committed());
       if (reason) {
         stopped = reason;
         stream.abort();
       }
     };
+    const timer = setInterval(() => {
+      try {
+        check();
+      } catch {
+        // an accounting slip never breaks the request
+      }
+    }, checkEveryMs);
+    timer.unref?.();
     stream.on('streamEvent', (event) => {
       started = true;
       try {
         if (event.type === 'message_start') {
-          startUsage = event.message?.usage ?? null;
+          const u = event.message?.usage ?? null;
+          prompt = u ? { input_tokens: u.input_tokens, cache_creation_input_tokens: u.cache_creation_input_tokens, cache_read_input_tokens: u.cache_read_input_tokens } : null;
+          writingSince = Date.now();
+          const tokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((sum, k) => sum + (Number.isFinite(u?.[k]) && u[k] > 0 ? u[k] : 0), 0);
+          if (fitted && !stopped && tokens > fitted.inputTokens && promptUsd() + params.max_tokens * outUsd > fitted.usd + 0.002) {
+            resend = tokens;
+            stream.abort();
+            return;
+          }
           check();
         } else if (event.type === 'content_block_start') {
-          const b = event.content_block;
-          if (b?.type === 'server_tool_use' && b.name === 'web_search') searches += 1;
-          if (b?.type === 'web_search_tool_result' || b?.type === 'web_fetch_tool_result') results += 1;
+          const b = event.content_block ?? {};
+          const type = typeof b.type === 'string' ? b.type : '';
+          open.set(event.index, { type, name: b.name });
+          if (type.endsWith('_tool_result')) {
+            // A server tool answered: the next round reads everything so far again, the result included.
+            pendingTokens = 0;
+            resultTokens += resultTokensOf(b, fetchTokens);
+            rereadUsd += promptUsd() + (writtenTokens() + resultTokens) * inUsd;
+          } else if (type === 'server_tool_use' && b.name === 'web_search') searches += 1;
+          if (writingSince === null) writingSince = Date.now();
           check();
         } else if (event.type === 'content_block_delta') {
           const d = event.delta ?? {};
           const k = String(d.text ?? '').length + String(d.thinking ?? '').length + String(d.partial_json ?? '').length;
           chars += k;
           sinceCheck += k;
-          if (sinceCheck > 2000) {
+          if (sinceCheck > 400) {
             sinceCheck = 0;
+            check();
+          }
+        } else if (event.type === 'content_block_stop') {
+          const b = open.get(event.index);
+          open.delete(event.index);
+          if (b?.type === 'server_tool_use') {
+            // The tool runs on Anthropic's side: no writing meanwhile, and its result will be read.
+            if (writingSince !== null) writingMs += Date.now() - writingSince;
+            writingSince = null;
+            pendingTokens += expectedResultTokens(b.name, fetchTokens);
             check();
           }
         }
@@ -414,7 +564,12 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
       ctx.charge?.(cost, { partial: false });
       return { message, costUsd: cost, stopped: null };
     } catch (err) {
-      const partialCost = started ? estimate() : 0;
+      const partialCost = started ? spent() : 0;
+      if (resend) {
+        if (partialCost > 0) ctx.charge?.(partialCost, { partial: true });
+        if (ctx.signal?.aborted) throw new BrainError('cancelled', 'Stopped.');
+        return { resendWithInput: resend, costUsd: partialCost };
+      }
       if (stopped) {
         ctx.charge?.(partialCost, { partial: true });
         let snapshot = null;
@@ -434,6 +589,8 @@ export function createClaude({ getKey, baseURL = API_BASE, importSdk = () => imp
       if (partialCost > 0) ctx.charge?.(partialCost, { partial: true });
       if (ctx.signal?.aborted) throw new BrainError('cancelled', 'Stopped.');
       throw classifyError(err, sdk);
+    } finally {
+      clearInterval(timer);
     }
   }
 
