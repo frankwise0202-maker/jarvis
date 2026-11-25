@@ -38,20 +38,21 @@ function startCore(args) {
 }
 
 async function ask(page, q, how) {
-  const before = await page.locator('#transcript li.msg-core').count();
+  // The transcript keeps the last 6 exchanges, so answers are told apart by a mark, not by count.
+  await page.evaluate(() => document.querySelectorAll('#transcript li.msg-core').forEach((li) => (li.dataset.e2eSeen = '1')));
   if (how === 'chip') {
     await page.locator(`#ask-chips .ask-chip[data-q="${q}"]`).click();
   } else {
     await page.locator('#ask-input').fill(q);
     await page.locator('#ask-input').press('Enter');
   }
-  const answer = page.locator('#transcript li.msg-core').nth(before);
-  await answer.waitFor({ state: 'attached', timeout: 10_000 });
-  await page.waitForFunction((i) => {
-    const li = document.querySelectorAll('#transcript li.msg-core')[i];
+  await page.waitForFunction(() => {
+    const li = document.querySelector('#transcript li.msg-core:not([data-e2e-seen])');
     return li && !li.classList.contains('is-pending') && li.textContent.trim().length > 0;
-  }, before, { timeout: 10_000 });
-  return (await answer.innerText()).trim();
+  }, null, { timeout: 10_000 });
+  const text = (await page.locator('#transcript li.msg-core:not([data-e2e-seen])').first().innerText()).trim();
+  await page.waitForTimeout(700); // a person's pace (the assistant allows a burst of 8, then 30 a minute)
+  return text;
 }
 
 async function run() {
