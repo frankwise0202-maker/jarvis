@@ -6,7 +6,7 @@ import { ask, classify, INTENTS } from '../../server/assistant/index.mjs';
 import { normalize, editDistance, correctTypos } from '../../server/assistant/normalize.mjs';
 import { VOCAB } from '../../server/assistant/intents.mjs';
 import { fixtureCore, askCtx } from './helpers.mjs';
-import { fmtBits } from '../../server/format.mjs';
+import { fmtBits, setLocale, getLocale } from '../../server/format.mjs';
 import * as dash from '../../dashboard/app/format.js';
 
 const ok = fixtureCore('ok');
@@ -224,6 +224,30 @@ test('the trend answer labels its 5-minute average, so it never contradicts "how
   assert.ok(r.answer.includes(`averaging ${avg} °C over the last 5 minutes`), r.answer);
   assert.equal(r.facts.cpuTemp.average5m, Math.round(alert.core.history.recent('cpuTemp', 300, ctx.now) * 10) / 10);
   assert.doesNotMatch(r.answer, /: \d+ °C against/);
+});
+
+test('times read the same as the dashboard\'s clock: one locale for both (UX-7)', () => {
+  const d = new Date(ok.core.snapshot.t);
+  const nb = (x) => x.replace(/[\u202f\u00a0]/g, ' ');
+  try {
+    for (const loc of ['en-US', 'en-GB', 'en-AU']) {
+      setLocale(loc);
+      assert.equal(getLocale(), loc);
+      const p = dash.clockParts(d, loc, { timeZone: 'UTC' });
+      const clock = p.period ? `${p.time} ${p.period}` : p.time;
+      assert.equal(nb(A('what time is it').answer).toUpperCase(), `It's ${clock} on ${nb(dash.fmtDate(d, loc, 'UTC'))}.`.toUpperCase(), loc);
+    }
+    setLocale('en-US');
+    assert.equal(nb(A('what time is it').answer), "It's 2:32 PM on Wednesday, November 25.");
+    assert.equal(nb(A('how long have you been up').answer), 'The computer and I have been up 3 days, 4 hours, since Sunday at 10:20 AM.');
+    // the Core's own event messages too: "The computer started at 10:20 AM", as the log's time column says
+    const fresh = fixtureCore('ok');
+    const boot = fresh.core.events.list({ limit: 200 }).find((e) => e.rule === 'machine.boot');
+    assert.equal(nb(boot.message), `The computer started at ${nb(dash.fmtEventTime(boot.t, boot.t, 'en-US', 'UTC')).replace(/:00 /, ' ')}`);
+  } finally {
+    setLocale('en-GB');
+  }
+  assert.equal(A('what time is it').answer, "It's 14:32 on Wednesday 25 November.");
 });
 
 test('scope: polite refusals, never a claim to have done something', () => {

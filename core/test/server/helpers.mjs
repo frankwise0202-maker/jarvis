@@ -10,6 +10,11 @@ import { createSimulator } from '../../server/sim/simulator.mjs';
 import { createCore } from '../../server/core.mjs';
 import { createManualClock } from '../../server/clock.mjs';
 import { loadConfig } from '../../server/config.mjs';
+import { setLocale } from '../../server/format.mjs';
+
+// The server's times follow the system's locale; the tests pin en-GB ("14:32", "Wednesday 25 November")
+// so they read the same on any machine. The assistant tests check en-US against the dashboard as well.
+setLocale('en-GB');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const FIXTURES = path.resolve(HERE, '../../fixtures');

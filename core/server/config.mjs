@@ -9,6 +9,7 @@
 //   JARVIS_CORE_NO_PERSIST=1       --no-persist         keep everything in memory only
 //   JARVIS_CORE_DASHBOARD_DIR      --dashboard-dir D    static files served at / (default core/dashboard)
 //   JARVIS_CORE_OWNER              --owner NAME         how the status assistant addresses you (default Frank)
+//   JARVIS_CORE_LOCALE             --locale TAG         times and dates, e.g. en-GB for 16:47 (default: the system's)
 //   JARVIS_CORE_NIGHT              --night 23:00-07:00  night dim window for the dashboard, or "off"
 //   JARVIS_CORE_FIXTURE            --fixture NAME       simulated machine: ok | warn | alert | nogpu | offline
 //   JARVIS_CORE_TIME_SCALE         --time-scale N       fixture only: simulated seconds per real second
@@ -23,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { deepMerge, isObj, parseHm } from './util.mjs';
 import { defaultDataDir } from './store.mjs';
 import { SCENARIO_NAMES } from './sim/scenarios.mjs';
+import { resolveLocale, systemLocale } from './format.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const CORE_DIR = path.resolve(HERE, '..');
@@ -31,6 +33,7 @@ export const SITE_ORIGIN = 'https://frankwise0202-maker.github.io';
 
 export const DEFAULTS = Object.freeze({
   ownerName: 'Frank',
+  locale: null, // times and dates: the system's ("en-US": 4:47 PM), or e.g. "en-GB" (16:47)
   host: '127.0.0.1',
   port: 8788,
   dataDir: null,
@@ -85,6 +88,7 @@ const FLAG_MAP = {
   '--data-dir': 'dataDir',
   '--dashboard-dir': 'dashboardDir',
   '--owner': 'ownerName',
+  '--locale': 'locale',
   '--night': 'night',
   '--fixture': 'fixture',
   '--time-scale': 'timeScale',
@@ -147,7 +151,7 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   } catch (err) {
     if (err?.code !== 'ENOENT') warnings.push(`could not read ${configFile}: ${err?.message ?? err} (using defaults)`);
   }
-  const allowedFileKeys = new Set(['ownerName', 'port', 'dataDir', 'dashboardDir', 'night', 'allowedOrigins', 'tailscaleLogins', 'thresholds', 'gpuMissingLevel', 'smartSudo', 'limits', 'intervals', 'siteUrl', 'siteSwUrl', 'apiUrl', 'internetUrls', 'dnsHost', 'persist']);
+  const allowedFileKeys = new Set(['ownerName', 'locale', 'port', 'dataDir', 'dashboardDir', 'night', 'allowedOrigins', 'tailscaleLogins', 'thresholds', 'gpuMissingLevel', 'smartSudo', 'limits', 'intervals', 'siteUrl', 'siteSwUrl', 'apiUrl', 'internetUrls', 'dnsHost', 'persist']);
   for (const k of Object.keys(fileCfg)) {
     if (!allowedFileKeys.has(k)) {
       warnings.push(`config file key "${k}" is not supported (ignored)`);
@@ -164,6 +168,7 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
     dataDir: pick('dataDir', 'JARVIS_CORE_DATA_DIR'),
     dashboardDir: pick('dashboardDir', 'JARVIS_CORE_DASHBOARD_DIR'),
     ownerName: pick('ownerName', 'JARVIS_CORE_OWNER'),
+    locale: pick('locale', 'JARVIS_CORE_LOCALE'),
     night: parseNight(pick('night', 'JARVIS_CORE_NIGHT')),
     fixture: pick('fixture', 'JARVIS_CORE_FIXTURE'),
     timeScale: pick('timeScale', 'JARVIS_CORE_TIME_SCALE'),
@@ -175,6 +180,7 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   if (over.dataDir !== undefined) cfg.dataDir = path.resolve(String(over.dataDir));
   if (over.dashboardDir !== undefined) cfg.dashboardDir = path.resolve(String(over.dashboardDir));
   if (over.ownerName !== undefined) cfg.ownerName = String(over.ownerName).trim().slice(0, 40);
+  if (over.locale !== undefined) cfg.locale = String(over.locale);
   if (over.night?.invalid) warnings.push(`night window "${over.night.invalid}" should look like 23:00-07:00 (ignored)`);
   else if (over.night) cfg.night = { ...cfg.night, ...over.night };
   if (over.fixture !== undefined) cfg.fixture = String(over.fixture).trim().toLowerCase() || null;
@@ -215,6 +221,11 @@ export function loadConfig({ env = process.env, argv = [], readFile = (p) => fs.
   cfg.allowedOrigins = cfg.allowedOrigins.filter((o) => typeof o === 'string' && /^https?:\/\/[^/]+$/.test(o));
   if (!Array.isArray(cfg.tailscaleLogins)) cfg.tailscaleLogins = [];
   if (!cfg.ownerName) cfg.ownerName = null;
+  if (cfg.locale !== null && cfg.locale !== undefined && cfg.locale !== '') {
+    const l = resolveLocale(String(cfg.locale));
+    if (!l) warnings.push(`locale "${cfg.locale}" is not one I know (using the system's)`);
+    cfg.locale = l ?? resolveLocale(systemLocale()) ?? 'en-US';
+  } else cfg.locale = resolveLocale(systemLocale()) ?? 'en-US';
 
   // Fixture mode keeps its history in memory unless a data directory was asked for explicitly.
   if (cfg.fixture && over.dataDir === undefined && fileCfg.dataDir === undefined) cfg.persist = false;
@@ -235,6 +246,7 @@ Usage: node core/server/main.mjs [options]
   --no-persist         keep history and events in memory only
   --dashboard-dir DIR  static files served at / (default core/dashboard)
   --owner NAME         how the status assistant addresses you (default Frank)
+  --locale TAG         times and dates, e.g. en-GB for 16:47 (default: the system's)
   --night HH:MM-HH:MM  night dim window for the dashboard, or "off" (default 23:00-07:00)
   --once               print one full report as JSON and exit
   --version            print the version

@@ -13,6 +13,7 @@ import { createStore } from './store.mjs';
 import { createApiServer } from './http/server.mjs';
 import { ask as askAssistant, INTENTS } from './assistant/index.mjs';
 import { VERSION, API_VERSION } from './version.mjs';
+import { getLocale } from './format.mjs';
 
 export async function createRuntime(config, { log = () => {}, io: ioOverride = null } = {}) {
   let core = null;
@@ -51,6 +52,7 @@ export async function createRuntime(config, { log = () => {}, io: ioOverride = n
       timeScale: core.clock.scale ?? 1,
       now: s?.t ?? core.clock.now(),
       timeZone,
+      locale: getLocale(),
       hostname: s?.host?.hostname ?? null,
       startedAt: core.startedAt,
       uptimeSec: s?.core?.uptimeSec ?? null,

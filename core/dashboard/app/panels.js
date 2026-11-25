@@ -534,7 +534,7 @@ export function createPanels() {
       li.__t = e.t ?? 0;
       setData(li, 'level', e.level);
       if (e.word === 'INFO') setData(li, 'info', 'true');
-      const time = el('span', 'ev-time', fmtEventTime(e.t, ctx.now, undefined, ctx.timeZone));
+      const time = el('span', 'ev-time', fmtEventTime(e.t, ctx.now, ctx.locale, ctx.timeZone));
       const lv = el('span', 'ev-level');
       lv.append(el('i', 'lv-icon'), e.word || (e.level === 'alert' ? 'ALERT' : e.level === 'warn' ? 'WARN' : 'OK'));
       const text = el('span', 'ev-text', keepUnits(e.title + (e.detail ? ` — ${e.detail}` : '')));
@@ -557,7 +557,7 @@ export function createPanels() {
   function refreshEventTimes(ctx) {
     for (const key of evOrder) {
       const li = evNodes.get(key);
-      if (li) setText(li.firstElementChild, fmtEventTime(li.__t, ctx.now, undefined, ctx.timeZone));
+      if (li) setText(li.firstElementChild, fmtEventTime(li.__t, ctx.now, ctx.locale, ctx.timeZone));
     }
   }
 

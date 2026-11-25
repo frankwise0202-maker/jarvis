@@ -12,6 +12,7 @@ import { createLiveIO } from './io/live.mjs';
 import { createRealClock, createManualClock } from './clock.mjs';
 import { createSimulator } from './sim/simulator.mjs';
 import { VERSION } from './version.mjs';
+import { setLocale } from './format.mjs';
 
 const log = (msg) => process.stdout.write(`[jarvis-core] ${msg}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,6 +40,7 @@ async function once(config) {
 
 async function main() {
   const { config, warnings, errors, help, version, configFile } = loadConfig({ env: process.env, argv: process.argv.slice(2) });
+  setLocale(config.locale);
   if (help) {
     process.stdout.write(USAGE);
     return 0;

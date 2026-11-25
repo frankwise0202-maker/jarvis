@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig, parseArgs } from '../../server/config.mjs';
+import { resolveLocale, systemLocale } from '../../server/format.mjs';
 import { checkAccess, checkOrigin, corsHeaders, hostnameOf } from '../../server/http/access.mjs';
 import { createRateLimiter } from '../../server/http/ratelimit.mjs';
 
@@ -41,6 +42,23 @@ test('env, flags (flags win) and the config file', () => {
   assert.equal(config.persist, false); // fixture mode keeps history in memory by default
   assert.ok(warnings.some((w) => /"bogus" is not supported/.test(w)));
   assert.equal(loadConfig({ env: { JARVIS_CORE_NIGHT: 'off' }, readFile: noFile }).config.night.enabled, false);
+});
+
+test("locale: the system's by default; a configured one in English; an unknown one warned about", () => {
+  const none = () => {
+    const e = new Error('none');
+    e.code = 'ENOENT';
+    throw e;
+  };
+  const load = (env, argv = [], readFile = none) => loadConfig({ env, argv, readFile });
+  assert.equal(load({}).config.locale, resolveLocale(systemLocale()));
+  assert.equal(load({ JARVIS_CORE_LOCALE: 'en_GB.UTF-8' }).config.locale, 'en-GB');
+  assert.equal(load({}, ['--locale', 'en-US']).config.locale, 'en-US');
+  assert.equal(load({}, ['--locale', 'de-DE']).config.locale, 'en-DE', 'German order and 24 hours, English words');
+  assert.equal(load({}, [], () => JSON.stringify({ locale: 'en-AU' })).config.locale, 'en-AU');
+  const bad = load({ JARVIS_CORE_LOCALE: 'not a locale' });
+  assert.match(bad.warnings.join('\n'), /locale "not a locale" is not one I know/);
+  assert.equal(bad.config.locale, resolveLocale(systemLocale()));
 });
 
 test('refuses a public host, a bad fixture and a bad port; ignores time scale outside fixture mode', () => {

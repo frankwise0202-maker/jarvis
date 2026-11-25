@@ -23,6 +23,18 @@ const params = new URLSearchParams(location.search);
 let settings = readSettings(params);
 // The clock's time zone: ?tz= (tests), else the Core's own (GET api/info), else the browser's.
 let timeZone = validZone(params.get('tz')) || undefined;
+// Its locale (12 or 24 hours, date order): ?locale=, else the Core's, so the clock, the event log and
+// the assistant's answers all read the same; the browser's until the Core has answered.
+let locale = validLocale(params.get('locale')) || undefined;
+
+function validLocale(l) {
+  if (!l || typeof l !== 'string') return null;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf([l])[0] || null;
+  } catch {
+    return null;
+  }
+}
 
 function validZone(tz) {
   if (!tz) return null;
@@ -129,6 +141,7 @@ function ctx(now = coreNow()) {
     everOnline,
     now,
     timeZone,
+    locale,
     lastSeenText: lastSampleClient ? fmtAgo(lastSampleClient, Date.now()) : null,
   };
 }
@@ -180,6 +193,7 @@ const client = createClient({
       kiosk.updateSettings(settings);
     }
     if (!params.get('tz') && validZone(inf.timeZone)) timeZone = inf.timeZone;
+    if (!params.get('locale') && validLocale(inf.locale)) locale = validLocale(inf.locale);
     vm = normalize(raw || {}, info);
     scheduleRender();
   },
@@ -237,10 +251,10 @@ const startedAt = Date.now();
 
 function updateClock(now) {
   const d = new Date(now);
-  const parts = clockParts(d, undefined, { timeZone });
+  const parts = clockParts(d, locale, { timeZone });
   setText(clockTime, parts.time);
   setText(clockPeriod, parts.period);
-  setText(clockDate, fmtDate(d, undefined, timeZone));
+  setText(clockDate, fmtDate(d, locale, timeZone));
 }
 
 function updateBanner(now) {
@@ -251,7 +265,7 @@ function updateBanner(now) {
     setText(bannerText, "Can't reach the Core yet. It may still be starting; retrying…");
     return;
   }
-  const when = lastSampleCore ? fmtEventTime(lastSampleCore, coreNow(), undefined, timeZone) : null;
+  const when = lastSampleCore ? fmtEventTime(lastSampleCore, coreNow(), locale, timeZone) : null;
   setText(bannerText, when ? `No data since ${when} (${fmtAgo(lastSampleClient, now)}). Reconnecting…` : 'No data from the Core. Reconnecting…');
 }
 

@@ -75,6 +75,7 @@ test('GET /api/events and /api/info and /api/ping', async () => {
   assert.deepEqual(info.json.you, { via: 'local', login: null, name: null });
   assert.deepEqual(info.json.night, { enabled: true, start: '23:00', end: '07:00' });
   assert.ok(info.json.assistant.intents.includes('how-are-you'));
+  assert.equal(info.json.locale, 'en-GB', 'the locale the server writes times in, for the dashboard');
   assert.equal((await request(port, '/api/ping')).json.ok, true);
 });
 

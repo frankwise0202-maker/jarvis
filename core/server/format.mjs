@@ -1,7 +1,8 @@
 // Human formatting shared by the health messages and the status assistant.
 // Disks use decimal units (as the drive's label and Ubuntu's Files app do: "1 TB"); memory uses binary
-// units with the everyday label ("16 GB" for 16 GiB). Temperatures are Celsius. Times use a 24-hour clock,
-// like the rest of Jarvis.
+// units with the everyday label ("16 GB" for 16 GiB). Temperatures are Celsius. Times and dates follow one
+// locale (setLocale: the system's unless the config names one), which GET /api/info gives the dashboard,
+// so the screen's clock, its event log and the assistant all say "4:47 PM" or all say "16:47".
 
 import { isNum } from './util.mjs';
 
@@ -104,16 +105,59 @@ export function fmtDuration(sec, { parts = 2 } = {}) {
   return out.slice(0, parts).join(', ');
 }
 
-/** Two-digit 24-hour clock for epoch ms: "14:05". */
-export function fmtClock(ms, timeZone) {
-  if (!isNum(ms)) return null;
-  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(ms);
+/** This system's locale for times and dates (from LANG, as Chrome takes it); en-US if it has none. */
+export function systemLocale() {
+  try {
+    const l = new Intl.DateTimeFormat().resolvedOptions().locale;
+    return l && l !== 'und' ? l : 'en-US';
+  } catch {
+    return 'en-US';
+  }
 }
 
-/** "Wednesday 25 November". */
+/**
+ * A usable English locale for a configured one, or null: "en-GB" and "en_GB.UTF-8" give "en-GB"; another
+ * language keeps its region's clock and date order in English ("de-DE" gives "en-DE"), because every word
+ * around the times is English.
+ */
+export function resolveLocale(value) {
+  if (typeof value !== 'string') return null;
+  const want = value.trim().replace(/[.@].*$/, '').replace(/_/g, '-');
+  if (!want || /^(c|posix)$/i.test(want)) return null;
+  try {
+    const [l] = Intl.DateTimeFormat.supportedLocalesOf([want]);
+    if (!l) return null;
+    const loc = new Intl.Locale(l);
+    if (loc.language === 'en') return l;
+    const region = loc.maximize().region;
+    const [en] = region ? Intl.DateTimeFormat.supportedLocalesOf([`en-${region}`]) : [];
+    if (en) return en;
+    return new Intl.DateTimeFormat(l, { hour: 'numeric' }).resolvedOptions().hourCycle === 'h12' ? 'en-US' : 'en-GB';
+  } catch {
+    return null;
+  }
+}
+
+let LOCALE = resolveLocale(systemLocale()) ?? 'en-US';
+
+/** Use this locale for every time and date from now on (null or unusable: the system's). Returns it. */
+export function setLocale(value) {
+  LOCALE = resolveLocale(value) ?? resolveLocale(systemLocale()) ?? 'en-US';
+  return LOCALE;
+}
+
+export const getLocale = () => LOCALE;
+
+/** The time of day for epoch ms in the locale: "4:05 PM" (en-US) or "16:05" (en-GB). */
+export function fmtClock(ms, timeZone) {
+  if (!isNum(ms)) return null;
+  return new Intl.DateTimeFormat(LOCALE, { hour: 'numeric', minute: '2-digit', timeZone }).format(ms);
+}
+
+/** "Wednesday, November 25" (en-US) or "Wednesday 25 November" (en-GB). */
 export function fmtDate(ms, timeZone) {
   if (!isNum(ms)) return null;
-  return new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone }).format(ms);
+  return new Intl.DateTimeFormat(LOCALE, { weekday: 'long', day: 'numeric', month: 'long', timeZone }).format(ms);
 }
 
 /** Local hour (0-23) of epoch ms. */
@@ -127,17 +171,17 @@ function dayKey(ms, timeZone) {
   return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }).format(ms);
 }
 
-/** "14:05 today", "14:05 yesterday", "Monday at 14:05", or "12 November at 14:05". */
+/** "14:05 today", "14:05 yesterday", "Monday at 14:05", or "12 November at 14:05" (in the locale's order). */
 export function fmtWhen(ms, now, timeZone) {
   if (!isNum(ms)) return null;
   const clock = fmtClock(ms, timeZone);
   if (dayKey(ms, timeZone) === dayKey(now, timeZone)) return `${clock} today`;
   if (dayKey(ms, timeZone) === dayKey(now - 86_400_000, timeZone)) return `${clock} yesterday`;
   if (now - ms < 6 * 86_400_000) {
-    const wd = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(ms);
+    const wd = new Intl.DateTimeFormat(LOCALE, { weekday: 'long', timeZone }).format(ms);
     return `${wd} at ${clock}`;
   }
-  const d = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', timeZone }).format(ms);
+  const d = new Intl.DateTimeFormat(LOCALE, { day: 'numeric', month: 'long', timeZone }).format(ms);
   return `${d} at ${clock}`;
 }
 
