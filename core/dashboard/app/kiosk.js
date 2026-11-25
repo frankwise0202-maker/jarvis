@@ -138,12 +138,13 @@ export function shouldRefresh({ minutes, refreshAt, openedMs, nowMs, coreLive })
 }
 
 /**
- * The live controller. `root` is <html>, `stage` the element that moves. Returns
+ * The live controller. `root` is <html>, `stage` the element that moves; `liftDim()` true keeps the
+ * screen bright inside the night window (morning mode). Returns
  * { tick(nowMs), isNight(), isWoken(), destroy() }; main.js calls tick once a second.
  * `kiosk: false` (a remote viewer) turns every kiosk behaviour off: the page never dims, never
  * moves, keeps its cursor and never refreshes itself.
  */
-export function createKiosk({ root, stage, veil, settings, onNightChange, onRefresh, isCoreLive, timeZone, kiosk = true }) {
+export function createKiosk({ root, stage, veil, settings, onNightChange, onRefresh, isCoreLive, timeZone, kiosk = true, liftDim = null }) {
   const zone = typeof timeZone === 'function' ? timeZone : () => timeZone;
   const on = kiosk !== false;
   let night = null;
@@ -195,7 +196,8 @@ export function createKiosk({ root, stage, veil, settings, onNightChange, onRefr
   function apply(nowMs) {
     lastNow = nowMs;
     const minutes = minutesOfDay(new Date(nowMs), zone());
-    const isNight = on && inWindow(minutes, settings.dim);
+    // Morning mode lifts the dim (a briefing time inside the night window, e.g. 06:30).
+    const isNight = on && inWindow(minutes, settings.dim) && !(liftDim && liftDim());
     const dimmed = isNight && nowMs >= wokeUntil;
     if (dimmed !== night) {
       night = dimmed;

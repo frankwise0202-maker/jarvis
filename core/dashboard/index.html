@@ -167,10 +167,67 @@
         </div>
       </section>
 
-      <div class="centre-bottom">
-        <section class="panel hud-frame" id="p-procs" aria-labelledby="h-procs">
+
+      <!-- The home base brain (Core 1.1.0): a strip under the core on the kiosk, a panel in the remote view. -->
+      <section class="panel hud-frame brain-panel" id="p-brain" aria-labelledby="h-brain" data-level="ok" hidden>
+        <header class="panel-head">
+          <h2 id="h-brain"><span class="idx">10</span>HOME BASE</h2>
+          <p class="panel-sub" id="brain-sub">BACKGROUND RESEARCH</p>
+        </header>
+        <div class="brain-cells">
+          <div class="bc bc-key" id="bc-key" data-level="ok">
+            <span class="hud-label">CLAUDE KEY</span>
+            <p class="bc-line"><i class="lv-icon" aria-hidden="true"></i><b class="bc-word" id="bc-key-word">—</b><span class="bc-text" id="bc-key-text"></span></p>
+          </div>
+          <div class="bc bc-spend" id="bc-spend" data-level="ok">
+            <span class="hud-label">SPEND</span>
+            <div class="bc-bar"><span class="bc-bar-name">TODAY</span><span class="meter" id="bc-today-meter" data-level="ok"><i></i></span><b class="mono bc-usd" id="bc-today">—</b></div>
+            <div class="bc-bar"><span class="bc-bar-name">MONTH</span><span class="meter" id="bc-month-meter" data-level="ok"><i></i></span><b class="mono bc-usd" id="bc-month">—</b></div>
+          </div>
+          <div class="bc bc-watch" id="bc-watch" data-level="ok">
+            <span class="hud-label">WATCHERS</span>
+            <p class="bc-line"><b class="mono bc-count" id="bc-watch-count">—</b><span class="bc-text" id="bc-watch-text"></span></p>
+          </div>
+        </div>
+        <p class="bc-cap" id="bc-cap" hidden></p>
+      </section>
+
+      <div class="centre-bottom" id="centre-bottom" data-tab="procs">
+        <!-- On the kiosk layout these share one place, with tabs: missions (the brain's research),
+             the morning briefing (remote viewers) and the top processes. -->
+        <section class="panel hud-frame tabbed" id="p-missions" aria-labelledby="h-missions" data-tab="missions" hidden>
+          <header class="panel-head">
+            <h2 id="h-missions"><span class="idx">08</span>MISSIONS</h2>
+            <div class="tabs" role="tablist" aria-label="Show"></div>
+            <span class="chip" id="missions-chip" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span>IDLE</span></span>
+          </header>
+          <ol class="missions" id="missions" aria-label="Background research, newest first"></ol>
+          <p class="missions-empty" id="missions-empty" hidden></p>
+        </section>
+
+        <section class="panel hud-frame tabbed brief-panel" id="p-briefing" aria-labelledby="h-briefing" data-tab="briefing" hidden>
+          <header class="panel-head">
+            <h2 id="h-briefing"><span class="idx">08</span>MORNING BRIEFING</h2>
+            <div class="tabs" role="tablist" aria-label="Show"></div>
+            <p class="panel-sub" id="brief-sub">—</p>
+          </header>
+          <div class="brief-body" id="brief-body">
+            <p class="brief-greeting" id="brief-greeting"></p>
+            <p class="brief-weather" id="brief-weather"></p>
+            <p class="brief-lead" id="brief-lead" hidden></p>
+            <div class="brief-sec" id="brief-news-sec"><h3 class="hud-label">HEADLINES</h3><ol class="brief-list brief-news" id="brief-news"></ol></div>
+            <div class="brief-sec" id="brief-hb-sec"><h3 class="hud-label">OVERNIGHT AT THE HOME BASE</h3><p class="brief-hb" id="brief-hb" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span id="brief-hb-text"></span></p><ul class="brief-list" id="brief-hb-notes"></ul></div>
+            <div class="brief-sec" id="brief-done-sec"><h3 class="hud-label">FINISHED OVERNIGHT</h3><ul class="brief-list brief-done" id="brief-done"></ul></div>
+            <div class="brief-sec" id="brief-new-sec"><h3 class="hud-label">WHAT'S NEW</h3><ul class="brief-list" id="brief-new"></ul></div>
+            <div class="brief-sec" id="brief-music-sec"><h3 class="hud-label">MUSIC FOR THE MORNING</h3><p class="brief-music" id="brief-music"></p></div>
+            <p class="brief-key" id="brief-key" hidden>Give the home base your key from Jarvis on your iPhone to unlock background research.</p>
+          </div>
+        </section>
+
+        <section class="panel hud-frame tabbed" id="p-procs" aria-labelledby="h-procs" data-tab="procs">
           <header class="panel-head">
             <h2 id="h-procs"><span class="idx">08</span>TOP PROCESSES</h2>
+            <div class="tabs" role="tablist" aria-label="Show"></div>
           </header>
           <div class="procs">
             <div class="proc-col">
@@ -254,6 +311,77 @@
       </section>
     </div>
   </main>
+
+  <!-- Morning mode (the kiosk only): from the briefing time until 10:00, until a key or the mouse. -->
+  <section class="morning" id="morning" aria-label="Good morning" hidden>
+    <header class="m-strip">
+      <div class="m-brand"><span class="brand-orb" aria-hidden="true"></span><span class="m-brand-word">JARVIS <span>CORE</span></span></div>
+      <div class="state-chip m-state" id="m-state" data-level="ok">
+        <span class="state-icon" aria-hidden="true"></span>
+        <span class="state-word" id="m-state-word">—</span>
+        <span class="state-detail" id="m-state-detail"></span>
+      </div>
+      <div class="m-vitals">
+        <div class="m-vital" id="m-cpu" data-level="ok"><span class="hud-label">CPU</span><b class="mono" id="m-cpu-v">—</b></div>
+        <div class="m-vital" id="m-gpu" data-level="ok"><span class="hud-label">GPU</span><b class="mono" id="m-gpu-v">—</b></div>
+        <div class="m-vital" id="m-ram" data-level="ok"><span class="hud-label">RAM</span><b class="mono" id="m-ram-v">—</b></div>
+        <div class="m-vital" id="m-disk" data-level="ok"><span class="hud-label">DISK</span><b class="mono" id="m-disk-v">—</b></div>
+      </div>
+      <div class="clock-block m-clock">
+        <time class="clock"><span id="m-clock-time">--:--</span><span class="clock-period" id="m-clock-period"></span></time>
+        <span class="clock-date" id="m-clock-date"></span>
+      </div>
+    </header>
+
+    <div class="m-hero">
+      <div class="m-rings" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="m-hello">
+        <p class="m-kicker" id="m-kicker">MORNING BRIEFING</p>
+        <h2 class="m-greeting" id="m-greeting">Good morning.</h2>
+        <p class="m-lead" id="m-lead" hidden></p>
+      </div>
+      <div class="m-weather" id="m-weather" hidden>
+        <b class="m-temp" id="m-temp">—</b>
+        <div class="m-wx">
+          <b class="m-wx-now" id="m-wx-now"></b>
+          <span class="m-wx-range" id="m-wx-range"></span>
+          <span class="hud-label m-wx-place" id="m-wx-place"></span>
+        </div>
+      </div>
+      <p class="m-wx-hint" id="m-wx-hint" hidden></p>
+    </div>
+
+    <div class="m-cards" id="m-cards" hidden>
+      <section class="m-card hud-frame" id="m-news-card" aria-labelledby="m-h-news">
+        <h3 class="m-label" id="m-h-news">HEADLINES</h3>
+        <ol class="m-headlines" id="m-headlines"></ol>
+      </section>
+      <section class="m-card hud-frame" id="m-night-card" aria-labelledby="m-h-night">
+        <h3 class="m-label" id="m-h-night">OVERNIGHT AT THE HOME BASE</h3>
+        <p class="m-hb" id="m-hb" data-level="ok"><i class="lv-icon" aria-hidden="true"></i><span id="m-hb-text"></span></p>
+        <ul class="m-notes" id="m-hb-notes"></ul>
+        <h3 class="m-label m-label-2" id="m-h-done">FINISHED WHILE YOU SLEPT</h3>
+        <ul class="m-done" id="m-done"></ul>
+      </section>
+      <section class="m-card hud-frame" id="m-new-card" aria-labelledby="m-h-new">
+        <h3 class="m-label" id="m-h-new">WHAT'S NEW</h3>
+        <ul class="m-whatsnew" id="m-whatsnew"></ul>
+        <h3 class="m-label m-label-2" id="m-h-music">MUSIC FOR THE MORNING</h3>
+        <p class="m-music" id="m-music"></p>
+      </section>
+    </div>
+
+    <div class="m-waiting" id="m-waiting">
+      <p class="m-big-clock mono" id="m-big-clock"></p>
+      <p class="m-summary" id="m-summary"></p>
+      <p class="m-wait-line"><span class="m-scan" aria-hidden="true"></span><span id="m-wait-text">Your briefing is on its way.</span></p>
+    </div>
+
+    <footer class="m-foot">
+      <p class="m-key" id="m-key" hidden><i class="lv-icon" aria-hidden="true"></i>Give the home base your key from Jarvis on your iPhone to unlock background research.</p>
+      <p class="m-hint">Press any key or move the mouse for the full system report.</p>
+    </footer>
+  </section>
 
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
