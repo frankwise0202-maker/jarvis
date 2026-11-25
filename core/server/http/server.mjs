@@ -8,9 +8,12 @@
 //   GET  /api/info                      version, uptimes, Tailscale URL, settings the dashboard needs
 //   GET  /api/ping                      liveness
 //   GET  /api/fixture, POST /api/fixture { scenario }   fixture mode only: see or switch the scenario
+//   /api/brain, /api/spend, /api/jobs, /api/watchers, /api/briefing, /api/push, /api/sync
+//                                       the home base brain, push and sync: http/brain-routes.mjs
 //   GET  /*                             static files (the dashboard)
 //
-// Every request passes the access check (http/access.mjs) and the origin check first.
+// Every request passes the access check (http/access.mjs) and the origin check first. The SSE stream also
+// carries the brain's events: job, watcher, briefing, spend.
 
 import http from 'node:http';
 import { checkAccess, checkOrigin, corsHeaders } from './access.mjs';
@@ -18,6 +21,12 @@ import { createRateLimiter } from './ratelimit.mjs';
 import { createSseHub } from './sse.mjs';
 import { createStatic } from './static.mjs';
 import { RANGES, SERIES_NAMES } from '../history.mjs';
+import { createBrainRoutes, isBrainRoute } from './brain-routes.mjs';
+import { redact } from '../brain/util.mjs';
+
+/** How long a request may take to arrive (headers and body); an upload to PUT /api/sync/* gets longer. */
+export const REQUEST_RECEIVE_MS = 15_000;
+export const SYNC_UPLOAD_MS = 10 * 60_000;
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -91,7 +100,7 @@ function readBody(req, limit) {
  *   info(access)       the /api/info body
  *   fixture            { get(), set(name) } in fixture mode, else null
  */
-export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {} }) {
+export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {}, getBrain = () => null, getPush = () => null, getSync = () => null }) {
   const limits = config.limits;
   const askLimiter = createRateLimiter({ capacity: limits.askBurst, refillPerSec: limits.askPerMinute / 60 });
   const apiLimiter = createRateLimiter({ capacity: limits.apiBurst, refillPerSec: limits.apiPerSecond });
@@ -110,6 +119,14 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     ];
   }
   attach(getCore());
+
+  // ---- the brain's events (job, watcher, briefing, spend) to every SSE client
+  const brainDetach = [];
+  const brain = getBrain();
+  if (brain?.on) {
+    for (const name of ['job', 'watcher', 'briefing', 'spend']) brainDetach.push(brain.on(name, (payload) => sse.broadcast(name, () => redact(JSON.stringify(payload)))));
+  }
+  const brainRoutes = createBrainRoutes({ getBrain, getPush, getSync, readBody, sendJson, HttpError, log });
 
   function accessOptions() {
     // The port a direct request's Host must name: the one actually bound (tests listen on port 0).
@@ -225,6 +242,8 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       }
     }
 
+    if (isBrainRoute(route)) return brainRoutes.handle(req, res, { route, method, url, access, cors });
+
     const known = ['/api/ping', '/api/status', '/api/history', '/api/events', '/api/stream', '/api/info', '/api/ask'];
     if (known.includes(route)) throw new HttpError(405, 'method_not_allowed', `${req.method} is not supported here`, { Allow: route === '/api/ask' ? 'POST, OPTIONS' : 'GET, HEAD, OPTIONS' });
     throw new HttpError(404, 'not_found', `no such endpoint: ${route}`);
@@ -246,8 +265,27 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     return origin.ok && origin.allow ? corsHeaders(origin.allow, req) : {};
   }
 
+  /**
+   * The request must arrive (headers and body) within 15 s; an upload to PUT /api/sync/* gets 10 minutes.
+   * (Node's own requestTimeout is off because it cannot tell an upload apart.)
+   */
+  function receiveDeadline(req) {
+    const upload = req.method === 'PUT' && /^\/api\/sync\//.test(String(req.url ?? ''));
+    const timer = setTimeout(() => {
+      if (!req.complete) {
+        counters.refused += 1;
+        req.socket?.destroy();
+      }
+    }, upload ? SYNC_UPLOAD_MS : REQUEST_RECEIVE_MS);
+    timer.unref?.();
+    const clear = () => clearTimeout(timer);
+    req.once('end', clear);
+    req.once('close', clear);
+  }
+
   async function handler(req, res) {
     counters.requests += 1;
+    receiveDeadline(req);
     let cors = {};
     try {
       const access = checkAccess(req, accessOptions());
@@ -284,14 +322,14 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     } catch (err) {
       if (!(err instanceof HttpError)) {
         counters.errors += 1;
-        log(`request failed: ${req.method} ${req.url}: ${err?.stack ?? err}`);
+        log(redact(`request failed: ${req.method} ${req.url}: ${err?.stack ?? err}`));
       }
       if (res.headersSent) {
         res.destroy();
         return;
       }
       const status = err instanceof HttpError ? err.status : 500;
-      const body = err instanceof HttpError ? { error: err.code, message: err.message } : { error: 'internal', message: 'something went wrong inside the Core' };
+      const body = err instanceof HttpError ? { error: err.code, message: redact(err.message) } : { error: 'internal', message: 'something went wrong inside the Core' };
       sendJson(req, res, status, body, { ...cors, ...(err.headers ?? {}) });
     }
   }
@@ -299,7 +337,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
   const server = http.createServer({ maxHeaderSize: 16 * 1024 }, (req, res) => {
     handler(req, res);
   });
-  server.requestTimeout = 15_000;
+  server.requestTimeout = 0; // receiveDeadline() above: 15 s, or 10 minutes for a sync upload
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 5_000;
   server.maxHeadersCount = 64;
@@ -332,6 +370,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     close() {
       sse.closeAll();
       for (const off of detach) off();
+      for (const off of brainDetach) off();
       return new Promise((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections?.();

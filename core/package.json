@@ -1,6 +1,6 @@
 {
   "name": "jarvis-core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Jarvis Core: the home base. System report (collector, health rules, history, events, a JSON API with live updates, a small local status assistant) on Node built-ins only, plus the brain (background research, watchers, morning briefing, push, sync), whose two dependencies are loaded lazily.",
   "type": "module",
@@ -11,7 +11,7 @@
     "start": "node server/main.mjs",
     "fixture": "node server/main.mjs --fixture ok",
     "once": "node server/main.mjs --once",
-    "test": "JARVIS_CORE_LONGRUN_HOURS=6 node --test \"test/server/**/*.test.mjs\" \"dashboard/test/*.test.mjs\" \"install/test/*.test.mjs\"",
+    "test": "JARVIS_CORE_LONGRUN_HOURS=6 node --test \"test/**/*.test.mjs\" \"dashboard/test/*.test.mjs\" \"install/test/*.test.mjs\"",
     "test:server": "JARVIS_CORE_LONGRUN_HOURS=6 node --test \"test/server/**/*.test.mjs\"",
     "test:dashboard": "node --test \"dashboard/test/*.test.mjs\"",
     "test:install": "node --test \"install/test/*.test.mjs\"",

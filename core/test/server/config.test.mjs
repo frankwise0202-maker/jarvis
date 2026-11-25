@@ -119,7 +119,8 @@ test('CORS: github.io, any localhost, same origin; others refused; preflight wit
   assert.equal(checkOrigin(req({}), local, {}).allow, null);
   const pre = corsHeaders('https://frankwise0202-maker.github.io', req({ 'access-control-request-private-network': 'true' }), { preflight: true });
   assert.equal(pre['Access-Control-Allow-Private-Network'], 'true');
-  assert.equal(pre['Access-Control-Allow-Methods'], 'GET, POST, OPTIONS');
+  assert.equal(pre['Access-Control-Allow-Methods'], 'GET, POST, PUT, DELETE, OPTIONS');
+  assert.equal(pre['Access-Control-Allow-Headers'], 'Content-Type, Content-Encoding, Last-Event-ID, X-Jarvis-Device-Label');
   assert.deepEqual(corsHeaders(null, req()), {});
 });
 

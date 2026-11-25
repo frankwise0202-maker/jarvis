@@ -142,8 +142,8 @@ export function corsHeaders(allow, req, { preflight = false } = {}) {
   if (!allow) return {};
   const out = { 'Access-Control-Allow-Origin': allow, Vary: 'Origin' };
   if (preflight) {
-    out['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
-    out['Access-Control-Allow-Headers'] = 'Content-Type, Last-Event-ID';
+    out['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+    out['Access-Control-Allow-Headers'] = 'Content-Type, Content-Encoding, Last-Event-ID, X-Jarvis-Device-Label';
     out['Access-Control-Max-Age'] = '600';
     out.Vary = 'Origin, Access-Control-Request-Headers, Access-Control-Request-Private-Network';
     if (String(req.headers?.['access-control-request-private-network'] ?? '').toLowerCase() === 'true') {
