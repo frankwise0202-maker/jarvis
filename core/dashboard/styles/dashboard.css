@@ -1451,6 +1451,18 @@ html[data-view='remote'] .open-jarvis {
 html[data-view='remote'] .ask-chip {
   min-width: 44px;
 }
+/* A tap answers in the HUD's own colour (iOS flashes grey otherwise; hover never sticks). */
+html[data-view='remote'] {
+  -webkit-tap-highlight-color: rgba(62, 224, 255, 0.14);
+}
+html[data-view='remote'] .ask-chip:active {
+  border-color: var(--line-3);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+html[data-view='remote'] .ask-send:active {
+  background: rgba(62, 224, 255, 0.22);
+}
 
 /* ---- the remote view: the iPhone, the iPad and laptop windows ------------------------------- */
 /* The kiosk layout above needs a window of at least 1366×740 (it bottoms out at 1rem = 12px).
