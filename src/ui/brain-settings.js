@@ -416,7 +416,11 @@ export function createBrainSettings(brain, { getApiKey, toast, requestPermission
     renderPush();
   }
 
-  const off = brain.subscribe(() => render());
+  const off = brain.subscribe((st) => {
+    render();
+    // Linked just now (Save): find out what this home base can do.
+    if (st && st.phase === 'idle' && st.url) brain.load();
+  });
   render();
   if (brain.base()) brain.load({ force: true });
   syncPush();
