@@ -194,6 +194,94 @@ test('scheduler: 07:00 local every day across daylight saving time, once per day
   await third.brain.stop();
 });
 
+/** A Core that has just started: its internet check has not answered yet. */
+function startingCore(clock) {
+  return {
+    startedAt: clock.now(),
+    snapshot: { health: { level: 'ok', summary: 'All systems normal' }, services: { internet: { status: 'unknown' } } },
+    history: { query: () => ({ t: [], series: {} }) },
+    events: { between: () => [] },
+  };
+}
+
+test('a missed 07:00 after a boot waits for the network and the first readings (2 minutes at most), then catches up', async () => {
+  // The machine was off at 07:00 and boots at 08:00 New York time; the network comes up 20 s later.
+  const clock = createManualClock(Date.parse('2026-11-26T13:00:00Z'));
+  const real = createFixtureFetch();
+  let networkUp = false;
+  const fetchFn = (url, opts) => (networkUp ? real(url, opts) : Promise.reject(Object.assign(new TypeError('fetch failed'), { code: 'ENETUNREACH' })));
+  const core = startingCore(clock);
+  const { brain, push } = makeBrain({ clock, core, fetchFn });
+  try {
+    await brain.putSettings({ briefing: { location: LOCATION } });
+    brain.briefings.reschedule();
+    assert.equal(brain.info().briefing.nextAt, '2026-11-26T12:00:00.000Z', 'the missed 07:00 is due');
+    brain.tick(); // what start() does at once
+    assert.equal(brain.briefings.tick(), null, 'not in the first moments after a start');
+    assert.equal(brain.latestBriefing(), null);
+    clock.set(clock.now() + 20_000);
+    networkUp = true;
+    core.snapshot.services.internet.status = 'up';
+    const b = await brain.briefings.tick();
+    assert.ok(b, 'made once the internet is up');
+    assert.equal(b.date, '2026-11-26');
+    assert.equal(b.weather?.label, 'Wellington, New Zealand');
+    assert.ok(b.headlines.length > 0);
+    assert.equal(push.sent.length, 1);
+    assert.equal(brain.info().briefing.nextAt, '2026-11-27T12:00:00.000Z');
+    // No internet answer at all: it still comes, 2 minutes after the start.
+    const clock2 = createManualClock(Date.parse('2026-11-26T13:00:00Z'));
+    const second = makeBrain({ clock: clock2, core: startingCore(clock2) });
+    await second.brain.putSettings({ briefing: { location: LOCATION } });
+    second.brain.briefings.reschedule();
+    clock2.set(clock2.now() + 60_000);
+    assert.equal(second.brain.briefings.tick(), null, 'still waiting after a minute');
+    clock2.set(clock2.now() + 61_000);
+    const late = await second.brain.briefings.tick();
+    assert.ok(late && late.weather, 'made at the 2-minute deadline');
+    await second.brain.stop();
+  } finally {
+    await brain.stop();
+  }
+});
+
+test('a scheduled briefing made while the feeds and the weather fail is made again 7 minutes later, quietly', async () => {
+  const clock = createManualClock(Date.parse('2026-11-26T11:59:00Z')); // 06:59 in New York
+  const real = createFixtureFetch();
+  let networkUp = false;
+  const fetchFn = (url, opts) => (networkUp ? real(url, opts) : Promise.reject(new TypeError('fetch failed')));
+  const data = tmp();
+  const { brain, push, logs } = makeBrain({ clock, fetchFn, dataDir: data });
+  const events = [];
+  brain.on('briefing', (e) => events.push(e));
+  try {
+    await brain.putSettings({ briefing: { location: LOCATION } });
+    clock.set(Date.parse('2026-11-26T12:00:10Z'));
+    const first = await brain.briefings.tick();
+    assert.equal(first.weather, null);
+    assert.deepEqual(first.headlines, []);
+    assert.equal(push.sent.length, 1);
+    assert.ok(logs.some((l) => /made again in 7 minutes/.test(l)));
+    networkUp = true;
+    clock.set(clock.now() + 5 * 60_000);
+    assert.equal(brain.briefings.tick(), null, 'not yet');
+    clock.set(clock.now() + 2 * 60_000 + 1000);
+    const again = await brain.briefings.tick();
+    assert.ok(again, 'made again');
+    assert.equal(again.date, '2026-11-26');
+    assert.equal(again.weather?.label, 'Wellington, New Zealand');
+    assert.ok(again.headlines.length > 0);
+    assert.deepEqual(brain.latestBriefing(), again);
+    assert.equal(push.sent.length, 1, 'no second notification');
+    assert.equal(events.length, 2, 'the dashboard and the app hear about the better one');
+    clock.set(clock.now() + 30 * 60_000);
+    assert.equal(brain.briefings.tick(), null, 'only once');
+    assert.equal(brain.info().briefing.nextAt, '2026-11-27T12:00:00.000Z');
+  } finally {
+    await brain.stop();
+  }
+});
+
 test('settings: limits, time, units, owner; a city is geocoded (Open-Meteo); coordinates rounded to 2 decimals; bad input refused', async () => {
   const config = { ownerName: 'Frank' };
   const { brain } = makeBrain({});

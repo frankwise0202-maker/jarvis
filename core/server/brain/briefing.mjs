@@ -5,7 +5,10 @@
 //   full (a key):  the same facts plus one Claude call (web search, 3 uses at most, $0.30 a day at most)
 //                  that writes it in Jarvis's voice and picks the top stories. Any problem: the free one.
 // Kept in brain/briefing-v1.json: the latest briefing and the day of the last scheduled one, so a restart
-// neither repeats nor (within 3 hours) misses the morning's briefing.
+// neither repeats nor (within 3 hours) misses the morning's briefing. After a start (a boot at 08:00 that
+// missed 07:00, an update at 06:59) the scheduled briefing waits until `ready()` says the Core has its
+// first readings and the network (2 minutes at most). A scheduled briefing that came out without its
+// weather or its headlines (a fetch failed) is made once more 7 minutes later, quietly (no second push).
 
 import fs from 'node:fs';
 import { dayKey, lastDailyAt, nextDailyAt, zonedParts } from './schedule.mjs';
@@ -18,6 +21,7 @@ import { fmtDate } from '../format.mjs';
 
 export const BRIEFING_DAILY_CAP_USD = 0.3;
 const CATCH_UP_MS = 3 * 3600_000;
+export const REDO_AFTER_MS = 7 * 60_000;
 
 /** core/whats-new.json: [{ date: "2026-11-25", title, detail }]; the last 3 days' entries, at most 4. */
 export function readWhatsNew(file, today) {
@@ -94,10 +98,13 @@ export function freeSpoken(b, { dateWords }) {
   return out.filter(Boolean).join(' ');
 }
 
-export function createBriefings({ file, now, timeZone, getSettings, fetchFn, getCore, jobs, watchers, spend, fullAvailable, whatsNewFile, onReady = () => {}, log = () => {} }) {
-  let state = { v: 1, latest: null, lastScheduledDay: null };
+export function createBriefings({ file, now, timeZone, getSettings, fetchFn, getCore, jobs, watchers, spend, fullAvailable, whatsNewFile, ready = () => true, onReady = () => {}, log = () => {} }) {
+  let state = { v: 1, latest: null, lastScheduledDay: null, redo: null };
   const loaded = file.load();
-  if (loaded?.v === 1) state = { v: 1, latest: loaded.latest && typeof loaded.latest === 'object' ? loaded.latest : null, lastScheduledDay: typeof loaded.lastScheduledDay === 'string' ? loaded.lastScheduledDay : null };
+  if (loaded?.v === 1) {
+    const redo = loaded.redo && Number.isFinite(loaded.redo.at) && typeof loaded.redo.of === 'string' ? { at: loaded.redo.at, of: loaded.redo.of } : null;
+    state = { v: 1, latest: loaded.latest && typeof loaded.latest === 'object' ? loaded.latest : null, lastScheduledDay: typeof loaded.lastScheduledDay === 'string' ? loaded.lastScheduledDay : null, redo };
+  }
   let nextAt = null;
   let running = null;
 
@@ -198,7 +205,13 @@ export function createBriefings({ file, now, timeZone, getSettings, fetchFn, get
         b.spoken = freeSpoken(b, { dateWords });
       }
       state.latest = b;
-      if (scheduled) state.lastScheduledDay = g.day;
+      if (scheduled) {
+        state.lastScheduledDay = g.day;
+        // No weather (a location is set) or no headlines: a fetch failed; try once more in a while.
+        const missing = (Boolean(getSettings().briefing.location) && !g.briefing.weather) || !g.candidates.length;
+        state.redo = missing ? { at: g.t + REDO_AFTER_MS, of: b.generatedAt } : null;
+        if (missing) log(`the morning briefing is missing its ${!g.candidates.length ? 'headlines' : 'weather'}; it is made again in ${REDO_AFTER_MS / 60_000} minutes`);
+      }
       await file.save(state);
       try {
         onReady(b, { scheduled });
@@ -212,18 +225,35 @@ export function createBriefings({ file, now, timeZone, getSettings, fetchFn, get
     return running;
   }
 
-  /** Run the scheduled briefing when it is due. Returns the promise when one started, else null. */
+  /** Run the scheduled briefing (or its one quiet redo) when it is due. Returns the promise when one started, else null. */
   function tick() {
-    if (nextAt === null || running) return null;
+    if (running) return null;
     const t = now();
-    if (t < nextAt) return null;
-    const due = nextAt;
-    nextAt = nextDailyAt(getSettings().briefing.time, timeZone, Math.max(t, due + 60_000));
-    state.lastScheduledDay = dayKey(due, timeZone);
-    return generate({ scheduled: true }).catch((err) => {
-      log(`the morning briefing failed: ${err?.message ?? err}`);
-      return null;
-    });
+    if (nextAt !== null && t >= nextAt) {
+      // Just started: wait for the first readings and the network (ready() has a deadline).
+      if (!ready()) return null;
+      const due = nextAt;
+      nextAt = nextDailyAt(getSettings().briefing.time, timeZone, Math.max(t, due + 60_000));
+      state.lastScheduledDay = dayKey(due, timeZone);
+      return generate({ scheduled: true }).catch((err) => {
+        log(`the morning briefing failed: ${err?.message ?? err}`);
+        return null;
+      });
+    }
+    if (state.redo && t >= state.redo.at) {
+      const { of } = state.redo;
+      state.redo = null;
+      // Only if nothing newer came since (a briefing asked for by hand is fresher anyway).
+      if (state.latest?.generatedAt !== of) {
+        file.save(state);
+        return null;
+      }
+      return generate({ scheduled: false }).catch((err) => {
+        log(`the morning briefing could not be made again: ${err?.message ?? err}`);
+        return null;
+      });
+    }
+    return null;
   }
 
   return {
