@@ -76,6 +76,45 @@ function fill(el, ...kids) {
   el.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false && k !== ''));
 }
 
+/**
+ * A remove button that asks once more: the first tap turns it into "Remove?" for 4 seconds, the
+ * second removes (what the home base found is never lost to a stray tap).
+ */
+function removeButton({ testid, label, confirmText = 'Remove?', onConfirm }) {
+  let armed = 0;
+  const text = h('span', { class: 'hbs-remove__text', hidden: true, text: confirmText });
+  const btn = h(
+    'button',
+    {
+      class: 'icon-btn hbs-remove',
+      type: 'button',
+      attrs: { 'data-testid': testid, 'aria-label': label },
+      on: {
+        click: () => {
+          if (armed) {
+            clearTimeout(armed);
+            armed = 0;
+            onConfirm();
+            return;
+          }
+          btn.dataset.confirm = 'true';
+          text.hidden = false;
+          btn.setAttribute('aria-label', `${confirmText} Tap again to confirm.`);
+          armed = setTimeout(() => {
+            armed = 0;
+            btn.dataset.confirm = 'false';
+            text.hidden = true;
+            btn.setAttribute('aria-label', label);
+          }, 4000);
+        },
+      },
+    },
+    icon('trash', { size: 16 }),
+    text,
+  );
+  return btn;
+}
+
 function msg(el, text, tone = 'info') {
   el.hidden = !text;
   el.dataset.tone = tone;
@@ -330,7 +369,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
     const actions = [];
     if (j.status === 'done') actions.push(h('button', { class: 'btn btn-sm', type: 'button', attrs: { 'data-testid': 'brain-job-open' }, on: { click: () => openResult(j.id) } }, h('span', { text: 'Open' })));
     if (j.active) actions.push(h('button', { class: 'btn btn-sm btn-danger-ghost', type: 'button', attrs: { 'data-testid': 'brain-job-cancel' }, on: { click: () => removeJob(j, true) } }, h('span', { text: 'Cancel' })));
-    else actions.push(h('button', { class: 'icon-btn hbs-remove', type: 'button', attrs: { 'data-testid': 'brain-job-remove', 'aria-label': `Remove “${j.title}” from the list` }, on: { click: () => removeJob(j, false) } }, icon('trash', { size: 16 })));
+    else actions.push(removeButton({ testid: 'brain-job-remove', label: `Remove “${j.title}” from the list`, onConfirm: () => removeJob(j, false) }));
     const detail = j.status === 'failed' || j.status === 'blocked' ? (j.error && j.error.message) || j.summary : j.summary;
     return h(
       'li',
@@ -495,7 +534,7 @@ export function createHomeBaseView(brain, { tab = 'briefing', jobId = '', watchI
         'div',
         { class: 'hbs-item__actions' },
         w.status === 'watching' || w.status === 'blocked' ? h('button', { class: 'btn btn-sm', type: 'button', disabled: pending, attrs: { 'data-testid': 'brain-watcher-check' }, on: { click: () => checkNow(w) } }, h('span', { text: pending ? 'Checking…' : 'Check now' })) : null,
-        h('button', { class: 'icon-btn hbs-remove', type: 'button', attrs: { 'data-testid': 'brain-watcher-remove', 'aria-label': `Stop watching for “${w.what}”` }, on: { click: () => removeWatch(w) } }, icon('trash', { size: 16 })),
+        removeButton({ testid: 'brain-watcher-remove', label: `Stop watching for “${w.what}”`, confirmText: 'Stop?', onConfirm: () => removeWatch(w) }),
       ),
     );
   }

@@ -279,6 +279,10 @@ export default [
         await t.waitFor(async () => /Still \$329/.test(await t.text(row)), { timeout: 15000, message: async () => `the check’s answer (${await t.text(row)})` });
         await shot(t, '5-watching');
         await row.locator(tid('brain-watcher-remove')).click();
+        await t.page.waitForTimeout(300);
+        t.assert(t.core.brain.watchers.length === 1, 'one tap only asks (“Stop?”)');
+        t.assert(/Stop\?/.test(await t.text(row.locator(tid('brain-watcher-remove')))), 'it asks');
+        await row.locator(tid('brain-watcher-remove')).click();
         await t.waitFor(() => t.core.brain.watchers.length === 0, { timeout: 5000, message: 'removed' });
         await t.visible('brain-watchers-empty');
       });

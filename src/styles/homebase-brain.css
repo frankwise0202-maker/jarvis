@@ -574,8 +574,28 @@
 }
 
 .hbs-remove {
-  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 40px;
   height: 40px;
+  padding: 0 8px;
+  gap: 4px;
+}
+
+.hbs-remove[data-confirm='true'] {
+  color: var(--err);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 50%, var(--line));
+}
+
+.hbs-remove__text {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.hbs-remove__text[hidden] {
+  display: none;
 }
 
 .hbs-chip {
