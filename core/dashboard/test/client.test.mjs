@@ -32,16 +32,26 @@ class FakeES {
     this.readyState = 2;
     this.onerror?.({});
   }
+  /** The connection is (re)established: the browser fires `open`, on its own retries too. */
+  open() {
+    this.readyState = 1;
+    this.onopen?.({ type: 'open' });
+  }
+  /** The connection dropped (the Core restarting): the browser will retry by itself. */
+  drop() {
+    this.readyState = 0;
+    this.onerror?.({});
+  }
 }
 
-function setup() {
+function setup(core = { version: '1.1.0' }) {
   FakeES.all = [];
   let clock = 0;
   const calls = [];
-  const seen = { status: 0, snapshot: 0, info: 0, history: 0, events: 0, links: [] };
+  const seen = { status: 0, snapshot: 0, info: 0, history: 0, events: 0, links: [], versions: [] };
   const fetchImpl = async (url) => {
     calls.push(url);
-    const body = url.startsWith('api/info') ? { version: '1.1.0' } : url.startsWith('api/brain') ? { version: '1.1.0', briefing: { lastAt: '2026-11-25T07:00:00Z' } } : url.startsWith('api/status') ? { t: 1 } : url.startsWith('api/history') ? { series: {} } : { events: [] };
+    const body = url.startsWith('api/info') ? { version: core.version } : url.startsWith('api/brain') ? { version: '1.1.0', briefing: { lastAt: '2026-11-25T07:00:00Z' } } : url.startsWith('api/status') ? { t: 1 } : url.startsWith('api/history') ? { series: {} } : { events: [] };
     return { ok: true, status: 200, json: async () => body };
   };
   const client = createClient({
@@ -50,7 +60,10 @@ function setup() {
     monoNow: () => clock,
     onStatus: () => seen.status++,
     onSnapshot: () => seen.snapshot++,
-    onInfo: () => seen.info++,
+    onInfo: (b) => {
+      seen.info++;
+      seen.versions.push(b.version);
+    },
     onHistory: () => seen.history++,
     onEvents: () => seen.events++,
     onLink: (v) => seen.links.push(v),
@@ -59,6 +72,7 @@ function setup() {
     client,
     calls,
     seen,
+    core,
     /** The page asleep in the background: the monotonic clock moves on, its timers do not run. */
     sleep(ms) {
       clock += ms;
@@ -172,8 +186,9 @@ test('back from the background (a phone unlocked): a new stream at once, no offl
   h.client.resume();
   assert.equal(FakeES.all.length, 2, 'a new stream right away');
   assert.equal(FakeES.all[0].closed, true, 'the old one closed');
+  FakeES.all[1].open();
   await flush();
-  assert.equal(statusReads(), before + 1, 'and one full read');
+  assert.equal(statusReads(), before + 1, 'and one full read (its stream opening does not read again)');
   h.advance(4000);
   assert.deepEqual(h.seen.links, [true], 'not called offline while the new stream connects');
   FakeES.all[1].send({ t: 2 });
@@ -181,6 +196,65 @@ test('back from the background (a phone unlocked): a new stream at once, no offl
   assert.deepEqual(h.seen.links, [true], 'still online: no red banner at all');
   h.advance(6000);
   assert.deepEqual(h.seen.links, [true, false], 'a Core that really is gone still shows as offline');
+  h.client.stop();
+});
+
+test('a quick Core restart (back within the browser\'s 3 s retry, never offline) reads api/info again: the new version reaches onInfo', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const h = setup({ version: '1.0.0' });
+  await h.client.start();
+  const es = FakeES.all[0];
+  es.open();
+  es.send({ t: 1 }, 'status');
+  await flush();
+  assert.deepEqual(h.seen.versions, ['1.0.0'], 'the first open follows the first read: no second read');
+  assert.ok(!h.calls.includes('api/brain'), 'a 1.0 Core is not asked for a brain');
+  // systemctl restart into 1.1.0: the stream drops, the browser retries by itself, the Core is
+  // back in 1.8 s (well inside the 5 s the watchdog waits).
+  h.core.version = '1.1.0';
+  es.drop();
+  h.advance(1800);
+  es.open();
+  es.send({ t: 2 }, 'status');
+  await flush();
+  await flush();
+  assert.deepEqual(h.seen.links, [true], 'never called offline');
+  assert.deepEqual(h.seen.versions, ['1.0.0', '1.1.0'], 'api/info read again: the kiosk reloads into the new version');
+  assert.ok(h.calls.includes('api/brain'), 'and the brain is read at once');
+  assert.equal(h.client.stats().reopenReads, 1);
+  // The browser gave up instead (a proxy answering 502 while the Core restarts): our own reconnect
+  // opens a new stream while the page is still online, and that open reads everything too.
+  h.core.version = '1.1.1';
+  es.fail();
+  h.advance(1000);
+  assert.equal(FakeES.all.length, 2);
+  FakeES.all[1].open();
+  FakeES.all[1].send({ t: 3 }, 'status');
+  await flush();
+  await flush();
+  assert.deepEqual(h.seen.links, [true]);
+  assert.deepEqual(h.seen.versions, ['1.0.0', '1.1.0', '1.1.1']);
+  h.client.stop();
+});
+
+test('an info frame on the stream updates the version the brain poll goes by', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const h = setup({ version: '1.0.0' });
+  await h.client.start();
+  const es = FakeES.all[0];
+  es.open();
+  es.send({ t: 0 }, 'status');
+  es.send({ version: '1.1.0' }, 'info');
+  assert.deepEqual(h.seen.versions, ['1.0.0', '1.1.0']);
+  for (let i = 1; i <= 61; i++) {
+    h.advance(1000);
+    es.send({ t: i });
+  }
+  await flush();
+  assert.equal(h.client.stats().brainReads, 1, 'the 60 s poll reads the brain of the new Core');
+  assert.ok(h.calls.includes('api/brain'));
   h.client.stop();
 });
 
