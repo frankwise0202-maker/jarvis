@@ -377,6 +377,8 @@ export function createPanels() {
     setFigure(n.netUp, fmtBits(net.txBps));
     setFigure(n.netInternet, checkText(vm.internet, 'online', 'DOWN'), 'not checked');
     setFigure(n.netApi, checkText(vm.api, 'reachable', 'UNREACHABLE'), 'not checked');
+    valueLevel(n.netInternet, vm, 'internet');
+    valueLevel(n.netApi, vm, 'api');
     const ts = vm.tailscale;
     if (ts.status === 'not-installed') setFigure(n.netTail, null, 'not installed');
     else if (!ts.status || ts.status === 'unknown') setFigure(n.netTail, null, 'not checked');
