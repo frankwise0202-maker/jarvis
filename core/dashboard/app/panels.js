@@ -22,6 +22,7 @@ import {
   fmtUptime,
   fmtWatts,
   keepUnits,
+  NBSP,
   num,
   pctNumber,
 } from './format.js';
@@ -452,7 +453,8 @@ export function createPanels() {
       setData(row.li, 'online', p.online === true ? 'true' : 'false');
       const kind = p.kind && p.kind !== 'device' ? ` · ${p.kind}` : '';
       const label = peerLabel(p) + (p.self ? ' (this PC)' : kind);
-      const when = p.online === true ? '' : p.lastSeen ? ` · seen ${fmtAgo(p.lastSeen, ctx.now)}` : ' · offline';
+      // "seen 47 min ago" stays on one line when a phone wraps the pill.
+      const when = p.online === true ? '' : p.lastSeen ? ` · ${`seen ${fmtAgo(p.lastSeen, ctx.now)}`.replace(/ /g, NBSP)}` : ' · offline';
       setText(row.name, label + when);
       row.li.classList.toggle('peer-self', !!p.self);
     }

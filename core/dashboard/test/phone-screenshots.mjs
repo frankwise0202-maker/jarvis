@@ -119,6 +119,34 @@ export function remoteProblems(page) {
         if (x > 1 && y > 1) out.push(`${desc(a)} overlaps ${desc(b)} (${Math.round(x)}×${Math.round(y)} px)`);
       }
     }
+    // Inside any box: no two pieces side by side run into each other (a readout's name and its
+    // flag, a panel's title and its chip, a figure and the next). Text is measured where it is
+    // drawn, so a word spilling out of a squeezed box counts.
+    const drawn = (el) => {
+      const r = el.getBoundingClientRect();
+      if (!ownText(el)) return r;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const t = range.getBoundingClientRect();
+      return { left: Math.min(r.left, t.left), right: Math.max(r.right, t.right), top: Math.min(r.top, t.top), bottom: Math.max(r.bottom, t.bottom) };
+    };
+    const seen = new Set();
+    for (const parent of document.querySelectorAll('.stage, .stage *')) {
+      const kids = [...parent.children].filter((k) => shown(k) && !['absolute', 'fixed'].includes(getComputedStyle(k).position) && k.tagName !== 'CANVAS' && !k.classList.contains('hud-sr'));
+      for (let i = 0; i < kids.length; i++) {
+        for (let j = i + 1; j < kids.length; j++) {
+          const ra = drawn(kids[i]);
+          const rb = drawn(kids[j]);
+          const x = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+          const y = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+          const key = `${desc(kids[i])}|${desc(kids[j])}`;
+          if (x > 1 && y > 1 && !seen.has(key)) {
+            seen.add(key);
+            out.push(`${desc(kids[i])} runs into ${desc(kids[j])} (${Math.round(x)}×${Math.round(y)} px)`);
+          }
+        }
+      }
+    }
     // The state word sits inside the heart, and the readouts never cover the orb.
     const label = document.getElementById('core-label').getBoundingClientRect();
     const orb = document.querySelector('.core-orb').getBoundingClientRect();
@@ -128,15 +156,18 @@ export function remoteProblems(page) {
     const BODY = '.ev-text, .msg, .ask-hello, .proc-name, .svc-name, .core-summary, .missing-text, .disk-note, .events-empty, .offline-text, .toast';
     let smallest = Infinity;
     for (const el of document.querySelectorAll('.stage *, .toast')) {
-      if (!ownText(el) || !shown(el)) continue;
+      if (!ownText(el) || !shown(el) || el.closest('.hud-sr')) continue;
       const cs = getComputedStyle(el);
       const fs = parseFloat(cs.fontSize);
       smallest = Math.min(smallest, fs);
       if (fs < 12 - 0.01) out.push(`text below 12 px: ${desc(el)} "${el.textContent.trim().slice(0, 30)}" (${fs}px)`);
       if (el.matches(BODY) && fs < 14 - 0.01) out.push(`sentence below 14 px: ${desc(el)} (${fs}px)`);
-      if (cs.display !== 'inline' && el.clientWidth > 0) {
+      if (cs.display !== 'inline' && el.clientWidth === 0) out.push(`text squeezed to nothing: ${desc(el)} "${el.textContent.trim().slice(0, 40)}"`);
+      else if (cs.display !== 'inline') {
         if (el.scrollWidth > el.clientWidth + 1) out.push(`text cut or spilling sideways: ${desc(el)} "${el.textContent.trim().slice(0, 40)}" (${el.scrollWidth} > ${el.clientWidth})`);
-        const clipsY = cs.overflowY !== 'visible' || cs.webkitLineClamp !== 'none';
+        // A one-line value with a tight line height overflows its line box by a few pixels of empty
+        // ascent and descent; only text that wraps can lose a line.
+        const clipsY = (cs.overflowY !== 'visible' || cs.webkitLineClamp !== 'none') && cs.whiteSpace !== 'nowrap';
         if (clipsY && el.scrollHeight > el.clientHeight + 1) out.push(`text cut at the bottom: ${desc(el)} "${el.textContent.trim().slice(0, 40)}"`);
       } else if (cs.display === 'inline') {
         const box = el.parentElement.getBoundingClientRect();
@@ -185,40 +216,44 @@ async function kioskBehaviourProblems(page, { night }) {
  */
 function longValueProblems(page) {
   return page.evaluate(() => {
+    // [text, shown as words in the muted style (data-unknown) rather than as a value]
+    const NB = '\u00a0';
     const LONG = {
-      'cpu-usage': '100%',
-      'cpu-temp': '100 °C',
-      'cpu-freq': '4.00 GHz',
-      'cpu-load': '12.34 · 12.34 · 12.34',
-      'gpu-util': '100%',
-      'gpu-temp': '100 °C',
-      'gpu-power': '151 W',
-      'gpu-fan': '100%',
-      'gpu-vram': '4.0 GB / 4.0 GB',
-      'mem-pct': '100%',
-      'mem-used': '15.5 GB',
-      'mem-avail': '1023 MB',
-      'mem-swap': '4.0 GB of 4.0 GB',
-      'io-read': '999 MB/s',
-      'io-write': '999 MB/s',
-      'disk-health': 'not checked',
-      'net-down': '999 Mb/s',
-      'net-up': '999 Mb/s',
-      'net-internet': 'not checked',
-      'net-api': 'UNREACHABLE',
-      'net-tail': 'not connected',
-      uptime: '365d 23h',
-      'g-cpu-v': '100%',
-      'g-gpu-v': 'NO DRIVER',
-      'g-ram-v': '100%',
-      'g-disk-v': 'NO DATA',
+      'cpu-usage': ['100%'],
+      'cpu-temp': [`100${NB}°C`],
+      'cpu-freq': [`4.00${NB}GHz`],
+      'cpu-load': ['12.34 · 12.34 · 12.34'],
+      'gpu-util': ['100%'],
+      'gpu-temp': [`100${NB}°C`],
+      'gpu-power': [`151${NB}W`],
+      'gpu-fan': ['100%'],
+      'gpu-vram': [`4.0 / 4.0${NB}GB`],
+      'mem-pct': ['100%'],
+      'mem-used': [`15.5${NB}GB`],
+      'mem-avail': [`1023${NB}MB`],
+      'mem-swap': [`4.0${NB}GB of 4.0${NB}GB`],
+      'io-read': [`999${NB}MB/s`],
+      'io-write': [`999${NB}MB/s`],
+      'disk-health': ['not checked', true],
+      'net-down': [`999${NB}Mb/s`],
+      'net-up': [`999${NB}Mb/s`],
+      'net-internet': ['not checked', true],
+      'net-api': ['UNREACHABLE'],
+      'net-tail': ['not connected', true],
+      uptime: ['365d 23h'],
+      'g-cpu-v': ['100%'],
+      'g-gpu-v': ['NO DRIVER', true],
+      'g-ram-v': ['100%'],
+      'g-disk-v': ['NO DATA', true],
     };
     const out = [];
-    for (const [id, text] of Object.entries(LONG)) {
+    for (const [id, [text, unknown]] of Object.entries(LONG)) {
       const orig = document.getElementById(id);
       if (!orig || orig.closest('[hidden]') || !orig.getClientRects().length) continue;
       const clone = orig.cloneNode(false);
       clone.removeAttribute('id');
+      if (unknown) clone.dataset.unknown = 'true';
+      else delete clone.dataset.unknown;
       clone.textContent = text;
       orig.after(clone);
       const before = orig.style.display;
@@ -248,7 +283,9 @@ async function shoot({ browser, state, sizeKey, outDir }) {
     locale: 'en-US',
     timezoneId: 'UTC',
     colorScheme: 'dark',
-    extraHTTPHeaders: { 'Tailscale-User-Login': LOGIN, 'Tailscale-User-Name': 'Frank' },
+    // What Tailscale serve adds. The page is plain http here (the phone gets https), so the Core is
+    // told the scheme, or it would refuse the page's own origin for module scripts and fonts.
+    extraHTTPHeaders: { 'Tailscale-User-Login': LOGIN, 'Tailscale-User-Name': 'Frank', 'X-Forwarded-Proto': 'http' },
   });
   const page = await context.newPage();
   const problems = [];
