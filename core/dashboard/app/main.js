@@ -12,13 +12,15 @@
 // once per animation frame from the newest view model.
 
 import { createAssistant } from './assistant.js';
+import { inMorning, morningOn, morningWindow, normBrain, normBriefing, normJob, normList, normSpend, normWatcher, todaysBriefing, upsert, MAX_JOBS, MAX_WATCHERS } from './brain.js';
+import { createBrainView } from './brain-view.js';
 import { createClient } from './client.js';
 import { createOrb } from './core-orb.js';
 import { $, setData, setHidden, setText, setVar } from './dom.js';
 import { clockParts, fmtAgo, fmtDate, fmtEventTime, num } from './format.js';
 import { createKiosk, readSettings, screenFeatures } from './kiosk.js';
-import { applyTick, historyPoints, normalize, parseEvents, readInfo } from './model.js';
-import { createPanels, fullest } from './panels.js';
+import { applyTick, historyPoints, normalize, parseEvents, readInfo, stateWord } from './model.js';
+import { createPanels, fullest, summaryLine } from './panels.js';
 import { createSpark, TimeRing } from './spark.js';
 
 const JARVIS_URL = 'https://frankwise0202-maker.github.io/jarvis/';
@@ -57,6 +59,12 @@ const stage = $('stage');
 const screenMode = screenFeatures(location.hostname);
 setData(root, 'view', screenMode.view);
 const panels = createPanels();
+const brainView = createBrainView({ kiosk: screenMode.kiosk });
+
+// --- the home base brain (Core 1.1.0; none on an old Core) ---------------------------------------
+const brainState = { brain: null, jobs: [], watchers: [], briefing: null };
+let morningShown = false; // the kiosk's full-screen morning is up
+let lastInputAt = null; // the Core's clock at the last key or mouse move during the morning window
 
 // --- state ------------------------------------------------------------------------------------
 let raw = null; // the merged status as the Core sent it
@@ -164,9 +172,93 @@ function render() {
   }
   if (!vm) vm = normalize(raw || {}, info);
   root.dataset.health = online ? vm.health.level : 'offline';
-  panels.render(vm, ctx());
+  const c = ctx();
+  panels.render(vm, c);
+  brainView.render(brainState, vm, c);
+  renderMorning(c);
   feedOrb(vm);
   for (const s of Object.values(sparks)) if (s.dirty) s.draw();
+}
+
+function renderMorning(c) {
+  if (!morningShown) {
+    brainView.renderMorning({ on: false, latest: brainState.briefing, brain: brainState.brain });
+    return;
+  }
+  const v = vm || normalize(raw || {}, info);
+  const sw = online ? stateWord(v, true) : { word: 'OFFLINE', detail: 'NO SIGNAL', level: 'offline' };
+  const d = fullest(v.disks);
+  brainView.renderMorning({
+    on: true,
+    brain: brainState.brain,
+    briefing: todaysBriefing(brainState.briefing, c.now, timeZone),
+    latest: brainState.briefing,
+    vm: v,
+    ctx: c,
+    sw,
+    online,
+    diskPct: d ? d.usedPct : null,
+    summary: summaryLine(v, c),
+    ownerName: (brainState.brain && brainState.brain.owner.name) || readInfo(info).ownerName,
+  });
+}
+
+/**
+ * Morning mode, on the kiosk only: from the briefing time (the Core's clock and time zone) until
+ * 10:00, unless a key or the mouse was touched in the last 10 minutes. Returns whether it changed.
+ */
+function updateMorning(now = coreNow()) {
+  const on = morningOn({ kiosk: screenMode.kiosk, win: morningWindow(brainState.brain), nowMs: now, timeZone, lastInputAt });
+  if (on === morningShown) return false;
+  morningShown = on;
+  orb.setNight(kiosk.isNight() || on); // the core behind the morning screen runs at half speed
+  scheduleRender();
+  return true;
+}
+
+/** A key press or a mouse move during the morning window: back to the system report for 10 minutes. */
+function noteInput() {
+  const now = coreNow();
+  if (!inMorning(now, timeZone, morningWindow(brainState.brain))) return false;
+  const wasOn = morningShown;
+  lastInputAt = now;
+  updateMorning(now);
+  return wasOn;
+}
+
+if (screenMode.kiosk) {
+  // Chrome sends a mousemove without movement when the page changes under a still cursor: only a
+  // real move counts.
+  let lastX = null;
+  let lastY = null;
+  window.addEventListener(
+    'mousemove',
+    (e) => {
+      const moved = lastX === null || Math.abs(e.screenX - lastX) > 2 || Math.abs(e.screenY - lastY) > 2;
+      const first = lastX === null;
+      lastX = e.screenX;
+      lastY = e.screenY;
+      if (moved && !first) noteInput();
+    },
+    { passive: true },
+  );
+  window.addEventListener('pointerdown', () => noteInput(), { passive: true });
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.repeat) return;
+      const wasOn = noteInput();
+      // The key that closes the morning screen does not also start a question (Alt+J still opens
+      // Jarvis); a key typed into a field that already has the focus stays there.
+      const t = e.target;
+      const inField = !!(t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]'));
+      if (wasOn && !inField && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true,
+  );
 }
 
 function scheduleRender() {
@@ -246,6 +338,40 @@ const client = createClient({
   onEvents(body) {
     panels.addEvents(parseEvents(body), ctx());
   },
+  onBrain(body) {
+    const b = normBrain(body);
+    brainState.brain = b;
+    if (!b) {
+      brainState.jobs = [];
+      brainState.watchers = [];
+      brainState.briefing = null;
+    }
+    updateMorning();
+    scheduleRender();
+  },
+  onJobs(body) {
+    brainState.jobs = normList(body, 'jobs', normJob).slice(0, MAX_JOBS);
+    scheduleRender();
+  },
+  onWatchers(body) {
+    brainState.watchers = normList(body, 'watchers', normWatcher).slice(0, MAX_WATCHERS);
+    scheduleRender();
+  },
+  onBriefing(body) {
+    brainState.briefing = normBriefing(body);
+    scheduleRender();
+  },
+  onBrainEvent(name, body) {
+    if (!brainState.brain) {
+      client.readBrain(); // a brain frame from a Core we took for an old one: read it all
+      return;
+    }
+    if (name === 'job') brainState.jobs = upsert(brainState.jobs, normJob(body), MAX_JOBS);
+    else if (name === 'watcher') brainState.watchers = upsert(brainState.watchers, normWatcher(body), MAX_WATCHERS);
+    else if (name === 'spend') brainState.brain = { ...brainState.brain, spend: normSpend(body) };
+    else if (name === 'briefing') client.readBriefing(); // the frame carries only the date and greeting
+    scheduleRender();
+  },
   onLink(up) {
     online = up;
     if (up) everOnline = true;
@@ -292,13 +418,14 @@ const kiosk = createKiosk({
   settings,
   timeZone: () => timeZone,
   onNightChange(on) {
-    orb.setNight(on);
+    orb.setNight(on || morningShown);
   },
   onRefresh() {
     location.reload();
   },
   isCoreLive: () => online,
   kiosk: screenMode.kiosk,
+  liftDim: () => morningShown,
 });
 
 function tick() {
@@ -306,6 +433,7 @@ function tick() {
   const now = coreNow();
   updateClock(now);
   updateBanner(wall);
+  if (updateMorning(now) || morningShown) scheduleRender(); // the morning's clock moves too
   kiosk.tick(now);
   assistant.tick(wall);
   if (!online && everOnline) {
@@ -393,5 +521,11 @@ window.__jarvisCore = {
     online,
     night: kiosk.isNight(),
     view: screenMode.view,
+    brain: !!brainState.brain,
+    morning: morningShown,
+    tab: brainView.front(),
+    jobs: brainState.jobs.length,
+    watchers: brainState.watchers.length,
+    briefing: brainState.briefing ? brainState.briefing.date : null,
   }),
 };

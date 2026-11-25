@@ -5,7 +5,11 @@
 // carries the header Tailscale serve adds (Tailscale-User-Login), so the page is a remote viewer
 // exactly as on the phone: no night dim, no pixel shift, no hidden cursor, no typing anywhere.
 //
-//   node core/dashboard/test/phone-screenshots.mjs [--out DIR] [--only ok,night] [--sizes iphone-13,ipad]
+//   node core/dashboard/test/phone-screenshots.mjs [--out DIR] [--only ok,night] [--sizes iphone-13,ipad] [--brain ok]
+//
+// --brain <preset> (brain-fixtures.mjs: ok, nokey, overcap, sdk, busy, …) runs against the stand-in
+// Core (mock-server.mjs) with the home base brain instead of the real Core 1.0 in fixture mode, so
+// the HOME BASE, missions and morning briefing panels are checked at every size too.
 //
 // Sizes (--sizes takes the keys; SIZES below): iPhones upright (320×568, 375×667, 390×844 with the
 // notch and the home bar) and on their sides (844×390 with the notch, 667×375, 568×320), the iPad
@@ -32,6 +36,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { layoutProblems, loadPlaywright, longTextProblems, startRealCore } from './screenshots.mjs';
+import { startMockCore } from './mock-server.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TAILNET_NAME = 'alienware.tail4e5f6a.ts.net'; // the fixtures' machine (core/fixtures/tailscale)
@@ -62,13 +67,14 @@ const STATES = ['ok', 'warn', 'alert', 'nogpu', 'internet', 'offline', 'night'];
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
 
 function parseArgs(argv) {
-  const o = { out: path.join(HERE, 'artifacts', 'phone'), only: null, sizes: Object.keys(SIZES) };
+  const o = { out: path.join(HERE, 'artifacts', 'phone'), only: null, sizes: Object.keys(SIZES), brain: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === '--out') o.out = path.resolve(next());
     else if (a === '--only') o.only = next().split(',');
     else if (a === '--sizes') o.sizes = next().split(',');
+    else if (a === '--brain') o.brain = next();
     else throw new Error(`unknown option ${a}`);
   }
   for (const k of o.sizes) if (!SIZES[k]) throw new Error(`unknown size ${k} (${Object.keys(SIZES).join(', ')})`);
@@ -437,11 +443,12 @@ export function longValueProblems(page) {
   });
 }
 
-async function shoot({ browser, state, sizeKey, outDir }) {
+async function shoot({ browser, state, sizeKey, outDir, brain = null }) {
   const size = SIZES[sizeKey];
   const night = state === 'night';
   const coreScenario = night || state === 'offline' ? 'ok' : state === 'internet' ? 'offline' : state;
-  const core = await startRealCore({ scenario: coreScenario, start: night ? NIGHT_START : SIM_START });
+  const start = night ? NIGHT_START : SIM_START;
+  const core = brain ? await startMockCore({ port: 0, scenario: coreScenario, rate: 1, start: Date.parse(`${start}Z`), brain, briefingAt: Date.parse('2026-11-25T07:00:00Z') }) : await startRealCore({ scenario: coreScenario, start });
   const port = new URL(core.url).port;
   const context = await browser.newContext({
     viewport: { width: size.w, height: size.h },
@@ -468,7 +475,7 @@ async function shoot({ browser, state, sizeKey, outDir }) {
   page.on('console', (m) => {
     if (m.type() === 'error' && !(stopping && /Failed to load resource|ERR_/.test(m.text()))) problems.push(`console error: ${m.text()}`);
   });
-  const name = `${state}-${sizeKey}`;
+  const name = `${brain ? `brain-${brain}-` : ''}${state}-${sizeKey}`;
   try {
     await page.goto(`http://${TAILNET_NAME}:${port}/?nosw`);
     await page.waitForFunction(() => window.__jarvisCore && window.__jarvisCore.stats().online, null, { timeout: 15000 });
@@ -549,11 +556,11 @@ async function main() {
   const browser = await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${TAILNET_NAME} 127.0.0.1`, '--no-proxy-server'] });
   const states = opts.only || STATES;
   let failed = 0;
-  console.log(`The remote view through the tailnet name ${TAILNET_NAME} (the real Core in fixture mode)`);
+  console.log(`The remote view through the tailnet name ${TAILNET_NAME} (${opts.brain ? `the stand-in Core with the brain preset ${opts.brain}` : 'the real Core in fixture mode'})`);
   try {
     for (const state of states) {
       for (const sizeKey of opts.sizes) {
-        const r = await shoot({ browser, state, sizeKey, outDir: opts.out });
+        const r = await shoot({ browser, state, sizeKey, outDir: opts.out, brain: opts.brain });
         if (r.problems.length) failed++;
         console.log(`${(r.problems.length ? 'PROBLEMS' : 'ok').padEnd(8)} ${r.name.padEnd(26)} ${r.layout.padEnd(10)} page ${r.height}px${r.smallest ? `, smallest text ${r.smallest}px` : ''}  ${r.first}`);
         for (const p of r.problems) console.log(`         - ${p}`);

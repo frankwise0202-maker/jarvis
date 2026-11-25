@@ -41,6 +41,66 @@ an alert is about (the CPU temperature, memory in use, a filesystem's percentage
 also turns amber or red, so the cause reads from across the room. Sentences from the Core (events,
 the summary, answers) keep each number with its unit on one line.
 
+## The home base brain (Core 1.1.0)
+
+With a Core that has the brain (`GET api/brain` answers), the system report gains:
+
+- **HOME BASE** (a strip under the core on the kiosk, a panel in the remote view): the Claude key
+  ("KEY SET …Ab3D"; no key: "Add your key from Jarvis on your phone"; the SDK missing: "Run
+  jarvis-core update"), the spend today and this month against the caps with a bar each (amber
+  from 80 %, red at the cap, "SPEND · DAILY CAP REACHED"), and the watchers (how many are active,
+  the latest one met).
+- **MISSIONS**: the background research, the running and queued ones first, then the finished
+  ones newest first, each with its status word (RUNNING, QUEUED, DONE, FAILED, BLOCKED, CANCELLED),
+  its time and its one-line summary (or why it failed). The watchers' own checks and the briefing's
+  call are not missions. On the kiosk layout the missions, the top processes and, for a remote
+  viewer, the morning briefing share the bottom-left place with tabs: the processes come to the
+  front by themselves while the CPU or the memory needs a look, the briefing on a remote viewer
+  when there is one, the missions otherwise; a tab picked by hand stays 10 minutes.
+- **MORNING BRIEFING** (remote viewers only: the iPhone, the iPad, the Mac): the latest briefing,
+  with its date: the weather, the headlines (links), the night at the home base, the research and
+  watchers that finished overnight, what's new and the music suggestion (an Apple Music link).
+
+Everything is live: the stream's `job`, `watcher`, `spend` and `briefing` frames update it at once
+(a `briefing` frame only carries the date, so the page reads `api/briefing`), and `api/brain`,
+`api/jobs` and `api/watchers` are read again every minute as a backstop. The brain is only asked
+for when `api/info` reports version 1.1.0 or later, and the briefing only once `briefing.lastAt`
+says there is one, so an old Core or a first night never logs a 404 in the console. **A Core
+without a brain (1.0.0) shows none of this**: no strip, no missions, no tabs, no morning.
+
+### Morning mode (the kiosk only)
+
+From the briefing time (`api/brain` → `briefing.time`, 07:00 by default) until 10:00, on the Core's
+clock and in its time zone (wall-clock minutes, so the DST days just work), the Alienware's screen
+shows a full-screen "Good morning, Frank." (the owner's name from `api/brain` → `owner.name`):
+
+- the strip at the top keeps the health in sight: the state word, CPU, GPU, RAM, DISK and the clock;
+- the greeting, the date and the weather (now, the high and low, the chance of rain), or, without a
+  location, a calm line to open Jarvis on the iPhone once and share it; a full briefing (written by
+  Claude) adds its first lines under the greeting;
+- three cards: the headlines (up to 6, two lines each), the night at the home base and what finished
+  while he slept, and what's new with the music suggestion. The middle card always fits: the
+  research first, then the watchers, three at most and "+N more on your phone" for the rest; on a
+  busy night (three or more) each keeps to one line for its title and one for its summary and the
+  night shows two of its notes (two lines each and three notes otherwise); the status dot sits on
+  the summary's first line;
+- without a key, one line at the bottom: "Give the home base your key from Jarvis on your iPhone to
+  unlock background research."; when something needs a look (a warning, an alert, the Core
+  offline), the Core's own sentence in its color above it;
+- no briefing yet at the briefing time: the greeting, a big clock, the Core's summary and "Your
+  briefing is on its way."; the briefing shows the moment it arrives over the stream. Only today's
+  briefing counts (its `date` on the Core's clock).
+
+A key press or a mouse move returns to the full system report (that key does not also start a
+question; Alt+J still opens Jarvis; Chrome's own mousemove without movement does not count); after
+10 minutes without either, the morning comes back, until 10:00. Only input during the window
+counts, so a mouse touched at 06:58 does not hold the morning back. The cards are built when a
+briefing arrives, shown or not, so the screen appears at once and its size never changes when it
+does. The night dim is lifted while the morning shows (a 06:30 briefing inside a 23:00–07:00 dim),
+the living core behind it runs at half speed, the motion is calm (two slow rings, a breathing heart,
+the cards rising in once) and stops with reduced motion. A window too small for the kiosk layout
+gets the morning in one scrolling column.
+
 ## Kiosk behaviour
 
 Everything in this section except the layout belongs to the Alienware's own screen only: the page
@@ -64,7 +124,11 @@ hides the cursor and never reloads itself; keys typed on its page stay where the
   (stale data never looks live). The link reconnects on its own (1 → 10 s backoff) and catches up
   with one full read.
 - **Updates**: when `api/info` reports a new version after a restart, the page reloads itself (a
-  remote viewer gets a notice instead: "Jarvis Core was updated. Reload this page…").
+  remote viewer gets a notice instead: "Jarvis Core was updated. Reload this page…"). The page
+  reads `api/info` again whenever its stream reopens, not only after an outage: a `systemctl
+  restart` (an update, the autoupdate timer) is back in under 2 s, within the browser's own 3 s
+  retry and well before the 5 s that call the Core offline. An `info` frame on the stream counts
+  too.
 - **Daily refresh** at 04:00 (only if the page has been open an hour and the Core answers), as a
   safety net against browser-level growth; the page itself does not grow (see the long-run test).
 - **Service worker** (`sw.js`): network first for the page's own files, so a kiosk that reloads
@@ -83,7 +147,7 @@ Chrome at 1440×900):
   which the kiosk shows only the newest of, scroll (the mouse wheel, a finger), and a new answer
   taller than its box arrives showing its first line, never only its end (`assistant.js`).
 - **A phone held upright, a narrow window, an iPad in Split View (up to 560 px wide)**: one column
-  that scrolls. A compact top bar (the state word and the clock; the host, the uptime and a small
+  that scrolls (with a brain, the morning briefing, HOME BASE and missions come first after the core). A compact top bar (the state word and the clock; the host, the uptime and a small
   Open Jarvis button under them), the living core at about `min(78vw, 320px)` with its four
   readouts (CPU, GPU, RAM, DISK) in a 2×2 grid under it instead of leader lines, the Core's
   summary sentence, then the panels in this order: Services, CPU, GPU, Memory, Storage, Network,
@@ -147,7 +211,9 @@ behind `tailscale serve`. The contract is the Core's (`/tmp/jarvis-scratch/core/
 frames (every second, without `services` and without `health.items`) replace the sections they carry
 and keep the rest, `event` frames go to the log (with their ids, so a reconnect replays what was
 missed). Events are also polled every 15 s. Any frame proves the Core is alive; 5 s of silence on
-the monotonic clock means offline. A page coming back from the background after more than 2 s (the
+the monotonic clock means offline. Every time the stream opens again (the browser's own retry or
+the page's reconnect) the page reads everything once more, so a Core that restarted too quickly to
+look offline still hands over its new version (the kiosk reloads, the brain is asked for). A page coming back from the background after more than 2 s (the
 iPhone unlocked, a tab brought back, a page restored from the back-forward cache) opens a new
 stream at once and reads everything again, so it shows fresh values instead of a red "Core
 offline" banner while the browser notices that its old stream died.
@@ -194,6 +260,9 @@ connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; 
 | `app/spark.js` | the sparkline ring buffer (one slot a second) and renderer |
 | `app/assistant.js` | the status assistant panel |
 | `app/kiosk.js` | which screen is the kiosk (`screenFeatures`); cursor, pixel shift, night dim, daily refresh, settings |
+| `app/brain.js` | the brain's JSON to what the panels show (key, spend, watchers, missions, the briefing) and the morning schedule (pure) |
+| `app/brain-view.js` | the HOME BASE strip/panel, missions, the tabs, the morning briefing panel and the morning screen |
+| `styles/brain.css` | their layout on the kiosk and in the remote view, and the morning screen |
 | `sw.js` | the network-first service worker for the page's own files |
 | `test/` | unit tests, fixtures, a mock Core, the screenshot run and the long-run check |
 
@@ -204,7 +273,11 @@ node --test core/dashboard/test/*.test.mjs                         # unit tests 
 nice -n 10 node core/dashboard/test/screenshots.mjs                # every state at 1920×1080, 2560×1440, 1366×768 (real Core, fixture mode)
 nice -n 10 node core/dashboard/test/phone-screenshots.mjs          # the remote view: iPhone, iPad, laptop windows, every state
 nice -n 10 node core/dashboard/test/longrun.mjs --hours 48 --rate 200   # two simulated days after the warm-up, memory verdict
+nice -n 10 node core/dashboard/test/morning-screenshots.mjs        # morning mode and the brain's panels on the kiosk (stand-in Core)
+nice -n 10 node core/dashboard/test/phone-screenshots.mjs --brain ok   # the remote view with the brain's panels
+nice -n 10 node core/dashboard/test/longrun.mjs --hours 24 --brain ok --start 2026-11-25T00:00:00Z   # with the brain, across 07:00 and 10:00
 node core/dashboard/test/mock-server.mjs --scenario warn           # a stand-in Core on :8790 (same protocol, plus a "down" switch)
+node core/dashboard/test/mock-server.mjs --brain ok --start 2026-11-25T07:05:00Z   # …with the brain (ok, nokey, overcap, sdk, noweather, long, waiting, full, busy, night, night2)
 ```
 
 The screenshot run starts a fresh real Core in fixture mode for every shot (`ok`, `warn`, `alert`,
@@ -249,6 +322,26 @@ without compiled code) and event listeners. The whole JS heap, its compiled code
 renderer's RSS are reported beside them: V8 keeps optimizing functions as they get hot, so code
 climbs for about a simulated day and then levels off, and the page cannot make new code (its CSP
 has no `'unsafe-eval'`). See `test/growth.mjs` for the limits.
+
+With `--brain <preset>` the phone run uses the stand-in Core with the brain instead of the real
+Core 1.0, so the morning briefing, HOME BASE and missions panels get the same checks at every size,
+and the long run with `--brain ok` pushes four missions, a watcher and the spend every simulated
+hour and a new briefing at 07:00, leaves 07:00–07:12 without questions so the morning screen comes
+up (the next question closes it), and warms up until the page also keeps its 30 missions. Its
+limits are made for long windows: over 6 hours the transcript's suggestion chips (±5 nodes) alone
+read as a slope, so judge the brain with 24 hours or more.
+
+The morning run (`morning-screenshots.mjs`) loads the kiosk against the stand-in with a brain preset
+(`test/brain-fixtures.mjs`): morning mode with and without weather, without a key, with a long
+headline list, a busy night (`night`: five research results, three met watchers, the overnight
+report's six long notes; `night2`: two long research results), the full briefing, the alert
+scenario, and no briefing yet at 07:00 (then one arrives over the stream and must show at once); the
+system report with the brain in the ok, warn and alert scenarios, without a key, over the cap, with
+the SDK missing, busy, and an old Core without a brain (no brain UI at all). It fails on anything
+cut off or spilling out of the morning screen or its cards, a strip on two lines, the night's status
+dot off the summary's first line, the night dim over the morning, a key press that does not return
+to the system report (or lands in the question box), the brain UI on an old Core, and the kiosk
+run's own layout checks.
 
 What cannot be tested here: real NVIDIA readings, a GNOME session, Chrome's kiosk window and the
 Open Jarvis window behaviour, a physical monitor (burn-in, brightness), Tailscale.
