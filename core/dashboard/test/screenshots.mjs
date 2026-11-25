@@ -116,7 +116,7 @@ async function layoutProblems(page) {
       if (p.scrollWidth > p.clientWidth + 1) out.push(`#${p.id} content cut off: ${p.scrollWidth - p.clientWidth}px too wide`);
     }
     // Text that overflows its own box (ellipsis is fine, but values should fit).
-    for (const b of document.querySelectorAll('.fig b, .gauge-readout .gv, .meter-val, .fs-pct, .svc-state, .state-word, .clock')) {
+    for (const b of document.querySelectorAll('.fig b, .gauge-readout .gv, .meter-val, .fs-pct, .svc-state, .state-word, .clock, .ev-time')) {
       if (b.closest('[hidden]')) continue;
       if (b.scrollWidth > b.clientWidth + 1) out.push(`value cut: #${b.id || b.className} "${b.textContent}"`);
     }
@@ -128,6 +128,53 @@ async function layoutProblems(page) {
     }
     const sum = document.getElementById('core-summary').getBoundingClientRect();
     for (const [id, r] of boxes) if (r.bottom > sum.top + 1 && r.top < sum.bottom && r.right > sum.left && r.left < sum.right && document.getElementById('core-summary').textContent.trim()) out.push(`${id} overlaps the summary line`);
+    return out;
+  });
+}
+
+/**
+ * Layout checks with the longest text the page can get, run after the screenshot: the longest event time
+ * (every hour over two weeks, in the page's locale, en-US and en-GB) in the log's time column, and a long
+ * drive name in each corner caption (a USB drive at /media/<user>/<label>). Nothing the app keeps is
+ * replaced: a cloned log row, and the caption's own text node, put back afterwards.
+ */
+async function longTextProblems(page) {
+  return page.evaluate(async () => {
+    const out = [];
+    const F = await import(new URL('app/format.js', location.href).href);
+    const now = Date.now();
+    const list = document.querySelector('.ev')?.parentElement;
+    if (list) {
+      let longest = '';
+      for (const loc of [undefined, 'en-US', 'en-GB']) {
+        for (let h = 0; h < 24 * 14; h += 1) {
+          const s = F.fmtEventTime(now - h * 3600000 - 59 * 60000, now, loc, 'UTC');
+          if (s.length > longest.length) longest = s;
+        }
+      }
+      const row = list.querySelector('.ev').cloneNode(true);
+      row.querySelector('.ev-time').textContent = longest;
+      list.prepend(row);
+      const t = row.querySelector('.ev-time');
+      const lv = row.querySelector('.ev-level').getBoundingClientRect();
+      if (t.scrollWidth > t.clientWidth + 1 || t.getBoundingClientRect().left + t.scrollWidth > lv.left + 1) out.push(`event time "${longest}" runs into the level column`);
+      row.remove();
+    }
+    const stage = document.getElementById('core-stage').getBoundingClientRect();
+    for (const sub of document.querySelectorAll('.gauge-readout .gr-sub')) {
+      const box = sub.closest('.gauge-readout').getBoundingClientRect();
+      let tn = sub.firstChild;
+      const made = !tn;
+      if (made) tn = sub.appendChild(document.createTextNode(''));
+      const old = tn.data;
+      tn.data = 'Seagate Expansion Desktop Drive 4TB · 29 MB free';
+      const r = sub.getBoundingClientRect();
+      const clipped = getComputedStyle(sub).overflowX !== 'visible';
+      const right = clipped ? r.right : r.left + sub.scrollWidth;
+      if (right > box.right + 1 || right > stage.right + 1 || r.left < stage.left - 1) out.push(`${sub.closest('.gauge-readout').id} caption runs out of its corner (${Math.round(right - box.right)}px)`);
+      if (made) tn.remove();
+      else tn.data = old;
+    }
     return out;
   });
 }
@@ -176,8 +223,9 @@ async function shoot({ browser, scenario, size, outDir, ask, mock }) {
     const layout = await layoutProblems(page);
     const file = path.join(outDir, `${scenario}-${size}.png`);
     await page.screenshot({ path: file });
+    const long = scenario === 'offline' ? [] : await longTextProblems(page);
     const stats = await page.evaluate(() => window.__jarvisCore.stats());
-    return { file, problems: [...problems, ...layout], stats };
+    return { file, problems: [...problems, ...layout, ...long], stats };
   } finally {
     await context.close();
     await core.close();

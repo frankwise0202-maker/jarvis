@@ -130,7 +130,17 @@ test('event times: time of day today, a date on other days', () => {
   const now = Date.parse('2026-11-25T21:47:00Z');
   assert.match(fmtEventTime(now - 60000, now, 'en-US', 'UTC'), /^9:46:00\sPM$/); // ICU may put a narrow space before PM
   assert.match(fmtEventTime(now - 60000, now, 'en-GB', 'UTC'), /^21:46:00$/);
-  assert.match(fmtEventTime(now - 26 * 3600000, now, 'en-US', 'UTC'), /^Nov 24, 7:47/);
+  assert.match(fmtEventTime(now - 26 * 3600000, now, 'en-US', 'UTC'), /^Tue 7:47\sPM$/);
+  assert.match(fmtEventTime(now - 26 * 3600000, now, 'en-GB', 'UTC'), /^Tue 19:47$/);
+  assert.equal(fmtEventTime(now - 10 * 86400000, now, 'en-US', 'UTC'), 'Nov 15');
+  assert.equal(fmtEventTime(now - 10 * 86400000, now, 'en-GB', 'UTC'), '15 Nov');
+  // never longer than the time column holds (12 characters in en-US; "Nov 21, 10:36 PM" was 16)
+  let longest = '';
+  for (let h = 0; h < 24 * 14; h += 1) {
+    const s = fmtEventTime(now - h * 3600000 - 59 * 60000, now, 'en-US', 'UTC');
+    if (s.length > longest.length) longest = s;
+  }
+  assert.ok(longest.length <= 12, longest);
   assert.equal(fmtEventTime(null, now), '');
 });
 

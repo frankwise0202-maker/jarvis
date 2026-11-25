@@ -273,13 +273,19 @@ export function fmtDate(date, locale, timeZone) {
   return dtf(locale, o).format(date);
 }
 
-/** An event's time: "9:47:03 PM" today, "Nov 24, 9:47 PM" on another day. */
+/**
+ * An event's time, short enough for the log's time column: "9:47:03 PM" today, "Sat 9:47 PM" in the
+ * last six days, "Nov 14" before that ("Nov 21, 10:36 PM" did not fit).
+ */
 export function fmtEventTime(ms, nowMs, locale, timeZone) {
   const t = num(ms);
   if (t === null) return '';
   const d = new Date(t);
-  const sameDay = dayKey(t, timeZone) === dayKey(num(nowMs) ?? t, timeZone);
-  const o = sameDay ? { hour: 'numeric', minute: '2-digit', second: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  const now = num(nowMs) ?? t;
+  let o;
+  if (dayKey(t, timeZone) === dayKey(now, timeZone)) o = { hour: 'numeric', minute: '2-digit', second: '2-digit' };
+  else if (Math.abs(now - t) < 6 * 86400000) o = { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+  else o = { month: 'short', day: 'numeric' };
   if (timeZone) o.timeZone = timeZone;
   return dtf(locale, o).format(d);
 }

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import {
   makeSandbox, makeRepo, install, cli, runScript, stubLog, snapshot, freePort, stopCore, CLI,
-  GSETTINGS_DEFAULTS, GDM_STOCK, USER,
+  GSETTINGS_DEFAULTS, GDM_STOCK, USER, CORE,
 } from './harness.mjs';
 
 const RULE = `${USER} ALL=(root) NOPASSWD: /usr/sbin/smartctl -j -H -A -i /dev/sd[a-z], /usr/sbin/smartctl -j -H -A -i /dev/nvme[0-9]n[0-9]`;
@@ -206,6 +206,14 @@ test('a password sudo remembers in this terminal is not the disk-check permissio
   } finally {
     sb.cleanup();
   }
+});
+
+test("the owner's guide says how to paste in Terminal at its first paste (Ctrl+V doesn't work there)", () => {
+  const md = fs.readFileSync(path.join(CORE, 'README.md'), 'utf8');
+  const first = md.search(/\bpaste\b/i);
+  const how = md.indexOf('Ctrl+Shift+V');
+  assert.ok(first > 0 && how > first && how - first < 200, 'the how-to is right at the first "paste"');
+  assert.match(md, /right-click and choose \*\*Paste\*\*/);
 });
 
 test('refuses to run as root, and outside Ubuntu', () => {

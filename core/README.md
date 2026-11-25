@@ -19,6 +19,9 @@ Chrome, pick the 64 bit .deb for Debian/Ubuntu, open the file and click Install.
 **2. The NVIDIA driver (for the graphics card readings).** Open **Terminal** (press the Windows key,
 type `terminal`, press Enter) and paste:
 
+> **To paste in Terminal:** right-click and choose **Paste**, or press **Ctrl+Shift+V**
+> (Ctrl+V on its own doesn't work there).
+
 ```
 nvidia-smi
 ```
@@ -55,7 +58,8 @@ If you skip Tailscale for now, the installer tells you exactly what to paste lat
 
 ## Install it: one command
 
-Open **Terminal** on the Alienware and paste this one line, then press Enter:
+Open **Terminal** on the Alienware and paste this one line (right-click > **Paste**, or **Ctrl+Shift+V**),
+then press Enter:
 
 ```
 wget -qO- https://raw.githubusercontent.com/frankwise0202-maker/jarvis/main/core/install/install.sh | bash
@@ -147,6 +151,9 @@ on any new computer. Close that window (**Ctrl+W**) to get back to the dashboard
 ---
 
 ## If something's not right
+
+**I pressed Ctrl+V and nothing appeared.** Terminal pastes with **Ctrl+Shift+V**, or right-click and
+choose **Paste**.
 
 **I pasted the install command and nothing happened at all.** The download didn't arrive (no
 internet, or GitHub was busy). Check the internet connection and paste it again a minute later.

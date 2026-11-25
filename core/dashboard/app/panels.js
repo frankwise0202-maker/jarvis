@@ -29,6 +29,8 @@ import { meterLevel, peerLabel, shortCpuName, sortPeers, stateWord, worst } from
 
 export const MAX_EVENTS = 40;
 const MOUNT_NAMES = { '/': 'System', '/home': 'Home', '/boot': 'Boot', '/boot/efi': 'Boot (EFI)' };
+/** A drive's short name for the DISK corner: "Home", or "BACKUP" for /media/frank-wise/BACKUP. */
+const mountShort = (m) => MOUNT_NAMES[m] || String(m).split('/').filter(Boolean).pop() || m;
 const MAX_FS = 2;
 const MAX_PEERS = 8;
 const PROC_ROWS = 5;
@@ -504,7 +506,7 @@ export function createPanels() {
     gaugeSet('disk', {
       value: d ? d.usedPct : null,
       unknownWords: 'NO DATA',
-      sub: d ? `${d.mount === '/' ? '' : `${d.mount} · `}${fmtDisk(d.free) ?? '?'} free` : '',
+      sub: d ? `${d.mount === '/' ? '' : `${mountShort(d.mount)} · `}${fmtDisk(d.free) ?? '?'} free` : '',
       level: vm.levels.disk,
     });
   }
