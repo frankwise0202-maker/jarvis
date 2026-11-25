@@ -356,6 +356,21 @@ export function brainProblem(f, { limits } = {}) {
   return { state: 'error', message: `The home base answered with an error${code ? ` (${code})` : ''}${said ? `: ${said}` : '.'}` };
 }
 
+/**
+ * "Brief me" the home base couldn't answer because it can't be reached (Tailscale off here, the
+ * Alienware asleep, the Core restarting) or can't brief at all (a Jarvis Core 1.0: 404): Jarvis then
+ * briefs as before v7.6 (the morning-briefing protocol on waking, a normal turn in the chat), so the
+ * owner always gets a briefing. Not for the Core's own answers (no key, the limit, rate).
+ */
+export function briefingFallback(f) {
+  if (!isObj(f) || f.ok) return false;
+  const r = f;
+  if (['unreachable', 'aborted', 'down', 'starting', 'refused', 'notcore', 'error'].includes(r.kind)) return true;
+  if (r.kind !== 'http') return false;
+  if (r.status === 404) return r.code !== 'none_yet';
+  return typeof r.status === 'number' && r.status >= 500;
+}
+
 // ---- deep links ------------------------------------------------------------------------------
 
 const LINK_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -412,25 +427,53 @@ function flat(s) {
 const RESEARCH_VERB = '(?:research|look into|find out about|find out|dig into|investigate|read up on)';
 const BACKGROUND = "(?:in the background|on (?:the |my )?home ?base|on the alien ?ware|overnight|while i(?:'m| am) (?:away|asleep|out|sleeping|at work)|while i sleep)";
 const RESEARCH = [
-  new RegExp(`^(?:(?:do )?(?:some |a )?(deep|quick) research (?:(?:on|into|about) )?|${RESEARCH_VERB} )(.+?) ${BACKGROUND}$`, 'i'),
+  new RegExp(`^(?:(?:do )?(?:some |a )?(deep|quick) research (?:(?:on|into|about) )?|${RESEARCH_VERB} )(.+?) (${BACKGROUND})$`, 'i'),
   new RegExp(`^${BACKGROUND}[,:]? (?:(?:do )?(?:some |a )?(deep|quick) research (?:(?:on|into|about) )?|${RESEARCH_VERB} )(.+)$`, 'i'),
   new RegExp(`^${HOME}[,:]? (?:(?:do )?(?:some |a )?(deep|quick) research (?:(?:on|into|about) )?|${RESEARCH_VERB} )(.+)$`, 'i'),
   new RegExp(`^(?:have|get|ask|tell|let) ${HOME} (?:to )?(?:(?:do )?(?:some |a )?(deep|quick) research (?:(?:on|into|about) )?|${RESEARCH_VERB} )(.+)$`, 'i'),
 ];
+// "Overnight" / "while I'm at work" at the end may belong to the question itself ("look into why my
+// sourdough is flat overnight", "find out what my dog does while I'm at work"): there it only counts
+// when what comes before is a plain topic (no question word, no verb of its own).
+const PLACE_TAIL = /^(?:in the background|on (?:the |my )?home ?base|on the alien ?ware)$/i;
+const CLAUSE = /\b(?:why|how|what|whats|when|where|who|whom|whose|which|whether|if|is|isn't|isnt|was|wasn't|are|aren't|were|be|been|being|does|doesn't|do|don't|did|didn't|has|have|had|happens|happened|gets|got|goes|went|keeps|stays|turns|turned)\b/i;
 
 const WATCH_VERB = '(?:watch for|watch out for|keep an eye out for|keep watch for|keep an eye on|monitor)';
-// [pattern, bare]: a bare "tell me when …" (no home base named) must name a change (CHANGE).
+// "Watch for …" / "keep an eye out for …" (no home base named): only with a clear change (below).
+const BARE_WATCH_VERB = '(?:watch for|keep an eye out for|keep watch for)';
+// [pattern, bare]. A watch is a daily paid check on the home base, so an ordinary sentence must never
+// become one: with the home base named, any watch ("home base, keep an eye on …", "have the home base
+// watch for …", "home base, let me know if …"); without it, only "watch for …" / "tell me when …" /
+// "let me know when …" with a clear future change (CLEAR_CHANGE). A bare "tell me if" / "let me know
+// if", "keep an eye on", "monitor" or "watch out for" is always a question for Jarvis.
 const WATCH = [
-  [new RegExp(`^(?:${HOME}[,:]? )?${WATCH_VERB} ()(.+)$`, 'i'), false],
+  [new RegExp(`^${HOME}[,:]? ${WATCH_VERB} ()(.+)$`, 'i'), false],
   [new RegExp(`^(?:have|get|ask|tell) ${HOME} (?:to )?${WATCH_VERB} ()(.+)$`, 'i'), false],
   [new RegExp(`^${HOME}[,:]? (?:tell|let) me (?:know )?(when|if) (.+)$`, 'i'), false],
-  [new RegExp(`^(?:tell|let) me (?:know )?(when|if) (.+)$`, 'i'), true],
+  [new RegExp(`^${BARE_WATCH_VERB} ()(.+)$`, 'i'), true],
+  [new RegExp(`^(?:tell|let) me (?:know )?(when) (.+)$`, 'i'), true],
 ];
-// "Tell me when …" is a watch only for a change worth waiting for ("drops under $300", "is back in
-// stock", "comes out"), not a question ("tell me when the next full moon is").
-const CHANGE = /\b(?:drops?|dropped|falls?|goes (?:on sale|down|up|under|below|over|above|back)|gets? (?:cheaper|announced|released)|is (?:back|on sale|available|in stock|announced|released|out|cheaper|under|below|over|above)|are (?:back|on sale|available|in stock|announced|released|out|cheaper|under|below)|comes? (?:out|back)|back in stock|in stock|on sale|under \$?\d|below \$?\d|over \$?\d|above \$?\d|less than|more than|cheaper|launch(?:es)?|ships?|announc(?:es|ed)|releases?|released|reach(?:es)?|hits?|passes|crosses|opens? (?:up|for)|becomes? available|available)\b/i;
+// The clear future changes a bare "watch for" / "tell me when" takes: a price threshold, back in
+// stock or on sale, a release or an announcement (present or future tense, never "was released").
+const MONEY = String.raw`(?:[$£€] ?\d[\d,.]*k?|\d[\d,.]*k? ?(?:dollars|bucks|usd|pounds|quid|euros))`;
+const CLEAR_CHANGE = new RegExp(
+  [
+    String.raw`\b(?:drops?|dropping|falls?|falling|goes|going|gets?|getting|is|are|comes? down|coming down|sells? for|selling for|costs?|priced)(?: down)? (?:under|below|beneath|to|less than|at or below|at most) ${MONEY}`,
+    String.raw`\b(?:under|below|less than|cheaper than) ${MONEY}`,
+    String.raw`\bprices? (?:drops?|dropping|falls?|falling|goes down|going down|is cut|gets cut)\b`,
+    String.raw`\b(?:(?:is|are|comes?|coming|gets?|getting) )?back in stock\b|\bin stock again\b|\b(?:is|are|gets?|getting) restocked\b`,
+    String.raw`\b(?:goes|go|going|is|are|gets?|getting) on sale\b|\b(?:opens?|opening) for (?:pre-?orders?|bookings?|reservations)\b|\b(?:goes|go|going) on pre-?order\b`,
+    String.raw`\b(?:comes?|coming) out\b|\b(?:is|are|gets?|getting|will be) (?:out|released|announced|launched)\b|\b(?:launches|releases|announces)\b|\b(?:goes|go|going) live\b|\b(?:becomes?|will become) available\b`,
+  ].join('|'),
+  'i',
+);
+// What a bare watch must not be: the past ("was released"), a habit ("usually comes out"), or about
+// something only this chat knows ("this", "these": the home base can't see the chat).
+const NOT_A_WATCH = /\b(?:was|were|had|did|has been|have been|already|usually|typically|normally|generally|always|ever|often|first|originally|used to|this|these)\b/i;
+// "Tell me when it comes out": what "it" is lives in the chat, which the home base never sees.
+const CHAT_PRONOUN = /^(?:it|its|it's|that|those|they|them|he|she|one)\b/i;
+const WATCH_BARE_MAX = 120;
 const VAGUE = /^(?:it|this|that|them|changes|anything|something|everything|me|you|done|ready|finished)$/i;
-
 const RESULTS = [
   /^(?:whats|what is|what) (?:did|has|have) (?:the |my )?(?:home ?base|jarvis core|alien ?ware) (?:find|found|come up with|turned up|turn up|got|get|learn|learned|dig up|dug up)(?: out)?(?: for me)?(?: so far| yet| overnight| today| last night)?$/,
   /^(?:any |show me |show |get |open |read me )?(?:the |my )?(?:research |background )?(?:results|findings|research) (?:from|on) (?:the |my )?(?:home ?base|jarvis core|alien ?ware)$/,
@@ -470,6 +513,8 @@ export function matchBrainCommand(text) {
     const m = re.exec(s);
     if (!m) continue;
     let prompt = m[2].trim().replace(/^(?:about|on|into) /i, '');
+    // "… overnight" / "… while I'm at work" after a question of its own: that is the question.
+    if (m[3] && !PLACE_TAIL.test(m[3]) && CLAUSE.test(prompt)) return null;
     let depth = m[1] ? m[1].toLowerCase() : 'quick';
     const deepTail = / (?:in depth|in detail|thoroughly|deeply)$/i;
     if (deepTail.test(prompt)) {
@@ -484,14 +529,19 @@ export function matchBrainCommand(text) {
     if (prompt.length < 3 || VAGUE.test(prompt)) return null;
     return { kind: 'research', prompt: prompt.slice(0, JOB_PROMPT_MAX), depth };
   }
+  // A watch is a sentence of its own: never text with a line break or a colon in it (a paragraph,
+  // code, an email to check), and never a long one unless the home base is named.
+  if (/[\n\r]/.test(text)) return null;
   for (const [re, bare] of WATCH) {
     const m = re.exec(s);
     if (!m) continue;
-    const what = m[2].trim().replace(/[\s,;:]+$/, '');
-    if (what.length < 4 || VAGUE.test(what) || what.split(' ').length < 2) return null;
-    // A bare "tell me when / let me know if …" must name a change worth watching for, and not be a
-    // question ("tell me when the next full moon is").
-    if (bare && (!CHANGE.test(what) || / (?:is|was|are|will be|happens|happened)$/i.test(what))) return null;
+    const what = m[2].trim().replace(/[\s,;]+$/, '');
+    if (what.length < 4 || VAGUE.test(what) || what.split(' ').length < 2 || what.includes(':')) return null;
+    if (bare) {
+      // Without the home base named: only a clear future change, said as a request, not a question.
+      if (s.length > WATCH_BARE_MAX || /\?\s*$/.test(text.trim())) return null;
+      if (!CLEAR_CHANGE.test(what) || NOT_A_WATCH.test(what) || CHAT_PRONOUN.test(what)) return null;
+    }
     const lead = m[1] ? `${m[1].toLowerCase() === 'if' ? 'If' : 'When'} ` : '';
     return { kind: 'watch', what: `${lead}${what}`.slice(0, WATCH_WHAT_MAX) };
   }

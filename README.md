@@ -343,7 +343,8 @@ Jarvis's home screen now tells you what is going on before you ask.
   and on the small core at the top. Once you have a habit of running your morning or evening
   briefing, it appears there too when it is due (**Run**).
 - **Quick keys**: **Look** (the camera: Optics, below), **Talk** (Voice Mode) and **Brief me** (the
-  briefing for this time of day, in a new chat); on a Mac also **Screen** (Jarvis looks at your
+  briefing for this time of day, in a new chat; while your home base's morning briefing is new, it
+  opens that one instead, free); on a Mac also **Screen** (Jarvis looks at your
   screen). The suggestion cards under them are there for your first few chats; after that your
   Protocols take their place.
 - **What the rings mean**: press and hold the core (right-click on a computer). **SPEND** is
@@ -968,7 +969,8 @@ right). Four tabs:
 - **Briefing:** this morning's briefing, with links to the headlines. **Make a new one now** if you
   want a fresh one.
 - **Research:** type a question, pick **Quick** (a few minutes) or **Deep** (reads more, costs
-  more), tap **Start research**. You can lock your phone: the home base keeps going and notifies you.
+  more), tap **Start research** (or the keyboard's send key). You can lock your phone: the home base
+  keeps going and notifies you.
   Tap **Open** on a finished one to read it with its sources; **Cancel** stops one that's running.
 - **Watching:** "Tell me when… the LG 27GP850 drops under $300". Choose how often it checks (every 6
   or 12 hours, or once a day). It notifies you once, when it happens. **Check now**, or the bin to stop.
@@ -979,13 +981,24 @@ right). Four tabs:
 - "Research the best espresso machines under $500 **in the background**" (or "home base, research …";
   add "in depth" for deep research)
 - "**What did the home base find?**"
-- "**Watch for** the LG 27GP850 dropping under $300" or "**Tell me when** the PS6 is announced"
+- "**Watch for** the LG 27GP850 dropping under $300", "**Tell me when** the PS6 is announced" or
+  "**Home base, keep an eye on** …". Without the words "home base", Jarvis only takes it as a watch
+  for something clear to wait for (a price under an amount, back in stock, on sale, comes out, is
+  released or announced), so an everyday question like "tell me if this email sounds rude: …" or
+  "let me know if it's cheaper to fly or drive" is answered by Jarvis as always, never turned into a
+  daily check that costs money.
 - "**Brief me**" or "**Morning briefing**": the home base's briefing; in Voice Mode Jarvis reads it
-  to you. Woken from Standby, "brief me" reads the home base's briefing too.
+  to you. Woken from Standby, "brief me" reads the home base's briefing too. If the home base can't
+  be reached (Tailscale off on the phone, the Alienware asleep) or still runs Jarvis Core 1.0, Jarvis
+  briefs you himself, as before.
+
+With no home base linked, these commands don't exist: what you type or say goes to Jarvis as before.
 
 **In the morning** the briefing waits at the top of the home screen until you read it or close it
-(×), and the 7:00 notification opens it. If the home base can't be reached, or still runs Jarvis Core
-1.0, the sheet says so plainly; nothing else changes.
+(×), and the 7:00 notification opens it (also when Jarvis is in Standby: Standby makes way). While
+that briefing is new, the **Brief me** key and the rail's suggestion open it too, free, instead of
+writing another. If the home base can't be reached, or still runs Jarvis Core 1.0, the sheet says so
+plainly; nothing else changes.
 
 ### Your iPhone and your Mac, in sync
 
@@ -1001,8 +1014,10 @@ last two weeks, on the Alienware's drive.
   as there's room: Jarvis keeps 100, and syncing never pushes one out). Nothing is ever deleted by
   syncing: delete a conversation on the iPhone and it stays deleted there (it never comes back), while
   the Mac keeps its copy until you delete it there too. If you carried on the same conversation on
-  both devices before they synced, you keep yours and get the other one next to it, named
-  "… (from Mac)".
+  both devices before they synced (or a reply that was cut off finished on one of them), you keep
+  yours and get the other one next to it, named "… (from Mac)". That copy follows the Mac; if you
+  carry it on here, your new turns are never lost: at the next sync it becomes a conversation of its
+  own, "… (from Mac, continued on iPhone)", which syncs like any other.
 - **Your API key never travels.** The backup is the same as **Settings → Data → Export** (which never
   includes the key), and the home base refuses anything that looks like a key anyway. Settings stay
   per device (each keeps its own voice, theme and limits).

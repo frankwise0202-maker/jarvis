@@ -79,7 +79,7 @@ import { matchHomeBaseCommand, escapeMarkdown } from '../lib/homebase.js';
 import { createBrain, createMorningCard } from './brain.js';
 import { createSync } from './sync.js';
 import { createHomeBaseView } from './homebase-sheet.js';
-import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, NO_KEY_MESSAGE, deviceLabel } from '../lib/brain.js';
+import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, briefingFallback, NO_KEY_MESSAGE, FRESH_BRIEFING_MS, deviceLabel } from '../lib/brain.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
@@ -969,6 +969,13 @@ export async function startApp(rootEl) {
   }
   /** Brief me: the briefing protocol for the time of day, in a fresh conversation. */
   function briefMe() {
+    // v7.6: with a home base linked and its briefing new or fresh (the morning card), the key and
+    // the rail's suggestion open that briefing (free) instead of writing another with Claude.
+    if (homeBaseBriefingFresh()) {
+      safe(() => presence.noteBriefing(new Date()));
+      openHomeBase({ tab: 'briefing' });
+      return true;
+    }
     const p = safe(() => getProtocol('morning-briefing'), null);
     if (!p) return false;
     const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
@@ -977,6 +984,15 @@ export async function startApp(rootEl) {
     const ok = send(text, p.mode || 'swarm');
     if (ok) presence.noteBriefing(new Date());
     return ok;
+  }
+  /** The linked home base has a briefing the owner hasn't seen yet, or one made in the last 3 hours. */
+  function homeBaseBriefingFresh() {
+    if (!brain || !brain.base()) return false;
+    if (safe(() => brain.morning(), null)) return true;
+    const st = safe(() => brain.getState(), null);
+    const at = st && st.phase === 'ready' && st.brain && st.brain.briefing ? st.brain.briefing.lastAt : null;
+    const age = typeof at === 'number' && at > 0 ? Date.now() - at : NaN;
+    return age >= -5 * 60 * 1000 && age < FRESH_BRIEFING_MS;
   }
   /**
    * Look: the live camera (Optics) where it can run; otherwise (the demo, no camera API) the system
@@ -1608,30 +1624,25 @@ export async function startApp(rootEl) {
   }
 
   // ---- the home base's brain from the chat and Voice Mode (v7.6, SPEC §24) ------------------------
-  /** A brain command for the linked home base, or null ("brief me" without one goes on as usual). */
+  /**
+   * A brain command for the linked home base, or null. No home base linked: nothing new, so every
+   * sentence (also "brief me", "watch for …") goes to Jarvis as before.
+   */
   function brainCommandOf(words) {
-    if (!brain) return null;
-    const cmd = safe(() => matchBrainCommand(words), null);
-    if (!cmd) return null;
-    // Not linked: a briefing or research goes to Claude as before; watching and "what did it find"
-    // need a home base, so Jarvis says how to link one.
-    if (!brain.base()) return cmd.kind === 'brief' || cmd.kind === 'research' ? null : { ...cmd, unlinked: true };
-    return cmd;
+    if (!brain || !brain.base()) return null;
+    return safe(() => matchBrainCommand(words), null);
   }
 
   /** What a brain command does: { line (chat Markdown), speech (what Jarvis says), ok }. */
   async function runBrainCommand(cmd) {
-    if (cmd.unlinked) {
-      const m = 'Link your home base first: Settings → Home base.';
-      return { line: escapeMarkdown(m), speech: m, ok: false };
-    }
     const problem = (r) => {
       const p = brainProblem(r, { limits: brain.getState().brain ? brain.getState().brain.limits : null });
       return { line: escapeMarkdown(p.message), speech: p.state === 'nokey' ? 'The home base needs your Claude key for that. You can give it the key in Settings, under Home base.' : p.message, ok: false, state: p.state };
     };
     if (cmd.kind === 'brief') {
       const r = await brain.latestBriefing({ fresh: true });
-      if (!r || !r.ok) return problem(r);
+      // Out of reach (or a 1.0 Core): `fallback`, so the caller briefs as before v7.6.
+      if (!r || !r.ok) return { ...problem(r), fallback: briefingFallback(r) };
       safe(() => brain.dismissMorning(r.briefing));
       safe(() => presence.noteBriefing(new Date()));
       return { line: briefingMarkdown(r.briefing), speech: briefingSpeech(r.briefing), ok: true };
@@ -1682,7 +1693,8 @@ export async function startApp(rootEl) {
       console.error('[jarvis] the home base turn failed:', err);
       return false;
     }
-    const { turn, textSegment } = added;
+    const { userTurn, turn, textSegment } = added;
+    const mode = composer.getMode();
     if (fresh || state.conv !== conv) setConversation(conv);
     else chat.sync();
     chat.scrollToBottom(false);
@@ -1691,6 +1703,20 @@ export async function startApp(rootEl) {
     Promise.resolve(runBrainCommand(cmd))
       .catch(() => ({ line: escapeMarkdown('Something went wrong asking the home base.'), ok: false }))
       .then((r) => {
+        // "Brief me" the home base can't answer (out of reach, a 1.0 Core): asked of Jarvis instead,
+        // as before v7.6. The waiting exchange goes (it was never saved, and never reached Claude's
+        // history) and the owner's words are sent as an ordinary message in its place.
+        const canAsk = state.online && (state.demo || !!safe(getApiKey, ''));
+        if (r && r.fallback && cmd.kind === 'brief' && canAsk && state.conv === conv && !state.runs.has(conv.id) && !runningElsewhere(conv.id)) {
+          const at = conv.turns.indexOf(userTurn);
+          if (at >= 0 && conv.turns[at + 1] === turn) {
+            conv.turns.splice(at, 2);
+            chat.setConversation(conv);
+            if (send(words, mode)) return;
+            conv.turns.splice(at, 0, userTurn, turn); // couldn't be sent: the home base's words stay
+            chat.setConversation(conv);
+          }
+        }
         // Built in src/lib/brain.js: the Core's words escaped, links only from checked addresses.
         textSegment.text = String((r && r.line) || escapeMarkdown('No answer from the home base.')).slice(0, 12000);
         turn.endedAt = Date.now();
@@ -1707,13 +1733,16 @@ export async function startApp(rootEl) {
     return true;
   }
 
-  /** The same, said in Voice Mode: Jarvis says it (free, no turn). */
+  /**
+   * The same, said in Voice Mode: Jarvis says it (free, no turn). "Brief me" the home base can't
+   * answer (out of reach, a 1.0 Core) is asked of Jarvis instead, as before v7.6 ({ send }).
+   */
   function brainFromVoice(words) {
     const cmd = brainCommandOf(words);
     if (!cmd) return null;
     const done = Promise.resolve(runBrainCommand(cmd))
       .catch(() => ({ speech: 'I couldn’t reach the home base just now.' }))
-      .then((r) => ({ ack: (r && r.speech) || 'No answer from the home base.' }));
+      .then((r) => (r && r.fallback && cmd.kind === 'brief' ? { send: words } : { ack: (r && r.speech) || 'No answer from the home base.' }));
     return { handled: true, done };
   }
 
@@ -1768,19 +1797,27 @@ export async function startApp(rootEl) {
    * with a home base linked, the home base's own briefing instead, said out loud (free: { done }).
    */
   function wakeBriefing() {
+    const protocol = () => {
+      const p = safe(() => getProtocol('morning-briefing'), null);
+      if (!p) return null;
+      const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
+      return text ? { text, mode: p.mode || 'swarm' } : null;
+    };
     if (brain && brain.base()) {
       safe(() => presence.noteBriefing(new Date()));
       const done = Promise.resolve(runBrainCommand({ kind: 'brief' }))
         .catch(() => ({ speech: 'I couldn’t reach the home base just now.' }))
-        .then((r) => ({ ack: (r && r.speech) || 'No briefing from the home base just now.' }));
+        .then((r) => {
+          // The home base can't brief (out of reach, a 1.0 Core): the briefing protocol, as before v7.6.
+          const fallback = r && r.fallback ? protocol() : null;
+          return fallback ? { send: fallback.text, mode: fallback.mode } : { ack: (r && r.speech) || 'No briefing from the home base just now.' };
+        });
       return { done };
     }
-    const p = safe(() => getProtocol('morning-briefing'), null);
-    if (!p) return null;
-    const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
-    if (!text) return null;
+    const b = protocol();
+    if (!b) return null;
     safe(() => presence.noteBriefing(new Date()));
-    return { text, mode: p.mode || 'swarm' };
+    return b;
   }
 
   // ---- Optics (the camera) ----------------------------------------------------------------------
@@ -3372,6 +3409,9 @@ export async function startApp(rootEl) {
     const link = parseHomeBaseLink(value);
     if (!link || !brain || !brain.base()) return false;
     if (isVoiceModeOpen()) return false;
+    // A notification tapped while Standby is on screen: the owner wants to look, and Standby sits
+    // above the app and its sheets, so it is left first (its microphone released).
+    if (standby && safe(() => standby.isOpen(), false)) safe(() => standby.exit());
     if (link.kind === 'job') return openHomeBase({ tab: 'research', jobId: link.id });
     if (link.kind === 'watch') return openHomeBase({ tab: 'watching', watchId: link.id });
     return openHomeBase({ tab: 'briefing' });

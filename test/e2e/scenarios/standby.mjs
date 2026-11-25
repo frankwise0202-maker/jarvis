@@ -347,6 +347,32 @@ export default [
     },
   },
   {
+    name: 'standby-brief-me-unreachable',
+    title: 'A home base linked but out of reach (Tailscale off on the phone): after waking, "brief me" still briefs, with the briefing protocol as before v7.6',
+    device: 'iphone13',
+    fakeMusic: true,
+    fakeCore: { mode: 'unreachable' },
+    allowConsole: [/Failed to load resource/, /ERR_INTERNET_DISCONNECTED/, /ERR_NAME_NOT_RESOLVED/, /Access-Control-Allow-Origin|CORS policy/],
+    timeout: 150000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 900 }, settings: { homeBaseUrl: 'https://alienware.tail4e5f6a.ts.net/' } });
+      await enterStandby(t);
+      await t.step('wake, then "brief me": the home base can’t answer, so the protocol runs', async () => {
+        await wakeByClaps(t);
+        await waitSaid(t, /Shall I put on some/);
+        await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer' });
+        await t.page.evaluate(() => window.__voice.say('Brief me.'));
+        await t.waitFor(() => leadCount(t) >= 1, { timeout: 20000, message: async () => `the briefing request (said: ${JSON.stringify((await said(t)).slice(-3))})` });
+        const msgs = t.requests('lead')[0].body?.messages || [];
+        t.assert(/Brief me like a crisp butler/.test(JSON.stringify(msgs)), 'The briefing protocol was sent');
+        t.assert(msgs.filter((m) => m.role === 'user').length === 1, 'In a chat of its own');
+        t.assert(!(await said(t)).some((x) => /Can’t reach the home base/.test(x)), 'no dead end');
+        const turn = t.page.locator(tid('turn-jarvis')).first();
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+      });
+    },
+  },
+  {
     name: 'standby-go-to-sleep',
     title: '"Jarvis, standby" in Voice Mode (opened with Talk) and "standby" typed in the chat open Standby, free',
     device: 'mac',

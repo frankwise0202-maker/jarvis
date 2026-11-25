@@ -2673,8 +2673,12 @@ function createVoiceMode(opts) {
     return true;
   }
 
-  /** A free local answer (the home base): the caption, "thinking" until `done` gives { ack }, then said. */
-  function sayLocal(text, done, status, failLine) {
+  /**
+   * A free local answer (the home base): the caption, "thinking" until `done` gives { ack }, then
+   * said. v7.6: `done` may give { send, mode } instead (the home base couldn't brief: out of reach, a
+   * 1.0 Core): those words are asked of Jarvis as before (`newChat`: the wake routine's briefing).
+   */
+  function sayLocal(text, done, status, failLine, { newChat = false } = {}) {
     showCaption('quote', `“${text}”`);
     const marker = { pending: true, viewer: true, homeBase: true };
     S.run = marker;
@@ -2684,6 +2688,14 @@ function createVoiceMode(opts) {
       (out) => {
         if (S.closed || S.run !== marker) return;
         S.run = null;
+        if (out && typeof out.send === 'string' && out.send.trim()) {
+          const sendOpts = { caption: text };
+          if (out.mode) sendOpts.mode = out.mode;
+          if (newChat) sendOpts.newChat = true;
+          const res = send(out.send, sendOpts);
+          if (res && res.error) speakAck(res.error);
+          return;
+        }
         speakAck(out && typeof out.ack === 'string' ? out.ack : '');
       },
       () => {
@@ -3132,7 +3144,7 @@ function createVoiceMode(opts) {
         clearMusicCard();
         // v7.6: with a home base linked, its own briefing, said out loud (free: no turn).
         if (b && b.done && typeof b.done.then === 'function') {
-          sayLocal(words, b.done, 'Getting your briefing from the home base…', 'I couldn’t reach the home base just now.');
+          sayLocal(words, b.done, 'Getting your briefing from the home base…', 'I couldn’t reach the home base just now.', { newChat: true });
           return true;
         }
         if (!b || !b.text) {
