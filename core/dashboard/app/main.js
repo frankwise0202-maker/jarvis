@@ -248,8 +248,11 @@ if (screenMode.kiosk) {
     (e) => {
       if (e.repeat) return;
       const wasOn = noteInput();
-      // The key that closes the morning screen does not also start a question (Alt+J still opens Jarvis).
-      if (wasOn && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      // The key that closes the morning screen does not also start a question (Alt+J still opens
+      // Jarvis); a key typed into a field that already has the focus stays there.
+      const t = e.target;
+      const inField = !!(t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]'));
+      if (wasOn && !inField && !e.altKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         e.stopImmediatePropagation();
       }

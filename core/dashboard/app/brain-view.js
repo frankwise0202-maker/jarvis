@@ -437,7 +437,7 @@ export function createBrainView({ kiosk }) {
     setHidden(n.mHealth, !needsLook || !!(n.mWaiting && !b));
     setData(n.mHealth, 'level', m.sw.level === 'offline' ? 'offline' : m.sw.level);
     const said = (m.summary || '').trim();
-    setText(n.mHealthText, needsLook ? (said && !/[.!?…]$/.test(said) ? `${said}.` : said) : '');
+    setText(n.mHealthText, needsLook && said ? (/[.!?…]$/.test(said) ? said : `${said}.`) : '—'); // hidden when '—'
     setText(n.mGreeting, greetingFor(m.ownerName));
     setText(n.mKicker, `${date.toUpperCase()}${b ? `${SEP}${b.kind === 'full' ? 'YOUR BRIEFING, WRITTEN BY CLAUDE' : 'YOUR BRIEFING'}` : ''}`);
     setHidden(n.mKey, !(brain && !brain.key.set));
