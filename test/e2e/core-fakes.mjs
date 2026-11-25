@@ -11,8 +11,9 @@
 //   'unreachable'                                    no answer at all (Tailscale off on this device)
 //   'down'                                           Tailscale serve's 502 while the Core is stopped or
 //                                                    restarting: no CORS headers, so the page can't read it
-//   'refused'                                        403 origin_not_allowed (the Core refuses this page;
-//                                                    readable: the Core sends CORS headers on its 403s)
+//   'refused'                                        403 forbidden (the Core refuses a request without a
+//                                                    Tailscale identity; readable: its access refusals carry
+//                                                    CORS headers for the app, so the tile can say why)
 //   'starting'                                       503 starting
 
 import { readFileSync } from 'node:fs';
@@ -64,7 +65,7 @@ export async function routeFakeCore(context, { mode = 'ok', delayMs = 0 } = {}) 
     const cors = origin ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
     const json = (status, body, extra = {}) =>
       route.fulfill({ status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store', ...extra }, body: JSON.stringify(body) });
-    if (state.mode === 'refused') return json(403, { error: 'origin_not_allowed', message: `origin ${origin || '(none)'} is not allowed` });
+    if (state.mode === 'refused') return json(403, { error: 'forbidden', message: 'requests from other devices must come through Tailscale serve' });
     if (state.mode === 'starting') return json(503, { error: 'starting', message: 'the Core is starting, try again in a second' }, { 'retry-after': '1' });
     const scenario = CORE_SCENARIOS.includes(state.mode) ? state.mode : 'ok';
     switch (url.pathname) {

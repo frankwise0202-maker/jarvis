@@ -1,7 +1,8 @@
 // Home base (v7.5, SPEC §23): the Jarvis Core on the owner's Alienware, reached over Tailscale. A
 // fake Core (core-fakes.mjs: real-format JSON from the Core's own fixture server) answers at
 // https://alienware.tail4e5f6a.ts.net/. Set-up from Settings, the tile's states (ok, warn, alert,
-// GPU without its driver, unreachable, refused) on an iPhone and on the desktop rail, the ask box,
+// GPU without its driver, unreachable, the Core down, refused) on an iPhone, on the desktop rail and on a
+// 1280×720 laptop, the ask box,
 // and "how's the home base" typed in the chat and said in Voice Mode, all free (no Claude request).
 
 import { tid } from '../harness.mjs';
@@ -216,6 +217,7 @@ export default [
         const el = await show('refused', 'refused');
         t.assert((await t.text(el.locator(tid('homebase-status')))) === 'REFUSED', 'REFUSED');
         t.assert(/refused the connection/.test(await t.text(el.locator(tid('homebase-message')))), 'the message says it refused');
+        t.assert(/It said: requests from other devices must come through Tailscale serve/.test(await t.text(el.locator(tid('homebase-message')))), 'and why (the Core’s readable 403)');
         t.assert(await el.locator(tid('homebase-setup')).isVisible(), 'Set up (check the address) is offered');
         await t.screenshot('5-refused');
       });
