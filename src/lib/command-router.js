@@ -27,7 +27,7 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
 import { LAYERS, FINAL_ORDER, MAX_WORDS, isQuestion, isBareNo, isStopWord, askedLast } from './command-order.js';
 
@@ -328,6 +328,19 @@ function partsCommand(text, parts, selected) {
 const OPTICS_PAID = new Set(['look', 'ask', 'more', 'part', 'hologram']);
 const OPTICS_CAMERA = new Set(['look', 'flip', 'live']);
 
+// "This month", "this weekend": a time, not the thing in front of the camera. A question whose only
+// "this" is such a time is no Look (v8.1: "how much have I spent this month?" with Optics open is the
+// spend readout; "is it going to rain this weekend?" a question for Jarvis).
+const THIS_TIME = /\bthis (?:morning|afternoon|evening|night|week|weekend|month|year|time|season|summer|winter|spring|fall|autumn|quarter|semester)\b/g;
+const POINTING = /\b(?:this|these|here)\b/;
+
+/** An Optics "this" question (a Look, or a question on the frozen frame) only about a time: not one. */
+function onlyAboutTime(cmd, text) {
+  if (!(cmd.action === 'ask' || (cmd.action === 'look' && !cmd.explicit))) return false;
+  const n = normalizeOpticsText(text);
+  return THIS_TIME.test(n) && !POINTING.test(n.replace(THIS_TIME, ' '));
+}
+
 function opticsAction(cmd) {
   const on = cmd.action === 'watch' || cmd.action === 'liveview' ? cmd.on === true : false;
   return {
@@ -446,7 +459,7 @@ const TODAY_COMMANDS = [
       if (!(s.optics && s.optics.open)) return null;
       if (s.surface === 'voice' && !opticsOnTop(s)) return null;
       const cmd = matchOpticsCommand(text, { frozen: s.optics.mode === 'frozen' });
-      if (!cmd) return null;
+      if (!cmd || onlyAboutTime(cmd, text)) return null;
       if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
       return opticsAction(cmd);
     },
@@ -502,7 +515,17 @@ const PHASE0 = {
   prompt: { match: (text, s) => matchPromptAnswer(s.prompt, text) },
   question: { match: (text, s, ctx) => matchQuestionAnswer(s.questions, text, ctx && ctx.readings) },
   screens: { match: (text) => (matchScreenCommand(text) ? { do: 'screens' } : null) },
-  optics: { carrier: false },
+  optics: {
+    carrier: false,
+    match: (text, s) => {
+      if (!(s.optics && s.optics.open)) return null;
+      if (s.surface === 'voice' && !opticsOnTop(s)) return null;
+      const cmd = matchOpticsCommand(text, { frozen: s.optics.mode === 'frozen' });
+      if (!cmd) return null;
+      if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
+      return opticsAction(cmd);
+    },
+  },
 };
 
 /** The ids of today's matchers (registerTodayCommands), which the surfaces carry out themselves. */

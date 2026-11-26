@@ -47,6 +47,7 @@ export const VOICE = {
     r('stop', 'LV', 'stop', 'the live view off (stopping is the safe direction)'),
     r('stop', 'C0', 'stop', 'the same in the chat box'),
     r('stop', 'H4', 'stop', 'pauses the tour and stops the Chrome task, with a prompt, a tour decision and a research offer open (H4)'),
+    ...['T', 'TD', 'H4', 'H4O'].map((s) => r('okay stop', s, 'stop', 'pauses the tour (and stops a Chrome task)')),
     // back (C3)
     r('go back', 'T', 'tour', 'the step before'),
     r('go back', 'VH', 'hologram', '"There\'s nothing to go back to." (no longer swallowed)'),
@@ -84,6 +85,7 @@ export const VOICE = {
     r('what is this', 'VH', null, 'about the hologram, for Claude'),
     r('what is this', 'V0', 'camera', 'opens the camera and looks'),
     r('how much has the live view cost', 'LV', 'app', 'the readout, free'),
+    ...['VL', 'VF', 'LV', 'OV'].map((s) => r('how much have I spent this month', s, 'app', '"this month" is a time, not the scene: the readout, not a Look')),
     // tours and Voice Mode's controls
     r('next', 'T', 'tour', 'the next step'),
     r('next', 'V0', null, 'a question for Claude'),
@@ -143,8 +145,6 @@ export const VOICE = {
       r('what about now', s, 'optics', 'a Look of the scene now (by design)'),
       r('this one', s, 'optics', 'a Look of the scene now (by design)'),
       r('is this ripe', s, 'optics', 'a question about "this" with the camera on is a Look (by design)'),
-      r('is it going to rain this weekend', s, 'optics', 'a question with "this" with the camera on is a Look (Optics\' rule; the answer still comes)'),
-      r('how much have I spent on groceries this month', s, 'optics', 'a question with "this" with the camera on is a Look (Optics\' rule)'),
     ]),
   ],
 };
