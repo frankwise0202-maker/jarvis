@@ -585,6 +585,41 @@ export default [
     },
   },
   {
+    name: 'mac-handsfree-brake-claps',
+    title: 'MAC-4: Mac, setup 1 with barge-in, woken in the background by claps, a TV heard in every listen and a double bang during each of George’s answers: the claps stop him, yet at most 3 paid questions, then the brake and Standby',
+    device: 'mac',
+    fakeMusic: true,
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 240000,
+    async run(t) {
+      await setup(t, { george: true, bargeIn: true });
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      const tv = 'Tell me about solar panels [[long]]';
+      await queue(t.page, '', tv, tv, tv, tv, tv, tv, tv);
+      await wakeByClaps(t);
+      let bangs = 0;
+      let clappedFor = 0;
+      const end = Date.now() + 200000;
+      while (Date.now() < end && (await t.page.locator(tid('voice-mode')).count())) {
+        const n = leadCount(t);
+        if (n > clappedFor && (await voiceState(t.page)) === 'speaking' && t.core.senses.speaks.length >= 2) {
+          clappedFor = n;
+          await t.page.waitForTimeout(1600); // George well into the answer, past the 1.5 s between two triggers
+          await play(t.page, DOUBLE_CLAP);
+          bangs += 1;
+        }
+        await t.page.waitForTimeout(250);
+      }
+      t.assert(bangs >= 3, `a double bang during each answer (${bangs})`);
+      t.assert(leadCount(t) === 3, `at most 3 paid questions while hidden without "Hey Jarvis" or a tap (${leadCount(t)} requests, ${bangs} bangs)`);
+      t.assert((await said(t.page)).some((x) => /Say “Hey Jarvis” when you need me\./.test(x)) || t.core.senses.speaks.some((s) => /when you need me/.test(s.text)), 'the brake was said');
+      await t.visible('standby', { message: 'back to Standby' });
+      await waitListening(t);
+    },
+  },
+  {
     name: 'mac-barge-in-self',
     title: 'Mac, barge-in on: George says "Jarvis" and the wake detector is fed his own word at that moment — nothing interrupts him; the same detection at another word does',
     device: 'mac',
