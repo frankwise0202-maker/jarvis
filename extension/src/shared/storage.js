@@ -13,7 +13,19 @@
 //                     off for every site unless the owner turns it on in Settings
 //   jarvis.history    finished tasks (not written while incognito is on); can be cleared
 //
-// In development builds only, jarvis.dev.apiBase points the API client at a local mock.
+// Voice from Jarvis (the link to Jarvis, the web app, through the owner's home base; link.js):
+//   chromeLink        { v: 1, core, key, linkedAt } the home base's address and the link key the
+//                     owner pasted from Jarvis (a link code). The key seals every message (the home
+//                     base can't read them); it is never sent anywhere, logged or synced.
+//   jarvis.voice      { tasksFromJarvis, approvals } whether Jarvis may start tasks here (Link
+//                     turns it on), and "Approve everyday steps by voice" (off; only offered once
+//                     VOICE_APPROVALS_AVAILABLE)
+//   jarvis.voiceTasks { day, count } tasks Jarvis started today (at most VOICE_TASKS_PER_DAY)
+//   jarvis.relay      { after, seen } where reading the home base's messages left off, and the ids
+//                     of the last 500 read (a message is never taken twice, also after a restart)
+//
+// In development builds only, jarvis.dev.apiBase points the API client at a local mock (and
+// jarvis.dev.voiceApprovals lets the tests turn voice approvals on before they are available).
 
 import { DEFAULT_MODEL, isModel } from '../background/models.js';
 import { DEFAULT_BUDGET_USD, DEFAULT_MAX_STEPS, normalizeBudget, normalizeSteps } from '../background/limits.js';
@@ -26,7 +38,14 @@ export const KEYS = Object.freeze({
   sites: 'jarvis.sites',
   everyday: 'jarvis.everyday',
   history: 'jarvis.history',
+  link: 'chromeLink',
+  voice: 'jarvis.voice',
+  voiceTasks: 'jarvis.voiceTasks',
+  relay: 'jarvis.relay',
 });
+
+/** Tasks Jarvis may start here in a day (by the computer's calendar). */
+export const VOICE_TASKS_PER_DAY = 30;
 
 /* global __DEV__ */
 /** True only in development builds (esbuild defines __DEV__; release code paths fold it away). */
@@ -72,6 +91,82 @@ export function normalizeSettings(raw) {
     maxSteps: normalizeSteps(s.maxSteps ?? DEFAULT_MAX_STEPS),
     incognito: s.incognito === true,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Voice from Jarvis: the link code
+
+const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/; // 32 bytes, base64url without padding
+
+/**
+ * The home base's origin from a link code's `core`, or '' when Jarvis for Chrome won't use it: its
+ * Tailscale address (https on a *.ts.net machine name, no port, path or user name), as the web app
+ * keeps it (the only host the extension may ask Chrome for: manifest optional_host_permissions).
+ * Development builds also take a local test relay (http://127.0.0.1:<port>, http://localhost:<port>).
+ */
+export function homeBaseOrigin(core, { dev = DEV } = {}) {
+  let u;
+  try {
+    u = new URL(String(core ?? ''));
+  } catch {
+    return '';
+  }
+  if (u.username || u.password || (u.pathname !== '/' && u.pathname !== '') || u.search || u.hash) return '';
+  const host = u.hostname.toLowerCase();
+  if (u.protocol === 'https:' && host.endsWith('.ts.net') && !u.port) {
+    const labels = host.split('.');
+    if (labels.length >= 4 && host.length <= 253 && labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) return `https://${host}`;
+    return '';
+  }
+  if (dev && u.protocol === 'http:' && (host === '127.0.0.1' || host === 'localhost')) return u.origin;
+  return '';
+}
+
+/**
+ * A link code from Jarvis (Settings → Jarvis for Chrome → Link): base64url of { v: 1, core, key }.
+ * Returns { ok: true, link: { v: 1, core, key } } or { ok: false, error } (what to tell the owner).
+ */
+export function parseLinkCode(input, { dev = DEV } = {}) {
+  const text = String(input ?? '').replace(/\s+/g, '');
+  const again = 'In Jarvis, open Settings → Jarvis for Chrome → Link, press Copy link code, then paste it here.';
+  if (!text) return { ok: false, error: `Paste the link code from Jarvis. ${again}` };
+  let data = null;
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(text) || text.length > 4000) throw new Error('not base64url');
+    const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4));
+    data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+  } catch {
+    data = null;
+  }
+  if (!data || typeof data !== 'object' || data.v !== 1 || typeof data.core !== 'string' || typeof data.key !== 'string') {
+    return { ok: false, error: `That isn’t a link code from Jarvis. ${again}` };
+  }
+  if (!KEY_TEXT.test(data.key)) return { ok: false, error: `That link code is incomplete. ${again}` };
+  const core = homeBaseOrigin(data.core, { dev });
+  if (!core) return { ok: false, error: 'Jarvis for Chrome reaches your home base only at its Tailscale address (https://…ts.net). In Jarvis, set your home base to that address, then copy a new link code.' };
+  return { ok: true, link: { v: 1, core, key: data.key } };
+}
+
+/** A stored link if it is one ({ v: 1, core, key, linkedAt }), else null. */
+export function normalizeLink(raw, { dev = DEV } = {}) {
+  if (!raw || typeof raw !== 'object' || raw.v !== 1 || typeof raw.key !== 'string' || !KEY_TEXT.test(raw.key)) return null;
+  const core = homeBaseOrigin(raw.core, { dev });
+  if (!core) return null;
+  const linkedAt = Number(raw.linkedAt);
+  return { v: 1, core, key: raw.key, linkedAt: Number.isFinite(linkedAt) && linkedAt > 0 ? linkedAt : 0 };
+}
+
+export const DEFAULT_VOICE = Object.freeze({ tasksFromJarvis: false, approvals: false });
+
+export function normalizeVoice(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  return { tasksFromJarvis: v.tasksFromJarvis === true, approvals: v.approvals === true };
+}
+
+/** The day a voice task counts toward, by this computer's calendar ("2026-11-26"). */
+export function localDay(now = Date.now()) {
+  const d = new Date(now);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** Storage bound to a chrome-like object ({ storage: { local } }), so tests can pass a fake. */
@@ -177,6 +272,61 @@ export function createStore(chromeLike = globalThis.chrome) {
     },
     async clearHistory() {
       await local.remove(KEYS.history);
+    },
+
+    // Voice from Jarvis -----------------------------------------------------------------------
+
+    /** The link to Jarvis ({ v: 1, core, key, linkedAt }), or null. */
+    async getLink() {
+      return normalizeLink(await get(KEYS.link));
+    },
+    /** Saves a link from a parsed link code; the owner's switch for tasks from Jarvis turns on. */
+    async setLink({ core, key }, at = Date.now()) {
+      const link = normalizeLink({ v: 1, core, key, linkedAt: at });
+      if (!link) return { ok: false, error: 'That link code can’t be used.' };
+      await set(KEYS.link, link);
+      await local.remove(KEYS.relay);
+      await this.setVoice({ tasksFromJarvis: true });
+      return { ok: true, link };
+    },
+    async clearLink() {
+      await local.remove([KEYS.link, KEYS.relay]);
+    },
+
+    async getVoice() {
+      return normalizeVoice(await get(KEYS.voice));
+    },
+    async setVoice(patch) {
+      const next = normalizeVoice({ ...(await this.getVoice()), ...(patch || {}) });
+      await set(KEYS.voice, next);
+      return next;
+    },
+
+    /** How many tasks Jarvis has started here today. */
+    async voiceTasksToday(now = Date.now()) {
+      const v = await get(KEYS.voiceTasks);
+      return v && typeof v === 'object' && v.day === localDay(now) && Number.isFinite(v.count) ? v.count : 0;
+    },
+    /** Counts one more task from Jarvis today; returns the new count. */
+    async countVoiceTask(now = Date.now()) {
+      const count = (await this.voiceTasksToday(now)) + 1;
+      await set(KEYS.voiceTasks, { day: localDay(now), count });
+      return count;
+    },
+
+    /** Where reading the home base's messages left off: { after, seen } (see relay.js). */
+    async getRelayState() {
+      const v = await get(KEYS.relay);
+      return { after: typeof v?.after === 'string' ? v.after : '', seen: Array.isArray(v?.seen) ? v.seen.filter((x) => typeof x === 'string') : [] };
+    },
+    async setRelayState({ after = '', seen = [] } = {}) {
+      await set(KEYS.relay, { after, seen });
+    },
+
+    /** Development builds only: voice approvals on before they are available (the tests). */
+    async getDevVoiceApprovals() {
+      if (typeof __DEV__ === 'undefined' || !__DEV__) return false;
+      return (await get('jarvis.dev.voiceApprovals')) === true;
     },
 
     /** The API base URL: the real API in release builds; a configurable mock in dev builds. */

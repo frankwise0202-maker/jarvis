@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createManifest } from '../extension/build/manifest.mjs';
+import { VERSION, createManifest } from '../extension/build/manifest.mjs';
 import { makeIcons } from '../extension/build/icons.mjs';
 import { zipFiles } from '../extension/build/zip.mjs';
 
@@ -63,8 +63,8 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
     throw new ExtensionBuildError('esbuild is not installed. Run "npm ci" first.');
   }
   const started = Date.now();
-  const pkg = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
-  const version = String(pkg.version || '1.0.0').replace(/[^0-9.]/g, '') || '1.0.0';
+  // Jarvis for Chrome has its own version (extension/build/manifest.mjs), not the web app's.
+  const version = VERSION;
 
   await rm(outDir, { recursive: true, force: true });
   await mkdir(path.join(outDir, 'icons'), { recursive: true });
@@ -104,7 +104,7 @@ export async function buildExtension({ dev = false, outDir = DEFAULT_OUT, zip = 
   if (!dev) {
     const bg = await readFile(path.join(outDir, 'background.js'), 'utf8');
     const panel = await readFile(path.join(outDir, 'sidepanel.js'), 'utf8');
-    for (const marker of ['jarvis.dev.apiBase', '__jarvisController', '__jarvisCommand', 'testStop']) {
+    for (const marker of ['jarvis.dev.apiBase', 'jarvis.dev.voiceApprovals', '__jarvisController', '__jarvisCommand', '__jarvisLink', 'testStop']) {
       if (bg.includes(marker) || panel.includes(marker)) throw new ExtensionBuildError(`Release build contains the development marker "${marker}".`);
     }
     const manifest = JSON.parse(await readFile(path.join(outDir, 'manifest.json'), 'utf8'));

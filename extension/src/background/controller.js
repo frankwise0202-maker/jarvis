@@ -4,7 +4,7 @@
 //
 // One task runs at a time. Every open side panel holds a port and receives the same updates.
 
-import { FINAL_STATUSES, PORT_NAME, PROMPT_CHOICES } from '../shared/protocol.js';
+import { APPROVE_PORT_NAME, FINAL_STATUSES, PORT_NAME, PROMPT_CHOICES } from '../shared/protocol.js';
 import { abortError, displayText, isAbort, jsonCopy, singleLine, sleep, truncate, uid } from '../shared/util.js';
 import { Conversation } from './history.js';
 import { Driver } from './driver.js';
@@ -147,19 +147,30 @@ export class Controller {
     this.driver.onLoadStopped = (toolId, info) => this.onLoadStopped(toolId, info);
     this.sendQueue = 0;
     this.retryDelaysMs = undefined; // tests shorten the agent loop's waits between retries
+    // Voice from Jarvis (link.js) listens here: onPrompt(run, prompt, facts) when a prompt is
+    // shown, onPromptClosed(run, promptId, how) when it goes, onTask(task) on every change.
+    this.hooks = {};
   }
 
   // -------------------------------------------------------------------------------------------
   // Panels
 
   connect(port) {
-    if (port.name !== PORT_NAME) return;
+    // The side panel, or the small approval window (approve.html) that shows its questions when
+    // no side panel is open (Voice from Jarvis).
+    if (port.name !== PORT_NAME && port.name !== APPROVE_PORT_NAME) return;
     this.ports.add(port);
     port.onDisconnect.addListener(() => this.ports.delete(port));
     port.onMessage.addListener((msg) => {
       this.onMessage(msg).catch((err) => console.error('[jarvis] message failed:', err?.message || err));
     });
     this.sendSnapshot(port);
+    this.hook('onConnect', port);
+  }
+
+  /** Whether a side panel is open (the approval window doesn't count). */
+  hasPanel() {
+    return [...this.ports].some((p) => p.name === PORT_NAME);
   }
 
   post(msg, port = null) {
@@ -188,6 +199,16 @@ export class Controller {
   emitTask(task) {
     this.post({ type: 'task', task: this.publicTask(task) });
     this.persistSoon();
+    this.hook('onTask', task);
+  }
+
+  /** Calls a Voice from Jarvis hook; its failure never reaches the task. */
+  hook(name, ...args) {
+    try {
+      this.hooks[name]?.(...args);
+    } catch (err) {
+      console.warn(`[jarvis] ${name} failed:`, err?.message || err);
+    }
   }
 
   async onMessage(msg) {
@@ -204,6 +225,9 @@ export class Controller {
         return this.resume();
       case 'decide':
         return this.decide(msg.promptId, msg.choice);
+      case 'open-card':
+      case 'unlink':
+        return this.hook('onPanelMessage', msg);
       case 'retry':
         return this.retry(msg.taskId, msg.windowId);
       case 'new-chat':
@@ -242,7 +266,13 @@ export class Controller {
     };
   }
 
-  async start({ text, windowId, retryOf = null, contextReset = false, resume = false }) {
+  /**
+   * Starts a task. `from: 'voice'`: Jarvis (the web app) started it from the owner's spoken words
+   * (Voice from Jarvis): it is marked so, `taskId` is the id Jarvis was told, and `voiceSites` are
+   * the sites the owner named or opened by voice for it (the voice policy's "Allow once");
+   * `onStarted(task)` is called once the task is on the list.
+   */
+  async start({ text, windowId, retryOf = null, contextReset = false, resume = false, from = null, taskId = null, voiceSites = null, onStarted = null }) {
     const clean = displayText(text).trim();
     if (!clean) return;
     if (this.run) {
@@ -254,9 +284,10 @@ export class Controller {
     // Jarvis for Chrome is for a Chrome profile of its own: no task before the owner confirmed it
     // on the panel's first-run screen (a key saved by an older version doesn't count).
     const profile = await this.store.getProfile();
-    const task = this.newTask(clean, { model: settings.model, retryOf, contextReset, resumed: resume });
+    const task = this.newTask(clean, { model: settings.model, retryOf, contextReset, resumed: resume, ...(from === 'voice' ? { from: 'voice' } : {}), ...(taskId ? { id: taskId } : {}) });
     this.tasks.push(task);
     this.thumbs.set(task.id, new Map());
+    onStarted?.(task);
     if (!profile) {
       this.finishTask(task, 'error', { error: 'Finish the setup in the side panel first: confirm that this Chrome profile is just for Jarvis.' });
       return;
@@ -299,6 +330,8 @@ export class Controller {
       // ports: the ports among them.
       flow: { reads: new Set(), cleared: new Map(), seen: new Set(), denied: new Set(), urls: new Set(), hosts: new Set(), ports: new Set() },
       noBarOk: new Set(), // documents (tab|doc) where the owner let Jarvis act without its bar
+      // Voice from Jarvis: the sites the owner named or opened by voice for this task.
+      voiceSites: new Set(voiceSites || []),
       settings,
       windowId,
     };
@@ -337,7 +370,7 @@ export class Controller {
       signal: run.abort.signal,
       approvals: run.approvals,
       ask: (prompt) => this.ask(run, prompt),
-      confirm: ({ action, category, source, site, facts }) => this.confirm(run, { action, category, source, site: site ?? this.currentSite(), facts: facts ? `What it covers: ${this.describeStep(facts)}` : '' }),
+      confirm: ({ action, category, source, site, facts }) => this.confirm(run, { action, category, source, site: site ?? this.currentSite(), facts: facts ? `What it covers: ${this.describeStep(facts)}` : '', voiceFacts: facts ? { label: facts.label, item: facts.item } : null }),
       site: () => this.currentSite(),
       scope: () => this.currentScope(),
       isCurrent: () => this.run === run && !run.orphaned,
@@ -557,10 +590,12 @@ export class Controller {
       // A prompt withdrawn before its turn (a page load Jarvis let go of) is never shown.
       if (prompt.token?.cancelled) return resolve(prompt.timeoutChoice || 'cancel');
       const id = uid('p_');
-      const onAbort = () => done(reject, abortError());
+      // How it closed, for Jarvis (Voice from Jarvis): 'clicked' (here, or in the approval
+      // window), 'voice' (from Jarvis), 'stopped' (the task ended or let go), 'expired'.
+      const onAbort = () => done(reject, abortError(), 'stopped');
       let timer = 0;
-      if (prompt.timeoutMs) timer = setTimeout(() => done(resolve, prompt.timeoutChoice), prompt.timeoutMs);
-      const done = (fn, v) => {
+      if (prompt.timeoutMs) timer = setTimeout(() => done(resolve, prompt.timeoutChoice, 'expired'), prompt.timeoutMs);
+      const done = (fn, v, how) => {
         clearTimeout(timer);
         run.abort.signal.removeEventListener('abort', onAbort);
         if (run.prompt?.id === id) run.prompt = null;
@@ -571,15 +606,19 @@ export class Controller {
           if (!run.takeover) this.driver.setMode('acting').catch(() => {});
         }
         this.emitTask(run.task);
+        this.hook('onPromptClosed', run, id, how);
         fn(v);
       };
       run.abort.signal.addEventListener('abort', onAbort, { once: true });
-      run.prompt = { id, choices, token: prompt.token || null, resolve: (v) => done(resolve, v) };
+      // (`facts`: what the voice policy and Jarvis's spoken line read beyond the card; `shownAt`:
+      // when it appeared, for the voice policy's 1.5 s.)
+      run.prompt = { id, choices, token: prompt.token || null, resolve: (v, how = 'clicked') => done(resolve, v, how), facts: prompt.voiceFacts || {}, shownAt: this.now() };
       run.task.prompt = { id, kind: prompt.kind, title: prompt.title, body: prompt.body, address: prompt.address || '', facts: prompt.facts || '', site: prompt.site || '', category: prompt.category || '', detail: prompt.detail || '', source: prompt.source || '', consequential: !!prompt.consequential, choices: prompt.choices };
       run.task.status = 'waiting';
       this.updateBadge('waiting');
       if (!run.takeover) this.driver.setMode('waiting').catch(() => {});
       this.emitTask(run.task);
+      this.hook('onPrompt', run, run.task.prompt, run.prompt.facts);
     });
   }
 
@@ -587,10 +626,30 @@ export class Controller {
     const run = this.run;
     if (!run?.prompt || run.prompt.id !== promptId) return;
     if (!run.prompt.choices.includes(choice)) return;
-    run.prompt.resolve(choice);
+    run.prompt.resolve(choice, 'clicked');
   }
 
-  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0, token = null, address = '' }) {
+  /**
+   * The owner's answer from Jarvis (Voice from Jarvis): link.js has checked it against the voice
+   * policy (the prompt open and unchanged, old enough, allowed). It goes through the same prompt
+   * as a click, so one approval still covers one step on one element, once; the step list says
+   * it came by voice. Returns whether it was taken.
+   */
+  decideFromJarvis(promptId, choice, { via = 'voice' } = {}) {
+    const run = this.run;
+    const p = run?.task.prompt;
+    if (!run?.prompt || run.prompt.id !== promptId || !p || !run.prompt.choices.includes(choice)) return false;
+    const label = p.choices?.find((c) => c.id === choice)?.label || choice;
+    const where = p.site ? ` on ${p.site}` : '';
+    const what = p.kind === 'confirm' ? ` (${(CATEGORY_CHIPS[p.category] || 'A step').toLowerCase()}${where})` : where;
+    const how = via === 'card' ? 'by voice from Jarvis (on its card)' : 'by voice from Jarvis';
+    const yes = !['deny', 'cancel', 'stop'].includes(choice);
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: yes ? 'info' : 'warn', label: `${yes ? 'Approved' : 'Answered'} ${how}: “${label}”${what}.`, status: 'done' });
+    run.prompt.resolve(choice, 'voice');
+    return true;
+  }
+
+  async confirm(run, { action, category, source, site, facts = '', consequential, title, timeoutMs = 0, token = null, address = '', voiceFacts = null }) {
     const what = CATEGORY_CHIPS[category] || 'Consequential action';
     const choice = await this.ask(run, {
       kind: 'confirm',
@@ -611,6 +670,7 @@ export class Controller {
       timeoutMs,
       timeoutChoice: 'cancel',
       token,
+      voiceFacts,
     });
     return choice === 'approve';
   }
@@ -623,7 +683,7 @@ export class Controller {
   cancelLoadPrompts(run) {
     for (const token of [...(run?.loadPrompts || [])]) {
       token.cancelled = true;
-      if (run.prompt?.token === token) run.prompt.resolve('cancel');
+      if (run.prompt?.token === token) run.prompt.resolve('cancel', 'stopped');
     }
   }
 
@@ -726,7 +786,7 @@ export class Controller {
         // Covered by the owner's request_confirmation approval of exactly this element, in this
         // state (used up now).
         if (c.bind && run.approvals.consume({ ...c.bind, site, tabId: c.toolId, url: c.url })) return null;
-        const ok = await this.confirm(run, { action: this.describeStep(c), category: c.category, source: 'guard', site, consequential: !!c.consequential, address: c.dest ? cardAddress(c.dest) : '' });
+        const ok = await this.confirm(run, { action: this.describeStep(c), category: c.category, source: 'guard', site, consequential: !!c.consequential, address: c.dest ? cardAddress(c.dest) : '', voiceFacts: { step: c.voice || '', kind: c.kind || '', label: c.label, item: c.item, typed: c.typed || '' } });
         if (ok) return null;
         // The address it would have opened stays declined too, on any site (this one included).
         run.approvals.decline(c.category, site, { element: c.element, href: [c.opens, c.dest].filter(Boolean) });
@@ -899,6 +959,7 @@ export class Controller {
       site,
       consequential: true,
       title: 'Act without the control bar?',
+      voiceFacts: { noBar: true },
     }).catch((err) => {
       if (isAbort(err)) throw err;
       return false;
@@ -1110,6 +1171,7 @@ export class Controller {
           title: 'Approve this page load?',
           token,
           address: shownUrl,
+          voiceFacts: { load: true },
         });
       } catch {
         ok = false;

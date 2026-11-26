@@ -1230,6 +1230,13 @@ export class Executor {
       site,
       toolId: t.toolId,
       element: step.targetId !== undefined && step.targetId !== null ? `${t.toolId}|${step.doc ?? t.docSeq}|${step.targetId}` : '',
+      // What the voice policy reads (voice-policy.js; nothing here decides anything): the kind of
+      // step, and which everyday kind it is: 'click' (one plain left click), 'option' (picking an
+      // option, ticking a box), 'text' (text Claude chose), or '' (anything else, and any step
+      // that opens an address shown on the card), with the text it would type.
+      kind: step.kind,
+      voice: shownDest ? '' : step.voice || (step.kind === 'click' && step.bindable ? 'click' : ''),
+      typed: step.typed || '',
     };
     // What a request_confirmation approval binds to (and is checked against): the element in that
     // state, the one input (a plain left click: request_confirmation's own target counts as one),
@@ -1764,7 +1771,9 @@ export class Executor {
       // every line break is an Enter: shown as such, the last one as "and press Enter".)
       const last = !multiline && breaks > 0 && parts[parts.length - 1] === '';
       const shown = (last ? parts.slice(0, -1) : parts).map((x) => revealText(x)).join(multiline ? '[new line]' : '[Enter]');
-      step = { kind: 'type', verb: `Type "${shown}"${last ? ' and press Enter' : ''} into`, desc, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', doc: t.docSeq };
+      // (For the voice policy: text Claude chose, with at most one Enter, at its end.)
+      const voice = !multiline && breaks > (last ? 1 : 0) ? '' : 'text';
+      step = { kind: 'type', verb: `Type "${shown}"${last ? ' and press Enter' : ''} into`, desc, targetId: f.targetId, ctx: f.ctx, item: f.item, selection: f.selection, guard: v.guard, dest: dest && siteOf(dest.url) !== ctx.site ? dest.url : '', opens: dest?.url || '', target: dest?.target || '', via: dest?.via || '', method: dest?.method || '', doc: t.docSeq, voice, typed: shown };
       await this.approve(t, step, ctx);
       // The focus may have moved while the owner was deciding.
       const again = await this.focus(t, ctx);
@@ -2085,21 +2094,21 @@ export class Executor {
       const changes = radio ? want && !r.desc.checked : want !== !!r.desc.checked;
       if (changes) {
         const v = assessFormInput({ desc: r.desc, willCheck: want, everyday: this.everyday(ctx), pageUrl: t.url });
-        if (v.verdict === 'ask') step = { kind: 'form', verb: want ? 'Turn on' : 'Turn off', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
+        if (v.verdict === 'ask') step = { kind: 'form', verb: want ? 'Turn on' : 'Turn off', desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc, voice: 'option' };
       }
     } else if (String(r.desc?.tag || '').toLowerCase() === 'select') {
       // A dropdown's change handler may act at once ("Actions: Delete all messages").
       const pv = await this.pageOp(t, 'previewOption', { ref, value }, ctx);
       if (pv?.option && !pv.option.selected) {
         const v = assessFormInput({ desc: { ...r.desc, name: pv.selectName || r.desc.name }, option: pv.option, everyday: this.everyday(ctx), pageUrl: t.url });
-        if (v.verdict === 'ask') step = { kind: 'form', verb: `Choose "${truncate(singleLine(pv.option.text), 60)}" in`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, option: pv.option.text, doc };
+        if (v.verdict === 'ask') step = { kind: 'form', verb: `Choose "${truncate(singleLine(pv.option.text), 60)}" in`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, option: pv.option.text, doc, voice: 'option' };
       }
     } else {
       // A value set into a text field is text Claude chose, like typing: shown whole, nothing
       // hidden in it after a read on another site, and then never an everyday step.
       this.checkChosenText(String(value), ctx.site, 'form');
       const v = assessFormInput({ desc: r.desc, everyday: this.everyday(ctx, { typing: true }), pageUrl: t.url });
-      if (v.verdict === 'ask') step = { kind: 'form', verb: `Set`, detail: `to "${revealText(String(value))}"`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc };
+      if (v.verdict === 'ask') step = { kind: 'form', verb: `Set`, detail: `to "${revealText(String(value))}"`, desc: r.desc, targetId: r.targetId, ctx: r.ctx, item: r.item, selection: r.selection, guard: v.guard, doc, voice: 'text', typed: revealText(String(value)) };
     }
     if (step) {
       await this.approve(t, step, ctx);

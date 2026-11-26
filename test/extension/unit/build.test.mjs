@@ -19,16 +19,23 @@ test('release build: manifest, icons, zip', async () => {
     assert.equal(m.manifest_version, 3);
     assert.equal(m.name, 'Jarvis for Chrome');
     // downloads: every download that starts while Jarvis works waits for the owner (RT2-A02);
-    // no activeTab: nothing uses it (RT2 T13).
-    assert.deepEqual(m.permissions.sort(), ['debugger', 'downloads', 'sidePanel', 'storage', 'tabs']);
+    // no activeTab: nothing uses it (RT2 T13); alarms: the 30-s tick that restarts the link to
+    // Jarvis's home base when Chrome stopped the worker (v1.1, Voice from Jarvis).
+    assert.deepEqual(m.permissions.sort(), ['alarms', 'debugger', 'downloads', 'sidePanel', 'storage', 'tabs']);
     assert.deepEqual(m.host_permissions, ['https://api.anthropic.com/*']);
+    // The home base is asked for by name when the owner links (never granted at install), and only
+    // on Tailscale; no externally_connectable: no web page can message the extension.
+    assert.deepEqual(m.optional_host_permissions, ['https://*.ts.net/*']);
+    assert.ok(!('externally_connectable' in m), 'no web page can message Jarvis for Chrome');
+    assert.ok(!('optional_permissions' in m), 'no other optional permission');
+    assert.equal(m.version, '1.1.0');
     assert.equal(m.background.service_worker, 'background.js');
     assert.equal(m.background.type, 'module');
     assert.equal(m.side_panel.default_path, 'sidepanel.html');
     assert.ok(m.commands['stop-jarvis'].suggested_key.mac, 'a Stop shortcut');
     assert.ok(m.commands._execute_action, 'a shortcut that opens Jarvis');
     assert.match(m.content_security_policy.extension_pages, /script-src 'self'/);
-    assert.match(m.content_security_policy.extension_pages, /connect-src https:\/\/api\.anthropic\.com(;|$)/);
+    assert.match(m.content_security_policy.extension_pages, /connect-src https:\/\/api\.anthropic\.com https:\/\/\*\.ts\.net(;|$)/);
     assert.ok(!('content_scripts' in m), 'nothing runs on pages Jarvis is not working on');
     for (const size of [16, 32, 48, 128]) {
       const png = await readFile(path.join(out, 'icons', `icon-${size}.png`));

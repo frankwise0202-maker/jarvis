@@ -85,6 +85,8 @@ export class Limits {
         { id: 'continue', label: `Continue to ${formatUsd(next)}`, tone: 'primary' },
         { id: 'stop', label: 'Stop here', tone: 'danger' },
       ],
+      // (What Jarvis says for it: Voice from Jarvis.)
+      voiceFacts: { spent: this.cost, limit: this.budgetLimit, next },
     };
   }
 
@@ -97,6 +99,7 @@ export class Limits {
         { id: 'continue', label: `Allow ${this.maxSteps} more`, tone: 'primary' },
         { id: 'stop', label: 'Stop here', tone: 'danger' },
       ],
+      voiceFacts: { limit: this.stepLimit, more: this.maxSteps },
     };
   }
 
