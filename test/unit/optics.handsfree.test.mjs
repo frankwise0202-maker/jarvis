@@ -248,3 +248,24 @@ test('the no-steal corpus stays with Jarvis in every Optics state (closed, live,
   }
   assert.deepEqual(taken, []);
 });
+
+test('R10: with a laptop hologram on screen, "open the camera" is its camera part, selected as today, with the hint for Optics', async () => {
+  const { register, OPTICS_HINT } = await import('../../src/ui/commands/optics.js');
+  const entries = new Map();
+  const calls = [];
+  register({ register: (e) => entries.set(e.id, e) }, { hologramPart: (args) => (calls.push(args), { say: `Here's the webcam. ${args.hint}` }) });
+  const part = entries.get('optics-camera-part');
+  assert.ok(part && part.layer === 'top', 'registered before the hologram\'s own entry');
+  const parts = [{ id: 'keyboard', name: 'Keyboard', aka: [] }, { id: 'webcam', name: 'Webcam', aka: ['camera'] }];
+  const VH = { surface: 'voice', hologram: { open: true, inWindow: false, parts, selected: null } };
+  for (const words of ['open the camera', 'camera on', 'show me the camera']) assert.equal((part.match(words, VH) || {}).do, 'hologram-part', words);
+  // "Open optics" is always Optics (optics-open); a hologram without a camera part, or none, leaves it.
+  assert.equal(part.match('open optics', VH), null);
+  assert.equal(part.match('open the camera', { ...VH, hologram: { ...VH.hologram, parts: parts.slice(0, 1) } }), null);
+  assert.equal(part.match('open the camera', { surface: 'voice' }), null);
+  assert.equal(part.match('open the camera', { ...VH, hologram: { ...VH.hologram, inWindow: true } }), null);
+  const out = await part.run(part.match('open the camera', VH), { reading: 'open the camera', surface: 'voice' });
+  assert.equal(OPTICS_HINT, 'Say ‘open Optics’ for your camera.');
+  assert.equal(out.say, `Here's the webcam. ${OPTICS_HINT}`);
+  assert.deepEqual(calls, [{ text: 'open the camera', surface: 'voice', hint: OPTICS_HINT }]);
+});

@@ -48,10 +48,16 @@ export const WINDOWS = {
 // ==== optics ==========================================================================================
 export const OPTICS = {
   rows: [
-    // E2 and R10: with a laptop hologram on screen, its camera part ("open Optics" always opens Optics).
-    { words: 'open the camera', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: the owner means its camera part.' },
-    { words: 'camera on', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: its camera part, as today.' },
-    { words: 'show me the camera', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: its camera part, as today.' },
+    // E2 and R10: with a laptop hologram on screen, its camera part, selected as today, and Jarvis adds
+    // "Say 'open Optics' for your camera." (optics-camera-part, before the hologram's own entry);
+    // "open Optics" always opens Optics.
+    { words: 'open the camera', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
+    { words: 'camera on', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
+    { words: 'show me the camera', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
+    { words: 'open the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
+    { words: 'camera on', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
+    { words: 'show me the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
+    { words: 'open optics', state: 'VH', winner: 'optics-open', why: '"Open Optics" always opens Optics, a hologram on screen or not.' },
     // E1: with no Look on screen, "put the picture to the side" stays a Screens float, as today.
     { words: 'put the picture to the side', state: 'VL', winner: 'screens', why: 'No Look on screen: a picture floated beside, as today.' },
     { words: 'put the picture to the side', state: 'VF', winner: 'screens', why: 'No Look card known to the router: a Screens float, as today.' },

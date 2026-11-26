@@ -24,16 +24,24 @@
 //   optics-close     (app) "close the camera", "camera off" with Optics closed: free, works from
 //                    anywhere (the camera on another screen goes off too); typed in Optics' own field,
 //                    Optics closes.
+//   optics-camera-part
+//                    (top) R10: with a hologram on top, camera words that name its camera part ("open
+//                    the camera", "camera on" over a laptop hologram) select that part as today, and
+//                    Jarvis adds "Say 'open Optics' for your camera." ("open optics" always opens Optics).
 //
 // What acts is the app's (its deps, below): this module stays importable in Node (no DOM): the T3
 // harness (test/unit/command-router.test.mjs) registers it with fake deps. Its phrases are in the
 // optics section of test/unit/fixtures/voice-corpus.mjs, its collisions in collisions.mjs.
 
+import { matchHologramCommand } from '../../lib/hologram-commands.js';
 import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsCommand } from '../../lib/optics-commands.js';
 import { matchOfferChoice, matchResearchThis } from '../../lib/research-offer.js';
 
 /** The research offer's id on Voice Mode's question stack (app.js researchThis). */
 export const RESEARCH_OFFER_ID = 'research-offer';
+
+/** R10: said after a hologram's camera part is selected by camera words. */
+export const OPTICS_HINT = 'Say ‘open Optics’ for your camera.';
 
 const CARD_ACTIONS = new Set(['expand', 'aside', 'close-card']);
 
@@ -56,6 +64,7 @@ function outcome(value) {
  *   closeCamera({ surface }) → { say } | false
  *   researchThis({ where, deep, surface, via, text }) → { say } | Promise | false   E3 (the offer)
  *   answerResearch(choiceId) → { say } | Promise | false   a dear way said for the open offer
+ *   hologramPart({ text, surface, hint }) → { say } | false   R10: the hologram's own command, then the hint
  */
 export function register(router, deps) {
   const call = (name, ...args) => {
@@ -81,6 +90,23 @@ export function register(router, deps) {
       return cmd && CARD_ACTIONS.has(cmd.action) ? { do: 'optics-card', command: cmd } : null;
     },
     run: (action, ctx) => call('opticsCommand', ctx.reading, ctx),
+  });
+
+  // R10 (E2): with a hologram on top, "open the camera" means its camera part (the hologram selects
+  // it, as today) and Jarvis says how to reach Optics. Before the hologram's own entry (same words).
+  router.register({
+    id: 'optics-camera-part',
+    layer: 'top',
+    surfaces: ['voice', 'hologram'],
+    match(text, s) {
+      const holo = s.hologram;
+      if (!holo || !holo.open || holo.inWindow || !Array.isArray(holo.parts) || !holo.parts.length) return null;
+      const words = String(text || '');
+      if (!isOpticsOpenRequest(words) || /\boptics\b/i.test(words)) return null;
+      const cmd = matchHologramCommand(words, holo.parts, { selected: holo.selected || null });
+      return cmd && cmd.action === 'select' ? { do: 'hologram-part', command: cmd, free: true } : null;
+    },
+    run: (action, ctx) => call('hologramPart', { text: ctx.reading, surface: ctx.surface, hint: OPTICS_HINT }),
   });
 
   // E3: "research this", the price first.

@@ -100,6 +100,11 @@ export const OPTICS = {
     ['use the Logitech camera', 'V0', 'optics-open'],
     ['open optics', 'OC0', 'optics-open'],
     ['open optics', 'VL', 'optics-open'],
+    // R10: a laptop hologram on screen: "open the camera" is its camera part, with the hint for Optics;
+    // "open optics" still opens Optics.
+    ['open the camera', 'VH', 'optics-camera-part'],
+    ['camera on', 'H0', 'optics-camera-part'],
+    ['open optics', 'VH', 'optics-open'],
     ['close the camera', 'V0', 'optics-close'],
     ['camera off', 'OC0', 'optics-close'],
     ['close the camera', 'VL', 'optics'],

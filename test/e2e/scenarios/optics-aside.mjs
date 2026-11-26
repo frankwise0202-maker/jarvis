@@ -18,7 +18,8 @@
 //                             back" opens the card again, the camera still live
 //   optics-open-by-voice      Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the
 //                             camera track live, "Optics is on."); "close the camera"; "video mode" starts
-//                             the live view
+//                             the live view; with Jarvis hidden, the line and one notification, whose click
+//                             opens Optics
 //   optics-open-by-voice-iphone  iPhone 13, Voice Mode: "open optics" asks for the tap ("Tap Look to turn
 //                             the camera on."); the tap opens Optics with no Look
 //   optics-research           Mac, the home base linked: "research this" with a Look aside: the offer with
@@ -376,7 +377,7 @@ export default [
   },
   {
     name: 'optics-open-by-voice',
-    title: 'Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the camera track live, "Optics is on."); "close the camera"; "video mode" starts the live view',
+    title: 'Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the camera track live, "Optics is on."); "close the camera"; "video mode" starts the live view; Jarvis hidden, a notification first, and its click opens Optics',
     device: 'mac',
     timeout: 150000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
@@ -386,6 +387,27 @@ export default [
       await page.addInitScript(installFakeSpeech);
       await page.addInitScript(() => {
         window.__voice.queue = [];
+        // Jarvis hidden on demand (document.hidden only: Voice Mode isn't told, so it keeps listening
+        // as Track 1's background listening would), and notifications recorded instead of shown.
+        window.__hiddenForTest = false;
+        const real = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__hiddenForTest === true || (real && real.get ? real.get.call(document) : false) });
+        window.__notes = [];
+        class FakeNotification {
+          constructor(title, options) {
+            this.title = title;
+            this.options = options || {};
+            this.onclick = null;
+            this.onclose = null;
+            window.__notes.push(this);
+          }
+          close() {
+            if (typeof this.onclose === 'function') this.onclose();
+          }
+        }
+        FakeNotification.permission = 'granted';
+        FakeNotification.requestPermission = () => Promise.resolve('granted');
+        window.Notification = FakeNotification;
       });
       await instrument(page);
       await page.context().grantPermissions(['camera']);
@@ -417,6 +439,25 @@ export default [
         await t.waitFor(async () => (await attr(page, 'liveview')) === 'on', { timeout: 15000, message: 'the live view to start' });
         await t.waitFor(() => liveReqs(t).length >= 1, { timeout: 15000, message: 'a live look' });
         t.assert(t.requests('lead').length === 0, 'still no question sent to Claude');
+      });
+      await t.step('Jarvis hidden (another app in front): "open optics" says the camera needs him on screen, with one notification; its click opens Optics', async () => {
+        await tapToTalk(['Close the camera.']);
+        await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 15000, message: 'Optics to close' });
+        await tapToTalk(['Open optics.']);
+        await page.evaluate(() => (window.__hiddenForTest = true)); // the words are heard while Jarvis is hidden
+        await t.waitFor(async () => (await said(page)).some((s) => /The camera only runs while I’m on screen\. Click the notification to bring me up\./.test(s)), { timeout: 15000, message: 'the line about the notification' });
+        const notes = await page.evaluate(() => window.__notes.map((n) => ({ title: n.title, body: n.options && n.options.body })));
+        t.assert(notes.length === 1 && /camera/i.test(notes[0].title + notes[0].body), `one notification (${JSON.stringify(notes)})`);
+        t.assert((await t.count('optics')) === 0 && (await liveVideoTracks(page)) === 0, 'no camera while hidden');
+        await page.evaluate(() => {
+          window.__hiddenForTest = false;
+          const n = window.__notes[0];
+          if (n && typeof n.onclick === 'function') n.onclick();
+        });
+        await t.visible('optics', { timeout: 15000, message: 'Optics to open from the notification' });
+        await waitLive(t);
+        t.assert((await liveVideoTracks(page)) === 1, 'the camera track live');
+        t.assert(t.requests('lead').length === 0, 'nothing sent to Claude');
       });
     },
   },

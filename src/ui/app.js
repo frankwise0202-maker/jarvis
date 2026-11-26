@@ -106,6 +106,7 @@ import { LIVE_VIEW_COUNTS, OFFLINE_LINE, matchOfferChoice, researchOffer, resear
 import { matchOpticsCommand, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { notify as notifyOwner } from './attention.js';
+import { commandAck as viewerAck } from './voice-visuals.js';
 
 const { sttSupported, startListening } = stt;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
@@ -2340,6 +2341,18 @@ export async function startApp(rootEl) {
     return { say: 'The camera is off.' };
   }
 
+  /**
+   * R10: "open the camera" with a laptop hologram on top (the router's optics-camera-part): the
+   * hologram selects its camera part as it does today, and Jarvis adds how to reach Optics.
+   */
+  function hologramPartByWords({ text, surface, hint }) {
+    const words = String(text || '');
+    const res = surface === 'voice' ? safe(() => voiceCommand(words), null) : safe(() => getHologramViewer().command(words, { source: 'typed' }), null);
+    if (!res || !res.handled) return false;
+    const ack = safe(() => viewerAck(res.command), '');
+    return { say: [ack, hint].filter(Boolean).join(' ') };
+  }
+
   /** Optics' own words (the router's optics-card, optics-close in its field): its line, or false. */
   function opticsCommandByWords(text) {
     const optics = currentOptics();
@@ -4468,7 +4481,7 @@ export async function startApp(rootEl) {
     // windows (src/ui/commands/windows.js):
     register('windows', registerWindowCommands, { ...shared });
     // optics (src/ui/commands/optics.js):
-    register('optics', registerOpticsCommands, { ...shared, opticsCommand: opticsCommandByWords, openOptics: openOpticsByWords, closeCamera: closeCameraByWords, researchThis, answerResearch: answerResearchOffer });
+    register('optics', registerOpticsCommands, { ...shared, opticsCommand: opticsCommandByWords, openOptics: openOpticsByWords, closeCamera: closeCameraByWords, researchThis, answerResearch: answerResearchOffer, hologramPart: hologramPartByWords });
     // chrome-relay (src/ui/commands/chrome.js):
     register('chrome', registerChromeCommands, { ...shared });
   }
