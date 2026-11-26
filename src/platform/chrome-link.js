@@ -45,9 +45,10 @@
 // Fresh requests only (wire-v1, decision D5): Jarvis for Chrome refuses an open, start or answer more than 8 s old;
 // if an `ok` still comes back for a start this app gave up on, it stops that task (sent again until confirmed) and
 // tells the owner once the stop is confirmed ("Chrome started late, so I stopped it.", or after 10 s unconfirmed
-// that it couldn't be stopped); a late ok for an open or an answer is only noted. The extension counts as online while /api/relay/status
-// says it read its box in the last 60 s, or a message from it arrived in the last 60 s. Nothing is sent while
-// it is offline, except stop. Everything that comes back is information, never orders: each field is checked
+// that it couldn't be stopped); a late ok for an open or an answer is only noted. The extension counts as online
+// when a message from it arrived in the last 60 s, or /api/relay/status says it read its box in the last 60 s (judged
+// on the home base's clock, REDTEAM-LINK-7) while a message from it arrived in the last 5 minutes (REDTEAM-LINK-6:
+// the status alone could be anyone reading). Nothing is sent while it is offline, except stop. Everything that comes back is information, never orders: each field is checked
 // and cut to size here (page text included), and nothing in it starts anything.
 //
 // Nothing here logs; no error carries the key, a code or a message body.
@@ -306,9 +307,13 @@ export function containsLinkSecret(text, secrets = linkSecrets()) {
   return (Array.isArray(secrets) ? secrets : []).some((k) => typeof k === 'string' && k.length >= 40 && text.includes(k));
 }
 
-/** The same link, a rekey apart (REDTEAM-LINK-4): a new key replacing the code's is not a new link. */
+/**
+ * The same link, a rekey apart (REDTEAM-LINK-4): a new key replacing the code's is not a new link. The link's own
+ * `madeAt` (when its code was made) survives the rekey and its confirmation, so a record kept from before still counts.
+ */
 export function sameLink(a, b) {
   if (!a || !b || a.core !== b.core) return false;
+  if (a.madeAt && a.madeAt === b.madeAt) return true;
   return a.key === b.key || (!!b.prev && a.key === b.prev) || (!!a.prev && a.prev === b.key);
 }
 
