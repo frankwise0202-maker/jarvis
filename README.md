@@ -286,6 +286,11 @@ other windows, minimized, or with the display asleep.
   move Standby there. When the one listening leaves Standby or closes, the other takes over by itself.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
+- **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a
+  restart or an update, say). Settings → Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)** turns that
+  on or off. Chrome lets a page speak only after one click, so until you click, Standby says **CLICK ONCE SO JARVIS
+  CAN SPEAK**: that click (or Enter) lets him speak, and Standby stays. If George can already speak (installed
+  Jarvis, his voice ready), there is no such line.
 - **If he can't hear you in the background** (a Chrome or Mac setting can stop that), he says once "I can't hear you
   while I'm in the background. Click me." and the notification says the same.
 - **On iPhone and iPad** nothing changes: he listens only while he is open on screen. On every device the camera and
