@@ -108,7 +108,7 @@ import { register as registerAudioCommands } from './commands/audio.js';
 import { register as registerTourCommands } from './commands/tours.js';
 import { register as registerVoiceCommands } from './commands/voice.js';
 import { register as registerChromeVoiceCommands } from './commands/chrome-voice.js';
-import { CHROME_VOICE_CHANNEL, createChromeVoice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
+import { CHROME_VOICE_CHANNEL, createChromeVoice, sayLinkNotice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
 import { notify as notifyAttention, closeNotify } from './attention.js'; // v8.1 chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
@@ -478,13 +478,9 @@ export async function startApp(rootEl) {
   const chromeLink = chromeLinkCtl ? chromeLinkCtl.api : null;
   /** Something Jarvis for Chrome did that no request is waiting for (D5: a task that started late was stopped). */
   function chromeLinkNotice(n) {
-    const line = n && typeof n.line === 'string' ? n.line : '';
-    if (!line) return;
-    const shown = typeof n.show === 'string' && n.show ? n.show : line; // (`line` is said; `show` may hold ⌘⇧.)
-    safe(() => toast(shown, { level: 'warn', timeout: 8000 }));
+    // CHROME-VOICE-R2-5: said as any line from Chrome (api.chrome.say: chromeListenRule), never with v8.0's say.
     const voice = safe(() => (voiceApi && isVoiceModeOpen() ? voiceApi : null), null);
-    if (voice && typeof voice.say === 'function') safe(() => voice.say(line));
-    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: shown }));
+    sayLinkNotice(n, { voice, hidden: () => document.hidden, toast: (text, o) => safe(() => toast(text, o)), notify: (x) => safe(() => notifyOwner(x)) });
   }
   // ---- chrome-relay ◂
   const morningCard = brain

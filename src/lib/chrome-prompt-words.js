@@ -233,7 +233,14 @@ const WITHDRAW_LEAD = /^(?:no|nope|nah|wait|hold on|hold it|hold off|never ?mind
 const STOP_CHECK_WORDS = /^(?:stop|stop it|stop now|stop stop|stop everything|stop chrome|stop it in chrome|stop the chrome task|stop the task|chrome stop)$/;
 // (Matched before the fillers come off: "start now" lets it go, "start" alone only lets it count on.)
 const GO_WORDS = /^(?:(?:(?:hey |ok |okay )?jarvis|please|okay|ok) )*(?:start (?:it )?(?:right )?now|send it(?: right)?(?: now)?|go ahead(?: and start(?: it)?)?|do it (?:right )?now|yes (?:start(?: it)?(?: now)?|go ahead|send it))(?: (?:please|jarvis|thanks|thank you))*$/;
-const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|sounds right|thanks|thank you|uh huh|mhm|mm hmm|go|start|start it|do it|go for it|proceed)$/;
+const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|sounds right|thanks|thank you|uh huh|mhm|mm hmm|go|start|start it|do it|go for it|proceed|continue|carry on|keep going|go on|done)$/;
+// A sentence that starts with a yes word, has no no word in it and goes on agreeing ("yes, continue", "sure, go on",
+// "okay, sounds good to me") lets it count on too (ROUTING-R2-5). One that goes on with something else ("okay, we'll do
+// this in this window") is other words.
+const YES_LED = /^(?:yes|yeah|yep|yup|okay|ok|sure|alright|all right|fine|right|correct|great|perfect|good|cool)(?:\s|$)/;
+const YES_LEAD_WORDS = /^(?:(?:yes|yeah|yep|yup|okay|ok|sure|alright|all right|fine|right|correct|great|perfect|good|cool|please) )+/;
+const AGREEING = /^(?:thats (?:right|fine|good|correct|it|great|perfect)|sounds (?:good|great|fine|right)(?: to me)?|all good|looks good|that works|works for me|of course|please)$/;
+const NO_IN_IT = /(?:^|\s)(?:no|nope|nah|not|wait|hold on|hold it|hold off|hang on|one second|one sec|just a second|never ?mind|forget it)(?:\s|$)/;
 
 // A question (R4), as the answers see it (normalized): never taken for a hint.
 const ASKING = /^(?:what|whats|why|how|hows|which|who|whos|when|where|wheres|is|are|was|were|does|do|did|should|shall|could|can|would|will|has|have|had|am)(?:\s|$)/;
@@ -300,7 +307,9 @@ export function matchChromeAnswer(text, state = {}, readings = null) {
       return answerAction({ do: 'chrome-check', how: 'withdraw', ...(STOP_CHECK_WORDS.test(said) ? { stop: true } : {}) });
     }
     const go = GO_WORDS.test(plainAnswer(text));
-    const keep = !go && KEEP_WORDS.test(said);
+    const rest = said.replace(YES_LEAD_WORDS, '');
+    const agreeing = YES_LED.test(plainAnswer(text)) && !isNoWord(text) && !NO_IN_IT.test(plainAnswer(text)) && (KEEP_WORDS.test(rest) || AGREEING.test(rest));
+    const keep = !go && (KEEP_WORDS.test(said) || agreeing);
     if (!go && !keep) return null;
     // Any other reading that is a no: a "no" heard as "go" (the check exists to catch exactly that).
     const others = (Array.isArray(readings) ? readings : []).filter((r) => typeof r === 'string' && normalizeAnswer(r) !== said);

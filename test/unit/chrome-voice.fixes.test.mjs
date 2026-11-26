@@ -291,6 +291,58 @@ test('REDTEAM-VOICE-7: two windows: Chrome\'s question, its closing and a task\'
   A.cv.destroy();
 });
 
+test('CHROME-VOICE-R2-6: two windows: the one holding the link closes, then Voice Mode closes in the other: Chrome\'s waiting question is notified there (once)', async () => {
+  const channel = channels();
+  const fakeA = createFakeChromeLink();
+  const A = createChromeVoice({ link: fakeA.link, voice: () => null, channel, toast: () => {}, notify: () => {}, closeNotice: () => {}, hidden: () => false });
+  const vB = createFakeVoice();
+  delete vB.card;
+  let open = true;
+  const notes = [];
+  const quietLink = { ...createFakeChromeLink().link, onPrompt: () => () => {}, onPromptClosed: () => () => {}, onDone: () => () => {} };
+  const B = createChromeVoice({ link: quietLink, voice: () => (open ? vB : null), channel, toast: () => {}, notify: (n) => notes.push(n), closeNotice: () => {}, hidden: () => false });
+  try {
+    B.voiceChanged();
+    await flush();
+    fakeA.prompt(PROMPTS.cart);
+    await flush();
+    assert.equal(vB.prompts.length, 1, 'B\'s Voice Mode has it');
+    A.destroy(); // window A (the link's) closes: pagehide, "bye"
+    await flush();
+    assert.equal(notes.length, 0, 'not while B\'s Voice Mode has it');
+    open = false; // B's Voice Mode closes (or goes to Standby)
+    B.voiceChanged();
+    await flush();
+    assert.equal(B.state().waiting, 1, 'the question is still open in B');
+    assert.equal(notes.length, 1, `a "Chrome asks" notification (got ${notes.length})`);
+    assert.equal(notes[0].title, 'Chrome asks');
+    // Control: with A still open, A (the link's window) notifies, B doesn't.
+  } finally {
+    B.destroy();
+  }
+  const fakeA2 = createFakeChromeLink();
+  const aNotes = [];
+  const A2 = createChromeVoice({ link: fakeA2.link, voice: () => null, channel, toast: () => {}, notify: (n) => aNotes.push(n), closeNotice: () => {}, hidden: () => false });
+  const vB2 = createFakeVoice();
+  delete vB2.card;
+  let open2 = true;
+  const bNotes = [];
+  const B2 = createChromeVoice({ link: quietLink, voice: () => (open2 ? vB2 : null), channel, toast: () => {}, notify: (n) => bNotes.push(n), closeNotice: () => {}, hidden: () => false });
+  try {
+    B2.voiceChanged();
+    await flush();
+    fakeA2.prompt(PROMPTS.cart);
+    await flush();
+    open2 = false;
+    B2.voiceChanged();
+    await flush();
+    assert.deepEqual([aNotes.length, bNotes.length], [1, 0], 'A notifies, B doesn\'t');
+  } finally {
+    A2.destroy();
+    B2.destroy();
+  }
+});
+
 // ---- REDTEAM-VOICE-8: prompts closed without a word -------------------------------------------------------
 
 test('REDTEAM-VOICE-8: a task\'s end closes its prompts (no stale "Chrome is waiting for you"); so does the link reporting no task; a "gone" refusal closes it and says so', async () => {
@@ -515,6 +567,206 @@ test('ROUTING-2: a statement or a trouble that ends "in Chrome" is the owner\'s 
     ['Best Buy: add a 4K monitor under $300 to the cart in Chrome', 'Best Buy: add a 4K monitor under $300 to the cart'],
     ["what's the return policy on this page in Chrome", "what's the return policy on this page"],
   ]) assert.equal((matchChromeTask(s, {}) || {}).text, text, s);
+});
+
+// ---- v8.1.1: CHROME-VOICE-R2-3, ROUTING-R2-2: an instruction by its shape, not a list of verbs -------------------
+// Both second reviews' sentences (chrome-voice's verbs.mjs and statements.mjs, its verifier's route-tasks.mjs; routing's
+// review2-routing-words, verbs.mjs, carriers.mjs and tasks.mjs, its verifier's r2.mjs), and ROUTING-2's own. (A search,
+// "look up flights to Denver in Chrome", is G1's to open, free: not in these lists.)
+const R2_INSTRUCTIONS = [
+  // chrome-voice reviewer (verbs.mjs)
+  'Cancel my Netflix subscription in Chrome.', 'Cancel the order on Amazon in Chrome.', 'Return the headphones on Amazon in Chrome.',
+  'Download my last invoice in Chrome.', 'Renew my library books in Chrome.', 'Upgrade my Spotify plan in Chrome.', 'Subscribe to the newsletter in Chrome.',
+  'Register for the webinar in Chrome.', 'Reorder the paper towels in Chrome.', 'Show me the reviews in Chrome.', 'Read me the first review in Chrome.',
+  'Write a review for the monitor in Chrome.', 'Email the seller in Chrome.', 'Contact support in Chrome.', 'Watch the trailer in Chrome.',
+  'Play the video in Chrome.', 'Save the recipe in Chrome.', 'Get the cheapest flight to Denver in Chrome.', 'Grab a coffee order from Starbucks in Chrome.',
+  'Tell me the price on this page in Chrome.', 'Check the weather on weather.com in Chrome.', 'Turn on dark mode on YouTube in Chrome.', 'Message Sam on WhatsApp in Chrome.',
+  'Reply to the last email in Chrome.', 'Archive the newsletter emails in Chrome.', 'Mark all as read in Gmail in Chrome.', 'Empty the cart in Chrome.',
+  'Remove the monitor from the cart in Chrome.', 'Apply the coupon in Chrome.', 'Enter my zip code in Chrome.', 'Type my address in Chrome.',
+  'Accept the cookies in Chrome.', 'Close the popup in Chrome.', 'Sign me up for the trial in Chrome.',
+  'Buy the monitor in Chrome.', 'Pick the second one in Chrome.', 'Choose next-day shipping in Chrome.',
+  'Install the update in Chrome.', 'Donate five dollars to Wikipedia in Chrome.', 'Vote in the poll in Chrome.', 'Like the post in Chrome.', 'Follow her on Twitter in Chrome.',
+  'Report the listing in Chrome.', 'Block the seller in Chrome.', 'Request a refund in Chrome.', 'Claim my reward in Chrome.', 'Redeem the gift card in Chrome.',
+  // chrome-voice verifier (route-tasks.mjs)
+  'Unfollow that account on Instagram in Chrome.', 'Transfer fifty dollars to savings in Chrome.', 'RSVP to the party in Chrome.', 'Join the Zoom meeting in Chrome.',
+  'Confirm my appointment in Chrome.', 'Move my dentist appointment to Friday in Chrome.', 'Invite Sam to the shared doc in Chrome.', 'Respond to the last email in Chrome.',
+  'Decline the meeting invite in Chrome.', 'Sell my old phone on eBay in Chrome.', 'Rent a car in Denver for next weekend in Chrome.', 'Dispute the charge in Chrome.',
+  'Complete the survey in Chrome.', 'Retweet the last post in Chrome.', 'Upvote the top comment in Chrome.', 'Login to my bank in Chrome.', 'Finish the checkout in Chrome.',
+  'Proceed to checkout in Chrome.', 'Re-order my usual groceries in Chrome.', 'Print my boarding pass in Chrome.', 'Pay my electric bill in Chrome.',
+  'Find a 4K monitor under $300 and add it to the cart in Chrome.', 'Order more paper towels in Chrome.',
+  // routing reviewer (review2-routing-words, carriers.mjs) and verifier (r2.mjs)
+  'use Jarvis for Chrome to cancel my Netflix subscription', 'use Chrome to cancel my Netflix subscription', 'have Chrome renew my library books',
+  'tell Chrome to email my landlord about the leak', 'ask Chrome to register me for the 5K', 'get Chrome to reorder my contact lenses',
+  'ask Chrome to reorder my contact lenses', 'get Chrome to register me for the 5K', 'in Chrome, register me for the 5K', 'in Chrome, cancel my Netflix subscription',
+  'in Chrome, transfer fifty dollars to savings', 'have Chrome install the Grammarly extension', 'use Chrome to block that spammer on Facebook', 'have Chrome find the return policy',
+  'cancel my Netflix subscription in Chrome', 'reorder my contact lenses in Chrome', 'transfer fifty dollars to savings in Chrome', 'install the Grammarly extension in Chrome',
+  'return the blender I bought on Amazon in Chrome', 'rsvp yes to the party in Chrome', 'refill my prescription at CVS in Chrome', 'reschedule my dentist appointment in Chrome',
+  'unsubscribe me from the Target emails in Chrome', 'renew my passport in Chrome', 'donate twenty dollars to the Red Cross in Chrome', 'archive the old emails in Chrome',
+  'mark all my emails as read in Chrome', 'join the zoom meeting in Chrome', 'upgrade my Spotify plan in Chrome', 'create a new Google Doc in Chrome', 'block that site in Chrome',
+  'report the spam account in Chrome', 'pay my electric bill in Chrome', 'find a 4K monitor under $300 and add it to the cart in Chrome', 'book a table for two at Nobu in Chrome',
+  'can you cancel my Netflix subscription in Chrome', 'please cancel my Netflix subscription in Chrome', 'I want you to cancel my Netflix subscription in Chrome',
+  // routing reviewer (verbs.mjs: a verb and its object)
+  'renew my library books in Chrome', 'return the shoes I bought last week in Chrome', 'register for the 5K race in Chrome', 'donate ten dollars to the food bank in Chrome',
+  'email my landlord about the leak in Chrome', 'text my wife that I am late in Chrome', 'enable two factor on my Google account in Chrome', 'disable autoplay on YouTube in Chrome',
+  'block that spammer on Facebook in Chrome', 'report the fake listing in Chrome', 'request a refund for my order in Chrome', 'claim my free trial in Chrome', 'redeem my gift card in Chrome',
+  'contact Amazon support in Chrome', 'archive all my old emails in Chrome', 'mark all emails as read in Chrome', 'confirm my appointment in Chrome', 'verify my email address in Chrome',
+  'ship the package to my mom in Chrome', 'move the meeting to Friday in Chrome', 'star the important emails in Chrome', 'watch the new trailer in Chrome', 'listen to the podcast in Chrome',
+  'download my tax forms in Chrome', 'print the boarding pass in Chrome', 'save this recipe in Chrome', 'remind me to pay rent in Chrome',
+  'create a new playlist in Chrome', 'start a free trial of Hulu in Chrome', 'stop my Hulu subscription in Chrome',
+  // routing reviewer (tasks.mjs: polite and plain forms)
+  'in Chrome, find a 4K monitor under $300', 'can you find a 4K monitor under $300 in Chrome', 'could you add the cheapest one to the cart in Chrome',
+  'would you book a table for two at 7 in Chrome', 'can you please find me a flight to Denver in Chrome', 'please find me a flight to Denver in Chrome',
+  'Jarvis, please find me a flight to Denver in Chrome', 'I want you to find a 4K monitor in Chrome', 'I need you to order more printer ink in Chrome',
+  'go ahead and find a 4K monitor in Chrome', 'help me find a 4K monitor in Chrome', 'get me a 4K monitor under $300 in Chrome', 'grab the cheapest charger in Chrome',
+  'check my order status on amazon in Chrome', 'fill out the contact form in Chrome', 'download my bank statement in Chrome', 'unsubscribe me from the newsletter in Chrome',
+  'look for a 4K monitor in Chrome', 'see if Best Buy has the monitor in stock in Chrome', 'make a reservation at Nobu for Friday in Chrome', 'buy more paper towels in Chrome',
+  'now add the second one too in Chrome', 'also add a HDMI cable in Chrome', 'then check out in Chrome', 'just find me a cheaper one in Chrome', 'maybe find a cheaper one in Chrome',
+  'try finding a cheaper one in Chrome', "let's find a cheaper one in Chrome", 'use Jarvis for Chrome to compare the two cheapest monitors',
+  // ROUTING-2's own instructions
+  'can you find me a hotel in Bath in Chrome', 'Best Buy: add a 4K monitor under $300 to the cart in Chrome',
+];
+
+const R2_TROUBLES = [
+  // chrome-voice reviewer (statements.mjs)
+  'Search results look weird in Chrome.', 'Sign in fails in Chrome.', 'Print preview is broken in Chrome.', 'Scroll bars are missing in Chrome.',
+  'Check boxes don’t work in Chrome.', 'Log in doesn’t work in Chrome.', 'Book covers don’t load in Chrome.', 'Order history is empty in Chrome.',
+  'Watch history is gone in Chrome.', 'Play button does nothing in Chrome.', 'Pay pal won’t load in Chrome.', 'Track changes is greyed out in Chrome.',
+  'Zoom keeps crashing in Chrome.', 'Clear history is greyed out in Chrome.', 'Open tabs are using too much memory in Chrome.', 'Find my iPhone won’t load in Chrome.',
+  'Click here buttons look broken in Chrome.', 'Pick up times are wrong in Chrome.', 'Look at all these ads in Chrome.', 'Turn by turn directions are wrong in Chrome.',
+  'Post office tracking says delivered in Chrome.', 'Share buttons are gone in Chrome.', 'Mute doesn’t work in Chrome.', 'Explore page is empty in Chrome.',
+  // chrome-voice verifier (route-tasks.mjs)
+  'Search is really slow in Chrome.', 'Checkout keeps failing in Chrome.', 'Play doesn’t do anything on YouTube in Chrome.', 'Update failed in Chrome.',
+  'Download keeps failing in Chrome.', 'Upload is stuck at 99 percent in Chrome.', 'Pause doesn’t work on Netflix in Chrome.', 'Refresh doesn’t help in Chrome.',
+  'Pay button is greyed out in Chrome.', 'Reply all is missing in Gmail in Chrome.', 'Save as PDF is missing in Chrome.', 'My Gmail won’t load in Chrome.', 'YouTube is really slow in Chrome.',
+  // routing reviewer and verifier
+  "my Gmail won't load in Chrome", 'explain how cookies work in Chrome', "in Chrome, my Gmail won't load", 'the page keeps reloading in Chrome', 'how come Gmail is slow in Chrome',
+  'why does YouTube buffer in Chrome', 'nothing loads in Chrome', 'every site is slow in Chrome',
+  // ROUTING-2's own
+  'Netflix keeps buffering in Chrome', 'my bookmarks are gone in Chrome', "I can't log in to my bank in Chrome", 'something is wrong in Chrome', 'the sound is not working in Chrome',
+  'it says access denied in Chrome', 'this page looks broken in Chrome', 'have Chrome open when I log in', 'teach me how to use bookmarks in Chrome',
+  'remind me how to turn on dark mode in Chrome', 'show me how to clear cookies in Chrome', 'how do I clear my cookies in Chrome',
+];
+
+test('CHROME-VOICE-R2-3, ROUTING-R2-2: with a carrier, any instruction is a task whatever its verb; a statement, a trouble or a request for help never is', () => {
+  const st = { chrome: { linked: true, online: true } };
+  const lost = R2_INSTRUCTIONS.filter((s) => !matchChromeTask(s, st));
+  const taken = R2_TROUBLES.filter((s) => matchChromeTask(s, st)).map((s) => `${s} -> "${matchChromeTask(s, st).text}"`);
+  assert.deepEqual({ lost, taken }, { lost: [], taken: [] });
+  // The task's words, as the check says them: the instruction's first word in lower case, a site first kept.
+  for (const [s, text] of [
+    ['Cancel my Netflix subscription in Chrome.', 'cancel my Netflix subscription'],
+    ['use Jarvis for Chrome to cancel my Netflix subscription', 'cancel my Netflix subscription'],
+    ['have Chrome renew my library books', 'renew my library books'],
+    ['in Chrome, register me for the 5K', 'register me for the 5K'],
+    ['Re-order my usual groceries in Chrome.', 're-order my usual groceries'],
+    ['Best Buy: add a 4K monitor under $300 to the cart in Chrome', 'Best Buy: add a 4K monitor under $300 to the cart'],
+  ]) assert.equal((matchChromeTask(s, st) || {}).text, text, s);
+  // Through the app's router (Voice Mode and the chat): the lead carriers G4 makes tasks any time.
+  const t = setup();
+  try {
+    const router = routerFor(t.cv);
+    for (const s of ['use Jarvis for Chrome to cancel my Netflix subscription', 'have Chrome renew my library books', 'tell Chrome to email my landlord about the leak', 'ask Chrome to register me for the 5K', 'get Chrome to reorder my contact lenses', 'Email the seller in Chrome.']) {
+      for (const surface of ['voice', 'chat']) assert.equal((router.route(s, surface) || {}).id, 'chrome-task', `${s} (${surface})`);
+    }
+    for (const s of ['Log in doesn’t work in Chrome.', 'Order history is empty in Chrome.', "my Gmail won't load in Chrome", 'explain how cookies work in Chrome']) {
+      for (const surface of ['voice', 'chat']) assert.equal(router.route(s, surface), null, `${s} (${surface}): the owner's question`);
+    }
+  } finally {
+    t.cv.destroy();
+  }
+});
+
+test('ROUTING-R2-5: during a task\'s check, "continue", "carry on", "keep going", "go on", "done" and a yes-led sentence with no no-word let it count on', () => {
+  const check = { chromeCheck: { kind: 'task' } };
+  for (const w of ['Continue.', 'Yes, continue.', 'Okay, continue.', 'Carry on.', 'Keep going.', 'Sure, go on.', 'Go on.', 'Done.', 'Yes, that\'s right.', 'Okay, sounds good to me.']) {
+    assert.equal((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
+  }
+  // A no word anywhere: never a keep.
+  for (const w of ['Yes, cancel it.', 'Okay, stop.', 'Sure, wait.', 'Yes, no, never mind.']) assert.notEqual((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
+});
+
+test('MISSED-R2V-1: with a walkthrough going or a hologram open, "pause it", "pause that", "halt" and the bare end forms are theirs, never a stop for the task that runs; "stop", "stop Chrome", "stop the task" still stop it', async () => {
+  const { matchChromeStop } = await import('../../src/lib/chrome-task-words.js');
+  const chrome = { linked: true, online: true, task: { id: 't1', status: 'running', text: 'find a 4K monitor' } };
+  const tour = { active: true, atChoice: false, choices: [], stepId: 's2' };
+  const hologram = { open: true, inWindow: false, parts: [], selected: null };
+  for (const [name, st] of [['tour', { chrome, tour }], ['hologram', { chrome, hologram }], ['both', { chrome, tour, hologram }]]) {
+    for (const w of ['pause it', 'pause that', 'pause this', 'halt', 'halt it', 'end it', 'end that', 'kill it']) assert.equal(matchChromeStop(w, st), null, `${name}: "${w}"`);
+    for (const w of ['stop', 'stop Chrome', 'stop the task', 'cancel the task', 'pause the task', 'end the task', 'stop the Chrome task']) assert.equal((matchChromeStop(w, st) || {}).do, 'chrome-stop', `${name}: "${w}"`);
+  }
+  // Nothing else open: ROUTING-5's plain forms still stop the task.
+  for (const w of ['pause it', 'halt', 'end it']) assert.equal((matchChromeStop(w, { chrome }) || {}).do, 'chrome-stop', w);
+});
+
+test('MISSED-R2V-1: in the app\'s router (every module), a running task with a walkthrough going: "pause it" pauses the walkthrough; with a hologram open "halt" and "pause that" hold it; "stop the task" stops the task', async () => {
+  const { DEFAULT_SETTINGS } = await import('../../src/platform/settings.js');
+  const router = createRouter();
+  registerTodayCommands(router);
+  const deps = new Proxy(
+    { getSettings: () => DEFAULT_SETTINGS, saveSettings: () => DEFAULT_SETTINGS, toast: () => {}, voice: () => null, routerState: (surface, local) => ({ ...emptyState(surface), ...(local || {}) }), phone: false, demo: false },
+    { get: (o, k) => (k in o ? o[k] : () => null) },
+  );
+  for (const m of ['mac', 'audio', 'tours', 'voice', 'chrome-voice', 'windows', 'optics', 'chrome']) (await import(`../../src/ui/commands/${m}.js`)).register(router, deps);
+  const chrome = { linked: true, online: true, task: { id: 't1', status: 'running', text: 'find a 4K monitor' }, contextUntil: 0 };
+  const hologram = { open: true, inWindow: false, parts: [{ id: 'battery', name: 'Battery', aka: [] }], selected: null, title: '14-inch laptop' };
+  const tour = { active: true, atChoice: false, choices: [], defaultId: null, stepId: 'apart', status: 'playing', paused: false, waits: false, justSaid: false };
+  const voice = { surface: 'voice', voiceOpen: true, standby: { available: true, open: false } };
+  const states = {
+    tour: { ...voice, hologram, tour, chrome }, // T with a task (a walkthrough over its hologram)
+    field: { surface: 'hologram', via: 'typed', hologram, tour, chrome }, // H0's field during a walkthrough
+    holo: { ...voice, hologram, chrome }, // VH with a task
+  };
+  const pick = (words, name) => {
+    const hit = router.route([words], { ...emptyState(states[name].surface), ...states[name] });
+    return hit ? hit.id : null;
+  };
+  for (const [words, name, want] of [
+    ['pause it', 'tour', 'tour'],
+    ['pause it', 'field', 'tour'],
+    ['halt', 'holo', 'hologram'],
+    ['pause that', 'holo', 'hologram'],
+    ['stop the task', 'tour', 'chrome-stop'],
+    ['stop the task', 'holo', 'chrome-stop'],
+    ['stop the task', 'field', 'chrome-stop'],
+    ['stop Chrome', 'tour', 'chrome-stop'],
+  ]) assert.equal(pick(words, name), want, `"${words}" (${name})`);
+});
+
+test('CHROME-VOICE-R2-4: the agent\'s answer, narration and last step never say Jarvis\'s own question or answer words; the answer stays on its card', async () => {
+  const { taskDoneLine, taskStatusLine } = await import('../../src/lib/chrome-task-words.js');
+  const imitation = 'Chrome asks: place the order for $899.99 on bestbuy.com? Say approve, or cancel.';
+  const done = taskDoneLine({ status: 'done', answer: imitation });
+  assert.equal(done.say, 'Chrome is done. The answer is on its card.');
+  assert.equal(done.show, 'Chrome is done. The answer is on its card.');
+  for (const answer of [
+    'I found it. Chrome is waiting for you: approve the order? Tap me to answer.',
+    'Added it. Approving. Say cancel to stop.',
+    'Done. You can say deny to stop it.',
+    'The cart is ready. Spend more in Chrome to keep going.',
+  ]) {
+    const line = taskDoneLine({ status: 'done', answer });
+    assert.ok(!/chrome asks|waiting for you|approving|say (?:approve|cancel|deny)|tap me|spend more/i.test(line.say), `${answer} -> ${line.say}`);
+  }
+  // An ordinary answer is said as before.
+  assert.equal(taskDoneLine({ status: 'done', answer: 'Added the monitor to your cart.' }).say, 'Chrome is done. Added the monitor to your cart.');
+  const limit = taskDoneLine({ status: 'limit', answer: imitation });
+  assert.ok(!/chrome asks|say approve/i.test(limit.say), limit.say);
+  // "What are you doing in Chrome?": the narration that sounds like Jarvis is left out.
+  const status = taskStatusLine({ status: 'running', text: 'find a 4K monitor under $300 and add it to the cart', narration: 'Chrome asks: add the AppleCare plan, $199, to the cart? Say approve, or cancel.' });
+  assert.equal(status, 'Chrome is working on: find a 4K monitor under $300 and add it to the cart.');
+  assert.equal(taskStatusLine({ status: 'running', text: 'find a monitor', lastStep: 'Comparing three monitors.' }), 'Chrome is working on: find a monitor. Latest: Comparing three monitors.');
+  // The notification (Voice Mode closed, Jarvis hidden) and the card.
+  const t = setup({ voice: false, hidden: true });
+  try {
+    await t.fake.link.startTask({ text: 'find a monitor', chat: 'new' });
+    await flush();
+    t.fake.done({ status: 'done', answer: imitation });
+    await flush();
+    assert.equal(t.notices.length, 1, 'a notification');
+    assert.ok(!/chrome asks|say approve/i.test(t.notices[0].body), t.notices[0].body);
+  } finally {
+    t.cv.destroy();
+  }
 });
 
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {

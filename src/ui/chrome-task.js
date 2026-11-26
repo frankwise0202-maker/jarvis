@@ -329,6 +329,22 @@ export function voiceAdapter(api) {
 }
 
 /**
+ * The link's own notices (app.js chromeLinkNotice: D5's late start, and its unconfirmed variant): shown in the chat,
+ * and said in Voice Mode as any line from Chrome is (api.chrome.say: no microphone after it unless this session would
+ * listen anyway; CHROME-VOICE-R2-5, PRIVACY-1). Not said (Voice Mode closed or busy) while Jarvis is hidden: a
+ * notification. `voice`: Voice Mode's api while it is open, else null.
+ */
+export function sayLinkNotice(n, { voice = null, hidden = () => false, toast = null, notify = null } = {}) {
+  const line = n && typeof n.line === 'string' ? n.line : '';
+  if (!line) return;
+  const shown = typeof n.show === 'string' && n.show ? n.show : line; // (`line` is said; `show` may hold ⌘⇧.)
+  if (typeof toast === 'function') quiet(() => toast(shown, { level: 'warn', timeout: 8000 }));
+  const say = voice && voice.chrome && typeof voice.chrome.say === 'function' ? voice.chrome.say : null;
+  const said = !!say && quiet(() => say(line), false);
+  if (!said && quiet(() => hidden(), false) && typeof notify === 'function') quiet(() => notify({ tag: 'chrome-link', title: 'Jarvis', body: shown }));
+}
+
+/**
  * The controller. deps:
  *   link        app.chromeLink (contract (f)), or a function giving it (null until it exists: everything
  *               says "not linked"). Its listeners are attached as soon as it is there.
@@ -964,13 +980,14 @@ export function createChromeVoice(deps = {}) {
    * window shows its cards; the window where Voice Mode is open says it; with Voice Mode open nowhere, the
    * window holding the link sends the notification.
    */
-  function onPrompt(raw, { relayed = false } = {}) {
+  function onPrompt(raw, { relayed = false, from = '' } = {}) {
     if (!raw || typeof raw !== 'object' || !raw.promptId) return;
     const prompt = { ...raw, promptId: String(raw.promptId) };
     if (!relayed) share({ t: 'prompt', prompt });
     let entry = S.prompts.get(prompt.promptId);
     if (!entry) {
-      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now(), direct: !relayed };
+      // from: the window that passed it on (CHROME-VOICE-R2-6: when it closes, this window notifies for it).
+      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now(), direct: !relayed, from: relayed ? from : '' };
       S.prompts.set(prompt.promptId, entry);
     } else {
       entry.prompt = prompt;
@@ -1203,10 +1220,15 @@ export function createChromeVoice(deps = {}) {
         break;
       case 'bye':
         S.peers.delete(from);
-        for (const entry of S.prompts.values()) if (!entry.handle) toVoiceOrNotice(entry);
+        for (const entry of S.prompts.values()) {
+          // The window that passed a question on has closed: this one notifies for it when Voice Mode is open nowhere
+          // (CHROME-VOICE-R2-6).
+          if (!entry.direct && entry.from === from) entry.direct = true;
+          if (!entry.handle) toVoiceOrNotice(entry);
+        }
         break;
       case 'prompt':
-        onPrompt(m.prompt, { relayed: true });
+        onPrompt(m.prompt, { relayed: true, from });
         break;
       case 'prompt-closed':
         onPromptClosed(m.promptId, { relayed: true });

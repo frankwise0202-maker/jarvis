@@ -81,6 +81,11 @@ const LEAD_CARRIERS = [
   'use jarvis for chrome to', 'use google chrome to', 'use chrome to', 'have jarvis for chrome', 'have google chrome', 'have chrome',
   'ask jarvis for chrome to', 'ask chrome to', 'tell jarvis for chrome to', 'tell chrome to', 'get jarvis for chrome to', 'get chrome to',
 ].map(seq);
+// The lead carriers that ask for something: whatever follows is an instruction (G4; CHROME-VOICE-R2-3).
+const ASKING_LEADS = new Set([
+  'use jarvis for chrome to', 'use google chrome to', 'use chrome to', 'have jarvis for chrome', 'have google chrome', 'have chrome',
+  'ask jarvis for chrome to', 'ask chrome to', 'tell jarvis for chrome to', 'tell chrome to', 'get jarvis for chrome to', 'get chrome to',
+]);
 const TAIL_CARRIERS = [
   'in google chrome', 'in chrome', 'on google chrome', 'on chrome', 'using google chrome', 'using chrome', 'with chrome',
   'in jarvis for chrome', 'using jarvis for chrome', 'with jarvis for chrome', 'over in chrome',
@@ -121,16 +126,19 @@ function trim(ws, i = 0, j = ws.length) {
 
 /**
  * The sentence taken apart: its words (fillers off), the carrier that names Chrome ('lead', 'tail'
- * or null) and the words the task would carry. Null for an empty sentence.
+ * or null) and the words the task would carry; `asks`: a lead carrier that asks ("have Chrome …").
+ * Null for an empty sentence.
  */
 function parse(text) {
   const ws = wordsOf(text);
   let { i, j, follow } = trim(ws);
   if (i >= j) return null;
   let carrier = null;
+  let asks = false;
   const lead = LEAD_CARRY.find((words) => startsWith(ws, i, words) && i + words.length < j);
   if (lead) {
     carrier = 'lead';
+    asks = ASKING_LEADS.has(lead.join(' '));
     const t = trim(ws, i + lead.length, j);
     i = t.i;
     j = t.j;
@@ -148,7 +156,7 @@ function parse(text) {
   if (i >= j) return null;
   const words = ws.slice(i, j);
   const s = words.map((x) => x.w).join(' ');
-  return { s, words, carrier, follow: follow || FOLLOW_TAIL.test(s), all: ws.map((x) => x.w).join(' ') };
+  return { s, words, carrier, asks, follow: follow || FOLLOW_TAIL.test(s), all: ws.map((x) => x.w).join(' ') };
 }
 
 // Words an instruction starts with, written in lower case after "Chrome, up to a dollar:".
@@ -158,27 +166,56 @@ const VERBS_SAID_FIRST = new Set(
     'switch remove delete change set close log apply print copy follow visit navigate press tap hit').split(' '),
 );
 
-// With a carrier, only an instruction is a task (ROUTING-2): its first word is a verb for a page ("find", "add",
-// "open", …). "My Gmail won't load in Chrome", "it says access denied in Chrome" are the owner's troubles, and
-// "explain how cookies work in Chrome" a question: Jarvis's, never a paid task.
-const INSTRUCTION_VERBS = new Set([
-  ...VERBS_SAID_FIRST,
-  ...('enter browse research explore track unsubscribe message reply post share like upload pay rate review schedule zoom translate summarise ' +
-    'extract collect gather note bookmark favorite favourite clear empty refresh reload accept submit checkout dismiss fix update edit rename mute ' +
-    'unmute pause resume skip turn fetch scan sign log order buy book reserve click scroll sort filter search look compare pick choose select').split(' '),
-]);
-const NOT_INSTRUCTION = /^(?:show me how|show me why|teach me|tell me how|tell me why|help me understand|open (?:when|whenever|on startup|at startup|every time)\b)/;
+// With a carrier, only an instruction is a task (ROUTING-2), told by the sentence's shape, never by a list of verbs
+// (CHROME-VOICE-R2-3, ROUTING-R2-2): "cancel my Netflix subscription", "email the seller" are instructions as much as
+// "find …". A statement or a trouble is the owner's, for Jarvis to answer: a subject first ("my Gmail won't load", "it
+// says access denied"), or a short noun phrase and then a verb ("log in doesn't work", "order history is empty", "Zoom
+// keeps crashing"). A question was taken out before (R4); "explain …", "teach me …", "tell me how …" ask for help.
+const NOT_INSTRUCTION =
+  /^(?:show me how|show me why|teach me|tell me how|tell me why|help me understand|explain|describe|define|remind me (?:how|what|why|where|when|which)|look at all (?:these|those|this|that|the)|open (?:when|whenever|on startup|at startup|every time))(?:\s|$)/;
+const SUBJECT_FIRST = new Set(
+  ('i im ive id ill my mine it its this that thats there theres the these those our your their his her we they theyre he she hes shes ' +
+    'something everything nothing anything someone somebody everyone everybody nobody a an no not nope nah').split(' '),
+);
+// The verb after the noun phrase. A trouble's ("won't", "keeps", "failed") may follow one with a determiner in it ("find my
+// iPhone won't load"); a plain one ("is", "has", "says") may also follow an instruction's object ("confirm the order is
+// right"), so before it the noun phrase has no determiner after its first word.
+const TROUBLE_VERBS = new Set('wont wouldnt doesnt dont didnt cant cannot couldnt isnt arent wasnt werent hasnt havent keeps kept fails failed stopped broke crashes crashed freezes froze'.split(' '));
+const PLAIN_VERBS = new Set('is are was were has have had does says say said looks look seems seem keep fail'.split(' '));
+// Never inside a noun phrase: a clause or a question starts there ("see if Best Buy has it", "make sure it is").
+const NOT_IN_A_NOUN = new Set('if whether that than then and or but so because sure what which who whom whose when where why how whatever whichever whoever i me you him it us them we they'.split(' '));
+const DETERMINERS = new Set('the a an my your our his her their its this these those some any every each no'.split(' '));
+
+/** The words (normalized) read as a statement: a subject first, or a noun phrase of one to four words and then its verb (or "not …ing"). */
+function statementShape(ws) {
+  if (!ws.length) return false;
+  if (SUBJECT_FIRST.has(ws[0])) return true;
+  // "Sound not working", "videos not loading": a trouble said short.
+  if (ws.slice(1, 5).some((w, n) => w === 'not' && /^[a-z]+ing$/.test(ws[n + 2] || ''))) return true;
+  for (let k = 1; k <= 4 && k < ws.length; k++) {
+    const trouble = TROUBLE_VERBS.has(ws[k]);
+    if (!trouble && !PLAIN_VERBS.has(ws[k])) continue;
+    const rest = ws.slice(1, k);
+    if (rest.some((w) => NOT_IN_A_NOUN.has(w))) return false;
+    const determined = rest.some((w) => DETERMINERS.has(w));
+    if (!determined || (trouble && k <= 3)) return true;
+  }
+  return false;
+}
 
 /**
- * The words after the carrier read as an instruction (ROUTING-2): a page verb first ("let's" and "please" may come
- * before it; so may a site and a colon: "Best Buy: add …").
+ * The words after the carrier read as an instruction (ROUTING-2, CHROME-VOICE-R2-3): after a carrier that asks ("have
+ * Chrome …", "tell Chrome to …"), anything but a request for help; after "… in Chrome" or "in Chrome, …", anything but a
+ * statement or a request for help. A site and a colon may come first ("Best Buy: add …", "Amazon: my order is late").
  */
 function isInstruction(p) {
   const ws = p.words.map((x) => x.w);
-  let k = ws[0] === 'lets' || ws[0] === 'please' ? 1 : 0;
+  const k = ws[0] === 'lets' || ws[0] === 'please' ? 1 : 0;
   const colon = p.words.slice(0, 4).findIndex((x) => /:$/.test(x.raw));
-  if (colon >= 0 && !INSTRUCTION_VERBS.has(ws[k])) k = colon + 1;
-  return !!ws[k] && INSTRUCTION_VERBS.has(ws[k]) && !NOT_INSTRUCTION.test(ws.slice(k).join(' '));
+  const after = colon >= 0 ? ws.slice(colon + 1) : null;
+  if (NOT_INSTRUCTION.test(ws.slice(k).join(' ')) || (after && NOT_INSTRUCTION.test(after.join(' ')))) return false;
+  if (p.asks) return true;
+  return !statementShape(ws.slice(k)) && !(after && statementShape(after));
 }
 
 /** The owner's own words for a task: their spelling, without the carrier, fillers or end stops. */
@@ -190,9 +227,11 @@ function taskWords(words) {
     .replace(/[\s,;:.!—–-]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
-  // "Find …" -> "find …" (the check reads "Chrome, up to a dollar: find …"); "Best Buy …", "USB …" stay.
-  const first = /^([A-Z][a-z]+)(?=\s|$)/.exec(text);
-  if (first && VERBS_SAID_FIRST.has(first[1].toLowerCase())) text = text[0].toLowerCase() + text.slice(1);
+  // "Find …" -> "find …" (the check reads "Chrome, up to a dollar: find …"), as any instruction's first word ("Cancel …",
+  // "Re-order …"; CHROME-VOICE-R2-3); "Best Buy: …" (a site and a colon first) and "USB …" stay.
+  const first = /^([A-Z][a-z]+(?:-[a-z]+)?)(?=\s|$)/.exec(text);
+  const site = words.slice(0, 4).some((x) => /:$/.test(x.raw));
+  if (first && (VERBS_SAID_FIRST.has(first[1].toLowerCase()) || !site)) text = text[0].toLowerCase() + text.slice(1);
   return text;
 }
 
@@ -430,6 +469,10 @@ export function matchChromeStop(text, state = {}) {
   // teaches), "whoa, stop". (With a hologram open, "stop that" / "stop this" stay its own: R10.)
   const holo = state && state.hologram && typeof state.hologram === 'object' && state.hologram.open;
   if (holo && /^stop (?:that|this)$/.test(s)) return null;
+  // MISSED-R2V-1: so are a walkthrough's and the viewer's own: "pause it", "pause that", "halt", "end it" (only the
+  // words that name the task stop it then: "stop the task", "stop Chrome").
+  const tour = state && state.tour && typeof state.tour === 'object' && state.tour.active;
+  if ((holo || tour) && /^(?:halt|(?:pause|end|kill|halt) (?:it|that|this))$/.test(s)) return null;
   // ("Pause", "end" and "kill" need what they stop: a bare "pause" is a walkthrough's word.)
   const what = '(?:it|that|this|the task|the job|what youre doing|what you are doing|clicking|working|that task|this task)';
   if (
@@ -549,18 +592,20 @@ export function taskRefusal(reason, why = '') {
 
 /** What Jarvis says when a task ends (the extension's `done`), as { show, say }. */
 export function taskDoneLine({ status, answer } = {}) {
-  const said = sayable(answer, 400);
-  const full = sayable(answer, 2000);
-  const join = (head, body) => (body ? `${head} ${body}` : head);
+  const said = sayableAnswer(answer, 400);
+  const full = sayableAnswer(answer, 2000);
+  // CHROME-VOICE-R2-4: words in it that sound like Jarvis's own question are never said (nor in a toast or a
+  // notification): the answer is on its card, in full.
+  const join = (head, body) => (said.dropped ? `${head} ${status === 'done' ? 'The answer' : 'What it said'} is on its card.` : body ? `${head} ${body}` : head);
   switch (status) {
     case 'done':
-      return { show: join('Chrome is done.', full), say: join('Chrome is done.', said) };
+      return { show: join('Chrome is done.', full.text), say: join('Chrome is done.', said.text) };
     case 'stopped':
       return { show: 'Chrome stopped.', say: 'Chrome stopped.' };
     case 'limit':
-      return { show: join('Chrome stopped at its limit.', full), say: join('Chrome stopped at its limit.', said) };
+      return { show: join('Chrome stopped at its limit.', full.text), say: join('Chrome stopped at its limit.', said.text) };
     default:
-      return { show: join('Chrome couldn’t finish that.', full), say: join('Chrome couldn’t finish that.', said) };
+      return { show: join('Chrome couldn’t finish that.', full.text), say: join('Chrome couldn’t finish that.', said.text) };
   }
 }
 
@@ -569,7 +614,7 @@ export function taskStatusLine(task) {
   const t = task && typeof task === 'object' ? task : null;
   if (!t || !t.status) return 'Chrome isn’t doing anything right now.';
   const what = sayable(t.text, 160);
-  const step = sayable(t.narration || t.lastStep, 200);
+  const step = sayableAnswer(t.narration || t.lastStep, 200).text; // (CHROME-VOICE-R2-4)
   if (t.status === 'waiting') return `Chrome is waiting for you${what ? ` on: ${what.replace(/[.!?]+$/, '')}` : ''}.`;
   if (t.status === 'paused') return `Chrome is paused${what ? ` on: ${what.replace(/[.!?]+$/, '')}` : ''}.`;
   if (['running', 'starting'].includes(t.status)) {
@@ -579,6 +624,29 @@ export function taskStatusLine(task) {
   if (t.status === 'done') return what ? `Chrome finished: ${what.replace(/[.!?]+$/, '')}.` : 'Chrome finished.';
   if (t.status === 'stopped') return 'Chrome stopped.';
   return 'Chrome isn’t doing anything right now.';
+}
+
+// Jarvis's own question and answer words (CHROME-VOICE-R2-4): his prompt's framing ("Chrome asks", "Chrome is waiting for
+// you", "Approving", "Tap me to answer"), "say approve" and its kin, and the reserved answers (G5).
+const JARVIS_WORDS = [
+  /\bchrome asks\b/i,
+  /\bchrome is waiting for you\b/i,
+  /\bapproving\b/i,
+  /\btap me to answer\b/i,
+  /\b(?:say|you can say|just say)\s+["“'‘]?(?:approve|allow once|spend more|more steps|deny|cancel|yes|no|stop)\b/i,
+  /\b(?:approve|allow (?:it |that )?once|deny|cancel (?:it |that )?in chrome|cancel chrome|stop chrome|stop it in chrome|stop the chrome task|chrome stop|spend more|more steps)\b/i,
+];
+
+/**
+ * The agent's own words (its final answer, narration or last step: written after it read web pages), made safe to say
+ * (CHROME-VOICE-R2-4): sayable(), without any sentence that sounds like Jarvis's own question or his answer words (a
+ * page steering the agent's wording). -> { text, dropped } (dropped: something was left out; the card shows it all).
+ */
+export function sayableAnswer(text, max = 300) {
+  const whole = sayable(text, 4000);
+  const sentences = whole.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  const kept = sentences.filter((x) => !JARVIS_WORDS.some((re) => re.test(x)));
+  return { text: sayable(kept.join(' '), max), dropped: kept.length < sentences.length };
 }
 
 /**
