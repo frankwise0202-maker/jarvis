@@ -280,6 +280,26 @@ test('VT-MISSED-1: the approval\'s check waits for the home base\'s words too; a
   assert.equal(f.fake.calls.startTask.length, 0, 'a cancel the home base never delivered never becomes a send');
 });
 
+// ---- REDTEAM-VOICE-3: a "no" heard as "go" ------------------------------------------------------------------
+
+test('REDTEAM-VOICE-3: during the check, "Go." with "No." as another reading withdraws it; "Start it." with "Stop it." too', async (t) => {
+  for (const [best, other] of [['Go.', 'No.'], ['Start it.', 'Stop it.'], ['Do it.', 'Don\'t.']]) {
+    const s = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : n === 1 ? { text: best, alts: [other], at: 400 } : null) });
+    await taskLineStarted(s);
+    await s.env.advance(8000);
+    assert.equal(s.fake.calls.startTask.length, 0, `${best} / ${other}: nothing sent`);
+    assert.ok(s.said().includes(CANCELLED), `${best} / ${other}: withdrawn, said`);
+  }
+  // Alone, "go" only lets it count on: the full time again, then it goes (never at once).
+  const g = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : n === 1 ? { text: 'Go.', at: 400 } : null) });
+  const line = await taskLineStarted(g);
+  await g.until(() => line.done, 'said');
+  await g.env.advance(350 + 400 + 300);
+  assert.equal(g.fake.calls.startTask.length, 0, '"go" sends nothing at once');
+  await g.env.advance(3000);
+  assert.equal(g.fake.calls.startTask.length, 1);
+});
+
 // ---- REDTEAM-VOICE-12: "no, I said …" keeps "in Chrome" -----------------------------------------------------
 
 test('REDTEAM-VOICE-12: "No, I said find a 5K monitor under $300" during the check: a new Chrome check with those words, never Claude', async (t) => {

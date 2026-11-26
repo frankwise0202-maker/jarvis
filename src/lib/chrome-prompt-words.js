@@ -96,12 +96,16 @@ export function isBareNo(text) {
 
 /**
  * A no, cancel or stop word anywhere in a reading (another reading of a yes that may be a no; or what
- * withdraws the check).
+ * withdraws the check). "Disapprove", "reject", "decline", "refuse", "never" and "hold off" are no words
+ * too (REDTEAM-VOICE-14).
  */
 export function isNoWord(text) {
   const s = normalizeAnswer(text);
   if (!s) return false;
-  return /^(?:no|nope|nah|not|negative|wait|hold on|hold it|never ?mind)(?:\s|$)/.test(s) || /(?:^|\s)(?:cancel|cancelled|deny|denied|stop|dont|do not|abort)(?:\s|$)/.test(s);
+  return (
+    /^(?:no|nope|nah|not|negative|wait|hold on|hold it|hold off|never ?mind|never)(?:\s|$)/.test(s) ||
+    /(?:^|\s)(?:cancel|cancelled|canceled|deny|denied|stop|dont|do not|abort|disapprove|disapproved|reject|rejected|decline|declined|refuse|refused|never)(?:\s|$)/.test(s)
+  );
 }
 
 // ------------------------------------------------------------------------------- the answers
@@ -211,9 +215,33 @@ export function chooseAnswer({ readings, answers, saidAt = null, now = Date.now(
 // it, words that let it go at once, and an affirmation, which lets it count on (from the start: it
 // never sends anything sooner, and is never other words). Anything else isn't the check's: Voice Mode
 // withdraws the check and routes the words as usual.
-const WITHDRAW_WORDS = /^(?:no|nope|nah|cancel|cancel it|cancel that|stop|stop it|stop now|wait|hold on|hold it|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|deny)$/;
-const GO_WORDS = /^(?:start now|start it now|start it|send it|send it now|go ahead|go|do it|do it now|yes start|yes go ahead|start)$/;
-const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|thanks|thank you|uh huh|mhm|mm hmm)$/;
+//   - A no word starting the sentence withdraws it too ("no no", "wait no", "hold on a second"), and so
+//     does any other reading that is a no (a "no" heard as "go"; REDTEAM-VOICE-3, -14).
+//   - The short words that sound like a withdraw word ("go" / "no", "start it" / "stop it", "do it" /
+//     "don't") only let it count on, never go at once (REDTEAM-VOICE-3).
+//   - A stop word ("stop", "stop Chrome") is marked `stop`: a task that runs stops too (REDTEAM-VOICE-4).
+const WITHDRAW_WORDS = /^(?:no|nope|nah|cancel|cancel it|cancel that|cancel cancel|stop|stop it|stop now|stop stop|stop everything|wait|hold on|hold it|hold off|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|stop it in chrome|stop the chrome task|chrome stop|deny)$/;
+// (Not "stop …" or "cancel …": "stop that" with a hologram open, "stop the music", are other words.)
+const WITHDRAW_LEAD = /^(?:no|nope|nah|wait|hold on|hold it|hold off|never ?mind|forget it|not now|dont|do not)(?:\s|$)/;
+const STOP_CHECK_WORDS = /^(?:stop|stop it|stop now|stop stop|stop everything|stop chrome|stop it in chrome|stop the chrome task|stop the task|chrome stop)$/;
+// (Matched before the fillers come off: "start now" lets it go, "start" alone only lets it count on.)
+const GO_WORDS = /^(?:(?:(?:hey |ok |okay )?jarvis|please|okay|ok) )*(?:start (?:it )?(?:right )?now|send it(?: right)?(?: now)?|go ahead(?: and start(?: it)?)?|do it (?:right )?now|yes (?:start(?: it)?(?: now)?|go ahead|send it))(?: (?:please|jarvis|thanks|thank you))*$/;
+const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|thanks|thank you|uh huh|mhm|mm hmm|go|start|start it|do it)$/;
+
+// A question (R4), as the answers see it (normalized): never taken for a hint.
+const ASKING = /^(?:what|whats|why|how|hows|which|who|whos|when|where|wheres|is|are|was|were|does|do|did|should|shall|could|can|would|will|has|have|had|am)(?:\s|$)/;
+
+/** The words lower-cased, punctuation off, nothing else taken off ("start now" keeps its "now"). */
+function plainAnswer(text) {
+  return String(text ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[‘’ʼ`´]/g, "'")
+    .replace(/(\w)'(\w)/g, '$1$2')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 // "No, I said the second one": a corrected task, routed again from the top (D2).
 const CORRECTION = /^\W*(?:(?:no|nope|nah)\W+)?(?:I\s+said|I\s+meant|I\s+mean|what\s+I\s+said\s+was)\W+(.+?)\W*$/i;
 
@@ -240,27 +268,37 @@ const answerAction = (a) => ({ free: true, undo: false, check: false, camera: fa
  * reading (undo: false); Voice Mode's prompt channel applies the 30-s window, the other readings and
  * the check when it acts.
  *   state.chromeCheck ({ kind: 'task' | 'approve' }, Voice Mode's): while a check counts down, "cancel",
- *     "no", "stop" withdraw it; "no, I said …" corrects a task (routed again from the top); "start now"
- *     / "send it" lets it go; "yes", "okay", "thanks" let it count on, from the start.
- *     -> { do: 'chrome-check', how: 'withdraw' | 'correct' | 'go' | 'keep', words? }
+ *     "no", "stop" (or a sentence starting with one: "no no", "wait no") withdraw it, and so does any other
+ *     reading that is a no; "no, I said …" corrects a task (routed again); "start now" / "send it" lets it
+ *     go; "yes", "okay", "go", "start it" let it count on, from the start.
+ *     -> { do: 'chrome-check', how: 'withdraw' | 'correct' | 'go' | 'keep', words?, stop? }
  *     (Other words aren't its: Voice Mode withdraws the check and routes them as usual.)
  *   state.prompt (the open Chrome prompt, with its answers, or the extension's fields): its reserved
  *     words; a bare "cancel" or "no" when it was asked last. -> { do: 'chrome-answer', answer, bare? }
  *     A bare "yes", "okay", "continue" … never answers it; asked last, with no tour and no other
- *     question open, Jarvis says what to say instead. -> { do: 'chrome-hint' }
+ *     question open, Jarvis says what to say instead. A sentence with "approve" in it that isn't one of
+ *     the reserved ones ("yes I approve", "approved") gets the same hint, never Claude. -> { do: 'chrome-hint' }
+ * `readings`: all the recognizer's readings ([best, …others]; the router passes them).
  * (A yes naming Chrome with nothing asked is matchNothingAsked's, in the destination layer.)
  */
-export function matchChromeAnswer(text, state = {}) {
+export function matchChromeAnswer(text, state = {}, readings = null) {
   const st = state && typeof state === 'object' ? state : {};
   const check = st.chromeCheck && typeof st.chromeCheck === 'object' ? st.chromeCheck : null;
   if (check) {
-    const fixed = check.kind === 'task' ? correctionOf(text) : '';
-    if (fixed) return answerAction({ do: 'chrome-check', how: 'correct', words: fixed });
+    const fixed = correctionOf(text);
+    if (fixed) return check.kind === 'task' ? answerAction({ do: 'chrome-check', how: 'correct', words: fixed }) : null;
     const said = normalizeAnswer(text);
-    if (WITHDRAW_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'withdraw' });
-    if (GO_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'go' });
-    if (KEEP_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'keep' });
-    return null;
+    if (!said) return null;
+    if (WITHDRAW_WORDS.test(said) || WITHDRAW_LEAD.test(said)) {
+      return answerAction({ do: 'chrome-check', how: 'withdraw', ...(STOP_CHECK_WORDS.test(said) ? { stop: true } : {}) });
+    }
+    const go = GO_WORDS.test(plainAnswer(text));
+    const keep = !go && KEEP_WORDS.test(said);
+    if (!go && !keep) return null;
+    // Any other reading that is a no: a "no" heard as "go" (the check exists to catch exactly that).
+    const others = (Array.isArray(readings) ? readings : []).filter((r) => typeof r === 'string' && normalizeAnswer(r) !== said);
+    if (others.some((r) => isNoWord(r))) return answerAction({ do: 'chrome-check', how: 'withdraw' });
+    return answerAction({ do: 'chrome-check', how: go ? 'go' : 'keep' });
   }
   const p = st.prompt && typeof st.prompt === 'object' && st.prompt.id ? st.prompt : null;
   if (p) {
@@ -277,7 +315,39 @@ export function matchChromeAnswer(text, state = {}) {
       const no = answers.find((a) => a && a.negative && !a.stopTask);
       if (no) return answerAction({ do: 'chrome-answer', answer: no.id, bare: true });
     }
+    // "Yes I approve", "approved", "go ahead and approve": Chrome's, never a question for Claude. Not an
+    // answer either (a yes counts only as a reserved whole sentence): Jarvis says what to say. (A question
+    // about approving, "should I approve the budget?", stays a question: R4.)
+    if (/(?:^|\s)(?:approve|approved|approving|disapprove)(?:\s|$)/.test(said) && !ASKING.test(said)) return answerAction({ do: 'chrome-hint' });
     return null;
+  }
+  return null;
+}
+
+/**
+ * Typed (the chat, a hologram's or Optics' field: no Voice Mode check there), the router's 'chrome-typed':
+ *   - while a task's countdown runs (`state.chrome.checking`): the check's own words, as by voice ("cancel",
+ *     "no", "stop" withdraw it; "stop" also stops a task that runs; "start now" lets it go; "okay" lets it
+ *     count on; "no, I said …" withdraws it: type the task again) (REDTEAM-VOICE-5);
+ *   - while a prompt waits on its card (`state.chrome.waiting`): a no goes out as the card's would; a yes
+ *     points to the card's button (typing isn't the check) (SPEC §32.3.5, REDTEAM-VOICE-14).
+ * -> { do: 'chrome-check-typed', how: 'withdraw' | 'go' | 'keep' | 'deny' | 'card', stop? } | null
+ */
+export function matchTypedChrome(text, state = {}) {
+  const chrome = state && state.chrome && typeof state.chrome === 'object' ? state.chrome : {};
+  if (chrome.checking) {
+    const a = matchChromeAnswer(text, { chromeCheck: { kind: 'task' } });
+    if (!a) return null;
+    return answerAction({ do: 'chrome-check-typed', how: a.how === 'correct' ? 'withdraw' : a.how, ...(a.stop ? { stop: true } : {}) });
+  }
+  if (Number(chrome.waiting) > 0) {
+    const said = normalizeAnswer(text);
+    if (!said) return null;
+    const kind = reservedKind(text);
+    if (kind === 'deny' || isBareNo(text)) return answerAction({ do: 'chrome-check-typed', how: 'deny' });
+    if (kind === 'approve' || kind === 'once' || kind === 'budget' || kind === 'steps' || /(?:^|\s)(?:approve|approved)(?:\s|$)/.test(said)) {
+      return answerAction({ do: 'chrome-check-typed', how: 'card' });
+    }
   }
   return null;
 }
