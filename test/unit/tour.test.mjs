@@ -617,7 +617,8 @@ test('line sync: the fallback per voice, then the estimate until a real chunk', 
 
 // ---- the player ----------------------------------------------------------------------------------
 
-function fakeTarget({ autoRotate = true } = {}) {
+/** A renderer target with contract (e)'s shape, as hologram.js's tourTarget() gives it. */
+function fakeTarget() {
   const t = {
     log: [],
     emphasis: null,
@@ -626,7 +627,7 @@ function fakeTarget({ autoRotate = true } = {}) {
     labelIds: null,
     selected: null,
     flights: [],
-    rotating: autoRotate,
+    rotateHeld: false,
     settledWith: [],
     setEmphasis(e) {
       t.emphasis = e;
@@ -649,15 +650,13 @@ function fakeTarget({ autoRotate = true } = {}) {
       t.log.push(`select ${id}`);
     },
     setLabels(on) {
-      t.labels = on;
+      t.labels = Array.isArray(on) || !!on;
+      t.labelIds = Array.isArray(on) ? on : null;
     },
-    labelsFor(list) {
-      t.labelIds = list;
+    holdAutoRotate(on) {
+      t.rotateHeld = !!on;
     },
-    autoRotate(on) {
-      t.rotating = on;
-    },
-    getState: () => ({ labels: t.labels, autoRotate: t.rotating }),
+    getState: () => ({ labels: t.labels, autoRotate: true, rotateHeld: t.rotateHeld }),
     settled(ms) {
       t.settledWith.push(ms);
       return Promise.resolve(true);
@@ -737,7 +736,7 @@ test('player: waits for the meshes, then says the first run; the camera moves wh
   const { clock, target, narr, asker, player, holds } = setup();
   const started = player.start();
   assert.equal(player.getState().status, 'starting');
-  assert.equal(target.rotating, false); // auto-rotate off during the tour
+  assert.equal(target.rotateHeld, true); // no idle spin during the tour
   await clock.tick(0);
   await started;
   assert.deepEqual(target.settledWith, [10000]);
@@ -980,7 +979,7 @@ test('player: end restores the renderer and lets go; the hologram stays where it
   assert.equal(target.emphasis, null);
   assert.equal(target.labels, true);
   assert.equal(target.labelIds, null);
-  assert.equal(target.rotating, true);
+  assert.equal(target.rotateHeld, false);
   assert.equal(target.exploded, 1);
   assert.deepEqual(ended, ['owner']);
   assert.deepEqual(holds, ['hold', 'release']);

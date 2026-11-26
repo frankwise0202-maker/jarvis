@@ -198,6 +198,9 @@ const AGENT_WORDS = {
 };
 
 let current = null; // the open instance; there is only ever one
+// v8.1 walkthroughs: whether this device's own voice sends start events (learned from a tour's first
+// chunk: real events come at once, an assumed start after 3 s); null until known. Sets the fallback.
+let deviceStartEvents = null;
 const voicedRuns = new WeakSet(); // runs whose answer Voice Mode had begun to say when it closed
 
 /**
@@ -1660,7 +1663,8 @@ function createVoiceMode(opts) {
       return;
     }
     S.silentTries += 1;
-    if (S.silentTries < SILENT_TRIES_MAX && !L.oneTry) {
+    // A walkthrough's decision always waits: listen again until its 60 s run out (critique H5).
+    if ((S.silentTries < SILENT_TRIES_MAX || decisionWaits()) && !L.oneTry) {
       setStatus('Listening again…', 'mic');
       S.retryTimer = setTimeout(() => {
         S.retryTimer = 0;
@@ -3209,6 +3213,14 @@ function createVoiceMode(opts) {
   function speakAck(text) {
     if (S.closed) return;
     const line = String(text || '').trim();
+    // v8.1: a word that moved a walkthrough on ("next", "enclosed") has no line of its own: the step
+    // being said is it, so the narration goes on undisturbed.
+    if (!line && S.speech && S.speech.kind === 'tour') {
+      setVoiceState('speaking');
+      setStatus('Speaking', 'speaker');
+      renderControls();
+      return;
+    }
     if (line && S.ttsOk) {
       speak(line, 'ack');
       return;
@@ -3351,7 +3363,15 @@ function createVoiceMode(opts) {
     if (S.listen) stopListening();
     speak(text, kind, 0, { onChunk: typeof o.onChunk === 'function' ? o.onChunk : null, onEnd, listenAfter });
     const sp = S.speech;
+    // Which voice says it: the narrator's fallbacks differ (George 4 s; the device voice 1.5 s with
+    // start events, else its 3 s assumption: src/lib/tour.js voicePacing).
+    const voice = narrationVoice();
+    if (sp) {
+      sp.voice = voice;
+      sp.begunAt = Date.now();
+    }
     return {
+      voice,
       cancel() {
         if (!sp || S.speech !== sp) return false;
         cancelSpeech();
@@ -3359,6 +3379,25 @@ function createVoiceMode(opts) {
         return true;
       },
     };
+  }
+
+  /** The voice a narration started with: { kind: 'george' } or { kind: 'device', startEvents }. */
+  function narrationVoice() {
+    let engine = null;
+    try {
+      // The voice router reports the device voice at once; George's stream may still wait for him.
+      if (typeof tts.voiceNow !== 'function') return { kind: 'device', startEvents: deviceStartEvents };
+      engine = tts.voiceNow() || (typeof tts.activeEngine === 'function' ? tts.activeEngine() : null);
+    } catch {
+      engine = 'device';
+    }
+    return engine === 'device' ? { kind: 'device', startEvents: deviceStartEvents } : { kind: 'george' };
+  }
+
+  /** A walkthrough's decision waits on top of the questions: Voice Mode keeps listening for its answer. */
+  function decisionWaits() {
+    const q = questions.top();
+    return !!(q && q.keep && String(q.id || '').startsWith('tour:'));
   }
 
   /** A narration ended (once): its onEnd(reason). */
@@ -3887,6 +3926,9 @@ function createVoiceMode(opts) {
       onChunk: null, // v8.1 narrate(): each chunk as it starts, { start, end } in the display text
       onEnd: null, // v8.1 narrate(): onEnd(reason), once
       listenAfter: null, // v8.1 narrate(): null (today's rule) | false | { noSpeechMs }
+      voice: null, // v8.1 narrate(): the voice it started with ({ kind, startEvents })
+      begunAt: 0, // v8.1 narrate(): when it was asked for
+      chunked: false, // v8.1 narrate(): its first chunk was seen
       ended: false,
     };
   }
@@ -3968,6 +4010,11 @@ function createVoiceMode(opts) {
     sp.idle = false;
     if (!sp.started) onSpeechStart(sp);
     if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));
+    // v8.1 narrate(): the device voice's first chunk tells whether it sends start events.
+    if (sp.kind === 'tour' && !sp.chunked && sp.voice && sp.voice.kind === 'device' && sp.begunAt) {
+      sp.chunked = true;
+      deviceStartEvents = Date.now() - sp.begunAt < 2000;
+    }
     // v8.1 narrate(): the narrator learns each chunk as it starts (offsets in the text it gave).
     if (sp.onChunk) {
       const from = displayIndex(sp, start);
@@ -4113,8 +4160,9 @@ function createVoiceMode(opts) {
       return;
     }
     const once = !!after && typeof after === 'object';
-    // Woken: the offer was just made, so Jarvis listens for the answer (Continuous or not).
-    const asking = !!S.wake && S.wake.phase === 'asking';
+    // Woken: the offer was just made, so Jarvis listens for the answer (Continuous or not). So does a
+    // walkthrough's decision ("enclosed, or opened?"), while it waits.
+    const asking = (!!S.wake && S.wake.phase === 'asking') || decisionWaits();
     if ((S.continuous || asking || once) && S.sttOk && !S.typing && !S.sttBlocked && !away()) {
       // Hands-free: listen again once the speaker has gone quiet.
       const listen = once ? { keepAnswer: true, noSpeechMs: Number(after.noSpeechMs) || 0, oneTry: true } : { keepAnswer: true };

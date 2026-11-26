@@ -25,6 +25,19 @@
 //                           canListen (the mic listens instead of stopping: a hologram is building) }
 //   v.close()  v.isOpen()  v.getState()
 //   getHologramViewer()     the open viewer or null (one at a time)
+//   Walkthroughs (v8.1, SPEC §29; src/ui/hologram/tour-player.js plays them on the renderer's tourTarget()):
+//   v.startTour({ partId, plan })  a tour of this hologram (the free local plan unless one is given):
+//                           { ok: true } | { ok: false, reason: 'building' | 'nogl' | 'none' | 'closed' }
+//   v.tour()                the tour's state for the router ({ active, atChoice, choices, defaultId,
+//                           stepId, paused, waits, justSaid, status, index, total, view }) or null
+//   v.tourCommand(action)   { do: 'tour-next' | 'tour-back' | … } (src/ui/commands/tours.js): truthy
+//                           when it acted; { say } for a view shown away from a decision
+//   v.showView(view, partId) no tour: "show it enclosed / opened" on that part → { say } | null
+//   v.viewerContext()       what is on screen, for the turn context (startTurn's viewer option)
+//   The tour bar replaces the assembly row and the tools while it runs; ← and → step, Space pauses and
+//   plays, Esc ends the tour first (then closes as before); a touch on the model pauses it; a hidden
+//   page pauses it and lets go of Voice Mode's hold. deps.tourVoice() (the open Voice Mode, or null)
+//   speaks it (narrate), asks its decisions (question, kept open) and holds a woken session.
 //
 // Chrome: title and part count, Assembled/Exploded with a slider, Labels, Rotate, View, Parts, 2D,
 // Photos, Reset, Close; a part card (name, group, info, material, Build 2D blueprint / Open
@@ -38,6 +51,8 @@
 // (on|off), data-selected (part id), data-isolated, data-view, data-rotate, data-panel,
 // data-model (library id), data-meshing (pending|settled: hull bodies and panels still meshing) and
 // data-mesher (worker|main: where they were meshed), so tests never depend on raycasting pixels.
+// Walkthroughs: data-tour (on), data-tour-status, data-tour-step, data-tour-index, data-tour-total,
+// data-tour-view, and the renderer's emphasis as data-glow, data-ghost and data-hide (part ids).
 // Text from specs and replies is only ever set with textContent.
 
 import { h, setText, clear } from '../dom.js';
@@ -49,6 +64,8 @@ import { createPhotoStrip, createPhotoViewer } from '../photos.js';
 import { photoQueries, searchPhotos, searchPhotosMerged } from '../../platform/photos.js';
 import { cutAtBreak } from '../voice-stream.js';
 import { listenPhrases } from '../voice-heard.js';
+import { choiceReply, localTourPlan, partPlacement, partViewShow, spokenName } from '../../lib/tour.js';
+import { createTourBar, createTourPlayer } from './tour-player.js';
 
 const LIVE_INTERVAL = 125; // ms between live-build updates (about 8 per second)
 const VIEW_CYCLE = ['front-left', 'front', 'left', 'top', 'back', 'front-right'];
@@ -65,6 +82,8 @@ const VIEW_LABELS = {
   'back-right': 'Rear three-quarter view (right)',
 };
 const CAPTION_HIDE_MS = 20000;
+// Commands that leave a "show it enclosed" look on the model (the others change what is shown).
+const KEEPS_VIEW = new Set(['labels-on', 'labels-off', 'rotate', 'stop', 'zoom-in', 'zoom-out', 'view', 'photos', 'parts-list', 'blueprint', 'close', 'close-blueprint', 'which-part']);
 const SPOKEN_HIDE_MS = 3000; // Voice Mode has said the reply: the caption only repeats it
 const HEARD_HIDE_MS = 6000; // Voice Mode's "what I heard" line (its 2-second check) goes after this long
 const DESKTOP_MQ = '(min-width: 900px)';
@@ -208,6 +227,9 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   let voiceWords = false; // the command field shows words Voice Mode is hearing
   let thumbDone = false;
   let lastSelectedId = null; // the last part shown ("isolate it" after the card was closed)
+  let tour = null; // the walkthrough playing: { player, bar, plan, voice }
+  let viewLook = false; // "show it enclosed" (no tour) put an emphasis on the model
+  const readyWaiters = []; // startTour before the renderer is up: resolved when it is
 
   // ---- DOM ------------------------------------------------------------------------------------
 
@@ -292,17 +314,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   });
   syncSend();
 
-  const bar = h(
-    'footer',
-    { class: 'hv__bar' },
-    h(
-      'div',
-      { class: 'hv__bar-inner' },
-      h('div', { class: 'hv__row' }, h('div', { class: 'hv__seg', attrs: { role: 'group', 'aria-label': 'Assembly' } }, segAssembled, segExploded), slider),
-      h('div', { class: 'hv__tools' }, tLabels, tRotate, tView, tParts, t2d, tPhotos, tReset),
-      cmdForm,
-    ),
+  const barInner = h(
+    'div',
+    { class: 'hv__bar-inner' },
+    h('div', { class: 'hv__row' }, h('div', { class: 'hv__seg', attrs: { role: 'group', 'aria-label': 'Assembly' } }, segAssembled, segExploded), slider),
+    h('div', { class: 'hv__tools' }, tLabels, tRotate, tView, tParts, t2d, tPhotos, tReset),
+    cmdForm,
   );
+  const bar = h('footer', { class: 'hv__bar' }, barInner);
 
   // Part card
   const cardGroup = h('p', { class: 'hv__card-group' });
@@ -421,6 +440,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     applyModel(true);
     holoReady = true;
     while (pendingOps.length) run(pendingOps.shift());
+    if (tour && typeof holo.holdAutoRotate === 'function') safe(() => holo.holdAutoRotate(true));
+    while (readyWaiters.length) readyWaiters.shift()(true);
     layout();
   }
 
@@ -482,6 +503,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   /** Switch to another hologram (a new one Jarvis built from words typed here). */
   function switchTo(nextSource) {
+    endTour('replaced'); // a different hologram: the tour was about the one before
+    viewLook = false;
     model = modelFromSource(nextSource);
     selectedPart = null;
     card.hidden = true;
@@ -578,6 +601,11 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     ds.model = model.libraryId || '';
     ds.meshing = state.meshing ? 'pending' : 'settled';
     ds.mesher = state.mesher || '';
+    // walkthroughs: the renderer's emphasis (what glows, what is see-through, what is hidden)
+    const emphasis = state.emphasis && typeof state.emphasis === 'object' ? state.emphasis : null;
+    ds.glow = emphasis && Array.isArray(emphasis.glow) ? emphasis.glow.join(' ') : '';
+    ds.ghost = emphasis && Array.isArray(emphasis.ghost) ? emphasis.ghost.join(' ') : '';
+    ds.hide = emphasis && Array.isArray(emphasis.hide) ? emphasis.hide.join(' ') : '';
     if (panel === 'parts') markSelectedRow();
     ds.segment = model.segmentId || '';
     loading.hidden = !!(holo && holoReady && (state.ready || !building)) || ds.state === 'nogl';
@@ -597,6 +625,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
   }
 
   function showCard(id, part) {
+    if (viewLook && (!id || id !== (selectedPart && selectedPart.id))) clearViewLook(); // another part: the view it had goes
     selectedPart = part || partById(id);
     if (!selectedPart) {
       card.hidden = true;
@@ -965,6 +994,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       if (el.dataset.state !== 'nogl') pendingOps.push(cmd);
       return '';
     }
+    // "Show it enclosed" put a look on the model: a command that changes what is shown takes it off.
+    if (viewLook && !KEEPS_VIEW.has(cmd.action)) clearViewLook();
     switch (cmd.action) {
       case 'explode':
         holo.explode(1);
@@ -1069,7 +1100,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     capText.scrollTop = capText.scrollHeight;
     if (turnId) captionTurn = { conversationId: model.conversationId, turnId };
     // What Voice Mode heard is not a reply: no "Open in chat" for an earlier one under it.
-    capOpen.hidden = status === 'heard' || !captionTurn || typeof deps.openInChat !== 'function';
+    capOpen.hidden = status === 'heard' || status === 'tour' || !captionTurn || typeof deps.openInChat !== 'function';
     if (status === 'done' || status === 'error' || status === 'stopped') captionTimer = setTimeout(hideCaption, status === 'done' ? doneHideMs() : CAPTION_HIDE_MS);
     else if (status === 'heard') captionTimer = setTimeout(hideCaption, HEARD_HIDE_MS);
     layoutSoon();
@@ -1163,15 +1194,25 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   /** v8.1: a local command the app carried out (Screens, Apple Music): its line in the caption, once known. */
   function showNotice(notice) {
-    showCaption({ status: 'thinking', text: '' });
+    let known = false;
     Promise.resolve(notice).then(
       (line) => {
-        if (!disposed) showCaption({ status: 'done', text: String(line ?? '') });
+        known = true;
+        if (disposed) return;
+        const text = String(line ?? '').trim();
+        // No line (a walkthrough's word: the step it starts is the answer): nothing to show.
+        if (text) showCaption({ status: 'done', text });
+        else if (!caption.hidden && caption.dataset.state === 'thinking') hideCaption();
       },
       (err) => {
+        known = true;
         if (!disposed) showCaption({ status: 'error', text: (err && err.message) || 'That message couldn’t be sent.' });
       },
     );
+    // "Thinking…" only while the line takes a moment (a command that acts at once shows its line at once).
+    setTimeout(() => {
+      if (!known && !disposed) showCaption({ status: 'thinking', text: '' });
+    }, 0);
   }
 
   async function sendToJarvis(text) {
@@ -1445,10 +1486,295 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   function onEscape() {
     if (photoViewer) return photoViewer.close();
+    if (tour) return endTour('esc'); // a walkthrough ends first; the next Esc closes as before
     if (panel) return closePanel();
     if (selectedPart || state.selected) return run({ action: 'deselect' });
     return api.close();
   }
+
+  // ---- walkthroughs (v8.1, SPEC §29) ----------------------------------------------------------------
+
+  /** Resolves true once the renderer is up (now or later), false after `ms` (or with no 3D view). */
+  function rendererReady(ms) {
+    if (holo && holoReady) return Promise.resolve(true);
+    if (disposed || el.dataset.state === 'nogl') return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const done = (ok) => {
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = setTimeout(() => {
+        const i = readyWaiters.indexOf(done);
+        if (i >= 0) readyWaiters.splice(i, 1);
+        resolve(false);
+      }, ms);
+      readyWaiters.push(done);
+    });
+  }
+
+  /**
+   * The tour's renderer target (contract (e)): the renderer's tourTarget(), reached through whatever
+   * renderer is up when a step is shown (a tour started as the viewer opens waits for it in settled()).
+   */
+  function tourTarget() {
+    const call = (name, ...args) => {
+      const t = holo && holoReady && typeof holo.tourTarget === 'function' ? safe(() => holo.tourTarget(), null) : null;
+      return t && typeof t[name] === 'function' ? safe(() => t[name](...args), undefined) : undefined;
+    };
+    return {
+      setEmphasis: (e) => call('setEmphasis', e),
+      flyTo: (o) => call('flyTo', o),
+      explode: (v, animate) => call('explode', v, animate),
+      focus: (id) => call('focus', id),
+      select: (id) => call('select', id),
+      setLabels: (on) => call('setLabels', on),
+      holdAutoRotate: (on) => call('holdAutoRotate', on),
+      getState: () => call('getState'),
+      settled: (ms) => rendererReady(ms).then((ok) => (ok ? call('settled', ms) : false)),
+    };
+  }
+
+  /** Voice Mode, while it is open under the viewer (it says the tour, asks its decisions, holds a woken session). */
+  const liveVoice = () => {
+    const v = typeof deps.tourVoice === 'function' ? safe(() => deps.tourVoice(), null) : null;
+    return v && typeof v.narrate === 'function' ? v : null;
+  };
+  const tourNarrator = { narrate: (o) => { const v = liveVoice(); return v ? v.narrate(o) : null; } };
+  const tourAsker = {
+    ask: (q) => {
+      const v = liveVoice();
+      if (!v || typeof v.question !== 'function') return null;
+      // Kept open: other words heard at the decision are routed as usual (a question about the part).
+      return v.question({ id: q.id, say: q.say, choices: q.choices, match: (text) => choiceReply(text, q.choices, { defaultId: q.defaultId }), keep: true, onAnswer: q.onAnswer, onExpire: q.onExpire });
+    },
+  };
+  const tourHolder = {
+    hold: () => { const v = liveVoice(); if (v && typeof v.hold === 'function') v.hold('tour'); },
+    release: () => { const v = liveVoice(); if (v && typeof v.release === 'function') v.release('tour'); },
+  };
+  /** A short line: said by Voice Mode when it is open, else shown. */
+  const tourSay = (line) => {
+    const v = liveVoice();
+    if (!(v && typeof v.say === 'function' && safe(() => v.say(line), false))) say(line);
+  };
+  const tourVoiceDeps = () => (liveVoice() ? { narrator: tourNarrator, asker: tourAsker, holder: tourHolder, say: tourSay } : { narrator: null, asker: null, holder: null, say: tourSay });
+
+  /** Start a walkthrough of this hologram: the free local plan (part tour with partId), or `plan`. */
+  function startTour({ partId = null, plan = null } = {}) {
+    if (disposed) return { ok: false, reason: 'closed' };
+    if (el.dataset.state === 'nogl') return { ok: false, reason: 'nogl' };
+    if (model.status === 'building' || !model.spec) return { ok: false, reason: 'building' };
+    const p = plan || safe(() => localTourPlan(model.spec, { partId }), null);
+    if (!p || !Array.isArray(p.steps) || !p.steps.length) return { ok: false, reason: 'none' };
+    endTour('replaced');
+    clearViewLook();
+    if (panel) closePanel();
+    const t = { plan: p, player: null, bar: null, voiced: !!liveVoice() };
+    t.bar = createTourBar({
+      onBack: () => tour === t && t.player.back(),
+      onToggle: () => tour === t && t.player.toggle(),
+      onNext: () => tour === t && t.player.next(),
+      onEnd: () => tour === t && endTour('owner'),
+      onChoose: (id) => tour === t && t.player.choose(id, { via: 'tap' }),
+    });
+    tour = t;
+    const settings = typeof deps.getSettings === 'function' ? safe(() => deps.getSettings(), {}) : {};
+    t.player = createTourPlayer({
+      plan: p,
+      target: tourTarget(),
+      ...tourVoiceDeps(),
+      rate: Number(settings && settings.voiceRate) || 1,
+      spec: model.spec,
+      onChange: (st) => tour === t && onTourChange(st),
+    });
+    barInner.insertBefore(t.bar.el, cmdForm);
+    el.dataset.tour = 'on';
+    t.bar.render(t.player.getState());
+    // Space and the arrows work at once (the overlay's first focus, Close, would take Space)
+    if (document.activeElement === closeBtn || document.activeElement === document.body) safe(() => t.bar.el.querySelector('[data-testid="tour-toggle"]').focus());
+    t.player.start();
+    if (document.hidden) t.player.setHidden(true);
+    layoutSoon();
+    return { ok: true, plan: p };
+  }
+
+  /** End the walkthrough (the hologram stays where it is). True when there was one. */
+  function endTour(reason = 'owner') {
+    const t = tour;
+    if (!t) return false;
+    tour = null;
+    safe(() => t.player.end(reason));
+    t.bar.destroy();
+    const ds = el.dataset;
+    for (const k of ['tour', 'tourStatus', 'tourStep', 'tourIndex', 'tourTotal', 'tourView']) delete ds[k];
+    if (!caption.hidden && caption.dataset.state === 'tour') hideCaption();
+    layoutSoon();
+    return true;
+  }
+
+  function onTourChange(st) {
+    if (disposed || !tour) return;
+    tour.bar.render(st);
+    const ds = el.dataset;
+    ds.tourStatus = st.status;
+    ds.tourStep = st.stepId || '';
+    ds.tourIndex = String(st.index || 0);
+    ds.tourTotal = String(st.total || 0);
+    ds.tourView = st.view || '';
+    // Phones: the bar keeps the count and the buttons; the step's words are the caption.
+    if (!isDesktop() && st.status !== 'ended') {
+      const words = st.status === 'choice' ? st.ask : st.say;
+      if (words && (caption.hidden || caption.dataset.state !== 'tour' || capText.textContent !== words)) showCaption({ status: 'tour', text: words });
+    }
+  }
+
+  /** The tour's state for the router (contract (b)'s `tour`), or null when none runs. */
+  function tourState() {
+    const p = tour && tour.player;
+    const st = p ? p.getState() : null;
+    if (!st || st.status === 'ended' || st.status === 'idle') return null;
+    const atChoice = st.status === 'choice' && st.choices.length > 0;
+    return {
+      active: true,
+      atChoice,
+      choices: atChoice ? st.choices : [],
+      defaultId: st.defaultId,
+      stepId: st.stepId,
+      status: st.status,
+      paused: st.status === 'paused',
+      waits: st.status === 'waiting',
+      // "what?" asks for the step again only right after it was said (it waits, or is done)
+      justSaid: st.status === 'waiting' || st.status === 'done' || atChoice,
+      index: st.index,
+      total: st.total,
+      view: st.view,
+      parts: st.parts,
+    };
+  }
+
+  /** A tour word (src/ui/commands/tours.js): what it did, truthy; { say } for a view without a step. */
+  function tourCommand(action) {
+    const p = tour && tour.player;
+    if (!p || !action) return false;
+    switch (action.do) {
+      case 'tour-next':
+        p.next();
+        return true;
+      case 'tour-back':
+        p.back();
+        return true;
+      case 'tour-repeat':
+        p.repeat();
+        return true;
+      case 'tour-pause':
+        return p.pause('owner');
+      case 'tour-resume':
+        p.resume();
+        return true;
+      case 'tour-end':
+        return endTour('owner');
+      case 'tour-choice':
+        return p.choose(action.choice, { via: 'voice' }) || true;
+      case 'tour-jump':
+        return p.jump(action.partId);
+      case 'tour-view': {
+        if (!p.showView(action.view)) return { say: viewLine(action.view, null) };
+        // the plan's own step says it; else the view is shown, paused, with a line
+        const st = p.getState();
+        return st.status === 'paused' ? { say: viewLine(action.view, st.parts[0] || tour.plan.for) } : true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  /** The line for "show it enclosed / opened" without a step of its own. */
+  function viewLine(view, partId) {
+    const part = partId ? partById(partId) : null;
+    if (!part) return view === 'opened' ? 'I can’t show that one opened.' : 'I can’t show that one enclosed.';
+    const the = spokenName(part.name);
+    if (view === 'enclosed') return `Here’s ${the}, enclosed: the case is see-through.`;
+    const place = model.spec ? safe(() => partPlacement(model.spec, part.id), null) : null;
+    return place && place.wayIn ? `Here’s ${the}, with ${place.wayIn} off.` : `Here’s ${the}, opened up.`;
+  }
+
+  /** No tour: "show it enclosed / opened" on a part (the selected one): that view, and its line. */
+  function showViewOutside(view, partId = null) {
+    if (disposed || tour) return null;
+    const id = partId || state.selected;
+    const part = id ? partById(id) : null;
+    if (!part || !holo || !holoReady || typeof holo.tourTarget !== 'function') return null;
+    const show = model.spec ? safe(() => partViewShow(model.spec, part.id, view), null) : null;
+    if (!show) return view === 'opened' ? { say: `${spokenName(part.name).replace(/^the/, 'The')} doesn’t come out in this hologram, so I can’t show it opened.` } : null;
+    const target = holo.tourTarget();
+    if (!viewLook) viewLook = { labels: state.labels !== false };
+    safe(() => target.setEmphasis({ glow: show.glow, ghost: show.ghost, hide: show.hide }));
+    safe(() => target.explode(show.explode));
+    safe(() => target.setLabels(show.glow));
+    safe(() => target.flyTo({ ids: [part.id], frame: show.frame, ...(show.camera ? { view: show.camera } : {}) }));
+    return { say: viewLine(view, part.id) };
+  }
+
+  /** The look "show it enclosed" left goes (another part, "reset", a tour). */
+  function clearViewLook() {
+    const look = viewLook;
+    if (!look) return;
+    viewLook = false;
+    const t = holo && holoReady && typeof holo.tourTarget === 'function' ? safe(() => holo.tourTarget(), null) : null;
+    if (!t) return;
+    safe(() => t.setEmphasis(null));
+    safe(() => t.setLabels(look.labels !== false));
+  }
+
+  /** What is on screen, for a question's turn context (startTurn's viewer option). */
+  function viewerContext() {
+    if (disposed) return null;
+    const name = (id) => {
+      const p = partById(id);
+      return p ? p.name : id;
+    };
+    const emphasis = state.emphasis && typeof state.emphasis === 'object' ? state.emphasis : null;
+    const glowing = emphasis && Array.isArray(emphasis.glow) ? emphasis.glow.filter((id) => partById(id)).map((id) => ({ id, name: name(id) })) : [];
+    const st = tour && tour.player ? tour.player.getState() : null;
+    const main = st && st.parts && st.parts[0] ? st.parts[0] : null;
+    return {
+      title: (model.spec && model.spec.title) || model.title || '',
+      exploded: Number(state.exploded) || 0,
+      selected: state.selected ? { id: state.selected, name: name(state.selected) } : null,
+      glowing,
+      tour: st && st.status !== 'ended' && st.status !== 'idle' ? { index: st.index, total: st.total, part: main ? spokenName(name(main)) : '', view: st.view } : null,
+    };
+  }
+
+  // ←, →, Space (not while typing): the tour's steps; Esc ends it first (onEscape).
+  function onTourKey(e) {
+    if (!tour || e.altKey || e.ctrlKey || e.metaKey) return;
+    const target = e.target && typeof e.target.closest === 'function' ? e.target : null;
+    if (target && target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+    const space = e.key === ' ' || e.key === 'Spacebar';
+    if (space && target && target.closest('.hv__tour button')) return; // the bar's own button takes it
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && !space) return;
+    e.preventDefault();
+    if (e.type !== 'keydown' || e.repeat) return;
+    const p = tour.player;
+    if (e.key === 'ArrowLeft') p.back();
+    else if (e.key === 'ArrowRight') p.next();
+    else p.toggle();
+  }
+  el.addEventListener('keydown', onTourKey);
+  el.addEventListener('keyup', onTourKey); // Space on another button (Close) must not click it during a tour
+
+  // A touch or drag on the model pauses the tour (Play goes on from that step).
+  const onStagePress = () => {
+    if (tour && tour.player) tour.player.pause('touch');
+  };
+  stage.addEventListener('pointerdown', onStagePress);
+
+  // A hidden page stops drawing: the tour pauses and lets go of the session; shown again, it goes on.
+  const onVisibility = () => {
+    if (tour && tour.player) tour.player.setHidden(document.hidden);
+  };
+  document.addEventListener('visibilitychange', onVisibility);
 
   // ---- public controller --------------------------------------------------------------------------
 
@@ -1545,7 +1871,20 @@ export function openHologramViewer({ source, deps = {} } = {}) {
       voiceInfo = info && typeof info === 'object' ? { ...info } : null;
       syncVoiceMic();
       el.dataset.voice = voiceInfo ? (voiceInfo.listening ? 'listening' : voiceInfo.state || 'idle') : '';
+      // A walkthrough speaks through Voice Mode while it is open (and on its own when it closes).
+      const voiced = !!liveVoice();
+      if (tour && tour.voiced !== voiced) {
+        tour.voiced = voiced;
+        tour.player.setVoice(tourVoiceDeps());
+      }
     },
+    /** v8.1 walkthroughs (see the file comment). */
+    startTour: (opts) => startTour(opts),
+    tour: () => tourState(),
+    tourCommand: (action) => tourCommand(action),
+    endTour: (reason) => endTour(reason),
+    showView: (view, partId) => showViewOutside(view, partId),
+    viewerContext: () => viewerContext(),
     /**
      * The command field: a local command first, otherwise a chat message to Jarvis. v8.1: the app's
      * router (deps.route) picks the command, in this surface's order (today: this hologram's, then
@@ -1576,8 +1915,14 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     },
     close() {
       if (disposed) return;
+      endTour('closed');
       disposed = true;
       if (active === api) active = null;
+      while (readyWaiters.length) readyWaiters.shift()(false);
+      el.removeEventListener('keydown', onTourKey);
+      el.removeEventListener('keyup', onTourKey);
+      stage.removeEventListener('pointerdown', onStagePress);
+      document.removeEventListener('visibilitychange', onVisibility);
       clearTimeout(liveTimer);
       clearTimeout(toastTimer);
       clearTimeout(captionTimer);

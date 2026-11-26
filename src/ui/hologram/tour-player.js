@@ -1,7 +1,7 @@
 // The walkthrough player and its bar (SPEC §29). The player plays a tour plan (src/lib/tour.js) on a
-// renderer target (contract (e): setEmphasis, flyTo, explode, focus, select, setLabels, settled), so
-// any renderer can show a tour; it never touches the viewer's DOM. The bar is a separate element
-// the viewer mounts.
+// renderer target (contract (e), holo.tourTarget(): setEmphasis, flyTo, explode, focus, select,
+// setLabels(true | false | [ids]), settled, holdAutoRotate), so any renderer can show a tour; it
+// never touches the viewer's DOM. The bar is a separate element the viewer mounts.
 //
 //   const player = createTourPlayer({ plan, target, narrator, asker, holder, say, clock, onChange, onEnd })
 //   await player.start()          after target.settled() (at most 10 s): the first step
@@ -137,17 +137,15 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
 
   const partsOf = (step) => (step && Array.isArray(step.parts) && step.parts.length ? step.parts : Array.isArray(look.glow) ? look.glow : []);
 
+  /** Labels: none, every part's, or only the step's parts' (setLabels takes a list of ids for that). */
   function applyLabels(mode, ids) {
-    if (mode === 'none') return safe(() => target.setLabels(false));
-    safe(() => target.setLabels(true));
-    if (typeof target.labelsFor === 'function') safe(() => target.labelsFor(mode === 'parts' ? ids : null));
+    safe(() => target.setLabels(mode === 'none' ? false : mode === 'parts' && ids.length ? ids.slice() : true));
   }
 
-  function flyTo(ids, frame, camera, zoom) {
+  function flyTo(ids, frame, camera) {
     const opts = { ids, frame: ids.length ? frame || 'parts' : 'all' };
     if (camera && typeof camera === 'object' && Array.isArray(camera.dir)) opts.dir = camera.dir;
     else if (typeof camera === 'string') opts.view = camera;
-    if (zoom) opts.zoom = zoom;
     const p = safe(() => target.flyTo(opts), null);
     if (p && typeof p.catch === 'function') p.catch(NOOP);
   }
@@ -166,7 +164,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     if ('explode' in show || (replay && 'explode' in look)) safe(() => target.explode(look.explode));
     if ('labels' in show || (replay && 'labels' in look)) applyLabels(look.labels, ids);
     if ('card' in show) safe(() => target.select(show.card ? ids[0] || null : null));
-    if (show.frame || show.camera || show.zoom || (replay && (look.frame || look.camera))) flyTo(ids, look.frame, look.camera, show.zoom);
+    if (show.frame || show.camera || (replay && (look.frame || look.camera))) flyTo(ids, look.frame, look.camera);
     if (show.photos && typeof target.photos === 'function') safe(() => target.photos(ids[0] || null));
     changed();
   }
@@ -441,9 +439,8 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     // The hologram stays where it is; the tour's glow, see-through case and hidden covers go.
     safe(() => target.setEmphasis(null));
     if (before) {
-      if (typeof target.labelsFor === 'function') safe(() => target.labelsFor(null));
       safe(() => target.setLabels(before.labels !== false));
-      if (before.autoRotate && typeof target.autoRotate === 'function') safe(() => target.autoRotate(true));
+      if (typeof target.holdAutoRotate === 'function') safe(() => target.holdAutoRotate(false));
     }
     changed();
     safe(() => onEnd(reason));
@@ -462,7 +459,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     stopActivity();
     look = { ...look, glow: [partId] };
     safe(() => target.setEmphasis({ glow: [partId], ghost: look.ghost || [], hide: look.hide || [], others: look.others }));
-    flyTo([partId], 'parts', null, null);
+    flyTo([partId], 'parts', null);
     status = 'paused';
     pausedFor = 'jump';
     if (typeof sayLine === 'function') safe(() => sayLine(JUMP_LINE));
@@ -521,8 +518,8 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
   function start() {
     if (status !== 'idle' || !steps.length) return Promise.resolve(false);
     const st = typeof target.getState === 'function' ? safe(() => target.getState(), null) : null;
-    before = { labels: st ? st.labels !== false : true, autoRotate: !!(st && st.autoRotate) };
-    if (typeof target.autoRotate === 'function') safe(() => target.autoRotate(false));
+    before = { labels: st ? st.labels !== false : true };
+    if (typeof target.holdAutoRotate === 'function') safe(() => target.holdAutoRotate(true)); // no idle spin while it tours
     safe(() => target.select(null)); // a part card from before would cover the model
     return begin();
   }
@@ -558,7 +555,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
       total: Math.max(path.length, at + 1),
       say: s && s.say ? s.say : '',
       ask: decision ? s.ask : '',
-      choices: decision ? s.choices.map((ch) => ({ id: ch.id, label: ch.label })) : [],
+      choices: decision ? s.choices.map((ch) => ({ id: ch.id, label: ch.label, words: ch.words || [] })) : [],
       defaultId: decision ? s.default : null,
       waits: status === 'waiting',
       parts: partsOf(s),

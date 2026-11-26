@@ -22,8 +22,21 @@ export const MAC_HF = {
 };
 
 // ==== tours ===========================================================================================
+// While a tour runs, its words come before the hologram's (layer top: `tour` before `hologram`); at its
+// decision with Voice Mode's question on the stack, the question takes the choice (layer answer).
+const TOUR_STATES = ['TOUR', 'TOUR_AT', 'TOUR_ASKED', 'TOUR_WAIT', 'TOUR_PAUSED', 'TOUR_FIELD'];
+const TOUR_OVER_HOLOGRAM = [
+  ['back', 'the previous step, not the back view'],
+  ['go back', 'the previous step (no blueprint to close)'],
+  ['pause', 'pauses the tour (the hologram would only stop spinning)'],
+  ['take me to the battery', "the battery's step, or the camera on it with the tour paused"],
+];
+const TOUR_ASKED_WORDS = ['enclosed', 'opened', 'both', 'you pick', 'show me that enclosed', 'show it opened', 'show it enclosed', 'show me that opened', 'open it up'];
 export const TOURS = {
   rows: [
+    ...TOUR_STATES.flatMap((state) => TOUR_OVER_HOLOGRAM.map(([words, why]) => ({ words, state, winner: 'tour', why }))),
+    { words: 'open it up', state: 'TOUR_AT', winner: 'tour', why: 'the "opened" choice at the decision (the hologram would explode)' },
+    ...TOUR_ASKED_WORDS.map((words) => ({ words, state: 'TOUR_ASKED', winner: 'question', why: "the tour's decision, answered as Voice Mode's question" })),
   ],
 };
 
