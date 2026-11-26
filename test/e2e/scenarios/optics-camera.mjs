@@ -510,7 +510,8 @@ export default [
       });
       await t.step('with the camera closed, "what\'s that?" and a question that only starts like a camera request are for Jarvis; "what am I looking at?" opens the camera and looks (a computer where the camera is allowed)', async () => {
         await t.visible('optics', { timeout: 45000, message: 'Optics to open by voice' });
-        await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-frozen')) === 'true', { timeout: 15000, message: 'the Look' });
+        // v8.1 (changed on purpose): a Mac's Look sits aside beside the live video (data-aside), no longer frozen.
+        await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-aside')) === 'true', { timeout: 15000, message: 'the Look (aside)' });
         await waitAnswer(t);
         const look = lastLook(t);
         t.assert(/Optics frame f2:/.test(look.message.content[0].text), 'a second frame (f2) in the same conversation');
