@@ -252,6 +252,7 @@ export const WINDOWS = {
     ['show the cooling fan', 'WINH', 'windows-hologram'],
     ['front view', 'WINH', 'windows-hologram'],
     ['labels off', 'WINH', 'windows-hologram'],
+    ['make it bigger', 'WINH', 'windows-hologram'],
     // D4: this window
     ["okay, we'll do this in this window", 'WIN2', 'windows'],
     ['do this in this window', 'V0', 'windows'],
@@ -262,6 +263,7 @@ export const WINDOWS = {
     ['swap them', 'WIN2', 'windows'],
     ['make the camera window bigger', 'WIN2', 'windows'],
     ['make it full screen', 'WIN2', 'windows'],
+    ['make the window bigger', 'WINH', 'windows'],
     ['make your window bigger', 'V0', 'windows'],
     ['float yourself', 'V0', 'windows'],
     // G1: Chrome

@@ -475,8 +475,10 @@ test('D5: a floating panel can\'t be resized by script, and a page can\'t be mov
     window.focusOn('main');
     const moves = window.__moves.length;
     const a = await window.win({ op: 'size', size: 'bigger', which: 'main' });
+    const pipDoc = window.documentPictureInPicture.window.document;
+    pipDoc.hasFocus = () => true;
     const panel = await window.win({ op: 'size', size: 'fill', which: null, here: true });
-    window.documentPictureInPicture.window.document.hasFocus = () => false;
+    pipDoc.hasFocus = () => false;
     const b = await window.win({ op: 'size', size: 'fill', which: null, here: true });
     return [a.status, a.message, panel.message, b.message, window.__moves.length - moves];
   });
