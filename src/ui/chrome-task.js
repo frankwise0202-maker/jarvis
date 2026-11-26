@@ -64,6 +64,7 @@ const FINAL = new Set(['done', 'stopped', 'failed', 'limit', 'error', 'interrupt
 const SAY_RETRY_MS = 400; // a line waits this long between tries while Voice Mode is busy
 const SAY_GIVE_UP_MS = 60000; // ... and is dropped after this (the card still shows it)
 const CLOSED_CARD_MS = 4000; // a prompt answered elsewhere: its card says so this long, then goes
+const CARD_ANSWERS_LINE = 'Chrome’s question is on its card: tap its button to answer.';
 
 // ---------------------------------------------------------------------------------- the views
 
@@ -942,9 +943,13 @@ export function createChromeVoice(deps = {}) {
   function run(action, { surface = 'voice' } = {}) {
     const a = action && typeof action === 'object' ? action : {};
     switch (a.do) {
-      case 'chrome-task':
+      case 'chrome-task': {
         startTaskFlow({ text: a.text, chat: a.chat });
-        return { ack: '', show: '' };
+        // Typed in a hologram's or Optics' field (over the chat): the line shows the price there too.
+        const pend = S.pendingTask;
+        const shown = surface === 'hologram' || surface === 'optics' ? (pend && !pend.done && !pend.cancelled ? pend.line : '') : '';
+        return { ack: '', show: shown };
+      }
       case 'chrome-ask':
         return ask(surface);
       case 'chrome-stop': {
@@ -960,44 +965,14 @@ export function createChromeVoice(deps = {}) {
         const line = open ? waitingLine(open.prompt).say : taskStatusLine(S.task);
         return { ack: line, show: open ? waitingLine(open.prompt).show : line };
       }
-      case 'chrome-answer':
-        // Typed in the chat (Voice Mode answers its own through its prompt channel).
-        return typedAnswer(a.answer);
-      case 'chrome-nothing-asked':
-        return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
-      case 'chrome-hint': {
-        const entry = [...S.prompts.values()].pop();
-        return entry ? { ack: hintLine(entry.prompt), show: hintLine(entry.prompt) } : null;
+      case 'chrome-nothing-asked': {
+        // A yes naming Chrome with no prompt open where it was said: one may wait on its card in the chat.
+        const line = S.prompts.size ? CARD_ANSWERS_LINE : NOTHING_ASKED_LINE;
+        return { ack: line, show: line };
       }
       default:
-        return null; // 'chrome-check' is Voice Mode's alone
+        return null; // 'chrome-check' and the prompt's answers are Voice Mode's own (its prompt channel)
     }
-  }
-
-  /**
-   * A reserved answer typed in the chat (or a hologram's or Optics' field): a no goes out at once (as
-   * the card's would); a yes is the card's button (typing isn't the check); click-only says where.
-   */
-  function typedAnswer(answerId) {
-    const entry = [...S.prompts.values()].pop();
-    if (!entry) return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
-    const answer = promptAnswers(entry.prompt).find((x) => x.id === answerId);
-    if (!answer) return null;
-    if (answer.stopTask) {
-      stopTask({ via: 'card', quietly: true });
-      return { ack: 'Chrome stopped.', show: 'Chrome stopped.' };
-    }
-    if (answer.negative) {
-      if (!answer.choice) return null;
-      send(entry, answer, 'card');
-      return { ack: '', show: '' };
-    }
-    if (answer.clickOnly) {
-      const line = clickOnlyLine(entry.prompt);
-      return { ack: line.say, show: line.show };
-    }
-    if (answer.id === 'other') return { ack: hintLine(entry.prompt), show: hintLine(entry.prompt) };
-    return { ack: 'Tap its button on the card to answer Chrome.', show: 'Tap its button on the card to answer Chrome.' };
   }
 
   /** "Click around for me": "What should I do in Chrome?", and the answer is the task (checked). */
@@ -1047,22 +1022,7 @@ export function createChromeVoice(deps = {}) {
     return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil };
   }
 
-  /**
-   * The open prompt as the router's answer layer sees it where Voice Mode isn't (state.prompt: the chat,
-   * a hologram's or Optics' field), or null: { id, chrome, answers, askedAt, kind, voice }.
-   */
-  function promptState() {
-    const entry = [...S.prompts.values()].pop();
-    if (!entry) return null;
-    return {
-      id: `chrome:${entry.prompt.promptId}`,
-      chrome: true,
-      answers: promptAnswers(entry.prompt),
-      askedAt: entry.shownAt || 0,
-      kind: promptKind(entry.prompt),
-      voice: { allowed: takesVoiceYes(entry.prompt) },
-    };
-  }
+
 
   /** Voice Mode opened, closed, slept or woke: cards and prompts follow it. */
   function voiceChanged() {
@@ -1112,7 +1072,6 @@ export function createChromeVoice(deps = {}) {
   return {
     run,
     state,
-    promptState,
     noteOpened: () => noteContext(),
     pending,
     voiceChanged,

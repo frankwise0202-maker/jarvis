@@ -3,7 +3,7 @@
 // Pure: no DOM and no app state. The app holds one instance (app.js), each surface asks it with the
 // state of the moment (routerState(surface) in app.js) and carries out what it picked.
 //
-//   const router = createRouter();                       // the order: TODAY_ORDER (below)
+//   const router = createRouter();                       // the order: FINAL_ORDER (command-order.js)
 //   router.register({ id, layer, surfaces, carrier, match, run });
 //   const hit = router.route(readings, state);           // { id, action, reading, ... } | null (Claude)
 //   router.route(readings, state, { after: hit });       // the next one in the order, when the surface
@@ -11,10 +11,15 @@
 //   router.run(hit, ctx);                                // the entry's own run(), for registered commands
 //
 // v8.1 Phase 0 moved today's four routing chains in unchanged (registerTodayCommands, TODAY_ORDER):
-// Voice Mode's heard(), the chat box, the hologram's field and Optics' field and mic. Each surface
-// keeps its own order through its table; test/unit/command-router.test.mjs proves the router picks
-// what each chain picked. Track 3 (voice) owns this file from here: the final order, the word cap,
-// the alternatives rule for today's entries, and the collision table.
+// Voice Mode's heard(), the chat box, the hologram's field and Optics' field and mic; each kept its
+// own order through its table (test/unit/command-router.today.test.mjs proves the router with
+// TODAY_ORDER picks what each chain picked). The app routes by the final order (C1, Track 3):
+// FINAL_ORDER in src/lib/command-order.js, one order for every surface, with its rules:
+//   R3  a reading of more than MAX_WORDS (18) words goes only to carriers;
+//   R7  another reading counts only when the best one isn't a question, and only for an action that
+//       is free, undoable, unchecked and touches neither the camera nor the microphone;
+//   the answer layer: a bare "cancel" or "no" answers whatever was asked last (the prompt or the top
+//       question, by `askedAt`), and "stop" is never an answer (the stop layer takes it).
 
 import { standbyCommand } from './wake/phrases.js';
 import { matchScreenCommand } from './screen-commands.js';
@@ -22,11 +27,12 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
+import { LAYERS, FINAL_ORDER, MAX_WORDS, isQuestion, isBareNo, isStopWord, askedLast } from './command-order.js';
 
 /** The layers, in the final order (C1): what a new matcher declares it is. */
-export const LAYERS = Object.freeze(['standby', 'answer', 'stop', 'destination', 'top', 'app', 'media', 'camera']);
+export { LAYERS, FINAL_ORDER, MAX_WORDS };
 /** Where words come from. */
 export const SURFACES = Object.freeze(['voice', 'chat', 'hologram', 'optics']);
 
@@ -37,8 +43,10 @@ export const SURFACES = Object.freeze(['voice', 'chat', 'hologram', 'optics']);
  *   via            'voice' (heard) | 'typed'
  *   speaking       Jarvis is speaking (Voice Mode)
  *   check          the 2-second check is on screen (Voice Mode)
- *   questions      open owner questions, newest first: [{ id, choices, match, keep, check }] (Voice Mode)
- *   prompt         the standing prompt (Jarvis for Chrome): { id, answers: [{ id, words, check }] } | null
+ *   questions      open owner questions, newest first: [{ id, choices, match, keep, check, askedAt }]
+ *                  (Voice Mode; askedAt: when it was last said, for "asked last")
+ *   prompt         the standing prompt (Jarvis for Chrome): { id, answers: [{ id, words, check, negative }],
+ *                  askedAt } | null (an answer with `negative` is what a bare "cancel" or "no" means)
  *   replying       Voice Mode's own reply is streaming (words wait for it: a hologram building)
  *   tour           { active, atChoice, choices, stepId } | null                       (Track 2)
  *   hologram       the viewer on screen: { open, inWindow, parts: [{ id, name, aka }], selected } | null
@@ -127,9 +135,12 @@ export const TODAY_ORDER = deepFreeze({
   optics: [{ use: ['@standby', '@answer', '@stop', '@destination', 'screens', '@top', 'optics', '@app', '@media', '@camera'] }],
 });
 
-const DEFAULT_FLAGS = Object.freeze({ free: true, undo: true, check: false, camera: false });
+const DEFAULT_FLAGS = Object.freeze({ free: true, undo: true, check: false, camera: false, mic: false });
 
-/** An action with its flags filled in: { do, free = true, undo = true, check = false, camera = false, ...args }. */
+/**
+ * An action with its flags filled in: { do, free = true, undo = true, check = false, camera = false,
+ * mic = false, ...args } (mic: it turns the microphone off or Voice Mode away, v8.1).
+ */
 export function normalizeAction(action, id = '') {
   const a = action && typeof action === 'object' ? action : {};
   const out = { ...DEFAULT_FLAGS, ...a };
@@ -138,10 +149,10 @@ export function normalizeAction(action, id = '') {
   return out;
 }
 
-/** R7: another reading may be taken only for an action that is free, undoable, unchecked and no camera. */
+/** R7: another reading may be taken only for an action that is free, undoable, unchecked, no camera, no microphone. */
 export function alternativeAllowed(action) {
   const a = normalizeAction(action);
-  return a.free && a.undo && !a.check && !a.camera;
+  return a.free && a.undo && !a.check && !a.camera && !a.mic;
 }
 
 /** The readings, best first: trimmed, non-empty, each once (case aside), as Voice Mode's heard() kept them. */
@@ -164,10 +175,12 @@ export function wordCount(text) {
 }
 
 /**
- * A router. `order`: the per-surface tables (default TODAY_ORDER). `wordCap`: R3's cap on the words
- * of a reading a matcher is asked about (carriers are exempt); Infinity (none) until Track 3 sets it.
+ * A router. `order`: the per-surface tables (default FINAL_ORDER, src/lib/command-order.js).
+ * `wordCap`: R3's cap on the words of a reading a matcher is asked about (carriers are exempt):
+ * MAX_WORDS (18) by default. `questionFirst`: R7, no other reading is tried when the best one is a
+ * question (on by default). TODAY_ORDER (Phase 0's tables) had neither, and keeps that by default.
  */
-export function createRouter({ order = TODAY_ORDER, wordCap = Infinity } = {}) {
+export function createRouter({ order = FINAL_ORDER, wordCap = order === TODAY_ORDER ? Infinity : MAX_WORDS, questionFirst = order !== TODAY_ORDER } = {}) {
   const entries = new Map(); // id -> entry, in registration order
   const tables = new Map(Object.entries(order || {}));
   let version = 0;
@@ -186,8 +199,7 @@ export function createRouter({ order = TODAY_ORDER, wordCap = Infinity } = {}) {
    *              their surfaces themselves, by id, and have no run.
    */
   function register({ id, layer, surfaces = SURFACES, carrier = false, match, run = null } = {}) {
-    // Ids may be dotted, as the final order names them ('chrome.prompt', 'voice.controls': command-order.js).
-    if (typeof id !== 'string' || !/^[a-z][a-z0-9.-]*$/.test(id)) throw new TypeError(`router: a matcher needs an id (got ${JSON.stringify(id)})`);
+    if (typeof id !== 'string' || !/^[a-z][a-z0-9-]*$/.test(id)) throw new TypeError(`router: a matcher needs an id (got ${JSON.stringify(id)})`);
     if (entries.has(id)) throw new Error(`router: "${id}" is registered already`);
     if (!LAYERS.includes(layer)) throw new TypeError(`router: "${id}" has an unknown layer ${JSON.stringify(layer)}`);
     if (typeof match !== 'function') throw new TypeError(`router: "${id}" needs match(text, state)`);
@@ -239,11 +251,13 @@ export function createRouter({ order = TODAY_ORDER, wordCap = Infinity } = {}) {
     const surface = SURFACES.includes(st.surface) ? st.surface : 'voice';
     const passes = planFor(surface);
     const from = after && after.pos ? after.pos : null;
+    // R7: the best reading is a question ("what's the best camera"): no other reading is tried.
+    const readable = questionFirst && isQuestion(list[0]) ? 1 : list.length;
     for (let p = from ? from.pass : 0; p < passes.length; p += 1) {
       const pass = passes[p];
       if (pass.when === 'bestNamesNoPart' && st.bestNamesPart) continue;
       const first = pass.readings === 'alternatives' ? 1 : 0;
-      const last = pass.readings === 'best' ? Math.min(1, list.length) : list.length;
+      const last = pass.readings === 'best' ? Math.min(1, readable) : readable;
       for (let i = first; i < last; i += 1) {
         if (from && p === from.pass && i < from.index) continue;
         const reading = list[i];
@@ -314,6 +328,19 @@ function partsCommand(text, parts, selected) {
 const OPTICS_PAID = new Set(['look', 'ask', 'more', 'part', 'hologram']);
 const OPTICS_CAMERA = new Set(['look', 'flip', 'live']);
 
+// "This month", "this weekend": a time, not the thing in front of the camera. A question whose only
+// "this" is such a time is no Look (v8.1: "how much have I spent this month?" with Optics open is the
+// spend readout; "is it going to rain this weekend?" a question for Jarvis).
+const THIS_TIME = /\bthis (?:morning|afternoon|evening|night|week|weekend|month|year|time|season|summer|winter|spring|fall|autumn|quarter|semester)\b/g;
+const POINTING = /\b(?:this|these|here)\b/;
+
+/** An Optics "this" question (a Look, or a question on the frozen frame) only about a time: not one. */
+function onlyAboutTime(cmd, text) {
+  if (!(cmd.action === 'ask' || (cmd.action === 'look' && !cmd.explicit))) return false;
+  const n = normalizeOpticsText(text);
+  return THIS_TIME.test(n) && !POINTING.test(n.replace(THIS_TIME, ' '));
+}
+
 function opticsAction(cmd) {
   const on = cmd.action === 'watch' || cmd.action === 'liveview' ? cmd.on === true : false;
   return {
@@ -324,23 +351,72 @@ function opticsAction(cmd) {
   };
 }
 
+/** The prompt's answer whose `negative` marks it as its no (else one called deny or cancel), or null. */
+function negativeAnswer(prompt) {
+  const answers = Array.isArray(prompt && prompt.answers) ? prompt.answers.filter((a) => a && typeof a.id === 'string') : [];
+  const a = answers.find((x) => x.negative) || answers.find((x) => x.id === 'deny' || x.id === 'cancel');
+  return a ? a.id : null;
+}
+
+/** The answer layer, the prompt (critique H4): its reserved words; a bare no only when it was asked last. */
+function promptAnswer(text, s) {
+  if (!s.prompt) return null;
+  const hit = matchPromptAnswer(s.prompt, text);
+  if (hit) return hit;
+  if (!isBareNo(text) || askedLast(s) !== 'prompt') return null;
+  const no = negativeAnswer(s.prompt);
+  return no ? { do: 'prompt-answer', prompt: s.prompt.id, answer: no, check: false, undo: false } : null;
+}
+
+/**
+ * The answer layer, the top question: its choice (never "stop": the stop layer's); a bare "cancel" or
+ * "no" only when it was asked last (after the prompt), and then a question with no such choice is set
+ * aside (`dismiss`) rather than passed on. An answer can't be undone: the best reading only (R7).
+ */
+function questionAnswer(text, s, ctx) {
+  const top = Array.isArray(s.questions) && s.questions.length ? s.questions[0] : null;
+  if (!top || isStopWord(text)) return null;
+  const bare = isBareNo(text);
+  if (bare && askedLast(s) === 'prompt') return null;
+  const hit = matchQuestionAnswer(s.questions, text, ctx && ctx.readings);
+  if (hit) return { ...hit, undo: false };
+  return bare ? { do: 'answer', question: top.id, choice: null, dismiss: true, check: false, undo: false } : null;
+}
+
+/**
+ * Screens' words, with v8.1's fixes (C3): "expand this in a different window" is a window, not an
+ * explode (F2); "bring … back" and "close …" go to the hologram or blueprint on top when no screen is
+ * open and it takes them ("bring everything back": every part shown), as in its own field (F3, R5).
+ */
+function screensCommand(text, s) {
+  let m = matchScreenCommand(text);
+  if (!m && /^\W*(?:(?:hey|ok|okay)\W+)?(?:jarvis\W+)?expand\b/i.test(String(text || ''))) m = matchScreenCommand(String(text).replace(/\bexpand\b/i, 'open'));
+  if (!m) return null;
+  if ((m.action === 'back' || m.action === 'close') && !(Array.isArray(s.windows) && s.windows.length)) {
+    if (s.hologram && s.hologram.open && partsCommand(text, s.hologram.parts, s.hologram.selected)) return null;
+    if (s.blueprintOpen && m.action === 'close') return null;
+  }
+  return m;
+}
+
 const TODAY_COMMANDS = [
-  // "Jarvis, standby", "go to sleep": Voice Mode closes into Standby; typed in the chat, Standby opens.
+  // "Jarvis, standby", "go to sleep": Voice Mode closes into Standby; elsewhere (the chat, a hologram's
+  // field, Optics' field), Standby opens (v8.1 C2: the Standby words everywhere).
   {
     id: 'standby',
     layer: 'standby',
-    surfaces: ['voice', 'chat'],
     match: (text, s) => (s.standby && s.standby.available && standbyCommand(text) ? { do: 'standby' } : null),
   },
-  // The standing prompt (Jarvis for Chrome, Track 3): its reserved answer words. Empty in Phase 0.
-  { id: 'prompt', layer: 'answer', surfaces: ['voice'], match: (text, s) => matchPromptAnswer(s.prompt, text) },
-  // The owner question on top of the stack (today: "Shall I draw a blueprint of …?").
-  { id: 'question', layer: 'answer', surfaces: ['voice'], match: (text, s, ctx) => matchQuestionAnswer(s.questions, text, ctx && ctx.readings) },
+  // The standing prompt (Jarvis for Chrome): its reserved answer words; a bare "cancel" or "no" when
+  // it was asked last means its no (the answer marked `negative`).
+  { id: 'prompt', layer: 'answer', surfaces: ['voice'], match: (text, s) => promptAnswer(text, s) },
+  // The owner question on top of the stack (the blueprint question, a tour decision, the research offer).
+  { id: 'question', layer: 'answer', surfaces: ['voice'], match: (text, s, ctx) => questionAnswer(text, s, ctx) },
   // Words heard while Voice Mode's own reply streams (the owner tapped the viewer's mic while a
   // hologram builds): a viewer command acts on the live model, anything else waits for the reply.
   { id: 'reply-building', layer: 'answer', surfaces: ['voice'], match: (text, s) => (s.replying ? { do: 'reply-building' } : null) },
   // Screens: "put it on my other screen", "float it", "bring it back".
-  { id: 'screens', layer: 'destination', match: (text) => (matchScreenCommand(text) ? { do: 'screens' } : null) },
+  { id: 'screens', layer: 'destination', match: (text, s) => (screensCommand(text, s) ? { do: 'screens' } : null) },
   // The home base (v7.5): "how's the home base?".
   {
     id: 'homebase',
@@ -378,11 +454,12 @@ const TODAY_COMMANDS = [
     id: 'optics',
     layer: 'top',
     surfaces: ['voice', 'optics'],
+    carrier: true, // a question about "this" carries the owner's words to a Look (R3)
     match: (text, s) => {
       if (!(s.optics && s.optics.open)) return null;
       if (s.surface === 'voice' && !opticsOnTop(s)) return null;
       const cmd = matchOpticsCommand(text, { frozen: s.optics.mode === 'frozen' });
-      if (!cmd) return null;
+      if (!cmd || onlyAboutTime(cmd, text)) return null;
       if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
       return opticsAction(cmd);
     },
@@ -431,12 +508,36 @@ const TODAY_COMMANDS = [
   },
 ];
 
+// Phase 0's versions of the matchers v8.1 changed (C1-C3), for the proof that the router with
+// TODAY_ORDER picks what today's chains picked (test/unit/command-router.today.test.mjs).
+const PHASE0 = {
+  standby: { surfaces: ['voice', 'chat'] },
+  prompt: { match: (text, s) => matchPromptAnswer(s.prompt, text) },
+  question: { match: (text, s, ctx) => matchQuestionAnswer(s.questions, text, ctx && ctx.readings) },
+  screens: { match: (text) => (matchScreenCommand(text) ? { do: 'screens' } : null) },
+  optics: {
+    carrier: false,
+    match: (text, s) => {
+      if (!(s.optics && s.optics.open)) return null;
+      if (s.surface === 'voice' && !opticsOnTop(s)) return null;
+      const cmd = matchOpticsCommand(text, { frozen: s.optics.mode === 'frozen' });
+      if (!cmd) return null;
+      if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
+      return opticsAction(cmd);
+    },
+  },
+};
+
 /** The ids of today's matchers (registerTodayCommands), which the surfaces carry out themselves. */
 export const TODAY_IDS = Object.freeze(TODAY_COMMANDS.map((c) => c.id));
 
-/** Register today's matchers (Phase 0: the four chains, moved in unchanged). Returns the unregister functions. */
-export function registerTodayCommands(router) {
-  return TODAY_COMMANDS.map((c) => router.register(c));
+/**
+ * Register today's matchers, as v8.1 has them (the Standby words on every surface, the answer layer's
+ * arbitration, Screens' fixes). `phase0`: exactly as Phase 0 moved them in. Returns the unregister
+ * functions.
+ */
+export function registerTodayCommands(router, { phase0 = false } = {}) {
+  return TODAY_COMMANDS.map((c) => router.register(phase0 && PHASE0[c.id] ? { ...c, ...PHASE0[c.id] } : c));
 }
 
 function deepFreeze(obj) {

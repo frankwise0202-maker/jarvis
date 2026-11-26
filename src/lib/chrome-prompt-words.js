@@ -18,8 +18,9 @@
 //   - The extension decides again when the answer comes (its voice policy, the prompt's hash, its age):
 //     the app only mirrors voice.allowed so it doesn't offer what will be refused.
 //
-//   matchChromeAnswer(text, state)    -> the router's answer layer ('chrome.prompt'): a check's words, a
+//   matchChromeAnswer(text, state)    -> the router's answer layer ('chrome-prompt'): a check's words, a
 //                                        prompt's reserved words, a bare no asked last, or null
+//   matchNothingAsked(text, state)    -> 'chrome-answer': a yes naming Chrome with nothing asked
 //   promptAnswers(prompt)             -> the answers for api.prompt(): [{ id, choice, words, check, … }]
 //   chooseAnswer({ readings, answers, saidAt, now }) -> null | { answer, check } | { answer, again }
 //   promptLine(prompt)                -> { say, show }: "Chrome asks: …? Say approve, or cancel."
@@ -233,7 +234,7 @@ function askedLast(state) {
 const answerAction = (a) => ({ free: true, undo: false, check: false, camera: false, ...a });
 
 /**
- * The router's answer layer for Jarvis for Chrome (id 'chrome.prompt'). Pure. Never from another
+ * The router's answer layer for Jarvis for Chrome (id 'chrome-prompt'). Pure. Never from another
  * reading (undo: false); Voice Mode's prompt channel applies the 30-s window, the other readings and
  * the check when it acts.
  *   state.chromeCheck ({ kind: 'task' | 'approve' }, Voice Mode's): while a check counts down, "cancel",
@@ -244,7 +245,7 @@ const answerAction = (a) => ({ free: true, undo: false, check: false, camera: fa
  *     words; a bare "cancel" or "no" when it was asked last. -> { do: 'chrome-answer', answer, bare? }
  *     A bare "yes", "okay", "continue" … never answers it; asked last, with no tour and no other
  *     question open, Jarvis says what to say instead. -> { do: 'chrome-hint' }
- *   no prompt: a yes that names Chrome ("spend more in Chrome") -> { do: 'chrome-nothing-asked' }
+ * (A yes naming Chrome with nothing asked is matchNothingAsked's, in the destination layer.)
  */
 export function matchChromeAnswer(text, state = {}) {
   const st = state && typeof state === 'object' ? state : {};
@@ -274,11 +275,19 @@ export function matchChromeAnswer(text, state = {}) {
     }
     return null;
   }
-  // Nothing asked: a yes that names Chrome is still Chrome's, never Claude's. (A no or a stop that
-  // names Chrome goes on to the stop layer: "stop Chrome", "cancel Chrome".)
-  const kind = reservedKind(text);
-  if (kind && kind !== 'stop' && kind !== 'deny' && namesChromeAnswer(text) && !matchChromeStop(text)) return answerAction({ do: 'chrome-nothing-asked' });
   return null;
+}
+
+/**
+ * Nothing asked (no prompt in `state`): a yes that names Chrome ("spend more in Chrome", "allow once in
+ * Chrome") is still Chrome's, never Claude's: "Chrome isn't asking anything right now." (A no or a stop
+ * that names Chrome goes to the stop layer: "stop Chrome", "cancel Chrome".) The router's 'chrome-answer'.
+ */
+export function matchNothingAsked(text, state = {}) {
+  if (state && state.prompt) return null;
+  const kind = reservedKind(text);
+  if (!kind || kind === 'stop' || kind === 'deny' || !namesChromeAnswer(text) || matchChromeStop(text)) return null;
+  return { do: 'chrome-nothing-asked', free: true, undo: true, check: false, camera: false };
 }
 
 /** How long the check after a yes waits: 2 s, or 5 s while Jarvis is hidden. */

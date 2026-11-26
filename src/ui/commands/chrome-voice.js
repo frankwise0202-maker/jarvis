@@ -3,23 +3,25 @@
 // app.js calls register() once at start (registerCommandModules), with the app's shared deps plus
 // `chromeVoice()`: the controller (src/ui/chrome-task.js createChromeVoice), or null. The matchers are
 // pure (src/lib/chrome-task-words.js, src/lib/chrome-prompt-words.js); the controller acts. In Voice
-// Mode, 'chrome.prompt' is carried out by its prompt channel (voice-mode.js answerPrompt: the 30-s
+// Mode, 'chrome-prompt' is carried out by its prompt channel (voice-mode.js answerPrompt: the 30-s
 // window, the other readings, the check) and the others by actChrome (the controller's line is said).
 //
 //   id             layer        what
-//   chrome.prompt  answer       a Chrome check's words (Voice Mode: "cancel", "no, I said …", "start now"),
-//                               the open prompt's reserved words, a bare "cancel" / "no" when the prompt was
-//                               asked last, a yes naming Chrome with nothing asked
-//   chrome.stop    stop         "stop Chrome", "cancel the Chrome task" (a bare "stop" is voice's 'stop')
-//   chrome.task    destination  "… in Chrome", "have Chrome …", page words in a Chrome context: a carrier
+//   chrome-prompt  answer       Voice Mode only: a Chrome check's words ("cancel", "no, I said …", "start
+//                               now"), the open prompt's reserved words, a bare "cancel" / "no" when the
+//                               prompt was asked last, a bare "yes" (never an answer: Jarvis says what to say)
+//   chrome-stop    stop         "stop Chrome", "cancel the Chrome task" (a bare "stop" is voice's 'stop')
+//   chrome-task    destination  "… in Chrome", "have Chrome …", page words in a Chrome context: a carrier
 //                               (no word cap). Its action says check: false: the task has one check, its
 //                               own spoken one (the lead's D2), never the generic 2-second check. Paid and
 //                               not undoable, so never from another reading.
-//   chrome.ask     destination  "click around for me" ("What should I do in Chrome?")
-//   chrome.status  destination  "what are you doing in Chrome?" (free)
+//   chrome-ask     destination  "click around for me" ("What should I do in Chrome?")
+//   chrome-status  destination  "what are you doing in Chrome?" (free)
+//   chrome-answer  destination  a yes naming Chrome with nothing asked ("Chrome isn't asking anything right
+//                               now."; with a card waiting in the chat: its buttons answer it)
 //
-// Tasks and "click around for me" are words for Voice Mode and the chat box; a hologram's and Optics'
-// fields leave them to their own handling (a task's check and card live in Voice Mode and the chat).
+// Typed (the chat, a hologram's or Optics' field), a task gets its card with the price and a 2-s countdown
+// in the chat; a field over the chat shows the check's line too.
 //
 // Keep this module importable in Node (no DOM at import time): the T3 harness
 // (test/unit/command-router.test.mjs) registers every module with fake deps. Its phrases go in the
@@ -27,9 +29,7 @@
 // test/unit/fixtures/collisions.mjs.
 
 import { matchChromeStatus, matchChromeStop, matchChromeTask, matchClickAround, taskRefusal } from '../../lib/chrome-task-words.js';
-import { matchChromeAnswer } from '../../lib/chrome-prompt-words.js';
-
-const TASK_SURFACES = ['voice', 'chat'];
+import { matchChromeAnswer, matchNothingAsked } from '../../lib/chrome-prompt-words.js';
 
 /**
  * @param {{ register: Function }} router  the app's command router
@@ -71,9 +71,10 @@ export function register(router, deps = {}) {
     );
   }
 
-  router.register({ id: 'chrome.prompt', layer: 'answer', match: (text, state) => matchChromeAnswer(text, state), run });
+  // Voice Mode only, like its 'prompt' and 'question': in the chat a prompt's card answers it.
+  router.register({ id: 'chrome-prompt', layer: 'answer', surfaces: ['voice'], match: (text, state) => matchChromeAnswer(text, state), run });
   router.register({
-    id: 'chrome.stop',
+    id: 'chrome-stop',
     layer: 'stop',
     match: (text, state) => {
       const m = matchChromeStop(text, state);
@@ -82,9 +83,8 @@ export function register(router, deps = {}) {
     run,
   });
   router.register({
-    id: 'chrome.task',
+    id: 'chrome-task',
     layer: 'destination',
-    surfaces: TASK_SURFACES,
     carrier: true,
     match: (text, state) => {
       const m = matchChromeTask(text, state);
@@ -92,6 +92,7 @@ export function register(router, deps = {}) {
     },
     run,
   });
-  router.register({ id: 'chrome.ask', layer: 'destination', surfaces: TASK_SURFACES, match: (text) => matchClickAround(text), run });
-  router.register({ id: 'chrome.status', layer: 'destination', match: (text) => matchChromeStatus(text), run });
+  router.register({ id: 'chrome-ask', layer: 'destination', match: (text) => matchClickAround(text), run });
+  router.register({ id: 'chrome-status', layer: 'destination', match: (text) => matchChromeStatus(text), run });
+  router.register({ id: 'chrome-answer', layer: 'destination', match: (text, state) => matchNothingAsked(text, state), run });
 }

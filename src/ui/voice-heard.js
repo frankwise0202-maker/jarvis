@@ -422,12 +422,18 @@ export function commandReading(text, alternatives = [], { isCommand = () => fals
   return alts.find((a) => test(isCommand, a)) || alts.find((a) => test(isMusic, a)) || best;
 }
 
-// The words Jarvis listens for (Chrome's contextual biasing): its name and the local commands.
+// The words Jarvis listens for (Chrome's contextual biasing): its name and the local commands. v8.1
+// adds the words of the hands-free release (Optics, Chrome, windows, the live view, walkthroughs and
+// Chrome's questions). Chrome only uses such a list with on-device recognition, which Jarvis doesn't
+// ask for, and stt.js drops it when the speech service says 'phrases-not-supported': today it changes
+// nothing, and it is ready for the day it does.
 export const COMMAND_PHRASES = Object.freeze([
   'expand it', 'explode it', 'put it back together', 'collapse', 'isolate', 'show the', 'hide the', 'zoom in', 'zoom out', 'rotate',
   'stop rotating', 'labels on', 'labels off', 'front view', 'side view', 'top view', 'reset the view', 'parts list', 'photos of',
   'blueprint', 'close the blueprint', 'switch it to 2D', 'other screen', 'second screen', 'float it', 'bring it back', 'in a window',
-  'what am I looking at', 'look at this', 'flip the camera', 'watch this', 'hologram of this', 'cancel', 'never mind', 'no, I said',
+  'what am I looking at', 'look at this', 'flip the camera', 'watch this', 'hologram of this',
+  'Optics', 'Chrome', 'side by side', 'live view', 'video mode', 'new chat', 'walk me through', 'enclosed', 'opened', 'approve',
+  'cancel', 'never mind', 'no, I said',
   'Apple Music', 'stop the music', 'play the album', 'a preview of',
 ]);
 

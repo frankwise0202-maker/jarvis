@@ -16,6 +16,7 @@ import {
   isBareNo,
   isNoWord,
   matchChromeAnswer,
+  matchNothingAsked,
   namesChromeAnswer,
   noChoice,
   normalizeAnswer,
@@ -230,8 +231,12 @@ test('the answer layer while a check counts down: withdraw, correct, go; other w
 });
 
 test('nothing asked: a yes that names Chrome is still Chrome\'s; its no and stop words go on to the stop layer', () => {
-  for (const w of ['spend more in Chrome', 'more steps in Chrome', 'allow once in Chrome']) assert.deepEqual(matchChromeAnswer(w, {}), { free: true, undo: false, check: false, camera: false, do: 'chrome-nothing-asked' }, w);
-  for (const w of ['stop Chrome', 'cancel Chrome', 'approve', 'deny', 'allow once', 'cancel']) assert.equal(matchChromeAnswer(w, {}), null, w);
+  for (const w of ['spend more in Chrome', 'more steps in Chrome', 'allow once in Chrome']) {
+    assert.deepEqual(matchNothingAsked(w, {}), { do: 'chrome-nothing-asked', free: true, undo: true, check: false, camera: false }, w);
+    assert.equal(matchChromeAnswer(w, {}), null, `the answer layer leaves it: ${w}`);
+  }
+  for (const w of ['stop Chrome', 'cancel Chrome', 'approve', 'deny', 'allow once', 'cancel']) assert.equal(matchNothingAsked(w, {}), null, w);
+  assert.equal(matchNothingAsked('spend more in Chrome', { prompt: { id: 'x' } }), null, 'asked: the answer layer\'s');
   assert.equal(namesChromeAnswer('spend more in Chrome'), true);
   assert.equal(namesChromeAnswer('approve'), false);
 });

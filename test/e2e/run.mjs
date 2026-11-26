@@ -58,6 +58,7 @@ import macHandsFree from './scenarios/mac-handsfree.mjs';
 // ---- tours ▸
 // ---- tours ◂
 // ---- voice ▸
+import voiceCommands from './scenarios/voice-commands.mjs';
 // ---- voice ◂
 // ---- chrome-voice ▸
 import chromeVoice from './scenarios/chrome-voice.mjs';
@@ -99,6 +100,7 @@ const V81_SCENARIOS = [
   // ---- tours ▸
   // ---- tours ◂
   // ---- voice ▸
+  ...voiceCommands,
   // ---- voice ◂
   // ---- chrome-voice ▸
   ...chromeVoice,
