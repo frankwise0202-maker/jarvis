@@ -782,3 +782,65 @@ test('CHROME-VOICE-R2-5: hidden on a Mac, the follow-up window over: the link\'s
   sayLinkNotice({ kind: 'late-start', line: 'Chrome started late, so I stopped it.', show: 'Chrome started late (⌘⇧.)' }, { voice: null, hidden: () => true, toast: () => {}, notify: (n) => n3.push(n) });
   assert.deepEqual(n3, [{ tag: 'chrome-link', title: 'Jarvis', body: 'Chrome started late (⌘⇧.)' }]);
 });
+
+// ---- v8.1.1 round 3: CHROME-VOICE-R3-1, R3-S1, R3-2 ------------------------------------------------------------
+
+test('CHROME-VOICE-R3-1: said in Voice Mode, a trouble or a remark ending "in Chrome" is the owner\'s question, never a paid task', async (t) => {
+  for (const words of ['Videos lag in Chrome.', 'Pages load slowly in Chrome.', 'Thanks for the help in Chrome.', 'Never mind in Chrome.', 'Gmail acting up in Chrome.', 'Facebook logs me out every day in Chrome.', 'Sound problems in Chrome.']) {
+    const s = await setup(t, { script: (n) => (n === 0 ? { text: words, at: 600 } : null) });
+    await s.env.advance(12000);
+    assert.deepEqual(s.fake.calls.startTask, [], `${words}: nothing goes to Chrome (said ${JSON.stringify(s.said())})`);
+    assert.ok(!s.said().some((x) => x.startsWith('Chrome, up to a dollar')), `${words}: no check line`);
+    assert.deepEqual(s.env.log.turns, [words], `${words}: the owner's question`);
+  }
+});
+
+test('CHROME-VOICE-R3-S1: a task running, "Tell Chrome to stop what it\'s doing." stops it and starts nothing (and a "yes" after it starts nothing either)', async (t) => {
+  for (const reply of [null, 'Yes.']) {
+    const s = await setup(t, {
+      before: async ({ fake }) => {
+        await fake.link.startTask({ text: 'find a 4K monitor', chat: 'new' });
+      },
+    });
+    s.env.voice('natural');
+    await s.env.advance(3000);
+    s.next({ text: "Tell Chrome to stop what it's doing.", at: 600 });
+    s.vm.tap();
+    await s.env.advance(6000);
+    if (reply) {
+      s.next({ text: reply, at: 600 });
+      s.vm.tap();
+      await s.env.advance(8000);
+    }
+    assert.equal(s.fake.calls.stopTask, 1, `the running task got its stop (said ${JSON.stringify(s.said())})`);
+    assert.equal(s.fake.calls.startTask.length, 1, 'nothing new started');
+    assert.ok(!s.said().some((x) => x.startsWith('Chrome, up to a dollar') || /busy with another task/.test(x)), `no check line and no busy question (${JSON.stringify(s.said())})`);
+  }
+});
+
+test('CHROME-VOICE-R3-2: "Hey Jarvis" over Chrome\'s question, then "Be quiet." (or "Stop talking.", "That\'s enough.", "Quiet please.", "Shush."): quiet, the task goes on; said again only after the owner\'s next tap listen ends with no words', async (t) => {
+  for (const continuous of [true, false]) {
+    for (const words of ['Be quiet.', 'Stop talking.', 'That’s enough.', 'Quiet please.', 'Shush.']) {
+      const s = await setup(t, { settings: { voiceContinuous: continuous } });
+      s.env.voice('natural');
+      await s.env.advance(1500);
+      s.fake.task({ id: 't1', status: 'running', text: 'find a monitor' });
+      s.fake.prompt(PROMPTS.site);
+      await s.until(() => asks(s) === 1, 'the question said');
+      await s.env.advance(400);
+      s.next({ text: words, at: 700 });
+      assert.equal(s.vm.bargeIn('word'), true);
+      await s.env.advance(15000);
+      const tag = `${words} (continuous ${continuous})`;
+      assert.deepEqual(s.heardLog, [words], `${tag}: heard`);
+      assert.equal(asks(s), 1, `${tag}: not said again (said ${JSON.stringify(s.said())})`);
+      assert.equal(s.cv.state().waiting, 1, `${tag}: still open on its card`);
+      assert.equal(s.fake.calls.stopTask, 0, `${tag}: the task goes on`);
+      if (words !== 'Be quiet.') continue;
+      // The owner's next tap, and nothing said: now it is said again.
+      s.vm.tap();
+      await s.env.advance(6000);
+      assert.equal(asks(s), 2, `${tag}: said again after the owner's next listen ended with no words`);
+    }
+  }
+});
