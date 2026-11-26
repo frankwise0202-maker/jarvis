@@ -5640,8 +5640,7 @@ starts a Chrome context: the controller watches `open()` on the link object (sam
   offered only when `voice.allowed` and the prompt has that choice (never "Always"); a yes the prompt can't take by
   voice is consumed with the click line; a yes of another kind with the right hint. `NEVER_ANSWERS` ("yes", "okay",
   "sure", "go ahead", "continue" …) never answer; asked last, they and any sentence that starts with a yes word and has
-  no no word and goes on with an answer's words ("yes, add it", "sure, do it", "yes, keep going"; never "okay, be quiet"
-  or "yes, open YouTube in Chrome", the owner's own commands) get the free hint (CHROME-VOICE-R3-4, R4-3).
+  (Other yes-led sentences, "yes, add it", are no answer: they go on as usual; CHROME-VOICE-R5-3, R5-4.)
 - Voice Mode's channel says a prompt once it is free (a prompt waiting is said as soon as it is, also when nothing
   else is spoken first; it waits in its own slot, so an owner question waiting beside it is said too, first:
   REDTEAM-VOICE-6). One listen follows it only when the session would listen anyway: Continuous on, no brake, and not

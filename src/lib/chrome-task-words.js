@@ -179,6 +179,10 @@ const NOT_INSTRUCTION =
 // ("tell Chrome to stop what it's doing", "… hold on", "… never mind", "have Chrome hold off"). A stop is matchChromeStop's.
 const NOT_A_TASK =
   /^(?:(?:stop|quit|abort|halt|cancel|end|kill)(?: (?:it|that|this|now|everything|the task|the chrome task|that task|this task|the search|searching|shopping|clicking|working|working on (?:it|that|this)|what (?:it|you|chrome) (?:is|are) doing|what (?:its|youre|chromes) doing))?|hold (?:on|off|it|up)|hang on|wait|stand by|never ?mind|nevermind|forget (?:it|about it)|leave it|drop it|back off|give up|pause(?: (?:it|that|this))?|go ahead|keep going|carry on|continue|go on|not now|skip it|knock it off|cut it out|call it off|scratch that|let it go|sit tight|chill|relax|calm down|stand down|pack it in|drop everything|forget the whole thing|leave it alone|wait up|hang tight|shut it down|turn it off|hold that thought|take a break|give it a rest)(?: (?:a|one|just a) (?:second|sec|minute|moment))?$/;
+// After a lead that asks, a stop (CHROME-VOICE-R4-4, R5-1): "stop" alone or with the plain stop's own objects, and the
+// stop idioms. Any other "tell Chrome to stop <something>" is an errand ("… stop my Netflix subscription"): a task.
+const ASKS_STOP =
+  /^(?:(?:stop|quit)(?: (?:it|that|this|now|the task|this task|that task|the search|searching|shopping|browsing|working|everything|what its doing|what it is doing|what youre doing|what you are doing))?|knock it off|cut it out|call it off|shut it down|turn it off|stand down|pack it in|drop everything)$/;
 // The words an instruction starts with (CHROME-VOICE-R3-1): the page verbs and the errands people send Chrome on.
 const INSTRUCTION_STARTS = new Set([
   ...VERBS_SAID_FIRST,
@@ -205,9 +209,6 @@ const BEFORE_FIRST = new Set(['lets', 'please', 'maybe', 'perhaps', 'quickly', '
 const ONLY_VERBS = new Set('confirm verify ensure make tell remind inform notify double-check doublecheck'.split(' '));
 // A trouble said as a noun phrase: "login issues with my bank", "sync problems".
 const TROUBLE_NOUNS = new Set('problem problems issue issues error errors trouble troubles bug bugs glitch glitches'.split(' '));
-// A trouble said short, with no determiner before it (CHROME-VOICE-R4-2, R4-5): "download stuck at 99 percent", "print
-// button broken", "send to Bank on Cash App says failed", "login loop on Hulu" (never "report the broken link").
-const TROUBLE_WORDS = /(?:^|\s)(?:greyed out|grayed out|broken|missing|gone|stuck|failing|failed|never arrived|resets|too (?:low|high|slow|small|big)|loop|looping|error|declined|unavailable|sold out|pending|disappeared|frozen|blank|terrible|awful|wrong|disabled|unresponsive|expired|(?:storage|inbox|disk|mailbox) (?:is )?full)(?=\s|$)/;
 // Verbs that take a clause: after them a word or a name and a plain "is", "has" or "says" is what to check ("check
 // Netflix is cancelled", "verify PayPal is linked"; CHROME-VOICE-R4-2).
 const CLAUSE_VERBS = new Set('check see confirm verify ensure double-check doublecheck tell make'.split(' '));
@@ -240,13 +241,6 @@ function statementShape(ws, raws = []) {
   if (ws.slice(1, 5).some((w, n) => w === 'not' && /^[a-z]+ing$/.test(ws[n + 2] || ''))) return true;
   // "Login issues with my bank", "sync problems" (not "report the issue": a determiner comes first there).
   for (let k = 1; k <= 3 && k < ws.length && !DETERMINERS.has(ws[k]) && !NOT_IN_A_NOUN.has(ws[k]); k++) if (TROUBLE_NOUNS.has(ws[k])) return true;
-  // "Download stuck at 99 percent", "print button broken" (CHROME-VOICE-R4-5): a trouble word with no determiner before it.
-  const head = ws.slice(0, 9).join(' ');
-  const tm = TROUBLE_WORDS.exec(head);
-  if (tm) {
-    const before = head.slice(0, tm.index).split(' ').slice(1);
-    if (!before.some((w) => DETERMINERS.has(w) || NOT_IN_A_NOUN.has(w))) return true;
-  }
   for (let k = 1; k <= 4 && k < ws.length; k++) {
     const trouble = TROUBLE_VERBS.has(ws[k]);
     if (!trouble && !PLAIN_VERBS.has(ws[k])) continue;
@@ -276,13 +270,13 @@ function isInstruction(p) {
   if (colon >= 0 && colon + 1 < ws.length && !INSTRUCTION_STARTS.has(ws[k])) k = colon + 1;
   const words = ws.slice(k).join(' ');
   if (!words || NOT_A_TASK.test(words) || NOT_INSTRUCTION.test(words)) return false;
-  if (p.asks) return !/^stop(?:\s|$)/.test(words); // (a stop after "tell Chrome to …" is matchChromeStop's: R4-4)
+  if (p.asks) return !ASKS_STOP.test(words); // (a stop after "tell Chrome to …" is matchChromeStop's: R4-4, R5-1)
   if (!INSTRUCTION_STARTS.has(ws[k])) return false;
   // A verb that is never a noun skips the shape only before a plain "is", "has" or "says", and never before a page's
   // thing ("confirm button doesn't work", "ensure checkbox won't tick"; CHROME-VOICE-R4-2).
   const rest = ws.slice(k);
   const firstVerb = rest.slice(1, 6).find((w) => TROUBLE_VERBS.has(w) || PLAIN_VERBS.has(w));
-  if (ONLY_VERBS.has(ws[k]) && !PAGE_NOUNS.has(rest[1]) && !(firstVerb && TROUBLE_VERBS.has(firstVerb)) && !TROUBLE_WORDS.test(rest.slice(0, 9).join(' '))) return true;
+  if (ONLY_VERBS.has(ws[k]) && !PAGE_NOUNS.has(rest[1]) && !(firstVerb && TROUBLE_VERBS.has(firstVerb))) return true;
   return !statementShape(rest, raws.slice(k));
 }
 
@@ -533,7 +527,7 @@ function matchChromeStopWords(text, state = {}) {
   }
   // After a lead that asks, a stop with any object, and the stop idioms (CHROME-VOICE-R4-4): "get Chrome to stop the
   // order", "tell Chrome to knock it off / cut it out / call it off / shut it down".
-  if (p.asks && /^(?:stop(?: .+)?|quit|knock it off|cut it out|call it off|shut it down|turn it off|stand down|pack it in|drop everything)$/.test(p.s)) {
+  if (p.asks && ASKS_STOP.test(p.s)) {
     return { do: 'chrome-stop', named: true, free: true, undo: false };
   }
   // (Never "Chrome, cancel that": a cancel is for what was just asked, never the task that runs; CHROME-VOICE-R4-1.)

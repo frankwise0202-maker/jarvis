@@ -1236,7 +1236,7 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   - **Interrupting him:** "Hey Jarvis" or two claps while he says Chrome's question stops him and he listens to you
     ("stop Chrome", "deny", or anything else); if you say nothing, he says the question again. The **Stop** button, or
     "be quiet" said to him, just makes him stop talking: the question stays on its card, and if you then say "approve"
-    he says it again first. "Yes, add it" and the like get the reminder of what to say. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
+    he says it again first. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
     other windows): "cancel", "no" or "stop" takes it back.
   - **Purchases always need a click.** So do paying, sending, posting, deleting, account changes and everything else
     Jarvis for Chrome marks. Jarvis and the card say "That's a purchase. It needs a click in the Jarvis window.

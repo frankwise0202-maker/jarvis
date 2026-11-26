@@ -876,7 +876,8 @@ test('CHROME-VOICE-R4-1: "Chrome, cancel that." (and its kin) to the busy questi
   }
 });
 
-test('CHROME-VOICE-R4-3: "Okay, be quiet." over Chrome\'s question is the hush (asked once), never the hint', async (t) => {
+test('CHROME-VOICE-R4-3, R5-3: "Okay, be quiet." and "Okay, that\'s enough." over Chrome\'s question are the hush (asked once), never the hint', async (t) => {
+  for (const words of ['Okay, be quiet.', 'Okay, that’s enough.']) {
   const s = await setup(t);
   s.env.voice('natural');
   await s.env.advance(1500);
@@ -884,11 +885,14 @@ test('CHROME-VOICE-R4-3: "Okay, be quiet." over Chrome\'s question is the hush (
   s.fake.prompt(PROMPTS.cart);
   await s.until(() => asks(s) === 1, 'the question said');
   await s.env.advance(400);
-  s.next({ text: 'Okay, be quiet.', at: 700 });
+  s.next({ text: words, at: 700 });
   assert.equal(s.vm.bargeIn('word'), true);
   await s.env.advance(15000);
-  assert.equal(asks(s), 1, `not said again (said ${JSON.stringify(s.said())})`);
-  assert.ok(!s.said().some((x) => /Say approve, or cancel\.$/.test(x) && !x.startsWith('Chrome asks')), 'no hint');
+  assert.equal(asks(s), 1, `${words}: not said again (said ${JSON.stringify(s.said())})`);
+  assert.ok(!s.said().some((x) => /Say approve, or cancel\.$/.test(x) && !x.startsWith('Chrome asks')), `${words}: no hint`);
+  assert.ok(s.said().includes('Okay.'), `${words}: the hush's "Okay."`);
+  assert.deepEqual(s.fake.calls.answer, [], `${words}: nothing answered`);
+  }
 });
 
 test('CHROME-VOICE-R4-4: a task running, "Tell Chrome to knock it off." (then "Yes.") stops it and never starts a task', async (t) => {

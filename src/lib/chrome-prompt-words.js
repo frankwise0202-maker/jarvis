@@ -339,21 +339,6 @@ export function matchChromeAnswer(text, state = {}, readings = null) {
     // answer either (a yes counts only as a reserved whole sentence): Jarvis says what to say. (A question
     // about approving, "should I approve the budget?", stays a question: R4.)
     if (/(?:^|\s)(?:approve|approved|approving|disapprove)(?:\s|$)/.test(said) && !ASKING.test(said)) return answerAction({ do: 'chrome-hint' });
-    // CHROME-VOICE-R3-4: a sentence that starts with a yes word and has no no word ("yes, add it", "sure, do it", "yes,
-    // keep going") is meant for it too: the free hint (what to say), never a paid question. Not with a walkthrough or an
-    // owner question open, nor when another question was asked after it.
-    const plain = plainAnswer(text);
-    const rest = said.replace(YES_LEAD_WORDS, '');
-    const asking = ASKING.test(rest) && !/^do (?:it|that|this)(?:\s|$)/.test(rest);
-    // (Not one about Jarvis's own windows, screens or viewers: "okay, we'll do this in this window" is the windows'.)
-    const his = /(?:^|\s)(?:window|windows|tab|tabs|screen|screens|hologram|camera|optics|blueprint)(?:\s|$)/.test(rest);
-    // Only when the rest answers it (CHROME-VOICE-R4-3): "okay, be quiet", "okay, pause the music", "yes, open YouTube in
-    // Chrome" are the owner's own commands, never the hint.
-    const answering = /^(?:(?:please|just|then) )*(?:add|do|go ahead|go for it|allow|let|spend|keep going|keep at it|continue|carry on|go on|buy|pay|order|confirm|approve|accept|proceed|book|reserve|purchase|place|submit|send|use|take|get|grab|pick|choose|select|sign|that|thats|this|it|of course|sure|fine)(?:\s|$)/.test(rest);
-    if (YES_LED.test(plain) && answering && !isNoWord(text) && !NO_IN_IT.test(plain) && !asking && !his && !/\?\s*$/.test(String(text))) {
-      const others = (Array.isArray(st.questions) && st.questions.length) || (st.tour && st.tour.active);
-      if (!others && askedLast(st)) return answerAction({ do: 'chrome-hint' });
-    }
     return null;
   }
   return null;
