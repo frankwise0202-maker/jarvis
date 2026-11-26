@@ -40,8 +40,8 @@ import { matchHologramCommand } from '../../lib/hologram-commands.js';
 import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsClosedWords, matchOpticsCommand, opticsClosedLine } from '../../lib/optics-commands.js';
 import { matchOfferChoice, matchResearchThis } from '../../lib/research-offer.js';
 
-// "My camera", "my webcam": the owner's own camera, never a hologram's camera part (R10's "my …").
-const MY_CAMERA = /\bmy (?:camera|webcam|web cam|cam)\b/i;
+// "My screen", "my camera": the owner's own, never a hologram's part (R10's "my …": ROUTING-7, ROUTING-R2-8).
+const MY_THING = /\bmy (?:screen|display|monitor|camera|webcam|web cam|cam)\b/i;
 
 /** The research offer's id on Voice Mode's question stack (app.js researchThis). */
 export const RESEARCH_OFFER_ID = 'research-offer';
@@ -100,7 +100,8 @@ export function register(router, deps) {
 
   // R10 (E2): with a hologram on top, "open the camera" means its camera part (the hologram selects
   // it, as today) and Jarvis says how to reach Optics. Before the hologram's own entry (same words).
-  // R10's "my …" (ROUTING-7): "open my camera" said in Voice Mode is the owner's camera: optics-open's.
+  // R10's "my …" (ROUTING-7, ROUTING-R2-8): "open my camera" is the owner's camera, never the part (in Voice Mode,
+  // optics-open's; typed in the hologram's field, a question for Jarvis, as "open optics" is there).
   router.register({
     id: 'optics-camera-part',
     layer: 'top',
@@ -110,7 +111,7 @@ export function register(router, deps) {
       if (!holo || !holo.open || holo.inWindow || !Array.isArray(holo.parts) || !holo.parts.length) return null;
       const words = String(text || '');
       if (!isOpticsOpenRequest(words) || /\boptics\b/i.test(words)) return null;
-      if (s.surface === 'voice' && MY_CAMERA.test(words)) return null;
+      if (MY_THING.test(words)) return null;
       const cmd = matchHologramCommand(words, holo.parts, { selected: holo.selected || null });
       return cmd && cmd.action === 'select' ? { do: 'hologram-part', command: cmd, free: true } : null;
     },

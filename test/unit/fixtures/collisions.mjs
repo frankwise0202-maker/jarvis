@@ -210,6 +210,10 @@ export const VOICE = {
     // ROUTING-R2-4: the emphatic no's are bare no's: with Chrome's question asked last (H4) they are its no, as "no" is
     // (voice's prompt entry first; chrome-voice's chrome-prompt says the same).
     ...['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'nah nah', 'no no'].map((w) => r(w, 'H4', 'prompt', 'asked last: the prompt (its no)')),
+    // ROUTING-R2-7: the laptop shown last and closed (VLC) still opens again for a command about the model.
+    r('open the hologram of the battery', 'VLC', 'hologram', 'opens the laptop again on its battery (free, undoable)'),
+    r('expand this in a different window', 'VLC', 'screens', 'a window (C3), as with nothing shown last'),
+    r('bring everything back', 'VLC', 'screens', "Screens' words with no hologram on screen, as in V0"),
   ],
 };
 
@@ -347,8 +351,7 @@ export const OPTICS = {
     { words: 'camera on', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'open the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
-    // ROUTING-7: "my camera" typed in the hologram's field stays its camera part with the hint (no "open optics" there).
-    ...['open my camera', 'show me my camera', 'open my webcam'].map((words) => ({ words, state: 'H0', winner: 'optics-camera-part', why: "Typed in the hologram's field: its camera part, with the hint for Optics." })),
+
     { words: 'camera on', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'open optics', state: 'VH', winner: 'optics-open', why: '"Open Optics" always opens Optics, a hologram on screen or not.' },

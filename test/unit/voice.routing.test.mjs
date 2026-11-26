@@ -2,6 +2,7 @@
 // the app's router built from today's matchers and the modules involved, as app.js registers them.
 //   ROUTING-R2-1  D3 with Optics open here: the hologram's commands act in its window, Optics keeps its own words
 //   ROUTING-R2-4  the emphatic no's answer the research offer (never a paid question)
+//   ROUTING-R2-7  the laptop shown last and closed opens again only for a command about it
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -107,3 +108,24 @@ for (const words of ['No.', 'No thanks.', 'No, no, no.', 'No, cancel that.', 'Ja
     assert.ok(picked.some(([k, v]) => (k === 'answer' && v === 'cancel') || (k === 'expire' && v === 'dismissed')), `the offer was answered no: ${JSON.stringify(picked)}`);
   });
 }
+
+// ---- ROUTING-R2-7: the laptop shown last over Voice Mode, closed (the router alone) -------------------------------
+
+test('ROUTING-R2-7: with a laptop shown last and closed, E2\'s camera words open Optics and questions reach Jarvis; commands still reopen it', () => {
+  const router = createRouter();
+  registerTodayCommands(router);
+  registerOptics(router, {});
+  const closedLaptop = {
+    ...emptyState('voice'),
+    voiceOpen: true,
+    camera: { supported: true, allowed: 'granted', ios: false },
+    reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: [] }] } },
+  };
+  const pick = (words) => {
+    const hit = router.route([words], closedLaptop);
+    return hit ? `${hit.id}:${hit.action.do}` : 'claude';
+  };
+  for (const words of ['Open the camera.', 'Camera on.', 'Show me the camera.', 'Turn the camera on.']) assert.equal(pick(words), 'optics-open:optics-open', words);
+  for (const words of ['Is the camera on?', 'Is my camera on?', 'What does the battery do?', 'Show my screen.']) assert.equal(pick(words), 'claude', words);
+  for (const words of ['Expand it.', 'Show the battery.', 'Rotate it.']) assert.equal(pick(words), 'hologram:hologram', words);
+});

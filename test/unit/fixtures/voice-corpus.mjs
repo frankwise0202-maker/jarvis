@@ -240,12 +240,34 @@ export const VOICE = {
     ...['VQ', 'TD'].flatMap((state) =>
       ['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'no, forget it', 'no not now', 'nah nah'].map((words) => [words, state, 'question:answer']),
     ),
+    // ROUTING-R2-8, R10's "my …": the owner's screen and camera are never a hologram's part, on screen (VH), in its field
+    // (H0) or shown last and closed (VLC): the words go where they go without the hologram.
+    ...['VH', 'H0', 'VLC'].flatMap((state) => ['show my screen', 'open my screen', 'is my screen on', 'is my camera on', 'show my display', 'show me my monitor'].map((words) => [words, state, null])),
+    // ROUTING-R2-7: a laptop hologram shown last and closed (VLC) doesn't open again for E2's camera words (Optics opens)
+    // or for a question (R4); it still does for a command about the model.
+    ['open the camera', 'VLC', 'optics-open'],
+    ['camera on', 'VLC', 'optics-open'],
+    ['show me the camera', 'VLC', 'optics-open'],
+    ['is the camera on', 'VLC', null],
+    ['what does the battery do', 'VLC', null],
+    ['expand it', 'VLC', 'hologram:hologram'],
+    ['show the battery', 'VLC', 'hologram:hologram'],
+    ['expand the picture', 'VLC', 'optics-idle'],
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',
     'read me the full story of Dune', 'exit the voice chat on discord', 'use George Foreman grill tips',
   ],
   states: {
+    // ROUTING-R2-7, R2-8: nothing on screen; a laptop hologram (a camera and a display among its parts) shown last over
+    // Voice Mode, closed, which can open again for a command about it.
+    VLC: {
+      surface: 'voice',
+      standby: { available: true, open: false },
+      camera: { supported: true, allowed: 'granted', ios: false },
+      voiceOpen: true,
+      reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }] } },
+    },
   },
 };
 
@@ -558,11 +580,12 @@ export const OPTICS = {
     ['camera on', 'H0', 'optics-camera-part'],
     ['open optics', 'VH', 'optics-open'],
     // ROUTING-7, R10's "my …": "open my camera" said over a hologram is the owner's camera (Optics), not the part.
-    // Typed in the hologram's field (no "open optics" there) it stays the part, with the hint.
+    // ROUTING-R2-8: typed in the hologram's field too it is no part: a question for Jarvis ("open optics" isn't a
+    // command there either).
     ['open my camera', 'VH', 'optics-open'],
     ['show me my camera', 'VH', 'optics-open'],
     ['open my webcam', 'VH', 'optics-open'],
-    ['open my camera', 'H0', 'optics-camera-part'],
+    ['open my camera', 'H0', null],
     ['close the camera', 'V0', 'optics-close'],
     ['camera off', 'OC0', 'optics-close'],
     ['close the camera', 'VL', 'optics'],
