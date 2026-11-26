@@ -129,8 +129,36 @@ async function sendDone(t, text) {
 }
 
 /** The app with a hologram and a report to put in windows. */
+/**
+ * Init script for the main window: every toast's words as they appear (window.__toastLog). A toast lasts 4.2 s,
+ * so a slow run can miss one by reading the screen after waiting for the windows.
+ */
+function installToastLog() {
+  if (window.opener) return;
+  window.__toastLog = [];
+  const last = new WeakMap();
+  const scan = () => {
+    for (const el of document.querySelectorAll('.toast-text')) {
+      const text = el.textContent || '';
+      if (last.get(el) === text) continue;
+      last.set(el, text);
+      window.__toastLog.push(text);
+    }
+  };
+  new MutationObserver(scan).observe(document, { childList: true, subtree: true, characterData: true });
+}
+
+const toastMark = (t) => t.page.evaluate(() => (window.__toastLog || []).length);
+
+/** A toast since `mark` said `re` (waits up to 8 s). */
+async function told(t, mark, re, what) {
+  const since = () => t.page.evaluate((n) => (window.__toastLog || []).slice(n), mark);
+  await t.waitFor(async () => (await since()).some((x) => re.test(x)), { timeout: 8000, message: async () => `${what} (toasts: ${JSON.stringify(await since())})` });
+}
+
 async function start(t, { monitors = 1, perm = 'prompt', voice = false } = {}) {
   t.page = await t.newPage(); // a fresh page each time (windows-side-by-side starts twice)
+  await t.page.addInitScript(installToastLog);
   await t.page.addInitScript(installScreenStubs, { monitors, perm });
   await t.page.addInitScript(installWindowGeometry);
   await t.page.context().addInitScript(installPopupGeometry);
@@ -180,13 +208,14 @@ export default [
       let report;
 
       await t.step('two windows: the first on the right half, then both side by side beside a strip of Jarvis', async () => {
+        const mark = await toastMark(t);
         ({ holo, report } = await openBoth(t));
         t.assert(!holo.isClosed() && !report.isClosed(), 'both windows are open');
         const holoPlace = await placeOf(t, holo);
         const reportPlace = await placeOf(t, report);
         t.assert(JSON.stringify(holoPlace) === JSON.stringify([320, 25, 560, 875]), `the hologram's window moved over (${holoPlace})`);
         t.assert(JSON.stringify(reportPlace) === JSON.stringify([880, 25, 560, 875]), `the report's window beside it (${reportPlace})`);
-        t.assert(/own window/i.test(await toastText(t)), `a toast says so (${await toastText(t)})`);
+        await told(t, mark, /own window/i, 'a toast says so');
         await t.screenshot('two-windows', report);
       });
 
@@ -210,10 +239,11 @@ export default [
         await report.evaluate(() => {
           document.hasFocus = () => false;
         });
+        const mark = await toastMark(t);
         await typeCommand(t, "we'll do this in this window");
         // The main window: the window "we" were working in comes back here.
         await t.waitFor(() => report.isClosed(), { timeout: 8000, message: 'the report window to come back' });
-        t.assert(/back in the main window/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+        await told(t, mark, /back in the main window/i, 'said so');
         t.assert(!holo.isClosed(), 'the hologram window stays');
       });
     },
@@ -313,9 +343,10 @@ export default [
       await t.step('smaller, then filling the screen beside Jarvis', async () => {
         await typeCommand(t, 'make the report window smaller');
         t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([376, 113, 448, 700]), `smaller around its centre (${await placeOf(t, report)})`);
+        const mark = await toastMark(t);
         await typeCommand(t, 'make the report window fill the screen');
         t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([320, 25, 1120, 875]), `all but Jarvis's strip (${await placeOf(t, report)})`);
-        t.assert(/fills the screen/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+        await told(t, mark, /fills the screen/i, 'said so');
       });
 
       await t.step('a floating panel: "drag its corner"', async () => {
