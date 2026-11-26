@@ -36,6 +36,7 @@ export const TASK_EVERY_MS = 2000; // (the to-app box takes 120 requests a minut
 export const CARD_LIFE_MS = 5 * 60 * 1000;
 export const OPENED_SITE_LIFE_MS = 10 * 60 * 1000;
 export const APPROVAL_WINDOW = Object.freeze({ width: 420, height: 620 });
+export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
 
@@ -220,8 +221,10 @@ export class JarvisLink {
   send(kind, body) {
     const relay = this.relay;
     if (!relay) return Promise.resolve(false);
+    const made = this.now();
     const job = this.queue.then(async () => {
-      if (this.relay !== relay) return false;
+      // (One that waited a minute behind an unreachable home base is stale: Jarvis would drop it.)
+      if (this.relay !== relay || this.now() - made > STALE_MS) return false;
       const b = typeof body === 'function' ? await body() : body;
       return b ? relay.send(kind, b) : false;
     });

@@ -221,7 +221,10 @@ export class Relay {
     }
   }
 
-  /** Sends one message to the app; resolves true once the home base has it. One retry. */
+  /**
+   * Sends one message to the app; resolves true once the home base has it. One retry, unless the
+   * home base isn't answering anyway (then it fails fast: what waits behind it isn't held up).
+   */
   async send(kind, body = {}) {
     let msg;
     try {
@@ -229,7 +232,8 @@ export class Relay {
     } catch {
       return false;
     }
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const attempts = this.failures > 0 ? 1 : 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const res = await this.request('POST', 'to-app', msg, SEND_TIMEOUT_MS);
         if (res.ok) {
@@ -240,7 +244,7 @@ export class Relay {
       } catch {
         /* try once more */
       }
-      if (attempt === 0) await this.sleep(1000);
+      if (attempt + 1 < attempts) await this.sleep(1000);
     }
     return false;
   }
