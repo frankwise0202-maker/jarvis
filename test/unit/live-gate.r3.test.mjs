@@ -158,3 +158,70 @@ test('MONEY-R3-1: asked again after that stop, as the line invites, the question
   assert.ok(budget.spent() <= 1 + 1e-9, `the record never passes $1 ($${budget.spent().toFixed(4)})`);
   assert.equal(gate.reserved(), 0);
 });
+
+// v8.1.1 fix MONEY-R4-1 (the re-verify of MONEY-R3-1's fix; its r4-ahead probe): the common cost stop is the one
+// MONEY-R2-1 designed, before the next round runs: a search starts, the round its result would start is counted
+// ahead (8,000 tokens), and the hour can't hold it. Nothing ran past the hold there (the meter's spent(), without
+// that round, is under it), so the hour counts the hold and keeps the room beside it for the live view's looks.
+for (const [spent, searches] of [
+  [0.7, 3],
+  [0.72, 2],
+  [0.65, 3],
+]) {
+  test(`MONEY-R4-1: hour at ${spent * 100}¢, a new chat, ${searches} searches of 7,000 tokens (under the 8,000 counted ahead): stopped before the next round runs, the hour counts the hold and keeps its room`, async () => {
+    const { budget, gate } = liveHour(spent);
+    const content = [blk.text('Let me look that up.')];
+    for (let i = 1; i <= searches; i++) content.push(blk.search(`s${i}`, `q${i}`), searchResult(`s${i}`, 7000));
+    content.push(blk.text('It is the Anker 715.'));
+    const h = createHarness({ handler: (req) => (req.kind === 'lead' ? { content, stop: 'end_turn', startUsage: COLD, usage: { ...COLD, output_tokens: 300 } } : { content: [blk.text('ok')], stop: 'end_turn' }) });
+    const meters = [];
+    const turn = await ask(h, h.jarvis.newConversation(), gate, meters);
+    assert.equal(meters.length, 1);
+    const { m } = meters[0];
+    assert.equal(m.tripped, 'cost');
+    assert.equal(turn.status, 'error');
+    assert.match(turn.error.message, CAP);
+    const hold = m.limitUsd;
+    assert.ok(m.spent() <= hold + 1e-9, `nothing ran past the hold (spent $${m.spent().toFixed(4)}, held $${hold.toFixed(4)})`);
+    const counted = budget.spent() - spent;
+    assert.ok(Math.abs(counted - hold) < 1e-6, `the hour counts the hold ($${counted.toFixed(4)} vs $${hold.toFixed(4)})`);
+    assert.ok(Math.abs(gate.room() - (1 - spent - hold)) < 1e-6 && gate.room() > 0.01, `the room beside the hold stays ($${gate.room().toFixed(4)})`);
+    assert.ok(gate.fits(0.0005), "the live view's looks go on");
+    if (spent === 0.7) assert.ok(Math.abs(counted - 0.2613) < 0.0001 && Math.abs(gate.room() - 0.0387) < 0.0001, `70¢: $0.2613 counted, 3.87¢ left ($${counted.toFixed(4)}, $${gate.room().toFixed(4)})`);
+    assert.equal(gate.reserved(), 0);
+  });
+}
+
+// v8.1.1 fix MONEY-R4-2 (the re-verify's two-window probe, case A): window B (another Jarvis window on the same
+// storage) has a question in flight with its hold while window A's question runs past its hold at a very large
+// result. The room A's round may have used beside B's hold can't be counted now (the record never passes $1);
+// it stays held by A for the rest of the hour, so it isn't offered again once B's answer settles.
+for (const [spent, tokens] of [
+  [0.4, 60000],
+  [0.45, 45000],
+]) {
+  test(`MONEY-R4-2: two windows, B holding a question while A's runs past its hold (${spent * 100}¢, ${tokens.toLocaleString('en-US')} tokens): once B settles, no room A's round may have used is on offer`, async () => {
+    const storage = memoryStorage();
+    const budgetA = createLiveBudget({ storage });
+    const budgetB = createLiveBudget({ storage });
+    budgetA.add(spent);
+    const gateA = G.createLiveGate({ budget: budgetA, storage, instance: 'aaaaaa' });
+    const gateB = G.createLiveGate({ budget: budgetB, storage, instance: 'bbbbbb' });
+    const b = await gateB.reserveUpTo(0.2613, 0.05); // window B's question, in flight
+    assert.ok(b.ok);
+    const h = createHarness({ handler: (req) => (req.kind === 'lead' ? reply(1, tokens, COLD) : { content: [blk.text('ok')], stop: 'end_turn' }) });
+    const meters = [];
+    const turn = await ask(h, h.jarvis.newConversation(), gateA, meters);
+    assert.equal(turn.status, 'error');
+    const { m } = meters[0];
+    assert.equal(m.tripped, 'cost');
+    const ran = m.spent();
+    assert.ok(budgetA.spent() <= 1 + 1e-9, `the record never passes $1 ($${budgetA.spent().toFixed(4)})`);
+    await gateB.settle(b.id, 0.03); // B's answer came in at 3¢
+    const takenOut = budgetA.spent() + gateA.reserved();
+    assert.ok(takenOut >= spent + ran + 0.03 - 1e-6, `what A's round may have used stays out of the room ($${takenOut.toFixed(4)} spent and held, against $${(spent + ran + 0.03).toFixed(4)})`);
+    assert.ok(Math.abs(gateA.room() - Math.max(0, 1 - takenOut)) < 1e-6, `room on offer $${gateA.room().toFixed(4)}`);
+    assert.ok(Math.abs(gateA.reserved() - gateB.reserved()) < 1e-9, 'both windows see the same holds');
+    assert.ok(budgetA.spent() <= 1 + 1e-9);
+  });
+}

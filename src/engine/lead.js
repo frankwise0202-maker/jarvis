@@ -460,15 +460,16 @@ function meterFor(ctx, ticket) {
  * mid-stream, or a connection that dropped): the worst is assumed (its reservation counts; with no
  * reservation, what it already cost). MONEY-R2-3: a request whose meter saw its prompt billed counts
  * what the meter says it may have cost (its prompt as billed, all of max_tokens, its searches and
- * rounds), not its whole reservation: retries and the owner's Stop no longer fill the hour. MONEY-R3-1:
- * up to what the hour can still hold, not only what was held (a round may have run past the hold).
+ * rounds), not its whole reservation: retries and the owner's Stop no longer fill the hour. MONEY-R3-1,
+ * MONEY-R4-1: what ran past the hold (spent(), without the rounds only counted ahead) up to what the hour
+ * can still hold.
  * Returns the gate's promise, so a stop's line can wait for it.
  */
 function settleFailedTicket(ctx, ticket, err, metered = null) {
   const e = err && typeof err === 'object' ? err : {};
   const turnedDown = typeof e.status === 'number' && !e.jarvisStarted && !e.jarvisPartial && !isAbortError(err);
   if (turnedDown) return ticket.release();
-  if (metered && metered.meter.started && typeof ticket.settleAtMost === 'function') return ticket.settleAtMost(metered.meter.committed());
+  if (metered && metered.meter.started && typeof ticket.settleAtMost === 'function') return ticket.settleAtMost(metered.meter.committed(), metered.meter.spent());
   const partial = e.jarvisPartial;
   return ticket.keep(partial ? responseCost(partial.model || ctx.leadModel, partial.usage, ctx.leadModel) : 0);
 }

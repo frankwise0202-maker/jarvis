@@ -31,7 +31,7 @@
 //                          { maxTokens, web } that keep the worst case within `usd`, or null
 //   createLiveGate({ budget, storage, now, lock })
 //                          { budget, reserve(usd), reserveUpTo(usd, floorUsd), extend(id, usd),
-//                            settle(id, usd), settleAtMost(id, usd), release(id), keep(id),
+//                            settle(id, usd), settleAtMost(id, usd, ranUsd), release(id), keep(id),
 //                            count(usd), reserved(), room(), fits(usd), resumeAt(usd) }
 //   capLine(resumeAt)      "That would take the live view past its dollar this hour. It can go on at
 //                          2:41 PM, or say 'stop live view' and ask again."
@@ -297,10 +297,11 @@ function parseReserved(raw) {
  *   settle(id, usd)   the request was answered: its real cost goes to the budget, its reservation goes
  *   release(id)       it failed before it was billed: the reservation goes
  *   extend(id, usd)   MONEY-R2-1: the reservation grows by `usd` when the hour still holds it
- *   settleAtMost(id, usd)
+ *   settleAtMost(id, usd, ranUsd)
  *                     MONEY-R2-3: stopped or cut after it was sent, with `usd` an upper bound of what it
- *                     may have cost (its meter's): that counts as spent, up to what the hour can still
- *                     hold (what was held and the room beside it, MONEY-R3-1); the reservation goes
+ *                     may have cost (its meter's): that counts as spent, up to what was held; `ranUsd`
+ *                     (the meter's figure without the rounds it counted ahead) up to what the hour can
+ *                     still hold, the room beside the hold too (MONEY-R3-1, MONEY-R4-1); the reservation goes
  *   keep(id)          it was stopped after it was sent (it may have been billed): the reservation
  *                     is counted as spent
  *   count(usd)        real money with no reservation (a request of a counted turn sent after the
@@ -468,17 +469,30 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
     extend: (id, usd) => run(() => tryExtend(id, usd)),
     /**
      * MONEY-R2-3: a request stopped or cut after it was sent, whose upper bound `usd` is known (its meter):
-     * that is counted as spent, up to what the hour can still hold; the reservation goes. MONEY-R3-1: not
-     * only what was held: a round that ran past the hold (a search result far larger than counted ahead,
-     * at an hour that couldn't grow it) may have used the room beside it, so that room is never left on offer.
+     * that is counted as spent, up to what was held; the reservation goes. MONEY-R3-1, MONEY-R4-1: what
+     * really ran past the hold (`ranUsd`, the meter's figure without the rounds it only counted ahead: a
+     * search result far larger than counted ahead, at an hour that couldn't grow the hold) may have used the
+     * room beside it, so that much counts up to all the room and the room is never left on offer. A stop
+     * before the next round ran counts the hold, and leaves the room.
      */
-    settleAtMost: (id, usd) =>
+    settleAtMost: (id, usd, ranUsd = 0) =>
       run(() => {
         const e = mine.get(id);
         if (!e) return false;
-        const cost = Math.min(isNum(usd) && usd > 0 ? usd : 0, e.nano / NANO + roomUsd());
+        const upTo = isNum(usd) && usd > 0 ? usd : 0;
+        const ran = isNum(ranUsd) && ranUsd > 0 ? Math.min(ranUsd, upTo) : 0;
+        const t = time();
+        const all = reservedNano(t) / NANO;
+        let own = 0;
+        for (const x of mine.values()) own += x.nano;
+        const cost = Math.max(Math.min(e.nano / NANO, upTo), Math.min(ran, e.nano / NANO + roomUsd(t)));
         if (nano(cost) > 0) budget.add(cost);
         drop(id);
+        // MONEY-R4-2: what ran past the hold that the hour couldn't take because another window holds the rest
+        // stays held by this window for the rest of the hour, so it isn't offered again when that question
+        // settles. The record never passes $1.
+        const kept = Math.min(Math.max(0, ran - cost), Math.max(0, all - own / NANO));
+        if (nano(kept) > 0) hold(t, nano(kept));
         return true;
       }),
     keep: (id) =>
@@ -801,7 +815,7 @@ export function createTurnGate({ gate, isOn, startedOn } = {}) {
         release: () => finish(() => gate.release(r.id)),
         keep: () => finish(() => gate.keep(r.id)),
         // MONEY-R2-3: stopped or cut after it was sent, with its meter's upper bound of what it may have cost.
-        settleAtMost: (usd) => finish(() => (typeof gate.settleAtMost === 'function' ? gate.settleAtMost(r.id, Number(usd) || 0) : gate.keep(r.id))),
+        settleAtMost: (usd, ranUsd) => finish(() => (typeof gate.settleAtMost === 'function' ? gate.settleAtMost(r.id, Number(usd) || 0, Number(ranUsd) || 0) : gate.keep(r.id))),
         // MONEY-R2-1: the meter grows the hold from the hour's room; it stops the request only when the hour
         // can't hold its next round.
         meter: ({ maxTokens: max, tools, onStop } = {}) =>
