@@ -226,11 +226,14 @@ export default [
       await t.goto('/?optics=1');
       await waitLive(t);
       await lookAside(t);
+      // The feed's two scenes differ in about 9% of the thumbnail (Watch's measure: more than 6% is a
+      // change); the same scene, well under 2%.
+      let lastDiff = 0;
       const sceneIs = async (same) =>
         t.waitFor(async () => {
-          const d = await sceneDiff(page);
-          return same ? d < 0.02 : d > 0.12;
-        }, { timeout: 12000, interval: 100, message: `the scene to be ${same ? 'the card\'s' : 'a new one'}` });
+          const d = (lastDiff = await sceneDiff(page));
+          return same ? d < 0.02 : d > 0.06;
+        }, { timeout: 12000, interval: 100, message: () => `the scene to be ${same ? 'the card\'s' : 'a new one'} (difference ${lastDiff.toFixed(3)})` });
       // The feed shows each scene for 4 s: wait for the change into the one wanted, so the question is
       // asked near the start of its 4 s (never as it is about to change again).
       const waitScene = async (same) => {
