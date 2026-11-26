@@ -4801,7 +4801,8 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
 - R9: every local action says one short line, so a stolen sentence is noticed at once.
 - R10: inside a hologram its part names win, except "my …" and "Optics"; when a part takes camera words, Jarvis adds
   "Say 'open Optics' for your camera." (`partHint`). "My screen", "my display", "my monitor", "my camera", "my webcam"
-  and "my cam" are never a part, on screen, in the hologram's field or shown last (ROUTING-7, ROUTING-R2-8). The
+  and "my cam" are never a part, on screen, in the hologram's field or shown last (ROUTING-7, ROUTING-R2-8), nor through
+  another reading of them ("open my camera" heard, "open the camera" the other reading: v8.1.1). The
   hologram shown last over Voice Mode, closed, opens again only for a command about it: never for E2's camera words
   ("open the camera": Optics opens), Optics' own words with Optics closed ("expand the picture") or a question
   ("is the camera on?"): ROUTING-R2-7.

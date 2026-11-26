@@ -325,6 +325,11 @@ export const REOPEN_ACTIONS = Object.freeze(new Set(['explode', 'collapse', 'sel
 const opticsOnTop = (s) => !!(s.optics && s.optics.open) && !s.hologram && !s.blueprintOpen;
 // "My screen", "my camera": the owner's own, never a hologram's part (R10's "my …": ROUTING-7, ROUTING-R2-8).
 const MY_THING = /\bmy (?:screen|display|monitor|camera|webcam|web cam|cam)\b/i;
+/** R10's "my …" in the best reading (a matcher's ctx): another reading never makes it a hologram's part. */
+function namesMyThing(ctx) {
+  const best = ctx && Array.isArray(ctx.readings) ? ctx.readings[0] : '';
+  return MY_THING.test(String(best || ''));
+}
 
 /** A hologram command for the parts given (or one that needs a part: "isolate it"). */
 function partsCommand(text, parts, selected) {
@@ -506,16 +511,18 @@ const TODAY_COMMANDS = [
     },
   },
   // The hologram's commands: on screen, or (Voice Mode) the one shown last, which opens again for them.
-  // R10's "my …": "show my screen", "open my camera" are the owner's, never a part (ROUTING-7, ROUTING-R2-8). The
-  // one shown last opens again only for a command about it: not for E2's camera words (Optics opens), Optics' own
-  // words with Optics closed ("expand the picture": MONEY-7's line) nor a question (R4): ROUTING-R2-7.
+  // R10's "my …": "show my screen", "open my camera" are the owner's, never a part (ROUTING-7, ROUTING-R2-8), nor
+  // through another reading of them (a viewer's microphone gives every reading, MONEY-R2-5: "open my camera" heard,
+  // "open the camera" the other one). The one shown last opens again only for a command about it: not for E2's camera
+  // words (Optics opens), Optics' own words with Optics closed ("expand the picture": MONEY-7's line) nor a question
+  // (R4): ROUTING-R2-7.
   {
     id: 'hologram',
     layer: 'top',
     surfaces: ['voice', 'hologram'],
-    match: (text, s) => {
+    match: (text, s, ctx) => {
       if (s.surface === 'voice' && opticsOnTop(s)) return null;
-      if (MY_THING.test(String(text || ''))) return null;
+      if (MY_THING.test(String(text || '')) || namesMyThing(ctx)) return null;
       if (s.hologram && s.hologram.open) return partsCommand(text, s.hologram.parts, s.hologram.selected);
       if (s.surface !== 'voice' || s.blueprintOpen) return null;
       const last = s.reply && s.reply.hologram;

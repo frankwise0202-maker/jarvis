@@ -317,6 +317,14 @@ export const ALTERNATIVES = Object.freeze(
     // v8.1.1 fix MONEY-R2-5: the hologram's own microphone gives every reading too; a paid blueprint never
     // comes from another reading (R7), so the question goes to Jarvis.
     { best: 'what is the battery', alts: ['blueprint the battery'], state: 'H0', want: 'claude' },
+    // v8.1.1 (integration: MONEY-R2-5 with ROUTING-R2-8): R10's "my …" in the best reading: no other reading makes it a
+    // hologram's part, in Voice Mode or from the viewer's own microphone; free hologram commands still come from one.
+    { best: 'show my screen', alts: ['show the screen'], state: 'VH', want: 'claude' },
+    { best: 'show my screen', alts: ['show the screen'], state: 'H0', want: 'claude' },
+    { best: 'open my camera', alts: ['open the camera'], state: 'H0', want: 'claude' },
+    { best: 'open my webcam', alts: ['open the webcam'], state: 'H0', want: 'claude' },
+    { best: 'open my camera', alts: ['open the camera'], state: 'VH', want: { id: 'optics-open' } },
+    { best: 'expanded', alts: ['expand it'], state: 'H0', want: { id: 'hologram' } },
   ].map((r) => Object.freeze(r)),
 );
 

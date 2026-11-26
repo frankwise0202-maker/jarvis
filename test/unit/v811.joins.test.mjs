@@ -147,3 +147,32 @@ test('cvoice + routing: a walkthrough with a Chrome task running: "pause it" pau
     }
   }
 });
+
+// ---- fix-money's viewer microphone (MONEY-R2-5: every reading) with fix-routing's R10 "my …" (ROUTING-R2-7, R2-8) ------
+
+test('money + routing: the hologram viewer\'s words, every reading as routeFromViewer routes them (each hit, then the next): "my camera" and "open my camera" stay a question for Jarvis even when another reading drops the "my"; the viewer\'s own commands still act', async () => {
+  const router = await appRouter();
+  const hologram = { open: true, inWindow: false, parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }], selected: null, title: '14-inch laptop' };
+  // routeFromViewer (src/ui/app.js): the router's hit, and the next one when the viewer couldn't act on it.
+  const chain = (readings, via) => {
+    const st = { ...emptyState('hologram'), surface: 'hologram', via, standby: { available: true, open: false }, hologram, camera: { supported: true, allowed: 'granted', ios: false } };
+    const out = [];
+    for (let hit = router.route(readings, st); hit && out.length < 8; hit = router.route(readings, st, { after: hit })) out.push(`${hit.id}:${hit.action.do} (${hit.reading})`);
+    return out;
+  };
+  for (const via of ['typed', 'voice']) {
+    for (const readings of [['my camera'], ['open my camera'], ['show me my camera'], ['open my camera', 'open the camera'], ['open my webcam', 'open the webcam'], ['show my screen', 'show the screen'], ['is my camera on', 'open the camera']]) {
+      assert.deepEqual(chain(readings, via), [], `${via} ${JSON.stringify(readings)}: a question for Jarvis`);
+    }
+    // R10: the part's camera words select it ("Say 'open Optics' for your camera."), as before.
+    assert.deepEqual(chain(['open the camera'], via)[0], 'optics-camera-part:hologram-part (open the camera)', `${via}: the camera part`);
+    // The viewer's own commands, from the best reading or (free) another one.
+    assert.equal(chain(['show the battery'], via)[0], 'hologram:hologram (show the battery)', `${via}: a part`);
+    assert.equal(chain(['expanded', 'expand it'], via)[0], 'hologram:hologram (expand it)', `${via}: a free command from another reading`);
+    // A paid blueprint never from another reading (MONEY-R2-5); from the best one it is the viewer's.
+    assert.deepEqual(chain(['what is the battery', 'blueprint the battery'], via), [], `${via}: the question, no blueprint`);
+    assert.equal(chain(['blueprint the battery'], via)[0], 'hologram:hologram (blueprint the battery)', `${via}: blueprint, said first`);
+    // Money's off words in the field (MONEY-R2-4) with routing's: the live view's line, nothing sent.
+    for (const w of ['stop live view', 'stop watching']) assert.equal(chain([w], via)[0], `optics-idle:optics-idle (${w})`, `${via}: "${w}"`);
+  }
+});

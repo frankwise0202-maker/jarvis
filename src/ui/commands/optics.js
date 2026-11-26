@@ -108,12 +108,14 @@ export function register(router, deps) {
     id: 'optics-camera-part',
     layer: 'top',
     surfaces: ['voice', 'hologram'],
-    match(text, s) {
+    match(text, s, ctx) {
       const holo = s.hologram;
       if (!holo || !holo.open || holo.inWindow || !Array.isArray(holo.parts) || !holo.parts.length) return null;
       const words = String(text || '');
       if (!isOpticsOpenRequest(words) || /\boptics\b/i.test(words)) return null;
-      if (MY_THING.test(words)) return null;
+      // Nor through another reading of them (v8.1.1: a viewer's microphone gives every reading, MONEY-R2-5).
+      const best = ctx && Array.isArray(ctx.readings) ? String(ctx.readings[0] || '') : '';
+      if (MY_THING.test(words) || MY_THING.test(best)) return null;
       const cmd = matchHologramCommand(words, holo.parts, { selected: holo.selected || null });
       return cmd && cmd.action === 'select' ? { do: 'hologram-part', command: cmd, free: true } : null;
     },
