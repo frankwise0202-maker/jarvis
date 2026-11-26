@@ -90,9 +90,10 @@ export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'ne
 export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
 // The code works once (REDTEAM-LINK-4): on the first message sealed with the code's key, a new key replaces it, sent
 // to Jarvis for Chrome in a `rekey` sealed with the code's key and sent again until confirmed by a message under the
-// new key (then the code's key is forgotten here). Until then this side still opens messages under the code's key
-// (at most PENDING_MS after the rekey) and seals with it for REKEY_GRACE_MS (Jarvis for Chrome takes it that long
-// after it switched), or while Jarvis for Chrome is still heard using it.
+// new key (then the code's key is forgotten here, and a hello under the new key tells Jarvis for Chrome to forget it
+// too: CHROME-LINK-R2-2). Until then this side still opens messages under the code's key (however long: R2-3) and
+// seals with it for REKEY_GRACE_MS (Jarvis for Chrome takes it that long after it switched), or while Jarvis for
+// Chrome is still heard using it.
 export const REKEY_GRACE_MS = 10 * 60_000;
 export const REKEY_RESEND_MS = Object.freeze([3_000, 6_000, 12_000, 30_000]);
 const PREV_HEARD_MS = 2 * 60_000; // Jarvis for Chrome used the code's key this recently: it hasn't switched
@@ -601,9 +602,11 @@ export function createChromeLink({
     return rec.key;
   }
 
-  /** Whether a message under the code's key is still taken (only before the new key is confirmed, half an hour at most). */
-  // (Until the new key is confirmed, however long: an extension that missed every rekey still uses the code's key, and
-  // is only heard, and sent the rekey again, through it. CHROME-LINK-R2-3: it was 30 minutes, then a reload.)
+  /**
+   * Whether a message under the code's key is still taken: until the new key is confirmed, however long. An extension
+   * that missed every rekey still uses the code's key, and is only heard, and sent the rekey again, through it
+   * (CHROME-LINK-R2-3: it was 30 minutes, then nothing until a reload).
+   */
   const prevOpen = (rec) => !!rec.prev;
 
   /** Send the new key, sealed with the code's (again until confirmed: on a schedule, and when the old key is heard). */
