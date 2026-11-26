@@ -2285,6 +2285,11 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
     `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
     Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
+    Voice Mode drops an open question when other words are routed, and "mission" is routed (to the answer entry)
+    before it is checked: so a dropped offer stays answerable by its dear ways for 30 s (its question and card
+    gone), an answer to an offer that has gone is said back ("That research offer has gone…"), never sent to
+    Claude, and in Voice Mode the research turn starts on the next tick (after Voice Mode's own note for the routed
+    command).
   - **The ways** (`researchPrompt`): Quick → a follow-up on the open Look (`optics.followUp`) or a quick turn ("Research
     this with a web search and give me a quick answer: <words>."); Mission → a swarm turn in words ("Research <words>:
     what it is, its specifications, prices and reviews, and anything to watch out for."; the agents can't see the
@@ -2317,7 +2322,8 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   `optics-open-by-voice-iphone` ("Tap Look to turn the camera on."; the tap opens Optics with no
   Look) and `optics-research` (the offer shown and said; Cancel sends nothing; Quick one quick-mode request with a web
   search; Mission one swarm turn; Home base one job on the Core; with the live view on, the offer's wording, and at
-  97¢ no quick answer offered). Changed on purpose: `optics-look-screen` (Optics stays open and live, the card folds,
+  97¢ no quick answer offered) and `optics-research-voice` (Voice Mode over Optics: the offer asked aloud, nothing
+  sent; "cancel" said back; "mission" through the 2-second check, then one swarm turn in words). Changed on purpose: `optics-look-screen` (Optics stays open and live, the card folds,
   "bring it back" typed in Optics' field reopens it aside), `optics-keys` (a Mac's Look is aside), and the pins checks
   (they measure the pins in their own box, the card's on a Mac).
 
