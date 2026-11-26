@@ -328,7 +328,8 @@ export default [
         await pillIs(t, /SPEAKERPHONE DISCONNECTED$/, 3000);
       });
       await t.step('the next wake: one short line before the greeting, once (never said by itself before)', async () => {
-        const said = async () => [...t.core.senses.speaks.map((x) => x.text), ...(await t.page.evaluate(() => window.__voice.said))].join(' | ');
+        // George may say a sentence in two pieces (his first piece can be part of one): joined with spaces.
+        const said = async () => [...t.core.senses.speaks.map((x) => x.text), ...(await t.page.evaluate(() => window.__voice.said))].join(' ').replace(/\s+/g, ' ');
         t.assert(!/speakerphone isn’t connected/.test(await said()), 'Nothing was said while Standby waited');
         await play(t, DOUBLE_CLAP);
         await t.visible('voice-mode', { timeout: 8000, message: 'two claps wake Jarvis' });
