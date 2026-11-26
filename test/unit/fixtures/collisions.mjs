@@ -245,7 +245,7 @@ export const CHROME_VOICE = {
 
 // ==== windows =========================================================================================
 // Window words and Chrome's are explicit destinations: they come before the thing on top (Optics here).
-const WINDOWS_OVER_OPTICS = ['VL', 'VF', 'OV'].flatMap((state) => [
+const WINDOWS_OVER_OPTICS = ['VL', 'VF', 'OV', 'LV'].flatMap((state) => [
   { words: 'do this in this window', state, winner: 'windows', why: 'The owner picks the window to work in, even with the camera open.' },
   { words: 'show me the hologram window', state, winner: 'windows', why: 'Bring the hologram window to the front; not a question about the camera picture.' },
   { words: 'look it up on Google', state, winner: 'chrome-open', why: 'A Google search in a tab, not a Look at the camera.' },
@@ -253,15 +253,30 @@ const WINDOWS_OVER_OPTICS = ['VL', 'VF', 'OV'].flatMap((state) => [
 export const WINDOWS = {
   rows: [
     ...WINDOWS_OVER_OPTICS,
+    // The hologram in a window takes what it takes in the main window (voice's ALL_HOLOS rows), by design.
+    ...['WIN2', 'WINH'].flatMap((state) => [
+      { words: 'stop that', state, winner: 'windows-hologram', why: 'Holds the model in its window still (free, undoable), as in the main window.' },
+      { words: 'open the hologram of the battery', state, winner: 'windows-hologram', why: 'Selects the battery part in its window (free, undoable), as in the main window.' },
+      // The layers in order: "stop" stops Jarvis first, window words before the hologram's own.
+      { words: 'stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'okay stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), never the explode of the hologram in its window.' },
+      { words: 'bring everything back', state, winner: 'screens', why: 'Windows are open: they come back (as in VHW), not every part shown.' },
+    ]),
+    // "Close that window" names a window: the one with the focus, else the newest (windows comes before screens).
+    ...['VHW', 'WIN2', 'WINH', 'WINC'].map((state) => ({ words: 'close that window', state, winner: 'windows', why: 'The window with the focus, else the newest; not every window.' })),
     // Lead decision D1 (chrome.task before chrome.open): "open the Nth link" is the reply's link only when the
-    // newest reply has links; page words are never chrome.open's. Out of a Chrome context these reach Claude;
-    // the Chrome-context rows (and "… in Chrome" with a page object) have the Chrome task as winner and go in with
-    // chrome-voice's matcher.
+    // newest reply has links; page words are never chrome.open's, links or not. Out of a Chrome context they reach
+    // Claude, unless they say "in Chrome" (a Chrome task). voice's rows cover the Chrome context (CC, CCL).
     { words: 'open the second link', state: 'WINL', winner: 'chrome-open', why: 'The newest reply has links: its second one, in Chrome.' },
     { words: 'open the second link', state: 'V0', winner: null, why: 'No links in the newest reply and no Chrome task: a question for Jarvis.' },
     { words: 'click the first link', state: 'WINL', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
     { words: 'open the first result', state: 'WINL', winner: null, why: 'A page object: never a Google search (a Chrome task in a Chrome context).' },
     { words: 'click the first result', state: 'V0', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
+    { words: 'click the first result', state: 'WINL', winner: null, why: 'The reply\'s links don\'t make "click …" chrome.open\'s.' },
+    { words: 'open the first result', state: 'V0', winner: null, why: 'A page object with no Chrome context: a question for Jarvis.' },
+    { words: 'open the cheapest one in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
+    { words: 'open the second result in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
   ],
 };
 

@@ -11,6 +11,8 @@
 //                           strip of Jarvis kept) and with two (on the other monitor, Jarvis in full view)
 //   windows-swap-resize     D5: "swap them", "make the report window smaller", "… fill the screen" (Jarvis's
 //                           strip kept); a floating panel says to drag its corner
+//   windows-float-jarvis    D6: "float yourself": Jarvis in the real floating panel, in place of a floating
+//                           hologram (said); it follows Voice Mode; "close the float"
 //   windows-follow-content  the hologram in a window: "explode it", "show the hybrid battery" said in Voice
 //                           Mode act there (no viewer opens here, nothing goes to Claude); its window
 //                           closed by hand, "expand it" opens it here again, as before
@@ -127,8 +129,36 @@ async function sendDone(t, text) {
 }
 
 /** The app with a hologram and a report to put in windows. */
+/**
+ * Init script for the main window: every toast's words as they appear (window.__toastLog). A toast lasts 4.2 s,
+ * so a slow run can miss one by reading the screen after waiting for the windows.
+ */
+function installToastLog() {
+  if (window.opener) return;
+  window.__toastLog = [];
+  const last = new WeakMap();
+  const scan = () => {
+    for (const el of document.querySelectorAll('.toast-text')) {
+      const text = el.textContent || '';
+      if (last.get(el) === text) continue;
+      last.set(el, text);
+      window.__toastLog.push(text);
+    }
+  };
+  new MutationObserver(scan).observe(document, { childList: true, subtree: true, characterData: true });
+}
+
+const toastMark = (t) => t.page.evaluate(() => (window.__toastLog || []).length);
+
+/** A toast since `mark` said `re` (waits up to 8 s). */
+async function told(t, mark, re, what) {
+  const since = () => t.page.evaluate((n) => (window.__toastLog || []).slice(n), mark);
+  await t.waitFor(async () => (await since()).some((x) => re.test(x)), { timeout: 8000, message: async () => `${what} (toasts: ${JSON.stringify(await since())})` });
+}
+
 async function start(t, { monitors = 1, perm = 'prompt', voice = false } = {}) {
-  await t.newPage();
+  t.page = await t.newPage(); // a fresh page each time (windows-side-by-side starts twice)
+  await t.page.addInitScript(installToastLog);
   await t.page.addInitScript(installScreenStubs, { monitors, perm });
   await t.page.addInitScript(installWindowGeometry);
   await t.page.context().addInitScript(installPopupGeometry);
@@ -178,13 +208,14 @@ export default [
       let report;
 
       await t.step('two windows: the first on the right half, then both side by side beside a strip of Jarvis', async () => {
+        const mark = await toastMark(t);
         ({ holo, report } = await openBoth(t));
         t.assert(!holo.isClosed() && !report.isClosed(), 'both windows are open');
         const holoPlace = await placeOf(t, holo);
         const reportPlace = await placeOf(t, report);
         t.assert(JSON.stringify(holoPlace) === JSON.stringify([320, 25, 560, 875]), `the hologram's window moved over (${holoPlace})`);
         t.assert(JSON.stringify(reportPlace) === JSON.stringify([880, 25, 560, 875]), `the report's window beside it (${reportPlace})`);
-        t.assert(/own window/i.test(await toastText(t)), `a toast says so (${await toastText(t)})`);
+        await told(t, mark, /own window/i, 'a toast says so');
         await t.screenshot('two-windows', report);
       });
 
@@ -208,10 +239,11 @@ export default [
         await report.evaluate(() => {
           document.hasFocus = () => false;
         });
+        const mark = await toastMark(t);
         await typeCommand(t, "we'll do this in this window");
         // The main window: the window "we" were working in comes back here.
         await t.waitFor(() => report.isClosed(), { timeout: 8000, message: 'the report window to come back' });
-        t.assert(/back in the main window/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+        await told(t, mark, /back in the main window/i, 'said so');
         t.assert(!holo.isClosed(), 'the hologram window stays');
       });
     },
@@ -278,6 +310,10 @@ export default [
         await typeCommand(t, 'side by side');
         t.assert(/side by side/i.test(await toastText(t)), `said so (${await toastText(t)})`);
         for (const place of [await placeOf(t, report), await placeOf(t, holo)]) t.assert(place[0] >= 320, `nothing over Jarvis's strip (${place})`);
+        // The next step starts a new main page: windows still open would answer its "who" and be adopted, as
+        // after a reload (then "put the hologram in a window" only raises the adopted one).
+        await holo.close();
+        await report.close();
       });
 
       await t.step('two monitors: the windows go to the other one', async () => {
@@ -311,9 +347,10 @@ export default [
       await t.step('smaller, then filling the screen beside Jarvis', async () => {
         await typeCommand(t, 'make the report window smaller');
         t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([376, 113, 448, 700]), `smaller around its centre (${await placeOf(t, report)})`);
+        const mark = await toastMark(t);
         await typeCommand(t, 'make the report window fill the screen');
         t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([320, 25, 1120, 875]), `all but Jarvis's strip (${await placeOf(t, report)})`);
-        t.assert(/fills the screen/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+        await told(t, mark, /fills the screen/i, 'said so');
       });
 
       await t.step('a floating panel: "drag its corner"', async () => {
@@ -324,6 +361,55 @@ export default [
         await typeCommand(t, 'make the report window bigger');
         await t.waitFor(async () => /Drag its corner/.test(await toastText(t)), { timeout: 5000, message: async () => `said why (${await toastText(t)})` });
         await typeCommand(t, 'close the float');
+      });
+    },
+  },
+
+  {
+    name: 'windows-float-jarvis',
+    title: '"Float yourself": Jarvis in the real floating panel (his core, the state word), in place of a floating hologram (said); it follows Voice Mode (LISTENING); typed, no extra tap; closing it',
+    device: 'desktop',
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installScreenStubs, { monitors: 1 });
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await sendDone(t, '[[hologram:camry]] Show me a 2024 Toyota Camry Hybrid');
+      let pip;
+
+      await t.step('a floating hologram, then "float yourself": Jarvis takes its place, and says so', async () => {
+        pip = await opensPage(t, () => typeCommand(t, 'float the hologram'));
+        await pip.waitForSelector(tid('screen-hologram'), { timeout: 10000 });
+        const pages = t.page.context().pages().length;
+        await typeCommand(t, 'float yourself');
+        await pip.waitForSelector(tid('float-jarvis'), { timeout: 10000 });
+        t.assert(t.page.context().pages().length === pages, 'the same floating panel');
+        t.assert(/Jarvis is floating, in place of the hologram/.test(await toastText(t)), `said so (${await toastText(t)})`);
+        t.assert((await screenAttr(pip, 'kind')) === 'jarvis', 'the panel shows Jarvis');
+        // The panel's word is the app's own state word (Presence's: STANDING BY while idle).
+        const word = async () => (await pip.locator(tid('float-jarvis-word')).textContent()) || '';
+        await t.waitFor(async () => (await word()) === 'STANDING BY', { timeout: 5000, message: async () => `the state word (${await word()})` });
+        await pip.setViewportSize({ width: 300, height: 260 });
+        await pip.waitForTimeout(400);
+        await t.screenshot('float-jarvis', pip);
+      });
+
+      await t.step('it follows Jarvis: Voice Mode listening shows LISTENING there', async () => {
+        await (await t.visible('voice-open')).click();
+        await t.visible('voice-mode');
+        await t.waitFor(async () => (await pip.locator(tid('float-jarvis')).getAttribute('data-state')) === 'listening', { timeout: 10000, message: async () => `the panel to say LISTENING (${await pip.locator(tid('float-jarvis')).getAttribute('data-state')})` });
+        t.assert((await pip.locator(tid('float-jarvis-word')).textContent()) === 'LISTENING', 'the state word');
+        await (await t.visible('voice-close')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+      });
+
+      await t.step('"close the float": the panel closes', async () => {
+        await typeCommand(t, 'close the float');
+        await t.waitFor(() => pip.isClosed(), { timeout: 8000, message: 'the floating panel to close' });
       });
     },
   },

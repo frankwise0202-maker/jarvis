@@ -67,6 +67,8 @@ const HERE_RE = [
 const CLOSE = '(?:close|shut|kill|dismiss|hide|get rid of)';
 const CLOSE_NAMED_RE = new RegExp(`^${CLOSE} ${THE}(${THING}) ${WIN}$`);
 const CLOSE_ALL_RE = /^(?:close|shut|kill) (?:everything|it all|all of it|all of them|them all|every window|all windows and viewers)$/;
+// "Close that window", "close this window", "close the last window": the one with the focus, else the newest.
+const CLOSE_THAT_RE = new RegExp(`^${CLOSE} (?:that|this|the last|the newest|the latest|that last) ${WIN}$`);
 
 // Layouts.
 const PAIR = `${THE}(${THING}) and ${THE}(${THING})`;
@@ -85,9 +87,14 @@ const FOCUS_RE = new RegExp(`^(?:show me|bring up|go to|switch to|focus on|focus
 // Size (D5): "make the camera window bigger", "make it smaller", "fill the screen", "full screen".
 const SIZE_WORD = '(bigger|larger|smaller|full ?screen|full size|maximized|fill the screen)';
 const SIZE_NAMED_RE = new RegExp(`^(?:make|set|have|let) ${THE}(${THING}) ${WIN} ${SIZE_WORD}$|^(?:make|set|have|let) ${THE}(${THING}) ${WIN} fill (?:the|my) screen$`);
-const SIZE_IT_RE = new RegExp(`^(?:make|set) (?:it|this|that|${THE}${WIN}) ${SIZE_WORD}$`);
+const SIZE_IT_RE = new RegExp(`^(?:make|set) (it|this|that|${THE}${WIN}) ${SIZE_WORD}$`);
 const FILL_RE = /^(?:(?:go )?full ?screen|fill the screen|(?:make it|have it|let it) fill the screen|maximi[sz]e(?: it| this| that| the window)?)$/;
 const sizeOf = (w) => (/small/.test(w) ? 'smaller' : /big|large/.test(w) ? 'bigger' : 'fill');
+// Jarvis's own window ("make your window bigger", "the main window", "the Jarvis window"): a script can't
+// resize it, and he says so. Read before the fillers go ("jarvis" is one of them).
+const LEAD = '(?:(?:hey|ok|okay) )?(?:jarvis )?(?:(?:can you|could you|would you|please) )?';
+const MAIN_WIN = '(?:the main|your|your own|the jarvis|jarvis s|jarvis) (?:window|tab)';
+const SIZE_MAIN_RE = new RegExp(`^${LEAD}(?:make|set|have|let) ${MAIN_WIN} (?:${SIZE_WORD}|fill (?:the|my) screen)(?: please)?$`);
 
 // Jarvis himself, floating (D6): "float yourself", "keep yourself on top". Read before the fillers go
 // ("jarvis" is one of them).
@@ -111,6 +118,8 @@ export function matchWindowCommand(text, state = {}) {
     .replace(/\s+/g, ' ')
     .trim();
   if (FLOAT_ME_RE.test(raw)) return action('float-jarvis');
+  const main = SIZE_MAIN_RE.exec(raw);
+  if (main) return action('size', { size: main[1] ? sizeOf(main[1]) : 'fill', which: 'main' });
   const s = normalizeScreenText(text).replace(/\bpop up\b/g, 'popup');
   if (!s) return null;
   const words = s.split(' ');
@@ -129,6 +138,7 @@ export function matchWindowCommand(text, state = {}) {
 
   let m = CLOSE_NAMED_RE.exec(s);
   if (m) return action('close', { which: kindOf(m[1]) });
+  if (CLOSE_THAT_RE.test(s) && open >= 1) return action('close', { which: null });
   if (CLOSE_ALL_RE.test(s)) return action('close-all', { viewers: true });
 
   m = PAIR_SIDE_RE.exec(s);
@@ -158,10 +168,17 @@ export function matchWindowCommand(text, state = {}) {
 
   m = SIZE_NAMED_RE.exec(s);
   if (m) return action('size', { size: m[2] ? sizeOf(m[2]) : 'fill', which: kindOf(m[1] || m[3]) });
-  // "It" is a window only while one is open and no viewer in the main window owns "it".
+  // A window noun ("the window", "this window") is a window while one is open. "It" is a window only when
+  // no hologram owns it: the main window's viewer, or a hologram in a window for "make it bigger/smaller"
+  // (its zoom, D3). "This window" is the one with the focus: Jarvis's own when it has it (he says so).
   const viewer = !!(state && state.hologram && state.hologram.open && !state.hologram.inWindow);
+  const holoWindow = Array.isArray(state && state.windows) && state.windows.some((w) => w && w.kind === 'hologram');
   m = SIZE_IT_RE.exec(s);
-  if (m && open >= 1 && !viewer) return action('size', { size: sizeOf(m[1]), which: null });
+  if (m && open >= 1) {
+    const size = sizeOf(m[2]);
+    if (!/^(?:it|this|that)$/.test(m[1])) return action('size', { size, which: null, ...(/^this \w/.test(m[1]) ? { here: true } : {}) });
+    if (!viewer && !(holoWindow && m[1] === 'it' && size !== 'fill')) return action('size', { size, which: null });
+  }
   if (FILL_RE.test(s) && open >= 1 && !viewer) return action('size', { size: 'fill', which: null });
   return null;
 }

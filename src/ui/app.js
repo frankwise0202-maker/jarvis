@@ -894,7 +894,7 @@ export async function startApp(rootEl) {
         // Jarvis's open_screen may move a camera that is on, never turn one on (controller.js).
         cameraLive: () => opticsCameraBridge.isLive(),
         // v8.1 (windows, D6): Jarvis floating ("float yourself"): his core, the state word, the words heard.
-        jarvisState: () => ({ core: root.dataset.core || 'idle', word: safe(() => presence.word().word, ''), heard: safe(() => (voiceInfo && voiceInfo.listening ? voiceInfo.heard || '' : ''), '') }),
+        jarvisState: () => floatingJarvisState(),
       }),
     null,
   );
@@ -967,6 +967,20 @@ export async function startApp(rootEl) {
     };
   }
 
+  /**
+   * What Jarvis floating shows (D6): Voice Mode's own state while it is open (listening, the words heard,
+   * thinking, speaking), else the app's core and Presence's state word.
+   */
+  function floatingJarvisState() {
+    const v = voiceApi ? safe(() => voiceInfo, null) : null;
+    if (v && typeof v.state === 'string') {
+      const core = v.listening ? 'listening' : v.state === 'error' ? 'error' : v.state === 'idle' ? 'idle' : v.state;
+      const words = { listening: 'LISTENING', speaking: 'SPEAKING', thinking: 'THINKING', idle: 'VOICE MODE', error: 'CHECK REPLY' };
+      return { core, word: words[core] || core.toUpperCase(), heard: v.listening ? v.heard || '' : '' };
+    }
+    return { core: root.dataset.core || 'idle', word: safe(() => presence.word().word, ''), heard: '' };
+  }
+
   /** "Close everything": the main window's viewers close too (Voice Mode stays). */
   function closeViewers() {
     const sheet = getBlueprintViewer();
@@ -1005,7 +1019,8 @@ export async function startApp(rootEl) {
       }, false),
     hidden: () => !!document.hidden,
     standalone: () => safe(() => detectScreenEnv(window).standalone, false),
-    listensHidden: () => false,
+    // Voice Mode keeps listening while Jarvis is covered (mac-hf's A1 setting, on a computer).
+    listensHidden: () => safe(() => getSettings().handsFreeBackground === true, false),
     toast: (msg, opts) => toast(msg, opts),
   });
 

@@ -3,7 +3,8 @@
 //   chrome-tab-open          after a reply with links: "pull this up in Chrome" opens a tab (no window
 //                            features, blank first, opener cut, then the first link: "That reply has N links;
 //                            I opened the first."); "open the second link"; spoken with pop-ups blocked, the
-//                            one-tap "Open in Chrome" button; nothing goes to Claude
+//                            one-tap "Open in Chrome" button; an address that does something (signs you out)
+//                            waits for a click on its card; nothing goes to Claude
 //   chrome-tab-search-check  "google USB-C chargers" spoken: the 2-second check shows the words before
 //                            anything opens; "no, I said …" fixes them; cancel opens nothing
 //   chrome-tab-beside        Optics open (the camera live): "pull this up in Chrome" opens a window placed
@@ -84,7 +85,7 @@ async function replyLinks(turn) {
 export default [
   {
     name: 'chrome-tab-open',
-    title: '"Pull this up in Chrome" after a reply with links: a tab (no features, opener cut) with the first link, and Jarvis says so; "open the second link"; spoken with pop-ups blocked, the one-tap "Open in Chrome" button; all free',
+    title: '"Pull this up in Chrome" after a reply with links: a tab (no features, opener cut) with the first link, and Jarvis says so; "open the second link"; spoken with pop-ups blocked, the one-tap "Open in Chrome" button; an address that does something waits for a click; all free',
     device: 'desktop',
     timeout: 240000,
     async run(t) {
@@ -139,6 +140,30 @@ export default [
         t.assert((await t.count('chrome-tap')) === 0, 'the button went away');
         t.assert(t.requests('lead').length === lead, `nothing went to Claude (${t.requests('lead').length - lead})`);
         await (await t.visible('voice-close')).click();
+      });
+
+      await t.step('an address that does something waits for a click on its card; only the click opens it', async () => {
+        await t.page.evaluate(() => {
+          window.__blockTabs = false;
+        });
+        // The mock's search links carry the question's words: every one of these signs you out.
+        const acting = await replyLinks(await sendDone(t, '[[search]] How do I logout of every device?'));
+        t.assert(acting.length >= 1 && acting.every((u) => /logout/.test(u)), `links that sign you out (${acting.join(' ')})`);
+        const before = (await tabs(t)).length;
+        const asked = t.requests('lead').length;
+        await typeCommand(t, 'pull this up in Chrome');
+        await t.visible('chrome-act', { timeout: 8000, message: 'the card' });
+        t.assert((await t.page.locator(tid('chrome-act-address')).textContent()) === acting[0], 'the card shows the address');
+        t.assert(/changes something about an account\. Open it\?/.test(await t.page.locator(tid('chrome-act')).textContent()), 'the card asks');
+        t.assert(/opens only when you click Open/.test(await toastText(t)), `said why (${await toastText(t)})`);
+        t.assert((await tabs(t)).length === before, 'nothing opened before the click');
+        await (await t.visible('chrome-act-open')).click();
+        await t.waitFor(async () => {
+          const list = await tabs(t);
+          return list.length === before + 1 && list.at(-1).sent === acting[0];
+        }, { timeout: 8000, message: 'the click to open it' });
+        t.assert((await t.count('chrome-act')) === 0, 'the card went away');
+        t.assert(t.requests('lead').length === asked, 'nothing went to Claude');
       });
     },
   },

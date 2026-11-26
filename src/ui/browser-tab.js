@@ -81,7 +81,7 @@ export function createBrowserTabs(deps = {}) {
   const call = (name, fallback, ...args) => (typeof deps[name] === 'function' ? safe(() => deps[name](...args), fallback) : fallback);
   let card = null; // { el, timer }
   let tabs = []; // [{ win, url }] opened by voice, newest last
-  let saidFallback = false; // "I can't reach Jarvis for Chrome": said once
+  let saidFallback = false; // "I can't reach the Jarvis window": said once an outage
   const prefs = loadPrefs();
 
   function dismiss() {
@@ -172,13 +172,17 @@ export function createBrowserTabs(deps = {}) {
     return { ...base, note, status: 'opened', via: 'tab' };
   }
 
-  /** The Chrome link (contract (f)) when it can take the page: linked, online, and not "in my Chrome". */
+  /**
+   * The Chrome link (contract (f)) when it can take the page: linked, online, and not "in my Chrome".
+   * `down`: linked but not online (the Jarvis window closed): a page here, said once.
+   */
   function linkFor(where) {
-    if (where === 'mine') return null;
+    if (where === 'mine') return { link: null, down: false };
     const link = call('chromeLink', null);
-    if (!link || typeof link.open !== 'function' || typeof link.state !== 'function') return null;
+    if (!link || typeof link.open !== 'function' || typeof link.state !== 'function') return { link: null, down: false };
     const st = safe(() => link.state(), null);
-    return st && st.linked && st.online ? link : null;
+    if (st && st.linked && st.online) return { link, down: false };
+    return { link: null, down: !!(st && st.linked) };
   }
 
   async function besideRect() {
@@ -200,7 +204,7 @@ export function createBrowserTabs(deps = {}) {
     if (plan.error) return done({ status: 'nothing', say: plan.say, error: plan.error });
     const rect = await besideRect();
     let fellBack = false;
-    const link = linkFor(a.where);
+    const { link, down } = linkFor(a.where);
     if (link) {
       let res;
       try {
@@ -208,11 +212,15 @@ export function createBrowserTabs(deps = {}) {
       } catch {
         res = { ok: false, reason: 'offline' };
       }
-      if (res && res.ok) return done({ status: 'opened', via: 'jarvis', beside: !!rect, kind: plan.kind, words: plan.words, url: plan.url, note: plan.note || '' });
-      const reason = (res && res.reason) || 'offline';
+      const reason = res && res.ok ? 'ok' : (res && res.reason) || 'offline';
+      const refused = reason === 'blocked' || reason === 'refused' || reason === 'bad';
+      if (reason === 'ok' || reason === 'needs-click' || refused) saidFallback = false; // it answered: a later outage is said again
+      if (reason === 'ok') return done({ status: 'opened', via: 'jarvis', beside: !!rect, kind: plan.kind, words: plan.words, url: plan.url, note: plan.note || '' });
       if (reason === 'needs-click') return done({ status: 'needs_click', via: 'jarvis', url: plan.url });
-      if (reason === 'blocked' || reason === 'refused' || reason === 'bad') return done({ status: 'error', url: plan.url, why: (res && typeof res.why === 'string' && res.why) || '' });
-      // Offline, unlinked, the Jarvis window closed: a page here, and Jarvis says so once.
+      if (refused) return done({ status: 'error', url: plan.url, why: (res && typeof res.why === 'string' && res.why) || '' });
+    }
+    if (link || down) {
+      // Offline, unlinked, the Jarvis window closed: a page here, and Jarvis says so once an outage.
       fellBack = !saidFallback;
       saidFallback = true;
     }
