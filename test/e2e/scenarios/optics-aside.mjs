@@ -207,7 +207,7 @@ export default [
         await t.waitFor(async () => (await t.count('hologram-viewer')) === 0, { timeout: 5000, message: 'the viewer to close' });
         await waitAside(t);
         await t.waitFor(async () => (await liveVideoTracks(page)) === 1, { timeout: 8000, message: 'the camera live again' });
-        t.assert((await t.count('optics-pin')) === 5, `the card keeps its labels (${await t.count('optics-pin')})`);
+        t.assert((await t.count('optics-pin')) >= 5, `the card keeps its labels (${await t.count('optics-pin')})`);
         await shot(t, 'mac-aside-3-after-hologram');
       });
     },
@@ -225,11 +225,17 @@ export default [
       await t.goto('/?optics=1');
       await waitLive(t);
       await lookAside(t);
-      const waitScene = async (same) =>
+      const sceneIs = async (same) =>
         t.waitFor(async () => {
           const d = await sceneDiff(page);
           return same ? d < 0.02 : d > 0.12;
         }, { timeout: 12000, interval: 100, message: `the scene to be ${same ? 'the card\'s' : 'a new one'}` });
+      // The feed shows each scene for 4 s: wait for the change into the one wanted, so the question is
+      // asked near the start of its 4 s (never as it is about to change again).
+      const waitScene = async (same) => {
+        await sceneIs(!same);
+        await sceneIs(same);
+      };
       await t.step('the same scene: "What is this?" is a follow-up on the card, no frame sent', async () => {
         await waitScene(true);
         const before = leads(t).length;

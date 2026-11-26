@@ -1288,8 +1288,9 @@ export function openOptics(deps = {}) {
           target.costUsd = Number(t.costUsd) || 0;
           if (TURN_ENDED.includes(t.status)) {
             target.status = t.status === 'done' ? 'done' : 'error';
-            // (Asked during the live view, its cost reaches the hour through countLiveRun(), which
-            // the sheet's own listener can't lose.)
+            // (Asked during the live view, its cost reaches the hour through the live view's gate in
+            // the engine (v8.1), or countLiveRun() without one: never through this sheet, which Live
+            // or closing can take away.)
             if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
             // v8.1 (E0): an answer the live view's gate refused at its dollar is said out loud.
