@@ -4984,7 +4984,10 @@ can't starve George's voice, hearing, sync or the brain (REDTEAM-LINK-2). Access
 tailnet or this computer, §23); for these three routes only, `access.mjs checkRelayOrigin` also allows a
 `chrome-extension://<32 letters a-p>` origin (and answers its private-network preflight) and a CORS-mode fetch that
 carries no Origin (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: an extension's own request; a web page's
-cross-site CORS request always carries its Origin, and a page's no-cors request is still refused). Every other route
+cross-site CORS request always carries its Origin, and a page's no-cors request is still refused). It takes fetch
+requests only: a `Sec-Fetch-Mode` other than `cors` or a `Sec-Fetch-Dest` other than `empty`, when present, is
+refused, so a page's frame or a navigation can neither hold a long poll nor make the extension look seen
+(REDTEAM-LINK-6; clients outside a browser send neither header). Every other route
 keeps `checkOrigin`. The Core checks shapes only: it never decodes, decrypts, logs or saves a message. What the home
 base could still do, if it were turned against the owner: hold back, delay or reorder messages (the app then counts
 the extension offline, §32.1.5); it can never read or forge one.
@@ -5063,8 +5066,12 @@ via })`, `onPrompt(fn)`, `onPromptClosed(fn)`, `onDone(fn)` (each `on…` return
 - **Back-off** while the home base can't be reached: 2, 4, 8, 15, 30, then 60 s (±20 %); a Core before 1.3 (404) is
   asked every 5 minutes; a status check that works ends the wait at once (a Core just updated). Settings shows the
   problem in the home base's own words.
-- **Online:** the status says the extension read its box less than 60 s ago, or a message from it arrived in the
-  last 60 s (a time more than a minute ahead of this clock isn't believed). While it is offline or not linked,
+- **Online:** a message from the extension (one that opened with the key) arrived in the last 60 s; or the status
+  says it read its box less than 60 s ago and a message from it arrived in the last 5 minutes (`PROVEN_MS`; a time
+  more than a minute ahead of this clock isn't believed). The status alone isn't believed, since anything can read
+  the box (REDTEAM-LINK-6): while it is fresh and the last message is getting old (3.5 minutes), the window holding
+  the link sends a `ping` (at most one a minute), whose answer is that message. The last message's time is kept in
+  the stored link (`heardAt`), so a reload doesn't start offline. While it is offline or not linked,
   `open`, `startTask` and `answer` answer at once (`offline` / `unlinked`) and send nothing; `stopTask` is always
   sent while linked (the safe direction), and sent again until confirmed.
 - **What comes back is information, never orders** (rule 5): every field is checked and cut to size here (no control

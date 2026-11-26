@@ -1018,6 +1018,32 @@ test('online follows the last 60 seconds: by a message, or by the relay\'s statu
   }
 });
 
+test('LINK-6: the relay seeing a reader is not enough: online needs a message from Jarvis for Chrome in the last few minutes; a ping goes out to prove it', async () => {
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const app = w.open({ now });
+    await online(app);
+    // Three minutes on, quiet, still reading: online (the status, and a message not long ago).
+    skew = 3 * 60_000;
+    w.relay.extSeenOverride = Date.now() + skew - 5000;
+    await app.control.refresh();
+    assert.equal(app.api.state().online, true, 'reading its box, heard from 3 minutes ago');
+    // Six minutes on: something reads the box (a frame, another key), but Jarvis for Chrome has said nothing.
+    w.peer.setOnline(false);
+    skew = 6 * 60_000;
+    w.relay.extSeenOverride = Date.now() + skew - 5000;
+    const posts = w.relay.posts['to-ext'];
+    await app.control.refresh();
+    assert.equal(app.api.state().online, false, 'the status alone is not enough');
+    await until(() => w.relay.posts['to-ext'] > posts, { what: 'a ping to prove it' });
+  } finally {
+    await w.close();
+  }
+});
+
 // ---- unlinking ------------------------------------------------------------------------------------------------
 
 test('Unlink here: Jarvis for Chrome is told first, then the key is forgotten; a waiting request ends', async () => {

@@ -129,6 +129,32 @@ test('origins: the relay also takes chrome-extension:// and an extension\'s own 
   assert.equal(checkOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, false);
   assert.equal(checkRelayOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }), access, opts).ok, false);
   assert.equal(checkRelayOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'script' }), access, opts).ok, false);
+  // REDTEAM-LINK-6: a page's frame or a navigation is never let in (checkOrigin admits navigations, for the dashboard).
+  for (const headers of [
+    { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    { 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    { origin: APP, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    { origin: EXT, 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' },
+    { 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'iframe' },
+  ]) {
+    assert.equal(checkRelayOrigin(req(headers), access, opts).ok, false, JSON.stringify(headers));
+  }
+  assert.equal(checkOrigin(req({ 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }), access, opts).ok, true, 'other routes keep checkOrigin (the dashboard)');
+  // The real callers still pass: the app's and the extension's fetches, and clients that send neither header.
+  assert.equal(checkRelayOrigin(req({ origin: APP, 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, true);
+  assert.equal(checkRelayOrigin(req({ origin: EXT, 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, true);
+  assert.equal(checkRelayOrigin(req({}), access, opts).ok, true);
+});
+
+test('HTTP: LINK-6: a frame of the relay is refused: no waiting read, the extension not counted as seen', async () => {
+  const before = (await get('/api/relay/status')).json.extSeenAt;
+  const framed = await get('/api/relay/to-ext?wait=2', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' });
+  assert.equal(framed.status, 403, `refused (${framed.status})`);
+  assert.equal(api.relay.store.sizes()['to-ext'].waiting, 0, 'holds no place');
+  assert.equal((await get('/api/relay/status')).json.extSeenAt, before, 'and the extension is not counted as seen');
+  const page = await get('/api/relay/to-app', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' });
+  assert.equal(page.status, 403, 'a top-level navigation neither');
 });
 
 // ------------------------------------------------------------------------------------- over HTTP, a fake clock

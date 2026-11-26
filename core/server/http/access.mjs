@@ -163,7 +163,11 @@ export function checkOrigin(req, access, { allowedOrigins = [] } = {}) {
 export const EXTENSION_ORIGIN_RE = /^chrome-extension:\/\/[a-p]{32}$/;
 
 /**
- * The relay's origin rule (/api/relay/* only): { ok, allow } like checkOrigin. On top of what checkOrigin allows:
+ * The relay's origin rule (/api/relay/* only): { ok, allow } like checkOrigin. First, only fetch() requests: a request
+ * whose Sec-Fetch-Mode is present and not `cors`, or whose Sec-Fetch-Dest is present and not `empty`, is refused (a
+ * page's frame or a navigation: REDTEAM-LINK-6; checkOrigin admits navigations for the dashboard, and a frame would
+ * hold a long poll and make the extension look online). Both real callers use fetch; clients outside a browser send
+ * neither header. Then, on top of what checkOrigin allows:
  *   - an Origin of chrome-extension://<id> (echoed in Access-Control-Allow-Origin; its private-network preflight
  *     is answered like the app's);
  *   - no Origin on a CORS-mode fetch (Sec-Fetch-Mode: cors, Sec-Fetch-Dest: empty): an extension's own request
@@ -171,13 +175,15 @@ export const EXTENSION_ORIGIN_RE = /^chrome-extension:\/\/[a-p]{32}$/;
  *     this never lets a page in, and a page's no-cors request (an <img>, a <script>) is still refused.
  */
 export function checkRelayOrigin(req, access, opts = {}) {
-  const base = checkOrigin(req, access, opts);
-  if (base.ok) return base;
   const h = req.headers ?? {};
-  const origin = one(h.origin);
-  if (typeof origin === 'string' && EXTENSION_ORIGIN_RE.test(origin)) return { ok: true, allow: origin };
   const mode = String(one(h['sec-fetch-mode']) ?? '').toLowerCase();
   const dest = String(one(h['sec-fetch-dest']) ?? '').toLowerCase();
+  if (mode && mode !== 'cors') return { ok: false, allow: null, reason: `the relay takes fetch requests only (not ${mode})` };
+  if (dest && dest !== 'empty') return { ok: false, allow: null, reason: `the relay takes fetch requests only (not ${dest})` };
+  const base = checkOrigin(req, access, opts);
+  if (base.ok) return base;
+  const origin = one(h.origin);
+  if (typeof origin === 'string' && EXTENSION_ORIGIN_RE.test(origin)) return { ok: true, allow: origin };
   if (!origin && mode === 'cors' && dest === 'empty') return { ok: true, allow: null };
   return base;
 }

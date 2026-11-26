@@ -111,7 +111,9 @@ preflights (a public page calling the 100.x Tailscale address) get
 `Access-Control-Allow-Private-Network: true` for those origins only. The relay's three routes alone also take
 `chrome-extension://<id>` origins (and their preflights), and an extension's own fetch that carries no Origin
 (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: a web page's cross-site CORS request always carries its
-Origin); every other route refuses them. A refused API request (403) still carries
+Origin); every other route refuses them. The relay takes fetch requests only: a `Sec-Fetch-Mode` other than `cors`
+or a `Sec-Fetch-Dest` other than `empty`, when present, is refused (a page's frame or a navigation, REDTEAM-LINK-6;
+clients outside a browser send neither). A refused API request (403) still carries
 CORS headers for those origins, so the Jarvis app can tell "refused" from a Core that isn't running behind
 `tailscale serve` (Tailscale then answers 502 without them); Funnel traffic never gets them. **Limits:** 4 KB bodies and 300-character questions,
 8 questions at once then 30 a minute per client, 16 live streams. (The brain's and the senses' own body
