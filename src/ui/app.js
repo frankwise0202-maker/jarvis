@@ -2069,7 +2069,13 @@ export async function startApp(rootEl) {
       // MAC-R3-4: only while it listens or answers. Left open and idle, it closes once Jarvis is in the background or
       // the quiet spell has passed, and Standby comes back.
       if (isVoiceModeOpen()) {
-        const busy = safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
+        // MAC-R4-2: a Chrome task running from here (or its check, or a question on its card) keeps it too.
+        const chromeBusy = safe(() => {
+          const st = chromeVoice && chromeVoice.state();
+          const status = st && st.task ? st.task.status : '';
+          return !!st && (!!st.checking || st.waiting > 0 || status === 'starting' || status === 'running' || status === 'waiting');
+        }, false);
+        const busy = chromeBusy || safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
         if (!busy && (document.hidden || Date.now() - R.last >= quiet)) {
           cancelSheetReturn();
           safe(() => voiceApi.close());

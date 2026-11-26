@@ -749,8 +749,11 @@ function createVoiceMode(opts) {
      * be listening for "cancel" or "no, I said …"): previews never start then.
      */
     isListening: () => !S.closed && (!!S.listen || !!S.review),
-    /** MAC-R3-4: whether it can hear the owner or is answering (what onActive reports); idle, an error or offline: false. */
-    isActive: () => !S.closed && (S.active || !!(S.listen || S.review || S.run || S.speech || S.retryTimer)),
+    /**
+     * MAC-R3-4: whether it can hear the owner or is answering (what onActive reports), or (MAC-R4-2) Chrome's question
+     * is open here, waits to be said, or its check runs; idle, an error or offline: false.
+     */
+    isActive: () => !S.closed && (S.active || !!(S.listen || S.review || S.run || S.speech || S.retryTimer) || !!(prompts.current() || C.pendingPrompt || C.check)),
     /** v8.0 Optics' live view: a short line Jarvis says by himself. True when it is said (sayLine()). */
     say: (text) => sayLine(text),
     /** v8.1 (A8): Standby heard two claps ('clap') or "Hey Jarvis" ('word') while he speaks. True when it acted. */
@@ -5437,6 +5440,12 @@ function createVoiceMode(opts) {
    * he speaks: he stops and listens; a tour's narration ends ('cancelled') and the tour pauses at its step.
    */
   function bargeIn(trigger) {
+    // MAC-R4-4: "Hey Jarvis" (not his own: the self-mask) is the owner calling him, whatever happens next: over the Mac's
+    // own voice or in the gap before a listen too, the hidden count starts again.
+    if (trigger === 'word' && !S.closed && !selfMask.masked()) {
+      S.asked = 0;
+      S.braked = false;
+    }
     if (trigger === 'word' && !S.closed && !S.speech && (S.listen || S.review)) {
       // MAC-V-1: "Hey Jarvis" while he listens: nothing to interrupt, but it is the owner calling him.
       S.asked = 0;

@@ -781,6 +781,51 @@ test('MAC-R3-4: api.isActive(): true while it listens or answers, false once idl
   assert.equal(vm.isActive(), false);
 });
 
+// MAC-R4-4: after the brake, "Hey Jarvis" heard by Standby's kept microphone while the greeting is said in the Mac's own
+// voice (no interrupting it) or in the gap before the offer's listen still starts the count again.
+test('MAC-R4-4: braked claps wake, kept-mic "Hey Jarvis" over the device-voice greeting or in the gap: the next question is answered', async (t) => {
+  for (const ms of [1000, 1600, 2000, 2600]) {
+    for (const voice of [null, 'natural']) {
+      const env = await voiceEnv(t);
+      env.setHidden(true);
+      env.say((n) => (n === 1 ? Q : null));
+      let carried = { asked: 3, braked: true };
+      const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+      if (voice) env.voice(voice);
+      const vm = env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+      await until(env, () => vm.isListening(), 'the wake window');
+      await env.advance(ms);
+      vm.bargeIn('word');
+      await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+      const said = env.log.spoken.map((x) => x.text);
+      assert.ok(env.log.turns.length >= 1, `${ms} ms, voice ${voice}: answered (${JSON.stringify(said.map((x) => x.slice(0, 30)))})`);
+      assert.ok(!said.includes(BRAKE_LINE), `${ms} ms, voice ${voice}: no brake line`);
+    }
+  }
+});
+
+// MAC-R4-2: a tapped Voice Mode with Chrome's question open (its 30-second window) is busy: the sheet return's tick
+// mustn't close it under the owner.
+test('MAC-R4-2: api.isActive() stays true while Chrome’s question is open (Continuous off or on), and false once it closes', async (t) => {
+  for (const continuous of [false, true]) {
+    const env = await voiceEnv(t);
+    env.voice('natural');
+    env.say(() => null);
+    const vm = env.open({ settings: { voiceContinuous: continuous } });
+    await until(env, () => !vm.isActive(), 'idle after the first listen', 60000);
+    const handle = vm.prompt({ id: 'chrome:p1', say: 'Chrome asks: add the monitor to the cart?', answers: [{ id: 'deny', words: ['no', 'cancel'], negative: true }], onAnswer: () => {} });
+    await until(env, () => env.log.spoken.some((x) => x.text.startsWith('Chrome asks:')), 'the question said');
+    let prev = 0;
+    for (const ms of [500, 2000, 5000, 10000, 20000, 28000]) {
+      await env.advance(ms - prev);
+      prev = ms;
+      assert.equal(vm.isActive(), true, `continuous ${continuous}: active ${ms} ms after, the question open`);
+    }
+    handle.close();
+    await until(env, () => !vm.isActive(), 'idle once the question closed', 60000);
+  }
+});
+
 // MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
 // preface that never came: the line was never said. Now it is asked for only when an answer says it.
 test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {
