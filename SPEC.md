@@ -5101,7 +5101,12 @@ later. Limit: the rekey travels sealed with K1, so someone who already holds the
 rekey is kept there (2 minutes after each send) could learn K2. While the rotation is unconfirmed, rekeys are sent
 again (on the schedule above, at each opening of Jarvis or lock handover, when a message under K1 comes, and from the
 status), so that exposure lasts as long as the rotation stays unconfirmed: at most 30 minutes after the rekey, then
-the link is given up (R3-1). A key exchange would close it; not in this release.
+the link is given up (R3-1). A key exchange would close it; not in this release. Known limit (CHROME-LINK-R4-1,
+accepted for v8.1.1): if Jarvis is closed, or the Mac sleeps, within a second or two of linking, before it hears
+Jarvis for Chrome's answer under K2, and stays closed for half an hour, the reopened Jarvis gives the link up and says
+the new key was never confirmed, although the extension took it; the owner presses Unlink in Jarvis for Chrome's side
+panel and links again. (A follow-up: past the limit keep K2 and drop only K1, and give up only if nothing under K2 is
+heard within a minute of a hello under K2.)
 
 **The clipboard** (critique L9, REDTEAM-LINK-4, PRIVACY-6). When this tab copied the code (its sessionStorage keeps
 `jarvis.chromeLink.copied.v1` = `{ at, hash }`, a SHA-256 of the code, never the code, so a reload doesn't forget it),

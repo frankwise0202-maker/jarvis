@@ -1167,6 +1167,8 @@ nothing. If Jarvis is closed in those first seconds, Jarvis for Chrome 1.1.1 sti
 sent with the code (1.1.0 forgets it at Jarvis's next message, or after 10 minutes). If Jarvis for Chrome went away
 right after the paste and never took the new key, Jarvis keeps trying for half an hour, then gives the link up and
 Settings says "Jarvis for Chrome never confirmed the new key. Link again.": an old code is never taken after that.
+If Jarvis is closed within a second or two of linking and stays closed for half an hour, it may say the new key was
+never confirmed; press Unlink in Jarvis for Chrome's side panel and link again.
 Until you link, the code holds the key that locks your messages, so don't share it. Jarvis never sends it to Claude: pasted in the chat box, Voice
 Mode's Type field, a hologram's field or Optics' Ask field, it's refused with where to paste it instead (so is an API
 key, which only the chat box's **Send anyway** lets through). Keep the Jarvis
