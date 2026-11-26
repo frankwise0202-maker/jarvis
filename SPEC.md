@@ -4766,7 +4766,9 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   `parts-list`, or without BroadcastChannel: the app opens the hologram in the main window as before.
   `screens.shown(kind)` → `{ id, label, mode, kind, title, ref, parts, selected }`.
 - Routing: with no hologram or blueprint viewer open here, `windows-hologram` takes a hologram command for the window
-  showing one (the router's `windows` list carries its parts and selection). Today's `hologram` matcher can still take
+  showing one (the router's `windows` list carries its parts and selection). With Optics open here it takes only words
+  that name the hologram ("explode the hologram"): Optics keeps its own ("close", "expand it", "show me the camera") and
+  the rest go where they go without the window. Today's `hologram` matcher can still take
   it first through the hologram shown last over Voice Mode (`reply.hologram`); then app.js `voiceCommand` sends it to
   the window (`windowHologramCommand`) instead of opening the hologram here again. Its window closed by hand: the
   hologram comes back here, as before.

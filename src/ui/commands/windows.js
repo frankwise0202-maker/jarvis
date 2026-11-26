@@ -42,6 +42,9 @@ const call = (fn, fallback, ...args) => {
   }
 };
 const IN_WINDOW = new Set([...WINDOW_HOLOGRAM_ACTIONS, 'close']);
+// Words that name the hologram itself ("explode the hologram", "rotate the model"): its window takes them
+// even with Optics on top here (ROUTING-10).
+const NAMES_HOLOGRAM = /\b(?:holograms?|models?)\b/i;
 
 /** The window showing a hologram (the one with the focus, else the newest: the last in the list). */
 function hologramWindow(state) {
@@ -88,13 +91,16 @@ export function register(router, deps = {}) {
 
   // D3: the hologram is in a window and no viewer is open here (a hologram, a blueprint): its words act
   // there. A command a window can't run (photos, a blueprint, the parts list) is left to the next one in
-  // the order (the hologram shown last opens here again, as before).
+  // the order (the hologram shown last opens here again, as before). With Optics on top here, Optics keeps
+  // its own words ("close", "expand it", "show me the camera") and the rest go where they go without the
+  // window: the window takes only words that name the hologram (ROUTING-10).
   router.register({
     id: 'windows-hologram',
     layer: 'top',
     surfaces: ['voice'],
     match: (text, state) => {
       if ((state.hologram && state.hologram.open) || state.blueprintOpen) return null;
+      if (state.optics && state.optics.open && !NAMES_HOLOGRAM.test(String(text || ''))) return null;
       const w = hologramWindow(state);
       if (!w) return null;
       const cmd = matchHologramCommand(String(text || ''), Array.isArray(w.parts) ? w.parts : [], { selected: w.selected || null });

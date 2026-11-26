@@ -263,6 +263,17 @@ export const WINDOWS = {
       { words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), never the explode of the hologram in its window.' },
       { words: 'bring everything back', state, winner: 'screens', why: 'Windows are open: they come back (as in VHW), not every part shown.' },
     ]),
+    // ROUTING-10: with Optics on top here, the hologram's window takes only words that name the hologram; the rest
+    // go where they go with Optics alone (VL, LV), as declared there.
+    ...['WINHO', 'WINHV'].flatMap((state) => [
+      { words: 'open the hologram of the battery', state, winner: 'windows-hologram', why: 'It names the hologram: the battery part in its window (free, undoable), Optics open or not.' },
+      { words: "that's enough", state, winner: 'optics', why: "Optics' live view words come first while it is on top (v8.0), as in VL and LV." },
+      { words: "what's on my screen", state, winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in VL and LV." },
+      { words: 'close that window', state, winner: 'windows', why: 'The window with the focus, else the newest; not every window.' },
+      { words: 'do this in this window', state, winner: 'windows', why: 'The owner picks the window to work in, even with the camera open.' },
+      { words: 'show me the hologram window', state, winner: 'windows', why: 'Bring the hologram window to the front; not a question about the camera picture.' },
+      { words: 'put the picture to the side', state, winner: 'screens', why: 'No Look on screen: a Screens float, as in VL and LV.' },
+    ]),
     // "Close that window" names a window: the one with the focus, else the newest (windows comes before screens).
     ...['VHW', 'WIN2', 'WINH', 'WINC'].map((state) => ({ words: 'close that window', state, winner: 'windows', why: 'The window with the focus, else the newest; not every window.' })),
     // Lead decision D1 (chrome.task before chrome.open): "open the Nth link" is the reply's link only when the
