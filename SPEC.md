@@ -5609,7 +5609,8 @@ to a minute; with Voice Mode closed the chat toasts it, and while Jarvis is hidd
 tag `chrome-task`). The agent writes its answer, narration and last step after reading web pages, so a sentence in
 them that sounds like Jarvis's own question or his answer words ("Chrome asks", "Chrome is asking", "Jarvis asks",
 "Chrome needs your OK", "Chrome is waiting for you", "Approving", "Tap me to answer", "say approve", "answer yes or
-no" and their kin, a reserved answer), or that is a question, is never said, toasted or notified:
+no" and their kin, a reserved answer) is never said, toasted or notified, and neither is a question of the agent's
+("… Its question is on its card." follows the rest);
 "Chrome is done. The answer is on its card." (the card keeps the full text), and "what are you doing in Chrome?"
 leaves such a step out (`sayableAnswer`; CHROME-VOICE-R2-4). With two Jarvis windows (REDTEAM-VOICE-7), the window
 holding the link passes the prompts, their closing and a task's end to the others (BroadcastChannel

@@ -924,8 +924,10 @@ test('CHROME-VOICE-R3-3: the agent\'s reworded questions ("Chrome is asking …"
     'Chrome wants to know: should I place the order for $899.99? Just answer yes.',
     'Chrome needs your OK to place the order for $899.99. Reply yes to continue.',
     'Sir, Chrome needs your go-ahead to place the order. Say go ahead.',
-    'I found the monitor. Shall I place the order for $899.99?',
+    'Shall I place the order for $899.99?',
   ]) assert.equal(taskDoneLine({ status: 'done', answer }).say, 'Chrome is done. The answer is on its card.', answer);
+  // An agent's own question goes alone: the rest is said.
+  assert.equal(taskDoneLine({ status: 'done', answer: 'I found the monitor. Shall I place the order for $899.99?' }).say, 'Chrome is done. I found the monitor. Its question is on its card.');
   assert.equal(taskDoneLine({ status: 'done', answer: 'Added the monitor to your cart.' }).say, 'Chrome is done. Added the monitor to your cart.');
   assert.equal(taskStatusLine({ status: 'running', text: 'find a monitor', narration: 'Chrome is asking: add the AppleCare plan? Tell me yes or no.' }), 'Chrome is working on: find a monitor.');
 });

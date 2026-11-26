@@ -640,7 +640,9 @@ export function taskDoneLine({ status, answer } = {}) {
   const full = sayableAnswer(answer, 2000);
   // CHROME-VOICE-R2-4: words in it that sound like Jarvis's own question are never said (nor in a toast or a
   // notification): the answer is on its card, in full.
-  const join = (head, body) => (said.dropped ? `${head} ${status === 'done' ? 'The answer' : 'What it said'} is on its card.` : body ? `${head} ${body}` : head);
+  // A question of the agent's alone is left out ("… Its question is on its card."; CHROME-VOICE-R3-3).
+  const join = (head, body) =>
+    said.dropped ? `${head} ${status === 'done' ? 'The answer' : 'What it said'} is on its card.` : `${body ? `${head} ${body}` : head}${said.asked ? ' Its question is on its card.' : ''}`;
   switch (status) {
     case 'done':
       return { show: join('Chrome is done.', full.text), say: join('Chrome is done.', said.text) };
@@ -692,9 +694,11 @@ const JARVIS_WORDS = [
 export function sayableAnswer(text, max = 300) {
   const whole = sayable(text, 4000);
   const sentences = whole.split(/(?<=[.!?…])\s+/).filter(Boolean);
-  // (A question of the agent's is never said either: it can't be answered by voice, and it may be a page's; R3-3.)
-  const kept = sentences.filter((x) => !JARVIS_WORDS.some((re) => re.test(x)) && !/\?["”’')\]]*$/.test(x));
-  return { text: sayable(kept.join(' '), max), dropped: kept.length < sentences.length };
+  const framed = sentences.some((x) => JARVIS_WORDS.some((re) => re.test(x)));
+  // (A question of the agent's is never said either: it can't be answered by voice, and it may be a page's; R3-3. Only
+  // the question goes then: `asked`.)
+  const kept = framed ? [] : sentences.filter((x) => !/\?["”’')\]]*$/.test(x));
+  return { text: sayable(kept.join(' '), max), dropped: framed || !kept.length && sentences.length > 0, asked: !framed && kept.length < sentences.length };
 }
 
 /**
