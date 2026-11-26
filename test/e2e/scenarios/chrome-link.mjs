@@ -190,16 +190,17 @@ export default [
         });
 
         await t.step('the iPhone: one line about linking on the computer; never reads the relay', async () => {
-          const before = relayCalls(t).length;
           const phone = await t.newPage({ device: 'iphone13', seed: LINKED_HOME });
-          await seedChromeLink(phone.context());
+          const phoneCore = t.core; // the newest context's fake Core: the iPhone's own requests
+          await seedChromeLink(phone.context()); // even with a link stored, the iPhone doesn't use it
           await t.goto('/', { page: phone });
           const phoneCard = await openChromeSettings(t, phone);
           await waitCard(t, phoneCard, 'phone');
           t.assert(/on your computer/.test(await t.text(phoneCard)), 'where to link it');
           t.assert(!(await phoneCard.locator(tid('chrome-link-link')).isVisible()), 'no Link on the iPhone');
           await new Promise((r) => setTimeout(r, 1000));
-          t.assert(relayCalls(t).length === before, `the iPhone never reads the relay (${relayCalls(t).slice(before).join(', ')})`);
+          const phoneRelay = phoneCore.requests.filter((r) => r.includes('/api/relay/'));
+          t.assert(phoneRelay.length === 0, `the iPhone never reads the relay (${phoneRelay.join(', ')})`);
           await t.screenshot('6-iphone', phone);
           await t.checkNoHorizontalOverflow('the iPhone card', phone);
         });
