@@ -49,7 +49,7 @@ import { addSpend, getSpend, getTodaySpend, onSpendChange } from '../platform/sp
 import { listConversations, getConversation, saveConversation, deleteConversation, deleteAllConversations, isPersistent, getPersistence, onPersistenceChange, onConversationConflict, onRemoteSave } from '../platform/db.js';
 import { resetApp, registerBackupPart } from '../platform/backup.js';
 import { saveLibraryItem, getLibraryItem, listLibraryItems, findPartBlueprint, setLibraryThumbnail, deleteLibraryItem, onLibraryChange } from '../platform/library.js';
-import { isOnline, onOnlineChange, isIOS, isAndroid, isTouch, parseUserAgent } from '../platform/env.js';
+import { isOnline, onOnlineChange, isIOS, isAndroid, isTouch, parseUserAgent, isStandalone } from '../platform/env.js';
 import { keepAwake, allowSleep } from '../platform/wakelock.js';
 import { registerServiceWorker } from '../platform/pwa.js';
 import * as stt from '../platform/voice/stt.js';
@@ -1716,7 +1716,28 @@ export async function startApp(rootEl) {
       keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage) }), false),
       detected: ({ trigger }) => !!voiceApi && safe(() => voiceApi.bargeIn(trigger) === true, false),
     },
+    // v8.1 (A11): no click yet (a restart, an update) and George can't speak without one: Standby says
+    // "CLICK ONCE SO JARVIS CAN SPEAK", and that click unlocks speech instead of leaving Standby.
+    needsClick: () => !phoneLike && !safe(() => navigator.userActivation.hasBeenActive === true, true) && !georgeWithoutClick(),
   });
+
+  /**
+   * v8.1 (A11): George can speak before any click: his voice is on and ready (the home base's or this Mac's), and
+   * Jarvis is installed as an app (Chrome lets an installed app play sound without a click; the built-in voice
+   * always needs one after a reload).
+   */
+  function georgeWithoutClick() {
+    const s = getSettings();
+    const home = !!s.homeBaseSpeak && !!homeBaseVoice && safe(() => homeBaseVoice.canSpeak() === true, false);
+    const local = !!s.naturalVoice && !!naturalVoice && safe(() => naturalVoice.engine.status().state === 'ready', false);
+    return (home || local) && safe(() => isStandalone(), false) && !safe(() => tts.audioStuck(), false);
+  }
+
+  /** v8.1 (A11): open Standby when Jarvis starts: a computer, Settings (automatic: on when "Hey Jarvis" is on). */
+  function standbyAtLaunch() {
+    const s = getSettings();
+    return !phoneLike && !state.demo && !!s.onboarded && (s.standbyAtLaunch === 'on' || (s.standbyAtLaunch !== 'off' && s.wakeWord === true));
+  }
 
   /** Tests on localhost only: a stand-in for the "Hey Jarvis" worker (no download, said on demand). */
   function wakeStubAllowed() {
@@ -4316,6 +4337,8 @@ export async function startApp(rootEl) {
   }
 
   if (!state.demo && !getSettings().onboarded) openOnboarding();
+  // v8.1 (A11): back on Standby after a restart or an update, without a click (a Mac whose owner wakes Jarvis by voice).
+  else if (safe(() => standbyAtLaunch(), false)) safe(() => enterStandby({ again: true }));
 
   {
     try {

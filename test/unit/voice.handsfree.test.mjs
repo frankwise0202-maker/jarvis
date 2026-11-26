@@ -81,6 +81,18 @@ test('A1: a session opened by a tap, hidden mid-listen — the same listen goes 
   assert.equal(env.doc.title, 'Jarvis');
 });
 
+test('A1: an idle session (nothing under way) hidden on a Mac shows no “Jarvis is listening” notification', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(onlyAfter(0, Q));
+  const vm = env.open({ listenWhileHidden: () => true }); // the question fails: an apology, then idle
+  await until(env, () => env.log.spoken.some((s) => /apologies/.test(s.text)), 'the apology');
+  await env.advance(3000);
+  env.setHidden(true);
+  await env.advance(1000);
+  assert.equal(env.log.notes.length, 0, JSON.stringify(env.log.notes.map((n) => n.title)));
+  vm.close();
+});
+
 test('A1 (u-mac probe C): hidden during the 2-second check — it keeps counting and sends; without hands-free it pauses (and A2 brings Standby back)', async (t) => {
   for (const handsFree of [true, false]) {
     const env = await voiceEnv(t);

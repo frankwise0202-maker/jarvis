@@ -1229,6 +1229,8 @@ function createVoiceMode(opts) {
    */
   function noteAway() {
     if (S.closed || S.awayNoted || !document.hidden || !handsFree()) return;
+    // Only while the session is under way (an idle one, after the brake say, listens to nothing).
+    if (!(S.listen || S.review || S.run || S.speech || S.retryTimer || S.wake)) return;
     S.awayNoted = true;
     callQuietly(() => notify({ tag: SESSION_NOTE, title: 'Jarvis is listening', body: 'Ask away, or say “go back to sleep”.' }));
   }
@@ -3522,7 +3524,6 @@ function createVoiceMode(opts) {
     W.line = line;
     S.asked = 0; // v8.1 (A6): woken: the questions count from here
     S.braked = false;
-    noteAway(); // v8.1 (A1): woken in the background on a Mac: one notification ("Jarvis is listening …")
     if (music) {
       showMusicCard(music.segment, { fresh: true });
       S.noRelisten = false; // the offer waits for an answer, not for a tap
@@ -3533,6 +3534,7 @@ function createVoiceMode(opts) {
       /* decoration */
     }
     speakAck(line);
+    noteAway(); // v8.1 (A1): woken in the background on a Mac: one notification ("Jarvis is listening …")
   }
 
   /** v8.1 (D3): the lines said before the greeting (wake.pending()), tidied; [] without the hook. */
