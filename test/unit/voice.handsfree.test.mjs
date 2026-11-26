@@ -654,6 +654,41 @@ test('MAC-R3-3: a TV heard in every listen of three false claps wakes: at most 3
   }
 });
 
+test('MAC-R3-3: braked after claps, the router’s own flags decide: "stop watching" (free) runs; a live view (not free, the camera) or a command through the check gets the brake line', async (t) => {
+  const cases = [
+    { words: 'stop watching', action: { do: 'optics', free: true, camera: false, check: false }, runs: true },
+    { words: 'start the live view', action: { do: 'optics', free: false, camera: true, check: false }, runs: false },
+    { words: 'what am I looking at', action: { do: 'camera', free: false, camera: true, check: false }, runs: false },
+    { words: 'text my brother I am late', action: { do: 'send-text', free: true, camera: false, check: true }, runs: false },
+  ];
+  for (const c of cases) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say((n) => (n === 1 ? c.words : null));
+    const ran = [];
+    const router = {
+      route: (readings) => (readings[0] === c.words ? { id: 'routed', layer: 'top', reading: readings[0], action: c.action } : null),
+      run: (hit) => {
+        ran.push(hit.reading);
+        return { ack: 'Done.' };
+      },
+    };
+    let carried = { asked: 3, braked: true };
+    const hiddenCount = { get: () => carried, set: (x) => (carried = x) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    const brakeLines = env.log.spoken.filter((x) => x.text === BRAKE_LINE).length;
+    if (c.runs) {
+      assert.deepEqual(ran, [c.words], `"${c.words}" runs`);
+      assert.equal(brakeLines, 0, `"${c.words}": no brake line`);
+    } else {
+      assert.deepEqual(ran, [], `"${c.words}" doesn’t run`);
+      assert.ok(brakeLines >= 1, `"${c.words}": the brake line`);
+      assert.equal(env.log.turns.length, 0);
+    }
+  }
+});
+
 // MAC-R3-1: after the brake, two claps and "Hey Jarvis" in the same breath: the owner called him, so the count starts
 // again (the wake window heard the wake words, or Standby's kept microphone did: barge-in), and the greeting keeps it.
 test('MAC-R3-1: braked, claps with "Hey Jarvis" heard by the wake window: the question in the offer’s listen is answered', async (t) => {

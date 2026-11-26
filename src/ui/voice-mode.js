@@ -3131,17 +3131,18 @@ function createVoiceMode(opts) {
   }
 
   /**
-   * MAC-R3-3: whether carrying out `hit` may cost money or send the words out (a question in the hidden count, A6;
-   * refused while braked in the background): a Chrome task (asked for or started), the paid briefing, a dear command
-   * (through the check), Optics (the live view) and the camera, and a question's answer other than no (a price
-   * question's "yes" is what pays).
+   * MAC-R3-3: whether carrying out `hit` may cost money, turn the camera on or send the words out (a question in the
+   * hidden count, A6; refused while braked in the background): what the router's flags mark (not free, the camera, the
+   * check), a Chrome task (asked for or started), the briefing, and a question's answer other than no (a price
+   * question's "yes" is what pays). "Stop watching" and the other stops are free.
    */
   function paidHit(hit) {
     if (!hit) return true;
-    if (hit.id === 'chrome-task' || hit.id === 'chrome-ask' || hit.id === 'briefing' || hit.id === 'optics' || hit.id === 'camera') return true;
     const a = hit.action || {};
+    if (a.free === false || a.camera === true || a.check === true) return true;
+    if (hit.id === 'chrome-task' || hit.id === 'chrome-ask' || hit.id === 'briefing') return true;
     if (hit.id === 'question') return !a.dismiss && a.choice !== 'no';
-    return !!a.check;
+    return false;
   }
 
   /**
