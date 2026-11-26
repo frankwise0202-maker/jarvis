@@ -77,6 +77,16 @@ test('REGRESS-2: "stop" with a turn running stops it (and Watch) through the dep
   assert.deepEqual(out, { say: 'Watch is off.' });
 });
 
+test('ROUTING-6: "stop" with only a blueprint sheet open is a free "Okay.", never a question for Claude', async () => {
+  for (const surface of ['voice', 'chat']) {
+    const { run, calls } = setup();
+    const { hit, out } = await run('stop', { surface, via: surface === 'voice' ? 'voice' : 'typed', blueprintOpen: true });
+    assert.equal(hit && hit.id, 'stop', surface);
+    assert.deepEqual(calls, [], surface);
+    assert.deepEqual(out, { say: 'Okay.' }, surface);
+  }
+});
+
 test('the app commands: what they do and say', async () => {
   const { run, calls, settings } = setup();
   assert.deepEqual((await run('new chat')).out, { say: 'New chat.' });

@@ -161,7 +161,11 @@ test('the stop layer: a bare "stop" stops everything that runs; nothing running:
   assert.deepEqual(pick(matchStopWord('stop everything', s('V0', { music: { playing: true } }))), { do: 'stop', targets: ['music'] });
   // A hologram on top with nothing running: its own "stop" (hold still) takes it.
   assert.equal(matchStopWord('stop', s('VH')), null);
-  assert.equal(matchStopWord('stop', s('V0', { blueprintOpen: true })), null);
+  // ROUTING-6: a blueprint sheet alone has no "stop" of its own: "Okay." (never a paid question). Over a
+  // hologram, the hologram's hold-still still takes it.
+  assert.deepEqual(pick(matchStopWord('stop', s('V0', { blueprintOpen: true }))), { do: 'stop', targets: [] });
+  assert.deepEqual(pick(matchStopWord('stop it', s('C0', { blueprintOpen: true }))), { do: 'stop', targets: [] });
+  assert.equal(matchStopWord('stop', s('VH', { blueprintOpen: true })), null);
   // A finished task doesn't count.
   assert.deepEqual(pick(matchStopWord('stop', s('V0', { chrome: { linked: true, online: true, task: { id: 't', status: 'done' }, contextUntil: 0 } }))), { do: 'stop', targets: [] });
   // Not a bare stop.

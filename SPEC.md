@@ -4615,8 +4615,9 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
 3. `stop`: a bare "stop" ("okay stop", "stop it", "stop everything") stops everything that runs (`stopTargets`): the
    tour pauses; the chat's turn (`state.running`: an answer, a research mission, a Look's answer; as its Stop button
    does), a Chrome task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop,
-   and the line says what stopped. Nothing running: "Okay." (never while a paid run goes on). With a hologram or
-   blueprint on top and nothing running it yields, and the viewer holds the model still.
+   and the line says what stopped. Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
+   blueprint over it) on top and nothing running it yields, and the viewer holds the model still (a blueprint sheet
+   alone has no "stop": "Okay.").
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
    `optics-card` (a Look's picture card, only while a Look is on screen: "put the picture to the side" goes back into
    its card, not a Screens float), `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes
