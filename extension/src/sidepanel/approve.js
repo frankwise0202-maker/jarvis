@@ -71,8 +71,8 @@ function render() {
     ),
   );
   document.title = waiting ? 'Jarvis for Chrome needs you' : 'Jarvis for Chrome';
-  const first = app.querySelector('.btn--primary');
-  if (first) first.focus();
+  // (No button takes the focus: the window appears in front while the owner may be typing
+  // elsewhere, and a Space or Enter meant for that must not press Approve. A click answers.)
 }
 
 // Nothing has waited for a moment: the window goes (the service worker opens it again if needed).
