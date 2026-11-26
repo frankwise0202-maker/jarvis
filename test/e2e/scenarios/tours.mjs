@@ -369,12 +369,17 @@ export default [
     device: 'desktop',
     timeout: 300000,
     async run(t) {
-      await voiceLaptop(t, { queue: ['Walk me through the battery.', 'Repeat.', 'Back.', 'Wait.', 'Continue.'], speech: { cps: 60 } });
+      // v8.1 (changed on purpose, REGRESS-3): "back" says the step before and waits there (B5), so "wait" there
+      // pauses the tour and "continue" goes on from that step to the question; the second "continue" takes the
+      // default view. Before, "back" played on to the question, where "wait" said "I'll wait.".
+      await voiceLaptop(t, { queue: ['Walk me through the battery.', 'Repeat.', 'Back.', 'Wait.', 'Continue.', 'Continue.'], speech: { cps: 60 } });
       const lead = await t.waitFor(async () => (leadCount(t) >= 2 ? leadCount(t) : null), { timeout: 30000, message: 'the hologram reply' });
-      await t.step('"repeat" at the question asks it again; "back" says the step before; "wait" there waits', async () => {
-        await t.waitFor(async () => norm((await voice(t)).said.join('|')).split(QUESTION).length - 1 >= 3, { timeout: 60000, message: async () => `the question asked three times: first, after "repeat", after "back" (said: ${norm((await voice(t)).said.join(' | '))})` });
-        // "Wait." is heard once the third question has been said
-        await t.waitFor(async () => (await voice(t)).said.some((x) => /^I[’']ll wait\.$/.test(norm(x))), { timeout: 15000, message: async () => `"wait" at the question: "I'll wait." (${norm((await voice(t)).said.join(' | '))})` });
+      await t.step('"repeat" at the question asks it again; "back" says the step before and waits; "wait" there pauses; "continue" goes on', async () => {
+        await t.waitFor(async () => norm((await voice(t)).said.join('|')).split(QUESTION).length - 1 >= 3, { timeout: 60000, message: async () => `the question asked three times: first, after "repeat", after "continue" (said: ${norm((await voice(t)).said.join(' | '))})` });
+        const said = (await voice(t)).said.map(norm);
+        const paused = said.findIndex((x) => /^Paused\. Say continue when you[’']re ready\.$/.test(x));
+        t.assert(paused > 0, `"wait" on the step gone back to pauses there (${said.join(' | ')})`);
+        t.assert(said[paused - 1] === PART_STEPS.apart, `"back" said the step before, then waited for the owner (${said.join(' | ')})`);
         const order = stepsOf(await tourLog(t));
         t.assert(order.filter((s) => s === 'apart').length >= 2, `"back" said "apart" again (${order.join(' → ')})`);
       });
