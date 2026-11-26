@@ -134,6 +134,34 @@ function installGeorgeProbe() {
   };
 }
 
+/**
+ * A page Chrome opened after a restart: no click yet. `navigator.userActivation` follows Chrome's rule from a clean
+ * start (active from the first press or key on, before the page's own handlers see it): a test page opened by the
+ * harness may count as already active, so this stands in for it. `window.__activation.real` keeps Chrome's value.
+ */
+function installNoClickYet() {
+  let active = false;
+  const real = navigator.userActivation;
+  const mark = (e) => {
+    if (e.isTrusted) active = true;
+  };
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend']) window.addEventListener(type, mark, true);
+  const ua = {
+    get hasBeenActive() {
+      return active;
+    },
+    get isActive() {
+      return active;
+    },
+  };
+  window.__activation = { real: () => (real ? real.hasBeenActive : null), fake: () => active };
+  try {
+    Object.defineProperty(Navigator.prototype, 'userActivation', { configurable: true, get: () => ua });
+  } catch {
+    /* Chrome's own stays */
+  }
+}
+
 // ---- helpers ----------------------------------------------------------------------------------------------
 
 const play = (page, samples) => page.evaluate((x) => window.__fakeMic.play(x), samples);
@@ -171,13 +199,14 @@ async function backInStandby(t, page = t.page, timeout = 20000) {
   await waitListening(t, page);
 }
 
-async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, page = null } = {}) {
+async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, noClickYet = false, page = null } = {}) {
   const p = page || (await t.newPage({ device, settings: { ...(t.scenario.settings || {}), ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
   await p.addInitScript(installFakeSpeech, speech);
   await p.addInitScript(installFakeMic, { wakeLock: true });
   await p.addInitScript(installNotifyProbe);
   await p.addInitScript(installSoundProbe);
   if (george) await p.addInitScript(installGeorgeProbe);
+  if (noClickYet) await p.addInitScript(installNoClickYet);
   await p.addInitScript(() => {
     window.__voice.queue = [];
   });
@@ -603,9 +632,10 @@ export default [
     settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
     timeout: 120000,
     async run(t) {
-      await setup(t, { wordStub: true });
+      await setup(t, { wordStub: true, noClickYet: true });
       await t.step('Standby opens by itself at launch', async () => {
         await t.visible('standby', { message: 'Standby at launch' });
+        t.note(`navigator.userActivation.hasBeenActive in the test page before any click: ${await t.page.evaluate(() => window.__activation.real())} (stood in for: false)`);
         await t.waitFor(async () => /CLICK ONCE SO JARVIS CAN SPEAK/.test(await t.text(t.locator('standby-state'))), { message: 'the click-once line' });
         await t.screenshot('1-standby-at-launch');
       });
