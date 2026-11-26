@@ -460,9 +460,10 @@ Say or type it, in the chat, a hologram's command box, the camera (Optics) or Vo
 - **"Pull it up beside me"**, "float it": a floating panel that stays on top of your other apps,
   beside whatever you're working on. Move and resize it as you like. With only one monitor
   connected, "my other screen" floats it here instead.
-- **"Open it in a window"**: its own window on the right half of your screen.
-- **"Bring it back"** closes the other screen and shows it here again; "close the other screen"
-  just closes it.
+- **"Open it in a window"**: its own window on the right half of your screen (several at once: see
+  Windows by voice below).
+- **"Bring it back"** closes that screen and shows it here again; "close the other screen" just closes
+  it. With several windows open, the one you name, else the one you're in, else the newest.
 - **The camera too**: "put the camera on my other screen" (or "put this on my other screen" while
   the camera is open, "float the camera") shows the live camera there, big, with a red **LIVE**;
   the camera closes here, so only one view uses it. **Camera off** under the picture (or the
@@ -491,11 +492,60 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
 
 #### Windows by voice
 
-<!-- v8.1: windows writes this part. -->
+- **"Put the camera in a window"**, then **"put the hologram in another window"**: each gets a window of its
+  own, named by what it shows (the camera window, the hologram window). Up to four at once; a fifth takes the
+  place of the oldest, and Jarvis says which. ("Expand this in a different window" works too.)
+- **"Side by side"**, **"camera on the left, hologram on the right"**, **"split the screen"**: Jarvis lays out
+  his windows on your other monitor when you have one (and allowed window placement), otherwise beside him on
+  this screen. Things you name that aren't in a window yet open first. A new window makes room the same way,
+  except for a window you dragged somewhere yourself: that one stays put.
+- **He always leaves a strip of his own window in view** (about 320 pixels). On a Mac, a window that is
+  completely covered counts as hidden, and hidden stops the camera and a walkthrough.
+- **"Close the camera window"**, **"bring the hologram back"**: that one only. **"Close that window"**, **"bring
+  it back"**: the window you're in, otherwise the newest one. **"Close all windows"** closes every window;
+  **"close everything"** also closes what is open in the main window (Voice Mode stays).
+- **Voice follows the hologram**: with it in a window, "explode it", "show the battery", "front view" or
+  "isolate it" happen in that window. Photos, blueprints and the parts list still open in the main window.
+- **"Do this in this window"** (or "show it here"): the window you're looking at, otherwise the main one; Jarvis
+  says which, and that window is "it" from then on. "Show the report here" puts the report in it.
+- **"Show me the hologram window"** brings it to the front. **"Swap them"** swaps two windows' places;
+  **"make the camera window bigger"** (or smaller), **"fill the screen"** resize it (on Jarvis's screen it still
+  leaves his strip; true full screen is the window's own full-screen button).
+- **"Float yourself"**: Jarvis himself in a small panel that stays on top of your other apps: his core, what
+  he's doing and the words he heard, the most honest sign of him while his window is hidden. Chrome needs one
+  tap to open it (a **Float Jarvis** button). One floating panel at a time: it takes the place of a floating
+  hologram, and he says so. Browsers without floating panels can't do this.
+- Jarvis moves only his own windows: Chrome won't let a page move a floating panel ("drag its corner"), or a
+  page from another site once it is open.
 
 #### Pull it up in Chrome
 
-<!-- v8.1: windows writes this part. -->
+- **"Pull this up in Chrome"** (or "open that in a new tab"). "This" is a link on screen, otherwise what you're
+  looking at: a Look's label, the live view's summary, or the hologram's name with the part you picked, searched
+  on Google; otherwise the links in Jarvis's last answer (with several, the first, and he says so); otherwise your
+  last question, searched. With nothing yet: "There's nothing to pull up yet."
+- **"Open the second link"**, "open link 3": that link of his last answer (when his last answer has links).
+- **"Google USB-C chargers"**, "search for heat pipes in Chrome", "look it up on Google": a Google search. Your
+  words go to Google, so Jarvis shows (and says) them for 2 seconds first: "no, I said …" fixes them, "cancel"
+  opens nothing.
+- **"Open YouTube"**, "go to amazon.com": that site.
+- Only browser words open the browser: Chrome, Google, a tab, the browser, a link or a site. "Search for flights to
+  Denver" or "look it up online" are still questions for Jarvis. Words about what's on a page ("click the first
+  result", "open the cheapest one in Chrome") are jobs for Jarvis for Chrome, never a Google search.
+- **An address that would do something just by opening it** (add to a cart, cancel an order, sign you out…) never
+  opens by voice. Jarvis shows it and asks "It looks like it adds to a cart. Open it?"; only your click opens it.
+- **With the camera, a walkthrough or the live view on screen**, the page opens in a window beside Jarvis instead of
+  a tab, so he stays in view ("It's open beside me.").
+- **With Jarvis for Chrome linked and online**, the page opens in the Jarvis window, where Jarvis for Chrome can work
+  in it (beside Jarvis when something is on screen, without taking the focus). Say **"in my Chrome"** or **"in a
+  normal tab"** for your usual Chrome window, with your sign-ins. Not linked, or offline: a normal tab, and he says
+  so once.
+- **Pop-ups blocked**: an **Open in Chrome** button appears; one tap opens the page. While Jarvis is hidden he says
+  "I couldn't open it: allow pop-ups for Jarvis once."
+- **"Close that tab"** closes the last tab he opened.
+- Said from a Jarvis tab (not the installed app), the new tab covers Jarvis. If he can't listen while covered, he
+  says once that "open it in a window" keeps him in view; that puts the page in a window beside him.
+- All of this is free: no request to Claude.
 
 ### Apple Music
 

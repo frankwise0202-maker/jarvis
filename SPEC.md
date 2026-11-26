@@ -1841,8 +1841,10 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
   Optics' mic; §19) go to the local matcher
   `src/lib/screen-commands.js` first: a known object ("this", "it", the hologram, blueprint, Mission Control, report,
   photo, camera, link + ordinal) plus a place ("other / second / external screen", "screen 2", "monitor", "beside me",
-  "float", "pop it out", "on top", "in a window / new tab"), every other word a command word; "bring it back" and
-  "close the other screen / screen 2 / the float" close. Questions and requests for new content ("pull up the weather
+  "float", "pop it out", "on top", "in a window"), every other word a command word; "bring it back" and
+  "close the other screen / screen 2 / the float" close. v8.1 (§31): "in a new tab" is a Chrome tab (§31.6);
+  "expand" is a command word; "back" and "close" carry which window (named, the other monitor's, the float, all), and
+  without a name act on the window with the focus, else the newest, no longer on every screen. Questions and requests for new content ("pull up the weather
   on my other screen") are not matched and go to Jarvis. Speech slips are folded in ("screen to/too", "flow it",
   "besides me", "clothes the…", "on mother screen"). No tokens are spent.
 - "This" (`src/lib/screen-targets.js`): the open viewer (photo, blueprint, hologram, the Mission Control sheet, a
@@ -1854,7 +1856,8 @@ the camera (Optics) and the natural voice; §19 says how the two connect (where 
   "beside" → Document Picture-in-Picture (sized per kind: hologram/blueprint 640×480, answer 460×540, mission 440×500);
   "window" → a popup on the right half of the current screen; Safari/Firefox → a window to drag (said so); phones →
   the app's own full-screen viewers, or the screen frame in an overlay (kept, edge and brackets included, inside the
-  safe area); links → their own window (opened on `about:blank`, opener cut), a tab on phones. A blocked popup or a
+  safe area); links → their own window (opened on `about:blank`, opener cut; tracked since v8.1), a tab on phones.
+  v8.1 (§31.1): each "in a window" opens one more window (at most four), and the others make room. A blocked popup or a
   PiP request without a gesture shows a one-tap button (`screens-tap`), the first time with a tip to allow pop-ups
   (`screens-tip`, remembered in `jarvis.screens.v1`). An open screen or panel takes new content without a gesture.
 - Screen mode (`?screen=<kind>&…`, `src/ui/screens/screen-page.js`): the HUD frame plus one panel, no chat. Saved items
@@ -3894,7 +3897,187 @@ and `liveSpentText`.
 
 ## 31. v8.1: Windows and tabs
 
-<!-- v8.1: windows writes this part. -->
+Several named windows by voice, layouts that keep Jarvis in view, voice that follows the hologram into its window,
+"this window", and "pull this up in Chrome" (the brief's D1-D6 and G1). Everything here is free and local.
+
+### 31.1 Several windows (D1)
+
+- `src/ui/screens/controller.js`. Each "in a window" / "in another window" (`matchScreenCommand` `where:
+  'window'`, no fallback note) opens one more popup, named by its kind (`windowName`, window-commands.js: "the
+  camera window", "the report window", "the page window"). At most `MAX_WINDOWS` (4, screen-placement.js) popups
+  (`window` and `screen` modes, pages included; the floating panel is apart, one at a time). A fifth takes the
+  oldest one's place (`at`: when it opened or last took new content): a Jarvis window shows the new thing (no new
+  popup, so no gesture); a page window closes once the new one has opened. The outcome carries `replaced: { kind,
+  report, title }`; Jarvis says "That's 4 windows, so it took the place of the camera window." The same thing asked
+  again raises its window (`already: true`). Fallback windows (`plan.note`: `no-pip`, `no-wm`, `wm-denied`,
+  `same-screen`) and screen windows (one per monitor) are reused as before.
+- Room for one more: when a window opens and Jarvis windows are already open on his screen, they and the new one get
+  `layoutRects` (side by side, then a grid; a strip of Jarvis kept); the others move (`moveTo`/`resizeTo`) only
+  once the new window has opened. The first window keeps today's place (`rightHalf`).
+- Page windows (`openLink`, kind `link`) are tracked as entries with `external: true`: they count, close and take
+  part in "the newest", but never get content over the channel, never move, and never take Jarvis content.
+- Which window (`pickOf`): the one with the focus (`document.hasFocus()` of the controller's own windows; screen
+  windows also post `{ t: 'focus' }`), else the one `here` picked (`working`), else the newest.
+- Back and close (`closeScreens`): `all` (every one; with `back`, the newest comes back); `screen` (that monitor's);
+  `where: 'beside'` (the floating panel); `where: 'other'` (the other monitor's: all with `all`, else the picked
+  one); `which` (the picked one showing that kind; none: `{ count: 0, which }`, "There's no camera window."); else the
+  picked one. `matchScreenCommand` now returns `all` ("close all screens", "close both screens", "close the
+  windows", "bring everything back"/"them") and `where: 'other'` for "the other/second/external screen" (it was
+  null, so the float closed too). `closeAll()` passes `all`. The tool's `where: 'back'` uses `what`: a kind brings
+  that one back; "this" the picked one.
+
+### 31.2 Layouts (D2)
+
+- `layoutRects({ screens, current, main, count, layout, side })` and `layoutArea(…)` in screen-placement.js (pure).
+  `screens`: ScreenDetailed list when Window Management is granted (no prompt for a layout), else `[window.screen]`;
+  `current`: Jarvis's screen; `main`: `windowRect(window)` (screenX/Y, outer size; missing: he fills his screen).
+- The other monitor first (`otherScreen`: an external one when Jarvis is on the laptop, else the biggest other):
+  its whole usable area; Jarvis stays fully in view.
+- One screen: the windows take the side of Jarvis's window with more room (or `side`, "the camera on the left"). With
+  room enough beside him (`MIN_COLUMN_PX` 480 per column) they don't cover him at all; else they cover all but a
+  strip of `KEEP_STRIP_PX` (320) at his near edge. `layoutArea` returns `{ area, region, screen, strip, side }`.
+- Rects: one window → on the other monitor, all of it; beside Jarvis, at most half his screen at the far side. Two →
+  two columns. Three → two on top, the third across the bottom. Four → 2×2. Whole pixels, screen coordinates, left to
+  right then top to bottom.
+- `arrange({ layout, a, b })` (controller): named kinds not in a window open first (`run` with `where: 'window'`; a
+  blocked popup returns `needs_tap`); then, left to right, `a`, `b`, the rest by age; one named window alone goes on
+  its side. Floating panels and pages can't be moved by script and stay. Outcome `{ status: 'arranged', layout,
+  count, names, screen: 'other' | 'current' }`; said "Camera on the left, hologram on the right.", "Side by side.",
+  "3 windows, in a grid on your other screen.", "Side by side with me." (one window).
+
+### 31.3 Voice follows the content (D3)
+
+- Channel (screen-page.js, `BroadcastChannel('jarvis-screens')`): main → screen `{ t: 'command', screen, command }`
+  (a hologram-commands.js command); screen → main `{ t: 'state', screen, parts?, selected? }` (the hologram's part
+  list, at most 200, and its selection) and `{ t: 'focus', screen }`.
+- `panel.command(cmd)` (panels.js, the hologram panel): `explode`, `collapse`, `labels-on`/`-off`, `rotate`, `stop`,
+  `reset`, `view`, `zoom-in`/`-out`, `select`, `focus`, `isolate`, `show-all`, `deselect` on its own renderer;
+  returns a short word ("Exploded view", "Isolated · Battery"). Commands before the 3D view is ready wait for it
+  (none when WebGL is missing). `deps.onState` reports `{ parts }` on a model change and `{ selected }` on a pick.
+- `screens.commandIn(kind, command)`: the picked window showing `kind`. A floating panel runs it here (it lives in the
+  main window's JavaScript); a screen window gets it over the channel. `close` closes that window. `isolate`/`focus`
+  without a part take the window's selection. null when no window shows it, for `photos`, `blueprint`,
+  `parts-list`, or without BroadcastChannel: the app opens the hologram in the main window as before.
+  `screens.shown(kind)` → `{ id, label, mode, kind, title, ref, parts, selected }`.
+- Routing: with no hologram or blueprint viewer open here, `windows-hologram` takes a hologram command for the window
+  showing one (the router's `windows` list carries its parts and selection). Today's `hologram` matcher can still take
+  it first through the hologram shown last over Voice Mode (`reply.hologram`); then app.js `voiceCommand` sends it to
+  the window (`windowHologramCommand`) instead of opening the hologram here again. Its window closed by hand: the
+  hologram comes back here, as before.
+
+### 31.4 "This window" (D4)
+
+- `here({ which })` (window-commands.js op `here`): the focused Jarvis window becomes the picked one (`working`) and
+  "it" (`recent`); with `which` ("show the report here") that thing is shown in it. With no window focused: the main
+  one; `which`, or the window picked before, comes back here. Outcome `{ status: 'here', where: 'window' | 'main',
+  moved, kind }`; said "In the camera window.", "Here, in the answer window.", "Here, in the main window.", "It's back
+  here, in the main window."
+- `focus` op: `win.focus()` on the picked window of that kind ("Here's the hologram window.").
+
+### 31.5 Window words and the router
+
+- `matchWindowCommand(text, state)` (src/lib/window-commands.js, pure; normalized like screen-commands.js):
+  `close` (`which`: "close the camera window"), `close-all` ("close everything": the app also closes its viewers),
+  `arrange` ("side by side", "split the screen", "tile them" with a window open; "put the camera and the hologram side
+  by side", "camera on the left, hologram on the right" always; one thing on one side with a window open, never
+  "show …"), `here`, `focus` ("show me the hologram window"), and D5's `swap` (two open) and `size` ("make the camera
+  window bigger", "make it full screen" with a window open and no viewer here), D6's `float-jarvis` ("float
+  yourself"). Questions go to Claude, except "do this in this window", checked before the question filter. It takes
+  nothing `matchScreenCommand` takes.
+- Every action `{ do: 'window', op, …, free: true, check: false, camera: false }`; `undo: false` for closes (no
+  alternative reading closes a window).
+- `matchScreenCommand` also takes "expand" as a command word ("expand this in a different window"), and no longer
+  reads "in a new tab" as a window (§31.6 takes it).
+- src/ui/commands/windows.js registers, in the router (§30): `windows` (layer destination; run:
+  `screens.windowCommand`, the line `screenAck` when spoken, `screenMessage` typed), `chrome-open` (layer destination;
+  run: `browserTabs.pullUp` with `resolveThis(thisInputs())`, or `closeTab`), and `windows-hologram` (layer top, Voice
+  Mode; run: `screens.commandIn('hologram', …)`, the line voice-visuals' `commandAck`). Screens' own words stay the
+  `screens` matcher (today's).
+- routerState's windows block (app.js): `windows` = the controller's list with `focused`, and a hologram window's
+  `parts` and `selected`; `reply.links` = the newest reply's links (`linksOf` of its text segments; none when the
+  newest reply has none).
+
+### 31.6 Chrome tabs (G1, and the app side of G3)
+
+- `matchChromeCommand(text, state)` (src/lib/chrome-commands.js, pure; its own normalization keeps dots and hyphens
+  inside words: "amazon.com", "usb-c"). `{ do: 'chrome-open', target, where: 'auto' | 'mine', free: true, undo: false,
+  check }`:
+  - `this`: "pull/bring/put/open/show this|that|it (up) in|on (Google) Chrome / my browser / a new tab".
+  - `link` `{ ordinal }`: "open the (second) link|source (in Chrome)", "open link 3" (1-5, last), only when the
+    newest reply has links (`state.reply.links`; otherwise declined: a Chrome task's in a Chrome context).
+  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company"), "search
+    (for) … in Chrome / on Google", "look up … on Google", "search Google for …", "open <not a site> in Chrome".
+    A query that goes on to act ("… and add it to the cart") is left to Jarvis for Chrome's tasks (`TASKISH`);
+    "find" is not a search verb.
+  - `this-search`: "google it", "look it up on Google".
+  - `site` `{ url, name }`: "open YouTube" (`CHROME_SITES`), "go to amazon.com" (a plain domain).
+  - `where: 'mine'`: "in my Chrome / my browser / a normal tab / my usual Chrome": the owner's own window.
+  - `{ do: 'chrome-close-tab' }`: "close that tab".
+  - Never: no browser word ("search for flights to Denver", "look it up online"), questions, Jarvis things ("open the
+    camera in Chrome"). Lead decision D1 (the router asks `chrome.task` first): never a sentence that starts with
+    "click" (or "scroll", "search this site for"), never a page object as the thing opened or the whole search ("the
+    cheapest one", "the first result", "that result", "the second item", "this product", "the listing", "the cart":
+    `PAGE_OBJECT`), never a pick on a page ("open the cheapest 4K monitor in Chrome": `PAGE_PICK`).
+- `planChromeOpen(target, { thisTarget, links })`: links from the newest reply (`linksOf`); "this" from
+  `resolveThis` (§30): `link` → its url; `reply` → one url, or the first of several with the note "That reply has 3
+  links; I opened the first."; `look`, `live`, `hologram`, `question` → a search for `words`; `none` → "There's
+  nothing to pull up yet." Every address through `safeAddress` (http/https, no user name or password, ≤ 2,048
+  characters); `searchUrl` builds `https://www.google.com/search?q=…`.
+- `addressAction(url)`: the extension's own `classifyAddress` (extension/src/background/address.js, imported: one
+  rule for the app and the extension), in words ("adds to a cart", "deletes or cancels something", …).
+- `createBrowserTabs(deps).pullUp(action, { thisTarget, links })` (src/ui/browser-tab.js), contract (d):
+  1. the plan; an error is said and nothing opens;
+  2. `rect` = `screens.besideRect()` (layoutRects, `count: 1`, `layout: 'beside'`) when `deps.onScreen()` (Optics,
+     a walkthrough or the live view on screen), else null;
+  3. `app.chromeLink` linked, online and `where !== 'mine'` → `open(url, { rect, focus: !rect })`: ok → "It's open in
+     the Jarvis window(, beside me)."; `needs-click` → "…waits for your click in the Jarvis window." (the extension's
+     card; the app doesn't ask too); `blocked`/`refused`/`bad` → "I can't open that address: <why>."; anything else
+     (offline, unlinked, off, busy) → step 4, with "I can't reach Jarvis for Chrome, so it's in a normal tab." once;
+  4. an acting address (not a search) → the card `chrome-act` ("It looks like it adds to a cart. Open it?", the
+     address in full, **Open** / **Not now**); only the click opens it;
+  5. `rect` → `screens.openPage(url, { rect, button: 'Open in Chrome' })` (a tracked page window at that rect;
+     "It's open beside me."); else `openInBrowserTab(url)`: `window.open('about:blank', '_blank')` with no features,
+     `opener = null`, `location.replace(url)`; the handle is kept for "close that tab", and the page becomes "it"
+     (`screens.noteRecent`).
+  6. Blocked: the card `chrome-tap` with **Open in Chrome**; with Jarvis hidden, "I couldn't open it: allow pop-ups
+     for Jarvis once." Said from a Jarvis tab (not standalone) that can't listen while covered, the first tab adds
+     "Say 'open it in a window' to keep me in view." (once: `jarvis.chromeTabs.v1`).
+- app.js: `browserTabs = createBrowserTabs({ chromeLink: () => app.chromeLink (when the Chrome link's wiring made
+  one), screens, onScreen: Optics open or a walkthrough active, hidden, standalone, listensHidden, toast })`;
+  `thisInputs()` gives resolveThis a link screen's address, a frozen Look's labels, the live view's summary, the
+  hologram's title and picked part (here or in a window), the newest reply's links and the last question.
+- Lines: `chromeLine(outcome)`: "It's open in Chrome.", "Searching Google for USB-C chargers.", "It's open beside
+  me.", "Closed the tab." / "I can only close a tab I opened."
+
+### 31.7 Float Jarvis (D6) and sizes (D5)
+
+- "Float yourself" (`floatJarvis`): a Document Picture-in-Picture panel of kind `jarvis` (panels.js `jarvisPanel`,
+  300×260): the core glyph, the state word and the words heard, from `deps.jarvisState()` (app.js: `root.dataset.core`,
+  `presence.word()`, Voice Mode's heard words while it listens), read every 400 ms with the panel's own timers. A new
+  one needs a tap (the one-tap card, button "Float Jarvis"); an open floating panel takes Jarvis in place of what it
+  showed ("I'm floating beside you, in place of the hologram."); no Document PiP: "This browser can't float me."
+- `swapWindows`: the picked window and the next newest exchange places (`placeOf`: where the window really is, else
+  where Jarvis put it). `sizeWindow({ size, which })`: `resizedRect` by a quarter around the centre, or `fill`; the
+  bounds are beside Jarvis (`layoutArea`, his strip kept) on his screen, the monitor's work area on another
+  (`screenAt`). Floating panels ("Drag its corner…") and pages ("I can't move a page from another site…") are said, not
+  moved. A window the owner dragged (its corner more than 30 px from where Jarvis put it) is left alone when another
+  one opens; an explicit layout moves it.
+
+### 31.8 Tests
+
+- Unit: `screens.layout` (rects, the strip, monitors in order, grids, whole pixels), `screens.windows`
+  (`matchWindowCommand`, its no-steal list and nothing Screens takes), `screens.chrome` (`matchChromeCommand`,
+  `planChromeOpen`, `safeAddress`, `addressAction` against the extension's classifier, `chromeLine`),
+  `screens.multiwindow` (Chromium: four windows and the fifth, named back/close, focus, page windows, layouts on one
+  and two monitors, `here`, `focus`, `commandIn` over the channel, the hologram panel's `command()`, `openPage`),
+  `screens.browser-tab` (Chromium, a fake `app.chromeLink` of contract (f)'s shape: tab, cards, beside, the link,
+  "in my Chrome", the fallback said once, close that tab), `screens.commands` (new rows; "in a new tab" moved).
+- The router: the windows sections of test/unit/fixtures/voice-corpus.mjs (states WIN2, WINH, WINL, WINC) and
+  collisions.mjs (window and Chrome words over Optics' in VL, VF, OV; D1's rows that hold out of a Chrome context).
+- E2E (test/e2e/scenarios/windows.mjs, chrome-tab.mjs): `windows-several`, `windows-close-by-name`,
+  `windows-side-by-side` (one and two stubbed monitors), `windows-swap-resize`, `windows-follow-content`,
+  `chrome-tab-open`, `chrome-tab-search-check`, `chrome-tab-beside`. Pages are recorded, never loaded (no third-party
+  request in tests); a 1440×900 laptop screen is stubbed, with moveTo/resizeTo recorded in the windows themselves.
 
 ## 32. v8.1: Jarvis for Chrome by voice
 
