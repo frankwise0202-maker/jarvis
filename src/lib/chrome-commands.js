@@ -319,7 +319,8 @@ export function chromeLine(o) {
     }
     case 'needs_click':
       if (o.via === 'jarvis') return 'That address looks like it does something, so it waits for your click in the Jarvis window.';
-      return `That address looks like it ${o.does || 'does something'}, so it opens only when you click Open.`;
+      // The link was down: said here, once, since the page opens only after the click.
+      return `${o.fellBack ? 'I can’t reach Jarvis for Chrome. ' : ''}That address looks like it ${o.does || 'does something'}, so it opens only when you click Open.`;
     case 'needs_tap':
       return o.hidden ? 'I couldn’t open it: allow pop-ups for Jarvis once.' : 'Tap Open in Chrome, and it’ll open.';
     case 'closed':

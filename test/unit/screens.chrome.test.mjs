@@ -207,6 +207,7 @@ test('what Jarvis says', () => {
   assert.equal(chromeLine({ status: 'opened', via: 'tab', kind: 'page', note: 'That reply has 3 links; I opened the first.' }), 'It’s open in Chrome. That reply has 3 links; I opened the first.');
   assert.equal(chromeLine({ status: 'needs_click', via: 'tab', does: 'adds to a cart' }), 'That address looks like it adds to a cart, so it opens only when you click Open.');
   assert.equal(chromeLine({ status: 'needs_click', via: 'jarvis' }), 'That address looks like it does something, so it waits for your click in the Jarvis window.');
+  assert.equal(chromeLine({ status: 'needs_click', via: 'tab', does: 'adds to a cart', fellBack: true }), 'I can’t reach Jarvis for Chrome. That address looks like it adds to a cart, so it opens only when you click Open.', 'the link down: said once, though nothing opened yet');
   assert.equal(chromeLine({ status: 'needs_tap' }), 'Tap Open in Chrome, and it’ll open.');
   assert.equal(chromeLine({ status: 'needs_tap', hidden: true }), 'I couldn’t open it: allow pop-ups for Jarvis once.');
   assert.equal(chromeLine({ status: 'nothing', say: 'There’s nothing to pull up yet.' }), 'There’s nothing to pull up yet.');
