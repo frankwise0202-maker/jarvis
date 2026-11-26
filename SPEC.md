@@ -3980,7 +3980,52 @@ none of its own (its step is the line).
 
 ### 29.2 The renderer
 
-<!-- v8.1: tour-render writes this part. -->
+`src/ui/hologram/hologram.js` and `shaders.js` give every hologram renderer (the viewer's, a Screens panel's) what a
+walkthrough step needs. Without an emphasis the look and the behaviour are as before.
+
+- **The target (contract (e)).** `holo.tourTarget()` returns one frozen object, the same every time; the tour player
+  drives the hologram only through it, never through the viewer's DOM: `setEmphasis(e | null)`,
+  `flyTo(opts) → Promise<'arrived' | 'touch' | 'replaced'>`, `explode(t, animate = true) → Promise<'arrived' |
+  'replaced'>`, `focus(id | null)` and `select(id | null)` (false for an unknown id; select shows the viewer's part
+  card), `setLabels(true | false | [ids])`, `settled(ms) → Promise<boolean>`, `holdAutoRotate(on)`,
+  `parts() → [{ id, name, group, groupName, tone, info, material, aka, shell }]`, `getState()`. Without WebGL (no
+  viewer, as today) the target is there and its moves resolve at once.
+- **`setEmphasis({ glow, ghost, hide, others })`**, part ids or keys (unknown ones are ignored; parts that arrive
+  later in a live build take their role): **glow**, full strength with the selected look and a pulse (alpha × (1 +
+  0.35·sin 4t), `uPulse`), several parts at once; **ghost**, see-through: edges at 0.5 and fill at 0.1 (a per-part
+  fill multiplier), `'shells'` naming the case parts, alone or in a list with ids; **hide**, not drawn, framed or
+  tappable; **others**, every other part's level (0.15 by default; 0 shows only the parts named). A part named twice:
+  hide, then glow, then ghost. A selected part glows too; isolate still wins. Levels ease in about a third of a
+  second. While a part pulses, frames come at 30 a second; the pulse stops after 2 minutes (a steady glow, frames on
+  demand again) and never runs with reduced motion. While a walkthrough look is set and the camera is under the
+  model, the projector floor fades out.
+- **The case parts** (`shellIdsOf(parts)`): the parts toned `secondary`; in a hologram that marks none, by name:
+  cover, case, casing, housing, shell, lid, cowl, cowling, can or sleeve (or their plurals), on the name or another
+  name, unless another word follows that it describes ("Case fan", "Lid switch"). The tone wins when there is one.
+- **`labelsFor(ids)`** (the target's `setLabels([ids])`): only those parts' labels, and the selected part's, all of
+  them placed; null: any part's. A glowing part's label is always kept and drawn as selected.
+- **`flyTo({ ids, frame, view | dir, ms })`**: the camera's target, distance and direction in one tween, 750 ms by
+  default; with an explode under way it lasts until the explode ends. `frame`: `'parts'` (the default with ids:
+  their combined fit, as close as focus) or `'all'` (every shown part; hidden ones left out). `view`: a view name or
+  `'access'`; `dir`: `[x, y, z]` from the model towards the camera (+x front, +y up, +z right), or `'access'`;
+  neither keeps the direction. `'access'` (`accessAngles`): the main part's explode direction (or the way it moves
+  without one), turned up to 65° towards the model's own view: a laptop battery that comes out downwards is seen
+  from 25° below, front-left; a part that comes out on the side the model is shown from is seen from that view. The
+  framing follows the parts frame by frame while they move. Resolves `'arrived'`; `'touch'` when the owner takes the
+  camera first (a press, drag, pinch or wheel on the model, or a zoom command); `'replaced'` when another camera move
+  takes over (a newer flyTo, focus, isolate, a view, reset) or the renderer closes. Reduced motion or a hidden view:
+  a cut.
+- **No chase**: focus during an explode starts no tween of its own, and the explode's framing follows the part; a
+  camera move made before an explode aims at where the parts are, frame by frame. The target's `explode` resolves when
+  the parts stop.
+- **Auto-rotation**: `holdAutoRotate(true)` holds the idle rotation off for a tour; `false` gives it back after the
+  usual 7-second quiet time. The owner's own "spin it" (`autoRotate(true)`) ends the hold; the setting is kept.
+- `getState()` adds `emphasis` (`{ glow, ghost, hide, others }` as given, or null), `labelsFor`, `flying` and
+  `rotateHeld`.
+- Later: `lift` (one part's own explode), a closer minimum for small parts, the move's time by distance.
+- Tests: `test/unit/hologram.emphasis.test.mjs` (Playwright's fake clock, a generic laptop with no brand or model in
+  `test/unit/hologram.laptop.mjs`); E2E `tour-render-emphasis` (the built renderer in the app page, its screenshots
+  reviewed).
 
 ### 29.3 Narration and voice
 

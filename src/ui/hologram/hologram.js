@@ -461,6 +461,7 @@ export function createHologram(container, options = {}) {
   // every case part), the parts whose labels may show (labelsFor), auto-rotation held off, and
   // whether a glowing part pulses (frames keep coming at the idle rate while it does).
   let emphasis = null; // { glow, ghost, shells, hide, others, since, pulse }
+  let shellCache = null; // { spec, ids }: the case parts of the spec shown
   let labelOnly = null;
   let rotateHeld = false;
   let pulseLive = false;
@@ -1425,7 +1426,6 @@ export function createHologram(container, options = {}) {
     return 'other';
   }
 
-  let shellCache = null;
   /** The hologram's case parts (shellIdsOf), worked out once per spec. */
   function shellIds() {
     if (!shellCache || shellCache.spec !== spec) shellCache = { spec, ids: shellIdsOf(spec ? spec.parts : []) };
@@ -1457,17 +1457,17 @@ export function createHologram(container, options = {}) {
     let e = null;
     if (next && typeof next === 'object') {
       const ghost = idSet(next.ghost);
-      const level = Number(next.others);
+      const level = next.others === undefined || next.others === null ? NaN : Number(next.others);
       e = {
         glow: idSet(next.glow),
         ghost,
         shells: ghost.has('shells'),
         hide: idSet(next.hide),
-        others: next.others === undefined || next.others === null || !Number.isFinite(level) ? OTHERS_LEVEL : Math.min(1, Math.max(0, level)),
+        others: Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : OTHERS_LEVEL,
         since: performance.now(),
         pulse: true,
       };
-      if (!e.glow.size && !e.ghost.size && !e.hide.size && (next.others === undefined || next.others === null)) e = null;
+      if (!e.glow.size && !e.ghost.size && !e.hide.size && !Number.isFinite(level)) e = null;
     }
     emphasis = e;
     updateVisGoals();
