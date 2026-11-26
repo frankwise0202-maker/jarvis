@@ -98,7 +98,7 @@ import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
 import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
-import { createStandbyLock, createVoiceBusy, voiceBusyElsewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
+import { createStandbyLock, createVoiceBusy, createVoiceTalk, voiceBusyElsewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
 import { setupOf, handsFreeMeasure } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
@@ -173,6 +173,8 @@ const audioDevices = isScreenMode()
 // a phone (its Standby listens only on screen), nor in a screen window (it never listens).
 const voiceBusy =
   isScreenMode() || safeInit(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches)) === true ? null : safeInit(() => createVoiceBusy());
+// MAC-R3-2: the window the owner talked to last (only its Voice Mode says Chrome's lines while several are open).
+const voiceTalk = isScreenMode() ? null : safeInit(() => createVoiceTalk());
 // Every recognizer listen hears the chosen question microphone (recognition.start(track), Chrome 135+).
 const sttDevice = withVoiceBusy(audioDevices ? audioDevices.wrapStt(stt) : stt, voiceBusy);
 // Voice Mode's chimes: in "Switch" (setup 3) the listen chime waits for the speakerphone's microphone.
@@ -1816,7 +1818,10 @@ export async function startApp(rootEl) {
         listenWhileHidden: () => handsFreeHidden(),
         // MAC-R2-1: while it can hear the owner or is answering (not while it merely sits open), a Standby in another
         // Jarvis window doesn't wake on the same words.
-        onActive: (on, o) => voiceBusy && !state.demo && safe(() => voiceBusy.set('voice', on, o || {})),
+        onActive: (on, o) => {
+          if (on && !state.demo && voiceTalk) safe(() => voiceTalk.note()); // MAC-R3-2: the window the owner talks to
+          return voiceBusy && !state.demo && safe(() => voiceBusy.set('voice', on, o || {}));
+        },
         // MAC-R2-3: the hidden count, kept across sessions.
         hiddenCount: {
           get: () => hiddenCount,
@@ -1864,6 +1869,7 @@ export async function startApp(rootEl) {
           voiceApi = null;
           voiceInfo = null;
           withdrawCameraNote(); // PRIVACY-2: what was asked for in this session goes with it
+          safe(() => voiceTalk && voiceTalk.drop()); // MAC-R3-2: (before its prompts go to another window's Voice Mode)
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
@@ -2060,8 +2066,17 @@ export async function startApp(rootEl) {
         return;
       }
       // MAC-R2-2: the owner talks to Jarvis (a tap on the voice button): wait; its close starts the quiet spell again.
+      // MAC-R3-4: only while it listens or answers. Left open and idle, it closes once Jarvis is in the background or
+      // the quiet spell has passed, and Standby comes back.
       if (isVoiceModeOpen()) {
-        R.last = Date.now();
+        const busy = safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
+        if (!busy && (document.hidden || Date.now() - R.last >= quiet)) {
+          cancelSheetReturn();
+          safe(() => voiceApi.close());
+          safe(() => standby.resume()); // before onClose's own step: release() leaves a Standby that is back alone
+          return;
+        }
+        if (busy) R.last = Date.now();
         R.timer = setTimeout(tick, 1000);
         return;
       }
@@ -5306,7 +5321,11 @@ export async function startApp(rootEl) {
     () =>
       createChromeVoice({
         link: () => chromeLink, // app.chromeLink (contract (f), chrome-relay's), or null (demo, a phone)
-        voice: () => voiceAdapter(voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
+        voice: () => {
+          const a = voiceAdapter(voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null);
+          // MAC-R3-2: with Voice Mode open in several windows, Chrome's lines are said where the owner talks (or last did).
+          return a && { ...a, talksHere: () => safe(() => !!voiceApi && voiceApi.isActive() === true, false) || !voiceTalk || safe(() => voiceTalk.here(), true) };
+        },
         dock: chromeDock,
         notify: (n) => notifyAttention(n),
         closeNotice: (tag) => closeNotify(tag),
@@ -5319,6 +5338,7 @@ export async function startApp(rootEl) {
     null,
   );
   safe(() => window.addEventListener('pagehide', () => safe(() => chromeVoice && chromeVoice.bye())));
+  safe(() => window.addEventListener('pagehide', () => safe(() => voiceTalk && voiceTalk.drop()))); // MAC-R3-2
   // Tests on localhost only ('jarvis.dev.chromeVoice' = '1'): window.__jarvisChromeVoice.question(spec) asks an owner
   // question in the open Voice Mode (the chrome-voice-stack E2E: a stand-in for a tour's decision beside a prompt).
   safe(() => {

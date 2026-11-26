@@ -6,8 +6,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere, createVoiceBusy, voiceBusyElsewhere } from '../../src/platform/standby-lock.js';
+import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere, createVoiceBusy, voiceBusyElsewhere, createVoiceTalk } from '../../src/platform/standby-lock.js';
 import { createFakeLocks } from './standby.fakes.mjs';
+import { PROMPTS, createFakeChromeLink, createFakeVoice, flush } from './chrome-voice.fakes.mjs';
+import { createChromeVoice } from '../../src/ui/chrome-task.js';
 
 const settle = async () => {
   for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
@@ -343,4 +345,86 @@ test('MAC-R2-1: voiceBusyElsewhere() counts only other windows: a Standby is nev
   await settle();
   assert.equal(await ask(), false, 'B idle again');
   assert.equal(await voiceBusyElsewhere({ locks: null, own: a }), false, 'no Web Locks: not busy');
+});
+
+// MAC-R3-2: since MAC-R2-1 a Standby wakes while an idle Voice Mode sits open in another window, so two Voice Modes can
+// be open. Only the window the owner talks to (or talked to last) says Chrome's question and a task's end.
+function fakeStorage() {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
+}
+
+test('MAC-R3-2: createVoiceTalk: the window that listened or answered last is "here"; its close hands that back to every window', () => {
+  const storage = fakeStorage();
+  const a = createVoiceTalk({ storage, win: 'A' });
+  const b = createVoiceTalk({ storage, win: 'B' });
+  assert.equal(a.here(), true, 'nobody noted: every window');
+  assert.equal(b.here(), true);
+  b.note(); // B's tapped Voice Mode answered
+  a.note(); // then A was woken and listens
+  assert.equal(a.here(), true);
+  assert.equal(b.here(), false, 'B sits idle: A is where the owner talks');
+  b.drop(); // B closing doesn't take A's place away
+  assert.equal(a.here(), true);
+  a.drop(); // A's Voice Mode closed
+  assert.equal(b.here(), true, 'the one still open says them again');
+  const off = createVoiceTalk({ storage: { getItem: () => { throw new Error('off'); }, setItem: () => { throw new Error('off'); }, removeItem: () => {} }, win: 'C' });
+  off.note();
+  assert.equal(off.here(), true, 'storage off: as before');
+});
+
+function channels() {
+  const ends = [];
+  return () => {
+    const end = {
+      listeners: new Set(),
+      postMessage(data) {
+        const copy = JSON.parse(JSON.stringify(data));
+        for (const other of ends) if (other !== end) for (const fn of other.listeners) queueMicrotask(() => fn({ data: copy }));
+      },
+      addEventListener(_t, fn) {
+        end.listeners.add(fn);
+      },
+      close() {
+        ends.splice(ends.indexOf(end), 1);
+      },
+    };
+    ends.push(end);
+    return end;
+  };
+}
+
+test('MAC-R3-2: two windows with Voice Mode open (A woken, B idle in the background): Chrome’s question and the task’s end are said in A only', async () => {
+  const storage = fakeStorage();
+  const talkA = createVoiceTalk({ storage, win: 'A' });
+  const talkB = createVoiceTalk({ storage, win: 'B' });
+  talkB.note(); // B: a tapped conversation, earlier
+  talkA.note(); // A: woken by "Hey Jarvis" now
+  const channel = channels();
+  const fakeA = createFakeChromeLink();
+  fakeA.set({ budgetUsd: 1 });
+  const vA = createFakeVoice();
+  delete vA.card;
+  vA.talksHere = () => talkA.here();
+  const A = createChromeVoice({ link: fakeA.link, voice: () => vA, channel, toast: () => {}, notify: () => {}, closeNotice: () => {}, hidden: () => false });
+  const fakeB = createFakeChromeLink();
+  fakeB.set({ budgetUsd: 1 });
+  const vB = createFakeVoice();
+  delete vB.card;
+  vB.talksHere = () => talkB.here();
+  const B = createChromeVoice({ link: { ...fakeB.link, onPrompt: () => () => {}, onPromptClosed: () => () => {}, onDone: () => () => {} }, voice: () => vB, channel, toast: () => {}, notify: () => {}, closeNotice: () => {}, hidden: () => true });
+  A.voiceChanged();
+  B.voiceChanged();
+  await flush();
+  fakeA.prompt(PROMPTS.cart);
+  await flush();
+  assert.equal(vA.prompts.length, 1, 'A says Chrome’s question');
+  assert.equal(vB.prompts.length, 0, 'B doesn’t');
+  fakeA.task({ id: 't9', status: 'running', text: 'find a monitor' });
+  fakeA.done({ status: 'done', answer: 'Added it.' });
+  await flush();
+  assert.ok(vA.said.some((x) => /done/i.test(x)), `A says the end (${JSON.stringify(vA.said)})`);
+  assert.ok(!vB.said.some((x) => /done/i.test(x)), `B doesn’t (${JSON.stringify(vB.said)})`);
+  A.destroy();
+  B.destroy();
 });

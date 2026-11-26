@@ -544,6 +544,198 @@ test('MAC-R2-3: braked after claps, the routine’s free answers still work ("pl
   await until(env, () => env.log.turns.length >= 1, 'a question taken on screen', 60000);
 });
 
+// MAC-R3-3: braked after claps, free commands still run (stops above all): only words that would be paid get the brake
+// line. And only paid or sent listens count toward the carried count (free music commands never brake him).
+const BRAKE_LINE = 'Say “Hey Jarvis” when you need me.';
+function freeRouter(ran) {
+  return {
+    route: (readings) => {
+      const w = readings[0];
+      if (/\bstop\b/i.test(w)) return { id: 'stop', layer: 'stop', reading: w, action: { targets: [/chrome|task/i.test(w) ? 'chrome' : 'music'] } };
+      if (/^(play|next)\b/i.test(w)) return { id: 'media-free', layer: 'media', reading: w, action: { words: w } };
+      return null;
+    },
+    run: (hit) => {
+      ran.push(hit.id === 'stop' ? `stop:${hit.action.targets.join(',')}` : hit.action.words);
+      return { ack: 'Done.' };
+    },
+  };
+}
+
+test('MAC-R3-3: braked after claps (hidden), "stop Chrome" and "stop the music" in the offer’s listen are carried out; a question gets the brake line and nothing is sent', async (t) => {
+  for (const carried0 of [{ asked: 3, braked: true }, { asked: 0, braked: false }]) {
+    for (const words of ['stop Chrome', 'stop the music', 'what is the capital of Spain']) {
+      const env = await voiceEnv(t);
+      env.setHidden(true);
+      env.say((n) => (n === 1 ? words : null));
+      const ran = [];
+      let carried = { ...carried0 };
+      const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+      env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount, router: freeRouter(ran) } });
+      await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+      const said = env.log.spoken.map((x) => x.text);
+      const what = `${JSON.stringify(carried0)} "${words}"`;
+      if (/^stop/.test(words)) {
+        assert.equal(ran.length, 1, `${what}: carried out (${JSON.stringify(ran)})`);
+        assert.equal(env.log.turns.length, 0, `${what}: nothing sent`);
+        if (carried0.braked) assert.ok(!said.slice(1).includes(BRAKE_LINE), `${what}: no brake line for a free stop`);
+        assert.deepEqual(carried, carried0.braked ? carried0 : { asked: 0, braked: false }, `${what}: a free stop is not counted`);
+      } else if (carried0.braked) {
+        assert.equal(env.log.turns.length, 0, `${what}: nothing sent`);
+        assert.ok(said.includes(BRAKE_LINE), `${what}: the brake line`);
+      } else {
+        assert.equal(env.log.turns.length, 1, `${what}: the question is answered`);
+        assert.equal(carried.asked, 1, `${what}: counted`);
+      }
+    }
+  }
+});
+
+test('MAC-R3-3: braked after claps, "stop Chrome" in the claps wake window (REDTEAM-VOICE-10) still runs', async (t) => {
+  for (const carried0 of [{ asked: 3, braked: true }, { asked: 0, braked: false }]) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say((n) => (n === 0 ? 'stop Chrome' : null));
+    const ran = [];
+    const router = {
+      route: (readings) => (/\bstop\b/i.test(readings[0]) ? { id: 'stop', layer: 'stop', reading: readings[0], action: { targets: ['chrome'] } } : null),
+      run: (hit) => {
+        ran.push(`${hit.id}:${hit.action.targets.join(',')}`);
+        return { ack: 'Chrome stopped.' };
+      },
+    };
+    let carried = { ...carried0 };
+    const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    assert.deepEqual(ran, ['stop:chrome'], `${JSON.stringify(carried0)}: the stop ran`);
+  }
+});
+
+test('MAC-R3-3: four claps wakes while hidden, each with one free music command: all four run, no brake, and the carried count stays 0', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  const words = ['play some jazz', 'next song', 'play Back in Black', 'stop the music'];
+  const ran = [];
+  const router = freeRouter(ran);
+  let carried = { asked: 0, braked: false };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = { asked: Math.max(0, Number(c && c.asked) || 0), braked: !!(c && c.braked) }) };
+  for (let s = 1; s <= 4; s++) {
+    const base = env.log.listens.length;
+    env.say((n) => (n === base + 1 ? words[s - 1] : null)); // the offer's listen of this session
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router } });
+    await until(env, () => env.log.closes.length >= s, `session ${s} to end`, 300000);
+  }
+  assert.equal(ran.length, 4, `every free command ran (${JSON.stringify(ran)})`);
+  assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
+  assert.deepEqual(carried, { asked: 0, braked: false });
+  assert.equal(env.log.turns.length, 0);
+});
+
+test('MAC-R3-3: a TV heard in every listen of three false claps wakes: at most 3 paid questions in all (the second and third wakes: none)', async (t) => {
+  for (const tv of [
+    ['How tall is the Eiffel Tower?', 'Who wrote Hamlet?', 'What is the speed of light?', 'What is the capital of Spain?'],
+    ['yes', 'Hey, what is the weather like in Paris?', 'run the briefing', 'tell me a joke'],
+  ]) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    let i = 0;
+    env.say(() => tv[i++ % tv.length]);
+    let carried = { asked: 0, braked: false };
+    const hiddenCount = { get: () => carried, set: (c) => (carried = { asked: Math.max(0, Number(c && c.asked) || 0), braked: !!(c && c.braked) }) };
+    const paid = [];
+    for (let s = 1; s <= 3; s++) {
+      const before = env.log.turns.length;
+      env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'An answer.', extra: { hiddenCount } });
+      await until(env, () => env.log.closes.length >= s, `session ${s} to end`, 300000);
+      paid.push(env.log.turns.length - before);
+    }
+    assert.ok(paid[0] <= 3 && paid[1] === 0 && paid[2] === 0, `${JSON.stringify(tv[0])}…: paid per wake ${JSON.stringify(paid)}`);
+  }
+});
+
+test('MAC-R3-3: braked after claps, the router’s own flags decide: "stop watching" (free) runs; a live view (not free, the camera) or a command through the check gets the brake line', async (t) => {
+  const cases = [
+    { words: 'stop watching', action: { do: 'optics', free: true, camera: false, check: false }, runs: true },
+    { words: 'start the live view', action: { do: 'optics', free: false, camera: true, check: false }, runs: false },
+    { words: 'what am I looking at', action: { do: 'camera', free: false, camera: true, check: false }, runs: false },
+    { words: 'text my brother I am late', action: { do: 'send-text', free: true, camera: false, check: true }, runs: false },
+  ];
+  for (const c of cases) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say((n) => (n === 1 ? c.words : null));
+    const ran = [];
+    const router = {
+      route: (readings) => (readings[0] === c.words ? { id: 'routed', layer: 'top', reading: readings[0], action: c.action } : null),
+      run: (hit) => {
+        ran.push(hit.reading);
+        return { ack: 'Done.' };
+      },
+    };
+    let carried = { asked: 3, braked: true };
+    const hiddenCount = { get: () => carried, set: (x) => (carried = x) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    const brakeLines = env.log.spoken.filter((x) => x.text === BRAKE_LINE).length;
+    if (c.runs) {
+      assert.deepEqual(ran, [c.words], `"${c.words}" runs`);
+      assert.equal(brakeLines, 0, `"${c.words}": no brake line`);
+    } else {
+      assert.deepEqual(ran, [], `"${c.words}" doesn’t run`);
+      assert.ok(brakeLines >= 1, `"${c.words}": the brake line`);
+      assert.equal(env.log.turns.length, 0);
+    }
+  }
+});
+
+// MAC-R3-1: after the brake, two claps and "Hey Jarvis" in the same breath: the owner called him, so the count starts
+// again (the wake window heard the wake words, or Standby's kept microphone did: barge-in), and the greeting keeps it.
+test('MAC-R3-1: braked, claps with "Hey Jarvis" heard by the wake window: the question in the offer’s listen is answered', async (t) => {
+  const cases = [(n) => (n === 0 ? `hey jarvis ${Q}` : n === 1 ? Q : null), (n) => (n === 0 ? 'hey jarvis' : n === 1 ? Q : null)];
+  for (const say of cases) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say(say);
+    let carried = { asked: 3, braked: true };
+    const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    assert.ok(env.log.turns.length >= 1, `answered (${JSON.stringify(env.log.spoken.map((x) => x.text.slice(0, 40)))})`);
+    assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
+  }
+});
+
+test('MAC-R3-1: braked, Standby’s kept microphone hears "Hey Jarvis" during the claps wake window (barge-in): the count starts again', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say((n) => (n === 1 ? Q : null));
+  let carried = { asked: 3, braked: true };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  const vm = env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+  await until(env, () => vm.isListening(), 'the wake window');
+  await env.advance(600);
+  vm.bargeIn('word');
+  await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+  assert.ok(env.log.turns.length >= 1, 'the question is answered');
+  assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
+});
+
+// MAC-R3-4: the app asks a tapped Voice Mode whether it listens or answers (isActive()); idle, it may be closed so a
+// woken Standby waiting behind a sheet comes back.
+test('MAC-R3-4: api.isActive(): true while it listens or answers, false once idle, and false after close', async (t) => {
+  const env = await voiceEnv(t);
+  env.say((n) => (n === 0 ? Q : null));
+  const vm = env.open({ answer: ANSWER });
+  await until(env, () => vm.isListening(), 'the listen');
+  assert.equal(vm.isActive(), true, 'listening');
+  await until(env, () => env.log.spoken.some((x) => x.text === ANSWER), 'the answer');
+  await until(env, () => !vm.isActive(), 'idle', 120000);
+  assert.equal(vm.isListening(), false);
+  vm.close();
+  assert.equal(vm.isActive(), false);
+});
+
 // MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
 // preface that never came: the line was never said. Now it is asked for only when an answer says it.
 test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {

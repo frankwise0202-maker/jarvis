@@ -645,3 +645,36 @@ test('A11: Use this window answers the click-once line too (its click made the p
   rootB.click();
   assert.equal(b.sb.isOpen(), false, 'the next tap leaves');
 });
+
+// MAC-R3-1: two claps and "Hey Jarvis" in the same breath. The wake carries the word (the hidden count starts again on
+// it, MAC-R2-3), whether the word comes while the claps' check is asked (a Mac) or, the microphone kept for barge-in,
+// right after the wake: then Voice Mode hears it (detected), not dropped as a second trigger.
+test('MAC-R3-1: claps, then "Hey Jarvis" while the voiceElsewhere() check runs: the wake is a word wake', async (t) => {
+  const { make } = await setup(t);
+  const a = make('A', { voiceElsewhere: () => new Promise((r) => setTimeout(() => r(false), 100)) });
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  a.cap().clap();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(a.sb.trigger('word'), true, 'taken into the wake');
+  await new Promise((r) => setTimeout(r, 150));
+  await settle();
+  assert.deepEqual(a.woken, ['word']);
+});
+
+test('MAC-R3-1: the microphone kept for barge-in: "Hey Jarvis" 0.4 s after the claps that woke it goes to Voice Mode; a second clap that soon is still ignored', async (t) => {
+  const { make } = await setup(t);
+  const detections = [];
+  const a = make('A', { bargeIn: { keep: () => true, detected: (d) => (detections.push(d.trigger), false) } });
+  a.sb.enter();
+  await settle();
+  a.cap().clap();
+  assert.deepEqual(a.woken, ['clap']);
+  await new Promise((r) => setTimeout(r, 400));
+  a.cap().clap();
+  assert.deepEqual(detections, [], 'claps twice: one trigger');
+  a.sb.trigger('word');
+  assert.deepEqual(detections, ['word'], 'the owner’s "Hey Jarvis" reaches Voice Mode');
+  assert.deepEqual(a.woken, ['clap'], 'never a second wake');
+});

@@ -1146,6 +1146,140 @@ export default [
     },
   },
   {
+    // Ported from the verify's r3-mac-brake-claps-heyjarvis.
+    name: 'mac-handsfree-brake-claps-heyjarvis',
+    title: 'MAC-R3-1: after the brake (hidden, a TV), the owner claps twice and says "Hey Jarvis, what is the capital of France?" in one breath (Standby takes the claps; the wake window hears the words), then asks again: answered, not braked',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 300000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 6000 } });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await t.page.evaluate(() => {
+        window.__voice.queue.length = 0;
+        window.__tv = true;
+        const proto = window.SpeechRecognition.prototype;
+        const start = proto.start;
+        proto.start = function tv(...args) {
+          if (window.__tv && !window.__voice.queue.length) window.__voice.queue.push('What is the capital of Spain?');
+          return start.apply(this, args);
+        };
+      });
+      // A false double bang: the TV runs up 3 paid questions, then the brake, then Standby.
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+      const afterBrake = leadCount(t);
+      const brakes1 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.note(`after the brake: ${afterBrake} paid, brake lines ${brakes1}`);
+      // The owner: two claps and "Hey Jarvis, …" in one breath, then the question again in the offer's listen. The TV
+      // is off now.
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await t.page.evaluate(() => {
+        window.__tv = false;
+        window.__voice.queue.length = 0;
+        window.__voice.queue.push('Hey Jarvis, what is the capital of France?', 'What is the capital of France?');
+      });
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.waitFor(async () => leadCount(t) > afterBrake || (await said(t.page)).filter((x) => /when you need me/.test(x)).length > brakes1, { timeout: 90000, message: 'an answer or the brake line again' });
+      const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.note(`claps + "Hey Jarvis": paid ${leadCount(t) - afterBrake}, brake lines ${brakes} (was ${brakes1})`);
+      t.assert(leadCount(t) > afterBrake && brakes === brakes1, `the owner said "Hey Jarvis": the question is answered and no brake line (paid ${leadCount(t) - afterBrake}, brake lines ${brakes1} -> ${brakes})`);
+    },
+  },
+  {
+    name: 'mac-handsfree-brake-claps-free',
+    title: 'MAC-R3-3: after the brake (hidden, a TV), a claps wake still carries out a free command ("play Back in Black": the Music card, no Claude request, no brake line), and a question in the same braked state gets the brake line and is not sent',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 300000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 6000 } });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await t.page.evaluate(() => {
+        window.__voice.queue.length = 0;
+        window.__tv = true;
+        const proto = window.SpeechRecognition.prototype;
+        const start = proto.start;
+        proto.start = function tv(...args) {
+          if (window.__tv && !window.__voice.queue.length) window.__voice.queue.push('What is the capital of Spain?');
+          return start.apply(this, args);
+        };
+      });
+      await waitListening(t, t.page, 60000);
+      await t.page.waitForTimeout(1700);
+      await play(t.page, DOUBLE_CLAP);
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+      const afterBrake = leadCount(t);
+      const brakes1 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+      t.assert(afterBrake <= 3 && brakes1 >= 1, `the TV braked him (${afterBrake} paid, ${brakes1} brake lines)`);
+      await t.step('braked, claps and "play Back in Black" in the offer’s listen: the Music card, nothing paid, no brake line', async () => {
+        await waitListening(t, t.page, 60000);
+        await t.page.waitForTimeout(1700);
+        await t.page.evaluate(() => {
+          window.__tv = false;
+          window.__voice.queue.length = 0;
+          window.__voice.queue.push('', 'Play Back in Black.');
+        });
+        await play(t.page, DOUBLE_CLAP);
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+        await t.page.locator(tid('voice-music-card')).last().waitFor({ state: 'attached', timeout: 30000 });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+        const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        t.assert(leadCount(t) === afterBrake, `nothing paid (${leadCount(t) - afterBrake})`);
+        t.assert(brakes === brakes1, `no brake line for a free command (${brakes1} -> ${brakes})`);
+      });
+      await t.step('still braked: claps and a question get the brake line, nothing sent', async () => {
+        await waitListening(t, t.page, 60000);
+        await t.page.waitForTimeout(1700);
+        await t.page.evaluate(() => {
+          window.__voice.queue.length = 0;
+          window.__voice.queue.push('', 'What is the capital of Italy?');
+        });
+        const brakes0 = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        await play(t.page, DOUBLE_CLAP);
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+        const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        t.assert(leadCount(t) === afterBrake, `nothing paid (${leadCount(t) - afterBrake})`);
+        t.assert(brakes > brakes0, 'the brake line');
+      });
+    },
+  },
+  {
+    // Ported from the verify's r3-mac-woken-sheet-tap-left-open.
+    name: 'standby-woken-sheet-tap-left-open',
+    title: 'MAC-R3-4: woken by claps, "open my history"; the owner taps the voice button, asks nothing, leaves the idle Voice Mode open and switches away (Jarvis hidden): it closes and Standby comes back, listening',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t, { devVoice: { sheetReturnMs: 6000 } });
+      await enterStandby(t);
+      await queue(t.page, '', 'Open my history.');
+      await wakeByClaps(t);
+      await waitSaid(t, /history is open/i, { timeout: 30000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+      await queue(t.page, '', '');
+      await (await t.visible('voice-open')).click();
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+      await t.waitFor(async () => (await voiceState(t.page)) === 'idle', { timeout: 30000, message: 'the tapped Voice Mode idle' });
+      await setHidden(t.page, true); // the owner walks away, Voice Mode left open
+      await t.waitFor(async () => (await standbyState(t.page))?.listening === 'live', {
+        timeout: 15000,
+        message: async () => `Standby back and listening (${JSON.stringify(await standbyState(t.page))}; Voice Mode open ${(await t.page.locator(tid('voice-mode')).count()) > 0})`,
+      });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 }); // the idle Voice Mode closed
+    },
+  },
+  {
     name: 'mac-handsfree-owner-10x',
     title: 'The owner’s setup, ten rounds: setup 1 (the speakerphone speaks, the Mac’s microphone listens), the Test passed, George, Jarvis hidden the whole time; wake by claps or "Hey Jarvis", ask, answer, barge-in by "Hey Jarvis", claps or none, follow-up, back to Standby: never deaf, never stuck, never two listens at once, never talking over himself',
     device: 'mac',

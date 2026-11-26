@@ -115,6 +115,7 @@ export function createStandby(deps = {}) {
   let unsubSettings = null;
   let offs = [];
   let lastTrigger = 0;
+  let lastKind = ''; // MAC-R3-1: what woke it last ('clap' or 'word')
   let prevFocus = null;
   let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
   let checking = false; // MAC-6: a wake waits for voiceElsewhere()'s answer
@@ -371,10 +372,15 @@ export function createStandby(deps = {}) {
   /** Two claps or "Hey Jarvis": release the microphone, then wake (Voice Mode, the routine). */
   function trigger(kind) {
     if (phase === 'awaiting') return kept ? interrupt(kind) : false;
+    if (phase === 'open' && checking && kind === 'word') {
+      checking = 'word'; // MAC-R3-1: "Hey Jarvis" with the claps: the wake waiting for the answer is the owner's
+      return true;
+    }
     if (phase !== 'open' || checking) return false;
     const now = Date.now();
     if (now - lastTrigger < 1500) return false;
     lastTrigger = now;
+    lastKind = kind;
     if (typeof voiceElsewhere === 'function') {
       // MAC-6: Voice Mode is open in another Jarvis window (the owner talks to it there, maybe "Hey Jarvis, …"):
       // this one stays asleep, still listening. Asked of the browser (a Web Lock), so it takes a moment.
@@ -383,8 +389,10 @@ export function createStandby(deps = {}) {
         .then(() => voiceElsewhere())
         .catch(() => false)
         .then((busy) => {
+          const k = checking === 'word' ? 'word' : kind;
           checking = false;
-          if (busy !== true && phase === 'open') wake(kind);
+          lastKind = k;
+          if (busy !== true && phase === 'open') wake(k);
         });
       return true;
     }
@@ -436,7 +444,9 @@ export function createStandby(deps = {}) {
   /** v8.1: two claps or "Hey Jarvis" heard during the woken session (the microphone kept): Voice Mode decides. */
   function interrupt(kind) {
     const now = Date.now();
-    if (now - lastTrigger < 1500 || !bargeIn || typeof bargeIn.detected !== 'function') return false;
+    // MAC-R3-1: "Hey Jarvis" right after the claps that woke it is the owner calling (not the same trigger twice).
+    const soon = now - lastTrigger < 1500 && !(kind === 'word' && lastKind === 'clap');
+    if (soon || !bargeIn || typeof bargeIn.detected !== 'function') return false;
     let acted = false;
     try {
       acted = bargeIn.detected({ trigger: kind === 'word' ? 'word' : 'clap' }) === true;
@@ -445,6 +455,7 @@ export function createStandby(deps = {}) {
     }
     if (acted) {
       lastTrigger = now;
+      lastKind = kind;
       if (word) word.reset(); // the same "Hey Jarvis" is not heard twice
     }
     return acted;

@@ -338,7 +338,8 @@ Mode or Optics first.
   so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
   itself once you close it, or after a minute with no click or key (it comes back above it, and what you
   opened stays underneath); with Jarvis in the background, right away. If you talk to Jarvis meanwhile (the
-  voice button), Standby comes back after that conversation the same way.
+  voice button), Standby comes back after that conversation the same way; a Voice Mode you leave open closes
+  once it has sat idle that long, or right away with Jarvis in the background.
 - **In a hologram's field or Optics' field** a few words are that viewer's question instead. Typed in a
   hologram's field, "open optics", "close the camera", "research this", "which microphone are you
   using?", "is Jarvis for Chrome linked?" and "brief me" go to Jarvis as a question. In Optics' field
@@ -361,13 +362,14 @@ other windows, minimized, or with the display asleep.
 - **Chrome's red dot and the Mac's orange dot** are on whenever Standby listens, so they can't tell you whether he
   is waiting for "Hey Jarvis" or hearing your question. The chimes and the title can.
 - **After an answer he listens about 8 seconds** for a follow-up. If nobody speaks, he goes back to Standby.
-- **The brake.** While his window is in the background, he takes at most 3 questions in a row without "Hey
-  Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you
-  need me." and goes back to Standby (or just stops listening, if you started with a tap). A TV left on can't run
-  up paid questions. Two claps can still stop him while he talks, but they don't start the count again (a door or
-  a bang on TV sounds like claps), not even by waking him again: after the brake, a wake by claps in the background
-  takes only his free answers ("play it", "go back to sleep"), until "Hey Jarvis", a tap or a key, or Jarvis on
-  screen.
+- **The brake.** While his window is in the background, he takes at most 3 paid questions in a row without "Hey
+  Jarvis" (to wake him, or at the start of a question), a tap or a key. Free commands ("stop the music", "play Back
+  in Black") don't count. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby (or just stops
+  listening, if you started with a tap). A TV left on can't run up paid questions. Two claps can still stop him
+  while he talks, but they don't start the count again (a door or a bang on TV sounds like claps), not even by
+  waking him again: after the brake, a wake by claps in the background still does free things ("play it", "go back
+  to sleep", "stop Chrome", "stop the music"), but anything that would cost money or turn on the camera gets the
+  brake line, until "Hey Jarvis" (also said with the claps), a tap or a key, or Jarvis on screen.
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
@@ -1254,8 +1256,8 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
     "approve" points you to the card's button.
   - **With Voice Mode closed or on Standby,** a notification tells you Chrome is asking. When you wake Jarvis, he
     starts with "Chrome is waiting for you: …". "Hey Jarvis, stop Chrome" (or "… deny") acts at once.
-  - **With two Jarvis windows open,** the one where you talk to Jarvis says Chrome's questions and its answers; the
-    other shows the cards.
+  - **With two Jarvis windows open,** the one where you talk to Jarvis says Chrome's questions and its answers (with
+    Voice Mode open in both, the one you talked to last); the other shows the cards.
 - **What it never does:**
   - Start a task from anything but your own words: never from a web page, Jarvis's answers or Jarvis for Chrome.
   - Approve a step without your "approve" or a click.

@@ -749,6 +749,8 @@ function createVoiceMode(opts) {
      * be listening for "cancel" or "no, I said …"): previews never start then.
      */
     isListening: () => !S.closed && (!!S.listen || !!S.review),
+    /** MAC-R3-4: whether it can hear the owner or is answering (what onActive reports); idle, an error or offline: false. */
+    isActive: () => !S.closed && (S.active || !!(S.listen || S.review || S.run || S.speech || S.retryTimer)),
     /** v8.0 Optics' live view: a short line Jarvis says by himself. True when it is said (sayLine()). */
     say: (text) => sayLine(text),
     /** v8.1 (A8): Standby heard two claps ('clap') or "Hey Jarvis" ('word') while he speaks. True when it acted. */
@@ -1830,16 +1832,19 @@ function createVoiceMode(opts) {
     C.hiddenIdle = !text && !!document.hidden; // v8.1 chrome-voice: a hidden listen ended with nothing (words: the owner is here)
     if (text) {
       S.silentTries = 0;
-      if (startsWithWakeWords(text)) {
+      const calls = startsWithWakeWords(text);
+      if (calls) {
         // MAC-V-1: "Hey Jarvis, …": the owner calling him, not the room's talk: the hidden count starts again.
         S.asked = 0;
         S.braked = false;
-      } else if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
+      }
       play('listen-stop');
       // The check may keep this recognizer (to hear "cancel" or "no, I said …"); otherwise it stops.
       S.mic = reason === 'final' && L.review ? L : null;
       try {
-        heard(text, L.alts, { sendNow: L.sendNow });
+        // v8.1 (A6), MAC-R3-3: one more question without the wake words or a tap, counted by heard() only when the
+        // words are paid or sent (a free command is not a question).
+        heard(text, L.alts, { sendNow: L.sendNow, counts: !calls && !L.wakeWindow });
       } finally {
         if (S.mic === L) {
           S.mic = null;
@@ -3082,14 +3087,15 @@ function createVoiceMode(opts) {
     hold.heard(); // the owner's words: a held session's 2 minutes start again
     // Woken from Standby: "wake up, daddy's home" (the greeting), then the answer to its offer.
     if (S.wake && wakeHeard(readings)) return;
-    // MAC-R2-3: braked in the background (woken by claps after the brake): nothing but the routine's free answers;
-    // other words get the brake line again, and nothing is sent.
-    if (brakedHidden()) {
-      S.wake = null;
-      showCaption('quote', `“${text}”`);
-      brake();
-      return;
-    }
+    // MAC-R2-3, MAC-R3-3: braked in the background (woken by claps after the brake): free commands are carried out,
+    // stops above all; words that would be paid get the brake line again, and nothing is sent.
+    const braked = brakedHidden();
+    let counted = false;
+    const paid = () => {
+      if (counted || !opts.counts) return;
+      counted = true;
+      S.asked += 1;
+    };
     const parts = partNamesNow();
     const local = routeLocal(readings, parts);
     let hit = chromeCheckFirst(routeWords(readings, local)); // v8.1 chrome-voice: a check counting was asked last
@@ -3103,14 +3109,40 @@ function createVoiceMode(opts) {
     // or its check (chrome-prompt) are an answer too, like the prompt's own.
     if (dropsQuestion(hit)) questions.dropTop('dropped');
     while (hit) {
+      if (paidHit(hit)) {
+        if (braked) break;
+        paid();
+      }
       if (act(hit, readings, opts)) return;
       hit = routeWords(readings, local, hit);
       chromeOtherWords(hit);
     }
+    if (braked) {
+      S.wake = null;
+      showCaption('quote', `“${text}”`);
+      brake();
+      return;
+    }
+    paid(); // a turn
     // A question about the hologram on screen: the reading that names one of its parts.
     const words = pickHeard(text, readings.slice(1), parts);
     if (opts.reviewed || opts.sendNow || !reviewOn()) send(words);
     else startReview(words);
+  }
+
+  /**
+   * MAC-R3-3: whether carrying out `hit` may cost money, turn the camera on or send the words out (a question in the
+   * hidden count, A6; refused while braked in the background): what the router's flags mark (not free, the camera, the
+   * check), a Chrome task (asked for or started), the briefing, and a question's answer other than no (a price
+   * question's "yes" is what pays). "Stop watching" and the other stops are free.
+   */
+  function paidHit(hit) {
+    if (!hit) return true;
+    const a = hit.action || {};
+    if (a.free === false || a.camera === true || a.check === true) return true;
+    if (hit.id === 'chrome-task' || hit.id === 'chrome-ask' || hit.id === 'briefing') return true;
+    if (hit.id === 'question') return !a.dismiss && a.choice !== 'no';
+    return false;
   }
 
   /**
@@ -4539,8 +4571,8 @@ function createVoiceMode(opts) {
     // v8.1 (D3): what waited for the owner comes first ("Chrome is waiting for you: …"), then the greeting.
     const line = [...wakePendingLines(), greetingLine({ now: new Date(), name, home }), suggestionLine({ artist: music ? music.artist : '', part })].join(' ');
     W.line = line;
-    startCount(); // v8.1 (A6), MAC-R2-3: woken by "Hey Jarvis" (or on screen) the questions count from here; by claps
-    // in the background they go on from the last sessions
+    // v8.1 (A6), MAC-R2-3: the count started with the wake (startWake); MAC-R3-1: a "Hey Jarvis" heard since (the
+    // wake window's words, Standby's barge-in) started it again, and it stays so.
     if (music) {
       showMusicCard(music.segment, { fresh: true });
       S.noRelisten = false; // the offer waits for an answer, not for a tap
