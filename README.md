@@ -337,7 +337,8 @@ Mode or Optics first.
 - **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
   so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
   itself once you close it, or after a minute with no click or key (it comes back above it, and what you
-  opened stays underneath); with Jarvis in the background, right away.
+  opened stays underneath); with Jarvis in the background, right away. If you talk to Jarvis meanwhile (the
+  voice button), Standby comes back after that conversation the same way.
 - **In a hologram's field or Optics' field** a few words are that viewer's question instead. Typed in a
   hologram's field, "open optics", "close the camera", "research this", "which microphone are you
   using?", "is Jarvis for Chrome linked?" and "brief me" go to Jarvis as a question. In Optics' field

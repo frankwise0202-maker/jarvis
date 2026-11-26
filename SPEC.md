@@ -4780,9 +4780,10 @@ A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says t
 reason `'command'` and the sheet opens. A woken session isn't over for good then (MAC-2): Standby stays woken (its lock
 held, a microphone kept for barge-in let go: `standby.rest()`) and app.js resumes it once the sheet that opened is
 closed, after a minute without a click, key, scroll or touch, or at once while Jarvis is hidden (nobody looks at the
-sheet there); it comes back above a sheet still open. A tapped session, or Return to standby off: as before. From a
-hologram's or Optics' field the viewers close first and the line is a toast. The model and the mode stay in Settings
-(they change costs).
+sheet there); it comes back above a sheet still open. While the owner talks to Jarvis meanwhile (the voice button), the
+wait pauses; that tapped session's close starts it again instead of letting Standby go (MAC-R2-2). Otherwise a tapped
+session, or Return to standby off: as before. From a hologram's or Optics' field the viewers close first and the line is
+a toast. The model and the mode stay in Settings (they change costs).
 
 **Tests.** test/unit/command-router.test.mjs registers today's matchers and every src/ui/commands module (with fake deps),
 as app.js does, and runs over every builder's section of test/unit/fixtures/voice-corpus.mjs and collisions.mjs and

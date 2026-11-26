@@ -245,6 +245,7 @@ const queue = (page, ...items) => page.evaluate((list) => window.__voice.queue.p
 
 // ---- v8.1.1 (review 2) --------------------------------------------------------------------------------------
 
+
 /** Two windows of one browser: A on Standby (hidden) with claps and the "Hey Jarvis" stand-in; B on the app. */
 async function twoWindows(t, { speechB = {} } = {}) {
   const a = await setup(t, { wordStub: true });
@@ -996,6 +997,36 @@ export default [
       t.assert(!aWoke, 'A stayed asleep');
       t.assert(leadCount(t) <= 1, `one answer for one sentence (${leadCount(t)} paid requests)`);
       t.assert((await standbyState(a))?.listening === 'live', `A is still on Standby, listening (${JSON.stringify(await standbyState(a))})`);
+    },
+  },
+  {
+    name: 'standby-woken-sheet-then-tap',
+    title: 'MAC-R2-2: woken by claps, "open my history" (the sidebar: Standby waits to come back); the owner taps the voice button, asks nothing and closes Voice Mode: Standby still comes back, and claps wake him',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t, { devVoice: { sheetReturnMs: 6000 } });
+      await enterStandby(t);
+      await queue(t.page, '', 'Open my history.');
+      await wakeByClaps(t);
+      await waitSaid(t, /history is open/i, { timeout: 30000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+      await t.step('the owner taps the voice button within the quiet spell, asks nothing, closes Voice Mode', async () => {
+        await queue(t.page, '', '');
+        await (await t.visible('voice-open')).click();
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+        await t.waitFor(async () => (await voiceState(t.page)) === 'idle', { timeout: 30000, message: 'the tapped Voice Mode idle' });
+        await t.page.keyboard.press('Escape');
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+      });
+      await t.step('Standby comes back after the quiet spell, listening; claps wake him', async () => {
+        await t.visible('standby', { timeout: 15000, message: 'Standby back after the tapped conversation' });
+        await waitListening(t);
+        await t.page.waitForTimeout(1600);
+        await queue(t.page, '');
+        await wakeByClaps(t);
+      });
     },
   },
 ];

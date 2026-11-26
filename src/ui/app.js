@@ -1839,8 +1839,10 @@ export async function startApp(rootEl) {
           // v8.1: a sheet the owner asked for by voice ("open settings") is what they look at next.
           const woken = !!(info && info.wakeSession) && safe(() => getSettings().wakeReturn !== false, true);
           const back = reason === 'standby' || (reason !== 'command' && woken);
-          // MAC-2: ...but a woken session never leaves Standby for good: it comes back after the sheet.
-          const afterSheet = reason === 'command' && woken && !state.demo;
+          // MAC-2: ...but a woken session never leaves Standby for good: it comes back after the sheet. MAC-R2-2: so
+          // does a conversation the owner started by a tap while that Standby still waited to come back.
+          const waiting = !back && !woken && !state.demo && !!standby && safe(() => standby.isAwaiting(), false) && safe(() => getSettings().wakeReturn !== false, true);
+          const afterSheet = ((reason === 'command' && woken) || waiting) && !state.demo;
           setTimeout(() => {
             if (back && !state.demo) enterStandby({ again: true });
             else if (afterSheet && standby && safe(() => standby.isAwaiting(), false)) returnAfterSheet();
@@ -2020,9 +2022,15 @@ export async function startApp(rootEl) {
     const tick = () => {
       R.timer = 0;
       if (sheetReturn !== R) return;
-      // Back already (the Standby key), let go of, or a new conversation: nothing left to do.
-      if (!standby || !safe(() => standby.isAwaiting(), false) || isVoiceModeOpen()) {
+      // Back already (the Standby key), or let go of: nothing left to do.
+      if (!standby || !safe(() => standby.isAwaiting(), false)) {
         cancelSheetReturn();
+        return;
+      }
+      // MAC-R2-2: the owner talks to Jarvis (a tap on the voice button): wait; its close starts the quiet spell again.
+      if (isVoiceModeOpen()) {
+        R.last = Date.now();
+        R.timer = setTimeout(tick, 1000);
         return;
       }
       const closed = R.sheet && !safe(() => anySheetOpen(), false);
