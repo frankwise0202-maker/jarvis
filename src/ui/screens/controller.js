@@ -10,6 +10,22 @@
 //   screens.list()  screens.closeAll()
 //   screenMessage(outcome) / screenAck(outcome)               what to show / say about an outcome
 //
+// Several windows (v8.1, SPEC §31): each "in a window" / "in another window" opens one more, named by
+// what it shows ("the camera window"), at most MAX_WINDOWS (a fifth takes the oldest one's place, and
+// Jarvis says so); windows beside Jarvis share his screen without covering all of him (layoutRects:
+// a strip of his window stays in view, or macOS would count him hidden). Pages opened in a window
+// are tracked too. "Bring the hologram back" and "close the camera window" act on that one only;
+// without a name, on the window that has focus, else the newest one.
+//   screens.runCommand(cmd, { source })  a screen command already matched (matchScreenCommand's)
+//   screens.windowCommand({ op, which, layout, a, b }, { source })  -> Promise<outcome>
+//       op 'close' | 'close-all' | 'arrange' | 'here' | 'focus', and D5's 'swap' | 'size' (window-commands.js)
+//   screens.commandIn(kind, command)   a viewer command ("explode it") for the window showing `kind`:
+//       { handled: true, … } or null (no window shows it: the app opens it in the main window)
+//   screens.shown(kind)                the window showing `kind`: { id, label, mode, parts, selected } | null
+//   screens.openPage(url, { title, rect, button }, { source })  a web page in a window placed at rect
+//   screens.noteRecent(target)         what "it" is now (a page just opened in Chrome)
+//   deps.jarvisState()                 optional (D6): { core, word, heard } for Jarvis floating ("float yourself")
+//
 // Placement (lib/screen-placement.js): another monitor with the Window Management API (asked once,
 // after a short explanation), a floating always-on-top panel (Document Picture-in-Picture), a
 // window on the right half of the screen, or, on phones, the app's own full-screen view. Popups and
@@ -47,8 +63,9 @@ import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { openOverlay } from '../overlay.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
-import { detectScreenEnv, planPlacement, placementNote, rightHalf, screenWindowFeatures } from '../../lib/screen-placement.js';
-import { answerMarkdownOf, lookSnapshot, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
+import { MAX_WINDOWS, availRect, detectScreenEnv, layoutArea, layoutRects, planPlacement, placementNote, resizedRect, rightHalf, screenAt, screenWindowFeatures, windowRect } from '../../lib/screen-placement.js';
+import { windowName } from '../../lib/window-commands.js';
+import { answerMarkdownOf, hostOf, lookSnapshot, missionSnapshot, questionTitle, resolveScreenTarget, screenKindName } from '../../lib/screen-targets.js';
 import { createScreenFrame } from './frame.js';
 import { createScreenPanel } from './panels.js';
 import { SCREEN_CHANNEL, armCameraGo, loadScreenContent, panelDeps, screenLabel } from './screen-page.js';
@@ -65,6 +82,10 @@ const safe = (fn, fallback) => {
 };
 const PUSH_GAP = { hologram: 120, blueprint: 250, answer: 160, mission: 300, look: 200 };
 const CAMERA_ON = new Set(['live', 'starting']);
+// The viewer's commands a hologram in a window or floating panel runs itself (panels.js command()).
+// The rest (photos, blueprint, the parts list) need the main window's viewer.
+export const WINDOW_HOLOGRAM_ACTIONS = Object.freeze(['explode', 'collapse', 'rotate', 'stop', 'labels-on', 'labels-off', 'reset', 'view', 'zoom-in', 'zoom-out', 'select', 'focus', 'isolate', 'show-all', 'deselect']);
+const HOLO_ACTIONS = new Set(WINDOW_HOLOGRAM_ACTIONS);
 const PROMPT_MS = 60000;
 const PREFS_KEY = 'jarvis.screens.v1';
 
@@ -107,17 +128,30 @@ async function wmPermission() {
   return 'prompt';
 }
 
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+/** 'Camera on the left, hologram on the right.' / 'Side by side.' (a layout, said and shown). */
+function arrangedLine(o) {
+  const names = Array.isArray(o.names) ? o.names : [];
+  const there = o.screen === 'other' ? ' on your other screen' : '';
+  if (o.layout === 'left-right' && names.length === 2) return `${cap(windowName(names[0]).replace(/^the | window$/g, ''))} on the left, ${windowName(names[1]).replace(/^the | window$/g, '')} on the right${there}.`;
+  if (o.count === 1) return o.screen === 'other' ? `${cap(windowName(names[0]))} fills your other screen.` : 'Side by side with me.';
+  if (o.count === 2) return `Side by side${there}.`;
+  return `${o.count} windows, in a grid${there}.`;
+}
+
 /** What to tell the owner (a toast for typed commands). */
 export function screenMessage(o) {
   if (!isObj(o)) return '';
   const name = screenKindName(o.kind, { report: !!o.report });
-  const Name = name.charAt(0).toUpperCase() + name.slice(1);
+  const Name = cap(name);
   const note = o.note ? placementNote(o.note, { label: o.label }) : '';
+  const replaced = isObj(o.replaced) ? ` ${MAX_WINDOWS} windows are open, so it took the place of ${windowName(o.replaced.kind, { report: !!o.replaced.report })}.` : '';
   switch (o.status) {
     case 'opened':
-      if (o.mode === 'screen') return `${Name} is on ${txt(o.label).toLowerCase() || 'your other screen'}.${note ? ` ${note}` : ''}`;
+      if (o.mode === 'screen') return `${Name} is on ${txt(o.label).toLowerCase() || 'your other screen'}.${note ? ` ${note}` : ''}${replaced}`;
+      if (o.mode === 'pip' && o.kind === 'jarvis') return o.already ? 'Jarvis is already floating.' : isObj(o.replaced) ? `Jarvis is floating, in place of ${screenKindName(o.replaced.kind, { report: !!o.replaced.report })}.` : 'Jarvis is floating beside you.';
       if (o.mode === 'pip') return note || `${Name} is floating beside you.`;
-      if (o.mode === 'window') return note || `${Name} is open in its own window.`;
+      if (o.mode === 'window') return o.already ? `${Name} is already in its own window.` : note || `${Name} is open in its own window.${replaced}`;
       if (o.mode === 'tab') return 'The link is open in a new tab.';
       return note || `${Name} is open full screen.`;
     case 'needs_tap':
@@ -125,7 +159,20 @@ export function screenMessage(o) {
     case 'needs_permission':
       return 'Allow window placement once, and Jarvis can use your other monitor.';
     case 'closed':
+      if (o.which && !o.count) return `There’s no ${windowName(o.which).replace(/^the /, '')} open.`;
+      if (o.which && o.count === 1 && !o.back) return `Closed ${windowName(o.kind, { report: !!o.report })}.`;
       return o.count ? (o.back ? `${Name} is back here.` : `Closed ${o.count === 1 ? txt(o.label).toLowerCase() || 'the screen' : `${o.count} screens`}.`) : 'Nothing is on another screen right now.';
+    case 'arranged':
+      return arrangedLine(o);
+    case 'here':
+      if (o.where === 'window') return o.moved ? `${Name} is here, in ${windowName(o.windowKind, { report: !!o.windowReport })}.` : `Working in ${windowName(o.kind, { report: !!o.report })}.`;
+      return o.moved ? `${Name} is back in the main window.` : 'Working in the main window.';
+    case 'focused':
+      return `${cap(windowName(o.kind, { report: !!o.report }))} is in front.`;
+    case 'swapped':
+      return 'Swapped.';
+    case 'sized':
+      return o.size === 'fill' ? (o.beside ? 'It fills the screen beside Jarvis.' : 'It fills the screen.') : o.size === 'smaller' ? 'Smaller.' : 'Bigger.';
     default:
       return txt(o.message) || 'That screen couldn’t open.';
   }
@@ -136,9 +183,11 @@ export function screenAck(o) {
   if (!isObj(o)) return '';
   switch (o.status) {
     case 'opened':
+      if (o.mode === 'pip' && o.kind === 'jarvis') return o.already ? "I'm already floating." : isObj(o.replaced) ? `I'm floating beside you, in place of ${screenKindName(o.replaced.kind, { report: !!o.replaced.report })}.` : "I'm floating beside you.";
+      if (isObj(o.replaced)) return `That's ${MAX_WINDOWS} windows, so it took the place of ${windowName(o.replaced.kind, { report: !!o.replaced.report })}.`;
       if (o.mode === 'screen') return o.note === 'no-such-screen' ? `There's no such screen, so it's on ${txt(o.label).toLowerCase()}.` : `It's on ${txt(o.label).toLowerCase() || 'your other screen'}.`;
       if (o.mode === 'pip') return o.note === 'single-screen' ? "Only one screen is connected, so it's floating beside you." : 'Floating beside you.';
-      if (o.mode === 'window') return o.note === 'no-wm' || o.note === 'wm-denied' ? "It's in its own window. Drag it to your other screen." : "It's in its own window.";
+      if (o.mode === 'window') return o.already ? "It's already in its own window." : o.note === 'no-wm' || o.note === 'wm-denied' ? "It's in its own window. Drag it to your other screen." : "It's in its own window.";
       if (o.mode === 'tab') return "It's open in a new tab.";
       return 'Here it is, full screen.';
     case 'needs_tap':
@@ -146,7 +195,20 @@ export function screenAck(o) {
     case 'needs_permission':
       return 'Chrome needs your permission once. Tap Allow, and I can use your other monitor.';
     case 'closed':
+      if (o.which && !o.count) return `There's no ${windowName(o.which).replace(/^the /, '')}.`;
+      if (o.which && o.count === 1 && !o.back) return `Closed ${windowName(o.kind, { report: !!o.report })}.`;
       return o.count ? (o.back ? 'Brought it back.' : 'Closed.') : "There's nothing on another screen.";
+    case 'arranged':
+      return arrangedLine(o);
+    case 'here':
+      if (o.where === 'window') return o.moved ? `Here, in ${windowName(o.windowKind, { report: !!o.windowReport })}.` : `In ${windowName(o.kind, { report: !!o.report })}.`;
+      return o.moved ? "It's back here, in the main window." : 'Here, in the main window.';
+    case 'focused':
+      return `Here's ${windowName(o.kind, { report: !!o.report })}.`;
+    case 'swapped':
+      return 'Swapped.';
+    case 'sized':
+      return o.size === 'fill' ? (o.beside ? 'It fills the screen beside me.' : 'It fills the screen.') : o.size === 'smaller' ? 'Smaller.' : 'Bigger.';
     default:
       return txt(o.message) || "I couldn't open that screen.";
   }
@@ -159,6 +221,7 @@ export function createScreens(deps = {}) {
   const RECENT_MS = 10 * 60 * 1000;
   let channel = null;
   let details = null; // ScreenDetails (Window Management), once granted
+  let working = null; // the window "we'll do this in this window" picked (its id), v8.1
   const prefs = loadPrefs();
 
   try {
@@ -257,12 +320,14 @@ export function createScreens(deps = {}) {
   }
 
   async function push(entry) {
-    if (!screens.has(entry.id)) return;
+    if (!screens.has(entry.id) || entry.external) return;
     let c = await contentOf(entry).catch(() => null);
     // A panel drawn here (floating, or in the app) reads storage itself when nothing is in memory
     // (a reply in another conversation); a screen window does that on its own.
     if (!c && entry.view) c = await loadScreenContent(entry.kind, entry.ref || {}).catch(() => null);
     if (!c || !screens.has(entry.id)) return;
+    // A hologram's parts, for its commands said here ("show the battery" acts in its window).
+    if (entry.kind === 'hologram' && c.data && isObj(c.data.spec)) entry.parts = partsOf(c.data.spec);
     if (entry.view) {
       if (c.title) entry.view.frame.setTitle(c.title);
       safe(() => entry.view.panel.update(c.data));
@@ -294,10 +359,67 @@ export function createScreens(deps = {}) {
 
   function register(fields) {
     // view: { frame, panel } rendered here (a floating panel, or full screen in the app on a phone)
-    const entry = { id: fields.id || newId(), mode: 'window', label: 'WINDOW', number: null, win: null, kind: 'answer', ref: {}, title: '', report: false, takenFrom: null, view: null, overlay: null, lastPush: 0, pushTimer: 0, ...fields };
+    // at: when it opened or last took new content (the newest one is "it"); external: a web page
+    // (another site: no channel, can't be moved or shown anything else); rect: where Jarvis put it.
+    const entry = { id: fields.id || newId(), mode: 'window', label: 'WINDOW', number: null, win: null, kind: 'answer', ref: {}, title: '', report: false, takenFrom: null, view: null, overlay: null, lastPush: 0, pushTimer: 0, at: Date.now(), focusAt: 0, external: false, rect: null, parts: null, selected: null, ...fields };
     screens.set(entry.id, entry);
     changed();
     return entry;
+  }
+
+  // ---- which window: named, focused, newest (v8.1) -------------------------------------------------
+
+  const alive = (e) => !e.win || !e.win.closed;
+  /** Windows Jarvis opened (a popup on this screen or another monitor, a page included): at most MAX_WINDOWS. */
+  const popups = () => [...screens.values()].filter((e) => (e.mode === 'window' || e.mode === 'screen') && alive(e));
+  /** Does this window have the focus right now? (Our own pages only: a web page can't be asked.) */
+  function hasFocus(e) {
+    if (!e || !e.win || e.external || e.mode === 'inapp') return false;
+    return safe(() => e.win.document.hasFocus() === true, false);
+  }
+  function focusedEntry() {
+    const list = [...screens.values()].filter(hasFocus);
+    return list.sort((a, b) => (b.focusAt || 0) - (a.focusAt || 0))[0] || null;
+  }
+  const newest = (list) => list.slice().sort((a, b) => (b.at || 0) - (a.at || 0))[0] || null;
+  /** Of `list`: the one with the focus, else the one "we'll do this in this window" picked, else the newest. */
+  function pickOf(list) {
+    if (!list.length) return null;
+    return list.find(hasFocus) || (working && list.find((e) => e.id === working)) || newest(list);
+  }
+  const targetOf = (e) => ({ kind: e.kind, ref: { ...(e.ref || {}) }, title: e.title, live: !!e.live });
+  /** The visual's part list ({ id, name, aka }) for a hologram's commands in another window. */
+  function partsOf(spec) {
+    const parts = isObj(spec) && Array.isArray(spec.parts) ? spec.parts : [];
+    return parts.filter(isObj).map((p) => ({ id: p.id, name: p.name, aka: Array.isArray(p.aka) ? p.aka : [] }));
+  }
+  function moveEntry(e, r) {
+    if (!e.win || e.external || e.mode === 'pip' || !r) return false;
+    const ok = safe(() => {
+      e.win.moveTo(r.left, r.top);
+      e.win.resizeTo(r.width, r.height);
+      return true;
+    }, false);
+    if (ok) e.rect = { ...r };
+    return ok;
+  }
+  /**
+   * Has the owner moved this window since Jarvis placed it? (Its corner is more than 30 px from where
+   * he put it. Only the position counts: Chrome sizes a popup's frame around the size asked for.)
+   */
+  function movedByHand(e) {
+    if (!e || !e.rect || !e.win) return false;
+    const now = safe(() => windowRect(e.win), null);
+    return !!now && (Math.abs(now.left - e.rect.left) > 30 || Math.abs(now.top - e.rect.top) > 30);
+  }
+
+  /** The screens to lay windows out on: every monitor when Window Management is allowed, else this one. */
+  async function layoutScreens() {
+    if (!details && (await wmPermission()) === 'granted' && typeof window.getScreenDetails === 'function') {
+      details = await Promise.resolve(window.getScreenDetails()).catch(() => null);
+    }
+    const list = details && Array.isArray(details.screens) && details.screens.length ? details.screens : [window.screen];
+    return { screens: list, current: (details && details.currentScreen) || window.screen };
   }
 
   function screenUrl(target, { id, where, number }) {
@@ -372,6 +494,11 @@ export function createScreens(deps = {}) {
 
   function showIn(entry, target, takenFrom) {
     if (entry.kind !== target.kind) entry.cameraState = undefined; // the new panel reports its own
+    if (!shows(entry, target)) {
+      entry.parts = null;
+      entry.selected = null;
+    }
+    entry.at = Date.now(); // the newest thing put on a screen
     entry.kind = target.kind;
     entry.ref = { ...(target.ref || {}) };
     entry.title = target.title || '';
@@ -387,18 +514,61 @@ export function createScreens(deps = {}) {
     changed();
   }
 
+  /** The window to reuse for this placement, or null for a new one ({ entry, replaced } when it takes the oldest one's place). */
+  function reuseFor(target, plan) {
+    const ours = popups().filter((s) => !s.external);
+    // One window per monitor; a window standing in for a float or a monitor (a fallback) is reused.
+    if (plan.mode === 'screen' || plan.note) {
+      const existing = ours.find((s) => s.mode === plan.mode && (plan.mode === 'window' || s.label === plan.label));
+      return existing ? { entry: existing } : null;
+    }
+    // "In a window", "in another window" (v8.1): a window of its own, unless one shows it already.
+    const same = ours.find((s) => s.mode === 'window' && shows(s, target));
+    if (same) return { entry: same, already: true };
+    const open = popups();
+    if (open.length < MAX_WINDOWS) return null;
+    const oldest = open.slice().sort((a, b) => (a.at || 0) - (b.at || 0))[0];
+    const replaced = { kind: oldest.kind, report: !!oldest.report, title: oldest.title };
+    // A page can't show Jarvis's things: once the new window is open, the page closes.
+    if (oldest.external) return { entry: null, replaced, close: oldest };
+    return { entry: oldest, replaced };
+  }
+
+  /**
+   * Room for one more window beside Jarvis (v8.1): the windows on his screen and the new one are laid
+   * out side by side or in a grid, a strip of his own window kept in view (layoutRects). The first
+   * window keeps today's place (the right half). -> { plan, moves: [[entry, rect]] } (the others move
+   * once the new window has opened).
+   */
+  function placeAmong(plan, skip = null) {
+    // A window the owner moved by hand stays where they put it.
+    const others = popups()
+      .filter((s) => s.mode === 'window' && !s.external && s !== skip && !movedByHand(s))
+      .sort((a, b) => (a.at || 0) - (b.at || 0));
+    if (!others.length || plan.mode !== 'window' || plan.note) return { plan, moves: [] };
+    const keep = others.slice(-(MAX_WINDOWS - 1));
+    const rects = layoutRects({ screens: [window.screen], current: window.screen, main: windowRect(window), count: keep.length + 1, layout: 'side-by-side' });
+    const rect = rects[rects.length - 1];
+    return { plan: { ...plan, rect, features: screenWindowFeatures(rect) }, moves: keep.map((e, i) => [e, rects[i]]) };
+  }
+
   async function openWindow(target, plan, cmd, gesture) {
     const where = plan.mode === 'screen' ? 'other' : 'window';
     if (target.kind === 'link') return openLink(target, plan, cmd, gesture);
-    // A screen already open in that place takes the new content (no gesture needed).
-    const existing = [...screens.values()].find((s) => s.mode === plan.mode && (plan.mode === 'window' || s.label === plan.label) && (!s.win || !s.win.closed));
-    if (existing) {
-      const taken = takeFromApp(target, existing);
-      showIn(existing, target, taken);
+    // A window already open there takes the new content (no gesture needed).
+    const reuse = reuseFor(target, plan);
+    if (reuse && reuse.entry) {
+      const existing = reuse.entry;
+      if (!reuse.already) {
+        const taken = takeFromApp(target, existing);
+        showIn(existing, target, taken);
+      }
       safe(() => existing.win && existing.win.focus());
       dismissPrompt();
-      return outcome('opened', target, { mode: plan.mode, label: existing.label, note: plan.note, screenName: plan.screenName, internal: plan.internal, reused: true });
+      return outcome('opened', target, { mode: existing.mode, label: existing.label, note: plan.note, screenName: plan.screenName, internal: plan.internal, reused: true, already: !!reuse.already, replaced: reuse.replaced || null });
     }
+    const room = cmd.rect ? { plan, moves: [] } : placeAmong(plan, reuse && reuse.close);
+    plan = room.plan;
     const id = newId();
     let url = screenUrl(target, { id, where, number: plan.number });
     // A camera window turns the camera on by itself only on this first load (a one-time nonce): a
@@ -410,19 +580,35 @@ export function createScreens(deps = {}) {
     const w = safe(() => window.open(url, `jarvis-${id}`, plan.features), null);
     if (!w) return needsTap(target, plan, cmd);
     dismissPrompt();
+    if (reuse && reuse.close) closeEntry(reuse.close);
+    for (const [e, r] of room.moves) moveEntry(e, r);
     const taken = takeFromApp(target);
-    const entry = register({ id, mode: plan.mode, label: plan.label, number: plan.number || null, win: w, kind: target.kind, ref: { ...(target.ref || {}) }, title: target.title, report: !!(target.ref && target.ref.report), live: !!target.live, takenFrom: taken ? 'viewer' : null });
+    const entry = register({ id, mode: plan.mode, label: plan.label, number: plan.number || null, win: w, kind: target.kind, ref: { ...(target.ref || {}) }, title: target.title, report: !!(target.ref && target.ref.report), live: !!target.live, takenFrom: taken ? 'viewer' : null, rect: plan.rect || null });
     safe(() => w.focus());
     watchClosed(entry);
-    return outcome('opened', target, { mode: plan.mode, label: plan.label, note: plan.note, screenName: plan.screenName, internal: plan.internal });
+    return outcome('opened', target, { mode: plan.mode, label: plan.label, note: plan.note, screenName: plan.screenName, internal: plan.internal, replaced: (reuse && reuse.replaced) || null });
   }
 
-  /** A web page in its own window (placed like a screen); the page never gets a handle on Jarvis. */
+  /**
+   * A web page in its own window (placed like a screen); the page never gets a handle on Jarvis.
+   * Tracked like Jarvis's own windows (v8.1): "close that window" closes it; being another site's
+   * page, it can't be moved or shown anything else.
+   */
   function openLink(target, plan, cmd) {
     const url = target.ref && target.ref.url;
     if (!url) return outcome('error', target, { message: 'That link can’t be opened.' });
-    const w = safe(() => window.open('about:blank', `jarvis-link-${newId()}`, plan.features), null);
-    if (!w) return needsTap(target, plan, cmd);
+    // The same page in a window already: raised, not opened twice.
+    const same = popups().find((s) => s.external && shows(s, target));
+    if (same) {
+      safe(() => same.win.focus());
+      dismissPrompt();
+      return outcome('opened', target, { mode: same.mode, label: same.label, note: plan.note, reused: true, already: true });
+    }
+    const reuse = plan.mode === 'window' && !plan.note && popups().length >= MAX_WINDOWS ? popups().sort((a, b) => (a.at || 0) - (b.at || 0))[0] : null;
+    const room = cmd.rect || plan.mode !== 'window' ? { plan, moves: [] } : placeAmong(plan, reuse);
+    const id = newId();
+    const w = safe(() => window.open('about:blank', `jarvis-link-${id}`, room.plan.features), null);
+    if (!w) return needsTap(target, room.plan, cmd);
     dismissPrompt();
     safe(() => {
       w.opener = null;
@@ -430,7 +616,12 @@ export function createScreens(deps = {}) {
     safe(() => {
       w.location.replace(url);
     });
-    return outcome('opened', target, { mode: plan.mode, label: plan.label, note: plan.note, screenName: plan.screenName, internal: plan.internal });
+    const replaced = reuse ? { kind: reuse.kind, report: !!reuse.report, title: reuse.title } : null;
+    if (reuse) closeEntry(reuse);
+    for (const [e, r] of room.moves) moveEntry(e, r);
+    const entry = register({ id, mode: room.plan.mode, label: room.plan.label, number: room.plan.number || null, win: w, kind: 'link', ref: { ...(target.ref || {}) }, title: target.title, external: true, rect: room.plan.rect || null });
+    watchClosed(entry);
+    return outcome('opened', target, { mode: room.plan.mode, label: room.plan.label, note: room.plan.note, screenName: room.plan.screenName, internal: room.plan.internal, replaced });
   }
 
   function watchClosed(entry) {
@@ -472,10 +663,17 @@ export function createScreens(deps = {}) {
       frame,
       compact: true,
       autoStart: true,
-      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st) },
+      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st), onState: (st) => noteState(entry, st), jarvisState: typeof deps.jarvisState === 'function' ? () => deps.jarvisState() : null },
     });
     frame.body.append(panel.el);
     entry.view = { frame, panel };
+  }
+
+  /** A hologram panel's parts and selection (its commands are said in the main window). */
+  function noteState(entry, st) {
+    if (!isObj(st)) return;
+    if (Array.isArray(st.parts)) entry.parts = st.parts;
+    if ('selected' in st) entry.selected = st.selected || null;
   }
 
   /** Phones and tablets: one screen, no popups. The screen opens full screen inside the app. */
@@ -533,6 +731,9 @@ export function createScreens(deps = {}) {
     const taken = takeFromApp(target);
     const entry = register({ mode: 'pip', label: 'FLOAT', win: pipWin, kind: target.kind, ref: { ...(target.ref || {}) }, title: target.title, report: !!(target.ref && target.ref.report), live: !!target.live, takenFrom: taken ? 'viewer' : null });
     mountPip(entry);
+    pipWin.addEventListener('focus', () => {
+      entry.focusAt = Date.now();
+    });
     // Closed by Chrome's "back to tab" button, the app's tab gets the focus: hand it back there.
     pipWin.addEventListener(
       'pagehide',
@@ -612,7 +813,9 @@ export function createScreens(deps = {}) {
     }
     // The turn that asked was stopped while the browser answered: nothing opens, no button.
     if (stopped()) return outcome('nothing', target, { message: 'Stopped.' });
-    const plan = planPlacement({ where: cmd.where, kind: target.kind, env, permission, details, currentScreen: window.screen, screen: cmd.screen, target: cmd.target, fullscreen: !!cmd.fullscreen });
+    let plan = planPlacement({ where: cmd.where, kind: target.kind, env, permission, details, currentScreen: window.screen, screen: cmd.screen, target: cmd.target, fullscreen: !!cmd.fullscreen });
+    // A place chosen already (a page beside Jarvis, v8.1): a window there.
+    if (cmd.rect && plan.mode !== 'inapp' && plan.mode !== 'tab') plan = { mode: 'window', rect: cmd.rect, features: screenWindowFeatures(cmd.rect), label: 'WINDOW', note: null };
     if (plan.mode === 'inapp') {
       // The app's own full-screen viewers where it has them (the camera: Optics); the screen frame
       // for the rest.
@@ -674,7 +877,7 @@ export function createScreens(deps = {}) {
   }
 
   function needsTap(target, plan, cmd) {
-    const button = buttonLabel(plan);
+    const button = (cmd && typeof cmd.button === 'string' && cmd.button) || buttonLabel(plan);
     const name = screenKindName(target.kind, { report: !!(target.ref && target.ref.report) });
     let tip = null;
     if (!prefs.tipShown && plan.mode !== 'pip') {
@@ -803,26 +1006,48 @@ export function createScreens(deps = {}) {
     closeEntry(entry, { back: true });
   }
 
-  function closeScreens({ where = null, screen = null, back = false, tool = false } = {}) {
-    let list = [...screens.values()];
-    if (where === 'beside') list = list.filter((s) => s.mode === 'pip');
-    if (screen) list = list.filter((s) => s.number === screen || s.label === `SCREEN ${screen}`);
+  /**
+   * Close windows (v8.1: only the ones meant). all: every one; screen: that monitor's; where 'beside':
+   * the floating panel; where 'other': the other monitor's (all of them, or the one with the focus,
+   * else the newest); which: the one showing that kind; otherwise the one with the focus, else the
+   * newest. back: the one closed comes back to the main window (with `all`, the newest one).
+   */
+  function closeScreens({ where = null, screen = null, back = false, tool = false, all = false, which = null } = {}) {
+    const every = [...screens.values()];
+    let list = every;
+    if (all) list = every;
+    else if (screen) list = every.filter((s) => s.number === screen || s.label === `SCREEN ${screen}`);
+    else if (where === 'beside') list = every.filter((s) => s.mode === 'pip');
+    else if (which) {
+      const one = pickOf(every.filter((s) => s.kind === which));
+      if (!one) return { status: 'closed', count: 0, which, kind: which, label: '', back: false };
+      list = [one];
+    } else if (where === 'other') {
+      const others = every.filter((s) => s.mode === 'screen');
+      list = others.length ? [pickOf(others)] : [];
+    } else {
+      const one = pickOf(every);
+      list = one ? [one] : [];
+    }
+    list = list.slice().sort((a, b) => (a.at || 0) - (b.at || 0));
     const last = list[list.length - 1] || null;
     // Handed back to the main window: the newest one. From Jarvis's tool, a camera only while it is
     // on (Optics would turn it on again): a camera screen whose camera is off just closes.
     const handBack = (s) => back && s === last && !(tool && s.kind === 'camera' && !CAMERA_ON.has(s.cameraState));
     const backLast = !!last && handBack(last);
     for (const s of list) closeEntry(s, { back: handBack(s) });
+    if (working && !screens.has(working)) working = null;
+    const plain = !screen && where !== 'other' && !which;
     // A floating panel opened before a reload (no entry here).
-    if (!list.length && (where === 'beside' || !screen)) {
+    if (!list.length && (where === 'beside' || plain)) {
       const stray = currentPipWindow();
       if (stray) {
         safe(() => stray.close());
         return { status: 'closed', count: 1, label: 'FLOAT', kind: null, back: false };
       }
     }
-    if (!list.length && !screen) post({ t: 'close', screen: '*' });
-    return { status: 'closed', count: list.length, label: last ? last.label : '', kind: last ? last.kind : null, title: last ? last.title : '', report: !!(last && last.report), back: backLast };
+    if (!list.length && plain && where !== 'beside') post({ t: 'close', screen: '*' });
+    return { status: 'closed', count: list.length, label: last ? last.label : '', kind: last ? last.kind : null, title: last ? last.title : '', report: !!(last && last.report), back: backLast, which: which || null };
   }
 
   // ---- channel: screens saying hello, closing, handing back ------------------------------------------
@@ -848,8 +1073,185 @@ export function createScreens(deps = {}) {
       if (m.t === 'camera') setCameraState(entry, txt(m.state) || undefined);
       else if (m.t === 'back') gone(entry, { back: true });
       else if (m.t === 'closed') gone(entry, { back: false });
+      else if (m.t === 'focus') entry.focusAt = Date.now();
+      else if (m.t === 'state') {
+        // A hologram's parts and selection there, for its commands said here (v8.1).
+        if (Array.isArray(m.parts)) entry.parts = m.parts.filter(isObj).slice(0, 200).map((p) => ({ id: txt(p.id), name: txt(p.name), aka: Array.isArray(p.aka) ? p.aka.filter((x) => typeof x === 'string') : [] }));
+        if (m.selected === null || typeof m.selected === 'string') entry.selected = m.selected || null;
+      }
     };
     post({ t: 'who' });
+  }
+
+  // ---- several windows (v8.1): layouts, "this window", the front, commands inside ----------------------
+
+  /**
+   * "Side by side", "camera on the left, hologram on the right", "split the screen": the windows
+   * Jarvis opened, laid out (layoutRects): on the other monitor when there is one (Window Management
+   * allowed), else beside Jarvis with a strip of him kept in view. Named things not yet in a window
+   * open in one first. Floating panels and pages from the web can't be moved by script: they stay.
+   */
+  async function arrange({ layout = 'side-by-side', a = null, b = null } = {}, { source = 'voice', gesture } = {}) {
+    // A phone or a tablet shows one thing at a time, full screen (as before).
+    if (detectScreenEnv(window).mobile) return { status: 'nothing', message: 'This screen shows one thing at a time.' };
+    const g = gesture === undefined ? hasGesture(source) : gesture;
+    for (const kind of [a, b]) {
+      if (!kind || popups().some((e) => e.kind === kind && !e.external)) continue;
+      const o = await run({ action: 'open', what: kind, where: 'window', screen: null, target: null, ordinal: null, fullscreen: false }, { source, gesture: g });
+      if (!o || o.status !== 'opened') return o;
+    }
+    const movable = popups().filter((e) => !e.external);
+    const pick = (k) => (k ? pickOf(movable.filter((e) => e.kind === k)) : null);
+    const ea = pick(a);
+    const eb = pick(b);
+    const rest = movable.filter((e) => e !== ea && e !== eb).sort((x, y) => (x.at || 0) - (y.at || 0));
+    if (!ea && !eb && !rest.length) return { status: 'nothing', message: popups().length ? 'Pages from the web can’t be moved, only Jarvis’s own windows.' : 'There’s nothing in a window to arrange yet.' };
+    // Left to right: the one named for the left, the one named for the right, then the rest.
+    let list;
+    let side = null;
+    if (ea && eb) list = [ea, eb, ...rest];
+    else if (ea) list = [ea, ...rest];
+    else if (eb) list = rest.length ? [rest[0], eb, ...rest.slice(1)] : [eb];
+    else list = rest;
+    list = list.slice(0, MAX_WINDOWS);
+    if (list.length === 1 && (ea || eb)) side = ea ? 'left' : 'right'; // one window, on the side named
+    const where = await layoutScreens();
+    const opts = { ...where, main: windowRect(window), count: list.length, layout, side };
+    const rects = layoutRects(opts);
+    let moved = 0;
+    list.forEach((e, i) => {
+      if (moveEntry(e, rects[i])) moved += 1;
+    });
+    if (!moved) return { status: 'nothing', message: 'Those windows can’t be moved.' };
+    const named = (a ? 1 : 0) + (b ? 1 : 0);
+    return { status: 'arranged', layout: named && list.length <= 2 ? 'left-right' : layout, count: list.length, names: list.map((e) => e.kind), screen: layoutArea(opts).screen, side };
+  }
+
+  /**
+   * "Do this in this window", "show it here" (D4): the window that has the focus, else the main one,
+   * and Jarvis says which. A window picked this way is where "it" lives from now on (its content is
+   * "this", and its viewer commands go there). "Show the report here": the report comes to it.
+   */
+  async function here({ which = null } = {}) {
+    const win = focusedEntry();
+    if (win) {
+      working = win.id;
+      if (which && which !== win.kind && !win.external && win.mode !== 'inapp') {
+        const target = await resolve({ what: which });
+        if (!target || target.error) return { status: 'nothing', message: (target && target.message) || 'There’s nothing to show yet.', kind: which };
+        showIn(win, target, takeFromApp(target, win));
+        recent = { target: targetOf(win), at: Date.now() };
+        const report = !!(target.ref && target.ref.report);
+        return { status: 'here', where: 'window', moved: true, kind: target.kind, report, windowKind: target.kind, windowReport: report };
+      }
+      recent = { target: targetOf(win), at: Date.now() };
+      return { status: 'here', where: 'window', moved: false, kind: win.kind, report: !!win.report, label: win.label };
+    }
+    // The main window: what was named, or the window "we" were working in, comes back here.
+    const was = working;
+    working = null;
+    const list = [...screens.values()].filter((e) => e.mode !== 'inapp' && !e.external);
+    const there = which ? pickOf(list.filter((e) => e.kind === which)) : list.find((e) => e.id === was) || null;
+    if (there) {
+      closeEntry(there, { back: true });
+      return { status: 'here', where: 'main', moved: true, kind: there.kind, report: !!there.report };
+    }
+    return { status: 'here', where: 'main', moved: false, kind: which || null };
+  }
+
+  /** A window's place now: where it really is (our own pages), else where Jarvis put it. */
+  const placeOf = (e) => safe(() => windowRect(e.win), null) || e.rect || null;
+
+  /** "Swap them" (D5): the two windows' places exchanged (the focused or newest one and the next newest). */
+  function swapWindows() {
+    const movable = popups().filter((e) => !e.external);
+    if (movable.length < 2) return { status: 'nothing', message: popups().length >= 2 ? 'Pages from the web can’t be moved, only Jarvis’s own windows.' : 'Swapping needs two of my windows.' };
+    const first = pickOf(movable);
+    const second = newest(movable.filter((e) => e !== first));
+    const a = placeOf(first);
+    const b = placeOf(second);
+    if (!a || !b || !moveEntry(first, b) || !moveEntry(second, a)) return { status: 'nothing', message: 'Those windows can’t be moved.' };
+    return { status: 'swapped', names: [first.kind, second.kind] };
+  }
+
+  /**
+   * "Make the camera window bigger", "smaller", "fill the screen" (D5): Jarvis's own windows only. On
+   * Jarvis's screen a window never covers his strip; elsewhere "fill" is the monitor's work area (true
+   * full screen needs a tap: the window's own full-screen button). Floating panels and pages can't be
+   * resized by script, and Jarvis says so.
+   */
+  async function sizeWindow({ size = 'bigger', which = null } = {}) {
+    const list = [...screens.values()].filter((e) => e.mode !== 'inapp' && alive(e) && (!which || e.kind === which));
+    const e = pickOf(list);
+    if (!e) return which ? { status: 'closed', count: 0, which, kind: which } : { status: 'nothing', message: 'There’s no window to resize.' };
+    if (e.mode === 'pip') return { status: 'nothing', message: 'Drag its corner; I can’t resize floating panels. Say “put it in a window” for one I can.' };
+    if (e.external) return { status: 'nothing', message: 'I can’t move a page from another site. Close it and open it again where you want it.' };
+    const where = await layoutScreens();
+    const r = placeOf(e);
+    const scr = screenAt(where.screens, r) || where.current;
+    const mine = screenAt(where.screens, windowRect(window)) || where.current;
+    const onJarvis = scr === mine || where.screens.length < 2;
+    const bounds = onJarvis ? layoutArea({ screens: [mine], current: mine, main: windowRect(window), count: 1 }).region : availRect(scr);
+    const next = resizedRect(r, size, bounds);
+    if (!moveEntry(e, next)) return { status: 'nothing', message: 'That window can’t be moved.' };
+    return { status: 'sized', size, kind: e.kind, report: !!e.report, beside: onJarvis };
+  }
+
+  /**
+   * "Float yourself" (D6): Jarvis himself in the floating panel (Document Picture-in-Picture): his core,
+   * the state word and the words heard (deps.jarvisState). One floating panel at a time: an open one
+   * takes him in place of what it showed (said). A new one needs a tap (Chrome's rule): the one-tap
+   * "Float Jarvis" button. No Document Picture-in-Picture: he says he can't.
+   */
+  async function floatJarvis({ source = 'voice', gesture } = {}) {
+    const env = detectScreenEnv(window);
+    if (!env.pip) return { status: 'nothing', kind: 'jarvis', message: env.mobile ? 'I can’t float on this device.' : 'This browser can’t float me. Chrome on a computer can.' };
+    const target = { kind: 'jarvis', ref: {}, title: 'Jarvis', live: true };
+    const open = [...screens.values()].find((e) => e.mode === 'pip' && e.win && !e.win.closed);
+    if (open && open.kind === 'jarvis') return { status: 'opened', mode: 'pip', kind: 'jarvis', label: 'FLOAT', reused: true, already: true };
+    if (open) {
+      const replaced = { kind: open.kind, report: !!open.report, title: open.title };
+      showIn(open, target, false);
+      return { status: 'opened', mode: 'pip', kind: 'jarvis', label: 'FLOAT', reused: true, replaced };
+    }
+    const g = gesture === undefined ? hasGesture(source) : gesture;
+    return place(target, { action: 'open', what: 'jarvis', where: 'beside', screen: null, target: null, ordinal: null, fullscreen: false, button: 'Float Jarvis' }, { gesture: g });
+  }
+
+  /** "Show me the hologram window": brought to the front (a page or a floating panel too). */
+  function focusWindow({ which = null } = {}) {
+    const e = pickOf([...screens.values()].filter((s) => s.kind === which && s.mode !== 'inapp'));
+    if (!e) return { status: 'closed', count: 0, which, kind: which };
+    safe(() => e.win && e.win.focus());
+    return { status: 'focused', kind: e.kind, report: !!e.report, label: e.label };
+  }
+
+  /**
+   * A viewer command for the window showing `kind` (D3: "explode it" while the hologram is in a
+   * window acts there). A floating panel runs it here; a screen window gets it over the channel.
+   * null when no window shows it, or the command needs the main window's viewer, or there is no
+   * channel: the app opens it in the main window, as before.
+   */
+  function commandIn(kind, command) {
+    if (!isObj(command) || typeof command.action !== 'string') return null;
+    const list = [...screens.values()].filter((e) => e.kind === kind && !e.external && e.mode !== 'inapp' && alive(e));
+    const e = pickOf(list);
+    if (!e) return null;
+    if (command.action === 'close') {
+      closeEntry(e);
+      return { handled: true, command, label: e.label, kind: e.kind, closed: true };
+    }
+    if (kind !== 'hologram' || !HOLO_ACTIONS.has(command.action)) return null;
+    const cmd = { ...command, partId: command.partId || (command.action === 'isolate' || command.action === 'focus' ? e.selected : undefined) };
+    if (e.mode === 'pip') {
+      const panel = e.view && e.view.panel;
+      if (!panel || typeof panel.command !== 'function') return null;
+      const word = safe(() => panel.command(cmd), '');
+      return { handled: true, command: cmd, label: e.label, kind: e.kind, word: txt(word) };
+    }
+    if (!channel) return null;
+    post({ t: 'command', screen: e.id, command: cmd });
+    return { handled: true, command: cmd, label: e.label, kind: e.kind };
   }
 
   // ---- entry points -------------------------------------------------------------------------------
@@ -860,9 +1262,12 @@ export function createScreens(deps = {}) {
     if (stopped()) return { status: 'nothing', message: 'Stopped.', kind: cmd.what };
     if (cmd.action === 'back') {
       if (!screens.size && !currentPipWindow()) return { status: 'closed', count: 0 };
-      return closeScreens({ back: true, tool: source === 'tool' });
+      // v8.1: "bring the hologram back" brings that one; "bring it back" the focused or newest one;
+      // "bring everything back" closes them all (the newest comes back).
+      const which = cmd.what && cmd.what !== 'this' ? cmd.what : null;
+      return closeScreens({ back: true, tool: source === 'tool', all: !!cmd.all, which });
     }
-    if (cmd.action === 'close') return closeScreens({ where: cmd.where, screen: cmd.screen });
+    if (cmd.action === 'close') return closeScreens({ where: cmd.where, screen: cmd.screen, all: !!cmd.all, which: cmd.which || null });
     const target = await resolve(cmd);
     if (stopped()) return { status: 'nothing', message: 'Stopped.', kind: cmd.what };
     if (!target || target.error) return { status: 'nothing', message: (target && target.message) || 'There’s nothing to put on a screen yet.', kind: cmd.what };
@@ -931,7 +1336,87 @@ export function createScreens(deps = {}) {
       if (!runEntry || !runEntry.conv) return;
       for (const s of screens.values()) if (s.ref && s.ref.conversationId === runEntry.conv.id) schedulePush(s, true);
     },
-    list: () => [...screens.values()].map((s) => ({ id: s.id, mode: s.mode, label: s.label, kind: s.kind, title: s.title })),
+    /**
+     * A screen command already matched (matchScreenCommand's), for the router: Promise<outcome>.
+     * `gesture` defaults to whether there is one now.
+     */
+    runCommand(cmd, { source = 'voice', gesture } = {}) {
+      if (!isObj(cmd)) return Promise.resolve({ status: 'nothing', message: 'That isn’t a screen command.' });
+      return run(cmd, { source, gesture: gesture === undefined ? hasGesture(source) : gesture }).catch((err) => {
+        console.error('[jarvis] screen command failed:', err);
+        return { status: 'error', message: 'That screen couldn’t open.' };
+      });
+    },
+    /**
+     * A window command (window-commands.js: close, close-all, arrange, here, focus) ->
+     * Promise<outcome>. 'close-all' closes the windows; the app closes its viewers (outcome.viewers).
+     */
+    windowCommand(action = {}, { source = 'voice', gesture } = {}) {
+      const a = isObj(action) ? action : {};
+      const go = async () => {
+        switch (a.op) {
+          case 'close':
+            return closeScreens({ which: a.which || null });
+          case 'close-all':
+            return { ...closeScreens({ all: true }), viewers: !!a.viewers };
+          case 'arrange':
+            return arrange(a, { source, gesture });
+          case 'here':
+            return here(a);
+          case 'focus':
+            return focusWindow(a);
+          case 'swap':
+            return swapWindows();
+          case 'size':
+            return sizeWindow(a);
+          case 'float-jarvis':
+            return floatJarvis({ source, gesture });
+          default:
+            return { status: 'nothing', message: 'I can’t do that with windows yet.' };
+        }
+      };
+      return go().catch((err) => {
+        console.error('[jarvis] window command failed:', err);
+        return { status: 'error', message: 'That didn’t work.' };
+      });
+    },
+    commandIn,
+    /** The window showing `kind` (the focused, picked or newest one): { id, label, mode, kind, title, ref, parts, selected } | null. */
+    shown(kind) {
+      const e = pickOf([...screens.values()].filter((s) => s.kind === kind && !s.external && s.mode !== 'inapp' && alive(s)));
+      return e ? { id: e.id, label: e.label, mode: e.mode, kind: e.kind, title: e.title, ref: { ...(e.ref || {}) }, parts: e.parts ? e.parts.slice() : null, selected: e.selected || null } : null;
+    },
+    /**
+     * A web page in a window (v8.1: "pull this up in Chrome" beside Jarvis): placed at `rect`, or
+     * like any window. The address must already be checked (chrome-commands.js safeAddress). Blocked
+     * pop-ups: the one-tap `button`. -> Promise<outcome>
+     */
+    openPage(url, { title = '', rect = null, button = '' } = {}, { source = 'voice', gesture } = {}) {
+      const target = { kind: 'link', ref: { url, title: txt(title) || hostOf(url) }, title: txt(title) || hostOf(url), live: false };
+      const cmd = { action: 'open', what: 'link', where: 'window', screen: null, target: null, ordinal: null, fullscreen: false, rect: isObj(rect) ? rect : null, button: txt(button) };
+      return place(target, cmd, { gesture: gesture === undefined ? hasGesture(source) : gesture })
+        .then((o) => {
+          if (o && (o.status === 'opened' || o.status === 'needs_tap')) recent = { target, at: Date.now() };
+          return o;
+        })
+        .catch((err) => {
+          console.error('[jarvis] page window failed:', err);
+          return { status: 'error', message: 'That page couldn’t open.' };
+        });
+    },
+    /**
+     * Where a page goes beside Jarvis (a rect in screen coordinates): the other monitor when Window
+     * Management is allowed, else the far side of his screen with a strip of him kept in view.
+     */
+    async besideRect() {
+      const where = await layoutScreens().catch(() => ({ screens: [window.screen], current: window.screen }));
+      return layoutRects({ ...where, main: windowRect(window), count: 1, layout: 'beside' })[0] || null;
+    },
+    /** What "it" is now (a page just opened in Chrome: "open it in a window" puts it beside Jarvis). */
+    noteRecent(target) {
+      if (isObj(target) && typeof target.kind === 'string') recent = { target: { ...target, ref: { ...(target.ref || {}) } }, at: Date.now() };
+    },
+    list: () => [...screens.values()].map((s) => ({ id: s.id, mode: s.mode, label: s.label, kind: s.kind, title: s.title, focused: hasFocus(s), external: !!s.external })),
     /** Which screen shows a target (for "this": a screen in the app counts as an open viewer). */
     inappTarget() {
       const e = [...screens.values()].find((s) => s.mode === 'inapp');
@@ -940,7 +1425,7 @@ export function createScreens(deps = {}) {
     isOpen: () => screens.size > 0,
     /** A camera screen whose camera may be running (one still loading counts): the OPTICS indicator. */
     cameraOn: () => cameraScreenOn({ unknownIsOn: true }),
-    closeAll: () => closeScreens({}),
+    closeAll: () => closeScreens({ all: true }),
     /** Closes every screen showing that kind (the OPTICS pill stops a camera on another screen). */
     closeKind(kind) {
       const list = [...screens.values()].filter((s) => s.kind === kind);

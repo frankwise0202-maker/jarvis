@@ -40,8 +40,24 @@ export const CHROME_VOICE = {
 };
 
 // ==== windows =========================================================================================
+// Window words and Chrome's are explicit destinations: they come before the thing on top (Optics here).
+const WINDOWS_OVER_OPTICS = ['VL', 'VF', 'OV'].flatMap((state) => [
+  { words: 'do this in this window', state, winner: 'windows', why: 'The owner picks the window to work in, even with the camera open.' },
+  { words: 'show me the hologram window', state, winner: 'windows', why: 'Bring the hologram window to the front; not a question about the camera picture.' },
+  { words: 'look it up on Google', state, winner: 'chrome-open', why: 'A Google search in a tab, not a Look at the camera.' },
+]);
 export const WINDOWS = {
   rows: [
+    ...WINDOWS_OVER_OPTICS,
+    // Lead decision D1 (chrome.task before chrome.open): "open the Nth link" is the reply's link only when the
+    // newest reply has links; page words are never chrome.open's. Out of a Chrome context these reach Claude;
+    // the Chrome-context rows (and "… in Chrome" with a page object) have the Chrome task as winner and go in with
+    // chrome-voice's matcher.
+    { words: 'open the second link', state: 'WINL', winner: 'chrome-open', why: 'The newest reply has links: its second one, in Chrome.' },
+    { words: 'open the second link', state: 'V0', winner: null, why: 'No links in the newest reply and no Chrome task: a question for Jarvis.' },
+    { words: 'click the first link', state: 'WINL', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
+    { words: 'open the first result', state: 'WINL', winner: null, why: 'A page object: never a Google search (a Chrome task in a Chrome context).' },
+    { words: 'click the first result', state: 'V0', winner: null, why: '"Click …" is a page verb: never chrome.open (a Chrome task in a Chrome context).' },
   ],
 };
 

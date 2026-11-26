@@ -65,12 +65,96 @@ export const CHROME_VOICE = {
 };
 
 // ==== windows =========================================================================================
+// Windows by voice (D1-D6) and "pull this up in Chrome" (G1). The section's states: WIN2 two windows open
+// (the camera's and the hologram's), WINH the hologram in a window and no viewer here, WINL the newest
+// reply has links, WINC the chat with two windows open.
+const WIN_PARTS = [
+  { id: 'battery', name: 'Battery', aka: ['battery pack'] },
+  { id: 'fan', name: 'Cooling fan', aka: [] },
+  { id: 'keyboard', name: 'Keyboard', aka: [] },
+];
+const WIN_TWO = [
+  { id: 'w-camera', kind: 'camera', label: 'WINDOW', focused: false },
+  { id: 'w-holo', kind: 'hologram', label: 'WINDOW', focused: false, parts: WIN_PARTS, selected: null },
+];
+const WIN_LINKS = [
+  { url: 'https://www.example.com/chargers/best', title: 'The best USB-C chargers' },
+  { url: 'https://reviews.example.net/chargers-compared', title: 'Chargers compared' },
+  { url: 'https://docs.example.com/usb-c/faq', title: 'USB-C FAQ' },
+];
 export const WINDOWS = {
   must: [
+    // D1: several windows, each named; back and close by name
+    ['put the camera in a window', 'V0', 'screens'],
+    ['put the hologram in another window', 'WIN2', 'screens'],
+    ['close the camera window', 'WIN2', 'windows'],
+    ['close the hologram window', 'WIN2', 'windows'],
+    ['close the camera window', 'WINC', 'windows'],
+    ['bring the hologram back', 'WIN2', 'screens'],
+    ['close that window', 'WIN2', 'screens'],
+    ['close all windows', 'WIN2', 'screens'],
+    ['close everything', 'WIN2', 'windows'],
+    // D2: layouts
+    ['side by side', 'WIN2', 'windows'],
+    ['side by side', 'WINC', 'windows'],
+    ['camera on the left, hologram on the right', 'V0', 'windows'],
+    ['put the camera and the hologram side by side', 'V0', 'windows'],
+    ['split the screen', 'WIN2', 'windows'],
+    // D3: the hologram's words act in its window
+    ['explode it', 'WINH', 'windows-hologram'],
+    ['show the cooling fan', 'WINH', 'windows-hologram'],
+    ['front view', 'WINH', 'windows-hologram'],
+    ['labels off', 'WINH', 'windows-hologram'],
+    // D4: this window
+    ["okay, we'll do this in this window", 'WIN2', 'windows'],
+    ['do this in this window', 'V0', 'windows'],
+    ['show it here', 'WIN2', 'windows'],
+    ['show the report here', 'WIN2', 'windows'],
+    // D5, D6
+    ['show me the hologram window', 'WIN2', 'windows'],
+    ['swap them', 'WIN2', 'windows'],
+    ['make the camera window bigger', 'WIN2', 'windows'],
+    ['make it full screen', 'WIN2', 'windows'],
+    ['float yourself', 'V0', 'windows'],
+    // G1: Chrome
+    ['pull this up in Chrome', 'V0', 'chrome-open'],
+    ['pull this up in Google Chrome', 'VL', 'chrome-open'],
+    ['open this in Chrome', 'VH', 'chrome-open'],
+    ['open that in a new tab', 'V0', 'chrome-open'],
+    ['pull it up in my Chrome', 'V0', 'chrome-open'],
+    ['pull this up in Chrome', 'C0', 'chrome-open'],
+    ['open the second link', 'WINL', 'chrome-open'],
+    ['open link 3', 'WINL', 'chrome-open'],
+    ['open the first link in Chrome', 'WINL', 'chrome-open'],
+    ['google usb c chargers', 'V0', 'chrome-open'],
+    ['search Google for the laptop battery part number', 'V0', 'chrome-open'],
+    ['look it up on Google', 'V0', 'chrome-open'],
+    ['google it', 'V0', 'chrome-open'],
+    ['open youtube', 'V0', 'chrome-open'],
+    ['go to amazon.com', 'V0', 'chrome-open'],
+    ['close that tab', 'V0', 'chrome-open:chrome-close-tab'],
+    // Lead decision D1: page words are never this matcher's (with no Chrome task here: Claude)
+    ['open the second link', 'V0', null],
+    ['click the first link', 'WINL', null],
+    ['open the first result', 'WINL', null],
   ],
   not: [
+    'put them side by side in the photo',
+    'swap the windows on my house',
+    'make the window bigger in my kitchen remodel',
+    'close the window please the bugs are coming in',
+    'how do I close everything on my Mac',
+    'float yourself a loan',
+    'search for flights to Denver next Friday',
+    'chrome plating costs',
+    'google and apple compared',
+    'open youtube music on my phone',
   ],
   states: {
+    WIN2: { surface: 'voice', windows: WIN_TWO },
+    WINH: { surface: 'voice', windows: [WIN_TWO[1]] },
+    WINL: { surface: 'voice', reply: { links: WIN_LINKS, hologram: null } },
+    WINC: { surface: 'chat', via: 'typed', windows: WIN_TWO },
   },
 };
 
