@@ -2196,6 +2196,114 @@ about 16¢.
   - `test/e2e/camera-rig.mjs` turns Chromium's one fake camera into several labelled cameras with facing modes and
     hot-plug. The harness has a `mac` device (Chrome on macOS).
 
+**v8.1: hands-free Optics.** The owner: "after I take a picture, like, put it aside, but also show the current video
+footage"; "I can hold something up to the optics" and research it; "hey Jarvis, open optics". Files:
+`src/ui/optics/optics.js`, `src/styles/optics.css`, `src/lib/optics-commands.js` (the words),
+`src/lib/research-offer.js` (new, pure), `src/lib/live-gate.js` (§27), `src/ui/commands/optics.js` (the router's
+entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `runResearch`, the gate).
+- **Aside** (computers). A mode of its own beside `live`, `frozen` and `review` (`el.dataset.aside`): with the desktop
+  layout, the camera live and a camera frame (`asideAllowed`: never the screen look or a past Look reviewed), a Look
+  ends `aside`. Its picture (`frozenHost`) and pins layer move into the card's picture box (`optics-aside-pic`, at
+  the frame's aspect ratio; the pins are laid out again there), while the stage shows the live video and the Look,
+  Watch and Live view keys work as when live. `frozen` keeps its v7 meaning: the picture fills the stage. The card's
+  actions (`optics-aside-actions`): **Expand** (`optics-expand`: `frozen`, the live video in a corner tile
+  `optics-tile`, `data-tile`, still live; the tile or **Live** goes back aside), **Other screen**
+  (`optics-other-screen`, E5 below) and **Close** (`optics-close-card`: the card goes, the camera stays; the Look stays
+  in the Optics log and the chat). Words, typed in Optics' field or said (the router's `optics-card`, destination
+  layer, only while a card is on screen): "expand the picture", "show the picture big" → `expand`; "put the picture
+  aside", "set it aside", "shrink the picture" → `aside`; "close the picture", "hide the photo" → `close-card`, all
+  free. `setMode` keeps `aside` only while `asideAllowed()` (the camera going off folds it to `frozen`). A phone, a
+  narrow window, the screen look and a reviewed Look stay `frozen` / `review` as in v7.
+- **Which picture a question is about** (`question(text)`, `asideQuestionRoute(text, { cmd, labels, sceneChanged })`).
+  While aside: Tell me more, What's this part?, a question naming one of the Look's labels (its words, three letters or
+  more) or "about / in / from the picture" → `card` (a follow-up on the Look's frame, `ask`); fresh words ("look
+  again", "look closer", "new look", "new picture", "take a picture", "snap a photo of this", "what about now?") → a
+  new Look; any other question → a new Look when the scene changed, else `card`. The Look keeps Watch's 64 × 36 gray
+  thumbnail of its own moment (`frozen.luma`); `sceneChanged()` compares the live one with it by Watch's measure
+  (`changedFraction`, a pixel moved by more than `pixelDelta` 25, more than `changeFraction` 6% of them). Unknown (no
+  thumbnail, the camera off or switched) counts as changed, so a question is never answered from an old picture by
+  accident. A new Look taken this way says "New look." first. Each answer is marked: the Look's header
+  `optics-answer-mark` "NEW LOOK" (`data-kind="new"`, camera Looks, not a review) and each follow-up's question line
+  "ABOUT THIS PICTURE" (`data-kind="card"`). Typed questions and Optics' mic take the same path (`onAskKey`, the mic's
+  final words, through `routed()`).
+- **The live view while aside** (`syncLiveLook`, from `setMode`): it pauses (`look`) only while a Look fills the stage
+  (`frozen`, `review`) and goes on as soon as none does (aside, Live, the card closed). A phone's Look is `frozen`, so
+  phones pause as in v8.0.
+- **"look …" (E4).** Optics' explicit Look words are whole sentences: "look", "look here", "look now", "take / have a
+  (quick) look", and "look at this / that / it / these / those / me" with at most three more words ("look at this one
+  here"). Before, any sentence that started "look" in Optics' field or mic was a Look ("look up the weather", "look, I
+  think we should wait", "look at my calendar for Friday"); the corpus' optics section keeps 16 such sentences, which
+  now go to Jarvis.
+- **"Take a picture" (E7)**, "snap a photo", "grab a pic of this", "new picture": a new Look (`fresh: true`, the
+  question "What am I looking at?"), from live, aside or frozen with the camera live.
+- **Open by voice (E2)** (`isOpticsOpenRequest`; `voiceOpticsOpen(text, { cameraAllowed, ios, hidden })` → `open`,
+  `need-tap`, `need-front` or null): "optics", "open optics", "camera on", "open / start / turn on / show me / bring
+  up the camera (webcam, optics)", "switch cameras", "use the Logitech camera" (`NAMED_CAMERA`, then `findNamedCamera`
+  among the described cameras). The router's `optics-open` (app layer, `camera: true`, so never an alternative
+  reading) → `openOpticsByWords`: Optics open already → "Optics is on." (never a paid question); typed in the chat →
+  Optics opens on any device (Enter is a gesture); said → `ios`: `need-tap` ("Tap Look to turn the camera on.", kept
+  30 s for Voice Mode's Look tap); a computer with Jarvis hidden: `need-front`, a notification (tag `jarvis-optics`)
+  whose click opens Optics, and "The camera only runs while I'm on screen. Click the notification to bring me up.";
+  the permission `granted`: `open` (Optics over Voice Mode, no Look, "Optics is on."); else `need-tap`. A camera switch
+  in the words runs once the camera is live (`autoCommand`). v8.0's live view words and the v7 Look words take the
+  same `hidden` rule (`voiceLiveViewRequest`, `voiceCameraRequest`). "Close the camera" with Optics closed
+  (`optics-close`): a camera view on another screen goes off ("Camera off."), else "The camera is off."; typed in
+  Optics' own field it closes Optics. "Video mode" is the live view (`LIVE_VIEW_ON` / `LIVE_VIEW_OFF`: "video mode",
+  "go into / switch to video mode", "stop / exit / leave video mode").
+- **A Look on another screen (E5).** Screens' look panel taking the Look calls `optics.sendAway(frameId)` (app.js
+  `closeViewerFor`): with the camera live the card folds (`closeCard`), the Look's row in the log reads "ON YOUR OTHER
+  SCREEN" (`data-away`) and keeps its whole picture, the notice says "On your other screen.", and the camera and the
+  live view go on. Without the camera (a reviewed Look, the screen look) Optics closes as in v7.1, since folding the
+  card would turn the camera on. "Bring it back" (`showScreenInApp`) with Optics open → `optics.bringBack(frameId)`:
+  the card opens again (aside on a computer with the camera live); with Optics closed → `reviewOptics` as before. The
+  card's **Other screen** goes through the router (`routed('put this on my other screen')`).
+- **Research this (E3)** (`src/lib/research-offer.js`; the router's `optics-research`, top layer, Voice Mode and
+  Optics' field): "research this / it / that", "look this up", "look up this", "look into this", "find out (more)
+  about this", "dig (deeper) into this", "read up on this", "do some research on this"; "in depth" or "deep research
+  this" (the home base's deep job); "in the background", "on the home base" or "have the home base research this"
+  (only the home base). "Research the best laptops under $800" (its own subject) and "look it up" stay Jarvis's.
+  - **The subject, in words** (`researchSubject`): the open Look's tapped label, else its first label, with the
+    answer's first sentence; else that sentence; else the live view's caption; else `resolveThis` outside Optics (a
+    hologram's title, the last question). None with the camera live: a Look first, by its price ("Let me look first:
+    about 3¢."), then the offer; none at all: "Show me first: open Optics and look, then say research this."
+  - **The offer, prices first** (`researchOffer`, `estimateResearchCost`, README's figures): "Research this coffee mug?
+    A quick answer with a web search, about 10¢. A research mission with 8 agents, about $1.70. Or the home base can
+    do it in the background, up to $1.25." (the team size and depth from Settings; without a home base, two ways). In
+    Voice Mode it is a question (`api.question({ id: 'research-offer', … })`): "quick" and "cancel" are its own
+    answers, at once; "mission" and "home base" are the router's `optics-research-answer` (answer layer,
+    `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
+    `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
+    Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
+  - **The ways** (`researchPrompt`): Quick → a follow-up on the open Look (`optics.followUp`) or a quick turn ("Research
+    this with a web search and give me a quick answer: <words>."); Mission → a swarm turn in words ("Research <words>:
+    what it is, its specifications, prices and reviews, and anything to watch out for."; the agents can't see the
+    picture); Home base → `runBrainCommand({ kind: 'research', prompt, depth })`.
+  - **With the live view on**, the quick answer goes through its gate (§27) and the mission and the home base don't
+    (`outsideLiveView`), which the offer says ("Those two are outside the live view's dollar an hour."); when a quick
+    answer's worst case wouldn't fit (`quickAnswerFits`), the offer says "A quick answer would take the live view past
+    its dollar this hour." instead of offering it.
+- **Router state** (app.js `routerState`, the optics block): `s.optics.mode` (`aside` among the others),
+  `s.optics.card` (`{ frameId, labels, aside }` while a Look's card is on screen) and `s.optics.sceneChanged` (while
+  aside). Optics' api adds `question`, `card()`, `sceneChanged()`, `sendAway`, `bringBack`, `liveSummary`, `mode`,
+  `canLook()`, `followUp`, `notice` and `offerResearch`.
+- **Tests.** Unit `optics.handsfree` (E4's 16 sentences, the Look forms, fresh words, the card words, video mode,
+  `voiceOpticsOpen`, E7, the aside rule, `findNamedCamera`, the no-steal corpus), `optics.research` (words, subject,
+  prices, the offer with and without the home base and the live view, answers, prompts; the strict mock answering the
+  quick way with one web search), `live-gate` and `optics.gate-engine` (§27), and the optics rows of `voice-corpus.mjs`
+  and `collisions.mjs`. E2E `optics-aside.mjs`: `optics-aside` (Mac: the live video stays big after LOOK, its track
+  live, and the Look sits in its card with NEW LOOK; Expand, Live and the tile; the typed card words; the log reopens
+  the card), `optics-aside-followups` (a scene that changes: a question with the card's scene is a follow-up with no
+  frame, ABOUT THIS PICTURE; with a new scene a new Look; "look again" always looks), `optics-aside-live-view` (the
+  live view keeps looking while aside, pauses while expanded, goes on with Live; the hour counts the Look),
+  `optics-aside-live-cap` (§27), `optics-aside-screen` (two monitors: Other screen; Optics stays live, the card folds;
+  "bring it back"), `optics-open-by-voice` (Mac Voice Mode: "open optics" with no request to Claude, "close the
+  camera", "video mode"), `optics-open-by-voice-iphone` ("Tap Look to turn the camera on."; the tap opens Optics with no
+  Look) and `optics-research` (the offer shown and said; Cancel sends nothing; Quick one quick-mode request with a web
+  search; Mission one swarm turn; Home base one job on the Core; with the live view on, the offer's wording, and at
+  97¢ no quick answer offered). Changed on purpose: `optics-look-screen` (Optics stays open and live, the card folds,
+  "bring it back" typed in Optics' field reopens it aside), `optics-keys` (a Mac's Look is aside), and the pins checks
+  (they measure the pins in their own box, the card's on a Mac).
+
 ### 18.2 The natural voice (Kokoro-82M, on the device)
 
 **Files.**
@@ -3664,8 +3772,10 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
 
 The owner asked for a live "video mode" on the cheap model, "always looking … constant for like an hour. Max is $1
 per hour." The live view is that: one-off looks on Claude Haiku 5.5 about once a second, for up to an hour, under a
-budget of $1 in any rolling hour that its own looks never pass. Questions asked during it count in the same hour and
-are always answered (below), so after a question at the limit the hour can read a few cents over $1.
+budget of $1 in any rolling hour that its own looks never pass. Questions asked during it count in the same hour. In
+v8.0 they were always answered, so after a question at the limit the hour could read a few cents over $1; since v8.1
+each of their requests is reserved at its worst case first and refused out loud when it would pass the $1 ("Answers
+in the hour (v8.1)", below).
 
 **Files.**
 - `src/engine/live.js`: `LIVE_DEFAULT_MODEL` (`claude-haiku-5-5`), `LIVE_SYSTEM` (starts "You are Jarvis Live view"),
@@ -3770,13 +3880,16 @@ the 15 s between lines), and a newer notice replaces one still waiting. `data-li
 
 **Pauses** (`data-liveview-paused`): `look` — a Look (typed, Space, LOOK, or said in Voice Mode) or a past Look
 reopened from the log puts its frame and answer on screen: "Paused while you look at this" until **Live**; a look already under way finishes and is counted, but its summary isn't shown and its line isn't
-listed or said (the next look after Live says it if it still matters). The Look and its
-follow-ups (Tell me more, What's this part?, Hologram of this) asked during the live view count toward the hour's $1
-when their turns end (`liveCount`), through a run listener of their own (`countLiveRun`, attached as soon as the run
-exists): Live, the LIVE pill, Esc or Optics closing take the answer sheet and its listener away while the answer goes
-on in the chat and is billed, and the cost is still counted (also after Optics has closed: the budget lives in
-localStorage). Questions are never refused at the limit: they work as before the live view, are counted, and can take
-the hour a few cents over $1 ("$1.03 this hour"); the looks then wait until the hour is back under $1. `cap` — "Live
+listed or said (the next look after Live says it if it still matters). v8.1: on a computer a Look sits aside beside
+the live video and the live view goes on; `look` holds only while a Look fills the stage (expanded, a phone's Look, a
+past Look reviewed: §18.1, `syncLiveLook`). The Look and its
+follow-ups (Tell me more, What's this part?, Hologram of this) asked during the live view count toward the hour's $1:
+Live, the LIVE pill, Esc or Optics closing take the answer sheet away while the answer goes on in the chat and is
+billed, and the cost is still counted (also after Optics has closed: the budget lives in localStorage). v8.0 counted
+them when their turns ended (`liveCount`, a run listener of their own, `countLiveRun`); v8.1 counts each request in the
+engine instead (below), and `countLiveRun` runs only for deps without the gate (`deps.liveGate`), so nothing is
+counted twice. v8.0 never refused a question at the limit (the hour could read "$1.03 this hour"); v8.1 refuses one
+that would pass the $1, before it is sent (below). `cap` — "Live
 view paused: it has spent $1 in the last hour. It can go on at 2:41 PM." (`budget.resumeAt`, named rounded up to the
 minute by `liveResumeShownAt`, so Resume already works at the minute named) with **Resume**
 (`optics-liveview-resume`, `data-resume-at`), disabled until then; the live view never goes on by itself. If another
@@ -3818,8 +3931,10 @@ reload, and `performance.now()` can stand still while a computer sleeps, so a gu
 longer than needed after a sleep; a clock set back counts the hour longer, which is safe. Two tabs that check the
 budget in the same millisecond at the edge can each send one look (about 0.014¢), and a reply can cost up to about
 0.01¢ more than its estimate (100 output tokens assumed, `max_tokens` 300). A question whose page is reloaded before its
-answer ends is cut off and isn't counted in the hour. In Voice Mode over Optics, a question without "this" ("is it
-charged?") is an ordinary turn for Jarvis: it neither pauses the live view nor counts in the hour.
+answer ends is cut off; since v8.1 its open reservation stays in storage and counts at its worst case until it is an
+hour old. In Voice Mode over Optics, a question without "this" ("is it charged?") is an ordinary turn for Jarvis: it
+doesn't pause the live view, but since v8.1 it counts in the hour (every answer sent from this window while its live
+view is on does).
 
 **Tests.** The strict mock answers a structured request whose system prompt starts "You are Jarvis Live view"
 (`test/mock/optics.mjs` `liveLookPlan`; `configureLive(t.mock, { scene, costUsd, delayMs, errors })`: one scripted
@@ -3847,6 +3962,66 @@ and `optics-live-bell-voice` (the cue's rule), `optics-live-mic` (Optics' mic st
 (the owner's tap kept with Continuous off) and `optics-live-phone-panel` (how much of the picture the panel and
 caption cover in portrait, sideways and at 320 px; the tap for all five lines). Unit tests: the words, the viewer rule
 and `liveSpentText`.
+
+**Answers in the hour (v8.1).** "Max is $1 per hour" holds for the answers asked while the live view is on, not only
+for its looks. One mechanism, in the engine, over v8.0's budget: `src/lib/live-gate.js` (pure; the clock, the storage
+and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), `src/engine/jarvis.js`
+(`startTurn(conv, { gate })`), app.js (`liveTurnGate`, `getLiveGate`).
+- **Which requests.** Every main-model request of a turn sent from a window whose live view is on (`liveViewOn()`: on
+  or paused): a Look, its follow-ups, any question typed or said in that window, a quick research answer, and each
+  later request of the same turn (a tool round, a `pause_turn` continuation). app.js `send()` gives every turn a gate
+  (`createTurnGate({ gate, isOn })`, one per turn) and, while the live view is on, makes it a quick turn
+  (`mode: 'quick'`: a swarm's agents are outside the gate). A research mission (its offer says so) and the home base
+  are outside (`outsideLiveView`); the demo has no gate.
+- **The worst case** (`requestWorstUsd(params, { model })`): the request's input as sent (system, tools, messages;
+  text and JSON at 3 characters a token; a picture from its real size, read from the JPEG or PNG header, else the
+  4,784-token cap; a PDF about one token per 20 bytes) at the 5-minute cache-write price (the cache may be cold), all
+  of `max_tokens` at the output price, and $0.01 for each web search its tools allow (`max_uses`). While the live view
+  is on, `max_tokens` is 4,000 for a turn's first request and 1,000 for later ones (`gateMaxTokens`; `leadParams`
+  takes the smaller): a Look's worst case is then about 27¢ (19,000 input tokens, 4,000 out, ten searches), a
+  follow-up's about 28¢, so questions are refused from about 72¢ spent in the hour.
+- **Reserve, then send** (`gateRequest`, in `leadRequest` before each request). `reserve(usd)` adds every window's
+  open reservations to the hour's spending; if that and this request would pass $1 the request is not sent:
+  `LiveCapRefused`, and the turn fails with `{ kind: 'live_cap', retryable: false }` and `capLine(resumeAt)`: "That
+  would take the live view past its dollar this hour. It can go on at 2:41 PM, or say 'stop live view' and ask
+  again." (the time rounded up to the minute like the live view's own note; without one, "Say 'stop live view' and
+  ask again."). A refused first request takes its question out of the history, so it can be asked again; a Stop asked
+  meanwhile wins over the refusal. Optics shows and says it (`sayAloud`: `sayNotice` where Jarvis may speak, not over
+  Voice Mode); Voice Mode says it as the turn's error; the chat shows it on the turn. This is the only refusal: the
+  live view's own looks keep their pause at the limit (above), and nothing else refuses a question.
+- **Settle.** Answered: `settle(id, responseCost(model, usage))`, the real cost into v8.0's budget (`budget.add`) and
+  the reservation gone. Failed with an HTTP status before any output (429, 529, 500…): `release`, nothing counted.
+  Stopped or cut after it was sent: `keep`, the reservation counted as spent (it may have been billed; the worst is
+  assumed).
+- **Every window.** Each window keeps its open reservations in localStorage under its own key
+  (`jarvis.liveView.reserved.<tag>`) beside v8.0's `jarvis.liveView.spend`, so every window sees every other's and
+  none can drop another's. A Web Lock (`navigator.locks`, `jarvis.liveView.gate`) makes the check and the reservation
+  one step across windows; without Web Locks two windows at the edge can each reserve once. A reservation never
+  settled (its window closed or reloaded mid-request) counts until it is an hour old. The looks check `gate.fits()`
+  (`deps.liveGate`: reservations included), so a look never takes room an answer holds; the meter shows spending.
+- **Counted once.** v8.0's rule stays: a turn that sent a request while the live view was on keeps counting after the
+  live view stops (Live, the LIVE pill, Optics closed): the turn gate is sticky, and its later requests get a ticket
+  of 0 that counts their real cost (`gate.count`). v8.0's `countLiveRun` is off when the gate is wired
+  (`liveCount: !!liveView && !deps.liveGate`), so no question is counted twice. A turn that never sent a request while
+  the live view was on goes out exactly as before.
+- **Hologram of this** stops the live view first (the hologram covers Optics, which stops it anyway), so its turn is
+  an ordinary one, not held to 4,000 tokens.
+- **Known limits.** Only a window whose live view is on gates its answers: a question asked in another window
+  meanwhile is neither gated nor counted. The worst case can't bound what a server tool adds inside its own request
+  (a web search's results, a fetched page of up to 12,000 tokens) nor a refusal's fallback to another model: the real
+  cost is what is counted, so such a request can take the hour past $1 by its difference, and the next request is
+  then refused.
+  With the live view on every answer is a quick one, at most 4,000 then 1,000 tokens a request: a long answer may
+  stop short ("Tell me more" goes on). In Voice Mode the refusal is said with Voice Mode's apology for a failed turn.
+- **Tests.** Unit `live-gate` (reserve, settle, release, keep; refused at the edge; two windows sharing storage; the
+  lock; a closed window's reservations; storage that throws or is full; the worst case of a Look, a tool round and a
+  web search; `capLine`; the engine side; the sticky turn gate) and `optics.gate-engine` (the strict mock: 4,000 then
+  1,000 `max_tokens`, settled to the real cost; the live view off changes nothing; refused at 97¢ with the question
+  out of the history, then answered after "stop live view"; a 529 released, then settled; Stop keeps the reservation;
+  the hour filled mid-turn refuses the next request; a web search with `pause_turn`; the live view stopped mid-turn
+  keeps counting). E2E `optics-aside-live-cap` (Mac, replies read aloud, 97¢ spent: "Tell me more" typed is refused
+  out loud and nothing is sent; "stop live view"; the same question answered) and `optics-research` (at 97¢ no quick
+  answer is offered). Changed on purpose: unit `optics.liveview` ("New picture" is a new Look, not the camera's Live).
 
 ## 28. v8.1: Hands-free on a Mac
 
