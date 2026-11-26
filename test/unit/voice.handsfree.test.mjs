@@ -689,6 +689,51 @@ test('MAC-R3-3: braked after claps, the router’s own flags decide: "stop watch
   }
 });
 
+// MAC-R4-1: the router calls a home base research job or a watch free (free: kind !== 'brief'), but both run on the
+// owner's key (a quick job up to $1.25, a deep one $3, a watch $0.30 a day): paid words for the brake and the count.
+const HOME_BASE_JOBS = ['research the history of the Roman Empire in the background', 'look into electric cars overnight', 'let me know when the new PlayStation goes on sale', 'watch for flights to Paris under $300'];
+async function realRouter() {
+  const { createRouter, registerTodayCommands, TODAY_ORDER } = await import('../../src/lib/command-router.js');
+  const r = createRouter({ order: TODAY_ORDER });
+  registerTodayCommands(r);
+  return { route: (readings) => r.route(readings, { surface: 'voice', homebase: { available: true, linked: true } }), run: () => false };
+}
+function fakeHomeBase(jobs) {
+  return { command: (text) => (jobs.push(text), { handled: true, done: Promise.resolve({ ack: 'Very good. The home base is researching it.' }) }) };
+}
+
+test('MAC-R4-1: braked after claps, a TV’s home base research or watch words get the brake line and start no job (4 wakes)', async (t) => {
+  const router = await realRouter();
+  let carried = { asked: 3, braked: true };
+  const jobs = [];
+  for (const words of HOME_BASE_JOBS) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say((n) => (n === 1 ? words : null));
+    const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+    env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router, homeBase: fakeHomeBase(jobs) } });
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    assert.ok(env.log.spoken.some((x) => x.text === BRAKE_LINE), `"${words}": the brake line`);
+  }
+  assert.deepEqual(jobs, [], 'no home base job');
+  assert.ok(carried.braked, 'still braked');
+});
+
+test('MAC-R4-1: one claps wake while hidden, a TV saying "look into <topic> overnight" in every listen: at most 3 home base jobs, then the brake', async (t) => {
+  const topics = ['electric cars', 'the Roman Empire', 'black holes', 'tax law', 'sourdough bread', 'the stock market', 'volcanoes', 'jazz history'];
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say((n) => (n >= 1 && n <= topics.length ? `look into ${topics[n - 1]} overnight` : null));
+  const jobs = [];
+  let carried = { asked: 0, braked: false };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: 'x', extra: { hiddenCount, router: await realRouter(), homeBase: fakeHomeBase(jobs) } });
+  await until(env, () => env.log.closes.length >= 1, 'the session to end', 300000);
+  assert.ok(jobs.length <= 3, `at most 3 jobs (${jobs.length})`);
+  assert.ok(env.log.spoken.some((x) => x.text === BRAKE_LINE), 'then the brake');
+  assert.ok(carried.braked && carried.asked >= 3, `counted (${JSON.stringify(carried)})`);
+});
+
 // MAC-R3-1: after the brake, two claps and "Hey Jarvis" in the same breath: the owner called him, so the count starts
 // again (the wake window heard the wake words, or Standby's kept microphone did: barge-in), and the greeting keeps it.
 test('MAC-R3-1: braked, claps with "Hey Jarvis" heard by the wake window: the question in the offer’s listen is answered', async (t) => {

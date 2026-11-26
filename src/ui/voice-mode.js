@@ -3133,14 +3133,16 @@ function createVoiceMode(opts) {
   /**
    * MAC-R3-3: whether carrying out `hit` may cost money, turn the camera on or send the words out (a question in the
    * hidden count, A6; refused while braked in the background): what the router's flags mark (not free, the camera, the
-   * check), a Chrome task (asked for or started), the briefing, and a question's answer other than no (a price
-   * question's "yes" is what pays). "Stop watching" and the other stops are free.
+   * check), a Chrome task (asked for or started), the briefing, a home base job (MAC-R4-1: research and a watch run on
+   * the owner's key, though the router calls them free; only its results are free), and a question's answer other
+   * than no (a price question's "yes" is what pays). "Stop watching" and the other stops are free.
    */
   function paidHit(hit) {
     if (!hit) return true;
     const a = hit.action || {};
     if (a.free === false || a.camera === true || a.check === true) return true;
     if (hit.id === 'chrome-task' || hit.id === 'chrome-ask' || hit.id === 'briefing') return true;
+    if (hit.id === 'brain' && a.kind !== 'results') return true;
     if (hit.id === 'question') return !a.dismiss && a.choice !== 'no';
     return false;
   }

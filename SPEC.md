@@ -4453,22 +4453,23 @@ by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no li
 
 **The brake** (critique H2): `S.asked` counts the listens whose words were paid or sent (MAC-R3-3, `paidHit()`: a turn;
 a routed action the router marks not free, the camera or the check; a Chrome task asked for or started; the briefing; a
-question's answer other than no; not the wake window's, and not a free command) since the last "Hey Jarvis" (a word wake
-starts it from 0), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`), or Jarvis on screen. It goes on
-across sessions (MAC-R2-3: app.js keeps it, `hiddenCount`): woken by claps in the background, a session starts from it
-(`startWake()` only), braked once it reached 3; it then hears its offer's answer once. Braked in the background,
-`heard()` routes first: free commands are carried out (stops above all, and the routine's free answers), and only words
-that `paidHit()` names, or that match nothing, get the brake line, with nothing sent (MAC-R3-3). "Hey Jarvis" heard in
-the wake window or by Standby's kept microphone starts the count again, and the greeting keeps it so (MAC-R3-1); Standby
-makes a wake a word wake when "Hey Jarvis" comes while its claps' check runs, and passes one that comes right after the
-claps (within the 1.5 s between two triggers) to Voice Mode. A claps barge-in keeps the count (MAC-4: claps are the weak
-signal), and at the limit while hidden it opens no listen (he finishes, then the brake). A question that starts with the
-wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js; not a bare "Jarvis, …") starts the count
-again, and so does "Hey Jarvis" heard by Standby's kept detector while he listens (MAC-V-1; nothing to interrupt there).
-While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when
-you need me." and goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`,
-until the owner calls him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The
-claps' room-talk guard stays.
+home base job, research or a watch, which the router calls free (MAC-R4-1); a question's answer other than no; not the
+wake window's, and not a free command) since the last "Hey Jarvis" (a word wake starts it from 0), "Hey Jarvis"
+barge-in, tap or key (a listen started with `gesture`), or Jarvis on screen. It goes on across sessions (MAC-R2-3:
+app.js keeps it, `hiddenCount`): woken by claps in the background, a session starts from it (`startWake()` only), braked
+once it reached 3; it then hears its offer's answer once. Braked in the background, `heard()` routes first: free
+commands are carried out (stops above all, and the routine's free answers), and only words that `paidHit()` names, or
+that match nothing, get the brake line, with nothing sent (MAC-R3-3). "Hey Jarvis" heard in the wake window or by
+Standby's kept microphone starts the count again, and the greeting keeps it so (MAC-R3-1); Standby makes a wake a word
+wake when "Hey Jarvis" comes while its claps' check runs, and passes one that comes right after the claps (within the
+1.5 s between two triggers) to Voice Mode. A claps barge-in keeps the count (MAC-4: claps are the weak signal), and at
+the limit while hidden it opens no listen (he finishes, then the brake). A question that starts with the wake words
+("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js; not a bare "Jarvis, …") starts the count again, and so
+does "Hey Jarvis" heard by Standby's kept detector while he listens (MAC-V-1; nothing to interrupt there). While hidden,
+from `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me."
+and goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner
+calls him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk
+guard stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
 `{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `left` | `unsupported`;
