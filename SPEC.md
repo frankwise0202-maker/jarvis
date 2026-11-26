@@ -2276,7 +2276,8 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   - **The subject, in words** (`researchSubject`): the open Look's tapped label, else its first label, with the
     answer's first sentence; else that sentence; else the live view's caption; else `resolveThis` outside Optics (a
     hologram's title, the last question). None with the camera live: a Look first, by its price ("Let me look first:
-    about 3¢."), then the offer; none at all: "Show me first: open Optics and look, then say research this."
+    about 3¢."; in Voice Mode the Look starts once that line is said, `afterVoiceSays`), then the offer; none at all:
+    "Show me first: open Optics and look, then say research this."
   - **The offer, prices first** (`researchOffer`, `estimateResearchCost`, README's figures): "Research this coffee mug?
     A quick answer with a web search, about 10¢. A research mission with 8 agents, about $1.70. Or the home base can
     do it in the background, up to $1.25." (the team size and depth from Settings; without a home base, two ways). In
