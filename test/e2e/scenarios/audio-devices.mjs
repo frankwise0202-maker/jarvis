@@ -145,10 +145,13 @@ export default [
         const before = (await A(t)).gets.length;
         await t.page.evaluate(() => window.__voice.queue.push('testing one two'));
         await t.locator('audio-test-mic').click();
-        await t.waitFor(async () => /Heard: testing one two/.test(await t.text(t.locator('audio-heard'))), { timeout: 8000, message: async () => `the words (${await t.text(t.locator('audio-heard'))})` });
-        await play(t, TALK);
+        // Within the test's 5 s: the claps first (the detector waits about a second after the second one), then
+        // something to move the level bar; the recognizer hears its words meanwhile.
+        await t.page.waitForTimeout(500);
         await play(t, DOUBLE_CLAP);
+        await play(t, TALK);
         await t.waitFor(async () => /Two claps heard/.test(await t.text(t.locator('audio-claps'))), { timeout: 8000, message: 'the claps' });
+        await t.waitFor(async () => /Heard: testing one two/.test(await t.text(t.locator('audio-heard'))), { timeout: 8000, message: async () => `the words (${await t.text(t.locator('audio-heard'))})` });
         const a = await A(t);
         const mine = a.gets.slice(before);
         t.assert(mine.length >= 2 && mine.every((g) => g.deviceId === 'mac-mic'), `Every microphone opened on the chosen one (${JSON.stringify(mine)})`);
