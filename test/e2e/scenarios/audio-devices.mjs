@@ -178,6 +178,19 @@ export default [
         t.assert(t.requests('lead').length === 0, 'Nothing was sent to Claude');
         await t.screenshot('5-handsfree');
       });
+      await t.step('Test speaker: George through the chosen speaker; Compare: the speakerphone’s microphone open only for the second sentence', async () => {
+        const speaks = t.core.senses.speaks.length;
+        await t.locator('audio-test-speaker').click();
+        await t.waitFor(async () => /That was George/.test(await t.text(t.locator('audio-test-status'))), { timeout: 30000, message: async () => `George through the speaker (${await t.text(t.locator('audio-test-status'))})` });
+        t.assert(t.core.senses.speaks.length > speaks, 'George spoke from the home base');
+        const before = (await A(t)).gets.length;
+        await t.locator('audio-compare').click();
+        await t.waitFor(async () => /2 of 2/.test(await t.text(t.locator('audio-test-status'))), { timeout: 30000, message: 'the second sentence' });
+        await t.waitFor(async () => /Done\. The second time/.test(await t.text(t.locator('audio-test-status'))), { timeout: 30000, message: 'Compare done' });
+        const opened = (await A(t)).gets.slice(before);
+        t.assert(opened.length === 1 && opened[0].deviceId === 'sp-mic', `The speakerphone’s microphone opened once (${JSON.stringify(opened)})`);
+        await t.waitFor(async () => (await micState(t)).live === 0, { timeout: 3000, message: 'and closed again' });
+      });
       await t.step('a reload: the setup and the results are still there', async () => {
         await t.reload();
         await openCard(t);
