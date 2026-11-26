@@ -4116,21 +4116,25 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   needs where the hour has that, else by just what it needs. So a third search, or two searches with large results,
   go on while the hour holds them. The meter stops that request alone (its own abort, linked to the turn's) in two
   cases only: the hour itself can't hold its next round (then the turn ends with `capLine`, which is then true: the
-  time named is when the hour holds the question's floor again), or the request starts to fetch a page beyond
+  line is built once the stopped request is counted (v8.1.1 fix MONEY-R3-1), so the time named is when the hour
+  really holds the question's floor again), or the request starts to fetch a page beyond
   `LIVE_WEB` (a fetched PDF has no size limit): before the fetch runs, with its own line (`FETCH_LINE`; the error
   kind stays `live_cap`, so Optics and Voice Mode say it as they say the cap line): "That needs a whole web page, which I don't open while the live view is on. Say 'stop live view' and
   ask again." The conversation's tools keep `web_fetch` (removing it from gated requests would change the cached
   prefix: the whole prompt written again at the cache-write price, and the earlier thinking dropped or refused,
   which costs more than the page it saves). Either way the question stays in the history (the request was sent) and
-  the request counts at most what it may have cost (below). So no request sent while the live view is on can settle
-  the hour above $1.
+  the request counts what it may have cost, up to what the hour can hold (below). So no request sent while the live
+  view is on settles the hour above $1 (for the real spend, see Known limits).
 - **Settle.** Answered: `settle(id, responseCost(model, usage))`, the real cost into v8.0's budget (`budget.add`) and
   the reservation gone. Failed with an HTTP status before any output (429, 529, 500…): `release`, nothing counted.
   Stopped or cut after it was sent (by the owner, a dropped connection, a mid-stream error, or the meter), once its
   prompt was billed (`message_start` seen): `settleAtMost(id, meter.committed())` (v8.1.1, fix MONEY-R2-3): the
   meter's figure (an upper bound of what it may have cost: its prompt as billed, all of `max_tokens`, its searches and
-  rounds, those under way included), never more than was held. So retries and the owner's Stop no longer fill the
-  hour with reservations. With no meter figure (cut before `message_start`, or a request without a reservation):
+  rounds, those under way included), up to what the hour can still hold: what was held and the room beside it
+  (`min(figure, held + room())`, fix MONEY-R3-1). The meter's figure passes the hold only when a round ran past it (a
+  search result far larger than counted ahead, at an hour that couldn't grow the hold); that round may have used the
+  room beside the hold, so the room is never left on offer to later questions and looks. So retries and the owner's
+  Stop no longer fill the hour with reservations, and a stop never leaves spent room on offer. With no meter figure (cut before `message_start`, or a request without a reservation):
   `keep`, the reservation counted as spent, as before.
 - **Every window.** Each window keeps its open reservations in localStorage under its own key
   (`jarvis.liveView.reserved.<tag>`) beside v8.0's `jarvis.liveView.spend`, so every window sees every other's and
@@ -4152,7 +4156,9 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   meanwhile is neither gated nor counted. The web budget is asked for, not enforced by the API: searches beyond it go
   on while the hour holds them; a page fetch is stopped before it runs (the answer ends there with its line). The
   meter counts a search's results as 8,000 tokens until they arrive; results much larger than that, arriving at the
-  very edge, could have the next round started before the stop reaches the API (what is held is then what counts). A
+  very edge, could have the next round started before the stop reaches the API. The hour then counts the meter's
+  figure up to all its room (it reads $1.00, and nothing more is sent until it has room again), but the real spend
+  can pass $1 by a few cents: the round already ran, and the record never goes above $1 for it (fix MONEY-R3-1). A
   stopped or cut request counts all of its `max_tokens` (about 8¢ at 4,000 on the lead model): the output billed before
   the stop isn't known, so the upper bound is kept. With the live view on every answer is a quick one, at most 4,000
   then 1,000 tokens a request: a long answer may stop short ("Tell me more" goes on). In Voice Mode the refusal is said
@@ -4169,7 +4175,11 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   page and never settles the hour above $1; searches beyond the budget stopped by their cost; 15¢ left sends a
   question with `max_tokens` to fit, 5¢ refuses it; the meter alone; the worst case with results, pages and rounds;
   a swarm turn asked with the live view off keeps its limits when it starts mid-mission, at 0¢ and at 80¢; a new
-  chat's quick answer priced from `previewRequest`), and `live-gate.r2` (v8.1.1, fixes MONEY-R2-1, MONEY-R2-2,
+  chat's quick answer priced from `previewRequest`), `live-gate.r3` (v8.1.1 fix MONEY-R3-1, from the third review's
+  probes: a new chat at 60¢, 70¢ and 74¢ whose one search result is measured at 30,000 to 60,000 tokens: the hour
+  counts the meter's figure up to all its room, never passes $1, offers no room, and the line names when it has room
+  again; asked again, the question is refused before it is sent; at an empty hour the same result completes), and
+  `live-gate.r2` (v8.1.1, fixes MONEY-R2-1, MONEY-R2-2,
   MONEY-R2-3, from the second review's probes: at an empty hour, in a new chat and a warm one, two searches of about
   8,000 tokens and a third search complete at their real cost, and a page fetch ends with its own line, the question
   kept and at most the meter's figure counted; the cap line only when the hour can't hold the next round; three

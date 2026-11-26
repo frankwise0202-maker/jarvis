@@ -299,7 +299,8 @@ function parseReserved(raw) {
  *   extend(id, usd)   MONEY-R2-1: the reservation grows by `usd` when the hour still holds it
  *   settleAtMost(id, usd)
  *                     MONEY-R2-3: stopped or cut after it was sent, with `usd` an upper bound of what it
- *                     may have cost (its meter's): min(held, usd) counts as spent, the reservation goes
+ *                     may have cost (its meter's): that counts as spent, up to what the hour can still
+ *                     hold (what was held and the room beside it, MONEY-R3-1); the reservation goes
  *   keep(id)          it was stopped after it was sent (it may have been billed): the reservation
  *                     is counted as spent
  *   count(usd)        real money with no reservation (a request of a counted turn sent after the
@@ -467,13 +468,15 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
     extend: (id, usd) => run(() => tryExtend(id, usd)),
     /**
      * MONEY-R2-3: a request stopped or cut after it was sent, whose upper bound `usd` is known (its meter):
-     * at most that, never more than what was held, is counted as spent; the reservation goes.
+     * that is counted as spent, up to what the hour can still hold; the reservation goes. MONEY-R3-1: not
+     * only what was held: a round that ran past the hold (a search result far larger than counted ahead,
+     * at an hour that couldn't grow it) may have used the room beside it, so that room is never left on offer.
      */
     settleAtMost: (id, usd) =>
       run(() => {
         const e = mine.get(id);
         if (!e) return false;
-        const cost = Math.min(e.nano / NANO, isNum(usd) && usd > 0 ? usd : 0);
+        const cost = Math.min(isNum(usd) && usd > 0 ? usd : 0, e.nano / NANO + roomUsd());
         if (nano(cost) > 0) budget.add(cost);
         drop(id);
         return true;

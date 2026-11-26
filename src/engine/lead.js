@@ -459,22 +459,18 @@ function meterFor(ctx, ticket) {
  * error: not billed); kept when it may have been billed (stopped after it was sent, cut off
  * mid-stream, or a connection that dropped): the worst is assumed (its reservation counts; with no
  * reservation, what it already cost). MONEY-R2-3: a request whose meter saw its prompt billed counts
- * at most what the meter says it may have cost (its prompt as billed, all of max_tokens, its searches
- * and rounds), never more than was held: retries and the owner's Stop no longer fill the hour.
+ * what the meter says it may have cost (its prompt as billed, all of max_tokens, its searches and
+ * rounds), not its whole reservation: retries and the owner's Stop no longer fill the hour. MONEY-R3-1:
+ * up to what the hour can still hold, not only what was held (a round may have run past the hold).
+ * Returns the gate's promise, so a stop's line can wait for it.
  */
 function settleFailedTicket(ctx, ticket, err, metered = null) {
   const e = err && typeof err === 'object' ? err : {};
   const turnedDown = typeof e.status === 'number' && !e.jarvisStarted && !e.jarvisPartial && !isAbortError(err);
-  if (turnedDown) {
-    ticket.release();
-    return;
-  }
-  if (metered && metered.meter.started && typeof ticket.settleAtMost === 'function') {
-    ticket.settleAtMost(metered.meter.committed());
-    return;
-  }
+  if (turnedDown) return ticket.release();
+  if (metered && metered.meter.started && typeof ticket.settleAtMost === 'function') return ticket.settleAtMost(metered.meter.committed());
   const partial = e.jarvisPartial;
-  ticket.keep(partial ? responseCost(partial.model || ctx.leadModel, partial.usage, ctx.leadModel) : 0);
+  return ticket.keep(partial ? responseCost(partial.model || ctx.leadModel, partial.usage, ctx.leadModel) : 0);
 }
 
 /**
@@ -509,12 +505,14 @@ async function leadRequest(ctx, req) {
       return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
       if (metered) metered.done();
-      if (ticket) settleFailedTicket(ctx, ticket, err, metered);
+      const settled = ticket ? settleFailedTicket(ctx, ticket, err, metered) : null;
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
       // The meter stopped it (MONEY-R2-1): the hour couldn't hold its next round (the cap line), or it
-      // started to fetch a page beyond the budget (its own line). What it may have cost is counted.
+      // started to fetch a page beyond the budget (its own line). What it may have cost is counted, and
+      // the line is built once it is (MONEY-R3-1), so it names when the hour really has room again.
       if (metered && metered.meter.tripped && !ctx.stopped) {
+        await Promise.resolve(settled).catch(() => {});
         const line = typeof ticket.message === 'function' ? ticket.message(metered.meter.tripped) : 'That would take the live view past its dollar this hour.';
         throw new LiveCapRefused(line, req, { sent: true });
       }

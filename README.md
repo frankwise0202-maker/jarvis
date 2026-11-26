@@ -1037,9 +1037,12 @@ browser asks for permission.
     cost (about 27¢: a long answer with two web searches), or what's left of the hour when that's
     less, with a shorter answer to fit. He gives back what it didn't use as soon as the answer is
     in. An answer that needs more (another search, larger results) gets more set aside while the
-    hour has it; he stops it only when the hour itself can't hold its next step, so no request sent
-    while the live view is on can take the hour past $1. An answer stopped or cut off counts at
-    most what it may have cost. When not even the question and a short answer fit (from about 88¢ spent in a new chat,
+    hour has it; he stops it when the hour itself can't hold its next step, so what's sent while
+    the live view is on stays within the hour. One rare case can go a few cents past $1: a web
+    search whose results are far larger than usual, arriving when the hour is nearly spent, is
+    paid for before Jarvis can stop it (the hour then reads $1.00 and nothing more is sent until it
+    has room). An answer stopped or cut off counts what it may have cost, up to what's left of the
+    hour. When not even the question and a short answer fit (from about 88¢ spent in a new chat,
     earlier in a long one) he doesn't send it and says so, out loud where he speaks: "That would
     take the live view past its dollar this hour. It can go on at 2:41 PM, or say 'stop live view'
     and ask again." With the live view off, questions are as usual. The looks cost about 30–50¢ an
@@ -1274,7 +1277,7 @@ from the credit in your account. Rough examples:
 | A follow-up about the same picture (Tell me more, What's this part?) | about the same as a quick question |
 | Hologram of this | the price of a hologram, about 10–30¢ (shown on the button) |
 | Watch | about 0.6¢ each time Jarvis looks again, at most about 17¢ for a 5-minute session; up to 60 looks a day |
-| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on the small, cheap model), which never take the hour past $1; questions asked while it's on (about 3¢ each, kept short, at most two web searches and no whole pages) count in the same hour, and no request sent while it's on can take the hour past $1: Jarvis sets aside its worst case (about 27¢, or what's left with a shorter answer) while it's answered and stops it before it would cost more; with too little left he doesn't send it and says so. A question asked before the live view started isn't counted. Each device has its own hour (on an iPhone the Home Screen app and Safari each have their own) |
+| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on the small, cheap model), which never take the hour past $1; questions asked while it's on (about 3¢ each, kept short, at most two web searches and no whole pages) count in the same hour, and what's sent while it's on stays within the hour: Jarvis sets aside its worst case (about 27¢, or what's left with a shorter answer) while it's answered and stops it before it would cost more than the hour can hold (only a web search with far larger results than usual, at the very end of the hour, can take it a few cents past $1); with too little left he doesn't send it and says so. A question asked before the live view started isn't counted. Each device has its own hour (on an iPhone the Home Screen app and Safari each have their own) |
 | Research this (Optics) | the price is said first, and nothing is spent until you pick: a quick answer with a web search about 10¢ (6–16¢); a research mission at your team size and depth (8 agents at Balanced, about $1.70); the home base up to $1.25 a job ($3 in depth). With the live view on, only the quick answer counts in its hour |
 | Opening Optics by voice ("open optics", "camera on") | free (no picture is taken) |
 | Commands, said or typed ("new chat", "open settings", windows, "pull this up in Chrome", "which microphone are you using?") | free (see [Everything by voice](#everything-by-voice)) |
