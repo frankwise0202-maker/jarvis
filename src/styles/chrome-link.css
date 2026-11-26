@@ -85,3 +85,15 @@
 .cl-help {
   margin: 0;
 }
+
+/* On an iPhone the card is one line saying where to link it: plain help text, no state dot. */
+.cl-card[data-state='phone'] .cl-state {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  line-height: var(--lh);
+}
+
+.cl-card[data-state='phone'] .cl-dot {
+  display: none;
+}
