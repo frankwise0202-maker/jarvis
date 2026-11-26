@@ -19,7 +19,7 @@
 //   optics-open-by-voice      Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the
 //                             camera track live, "Optics is on."); "close the camera"; "video mode" starts
 //                             the live view; with Jarvis hidden, the line and one notification, whose click
-//                             opens Optics
+//                             opens Optics; a Look aside, then "look again": "New look." said first
 //   optics-open-by-voice-iphone  iPhone 13, Voice Mode: "open optics" asks for the tap ("Tap Look to turn
 //                             the camera on."); the tap opens Optics with no Look
 //   optics-research           Mac, the home base linked: "research this" with a Look aside: the offer with
@@ -394,7 +394,7 @@ export default [
   },
   {
     name: 'optics-open-by-voice',
-    title: 'Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the camera track live, "Optics is on."); "close the camera"; "video mode" starts the live view; Jarvis hidden, a notification first, and its click opens Optics',
+    title: 'Mac, Voice Mode: "open optics" opens the camera (no request to Claude, the camera track live, "Optics is on."); "close the camera"; "video mode" starts the live view; Jarvis hidden, a notification first, and its click opens Optics; with a Look aside, "look again" is said "New look." first',
     device: 'mac',
     timeout: 150000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
@@ -475,6 +475,21 @@ export default [
         await waitLive(t);
         t.assert((await liveVideoTracks(page)) === 1, 'the camera track live');
         t.assert(t.requests('lead').length === 0, 'nothing sent to Claude');
+      });
+      await t.step('a Look aside, then "look again": Jarvis says "New look." first, then the new Look goes', async () => {
+        const looks = () => leads(t).filter((r) => hasImage(r)).length;
+        await tapToTalk(['What am I looking at?']);
+        await waitAside(t);
+        await waitAnswer(t);
+        t.assert(looks() === 1, `one Look (${looks()})`);
+        const n = (await said(page)).length;
+        await tapToTalk(['Look again.']);
+        await t.waitFor(() => looks() === 2, { timeout: 20000, message: 'the new Look' });
+        await t.waitFor(async () => (await said(page)).length > n, { timeout: 10000, message: 'something said' });
+        const after = (await said(page)).slice(n);
+        t.assert(/^New look\.$/.test(after[0]), `"New look." said first (${JSON.stringify(after)})`);
+        await waitAnswer(t);
+        t.assert((await t.text(page.locator(tid('optics-answer-mark')))) === 'NEW LOOK', 'the answer is marked NEW LOOK');
       });
     },
   },

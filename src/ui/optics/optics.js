@@ -1625,6 +1625,31 @@ export function openOptics(deps = {}) {
     return changedFraction(now, frozen.luma, watchOpts.pixelDelta) > watchOpts.changeFraction;
   }
 
+  /**
+   * Runs `fn` once Voice Mode has said the line it is saying now (v8.1: "New look." before the Look):
+   * when it is no longer busy, after it was, or after 400 ms if it never was; at most 4 s.
+   */
+  function afterVoiceLine(fn) {
+    const t0 = Date.now();
+    let seenBusy = false;
+    const tick = () => {
+      if (closed) return;
+      const busy = !!(voiceNow && voiceNow.busy);
+      if (busy) seenBusy = true;
+      const waited = Date.now() - t0;
+      if ((!busy && (seenBusy || waited >= 400)) || waited >= 4000) {
+        try {
+          fn();
+        } catch (err) {
+          console.error('[jarvis] optics: the new look failed:', err);
+        }
+        return;
+      }
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  }
+
   /** With a Look aside: 'card' (a follow-up on its picture) or 'look' (a new Look): asideQuestionRoute. */
   function asideRoute(words, cmd) {
     return asideQuestionRoute(words, { cmd, labels: frozen ? frozen.pins.map((p) => p.text) : [], sceneChanged: sceneChanged() });
@@ -2734,6 +2759,12 @@ export function openOptics(deps = {}) {
         // v8.1, a Look aside: its card (a follow-up, no new frame), or a new Look by the rule.
         if (aside) {
           if (asideRoute(text, cmd) === 'card') return started('ask', () => asked(ask(cmd.question)));
+          if (deps.voice) {
+            // Over Voice Mode, Jarvis says "New look." first (this ack, said at once), and the Look goes
+            // once he has said it: its turn would cut the line short.
+            afterVoiceLine(() => look({ textOverride: cmd.question }));
+            return ack('look', 'New look.');
+          }
           return started('look', () => look({ textOverride: cmd.question }), 'New look.');
         }
         if (cmd.action === 'ask') return started('ask', () => asked(ask(cmd.question)));
@@ -2873,9 +2904,12 @@ export function openOptics(deps = {}) {
 
   // Opened over Voice Mode: the mic button is Voice Mode's (a tap is the core's tap), and it shows
   // whether Voice Mode is listening and what it hears.
+  // v8.1: Voice Mode's state as it last told us (busy: a turn or its speech), for "New look." first.
+  let voiceNow = null;
   function setVoice(info) {
     if (!deps.voice) return;
     const i = info && typeof info === 'object' ? info : {};
+    voiceNow = i;
     micBtn.hidden = false;
     micBtn.setAttribute('aria-pressed', String(!!i.listening));
     micBtn.classList.toggle('is-listening', !!i.listening);
