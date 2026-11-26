@@ -604,8 +604,9 @@ export async function startApp(rootEl) {
     // "How's the home base?": the Jarvis Core answers, free (a local exchange; v7.5).
     // v7.6: "research … in the background", "what did the home base find?", "watch for …", "brief me":
     // the home base acts (free, local exchanges) while one is linked.
-    // v8.1: the router picks the command, in the chat's order (routeChat).
-    onCommand: (text) => routeChat(text),
+    // v8.1: the router picks the command, in the chat's order (routeChat); if it fails, the words
+    // are a message, as for any words no command takes.
+    onCommand: (text) => safe(() => routeChat(text), false),
     onStop: () => stop(),
     onMic: () => toggleMic(),
     onHintAction: (code) => {
