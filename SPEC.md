@@ -2246,7 +2246,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   Optics opens on any device (Enter is a gesture); said → `ios`: `need-tap` ("Tap Look to turn the camera on.", kept
   30 s for Voice Mode's Look tap); a computer with Jarvis hidden: `need-front`, a notification (tag `jarvis-optics`)
   whose click opens Optics, and "The camera only runs while I'm on screen. Click the notification to bring me up.";
-  the permission `granted`: `open` (Optics over Voice Mode, no Look, "Optics is on."); else `need-tap`. A camera switch
+  the permission `granted`: `open` (Optics over Voice Mode, no Look; Jarvis waits for Optics' `cameraDone`, at most
+  12 s, and says `opticsOpenLine`'s line: "Optics is on." only once the camera is live, "I can't find a camera.",
+  the camera's own message such as "The camera is in use by another app…", or "The camera is starting."); else
+  `need-tap`. A camera switch
   in the words runs once the camera is live (`autoCommand`). v8.0's live view words and the v7 Look words take the
   same `hidden` rule (`voiceLiveViewRequest`, `voiceCameraRequest`). With a laptop hologram on top, "open the camera",
   "camera on" and "show me the camera" are its camera part (R10): the router's `optics-camera-part` (top layer, Voice

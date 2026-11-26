@@ -765,11 +765,12 @@ browser asks for permission.
   weather", "look, I think we should wait" or "look at my calendar for Friday" go to Jarvis.
 - **Open by voice.** "Open optics", "open the camera" or "camera on" opens Optics without taking a
   picture, so nothing is spent; "switch cameras" or "use the Logitech camera" opens it on that
-  camera. In Voice Mode on a Mac where you've allowed the camera, Optics opens over Voice Mode
-  ("Optics is on."). If Jarvis isn't on screen (another app is in front), the camera can't run:
-  he says so and shows a notification, and a click on it brings him up with Optics open. On an
-  iPhone, or before you've allowed the camera, he says "Tap Look to turn the camera on." Typed
-  in the chat, the words open Optics on any device. "Close the camera" closes it (with Optics
+  camera. In Voice Mode on a Mac where you've allowed the camera, Optics opens over Voice Mode, and
+  Jarvis says "Optics is on." once the camera is live (or why not: "I can't find a camera.", or
+  that another app is using it). If Jarvis isn't on screen (another app is in front), the camera
+  can't run: he says so and shows a notification, and a click on it brings him up with Optics
+  open. On an iPhone, or before you've allowed the camera, he says "Tap Look to turn the camera
+  on." Typed in the chat, the words open Optics on any device. "Close the camera" closes it (with Optics
   closed it turns off a camera you put on your other screen). "Video mode" is the live view:
   "video mode", "go into video mode", "stop video mode". With a laptop hologram on screen, "open
   the camera" shows the hologram's camera, and Jarvis reminds you to say "open Optics" for yours.
