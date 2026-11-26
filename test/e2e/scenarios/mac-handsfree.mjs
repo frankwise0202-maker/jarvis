@@ -171,7 +171,7 @@ async function backInStandby(t, page = t.page, timeout = 20000) {
   await waitListening(t, page);
 }
 
-async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, page = null } = {}) {
+async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, page = null } = {}) {
   const p = page || (await t.newPage({ device, settings: { ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
   await p.addInitScript(installFakeSpeech, speech);
   await p.addInitScript(installFakeMic, { wakeLock: true });
@@ -181,17 +181,18 @@ async function setup(t, { device = 'mac', speech = {}, settings = {}, george = f
   await p.addInitScript(() => {
     window.__voice.queue = [];
   });
-  if (bargeIn || wordStub) {
+  if (bargeIn || wordStub || devVoice) {
     await p.addInitScript(
-      ({ test, stub }) => {
+      ({ test, stub, voice }) => {
         try {
           if (test) localStorage.setItem('jarvis.handsFreeTest.v1', test);
           if (stub) localStorage.setItem('jarvis.dev.wakeWord', 'stub');
+          if (voice) localStorage.setItem('jarvis.dev.voice', voice);
         } catch {
           /* storage unavailable */
         }
       },
-      { test: bargeIn ? TEST_PASSED : '', stub: wordStub },
+      { test: bargeIn ? TEST_PASSED : '', stub: wordStub, voice: devVoice ? JSON.stringify(devVoice) : '' },
     );
   }
   await t.goto('/', { page: p });
@@ -492,6 +493,32 @@ export default [
         await t.waitFor(async () => /Ready when you are/.test(await voiceStatus(t.page)), { timeout: 20000, message: 'the paused check' });
         await backInStandby(t, t.page, 120000);
         t.assert(leadCount(t) === before, 'the paused words were not sent');
+      });
+    },
+  },
+  {
+    name: 'standby-hold-timeout',
+    title: 'A held session (a tour waiting at a decision) stays out of Standby until its cap after the owner’s last words, then goes back by itself (the 2 minutes shortened to 20 s)',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t, { devVoice: { holdCapMs: 20000 }, speech: { noSpeechMs: 60000 } });
+      await enterStandby(t);
+      await queue(t.page, '');
+      await wakeByClaps(t);
+      await waitSaid(t, /Shall I put on some/);
+      const heldAt = await t.page.evaluate(() => (window.__jarvisVoice.hold('tour') ? performance.now() : -1));
+      t.assert(heldAt > 0, 'held');
+      await t.step('held: not back after the usual quiet (8 s window, then 2.5 s)', async () => {
+        await t.page.waitForTimeout(15000);
+        t.assert(await t.page.locator(tid('voice-mode')).count(), 'Voice Mode is still up 15 s after the hold');
+      });
+      await t.step('the cap is up: Standby, by itself', async () => {
+        await backInStandby(t, t.page, 20000);
+        const took = (await t.page.evaluate(() => performance.now())) - heldAt;
+        t.assert(took >= 19500, `back ${Math.round(took)} ms after the hold (its cap: 20 s)`);
+        t.assert(leadCount(t) === 0, 'nothing was sent');
       });
     },
   },

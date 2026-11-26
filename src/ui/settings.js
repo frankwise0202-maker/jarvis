@@ -824,6 +824,15 @@ export function createSettingsPanel(o) {
         forId: fieldId('wakeReturn'),
         control: switchField('wakeReturn', { label: 'Return to standby after a conversation' }),
       }),
+      // v8.1 (A1, SPEC §28.1): computers only (an iPhone or iPad listens only while Jarvis is on screen).
+      currentOs() === 'ios' || currentOs() === 'android'
+        ? null
+        : row({
+            label: 'Keep talking when Jarvis is in the background (Mac)',
+            help: 'After “Hey Jarvis”, two claps, or a tap, he goes on hearing you and answering while his window is behind other windows or the display sleeps. You hear a chime each time he listens, and the tab says what he is doing.',
+            forId: fieldId('handsFreeBackground'),
+            control: switchField('handsFreeBackground', { label: 'Keep talking when Jarvis is in the background (Mac)', get: (st) => st.handsFreeBackground !== false }),
+          }),
       h('div', { class: 'set-row-actions' }, goBtn),
     );
   }

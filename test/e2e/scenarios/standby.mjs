@@ -463,7 +463,7 @@ export default [
   },
   {
     name: 'standby-background',
-    title: 'Mac: Standby keeps listening while Jarvis is in a background tab; two claps wake him there (the wake sound and the greeting are heard), and once he is on screen he listens for the answer. iPhone: hidden pauses the microphone, shown resumes it',
+    title: 'Mac: Standby keeps listening while Jarvis is in a background tab; two claps wake him there (the wake sound and the greeting are heard), and (v8.1, hands-free) he listens for the answer there too. iPhone: hidden pauses the microphone, shown resumes it',
     device: 'mac',
     fakeMusic: true,
     timeout: 150000,
@@ -476,15 +476,18 @@ export default [
         t.assert((await standbyState(t))?.listening === 'live', 'Still listening');
         t.assert((await mic(t)).live === 1, 'The microphone stays on (the browser shows it on the tab)');
       });
-      await t.step('two claps in the background: the greeting is said; shown again, he listens', async () => {
+      await t.step('two claps in the background: the greeting is said, and he listens there (v8.1, A1)', async () => {
         await play(t, DOUBLE_CLAP);
         await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
         await waitSaid(t, /Shall I put on some/, { timeout: 15000 });
-        t.assert((await voiceState(t)) !== 'listening', 'No listening while Jarvis is not on screen');
-        await setHidden(t.page, false);
-        await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen once on screen' });
+        // v8.1 (changed on purpose): on a Mac a session woken in the background listens there (Settings → Voice →
+        // Wake Jarvis → Keep talking when Jarvis is in the background, on by default). With it off, he listens only
+        // once on screen, as before: mac-handsfree-setting-off.
+        await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen while still hidden' });
+        t.assert(await t.page.evaluate(() => document.hidden), 'still in the background');
         await t.page.evaluate(() => window.__voice.say('Go back to sleep.'));
         await backInStandby(t);
+        await setHidden(t.page, false);
       });
       await t.step('an iPhone pauses when hidden and resumes when shown', async () => {
         const page = await t.newPage({ device: 'iphone13' });
