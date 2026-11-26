@@ -276,7 +276,8 @@ function isInstruction(p) {
   // thing ("confirm button doesn't work", "ensure checkbox won't tick"; CHROME-VOICE-R4-2).
   const rest = ws.slice(k);
   const firstVerb = rest.slice(1, 6).find((w) => TROUBLE_VERBS.has(w) || PLAIN_VERBS.has(w));
-  if (ONLY_VERBS.has(ws[k]) && !PAGE_NOUNS.has(rest[1]) && !(firstVerb && TROUBLE_VERBS.has(firstVerb))) return true;
+  const upToVerb = firstVerb ? rest.slice(1, rest.indexOf(firstVerb)) : rest.slice(1);
+  if (ONLY_VERBS.has(ws[k]) && !PAGE_NOUNS.has(rest[1]) && !(firstVerb && TROUBLE_VERBS.has(firstVerb)) && !upToVerb.some((w) => PREPOSITIONS.has(w))) return true;
   return !statementShape(rest, raws.slice(k));
 }
 
