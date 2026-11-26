@@ -32,6 +32,7 @@ import regressions from './scenarios/regressions.mjs';
 import optics from './scenarios/optics.mjs';
 import opticsCamera from './scenarios/optics-camera.mjs';
 import opticsLive from './scenarios/optics-live.mjs';
+import opticsLive2 from './scenarios/optics-live-2.mjs';
 import naturalVoice from './scenarios/natural-voice.mjs';
 import holograms from './scenarios/holograms.mjs';
 import hologramsReal from './scenarios/holograms-real.mjs';
@@ -59,7 +60,7 @@ const presence = await optionalScenarios('./scenarios/presence.mjs');
 const ARTIFACTS = path.join(ROOT, 'test', 'artifacts');
 // Optics and the natural voice (v7 senses) run last; Optics' scenarios start a Chromium of their own
 // with a fake camera (browserArgs, one such browser open at a time).
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...naturalVoice];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...opticsLive2, ...naturalVoice];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

@@ -471,6 +471,9 @@ export async function startApp(rootEl) {
   const sttPausingPreviews = {
     ...stt,
     startListening: (options = {}) => {
+      // Jarvis stops talking first, as the chat mic does (v8.0): a live view line or a reply read
+      // aloud through the Mac's speakerphone would otherwise be heard as the owner's question.
+      safe(() => stopSpeakingNow());
       safe(() => musicPlayer.pauseForMic());
       let open = true;
       otherMics += 1;
@@ -2154,20 +2157,24 @@ export async function startApp(rootEl) {
 
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
+    // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
+    // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
+    // blueprint is on screen: it is about that. The live view's words follow the same rule: with a
+    // hologram or blueprint on screen, "keep watching" never turns the camera on (v8.0).
+    const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
     // "Live view", "watch me", "keep watching": the camera opens by the same rule, then the live view.
-    const live = safe(() => voiceLiveViewRequest(text, { cameraAllowed, ios: isIOS() }), null);
+    const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
     if (live === 'need-tap') {
       pendingVoiceLook = { text: '', at: Date.now(), live: true };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
     }
     if (live === 'start') {
-      const optics = openOpticsScreen({ voice: true, autoLive: true });
-      return { handled: true, command: { action: 'optics', kind: 'liveview', ack: optics ? 'Live view on. I’ll speak up when I see something.' : 'The camera couldn’t start.' } };
+      // Jarvis says the outcome once the camera is live and the live view has started: "Live view
+      // on…", the pause at the hour's $1, or why the camera couldn't start (never "on" when it isn't).
+      const optics = openOpticsScreen({ voice: true, autoLive: true, autoLiveSaid: true });
+      const done = optics && optics.autoLiveDone ? optics.autoLiveDone : Promise.resolve({ error: 'The camera couldn’t start.' });
+      return { handled: true, command: { action: 'optics', kind: 'liveview', ack: '' }, done };
     }
-    // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
-    // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
-    // blueprint is on screen: it is about that.
-    const viewerOpen = !!(getHologramViewer() || getBlueprintViewer());
     const kind = safe(() => voiceCameraRequest(text, { viewerOpen, cameraAllowed, ios: isIOS() }), null);
     if (!kind) return null;
     if (kind === 'need-tap') {
@@ -2204,6 +2211,8 @@ export async function startApp(rootEl) {
       // v8.0 Live view: looks on the cheap model, the lines spoken through the voice output.
       liveLook: state.demo ? null : liveFromOptics,
       liveSpeech: { state: liveSpeechState, say: sayLiveLine, unlock: () => safe(() => unlockSpeech()) },
+      // A live look sent but never answered (stopped, a timeout): the month counts its estimate too.
+      liveSpendEstimate: (usd) => safe(() => addSpend(usd)),
       liveOptions: devLiveOptions(),
       stt: sttPausingPreviews,
       sttSupported: sttOk,
@@ -2233,7 +2242,7 @@ export async function startApp(rootEl) {
    * words of a Look to take as soon as the camera is live ("what am I looking at?" said in Voice Mode).
    * Returns the Optics api (truthy), or false.
    */
-  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false } = {}) {
+  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false, autoLiveSaid = false } = {}) {
     if (isOpticsOpen()) return currentOptics() || true;
     if (!voice) stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
@@ -2241,6 +2250,7 @@ export async function startApp(rootEl) {
     if (start === 'screen') extra.start = start;
     if (autoLook) extra.autoLook = autoLook;
     if (autoLive) extra.autoLive = true; // "live view" said in Voice Mode: it starts once the camera is live
+    if (autoLive && autoLiveSaid) extra.autoLiveSaid = true; // and Voice Mode says the outcome (autoLiveDone)
     if (voice && voiceApi) {
       Object.assign(extra, {
         voice: { tap: () => safe(() => voiceApi && voiceApi.tap()) },
