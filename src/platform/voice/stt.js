@@ -23,6 +23,9 @@
 //                       same recognizer goes on, and the words it had heard when the turn ended stay
 //                       that turn's even when it rewrites them later (a late final: "twenty five" ->
 //                       "25"); the next turn's words are the ones after them (continuation)
+//     background        v8.1 (a computer, hands-free): a recognizer that ends by itself while the page
+//                       is hidden is started again, as when it is visible (desktop Chrome lets a hidden
+//                       page listen). Without it, listening gives up there (iOS stops it anyway).
 //     audioTrack        v8.1 (Chrome on a computer): () -> Promise<{ track, stop(), used(ok) } | null>, the
 //                       microphone chosen for questions (Settings → Voice → Microphone and speaker). The
 //                       recognizer then hears that track (recognition.start(track), Chrome 135+) instead of
@@ -492,6 +495,7 @@ export function startListening(options = {}) {
   const maxMs = Number.isFinite(opts.maxMs) && opts.maxMs > 0 ? Math.min(TIMING.maxMs, opts.maxMs) : TIMING.maxMs;
   const noSpeechMs = Number.isFinite(opts.noSpeechMs) && opts.noSpeechMs > 0 ? opts.noSpeechMs : TIMING.noSpeechMs;
   const keep = opts.keepListening === true;
+  const background = opts.background === true;
   const trackSource = typeof opts.audioTrack === 'function' ? opts.audioTrack : null;
   const phrases = normalizePhrases(opts.phrases);
   const lang = resolveListenLang(opts.lang);
@@ -858,7 +862,7 @@ export function startListening(options = {}) {
       S.parts = [];
       const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults && !S.again;
       S.again = false;
-      if (pageHidden()) {
+      if (pageHidden() && !background) {
         giveUp();
         return;
       }

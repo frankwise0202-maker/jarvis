@@ -90,6 +90,10 @@ export const DEFAULT_SETTINGS = deepFreeze({
   audioOutputLabel: '',
   // ---- mac-dev ◂
   // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
+  // Settings → Voice → Wake Jarvis → "Keep talking when Jarvis is in the background (Mac)" (owner question 2:
+  // on by default). On a computer, a session the owner started (a wake, a tap, a key) goes on listening and
+  // speaking while Jarvis is hidden; off: as before v8.1. An iPhone or iPad pauses while hidden either way.
+  handsFreeBackground: true,
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂
@@ -241,6 +245,7 @@ const VALIDATORS = {
   audioOutputLabel: line({ maxLength: 200 }),
   // ---- mac-dev ◂
   // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
+  handsFreeBackground: bool,
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂

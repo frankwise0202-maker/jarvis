@@ -2928,6 +2928,22 @@ room's talk is not sent), `standby-word-failed` and `standby-word-wait` (claps o
 word, never held while nothing listens), `standby-hey-jarvis` (the real models in the real worker on a synthetic
 voice), `standby-hey-jarvis-stub`, `standby-background`, `standby-denied`.
 
+**v8.1 note: every end of a woken session goes back to Standby** (A2; before, a failed question, a voice-input error, a
+2-second check paused by a tab switch, or anything still "busy" when the sleep timer fired left Voice Mode up for good,
+with Standby not listening). In a woken session: after an apology (`afterApology`) and after a voice-input error
+(`voiceInputError`; the `S.typing` it forces is marked `S.typingForced` and doesn't hold the return) the return is
+armed for `SLEEP_FAILED_MS` (10 s: time for a tap; "Hey Jarvis" works again only once he is back on Standby); a check
+paused in a woken session (`reviewPause('paused')`) arms `SLEEP_IDLE_MS` (60 s) and, when it fires, closes into
+Standby (`close()` drops the words: nothing is sent). `armSleep` arms itself again (`SLEEP_IDLE_MS`) while Voice Mode
+is busy (listening, a turn, speech, a check counting or hearing words, the owner typing) instead of giving up. A held
+session (`api.hold()`, contract (a)) waits until 2 minutes after the owner's last words (`src/lib/voice-hold.js`);
+`'jarvis.dev.voice'` `{ holdCapMs }` (2 s to 2 minutes, shorter only) shortens that for tests, and on localhost gives
+them `window.__jarvisVoice` `{ hold, release }`. Sessions opened by a tap: as before. Return to standby off: no
+return. Also (A12, SHOULD): "Hey Jarvis" whose download or worker failed is started again after 2 s, 5 s, 15 s, 60 s,
+then every 5 minutes (`createBackoff`, src/lib/audio-devices.js), and at once on `online`; the hint adds "Jarvis
+tries again by himself." Unit `voice.handsfree`, `standby.hands-free`; E2E `standby-session-ends` (the mock's
+refusal, a network error, "wait"), `standby-hold-timeout`; `standby-background` changed on purpose (§28.1).
+
 ## 23. v7.5: Home base (the Jarvis Core)
 
 The **home base** is the Jarvis Core (`core/`, its own README): the owner's Alienware running 24/7 with a live system
@@ -3660,6 +3676,19 @@ and a real Alienware's speed (the chunk sizes assume 0.7× real time until measu
   and `turnStatsLine` (shared text) says the same. A recent briefing, or a free one, stays "Free · Home base".
   Unit `brain`, `share`, `platform.sync`; E2E `brain-chat`.
 
+**v8.1 note: the watchdogs while hidden, by device** (A3, §28.1). "Hidden, it never counts" (George's stall
+watchdog) and the built-in voice's visible-time clock were made for iOS, which pauses speech and Web Audio in the
+background. On a computer the voices play on there, so a reply whose sound stopped (George) or whose `end` was lost
+(the built-in voice) while Jarvis was hidden never ended: Voice Mode neither listened nor slept. Both modules now
+export `setPausesWhenHidden(on)` (default `true`: the iPhone's rule, unchanged); app.js calls both with `phoneLike`
+once. With `false` hidden time counts: tts.js's clock counts it like visible time (and resumes a paused engine there
+too), and natural-stream.js's watchdog counts at most `NATURAL_TIMING.stallHiddenStepMs` (1 s) a tick while hidden (a
+hidden page's timers run about once a second), so a hidden stall hands over to the built-in voice in about 4 s instead
+of never (about 14 s at the visible 250 ms a tick). Unit `voice.hidden` (George hidden on a computer: hands over in
+3.5 s, in 4-5 ticks of 1 s; playing normally: no kick; an iPhone: never while hidden; the built-in voice: a lost end
+still ends hidden on a computer, not on an iPhone; the router: the device voice says the rest while still hidden);
+E2E `mac-handsfree-stall-hidden`.
+
 ## 27. v8.0: Live view (Optics)
 
 The owner asked for a live "video mode" on the cheap model, "always looking … constant for like an hour. Max is $1
@@ -3854,7 +3883,51 @@ and `liveSpentText`.
 
 ### 28.1 Listening in the background
 
-<!-- v8.1: mac-hf writes this part. -->
+The owner keeps Jarvis on Standby in Chrome on a Mac day and night, behind other windows or with the display asleep,
+and talks to him from across the room. Desktop Chrome lets a hidden page listen (Chromium aborts recognition in the
+background only on Android); Jarvis's own checks stopped it: woken hidden, he greeted and listened 0 times (the u-mac
+study's probe). Now a session the owner started goes on while Jarvis is hidden, on computers only (A1).
+
+**Who may go on hidden.** app.js `handsFreeHidden()`: not `phoneLike` (iOS, Android, a touch screen up to 1024 px, as
+Standby's `pauseWhenHidden`), `settings.handsFreeBackground !== false` (owner question 2: on by default), and
+`voiceOwnerStarted` (`openVoice({ ownerStarted })`: every way Voice Mode opens today is the owner's: a tap, a key, a
+wake; nothing else ever opens the microphone for questions). It is Voice Mode's `listenWhileHidden` (contract (a)):
+`away()` is then false while hidden, so the wake window listens, Jarvis listens again after speaking, the hidden branch
+of `onVisibility` leaves the listen and the 2-second check alone (it keeps counting and sends), and a silent listen
+gets its second try. Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**
+(`setting-handsFreeBackground`; not shown on iOS or Android). Off: as before v8.1.
+
+**What changes in such a session** (src/ui/voice-mode.js, `handsFree()`):
+- each listen passes `background: true` to stt.js: a recognizer session that ends by itself while hidden is started
+  again, as on screen (before: `giveUp()`); `noSpeechMs` (A6) goes to the recognizer too;
+- `play()` asks sounds.js with `{ hidden: true }`: `HIDDEN_SOUNDS` (wake, listen-start, listen-stop, error) play while
+  hidden; the others never do;
+- `setVoiceState` calls attention.js `sessionTitle(state)`: while the page is hidden the title is "Listening · Jarvis",
+  "Thinking · Jarvis" (thinking or working) or "Speaking · Jarvis", composed with the "(n) " marker of
+  `missionFinished`; idle, shown again, or the session closed: the app's title again;
+- one notification per session, when it is or becomes hidden (`notify({ tag: 'session', title: 'Jarvis is listening',
+  body: 'Ask away, or say “go back to sleep”.' })`; its click brings Jarvis forward), closed at `close()`
+  (`closeNotify('session')`). app.js's old wake notification ("… Switch to Jarvis to answer.") stays for sessions that
+  can't go on hidden;
+- the recognizer failing hidden (`not-allowed` or `other` while hidden; device test 2): once, "I can't hear you while
+  I'm in the background. Click me." is said and the notification says the same; no more listening while hidden
+  (`S.deaf`, until a tap); a woken session goes back to Standby after 10 s.
+
+**The voices (A3)**: §26 note (`setPausesWhenHidden`). **Unchanged:** an iPhone or iPad pauses while hidden; the camera
+and the live view stop while hidden (camera.js; v8.0). Chrome's red dot and macOS's orange dot are on whenever Standby
+listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question" (README).
+
+**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` →
+`{ add(fn, { waits }) → remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command
+modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`. Each
+`fn()` returns a line or null at each wake; lines with `waits: true` (Chrome's question) come first, then the others
+in the order added; a throwing `fn` counts as null; lines are tidied and cut at 240 characters.
+
+**Tests.** Unit `stt.background`, `sounds.hidden`, `attention.title`, `voice.handsfree` (Voice Mode on a Node
+harness, `voice-mode.fakes.mjs`), `wake.pending`. E2E `mac-handsfree-hidden-wake`, `mac-handsfree-hidden-mid-listen`,
+`mac-handsfree-hidden-check` (u-mac probe C), `mac-handsfree-setting-off`, `mac-handsfree-iphone`,
+`mac-handsfree-indicators`, `mac-handsfree-stall-hidden`; `standby-background` changed on purpose (a Mac woken in the
+background listens there).
 
 ### 28.2 Microphone and speaker
 
@@ -4017,11 +4090,80 @@ on the default device follows a macOS default change.
 
 ### 28.4 Interrupting by voice
 
-<!-- v8.1: mac-hf writes this part. -->
+Before v8.1 only a tap stopped Jarvis: a new listen cancels speech, and he listened again only after speaking, with
+Standby's microphone released at the wake. Across the room nothing could be said while he talked (critique H6). Now,
+on a Mac in setup 1 or 3, "Hey Jarvis" or two claps while George speaks stop him and he listens (A8; free, on the Mac).
+
+**The gate** (src/lib/hands-free.js `bargeInAllowed({ computer, setup, test })`, app.js Standby's `bargeIn.keep()`): a
+computer, `audioSetup` (src/lib/audio-devices.js `setupOf`) in `HANDS_FREE.bargeInSetups` (`speaker-mac-mic`,
+`switch`; owner question 10: add `speakerphone-both` to allow it there), and the hands-free Test's self-trigger step
+passed (`readHandsFreeTest(localStorage)`, key `jarvis.handsFreeTest.v1`, read through `normalizeHandsFreeTest`).
+"Hey Jarvis" needs the wake word on; claps work either way.
+
+**Standby** (`createStandby({ bargeIn: { keep(), detected({ trigger }) } })`): at a wake where `keep()` is true, its
+capture and the "Hey Jarvis" worker stay on through the session instead of being released first (in setups 1 and 3
+the capture is the Mac's microphone with echo cancellation on and noise suppression and auto gain off: §28.2). Claps
+and the word heard then go to `detected()`, never to a second wake (1.5 s apart at least, as a wake; the worker is
+reset after a detection that acted). After the session the same capture listens on (no second getUserMedia), unless
+the chosen microphone moved meanwhile. Another window taking Standby during the session releases the kept microphone.
+
+**Voice Mode** (`api.bargeIn(trigger)`, app.js's `detected`): only while speech is under way, not while it listens or
+checks, and only while `tts.voiceNow()` is George (`natural`, `homebase`): the Mac's own voice is played by macOS,
+outside Chrome's echo reference. For `'word'`, not while the self-mask is on. Then it is the core's tap while he
+speaks: the reply's spoken part already done → `releaseRun()`; the reply still being said → `abortRun({ listen: true
+})` (what was written stays in the chat); a line or an answer read → cancel it and listen. A narration ends
+`'cancelled'` (a tour pauses at its step: Track 2). The hidden count of §28.5 starts again. True when it acted.
+
+**The self-mask** (`createSelfMask()`, critique M8): Voice Mode gives it what is about to be said (`begin(text, rate)`,
+`text()` as a reply streams) and the speech's events (`chunk({ start })`, `boundary({ charIndex })`, offsets in the
+engine's text); `masked()` is true from about `HANDS_FREE.maskBeforeMs` (1 s) before to `maskAfterMs` (1 s) after each
+"Jarvis" (`jarvisSpans`: the whole word, any case, "Jarvis's" too), the position between events estimated at
+`HANDS_FREE.charsPerSecond` (14.5) × rate. Claps are not masked (George saying "Jarvis" makes no clap). Jarvis's own
+lines say "Chrome asks …", never "Jarvis for Chrome asks …" (chrome-voice).
+
+**Unchanged:** setup 2, no setup chosen, the Mac's own voice, a failed or missing self-test, an iPhone: a tap on the
+core or Space stops him, as before; tours then listen only at decisions and `wait` steps (B5).
+
+**Tests.** Unit `hands-free` (the gate, the mask), `standby.hands-free` (the kept capture, `detected()`, the reuse, a
+taken lock), `voice.handsfree` (George or claps stop him; not the Mac's voice, not while listening; his own "Jarvis"
+masked, claps at that moment not). E2E `mac-barge-in` (the stand-in "Hey Jarvis" while George speaks: he listens;
+Standby's capture stayed live), `mac-barge-in-self` (the stand-in fed George's own "Jarvis" at that word: he goes on);
+`tour-barge-in` with Track 2.
 
 ### 28.5 The follow-up window, the brake and one window
 
-<!-- v8.1: mac-hf writes this part. -->
+**The follow-up window** (A6, owner question 3; src/lib/hands-free.js `followUp({ woken, away, continuous, asking,
+asked })`, used by `afterSpeech`): after speech, a woken session (`S.wakeSession`) and every session while Jarvis is
+hidden listen once, with `noSpeechMs` `HANDS_FREE.followUpMs` (8000) given to the recognizer and to Voice Mode's own
+watchdog, and `oneTry` (before: two tries of up to 12 s). Nobody speaks: a woken session goes back to Standby 2.5 s
+later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way (Continuous or not). A session opened
+by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
+
+**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last
+wake (the greeting resets it), barge-in, tap or key (a listen started with `gesture`). While hidden, from
+`HANDS_FREE.hiddenQuestions` (3) on there is no follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and
+goes back to Standby (woken, Return to standby on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls
+him again). A TV left on can't run up paid questions. On screen the count doesn't matter. The claps' room-talk guard
+stays.
+
+**One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
+`{ acquire(), take(), release(), state }`, state `off` | `asking` | `held` | `elsewhere` | `unsupported`; Standby's
+`createLock` dep): Standby asks for the Web Lock `jarvis-standby` when it opens (`ifAvailable` first; held elsewhere:
+`elsewhere`, and it waits in line) and listens only while it holds it; it keeps it through a woken session and lets go
+on `exit()`/`release()` (or when the window closes). While another window has it: `data-listening="elsewhere"`, the
+pill "NOT LISTENING IN THIS WINDOW", the hint "Standby is on in another Jarvis window.", and **Use this window**
+(`standby-use-here`; Tab reaches it, Enter or Space presses it; its click is not the tap that leaves Standby) →
+`take()`: a request with `steal: true` (the browser takes the lock from the holder at once, also from a frozen page,
+ahead of any other window waiting). The holder's request then fails with AbortError: it stops listening (a kept
+barge-in microphone too) and waits in line. When the holder leaves Standby or closes, the next window in line listens
+by itself. (The design had the holder asked to let go over a BroadcastChannel; `steal` needs no message and can't be
+missed.) No Web Locks (or a request that throws): `unsupported`, as before.
+
+**Tests.** Unit `hands-free` (`followUp`), `voice.handsfree` (the 8 s window and one try; a follow-up answered; the
+brake, woken and tapped, Return to standby off; a tap or a barge-in starts the count again), `standby.lock` (one, two
+and three windows, steal, withdrawing, no Web Locks), `standby.hands-free` (Standby with the lock). E2E
+`mac-handsfree-followup-window`, `mac-handsfree-hidden-tapped`, `standby-one-window` (two pages of one browser
+context).
 
 ## 29. v8.1: Walkthroughs
 
