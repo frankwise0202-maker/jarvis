@@ -44,7 +44,7 @@ test('the extension’s relay loop and Jarvis’s end, through Core’s own rela
     // Jarvis posts three requests; the extension's long poll wakes on the first and reads them in order.
     for (const kind of ['hello', 'ping', 'open']) {
       const msg = await seal(cryptoKey, { box: BOX_TO_EXT, kind, body: kind === 'open' ? { url: 'https://www.example.com/', rect: null, focus: true } : {} });
-      const res = await fetch(`${core}/api/relay/to-ext`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://frankwise0202-maker.github.io' }, body: JSON.stringify(msg) });
+      const res = await fetch(`${core}/api/relay/to-ext`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) });
       assert.equal(res.status, 200);
     }
     const end = Date.now() + 8000;
