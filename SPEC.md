@@ -2227,9 +2227,9 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   accident. A new Look taken this way says "New look." first: over Voice Mode, `command()` answers with that ack and
   no turn (Voice Mode says it at once), and the Look starts once Voice Mode is no longer busy saying it
   (`afterVoiceLine`, from `setVoice`'s `busy`; at most 4 s), since the turn's start would cut the line; typed or said
-  into Optics' own mic, it is announced. Each answer is marked: the Look's header
-  `optics-answer-mark` "NEW LOOK" (`data-kind="new"`, camera Looks, not a review) and each follow-up's question line
-  "ABOUT THIS PICTURE" (`data-kind="card"`). Typed questions and Optics' mic take the same path (`onAskKey`, the mic's
+  into Optics' own mic, it is announced. Each answer is marked, on a computer's layout only (a phone's sheet is as
+  before): the Look's header `optics-answer-mark` "NEW LOOK" (`data-kind="new"`, camera Looks, not a review) and each
+  follow-up's question line "ABOUT THIS PICTURE" (`data-kind="card"`). Typed questions and Optics' mic take the same path (`onAskKey`, the mic's
   final words, through `routed()`).
 - **The live view while aside** (`syncLiveLook`, from `setMode`): it pauses (`look`) only while a Look fills the stage
   (`frozen`, `review`) and goes on as soon as none does (aside, Live, the card closed). A phone's Look is `frozen`, so
