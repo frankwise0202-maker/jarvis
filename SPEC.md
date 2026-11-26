@@ -4342,11 +4342,12 @@ through `sayable()`, and nothing in it is ever routed as the owner's words.
 
 | id | layer | surfaces | takes |
 |---|---|---|---|
-| `chrome-prompt` | answer | all | while a Chrome check counts down (Voice Mode's `state.chromeCheck`): "cancel", "no", "stop" (withdraw), "no, I said …" (correct), "start now" (go); the open prompt's reserved words (`state.prompt`); a bare "cancel" or "no" when the prompt was asked last (`askedAt`, against every open question's); a bare "yes", "okay", "continue" … asked last with no tour and no other question open (Jarvis says what to say: never an answer); a yes naming Chrome with nothing asked ("Chrome isn't asking anything right now.") |
+| `chrome-prompt` | answer | voice | while a Chrome check counts down (Voice Mode's `state.chromeCheck`): "cancel", "no", "stop" (withdraw), "no, I said …" (correct), "start now" (go); the open prompt's reserved words (`state.prompt`); a bare "cancel" or "no" when the prompt was asked last (`askedAt`, against every open question's); a bare "yes", "okay", "continue" … asked last with no tour and no other question open (Jarvis says what to say: never an answer). Voice Mode only, like voice's `prompt` and `question`: in the chat, a prompt's card answers it |
 | `chrome-stop` | stop | all | "stop Chrome", "cancel the Chrome task", "Chrome, stop" (a bare "stop" is voice's `stop`, which stops the Chrome task too) |
-| `chrome-task` | destination | voice, chat | `matchChromeTask` (32.3.2), a carrier; its action is `{ do: 'chrome-task', text, chat, free: false, undo: false, check: false }`: never from another reading (R7), and never the generic 2-second check (it has its own, 32.3.3; the lead's D2) |
-| `chrome-ask` | destination | voice, chat | "click around for me" → "What should I do in Chrome?" (an owner question; the answer, `matchTaskAnswer`, is the task) |
+| `chrome-task` | destination | all | `matchChromeTask` (32.3.2), a carrier; its action is `{ do: 'chrome-task', text, chat, free: false, undo: false, check: false }`: never from another reading (R7), and never the generic 2-second check (it has its own, 32.3.3; the lead's D2) |
+| `chrome-ask` | destination | all | "click around for me" → "What should I do in Chrome?" (an owner question; the answer, `matchTaskAnswer`, is the task) |
 | `chrome-status` | destination | all | "what are you doing in Chrome?", "what's Chrome doing", "is Chrome done yet" → the latest step (free) |
+| `chrome-answer` | destination | all | a reserved yes that names Chrome ("allow once in Chrome", "spend more in Chrome", "more steps in Chrome") with no Chrome prompt open → "Chrome isn’t asking anything right now." (free); with a prompt's card waiting where no voice can answer it → "Chrome’s question is on its card: tap its button to answer." Never a task, never an answer |
 
 `chrome-task` comes before `chrome.open` (G1) in the destination layer (the lead's D1); each declines the other's
 sentences (`chrome-task` declines what opening takes: "pull this up in Chrome", "look it up in Chrome", "open the

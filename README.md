@@ -949,6 +949,7 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   - **For now, every step needs a click.** Approving everyday steps by voice comes with the setting **Approve everyday
     steps by voice** in Jarvis for Chrome, after its security review. Until then you can say no by voice, and Jarvis
     tells you where to click.
+  - **In the chat,** the card's buttons answer it. Typed words don't.
   - **With Voice Mode closed or on Standby,** a notification tells you Chrome is asking. When you wake Jarvis, he
     starts with "Chrome is waiting for you: …".
 - **What it never does:**
