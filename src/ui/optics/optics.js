@@ -687,6 +687,10 @@ export function openOptics(deps = {}) {
   }
 
   // ---- camera ---------------------------------------------------------------------------------
+  // v8.1: a Look aside when something covered Optics (Hologram of this) goes back aside beside the
+  // live video on a computer once Optics shows again (onCover): the camera was live for the owner.
+  let asideWhenCovered = false;
+  let restoreAside = false;
   function onCameraState(state, info) {
     if (closed) return;
     if (state === 'live') {
@@ -698,8 +702,10 @@ export function openOptics(deps = {}) {
       hideCard();
       deps.wakeLock && deps.wakeLock.keepAwake && deps.wakeLock.keepAwake();
       // A frozen Look stays frozen when the camera comes back (after a pause), one set aside stays
-      // aside; otherwise live.
-      setMode(frozen ? (mode === 'review' ? 'review' : mode === 'aside' && asideAllowed() ? 'aside' : 'frozen') : 'live');
+      // aside (also one that was aside when something covered Optics: restoreAside); otherwise live.
+      const backAside = restoreAside;
+      restoreAside = false;
+      setMode(frozen ? (mode === 'review' ? 'review' : (mode === 'aside' || backAside) && asideAllowed() ? 'aside' : 'frozen') : 'live');
       if (autoLive && mode === 'live') {
         autoLive = false;
         // A moment for the exposure to settle, then the live view ("live view" said in Voice Mode).
@@ -3099,6 +3105,7 @@ export function openOptics(deps = {}) {
     covered = now;
     el.dataset.covered = now ? 'true' : 'false';
     if (now) {
+      asideWhenCovered = !!frozen && mode === 'aside';
       toggleCameraMenu(false);
       stopWatch('');
       stopLiveView('Live view stopped: something covered the camera.');
@@ -3107,8 +3114,14 @@ export function openOptics(deps = {}) {
       return;
     }
     if (frozen) {
+      const wasAside = asideWhenCovered;
+      asideWhenCovered = false;
       setMode(mode === 'review' ? 'review' : 'frozen');
       layoutSoon();
+      if (wasAside && mode === 'frozen' && cameraPlatform().autoResume) {
+        restoreAside = true;
+        startCamera();
+      }
     } else if (cameraPlatform().autoResume) startCamera();
     else {
       setMode('paused');

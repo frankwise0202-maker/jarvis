@@ -4,7 +4,8 @@
 //                             in its card (the picture with its labels, the answer, NEW LOOK); Expand
 //                             (the picture big, the live video a corner tile, still live), Live and the
 //                             tile go back; typed "expand the picture", "put the picture aside", "close
-//                             the picture" (free); the log reopens it as the card
+//                             the picture" (free); the log reopens it as the card; Hologram of this, and
+//                             once the viewer closes the card is back aside, the camera live again
 //   optics-aside-followups    Mac, a scene that changes (A for 4 s, B for 4 s): with the scene of the
 //                             card's picture a question is a follow-up (no frame, ABOUT THIS PICTURE);
 //                             with a changed scene a new Look (NEW LOOK); "look again" always looks
@@ -117,9 +118,9 @@ const MAC_CAMERAS = [{ label: 'FaceTime HD Camera (Built-in) (05ac:8514)' }, { l
 export default [
   {
     name: 'optics-aside',
-    title: 'Mac: after LOOK the live video stays big and the Look sits in its card (picture, labels, answer, NEW LOOK); Expand puts the picture big with the live video in a corner tile, still live; Live and the tile go back; typed "expand the picture", "put the picture aside", "close the picture" are free; the log reopens it as the card',
+    title: 'Mac: after LOOK the live video stays big and the Look sits in its card (picture, labels, answer, NEW LOOK); Expand puts the picture big with the live video in a corner tile, still live; Live and the tile go back; typed "expand the picture", "put the picture aside", "close the picture" are free; the log reopens it as the card; after Hologram of this the card is back aside beside the live camera',
     device: 'mac',
-    timeout: 120000,
+    timeout: 180000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
     async run(t) {
       const page = await t.newPage();
@@ -175,6 +176,18 @@ export default [
         await page.locator(tid('optics-log-item')).click();
         await waitAside(t);
         await t.waitFor(async () => (await t.count('optics-pin')) === 5, { timeout: 5000, message: 'its labels on the card' });
+      });
+      await t.step('Hologram of this from the card: the viewer over Optics, no camera under it; closed, the Look is back aside beside the live camera', async () => {
+        await page.locator(tid('optics-hologram')).click();
+        await t.visible('hologram-viewer', { timeout: 30000, message: 'the hologram viewer over Optics' });
+        await t.waitFor(async () => (await liveVideoTracks(page)) === 0, { timeout: 5000, message: 'no camera under the viewer' });
+        await t.waitFor(async () => (await page.locator(tid('hologram-viewer')).getAttribute('data-state')) === 'ready', { timeout: 60000, message: 'the hologram to finish' });
+        await page.locator(tid('hologram-close')).click();
+        await t.waitFor(async () => (await t.count('hologram-viewer')) === 0, { timeout: 5000, message: 'the viewer to close' });
+        await waitAside(t);
+        await t.waitFor(async () => (await liveVideoTracks(page)) === 1, { timeout: 8000, message: 'the camera live again' });
+        t.assert((await t.count('optics-pin')) === 5, `the card keeps its labels (${await t.count('optics-pin')})`);
+        await shot(t, 'mac-aside-3-after-hologram');
       });
     },
   },
