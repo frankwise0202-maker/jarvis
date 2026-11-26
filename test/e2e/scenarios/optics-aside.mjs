@@ -35,7 +35,7 @@ import { installCameraRig } from '../camera-rig.mjs';
 import { configureLive, isLiveRequest } from '../../mock/optics.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { installScreenStubs, opensPage, typeCommand, waitAttr } from './screens.mjs';
-import { cameraArgs, checkPins, instrument, liveTracks, shot, waitAnswer, waitLive } from './optics.mjs';
+import { cameraArgs, checkPins, instrument, liveTracks, pinClashes, shot, waitAnswer, waitLive } from './optics.mjs';
 
 const attr = (page, name) => page.locator(tid('optics')).getAttribute(`data-${name}`);
 const said = (page) => page.evaluate(() => (window.__voice ? window.__voice.said.slice() : []));
@@ -138,6 +138,10 @@ export default [
         const pic = await page.locator(tid('optics-aside-picture')).boundingBox();
         t.assert(pic && pic.width >= 300 && pic.width <= 440, `the card's picture is about 400 px wide (${JSON.stringify(pic)})`);
         await checkPins(t, { width: 1280, height: 720 });
+        // The card's picture is small (about 400 px): its plates still clear of each other and of every dot.
+        const clash = await pinClashes(page);
+        t.note(`the card's pins: ${JSON.stringify(clash)}`);
+        t.assert(!clash.overlaps.length && !clash.covered.length, `no plate overlaps another or covers a dot in the card (${JSON.stringify(clash)})`);
         t.assert((await t.text(page.locator(tid('optics-answer-mark')))) === 'NEW LOOK', 'the answer is marked NEW LOOK');
         for (const id of ['optics-expand', 'optics-other-screen', 'optics-close-card']) t.assert(await page.locator(tid(id)).isVisible(), `${id} on the card`);
         await shot(t, 'mac-aside-1-card');
