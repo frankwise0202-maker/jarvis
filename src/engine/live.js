@@ -66,7 +66,7 @@ export async function runLiveLook(options) {
     const { apiKey, apiBase, fetch, model = LIVE_DEFAULT_MODEL, frame, summary, said, signal, onSpend } = options || {};
     if (signal?.aborted) return { ok: false, costUsd: 0, error: 'stopped' };
     const key = typeof apiKey === 'string' ? apiKey.trim() : '';
-    if (!key) return { ok: false, costUsd: 0, error: 'Add your API key first.' };
+    if (!key) return { ok: false, costUsd: 0, fatal: true, error: 'Add your API key first.' };
     const data = typeof frame?.data === 'string' ? frame.data : '';
     const mediaType = data ? sniffImageType(data) : null;
     if (mediaType !== 'image/jpeg' && mediaType !== 'image/png') return { ok: false, costUsd: 0, error: 'No usable frame.' };

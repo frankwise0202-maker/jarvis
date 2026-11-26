@@ -100,7 +100,7 @@ rainy Sunday: … and …. Tap Preview to hear a clip, or Open in Apple Music to
 couldn't search Apple Music just now: …" for an `is_error` result. `[[music]]` comes after
 `[[screen]]` in the precedence above.
 
-### Optics (lead tools version 5: `pin_labels`, `look_through_camera`) and Watch
+### Optics (lead tools version 5: `pin_labels`, `look_through_camera`), Watch and the live view
 
 In `optics.mjs`. A Look is detected from the request itself: the newest user message carries an
 image and its `<turn_context>` has an `Optics frame fN: … W×H pixels` line. The labels are the
@@ -120,6 +120,18 @@ screen-style labels. Only tools the request defines are called.
 | *(the same)* "Tell me more." | a longer answer about the scene |
 | *(the same)* "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)" | what it is, then `pin_labels` with that one label at that pixel, then "I've marked it on the frame." (Optics' **What's this part?** for a tapped pin) |
 | a structured request whose system prompt starts `You are Jarvis Watch` | `{ worth_saying, line, summary }`: the first frame (no previous summary) sets the scene; later ones report that the mug moved and the notebook is gone |
+| a structured request whose system prompt starts `You are Jarvis Live view` (v8.0) | `{ summary, worth_saying, line }` with usage, one answer per look: by default the desk, the same desk, the owner holding up an AA battery ("That's a Duracell AA, 1.5 volts.", worth saying), the battery put down (repeated) |
+
+**Live view scripts** (`configureLive(t.mock, { scene, costUsd, delayMs, errors })`, after the
+mock's reset, i.e. at the start of an E2E scenario; `mock.state.live`): `scene` is one
+`{ summary, worth_saying, line }` per answered look (the last one repeated); `costUsd` sizes each
+answer's usage to cost about that on Claude Haiku 5.5 (input tokens at $0.10 per million);
+`delayMs` makes every answer wait that long (real milliseconds; a look given up meanwhile is
+dropped); `errors` maps a look number (from 1, rate-limited looks included) to
+`{ status: 429 | 529, retryAfter? }` (no `retry-after` header when `retryAfter` is left out),
+`'refusal'` (`stop_reason: refusal`, no text) or `'cut'` (`max_tokens`, half a JSON). Scripted
+errors are not violations. The validator accepts `thinking: { type: 'disabled' }` only on Claude
+Haiku 5.5 at effort high or below (with no other keys), as the real API does.
 
 ### Voice Mode turns (the spoken reply channel)
 

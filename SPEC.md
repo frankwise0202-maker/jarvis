@@ -3714,7 +3714,9 @@ two requests are never less than a second apart.
 - **Errors**: 429/529 → `liveBackoff(prev, retryAfterMs)`, and the note "Looking less often: your Anthropic
   account's speed limit." until a look succeeds. A refusal or a reply cut short (a reply with a cost) skips that
   frame. No reply at all (network, server) backs off too; after three in a row the note says Jarvis can't reach
-  Claude. Offline (`navigator.onLine`, the `offline` event) pauses with a note and goes on at `online`.
+  Claude. A request that may have been billed with no answer (`costUnknown`: a timeout, a dropped connection) is
+  counted at its estimate. A `fatal` result (no key, a refused key, no credit, a model the key can't use) stops the
+  live view with that reason on the panel. Offline (`navigator.onLine`, the `offline` event) pauses with a note and goes on at `online`.
 
 **Speaking** (app.js). `liveSpeech.state()` → `{ allowed, ownerSpeaking, jarvisSpeaking }` from Voice Mode's
 `voiceInfo` (listening with words heard; speaking or busy), the chat mic and `state.speaking`. `liveSpeech.say(line)`:
@@ -3725,7 +3727,8 @@ router speaks it (George when he's on), as a `state.speaking` entry with no turn
 any read-aloud reply. `liveSpeech.unlock()` runs inside the Live view tap (iOS speech).
 
 **Pauses** (`data-liveview-paused`): `look` — a Look (typed, Space, LOOK, or said in Voice Mode) or a past Look
-reopened from the log puts its frame and answer on screen: "Paused while you look at this" until **Live**; a look already under way finishes and is counted, its summary isn't shown. The Look and its
+reopened from the log puts its frame and answer on screen: "Paused while you look at this" until **Live**; a look already under way finishes and is counted, but its summary isn't shown and its line isn't
+listed or said (the next look after Live says it if it still matters). The Look and its
 follow-ups asked during the live view count toward the hour's $1 when their turns end (`liveCount`). `cap` — "Live
 view paused: it has spent $1 in the last hour. It can go on at 2:41 PM." (`budget.resumeAt`) with **Resume**
 (`optics-liveview-resume`), disabled until then; the live view never goes on by itself. `offline`.

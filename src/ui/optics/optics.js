@@ -1661,9 +1661,20 @@ export function openOptics(deps = {}) {
   // started (5 s from 90 cents in the hour), never over $1 in any hour (the budget below, kept in
   // localStorage and shared by every tab), paused while a Look is on screen, and stopped (never
   // paused) whenever the camera stops. Nothing is recorded: each frame is sent and dropped.
-  const liveStore = { getItem: (k) => store.get(k), setItem: (k, v) => store.set(k, v) };
+  // localStorage behind try/catch (private mode, full storage): the budget never throws.
+  const liveStore = {
+    getItem: (k) => store.get(k),
+    setItem: (k, v) => store.set(k, v),
+    removeItem: (k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* private mode */
+      }
+    },
+  };
   function budget() {
-    if (!liveBudget) liveBudget = createLiveBudget({ capUsd: liveOpts.capUsd, windowMs: liveOpts.windowMs, storage: liveStore });
+    if (!liveBudget) liveBudget = createLiveBudget({ capUsd: liveOpts.capUsd, windowMs: liveOpts.windowMs, now: () => Date.now(), storage: liveStore, key: 'jarvis.liveView.spend' });
     return liveBudget;
   }
 
@@ -1836,7 +1847,8 @@ export function openOptics(deps = {}) {
     else if (kind === 'cap') {
       const at = budget().resumeAt(est || Math.max(estimateLive(), lv.lastCostUsd));
       lv.resumeAt = at;
-      const text = `Live view paused: it has spent ${formatCap()} in the last hour. It can go on at ${resumeLabel(at)}.`;
+      const when = Number.isFinite(at) ? ` It can go on at ${resumeLabel(at)}.` : '';
+      const text = `Live view paused: it has spent ${formatCap()} in the last hour.${when}`;
       setLiveNote(text, 'warn');
       announce(text);
       liveResume.hidden = false;
@@ -1861,7 +1873,7 @@ export function openOptics(deps = {}) {
       if (!budget().canSpend(est)) {
         lv.resumeAt = budget().resumeAt(est);
         liveResume.disabled = true;
-        if (byOwner) announce(`It can go on at ${resumeLabel(lv.resumeAt)}.`);
+        if (byOwner && Number.isFinite(lv.resumeAt)) announce(`It can go on at ${resumeLabel(lv.resumeAt)}.`);
         return false;
       }
     }
@@ -2004,10 +2016,21 @@ export function openOptics(deps = {}) {
           liveCaption.hidden = false;
         }
       }
-      if (res.worthSaying && res.line && !lv.said.includes(res.line)) liveLine(lv, res.line);
+      // A look that was under way when a Look took the screen: its line waits (the owner is reading
+      // the Look's answer); the next look after Live says it if it still matters.
+      if (res.worthSaying && res.line && !lv.said.includes(res.line) && lv.paused !== 'look') liveLine(lv, res.line);
       return;
     }
     if (res.error === 'stopped') return;
+    // Nothing more can work (no key, a key Anthropic refused, no credit, a model the key can't use):
+    // the live view stops and says why.
+    if (res.fatal) {
+      stopLiveView(`Live view stopped: ${String(res.error || 'Claude refused the request.').replace(/\s+/g, ' ').trim()}`, { keepHud: true });
+      return;
+    }
+    // A request that may have been billed but whose answer never came (a timeout, a dropped
+    // connection): counted at its estimate, so the hour's $1 is never under-counted.
+    if (res.costUnknown && !(cost > 0)) budget().add(lv.est);
     if (!isOnline()) {
       pauseLiveView('offline');
       return;
@@ -2016,7 +2039,7 @@ export function openOptics(deps = {}) {
     if (cost > 0) return;
     // No reply (a network or server problem): back off, never a tight loop.
     lv.errors += 1;
-    lv.backoffMs = liveBackoff(lv.backoffMs, 0);
+    lv.backoffMs = liveBackoff(lv.backoffMs, undefined);
     lv.backoffUntil = Date.now() + lv.backoffMs;
     if (lv.errors >= 3 && !lv.paused && !lv.rateLimited) setLiveNote('Jarvis can’t reach Claude right now. Trying again less often.', 'warn');
   }
