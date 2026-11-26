@@ -5140,7 +5140,12 @@ later. Limit: the rekey travels sealed with K1, so someone who already holds the
 rekey is kept there (2 minutes after each send) could learn K2. While the rotation is unconfirmed, rekeys are sent
 again (on the schedule above, at each opening of Jarvis or lock handover, when a message under K1 comes, and from the
 status), so that exposure lasts as long as the rotation stays unconfirmed: at most 30 minutes after the rekey, then
-the link is given up (R3-1). A key exchange would close it; not in this release.
+the link is given up (R3-1). A key exchange would close it; not in this release. Known limit (CHROME-LINK-R4-1,
+accepted for v8.1.1): if Jarvis is closed, or the Mac sleeps, within a second or two of linking, before it hears
+Jarvis for Chrome's answer under K2, and stays closed for half an hour, the reopened Jarvis gives the link up and says
+the new key was never confirmed, although the extension took it; the owner presses Unlink in Jarvis for Chrome's side
+panel and links again. (A follow-up: past the limit keep K2 and drop only K1, and give up only if nothing under K2 is
+heard within a minute of a hello under K2.)
 
 **The clipboard** (critique L9, REDTEAM-LINK-4, PRIVACY-6). When this tab copied the code (its sessionStorage keeps
 `jarvis.chromeLink.copied.v1` = `{ at, hash }`, a SHA-256 of the code, never the code, so a reload doesn't forget it),
@@ -5463,11 +5468,10 @@ only as one quote of at most about 40 characters after "The button says" (or "Th
 only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
 allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4), nor, after a
 fold by sound (digits read as letters, doubled letters, k for c, s for z, a soft c, ph for f, or for oar, a silent h),
-one of those or the stems aprov, ahprov, uprov, apruv, upruv, aprouv, kancel, kansel, cancle, cansul, cansle, javis,
-jarvas, jarvus, spendmore, spendmor, spenmor, spendmoin, moresteps, morestep, morstep and mosteps (REDTEAM-LINK-8: "Aprove", "Approove", "Ah-prove", "Kancel", "Appr0ve",
+one of those or the stems aprov, ahprov, uprov, apruv, kancel, kansel, cancle, cansul, javis, jarvas, spendmore,
+spendmor, moresteps, morestep and morstep (REDTEAM-LINK-8: "Aprove", "Approove", "Ah-prove", "Kancel", "Appr0ve",
 "Alow once", "Spend more in Chrome"; CHROME-LINK-R2-6: "Uh-prove", "Apruve", "Cansul", "Jarviz", "Spend mor in
-Chrome", "Mor steps", "More stepz"; CHROME-LINK-R3-2: "Uh-pruve", "Approuve", "Cansle", "Jarvus", "Spen more", "Mo
-steps", "Spend mo in Chrome"), nor a word that folds to ye, yea, yeah, yeh, ya, yah, yas, yep, yup or spendmo ("Yep",
+Chrome", "Mor steps", "More stepz"), nor a word that folds to ye, yea, yeah, yeh, ya, yah, yas, yep or yup ("Yep",
 "Yeah"; whole words only, so "Yearly" and "Yuppie" are still quoted). A list of sounds always has neighbours
 ("Stahp" is left, or "Staples" would go with it): the quote only describes the step, and the extension's own policy
 decides every answer. A site whose

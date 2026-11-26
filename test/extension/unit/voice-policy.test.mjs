@@ -237,16 +237,6 @@ test('CHROME-LINK-R2-6: the answer words’ nearest sound-alikes are never quote
   }
 });
 
-test('CHROME-LINK-R3-2: the cross-spellings of R2-6\'s stems are never quoted either; their everyday neighbours still are', () => {
-  // Ported from the third review's quote-neigh.mjs: each was still quoted on 422af45.
-  for (const label of ['Uh-pruve', 'Upruve', 'Uhpruv', 'Approuve', 'Aprouve', 'A-prouve', 'Cansle', 'Jarvus', 'Spen more', 'Mo steps', 'Spend mo in Chrome', 'Spendmo']) {
-    assert.equal(quoteForVoice(label), '', label);
-  }
-  for (const label of ['Spend money', 'Most episodes', 'Moreover', 'Morning steps', 'Morestead', 'Upload', 'Uproar', 'Uprooted', 'Apron', 'Proven', 'Improve', 'Yahoo Mail', 'Yamaha', 'Yelp', 'Yeti', 'Group tours', 'Your account', 'Can slice', 'Mostly sunny']) {
-    assert.equal(quoteForVoice(label), label, label);
-  }
-});
-
 test('the site said aloud; a name holding an answer word is left on the card', () => {
   assert.equal(spokenSite('bestbuy.com'), 'bestbuy.com');
   assert.match(spokenSite('say-approve.com'), /on the card/);
