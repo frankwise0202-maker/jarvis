@@ -9,17 +9,22 @@
 //
 // v8.1 (A12): onSilence(true) once the microphone has sent exact digital silence (every sample 0) for
 // silenceMs (10 s): a microphone's mute button (a speakerphone's), not a quiet room (a real microphone always
-// has some noise); onSilence(false) at the first sound after that.
+// has some noise); onSilence(false) at the first sound after that. Digital silence isn't the room: when sound
+// comes back after a second or more of it, the clap detector starts afresh (its noise floor would otherwise
+// have sunk to -100 dB and take about ten seconds to climb back, the room's own noise judged "busy" meanwhile,
+// and no two claps heard).
 
 import { createClapDetector } from './clap.js';
 import { createResampler } from './resample.js';
 import { createFramer, OWW } from './oww.js';
 
 export const SILENCE_MS = 10000;
+export const ZEROS_RESET_MS = 1000;
 
 export function createWakeTap({ inputRate = 48000, clap = true, sensitivity = 'normal', word = false, onClap = () => {}, onFrame = () => {}, onSilence = null, silenceMs = SILENCE_MS } = {}) {
   const rs = createResampler(inputRate, OWW.sampleRate);
   const silentAfter = Math.max(1, Math.round((inputRate * silenceMs) / 1000));
+  const resetAfter = Math.max(1, Math.round((inputRate * ZEROS_RESET_MS) / 1000));
   let zeros = 0; // exact zeros in a row, at inputRate
   let silent = false;
   const detector = createClapDetector({ sampleRate: OWW.sampleRate, sensitivity });
@@ -31,7 +36,7 @@ export function createWakeTap({ inputRate = 48000, clap = true, sensitivity = 'n
 
   function push(block) {
     if (!block || !block.length) return;
-    if (typeof onSilence === 'function') watchSilence(block);
+    watchSilence(block);
     const y = rs.push(block);
     samples16 += y.length;
     if (cfg.clap) {
@@ -49,17 +54,22 @@ export function createWakeTap({ inputRate = 48000, clap = true, sensitivity = 'n
         break;
       }
     }
-    if (last < 0) zeros += block.length;
-    else {
+    if (last < 0) {
+      zeros += block.length;
+    } else {
+      // Sound again: after a second or more of digital silence the detector starts afresh (not the room).
+      let first = 0;
+      while (first < last && block[first] === 0) first++;
+      if (zeros + first >= resetAfter) detector.reset();
       zeros = block.length - 1 - last;
       if (silent) {
         silent = false;
-        onSilence(false);
+        if (typeof onSilence === 'function') onSilence(false);
       }
     }
     if (!silent && zeros >= silentAfter) {
       silent = true;
-      onSilence(true);
+      if (typeof onSilence === 'function') onSilence(true);
     }
   }
 

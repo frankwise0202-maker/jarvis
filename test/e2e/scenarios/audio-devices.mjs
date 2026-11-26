@@ -208,6 +208,7 @@ export default [
     name: 'audio-devices-routing',
     title: 'Mac, “Speakerphone speaks, Mac listens”: Standby listens on the Mac’s microphone with echo cancellation on and noise suppression and auto gain off; the pill names it; the recognizer gets a processed track of it; George’s context and the chimes play on the speakerphone; setup 3 hears the question on the speakerphone’s microphone',
     device: 'mac',
+    fakeMusic: true, // woken: the routine's Apple Music offer
     seed: { settings: { ...SETUP1, ...GEORGE } },
     fakeCore: { senses: { speak: 'ready' } },
     timeout: 150000,
@@ -283,6 +284,7 @@ export default [
     name: 'audio-devices-hotplug',
     title: 'Mac, “Speakerphone for both”, Standby on: a single missed enumeration (a Bluetooth mode switch) changes nothing; the speakerphone turned off: Standby listens on the Mac’s microphone at once and the pill says the speakerphone is disconnected, George’s speaker goes to the default; back: Standby and George move back by themselves',
     device: 'mac',
+    fakeMusic: true, // woken: the routine's Apple Music offer
     seed: { settings: { ...SETUP2, ...GEORGE } },
     fakeCore: { senses: { speak: 'ready' } },
     timeout: 150000,
@@ -415,6 +417,7 @@ export default [
     name: 'standby-muted',
     title: 'Mac, Standby: the speakerphone’s mute button (exact digital silence) for 10 s: the pill asks “MICROPHONE MUTED?” and the hint says why; unmuted, it listens as before',
     device: 'mac',
+    fakeMusic: true, // woken: the routine's Apple Music offer
     seed: { settings: SETUP2 },
     timeout: 90000,
     async run(t) {

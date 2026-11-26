@@ -51,7 +51,7 @@ test('a quiet room is never "muted": its noise floor is not exact zeros; claps s
   assert.equal(claps.length, 1, 'two claps detected as before');
 });
 
-test('without onSilence nothing is counted; reset() starts the count over', () => {
+test('without onSilence nothing is called; reset() starts the count over', () => {
   const quiet = createWakeTap({ inputRate: RATE });
   feed(quiet, 11); // no callback: nothing to call, nothing breaks
   const events = [];
@@ -62,4 +62,22 @@ test('without onSilence nothing is counted; reset() starts the count over', () =
   assert.deepEqual(events, [], 'the count started over at reset');
   feed(tap, 2.1);
   assert.deepEqual(events, [true]);
+});
+
+test('unmuted: two claps work at once again (the detector starts afresh after a second or more of digital silence)', () => {
+  for (const zerosSec of [1.5, 3, 12]) {
+    const claps = [];
+    const tap = createWakeTap({ inputRate: 16000, clap: true, onClap: (e) => claps.push(e) });
+    const push = (x) => {
+      for (let at = 0; at + 128 <= x.length; at += 128) tap.push(x.subarray(at, at + 128));
+    };
+    push(S.roomNoise(2, { rmsDb: -62, rate: 16000 }));
+    push(new Float32Array(Math.round(zerosSec * 16000))); // the mute button
+    push(S.roomNoise(0.5, { rmsDb: -62, rate: 16000 })); // unmuted, half a second later: two claps
+    const dbl = S.concat(S.silence(0.3, 16000), S.doubleClap({ gapMs: 420, at: 0.2, seconds: 1.0, peakDb: -10, rate: 16000 }), S.silence(0.9, 16000));
+    const noise = S.roomNoise(dbl.length / 16000, { rmsDb: -62, rate: 16000 });
+    push(dbl.map((v, i) => v + (noise[i] || 0)));
+    push(S.roomNoise(1, { rmsDb: -62, rate: 16000 }));
+    assert.equal(claps.length, 1, `after ${zerosSec} s of digital silence`);
+  }
 });
