@@ -158,6 +158,29 @@ const VERBS_SAID_FIRST = new Set(
     'switch remove delete change set close log apply print copy follow visit navigate press tap hit').split(' '),
 );
 
+// With a carrier, only an instruction is a task (ROUTING-2): its first word is a verb for a page ("find", "add",
+// "open", …). "My Gmail won't load in Chrome", "it says access denied in Chrome" are the owner's troubles, and
+// "explain how cookies work in Chrome" a question: Jarvis's, never a paid task.
+const INSTRUCTION_VERBS = new Set([
+  ...VERBS_SAID_FIRST,
+  ...('enter browse research explore track unsubscribe message reply post share like upload pay rate review schedule zoom translate summarise ' +
+    'extract collect gather note bookmark favorite favourite clear empty refresh reload accept submit checkout dismiss fix update edit rename mute ' +
+    'unmute pause resume skip turn fetch scan sign log order buy book reserve click scroll sort filter search look compare pick choose select').split(' '),
+]);
+const NOT_INSTRUCTION = /^(?:show me how|show me why|teach me|tell me how|tell me why|help me understand|open (?:when|whenever|on startup|at startup|every time)\b)/;
+
+/**
+ * The words after the carrier read as an instruction (ROUTING-2): a page verb first ("let's" and "please" may come
+ * before it; so may a site and a colon: "Best Buy: add …").
+ */
+function isInstruction(p) {
+  const ws = p.words.map((x) => x.w);
+  let k = ws[0] === 'lets' || ws[0] === 'please' ? 1 : 0;
+  const colon = p.words.slice(0, 4).findIndex((x) => /:$/.test(x.raw));
+  if (colon >= 0 && !INSTRUCTION_VERBS.has(ws[k])) k = colon + 1;
+  return !!ws[k] && INSTRUCTION_VERBS.has(ws[k]) && !NOT_INSTRUCTION.test(ws.slice(k).join(' '));
+}
+
 /** The owner's own words for a task: their spelling, without the carrier, fillers or end stops. */
 function taskWords(words) {
   let text = words
@@ -338,7 +361,8 @@ export function matchChromeTask(text, state = {}) {
   const pageLink = LINK_WORDS.test(s) && !replyLinkCount(st);
   if (!pageLink && isOpening(s, p.carrier)) return null; // G1 opens it (free)
   let via = null;
-  if (p.carrier) via = 'carrier';
+  // (A question about the page itself, "what's the return policy on this page in Chrome", is a task too.)
+  if (p.carrier) via = isInstruction(p) || pageLink || (QUESTION.test(s) && PAGE_WORDS.test(s)) ? 'carrier' : null;
   else if (inChromeContext(st) && (pageLink || pageBound(s))) via = 'context';
   if (!via) return null;
   const words = taskWords(p.words);
@@ -399,7 +423,22 @@ export function matchChromeStop(text, state = {}) {
   }
   const chrome = state && state.chrome && typeof state.chrome === 'object' ? state.chrome : {};
   const running = !!(chrome.task && typeof chrome.task === 'object' && ['running', 'waiting', 'paused', 'starting'].includes(chrome.task.status));
-  if (running && /^(?:stop|stop it|stop now|stop stop)$/.test(s)) return { do: 'chrome-stop', named: false, free: true, undo: false };
+  if (!running) return null;
+  if (/^(?:stop|stop it|stop now|stop stop)$/.test(s)) return { do: 'chrome-stop', named: false, free: true, undo: false };
+  // While a task runs, the plain ways of stopping it are Chrome's too (ROUTING-5): "stop that", "stop the task",
+  // "cancel the task", "abort", "halt", "kill it", "stop what you're doing", a bare "cancel" (what every check
+  // teaches), "whoa, stop". (With a hologram open, "stop that" / "stop this" stay its own: R10.)
+  const holo = state && state.hologram && typeof state.hologram === 'object' && state.hologram.open;
+  if (holo && /^stop (?:that|this)$/.test(s)) return null;
+  // ("Pause", "end" and "kill" need what they stop: a bare "pause" is a walkthrough's word.)
+  const what = '(?:it|that|this|the task|the job|what youre doing|what you are doing|clicking|working|that task|this task)';
+  if (
+    new RegExp(`^(?:stop|cancel|abort|halt)(?: ${what})?$`).test(s) ||
+    new RegExp(`^(?:end|pause|kill) ${what}$`).test(s) ||
+    /^(?:whoa|woah|hey|hold on) stop(?: it| that)?$/.test(s)
+  ) {
+    return { do: 'chrome-stop', named: true, free: true, undo: false };
+  }
   return null;
 }
 
