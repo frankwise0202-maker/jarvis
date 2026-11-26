@@ -14,9 +14,12 @@
 //   jarvis.history    finished tasks (not written while incognito is on); can be cleared
 //
 // Voice from Jarvis (the link to Jarvis, the web app, through the owner's home base; link.js):
-//   chromeLink        { v: 1, core, key, linkedAt } the home base's address and the link key the
-//                     owner pasted from Jarvis (a link code). The key seals every message (the home
-//                     base can't read them); it is never sent anywhere, logged or synced.
+//   chromeLink        { v: 1, core, key, linkedAt, prev?, prevUntil? } the home base's address and the
+//                     link key: first the one the owner pasted from Jarvis (a link code), then the new
+//                     one Jarvis sends in its `rekey` (REDTEAM-LINK-4: the code works once); `prev` is
+//                     the code's key, still opened until Jarvis uses the new one or `prevUntil`. The key
+//                     seals every message (the home base can't read them); it is never sent anywhere,
+//                     logged or synced.
 //   jarvis.voice      { tasksFromJarvis, approvals } whether Jarvis may start tasks here (Link
 //                     turns it on), and "Approve everyday steps by voice" (off; only offered once
 //                     VOICE_APPROVALS_AVAILABLE)
@@ -154,7 +157,13 @@ export function normalizeLink(raw, { dev = DEV } = {}) {
   const core = homeBaseOrigin(raw.core, { dev });
   if (!core) return null;
   const linkedAt = Number(raw.linkedAt);
-  return { v: 1, core, key: raw.key, linkedAt: Number.isFinite(linkedAt) && linkedAt > 0 ? linkedAt : 0 };
+  const out = { v: 1, core, key: raw.key, linkedAt: Number.isFinite(linkedAt) && linkedAt > 0 ? linkedAt : 0 };
+  const prevUntil = Number(raw.prevUntil);
+  if (typeof raw.prev === 'string' && KEY_TEXT.test(raw.prev) && raw.prev !== raw.key && Number.isSafeInteger(prevUntil) && prevUntil > 0) {
+    out.prev = raw.prev;
+    out.prevUntil = prevUntil;
+  }
+  return out;
 }
 
 export const DEFAULT_VOICE = Object.freeze({ tasksFromJarvis: false, approvals: false });
@@ -293,6 +302,18 @@ export function createStore(chromeLike = globalThis.chrome) {
     },
     async clearLink() {
       await local.remove([KEYS.link, KEYS.relay]);
+    },
+    /**
+     * The same link with a new key (Jarvis's `rekey`, REDTEAM-LINK-4): `prev` and `prevUntil` keep the
+     * code's key for a while; null drops them. The cursor and the switches stay as they are.
+     */
+    async rekeyLink({ key, prev = null, prevUntil = 0 }) {
+      const current = await this.getLink();
+      if (!current) return null;
+      const link = normalizeLink({ ...current, key, ...(prev ? { prev, prevUntil } : { prev: undefined, prevUntil: undefined }) });
+      if (!link) return null;
+      await set(KEYS.link, link);
+      return link;
     },
 
     async getVoice() {

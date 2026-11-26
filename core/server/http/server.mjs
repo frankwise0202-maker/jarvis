@@ -156,7 +156,9 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     const method = req.method === 'HEAD' ? 'GET' : req.method;
     const core = getCore();
 
-    if (route !== '/api/stream') {
+    // Jarvis for Chrome's relay has its own limits (http/relay-routes.mjs): its traffic never takes from this
+    // bucket, which every device of the owner's login shares for speak, hear, sync and the brain (REDTEAM-LINK-2).
+    if (route !== '/api/stream' && !isRelayRoute(route)) {
       const r = apiLimiter.take(access.key);
       if (!r.ok) throw new HttpError(429, 'rate_limited', 'too many requests, slow down', { 'Retry-After': String(r.retryAfterSec) });
     }
@@ -258,7 +260,11 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       }
     }
 
-    if (isRelayRoute(route)) return relayRoutes.handle(req, res, { route, url, cors });
+    if (isRelayRoute(route)) {
+      const origin = req.headers.origin;
+      const client = `${access.key}|${typeof origin === 'string' ? origin.slice(0, 200) : ''}`;
+      return relayRoutes.handle(req, res, { route, url, cors, client });
+    }
     if (isBrainRoute(route)) return brainRoutes.handle(req, res, { route, method, url, access, cors });
     if (isSensesRoute(route)) return sensesRoutes.handle(req, res, { route, method, url, access, cors });
 

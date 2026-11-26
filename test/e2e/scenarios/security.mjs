@@ -216,6 +216,18 @@ export default [
       await t.page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: t.url });
       await t.goto('/');
 
+      await t.step('the composer refuses a Jarvis for Chrome link code: it says where to paste it, and sends nothing (REDTEAM-LINK-5)', async () => {
+        const input = await t.visible('composer-input');
+        const code = Buffer.from(JSON.stringify({ v: 1, core: 'https://alienware.tail4e5f6a.ts.net', key: 'A'.repeat(43) })).toString('base64url');
+        await input.fill(`Here's the code: ${code}`);
+        await (await t.visible('composer-send')).click();
+        const notice = await t.visible('attachment-error', { message: 'the composer says where the code goes' });
+        t.assert(/Paste it in Jarvis for Chrome’s side panel\./.test(await t.text(notice)), `the line (${await t.text(notice)})`);
+        t.assert((await t.count('turn-jarvis')) === 0 && (await t.count('turn-user')) === 0, 'nothing sent');
+        t.assert((await input.inputValue()).includes(code), 'the text stays for the owner to take out');
+        await input.fill('');
+      });
+
       await t.step('the composer asks before sending something shaped like a key', async () => {
         const input = await t.visible('composer-input');
         await input.fill(`Please check ${MOCK_API_KEY} for me`);

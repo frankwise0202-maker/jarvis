@@ -4,7 +4,7 @@
 //   createFakeChromeLink(opts) -> { link, calls, set(patch), task(patch), prompt(p), closePrompt(id, how), done(d), … }
 //     `link` has exactly contract (f)'s shape (brief-v81.md "(f) The Chrome link"):
 //       state() -> { linked, online, voiceApprovals, task }, subscribe(fn) -> unsubscribe,
-//       open(url, { rect, focus }), startTask({ text, chat }), stopTask(), answer({ promptId, hash, choice, via }),
+//       open(url, { rect, focus }), startTask({ text, chat }), stopTask() -> { ok, reason? }, answer({ promptId, hash, choice, via }),
 //       onPrompt(fn), onPromptClosed(fn), onDone(fn)
 //     and, like the extension's voice policy (G5), it refuses an answer whose hash is stale, whose prompt
 //     is closed, or whose yes the prompt's voice.allowed doesn't allow (reason 'refused', with a why).
@@ -144,14 +144,18 @@ export function createFakeChromeLink({ linked = true, online = true, voiceApprov
       queueMicrotask(changed);
       return { ok: true, id };
     },
+    // Contract (f) since REDTEAM-LINK-1: resolves once the extension confirms the stop ({ ok: true }; nothing
+    // running counts as confirmed), or { ok: false, reason }.
     async stopTask() {
       calls.stopTask += 1;
+      if (!state.linked) return { ok: false, reason: 'unlinked' };
       const t = state.task;
-      if (!t || !['running', 'waiting', 'paused'].includes(t.status)) return;
+      if (!t || !['running', 'waiting', 'paused'].includes(t.status)) return { ok: true };
       for (const id of [...open.keys()]) ctl.closePrompt(id, 'stopped');
       state = { ...state, task: null };
       changed();
       emit(doneFns, { id: t.id, status: 'stopped', answer: '', costUsd: t.costUsd });
+      return { ok: true };
     },
     async answer({ promptId, hash, choice, via } = {}) {
       calls.answer.push({ promptId, hash, choice, via });

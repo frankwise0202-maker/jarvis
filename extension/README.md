@@ -227,7 +227,8 @@ the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, u
 needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
 
 1. In Jarvis, in your usual Chrome: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link
-   code**. The code works once, for 30 minutes.
+   code**. The code works once, for 30 minutes: as soon as the two are linked, Jarvis sends a new
+   key and both forget the code's, so an old code opens nothing.
 2. In the Jarvis window: open the side panel (⌥⇧J) → **Settings** → **Voice from Jarvis**, paste
    the code and press **Link**.
 3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.
@@ -296,10 +297,11 @@ purchase."*) and that it needs a click in the Jarvis window.
 - When no side panel is open, a question that needs a click opens a small Jarvis for Chrome
   window with the same card, and **Stop**. Its answers take a click only after a second, so a
   click meant for another window can't answer it; it closes by itself once nothing waits.
-- If Jarvis for Chrome can't reach your home base for 20 seconds while a task from Jarvis runs,
-  the task pauses itself (as **Take over** does), so a *"stop"* said to Jarvis can't be lost on the
-  way; press **Continue** in the side panel to go on. **⌘⇧.** and the side panel's **Stop** always
-  work.
+- If Jarvis for Chrome can't read what Jarvis sends it through your home base for 20 seconds
+  while a task from Jarvis runs (its own messages getting through to Jarvis don't count), or the
+  link with Jarvis ends mid-task (Unlink on either side, or a new link), the task pauses itself (as
+  **Take over** does), so a *"stop"* said to Jarvis is never lost on the way; press **Continue** in
+  the side panel to go on. **⌘⇧.** and the side panel's **Stop** always work.
 
 Opening pages and the relay cost nothing; a task costs what any task costs (see [Costs](#costs)).
 

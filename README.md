@@ -1113,10 +1113,14 @@ leave each other messages on your home base. You link them once, on the Mac:
 2. In Jarvis, open **Settings → Jarvis for Chrome**, press **Link**, then **Copy link code**.
 3. In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then **Settings → Voice
    from Jarvis**, and paste the code. When Chrome asks, let Jarvis for Chrome reach your home base.
-4. Both sides now say **Linked · online**, and Jarvis clears the code from your clipboard. **Test** checks the link
-   any time, and so does asking "is Jarvis for Chrome linked?" ("link Jarvis for Chrome" brings you to its settings).
+4. Both sides now say **Linked · online**, and Jarvis clears the code from your clipboard if it's still there (it
+   reads the clipboard first, so something you copied since stays; if it can't, Settings says so). **Test** checks
+   the link any time, and so does asking "is Jarvis for Chrome linked?" ("link Jarvis for Chrome" brings you to its
+   settings).
 
-The code works once, for 30 minutes: it holds the key that locks your messages, so don't share it. Keep the Jarvis
+The code works once, for 30 minutes: the moment the two are linked, they agree a new key and forget the code's, so an
+old code (in your clipboard history, say) opens nothing. Until then it holds the key that locks your messages, so
+don't share it. Keep the Jarvis
 window open (it can sit behind other windows): if it's closed, Settings says **Linked · offline**, "pull this up in
 Chrome" opens a normal tab instead, and Jarvis tells you he can't reach Jarvis for Chrome rather than start a task
 there. **Unlink** on either side ends the link. The link belongs to your Mac: on the iPhone, Settings → Jarvis for

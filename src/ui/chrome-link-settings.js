@@ -2,9 +2,10 @@
 // "Jarvis" Chrome profile) through the home base, see whether it's there, and unlink.
 //   · Not linked: what it does, and Link (it needs the home base: Settings → Home base).
 //   · Linking: Copy link code, then the steps in the Jarvis window (side panel → Settings → Voice from Jarvis →
-//     paste; Chrome asks to let it reach the home base), and Cancel. The code works for 30 minutes; Jarvis
-//     clears it from the clipboard once linked (critique L9). If the clipboard can't be written, the code is
-//     shown to copy by hand.
+//     paste; Chrome asks to let it reach the home base), and Cancel. The code works once, for 30 minutes: once
+//     linked, a new key replaces the code's (REDTEAM-LINK-4), and Jarvis clears the code from the clipboard if it
+//     is still there (critique L9, PRIVACY-6), or says it couldn't check. If the clipboard can't be written, the
+//     code is shown to copy by hand.
 //   · Linked: "Linked · online" (or offline, with what to do), Test (a ping: the round trip and whether "Tasks
 //     from Jarvis" is on there), and Unlink (tap twice).
 //   · On an iPhone: one line (the link is made on the computer).
@@ -37,11 +38,12 @@ export const CHROME_LINK_WORDS = Object.freeze({
     'In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then Settings → Voice from Jarvis, and paste the code. (Voice from Jarvis needs Jarvis for Chrome 1.1.0 or later.)',
     'When Chrome asks, let Jarvis for Chrome reach your home base.',
   ],
-  codeNote: 'The code works once, for 30 minutes. Jarvis clears it from your clipboard as soon as the two are linked.',
+  codeNote: 'The code works once, for 30 minutes: once the two are linked, a new key replaces it. Jarvis then clears it from your clipboard if it’s still there.',
   copied: 'Link code copied. Paste it in Jarvis for Chrome.',
   copyFailed: 'Jarvis couldn’t copy it. Select the code below and copy it (⌘C or Ctrl+C).',
   linked: 'Linked with Jarvis for Chrome.',
   cleared: 'Linked. The link code was cleared from your clipboard.',
+  unchecked: 'Linked. Jarvis couldn’t check your clipboard: if it still holds the link code, copy something else over it. (The code no longer works.)',
   unlinked: 'Unlinked. Jarvis for Chrome was told, if it could be reached.',
   extUnlinked: 'Jarvis for Chrome unlinked itself. Link again whenever you like.',
   expired: 'The link code expired before it was used. Press Link for a new one.',
@@ -82,6 +84,7 @@ export function createChromeLinkSettings(control, { toast } = {}) {
   let unlinkTimer = 0;
   let lastPhase = null;
   let lastCleared = null;
+  let lastClip = null;
   let busy = false;
 
   const stateDot = h('span', { class: 'cl-dot', attrs: { 'aria-hidden': 'true' } });
@@ -174,16 +177,19 @@ export function createChromeLinkSettings(control, { toast } = {}) {
     out(problemOut, problem, 'warn');
     // What just happened.
     if (lastPhase === 'pending' && stateName === 'linked') {
-      out(result, info.clearedAt ? CHROME_LINK_WORDS.cleared : CHROME_LINK_WORDS.linked, 'ok');
+      out(result, info.clearedAt ? CHROME_LINK_WORDS.cleared : info.clipboard === 'unchecked' ? CHROME_LINK_WORDS.unchecked : CHROME_LINK_WORDS.linked, info.clipboard === 'unchecked' ? 'warn' : 'ok');
       say(CHROME_LINK_WORDS.linked, { level: 'success' });
     } else if (stateName === 'linked' && info.clearedAt && info.clearedAt !== lastCleared && lastCleared !== null) {
       out(result, CHROME_LINK_WORDS.cleared, 'ok');
+    } else if (stateName === 'linked' && info.clipboard === 'unchecked' && lastClip !== 'unchecked') {
+      out(result, CHROME_LINK_WORDS.unchecked, 'warn');
     } else if (info.note === 'ext-unlinked' && stateName !== 'linked') {
       out(result, CHROME_LINK_WORDS.extUnlinked, 'info');
     } else if (info.note === 'expired' && stateName !== 'pending' && stateName !== 'linked') {
       out(result, CHROME_LINK_WORDS.expired, 'info');
     }
     lastCleared = info.clearedAt || 0;
+    lastClip = info.clipboard || null;
     lastPhase = stateName;
   }
 

@@ -43,6 +43,8 @@ export function createFakeRelay({ waitScaleMs = 1000, now = () => Date.now() } =
     requests: [],
     down: false, // fetch fails as if the home base were unreachable
     hang: false, // requests never answer (until down/hang is cleared or the caller gives up)
+    refuseReads: false, // GET of to-ext answers 429 (a flooded box), while posts still go in
+    failPosts: false, // POSTs to to-app fail as if the connection dropped (the extension's messages can't get out)
     seen,
     reset() {
       boxes[BOX_TO_EXT].length = 0;
@@ -82,6 +84,7 @@ export function createFakeRelay({ waitScaleMs = 1000, now = () => Date.now() } =
         return { status: 200, json: { ok: true } };
       }
       if (method !== 'GET') return { status: 405, json: {} };
+      if (relay.refuseReads && box === BOX_TO_EXT) return { status: 429, json: { error: 'rate_limited' } };
       if (box === BOX_TO_EXT) seen.extSeenAt = now();
       else seen.appSeenAt = now();
       const after = typeof query.after === 'string' ? query.after : '';
@@ -114,6 +117,7 @@ export function createFakeRelay({ waitScaleMs = 1000, now = () => Date.now() } =
     async fetch(url, init = {}) {
       if (init.signal?.aborted) throw abortErr();
       if (relay.down) throw new TypeError('Failed to fetch');
+      if (relay.failPosts && (init.method || 'GET') === 'POST' && String(url).includes('/api/relay/to-app')) throw new TypeError('Failed to fetch');
       if (relay.hang) {
         await new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(abortErr()), { once: true }));
       }

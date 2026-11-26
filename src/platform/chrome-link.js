@@ -13,11 +13,17 @@
 //
 //   const link = createChromeLink({ getHomeBase, version, ... })   (installChromeLink in app.js)
 //   link.api = app.chromeLink, exactly contract (f):
-//     state() → { linked, online, voiceApprovals, task: null | { id, status, text, narration, lastStep, costUsd, limitUsd } }
+//     state() → { linked, online, voiceApprovals, task: null | { id, status, text, narration, lastStep, costUsd, limitUsd },
+//                 budgetUsd?, maxSteps? }   (the extension's task budget and step limit, once its hello or status said them:
+//                                           MONEY-3, so the check says what will be enforced)
 //     subscribe(fn) → unsubscribe                     fn(state()) after each change
 //     open(url, { rect, focus }) → Promise<{ ok: true, site } | { ok: false, reason, why? }>
-//     startTask({ text, chat }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
-//     stopTask() → Promise<void>                       (sent whenever linked: stopping is the safe direction)
+//     startTask({ text, chat, limitUsd? }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
+//                                                      limitUsd: the budget the owner heard; the extension keeps the task
+//                                                      within it, never above its own (MONEY-3)
+//     stopTask() → Promise<{ ok: true } | { ok: false, reason: 'unlinked' | 'offline' }>
+//                                                      sent whenever linked (stopping is the safe direction), and
+//                                                      sent again until Jarvis for Chrome confirms it (REDTEAM-LINK-1)
 //     answer({ promptId, hash, choice, via }) → Promise<{ ok: true } | { ok: false, reason, why? }>
 //     onPrompt(fn) · onPromptClosed(fn /* promptId, { how } */) · onDone(fn /* { id, status, answer, costUsd } */) → unsubscribe
 //   link.control: what Settings → Jarvis for Chrome needs (info(), onChange(fn), begin(), code(), copyCode(),
@@ -32,10 +38,14 @@
 // state.
 //
 // Every request carries an id; the extension answers it with one `reply` whose `re` is that id. A request gets
-// no reply after 10 s → { ok: false, reason: 'offline' }. Fresh requests only (wire-v1, decision D5): Jarvis for
-// Chrome refuses an open, start or answer more than 8 s old; if an `ok` still comes back for a start this app gave
-// up on, it sends stop at once and tells the owner ("Chrome started late, so I stopped it."); a late ok for an open
-// or an answer is only noted. The extension counts as online while /api/relay/status
+// no reply after 10 s → { ok: false, reason: 'offline' }. A stop is different (REDTEAM-LINK-1): one is pending at a
+// time, sent again (a fresh envelope each time) after 2, 2, 4, 8, 15, then every 30 s until Jarvis for Chrome
+// confirms it (its reply, ok or 'gone'; a `done` for the task; a status or task news showing the task no longer
+// runs), for up to 2 minutes; stopTask() resolves when it is confirmed, or 'offline' after those 2 minutes.
+// Fresh requests only (wire-v1, decision D5): Jarvis for Chrome refuses an open, start or answer more than 8 s old;
+// if an `ok` still comes back for a start this app gave up on, it stops that task (sent again until confirmed) and
+// tells the owner once the stop is confirmed ("Chrome started late, so I stopped it.", or after 10 s unconfirmed
+// that it couldn't be stopped); a late ok for an open or an answer is only noted. The extension counts as online while /api/relay/status
 // says it read its box in the last 60 s, or a message from it arrived in the last 60 s. Nothing is sent while
 // it is offline, except stop. Everything that comes back is information, never orders: each field is checked
 // and cut to size here (page text included), and nothing in it starts anything.
@@ -46,10 +56,16 @@ import { readItem, writeItem, removeItem, watchItem } from './storage.js';
 import { requestHomeBase } from './homebase.js';
 import { isIOS, isAndroid } from './env.js';
 import { normalizeHomeBaseUrl } from '../lib/homebase.js';
-import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, makeLinkCode, isLinkKey, isCoreOrigin, ID_CHARS } from '../lib/relay-envelope.js';
+import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, makeLinkCode, isLinkKey, isCoreOrigin, ID_CHARS, ID_BYTES, b64url } from '../lib/relay-envelope.js';
 
 export const CHROME_LINK_KEY = 'jarvis.chromeLink.v1';
 export const CHROME_LINK_INBOX_KEY = 'jarvis.chromeLink.inbox.v1';
+// Starts this device sent and hasn't had an answer to, and the voice tasks it knows it started (MISSED-LINK-A):
+// { v: 1, starts: [{ env, sentAt, gaveUpAt, until, win }], known: [taskId] }. Nothing secret (envelope ids and task
+// ids, which the relay or the status show anyway). localStorage, so every window of this device and a reloaded one
+// see it: the window that holds the link reads the late answer or the task's news, and the window that gave up may
+// be gone.
+export const CHROME_LINK_STARTS_KEY = 'jarvis.chromeLink.starts.v1';
 export const CHROME_LINK_LOCK = 'jarvis-chrome-link';
 export const CHROME_LINK_CHANNEL = 'jarvis-chrome-link';
 export const REPLY_TIMEOUT_MS = 10_000;
@@ -57,13 +73,36 @@ export const ONLINE_MS = 60_000;
 export const POLL_WAIT_S = 20;
 export const STATUS_EVERY_MS = 30_000;
 export const PENDING_MS = 30 * 60_000; // an unused link code is forgotten after half an hour
-export const CLIPBOARD_CLEAR_MS = 10 * 60_000; // the code is cleared from the clipboard once linked, if copied this recently
+// The code is cleared from the clipboard once linked, if this tab copied it during its life (PENDING_MS), and only if
+// the clipboard still holds it (REDTEAM-LINK-4, PRIVACY-6). The tab's sessionStorage keeps that it was copied (a hash
+// of the code, never the code), so a reload while the owner sets up Jarvis for Chrome doesn't forget it.
+export const CHROME_LINK_COPIED_KEY = 'jarvis.chromeLink.copied.v1';
 export const BACKOFF_MS = Object.freeze([2_000, 4_000, 8_000, 15_000, 30_000, 60_000]);
 export const OLD_CORE_RETRY_MS = 5 * 60_000;
 export const TEXT_MAX = 2000; // a task's words, and what comes back about it
 export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
 export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
+// The code works once (REDTEAM-LINK-4): on the first message sealed with the code's key, a new key replaces it, sent
+// to Jarvis for Chrome in a `rekey` sealed with the code's key and sent again until confirmed by a message under the
+// new key (then the code's key is forgotten here). Until then this side still opens messages under the code's key
+// (at most PENDING_MS after the rekey) and seals with it for REKEY_GRACE_MS (Jarvis for Chrome takes it that long
+// after it switched), or while Jarvis for Chrome is still heard using it.
+export const REKEY_GRACE_MS = 10 * 60_000;
+export const REKEY_RESEND_MS = Object.freeze([3_000, 6_000, 12_000, 30_000]);
+const PREV_HEARD_MS = 2 * 60_000; // Jarvis for Chrome used the code's key this recently: it hasn't switched
 export const LATE_START_LINE = 'Chrome started late, so I stopped it.';
+// Stop (REDTEAM-LINK-1): one pending stop at a time, sent again (a fresh envelope each time) until Jarvis for
+// Chrome confirms it: its reply (ok, or 'gone': nothing runs), a `done` for the task, or a status or task news
+// showing that task no longer runs. After STOP_FOR_MS unconfirmed it gives up. The owner is told after
+// STOP_CONFIRM_MS without a confirmation (chrome-voice for a spoken stop; this file for D5's late start).
+export const STOP_RESEND_MS = Object.freeze([2_000, 2_000, 4_000, 8_000, 15_000, 30_000]);
+export const STOP_FOR_MS = 2 * 60_000; // the relay keeps a message 2 minutes: so long a stop is worth sending
+export const STOP_CONFIRM_MS = 10_000;
+export const LATE_START_UNCONFIRMED = Object.freeze({
+  line: 'Chrome started a task late, and I couldn’t reach it to stop it. Press Stop in its side panel, or Command-Shift-Period.',
+  show: 'Chrome started a task late, and I couldn’t reach it to stop it. Press Stop in its side panel, or ⌘⇧. in Chrome.',
+});
+const OVER_STATUSES = new Set(['done', 'stopped', 'failed', 'limit', 'error', 'interrupted']);
 const MIN_POLL_MS = 1500; // an answer that came back at once with nothing in it is not asked again sooner
 const AFTER_BATCH_MS = 250; // a little time for more of the same burst before the next read
 const READ_MAX_CHARS = 2 * 1024 * 1024; // 50 messages of up to 22 KB
@@ -112,11 +151,19 @@ export function cleanReply(body) {
   return out;
 }
 
-/** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status } }. */
+/** A task budget the extension reports ($0.05-$50 in its settings), or null. */
+const budgetOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1000 ? Math.round(v * 100) / 100 : null);
+const stepsOf = (v) => (Number.isSafeInteger(v) && v > 0 && v <= 10_000 ? v : null);
+
+/** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status, from? }, budgetUsd?, maxSteps? }. */
 export function cleanStatus(body) {
   const b = isObj(body) ? body : {};
-  const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE) } : null;
-  return { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
+  // (`from`: 'voice' for a task from Jarvis, 'panel' for one typed in the side panel; since the review.)
+  const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE), ...(token(b.task.from, WORD_RE) ? { from: token(b.task.from, WORD_RE) } : {}) } : null;
+  const out = { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
+  if (budgetOf(b.budgetUsd) !== null) out.budgetUsd = budgetOf(b.budgetUsd);
+  if (stepsOf(b.maxSteps) !== null) out.maxSteps = stepsOf(b.maxSteps);
+  return out;
 }
 
 /** task { id, status, text, narration, lastStep, costUsd, limitUsd } (no pictures). */
@@ -210,11 +257,54 @@ function readJson(read, key) {
   }
 }
 
-/** The stored link, checked: { v, core, key, linkedAt, extSeenAt, madeAt } or null. */
+/**
+ * The stored link, checked: { v, core, key, linkedAt, extSeenAt, madeAt, prev, rekeyAt, prevSeenAt } or null. `prev` is
+ * the code's key while the new one isn't confirmed yet (REDTEAM-LINK-4), else null.
+ */
 export function readLinkRecord(read = readItem) {
   const raw = readJson(read, CHROME_LINK_KEY);
   if (!isObj(raw) || raw.v !== 1 || !isCoreOrigin(raw.core) || !isLinkKey(raw.key)) return null;
-  return { v: 1, core: raw.core, key: raw.key, linkedAt: posInt(raw.linkedAt), extSeenAt: posInt(raw.extSeenAt), madeAt: posInt(raw.madeAt) };
+  const prev = isLinkKey(raw.prev) && raw.prev !== raw.key && posInt(raw.linkedAt) ? raw.prev : null;
+  return {
+    v: 1,
+    core: raw.core,
+    key: raw.key,
+    linkedAt: posInt(raw.linkedAt),
+    extSeenAt: posInt(raw.extSeenAt),
+    madeAt: posInt(raw.madeAt),
+    prev,
+    rekeyAt: prev ? posInt(raw.rekeyAt) : null,
+    prevSeenAt: prev ? posInt(raw.prevSeenAt) : null,
+  };
+}
+
+/**
+ * A link code in some text: base64url of `{"v":1,"core":"https://…`, whose first 20 characters never change, and the
+ * rest of a code after them (REDTEAM-LINK-5).
+ */
+export const LINK_CODE_RE = /eyJ2IjoxLCJjb3JlIjoi[A-Za-z0-9_-]{40,}/;
+export const LINK_CODE_RE_ALL = new RegExp(LINK_CODE_RE.source, 'g');
+
+/** This device's link secrets: its link key, and the code's key while a rekey is unconfirmed (never shown anywhere). */
+export function linkSecrets(read = readItem) {
+  const r = readLinkRecord(read);
+  return r ? [r.key, r.prev].filter(Boolean) : [];
+}
+
+/**
+ * True when `text` holds a link code or this device's link key (REDTEAM-LINK-5): the chat refuses to send it to
+ * Claude, and a conversation holding one stays out of backups and sync, like one holding an API key.
+ */
+export function containsLinkSecret(text, secrets = linkSecrets()) {
+  if (typeof text !== 'string' || !text) return false;
+  if (LINK_CODE_RE.test(text)) return true;
+  return (Array.isArray(secrets) ? secrets : []).some((k) => typeof k === 'string' && k.length >= 40 && text.includes(k));
+}
+
+/** The same link, a rekey apart (REDTEAM-LINK-4): a new key replacing the code's is not a new link. */
+export function sameLink(a, b) {
+  if (!a || !b || a.core !== b.core) return false;
+  return a.key === b.key || (!!b.prev && a.key === b.prev) || (!!a.prev && a.prev === b.key);
 }
 
 function defaultComputer() {
@@ -250,6 +340,46 @@ function defaultLocks() {
   } catch {
     return null;
   }
+}
+
+/** This tab's sessionStorage (a reload keeps it; other windows have their own), or a memory stand-in. */
+function defaultSession() {
+  const memory = new Map();
+  const store = () => {
+    try {
+      const s = globalThis.sessionStorage;
+      return s && typeof s.getItem === 'function' ? s : null;
+    } catch {
+      return null;
+    }
+  };
+  return {
+    read(k) {
+      try {
+        const s = store();
+        return s ? s.getItem(k) : memory.has(k) ? memory.get(k) : null;
+      } catch {
+        return memory.has(k) ? memory.get(k) : null;
+      }
+    },
+    write(k, v) {
+      try {
+        const s = store();
+        if (s) s.setItem(k, String(v));
+        else memory.set(k, String(v));
+      } catch {
+        memory.set(k, String(v));
+      }
+    },
+    remove(k) {
+      memory.delete(k);
+      try {
+        store()?.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
 
 function defaultClipboard() {
@@ -288,6 +418,7 @@ export function createChromeLink({
   locks = defaultLocks(),
   channel = defaultChannel(),
   clipboard = defaultClipboard(),
+  session = defaultSession(),
   computer = defaultComputer(),
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
@@ -306,11 +437,15 @@ export function createChromeLink({
   let statusSeen = 0; // the relay's extSeenAt (ms)
   let savedSeen = 0; // the extSeenAt last written to storage
   let voiceApprovals = false;
+  let budget = null; // { budgetUsd, maxSteps } from the extension's hello or status (MONEY-3)
   let task = null;
   let extVersion = '';
-  let copied = null; // { at } when this window put the link code on the clipboard
   let clearedAt = 0;
-  let cryptoKey = null; // { key: the text it came from, value: CryptoKey }
+  let clipState = null; // 'cleared' | 'unchecked' (it couldn't be read, so it was left) | null
+  const cryptoKeys = new Map(); // key text → CryptoKey (the link's key, and the code's while a rekey is unconfirmed)
+  let rekeyTimer = null;
+  let rekeySends = 0;
+  let rekeyLastAt = 0;
   let seen = createSeenIds();
   let cursor = null;
   let onlineTimer = null;
@@ -318,8 +453,11 @@ export function createChromeLink({
   let pollWake = null; // ends the long poll's back-off early (the home base answered the status again)
   let lastSig = '';
   const pending = new Map(); // envelope id → { kind, resolve }
-  const late = new Map(); // envelope id → { kind, until }: requests given up on whose reply may still come (D5)
+  const late = new Map(); // envelope id → { kind, until }: opens and answers given up on whose reply may still come (D5)
+  const winId = Math.floor(random() * 2 ** 48).toString(36) + Math.floor(Math.random() * 2 ** 30).toString(36); // this window
+  const candidates = new Map(); // voice task id → when first seen while one of this window's starts waited (MISSED-LINK-A)
   let lateNoted = 0; // late ok replies to an open or an answer (only noted)
+  let stopper = null; // the pending stop (LINK-1): { taskId, ids: Set of envelope ids, rec, started, sends, timer, over, promise, resolve }
   const listeners = new Set();
   const controlListeners = new Set();
   const promptListeners = new Set();
@@ -376,7 +514,8 @@ export function createChromeLink({
   }
 
   function save(rec) {
-    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt }));
+    const rotating = rec.prev ? { prev: rec.prev, rekeyAt: rec.rekeyAt, prevSeenAt: rec.prevSeenAt } : {};
+    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt, ...rotating }));
   }
 
   function loadInbox() {
@@ -395,9 +534,11 @@ export function createChromeLink({
   function reload() {
     const before = record;
     record = load();
-    const keyChanged = !before || !record || before.key !== record.key;
+    const keyChanged = !before || !record || !sameLink(before, record);
     if (keyChanged) {
-      cryptoKey = null;
+      cryptoKeys.clear();
+      cancelLater(rekeyTimer);
+      rekeyTimer = null;
       cursor = null;
       seen = createSeenIds();
       if (holding && record) loadInbox();
@@ -406,8 +547,10 @@ export function createChromeLink({
       savedSeen = record ? record.extSeenAt || 0 : 0;
       task = null;
       voiceApprovals = false;
+      budget = null;
       extVersion = '';
       for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'unlinked' });
+      endStop(stopper, { ok: false, reason: 'unlinked' });
     }
     if (record && record.extSeenAt) savedSeen = Math.max(savedSeen, record.extSeenAt);
     if (record && record.linkedAt && (!before || !before.linkedAt)) maybeClearClipboard();
@@ -421,16 +564,61 @@ export function createChromeLink({
   function forget(why = null) {
     storage.remove(CHROME_LINK_KEY);
     storage.remove(CHROME_LINK_INBOX_KEY);
+    storage.remove(CHROME_LINK_STARTS_KEY);
     note = why;
     problem = null;
     reload();
   }
 
-  async function keyOf(rec) {
-    if (cryptoKey && cryptoKey.key === rec.key) return cryptoKey.value;
-    const value = await importLinkKey(rec.key);
-    cryptoKey = { key: rec.key, value };
+  async function keyOf(text) {
+    if (cryptoKeys.has(text)) return cryptoKeys.get(text);
+    const value = await importLinkKey(text);
+    if (cryptoKeys.size > 3) cryptoKeys.clear();
+    cryptoKeys.set(text, value);
     return value;
+  }
+
+  /**
+   * The key a message to Jarvis for Chrome is sealed with (REDTEAM-LINK-4): the link's own, or while the new key
+   * isn't confirmed, the code's (Jarvis for Chrome takes it for REKEY_GRACE_MS after it switched, and needs it before).
+   */
+  function sealKeyText(rec) {
+    if (!rec.prev) return rec.key;
+    const t = now();
+    if (t - (rec.rekeyAt || 0) < REKEY_GRACE_MS) return rec.prev;
+    if (rec.prevSeenAt && t - rec.prevSeenAt < PREV_HEARD_MS) return rec.prev;
+    return rec.key;
+  }
+
+  /** Whether a message under the code's key is still taken (only before the new key is confirmed, half an hour at most). */
+  const prevOpen = (rec) => !!rec.prev && now() - (rec.rekeyAt || 0) < PENDING_MS;
+
+  /** Send the new key, sealed with the code's (again until confirmed: on a schedule, and when the old key is heard). */
+  function sendRekey({ force = false } = {}) {
+    const rec = record;
+    if (!rec || !rec.prev || !rec.linkedAt) return Promise.resolve(false);
+    const t = now();
+    if (!force && t - rekeyLastAt < 2000) return Promise.resolve(false);
+    rekeyLastAt = t;
+    const sent = tell('rekey', { key: rec.key }, rec, rec.prev);
+    cancelLater(rekeyTimer);
+    rekeyTimer = null;
+    if (holding && t - (rec.rekeyAt || 0) < REKEY_GRACE_MS) {
+      const wait = REKEY_RESEND_MS[Math.min(rekeySends, REKEY_RESEND_MS.length - 1)];
+      rekeySends += 1;
+      rekeyTimer = later(() => sendRekey({ force: true }), wait);
+    }
+    return sent;
+  }
+
+  /** A message under the new key: Jarvis for Chrome has switched. The code's key is forgotten here. */
+  function rekeyConfirmed() {
+    if (!record || !record.prev) return;
+    cryptoKeys.delete(record.prev);
+    record = { ...record, prev: null, rekeyAt: null, prevSeenAt: null };
+    save(record);
+    cancelLater(rekeyTimer);
+    rekeyTimer = null;
   }
 
   // ---- state and changes --------------------------------------------------------------------------------
@@ -447,7 +635,16 @@ export function createChromeLink({
 
   function state() {
     const linked = isLinked();
-    return { linked, online: linked && isOnlineNow(), voiceApprovals: linked && voiceApprovals, task: linked && task ? { ...task } : null };
+    const out = { linked, online: linked && isOnlineNow(), voiceApprovals: linked && voiceApprovals, task: linked && task ? { ...task } : null };
+    if (linked && budget) Object.assign(out, budget);
+    return out;
+  }
+
+  function noteBudget(body) {
+    const usd = budgetOf(body && body.budgetUsd);
+    if (usd === null) return;
+    const steps = stepsOf(body.maxSteps);
+    budget = { budgetUsd: usd, ...(steps !== null ? { maxSteps: steps } : budget && budget.maxSteps ? { maxSteps: budget.maxSteps } : {}) };
   }
 
   function info() {
@@ -464,8 +661,9 @@ export function createChromeLink({
       note,
       extVersion,
       late: lateNoted,
-      copied: !!copied,
+      copied: !!readCopied(),
       clearedAt: clearedAt || null,
+      clipboard: clipState,
     };
   }
 
@@ -482,16 +680,32 @@ export function createChromeLink({
     call(controlListeners, info());
   }
 
-  function noteHeard() {
+  function noteHeard({ viaPrev = false } = {}) {
     heard = now();
     if (record && !record.linkedAt) {
-      // The first message sealed with this key: Jarvis for Chrome has the code. Linked.
-      record = { ...record, linkedAt: heard, extSeenAt: heard };
+      // The first message sealed with this key: Jarvis for Chrome has the code. Linked. A new key replaces the
+      // code's at once, so the code works once (REDTEAM-LINK-4): sent sealed with the code's key, and again until
+      // a message under the new one confirms it.
+      record = { ...record, key: newLinkKey(), prev: record.key, rekeyAt: heard, prevSeenAt: heard, linkedAt: heard, extSeenAt: heard };
       savedSeen = heard;
+      rekeySends = 0;
       save(record);
       maybeClearClipboard();
-      sendHello();
-    } else if (record && heard - savedSeen >= SEEN_SAVE_MS) {
+      sendRekey({ force: true }).finally(() => sendHello()); // the rekey first: it is read before anything else
+      return;
+    }
+    if (record && record.prev) {
+      if (!viaPrev) rekeyConfirmed();
+      else {
+        // Still the code's key: it hasn't switched (the rekey or its answer was lost). Sent again.
+        if (heard - (record.prevSeenAt || 0) >= 5000) {
+          record = { ...record, prevSeenAt: heard };
+          save(record);
+        }
+        sendRekey();
+      }
+    }
+    if (record && heard - savedSeen >= SEEN_SAVE_MS) {
       record = { ...record, extSeenAt: heard };
       savedSeen = heard;
       save(record);
@@ -507,41 +721,56 @@ export function createChromeLink({
     }
   }
 
-  const shareState = () => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion });
+  const shareState = (ev = null) => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion, budget, ...(ev ? { ev } : {}) });
 
   // ---- what comes in ------------------------------------------------------------------------------------
-  function handle(message) {
+  function handle(message, { viaPrev = false } = {}) {
     const { kind, body } = message;
-    noteHeard();
+    noteHeard({ viaPrev });
+    let ev = null; // what this message says about a pending stop (other windows hear it with the state)
     switch (kind) {
       case 'reply': {
         const reply = cleanReply(body);
         if (!reply) break;
+        if (stopEvidence({ reply })) break; // this window's stop, confirmed (or refused: sent again)
         const entry = pending.get(reply.re);
-        if (entry) entry.resolve(interpret(entry.kind, reply));
-        else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
+        if (entry) {
+          if (entry.kind === 'start') resolveStart(reply.re, reply);
+          entry.resolve(interpret(entry.kind, reply));
+        } else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
         break;
       }
       case 'hello':
-        if (body.ext === 'jarvis-for-chrome') extVersion = cleanText(body.version, 24);
+        if (body.ext === 'jarvis-for-chrome') {
+          extVersion = cleanText(body.version, 24);
+          noteBudget(body);
+        }
         break;
       case 'status': {
         const s = cleanStatus(body);
         voiceApprovals = s.voiceApprovals;
+        noteBudget(s);
         if (!s.task) task = null;
         else if (!task || task.id !== s.task.id) task = { id: s.task.id, status: s.task.status || 'running', text: '', narration: '', lastStep: '', costUsd: null, limitUsd: null };
         else task = { ...task, status: s.task.status || task.status };
+        ev = { status: { task: s.task } };
+        if (s.task && s.task.from === 'voice') voiceTaskSeen(s.task.id);
         break;
       }
       case 'task': {
         const t = cleanTask(body);
-        if (t) task = t;
+        if (t) {
+          task = t;
+          ev = { task: { id: t.id, status: t.status } };
+          voiceTaskSeen(t.id); // (task news is sent for tasks from Jarvis only)
+        }
         break;
       }
       case 'done': {
         const d = cleanDone(body);
         if (!d) break;
         if (task && task.id === d.id) task = null;
+        ev = { done: { id: d.id } };
         call(doneListeners, d);
         break;
       }
@@ -562,20 +791,26 @@ export function createChromeLink({
       default:
         break; // a kind this version doesn't know: nothing
     }
-    shareState();
+    if (ev) stopEvidence(ev);
+    shareState(ev);
     changed();
   }
 
   async function receive(rec, data) {
     if (!isObj(data) || !Array.isArray(data.messages)) return 0;
-    const value = await keyOf(rec);
     let opened = 0;
     for (const env of data.messages.slice(0, 64)) {
-      if (record !== rec && (!record || record.key !== rec.key)) return opened; // unlinked meanwhile
-      const r = await openEnvelope(value, env, { box: 'to-app', now: now(), seen });
+      if (!record || !sameLink(record, rec)) return opened; // unlinked meanwhile
+      const cur = record; // (the key may have been replaced by the message before: REDTEAM-LINK-4)
+      let r = await openEnvelope(await keyOf(cur.key), env, { box: 'to-app', now: now(), seen });
+      let viaPrev = false;
+      if (!r.ok && r.reason === 'tag' && prevOpen(cur)) {
+        r = await openEnvelope(await keyOf(cur.prev), env, { box: 'to-app', now: now(), seen });
+        viaPrev = r.ok;
+      }
       if (!r.ok) continue; // dropped, silently
       opened += 1;
-      handle(r.message);
+      handle(r.message, { viaPrev });
     }
     if (typeof data.last === 'string' && ID_RE.test(data.last)) cursor = data.last;
     saveInbox();
@@ -587,15 +822,15 @@ export function createChromeLink({
     return requestHomeBase(baseOf(rec.core), 'relay/to-ext', { method: 'POST', body: envelope, timeoutMs: REPLY_TIMEOUT_MS, fetchImpl, signal, probe: false });
   }
 
-  async function sealFor(rec, kind, body) {
-    return sealEnvelope(await keyOf(rec), { box: 'to-ext', kind, body, at: now() });
+  async function sealFor(rec, kind, body, keyText = sealKeyText(rec)) {
+    return sealEnvelope(await keyOf(keyText), { box: 'to-ext', kind, body, at: now() });
   }
 
-  /** A message that wants no reply (hello, unlinked). Resolves when the home base took it (or didn't). */
-  async function tell(kind, body = {}, rec = record) {
+  /** A message that wants no reply (hello, unlinked, rekey). Resolves when the home base took it (or didn't). */
+  async function tell(kind, body = {}, rec = record, keyText = undefined) {
     if (!rec) return false;
     try {
-      const r = await post(rec, await sealFor(rec, kind, body));
+      const r = await post(rec, await sealFor(rec, kind, body, keyText));
       return !!r.ok;
     } catch {
       return false;
@@ -630,11 +865,13 @@ export function createChromeLink({
       // Given up on: its reply may still come (the relay keeps the request for 2 minutes), so it is remembered.
       const giveUp = () => {
         if (pending.get(envelope.id) !== entry) return;
-        gaveUp(envelope.id, kind);
+        if (kind === 'start') giveUpStart(envelope.id);
+        else gaveUp(envelope.id, kind);
         entry.resolve({ ok: false, reason: 'offline' });
       };
       entry.timer = later(giveUp, REPLY_TIMEOUT_MS);
       pending.set(envelope.id, entry);
+      if (kind === 'start') noteStartSent(envelope.id);
       post(rec, envelope).then(
         (r) => {
           if (!r.ok) giveUp();
@@ -654,26 +891,269 @@ export function createChromeLink({
 
   /**
    * A reply to a request this window gave up on (D5): true when it was one. A late ok for a start means a task
-   * runs that the owner was told never started: it is stopped at once and the owner is told. A late ok for an open
-   * or an answer is only noted; a late refusal changes nothing.
+   * runs that the owner was told never started: it is stopped (sent again until confirmed, LINK-1) and the owner
+   * is told once the stop is confirmed. A late ok for an open or an answer is only noted; a late refusal changes
+   * nothing.
    */
   function lateReply(reply) {
+    if (lateStartReply(reply)) return true;
     const entry = late.get(reply.re);
     if (!entry) return false;
     late.delete(reply.re);
     if (entry.until <= now() || !reply.ok) return true;
-    if (entry.kind === 'start') {
-      request('stop', {}, { needOnline: false });
-      try {
-        notice({ kind: 'late-start', line: LATE_START_LINE });
-      } catch {
-        /* the app's own trouble */
-      }
-    } else {
-      lateNoted += 1;
-    }
+    if (entry.kind === 'start') stopLateStart(reply.id || null);
+    else lateNoted += 1;
     changed();
     return true;
+  }
+
+  // ---- starts whose answer never came (MISSED-LINK-A) -----------------------------------------------------
+  // A start's reply can be lost while the task runs: the owner hears it didn't start. So every start is noted (in
+  // this device's localStorage, for all its windows); a late ok for it, or news of a task from Jarvis that this
+  // device never started, coming after the start was given up, is a late start (D5): stopped, and said once the
+  // stop is confirmed. The window that gave up handles it; if it is gone, the window holding the link does.
+
+  function readStarts() {
+    const raw = readJson(storage.read, CHROME_LINK_STARTS_KEY);
+    const t = now();
+    const starts = (isObj(raw) && Array.isArray(raw.starts) ? raw.starts : [])
+      .filter((e) => isObj(e) && ID_RE.test(e.env || '') && posInt(e.sentAt))
+      .map((e) => {
+        const out = { env: e.env, sentAt: e.sentAt, gaveUpAt: posInt(e.gaveUpAt), until: posInt(e.until), win: typeof e.win === 'string' ? e.win : null };
+        // Unanswered past its 10 s and never given up: its window went away without a word.
+        if (!out.gaveUpAt && t > out.sentAt + REPLY_TIMEOUT_MS + 2000) {
+          out.gaveUpAt = out.sentAt + REPLY_TIMEOUT_MS;
+          out.until = out.gaveUpAt + LATE_WATCH_MS;
+          out.win = null;
+        }
+        return out;
+      })
+      .filter((e) => !e.until || e.until > t)
+      .slice(-16);
+    const known = (isObj(raw) && Array.isArray(raw.known) ? raw.known : []).map((x) => token(x)).filter(Boolean).slice(-20);
+    return { starts, known };
+  }
+
+  function writeStarts(data) {
+    storage.write(CHROME_LINK_STARTS_KEY, JSON.stringify({ v: 1, starts: data.starts.slice(-16), known: data.known.slice(-20) }));
+  }
+
+  const isLateEntry = (e, t) => !!e.gaveUpAt && t >= e.gaveUpAt && (!e.until || t < e.until);
+  const mayHandle = (e) => e.win === winId || (e.win === null && !!holding);
+
+  function addKnown(data, taskId) {
+    if (taskId && !data.known.includes(taskId)) data.known.push(taskId);
+    candidates.delete(taskId);
+  }
+
+  function noteStartSent(env) {
+    const data = readStarts();
+    data.starts.push({ env, sentAt: now(), gaveUpAt: null, until: null, win: winId });
+    writeStarts(data);
+  }
+
+  /** A reply to this window's start came in time: it is no longer waited on (its task, if any, is known). */
+  function resolveStart(env, reply) {
+    const data = readStarts();
+    data.starts = data.starts.filter((e) => e.env !== env);
+    if (reply.ok && reply.id) addKnown(data, reply.id);
+    writeStarts(data);
+  }
+
+  /** This window gave up on its start: a task seen while it waited is that start's, and stopped. */
+  function giveUpStart(env) {
+    const data = readStarts();
+    const e = data.starts.find((x) => x.env === env);
+    if (!e) return;
+    const t = now();
+    e.gaveUpAt = t;
+    e.until = t + LATE_WATCH_MS;
+    const hit = Array.from(candidates).find(([taskId, seenAt]) => seenAt >= e.sentAt && !data.known.includes(taskId));
+    if (!hit) {
+      writeStarts(data);
+      return;
+    }
+    claimLate(data, e, hit[0]);
+  }
+
+  function claimLate(data, e, taskId) {
+    data.starts = data.starts.filter((x) => x.env !== e.env);
+    if (taskId && data.known.includes(taskId)) {
+      writeStarts(data);
+      return;
+    }
+    addKnown(data, taskId);
+    writeStarts(data);
+    stopLateStart(taskId || null);
+    changed();
+  }
+
+  /** A late reply to a start (this window's, or one whose window is gone): true when it was one. */
+  function lateStartReply(reply) {
+    const data = readStarts();
+    const e = data.starts.find((x) => x.env === reply.re);
+    if (!e || !mayHandle(e)) return false;
+    if (!reply.ok || !isLateEntry(e, now())) {
+      // A refusal, or an ok in time for a start whose window went away: nothing runs that the owner wasn't told of.
+      data.starts = data.starts.filter((x) => x !== e);
+      if (reply.ok && reply.id) addKnown(data, reply.id);
+      writeStarts(data);
+      return true;
+    }
+    claimLate(data, e, reply.id || null);
+    return true;
+  }
+
+  /**
+   * News of a task from Jarvis (a `task` message, or a status naming one from voice). One this device never started,
+   * after a start was given up, is a late start; while a start waits, it is remembered until that start is answered
+   * or given up. With no start waiting anywhere, it is a task this device already knew of.
+   */
+  function voiceTaskSeen(taskId) {
+    if (!taskId) return;
+    const data = readStarts();
+    if (data.known.includes(taskId)) return;
+    const t = now();
+    if (!data.starts.length) {
+      addKnown(data, taskId);
+      writeStarts(data);
+      return;
+    }
+    const e = data.starts.find((x) => isLateEntry(x, t) && mayHandle(x));
+    if (e) {
+      claimLate(data, e, taskId);
+      return;
+    }
+    if (data.starts.some((x) => x.win === winId && !isLateEntry(x, t)) && !candidates.has(taskId)) candidates.set(taskId, t);
+  }
+
+  /** This window is going away: its starts are left to whichever window holds the link. */
+  function orphanStarts() {
+    let data;
+    try {
+      data = readStarts();
+    } catch {
+      return;
+    }
+    let touched = false;
+    for (const e of data.starts) {
+      if (e.win !== winId) continue;
+      e.win = null;
+      if (!e.gaveUpAt) {
+        e.gaveUpAt = e.sentAt + REPLY_TIMEOUT_MS;
+        e.until = e.gaveUpAt + LATE_WATCH_MS;
+      }
+      touched = true;
+    }
+    if (touched) writeStarts(data);
+  }
+
+  function tellOwner(n) {
+    try {
+      notice(n);
+    } catch {
+      /* the app's own trouble */
+    }
+  }
+
+  /** A task the owner was told never started: stopped, and the owner told once that is confirmed (D5). */
+  function stopLateStart(taskId) {
+    let settled = false;
+    const warn = later(() => {
+      if (!settled) tellOwner({ kind: 'late-start-unconfirmed', ...LATE_START_UNCONFIRMED });
+    }, STOP_CONFIRM_MS);
+    return stopChrome(taskId).then((r) => {
+      settled = true;
+      cancelLater(warn);
+      if (r.ok) tellOwner({ kind: 'late-start', line: LATE_START_LINE });
+      return r;
+    });
+  }
+
+  // ---- stop: sent again until confirmed (REDTEAM-LINK-1) ----------------------------------------------------
+
+  /**
+   * Stop the running task: Promise<{ ok: true } | { ok: false, reason: 'unlinked' | 'offline' }>. One stop is
+   * pending at a time; asking again joins it and sends it again now. `taskId`: the task it is for, when known
+   * (its done or a status without it confirms the stop).
+   */
+  function stopChrome(taskId = null) {
+    const id = taskId || (task && task.id) || null;
+    if (stopper && !stopper.over && record && sameLink(stopper.rec, record)) {
+      if (id && !stopper.taskId) stopper.taskId = id;
+      sendStop(stopper, { now: true });
+      return stopper.promise;
+    }
+    const rec = record;
+    if (!isLinked() || !rec) return Promise.resolve({ ok: false, reason: 'unlinked' });
+    const s = { taskId: id, ids: new Set(), rec, started: now(), sends: 0, waited: 0, timer: null, over: false };
+    s.promise = new Promise((resolve) => {
+      s.resolve = resolve;
+    });
+    stopper = s;
+    sendStop(s);
+    return s.promise;
+  }
+
+  function sendStop(s, { now: soon = false } = {}) {
+    if (s.over) return;
+    cancelLater(s.timer);
+    s.timer = null;
+    const n = s.sends;
+    s.sends += 1;
+    // A fresh envelope each time (Jarvis for Chrome takes a stop whatever its age within the envelope's 120 s),
+    // sealed as the link stands now (a rotated key, REDTEAM-LINK-4).
+    const rec = record && sameLink(record, s.rec) ? record : s.rec;
+    sealFor(rec, 'stop', {})
+      .then((env) => {
+        if (s.over) return null;
+        s.ids.add(env.id);
+        return post(rec, env);
+      })
+      .catch(() => null);
+    // The 2 minutes are counted in the waits between sends (a throttled timer only stretches them).
+    const wait = soon ? STOP_RESEND_MS[0] : STOP_RESEND_MS[Math.min(n, STOP_RESEND_MS.length - 1)];
+    const left = STOP_FOR_MS - s.waited;
+    if (left <= wait) {
+      s.timer = later(() => endStop(s, { ok: false, reason: 'offline' }), Math.max(0, left));
+      return;
+    }
+    s.waited += wait;
+    s.timer = later(() => sendStop(s), wait);
+  }
+
+  function endStop(s, result) {
+    if (!s || s.over) return;
+    s.over = true;
+    cancelLater(s.timer);
+    s.timer = null;
+    if (stopper === s) stopper = null;
+    s.resolve(result);
+  }
+
+  /**
+   * What came back may confirm the pending stop: its reply (ok, or 'gone': nothing runs), a `done` for its task,
+   * a status without its task, or task news saying it is over. ev: { reply } | { done } | { status } | { task }.
+   */
+  function stopEvidence(ev) {
+    const s = stopper;
+    if (!s || s.over || !ev) return false;
+    if (ev.reply) {
+      if (!s.ids.has(ev.reply.re)) return false;
+      if (ev.reply.ok || ev.reply.reason === 'gone') endStop(s, { ok: true });
+      return true; // (another refusal: sent again on its schedule)
+    }
+    if (ev.done) {
+      if (!s.taskId || ev.done.id === s.taskId) endStop(s, { ok: true });
+      return false;
+    }
+    if (ev.status) {
+      const t = ev.status.task;
+      if (!t || (s.taskId && t.id !== s.taskId)) endStop(s, { ok: true });
+      return false;
+    }
+    if (ev.task && s.taskId && ev.task.id === s.taskId && OVER_STATUSES.has(ev.task.status)) endStop(s, { ok: true });
+    return false;
   }
 
   function interpret(kind, reply) {
@@ -691,7 +1171,10 @@ export function createChromeLink({
     }
     if (kind === 'start') return reply.id ? { ok: true, id: reply.id } : { ok: false, reason: 'bad' };
     if (kind === 'ping') {
-      if (reply.status) voiceApprovals = reply.status.voiceApprovals;
+      if (reply.status) {
+        voiceApprovals = reply.status.voiceApprovals;
+        noteBudget(reply.status);
+      }
       return { ok: true, status: reply.status || null };
     }
     return { ok: true };
@@ -790,6 +1273,7 @@ export function createChromeLink({
     }
     holding = ctl;
     loadInbox();
+    if (record && record.prev) sendRekey({ force: true }); // a rotation not yet confirmed goes on here
     if (record && record.linkedAt) sendHello();
     pollLoop(ctl);
     statusLoop(ctl);
@@ -841,29 +1325,87 @@ export function createChromeLink({
   }
 
   // ---- the clipboard ----------------------------------------------------------------------------------------
+  /** What this tab copied: { at, hash } (the hash of the code, never the code), or null. */
+  function readCopied() {
+    let raw = null;
+    try {
+      raw = JSON.parse(session.read(CHROME_LINK_COPIED_KEY) || 'null');
+    } catch {
+      raw = null;
+    }
+    if (!isObj(raw) || !posInt(raw.at) || typeof raw.hash !== 'string' || !ID_RE.test(raw.hash)) return null;
+    if (now() - raw.at > PENDING_MS + 60_000) return null; // the code it was is dead
+    return { at: raw.at, hash: raw.hash };
+  }
+
+  function forgetCopied() {
+    try {
+      session.remove(CHROME_LINK_COPIED_KEY);
+    } catch {
+      /* no session storage */
+    }
+  }
+
+  async function codeHash(text) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text).trim()));
+    return b64url(new Uint8Array(digest).slice(0, ID_BYTES));
+  }
+
+  /**
+   * Linked: if this tab copied the code (during its 30-minute life, a reload included), the clipboard is cleared,
+   * but only while it still holds the code: it is read first, so whatever the owner copied since stays. Not allowed
+   * now (another window has the focus): tried again when this one gets it. Not allowed at all (reading refused):
+   * left as it is, and Settings says so (`clipboard: 'unchecked'`).
+   */
   function maybeClearClipboard() {
-    if (!copied || !clipboard) return;
-    if (now() - copied.at > CLIPBOARD_CLEAR_MS) {
-      copied = null;
+    const copied = readCopied();
+    if (!copied || !clipboard) {
+      if (!readCopied()) forgetCopied();
       return;
     }
-    const clear = () => {
-      if (!copied) return;
-      Promise.resolve()
-        .then(() => clipboard.writeText(''))
-        .then(
-          () => {
-            copied = null;
-            clearedAt = now();
-            changed();
-          },
-          () => {
-            // Not allowed now (the window isn't focused): try again when it is.
-            if (win && typeof win.addEventListener === 'function') win.addEventListener('focus', clear, { once: true });
-          },
-        );
+    let tries = 0;
+    const clear = async () => {
+      const mine = readCopied();
+      if (!mine) return;
+      tries += 1;
+      let text;
+      try {
+        if (typeof clipboard.readText !== 'function') throw new Error('no reading');
+        text = await clipboard.readText();
+      } catch {
+        const focused = (() => {
+          try {
+            return !win || !win.document || typeof win.document.hasFocus !== 'function' || win.document.hasFocus();
+          } catch {
+            return true;
+          }
+        })();
+        if (!focused && tries < 3 && win && typeof win.addEventListener === 'function') {
+          win.addEventListener('focus', () => clear(), { once: true }); // not now: when this window gets the focus
+          return;
+        }
+        forgetCopied();
+        clipState = 'unchecked';
+        changed();
+        return;
+      }
+      if ((await codeHash(text)) !== mine.hash) {
+        forgetCopied(); // something else is on the clipboard now: nothing to clear
+        changed();
+        return;
+      }
+      try {
+        await clipboard.writeText('');
+      } catch {
+        if (tries < 3 && win && typeof win.addEventListener === 'function') win.addEventListener('focus', () => clear(), { once: true });
+        return;
+      }
+      forgetCopied();
+      clearedAt = now();
+      clipState = 'cleared';
+      changed();
     };
-    clear(); // refused while another window has the focus: then once this one gets it back
+    clear();
   }
 
   // ---- other windows ------------------------------------------------------------------------------------------
@@ -872,14 +1414,31 @@ export function createChromeLink({
     if (!isObj(m) || destroyed) return;
     if (m.t === 'reply') {
       const reply = cleanReply(m.reply);
+      if (reply && stopEvidence({ reply })) return;
       const entry = reply && pending.get(reply.re);
-      if (entry) entry.resolve(interpret(entry.kind, reply));
-      else if (reply) lateReply(reply);
+      if (entry) {
+        if (entry.kind === 'start') resolveStart(reply.re, reply);
+        entry.resolve(interpret(entry.kind, reply));
+      } else if (reply) lateReply(reply);
     } else if (m.t === 'state' && !holding) {
       task = isObj(m.task) ? cleanTask(m.task) : null;
       voiceApprovals = m.voiceApprovals === true;
       if (posInt(m.heard) && m.heard > heard) heard = m.heard;
       extVersion = cleanText(m.extVersion, 24);
+      if (isObj(m.budget)) noteBudget(m.budget);
+      // What the holder just heard, for a stop this window sent (LINK-1).
+      if (isObj(m.ev)) {
+        const e = m.ev;
+        if (isObj(e.done)) stopEvidence({ done: { id: token(e.done.id) } });
+        else if (isObj(e.status)) {
+          const st = isObj(e.status.task) && token(e.status.task.id) ? { id: token(e.status.task.id), from: token(e.status.task.from, WORD_RE) } : null;
+          stopEvidence({ status: { task: st } });
+          if (st && st.from === 'voice') voiceTaskSeen(st.id);
+        } else if (isObj(e.task)) {
+          stopEvidence({ task: { id: token(e.task.id), status: token(e.task.status, WORD_RE) } });
+          voiceTaskSeen(token(e.task.id));
+        }
+      }
       changed();
     } else if (m.t === 'ask' && holding) {
       shareState();
@@ -914,7 +1473,9 @@ export function createChromeLink({
       if (!core || !isCoreOrigin(core)) return { ok: false, reason: 'no-home-base' };
       note = null;
       clearedAt = 0;
+      clipState = null;
       storage.remove(CHROME_LINK_INBOX_KEY);
+      storage.remove(CHROME_LINK_STARTS_KEY);
       save({ v: 1, core, key: newLinkKey(), linkedAt: null, extSeenAt: null, madeAt: now() });
       reload();
       return record ? { ok: true } : { ok: false, reason: 'storage' };
@@ -923,7 +1484,7 @@ export function createChromeLink({
     code() {
       return record && !record.linkedAt ? makeLinkCode({ core: record.core, key: record.key }) : null;
     },
-    /** Put the link code on the clipboard; it is cleared once linked (if within 10 minutes). */
+    /** Put the link code on the clipboard; it is cleared once linked, if it is still there (LINK-4, PRIVACY-6). */
     async copyCode() {
       const code = control.code();
       if (!code) return { ok: false, reason: 'no-code' };
@@ -933,7 +1494,11 @@ export function createChromeLink({
       } catch {
         return { ok: false, reason: 'clipboard' };
       }
-      copied = { at: now() };
+      try {
+        session.write(CHROME_LINK_COPIED_KEY, JSON.stringify({ at: now(), hash: await codeHash(code) }));
+      } catch {
+        /* no session storage: cleared only if linked before this tab reloads (by memory, below) */
+      }
       changed();
       return { ok: true };
     },
@@ -981,15 +1546,21 @@ export function createChromeLink({
       const where = cleanRect(rect);
       return request('open', { url: href, rect: where, focus: typeof focus === 'boolean' ? focus : !where });
     },
-    startTask({ text, chat = 'new' } = {}) {
+    startTask({ text, chat = 'new', limitUsd } = {}) {
       const words = cleanText(text, TEXT_MAX);
       if (!words) return Promise.resolve({ ok: false, reason: 'bad' });
-      return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice' });
+      // The budget the owner heard in the check: the extension keeps the task within it (MONEY-3).
+      const limit = budgetOf(limitUsd);
+      return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice', ...(limit !== null ? { limitUsd: limit } : {}) });
     },
-    async stopTask() {
-      // Stop goes out even when the extension seems offline: it is the safe direction, and the relay keeps it
-      // for 2 minutes.
-      await request('stop', {}, { needOnline: false });
+    /**
+     * Stop goes out even when the extension seems offline (the safe direction), and is sent again until Jarvis for
+     * Chrome confirms it (LINK-1): { ok: true } once confirmed; { ok: false, reason: 'unlinked' } at once when
+     * not linked; { ok: false, reason: 'offline' } when 2 minutes pass unconfirmed. Callers tell the owner
+     * themselves when it takes long (chrome-voice: after 10 s).
+     */
+    stopTask() {
+      return stopChrome();
     },
     answer({ promptId, hash, choice, via = 'voice' } = {}) {
       const p = token(promptId);
@@ -1016,6 +1587,14 @@ export function createChromeLink({
 
   // ---- start ------------------------------------------------------------------------------------------------
   const unwatch = storage.watch ? storage.watch(CHROME_LINK_KEY, () => reload()) : () => {};
+  // A reload or a closed window: its unanswered starts are left to the window that holds the link (MISSED-LINK-A).
+  if (win && typeof win.addEventListener === 'function') {
+    try {
+      win.addEventListener('pagehide', () => orphanStarts());
+    } catch {
+      /* not a window */
+    }
+  }
   if (channel) {
     try {
       channel.onmessage = onChannel;
@@ -1037,8 +1616,10 @@ export function createChromeLink({
     } catch {
       /* ignore */
     }
+    orphanStarts(); // (before release(): another window may take the link over and must find them)
     release();
     for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'offline' });
+    endStop(stopper, { ok: false, reason: 'offline' });
     for (const t of Array.from(timers)) cancelLater(t);
     if (channel) {
       try {

@@ -10,11 +10,15 @@
 //
 // The service worker long-polls `to-ext` with a 20-s wait (a fetch longer than 30 s can end a
 // worker), each poll after one extension API call (it resets the worker's idle timer); while a
-// task from Jarvis runs it waits 10 s, so 20 s without an answer means the home base can't be
-// reached (link.js then pauses that task). A chrome.alarms tick every 30 s starts the loop again
+// task from Jarvis runs it waits 10 s, so 20 s without a read of the box means a Stop said to
+// Jarvis can't arrive (link.js then pauses that task). A read counts when it waited or brought
+// messages: the extension's own posts getting through don't (REDTEAM-LINK-3), nor does an answer at
+// once with nothing in it. A chrome.alarms tick every 30 s starts the loop again
 // when Chrome stopped the worker. While the home base can't be reached the loop backs off (1 s up
-// to 30 s). Where it left off and the ids it has read are kept (chrome.storage.local), so a message
-// is never taken twice, also after a restart.
+// to 30 s). A poll answered in under a second with nothing in it is followed by a pause of at least
+// 1.5 s (REDTEAM-LINK-2: a home base that answers at once must not make the loop spin). Where it
+// left off and the ids it has read are kept (chrome.storage.local), so a message is never taken
+// twice, also after a restart.
 //
 // Nothing here is logged: not the messages, not the key, not the home base's answers.
 
@@ -29,6 +33,8 @@ export const UNREACHABLE_MS = 20 * 1000;
 export const ONLINE_MS = 60 * 1000;
 export const STATUS_EVERY_MS = 30 * 1000;
 export const BACKOFF_MS = Object.freeze([1000, 2000, 5000, 10000, 20000, 30000]);
+export const QUICK_EMPTY_MS = 1000; // a poll answered sooner than this with nothing in it didn't wait
+export const MIN_POLL_MS = 1500; // ... and the next one waits at least this long (REDTEAM-LINK-2)
 export const ALARM = 'jarvis-relay';
 export const ALARM_PERIOD_MIN = 0.5; // 30 s: Chrome's shortest
 const MAX_MESSAGES = 50;
@@ -53,7 +59,8 @@ export class Relay {
     this.running = false;
     this.after = '';
     this.seen = new SeenIds();
-    this.lastOkAt = 0;
+    this.lastOkAt = 0; // the home base last answered anything (the side panel's "reachable")
+    this.lastReadAt = 0; // the box to-ext was last really read: the poll waited or brought messages (the pause)
     this.failures = 0;
     this.appSeenAt = 0;
     // When a message from the app last opened with this link's key (saved): until then the key isn't
@@ -62,6 +69,17 @@ export class Relay {
     this.statusAt = 0;
     this.abort = null;
     this.key = null;
+    this.prevKey = null;
+  }
+
+  /**
+   * The same link with its key replaced (Jarvis's `rekey`, REDTEAM-LINK-4): seals with `key` from
+   * now on, and still opens `prev` (the code's key) until `prevUntil`, or until it is dropped.
+   */
+  setKeys({ key, prev = null, prevUntil = 0 }) {
+    if (key !== this.link.key) this.key = null;
+    if (prev !== this.link.prev) this.prevKey = null;
+    this.link = { ...this.link, key, prev: prev || undefined, prevUntil: prev ? prevUntil : undefined };
   }
 
   /** Starts the loop (a second call while it runs does nothing). */
@@ -74,9 +92,10 @@ export class Relay {
     return this.loop;
   }
 
-  /** Stops the loop at once (the poll in flight is abandoned). */
+  /** Stops the loop at once (the poll in flight is abandoned); messages still being retried give up. */
   stop() {
     this.running = false;
+    this.ended = true;
     try {
       this.abort?.abort();
     } catch {
@@ -89,9 +108,24 @@ export class Relay {
     return this.key;
   }
 
+  /** The code's key while it is still taken (REDTEAM-LINK-4), else null. */
+  async previousKey() {
+    if (!this.link.prev || !(this.now() < Number(this.link.prevUntil))) return null;
+    if (!this.prevKey) this.prevKey = await importLinkKey(this.link.prev);
+    return this.prevKey;
+  }
+
   /** ms since the home base last answered (Infinity before it ever did). */
   unreachableFor(now = this.now()) {
     return this.lastOkAt ? Math.max(0, now - this.lastOkAt) : Infinity;
+  }
+
+  /**
+   * ms since Jarvis's box was last really read (Infinity before): what the pause of a task from
+   * Jarvis watches (REDTEAM-LINK-3). Posts that get through don't count: they can't bring a Stop.
+   */
+  unreadFor(now = this.now()) {
+    return this.lastReadAt ? Math.max(0, now - this.lastReadAt) : Infinity;
   }
 
   /**
@@ -163,6 +197,7 @@ export class Relay {
         /* not needed for the poll itself */
       }
       const wait = this.busy() ? POLL_WAIT_BUSY_S : POLL_WAIT_S;
+      const asked = this.now();
       let res = null;
       try {
         res = await this.request('GET', `to-ext?${this.after ? `after=${encodeURIComponent(this.after)}&` : ''}wait=${wait}`, null, wait * 1000 + POLL_GRACE_MS);
@@ -172,6 +207,9 @@ export class Relay {
       if (!this.running) break;
       const data = res?.ok ? res.data : null;
       if (data && Array.isArray(data.messages)) {
+        // An answer at once with nothing in it: the poll didn't wait (REDTEAM-LINK-2).
+        const quickEmpty = !data.messages.length && this.now() - asked < QUICK_EMPTY_MS;
+        if (!quickEmpty) this.lastReadAt = this.now();
         this.answered();
         for (const m of data.messages.slice(0, MAX_MESSAGES)) {
           if (!this.running) break;
@@ -182,6 +220,7 @@ export class Relay {
         if (typeof data.last === 'string' && data.last.length <= 64) this.after = data.last;
         await this.save();
         if (this.now() - this.statusAt >= STATUS_EVERY_MS) await this.readStatus();
+        if (quickEmpty && this.running) await this.sleep(MIN_POLL_MS);
         continue;
       }
       // (A cursor the home base won't take is dropped: it then answers with every message it holds.)
@@ -196,16 +235,26 @@ export class Relay {
     await this.store.setRelayState({ after: this.after, seen: this.seen.toJSON(), heardAt: this.heardAt }).catch(() => {});
   }
 
-  /** One message from the box: opened, counted as read (and saved) before it is acted on. */
+  /**
+   * One message from the box: opened, counted as read (and saved) before it is acted on. Under the
+   * link's key, or the code's while it is still taken (the message then says `viaPrev`).
+   */
   async receive(m) {
     if (!isMsg(m)) return;
     let opened;
+    let viaPrev = false;
     try {
       opened = await unseal(await this.cryptoKey(), { box: BOX_TO_EXT, msg: m, now: this.now(), seen: this.seen });
+      const prev = !opened.ok && opened.reason === 'tag' ? await this.previousKey() : null;
+      if (prev) {
+        opened = await unseal(prev, { box: BOX_TO_EXT, msg: m, now: this.now(), seen: this.seen });
+        viaPrev = opened.ok;
+      }
     } catch {
       return;
     }
     if (!opened.ok || !this.running) return; // dropped without a word
+    if (viaPrev) opened.message.viaPrev = true;
     this.heardAt = this.appSeenAt = this.now();
     await this.save();
     this.emitState();
@@ -232,8 +281,11 @@ export class Relay {
   /**
    * Sends one message to the app; resolves true once the home base has it. One retry, unless the
    * home base isn't answering anyway (then it fails fast: what waits behind it isn't held up).
+   * With `until` (ms, this clock), it is tried again every second or so until then (the same
+   * envelope: the home base keeps a repeated id once): a reply to a start or a stop must not be
+   * lost to a moment's failure (MISSED-LINK-A).
    */
-  async send(kind, body = {}) {
+  async send(kind, body = {}, { until = 0 } = {}) {
     let msg;
     try {
       msg = await seal(await this.cryptoKey(), { box: BOX_TO_APP, kind, body, at: this.now() });
@@ -241,7 +293,8 @@ export class Relay {
       return false;
     }
     const attempts = this.failures > 0 ? 1 : 2;
-    for (let attempt = 0; attempt < attempts; attempt++) {
+    for (let attempt = 0; ; attempt++) {
+      let wait = 1000;
       try {
         const res = await this.request('POST', 'to-app', msg, SEND_TIMEOUT_MS);
         if (res.ok) {
@@ -249,11 +302,14 @@ export class Relay {
           return true;
         }
         if (res.status === 400 || res.status === 413) return false;
+        if (res.status === 429 && res.retryAfter > 0) wait = Math.min(5000, res.retryAfter * 1000);
       } catch {
-        /* try once more */
+        /* try again */
       }
-      if (attempt + 1 < attempts) await this.sleep(1000);
+      const left = until - this.now();
+      const again = until ? left > 0 && !this.ended : attempt + 1 < attempts;
+      if (!again) return false;
+      await this.sleep(until ? Math.max(0, Math.min(wait, left)) : wait);
     }
-    return false;
   }
 }

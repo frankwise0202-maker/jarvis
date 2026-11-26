@@ -4904,13 +4904,33 @@ both ends build to it, and a change needs both.
 key }))`, `core` being the home base's origin as the app uses it (`https://<machine>.<tailnet>.ts.net`: no path, no
 port). The owner copies it (**Copy link code**) and pastes it into Jarvis for Chrome (side panel → Settings → Voice
 from Jarvis); Chrome asks to let the extension reach the home base. The first message sealed with the key (the
-extension's `hello`) proves the extension has it: linked, and the app answers with its own `hello`. If this window
-copied the code in the last 10 minutes, it then writes an empty text to the clipboard (critique L9): at once when
-the page may, else when its window next has the focus. An unused code is forgotten after 30 minutes. Either side can
+extension's `hello`) proves the extension has it: linked, and the app answers with its own `hello`. An unused code is
+forgotten after 30 minutes.
+
+**The code works once** (REDTEAM-LINK-4, added during the review). On that first message the app makes a new key K2
+and sends `rekey { key: K2 }` sealed with the code's key K1, before its `hello`. Jarvis for Chrome switches: it seals
+with K2 from then on (its answer to the rekey too), and still opens K1 for 10 minutes or until a message from the app
+arrives under K2, then forgets K1. The app keeps K1 as `prev` until a message under K2 arrives (the confirmation),
+sending the rekey again (fresh envelopes, after 3, 6, 12, then every 30 s, for 10 minutes, and whenever a message
+under K1 still comes); meanwhile it seals with K1 (for 10 minutes after the rekey, or while the extension is still
+heard using K1) and opens both, K1 for 30 minutes at most. Once confirmed, both have forgotten K1: a message sealed
+with it is dropped, so an old code (clipboard history, a note) opens nothing. A lost rekey or a lost answer is covered:
+the rekey is sent again, a repeated rekey with the same K2 is answered again, and the extension's next message under
+K2 confirms it. The extension refuses a rekey to any other key once it has switched, so the code can't move the link
+later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay in the two
+minutes the rekey is kept there could learn K2 (a key exchange would close that; not in this release).
+
+**The clipboard** (critique L9, REDTEAM-LINK-4, PRIVACY-6). When this tab copied the code (its sessionStorage keeps
+`jarvis.chromeLink.copied.v1` = `{ at, hash }`, a SHA-256 of the code, never the code, so a reload doesn't forget it),
+the app clears the clipboard once linked, for the code's whole 30-minute life: it reads the clipboard first and writes
+an empty text only while it still holds the code (something copied since stays); not allowed now (another window has
+the focus), it tries again when this window gets it; reading refused, it leaves the clipboard and Settings says
+"Jarvis couldn't check your clipboard: if it still holds the link code, copy something else over it.". Either side can
 unlink: it sends `unlinked {}` first if it can (the app waits 5 s at most), then forgets its copy; the other side
 forgets its copy when the message arrives.
 
-The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` in localStorage `jarvis.chromeLink.v1`
+The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` (plus `prev`, `rekeyAt`, `prevSeenAt` while a rekey
+is unconfirmed) in localStorage `jarvis.chromeLink.v1`
 (`linkedAt` is null while it waits for the extension; `extSeenAt`, its last sign of life, is written at most every
 15 s so other windows see it; `madeAt` dates the code) and `{ core, cursor, seen }` in `jarvis.chromeLink.inbox.v1`
 (where it has read up to and the last 500 ids it opened: nothing secret, the relay sees both; so a reload never
@@ -4949,14 +4969,18 @@ app's, the extension's and the Core's tests all read it.
   `unsupported_type`, 429 `rate_limited`. The same id again is kept once (a sender's retry).
 - `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…`: `200 { messages: [{ id, iv, ct }], last }`,
   the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest
-  id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0; at most 8
-  waiting reads a box) for a message, then answers `messages: []`. A reader that hangs up lets go of its place.
+  id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0) for a
+  message, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client; a long poll that
+  finds no place, with nothing to read, gets 429 `busy` with `Retry-After: 2` (REDTEAM-LINK-2: an empty answer at
+  once made a looping reader spin). A reader that hangs up lets go of its place.
 - `GET /api/relay/status` → `200 { extSeenAt, appSeenAt }`: when each side last read its box (ms, or null; a read
   waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app.
 
 Each box keeps at most 50 messages, each for 2 minutes, **in memory only**: nothing is logged (the routes have no
 logger, and an error never quotes a body) or written to disk, and a restart forgets everything. 120 requests a
-minute per box (both methods) and for the status, on top of the API's general limit. Access: the usual check (the
+minute per box (both methods) and for the status, for each client (its Tailscale login and its Origin). The relay's
+requests never take from the API's general limit, which every device of the owner's login shares, so relay traffic
+can't starve George's voice, hearing, sync or the brain (REDTEAM-LINK-2). Access: the usual check (the
 tailnet or this computer, §23); for these three routes only, `access.mjs checkRelayOrigin` also allows a
 `chrome-extension://<32 letters a-p>` origin (and answers its private-network preflight) and a CORS-mode fetch that
 carries no Origin (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: an extension's own request; a web page's
@@ -4973,16 +4997,17 @@ exactly one `reply` whose `re` is that id. The app gives up on a reply after 10 
 | `hello` | `{ app: 'jarvis', version }`: when linked, and when a window starts holding the link while linked |
 | `ping` | `{}` (Settings → Jarvis for Chrome → Test) |
 | `open` | `{ url, rect: { left, top, width, height } \| null, focus }` |
-| `start` | `{ text, chat: 'new' \| 'same', from: 'voice' }` |
+| `start` | `{ text, chat: 'new' \| 'same', from: 'voice', limitUsd? }` (`limitUsd`: the budget the owner heard; MONEY-3) |
 | `stop` | `{}`: stops the running task |
 | `answer` | `{ promptId, hash, choice, via: 'voice' \| 'card' }` |
 | `unlinked` | `{}` |
+| `rekey` | `{ key }`: the link's new key, sealed with the code's, right after linking (REDTEAM-LINK-4, §32.1.1) |
 
 | Extension → app (`to-app`) | body |
 |---|---|
 | `reply` | `{ re, ok: true, … }` (ping → `{ status }`, open → `{ url, site }`, start → `{ id }`, stop → `{}`, answer → `{ promptId }`) or `{ re, ok: false, reason, why }`, reason one of `off`, `busy`, `cap`, `blocked`, `needs-click`, `refused`, `gone`, `bad` |
-| `hello` | `{ ext: 'jarvis-for-chrome', version }`: when linked, and in answer to the app's |
-| `status` | `{ online: true, tasksFromJarvis, voiceApprovals, task: null \| { id, status } }`: on every change, every 60 s while a task runs |
+| `hello` | `{ ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps }`: when linked, and in answer to the app's |
+| `status` | `{ online: true, tasksFromJarvis, voiceApprovals, task: null \| { id, status, from }, budgetUsd, maxSteps }`: on every change (the budget too), every 60 s while a task runs |
 | `task` | `{ id, status, text, narration, lastStep, costUsd, limitUsd, from: 'voice' }` (no pictures) |
 | `done` | `{ id, status: 'done' \| 'stopped' \| 'failed' \| 'limit', answer (2,000 characters at most), costUsd }` |
 | `prompt` | `{ promptId, hash, kind, category, consequential, site, title, spoken, body, address, choices: [{ id, label }], voice: { allowed, why } }` (§32.2) |
@@ -4997,15 +5022,37 @@ message for 120 s and the relay holds it for 2 minutes, so a request could be pi
 30-s alarm). Jarvis for Chrome answers an `open`, `start` or `answer` whose `at` is more than 8 s old with `reply
 { ok: false, reason: 'gone', why: 'too late' }` and does nothing else (`stop`, `ping`, `hello` and `unlinked` are
 always taken). The app remembers for 2 minutes each `start`, `open` and `answer` it gave up on; if an `ok` still comes
-back for a `start`, it sends `stop` at once and tells the owner "Chrome started late, so I stopped it." (said in
-Voice Mode when it is open, a toast, and a notification while Jarvis is hidden); a late `ok` for an `open` or an
-`answer` is only noted, and a late refusal changes nothing. The window that gave up is the one that tells (the
-holder passes it the reply).
+back for a `start`, it stops that task at once (sent again until confirmed, §32.1.5) and, once the stop is confirmed,
+tells the owner "Chrome started late, so I stopped it." (said in Voice Mode when it is open, a toast, and a
+notification while Jarvis is hidden); not confirmed within 10 s, it says instead that it couldn't reach Chrome to stop
+the task and to press Stop in its side panel. A late `ok` for an `open` or an `answer` is only noted, and a late
+refusal changes nothing. The window that gave up is the one that tells (the holder passes it the reply).
+
+A start's reply can also be lost while the task runs (MISSED-LINK-A). So the app notes every `start` it sends in
+localStorage `jarvis.chromeLink.starts.v1` (`{ v: 1, starts: [{ env, sentAt, gaveUpAt, until, win }], known:
+[taskId] }`: envelope and task ids only, nothing secret), which every window of the device and a reloaded one see
+(sessionStorage, which the review suggested, belongs to one tab: the window that holds the link, which reads the late
+answer, is often another one). News of a task from Jarvis (a `task` message, or a `status` whose task is `from:
+'voice'`) naming a task this device never got an `ok` for, after a start was given up (within 2 minutes), is a late
+start too: stopped and said in the same way. News seen while a start still waits is kept until that start is answered
+(its task is then known) or given up (then it is that start's task). The window that gave up handles it; a window that
+reloads or closes leaves its starts to the window holding the link (`pagehide`), which then handles them. Jarvis for
+Chrome, for its part, sends its reply to a `start` or a `stop` again (the same envelope) for about 10 s after the
+request was made, instead of once or twice.
 
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
-`state()` → `{ linked, online, voiceApprovals, task }`, `subscribe(fn)`, `open(url, { rect, focus })`,
-`startTask({ text, chat })`, `stopTask()`, `answer({ promptId, hash, choice, via })`, `onPrompt(fn)`,
-`onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
+`state()` → `{ linked, online, voiceApprovals, task }` (plus `budgetUsd` and `maxSteps`, the extension's task budget
+and step limit, once its `hello` or `status` has said them: MONEY-3), `subscribe(fn)`, `open(url, { rect, focus })`,
+`startTask({ text, chat, limitUsd })` (`limitUsd`: the budget the owner heard, MONEY-3), `stopTask()` → `{ ok: true }` or `{ ok: false, reason: 'unlinked' | 'offline' }`
+(changed during the red-team review, REDTEAM-LINK-1: it was `Promise<void>`), `answer({ promptId, hash, choice,
+via })`, `onPrompt(fn)`, `onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
+- **Stop is confirmed and sent again** (REDTEAM-LINK-1). One stop is pending at a time; it is sent again, a fresh
+  envelope each time, after 2, 2, 4, 8 and 15 s, then every 30 s, until Jarvis for Chrome confirms it: its `reply`
+  (ok, or `gone`: nothing runs), a `done` for the task, a `status` without that task, or task news saying it is over.
+  `stopTask()` resolves `{ ok: true }` then; `{ ok: false, reason: 'unlinked' }` at once when not linked; `{ ok:
+  false, reason: 'offline' }` once 2 minutes of tries pass unconfirmed. Asking again while one is pending joins it
+  and sends it again at once. A caller that speaks tells the owner itself when the stop takes long (chrome-voice:
+  after 10 s, to press Stop in the side panel).
 - **Where it runs:** on computers only (never on an iPhone, iPad or Android phone: not a single request there),
   while Jarvis is open, hidden too (hands-free on the Mac).
 - **One window per device holds the link** (the Web Lock `jarvis-chrome-link`, critique M6). It alone long-polls
@@ -5019,7 +5066,7 @@ holder passes it the reply).
 - **Online:** the status says the extension read its box less than 60 s ago, or a message from it arrived in the
   last 60 s (a time more than a minute ahead of this clock isn't believed). While it is offline or not linked,
   `open`, `startTask` and `answer` answer at once (`offline` / `unlinked`) and send nothing; `stopTask` is always
-  sent (the safe direction: the relay keeps it 2 minutes).
+  sent while linked (the safe direction), and sent again until confirmed.
 - **What comes back is information, never orders** (rule 5): every field is checked and cut to size here (no control
   or bidi characters; a prompt's title 200 characters, `spoken` 400, `body` 1,000, `address` 2,048; a task's text and
   a result's answer 2,000; ids as plain tokens); `consequential` counts as true unless it says false, and
@@ -5072,7 +5119,7 @@ Jarvis".
 asked for by name when the owner links; the CSP's `connect-src` adds `https://*.ts.net`. Still no
 `externally_connectable` and no content scripts: no web page can message the extension. Version 1.1.0 (the
 extension's own: `extension/build/manifest.mjs` `VERSION`). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
-key, linkedAt }`; `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
+key, linkedAt }` (and `prev`, `prevUntil`: the code's key for a while after the rekey, §32.2.4); `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
 `jarvis.voiceTasks` `{ day, count }` (tasks from Jarvis on this computer's calendar day); `jarvis.relay` `{ after,
 seen, heardAt }` (where reading `to-ext` left off, the last 500 ids read, and when a message from the app last opened
 with this key).
@@ -5092,7 +5139,8 @@ relay (`http://127.0.0.1:<port>`).
 
 **32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
 runs, so 20 s without an answer means the home base is gone), each poll after one extension API call
-(`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. Failures back off 1, 2, 5,
+(`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. A poll answered in under a
+second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). Failures back off 1, 2, 5,
 10, 20, 30 s (a 429's Retry-After counts, up to 60 s); a 400 drops the cursor. Each message is opened (§32.1.2's
 drops), counted as read and saved before it is acted on, so none is taken twice, also across a worker or browser
 restart. `/api/relay/status` is read at most every 30 s for the panel. Messages to `to-app` leave in the order they
@@ -5114,20 +5162,29 @@ the envelope's 120 s.
   (`state: 'normal'`) without focusing it; without one the window is focused unless `focus` is false. → `{ url,
   site }` (`site` the registrable domain). The site counts as opened by voice for the next task from Jarvis (10
   minutes).
-- `start { text, chat, from }` → `bad` (empty, or over 2,000 characters), `off` (Tasks from Jarvis off, or the
-  panel's setup unfinished), `busy` (a task runs), `cap` (30 today); else `chat: 'new'` starts a fresh conversation
-  and the controller runs it with the extension's own model, budget and step limit in the last focused Jarvis
-  window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
+- `start { text, chat, from, limitUsd }` → `bad` (empty, or over 2,000 characters), `off` (Tasks from Jarvis off, or
+  the panel's setup unfinished), `busy` (a task runs), `cap` (30 today); else `chat: 'new'` starts a fresh
+  conversation and the controller runs it with the extension's own model and step limit, and a budget of
+  min(its own budget, `limitUsd`) when Jarvis says what the owner heard (MONEY-3: what is said is what is
+  enforced; Continue at the budget adds that much again), in the last focused Jarvis window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
 - `stop` → the running task stops (the step list says "Stopped by voice from Jarvis."); `gone` when none runs.
+- The reply to a `start` or a `stop` is tried again (the same envelope) until about 10 s after the request's `at`
+  (and at least 2 s), so a moment's failure of the extension's posts can't lose it (MISSED-LINK-A).
 - `answer { promptId, hash, choice, via }` → `gone` unless that prompt is open; `bad` for a choice it doesn't have;
   `refused` (with a short reason, §32.2.6; the prompt stays open) when the hash differs, the policy says no, or a
   yes comes less than 1.5 s after the prompt appeared; else it is decided through the same path as a click
   (`decideFromJarvis`), and the step list says "Approved by voice from Jarvis: “Approve” (page step on <site>)."
   (`via: 'card'` says "on its card").
 - `unlinked` → reply, then unlink. Any other kind → `bad`.
+- `rekey { key }` (REDTEAM-LINK-4) → the first one, under the code's key, switches the link: `chromeLink` becomes
+  `{ …, key: <new>, prev: <the code's>, prevUntil: now + 10 min }` (the cursor and the switches stay), the relay seals
+  with the new key from then on (this reply too) and opens the code's key only until `prevUntil` or until a message
+  from Jarvis under the new key, which drops it. The same new key again (Jarvis didn't hear the answer) → `ok` again;
+  any other key → `bad`. Not a new link: nothing pauses, the relay isn't restarted.
 
-**32.2.5 What goes back.** `status` on every change of the running task or the switches, and every 60 s while a task
-runs; `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+**32.2.5 What goes back.** `status` on every change of the running task, the switches or the task budget, and every
+60 s while a task runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it
+started from one typed in the panel; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
 how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
 for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
 last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;
@@ -5176,9 +5233,14 @@ prompt. One approval from Jarvis still covers one step on one element, once (the
 Development builds can make voice approvals available for the tests (`jarvis.dev.voiceApprovals`); the build refuses
 a release that contains that marker.
 
-**32.2.8 The pause.** While a task from Jarvis runs, once the home base hasn't answered for 20 s the task pauses itself
-as Take over does, with a notice (critique M4: a "stop" said to Jarvis must not be lost); once per outage: Continue in
-the panel goes on. The panel's Stop and ⌘⇧. are unchanged.
+**32.2.8 The pause.** While a task from Jarvis runs, once Jarvis's box (`to-ext`) hasn't been read for 20 s the task
+pauses itself as Take over does, with a notice (critique M4: a "stop" said to Jarvis must not be lost). A read counts
+when the poll waited or brought messages (`lastReadAt`); the extension's own posts to `to-app` getting through don't
+count, nor does a poll answered at once with nothing (REDTEAM-LINK-3: a flooded or refused box with posts still going
+in used to keep a task running). Once per outage: Continue in the panel goes on. When the link ends mid-task (Unlink in
+the panel, `unlinked` from Jarvis, or a new link), the task pauses the same way at once ("Paused: the link with Jarvis
+ended, …"). The panel's Stop and ⌘⇧. are unchanged; `lastOkAt` (anything answered) only feeds the panel's
+"reachable".
 
 **32.2.9 The approval window** (G7). When no side panel is connected and a task from Jarvis shows a prompt that voice
 may not answer, or an address waits for a click, the worker opens `approve.html` (`chrome.windows.create({ type:

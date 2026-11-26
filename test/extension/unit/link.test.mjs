@@ -12,7 +12,7 @@ import { Controller } from '../../../extension/src/background/controller.js';
 import { createClient } from '../../../extension/src/background/api.js';
 import { createStore, VOICE_TASKS_PER_DAY, localDay, parseLinkCode, homeBaseOrigin } from '../../../extension/src/shared/storage.js';
 import { PORT_NAME } from '../../../extension/src/shared/protocol.js';
-import { FRESH_MS, JarvisLink, cleanRect, doneStatus, namedSites, openVerdict, tooLate } from '../../../extension/src/background/link.js';
+import { FRESH_MS, JarvisLink, REKEY_GRACE_MS, cleanRect, doneStatus, namedSites, openVerdict, tooLate } from '../../../extension/src/background/link.js';
 import { Relay, UNREACHABLE_MS, backoffMs } from '../../../extension/src/background/relay.js';
 import { CLICK_ONLY, MIN_PROMPT_AGE_MS, promptHash } from '../../../extension/src/background/voice-policy.js';
 
@@ -194,6 +194,44 @@ test('the relay loop backs off while the home base can’t be reached, and start
   assert.ok(relay.requests.some((q) => q.path === '/api/relay/to-ext' && q.query.wait === '20'), 'a 20-s long poll');
 });
 
+test('LINK-2: a poll answered at once with nothing doesn’t loop right away: at least 1.5 s before the next; one that waited doesn’t', async () => {
+  // The home base answers every long poll at once, empty (an old Core whose places were all taken, a proxy).
+  const relay = createFakeRelay({ waitScaleMs: 0 });
+  const store = createStore(createFakeBrowser().chrome);
+  const slept = [];
+  let clock = 1_800_000_000_000;
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store, onMessage() {}, fetch: relay.fetch, now: () => clock, sleep: async (ms) => {
+    slept.push(ms);
+    clock += ms;
+    await new Promise((res) => setTimeout(res, 1));
+  } });
+  r.start();
+  const end = Date.now() + 3000;
+  const polls = () => relay.requests.filter((q) => q.path === '/api/relay/to-ext').length;
+  while (polls() < 6 && Date.now() < end) await new Promise((res) => setTimeout(res, 5));
+  r.stop();
+  const n = polls();
+  assert.ok(n >= 6, `it went on polling (${n})`);
+  assert.ok(slept.filter((ms) => ms >= 1500).length >= n - 1, `a pause of 1.5 s at least between answers that came at once (${n} polls, slept ${JSON.stringify(slept)})`);
+  // A poll that really waited (its 20 s went by) and came back empty is followed by the next at once.
+  const relay2 = createFakeRelay({ waitScaleMs: 0 });
+  const slept2 = [];
+  let clock2 = 1_800_000_000_000;
+  const waited = async (url, init) => {
+    clock2 += 20_000;
+    return relay2.fetch(url, init);
+  };
+  const r2 = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store: createStore(createFakeBrowser().chrome), onMessage() {}, fetch: waited, now: () => clock2, sleep: async (ms) => {
+    slept2.push(ms);
+    await new Promise((res) => setTimeout(res, 1));
+  } });
+  r2.start();
+  const end2 = Date.now() + 3000;
+  while (relay2.requests.filter((q) => q.path === '/api/relay/to-ext').length < 4 && Date.now() < end2) await new Promise((res) => setTimeout(res, 2));
+  r2.stop();
+  assert.deepEqual(slept2.filter((ms) => ms >= 1500), [], 'no pause after a poll that waited');
+});
+
 test('online (the side panel): only once Jarvis has answered with this link’s key, and while it is heard from or reads its box', async () => {
   let t = 1_800_000_000_000;
   const now = () => t;
@@ -252,13 +290,13 @@ test('linked: hello and the status go to Jarvis; the alarm is set; ping answers 
   const s = await setup();
   t.after(s.done);
   const hello = await s.app.waitFor((m) => m.kind === 'hello');
-  assert.deepEqual(hello.body, { ext: 'jarvis-for-chrome', version: '1.1.0' });
+  assert.deepEqual(hello.body, { ext: 'jarvis-for-chrome', version: '1.1.0', budgetUsd: 1, maxSteps: 40 }, 'with the task budget (MONEY-3)');
   const status = await s.app.waitFor((m) => m.kind === 'status');
-  assert.deepEqual(status.body, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null });
+  assert.deepEqual(status.body, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null, budgetUsd: 1, maxSteps: 40 });
   assert.ok(s.calls.alarms.some((a) => a.op === 'create' && a.name === 'jarvis-relay' && a.opts.periodInMinutes === 0.5));
   const pong = await s.app.request('ping');
   assert.equal(pong.ok, true);
-  assert.deepEqual(pong.status, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null });
+  assert.deepEqual(pong.status, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null, budgetUsd: 1, maxSteps: 40 });
   // Jarvis's hello is answered with a reply, a hello and the status.
   const n = s.app.of('hello').length;
   assert.equal((await s.app.request('hello', { app: 'jarvis', version: '8.1' })).ok, true);
@@ -558,6 +596,97 @@ test('a message sealed with another key, or too old, gets no answer at all', asy
   assert.equal(s.controller.tasks.length, 0);
 });
 
+test('MISSED-LINK-A: the reply to a start and to a stop is sent again for about 10 s when the posts fail', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await s.store.allowSiteAlways('shop.example');
+  s.mock.script([() => ({ hold: true })]);
+  // The extension's posts fail for a while as the start arrives: its reply must still reach Jarvis.
+  s.relay.failPosts = true;
+  setTimeout(() => {
+    s.relay.failPosts = false;
+  }, 400);
+  const r = await s.app.request('start', { text: 'Find a monitor on shop.example', chat: 'new', from: 'voice' }, { timeoutMs: 8000 });
+  assert.equal(r.ok, true, 'the reply to the start arrived after the posts came back');
+  await s.waitFor(() => s.controller.run);
+  s.relay.failPosts = true;
+  setTimeout(() => {
+    s.relay.failPosts = false;
+  }, 400);
+  const stop = await s.app.request('stop', {}, { timeoutMs: 8000 });
+  assert.equal(stop.ok, true, 'and so did the reply to the stop');
+});
+
+test('LINK-4: a rekey under the code’s key switches the link; the answer comes under the new key; the code’s key is taken until Jarvis uses the new one, then dropped', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  const next = newLinkKey();
+  const app2 = await createAppPeer({ relay: s.relay, key: next, now: s.now }); // Jarvis's end, with the new key
+  const msg = await s.app.post('rekey', { key: next });
+  const reply = await app2.waitFor((m) => m.kind === 'reply' && m.body.re === msg.id);
+  assert.deepEqual(reply.body, { re: msg.id, ok: true }, 'answered under the new key');
+  const link = await s.store.getLink();
+  assert.equal(link.key, next);
+  assert.equal(link.prev, s.key, 'the code’s key kept a while');
+  // Jarvis hasn’t heard the answer yet: a request under the code’s key is still taken (answered under the new key).
+  const ping1 = await s.app.post('ping', {});
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === ping1.id)).body.ok, true);
+  // Jarvis uses the new key: the code’s key is forgotten, and opens nothing any more.
+  const ping2 = await app2.post('ping', {});
+  await app2.waitFor((m) => m.kind === 'reply' && m.body.re === ping2.id);
+  await s.waitFor(async () => !(await s.store.getLink()).prev, 3000, 'the code’s key dropped');
+  const ping3 = await s.app.post('ping', {});
+  await new Promise((r) => setTimeout(r, 300));
+  await app2.poll();
+  assert.ok(!app2.received.some((m) => m.body?.re === ping3.id), 'a request under the old code gets nothing');
+});
+
+test('LINK-4: the same rekey again is answered again; another key under the code’s is refused; 10 minutes on, the code’s key is dropped anyway', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  const next = newLinkKey();
+  const app2 = await createAppPeer({ relay: s.relay, key: next, now: s.now });
+  const m1 = await s.app.post('rekey', { key: next });
+  await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m1.id);
+  const m2 = await s.app.post('rekey', { key: next }); // its answer was lost: sent again
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m2.id)).body.ok, true);
+  const m3 = await s.app.post('rekey', { key: newLinkKey() }); // someone else with the old code
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m3.id)).body.reason, 'bad');
+  assert.equal((await s.store.getLink()).key, next, 'the link stays on the new key');
+  s.clock.offset += REKEY_GRACE_MS + 1000;
+  const late = await s.app.post('ping', {});
+  await new Promise((r) => setTimeout(r, 300));
+  await app2.poll();
+  assert.ok(!app2.received.some((m) => m.body?.re === late.id), 'the code’s key opens nothing after its grace');
+  const ok = await app2.request('ping', {});
+  assert.equal(ok.ok, true, 'the new key works');
+});
+
+test('MONEY-3: the budget goes to Jarvis (hello, status, and again when it changes); a task from Jarvis runs within the limit the owner heard', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await s.app.waitFor((m) => m.kind === 'status');
+  await s.store.setSettings({ budgetUsd: 5, maxSteps: 60 });
+  await s.link.onStorageChanged({ 'jarvis.settings': {} });
+  const status = await s.app.waitFor((m) => m.kind === 'status' && m.body.budgetUsd === 5);
+  assert.equal(status.body.maxSteps, 60);
+  await s.store.allowSiteAlways('shop.example');
+  const runWith = async (limitUsd) => {
+    s.mock.script([() => ({ hold: true })]);
+    const r = await s.app.request('start', { text: 'Find a monitor on shop.example', chat: 'new', from: 'voice', ...(limitUsd === undefined ? {} : { limitUsd }) });
+    assert.equal(r.ok, true);
+    await s.waitFor(() => s.controller.run?.task.id === r.id);
+    const limit = s.controller.run.limits.budgetLimit;
+    await s.controller.stop('panel');
+    await s.waitFor(() => !s.controller.run);
+    return limit;
+  };
+  assert.equal(await runWith(1), 1, 'heard "up to a dollar": a dollar, though the extension\'s budget is $5');
+  assert.equal(await runWith(10), 5, 'never above the extension\'s own budget');
+  assert.equal(await runWith(undefined), 5, 'no limit heard: its own budget');
+  assert.equal(await runWith('lots'), 5, 'a limit that isn\'t a sum is ignored');
+});
+
 test('stop from Jarvis stops the task; the step list says so', async (t) => {
   const s = await setup();
   t.after(s.done);
@@ -593,6 +722,43 @@ test('a task from Jarvis pauses when the relay has been unreachable for 20 s (on
   assert.equal(run.takeover, false);
   await s.controller.stop('panel');
   assert.equal(run.task.status, 'stopped');
+});
+
+test('LINK-3: the pause watches reads of Jarvis’s box, not posts: reads refused while posts go in, 20 s later the task pauses', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await untilStepPrompt(s);
+  const run = s.controller.run;
+  s.relay.refuseReads = true; // to-ext answers 429; to-app still takes the extension’s messages
+  s.clock.offset += 10_000;
+  assert.equal(await s.link.relay.send('status', { online: true }), true, 'a post goes in');
+  s.link.checkRelay();
+  assert.equal(run.takeover, false, '10 s: not yet');
+  s.clock.offset += 11_000;
+  assert.equal(await s.link.relay.send('status', { online: true }), true, 'posts keep going in');
+  s.link.checkRelay();
+  assert.equal(run.takeover, true, 'no read for 21 s: paused, whatever the posts');
+  assert.ok(run.task.steps.some((st) => /^Paused: Jarvis for Chrome couldn’t reach your home base for 20 seconds/.test(st.label)));
+  s.relay.refuseReads = false;
+  await s.controller.stop('panel');
+});
+
+test('LINK-3: the link ending mid-task pauses a task from Jarvis (an unlinked from Jarvis, the panel’s Unlink, a new link)', async (t) => {
+  for (const how of ['from-jarvis', 'panel', 'new-link']) {
+    const s = await setup();
+    try {
+      await untilStepPrompt(s);
+      const run = s.controller.run;
+      if (how === 'from-jarvis') await s.app.post('unlinked', {});
+      else if (how === 'panel') await s.link.unlink({ tell: true });
+      else await s.store.setLink({ core: CORE, key: newLinkKey() }).then(() => s.store.getLink()).then((l) => s.link.useLink(l));
+      await s.waitFor(() => run.takeover, 3000, `the pause (${how})`);
+      assert.ok(run.task.steps.some((st) => /^Paused: the link with Jarvis ended/.test(st.label)), how);
+      assert.notEqual(run.task.status, 'stopped', 'paused, not stopped: Continue in the panel goes on');
+    } finally {
+      await s.done();
+    }
+  }
 });
 
 test('a task from the side panel never pauses for the relay', async (t) => {

@@ -272,7 +272,7 @@ export class Controller {
    * the sites the owner named or opened by voice for it (the voice policy's "Allow once");
    * `onStarted(task)` is called once the task is on the list.
    */
-  async start({ text, windowId, retryOf = null, contextReset = false, resume = false, from = null, taskId = null, voiceSites = null, onStarted = null }) {
+  async start({ text, windowId, retryOf = null, contextReset = false, resume = false, from = null, taskId = null, voiceSites = null, onStarted = null, budgetCapUsd = null }) {
     const clean = displayText(text).trim();
     if (!clean) return;
     if (this.run) {
@@ -296,7 +296,10 @@ export class Controller {
       this.finishTask(task, 'error', { error: 'Add your Anthropic API key first (Settings → API key).' });
       return;
     }
-    const limits = new Limits({ budgetUsd: settings.budgetUsd, maxSteps: settings.maxSteps });
+    // A task from Jarvis runs within the budget the owner heard, never above this profile's own (MONEY-3).
+    const cap = Number(budgetCapUsd);
+    const budgetUsd = Number.isFinite(cap) && cap > 0 ? Math.min(settings.budgetUsd, cap) : settings.budgetUsd;
+    const limits = new Limits({ budgetUsd, maxSteps: settings.maxSteps });
     task.limits = limits.snapshot();
     const run = {
       task,
