@@ -11,9 +11,12 @@ import {
   approvingLine,
   chooseAnswer,
   clickOnlyLine,
+  correctionOf,
   hintLine,
   isBareNo,
   isNoWord,
+  matchChromeAnswer,
+  namesChromeAnswer,
   noChoice,
   normalizeAnswer,
   promptAnswers,
@@ -188,4 +191,43 @@ test('every answer\'s words are reserved words, and every reserved word answers 
     // A yes always comes with the check; nothing else does.
     for (const a of answers) assert.equal(a.check, !a.negative && !a.clickOnly && a.id !== 'other', `${p.promptId}: ${a.id}`);
   }
+});
+
+test('the answer layer (chrome.prompt): the prompt\'s words, a bare "cancel" or "no" only when it was asked last, never a bare yes', () => {
+  const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
+  const st = (patch = {}) => ({ prompt, questions: [], ...patch });
+  const pick1 = (words, s = st()) => matchChromeAnswer(words, s);
+  assert.deepEqual(pick1('approve'), { free: true, undo: false, check: false, camera: false, do: 'chrome-answer', answer: 'approve' }, 'never from another reading (undo: false)');
+  assert.equal(pick1('cancel Chrome').answer, 'deny');
+  assert.equal(pick1('stop Chrome').answer, 'stop');
+  for (const w of ['yes', 'okay', 'continue', 'go ahead', 'sure', 'stop', 'tell me a joke']) assert.equal(pick1(w), null, w);
+  assert.deepEqual(pick1('cancel'), { free: true, undo: false, check: false, camera: false, do: 'chrome-answer', answer: 'deny', bare: true });
+  // A question asked after the prompt takes the bare words; one asked before doesn't.
+  assert.equal(pick1('cancel', st({ questions: [{ id: 'research-offer', askedAt: 4000 }] })), null);
+  assert.equal(pick1('no', st({ questions: [{ id: 'tour-choice', askedAt: 1000 }] })).answer, 'deny');
+  assert.equal(pick1('no', st({ questions: [{ id: 'no-time' }] })), null, 'a question without a time: the question keeps them');
+  assert.equal(pick1('cancel Chrome', st({ questions: [{ id: 'research-offer', askedAt: 4000 }] })).answer, 'deny', 'naming Chrome is always the prompt\'s');
+  // The extension's fields alone (no answers given): the answers are made from them.
+  assert.equal(pick1('approve', { prompt: { id: 'x', askedAt: 1, kind: 'step', voice: { allowed: true } } }).answer, 'click', 'no approve choice: consumed, needs a click');
+});
+
+test('the answer layer while a check counts down: withdraw, correct, go; other words aren\'t its', () => {
+  const st = { chromeCheck: { kind: 'task' } };
+  for (const w of ['cancel', 'no', 'stop', 'Stop!', 'never mind', 'wait', 'okay stop', 'cancel Chrome']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'withdraw', w);
+  for (const w of ['start now', 'send it', 'go ahead', 'do it']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'go', w);
+  assert.deepEqual(matchChromeAnswer('No, I said add the second one to the cart', st), { free: true, undo: false, check: false, camera: false, do: 'chrome-check', how: 'correct', words: 'add the second one to the cart' });
+  assert.equal(correctionOf('no I meant the 32-inch one'), 'the 32-inch one');
+  assert.equal(correctionOf('I said find a USB-C hub.'), 'find a USB-C hub');
+  assert.equal(correctionOf('no thanks'), '');
+  for (const w of ['what time is it', 'how do I stop my dog from barking', 'stop that', 'play Back in Black']) assert.equal(matchChromeAnswer(w, st), null, w);
+  // A yes's check: no corrections (there are no words to correct).
+  assert.equal(matchChromeAnswer('no, I said approve', { chromeCheck: { kind: 'approve' } }), null);
+  assert.equal(matchChromeAnswer('cancel', { chromeCheck: { kind: 'approve' } }).how, 'withdraw');
+});
+
+test('nothing asked: a yes that names Chrome is still Chrome\'s; its no and stop words go on to the stop layer', () => {
+  for (const w of ['spend more in Chrome', 'more steps in Chrome', 'allow once in Chrome']) assert.deepEqual(matchChromeAnswer(w, {}), { free: true, undo: false, check: false, camera: false, do: 'chrome-nothing-asked' }, w);
+  for (const w of ['stop Chrome', 'cancel Chrome', 'approve', 'deny', 'allow once', 'cancel']) assert.equal(matchChromeAnswer(w, {}), null, w);
+  assert.equal(namesChromeAnswer('spend more in Chrome'), true);
+  assert.equal(namesChromeAnswer('approve'), false);
 });
