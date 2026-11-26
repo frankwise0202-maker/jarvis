@@ -39,11 +39,48 @@
 // One home base for two devices: { senses: { …, shared: true } } has the harness hand every context of
 // the scenario the same senses state (t.coreSenses, passed here as `sensesState`), as the real Core's
 // api/senses is one for every device.
+//
+// Jarvis for Chrome's relay (v8.1, Jarvis Core 1.3, SPEC §32.1, wire v1): api/relay/to-ext, api/relay/to-app
+// and api/relay/status, answered by the Core's own relay store (core/server/http/relay-routes.mjs
+// createRelayStore: 50 messages a box, 2 minutes each, the long poll, the status), so the fake can't drift from
+// the real thing. One relay per home base: every context of a scenario shares it (like sync), and t.core.relay
+// is it: { store, mode, posts, reads, status() }.
+//   t.core.relay.mode    'ok' | 'old' (a Core before 1.3: 404 not_found on every relay route) | 'unreachable'
+//   routeFakeCore(context, { relay: { mode } }) (or the scenario's fakeCore: { relay: { mode: 'old' } }) seeds it.
+//   t.core.relay.posts / reads count the requests (never their contents).
+//
+// A fake Jarvis for Chrome (the extension in its own profile, in Node): it reads to-ext and writes to-app on
+// that relay, speaking wire v1 with a key (src/lib/relay-envelope.js, the app's own copy), scriptable from a
+// scenario. chrome-voice and windows run their E2E against it.
+//
+//   import { createFakeChromePeer, seedChromeLink, CHROME_TEST_KEY } from '../core-fakes.mjs';
+//   await seedChromeLink(context);                 // this browser context starts linked with CHROME_TEST_KEY
+//   const peer = createFakeChromePeer(t.core.relay); // linked with CHROME_TEST_KEY; or { key: null } and then
+//   peer.start();                                  //   peer.link(code): the code the app made, as if pasted
+//   … peer.received                                // every message from the app, opened: [{ kind, id, at, body }]
+//   await peer.waitFor('open')                     // the next (or a past, unanswered-for) message of a kind
+//   peer.answer('start', { ok: false, reason: 'busy' })   // how it replies to a kind: a reply body (without re),
+//                                                  //   a function (body, message) => body, or null (no reply)
+//   await peer.task({ id, status: 'running', text, narration, lastStep, costUsd, limitUsd })
+//   await peer.prompt({ promptId, hash, kind, category, consequential, site, title, spoken, body, address,
+//                       choices, voice })          // defaults for anything left out (prompt() returns the body)
+//   await peer.promptClosed(promptId, 'clicked') · await peer.done({ id, status, answer, costUsd })
+//   await peer.status({ voiceApprovals: true, task: { id, status } }) · await peer.send(kind, body)
+//   peer.setOnline(false, { seenAgoMs: 120000 })   // stops reading its box; the relay's status says it was last
+//                                                  //   seen that long ago (setOnline(true) reads again)
+//   await peer.unlink()                            // sends unlinked and forgets the key
+//   await peer.stop()
+// Its default replies: ping { status }, open { url, site }, start { id: 'task-1', 'task-2', … } (and, with
+// { autoTask: true }, a task message for it), stop {} (and done 'stopped' for a running task), answer { promptId };
+// any other request { ok: false, reason: 'bad' }. It answers the app's hello with its own (and says hello once
+// when it links). replyDelayMs delays every reply.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRelayStore, isRelayEnvelope } from '../../core/server/http/relay-routes.mjs';
+import { b64url, importLinkKey, sealEnvelope, openEnvelope, createSeenIds, parseLinkCode } from '../../src/lib/relay-envelope.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'unit', 'fixtures', 'homebase');
 export const CORE_HOST = 'alienware.tail4e5f6a.ts.net';
@@ -504,9 +541,338 @@ function syncRoute(store, b, req, url, json, raw) {
   return json(405, { error: 'method_not_allowed', message: 'GET, PUT' });
 }
 
-export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore(), senses = {}, sensesState = null } = {}) {
+// ---- Jarvis for Chrome's relay (v8.1, Core 1.3.0) -----------------------------------------------------------
+
+/** The E2E's link key (never a real one): what seedChromeLink() stores and createFakeChromePeer() uses. */
+export const CHROME_TEST_KEY = b64url(Uint8Array.from({ length: 32 }, (_, i) => (i * 29 + 7) & 255));
+export const CHROME_LINK_STORAGE_KEY = 'jarvis.chromeLink.v1';
+
+/** One home base's relay: the Core's own store, plus the fake's mode and counts. */
+export function fakeRelay(seed = {}) {
+  const sd = seed && typeof seed === 'object' ? seed : {};
+  let store = null; // made on first use: a scenario that never links starts no timer
+  const relay = {
+    get store() {
+      if (!store) store = createRelayStore();
+      return store;
+    },
+    mode: sd.mode || 'ok',
+    posts: { 'to-ext': 0, 'to-app': 0 },
+    reads: { 'to-ext': 0, 'to-app': 0, status: 0 },
+    extSeenOverride: undefined, // a fake peer that went offline long ago (setOnline(false, { seenAgoMs }))
+    status() {
+      const s = relay.store.status();
+      return relay.extSeenOverride === undefined ? s : { ...s, extSeenAt: relay.extSeenOverride };
+    },
+  };
+  return relay;
+}
+
+const relays = new WeakMap(); // the scenario's sync store (one home base) → its relay
+
+/** The relay of the home base whose sync store is `sync` (every context of a scenario shares both). */
+export function relayOf(sync, seed = {}) {
+  let relay = relays.get(sync);
+  if (!relay) {
+    relay = fakeRelay(seed);
+    relays.set(sync, relay);
+  }
+  return relay;
+}
+
+/**
+ * How the relay answers one request, like the Core (relay-routes.mjs): { status, body } or null (no answer:
+ * 'unreachable'). req: { method, pathname, search, body (text), contentType, signal }.
+ */
+export async function answerRelay(relay, { method, pathname, search = '', body = '', contentType = 'application/json', signal = null }) {
+  const m = /^\/api\/relay\/(to-ext|to-app|status)\/?$/.exec(pathname);
+  if (!m) return { status: 404, body: { error: 'not_found', message: `no such endpoint: ${pathname}` } };
+  if (relay.mode === 'unreachable') return null;
+  if (relay.mode === 'old') return { status: 404, body: { error: 'not_found', message: `no such endpoint: ${pathname}` } };
+  const name = m[1];
+  if (name === 'status') {
+    if (method !== 'GET') return { status: 405, body: { error: 'method_not_allowed', message: `${method} is not supported here` } };
+    relay.reads.status += 1;
+    return { status: 200, body: relay.status() };
+  }
+  if (method === 'POST') {
+    if (!/^application\/json/i.test(contentType || '')) return { status: 415, body: { error: 'unsupported_type', message: 'send JSON' } };
+    if (Buffer.byteLength(body || '') > 24 * 1024) return { status: 413, body: { error: 'too_large', message: 'the request body is larger than 24576 bytes' } };
+    let env;
+    try {
+      env = JSON.parse(body || '');
+    } catch {
+      return { status: 400, body: { error: 'bad_json', message: 'the body is not valid JSON' } };
+    }
+    if (!isRelayEnvelope(env)) return { status: 400, body: { error: 'bad_envelope', message: 'send { id, iv, ct }' } };
+    relay.posts[name] += 1;
+    relay.store.post(name, env);
+    return { status: 200, body: { ok: true } };
+  }
+  if (method !== 'GET') return { status: 405, body: { error: 'method_not_allowed', message: `${method} is not supported here` } };
+  const q = new URLSearchParams(search);
+  const after = q.get('after') || null;
+  const wait = q.get('wait') === null ? 0 : Number(q.get('wait'));
+  if (after && !/^[A-Za-z0-9_-]{22}$/.test(after)) return { status: 400, body: { error: 'bad_after', message: 'after must be a message id' } };
+  if (!Number.isInteger(wait) || wait < 0 || wait > 25) return { status: 400, body: { error: 'bad_wait', message: 'wait must be 0 to 25' } };
+  relay.reads[name] += 1;
+  return { status: 200, body: await relay.store.wait(name, after, wait * 1000, signal) };
+}
+
+/** Jarvis linked to the fake peer from the start: the stored link (as Settings → Jarvis for Chrome → Link makes it). */
+export function chromeLinkRecord({ key = CHROME_TEST_KEY, core = CORE_ORIGIN, linkedAt = Date.now() - 60_000, extSeenAt = null, madeAt = null } = {}) {
+  return { v: 1, core, key, linkedAt, extSeenAt, madeAt: madeAt ?? (linkedAt || Date.now()) - 1000 };
+}
+
+/** Seed a browser context's storage with a link (once per context: a reload keeps what the app did since). */
+export async function seedChromeLink(context, opts = {}) {
+  const value = JSON.stringify(chromeLinkRecord(opts));
+  await context.addInitScript(
+    ({ key, value, marker }) => {
+      try {
+        if (localStorage.getItem(marker)) return;
+        localStorage.setItem(marker, '1');
+        localStorage.setItem(key, value);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    { key: CHROME_LINK_STORAGE_KEY, value, marker: '__jarvis_e2e_chrome_seeded__' },
+  );
+}
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A fake Jarvis for Chrome on `relay` (see the header). */
+export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '1.1.0', online = true, answers = {}, replyDelayMs = 0, autoTask = false, tasksFromJarvis = true, voiceApprovals = false } = {}) {
+  let linkKey = key;
+  let cryptoKey = null;
+  let running = false;
+  let loop = null;
+  let halt = null; // aborts the read in progress when the peer stops (the relay's own timer doesn't hold the process)
+  let reading = online;
+  let cursor = null;
+  let seen = createSeenIds();
+  let taskSeq = 0;
+  let current = null; // the running task { id, status, text }
+  const script = { ...answers };
+  const waiters = [];
+  const peer = {
+    received: [],
+    sent: [],
+    dropped: 0,
+    get key() {
+      return linkKey;
+    },
+    get linked() {
+      return !!linkKey;
+    },
+    get task() {
+      return current ? { ...current } : null;
+    },
+    start() {
+      if (running) return peer;
+      running = true;
+      halt = new AbortController();
+      loop = run(halt.signal);
+      return peer;
+    },
+    async stop() {
+      running = false;
+      if (halt) halt.abort();
+      await loop;
+    },
+    setOnline(on, { seenAgoMs } = {}) {
+      reading = !!on;
+      relay.extSeenOverride = on ? undefined : seenAgoMs === undefined ? relay.extSeenOverride : Date.now() - seenAgoMs;
+    },
+    answer(kind, value) {
+      script[kind] = value;
+    },
+    async send(kind, body = {}) {
+      if (!linkKey) throw new Error('the fake Jarvis for Chrome is not linked');
+      const env = await sealEnvelope(await cryptoOf(), { box: 'to-app', kind, body, at: Date.now() });
+      relay.store.post('to-app', env);
+      peer.sent.push({ kind, id: env.id, body });
+      return env.id;
+    },
+    task(fields = {}) {
+      current = { id: fields.id || current?.id || `task-${++taskSeq}`, status: fields.status || 'running' };
+      return peer.send('task', { id: current.id, status: current.status, text: 'find a 4K monitor under $300 and add it to the cart', narration: '', lastStep: '', costUsd: 0, limitUsd: 1, from: 'voice', ...fields });
+    },
+    done(fields = {}) {
+      const id = fields.id || current?.id || `task-${++taskSeq}`;
+      if (current && current.id === id) current = null;
+      return peer.send('done', { id, status: 'done', answer: '', costUsd: 0.12, ...fields });
+    },
+    async prompt(fields = {}) {
+      const body = {
+        promptId: `p-${Math.random().toString(36).slice(2, 10)}`,
+        hash: b64url(Uint8Array.from({ length: 16 }, () => Math.floor(Math.random() * 256))),
+        kind: 'step',
+        category: 'change',
+        consequential: false,
+        site: 'www.example.com',
+        title: 'Add to cart',
+        spoken: 'Jarvis for Chrome wants to click Add to cart on www.example.com.',
+        body: 'Click “Add to cart” for the 27-inch 4K monitor.',
+        address: 'https://www.example.com/monitors/27-4k',
+        choices: [{ id: 'approve', label: 'Approve' }, { id: 'deny', label: 'Deny' }],
+        voice: { allowed: false, why: 'Approving by voice is off.' },
+        ...fields,
+      };
+      await peer.send('prompt', body);
+      return body;
+    },
+    promptClosed(promptId, how = 'clicked') {
+      return peer.send('prompt-closed', { promptId, how });
+    },
+    status(fields = {}) {
+      return peer.send('status', { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, ...fields });
+    },
+    /** Take a link code the app made (as pasting it into Jarvis for Chrome): its key, then hello. */
+    async link(code) {
+      const parsed = parseLinkCode(code);
+      if (!parsed.ok) throw new Error(`not a link code (${parsed.reason})`);
+      if (parsed.link.core !== CORE_ORIGIN) throw new Error(`the code names another home base: ${parsed.link.core}`);
+      linkKey = parsed.link.key;
+      cryptoKey = null;
+      seen = createSeenIds();
+      await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+      return parsed.link;
+    },
+    async unlink() {
+      if (linkKey) await peer.send('unlinked', {});
+      linkKey = null;
+      cryptoKey = null;
+    },
+    /** The first message of `kind` (matching `where`) not yet taken by an earlier waitFor; waits for one. */
+    waitFor(kind, { where = () => true, timeoutMs = 15_000 } = {}) {
+      const found = peer.received.find((m) => m.kind === kind && !m.taken && where(m));
+      if (found) {
+        found.taken = true;
+        return Promise.resolve(found);
+      }
+      return new Promise((resolve, reject) => {
+        const w = { kind, where, resolve };
+        waiters.push(w);
+        setTimeout(() => {
+          const i = waiters.indexOf(w);
+          if (i < 0) return;
+          waiters.splice(i, 1);
+          reject(new Error(`the fake Jarvis for Chrome got no ${kind} in ${Math.round(timeoutMs / 1000)} s (got: ${peer.received.map((m) => m.kind).join(', ') || 'nothing'})`));
+        }, timeoutMs);
+      });
+    },
+  };
+
+  async function cryptoOf() {
+    if (!cryptoKey) cryptoKey = await importLinkKey(linkKey);
+    return cryptoKey;
+  }
+
+  async function reply(message, value) {
+    if (value === null || value === undefined) return; // scripted silence: the app gives up after 10 s
+    if (replyDelayMs) await sleepMs(replyDelayMs);
+    await peer.send('reply', { ok: true, ...value, re: message.id });
+  }
+
+  function hostOf(url) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  async function onMessage(message) {
+    const { kind, body } = message;
+    const scripted = Object.prototype.hasOwnProperty.call(script, kind) ? script[kind] : undefined;
+    const pick = (fallback) => (typeof scripted === 'function' ? scripted(body, message) : scripted === undefined ? fallback : scripted);
+    switch (kind) {
+      case 'hello':
+        await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+        return;
+      case 'unlinked':
+        linkKey = null;
+        cryptoKey = null;
+        return;
+      case 'ping':
+        return reply(message, pick({ ok: true, status: { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null } }));
+      case 'open':
+        return reply(message, pick({ ok: true, url: body.url, site: hostOf(body.url) }));
+      case 'start': {
+        const answer = pick({ ok: true, id: `task-${++taskSeq}` });
+        await reply(message, answer);
+        if (answer && answer.ok !== false && answer.id) {
+          current = { id: answer.id, status: 'running' };
+          if (autoTask) await peer.task({ id: answer.id, text: body.text, narration: 'Starting the task.' });
+        }
+        return;
+      }
+      case 'stop': {
+        const answer = pick({ ok: true });
+        await reply(message, answer);
+        if (current && answer && answer.ok !== false) await peer.done({ id: current.id, status: 'stopped', answer: '' });
+        return;
+      }
+      case 'answer':
+        return reply(message, pick({ ok: true, promptId: body.promptId }));
+      default:
+        return reply(message, pick({ ok: false, reason: 'bad' }));
+    }
+  }
+
+  async function run(signal) {
+    while (running) {
+      if (!reading || !linkKey) {
+        await sleepMs(100);
+        continue;
+      }
+      const out = await relay.store.wait('to-ext', cursor, 500, signal);
+      if (!running) break;
+      cursor = out.last;
+      for (const env of out.messages) {
+        if (!linkKey) break;
+        const r = await openEnvelope(await cryptoOf(), env, { box: 'to-ext', now: Date.now(), seen });
+        if (!r.ok) {
+          peer.dropped += 1;
+          continue;
+        }
+        const message = { ...r.message };
+        peer.received.push(message);
+        const i = waiters.findIndex((w) => w.kind === message.kind && w.where(message));
+        if (i >= 0) {
+          message.taken = true;
+          waiters.splice(i, 1)[0].resolve(message);
+        }
+        try {
+          await onMessage(message);
+        } catch {
+          /* a scripted answer that threw: no reply */
+        }
+      }
+    }
+  }
+
+  return peer;
+}
+
+/** api/relay/*: answers (a Promise), or null (not a relay route). */
+function relayRoute(relay, route, req, url, cors) {
+  if (!/^\/api\/relay(?:\/|$)/.test(url.pathname)) return null;
+  return (async () => {
+    const out = await answerRelay(relay, { method: req.method(), pathname: url.pathname, search: url.search, body: req.postData() || '', contentType: req.headers()['content-type'] || '' });
+    if (!out) return route.abort('internetdisconnected');
+    return route.fulfill({ status: out.status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: JSON.stringify(out.body) });
+  })().catch(() => {
+    /* the page went away while its read waited */
+  });
+}
+
+export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain = {}, sync = fakeSyncStore(), senses = {}, sensesState = null, relay: relaySeed = {} } = {}) {
   const fx = coreFixtures();
-  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync, senses: sensesState || fakeSenses(senses) };
+  const state = { mode, delayMs, requests: [], asks: [], brain: fakeBrain(brain), sync, senses: sensesState || fakeSenses(senses), relay: relayOf(sync, relaySeed) };
   await context.route(`${CORE_ORIGIN}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -525,6 +891,8 @@ export async function routeFakeCore(context, { mode = 'ok', delayMs = 0, brain =
     if (state.mode === 'starting') return json(503, { error: 'starting', message: 'the Core is starting, try again in a second' }, { 'retry-after': '1' });
     const scenario = CORE_SCENARIOS.includes(state.mode) ? state.mode : 'ok';
     const raw = (status, text) => route.fulfill({ status, contentType: 'application/json; charset=utf-8', headers: { ...cors, 'cache-control': 'no-store' }, body: text });
+    const relayAnswer = relayRoute(state.relay, route, req, url, cors);
+    if (relayAnswer) return relayAnswer;
     const syncAnswer = syncRoute(state.sync, state.brain, req, url, json, raw);
     if (syncAnswer) return syncAnswer;
     const sensesAnswer = sensesRoute(state.senses, route, req, url, json);

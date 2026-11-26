@@ -271,6 +271,30 @@ or `"q8"` there fixes George's version instead of letting the Alienware pick.
 
 ---
 
+## Jarvis for Chrome: the home base carries the messages (Jarvis Core 1.3)
+
+Jarvis (in your usual Chrome on the Mac) can ask Jarvis for Chrome (the extension in its own "Jarvis"
+Chrome profile) to open a page or do a task: say "pull this up in Chrome". The two can't talk to each
+other directly, on purpose (they live in separate profiles), so they leave messages for each other on
+the home base. You link them once: in Jarvis, **Settings → Jarvis for Chrome → Link → Copy link code**,
+then paste the code in Jarvis for Chrome (its side panel, **Settings → Voice from Jarvis**). The steps
+are in the Jarvis app's README, "Jarvis for Chrome (beta)".
+
+What the home base does with them:
+
+- **It can't read them.** Each message is locked (AES-256 encryption) with a key that only Jarvis and
+  Jarvis for Chrome have: it travels inside the link code you copy and paste, and never reaches the
+  home base, not even in a backup or sync.
+- **It keeps them for 2 minutes, in memory only.** At most 50 waiting in each direction; nothing is
+  written to the disk or to a log, and a restart forgets them all.
+- **Only your devices reach it,** through Tailscale, as for everything else. These two addresses alone
+  also accept requests from Chrome extensions; the rest of the home base doesn't.
+
+Nothing to set up on the Alienware: Jarvis Core 1.3 has it (an automatic update brings it; or run
+`jarvis-core update`). It's free.
+
+---
+
 ## Everyday commands (in Terminal)
 
 | Command | What it does |
