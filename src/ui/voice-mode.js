@@ -1561,6 +1561,7 @@ function createVoiceMode(opts) {
       S.braked = false;
       S.deaf = false;
       S.typingForced = false;
+      S.sleepAfter = false; // MAC-8: a tap during "Very good, Tony." (or the brake line): they changed their mind
     }
     const review = !duringBuild && reviewOn();
     // noSpeechMs, oneTry (v8.1, narrate()'s listenAfter): its own silence window, and no second try.
@@ -4950,6 +4951,7 @@ function createVoiceMode(opts) {
     }
     const count = { asked: S.asked, braked: S.braked };
     S.deaf = false;
+    S.sleepAfter = false; // MAC-8: the sleep or brake line was cut: the owner wants him after all
     hold.heard();
     disarmSleep();
     clearRetry();

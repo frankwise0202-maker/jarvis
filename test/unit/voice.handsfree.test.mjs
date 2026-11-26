@@ -373,6 +373,46 @@ test('MAC-4: on screen, two claps during an answer still stop him and he listens
   assert.equal(vm.state, 'listening');
 });
 
+// MAC-8: "go back to sleep" (or the brake) sets S.sleepAfter for the line said next. When the owner cut that line
+// ("Hey Jarvis", a tap) and asked something, the answer used to drop straight to Standby, without its follow-up.
+test('MAC-8: “go back to sleep”, then “Hey Jarvis” or a tap during “Very good, Tony.” and a question: the answer gets its follow-up listen, not Standby at once', async (t) => {
+  for (const how of ['word', 'tap']) {
+    const env = await voiceEnv(t, { speechMs: 3000, noSpeechMs: 60000 });
+    env.voice('natural');
+    env.say((n) => (n === 1 ? 'go back to sleep' : n === 2 ? Q : null));
+    const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: ANSWER });
+    await until(env, () => env.log.spoken.some((s) => /^Very good, Tony/.test(s.text)), 'the sleep line');
+    await env.advance(1000);
+    if (how === 'word') assert.equal(vm.bargeIn('word'), true, 'the line is cut');
+    else vm.tap();
+    await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), `${how}: the answer, said to the end`);
+    await env.advance(1500);
+    assert.deepEqual(env.log.closes, [], `${how}: not straight back to Standby`);
+    assert.equal(env.log.listens.length, 4, `${how}: the follow-up listen`);
+    assert.equal(env.log.listens[3].noSpeechMs, 8000);
+    await env.advance(12000);
+    assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], `${how}: Standby after the quiet follow-up`);
+  }
+});
+
+test('MAC-8: the brake line cut by a tap (his own “Jarvis” in it masks the wake word) and a question: answered, then the follow-up window (not Standby at once)', async (t) => {
+  const env = await voiceEnv(t, { speechMs: 3000, noSpeechMs: 60000 });
+  env.voice('natural');
+  env.setHidden(true);
+  let cut = false;
+  env.say((n) => (n === 0 ? null : n <= 3 ? 'what is the capital of Spain' : n === 4 && cut ? Q : null));
+  const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: (q) => (/France/.test(q) ? ANSWER : 'Madrid.') });
+  await until(env, () => env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'the brake line');
+  await env.advance(800);
+  cut = true;
+  assert.equal(vm.bargeIn('word'), false, 'masked: George is saying “Jarvis”');
+  vm.tap();
+  await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), 'the answer');
+  await env.advance(1500);
+  assert.deepEqual(env.log.closes, [], 'not straight back to Standby');
+  assert.equal(env.log.listens.at(-1).noSpeechMs, 8000, 'the follow-up listen');
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {
