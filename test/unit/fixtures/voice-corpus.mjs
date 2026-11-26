@@ -87,6 +87,14 @@ export const VOICE = {
     ['okay stop', 'LV', 'stop:stop'],
     ['stop', 'C0', 'stop:stop'],
     ['stop', 'VH', 'hologram'],
+    // SHOULD C5: "look at my screen" (a place the owner names, before the hologram's "look at <part>")
+    ['look at my screen', 'V0', 'screen-look:screen-look'],
+    ["what's on my screen", 'C0', 'screen-look:screen-look'],
+    ['look at my screen', 'VH', 'screen-look'],
+    ['look at my screen', 'VL', 'screen-look'],
+    // SHOULD C6: "brief me" with no home base: asked first, with the price
+    ['brief me', 'NB', 'briefing:brief'],
+    ['brief me', 'V0', 'brain'],
     // the Standby words everywhere (C2)
     ['go to sleep', 'H0', 'standby'],
     ['standby', 'OT', 'standby'],

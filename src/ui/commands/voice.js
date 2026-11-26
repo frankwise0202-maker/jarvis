@@ -10,10 +10,14 @@
 //   app             layer app (6), every surface: "new chat", "open history / settings / the library /
 //                   mission control / the home base", "speak slower", "turn off continuous", "send
 //                   right away", "use George", "how much have I spent today"
+//   screen-look     SHOULD C5, layer destination, every surface: "look at my screen" offers a one-tap
+//                   button with a Look's price (the screen's share picker needs a tap)
+//   briefing        SHOULD C6, layer app, Voice Mode: "brief me" with no home base linked: Voice Mode
+//                   asks with the price first; run() gives the briefing protocol's words to send
 // Each says one short line (appCommandLine). Keep this module importable in Node (no DOM at import
 // time): the T3 harness (test/unit/command-router.test.mjs) registers it with fake deps.
 
-import { matchAppCommand, matchVoiceControl, matchStopWord, appCommandLine, nextVoiceRate } from '../../lib/app-commands.js';
+import { matchAppCommand, matchVoiceControl, matchStopWord, matchScreenLook, matchBriefing, appCommandLine, nextVoiceRate } from '../../lib/app-commands.js';
 
 const call = (fn, ...args) => (typeof fn === 'function' ? fn(...args) : undefined);
 
@@ -29,6 +33,8 @@ const call = (fn, ...args) => (typeof fn === 'function' ? fn(...args) : undefine
  *   spend()                          { todayUsd, monthUsd, liveUsd }
  *   stopTarget(target)               stops one thing a bare "stop" names ('tour', 'chrome', 'liveview',
  *                                    'music', 'speech')
+ *   screenLook({ surface })          offers the button: { supported, shown } (shown: its line is on it already)
+ *   briefing()                       the briefing protocol's words: { send, mode } | false
  */
 export function register(router, deps = {}) {
   router.register({
@@ -60,6 +66,26 @@ export function register(router, deps = {}) {
     layer: 'app',
     match: (text, state) => matchAppCommand(text, state),
     run: (action, ctx = {}) => runApp(action, ctx, deps),
+  });
+
+  // SHOULD C5: "look at my screen" (a place the owner names: before the hologram's own "look at <part>").
+  router.register({
+    id: 'screen-look',
+    layer: 'destination',
+    match: (text) => matchScreenLook(text),
+    run: (action, ctx = {}) => {
+      const out = call(deps.screenLook, { surface: ctx.surface || 'chat' }) || {};
+      return { say: out.shown ? '' : appCommandLine(action, out) };
+    },
+  });
+
+  // SHOULD C6: "brief me" with no home base: Voice Mode asks first (the price), then sends what run() gives.
+  router.register({
+    id: 'briefing',
+    layer: 'app',
+    surfaces: ['voice'],
+    match: (text, state) => matchBriefing(text, state),
+    run: () => call(deps.briefing) || false,
   });
 }
 

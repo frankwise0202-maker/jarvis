@@ -176,6 +176,59 @@ export default [
     },
   },
   {
+    name: 'voice-commands-screen-look',
+    title:
+      'Voice for everything (C5): "look at my screen" in Voice Mode offers a one-tap button with a Look\'s price (the screen\'s share picker needs a tap); typed in the chat, the line is a toast with its Look button; nothing reaches Claude until it is tapped',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await t.step('said in Voice Mode: the line with the price, and the button', async () => {
+        await openVoice(t, ['Jarvis, look at my screen.']);
+        await saysLine(t, "Tap Look at my screen when you're ready. A Look costs about 3 cents.");
+        const btn = await t.visible('voice-screen-look', { message: 'the one-tap button' });
+        t.assert(/Look at my screen · about 3¢/.test(norm(await t.text(btn))), `its label shows the price (${norm(await t.text(btn))})`);
+        noRequests(t, 'the offer');
+        await t.screenshot('1-offer');
+        await (await t.visible('voice-close')).click();
+        await voiceClosed(t);
+      });
+      await t.step('typed in the chat: a toast with its Look button', async () => {
+        await typeCommand(t, 'look at my screen');
+        await t.waitFor(async () => /Tap Look to look at your screen/.test(await toastText(t)), { timeout: 5000, message: async () => `the toast (${await toastText(t)})` });
+        t.assert(await t.page.locator('.toast button', { hasText: 'Look' }).first().isVisible(), 'the toast carries the Look button');
+        noRequests(t, 'the offer');
+      });
+    },
+  },
+  {
+    name: 'voice-commands-brief',
+    title:
+      'Voice for everything (C6): "brief me" with no home base linked says the briefing\'s price and waits; "no" sends nothing',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await t.step('the price first, then "no": nothing is sent', async () => {
+        await openVoice(t, ['brief me', 'no']);
+        await saysLine(t, 'Your briefing sends a team of agents to look up the news, about $1.70. Shall I run it?');
+        await saysLine(t, 'Okay, no briefing.');
+        noRequests(t, '"no" to the briefing');
+        await t.screenshot('1-no-briefing');
+      });
+    },
+  },
+  {
     name: 'voice-commands-questions',
     title:
       'Voice for everything: ten ordinary questions, some of them with Optics open, each reach Jarvis exactly once (one request each), and none is taken by a command',

@@ -17,6 +17,8 @@ import {
   moneyWords,
   nextVoiceRate,
   VOICE_RATE,
+  matchScreenLook,
+  matchBriefing,
 } from '../../src/lib/app-commands.js';
 import { NOT as NO_STEAL, ALL_STATE_NAMES as NO_STEAL_STATES, stateFor } from './fixtures/voice-corpus-base.mjs';
 
@@ -258,3 +260,24 @@ test('appCommandLine: one short line for each action (R9)', () => {
   // Lines never name the extension by its full name (A8: Jarvis must not say his own wake word).
   for (const t of ['tour', 'chrome', 'liveview', 'music']) assert.doesNotMatch(appCommandLine(act('stop', { targets: [t] })), /Jarvis/);
 });
+
+test('SHOULD C5: "look at my screen", never from another reading (camera: true), with a Look\'s price', () => {
+  for (const t of ['look at my screen', 'Jarvis, take a look at my screen', "what's on my screen", 'check my screen', 'can you see my screen']) {
+    assert.deepEqual(pick(matchScreenLook(t)), { do: 'screen-look' }, t);
+    assert.equal(matchScreenLook(t).camera, true);
+    assert.equal(matchScreenLook(t).free, false);
+  }
+  for (const t of ['my screen is cracked', 'look at my calendar', 'look at the screen protector', 'how do I take a screenshot on a Mac']) assert.equal(matchScreenLook(t), null, t);
+  assert.equal(appCommandLine(act('screen-look')), "Tap Look at my screen when you're ready. A Look costs about 3 cents.");
+  assert.equal(appCommandLine(act('screen-look'), { supported: false }), "I can't see this screen.");
+});
+
+test('SHOULD C6: "brief me" with no home base asks with the price; with one linked, its own briefing answers', () => {
+  assert.deepEqual(pick(matchBriefing('brief me', stateFor('NB'))), { do: 'brief' });
+  assert.deepEqual(pick(matchBriefing('run my morning briefing', stateFor('NB'))), { do: 'brief' });
+  assert.equal(matchBriefing('brief me', stateFor('V0')), null, 'the home base is linked in V0');
+  assert.equal(matchBriefing('what is a briefing', stateFor('NB')), null);
+  assert.equal(matchBriefing('brief me', stateFor('NB')).free, false, 'never from another reading');
+  assert.equal(appCommandLine(act('brief')), 'Your briefing sends a team of agents to look up the news, about $1.70. Shall I run it?');
+});
+
