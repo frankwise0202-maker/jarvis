@@ -4489,7 +4489,8 @@ may talk to Jarvis in one window while a forgotten tab is on Standby. A window h
 (shared: one hold per window, `createVoiceBusy()`, app.js, computers only) while it can hear the owner or is answering:
 every listen of the shared `sttDevice` (the chat box's microphone, Voice Mode, a viewer's or Optics' microphone, the
 hands-free Test), and Voice Mode's own work (`onActive`: a listen, the 2-second check, a turn, speech). It lets go about
-2 s after the last one stops, and at once when Voice Mode closes. Standby's `voiceElsewhere` dep
+2 s after the last one stops, and at once when Voice Mode closes (its listen, ending a moment after the close, included;
+anything that starts meanwhile brings back the 2 s: v8.1.1). Standby's `voiceElsewhere` dep
 (`voiceBusyElsewhere()`: `navigator.locks.query()`, this window's own hold not counted) is asked before each wake: while
 another window is busy, two claps or "Hey Jarvis" don't wake this Standby (it stays on, listening). An idle Voice Mode
 left open holds nothing, so it no longer keeps Standby deaf. A window that closes lets go of the lock with it. Not on a

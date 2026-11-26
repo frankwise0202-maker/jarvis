@@ -299,10 +299,14 @@ export function createVoiceBusy({ locks = defaultLocks(), idleMs = 2000, name = 
   const tags = new Set();
   let close = null; // the hold's close(), while held
   let timer = 0;
+  // A part let go `now` (Voice Mode closed) while another still ran (its listen, ending a moment later): when the
+  // last one ends, the lock goes at once too, not after idleMs. Anything that starts meanwhile cancels it.
+  let closing = false;
   const letGo = () => {
     clearTimeout(timer);
     timer = 0;
     if (tags.size || !close) return;
+    closing = false;
     const c = close;
     close = null;
     c();
@@ -311,14 +315,16 @@ export function createVoiceBusy({ locks = defaultLocks(), idleMs = 2000, name = 
     set(tag, on, { now = false } = {}) {
       if (on) {
         tags.add(tag);
+        closing = false;
         clearTimeout(timer);
         timer = 0;
         if (!close && locks) close = holdVoiceLock({ locks, name });
         return;
       }
       tags.delete(tag);
+      if (now && tags.size) closing = true;
       if (tags.size || !close) return;
-      if (now) letGo();
+      if (now || closing) letGo();
       else if (!timer) timer = later(letGo, idleMs);
     },
     get held() {

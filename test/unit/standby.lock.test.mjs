@@ -300,6 +300,33 @@ test('MAC-R2-1: createVoiceBusy holds the voice lock while any part of the windo
   assert.equal(none.held, false, 'no Web Locks: nothing held (as before)');
 });
 
+// v8.1.1 (integration; E2E standby-voice-elsewhere): Voice Mode closed while its listen still ran. The listen ends a
+// moment after the close (the recognizer's onEnd), and its part used to start the 2 s idle wait: a "Hey Jarvis" to
+// the Standby in another window within those 2 s was ignored. Closed now means at once, as MAC-R2-1 says.
+test('MAC-R2-1: Voice Mode closed while its listen runs: the lock goes when that listen ends, at once; something new in between keeps the usual wait', async () => {
+  const locks = createFakeLocks();
+  const busy = createVoiceBusy({ locks: locks.as('B'), idleMs: 5000 });
+  busy.set('listen:1', true); // Voice Mode's listen (app.js withVoiceBusy)
+  busy.set('voice', true);
+  await settle();
+  busy.set('voice', false, { now: true }); // Voice Mode closed
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), ['B'], 'its listen still ends');
+  busy.set('listen:1', false); // the recognizer's onEnd, a moment later
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), [], 'let go at once, not 5 s later');
+  // A listen that starts before the closed one ends (the chat box's microphone): the usual wait again.
+  busy.set('listen:2', true);
+  busy.set('voice', true);
+  await settle();
+  busy.set('voice', false, { now: true });
+  busy.set('listen:3', true);
+  busy.set('listen:2', false);
+  busy.set('listen:3', false);
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), ['B'], 'something new started: the usual moment');
+});
+
 test('MAC-R2-1: voiceBusyElsewhere() counts only other windows: a Standby is never kept asleep by its own window’s lingering hold', async () => {
   const locks = createFakeLocks();
   const a = createVoiceBusy({ locks: locks.as('A'), idleMs: 5000 });
