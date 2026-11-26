@@ -206,6 +206,8 @@ test('coming and going: gone only after two enumerations about 3 s apart; back a
   assert.deepEqual([gone.state.input, gone.state.output], ['gone', 'gone']);
   assert.deepEqual(gone.actions.map((a) => `${a.role}:${a.action}`), ['input:fallback', 'output:fallback']);
   assert.deepEqual(goneOf(gone.state), { input: true, output: true });
+  assert.deepEqual(goneOf(gone.state, chosen), { input: true, output: true });
+  assert.deepEqual(goneOf(gone.state, { input: { id: 'mac-mic', label: '' }, output: chosen.output }), { input: false, output: true }, 'only the devices chosen now');
   // Still gone: nothing more to do.
   const still = audioHotplugPlan({ state: gone.state, devices: macOnly, chosen, now: 9000 });
   assert.deepEqual([still.state.input, still.actions.length], ['gone', 0]);

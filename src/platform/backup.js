@@ -71,7 +71,9 @@ const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 // per-browser device id and the webcam's model with its USB ids, local to this device: SPEC 18.1).
 // v7.7: hearing and voice through the home base are this device's own choice (and a download on the
 // home base): never exported, never applied from a backup (v7.8: nor who made that choice).
-const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCameraLabel', 'homeBaseHear', 'homeBaseSpeak', 'homeBaseSpeakBy'];
+// v8.1: the microphone and speaker setup is this computer's own (device ids are per browser, and another
+// device's speakerphone means nothing here): never exported, never synced, never applied from a backup.
+const EXCLUDED_SETTINGS = ['onboarded', 'features', 'opticsCameraId', 'opticsCameraLabel', 'homeBaseHear', 'homeBaseSpeak', 'homeBaseSpeakBy', 'audioSetup', 'audioInputId', 'audioInputLabel', 'audioOutputId', 'audioOutputLabel'];
 
 /**
  * The settings an import restores: the owner's profile, voice and appearance. Never limits, models,

@@ -429,10 +429,18 @@ export function audioHotplugPlan({ state, devices, chosen = {}, now = 0, goneMs 
   return { state: next, actions, recheckAt };
 }
 
-/** The watcher's confirmed absences, for planSetup: { input, output }. */
-export function goneOf(state) {
+/**
+ * The watcher's confirmed absences, for planSetup: { input, output }. With `chosen`, only absences of the
+ * devices chosen now count (a state about a device chosen before says nothing about the new one).
+ */
+export function goneOf(state, chosen = null) {
   const s = state && typeof state === 'object' ? state : {};
-  return { input: s.input === 'gone', output: s.output === 'gone' };
+  const same = (role) => {
+    if (!chosen) return true;
+    const want = chosen[role];
+    return !!want && s[`${role}Key`] === `${want.id || ''}|${want.label || ''}`;
+  };
+  return { input: s.input === 'gone' && same('input'), output: s.output === 'gone' && same('output') };
 }
 
 // ---- Standby's capture retries and the Mac's sleep ----------------------------------------------------------

@@ -23,6 +23,13 @@
 //                       same recognizer goes on, and the words it had heard when the turn ended stay
 //                       that turn's even when it rewrites them later (a late final: "twenty five" ->
 //                       "25"); the next turn's words are the ones after them (continuation)
+//     audioTrack        v8.1 (Chrome on a computer): () -> Promise<{ track, stop(), used(ok) } | null>, the
+//                       microphone chosen for questions (Settings → Voice → Microphone and speaker). The
+//                       recognizer then hears that track (recognition.start(track), Chrome 135+) instead of
+//                       Chrome's own microphone: the first session starts once the track is open (Chrome
+//                       needs no tap for it; iOS never gets one), every restart uses the same track, and it is
+//                       stopped when listening ends. null, or a track start(track) refuses: recognition.start()
+//                       as before. used(true | false) says once which one the recognizer got.
 //   stop(): "I'm done": deliver what was heard now. abort(): cancel without delivering anything.
 //
 // Jarvis, not the browser, decides when the owner has finished (v7.2). The recognizer runs
@@ -485,6 +492,7 @@ export function startListening(options = {}) {
   const maxMs = Number.isFinite(opts.maxMs) && opts.maxMs > 0 ? Math.min(TIMING.maxMs, opts.maxMs) : TIMING.maxMs;
   const noSpeechMs = Number.isFinite(opts.noSpeechMs) && opts.noSpeechMs > 0 ? opts.noSpeechMs : TIMING.noSpeechMs;
   const keep = opts.keepListening === true;
+  const trackSource = typeof opts.audioTrack === 'function' ? opts.audioTrack : null;
   const phrases = normalizePhrases(opts.phrases);
   const lang = resolveListenLang(opts.lang);
   const Ctor = recognitionCtor();
@@ -508,6 +516,8 @@ export function startListening(options = {}) {
     turn: { n: 0, start: Date.now(), committed: '', prior: [], own: '', text: '', heard: false, last: 0 },
     turns: 0,
     timers: {},
+    track: null, // v8.1: { track, stop(), used(ok) } the question microphone's track (audioTrack)
+    trackNoted: false,
   };
   const now = () => Date.now();
 
@@ -695,6 +705,7 @@ export function startListening(options = {}) {
     clearTimers();
     detach(S.rec);
     S.rec = null;
+    releaseTrack();
     // stop(): deliver what was heard in this turn (some engines never flag a result final).
     let delivered = false;
     if (S.closing === 'stop' && !S.errored) {
@@ -713,6 +724,49 @@ export function startListening(options = {}) {
   function detach(rec) {
     if (!rec) return;
     rec.onresult = rec.onerror = rec.onend = rec.onnomatch = null;
+  }
+
+  /** v8.1: the question microphone's track is stopped when listening ends (its microphone closes). */
+  function releaseTrack() {
+    const t = S.track;
+    S.track = null;
+    if (t && typeof t.stop === 'function') {
+      try {
+        t.stop();
+      } catch {
+        /* gone */
+      }
+    }
+  }
+
+  function noteTrack(used) {
+    if (S.trackNoted || !S.track) return;
+    S.trackNoted = true;
+    call(S.track.used, used);
+  }
+
+  /**
+   * recognition.start(), or v8.1's start(track) with the question microphone's track. A track the
+   * recognizer refuses (it ended: its microphone went away) is let go, and Chrome's own microphone hears
+   * the rest, as before.
+   */
+  function startRec(rec) {
+    const t = S.track;
+    if (t && t.track && t.track.readyState !== 'ended') {
+      try {
+        rec.start(t.track);
+        noteTrack(true);
+        return;
+      } catch (err) {
+        const name = err && err.name;
+        if (name !== 'InvalidStateError' && name !== 'TypeError') throw err;
+      }
+    }
+    if (t) {
+      noteTrack(false);
+      releaseTrack();
+    }
+    rec.start();
   }
 
   /** The recognizer can't go on: deliver this turn's words, or report `err` (or that nothing was heard). */
@@ -822,7 +876,7 @@ export function startListening(options = {}) {
     };
 
     try {
-      rec.start();
+      startRec(rec);
     } catch (err) {
       detach(rec);
       S.rec = null;
@@ -902,6 +956,25 @@ export function startListening(options = {}) {
 
   S.turns = 0;
   newTurn(0);
+  if (trackSource) {
+    // v8.1 (Chrome on a computer): the chosen microphone opens first, then the recognizer starts on it.
+    Promise.resolve()
+      .then(() => trackSource())
+      .catch(() => null)
+      .then((t) => {
+        const usable = t && t.track && t.track.readyState !== 'ended' ? t : null;
+        if (!usable && t && typeof t.stop === 'function') call(t.stop);
+        if (S.ended || S.closing) {
+          // stop() or abort() came first: nothing was started, nothing is heard.
+          if (usable) call(usable.stop);
+          if (!S.ended && !S.rec) finish();
+          return;
+        }
+        S.track = usable;
+        begin(true);
+      });
+    return handle;
+  }
   // start() synchronously: iOS Safari only lets recognition begin inside the user's tap.
   // (Recognition events are always asynchronous, so the caller still gets the handle first.)
   begin(true);

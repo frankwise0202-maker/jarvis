@@ -19,6 +19,12 @@
 //   out.probe()                      v7.8.1: outside a tap, while replies avoid this stuck output: kick it
 //                                    (no sound) and let it idle-suspend as usual, so the next reply can see
 //                                    whether its clock moves
+//   out.setSink(id)                  v8.1: the speaker George plays on (AudioContext.setSinkId; '' = the default
+//                                    output), kept for a context made later. Promise<boolean>; never throws
+//   out.settle(ms)                   v8.1: nothing starts sooner than `ms` from now (a Bluetooth microphone just
+//                                    closed: the speakerphone is switching back from its phone-call mode)
+//   out.onDevice(fn)                 v8.1: fn({ type: 'error' | 'statechange', state }) from George's context (its
+//                                    output device went away; it stopped or started): the device watcher checks
 //
 // Chain: every chunk is an AudioBufferSourceNode -> one GainNode -> one AnalyserNode
 // (fftSize 512, smoothing 0.6) -> destination. Chunks are scheduled back to back on the audio
@@ -108,6 +114,9 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
   // v7.8.1: our own idle suspend is still landing. WebKit sets `state` only once it has, so a play() in
   // that window would see 'running', skip resume(), and the suspend would then stop the clock under it.
   let suspending = false;
+  let sinkId = ''; // v8.1: the chosen speaker ('' = the default output: nothing is asked of the context)
+  let settleUntil = 0; // v8.1: Date.now() before which nothing starts
+  const deviceListeners = new Set();
 
   function supported() {
     return typeof Ctor === 'function';
@@ -131,7 +140,58 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     time = new Float32Array(analyser.fftSize);
     ranges = bandBins(ctx.sampleRate, analyser.fftSize);
     watchVisibility();
+    watchDevice(ctx);
+    if (sinkId) applySink(ctx);
     return ctx;
+  }
+
+  /** v8.1: the context's output device went away (error), or it stopped or started: tell the watcher. */
+  function watchDevice(c) {
+    if (!c || typeof c.addEventListener !== 'function') return;
+    const tell = (type) => () => {
+      if (ctx !== c) return;
+      for (const fn of [...deviceListeners]) {
+        try {
+          fn({ type, state: c.state });
+        } catch {
+          /* decoration */
+        }
+      }
+    };
+    try {
+      c.addEventListener('error', tell('error'));
+      c.addEventListener('statechange', tell('statechange'));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function applySink(c) {
+    try {
+      if (!c || typeof c.setSinkId !== 'function') return Promise.resolve(false);
+      const p = c.setSinkId(sinkId);
+      return Promise.resolve(p).then(
+        () => true,
+        () => false,
+      );
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+
+  /** v8.1: the speaker George plays on ('' = the default output). */
+  function setSink(id) {
+    const next = typeof id === 'string' ? id : '';
+    const same = next === sinkId;
+    sinkId = next;
+    if (!ctx || (same && (ctx.sinkId || '') === next)) return Promise.resolve(true);
+    return applySink(ctx);
+  }
+
+  /** v8.1: nothing starts sooner than `ms` from now. */
+  function settle(ms) {
+    const until = Date.now() + Math.max(0, Number(ms) || 0);
+    if (until > settleUntil) settleUntil = until;
   }
 
   function watchVisibility() {
@@ -276,7 +336,9 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     const src = c.createBufferSource();
     src.buffer = buffer;
     src.connect(gain);
-    const at = Math.max(when, c.currentTime);
+    // v8.1: a Bluetooth microphone just closed: wait out the speakerphone's switch (its first words would be lost).
+    const hold = settleUntil > Date.now() ? (settleUntil - Date.now()) / 1000 : 0;
+    const at = Math.max(when, c.currentTime + hold);
     src.start(at);
     live.add(src);
     const handle = {
@@ -397,6 +459,13 @@ export function createAudioOut({ AudioContextImpl, scope = globalThis, idleSuspe
     level,
     bands,
     close,
+    setSink,
+    settle,
+    onDevice(fn) {
+      if (typeof fn !== 'function') return () => {};
+      deviceListeners.add(fn);
+      return () => deviceListeners.delete(fn);
+    },
     busy: () => live.size > 0,
     get context() {
       return ctx;
