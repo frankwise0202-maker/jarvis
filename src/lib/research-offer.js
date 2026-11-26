@@ -19,6 +19,7 @@
 //   researchPrompt(subject, route)  the words each way sends: a follow-up in this chat, a mission, or
 //                                  the home base's job
 //   LOOK_FIRST_LINE                "Let me look first: about 3¢." (no subject yet: a Look, then the offer)
+//   lookFirstLine(usd)             the same line with the Look's own price (MONEY-8)
 
 import { normalizeOpticsText, theName } from './optics-commands.js';
 import { formatUsd } from './optics.js';
@@ -51,6 +52,11 @@ export const DEFAULT_AGENTS = 8;
 export const LIVE_VIEW_COUNTS = Object.freeze({ quick: true, mission: false, homebase: false });
 
 export const LOOK_FIRST_LINE = 'Let me look first: about 3¢.';
+/** MONEY-8: the line with the Look's own price (warm or cold: app.js lookEstimate), "about 8¢" in a new chat. */
+export function lookFirstLine(usd) {
+  const v = Number(usd);
+  return Number.isFinite(v) && v > 0 ? `Let me look first: about ${Math.max(1, Math.round(v * 100))}¢.` : LOOK_FIRST_LINE;
+}
 export const OFFLINE_LINE = 'I can’t research while offline.';
 export const OUTSIDE_TWO = 'Those two are outside the live view’s dollar an hour.';
 export const OUTSIDE_ONE = 'That one is outside the live view’s dollar an hour.';

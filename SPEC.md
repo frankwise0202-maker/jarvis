@@ -3009,14 +3009,17 @@ before; on iOS they never do.
   ("play Back in Black by AC/DC", "play some <artist>": a local exchange in the chat, "Here's Back In Black by AC/DC.
   Tap Open in Apple Music to play it.", showing what the offer found, no second search; then a tap; a preview plays
   in-app after a tap; "yes" with no music offered is the briefing); "brief me" / "the briefing" / "catch me up" /
-  "sure, run the briefing" / "no, just the briefing" → `wake.briefing()`: the briefing protocol for the time of day sent
-  as a spoken Voice Mode turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid
-  request); "no" / "not now, thanks" / "go back to sleep" / "no thanks, go back to sleep" … → "Very good, Frank." then
+  "sure, run the briefing" / "no, just the briefing" → `wake.briefing()`: the briefing protocol for the time of day,
+  a paid team of agents, so (v8.1 fixes MONEY-4, MAC-5) asked first with its price as C6's "brief me" is
+  (`askPaidBriefing`: "Your briefing sends a team of agents to look up the news, about $1.55. Shall I run it?", the
+  price from `briefingUsd` at the owner's team size and depth, MONEY-5); only "yes" sends it as a spoken Voice Mode
+  turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid request), "no" sends
+  nothing. Room talk answering the offer (woken in the background, or by claps) never starts it alone; "no" / "not now, thanks" / "go back to sleep" / "no thanks, go back to sleep" … → "Very good, Frank." then
   Voice Mode closes into Standby (`onClose({ reason: 'standby' })`); an answer word then a music command ("Yes, play
   some AC/DC", "No, play Highway to Hell") → that command, local and free (the offer's card when it names the offered
   artist); anything else → an ordinary turn (the 2-second check). `standbyCommand` takes the same pieces anywhere in
   Voice Mode ("No thanks, go back to sleep", "Okay, standby").
-- The routine itself never calls Claude (E2E: no lead request until "brief me").
+- The routine itself never calls Claude (E2E: no lead request until "brief me", its price and "yes").
 - After a woken conversation (`wakeSession`) Voice Mode goes back to Standby when `wakeReturn` is on: on Exit (onClose
   `{ wakeSession: true }`), "go back to sleep", 2.5 s after it stopped listening for silence, or after a minute idle
   (not while a preview plays: `wake.canSleep()`).
@@ -3275,7 +3278,8 @@ none of these commands exist; every sentence goes to Claude as before. In Voice 
 are said (`homeBase.command`, no turn; a briefing the Core can't give: the words are sent as a turn).
 The Standby wake routine's "brief me" uses the home base's briefing, said out loud, when a home base
 is linked (`wake.briefing()` → `{ done }`; free), and the paid briefing protocol (a chat of its own)
-when it can't answer; otherwise the protocol as before. Old conversations, tools and prompts are
+when it can't answer (v8.1: its price asked first, then "yes": `{ send, paid: true, usd }`); otherwise the
+protocol as before, its price asked first. Old conversations, tools and prompts are
 unchanged.
 
 **Tests.** Unit `brain` (the views and their guards: a key-like hint, bad sources, music; failures;

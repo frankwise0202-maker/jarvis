@@ -72,7 +72,7 @@ export function register(router, deps = {}) {
   router.register({
     id: 'screen-look',
     layer: 'destination',
-    match: (text) => matchScreenLook(text),
+    match: (text, state) => matchScreenLook(text, state),
     run: (action, ctx = {}) => {
       const out = call(deps.screenLook, { surface: ctx.surface || 'chat' }) || {};
       return { say: out.shown ? '' : appCommandLine(action, out) };

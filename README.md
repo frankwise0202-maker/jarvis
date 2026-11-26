@@ -435,8 +435,12 @@ he wakes up, greets you and offers some music or your briefing.
   and listens:
   - **"Yes"** (or "play it", "sure", "yes, please do"): the card is ready for you: tap **Open in
     Apple Music** (or **Preview** to hear a clip here). Jarvis can't start the music app by himself.
-  - **"Brief me"** (or "sure, run the briefing"): he runs the briefing for the time of day and
-    reads it to you (that's the first thing that costs anything, like any briefing).
+  - **"Brief me"** (or "sure, run the briefing"): with a home base linked, he reads you its
+    briefing. Without one (or when it can't brief), the briefing is a team of agents, so he asks
+    first with its price at your team size and depth: "Your briefing sends a team of agents to look
+    up the news, about $1.55. Shall I run it?" (about 90¢ at Fast, $4.20 at Deep). Only "yes" runs
+    it and reads it to you; "no" sends nothing. The same when "yes" answers an offer with no music
+    in it, and when he was woken in the background or by claps: talk in the room never starts it.
   - **"No"** or **"go back to sleep"** (or "no thanks, go back to sleep", "not now, thanks"):
     "Very good, Frank." and back to Standby.
   - "Yes, play some Miles Davis" or "no, play Highway to Hell" finds that music instead (free).
@@ -1065,7 +1069,7 @@ browser asks for permission.
   the first two). Mission and Home base go through the 2-second check first. The quick answer is
   a follow-up in this conversation, so it sees the picture; the mission and the home base get the
   thing in words (its label and the answer's first sentence). With nothing looked at yet, Jarvis
-  looks first ("Let me look first: about 3¢.") and then asks. "Research this in the background"
+  looks first ("Let me look first: about 3¢.", or about 8¢ in a new or quiet chat) and then asks. "Research this in the background"
   offers only the home base. Outside Optics, "this" is the hologram on screen or what you were
   just asking about. With the live view on, the quick answer counts in its $1 an hour and the
   mission and the home base don't (the offer says so); when a quick answer wouldn't fit in the

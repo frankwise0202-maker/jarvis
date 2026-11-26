@@ -196,9 +196,11 @@ export default [
       await t.goto('/');
       await t.step('said in Voice Mode: the line with the price, and the button', async () => {
         await openVoice(t, ['Jarvis, look at my screen.']);
-        await saysLine(t, "Tap Look at my screen when you're ready. A Look costs about 3 cents.");
+        // Changed on purpose (v8.1 fix MONEY-8): a Look's own price, warm or cold. Here there is no chat
+        // yet, so it is a new chat's first Look: about 8 cents, on the line and the button alike.
+        await saysLine(t, /^Tap Look at my screen when you're ready\. A Look costs about 8 cents\.$/);
         const btn = await t.visible('voice-screen-look', { message: 'the one-tap button' });
-        t.assert(/Look at my screen · about 3¢/.test(norm(await t.text(btn))), `its label shows the price (${norm(await t.text(btn))})`);
+        t.assert(/Look at my screen · about 8¢/.test(norm(await t.text(btn))), `its label shows the price (${norm(await t.text(btn))})`);
         noRequests(t, 'the offer');
         await t.screenshot('1-offer');
         await (await t.visible('voice-close')).click();
@@ -206,7 +208,7 @@ export default [
       });
       await t.step('typed in the chat: a toast with its Look button', async () => {
         await typeCommand(t, 'look at my screen');
-        await t.waitFor(async () => /Tap Look to look at your screen/.test(await toastText(t)), { timeout: 5000, message: async () => `the toast (${await toastText(t)})` });
+        await t.waitFor(async () => /Tap Look to look at your screen\. A Look costs about 8 cents\./.test(await toastText(t)), { timeout: 5000, message: async () => `the toast (${await toastText(t)})` });
         t.assert(await t.page.locator('.toast button', { hasText: 'Look' }).first().isVisible(), 'the toast carries the Look button');
         noRequests(t, 'the offer');
       });

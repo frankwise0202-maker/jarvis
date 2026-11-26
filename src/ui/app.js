@@ -119,7 +119,8 @@ import { notify as notifyOwner } from './attention.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
 import { GATE_LIMITS, createLiveGate, createTurnGate, gateNote, requestWorstUsd } from '../lib/live-gate.js';
-import { LIVE_VIEW_COUNTS, LOOK_FIRST_LINE, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { LIVE_VIEW_COUNTS, OFFLINE_LINE, lookFirstLine, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { briefingUsd } from '../lib/app-commands.js'; // v8.1 fix (MONEY-5): the briefing's price
 import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { commandAck as viewerAck } from './voice-visuals.js';
@@ -2157,6 +2158,7 @@ export async function startApp(rootEl) {
         },
         offer: () => wakeOffer(),
         briefing: () => wakeBriefing(),
+        briefingUsd: () => briefingPrice(), // MONEY-4: said with the offer's paid briefing, before it is sent
         returnToStandby: () => getSettings().wakeReturn !== false,
         canSleep: () => !musicPlayer.isPlaying(),
         pending: () => wakePending.lines(), // v8.1 (D3): said before the greeting
@@ -2203,6 +2205,9 @@ export async function startApp(rootEl) {
       const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
       return text ? { text, mode: p.mode || 'swarm' } : null;
     };
+    // MONEY-4, MAC-5: the protocol is a paid team of agents: Voice Mode asks first with its price
+    // (MONEY-5: at the owner's team size and depth), and it is noted as given only once it is sent.
+    const noted = () => safe(() => presence.noteBriefing(new Date()));
     if (brain && brain.base()) {
       safe(() => presence.noteBriefing(new Date()));
       const done = Promise.resolve(runBrainCommand({ kind: 'brief' }))
@@ -2210,14 +2215,19 @@ export async function startApp(rootEl) {
         .then((r) => {
           // The home base can't brief (out of reach, a 1.0 Core): the briefing protocol, as before v7.6.
           const fallback = r && r.fallback ? protocol() : null;
-          return fallback ? { send: fallback.text, mode: fallback.mode } : { ack: (r && r.speech) || 'No briefing from the home base just now.' };
+          return fallback ? { send: fallback.text, mode: fallback.mode, usd: briefingPrice(), paid: true } : { ack: (r && r.speech) || 'No briefing from the home base just now.' };
         });
       return { done };
     }
     const b = protocol();
     if (!b) return null;
-    safe(() => presence.noteBriefing(new Date()));
-    return b;
+    return { ...b, usd: briefingPrice(), paid: true, sent: noted };
+  }
+
+  /** MONEY-5: what the briefing protocol costs now, at the owner's team size and depth (app-commands.js briefingUsd). */
+  function briefingPrice() {
+    const s = getSettings();
+    return briefingUsd({ maxAgents: s.maxAgents, depth: s.depth, location: s.location });
   }
 
   // ---- Optics (the camera) ----------------------------------------------------------------------
@@ -2417,6 +2427,8 @@ export async function startApp(rootEl) {
     const warm = !!(conv && conv.apiMessages && conv.apiMessages.length && Date.now() - (conv.updatedAt || 0) < 4.5 * 60 * 1000);
     return estimateLookCost({ model: getSettings().leadModel, prefixCached: warm }).usd;
   }
+  /** Whole cents, at least 1: "about 3¢" warm, "about 8¢" in a new or quiet chat (MONEY-8). */
+  const centsOf = (usd) => Math.max(1, Math.round(Number(usd) * 100) || 1);
 
   // ---- Optics over Voice Mode: a Look, a question or a hologram is a Voice Mode turn (spoken) ----
   function voiceTurnResult(res) {
@@ -2659,7 +2671,7 @@ export async function startApp(rootEl) {
    * The router's optics-research: the subject in words, the offer with each way's price (Voice Mode:
    * a question said and answered by voice; Optics: a card with its buttons, said where Jarvis speaks),
    * then the way the owner picks. Nothing is spent before that. No subject yet with the camera live:
-   * "Let me look first: about 3¢." (a Look, then the offer).
+   * "Let me look first: about 3¢." (a Look, then the offer; its price warm or cold, MONEY-8).
    */
   function researchThis({ where = 'offer', deep = false, surface = 'voice' } = {}) {
     if (!state.online) return { say: OFFLINE_LINE };
@@ -2682,7 +2694,7 @@ export async function startApp(rootEl) {
       };
       if (voiceApi && safe(() => isVoiceModeOpen(), false)) afterVoiceSays(go);
       else go();
-      return { say: LOOK_FIRST_LINE };
+      return { say: lookFirstLine(lookEstimate()) }; // MONEY-8: warm or cold, as the LOOK button says
     }
     const settings = getSettings();
     const offer = researchOffer({
@@ -4702,6 +4714,10 @@ export async function startApp(rootEl) {
     // ---- voice ▸
     // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
     if (surface !== 'voice') s.speaking = !!state.speaking;
+    // The prices the paid commands say first (MONEY-5, MONEY-8): the briefing at the owner's team size and
+    // depth, a Look warm or cold in this chat.
+    s.briefingUsd = safe(() => briefingPrice(), 0);
+    s.lookUsd = safe(() => lookEstimate(), 0);
     // ---- voice ◂
     // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
     if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
@@ -4986,11 +5002,12 @@ export async function startApp(rootEl) {
         const fromVoice = surface === 'voice' && !!voiceApi && safe(() => isVoiceModeOpen(), false);
         const tap = () => openOpticsScreen({ start: 'screen', voice: fromVoice });
         if (fromVoice) {
-          safe(() => voiceApi.offer({ label: 'Look at my screen · about 3¢', testid: 'voice-screen-look', onTap: tap }));
+          safe(() => voiceApi.offer({ label: `Look at my screen · about ${centsOf(lookEstimate())}¢`, testid: 'voice-screen-look', onTap: tap }));
           return { supported: true };
         }
         if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
-        toast('Tap Look to look at your screen. A Look costs about 3 cents.', { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
+        const cents = centsOf(lookEstimate());
+        toast(`Tap Look to look at your screen. A Look costs about ${cents} cent${cents === 1 ? '' : 's'}.`, { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
         return { supported: true, shown: true };
       },
       // SHOULD C6: "brief me" with no home base (asked first in Voice Mode): the briefing protocol's words.

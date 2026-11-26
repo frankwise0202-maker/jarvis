@@ -281,3 +281,27 @@ test('SHOULD C6: "brief me" with no home base asks with the price; with one link
   assert.equal(appCommandLine(act('brief')), 'Your briefing sends a team of agents to look up the news, about $1.70. Shall I run it?');
 });
 
+
+test('MONEY-5: the briefing is priced at the owner\'s team size and depth (as a mission is), and C6 says that price', async () => {
+  const { briefingUsd } = await import('../../src/lib/app-commands.js');
+  const { estimateResearchCost } = await import('../../src/lib/research-offer.js');
+  assert.equal(briefingUsd({ maxAgents: 8, depth: 'balanced', location: 'Brooklyn' }), estimateResearchCost({ route: 'mission', agents: 7, depth: 'balanced' }).usd, 'six angles and one for the owner\'s interests');
+  assert.equal(briefingUsd({ maxAgents: 8, depth: 'deep', location: 'Brooklyn' }), 4.2);
+  assert.equal(briefingUsd({ maxAgents: 8, depth: 'fast', location: 'Brooklyn' }), 0.9);
+  assert.equal(briefingUsd({ maxAgents: 8, depth: 'balanced' }), estimateResearchCost({ route: 'mission', agents: 6, depth: 'balanced' }).usd, 'no location: no weather or local news');
+  assert.equal(briefingUsd({ maxAgents: 3, depth: 'balanced', location: 'Brooklyn' }), estimateResearchCost({ route: 'mission', agents: 3, depth: 'balanced' }).usd, 'at most the per-wave limit');
+  const deep = matchBriefing('brief me', { ...stateFor('NB'), briefingUsd: 4.2 });
+  assert.equal(deep.usd, 4.2);
+  assert.equal(appCommandLine(deep), 'Your briefing sends a team of agents to look up the news, about $4.20. Shall I run it?');
+});
+
+test('MONEY-8: "look at my screen" says a Look\'s own price, warm or cold (a new chat\'s first Look is about 8 cents)', async () => {
+  const { lookFirstLine, LOOK_FIRST_LINE } = await import('../../src/lib/research-offer.js');
+  const cold = matchScreenLook('look at my screen', { lookUsd: 0.0785 });
+  assert.equal(cold.usd, 0.0785);
+  assert.equal(appCommandLine(cold), "Tap Look at my screen when you're ready. A Look costs about 8 cents.");
+  assert.equal(appCommandLine(matchScreenLook('look at my screen', { lookUsd: 0.0257 })), "Tap Look at my screen when you're ready. A Look costs about 3 cents.");
+  assert.equal(lookFirstLine(0.0785), 'Let me look first: about 8¢.');
+  assert.equal(lookFirstLine(0.0257), 'Let me look first: about 3¢.');
+  assert.equal(lookFirstLine(undefined), LOOK_FIRST_LINE);
+});

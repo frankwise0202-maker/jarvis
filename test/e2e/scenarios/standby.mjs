@@ -316,7 +316,9 @@ export default [
   },
   {
     name: 'standby-brief-me',
-    title: '"Brief me" after waking runs the briefing protocol in a new chat as a spoken Voice Mode turn (the first paid request); when the conversation goes quiet Jarvis returns to Standby',
+    // Changed on purpose (v8.1 fixes MONEY-4, MAC-5): the briefing is a paid team of agents, so after "brief me"
+    // Jarvis says its price first and only "yes" sends it.
+    title: '"Brief me" after waking says the briefing\'s price first; "yes" runs the briefing protocol in a new chat as a spoken Voice Mode turn (the first paid request); when the conversation goes quiet Jarvis returns to Standby',
     device: 'iphone13',
     fakeMusic: true,
     timeout: 150000,
@@ -329,6 +331,11 @@ export default [
         await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer' });
         t.assert(leadCount(t) === 0, 'Nothing paid yet');
         await t.page.evaluate(() => window.__voice.say('Brief me.'));
+        await waitSaid(t, /^Your briefing sends a team of agents to look up the news, about \$\d+\.\d\d\. Shall I run it\?$/);
+        await t.page.waitForTimeout(1500);
+        t.assert(leadCount(t) === 0, 'Nothing paid before "yes"');
+        await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer to the price' });
+        await t.page.evaluate(() => window.__voice.say('Yes.'));
         await t.waitFor(() => leadCount(t) >= 1, { timeout: 15000, message: 'the briefing request' });
         const req = t.requests('lead')[0];
         const msgs = req.body?.messages || [];
@@ -348,7 +355,8 @@ export default [
   },
   {
     name: 'standby-brief-me-unreachable',
-    title: 'A home base linked but out of reach (Tailscale off on the phone): after waking, "brief me" still briefs, with the briefing protocol as before v7.6',
+    // Changed on purpose (v8.1 fix MONEY-4): the protocol it falls back to is paid: its price first, then "yes".
+    title: 'A home base linked but out of reach (Tailscale off on the phone): after waking, "brief me" still briefs, with the briefing protocol as before v7.6, its price said first and sent on "yes"',
     device: 'iphone13',
     fakeMusic: true,
     fakeCore: { mode: 'unreachable' },
@@ -362,6 +370,10 @@ export default [
         await waitSaid(t, /Shall I put on some/);
         await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer' });
         await t.page.evaluate(() => window.__voice.say('Brief me.'));
+        await waitSaid(t, /^Your briefing sends a team of agents to look up the news, about \$\d+\.\d\d\. Shall I run it\?$/);
+        t.assert(leadCount(t) === 0, 'Nothing paid before "yes"');
+        await t.waitFor(async () => (await voiceState(t)) === 'listening', { message: 'Jarvis to listen for the answer to the price' });
+        await t.page.evaluate(() => window.__voice.say('Yes.'));
         await t.waitFor(() => leadCount(t) >= 1, { timeout: 20000, message: async () => `the briefing request (said: ${JSON.stringify((await said(t)).slice(-3))})` });
         const msgs = t.requests('lead')[0].body?.messages || [];
         t.assert(/Brief me like a crisp butler/.test(JSON.stringify(msgs)), 'The briefing protocol was sent');
