@@ -14,6 +14,7 @@ import {
   isLiveViewRequest,
   isOpticsOpenRequest,
   matchOpticsCommand,
+  opticsOpenLine,
   voiceCameraRequest,
   voiceLiveViewRequest,
   voiceOpticsOpen,
@@ -268,4 +269,15 @@ test('R10: with a laptop hologram on screen, "open the camera" is its camera par
   assert.equal(OPTICS_HINT, 'Say ‘open Optics’ for your camera.');
   assert.equal(out.say, `Here's the webcam. ${OPTICS_HINT}`);
   assert.deepEqual(calls, [{ text: 'open the camera', surface: 'voice', hint: OPTICS_HINT }]);
+});
+
+test('E2: what Jarvis says once Optics opened by voice knows how the camera started: "Optics is on." only when it is live', () => {
+  assert.equal(opticsOpenLine({ ok: true }), 'Optics is on.');
+  assert.equal(opticsOpenLine({ error: 'No camera was found on this device.', code: 'no-camera' }), 'I can’t find a camera.');
+  const busy = 'The camera is in use by another app. Close it (a video call, the Camera app), then try again.';
+  assert.equal(opticsOpenLine({ error: busy, code: 'busy' }), busy);
+  assert.equal(opticsOpenLine({ error: 'Camera access is blocked for Jarvis.', code: 'denied' }), 'Camera access is blocked for Jarvis.');
+  assert.equal(opticsOpenLine({ timeout: true }), 'The camera is starting.');
+  assert.equal(opticsOpenLine({ paused: true }), 'Optics is open. The camera waits until I’m on screen.');
+  for (const r of [{ error: 'Closed.' }, {}, null, undefined]) assert.equal(opticsOpenLine(r), 'The camera couldn’t start.');
 });

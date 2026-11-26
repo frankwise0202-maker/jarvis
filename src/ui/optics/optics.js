@@ -40,7 +40,7 @@
 //           this part?"; the mic button is Voice Mode's.
 //
 //   openOptics(deps) -> { close(), el, command(text), question(text), stopWatch(), stopLiveView(), autoLookDone,
-//           autoLiveDone, card(), sceneChanged(), sendAway(frameId), bringBack(frameId) }
+//           autoLiveDone, cameraDone, card(), sceneChanged(), sendAway(frameId), bringBack(frameId) }
 //   isOpticsOpen()   currentOptics()
 //   opticsCameraBridge (engine deps.camera)
 //   deps: { look({ text, frame }) -> Promise<{ run, frameId?, note? } | { error }>, ask({ text }) -> same,
@@ -507,6 +507,16 @@ export function openOptics(deps = {}) {
     autoLiveResolve = null;
     resolve(value);
   }
+  // v8.1 (E2): how the camera started, once (the app says "Optics is on." only once it is live):
+  // { ok: true } | { error, code } | { paused: true }.
+  let cameraDoneResolve = null;
+  const cameraDone = new Promise((resolve) => (cameraDoneResolve = resolve));
+  function settleCameraDone(value) {
+    if (!cameraDoneResolve) return;
+    const resolve = cameraDoneResolve;
+    cameraDoneResolve = null;
+    resolve(value);
+  }
   // "What am I looking at?" said in Voice Mode opened Optics: look as soon as the camera is live.
   let autoLook = typeof deps.autoLook === 'string' ? deps.autoLook.trim().slice(0, 500) : '';
   let autoLookResolve = null;
@@ -703,6 +713,7 @@ export function openOptics(deps = {}) {
       }
       el.dataset.interrupted = 'false';
       hideCard();
+      settleCameraDone({ ok: true });
       deps.wakeLock && deps.wakeLock.keepAwake && deps.wakeLock.keepAwake();
       // A frozen Look stays frozen when the camera comes back (after a pause), one set aside stays
       // aside (also one that was aside when something covered Optics: restoreAside); otherwise live.
@@ -743,6 +754,7 @@ export function openOptics(deps = {}) {
       return;
     }
     if (state === 'paused') {
+      settleCameraDone({ paused: true });
       stopWatch('The camera stopped.');
       // Off means off: hidden, minimized, another app, a call, the camera unplugged (v8.0).
       stopLiveView('Live view stopped: the camera stopped.');
@@ -773,6 +785,14 @@ export function openOptics(deps = {}) {
         why = '';
       }
       settleAutoLive({ error: why || 'The camera couldn’t start.' });
+      let code = '';
+      try {
+        const err = info && info.error ? (info.error instanceof CameraError ? info.error : classifyCameraError(info.error)) : null;
+        code = err && typeof err.code === 'string' ? err.code : '';
+      } catch {
+        code = '';
+      }
+      settleCameraDone({ error: why || 'The camera couldn’t start.', code });
       showError(info && info.error);
       return;
     }
@@ -3200,6 +3220,7 @@ export function openOptics(deps = {}) {
     endSchematic();
     settleAutoLook({ error: 'Closed.' });
     settleAutoLive({ error: 'Closed.' });
+    settleCameraDone({ error: 'Closed.' });
     deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
     try {
       deps.onLiveChange && deps.onLiveChange({ camera: false, watch: false, watchEndsAt: null });
@@ -3298,6 +3319,8 @@ export function openOptics(deps = {}) {
     overVoice: !!deps.voice,
     /** deps.autoLook: a Promise of the Look's outcome ({ run, frameId } | { error }), else null. */
     autoLookDone,
+    // v8.1 (E2): how the camera started ({ ok } | { error, code } | { paused }), for "open optics" by voice.
+    cameraDone,
     /** deps.autoLive: a Promise of the live view's start ({ ack } to say | { error }), else null (v8.0). */
     autoLiveDone,
     get state() {

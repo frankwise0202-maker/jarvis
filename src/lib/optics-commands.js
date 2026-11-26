@@ -265,6 +265,22 @@ export function voiceOpticsOpen(text, { cameraAllowed = 'unknown', ios = false, 
 }
 
 /**
+ * v8.1 (E2): what Jarvis says once Optics opened by voice knows how its camera started (optics.js
+ * cameraDone): "Optics is on." only once the camera is live; "I can't find a camera." when there is
+ * none; the camera's own message otherwise (in use, blocked); "The camera is starting." when it takes
+ * longer than the caller waits.
+ */
+export function opticsOpenLine(result) {
+  const r = result && typeof result === 'object' ? result : {};
+  if (r.ok) return 'Optics is on.';
+  if (r.timeout) return 'The camera is starting.';
+  if (r.code === 'no-camera') return 'I can’t find a camera.';
+  if (r.paused) return 'Optics is open. The camera waits until I’m on screen.';
+  const why = typeof r.error === 'string' ? r.error.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  return why && why !== 'Closed.' ? why : 'The camera couldn’t start.';
+}
+
+/**
  * v8.1: the camera a word names ("logitech", "macbook", "built-in", "iphone", "external" …), among
  * cameras.js's described cameras ({ id, name, label, detail, kind }), or null.
  */

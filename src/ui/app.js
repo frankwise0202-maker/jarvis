@@ -103,7 +103,7 @@ import { register as registerChromeCommands } from './commands/chrome.js';
 import { createLiveBudget } from '../lib/live-view.js';
 import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
 import { LIVE_VIEW_COUNTS, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
-import { matchOpticsCommand, voiceOpticsOpen } from '../lib/optics-commands.js';
+import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { notify as notifyOwner } from './attention.js';
 import { commandAck as viewerAck } from './voice-visuals.js';
@@ -2331,7 +2331,13 @@ export async function startApp(rootEl) {
     }
     if (kind === 'need-front') return { say: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoCommand })) };
     if (kind !== 'open') return false;
-    return { say: openOpticsScreen({ voice: !!voiceApi, autoCommand }) ? 'Optics is on.' : 'The camera couldn’t start.' };
+    const api = openOpticsScreen({ voice: !!voiceApi, autoCommand });
+    if (!api) return { say: 'The camera couldn’t start.' };
+    // "Optics is on." only once the camera is live; else why not ("I can't find a camera.", in use…).
+    const done = api && api.cameraDone && typeof api.cameraDone.then === 'function' ? api.cameraDone : null;
+    if (!done) return { say: 'Optics is on.' };
+    const late = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000));
+    return Promise.race([done, late]).then((r) => ({ say: opticsOpenLine(r) }));
   }
 
   /** "Close the camera" with Optics closed: a camera view on another screen goes off (Screens), else nothing to do. */
