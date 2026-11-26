@@ -931,7 +931,7 @@ async function renderSettings() {
 // home base (README: Voice from Jarvis). The key stays in chrome.storage.local.
 
 const VOICE_STEPS_TEXT = Object.freeze([
-  'In Jarvis: Settings → Jarvis for Chrome → Link → Copy link code.',
+  'In Jarvis, in your usual Chrome: Settings → Jarvis for Chrome → Link → Copy link code.',
   'Paste it here and press Link. Chrome asks to let Jarvis for Chrome reach your home base: allow it.',
 ]);
 
