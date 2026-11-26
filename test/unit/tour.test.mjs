@@ -1334,3 +1334,35 @@ test('ROUTING-R2-9: "repeat" on a step "back" went to says that step again and w
   player.next();
   assert.equal(player.getState().status, 'playing');
 });
+
+test('ROUTING-R3-4: after "back", a pause (or the voice cut) then "repeat" or "continue" says that step and waits again', async () => {
+  for (const how of ['pause-repeat', 'pause-resume', 'cut-repeat', 'cut-resume']) {
+    const { clock, narr, asker, player } = setup();
+    await player.start();
+    await clock.tick(0);
+    narr.chunk(0);
+    narr.chunk(1);
+    narr.end();
+    await clock.tick(0);
+    asker.last().onAnswer('enclosed', { via: 'voice' });
+    const lines = narr.last().lines.length;
+    for (let i = 0; i < lines; i++) narr.chunk(i);
+    narr.end();
+    await clock.tick(0);
+    player.back(); // "neighbours", said alone
+    narr.chunk(0);
+    if (how.startsWith('pause')) player.pause('owner');
+    else {
+      narr.end('stopped'); // a tap on the mic, or "Hey Jarvis"
+      await clock.tick(0);
+    }
+    assert.equal(player.getState().status, 'paused', how);
+    if (how.endsWith('repeat')) player.repeat();
+    else player.resume();
+    assert.equal(narr.last().lines.length, 1, `${how}: only that step is said`);
+    narr.chunk(0);
+    narr.end();
+    await clock.tick(0);
+    assert.deepEqual([player.getState().stepId, player.getState().status], ['neighbours', 'waiting'], how);
+  }
+});

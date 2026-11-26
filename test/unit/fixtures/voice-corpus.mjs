@@ -272,6 +272,12 @@ export const VOICE = {
     ['where is the camera', 'VLC', null],
     // ROUTING-R3-S2: the microphone off, in Voice Mode.
     ...['turn the mic off', 'turn the microphone off', 'switch the mic off', 'turn your mic off'].map((w) => [w, 'V0', 'voice-controls:mic-off']),
+    // ROUTING-R3-6: a run's own stop words while one runs (V0R, C0R); with nothing running they stay questions.
+    ...['stop the mission', 'cancel the mission', 'stop the research', 'stop researching', 'cancel the research'].flatMap((w) => [
+      [w, 'V0R', 'stop:stop'],
+      [w, 'C0R', 'stop:stop'],
+      [w, 'V0', null],
+    ]),
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',
@@ -287,6 +293,9 @@ export const VOICE = {
       voiceOpen: true,
       reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }] } },
     },
+    // ROUTING-R3-6: a turn running in this window (a mission), in Voice Mode and in the chat.
+    V0R: { surface: 'voice', standby: { available: true, open: false }, voiceOpen: true, running: true },
+    C0R: { surface: 'chat', via: 'typed', running: true },
     // ROUTING-R3-1: VLC with the camera in a Screens window.
     VLCW: {
       surface: 'voice',

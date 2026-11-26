@@ -259,11 +259,22 @@ export function stopTargets(state = {}) {
  * too), whose own "stop" holds the model still; a blueprint sheet alone has no "stop" of its own
  * (ROUTING-6). "Stop the tour" and "stop Chrome" belong to the tour and to Chrome.
  */
+// "Stop the mission", "cancel the research", "stop researching": the run's own words, only while one runs (ROUTING-R3-6).
+const RUN_STOP = /^(?:(?:stop|cancel|end|abort|kill)(?: the| that| this| my| your)? (?:mission|research|answer|search)|stop (?:researching|searching))$/;
+
 export function matchStopWord(text, state = {}) {
   const s = normalizeAppText(text);
-  if (!s || !STOP.test(s)) return null;
+  if (!s) return null;
+  if (!STOP.test(s)) {
+    if (!RUN_STOP.test(s) || !(state.running || state.runningElsewhere)) return null;
+    return act('stop', { targets: [state.running ? 'answer' : '', state.runningElsewhere ? 'elsewhere' : ''].filter(Boolean) });
+  }
   const targets = stopTargets(state);
-  if (!targets.length && state.hologram && state.hologram.open) return null;
+  const holo = !!(state.hologram && state.hologram.open);
+  if (!targets.length && holo) return null;
+  // Only another window's run, a hologram on screen: the model holds still as its own "stop" does, then the line says
+  // where the run is (ROUTING-R3-5).
+  if (holo && targets.length === 1 && targets[0] === 'elsewhere') return act('stop', { targets: ['hologram', 'elsewhere'] });
   return act('stop', { targets });
 }
 
@@ -339,6 +350,7 @@ function answersStopped({ here = 0, other = 0 } = {}) {
 }
 
 const STOPPED = {
+  hologram: 'holding it still',
   tour: 'the tour is paused',
   answer: 'the answer is stopped',
   chrome: 'Chrome is stopping',

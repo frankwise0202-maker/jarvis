@@ -287,3 +287,21 @@ test('ROUTING-R2-6, MISSED-R2V-2: "google … in Chrome" and "… on Google" get
     assert.deepEqual(target(t), { kind: 'search', query: q, where: 'auto', check: true }, t);
   }
 });
+
+test('ROUTING-R3-2: "google chrome …" and "google chromecast …" keep the product\'s name in the search', () => {
+  for (const [t, q] of [
+    ['google chrome dark mode settings', 'google chrome dark mode settings'],
+    ['google chrome download for mac', 'google chrome download for mac'],
+    ['google chrome vs safari battery life', 'google chrome vs safari battery life'],
+    ['google chromecast setup with tv', 'google chromecast setup with tv'],
+    ['google chrome dark mode settings in Chrome', 'google chrome dark mode settings'],
+    ['google chrome extensions', 'google chrome extensions'],
+  ]) {
+    assert.deepEqual(target(t), { kind: 'search', query: q, where: 'auto', check: true }, t);
+  }
+  // Unchanged: "google for …", "google it", an everyday search, a statement about Chrome.
+  assert.deepEqual(target('google for USB-C chargers'), { kind: 'search', query: 'usb-c chargers', where: 'auto', check: true });
+  assert.deepEqual(target('google it'), { kind: 'this-search', where: 'auto', check: false });
+  assert.deepEqual(target('google home remedies for a cold'), { kind: 'search', query: 'home remedies for a cold', where: 'auto', check: true });
+  assert.equal(matchChromeCommand('google chrome keeps crashing', NO_LINKS), null);
+});

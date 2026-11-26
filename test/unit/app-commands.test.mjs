@@ -347,8 +347,23 @@ test('ROUTING-R2-3: "stop" stops every run in this window and says which; a run 
   // A run in another Jarvis window: this one can't stop it, so Jarvis says where it runs.
   const there = s('C0', { runningElsewhere: true });
   assert.deepEqual(pick(matchStopWord('stop', there)), { do: 'stop', targets: ['elsewhere'] });
-  assert.deepEqual(pick(matchStopWord('stop', s('VH', { runningElsewhere: true }))), { do: 'stop', targets: ['elsewhere'] }, 'not the hologram\'s hold-still while a paid run goes on');
+  // ROUTING-R3-5: with a hologram on screen and only another window's run, the model holds still too, then the line.
+  assert.deepEqual(pick(matchStopWord('stop', s('VH', { runningElsewhere: true }))), { do: 'stop', targets: ['hologram', 'elsewhere'] });
+  assert.equal(appCommandLine(matchStopWord('okay stop', s('VH', { runningElsewhere: true }))), "Holding it still. I'm still answering in another window: stop it there.");
+  // With a run here too, the run stops (no hold-still needed for the line).
+  assert.deepEqual(pick(matchStopWord('stop', s('VH', { running: true, runningElsewhere: true }))), { do: 'stop', targets: ['answer', 'elsewhere'] });
   assert.equal(appCommandLine(matchStopWord('stop', there)), "I'm still answering in another window. Stop it there.");
   assert.equal(line({ answer: { here: 1, other: 0 } }, ['answer', 'elsewhere']), "The answer is stopped. I'm still answering in another window: stop it there.");
   for (const t of ['answer', 'elsewhere']) assert.doesNotMatch(appCommandLine(act('stop', { targets: [t] })), /Jarvis|^Okay\.$/);
+});
+
+test('ROUTING-R3-6: while a run goes on, "stop the mission", "cancel the research", "stop researching" stop it', () => {
+  const s = (name, patch) => stateFor(name, patch);
+  for (const words of ['stop the mission', 'Cancel the mission.', 'stop the research', 'stop researching', 'cancel the research', 'stop the search', 'Jarvis, abort the mission', 'end the research']) {
+    assert.deepEqual(pick(matchStopWord(words, s('C0', { running: true }))), { do: 'stop', targets: ['answer'] }, words);
+    assert.deepEqual(pick(matchStopWord(words, s('V0', { runningElsewhere: true }))), { do: 'stop', targets: ['elsewhere'] }, words);
+    assert.equal(matchStopWord(words, s('V0')), null, `${words}: nothing runs, a question as before`);
+  }
+  assert.equal(appCommandLine(matchStopWord('stop the mission', s('C0', { running: true }))), 'The answer is stopped.');
+  for (const words of ['stop the war', 'stop that', 'cancel my meeting', 'stop the research on bees']) assert.equal(matchStopWord(words, s('C0', { running: true })), null, words);
 });
