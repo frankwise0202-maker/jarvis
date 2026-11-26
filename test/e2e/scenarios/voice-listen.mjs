@@ -268,7 +268,7 @@ export default [
   {
     name: 'voice-listen-alternatives',
     title:
-      'Voice Mode uses the recognizer\'s other readings: camera words heard as "locking at" still ask for Look; with a hologram open, "the separate her" shows the separator (a part\'s name, free) and a question about it is sent with the part\'s name; Chrome\'s contextual biasing gets "Jarvis", the command words and the part names',
+      'Voice Mode uses the recognizer\'s other readings, for free commands only (v8.1, R7): camera words heard as "locking at" are never a camera request from another reading (the words wait in the 2-second check, and "cancel" sends nothing); with a hologram open, "the separate her" shows the separator (a part\'s name, free) and a question about it is sent with the part\'s name; Chrome\'s contextual biasing gets "Jarvis", the command words and the part names',
     device: 'iphone13',
     timeout: 200000,
     async run(t) {
@@ -292,11 +292,15 @@ export default [
         t.assert(['expand it', 'other screen', 'what am I looking at', 'cancel'].every((p) => phrases.includes(p)), 'The command words too');
       });
 
-      await t.step('a reading the recognizer was less sure of is a camera request: Look is asked for (nothing is sent)', async () => {
+      // v8.1 (R7, critique L4): the camera is never asked for by a reading the recognizer was less sure
+      // of, and no other reading counts when the best one is a question: the words wait in the check.
+      await t.step('a reading the recognizer was less sure of is never a camera request: the words wait in the check; "cancel" sends nothing', async () => {
         await say(t, { parts: [{ at: 100, text: 'What am I locking at?', alts: ['What am I looking at?'] }] });
-        await t.waitFor(async () => (await voiceState(t)).said.some((x) => /Tap Look, and show me\./.test(x)), { timeout: 10000, message: 'Jarvis to ask for Look' });
+        await checkShows(t, 'What am I locking at?');
+        t.assert(!(await voiceState(t)).said.some((x) => /Tap Look/.test(x)), 'Look is not asked for');
+        await say(t, 'cancel');
+        await notSent(t, '"cancel"');
         t.assert(sentTexts(t).length === 0, 'Nothing was sent to Jarvis');
-        t.assert(!(await t.page.locator(tid('voice-review')).isVisible()), 'A local command has no 2-second check');
       });
 
       await t.step('"show me an AA battery" builds the hologram over Voice Mode', async () => {

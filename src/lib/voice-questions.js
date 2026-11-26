@@ -110,7 +110,7 @@ export function matchPromptAnswer(prompt, text) {
  *   { id, say, choices: [{ id, label, words }], match(text, readings) → choiceId | null, check = false,
  *     keep = false, timeoutMs = 60000, onAnswer(choiceId, { words, via }), onExpire(reason) }
  * onExpire's reason: 'timeout' | 'dropped' (other words, keep false) | 'replaced' (a new request or
- * Stop) | 'closed' (Voice Mode closed).
+ * Stop) | 'closed' (Voice Mode closed) | 'dismissed' (v8.1: a bare "cancel" or "no" said to it).
  */
 export function createQuestionStack({ now = () => Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t), onAsk = () => {} } = {}) {
   const stack = []; // newest last
@@ -217,6 +217,18 @@ export function createQuestionStack({ now = () => Date.now(), setTimer = (fn, ms
       if (!q || q.spec.id !== id) return false;
       remove(q);
       call(q.spec.onAnswer, choiceId, { words: typeof info.words === 'string' ? info.words : '', via: info.via === 'tap' ? 'tap' : 'voice' });
+      uncover();
+      return true;
+    },
+    /**
+     * v8.1: a bare "cancel" or "no" said to the top question (it was asked last), and none of its
+     * choices is that: it goes even if it keeps (onExpire(reason)), and the one under it goes on.
+     */
+    dismissTop(reason = 'dismissed') {
+      const q = stack[stack.length - 1];
+      if (!q) return false;
+      remove(q);
+      call(q.spec.onExpire, reason);
       uncover();
       return true;
     },

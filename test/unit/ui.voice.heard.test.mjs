@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REVIEW_MS, reviewReply, applyCorrection, planCorrection as plan, pickHeard, namesPart, commandReading, listenPhrases } from '../../src/ui/voice-heard.js';
+import { REVIEW_MS, reviewReply, applyCorrection, planCorrection as plan, pickHeard, namesPart, commandReading, listenPhrases, COMMAND_PHRASES } from '../../src/ui/voice-heard.js';
 import { matchMusicCommand } from '../../src/lib/music-commands.js';
 import { matchScreenCommand } from '../../src/lib/screen-commands.js';
 
@@ -162,3 +162,18 @@ test('listenPhrases: Apple Music\'s command words are listened for too (after th
   assert.ok(p.indexOf('no, I said') < p.indexOf('Apple Music'), 'the check\'s words come first');
   assert.ok(listenPhrases({ partNames: Array.from({ length: 60 }, (_, i) => `Part ${i}`) }).length <= 80);
 });
+
+test('listenPhrases: the hands-free words (v8.1) are listened for too, each once', () => {
+  const p = listenPhrases().map((x) => x.phrase);
+  for (const w of ['Optics', 'Chrome', 'side by side', 'live view', 'video mode', 'new chat', 'walk me through', 'enclosed', 'opened', 'approve']) {
+    assert.ok(COMMAND_PHRASES.includes(w), w);
+    assert.ok(p.includes(w), w);
+  }
+  assert.equal(new Set(COMMAND_PHRASES.map((w) => w.toLowerCase())).size, COMMAND_PHRASES.length, 'no phrase twice');
+  assert.ok(COMMAND_PHRASES.every((w) => typeof w === 'string' && w.length <= 60));
+  assert.ok(Object.isFrozen(COMMAND_PHRASES));
+  // Without a hologram every command word fits in the list of 80.
+  assert.equal(p.length, 1 + COMMAND_PHRASES.length);
+  assert.ok(p.length <= 80);
+});
+
