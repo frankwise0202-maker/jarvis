@@ -490,6 +490,8 @@ export function openOptics(deps = {}) {
   // and autoLiveDone says what happened ({ ack } to say, or { error }): Jarvis says "Live view on"
   // only once it is (not at the limit, not when the camera couldn't start).
   let autoLive = deps.autoLive === true;
+  // v8.1: "switch cameras" / "use the Logitech camera" said with Optics closed: made once the camera is live.
+  let autoCommand = typeof deps.autoCommand === 'string' ? deps.autoCommand.trim().slice(0, 200) : '';
   // The caller says autoLiveDone's outcome (Voice Mode heard "live view"); else (the tap on Voice
   // Mode's Look) Optics says a pause at the limit itself.
   const autoLiveSaid = deps.autoLiveSaid === true;
@@ -706,6 +708,15 @@ export function openOptics(deps = {}) {
           if (closed) return settleAutoLive({ error: 'Closed.' });
           const on = camera.live && mode === 'live' && startLiveView({ aloud: !autoLiveSaid });
           settleAutoLive(on ? { ack: liveStartedAck() } : { error: 'The live view couldn’t start.' });
+        }, 300);
+      }
+      if (autoCommand && mode === 'live') {
+        const words = autoCommand;
+        autoCommand = '';
+        setTimeout(() => {
+          if (closed) return;
+          const res = command(words);
+          if (res && res.command && res.command.ack) announce(res.command.ack);
         }, 300);
       }
       if (autoLook && mode === 'live') {
@@ -1253,7 +1264,7 @@ export function openOptics(deps = {}) {
             if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
             // v8.1 (E0): an answer the live view's gate refused at its dollar is said out loud.
-            if (t.status === 'error' && t.error && t.error.kind === 'live_cap') sayRefusal(t.error.message);
+            if (t.status === 'error' && t.error && t.error.kind === 'live_cap') sayAloud(t.error.message);
             if (target === frozen && frozen.logEntry) updateLogEntry(frozen);
             if (target.status === 'done') announce(frozen && frozen.pins.length ? `Answer ready. ${frozen.pins.length} labels pinned.` : 'Answer ready.');
             setMode(mode);
@@ -1301,23 +1312,53 @@ export function openOptics(deps = {}) {
   }
 
   /**
-   * v8.1 (E0): "That would take the live view past its dollar this hour…" said out loud where Jarvis
-   * may speak (replies read aloud), and announced; over Voice Mode, Voice Mode says the turn's error
-   * itself.
+   * v8.1: a line said out loud where Jarvis may speak, and announced: "That would take the live view
+   * past its dollar this hour…" (E0), the research offer (E3). Over Voice Mode, Voice Mode says its own
+   * (a turn's error, its question); elsewhere v8.0's sayNotice() waits for a quiet moment.
    */
-  function sayRefusal(text) {
+  function sayAloud(text) {
     const line = String(text || '').trim();
     if (!line || closed) return;
     announce(line);
-    if (deps.voice) return;
-    const sp = deps.liveSpeech;
-    try {
-      const st = sp && typeof sp.state === 'function' ? sp.state() : null;
-      if (st && st.allowed && typeof sp.say === 'function') sp.say(line);
-    } catch {
-      /* speech is optional */
-    }
+    if (!deps.voice) sayNotice(line);
   }
+
+  /** v8.1 (E3): the research offer's card: the line with the prices, and a button per way. */
+  function offerResearch(offer, pick) {
+    if (closed || !offer || !Array.isArray(offer.choices)) return { close() {} };
+    const token = {};
+    researchCard = token;
+    const buttons = offer.choices.map((c) =>
+      h('button', {
+        class: c.id === 'cancel' ? 'btn' : 'btn btn-primary',
+        type: 'button',
+        text: c.label,
+        attrs: { 'data-testid': `optics-research-${c.id}` },
+        on: {
+          click: () => {
+            if (researchCard !== token) return;
+            researchCard = null;
+            hideCard();
+            try {
+              pick(c.id);
+            } catch (err) {
+              console.error('[jarvis] research failed:', err);
+            }
+          },
+        },
+      }),
+    );
+    showCard({ kind: 'research', title: 'Research', text: offer.say, extra: h('div', { class: 'optics-card-actions optics-research-choices', attrs: { 'data-testid': 'optics-research-offer' } }, ...buttons) });
+    sayAloud(offer.say); // said where Jarvis may speak (Voice Mode says its own question)
+    return {
+      close() {
+        if (researchCard !== token) return;
+        researchCard = null;
+        if (card.dataset.kind === 'research') hideCard();
+      },
+    };
+  }
+  let researchCard = null;
 
   /** Labels added by a follow-up: a new object gets its pin; one already pinned (same name, nearby) stays put. */
   function mergePins(pins, more) {
@@ -1601,6 +1642,12 @@ export function openOptics(deps = {}) {
   function sendAway(frameId) {
     const entry = frozen && (!frameId || frozen.frameId === frameId) ? frozen : null;
     if (!entry) return false;
+    // A past Look reviewed (or the screen) with the camera off: as before, Optics closes (folding the
+    // card would turn the camera on, which only the owner does).
+    if (!camera.live) {
+      setTimeout(() => close('screens'), 0);
+      return true;
+    }
     entry.away = true;
     if (entry.logEntry && entry.logEntry.meta) setText(entry.logEntry.meta, `${timeLabel(entry.at)} · ON YOUR OTHER SCREEN`);
     if (entry.logEntry && entry.logEntry.item) entry.logEntry.item.dataset.away = 'true';
@@ -3208,6 +3255,23 @@ export function openOptics(deps = {}) {
     get liveSummary() {
       return liveView && liveView.summary ? liveView.summary : '';
     },
+    /** v8.1: whether a Look can be taken now (the camera live, nothing under way). */
+    canLook: () => camera.live && !isBusy() && (mode === 'live' || mode === 'aside' || mode === 'frozen'),
+    /** v8.1 (E3): a follow-up about the Look on screen or aside (shown in its card: "About this picture"). */
+    followUp: (text) => (frozen && (mode === 'frozen' || mode === 'review' || mode === 'aside') ? ask(String(text || '')) : Promise.resolve(null)),
+    /** v8.1: a short line under the top bar (and announced). */
+    notice: (text) => {
+      const line = String(text || '').trim();
+      if (!line || closed) return;
+      showNotice(line, 7000);
+      announce(line);
+    },
+    /**
+     * v8.1 (E3): the research offer as a card with its prices and buttons (`pick(choiceId)` on a tap),
+     * said where Jarvis speaks when Voice Mode isn't open (Voice Mode says its own question). Returns
+     * { close() }.
+     */
+    offerResearch: (offer, pick) => offerResearch(offer, pick),
     /** Voice Mode's listening state for the mic button (opened over Voice Mode). */
     setVoice: (info) => setVoice(info),
     /** Watch off (the WATCH pill in the header); the camera stays on. */

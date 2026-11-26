@@ -1,27 +1,143 @@
 // Optics (Track 5: E0-E7): this builder's voice and typed commands (v8.1; optics writes this file).
 //
 // app.js calls register() once at start (registerCommandModules), with the app's shared deps plus
-// the ones added in this module's own call there. Register each matcher with the command router
-// (src/lib/command-router.js, contract (b)). For example,
-// "open optics", "video mode", "research this":
+// the ones added in this module's own call there. Today's Optics words (a Look, Flip, Watch, the live
+// view…) stay the router's own `optics` and `camera` entries (command-router.js); these are the new
+// ones:
 //
-//   router.register({
-//     id: 'my-words',                  // unique
-//     layer: 'app',                    // one of LAYERS: its place in each surface's order
-//     surfaces: ['voice', 'chat'],     // default: all four ('voice', 'chat', 'hologram', 'optics')
-//     carrier: false,                  // true: it carries the owner's words out (no word cap)
-//     match: (text, state, ctx) => …,  // pure: an action { do, free, undo, check, camera, …args } or null
-//     run: (action, ctx) => …,         // acts: { say } | Promise<{ say }> | false (it couldn't after all)
-//   });
+//   optics-card      (destination) a Look on screen or set aside beside the live video (E1):
+//                    "expand the picture", "show the picture big", "put the picture aside", "close
+//                    the picture"; typed in Optics' field as well as said. Before Screens: "put the
+//                    picture to the side" is the card's while Optics shows a Look (a float otherwise).
+//   optics-research  (top) "research this", "look this up", "dig into this", "research this in the
+//                    background" (E3): the price first (an offer: quick, mission, home base), in Voice
+//                    Mode and in Optics' field. Before Optics' own words, so "research this?" is never
+//                    a Look.
+//   optics-research-answer
+//                    (answer) "mission" or "home base" for the open research offer (the dear ways):
+//                    through the 2-second check (check: true); "quick" and "cancel" are the offer's own
+//                    answers (Voice Mode's question), at once.
+//   optics-open      (app) "open optics", "open the camera", "camera on", "start the camera", "show me
+//                    the camera", "switch cameras", "use the Logitech camera" with Optics closed (E2):
+//                    free, no Look; never from another reading (camera: true). With Optics open: "Optics
+//                    is on." (never a paid question).
+//   optics-close     (app) "close the camera", "camera off" with Optics closed: free, works from
+//                    anywhere (the camera on another screen goes off too); typed in Optics' own field,
+//                    Optics closes.
 //
-// Keep this module importable in Node (no DOM at import time): the T3 harness
-// (test/unit/command-router.test.mjs) registers every module with fake deps. Its phrases go in the
-// optics section of test/unit/fixtures/voice-corpus.mjs, and its collisions in the optics section of
-// test/unit/fixtures/collisions.mjs.
+// What acts is the app's (its deps, below): this module stays importable in Node (no DOM): the T3
+// harness (test/unit/command-router.test.mjs) registers it with fake deps. Its phrases are in the
+// optics section of test/unit/fixtures/voice-corpus.mjs, its collisions in collisions.mjs.
+
+import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsCommand } from '../../lib/optics-commands.js';
+import { matchOfferChoice, matchResearchThis } from '../../lib/research-offer.js';
+
+/** The research offer's id on Voice Mode's question stack (app.js researchThis). */
+export const RESEARCH_OFFER_ID = 'research-offer';
+
+const CARD_ACTIONS = new Set(['expand', 'aside', 'close-card']);
+
+/** Whether Optics is the thing on top (no hologram or blueprint over it). */
+const opticsOnTop = (s) => !!(s.optics && s.optics.open) && !s.hologram && !s.blueprintOpen;
+
+/** A `run` result from what the app's dep returned: { say } | Promise<{ say }> | false. */
+function outcome(value) {
+  if (value === false || value === null || value === undefined) return false;
+  if (typeof value.then === 'function') return value.then((v) => (v && typeof v.say === 'string' ? v : { say: '' }));
+  return typeof value.say === 'string' ? value : { say: '' };
+}
 
 /**
  * @param {{ register: Function }} router  the app's command router
  * @param {object} deps  shared: { getSettings, saveSettings, toast, voice() (the open Voice Mode's api,
- *   or null), routerState(surface, local), phone, demo }, plus this module's own (app.js)
+ *   or null), routerState(surface, local), phone, demo }, plus this module's own (app.js):
+ *   opticsCommand(text, ctx) → { say } | Promise | false   Optics' own command for these words
+ *   openOptics({ text, surface, via }) → { say } | Promise | false   E2 (the camera rules)
+ *   closeCamera({ surface }) → { say } | false
+ *   researchThis({ where, deep, surface, via, text }) → { say } | Promise | false   E3 (the offer)
+ *   answerResearch(choiceId) → { say } | Promise | false   a dear way said for the open offer
  */
-export function register(router, deps) {}
+export function register(router, deps) {
+  const call = (name, ...args) => {
+    const fn = deps && deps[name];
+    if (typeof fn !== 'function') return false;
+    try {
+      return outcome(fn(...args));
+    } catch (err) {
+      console.error(`[jarvis] optics ${name} failed:`, err);
+      return false;
+    }
+  };
+
+  // E1: the Look's card, while one is on screen (aside on a Mac, or frozen).
+  router.register({
+    id: 'optics-card',
+    layer: 'destination',
+    surfaces: ['voice', 'optics'],
+    match(text, s) {
+      if (!(s.optics && s.optics.open && s.optics.card)) return null;
+      if (s.surface === 'voice' && !opticsOnTop(s)) return null;
+      const cmd = matchOpticsCommand(text, { frozen: true });
+      return cmd && CARD_ACTIONS.has(cmd.action) ? { do: 'optics-card', command: cmd } : null;
+    },
+    run: (action, ctx) => call('opticsCommand', ctx.reading, ctx),
+  });
+
+  // E3: "research this", the price first.
+  router.register({
+    id: 'optics-research',
+    layer: 'top',
+    surfaces: ['voice', 'optics'],
+    match(text) {
+      const m = matchResearchThis(text);
+      return m ? { do: 'research', where: m.where, deep: m.deep } : null;
+    },
+    run: (action, ctx) => call('researchThis', { where: action.where, deep: action.deep, surface: ctx.surface, via: ctx.via, text: ctx.reading }),
+  });
+
+  // E3: "mission" / "home base" for the open offer: the dear ways go through the 2-second check.
+  router.register({
+    id: 'optics-research-answer',
+    layer: 'answer',
+    surfaces: ['voice'],
+    match(text, s) {
+      const q = Array.isArray(s.questions) ? s.questions[0] : null;
+      if (!q || q.id !== RESEARCH_OFFER_ID || !Array.isArray(q.choices)) return null;
+      const choice = matchOfferChoice(text, q.choices.filter((c) => c && c.dear));
+      return choice ? { do: 'research-answer', choice, check: true, free: false, undo: false } : null;
+    },
+    run: (action) => call('answerResearch', action.choice),
+  });
+
+  // E2: "open optics" with Optics closed (Voice Mode, or typed in the chat: Enter is a gesture); with
+  // Optics open already (said, or typed in its field), Jarvis just says so: never a paid question.
+  router.register({
+    id: 'optics-open',
+    layer: 'app',
+    surfaces: ['voice', 'chat', 'optics'],
+    match(text, s) {
+      const open = !!(s.optics && s.optics.open);
+      if (s.surface === 'optics' && !open) return null;
+      if (!open && !(s.camera && s.camera.supported)) return null;
+      if (!isOpticsOpenRequest(text)) return null;
+      // A camera switch with Optics open is Optics' own word ("switch cameras": Flip).
+      if (open && matchOpticsCommand(text)) return null;
+      return { do: 'optics-open', open, camera: true };
+    },
+    run: (action, ctx) => call('openOptics', { text: ctx.reading, surface: ctx.surface, via: ctx.via, open: action.open }),
+  });
+
+  // "Close the camera" with Optics closed (free, from anywhere: a camera on another screen goes off
+  // too), or typed in Optics' own field (where typed words are otherwise a question).
+  router.register({
+    id: 'optics-close',
+    layer: 'app',
+    surfaces: ['voice', 'chat', 'optics'],
+    match(text, s) {
+      const open = !!(s.optics && s.optics.open);
+      if (open && !(s.surface === 'optics' && s.via === 'typed')) return null;
+      return isCameraCloseRequest(text) ? { do: 'camera-off', open } : null;
+    },
+    run: (action, ctx) => (action.open ? call('opticsCommand', ctx.reading, ctx) : call('closeCamera', { surface: ctx.surface })),
+  });
+}

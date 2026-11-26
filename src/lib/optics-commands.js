@@ -40,6 +40,9 @@
 //   Anything else is null: it goes to Jarvis as a normal message (in Voice Mode, a spoken turn).
 //
 //   findNamedCamera(cameras, name)    (v8.1) the camera "use the Logitech camera" names, or null
+//   isOpticsOpenRequest(text), isCameraCloseRequest(text)
+//                                     (v8.1) "open optics" (and the switches) / "close the camera",
+//                                     whole sentences, for the router with Optics closed
 //   asideQuestionRoute(text, { cmd, labels, sceneChanged })
 //                                     (v8.1) a question asked while a Look sits in its card beside
 //                                     the live video: 'card' (a follow-up on that picture, no new
@@ -228,6 +231,16 @@ function openRule({ cameraAllowed, ios, hidden }, yes) {
   if (ios) return 'need-tap'; // iOS asks for the camera inside a tap, every time
   if (hidden) return 'need-front'; // the camera never runs while Jarvis is hidden (camera.js)
   return cameraAllowed === 'granted' ? yes : 'need-tap';
+}
+
+/**
+ * v8.1: "close the camera", "turn off the camera", "camera off" with Optics closed: explicit camera
+ * words only (never Optics' own bare "close", "close it" or "that's all").
+ */
+const CAMERA_OFF = new RegExp(`^(?:(?:close|turn off|switch off|shut off|shut down|stop|hide)(?: the| my)? (?:camera|webcam|web cam|optics|camera view)|(?:camera|webcam|optics) off|(?:turn|switch) (?:the |my )?(?:camera|webcam|optics) off)$`);
+export function isCameraCloseRequest(text) {
+  const n = normalizeOpticsText(text);
+  return !!n && n.length <= 60 && CAMERA_OFF.test(n);
 }
 
 /** v8.1: "open optics", "open the camera", "camera on" … and the camera switches, as whole sentences. */
