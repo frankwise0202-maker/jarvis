@@ -4439,12 +4439,16 @@ no message and can't be missed.) No Web Locks (or a request that throws): `unsup
 (MAC-10: app.js passes no `createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only
 on screen, so its windows can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
 
-**Voice Mode in another window** (MAC-6): the Standby lock keeps two Standbys apart, but the owner may talk to Voice
-Mode (opened by a tap) in one window while a forgotten tab is on Standby. Voice Mode open in any window holds the Web
-Lock `jarvis-voice` in shared mode for its life (`holdVoiceLock()`, app.js, computers only). Standby's `voiceElsewhere`
-dep (`voiceOpenSomewhere()`: an exclusive `ifAvailable` request that gets nothing while any window holds it) is asked
-before each wake: while Voice Mode is open somewhere, two claps or "Hey Jarvis" don't wake this Standby (it stays on,
-listening). A window that closes lets go of the lock with it. Not on a phone (no check: a wake is at once, as before).
+**Jarvis busy in another window** (MAC-6, MAC-R2-1, MAC-R2-4): the Standby lock keeps two Standbys apart, but the owner
+may talk to Jarvis in one window while a forgotten tab is on Standby. A window holds the Web Lock `jarvis-voice`
+(shared: one hold per window, `createVoiceBusy()`, app.js, computers only) while it can hear the owner or is answering:
+every listen of the shared `sttDevice` (the chat box's microphone, Voice Mode, a viewer's or Optics' microphone, the
+hands-free Test), and Voice Mode's own work (`onActive`: a listen, the 2-second check, a turn, speech). It lets go about
+2 s after the last one stops, and at once when Voice Mode closes. Standby's `voiceElsewhere` dep
+(`voiceBusyElsewhere()`: `navigator.locks.query()`, this window's own hold not counted) is asked before each wake: while
+another window is busy, two claps or "Hey Jarvis" don't wake this Standby (it stays on, listening). An idle Voice Mode
+left open holds nothing, so it no longer keeps Standby deaf. A window that closes lets go of the lock with it. Not on a
+phone (no check: a wake is at once, as before).
 
 **Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
 Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,

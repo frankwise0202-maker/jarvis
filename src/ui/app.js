@@ -98,7 +98,7 @@ import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
 import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
-import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
+import { createStandbyLock, createVoiceBusy, voiceBusyElsewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
 import { setupOf, handsFreeMeasure } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
@@ -129,11 +129,52 @@ import { commandAck as viewerAck } from './voice-visuals.js';
 // capture and every listen use the microphones chosen there, and George, the chimes and music previews the
 // speaker; one watcher follows them when they come and go. Nothing chosen: everything as before. Not in a
 // screen window (it never listens or speaks).
+/**
+ * MAC-R2-1, MAC-R2-4: an stt API whose every listen counts as "this window can hear the owner" (`busy`: createVoiceBusy)
+ * from its start to its onEnd (stt.js calls onEnd exactly once, however listening ended). Without `busy`: as it was.
+ */
+function withVoiceBusy(base, busy) {
+  if (!busy || !base || typeof base.startListening !== 'function') return base;
+  let seq = 0;
+  return {
+    ...base,
+    startListening(options = {}) {
+      const o = options && typeof options === 'object' ? options : {};
+      const tag = `listen:${++seq}`;
+      let open = true;
+      const done = () => {
+        if (!open) return;
+        open = false;
+        safeInit(() => busy.set(tag, false));
+      };
+      safeInit(() => busy.set(tag, true));
+      try {
+        return base.startListening({
+          ...o,
+          onEnd: (...args) => {
+            done();
+            return typeof o.onEnd === 'function' ? o.onEnd(...args) : undefined;
+          },
+        });
+      } catch (err) {
+        done();
+        throw err;
+      }
+    },
+  };
+}
+
 const audioDevices = isScreenMode()
   ? null
   : safeInit(() => createAudioDevices({ getSettings, phoneLike: safeInit(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches)) === true, playChime: (name, o) => sounds.play(name, o) }));
+// MAC-R2-1, MAC-R2-4: this window can hear the owner, or is answering: every listen on this device (the chat box's
+// microphone, Voice Mode, a viewer's or Optics' microphone, the hands-free Test) and Voice Mode's own work (its check, a
+// turn, speech) hold the voice lock, so a Standby in another Jarvis window stays asleep meanwhile and only then. Not on
+// a phone (its Standby listens only on screen), nor in a screen window (it never listens).
+const voiceBusy =
+  isScreenMode() || safeInit(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches)) === true ? null : safeInit(() => createVoiceBusy());
 // Every recognizer listen hears the chosen question microphone (recognition.start(track), Chrome 135+).
-const sttDevice = audioDevices ? audioDevices.wrapStt(stt) : stt;
+const sttDevice = withVoiceBusy(audioDevices ? audioDevices.wrapStt(stt) : stt, voiceBusy);
 // Voice Mode's chimes: in "Switch" (setup 3) the listen chime waits for the speakerphone's microphone.
 const voiceSounds = audioDevices ? { ...sounds, play: (name, o) => (audioDevices.holdChime(name, o) ? true : sounds.play(name, o)) } : sounds;
 const { sttSupported, startListening } = sttDevice;
@@ -1542,7 +1583,6 @@ export async function startApp(rootEl) {
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
   let voiceOwnerStarted = false; // v8.1 (A1): the owner opened it (a tap, a key, a wake): it may go on hidden
-  let voiceLockClose = null; // MAC-6: Voice Mode open here holds the voice lock (Standby elsewhere stays asleep)
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
@@ -1749,6 +1789,9 @@ export async function startApp(rootEl) {
         wake,
         // v8.1 (A1, SPEC §28.1): on a computer, a session the owner started goes on while Jarvis is hidden.
         listenWhileHidden: () => handsFreeHidden(),
+        // MAC-R2-1: while it can hear the owner or is answering (not while it merely sits open), a Standby in another
+        // Jarvis window doesn't wake on the same words.
+        onActive: (on, o) => voiceBusy && !state.demo && safe(() => voiceBusy.set('voice', on, o || {})),
         ...devVoiceOptions(), // v8.1 tests: a shorter hold
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
@@ -1789,8 +1832,6 @@ export async function startApp(rootEl) {
           voiceApi = null;
           voiceInfo = null;
           withdrawCameraNote(); // PRIVACY-2: what was asked for in this session goes with it
-          if (voiceLockClose) safe(voiceLockClose);
-          voiceLockClose = null;
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
@@ -1816,8 +1857,6 @@ export async function startApp(rootEl) {
         },
       });
       safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts and cards come to Voice Mode
-      // MAC-6: while it is open, a Standby in another Jarvis window (a forgotten tab) doesn't wake on the same words.
-      if (!voiceLockClose && !safe(() => phoneLike, true) && !state.demo && safe(() => isVoiceModeOpen(), false)) voiceLockClose = safe(() => holdVoiceLock(), null);
     } catch (err) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
@@ -1901,9 +1940,9 @@ export async function startApp(rootEl) {
     // v8.1 (A11): no click yet (a restart, an update) and George can't speak without one: Standby says
     // "CLICK ONCE SO JARVIS CAN SPEAK", and that click unlocks speech instead of leaving Standby.
     needsClick: () => !phoneLike && !safe(() => navigator.userActivation.hasBeenActive === true, true) && !georgeWithoutClick(),
-    // MAC-6: Voice Mode open in another Jarvis window (the owner talks to it there): this Standby stays asleep.
-    // Not on a phone (Standby there listens only on screen, as before).
-    voiceElsewhere: phoneLike ? null : () => voiceOpenSomewhere(),
+    // MAC-6, MAC-R2-1: another Jarvis window can hear the owner or is answering (a listen, Voice Mode's check, a turn,
+    // speech): this Standby stays asleep. This window's own lingering hold doesn't count. Not on a phone (as before).
+    voiceElsewhere: phoneLike ? null : () => voiceBusyElsewhere({ own: voiceBusy }),
   });
 
   /**

@@ -376,8 +376,9 @@ other windows, minimized, or with the display asleep.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
   only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
   move Standby there. When you leave Standby in the one listening, the others leave Standby too, so no microphone
-  turns on by itself; only when its window closes does the next one take over by itself. While Voice Mode is open
-  in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
+  turns on by itself; only when its window closes does the next one take over by itself. While Jarvis listens or
+  answers in one window (Voice Mode, the chat box's microphone, a hologram's or Optics' microphone), Standby in
+  another doesn't wake: "Hey Jarvis, …" said there gets one answer. A Voice Mode left open and idle doesn't stop it.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a
@@ -1359,8 +1360,8 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   - **One window listens.** With Jarvis open in two windows, only one listens on Standby. Another
     takes over by itself only when that window closes; when you leave Standby, the others leave it
     too, so no microphone turns on by itself. **Use this window** moves it when you choose. A window
-    you open while another is on Standby doesn't open Standby by itself. While Voice Mode is open in
-    one window, Standby in another doesn't wake.
+    you open while another is on Standby doesn't open Standby by itself. While Jarvis listens or
+    answers in one window, Standby in another doesn't wake (an idle Voice Mode left open doesn't count).
   - **Chrome's questions are said out loud** (Jarvis for Chrome: "Chrome asks: …"), in Voice Mode and
     at the next wake, and he listens up to 30 seconds for your answer, so anyone in the room can hear
     them. With Voice Mode closed, a notification says Chrome is asking instead.

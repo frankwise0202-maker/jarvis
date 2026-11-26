@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere } from '../../src/platform/standby-lock.js';
+import { createStandbyLock, STANDBY_LOCK, VOICE_LOCK, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere, createVoiceBusy, voiceBusyElsewhere } from '../../src/platform/standby-lock.js';
 import { createFakeLocks } from './standby.fakes.mjs';
 
 const settle = async () => {
@@ -264,4 +264,56 @@ test('REGRESS-1: standbyHeldSomewhere() says whether some window holds Standby, 
   assert.equal(await standbyHeldSomewhere({ locks: null }), false, 'no Web Locks: as before');
   assert.equal(await standbyHeldSomewhere({ locks: { request() {} } }), false, 'no query(): unknown, so not held (Standby itself steps back if it is)');
   assert.equal(await standbyHeldSomewhere({ locks: { query: () => Promise.reject(new Error('SecurityError')) } }), false);
+});
+
+// MAC-R2-1, MAC-R2-4: the voice lock means "this window can hear the owner or is answering" (a listen on any
+// surface, Voice Mode's check, a turn or speech), not "Voice Mode is open". An idle Voice Mode left open in another
+// window used to keep Standby deaf to claps and "Hey Jarvis" until someone closed it.
+test('MAC-R2-1: createVoiceBusy holds the voice lock while any part of the window is active, and lets go about 2 s after the last one stops (at once on close)', async () => {
+  const locks = createFakeLocks();
+  const busy = createVoiceBusy({ locks: locks.as('B'), idleMs: 40 });
+  assert.equal(busy.held, false);
+  busy.set('listen:1', true);
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), ['B'], 'held while the chat box’s microphone listens');
+  busy.set('voice', true); // Voice Mode thinking
+  busy.set('listen:1', false);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.deepEqual(locks.holders(VOICE_LOCK), ['B'], 'still held: Voice Mode is answering');
+  busy.set('voice', false);
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), ['B'], 'not let go at once: a moment between his states');
+  busy.set('voice', true); // he listens again within the moment: one hold all along
+  busy.set('voice', false);
+  await new Promise((r) => setTimeout(r, 80));
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), [], 'idle: let go');
+  assert.equal(busy.held, false);
+  busy.set('voice', true);
+  await settle();
+  busy.set('voice', false, { now: true }); // Voice Mode closed
+  await settle();
+  assert.deepEqual(locks.holders(VOICE_LOCK), [], 'closed: let go at once');
+  const none = createVoiceBusy({ locks: null });
+  none.set('voice', true);
+  none.set('voice', false, { now: true });
+  assert.equal(none.held, false, 'no Web Locks: nothing held (as before)');
+});
+
+test('MAC-R2-1: voiceBusyElsewhere() counts only other windows: a Standby is never kept asleep by its own window’s lingering hold', async () => {
+  const locks = createFakeLocks();
+  const a = createVoiceBusy({ locks: locks.as('A'), idleMs: 5000 });
+  const ask = () => voiceBusyElsewhere({ locks: locks.as('A'), own: a });
+  assert.equal(await ask(), false, 'nobody busy');
+  a.set('voice', true); // A's own Voice Mode, about to close into Standby
+  await settle();
+  assert.equal(await ask(), false, 'only A itself: not elsewhere');
+  const b = createVoiceBusy({ locks: locks.as('B'), idleMs: 5000 });
+  b.set('listen:1', true); // B's chat box listens
+  await settle();
+  assert.equal(await ask(), true, 'B can hear the owner');
+  b.set('listen:1', false, { now: true });
+  await settle();
+  assert.equal(await ask(), false, 'B idle again');
+  assert.equal(await voiceBusyElsewhere({ locks: null, own: a }), false, 'no Web Locks: not busy');
 });

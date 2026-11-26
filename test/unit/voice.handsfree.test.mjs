@@ -485,6 +485,23 @@ test('MAC-7: on screen, the same one-breath wake shows no notification; with not
   assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, ANSWER);
 });
 
+// MAC-R2-1: the app's voice lock follows what Voice Mode does, not whether it is open: it is active while he listens,
+// checks, thinks or speaks, and not while he sits idle ("Ready"); closed, it ends at once.
+test('MAC-R2-1: Voice Mode tells the app when it can hear the owner or is answering, and when it sits idle; closing ends it at once', async (t) => {
+  const env = await voiceEnv(t, { noSpeechMs: 900 });
+  env.say(onlyAfter(0, Q));
+  const seen = [];
+  const vm = env.open({ answer: ANSWER, settings: { listenSend: 'show' }, extra: { onActive: (on, o = {}) => seen.push(o.now ? `${on}:now` : on) } });
+  await env.advance(200);
+  assert.equal(seen.at(-1), true, 'listening: active');
+  await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), 'the answer, through the 2-second check');
+  assert.ok(!seen.includes(false), `active all through the check, the turn and the answer (${JSON.stringify(seen)})`);
+  await until(env, () => vm.state === 'idle', 'idle after the follow-ups heard nobody', 60000);
+  assert.equal(seen.at(-1), false, 'idle: no longer active');
+  vm.close();
+  assert.equal(seen.at(-1), 'false:now', 'closed: at once');
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {

@@ -135,6 +135,9 @@
 //                           it speaks …) into the app's state; heard() carries out what it picks
 //                           (act()). Without one, only Voice Mode's own words are local.
 //   holdCapMs             v8.1 (tests: 'jarvis.dev.voice'): a shorter cap for hold() than its 2 minutes
+//   onActive(on, { now }) MAC-R2-1: true while Voice Mode can hear the owner or is answering (a listen, the 2-second
+//                           check, a turn, speech), false when it sits idle; at close, false with { now: true }. The
+//                           app's voice lock follows it (a Standby in another window stays asleep only meanwhile).
 //   listenWhileHidden     v8.1 (Track 1 fills it): () -> boolean, Voice Mode goes on listening while
 //                           Jarvis is hidden (a Mac). Default () => false: away() is document.hidden.
 //                           v8.1 hands-free (SPEC §28.1): with it, such a session also restarts its
@@ -338,6 +341,7 @@ function createVoiceMode(opts) {
     router,
     listenWhileHidden,
     holdCapMs,
+    onActive,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -386,6 +390,7 @@ function createVoiceMode(opts) {
     typingForced: false, // S.typing was set by a voice-input error, not by the owner (it doesn't hold off Standby)
     awayNoted: false, // this session's "Jarvis is listening" notification was shown
     deaf: false, // the recognizer failed in the background: said once; no more listening there
+    active: false, // MAC-R2-1: last told to onActive (he can hear the owner or is answering)
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -1163,6 +1168,7 @@ function createVoiceMode(opts) {
   function setVoiceState(next) {
     S.state = next;
     root.dataset.state = next;
+    reportActive(next);
     if (handsFree()) callQuietly(() => sessionTitle(next)); // v8.1 (A1): "Listening · Jarvis" while hidden
     if (next !== 'idle' && next !== 'offline') disarmSleep();
     try {
@@ -1177,6 +1183,19 @@ function createVoiceMode(opts) {
     renderControls();
     updateLevelLoop();
     if (next === 'listening' || next === 'speaking') keepAwake();
+  }
+
+  /**
+   * MAC-R2-1: tell the app (onActive) whether this Voice Mode can hear the owner or is answering: a listen (or one about
+   * to start again), the 2-second check, a turn or speech. Idle, an error or offline: not. The app's voice lock follows
+   * it, so a Standby in another window stays asleep only while Jarvis is busy here, never while he merely sits open.
+   */
+  function reportActive(state) {
+    if (typeof onActive !== 'function' || S.closed) return;
+    const on = state === 'listening' || state === 'thinking' || state === 'working' || state === 'speaking' || !!(S.listen || S.review || S.run || S.speech || S.retryTimer);
+    if (on === S.active) return;
+    S.active = on;
+    callQuietly(() => onActive(on));
   }
 
   function setStatus(text, ic) {
@@ -4793,7 +4812,7 @@ function createVoiceMode(opts) {
     if (R.preface) {
       const line = R.preface;
       R.preface = '';
-      appendLive(sp, `${line} `);
+      if (line) appendLive(sp, `${line} `);
     }
     return sp;
   }
@@ -5518,6 +5537,9 @@ function createVoiceMode(opts) {
     if (S.closed) return;
     S.closed = true;
     disarmSleep();
+    // MAC-R2-1: closed: the app's voice lock goes at once (also when it was idle, waiting its moment to go).
+    if (typeof onActive === 'function') callQuietly(() => onActive(false, { now: true }));
+    S.active = false;
     callQuietly(() => sessionTitle(null)); // v8.1 (A1): the tab title comes back
     if (S.awayNoted) callQuietly(() => closeNotify(SESSION_NOTE)); // and the session's notification goes
     if (current === instance) current = null;

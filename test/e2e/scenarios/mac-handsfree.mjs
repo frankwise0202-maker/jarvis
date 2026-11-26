@@ -243,6 +243,20 @@ async function wakeByClaps(t, page = t.page) {
 /** The words the recognizer hears in its next sessions, in order ('' = nobody speaks in that one). */
 const queue = (page, ...items) => page.evaluate((list) => window.__voice.queue.push(...list), items);
 
+// ---- v8.1.1 (review 2) --------------------------------------------------------------------------------------
+
+/** Two windows of one browser: A on Standby (hidden) with claps and the "Hey Jarvis" stand-in; B on the app. */
+async function twoWindows(t, { speechB = {} } = {}) {
+  const a = await setup(t, { wordStub: true });
+  const b = await t.page.context().newPage();
+  t.attachPageGuards(b);
+  await setup(t, { page: b, speech: speechB });
+  await (await t.visible('quick-key-standby', { page: a })).click();
+  await t.waitFor(async () => (await standbyState(a))?.word === 'ready' && (await standbyState(a))?.listening === 'live', { timeout: 15000, message: 'A on Standby, claps and the stand-in ready' });
+  await setHidden(a, true);
+  return { a, b };
+}
+
 export default [
   // ---- A1: listening and speaking in the background ----------------------------------------------------------
   {
@@ -922,6 +936,66 @@ export default [
         await a.evaluate(() => window.__jarvisWake.say());
         await a.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
       });
+    },
+  },
+  {
+    name: 'standby-voice-idle-elsewhere',
+    title: 'MAC-R2-1: Voice Mode left open and idle in window B (opened by a tap, heard nobody): two claps and "Hey Jarvis" still wake the Standby in window A',
+    device: 'mac',
+    fakeMusic: true,
+    settings: { wakeWord: true },
+    timeout: 150000,
+    async run(t) {
+      const { a, b } = await twoWindows(t);
+      await t.step('B: the owner taps Voice Mode and says nothing; it goes idle and stays open', async () => {
+        await queue(b, '', '');
+        await (await t.visible('voice-open', { page: b })).click();
+        await t.waitFor(async () => (await voiceState(b)) === 'idle', { timeout: 30000, message: async () => `B idle (${await voiceState(b)} “${await voiceStatus(b)}”)` });
+        await b.waitForTimeout(3000); // past the moment B keeps the voice lock after it went idle
+      });
+      await t.step('two claps to A wake A (B hears nothing)', async () => {
+        await a.bringToFront(); // the tab's audio runs (a background headless tab is throttled); still reported hidden
+        await setHidden(a, true);
+        await a.waitForTimeout(1600);
+        await queue(a, '', '');
+        await play(a, DOUBLE_CLAP);
+        await a.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 }).catch(() => {});
+        t.assert((await a.locator(tid('voice-mode')).count()) > 0, `claps wake A while B’s Voice Mode sits idle (A: ${JSON.stringify(await standbyState(a))})`);
+        t.assert((await voiceState(b)) === 'idle', 'B still open and idle');
+        await a.keyboard.press('Escape'); // A's woken session ends: back to Standby
+        await backInStandby(t, a, 20000);
+      });
+      await t.step('"Hey Jarvis" to A wakes A too', async () => {
+        await a.waitForTimeout(1600);
+        await queue(a, '', '');
+        t.assert(await a.evaluate(() => window.__jarvisWake.say()), 'A’s stand-in heard "Hey Jarvis"');
+        await a.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 }).catch(() => {});
+        t.assert((await a.locator(tid('voice-mode')).count()) > 0, `"Hey Jarvis" wakes A while B’s Voice Mode sits idle (A: ${JSON.stringify(await standbyState(a))})`);
+      });
+    },
+  },
+  {
+    name: 'standby-chat-mic-elsewhere',
+    title: 'MAC-R2-4: the owner dictates "Hey Jarvis, what is the capital of France?" into the chat box’s microphone in window B while the Standby in window A (hidden) hears the same words: A stays asleep, one request',
+    device: 'mac',
+    fakeMusic: true,
+    settings: { wakeWord: true },
+    timeout: 120000,
+    async run(t) {
+      const { a, b } = await twoWindows(t, { speechB: { noSpeechMs: 6000 } });
+      await queue(a, 'what is the capital of France'); // what A would hear if it woke: the rest of the sentence
+      await queue(b, { parts: [{ at: 1200, text: 'Hey Jarvis, what is the capital of France?' }] });
+      await (await t.visible('composer-mic', { page: b })).click();
+      await b.waitForTimeout(400);
+      t.assert(await a.evaluate(() => window.__jarvisWake.say()), 'A’s stand-in heard "Hey Jarvis"');
+      let aWoke = false;
+      for (let i = 0; i < 24; i++) {
+        await b.waitForTimeout(500);
+        if ((await a.locator(tid('voice-mode')).count()) > 0) aWoke = true;
+      }
+      t.assert(!aWoke, 'A stayed asleep');
+      t.assert(leadCount(t) <= 1, `one answer for one sentence (${leadCount(t)} paid requests)`);
+      t.assert((await standbyState(a))?.listening === 'live', `A is still on Standby, listening (${JSON.stringify(await standbyState(a))})`);
     },
   },
 ];
