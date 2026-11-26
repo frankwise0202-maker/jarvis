@@ -329,6 +329,22 @@ export function voiceAdapter(api) {
 }
 
 /**
+ * The link's own notices (app.js chromeLinkNotice: D5's late start, and its unconfirmed variant): shown in the chat,
+ * and said in Voice Mode as any line from Chrome is (api.chrome.say: no microphone after it unless this session would
+ * listen anyway; CHROME-VOICE-R2-5, PRIVACY-1). Not said (Voice Mode closed or busy) while Jarvis is hidden: a
+ * notification. `voice`: Voice Mode's api while it is open, else null.
+ */
+export function sayLinkNotice(n, { voice = null, hidden = () => false, toast = null, notify = null } = {}) {
+  const line = n && typeof n.line === 'string' ? n.line : '';
+  if (!line) return;
+  const shown = typeof n.show === 'string' && n.show ? n.show : line; // (`line` is said; `show` may hold ⌘⇧.)
+  if (typeof toast === 'function') quiet(() => toast(shown, { level: 'warn', timeout: 8000 }));
+  const say = voice && voice.chrome && typeof voice.chrome.say === 'function' ? voice.chrome.say : null;
+  const said = !!say && quiet(() => say(line), false);
+  if (!said && quiet(() => hidden(), false) && typeof notify === 'function') quiet(() => notify({ tag: 'chrome-link', title: 'Jarvis', body: shown }));
+}
+
+/**
  * The controller. deps:
  *   link        app.chromeLink (contract (f)), or a function giving it (null until it exists: everything
  *               says "not linked"). Its listeners are attached as soon as it is there.

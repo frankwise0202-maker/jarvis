@@ -752,3 +752,33 @@ test('CHROME-VOICE-R2-4: a task\'s answer that reads "Chrome asks: …? Say appr
   const line = s.said().find((x) => x.startsWith('Chrome is done.'));
   assert.equal(line, 'Chrome is done. The answer is on its card.');
 });
+
+// ---- v8.1.1: CHROME-VOICE-R2-5: the link's own notices follow chromeListenRule ------------------------------------
+
+test('CHROME-VOICE-R2-5: hidden on a Mac, the follow-up window over: the link\'s late-start line (app.js chromeLinkNotice) is said and opens no microphone', async (t) => {
+  const { sayLinkNotice } = await import('../../src/ui/chrome-task.js');
+  const s = await setup(t, { listenWhileHidden: () => true });
+  await s.env.advance(1200);
+  s.env.setHidden(true);
+  await s.until(() => s.vm.state === 'idle', 'idle while hidden', 30000);
+  await s.env.advance(60000);
+  const before = s.env.log.listens.length;
+  const toasts = [];
+  const notes = [];
+  sayLinkNotice({ kind: 'late-start', line: 'Chrome started late, so I stopped it.' }, { voice: s.vm, hidden: () => true, toast: (x) => toasts.push(x), notify: (n) => notes.push(n) });
+  await s.env.advance(10000);
+  assert.ok(s.said().includes('Chrome started late, so I stopped it.'), 'said');
+  assert.equal(s.env.log.listens.length, before, `no hidden listen after it (${s.env.log.listens.length - before} opened)`);
+  assert.deepEqual(toasts, ['Chrome started late, so I stopped it.'], 'shown in the chat too');
+  // Voice Mode busy and Jarvis hidden: the notification says it instead.
+  const busy = await setup(t, { listenWhileHidden: () => true, speechMs: 6000 });
+  await busy.env.advance(1200);
+  assert.equal(busy.vm.say('The bracket has three parts.'), true);
+  const n2 = [];
+  sayLinkNotice({ kind: 'late-start', line: 'Chrome started late, so I stopped it.' }, { voice: busy.vm, hidden: () => true, toast: () => {}, notify: (n) => n2.push(n) });
+  assert.equal(n2.length, 1, 'a notification while Voice Mode is busy and Jarvis is hidden');
+  // Voice Mode closed: the toast, and a notification while hidden.
+  const n3 = [];
+  sayLinkNotice({ kind: 'late-start', line: 'Chrome started late, so I stopped it.', show: 'Chrome started late (⌘⇧.)' }, { voice: null, hidden: () => true, toast: () => {}, notify: (n) => n3.push(n) });
+  assert.deepEqual(n3, [{ tag: 'chrome-link', title: 'Jarvis', body: 'Chrome started late (⌘⇧.)' }]);
+});
