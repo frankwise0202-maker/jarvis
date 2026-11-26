@@ -18,6 +18,9 @@
 //                              block (the line breaks become pauses); 'off' = ''
 //   chunkText(text, max = 220), splitSentences(text)   pure helpers (exported for tests)
 //   SPEECH_TIMING              the engine's timing constants (read-only)
+//   setPausesWhenHidden(on)    v8.1: false on a computer (app.js, once): the watchdogs count time while
+//                              the page is hidden too (speech goes on there); true (the default): the
+//                              iPhone's rule, only visible time counts (iOS pauses speech in the background)
 //
 // Speech streams. Real engines break a simple "speak the next chunk from the previous chunk's
 // onend" chain in many ways (WebKit leaves speaking/pending stuck, onend goes missing or comes
@@ -75,7 +78,9 @@
 //   - once unlockSpeech() has run, waits 250 ms (or the learned drop window) after our own
 //     cancel() before the next speak();
 //   - counts time only while the page is visible (iOS pauses speech in the background), and
-//     calls speechSynthesis.resume() if the engine is paused while the page is visible.
+//     calls speechSynthesis.resume() if the engine is paused while the page is visible; v8.1: on a
+//     computer (setPausesWhenHidden(false)) hidden time counts too and a paused engine is resumed
+//     there as well, so a reply whose 'end' is lost in the background still ends.
 //
 // Chunks pack whole sentences: ≤ 220 characters for an online or unknown voice (fewer below rate
 // 1, so a chunk stays under ~15 s), up to 360 for an on-device voice. A sentence longer than the
@@ -356,6 +361,21 @@ function endTimeout(chunk, rate) {
 // ---- visible time (quirk g: speech pauses while the page is hidden) ----
 
 const clock = { acc: 0, last: -1, hidden: false, watching: false };
+let pausesWhenHidden = true; // v8.1: false on a computer, where speech goes on in the background
+
+/**
+ * v8.1 (SPEC §26 note, §28.1): whether speech pauses while the page is hidden. True (the default) on an
+ * iPhone or iPad: hidden time doesn't count. False on a computer: it counts, like visible time.
+ */
+export function setPausesWhenHidden(on) {
+  vnow(); // the time so far counts under the old rule
+  pausesWhenHidden = on !== false;
+}
+
+/** The page is hidden, and speech pauses there (an iPhone). */
+function pausedHidden() {
+  return pausesWhenHidden && isHidden();
+}
 
 function isHidden() {
   try {
@@ -366,14 +386,14 @@ function isHidden() {
   }
 }
 
-/** Milliseconds of visible time (a gap is counted in the state it started in). */
+/** Milliseconds of visible time (a gap is counted in the state it started in); hidden time too on a computer. */
 function vnow() {
   const t = Date.now();
   if (clock.last < 0) clock.last = t;
   const step = t - clock.last;
   if (!clock.hidden && step > 0) clock.acc += Math.min(step, T.maxClockStepMs);
   clock.last = t;
-  clock.hidden = isHidden();
+  clock.hidden = pausedHidden();
   return clock.acc;
 }
 
@@ -391,7 +411,7 @@ function watchVisibility() {
 
 function onVisibility() {
   vnow();
-  if (current && !isHidden()) resumeEngine();
+  if (current && !pausedHidden()) resumeEngine();
 }
 
 function resumeEngine() {
@@ -1037,7 +1057,7 @@ function tick(s) {
   } catch {
     /* treat as quiet */
   }
-  if (paused && !isHidden()) resumeEngine();
+  if (paused && !pausedHidden()) resumeEngine();
   const busy = speaking || pending;
   const behind = s.inflight.length > 1; // our next chunk is queued behind the head
   if (head.started) {

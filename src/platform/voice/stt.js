@@ -23,6 +23,9 @@
 //                       same recognizer goes on, and the words it had heard when the turn ended stay
 //                       that turn's even when it rewrites them later (a late final: "twenty five" ->
 //                       "25"); the next turn's words are the ones after them (continuation)
+//     background        v8.1 (a computer, hands-free): a recognizer that ends by itself while the page
+//                       is hidden is started again, as when it is visible (desktop Chrome lets a hidden
+//                       page listen). Without it, listening gives up there (iOS stops it anyway).
 //   stop(): "I'm done": deliver what was heard now. abort(): cancel without delivering anything.
 //
 // Jarvis, not the browser, decides when the owner has finished (v7.2). The recognizer runs
@@ -485,6 +488,7 @@ export function startListening(options = {}) {
   const maxMs = Number.isFinite(opts.maxMs) && opts.maxMs > 0 ? Math.min(TIMING.maxMs, opts.maxMs) : TIMING.maxMs;
   const noSpeechMs = Number.isFinite(opts.noSpeechMs) && opts.noSpeechMs > 0 ? opts.noSpeechMs : TIMING.noSpeechMs;
   const keep = opts.keepListening === true;
+  const background = opts.background === true;
   const phrases = normalizePhrases(opts.phrases);
   const lang = resolveListenLang(opts.lang);
   const Ctor = recognitionCtor();
@@ -804,7 +808,7 @@ export function startListening(options = {}) {
       S.parts = [];
       const quick = now() - S.sessionStart < TIMING.fastEndMs && !S.sessionResults && !S.again;
       S.again = false;
-      if (pageHidden()) {
+      if (pageHidden() && !background) {
         giveUp();
         return;
       }
