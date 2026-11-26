@@ -4041,7 +4041,10 @@ ScriptProcessor fallback) counts exact zeros at the device rate; after `SILENCE_
 reports `{ type: 'silence', silent: true }` (capture.js `onSilence(true)`), and at the first non-zero sample
 `silent: false`. Standby's pill then says `MICROPHONE MUTED?` (tone warn, `data-muted="true"`) and the hint "No sound
 at all is coming from the microphone. Is it muted (the speakerphone’s mute button)?". A quiet room is never exact
-zeros (a microphone always has some noise).
+zeros (a microphone always has some noise). When sound comes back after a second or more of exact zeros
+(`ZEROS_RESET_MS`), the tap resets the clap detector: its noise floor would otherwise have sunk to -100 dB during
+the silence and climbed back at its slow rate, the room's own noise judged "busy" for about ten seconds and no
+two claps heard (src/lib/wake/clap.js itself is unchanged).
 
 **Standby's one-time line**: with nothing chosen, the first time Standby's capture is live on a computer whose
 default output is Bluetooth, `standby-tip` says "Using a Bluetooth speakerphone? Set it up in Settings → Voice."
