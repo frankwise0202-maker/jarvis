@@ -67,8 +67,9 @@ import { voiceById } from '../platform/voice/natural/catalog.js';
 import { markdownToPlainText } from '../lib/markdown.js';
 import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './optics/optics.js';
 import { runWatchLook } from '../engine/watch.js';
+import { LIVE_DEFAULT_MODEL, runLiveLook } from '../engine/live.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
-import { voiceCameraRequest } from '../lib/optics-commands.js';
+import { voiceCameraRequest, voiceLiveViewRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
 import { matchMusicCommand } from '../lib/music-commands.js';
@@ -950,6 +951,7 @@ export async function startApp(rootEl) {
     // Optics (the camera): Watch, a Look being answered (a turn of the open conversation), the live camera.
     if (isOpticsOpen()) {
       if (opticsLive.watch) return ['watching', 'Watching'];
+      if (opticsLive.liveView) return ['watching', 'Live view'];
       if (state.conv && state.runs.has(state.conv.id)) return ['analyzing', 'Analyzing…'];
       if (opticsLive.camera) return ['optics', 'Optics live'];
     }
@@ -999,11 +1001,12 @@ export async function startApp(rootEl) {
 
   // Optics' live state (deps.onLiveChange): the camera, and Watch with its end (the state word and the
   // WATCH pill count it down once a second).
-  const opticsLive = { camera: false, watch: false, watchEndsAt: null };
+  const opticsLive = { camera: false, watch: false, watchEndsAt: null, liveView: false };
   let watchTicker = 0;
-  function onOpticsLive({ camera, watch, watchEndsAt } = {}) {
+  function onOpticsLive({ camera, watch, watchEndsAt, liveView } = {}) {
     opticsLive.camera = !!camera;
     opticsLive.watch = !!watch;
+    opticsLive.liveView = !!liveView;
     opticsLive.watchEndsAt = opticsLive.watch && Number.isFinite(watchEndsAt) ? watchEndsAt : null;
     clearInterval(watchTicker);
     watchTicker = opticsLive.watchEndsAt ? setInterval(() => updateCore(), 1000) : 0;
@@ -1507,7 +1510,7 @@ export async function startApp(rootEl) {
         // Optics: Look in the dock opens the camera over Voice Mode.
         // Look: the words of a "what am I looking at?" that had to wait for this tap (iPhone) are
         // looked at as soon as the camera is live.
-        look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsScreen({ voice: true, autoLook: takePendingVoiceLook() }) },
+        look: { supported: () => !state.demo && safe(() => cameraSupported(), false), open: () => openOpticsForVoiceLook() },
         mode: () => composer.getMode(),
         visuals: voiceVisuals,
         // Standby (v7.4): "Jarvis, standby" / "go to sleep" closes Voice Mode into Standby.
@@ -1922,6 +1925,20 @@ export async function startApp(rootEl) {
     }
   }
 
+  /**
+   * Dev and test override for the live view (v8.0, 'jarvis.dev.optics' JSON { liveSessionMs }): a
+   * shorter session only (5 s to the hour). Nothing here can raise the $1 or widen the hour.
+   */
+  function devLiveOptions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.optics') || 'null');
+      const v = raw && typeof raw === 'object' ? Number(raw.liveSessionMs) : Number.NaN;
+      return Number.isFinite(v) ? { sessionMs: Math.min(3600000, Math.max(5000, v)) } : {};
+    } catch {
+      return {};
+    }
+  }
+
   function opticsProblem({ newChat = false } = {}) {
     if (!state.demo && !safe(getApiKey, '')) return 'Add your Anthropic API key first: close Optics, then open Settings → API key.';
     if (!state.online) return 'You’re offline. Reconnect and try again.';
@@ -2010,6 +2027,69 @@ export async function startApp(rootEl) {
     });
   }
 
+  // ---- Optics' live view (v8.0): one-off looks on the cheap model, about once a second ------------
+  function liveFromOptics(frame, { summary, said, signal, model } = {}) {
+    if (!state.online) return Promise.resolve({ ok: false, costUsd: 0, error: 'offline' });
+    return runLiveLook({
+      apiKey: safe(getApiKey, ''),
+      apiBase: safe(getDevApiBase, ''),
+      model: model || LIVE_DEFAULT_MODEL,
+      frame,
+      summary,
+      said,
+      signal,
+      // Each look is part of the month's spending too, as Watch frames are.
+      onSpend: (usd) => safe(() => addSpend(usd)),
+    });
+  }
+
+  /**
+   * May Jarvis say a live view line now? Only where he speaks anyway (Voice Mode open, or replies
+   * read aloud), never while the owner is talking (a microphone hearing words) or he is speaking.
+   */
+  function liveSpeechState() {
+    const vm = !!voiceApi && safe(() => isVoiceModeOpen(), false);
+    const mode = safe(() => getSettings().speakReplies, 'off');
+    const readAloud = mode === 'summary' || mode === 'full';
+    const info = (vm && voiceInfo) || {};
+    return {
+      allowed: !!ttsOk && (vm || readAloud),
+      ownerSpeaking: !!state.listening || (vm && !!info.listening && !!String(info.heard || '').trim()),
+      jarvisSpeaking: !!state.speaking || (vm && (info.state === 'speaking' || !!info.busy)),
+    };
+  }
+
+  /** A live view line through the voice output (Voice Mode's, else the router: George when he's on). */
+  function sayLiveLine(line) {
+    const text = String(line || '').trim();
+    if (!text) return false;
+    if (voiceApi && safe(() => isVoiceModeOpen(), false)) return safe(() => voiceApi.say && voiceApi.say(text), false) === true;
+    if (!ttsOk || state.speaking || state.listening) return false;
+    if (musicPlayer.isPlaying()) safe(() => musicPlayer.pause()); // a preview would play over him
+    const s = getSettings();
+    const entry = { turnId: null, live: true, handle: null };
+    state.speaking = entry;
+    try {
+      entry.handle = speak(text, {
+        voiceURI: s.voiceURI,
+        rate: s.voiceRate,
+        onChunk: () => pulseLevel(),
+        onEnd: () => {
+          if (state.speaking === entry) {
+            state.speaking = null;
+            updateCore();
+          }
+        },
+      });
+    } catch (err) {
+      console.warn('[jarvis] live view line not spoken:', err);
+      if (state.speaking === entry) state.speaking = null;
+      return false;
+    }
+    updateCore();
+    return true;
+  }
+
   /** About what the next Look costs: the conversation's prompt is cached for 5 minutes after use. */
   function lookEstimate() {
     const conv = state.conv;
@@ -2058,16 +2138,32 @@ export async function startApp(rootEl) {
    * allowed, Optics opens over Voice Mode and looks at once; otherwise Jarvis asks for a tap on Look.
    */
   // "What am I looking at?" said where the camera needs a tap first (iPhone): kept for Voice Mode's Look.
-  let pendingVoiceLook = null; // { text, at }
+  // v8.0: "live view" said there waits the same way: the tap on Look then starts the live view.
+  let pendingVoiceLook = null; // { text, at, live }
   const PENDING_LOOK_MS = 30000;
   function takePendingVoiceLook() {
     const p = pendingVoiceLook;
     pendingVoiceLook = null;
-    return p && Date.now() - p.at <= PENDING_LOOK_MS ? p.text : '';
+    return p && Date.now() - p.at <= PENDING_LOOK_MS ? p : null;
+  }
+  /** Voice Mode's Look button: Optics over Voice Mode, with what was said before the tap. */
+  function openOpticsForVoiceLook() {
+    const p = takePendingVoiceLook();
+    return openOpticsScreen({ voice: true, autoLook: p && !p.live ? p.text : '', autoLive: !!(p && p.live) });
   }
 
   function voiceLookRequest(text) {
     if (state.demo || !voiceApi || !safe(() => cameraSupported(), false)) return null;
+    // "Live view", "watch me", "keep watching": the camera opens by the same rule, then the live view.
+    const live = safe(() => voiceLiveViewRequest(text, { cameraAllowed, ios: isIOS() }), null);
+    if (live === 'need-tap') {
+      pendingVoiceLook = { text: '', at: Date.now(), live: true };
+      return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
+    }
+    if (live === 'start') {
+      const optics = openOpticsScreen({ voice: true, autoLive: true });
+      return { handled: true, command: { action: 'optics', kind: 'liveview', ack: optics ? 'Live view on. I’ll speak up when I see something.' : 'The camera couldn’t start.' } };
+    }
     // Only words plainly about seeing: "what's that?" or "what is it?" in a conversation is about
     // something Jarvis said, and goes to Jarvis as usual. So does "what is this?" while a hologram or
     // blueprint is on screen: it is about that.
@@ -2076,7 +2172,7 @@ export async function startApp(rootEl) {
     if (!kind) return null;
     if (kind === 'need-tap') {
       // The question waits for that tap (30 s): Look then looks at once, with these words.
-      pendingVoiceLook = { text: String(text).trim().slice(0, 500), at: Date.now() };
+      pendingVoiceLook = { text: String(text).trim().slice(0, 500), at: Date.now(), live: false };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and show me.' } };
     }
     const optics = openOpticsScreen({ voice: true, autoLook: String(text).trim() });
@@ -2105,6 +2201,10 @@ export async function startApp(rootEl) {
       hologramEstimate: () => estimateHologramCost({ model: getSettings().leadModel }).usd,
       openHologram: (run, seg) => (run && run.turn ? openVisualSegment(run.turn, seg) : null),
       watchLook: watchFromOptics,
+      // v8.0 Live view: looks on the cheap model, the lines spoken through the voice output.
+      liveLook: state.demo ? null : liveFromOptics,
+      liveSpeech: { state: liveSpeechState, say: sayLiveLine, unlock: () => safe(() => unlockSpeech()) },
+      liveOptions: devLiveOptions(),
       stt: sttPausingPreviews,
       sttSupported: sttOk,
       sounds,
@@ -2133,13 +2233,14 @@ export async function startApp(rootEl) {
    * words of a Look to take as soon as the camera is live ("what am I looking at?" said in Voice Mode).
    * Returns the Optics api (truthy), or false.
    */
-  function openOpticsScreen({ start, voice = false, autoLook = '' } = {}) {
+  function openOpticsScreen({ start, voice = false, autoLook = '', autoLive = false } = {}) {
     if (isOpticsOpen()) return currentOptics() || true;
     if (!voice) stopSpeakingNow();
     if (state.listening) safe(() => state.listening.stop());
     const extra = {};
     if (start === 'screen') extra.start = start;
     if (autoLook) extra.autoLook = autoLook;
+    if (autoLive) extra.autoLive = true; // "live view" said in Voice Mode: it starts once the camera is live
     if (voice && voiceApi) {
       Object.assign(extra, {
         voice: { tap: () => safe(() => voiceApi && voiceApi.tap()) },

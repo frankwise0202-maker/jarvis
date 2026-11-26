@@ -189,7 +189,8 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
 
   const plan = decision.plan;
   signThinkingBlocks(body, plan.blocks);
-  const usage = computeUsage(mock, body, plan.blocks);
+  // plan.usage: a scripted usage on top of the simulated one (the live view's cost per look).
+  const usage = plan.usage ? { ...computeUsage(mock, body, plan.blocks), ...plan.usage } : computeUsage(mock, body, plan.blocks);
   const ranServerTools = plan.blocks.some((b) => b.type === 'server_tool_use' || b.type === 'web_search_tool_result' || b.type === 'web_fetch_tool_result');
   const container = ranServerTools ? useContainer(body, plan.blocks, mock.state, now().getTime()) : null;
   const message = {
@@ -214,6 +215,15 @@ async function dispatch(mock, { method = 'GET', url, headers = {}, bodyText = ''
     if (plan.cutAfter !== undefined) {
       entry.outcome = 'cut';
       return { drop: true };
+    }
+    // plan.delayMs: a slow reply (real milliseconds, not scaled); the client may give up first.
+    if (plan.delayMs > 0) {
+      try {
+        await sleep(plan.delayMs, signal);
+      } catch {
+        entry.outcome = 'aborted';
+        return { drop: true };
+      }
     }
     entry.outcome = 'ok';
     return { status: 200, headers: { ...baseHeaders, 'content-type': 'application/json' }, json: message };

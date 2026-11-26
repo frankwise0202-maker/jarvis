@@ -22,8 +22,8 @@ import {
   hologramPlan, openSavedPlan, savedIdsOf, turnContextText, visualFollowUpText,
 } from './visuals.mjs';
 import {
-  OPTICS_TOOL_NAMES, cameraIsLive, conversationFrameOf, hologramSubjectOf, isWatchRequest, lookThroughCameraPlan, opticsFollowUpPlan, opticsFollowUpTextPlan,
-  opticsFrameOf, opticsHologramSample, opticsLookPlan, watchAnswer,
+  OPTICS_TOOL_NAMES, cameraIsLive, conversationFrameOf, hologramSubjectOf, isLiveRequest, isWatchRequest, liveLookPlan, lookThroughCameraPlan, opticsFollowUpPlan,
+  opticsFollowUpTextPlan, opticsFrameOf, opticsHologramSample, opticsLookPlan, watchAnswer,
 } from './optics.mjs';
 
 const sentenceCase = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -36,6 +36,9 @@ export function createBehaviorState() {
     droppedLead: new Set(), // lead requests ([[droplead]]) whose first response was already cut
     containers: new Map(), // code-execution container id -> { expiresAt } (web tools' dynamic filtering)
     containerByToolUse: new Map(), // server_tool_use id -> the container it ran in
+    live: null, // v8.0 live view: the test's script (optics.mjs configureLive), else the default scene
+    liveLooks: 0, // live requests so far (rate-limited ones too)
+    liveAnswered: 0, // live requests answered (the scene's position)
   };
 }
 
@@ -132,6 +135,8 @@ export function planResponse({ body, kind, state, now }) {
   if (kind === 'structured') {
     // Optics Watch: a realistic { worth_saying, line, summary } for the frame.
     if (isWatchRequest(body)) return { plan: { blocks: [text(watchAnswer(body))], stop_reason: 'end_turn', pace: 'quick' } };
+    // Optics live view (v8.0): { summary, worth_saying, line }, scripted per test.
+    if (isLiveRequest(body)) return liveLookPlan(body, state);
     // Structured outputs: one text block whose text is JSON matching the schema.
     const schema = body.output_config.format.schema;
     return { plan: { blocks: [text(JSON.stringify(valueFromSchema(schema)))], stop_reason: 'end_turn', pace: 'quick' } };

@@ -224,6 +224,68 @@
 .optics-watch-note { margin: 6px 0 0; font-size: 14px; line-height: 1.4; color: var(--text); }
 .optics-watch-note[data-kind='alert'] { color: var(--accent-2); }
 
+/* ---- Live view (v8.0): the meter, a note, what Jarvis said; a caption under the video ------------ */
+.optics-liveview {
+  position: absolute;
+  left: calc(var(--safe-left) + 16px);
+  right: calc(var(--safe-right) + 16px);
+  top: calc(var(--top-h) + 8px);
+  z-index: 2;
+  box-sizing: border-box;
+  padding: 6px 6px 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--scrim);
+  border: 1px solid var(--line-2);
+}
+.optics-liveview-row { display: flex; align-items: center; gap: 8px; font: 600 11px/1.3 var(--font-mono); letter-spacing: 0.08em; }
+.optics-liveview-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--live-c); }
+.optics[data-liveview='on'] .optics-liveview-dot { animation: optics-breathe 1s ease-in-out infinite alternate; }
+.optics[data-liveview='off'] .optics-liveview-dot,
+.optics[data-liveview-paused='look'] .optics-liveview-dot,
+.optics[data-liveview-paused='cap'] .optics-liveview-dot,
+.optics[data-liveview-paused='offline'] .optics-liveview-dot { background: var(--text-3); animation: none; }
+.optics-liveview-meter { flex: 1; min-width: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.optics-liveview-stop { position: relative; flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 50%; background: rgba(15, 31, 48, 0.7); color: var(--text); cursor: pointer; }
+.optics-liveview-stop::before { content: ''; position: absolute; inset: -6px; } /* a 44 px target */
+.optics-liveview-stop:focus-visible,
+.optics-liveview-resume:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.optics-liveview-noterow { display: flex; align-items: center; gap: 10px; }
+.optics-liveview-note { flex: 1; min-width: 0; margin: 6px 6px 0 0; font-size: 14px; line-height: 1.4; color: var(--text); }
+.optics-liveview-note[data-kind='warn'] { color: var(--warn, #f5b14c); }
+.optics-liveview-resume { flex: none; display: inline-flex; align-items: center; gap: 6px; margin: 6px 6px 0 0; min-height: 36px; }
+.optics-liveview-lines { list-style: none; margin: 6px 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.optics-liveview-line { display: flex; gap: 8px; align-items: baseline; min-width: 0; font-size: 13px; line-height: 1.35; color: var(--text-2); }
+.optics-liveview-line.is-newest { font-size: 14px; color: var(--accent-2); }
+.optics-liveview-line:not(.is-newest) .optics-liveview-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.optics-liveview-time { flex: none; font: 500 10px/1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-3); }
+.optics-liveview-text { min-width: 0; }
+/* Phones: under a Look the frame needs the room; the list comes back with Live. The frozen frame
+   starts below the panel (--live-hud-h, measured by optics.js), so no label hides behind it. */
+.optics[data-layout='phone'][data-frozen='true'] .optics-liveview-lines { display: none; }
+.optics[data-layout='phone'][data-frozen='true'][data-live-hud='true'] .optics-stage { top: calc(var(--top-h) + var(--live-hud-h, 0px)); }
+.optics-liveview-caption {
+  position: absolute;
+  left: calc(var(--safe-left) + 16px);
+  right: calc(var(--safe-right) + 16px);
+  bottom: calc(var(--live-b, var(--deck-h)) + 12px);
+  z-index: 1;
+  width: -webkit-fit-content;
+  width: fit-content;
+  max-width: 640px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(4, 7, 12, 0.8);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}
+.optics[data-frozen='true'] .optics-liveview-caption,
+.optics[data-liveview='off'] .optics-liveview-caption { display: none; }
+
 /* ---- control deck (the one blurred layer while live) -------------------------------------------- */
 .optics-deck {
   position: absolute;
@@ -278,6 +340,7 @@
 .optics-key[aria-pressed='true'] .icon { border-color: var(--live-c); background: var(--live-bg); color: var(--live-c); }
 .optics-key-label { font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); }
 .optics-key:disabled { opacity: 0.4; cursor: default; }
+.optics-key--liveview { width: auto; min-width: 56px; padding: 0 2px; white-space: nowrap; }
 .optics-shutter-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .optics-shutter {
   position: relative;
@@ -449,6 +512,13 @@
   .optics-log-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .optics-log-line { font-size: 13px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .optics-log-meta { font: 500 10px/1 var(--font-mono); color: var(--text-3); letter-spacing: 0.06em; }
+  /* The live view's HUD is the first thing in the rail (above the answer and the log). */
+  .optics-side .optics-liveview { position: relative; left: auto; right: auto; top: auto; flex: none; padding: 10px 10px 12px 14px; border-radius: var(--r-md); background: rgba(7, 13, 21, 0.86); }
+  .optics-liveview-caption { bottom: 14px; left: 14px; right: 14px; }
+  /* Five keys and the ask field: the keys take a line of their own when the column is narrow. */
+  .optics-deck { flex-wrap: wrap; row-gap: 10px; }
+  .optics-ask-row { flex: 1 1 240px; }
+  .optics-keys { margin-inline: auto; }
   /* Watch lives at the top of the rail on desktop; the answer and the log move down under it. */
   .optics-watch { left: auto; right: 24px; width: clamp(360px, 28vw, 420px); box-sizing: border-box; top: var(--top-h); min-height: 84px; }
   .optics[data-watch-hud='true'] .optics-side { top: calc(var(--top-h) + 98px); }
@@ -463,6 +533,12 @@
   .optics-deck:not([data-frozen='true']) { left: auto; top: var(--top-h); width: calc(var(--live-col) + var(--safe-right)); min-height: 0; justify-content: center; padding-left: 16px; border-top: 0; border-left: 1px solid var(--line); }
   .optics-deck:not([data-frozen='true']) .optics-keys { order: -1; gap: 14px; }
   .optics:not([data-frozen='true']) .optics-watch { right: calc(var(--live-col) + var(--safe-right) + 16px); }
+  .optics:not([data-frozen='true']) .optics-liveview,
+  .optics:not([data-frozen='true']) .optics-liveview-caption { right: calc(var(--live-col) + var(--safe-right) + 16px); }
+  .optics[data-frozen='true'] .optics-liveview { right: calc(var(--side-w) + var(--safe-right) + 16px); }
+  .optics-liveview-caption { bottom: 12px; }
+  /* Four keys in the column: Live view takes the next line when they don't fit. */
+  .optics-deck:not([data-frozen='true']) .optics-keys { flex-wrap: wrap; row-gap: 8px; }
   .optics[data-frozen='true'] .optics-stage { top: var(--top-h); bottom: 0; right: calc(var(--side-w) + var(--safe-right)); }
   .optics[data-state='frozen'] .optics-stage { --scan-h: calc(100vh - var(--top-h)); }
   .optics[data-frozen='true'] .optics-side { left: auto; right: 0; top: var(--top-h); bottom: var(--deck-ask-h); width: calc(var(--side-w) + var(--safe-right)); height: auto; }
@@ -470,8 +546,17 @@
   .optics-deck[data-frozen='true'] { left: auto; width: calc(var(--side-w) + var(--safe-right)); padding-left: 16px; border-left: 1px solid var(--line); }
 }
 
+/* Narrow phones: four keys (Flip, LOOK, Watch, Live view) on one line. */
+@media (max-width: 389px) {
+  .optics-keys { gap: 16px; }
+}
+@media (max-width: 339px) {
+  .optics-keys { gap: 10px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .optics-stage { transition: none; }
+  .optics[data-liveview='on'] .optics-liveview-dot,
   .optics-pill-dot,
   .optics[data-watching='true'] .optics-watch-dot { animation: none; }
   .optics-flash.is-on,

@@ -156,7 +156,7 @@ export function validateBody(body, betas = new Set()) {
 
   let err = validateSystem(body.system);
   if (err) return err;
-  err = validateThinking(body.thinking, betas);
+  err = validateThinking(body.thinking, betas, body);
   if (err) return err;
   err = validateOutputConfig(body.output_config);
   if (err) return err;
@@ -238,9 +238,20 @@ function validateSystem(system) {
   return null;
 }
 
-function validateThinking(thinking, betas) {
+// Claude Haiku 5.5 can turn thinking off ({ type: 'disabled' }) at effort high or below (v8.0's
+// live view asks for that); the other models take only adaptive thinking.
+const HAIKU_NO_THINKING_EFFORTS = new Set(['low', 'medium', 'high']);
+
+function validateThinking(thinking, betas, body = {}) {
   if (thinking === undefined) return null;
   if (!isPlainObject(thinking)) return bad('thinking: Input should be a valid dictionary');
+  if (thinking.type === 'disabled' && body.model === HAIKU_MODEL) {
+    const effort = isPlainObject(body.output_config) ? body.output_config.effort : undefined;
+    if (effort !== undefined && effort !== null && !HAIKU_NO_THINKING_EFFORTS.has(effort)) {
+      return bad(`"thinking.type.disabled" needs output_config.effort "high" or lower on ${HAIKU_MODEL} (got "${effort}").`);
+    }
+    return extraKeys(thinking, new Set(['type']), 'thinking.disabled');
+  }
   if (thinking.type === 'disabled' || thinking.type === 'enabled') {
     return bad(`"thinking.type.${thinking.type}" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.`);
   }

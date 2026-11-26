@@ -131,7 +131,8 @@
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
 // viewer's mic button: the core's tap, except that while a hologram of the reply builds it listens
-// for a command), stop() (the viewer's "Stop building") and note(text) (a line under the caption).
+// for a command), stop() (the viewer's "Stop building"), note(text) (a line under the caption) and
+// say(line) (v8.0: a line Jarvis says by himself, Optics' live view; see sayLine()).
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
 
@@ -651,6 +652,8 @@ function createVoiceMode(opts) {
      * be listening for "cancel" or "no, I said …"): previews never start then.
      */
     isListening: () => !S.closed && (!!S.listen || !!S.review),
+    /** v8.0 Optics' live view: a short line Jarvis says by himself. True when it is said (sayLine()). */
+    say: (text) => sayLine(text),
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -3017,6 +3020,24 @@ function createVoiceMode(opts) {
     }
     if (o.error) speakAck(asSentence(clip(singleLine(o.error), 220)));
     else speakAck(o.opened ? savedBlueprintAck(cmd) : '');
+  }
+
+  /**
+   * v8.0 Optics' live view: a line Jarvis says by himself ("That's a Duracell AA"), only while Voice
+   * Mode is free: no turn, no speech, no 2-second check or question waiting, the wake routine over,
+   * and no words heard. A listen that has heard nothing yet is put aside for the line (the microphone
+   * never hears Jarvis) and, with Continuous on, listening starts again after it. True when said.
+   */
+  function sayLine(text) {
+    const line = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (S.closed || !line || !S.ttsOk) return false;
+    if (S.run || S.speech || S.review || S.confirm || S.wake || S.mic) return false;
+    const L = S.listen;
+    if (L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening'))) return false;
+    if (L) stopListening();
+    clearRetry();
+    speakAck(line);
+    return true;
   }
 
   /** Say a short line (shown in the captions too), then listen again when Continuous is on. */

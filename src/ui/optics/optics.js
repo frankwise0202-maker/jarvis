@@ -8,6 +8,12 @@
 //           while frozen reuse the frame (deps.ask).
 //   Watch   sends a frame only when the scene changes (frame differencing on a 64 px thumbnail):
 //           at most one every 10 s, off after 5 minutes, with a countdown and the cost so far.
+//   Live view (v8.0) Jarvis watches live: about once a second the newest frame (640×360) goes to
+//           the cheap model with the scene so far and the lines he said (deps.liveLook); a caption
+//           under the video says what he sees, a worth-saying line is listed and spoken (at most one
+//           every 15 s, never over the owner or over Jarvis: deps.liveSpeech). Never over $1 in any
+//           hour (src/lib/live-view.js createLiveBudget, shared by every tab), off after an hour,
+//           paused while a Look is on screen, stopped whenever the camera stops. Never with Watch.
 //   Screen  "look at my screen" (computers): one frame of the screen, then the capture stops.
 //   Camera  the picker under the title lists every camera (the MacBook's, a Logitech webcam, an
 //           iPhone's back lenses): the owner's choice is remembered (deps.cameraChoice); a camera
@@ -21,14 +27,18 @@
 //           looking at?" is a Look, "flip", "close", "tell me more", "hologram of this", "what's
 //           this part?"; the mic button is Voice Mode's.
 //
-//   openOptics(deps) -> { close(), el, command(text), stopWatch() }   isOpticsOpen()   currentOptics()
+//   openOptics(deps) -> { close(), el, command(text), stopWatch(), stopLiveView() }   isOpticsOpen()   currentOptics()
 //   opticsCameraBridge (engine deps.camera)
 //   deps: { look({ text, frame }) -> Promise<{ run, frameId?, note? } | { error }>, ask({ text }) -> same,
 //           watchLook(frame, { goal, previous, signal }) -> Promise<{ ok, worthSaying, line, summary, costUsd }>,
+//           liveLook?(frame, { summary, said, signal, model }) -> Promise<{ ok, worthSaying, line, summary,
+//           costUsd, rateLimited?, retryAfterMs?, error? }> (v8.0 Live view; no key without it),
+//           liveSpeech?: { state() -> { allowed, ownerSpeaking, jarvisSpeaking }, say(line) -> boolean, unlock?() },
+//           liveOptions? (tests: a shorter session), autoLive? (start the live view once the camera is live),
 //           getSettings(), stt?, sttSupported?, sounds?, wakeLock?: { keepAwake, allowSleep },
 //           lookBlocked?() -> null | { code: 'busy', title, text }: the chat is busy, so LOOK offers
 //           "Look in a new chat" (look({ …, newChat: true })) or Wait instead of freezing a frame,
-//           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt }), onClose?(), watchOptions?, review?,
+//           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt, liveView }), onClose?(), watchOptions?, review?,
 //           onCapture?({ source }) (a frame was taken: Presence flares the core),
 //           screenCommand?(text, { spoken }) -> true when Screens took the words ("put the camera on
 //           my other screen"), asked first for what is typed or said here,
@@ -44,7 +54,8 @@
 //           with Try again and Use the camera (through the first-use card), never the camera.
 //
 // Privacy: the camera runs only while this screen is open and visible (src/platform/camera.js);
-// nothing is sent until LOOK (or Watch, which the owner starts and which shows its countdown).
+// nothing is sent until LOOK (or Watch or the live view, which the owner starts, which show their
+// clock and cost, and which stop by themselves). Nothing is recorded: each frame is sent and dropped.
 
 import '../../styles/optics.css';
 import { h, setText } from '../dom.js';
@@ -65,12 +76,16 @@ import {
 } from '../../platform/camera.js';
 import { OPTICS_LIMITS, WATCH_DEFAULTS, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
 import { hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
+import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, nextLiveDelay } from '../../lib/live-view.js';
 import { matchScreenCommand } from '../../lib/screen-commands.js';
 import { listenPhrases } from '../voice-heard.js';
 import { drawSchematic } from './schematic.js';
 
 const INTRO_KEY = 'jarvis.optics.intro.v1';
 const WATCH_DAY_KEY = 'jarvis.optics.watch.v1';
+// The live view's last real cost of a look (v8.0): the estimate before each look is never below it,
+// also after a reload or in another window (the hour's spending itself is src/lib/live-view.js's).
+const LIVE_LAST_KEY = 'jarvis.liveView.lastLook';
 // On screen a phone's cameras are BACK and FRONT, like the iPhone's own names (the frame's source
 // stays 'rear' for Claude: "the owner's rear camera").
 const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
@@ -132,6 +147,30 @@ const timeLabel = (at = Date.now()) => {
     return '';
   }
 };
+
+/** "2:41 PM": when a paused live view can go on (the device's own clock style). */
+const resumeLabel = (at) => {
+  try {
+    return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+};
+
+/** "A · b c · d e" -> the spaces inside each part made non-breaking, so a line breaks only at " · ". */
+const keepParts = (text) =>
+  String(text || '')
+    .split(' · ')
+    .map((p) => p.replace(/ /g, '\u00a0'))
+    .join(' · ');
+
+/** "an hour", "20 minutes", "8 seconds": the live view's session length in words. */
+function durationWords(ms) {
+  const v = Math.max(0, Number(ms) || 0);
+  if (v >= 3600000 && v % 3600000 === 0) return v === 3600000 ? 'an hour' : `${v / 3600000} hours`;
+  if (v >= 60000) return `${Math.round(v / 60000)} minutes`;
+  return `${Math.round(v / 1000)} seconds`;
+}
 
 function todayKey() {
   const d = new Date();
@@ -218,7 +257,9 @@ export function openOptics(deps = {}) {
   // Hologram of this: the frozen frame as a schematic (edges) while the hologram is built.
   const schematic = h('canvas', { class: 'optics-schematic', attrs: { 'data-testid': 'optics-schematic', 'aria-hidden': 'true' } });
   const schematicLabel = h('p', { class: 'optics-schematic-label', attrs: { 'data-testid': 'optics-schematic-label', 'aria-hidden': 'true' } });
-  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, schematic, brackets, reticle, scan, pinsLayer, schematicLabel, flash, card);
+  // What Jarvis sees now (the newest summary), under the video while the live view is on.
+  const liveCaption = h('p', { class: 'optics-liveview-caption', hidden: true, attrs: { 'data-testid': 'optics-liveview-caption', 'aria-hidden': 'true' } });
+  const stage = h('div', { class: 'optics-stage' }, video, frozenHost, schematic, brackets, reticle, scan, pinsLayer, schematicLabel, liveCaption, flash, card);
 
   const title = h('span', { class: 'optics-title', text: 'OPTICS' });
   // The camera's name (shortened with "…" when long) and then its frame size and state, always whole.
@@ -257,6 +298,25 @@ export function openOptics(deps = {}) {
   const watchStats = h('span', { class: 'optics-watch-stats', attrs: { 'data-testid': 'optics-watch-cost' } });
   const watchNote = h('p', { class: 'optics-watch-note', attrs: { 'data-testid': 'optics-watch-note', 'aria-live': 'polite' } });
   const watchHud = h('div', { class: 'optics-watch', hidden: true, attrs: { 'data-testid': 'optics-watch' } }, h('div', { class: 'optics-watch-row' }, h('span', { class: 'optics-watch-dot', attrs: { 'aria-hidden': 'true' } }), watchClock, watchStats), watchNote);
+
+  // Live view HUD (v8.0): the meter (always on screen while it is on), a note (paused, speed limit,
+  // offline, the hour), Resume at the limit, and what Jarvis said (newest first, the last five).
+  // On a computer it sits at the top of the side column; on a phone under the top bar.
+  const liveMeter = h('span', { class: 'optics-liveview-meter', attrs: { 'data-testid': 'optics-liveview-meter' } });
+  const liveStop = h('button', { class: 'optics-liveview-stop', type: 'button', attrs: { 'data-testid': 'optics-liveview-stop', 'aria-label': 'Stop the live view' } }, icon('close', { size: 16 }));
+  // While on: stop. Once off (its note still showing): put the panel away.
+  liveStop.addEventListener('click', () => (liveView ? stopLiveView('Live view stopped.') : hideLiveHud()));
+  const liveNote = h('p', { class: 'optics-liveview-note', hidden: true, attrs: { 'data-testid': 'optics-liveview-note', 'aria-live': 'polite' } });
+  const liveResume = h('button', { class: 'btn btn-sm optics-liveview-resume', type: 'button', hidden: true, attrs: { 'data-testid': 'optics-liveview-resume' } }, icon('play', { size: 14 }), h('span', { text: 'Resume' }));
+  liveResume.addEventListener('click', () => resumeLiveView({ byOwner: true }));
+  const liveLines = h('ol', { class: 'optics-liveview-lines', hidden: true, attrs: { 'data-testid': 'optics-liveview-lines', 'aria-label': 'What Jarvis said' } });
+  const liveHud = h(
+    'section',
+    { class: 'optics-liveview', hidden: true, attrs: { 'data-testid': 'optics-liveview', 'aria-label': 'Live view' } },
+    h('div', { class: 'optics-liveview-row' }, h('span', { class: 'optics-liveview-dot', attrs: { 'aria-hidden': 'true' } }), liveMeter, liveStop),
+    h('div', { class: 'optics-liveview-noterow' }, liveNote, liveResume),
+    liveLines,
+  );
 
   // Answer sheet (phone: above the deck; desktop: the side column)
   const answerState = h('span', { class: 'optics-answer-state', attrs: { 'data-testid': 'optics-answer-status' } });
@@ -329,10 +389,16 @@ export function openOptics(deps = {}) {
     h('span', { class: 'optics-shutter-label', text: 'LOOK' }),
   );
   const watchBtn = h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-watch-toggle', 'aria-label': 'Watch: look again when the scene changes', 'aria-pressed': 'false', title: 'Watch (Option/Alt-W)' }, on: { click: () => toggleWatch() } }, icon('eye', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Watch' }));
+  const liveViewBtn = h(
+    'button',
+    { class: 'optics-key optics-key--liveview', type: 'button', hidden: typeof deps.liveLook !== 'function', attrs: { 'data-testid': 'optics-liveview-toggle', 'aria-label': 'Live view: Jarvis watches live and speaks up, for up to an hour (never over $1 an hour)', 'aria-pressed': 'false', title: 'Live view (Option/Alt-L)' }, on: { click: () => toggleLiveView() } },
+    icon('live', { size: 22 }),
+    h('span', { class: 'optics-key-label', text: 'Live view' }),
+  );
   const screenBtn = screenLookSupported()
     ? h('button', { class: 'optics-key', type: 'button', attrs: { 'data-testid': 'optics-screen', 'aria-label': 'Look at my screen', title: 'Look at my screen (one frame)' }, on: { click: () => lookAtScreen() } }, icon('laptop', { size: 22 }), h('span', { class: 'optics-key-label', text: 'Screen' }))
     : null;
-  const keys = h('div', { class: 'optics-keys' }, flipBtn, h('div', { class: 'optics-shutter-wrap' }, lookBtn, lookCaption), watchBtn, screenBtn);
+  const keys = h('div', { class: 'optics-keys' }, flipBtn, h('div', { class: 'optics-shutter-wrap' }, lookBtn, lookCaption), watchBtn, liveViewBtn, screenBtn);
   const askRow = h('div', { class: 'optics-ask-row' }, askInput, micBtn);
   const deck = h('div', { class: 'optics-deck' }, askRow, keys);
   const live = h('div', { class: 'visually-hidden', attrs: { 'aria-live': 'polite', role: 'status' } });
@@ -346,6 +412,7 @@ export function openOptics(deps = {}) {
     top,
     notice,
     watchHud,
+    liveHud,
     live,
   );
 
@@ -358,6 +425,13 @@ export function openOptics(deps = {}) {
   let followInView = null; // the follow-up entry
   let followScrolledByOwner = false;
   let watch = null;
+  // Live view (v8.0): { startedAt, endsAt, timer, tickTimer, resumeTimer, inflight, sent, est, looks,
+  // summary, said, lines, lastStartAt, lastCostUsd, backoffMs, backoffUntil, rateLimited, errors,
+  // paused: null | 'look' | 'cap' | 'offline', resumeAt, lastSpokenAt }
+  let liveView = null;
+  const liveOpts = { ...LIVE_DEFAULTS, ...(deps.liveOptions || {}) };
+  let liveBudget = null; // the $1-an-hour budget (created on first use, shared through localStorage)
+  let liveHudTimer = 0;
   let mic = null;
   let closed = false;
   let resumeOnVisible = false;
@@ -365,6 +439,8 @@ export function openOptics(deps = {}) {
   let holo = null; // Hologram of this: { entry, run, opened }
   let menuOpen = false;
   let noticeTimer = 0;
+  // "Live view" said in Voice Mode opened Optics: the live view starts as soon as the camera is live.
+  let autoLive = deps.autoLive === true;
   // "What am I looking at?" said in Voice Mode opened Optics: look as soon as the camera is live.
   let autoLook = typeof deps.autoLook === 'string' ? deps.autoLook.trim().slice(0, 500) : '';
   let autoLookResolve = null;
@@ -389,7 +465,7 @@ export function openOptics(deps = {}) {
     onSwitch: (e) => onCameraSwitched(e),
     preferred: () => (choice ? choice.get() : null),
     // A camera plugged in is switched to by itself only while nothing is under way.
-    allowAutoSwitch: () => !watch && !isBusy() && !holo,
+    allowAutoSwitch: () => !watch && !liveView && !isBusy() && !holo,
   });
   const desktopMq = window.matchMedia ? window.matchMedia(DESKTOP_MQ) : null;
 
@@ -400,9 +476,10 @@ export function openOptics(deps = {}) {
     const liveNow = camera.live;
     deck.dataset.frozen = el.dataset.frozen;
     lookBtn.disabled = !(liveNow && (next === 'live' || next === 'frozen')) || isBusy();
-    flipBtn.disabled = !(liveNow && camera.canFlip) || !!watch || isBusy();
+    flipBtn.disabled = !(liveNow && camera.canFlip) || !!watch || !!liveView || isBusy();
     watchBtn.disabled = !(liveNow && (next === 'live' || watch));
-    if (screenBtn) screenBtn.disabled = isBusy() || !!watch;
+    liveViewBtn.disabled = !((liveNow && (next === 'live' || next === 'frozen') && !!deps.liveLook) || liveView);
+    if (screenBtn) screenBtn.disabled = isBusy() || !!watch || !!liveView;
     syncTop();
     renderLookCost();
     fitLive();
@@ -475,16 +552,17 @@ export function openOptics(deps = {}) {
     const on = camera.live;
     livePill.hidden = !on;
     closeBtn.hidden = on;
-    setText(pillText, watch ? `WATCH ${clock(watch.endsAt - Date.now())}` : 'OPTICS');
-    livePill.setAttribute('aria-label', watch ? 'Watch is on. Turn the camera off' : 'Camera is on. Turn it off');
+    // The pill reads LIVE VIEW while the live view is on (LIVE is the pill's own word).
+    setText(pillText, liveView ? 'VIEW' : watch ? `WATCH ${clock(watch.endsAt - Date.now())}` : 'OPTICS');
+    livePill.setAttribute('aria-label', liveView ? 'Live view is on. Turn the camera off' : watch ? 'Watch is on. Turn the camera off' : 'Camera is on. Turn it off');
     el.dataset.camera = on ? 'live' : camera.state === 'paused' ? 'paused' : 'off';
     el.dataset.mirrored = camera.mirrored ? 'true' : 'false';
-    const liveKey = `${on}|${!!watch}`;
+    const liveKey = `${on}|${!!watch}|${!!liveView}`;
     if (liveKey !== lastLiveKey) {
       lastLiveKey = liveKey;
       try {
         // watchEndsAt (ms since the epoch, or null): the app's status line can count Watch down.
-        deps.onLiveChange && deps.onLiveChange({ camera: on, watch: !!watch, watchEndsAt: watch ? watch.endsAt : null });
+        deps.onLiveChange && deps.onLiveChange({ camera: on, watch: !!watch, watchEndsAt: watch ? watch.endsAt : null, liveView: !!liveView });
       } catch {
         /* optional */
       }
@@ -510,6 +588,13 @@ export function openOptics(deps = {}) {
       deps.wakeLock && deps.wakeLock.keepAwake && deps.wakeLock.keepAwake();
       // A frozen Look stays frozen when the camera comes back (after a pause); otherwise live.
       setMode(frozen ? (mode === 'review' ? 'review' : 'frozen') : 'live');
+      if (autoLive && mode === 'live') {
+        autoLive = false;
+        // A moment for the exposure to settle, then the live view ("live view" said in Voice Mode).
+        setTimeout(() => {
+          if (!closed && camera.live && mode === 'live') startLiveView();
+        }, 300);
+      }
       if (autoLook && mode === 'live') {
         const words = autoLook;
         autoLook = '';
@@ -523,6 +608,8 @@ export function openOptics(deps = {}) {
     }
     if (state === 'paused') {
       stopWatch('The camera stopped.');
+      // Off means off: hidden, minimized, another app, a call, the camera unplugged (v8.0).
+      stopLiveView('Live view stopped: the camera stopped.');
       deps.wakeLock && deps.wakeLock.allowSleep && deps.wakeLock.allowSleep();
       if (!frozen) {
         setMode('paused');
@@ -538,6 +625,7 @@ export function openOptics(deps = {}) {
     }
     if (state === 'error') {
       stopWatch('');
+      stopLiveView('');
       settleAutoLook({ error: 'The camera couldn’t start.' });
       showError(info && info.error);
       return;
@@ -608,6 +696,8 @@ export function openOptics(deps = {}) {
     showNotice(text, 6000);
     announce(text);
     if (watch && watch.detector) watch.detector.reset(); // a new picture: Watch starts over from it
+    // The camera the owner chose was unplugged: the live view stops (it never goes on with another one).
+    if (liveView && why !== 'plugged') stopLiveView('Live view stopped: the camera was unplugged.');
     if (menuOpen) renderCameraMenu();
     setMode(mode);
   }
@@ -659,6 +749,7 @@ export function openOptics(deps = {}) {
     toggleCameraMenu(false);
     if (!cam || !cam.id || (cam.id === camera.deviceId && camera.live)) return;
     if (watch) stopWatch('Watch stopped: the camera changed.');
+    if (liveView) stopLiveView('Live view stopped: the camera changed.');
     const res = await camera.select(cam.id);
     if (closed) return;
     if (res.ok) {
@@ -751,7 +842,7 @@ export function openOptics(deps = {}) {
   }
 
   async function flip() {
-    if (!camera.live || watch || isBusy()) return false;
+    if (!camera.live || watch || liveView || isBusy()) return false;
     flipBtn.disabled = true;
     const res = await camera.flip();
     if (closed) return false;
@@ -890,7 +981,7 @@ export function openOptics(deps = {}) {
 
   /** One frame of the screen, sent as a Look. Resolves { captureError } when no frame was taken. */
   async function lookAtScreen({ newChat = false } = {}) {
-    if (isBusy() || watch) return { skipped: true };
+    if (isBusy() || watch || liveView) return { skipped: true };
     const blocked = newChat ? null : lookBlockedNow();
     if (blocked) {
       showCard({
@@ -949,6 +1040,12 @@ export function openOptics(deps = {}) {
   async function sendFrame(frame, question, { newChat = false } = {}) {
     captured(frame.source);
     freezeWith(frame, question || 'What am I looking at?');
+    // A Look asked during the live view: the live view pauses while its picture and answer are on
+    // screen, and the Look's cost counts toward the live view's hour limit (v8.0).
+    if (liveView) {
+      frozen.liveCount = true;
+      pauseLiveView('look');
+    }
     askInput.value = '';
     setMode('frozen');
     playScan();
@@ -1016,6 +1113,11 @@ export function openOptics(deps = {}) {
           target.costUsd = Number(t.costUsd) || 0;
           if (['done', 'error', 'stopped', 'interrupted'].includes(t.status)) {
             target.status = t.status === 'done' ? 'done' : 'error';
+            // Asked during the live view: its cost counts toward the hour's $1 (once).
+            if (target.liveCount && !target.liveCounted) {
+              target.liveCounted = true;
+              countLiveSpend(target.costUsd);
+            }
             if (typeof target.onEnd === 'function') target.onEnd(t);
             if (t.status !== 'done' && !target.text) target.text = (t.error && t.error.message) || target.error || 'Jarvis couldn’t finish this answer.';
             if (target === frozen && frozen.logEntry) updateLogEntry(frozen);
@@ -1037,7 +1139,7 @@ export function openOptics(deps = {}) {
    */
   async function ask(question, { display = '', send = null, entryExtra = null } = {}) {
     if (!frozen || isBusy()) return null;
-    const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, ...(entryExtra || {}) };
+    const entry = { question: display || question, text: '', status: 'analyzing', costUsd: 0, unsub: null, liveCount: !!liveView, ...(entryExtra || {}) };
     followups.push(entry);
     followInView = entry;
     followScrolledByOwner = false;
@@ -1197,6 +1299,16 @@ export function openOptics(deps = {}) {
       askInput.value = '';
       return;
     }
+    // "Live view", "watch me", "stop live view", "that's enough", "stop watching" typed here (v8.0).
+    const typed = q ? matchOpticsCommand(q, { frozen: !!frozen && (mode === 'frozen' || mode === 'review') }) : null;
+    if (typed && (typed.action === 'liveview' || (typed.action === 'watch' && !typed.on))) {
+      const res = command(q);
+      if (res && res.handled) {
+        askInput.value = '';
+        if (res.command && res.command.ack) announce(res.command.ack);
+        return;
+      }
+    }
     if (frozen && (mode === 'frozen' || mode === 'review')) {
       if (!q) return;
       askInput.value = '';
@@ -1212,6 +1324,8 @@ export function openOptics(deps = {}) {
     if (camera.live) setMode('live');
     else startWithIntro(); // a screen look or a past Look reviewed: the camera was never on
     layoutSoon();
+    // Back to Live from a Look asked during the live view: it goes on (v8.0).
+    if (liveView && liveView.paused === 'look' && camera.live) resumeLiveView();
   }
 
   // ---- answer sheet -----------------------------------------------------------------------------
@@ -1399,6 +1513,11 @@ export function openOptics(deps = {}) {
 
   function startWatch() {
     if (!camera.live || mode !== 'live' || !deps.watchLook) return;
+    // Watch and the live view never run together: starting one stops the other (v8.0).
+    if (liveView) {
+      stopLiveView('');
+      announce('Live view off: Watch is on.');
+    }
     const cap = watchOpts.maxLooksPerDay;
     if (watchLooksToday() >= cap) {
       announce(`Watch has reached today's limit of ${cap} looks.`);
@@ -1537,6 +1656,501 @@ export function openOptics(deps = {}) {
     if (!closed) setMode(mode === 'live' ? 'live' : mode);
   }
 
+  // ---- Live view (v8.0) ---------------------------------------------------------------------------
+  // Jarvis watches live for up to an hour: one look at a time, the next 1 s after the previous one
+  // started (5 s from 90 cents in the hour), never over $1 in any hour (the budget below, kept in
+  // localStorage and shared by every tab), paused while a Look is on screen, and stopped (never
+  // paused) whenever the camera stops. Nothing is recorded: each frame is sent and dropped.
+  // localStorage behind try/catch (private mode, full storage): the budget never throws.
+  const liveStore = {
+    getItem: (k) => store.get(k),
+    setItem: (k, v) => store.set(k, v),
+    removeItem: (k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* private mode */
+      }
+    },
+  };
+  function budget() {
+    if (!liveBudget) liveBudget = createLiveBudget({ capUsd: liveOpts.capUsd, windowMs: liveOpts.windowMs, now: () => Date.now(), storage: liveStore, key: 'jarvis.liveView.spend' });
+    return liveBudget;
+  }
+
+  /** The last real cost of a live look in the past hour (this tab, another one, before a reload), else 0. */
+  function lastLiveCost() {
+    try {
+      const v = JSON.parse(store.get(LIVE_LAST_KEY) || 'null');
+      const usd = Number(v && v.usd);
+      const t = Number(v && v.t);
+      return Number.isFinite(usd) && usd > 0 && Number.isFinite(t) && Date.now() - t < liveOpts.windowMs ? usd : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** A cost asked during the live view (a Look, a follow-up) counts toward the hour's $1. */
+  function countLiveSpend(usd) {
+    const v = Number(usd) || 0;
+    if (v <= 0) return;
+    budget().add(v);
+    if (liveView) renderLiveHud();
+  }
+
+  const isOnline = () => {
+    try {
+      return typeof navigator === 'undefined' || navigator.onLine !== false;
+    } catch {
+      return true;
+    }
+  };
+
+  function toggleLiveView() {
+    if (liveView) {
+      stopLiveView('Live view stopped.');
+      return;
+    }
+    // Inside the tap: iOS lets Jarvis's voice play only after a gesture started it.
+    try {
+      if (deps.liveSpeech && typeof deps.liveSpeech.unlock === 'function') deps.liveSpeech.unlock();
+    } catch {
+      /* speech is optional */
+    }
+    startLiveView();
+  }
+
+  /**
+   * Starts the live view. Never turns the camera on: it must be live already. A Look on screen goes
+   * back to Live first. Returns true when it is on.
+   */
+  function startLiveView() {
+    if (liveView) return true;
+    if (closed || !camera.live || !deps.liveLook || !(mode === 'live' || mode === 'frozen')) return false;
+    if (mode === 'frozen') backToLive();
+    if (mode !== 'live') return false;
+    if (watch) {
+      stopWatch('');
+      watchHud.hidden = true;
+      el.dataset.watchHud = 'false';
+      announce('Watch off: Live view is on.');
+    }
+    clearTimeout(liveHudTimer);
+    const now = Date.now();
+    liveView = {
+      startedAt: now,
+      endsAt: now + liveOpts.sessionMs,
+      timer: 0,
+      tickTimer: 0,
+      resumeTimer: 0,
+      inflight: null,
+      sent: false,
+      est: 0,
+      looks: 0,
+      summary: '',
+      said: [],
+      lines: [],
+      lastStartAt: 0,
+      lastCostUsd: 0,
+      backoffMs: 0,
+      backoffUntil: 0,
+      rateLimited: false,
+      errors: 0,
+      paused: null,
+      resumeAt: 0,
+      lastSpokenAt: 0,
+    };
+    budget().reload();
+    liveView.lastCostUsd = lastLiveCost();
+    el.dataset.liveview = 'on';
+    el.dataset.liveviewPaused = '';
+    el.dataset.liveviewLooks = '0';
+    liveViewBtn.setAttribute('aria-pressed', 'true');
+    liveStop.setAttribute('aria-label', 'Stop the live view');
+    liveHud.hidden = false;
+    liveLines.replaceChildren();
+    liveLines.hidden = true;
+    setText(liveCaption, '');
+    liveCaption.hidden = true;
+    setLiveNote('');
+    liveResume.hidden = true;
+    placeLiveHud();
+    liveView.tickTimer = setInterval(tickLiveView, 1000);
+    renderLiveHud();
+    announce(`Live view on, for up to ${durationWords(liveOpts.sessionMs)}. Jarvis speaks up when he sees something.`);
+    setMode('live');
+    // Not when the hour's $1 is already spent (another tab, or a live view just before): it waits.
+    if (!isOnline()) pauseLiveView('offline');
+    else scheduleLive(0);
+    return true;
+  }
+
+  /** Off (not paused): the camera stopped, the owner stopped it, the hour is over, Optics closed. */
+  function stopLiveView(message = '', { keepHud = false } = {}) {
+    if (!liveView) return;
+    const lv = liveView;
+    liveView = null;
+    clearTimeout(lv.timer);
+    clearInterval(lv.tickTimer);
+    clearTimeout(lv.resumeTimer);
+    if (lv.inflight) {
+      lv.inflight.abort();
+      lv.inflight = null;
+      // A request already sent may be billed though its answer never comes: counted at its estimate.
+      if (lv.sent) budget().add(lv.est);
+    }
+    el.dataset.liveview = 'off';
+    el.dataset.liveviewPaused = '';
+    liveViewBtn.setAttribute('aria-pressed', 'false');
+    liveStop.setAttribute('aria-label', 'Close the live view panel');
+    liveCaption.hidden = true;
+    liveResume.hidden = true;
+    setText(liveMeter, keepParts(`LIVE VIEW OFF · ${lv.looks} ${lv.looks === 1 ? 'look' : 'looks'} · ${formatUsd(budget().spent())} this hour`));
+    if (message) {
+      setLiveNote(message, keepHud ? 'info' : '');
+      announce(message);
+    } else setLiveNote('');
+    clearTimeout(liveHudTimer);
+    if (!keepHud) liveHudTimer = setTimeout(() => !liveView && hideLiveHud(), message ? 6000 : 0);
+    if (!closed) setMode(mode);
+  }
+
+  function hideLiveHud() {
+    clearTimeout(liveHudTimer);
+    if (closed) return;
+    liveHud.hidden = true;
+    el.dataset.liveHud = 'false';
+    syncLiveHudRoom();
+  }
+
+  /**
+   * Phones: a Look's frozen frame sits under the live view's panel (its labels must never hide
+   * behind it): the stage starts below the panel (--live-hud-h).
+   */
+  function syncLiveHudRoom() {
+    const phonePanel = !liveHud.hidden && el.dataset.layout !== 'desktop' && liveHud.parentNode === el;
+    const room = phonePanel ? Math.ceil(liveHud.getBoundingClientRect().height) + 8 : 0;
+    el.style.setProperty('--live-hud-h', `${room}px`);
+  }
+
+  /** The live view waits: a Look on screen ('look'), the hour's $1 reached ('cap'), offline. */
+  function pauseLiveView(kind, { est = 0 } = {}) {
+    const lv = liveView;
+    if (!lv || lv.paused === kind) return;
+    lv.paused = kind;
+    clearTimeout(lv.timer);
+    clearTimeout(lv.resumeTimer);
+    el.dataset.liveviewPaused = kind;
+    liveResume.hidden = true;
+    if (kind === 'look') setLiveNote('Paused while you look at this', 'info');
+    else if (kind === 'offline') setLiveNote('You’re offline. Live view goes on when you’re back online.', 'warn');
+    else if (kind === 'cap') {
+      const at = budget().resumeAt(est || Math.max(estimateLive(), lv.lastCostUsd));
+      lv.resumeAt = at;
+      const when = Number.isFinite(at) ? ` It can go on at ${resumeLabel(at)}.` : '';
+      const text = `Live view paused: it has spent ${formatCap()} in the last hour.${when}`;
+      setLiveNote(text, 'warn');
+      announce(text);
+      liveResume.hidden = false;
+      liveResume.disabled = at > Date.now();
+      // The Resume button works from then (the owner taps it: it never goes on by itself).
+      const wait = at - Date.now();
+      if (wait > 0) {
+        lv.resumeTimer = setTimeout(() => {
+          if (liveView === lv && lv.paused === 'cap') liveResume.disabled = false;
+        }, Math.min(wait + 50, 2147483000));
+      }
+    }
+    renderLiveHud();
+  }
+
+  function resumeLiveView({ byOwner = false } = {}) {
+    const lv = liveView;
+    if (!lv || !lv.paused || closed) return false;
+    if (lv.paused === 'cap') {
+      budget().reload();
+      const est = Math.max(estimateLive(), lv.lastCostUsd);
+      if (!budget().canSpend(est)) {
+        lv.resumeAt = budget().resumeAt(est);
+        liveResume.disabled = true;
+        if (byOwner && Number.isFinite(lv.resumeAt)) announce(`It can go on at ${resumeLabel(lv.resumeAt)}.`);
+        return false;
+      }
+    }
+    if (lv.paused === 'offline' && !isOnline()) return false;
+    if (!camera.live || mode !== 'live') return false;
+    lv.paused = null;
+    clearTimeout(lv.resumeTimer);
+    el.dataset.liveviewPaused = '';
+    liveResume.hidden = true;
+    setLiveNote(lv.rateLimited ? 'Looking less often: your Anthropic account’s speed limit.' : '', lv.rateLimited ? 'warn' : '');
+    renderLiveHud();
+    scheduleLive();
+    return true;
+  }
+
+  function formatCap() {
+    const cap = Number(liveOpts.capUsd) || 1;
+    return cap >= 1 && Number.isInteger(cap) ? `$${cap}` : formatUsd(cap);
+  }
+
+  function estimateLive() {
+    const lv = liveView;
+    const saidChars = lv ? lv.said.reduce((n, l) => n + l.length, 0) : 0;
+    const w = liveOpts.maxEdge;
+    return estimateLiveLookUsd({ model: liveOpts.model, width: w, height: Math.round((w * 9) / 16), summaryChars: lv ? lv.summary.length : 0, saidChars });
+  }
+
+  function setLiveNote(text, kind = '') {
+    setText(liveNote, text || '');
+    liveNote.hidden = !text;
+    liveNote.dataset.kind = kind || 'info';
+  }
+
+  function scheduleLive(delay) {
+    const lv = liveView;
+    if (!lv || lv.paused || lv.inflight || closed) return;
+    clearTimeout(lv.timer);
+    const d = delay !== undefined ? delay : nextLiveDelay({ lastStartAt: lv.lastStartAt, now: Date.now(), spentUsd: budget().spent(), backoffUntil: lv.backoffUntil });
+    lv.timer = setTimeout(() => liveTick(lv), Math.max(0, Number(d) || 0));
+  }
+
+  /** One look: the budget first, then the newest frame, then the answer. Never two at a time. */
+  async function liveTick(lv) {
+    if (liveView !== lv || lv.paused || lv.inflight || closed) return;
+    if (!camera.live) {
+      stopLiveView('Live view stopped: the camera stopped.');
+      return;
+    }
+    const now = Date.now();
+    if (now >= lv.endsAt) {
+      endLiveHour();
+      return;
+    }
+    if (!isOnline()) {
+      pauseLiveView('offline');
+      return;
+    }
+    budget().reload(); // another tab may have spent meanwhile
+    const wait = nextLiveDelay({ lastStartAt: lv.lastStartAt, now, spentUsd: budget().spent(), backoffUntil: lv.backoffUntil });
+    if (wait > 20) {
+      scheduleLive(wait);
+      return;
+    }
+    // The estimate, or the last real cost when that was higher: never past the cap.
+    const est = Math.max(estimateLive(), lv.lastCostUsd);
+    if (!budget().canSpend(est)) {
+      pauseLiveView('cap', { est });
+      return;
+    }
+    lv.est = est;
+    lv.sent = false;
+    const controller = new AbortController();
+    lv.inflight = controller;
+    let frame;
+    try {
+      frame = await camera.capture({ maxEdge: liveOpts.maxEdge, quality: liveOpts.quality, previewEdge: 160 });
+    } catch {
+      if (lv.inflight === controller) lv.inflight = null;
+      lv.lastStartAt = Date.now(); // no frame this time: the next try waits its second
+      if (liveView === lv) scheduleLive();
+      return;
+    }
+    if (frame.canvas) releaseCanvas(frame.canvas);
+    // Stopped, paused, closed or the camera stopped while the frame was encoded: nothing is sent.
+    if (liveView !== lv || lv.paused || closed || controller.signal.aborted || !camera.live) {
+      if (lv.inflight === controller) lv.inflight = null;
+      if (liveView === lv && !lv.paused) scheduleLive();
+      return;
+    }
+    lv.looks += 1;
+    lv.sent = true;
+    // The cadence counts from the request itself: never two requests less than a second apart.
+    lv.lastStartAt = Date.now();
+    el.dataset.liveviewLooks = String(lv.looks);
+    let res;
+    try {
+      res = await deps.liveLook({ data: frame.data, width: frame.width, height: frame.height, source: frame.source }, { summary: lv.summary, said: lv.said.slice(), signal: controller.signal, model: liveOpts.model });
+    } catch {
+      res = { ok: false, costUsd: 0, error: 'This frame could not be checked.' };
+    }
+    const mine = lv.inflight === controller;
+    if (mine) lv.inflight = null;
+    if (!mine && liveView !== lv) return; // stopped meanwhile: its estimate was counted then
+    lv.sent = false;
+    const cost = Number(res && res.costUsd) || 0;
+    if (cost > 0) {
+      budget().add(cost);
+      lv.lastCostUsd = cost;
+      store.set(LIVE_LAST_KEY, JSON.stringify({ t: Date.now(), usd: cost }));
+    }
+    if (liveView !== lv) return;
+    onLiveResult(lv, res || { ok: false }, cost);
+    renderLiveHud();
+    if (!lv.paused) scheduleLive();
+  }
+
+  function onLiveResult(lv, res, cost) {
+    if (res.rateLimited) {
+      // 429 / 529: wait for retry-after (else 2 s, doubling up to 30 s), and say why.
+      lv.backoffMs = liveBackoff(lv.backoffMs, res.retryAfterMs);
+      lv.backoffUntil = Date.now() + lv.backoffMs;
+      lv.rateLimited = true;
+      if (!lv.paused) setLiveNote('Looking less often: your Anthropic account’s speed limit.', 'warn');
+      el.dataset.liveviewLimited = 'true';
+      return;
+    }
+    if (res.ok) {
+      lv.backoffMs = 0;
+      lv.backoffUntil = 0;
+      lv.errors = 0;
+      if (lv.rateLimited) {
+        lv.rateLimited = false;
+        el.dataset.liveviewLimited = 'false';
+        if (!lv.paused) setLiveNote('');
+      }
+      if (res.summary && res.summary !== lv.summary) {
+        lv.summary = res.summary;
+        if (!lv.paused || lv.paused !== 'look') {
+          setText(liveCaption, res.summary);
+          liveCaption.hidden = false;
+        }
+      }
+      // A look that was under way when a Look took the screen: its line waits (the owner is reading
+      // the Look's answer); the next look after Live says it if it still matters.
+      if (res.worthSaying && res.line && !lv.said.includes(res.line) && lv.paused !== 'look') liveLine(lv, res.line);
+      return;
+    }
+    if (res.error === 'stopped') return;
+    // Nothing more can work (no key, a key Anthropic refused, no credit, a model the key can't use):
+    // the live view stops and says why.
+    if (res.fatal) {
+      stopLiveView(`Live view stopped: ${String(res.error || 'Claude refused the request.').replace(/\s+/g, ' ').trim()}`, { keepHud: true });
+      return;
+    }
+    // A request that may have been billed but whose answer never came (a timeout, a dropped
+    // connection): counted at its estimate, so the hour's $1 is never under-counted.
+    if (res.costUnknown && !(cost > 0)) budget().add(lv.est);
+    if (!isOnline()) {
+      pauseLiveView('offline');
+      return;
+    }
+    // A reply came back but was a refusal or cut short: that frame is skipped.
+    if (cost > 0) return;
+    // No reply (a network or server problem): back off, never a tight loop.
+    lv.errors += 1;
+    lv.backoffMs = liveBackoff(lv.backoffMs, undefined);
+    lv.backoffUntil = Date.now() + lv.backoffMs;
+    if (lv.errors >= 3 && !lv.paused && !lv.rateLimited) setLiveNote('Jarvis can’t reach Claude right now. Trying again less often.', 'warn');
+  }
+
+  /** A worth-saying line: listed (newest first, the last five) and spoken when Jarvis may speak. */
+  function liveLine(lv, line) {
+    lv.said.unshift(line);
+    if (lv.said.length > liveOpts.saidKept) lv.said.length = liveOpts.saidKept;
+    const entry = { line, at: Date.now(), spoken: false };
+    lv.lines.unshift(entry);
+    if (lv.lines.length > liveOpts.saidKept) lv.lines.length = liveOpts.saidKept;
+    entry.spoken = speakLiveLine(lv, line);
+    if (!entry.spoken) safeCue('notify');
+    announce(line);
+    renderLiveLines(lv);
+  }
+
+  function speakLiveLine(lv, line) {
+    const sp = deps.liveSpeech;
+    if (!sp || typeof sp.say !== 'function') return false;
+    let st = null;
+    try {
+      st = typeof sp.state === 'function' ? sp.state() : null;
+    } catch {
+      st = null;
+    }
+    if (!st || !st.allowed) return false;
+    // The owner talking (Voice Mode's or Optics' own microphone hearing words), or Jarvis speaking.
+    const ownerSpeaking = !!st.ownerSpeaking || !!mic;
+    if (!canSpeakLive({ lastSpokenAt: lv.lastSpokenAt, now: Date.now(), ownerSpeaking, jarvisSpeaking: !!st.jarvisSpeaking })) return false;
+    let ok = false;
+    try {
+      ok = sp.say(line) === true;
+    } catch {
+      ok = false;
+    }
+    if (ok) {
+      lv.lastSpokenAt = Date.now();
+      el.dataset.liveviewSpoken = String((Number(el.dataset.liveviewSpoken) || 0) + 1);
+    }
+    return ok;
+  }
+
+  function renderLiveLines(lv) {
+    liveLines.replaceChildren(
+      ...lv.lines.map((l, i) =>
+        h('li', { class: ['optics-liveview-line', i === 0 && 'is-newest'], attrs: { 'data-testid': 'optics-liveview-line', 'data-spoken': String(!!l.spoken) } }, h('span', { class: 'optics-liveview-time', text: timeLabel(l.at) }), h('span', { class: 'optics-liveview-text', text: l.line })),
+      ),
+    );
+    liveLines.hidden = !lv.lines.length;
+  }
+
+  function renderLiveHud() {
+    const lv = liveView;
+    if (!lv) return;
+    const now = Date.now();
+    const spent = budget().spent();
+    // Breaks only between its parts ("… this hour ·" / "limit $1"), never inside one.
+    setText(liveMeter, keepParts(liveMeterText({ elapsedMs: now - lv.startedAt, spentUsd: spent, capUsd: liveOpts.capUsd })));
+    liveMeter.dataset.spentUsd = spent.toFixed(6);
+    liveMeter.dataset.looks = String(lv.looks);
+    el.dataset.liveviewSlow = spent >= liveOpts.slowFromUsd ? 'true' : 'false';
+    if (lv.paused === 'cap' && lv.resumeAt && now >= lv.resumeAt) liveResume.disabled = false;
+  }
+
+  function tickLiveView() {
+    const lv = liveView;
+    if (!lv) return;
+    if (Date.now() >= lv.endsAt) {
+      endLiveHour();
+      return;
+    }
+    renderLiveHud();
+  }
+
+  function endLiveHour() {
+    if (!liveView) return;
+    stopLiveView(`Live view stopped after ${durationWords(liveOpts.sessionMs)}. Tap Live view to keep going.`, { keepHud: true });
+  }
+
+  /** The HUD: the top of the side column on a computer, under the top bar on a phone. */
+  function placeLiveHud() {
+    const desktop = el.dataset.layout === 'desktop';
+    const home = desktop ? side : el;
+    if (liveHud.parentNode !== home) {
+      if (desktop) side.prepend(liveHud);
+      else el.insertBefore(liveHud, live);
+    }
+    el.dataset.liveHud = liveHud.hidden ? 'false' : 'true';
+    syncLiveHudRoom();
+  }
+
+  const onOnline = () => {
+    if (liveView && liveView.paused === 'offline') resumeLiveView();
+  };
+  const onOffline = () => {
+    if (liveView && !liveView.paused) pauseLiveView('offline');
+  };
+  window.addEventListener('online', onOnline);
+  window.addEventListener('offline', onOffline);
+  offs.push(() => window.removeEventListener('online', onOnline));
+  offs.push(() => window.removeEventListener('offline', onOffline));
+  // Another Jarvis tab or window spent from the same hour's $1: the meter follows.
+  const onStorage = (e) => {
+    if (!liveView || !e || (e.key && e.key !== 'jarvis.liveView.spend')) return;
+    budget().reload();
+    renderLiveHud();
+  };
+  window.addEventListener('storage', onStorage);
+  offs.push(() => window.removeEventListener('storage', onStorage));
+
   // ---- words: Optics commands (typed, spoken here, or heard by Voice Mode) -----------------------------
   /**
    * Words for Optics: { handled: false } when they are for Jarvis as usual, else { handled: true,
@@ -1588,7 +2202,7 @@ export function openOptics(deps = {}) {
         // Live: a Look whose question asks for the hologram (the frame goes with it).
         return started('hologram', () => look({ textOverride: hologramRequest(cmd.subject) }));
       case 'flip': {
-        if (!camera.live || !camera.canFlip || watch || busy) return ack('flip', camera.canFlip ? 'Not right now.' : 'There’s only one camera.');
+        if (!camera.live || !camera.canFlip || watch || liveView || busy) return ack('flip', camera.canFlip ? 'Not right now.' : 'There’s only one camera.');
         const want = cmd.side;
         if (want && camera.phone && camera.facing === want) return ack('flip', `That’s the ${want === 'front' ? 'front' : 'back'} camera already.`);
         flip();
@@ -1607,11 +2221,35 @@ export function openOptics(deps = {}) {
           startWatch();
           return ack('watch', watch ? 'Watching. I’ll speak up if something changes.' : 'Watch can’t start right now.');
         }
+        // "Stop watching" stops whichever is on: Watch or the live view.
+        if (!cmd.on && liveView) {
+          stopLiveView('Live view stopped.');
+          return ack('liveview', 'Live view off.');
+        }
         if (!cmd.on && watch) {
           stopWatch('Watch stopped.');
           return ack('watch', 'Watch off.');
         }
         return ack('watch', cmd.on ? 'I’m already watching.' : 'Watch is already off.');
+      case 'liveview':
+        if (cmd.on) {
+          if (liveView) return ack('liveview', liveView.paused === 'cap' ? liveNote.textContent || 'The live view is paused.' : 'I’m already watching.');
+          if (!deps.liveLook) return { handled: false };
+          // Never turns the camera on by itself: it must be live already.
+          if (!camera.live) return ack('no-camera', 'Turn the camera on first, then say live view.');
+          if (busy) return ack('busy', 'One moment, I’m still on the last one.');
+          const on = startLiveView();
+          return ack('liveview', on ? 'Live view on. I’ll speak up when I see something.' : 'The live view can’t start right now.');
+        }
+        if (liveView) {
+          stopLiveView('Live view stopped.');
+          return ack('liveview', 'Live view off.');
+        }
+        if (watch) {
+          stopWatch('Watch stopped.');
+          return ack('watch', 'Watch off.');
+        }
+        return ack('liveview', 'The live view is already off.');
       default:
         return { handled: false };
     }
@@ -1747,6 +2385,7 @@ export function openOptics(deps = {}) {
     followInView = null;
     answerBody.scrollTop = 0;
     setMode('frozen');
+    if (liveView) pauseLiveView('look'); // a past Look on screen: the live view waits for Live
     renderAnswer();
     renderPinList();
     layoutSoon();
@@ -1797,6 +2436,9 @@ export function openOptics(deps = {}) {
       } else if (e.code === 'KeyW') {
         e.preventDefault();
         toggleWatch();
+      } else if (e.code === 'KeyL') {
+        e.preventDefault();
+        if (!liveViewBtn.disabled) toggleLiveView();
       }
       return;
     }
@@ -1827,6 +2469,7 @@ export function openOptics(deps = {}) {
     // Live sits in the answer's actions on a computer, and in the deck's ask row on a phone.
     const home = layout === 'desktop' ? answerActions : askRow;
     if (liveBtn.parentNode !== home) home.prepend(liveBtn);
+    if (!liveHud.hidden || liveView) placeLiveHud();
     layoutSoon();
     keepFollowUpInView();
     fitLive();
@@ -1840,11 +2483,13 @@ export function openOptics(deps = {}) {
     // Before, it kept the frozen stage's numbers, so after Live part of the frame was hidden under the
     // top bar and the deck and the brackets sat elsewhere.
     ro = new ResizeObserver(() => {
+      syncLiveHudRoom();
       fitLive();
       layoutSoon();
     });
     ro.observe(stage);
     ro.observe(deck);
+    ro.observe(liveHud); // the live view's panel grows with its lines: a frozen frame stays clear of it
   }
   const onVisible = () => {
     if (document.visibilityState === 'visible' && resumeOnVisible && !closed && camera.state === 'paused') {
@@ -1868,6 +2513,7 @@ export function openOptics(deps = {}) {
     if (now) {
       toggleCameraMenu(false);
       stopWatch('');
+      stopLiveView('Live view stopped: something covered the camera.');
       if (camera.live) camera.stop('covered');
       syncTop();
       return;
@@ -1927,6 +2573,8 @@ export function openOptics(deps = {}) {
     if (closed) return;
     closed = true;
     stopWatch('');
+    stopLiveView('');
+    clearTimeout(liveHudTimer);
     if (mic) {
       try {
         mic.abort ? mic.abort() : mic.stop();
@@ -1992,6 +2640,12 @@ export function openOptics(deps = {}) {
     setVoice: (info) => setVoice(info),
     /** Watch off (the WATCH pill in the header); the camera stays on. */
     stopWatch: () => stopWatch('Watch stopped.'),
+    /** The live view off (v8.0); the camera stays on. */
+    stopLiveView: () => stopLiveView('Live view stopped.'),
+    /** Live view: { on, paused, looks } (v8.0). */
+    get liveView() {
+      return liveView ? { on: true, paused: liveView.paused, looks: liveView.looks } : { on: false, paused: null, looks: 0 };
+    },
     /** Opened over Voice Mode (its turns are spoken, its mic is Voice Mode's). */
     overVoice: !!deps.voice,
     /** deps.autoLook: a Promise of the Look's outcome ({ run, frameId } | { error }), else null. */
