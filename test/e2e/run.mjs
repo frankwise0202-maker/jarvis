@@ -58,6 +58,7 @@ import macHandsFree from './scenarios/mac-handsfree.mjs';
 import tourRender from './scenarios/tour-render.mjs';
 // ---- tour-render ◂
 // ---- tours ▸
+import tours from './scenarios/tours.mjs';
 // ---- tours ◂
 // ---- voice ▸
 import voiceCommands from './scenarios/voice-commands.mjs';
@@ -103,6 +104,7 @@ const V81_SCENARIOS = [
   ...tourRender,
   // ---- tour-render ◂
   // ---- tours ▸
+  ...tours,
   // ---- tours ◂
   // ---- voice ▸
   ...voiceCommands,

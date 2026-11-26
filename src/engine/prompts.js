@@ -643,6 +643,35 @@ export function buildBlueprintRequestBlock({ model, part = null, hologram = null
   return lines.join('\n');
 }
 
+const VIEWER_VIEWS = ['enclosed', 'opened', 'apart'];
+
+/**
+ * The hologram on screen when the owner asks (startTurn({ viewer })): one line in this turn's
+ * <turn_context>, so "what does that do?" in the middle of a walkthrough is about the part that
+ * glows. It is per-turn text in the new message, so the cached prefix never changes and older
+ * chats get it too. '' without a viewer.
+ *   viewer: { title, exploded: 0..1, selected: { id, name } | null, glowing: [{ id, name }],
+ *             tour: { index, total, part: 'the battery', view: 'enclosed' | 'opened' | 'apart' | '' } | null }
+ */
+export function buildViewerLine(viewer) {
+  if (!viewer || typeof viewer !== 'object' || Array.isArray(viewer)) return '';
+  const named = (p) => (p && typeof p === 'object' && typeof p.id === 'string' && PART_ID.test(p.id) ? `"${libText(p.name, 40) || p.id}" (id: ${p.id})` : '');
+  const glowing = [...new Set((Array.isArray(viewer.glowing) ? viewer.glowing : []).map(named).filter(Boolean))].slice(0, 4);
+  const selected = named(viewer.selected);
+  const exploded = typeof viewer.exploded === 'number' && Number.isFinite(viewer.exploded) ? (viewer.exploded >= 0.5 ? ', exploded' : ', assembled') : '';
+  let line = `On screen: the hologram "${libText(viewer.title) || 'Untitled'}"${exploded}`;
+  if (glowing.length) line += `; glowing: ${wordList(glowing)}`;
+  if (selected && !glowing.includes(selected)) line += `; selected: ${selected}`;
+  line += '.';
+  const tour = viewer.tour && typeof viewer.tour === 'object' ? viewer.tour : null;
+  if (tour && Number.isInteger(tour.index) && Number.isInteger(tour.total) && tour.index > 0 && tour.total >= tour.index) {
+    const bits = [`step ${tour.index} of ${tour.total}`, libText(tour.part, 40), VIEWER_VIEWS.includes(tour.view) ? tour.view : ''].filter(Boolean);
+    line += ` Walkthrough: ${bits.join(', ')}.`;
+  }
+  if (glowing.length || selected) line += ' "This" or "that" in the owner\'s words most likely means that part.';
+  return line;
+}
+
 /** `text` (a <turn_context> block) with `blocks` added right before its closing tag. */
 export function withTurnContextBlocks(text, blocks) {
   const extra = (Array.isArray(blocks) ? blocks : []).filter((b) => typeof b === 'string' && b.trim());

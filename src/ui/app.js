@@ -1487,6 +1487,8 @@ export async function startApp(rootEl) {
     if (extras && extras.spoken === true) input.spoken = true; // Voice Mode: the reply is written for the ear
     if (extras && extras.blueprintFor) input.blueprintFor = extras.blueprintFor; // a 2D request from the hologram viewer
     if (extras && extras.optics) input.optics = extras.optics; // a Look: the one image is an Optics frame
+    const onScreen = viewerTurnContext(); // v8.1: a hologram on screen (a viewer's words, Voice Mode over it): Claude knows what glows
+    if (onScreen) input.viewer = onScreen;
     // v8.1 (E0): an answer asked while the live view is on goes through its $1-an-hour gate, as a quick
     // answer (agents are outside the gate); a research mission is outside it (its offer says so).
     if (!takeOutsideLiveView(extras, clean)) {
@@ -3121,8 +3123,54 @@ export async function startApp(rootEl) {
       // Voice Mode open under the viewer: the mic button is its talk button (while a hologram it
       // builds is shown, a tap listens for a command instead of stopping him: Voice Mode decides).
       voice: { active: () => !!voiceApi && safe(() => isVoiceModeOpen(), false), tap: () => voiceApi && voiceApi.viewerTap() },
+      // v8.1 walkthroughs: Voice Mode, while open, says the tour, asks its decisions and holds a woken session.
+      tourVoice: () => (voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
       onClose: () => onViewerClosed(),
     };
+  }
+
+  // ---- v8.1 walkthroughs (SPEC §29) ---------------------------------------------------------------
+
+  /** The newest reply's hologram, when the newest reply showed one: { segment, conversationId, turnId } or null. */
+  function newestReplyHologram() {
+    const conv = state.conv;
+    const last = conv ? turnsOf(conv).filter((t) => t && t.role === 'jarvis').pop() : null;
+    const segs = last && Array.isArray(last.segments) ? last.segments : [];
+    let seg = null;
+    for (let i = segs.length - 1; i >= 0 && !seg; i -= 1) if (isObj(segs[i]) && segs[i].kind === 'hologram') seg = segs[i];
+    if (!seg || seg.status === 'building' || seg.status === 'error' || !isObj(seg.spec) || !Array.isArray(seg.spec.parts) || !seg.spec.parts.length) return null;
+    return { segment: seg, conversationId: conv.id, turnId: last.id };
+  }
+
+  /** The router's `tourReply`: the newest reply's hologram ({ title, parts }) a walkthrough would open. */
+  function tourReplyState() {
+    const r = newestReplyHologram();
+    if (!r) return null;
+    const spec = r.segment.spec;
+    return { title: String(spec.title || r.segment.title || ''), parts: spec.parts.filter(isObj).map((p) => ({ id: p.id, name: p.name, aka: Array.isArray(p.aka) ? p.aka : [] })) };
+  }
+
+  /** "Walk me through it" with the viewer closed, right after a reply that showed a hologram: open it again. */
+  function openReplyHologram() {
+    const r = newestReplyHologram();
+    if (!r) return null;
+    const sheet = getBlueprintViewer();
+    if (sheet) safe(() => sheet.close());
+    let viewer = null;
+    try {
+      viewer = openHologramViewer({ source: { segment: r.segment, conversationId: r.conversationId, turnId: r.turnId }, deps: viewerDeps() });
+    } catch (err) {
+      console.error('[jarvis] hologram viewer failed:', err);
+      return null;
+    }
+    if (voiceInfo) safe(() => viewer.setVoice(voiceInfo));
+    return viewer;
+  }
+
+  /** What the open hologram viewer shows (its title, the glowing part, the tour's step), for a turn's context (B6). */
+  function viewerTurnContext() {
+    const viewer = getHologramViewer();
+    return viewer && typeof viewer.viewerContext === 'function' ? safe(() => viewer.viewerContext(), null) : null;
   }
 
   function showInChat(conversationId, turnId) {
@@ -4628,6 +4676,11 @@ export async function startApp(rootEl) {
     // ---- mac-hf ▸
     // ---- mac-hf ◂
     // ---- tours ▸ (s.tour)
+    // The walkthrough on screen (its words claim "next", "back", "enclosed" only then), and the hologram
+    // a "walk me through it" would tour: the open one, else the newest reply's (never an older one: L3).
+    s.tour = holo && typeof holo.tour === 'function' ? safe(() => holo.tour(), null) : null;
+    if (s.hologram && holo) s.hologram.title = safe(() => holo.getState().title, '') || '';
+    s.tourReply = holo ? null : safe(() => tourReplyState(), null);
     // ---- tours ◂
     // ---- voice ▸
     // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
@@ -4944,7 +4997,12 @@ export async function startApp(rootEl) {
           case 'speech':
             safe(() => stopSpeakingNow());
             break;
-          // 'tour' (tours) and 'chrome' (chrome-voice) are added by their builders here.
+          case 'tour': {
+            // tours: the walkthrough pauses at its step ("continue" goes on); its narration stops with Jarvis's voice
+            const viewer = getHologramViewer();
+            if (viewer && typeof viewer.tourCommand === 'function') safe(() => viewer.tourCommand({ do: 'tour-pause' }));
+            break;
+          }
           case 'chrome':
             // v8.1 chrome-voice: a bare "stop" stops the Chrome task too (its line is said: "Chrome is stopping").
             safe(() => chromeVoice && chromeVoice.stopFromVoice());
@@ -5013,7 +5071,7 @@ export async function startApp(rootEl) {
     // mac-dev (src/ui/commands/audio.js):
     register('audio', registerAudioCommands, { ...shared, audio: audioDevices });
     // tours (src/ui/commands/tours.js):
-    register('tour', registerTourCommands, { ...shared });
+    register('tour', registerTourCommands, { ...shared, tours: { viewer: () => getHologramViewer(), openReply: () => openReplyHologram() } });
     // voice (src/ui/commands/voice.js):
     register('voice', registerVoiceCommands, { ...shared, ...voiceCommandDeps() });
     // chrome-voice (src/ui/commands/chrome-voice.js):

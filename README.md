@@ -586,6 +586,39 @@ Jarvis's home screen now tells you what is going on before you ask.
 
 <!-- v8.1: tours writes this part. -->
 
+- **"Walk me through it"**, with a hologram on screen (or right after Jarvis showed you one): Jarvis
+  talks you through it part by part, and the hologram moves to each part as he starts talking about
+  it. It's free, works offline, and works for holograms from your library too.
+- **"Walk me through the battery"**: it comes apart, the camera flies in to the battery, glowing, and
+  Jarvis asks **"Do you want to see it enclosed, or opened?"** Say **enclosed** (it goes back
+  together, the case turns see-through and the battery glows where it sits), **opened** (the cover
+  in the way comes off and the camera looks at the battery from that side), **both**, or **you
+  pick**. Then he tells you what it is and what sits next to it.
+- **While it plays**, say **next**, **back** (or "go back", "previous"), **repeat** ("say that
+  again"), **wait** or **pause**, **continue**, **skip to the fan**, or **stop the tour** ("that's
+  enough"). They act at once and cost nothing. Outside a walkthrough these words do what they did
+  before: "back" alone still turns the hologram to its back view.
+- **The walkthrough bar** under the hologram shows what Jarvis is saying, "3 of 8", **Back**,
+  **Pause** (or **Play**), **Next** and **End**, and the choice buttons when he asks. On a Mac, ←
+  and → step through, Space pauses and plays, and Esc ends the walkthrough (a second Esc closes the
+  hologram). Touching or turning the model pauses it; **Play** goes on from that step. On a phone
+  the bar keeps the count and the buttons, and the words show over the hologram.
+- **Questions on the way**, like "what does that do?" or "is it glued in?", go to Jarvis as normal
+  questions (paid like any other, about 3–5¢). He is told which part is glowing and which step
+  you're on, so "that" means the part on screen. When he asks "enclosed or opened?", he listens
+  for your answer for up to a minute (the buttons and the words work any time after that), and
+  asking something else in between doesn't lose your place.
+- **"Show it enclosed"** and **"show it opened"** also work without a walkthrough: tap a part (or
+  say its name), then say which view you want.
+- **In Voice Mode** Jarvis says each step as the hologram moves. He listens only where you're
+  expected to answer (his question and the end), so a Bluetooth speakerphone switches less often.
+  If you close Voice Mode, the walkthrough goes on in the bar by itself. If Jarvis's window is
+  hidden, the walkthrough pauses (and a woken Jarvis can go back to Standby); it goes on when you
+  come back.
+- **How it's planned:** on your device, from the hologram itself (its parts, groups and shapes).
+  Where a part sits and the way in to it are said only when the hologram makes them clear;
+  otherwise Jarvis says it's inside the case. For real repair steps, ask Jarvis.
+
 ### Screens: your other monitor, or a panel beside you
 
 Say or type it, in the chat, a hologram's command box, the camera (Optics) or Voice Mode:
@@ -1111,6 +1144,7 @@ from the credit in your account. Rough examples:
 | A 3D hologram | about 10–30¢ (a battery at the low end, a whole car at the high end) |
 | A 2D blueprint | about 15¢, or about 35¢ once the conversation has been quiet for 5 minutes (shown on the button before you ask) |
 | Reopening a saved hologram or blueprint, hologram commands, Photos | free |
+| A walkthrough ("walk me through it") and its words (next, back, enclosed…) | free; a question you ask on the way costs what a question costs |
 | A Look with the camera (Optics) | about 2–3¢ on Opus 5.5 (about 8¢ for the first one in a new or quiet conversation); shown under the LOOK button |
 | A follow-up about the same picture (Tell me more, What's this part?) | about the same as a quick question |
 | Hologram of this | the price of a hologram, about 10–30¢ (shown on the button) |
