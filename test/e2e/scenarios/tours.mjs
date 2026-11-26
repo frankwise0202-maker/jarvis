@@ -18,7 +18,7 @@
 //                         at), then opened with the bottom cover hidden
 //   tour-hidden           the page hidden mid-tour: paused, Voice Mode's hold let go; shown: it goes on
 //   tour-george-sync      George from a fake home base: each step shown within 300 ms of its words
-//   tour-device-voice     the device's voice with start events (each step as its words begin: within 500 ms)
+//   tour-device-voice     the device's voice with start events (each step while its first sentence is said)
 //                         and without (never before its words, within the 3 s assumption)
 //   tour-decision-voice   at the question, "what does that do?" is one paid turn about the glowing
 //                         battery and the tour waits; Voice Mode keeps listening; "enclosed" by voice
@@ -609,11 +609,11 @@ export default [
   },
   {
     name: 'tour-device-voice',
-    title: 'The device\'s own voice: with start events each step is shown as its words begin (within 500 ms on this machine); without them (the engine assumes a chunk plays after 3 s) a step is never shown before its words and is shown within about 3.5 s of them; each step once',
+    title: 'The device\'s own voice: with start events each step is shown as its words begin (never before them, and while its first sentence is still being said); without them (the engine assumes a chunk plays after 3 s) a step is never shown before its words and is shown within about 3.5 s of them; each step once',
     device: 'desktop',
     timeout: 300000,
     async run(t) {
-      const check = async (page, { label, early, late }) => {
+      const check = async (page, { label, early, late, during = false }) => {
         await waitStatus(t, 'done', { timeout: 120000, page });
         const log = await tourLog(t, page);
         const v = await voice(t, page);
@@ -623,7 +623,8 @@ export default [
         const bad = [];
         for (const step of ['apart', 'g-case', 'g-power', 'g-input', 'end']) {
           const words = { apart: 'Taken apart, it has 16 main parts.', 'g-case': 'Case: the bottom cover.', 'g-power': 'Power: the battery.', 'g-input': 'Keyboard and touchpad: the keyboard.', end: "That's the tour." }[step];
-          const u = v.log.find((e) => norm(e.text).startsWith(words));
+          const k = v.log.findIndex((e) => norm(e.text).startsWith(words));
+          const u = v.log[k];
           const shown = shownAt(log, step);
           t.assert(u && shown > 0, `${label}: ${step} said and shown`);
           if (!u || shown < 0) continue;
@@ -631,16 +632,20 @@ export default [
           gaps.push(`${step} ${gap}`);
           if (gap < early) bad.push(`${step} shown ${-gap} ms before its words`);
           if (gap > late) bad.push(`${step} shown ${gap} ms after its words began (at most ${late})`);
+          // with start events: while its first sentence is still being said (the next one starts when it ends)
+          const after = v.log[k + 1];
+          if (during && after && shown > after.at) bad.push(`${step} shown ${Math.round(shown - after.at)} ms after its first sentence ended`);
         }
         t.note(`${label}: ${gaps.join(', ')} ms`);
         t.assert(!bad.length, `${label}: ${bad.join('; ')} (every step: ${gaps.join(', ')} ms)`);
       };
       await t.step('with start events', async () => {
         await voiceLaptop(t, { queue: ['Walk me through it.'], speech: { cps: 40 } });
-        // The fake's start event is a page timer: with another browser run beside it, it comes 100-330 ms late
-        // here. A sync bug is early (shown at speak()) or a second and more late (the 1.5 s fallback, an
-        // estimate, a sentence behind), so 500 ms still tells them apart.
-        await check(t.page, { label: 'start events', early: -60, late: 500 });
+        // The fake's start event is a page timer, which a loaded machine delays (100-540 ms here with other
+        // browser runs beside this one). So the look must come while its first sentence is still being said
+        // (the next sentence's start is that sentence's end timer, which a loaded page delays as much): a sync
+        // bug shows it early (at speak()) or late (the 1.5 s fallback, an estimate, a sentence behind).
+        await check(t.page, { label: 'start events', early: -60, late: 1500, during: true });
       });
       await t.step('without start events', async () => {
         const page = await t.newPage();
