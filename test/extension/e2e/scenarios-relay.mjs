@@ -14,6 +14,7 @@
 
 import { assert, tid, waitFor } from './harness.mjs';
 import { createAppPeer, linkCode, newLinkKey } from '../helpers/fake-relay.mjs';
+import { VERSION } from '../../../extension/build/manifest.mjs';
 
 const read = { name: 'read_page', input: { filter: 'interactive' } };
 const ref = (ctx, pattern) => ({ type: 'ref', ref: ctx.ref(pattern) });
@@ -69,7 +70,7 @@ const relayOpen = {
     assert((await section.locator(tid('link-hint')).textContent()).includes('Settings → Jarvis for Chrome → Link'), 'what to do while Jarvis isn’t heard from');
     const app = await createAppPeer({ relay: run.server.relay, key });
     const hello = await app.waitFor((m) => m.kind === 'hello', { timeoutMs: 15000 });
-    assert(hello.body.ext === 'jarvis-for-chrome' && hello.body.version === '1.1.0', JSON.stringify(hello.body));
+    assert(hello.body.ext === 'jarvis-for-chrome' && hello.body.version === VERSION, JSON.stringify(hello.body));
     const stored = await run.sw.evaluate(() => chrome.storage.local.get(['chromeLink', 'jarvis.voice']));
     assert(stored.chromeLink?.key === key && stored.chromeLink.core === run.server.apiBase && stored.chromeLink.v === 1, 'the key in chrome.storage.local');
     assert(stored['jarvis.voice']?.tasksFromJarvis === true, 'Link turns Tasks from Jarvis on');

@@ -5319,8 +5319,8 @@ Jarvis".
 
 **32.2.1 The manifest and storage.** `alarms` in `permissions`; `optional_host_permissions: ['https://*.ts.net/*']`,
 asked for by name when the owner links; the CSP's `connect-src` adds `https://*.ts.net`. Still no
-`externally_connectable` and no content scripts: no web page can message the extension. Version 1.1.0 (the
-extension's own: `extension/build/manifest.mjs` `VERSION`). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
+`externally_connectable` and no content scripts: no web page can message the extension. Version 1.1.1 (the
+extension's own: `extension/build/manifest.mjs` `VERSION`; 1.1.0 still works with this app). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
 key, linkedAt }` (and `prev`, `prevUntil`: the code's key for a while after the rekey, §32.2.4); `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
 `jarvis.voiceTasks` `{ day, count }` (tasks from Jarvis on this computer's calendar day); `jarvis.relay` `{ after,
 seen, heardAt }` (where reading `to-ext` left off, the last 500 ids read, and when a message from the app last opened

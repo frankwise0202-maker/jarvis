@@ -28,7 +28,7 @@ test('release build: manifest, icons, zip', async () => {
     assert.deepEqual(m.optional_host_permissions, ['https://*.ts.net/*']);
     assert.ok(!('externally_connectable' in m), 'no web page can message Jarvis for Chrome');
     assert.ok(!('optional_permissions' in m), 'no other optional permission');
-    assert.equal(m.version, '1.1.0');
+    assert.equal(m.version, '1.1.1');
     assert.equal(m.background.service_worker, 'background.js');
     assert.equal(m.background.type, 'module');
     assert.equal(m.side_panel.default_path, 'sidepanel.html');

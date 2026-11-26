@@ -1147,8 +1147,9 @@ Jarvis (in your usual Chrome) and Jarvis for Chrome (in its own profile) can't s
 leave each other messages on your home base. You link them once, on the Mac:
 
 1. Make sure **Jarvis for Chrome 1.1.0 or later** is installed (above; its side panel shows the version at the bottom
-   of Settings). To update an older one, download **jarvis-for-chrome.zip** again, replace the unzipped folder, and
-   press **Reload** on Jarvis for Chrome in `chrome://extensions`: your key and settings are kept. Your home base must
+   of Settings). **1.1.1** is the newest and an optional update: 1.1.0 keeps working, and 1.1.1 adds a little more
+   safety around the link code. To update, download **jarvis-for-chrome.zip** again, replace the unzipped folder,
+   and press **Reload** on Jarvis for Chrome in `chrome://extensions`: your key and settings are kept. Your home base must
    be linked too (**Settings → Home base**), with Jarvis Core 1.3 or later, which it installs by itself (or run
    `jarvis-core update` on the Alienware).
 2. In Jarvis, open **Settings → Jarvis for Chrome**, press **Link**, then **Copy link code**.

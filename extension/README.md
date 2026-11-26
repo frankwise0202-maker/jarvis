@@ -222,7 +222,9 @@ only they have: the home base passes them on without being able to read them, ke
 ### Link it (once)
 
 You need Jarvis for Chrome **1.1.0** or later: the side panel's **Settings** shows its version at
-the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, update it as in
+the bottom, and an older one has no **Voice from Jarvis** there. The newest is **1.1.1**, an optional
+update: 1.1.0 keeps working, and 1.1.1 also refuses anything sent with an old link code once the
+two are linked, and says hello again until Jarvis answers. To update, see
 [Updating and removing](#updating-and-removing) (your key, settings and history are kept). Jarvis
 needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
 
@@ -536,8 +538,8 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
   one.
 - **"Out of credits":** add credits at console.anthropic.com → Billing.
 - **The microphone doesn't work:** click the mic again and allow it in the tab Chrome opens.
-- **There's no "Voice from Jarvis" in Settings:** this is Jarvis for Chrome 1.0. Update it to 1.1.0
-  (above).
+- **There's no "Voice from Jarvis" in Settings:** this is Jarvis for Chrome 1.0. Update it to the
+  newest, 1.1.1 (above).
 - **"Linked · waiting for Jarvis":** your home base answers, but Jarvis hasn't answered on this link
   in the last minute (or ever). Open Jarvis in your usual Chrome and keep it open. If Jarvis doesn't show **Linked**, the
   code you pasted was replaced or had expired: press **Link** in Jarvis for a new one, then

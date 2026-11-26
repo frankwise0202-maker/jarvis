@@ -21,7 +21,7 @@
 export const NAME = 'Jarvis for Chrome';
 
 /** The version Jarvis for Chrome ships as (its own, not the web app's). */
-export const VERSION = '1.1.0';
+export const VERSION = '1.1.1';
 
 /** Where the owner's home base can be: its Tailscale name (see Voice from Jarvis). */
 export const HOME_BASE_HOSTS = Object.freeze(['https://*.ts.net/*']);
