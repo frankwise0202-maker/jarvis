@@ -155,7 +155,7 @@ function parse(text) {
 const VERBS_SAID_FIRST = new Set(
   ('find add click scroll sort filter search go open compare pick choose select buy order get grab read check save tell show look put book ' +
     'sign fill type play watch see use make reserve subscribe download send write summarize list give help take start continue keep try ' +
-    'switch remove delete change set close log apply print copy follow visit navigate find search press tap hit').split(' '),
+    'switch remove delete change set close log apply print copy follow visit navigate press tap hit').split(' '),
 );
 
 /** The owner's own words for a task: their spelling, without the carrier, fillers or end stops. */
@@ -235,12 +235,14 @@ const PAGE_WORDS = /(?:^|\s)(?:(?:on|in|from|of) (?:this|the) (?:page|site|websi
 
 // ------------------------------------------------------------------------ opening (G1's words)
 
-// What opening a page takes (Track 4's matchChromeCommand: G1 and G3): "pull this up in Chrome",
-// "open the second link", "google …", "search for … in Chrome", "open YouTube in Chrome", "go to
-// amazon.com". It is the cheaper move (no clicks, no task budget): a task needs more than that.
-const OPEN_THIS = /^(?:(?:pull|bring|put|open|show|load|get|throw|look)(?: me)? (?:this|that|it)(?: up)?|(?:pull|bring) up (?:this|that|it)|(?:open|show) (?:this|that|it) up)$/;
+// What opening a page takes (the windows builder's matchChromeCommand: G1 and G3, src/lib/chrome-commands.js):
+// "pull this up in Chrome", "look it up in Chrome", "open the second link", "google …", "search for …
+// in Chrome", "open YouTube in Chrome", "go to amazon.com". It is the cheaper move (no clicks, no task
+// budget): a task needs more than that. ("Find … in Chrome" is not one of its searches: it is a task.)
+const OPEN_THIS =
+  /^(?:(?:pull|bring|put|open|show|load|get|throw|send|take)(?: me)? (?:this|that|it)(?: (?:page|link|one|thing))?(?: up)?|(?:pull|bring|open|show) up (?:this|that|it)(?: (?:page|link|one|thing))?|(?:open|show) (?:this|that|it) up|(?:look|search) (?:it|this|that) up|google (?:it|this|that|them))$/;
 const OPEN_LINK = /^(?:open|pull up|bring up|show me|go to|load)(?: up)? (?:the )?(?:(?:first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|top) )?(?:link|links|source|sources|website|site)(?: \d+)?$|^open link \d+$/;
-const OPEN_SEARCH = /^(?:google|search(?: on)? google for|look (?:on )?google for|search(?: for)?|look up|look for|find(?: me)?) (?!(?:it|this|that)$)\S/;
+const OPEN_SEARCH = /^(?:google|search(?: on)? google for|look (?:on )?google for|search(?: for)?|look up) (?!(?:it|this|that)$)\S|^(?:search|look) .+ up$/;
 const OPEN_SITE = /^(?:open|go to|pull up|bring up|load|take me to|show me)(?: up)? (?!(?:it|this|that)$)\S/;
 // Words that make it more than opening: an action on the page, or the page itself.
 const ACTION = new RegExp(

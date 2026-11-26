@@ -137,8 +137,13 @@ test('opening a page is G1\'s (free, no task): "pull this up", links, searches, 
     'open the second link in Chrome',
     'open link 3',
     'search for usb c chargers in Chrome',
-    'find a 4K monitor in Chrome',
     'look up the return policy in Chrome',
+    'look it up in Chrome',
+    'search it up in Google Chrome',
+    'look them up in Chrome',
+    'open this one in Chrome',
+    'send it to Chrome',
+    'google it',
     'google usb c chargers',
     'search Google for the laptop battery',
     'open youtube in Chrome',
@@ -148,8 +153,10 @@ test('opening a page is G1\'s (free, no task): "pull this up", links, searches, 
     assert.equal(matchChromeTask(s, none), null, `none: ${s}`);
     assert.equal(matchChromeTask(s, ctx), null, `context: ${s}`);
   }
-  // With an action or a thing on the page, it is a task.
+  // With an action or a thing on the page, it is a task; so is "find …" (not one of G1's searches).
   assert.equal(taskText('find a 4K monitor and add it to the cart in Chrome', none), 'find a 4K monitor and add it to the cart');
+  assert.equal(taskText('find a 4K monitor in Chrome', none), 'find a 4K monitor');
+  assert.equal(taskText('open the second result in Chrome', none), 'open the second result');
   assert.equal(taskText('open the cheapest one in Chrome', none), 'open the cheapest one');
   assert.equal(taskText('in Chrome, open youtube', none), 'open youtube', 'a leading "in Chrome" is a task (G1 takes only its own shapes)');
 });
@@ -237,7 +244,7 @@ test('the chat: a context sentence after a task, or a follow-up word, carries on
   assert.equal(matchChromeTask('add the cheapest one to the cart', afterTask).chat, 'same');
   assert.equal(matchChromeTask('add the cheapest one to the cart', ctx).chat, 'new', 'after "pull this up" only: no chat to carry on');
   assert.equal(matchChromeTask('now add a USB-C hub to the cart too in Chrome', afterTask).chat, 'same', 'a follow-up word with the carrier');
-  assert.equal(matchChromeTask('now find a USB-C hub too in Chrome', afterTask), null, '"find X in Chrome" alone is a search (G1)');
+  assert.equal(matchChromeTask('now find a USB-C hub too in Chrome', afterTask).chat, 'same');
   assert.equal(matchChromeTask('find a USB-C hub and add it to the cart in Chrome', afterTask).chat, 'new', 'a fresh request');
   const late = { ...afterTask, now: NOW + 120001 };
   assert.equal(matchChromeTask('now add the second one too in Chrome', late).chat, 'new', 'the context is over');
