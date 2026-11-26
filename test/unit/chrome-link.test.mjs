@@ -277,6 +277,9 @@ test('Link: a key made here, the code copied, Jarvis for Chrome pastes it and sa
     const hello = await w.peer.waitFor('hello');
     assert.deepEqual(hello.body, { app: 'jarvis', version: '8.1.0' });
     assert.equal(app.control.info().extVersion, '1.1.0');
+    const ping = await app.control.ping();
+    assert.equal(ping.ok, true, 'Settings → Test: a round trip');
+    assert.equal(ping.status.tasksFromJarvis, true);
     assert.deepEqual(app.control.begin(), { ok: false, reason: 'linked' });
   } finally {
     await w.close();
@@ -494,6 +497,8 @@ test('offline: nothing sent while Jarvis for Chrome is away (stop excepted); no 
     assert.equal(w.relay.posts['to-ext'], before, 'nothing went out');
     await app.api.stopTask(); // goes out all the same, and gives up after the timeout
     assert.equal(w.relay.posts['to-ext'], before + 1, 'stop is sent even offline');
+    assert.deepEqual(await app.control.ping(), { ok: false, reason: 'offline' }, 'Settings → Test asks anyway, and says when nothing answers');
+    assert.equal(w.relay.posts['to-ext'], before + 2);
     // Online by the status (it reads its box), but it never answers: the request gives up.
     w.peer.setOnline(true);
     w.peer.start();
@@ -626,7 +631,12 @@ test('back-off while the home base can\'t be reached; an old Core (404) waits 5 
     const m = app.log.length;
     await sleep(500); // 5 minutes at 100× is 3 s: at most one more try
     assert.ok(app.log.length - m <= 2, 'an old Core is asked again only every 5 minutes');
+    // The Core is updated: the next status check that works ends the wait at once.
     w.relay.mode = 'ok';
+    const k = app.log.length;
+    await app.control.refresh();
+    await until(() => app.log.slice(k).includes('GET /api/relay/to-app'), { timeoutMs: 1000, what: 'reading again right after the status answered' });
+    assert.equal(app.control.info().problem, null);
   } finally {
     await w.close();
   }

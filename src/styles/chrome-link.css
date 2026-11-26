@@ -1,0 +1,87 @@
+/* Settings → Jarvis for Chrome (v8.1, src/ui/chrome-link-settings.js): the link's state, the steps while linking,
+   the link code shown only when it couldn't be copied. */
+
+.cl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-card [hidden] {
+  display: none !important;
+}
+
+.cl-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.cl-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--text-3, rgba(171, 200, 217, 0.5));
+}
+
+.cl-dot[data-tone='ok'] {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok-soft);
+}
+
+.cl-dot[data-tone='wait'] {
+  background: var(--warn);
+}
+
+.cl-dot[data-tone='off'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--text-2);
+}
+
+.cl-dot[data-tone='none'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.cl-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding-left: 1.4em;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.cl-steps li::marker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cl-step-action {
+  margin-top: 8px;
+}
+
+.cl-code {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--fs-input, 16px);
+}
+
+.cl-pending,
+.cl-off,
+.cl-linked {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-help {
+  margin: 0;
+}

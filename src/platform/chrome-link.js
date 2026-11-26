@@ -308,6 +308,7 @@ export function createChromeLink({
   let cursor = null;
   let onlineTimer = null;
   let pendingTimer = null;
+  let pollWake = null; // ends the long poll's back-off early (the home base answered the status again)
   let lastSig = '';
   const pending = new Map(); // envelope id → { kind, resolve }
   const listeners = new Set();
@@ -691,7 +692,11 @@ export function createChromeLink({
       if (r.kind === 'aborted') break;
       failures += 1;
       setProblem(problemOf(r));
-      await sleep(backoff(failures, r), ctl);
+      await new Promise((resolve) => {
+        pollWake = resolve;
+        sleep(backoff(failures, r), ctl).then(resolve);
+      });
+      pollWake = null;
     }
   }
 
@@ -712,6 +717,7 @@ export function createChromeLink({
     const ext = posInt(r.data.extSeenAt);
     if (ext && ext > statusSeen) statusSeen = ext;
     if (problem === 'old-core' || problem === 'unreachable' || problem === 'down') problem = null;
+    if (pollWake) pollWake(); // the relay answers again (a Core just updated to 1.3, say): read now, not in 5 minutes
     if (record.linkedAt && statusSeen - savedSeen >= SEEN_SAVE_MS && statusSeen - now() < ONLINE_MS) {
       record = { ...record, extSeenAt: Math.min(statusSeen, now()) };
       savedSeen = record.extSeenAt;
@@ -809,14 +815,7 @@ export function createChromeLink({
           },
         );
     };
-    let focused = true;
-    try {
-      focused = !win || !win.document || typeof win.document.hasFocus !== 'function' || win.document.hasFocus();
-    } catch {
-      focused = true;
-    }
-    if (focused) clear();
-    else if (win && typeof win.addEventListener === 'function') win.addEventListener('focus', clear, { once: true });
+    clear(); // refused while another window has the focus: then once this one gets it back
   }
 
   // ---- other windows ------------------------------------------------------------------------------------------
@@ -908,9 +907,10 @@ export function createChromeLink({
       await checkStatus(null);
       return info();
     },
-    /** A round trip to Jarvis for Chrome: { ok: true, status } or { ok: false, reason }. */
+    /** A round trip to Jarvis for Chrome (Settings → Test): { ok: true, status } or { ok: false, reason }. Sent even
+     *  when the status says offline (it may be out of date); a ping does nothing there. */
     ping() {
-      return request('ping', {});
+      return request('ping', {}, { needOnline: false });
     },
     dismissNote() {
       note = null;

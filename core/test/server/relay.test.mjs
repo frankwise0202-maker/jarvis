@@ -282,6 +282,16 @@ test('HTTP: the long poll answers when a message arrives, or with nothing after 
   clock += RELAY_TTL_MS;
 });
 
+test('HTTP: a long poll outlives the 15-second receive deadline (it only covers receiving the request)', async () => {
+  const { REQUEST_RECEIVE_MS } = await import('../../server/http/server.mjs');
+  const wait = Math.ceil(REQUEST_RECEIVE_MS / 1000) + 1;
+  const t0 = Date.now();
+  const r = await get(`/api/relay/to-ext?after=${id22(98)}&wait=${wait}`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { messages: [], last: id22(98) });
+  assert.ok(Date.now() - t0 >= REQUEST_RECEIVE_MS, `answered after its wait (${Date.now() - t0} ms), not cut at the deadline`);
+});
+
 test('HTTP: the status says when each side last read its box', async () => {
   clock = START + 70 * 60_000;
   const s0 = (await get('/api/relay/status')).json;
