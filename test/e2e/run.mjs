@@ -58,7 +58,7 @@ import macHandsFree from './scenarios/mac-handsfree.mjs';
 import tourRender from './scenarios/tour-render.mjs';
 // ---- tour-render ◂
 // ---- tours ▸
-import tours from './scenarios/tours.mjs';
+import tours, { tourBargeIn } from './scenarios/tours.mjs';
 // ---- tours ◂
 // ---- voice ▸
 import voiceCommands from './scenarios/voice-commands.mjs';
@@ -105,6 +105,7 @@ const V81_SCENARIOS = [
   // ---- tour-render ◂
   // ---- tours ▸
   ...tours,
+  tourBargeIn, // the join with mac-hf's barge-in (A8 + B5), registered once both are merged
   // ---- tours ◂
   // ---- voice ▸
   ...voiceCommands,

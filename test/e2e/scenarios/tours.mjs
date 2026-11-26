@@ -720,6 +720,7 @@ export const tourBargeIn = {
   name: 'tour-barge-in',
   title: 'Mac, setup 1 with the hands-free Test passed: woken by "Hey Jarvis", Jarvis walks through the laptop in George\'s voice; "Hey Jarvis" while he narrates stops him, the tour pauses at its step and he listens; "continue" goes on from that step',
   device: 'mac',
+  fakeMusic: true, // the wake routine's Apple Music offer: no request leaves the test (as mac-hf's scenarios)
   fakeCore: { senses: { speak: 'ready' } },
   settings: { wakeWord: true, homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'owner', audioSetup: 'speaker-mac-mic' },
   timeout: 240000,
