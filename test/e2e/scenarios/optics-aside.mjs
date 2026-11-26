@@ -144,6 +144,19 @@ export default [
         t.assert(!clash.overlaps.length && !clash.covered.length, `no plate overlaps another or covers a dot in the card (${JSON.stringify(clash)})`);
         t.assert((await t.text(page.locator(tid('optics-answer-mark')))) === 'NEW LOOK', 'the answer is marked NEW LOOK');
         for (const id of ['optics-expand', 'optics-other-screen', 'optics-close-card']) t.assert(await page.locator(tid(id)).isVisible(), `${id} on the card`);
+        // The follow-up chips in the card, a pin tapped (What's this part? too): each whole on screen.
+        await page.locator(tid('optics-pin')).first().click();
+        await t.waitFor(async () => await page.locator(tid('optics-part')).isVisible(), { timeout: 3000, message: 'What\'s this part? for the tapped pin' });
+        const chips = await page.evaluate(() =>
+          [...document.querySelectorAll('[data-testid="optics-followups"] .optics-chip')]
+            .filter((b) => !b.hidden && b.offsetParent)
+            .map((b) => {
+              const r = b.getBoundingClientRect();
+              return { id: b.dataset.testid, left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), vw: innerWidth, vh: innerHeight };
+            }),
+        );
+        t.assert(chips.length >= 3, `the card's follow-up chips (${JSON.stringify(chips)})`);
+        for (const c of chips) t.assert(c.left >= 0 && c.right <= c.vw && c.top >= 0 && c.bottom <= c.vh, `the ${c.id} chip is whole on screen (${JSON.stringify(c)})`);
         await shot(t, 'mac-aside-1-card');
       });
       await t.step('Expand: the picture big, the live video a tile in its corner, still live; Live and the tile go back', async () => {
