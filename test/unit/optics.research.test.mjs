@@ -181,3 +181,19 @@ test('what each way sends: words only (the agents and the home base can\'t see t
   assert.equal(researchPrompt(subject, 'homebase'), 'USB-C charger (A 65-watt charger with two ports): what it is, its specifications, prices and reviews, and anything to watch out for');
   assert.equal(researchPrompt(null, 'quick'), 'Research this with a web search and give me a quick answer: this.');
 });
+
+test('the strict mock answers the quick way with one web search (researchPlan); anything else goes on as before', async () => {
+  const { createJarvis } = await import('../../src/engine/index.js');
+  const { createMockFetch } = await import('../mock/anthropic-mock.mjs');
+  const { DEFAULT_TEST_SETTINGS, KEY, createFakeLibrary, createMemory } = await import('./engine.support.test.mjs');
+  const fetch = createMockFetch({ timeScale: 0.02 });
+  const jarvis = createJarvis({ getSettings: () => DEFAULT_TEST_SETTINGS, getApiKey: () => KEY, fetch, memory: createMemory(), library: createFakeLibrary(), persist: async (c) => structuredClone(c), clientOptions: { maxRetries: 0 }, retryBaseMs: 20, workerStaggerMs: 5, maxRetryWaitMs: 200 });
+  const conv = jarvis.newConversation();
+  const subject = researchSubject({ label: 'USB-C charger', answer: 'A 65-watt charger with two ports.' });
+  const turn = await jarvis.startTurn(conv, { text: researchPrompt(subject, 'quick'), mode: 'quick' }).done;
+  assert.equal(turn.status, 'done');
+  assert.equal(turn.usage.searches, 1, 'one web search');
+  const words = turn.segments.filter((s) => s.kind === 'text').map((s) => s.text).join(' ');
+  assert.match(words, /Research: USB-C charger/);
+  assert.deepEqual(fetch.mock.violations, []);
+});

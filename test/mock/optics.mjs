@@ -24,12 +24,15 @@
 //     "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)"  what that object
 //                         is, then pin_labels with that one label, then "I've marked it on the frame."
 
-//   Research (v8.1, Track 5 fills it): researchPlan(env), asked by behavior.mjs before the Optics
-//     follow-ups ("Research this …" in a conversation that has looked through the camera, the quick
-//     route with a web search); a plan, or null (not research).
+//   Research (v8.1, Track 5): researchPlan(env), asked by behavior.mjs before the Optics follow-ups.
+//     The quick way of "research this" (src/lib/research-offer.js researchPrompt: "Research this with a
+//     web search and give me a quick answer: <subject>."): one web search, then a short answer about
+//     the subject, spoken-style in Voice Mode. The mission ("Research <subject>: …", swarm mode) and
+//     anything else: null (the mock goes on as before).
 
 import { readFileSync } from 'node:fs';
-import { newToolUseId } from './util.mjs';
+import { newServerToolUseId, newToolUseId, seededRandom } from './util.mjs';
+import { searchResults } from './content.mjs';
 
 export const OPTICS_TOOL_NAMES = Object.freeze(['pin_labels', 'look_through_camera']);
 const text = (t) => ({ type: 'text', text: t, citations: null });
@@ -324,7 +327,28 @@ export function opticsFollowUpTextPlan({ think, prompt, frame, pinsTool }) {
  * ctx, spoken, think(text), hasTool(name), userMsg, msgs, frame (the conversation's Optics frame, or
  * null), pace }. A plan, or null: the mock goes on as before.
  */
+export const RESEARCH_QUICK_PREFIX = 'Research this with a web search and give me a quick answer:';
+
 export function researchPlan(env) {
-  void env;
-  return null;
+  const prompt = String((env && env.prompt) || '').trim();
+  if (!prompt.startsWith(RESEARCH_QUICK_PREFIX) || !env.hasTool('web_search')) return null;
+  const subject = prompt.slice(RESEARCH_QUICK_PREFIX.length).trim().replace(/[.!?]+$/, '') || 'this';
+  const name = subject.replace(/\s*\(.*$/, '').trim() || subject;
+  const query = `${name} specifications price reviews`;
+  const id = newServerToolUseId();
+  const hits = searchResults(query, seededRandom(query), 'lead');
+  const first = hits[0] && hits[0].result ? hits[0].result.title : 'a reviews site';
+  const answer = env.spoken
+    ? `I looked it up, sir. The ${name} is well reviewed: reliable, fairly priced, and the usual pick for that job. More details are on screen.`
+    : `**Research: ${name}.** A quick web search finds it well reviewed: reliable, fairly priced, and the usual pick for that job (${first}).`;
+  return {
+    blocks: [
+      env.think(`The owner wants a quick answer about ${name}; one search will do.`),
+      { type: 'server_tool_use', id, name: 'web_search', input: { query } },
+      { type: 'web_search_tool_result', tool_use_id: id, content: hits.map((h) => h.result) },
+      text(answer),
+    ],
+    stop_reason: 'end_turn',
+    pace: env.pace || 'quick',
+  };
 }

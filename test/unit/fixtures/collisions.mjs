@@ -48,6 +48,21 @@ export const WINDOWS = {
 // ==== optics ==========================================================================================
 export const OPTICS = {
   rows: [
+    // E2 and R10: with a laptop hologram on screen, its camera part ("open Optics" always opens Optics).
+    { words: 'open the camera', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: the owner means its camera part.' },
+    { words: 'camera on', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: its camera part, as today.' },
+    { words: 'show me the camera', state: 'VH', winner: 'hologram', why: 'A laptop hologram is on screen: its camera part, as today.' },
+    // E1: with no Look on screen, "put the picture to the side" stays a Screens float, as today.
+    { words: 'put the picture to the side', state: 'VL', winner: 'screens', why: 'No Look on screen: a picture floated beside, as today.' },
+    { words: 'put the picture to the side', state: 'VF', winner: 'screens', why: 'No Look card known to the router: a Screens float, as today.' },
+    { words: 'put the picture to the side', state: 'OV', winner: 'screens', why: 'No Look on screen: a Screens float, as today.' },
+    // E1: with a Look's card (aside on a Mac), its words are the card's, before Screens and Optics' own.
+    { words: 'expand the picture', state: 'OPA', winner: 'optics-card', why: 'The picture in the card, big.' },
+    { words: 'show the picture big', state: 'OPA', winner: 'optics-card', why: 'The picture in the card, big.' },
+    { words: 'put the picture aside', state: 'OPA', winner: 'optics-card', why: 'Back into the card beside the live video.' },
+    { words: 'put the picture to the side', state: 'OPA', winner: 'optics-card', why: 'A Look is on screen: back into its card, not a Screens float.' },
+    { words: 'close the picture', state: 'OPA', winner: 'optics-card', why: 'The card goes; the camera stays on.' },
+    { words: 'put the picture to the side', state: 'OPT', winner: 'optics-card', why: 'Typed with a Look on screen: back into its card.' },
   ],
 };
 
