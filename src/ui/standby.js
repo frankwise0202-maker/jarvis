@@ -185,6 +185,7 @@ export function createStandby(deps = {}) {
 
   function unmount() {
     if (!root) return;
+    if (els.tip) els.tip.hidden = true; // v8.1: the one-time line is for that first Standby only
     for (const el of inerted) if (el.isConnected) el.inert = false;
     inerted = [];
     root.hidden = true;
