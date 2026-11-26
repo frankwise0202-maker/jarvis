@@ -3,7 +3,7 @@
 // openVoiceMode() opened the way app.js does. From the u-mac study's probe (probes/u-mac/app/shim.mjs).
 //
 //   const env = await voiceEnv(t);                         // installs everything; restored after the test
-//   const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, ... });
+//   const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, extra: { router }, ... });
 //   env.setHidden(true); await env.advance(ms);
 //   env.log: { listens: [opts], turns: [text], spoken: [{ text, voice }], closes: [info], ... }
 //
@@ -484,7 +484,7 @@ export async function voiceEnv(t, { noSpeechMs = 900, speechMs = 1500, heardAfte
      * Open Voice Mode the way app.js does. `answer`: each question is a turn that streams this text and ends
      * ('done' after about 1 s); without it, startTurn fails and Jarvis apologises (the mock's error).
      */
-    open({ wake = null, listenWhileHidden = undefined, settings = {}, startTurn = null, answer = null } = {}) {
+    open({ wake = null, listenWhileHidden = undefined, settings = {}, startTurn = null, answer = null, extra = {} } = {}) {
       const turnFor = (text) => {
         log.turns.push(text);
         if (!answer) throw new Error('no API in this test');
@@ -536,6 +536,7 @@ export async function voiceEnv(t, { noSpeechMs = 900, speechMs = 1500, heardAfte
         wake,
         listenWhileHidden,
         onClose: (info) => log.closes.push(info),
+        ...extra, // more of app.js's deps (a test's router: { route, run })
       });
     },
     status: () => {

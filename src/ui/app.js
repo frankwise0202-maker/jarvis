@@ -4700,6 +4700,9 @@ export async function startApp(rootEl) {
     // ---- voice ▸
     // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
     if (surface !== 'voice') s.speaking = !!state.speaking;
+    // What else a bare "stop" stops (REGRESS-2): the chat's turn (an answer, a mission, a Look's answer) and Watch.
+    s.running = currentRunning();
+    if (s.optics) s.optics.watch = !!opticsLive.watch;
     // ---- voice ◂
     // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
     if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
@@ -5001,6 +5004,15 @@ export async function startApp(rootEl) {
       },
       stopTarget: (target) => {
         switch (target) {
+          case 'answer':
+            // The chat's turn (an answer, a mission, a Look's answer), as its Stop button stops it (REGRESS-2).
+            safe(() => stop());
+            break;
+          case 'watch': {
+            const optics = currentOptics();
+            if (optics) safe(() => optics.stopWatch());
+            break;
+          }
           case 'liveview': {
             const optics = currentOptics();
             if (optics) safe(() => optics.stopLiveView());

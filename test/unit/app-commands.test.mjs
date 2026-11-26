@@ -170,6 +170,29 @@ test('the stop layer: a bare "stop" stops everything that runs; nothing running:
   }
 });
 
+test('REGRESS-2: "stop" stops the turn that runs (an answer, a mission, a Look\'s answer) and Watch; never "Okay." while one runs', () => {
+  const s = (name, patch) => stateFor(name, patch);
+  // The chat box during an answer or a research mission: the turn stops, as its Stop button stops it.
+  assert.deepEqual(pick(matchStopWord('stop', s('C0', { running: true }))), { do: 'stop', targets: ['answer'] });
+  // Voice Mode while the details of an answer are still being written (or a mission runs in the chat).
+  assert.deepEqual(pick(matchStopWord('okay stop', s('V0', { running: true }))), { do: 'stop', targets: ['answer'] });
+  // Optics' field: Watch on (its looks cost money); a Look's answer streaming (a turn of the chat).
+  assert.deepEqual(pick(matchStopWord('stop', s('OT', { optics: { ...s('OT').optics, watch: true } }))), { do: 'stop', targets: ['watch'] });
+  assert.deepEqual(pick(matchStopWord('stop it', s('OV', { running: true }))), { do: 'stop', targets: ['answer'] });
+  assert.deepEqual(pick(matchStopWord('stop', s('VL', { running: true, optics: { ...s('VL').optics, watch: true } }))), { do: 'stop', targets: ['answer', 'watch'] });
+  // A hologram on top: a running turn stops (the viewer's own "stop", hold still, only when nothing runs).
+  assert.deepEqual(pick(matchStopWord('stop', s('H0', { running: true }))), { do: 'stop', targets: ['answer'] });
+  // Everything at once, in the order Jarvis says it.
+  const all = s('T', { running: true, speaking: true, music: { playing: true }, optics: { open: true, mode: 'live', liveView: true, watch: true }, chrome: { linked: true, online: true, task: { id: 't', status: 'running' }, contextUntil: 0 } });
+  assert.deepEqual(stopTargets(all), ['tour', 'answer', 'chrome', 'watch', 'liveview', 'music', 'speech']);
+  // The lines: what stopped, never a bare "Okay." while something ran.
+  assert.equal(appCommandLine(act('stop', { targets: ['answer'] })), 'The answer is stopped.');
+  assert.equal(appCommandLine(act('stop', { targets: ['answer', 'speech'] })), 'The answer is stopped.');
+  assert.equal(appCommandLine(act('stop', { targets: ['watch'] })), 'Watch is off.');
+  assert.equal(appCommandLine(act('stop', { targets: ['tour', 'answer', 'watch'] })), 'The tour is paused, the answer is stopped and Watch is off.');
+  for (const t of ['answer', 'watch']) assert.doesNotMatch(appCommandLine(act('stop', { targets: [t] })), /Jarvis/);
+});
+
 test('stopTargets and chromeTaskRunning read contract (b) state', () => {
   assert.deepEqual(stopTargets({}), []);
   assert.deepEqual(stopTargets(stateFor('V0')), []);

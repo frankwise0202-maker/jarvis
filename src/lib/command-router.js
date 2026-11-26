@@ -48,10 +48,11 @@ export const SURFACES = Object.freeze(['voice', 'chat', 'hologram', 'optics']);
  *   prompt         the standing prompt (Jarvis for Chrome): { id, answers: [{ id, words, check, negative }],
  *                  askedAt } | null (an answer with `negative` is what a bare "cancel" or "no" means)
  *   replying       Voice Mode's own reply is streaming (words wait for it: a hologram building)
+ *   running        a turn of the open chat runs: an answer, a mission, a Look's answer ("stop" stops it)
  *   tour           { active, atChoice, choices, stepId } | null                       (Track 2)
  *   hologram       the viewer on screen: { open, inWindow, parts: [{ id, name, aka }], selected } | null
  *   blueprintOpen  a blueprint sheet is on screen
- *   optics         { open, mode: 'live'|'aside'|'frozen'|null, liveView, card, cameraAllowed, sceneChanged } | null
+ *   optics         { open, mode: 'live'|'aside'|'frozen'|null, liveView, watch, card, cameraAllowed, sceneChanged } | null
  *   camera         Voice Mode's camera words with Optics closed: { supported, allowed, ios }
  *   windows        [{ id, kind, label, focused }]                                    (Track 4)
  *   reply          { links, hologram }: hologram = the one shown last over Voice Mode, while it can
@@ -73,6 +74,7 @@ export function emptyState(surface = 'voice') {
     questions: [],
     prompt: null,
     replying: false,
+    running: false,
     tour: null,
     hologram: null,
     blueprintOpen: false,

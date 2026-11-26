@@ -4613,8 +4613,10 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    no is its answer marked `negative`; a question without a choice for it is set aside (`dismissTop`, onExpire
    `'dismissed'`), so it never goes on to Claude. "Stop" is never an answer.
 3. `stop`: a bare "stop" ("okay stop", "stop it", "stop everything") stops everything that runs (`stopTargets`): the
-   tour pauses; a Chrome task, the live view, a music preview and Jarvis's voice stop. Nothing running: "Okay.". With
-   a hologram or blueprint on top and nothing running it yields, and the viewer holds the model still.
+   tour pauses; the chat's turn (`state.running`: an answer, a research mission, a Look's answer; as its Stop button
+   does), a Chrome task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop,
+   and the line says what stopped. Nothing running: "Okay." (never while a paid run goes on). With a hologram or
+   blueprint on top and nothing running it yields, and the viewer holds the model still.
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
    `optics-card` (a Look's picture card, only while a Look is on screen: "put the picture to the side" goes back into
    its card, not a Screens float), `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes
@@ -4678,7 +4680,7 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
 | "repeat that", "say that again" (Voice Mode) | `repeat` | the last answer (else the last line) / "I haven't said anything yet." |
 | "stop listening" (Voice Mode) | `mic-off` (mic) | "I've stopped listening. Tap me when you need me." / woken: back to Standby |
 | "exit Voice Mode" (Voice Mode) | `exit-voice` (mic, no undo) | "Closing Voice Mode.", then it closes |
-| "stop" | `stop`, `targets` | "Okay." / "The tour is paused and Chrome is stopping." |
+| "stop" | `stop`, `targets` | "Okay." / "The answer is stopped." / "The tour is paused and Chrome is stopping." / "Watch is off." |
 
 A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says the line, Voice Mode closes with the
 reason `'command'` (the app doesn't go back to Standby for it) and the sheet opens; from a hologram's or Optics' field the

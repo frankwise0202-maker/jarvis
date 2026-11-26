@@ -235,6 +235,31 @@ export default [
     },
   },
   {
+    // REGRESS-2: a bare "stop" stops what runs, the chat's own turn included. v8.0 left typed words in the box
+    // during a run; v8.1 before this fix said "Okay." and let the mission run on and be billed.
+    name: 'voice-commands-stop-running',
+    title: '"stop" typed in the chat box while a research mission runs stops it: the turn ends "stopped" and the line says so ("The answer is stopped."), never a bare "Okay."',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      const turn = await t.send('[[swarm:3]] [[slow]] Research tidal power');
+      await t.waitFor(async () => (await turn.getAttribute('data-status')) === 'running', { timeout: 10000, message: 'the mission to run' });
+      await t.step('"stop" + Enter while it runs', async () => {
+        const input = await t.visible('composer-input');
+        await input.fill('stop');
+        await input.press('Enter');
+        await t.waitFor(async () => (await input.inputValue()) === '', { timeout: 5000, message: 'the composer to take "stop" as a command' });
+        await t.waitForTurn(turn, ['stopped'], { timeout: 20000 });
+        const toasts = (await t.page.locator('.toast-text').allTextContents()).map(norm);
+        t.assert(toasts.includes('The answer is stopped.'), `the line says what stopped (toasts: ${JSON.stringify(toasts)})`);
+        t.assert(!toasts.includes('Okay.'), `no bare "Okay." while a mission ran (toasts: ${JSON.stringify(toasts)})`);
+        await t.screenshot('1-stopped');
+      });
+    },
+  },
+  {
     name: 'voice-commands-questions',
     title:
       'Voice for everything: ten ordinary questions, some of them with Optics open, each reach Jarvis exactly once (one request each), and none is taken by a command',

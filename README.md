@@ -278,7 +278,7 @@ on screen first, and costs what a question costs.
 | | "send right away", "show me what you heard first" | The 2-second check, off or on |
 | | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
 | Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
-| Stop | "stop" | Stops whatever runs: a walkthrough pauses; a Chrome task, the live view and a preview stop. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
+| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped."). Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
 | Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
 | Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
 | | "open history", "show me my history" | History |

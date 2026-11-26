@@ -3,8 +3,8 @@
 // app.js calls register() once at start (registerCommandModules), with the app's shared deps plus
 // the ones added in this module's own call there. Three matchers, from src/lib/app-commands.js:
 //   stop            layer stop (3), every surface: a bare "stop" stops everything that runs (the tour
-//                   pauses; a Chrome task, the live view, a preview and Jarvis's voice stop); nothing
-//                   running: "Okay."
+//                   pauses; the chat's turn, a Chrome task, Watch, the live view, a preview and Jarvis's
+//                   voice stop); nothing running: "Okay."
 //   voice-controls  layer app (6), Voice Mode only: "stop talking", "read the full answer", "repeat
 //                   that", "stop listening", "exit Voice Mode" (Voice Mode carries them out itself)
 //   app             layer app (6), every surface: "new chat", "open history / settings / the library /
@@ -31,8 +31,8 @@ const call = (fn, ...args) => (typeof fn === 'function' ? fn(...args) : undefine
  *                                    the line says; leave: Voice Mode says the line, closes, then calls it)
  *   useVoice(which)                  'george' | 'device' → Promise<{ ok, needsDownload, device }>
  *   spend()                          { todayUsd, monthUsd, liveUsd }
- *   stopTarget(target)               stops one thing a bare "stop" names ('tour', 'chrome', 'liveview',
- *                                    'music', 'speech')
+ *   stopTarget(target)               stops one thing a bare "stop" names ('tour', 'answer', 'chrome',
+ *                                    'watch', 'liveview', 'music', 'speech')
  *   screenLook({ surface })          offers the button: { supported, shown } (shown: its line is on it already)
  *   briefing()                       the briefing protocol's words: { send, mode } | false
  */
