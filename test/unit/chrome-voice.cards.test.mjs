@@ -211,6 +211,7 @@ test('a typed task: the card shows the price and counts down; Cancel sends nothi
     const { createChromeVoice } = window.__mods.cards;
     const { createFakeChromeLink } = window.__mods.fakes;
     const fake = createFakeChromeLink();
+    fake.set({ budgetUsd: 1 }); // Jarvis for Chrome reported its budget (hello and status: MONEY-3)
     const dock = document.createElement('div');
     dock.className = 'chrome-dock';
     document.body.append(dock);
@@ -228,12 +229,13 @@ test('a typed task: the card shows the price and counts down; Cancel sends nothi
     out.final = dock.querySelector('[data-testid="chrome-task-card"]').dataset.status;
     return out;
   });
+  // Typed, nothing listens: "Press Cancel to stop." (REDTEAM-VOICE-5); the start carries the price shown (MONEY-3).
   assert.deepEqual(r, {
     status: 'checking',
-    check: 'Chrome, up to a dollar: add the cheapest one to the cart. Say cancel to stop.',
+    check: 'Chrome, up to a dollar: add the cheapest one to the cart. Press Cancel to stop.',
     after: 'cancelled',
     sent: 0,
-    sent2: [{ text: 'add the cheapest one to the cart', chat: 'new' }],
+    sent2: [{ text: 'add the cheapest one to the cart', chat: 'new', limitUsd: 1 }],
     final: 'running',
   });
   assert.deepEqual(p.problems, []);

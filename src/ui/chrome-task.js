@@ -465,7 +465,10 @@ export function createChromeVoice(deps = {}) {
     const pend = S.pendingTask;
     // A check (or a start refused) shows over the last task, except a refusal while one runs.
     if (pend && !pend.done && !(pend.refused && S.task && RUNNING.has(S.task.status))) {
-      return { phase: pend.cancelled ? 'cancelled' : pend.refused ? 'refused' : 'checking', text: pend.text, line: pend.line, checkMs: pend.ms, countAt: pend.countAt };
+      // Its start on its way (ROUTING-11): no check any more; Stop stops the task it makes.
+      const flying = pend.sent && !pend.cancelled && !pend.refused;
+      const phase = pend.cancelled ? 'cancelled' : pend.refused ? 'refused' : flying ? (pend.stopAfterStart ? 'stopping' : 'starting') : 'checking';
+      return { phase, text: pend.text, line: pend.line, checkMs: pend.ms, countAt: pend.countAt };
     }
     const t = S.task;
     if (!t) return null;
@@ -603,7 +606,7 @@ export function createChromeVoice(deps = {}) {
   /** "Start now" on the card: the check ends at once and the task goes. */
   function startNow() {
     const pend = S.pendingTask;
-    if (!pend || pend.done || pend.cancelled || pend.refused) return;
+    if (!pend || pend.done || pend.cancelled || pend.refused || pend.sent) return;
     if (pend.check && typeof pend.check.go === 'function' && quiet(() => pend.check.go(), false)) return;
     goTask(pend);
   }
@@ -615,7 +618,8 @@ export function createChromeVoice(deps = {}) {
    */
   function cancelCheck(how, { quietly = false, fromCheck = false } = {}) {
     const pend = S.pendingTask;
-    if (!pend || pend.done || pend.cancelled || pend.refused) return false;
+    // (A start already sent is no check either: a stop then stops the task it makes, ROUTING-11.)
+    if (!pend || pend.done || pend.cancelled || pend.refused || pend.sent) return false;
     clearTimeout(pend.timer);
     pend.cancelled = true;
     if (!fromCheck && pend.check && typeof pend.check.cancel === 'function') quiet(() => pend.check.cancel());
@@ -633,6 +637,9 @@ export function createChromeVoice(deps = {}) {
       refuse(pend, why);
       return;
     }
+    // On its way: from here a stop is for the task this start makes (ROUTING-11; the reply takes a relay round trip).
+    pend.sent = true;
+    renderTask();
     let res = null;
     try {
       // The limit the owner heard goes with it (absent while the budget is unknown: "up to your Chrome budget").
@@ -642,6 +649,14 @@ export function createChromeVoice(deps = {}) {
     }
     if (S.pendingTask !== pend || S.destroyed) return;
     if (!res || !res.ok) {
+      if (pend.stopAfterStart) {
+        // Stopped on its way, and it never started: nothing runs (the owner was told it is stopping).
+        pend.cancelled = true;
+        pend.line = TASK_CANCELLED_LINE;
+        renderTask();
+        settleFlightStop(pend, { confirmed: true, nothingRan: true });
+        return;
+      }
       refuse(pend, (res && res.reason) || 'offline', res && res.why);
       return;
     }
@@ -651,7 +666,37 @@ export function createChromeVoice(deps = {}) {
     noteContext();
     syncFromLink();
     renderTask();
+    if (pend.stopAfterStart) {
+      // A stop said while its start was on its way: the task is stopped at once, now that it has an id (never
+      // "Chrome is on it." for a task the owner stopped; D5's rule).
+      stopTask({ via: 'voice', quietly: pend.stopQuietly !== false }).then((r) => settleFlightStop(pend, r));
+      return;
+    }
     tell(TASK_STARTED_LINE);
+  }
+
+  /** A start on its way (sent, no answer yet), or null. */
+  function inFlight() {
+    const pend = S.pendingTask;
+    return pend && pend.sent && !pend.done && !pend.cancelled && !pend.refused ? pend : null;
+  }
+
+  /** Stop the task a start on its way makes, once it has an id (ROUTING-11). quietly: no "Chrome stopped." at the end. */
+  function stopInFlight(pend, { quietly = true } = {}) {
+    if (!pend.stopAfterStart) {
+      pend.stopAfterStart = true;
+      pend.stopQuietly = quietly;
+      pend.stopPromise = new Promise((resolve) => {
+        pend.stopResolve = resolve;
+      });
+      renderTask();
+    } else if (!quietly) pend.stopQuietly = false;
+    return pend.stopPromise;
+  }
+
+  function settleFlightStop(pend, result) {
+    if (typeof pend.stopResolve === 'function') pend.stopResolve(result || { confirmed: false });
+    pend.stopResolve = null;
   }
 
   function refuse(pend, reason, why = '') {
@@ -754,6 +799,8 @@ export function createChromeVoice(deps = {}) {
    * { confirmed: boolean }>
    */
   function stopTask({ via = 'voice', quietly = false } = {}) {
+    const flying = inFlight();
+    if (flying) return stopInFlight(flying, { quietly });
     const t = S.task;
     if (!t || !RUNNING.has(t.status)) {
       if (!quietly && via !== 'card') tell(NOTHING_TO_STOP_LINE);
@@ -1251,6 +1298,12 @@ export function createChromeVoice(deps = {}) {
       return { withdrawn: false, stopping: true, busyYes: true, none: false };
     }
     const withdrawn = cancelCheck('stop', { quietly: true });
+    const flying = inFlight();
+    if (flying) {
+      // Its start is on its way: the task it makes is stopped as soon as it has an id (ROUTING-11).
+      stopInFlight(flying, { quietly: !say });
+      return { withdrawn, stopping: true, busyYes: false, none: false };
+    }
     const t = S.task;
     const stopping = !!(t && RUNNING.has(t.status));
     let confirmed = false;
@@ -1329,7 +1382,7 @@ export function createChromeVoice(deps = {}) {
     // lastTask: the latest task, finished too ("now add the second one too" carries on its chat).
     const last = S.task && S.task.id ? { id: S.task.id, status: over(S.task.status), text: S.task.text } : null;
     // checking: a task's countdown runs (typed words take it too: REDTEAM-VOICE-5); waiting: prompts on their cards.
-    return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil, checking: !!pend, waiting: S.prompts.size };
+    return { linked: !!st.linked, online: !!st.online, task: t, lastTask: last, contextUntil: S.contextUntil, checking: !!pend && !pend.sent, waiting: S.prompts.size };
   }
 
   /** Voice Mode opened, closed, slept or woke: cards and prompts follow it (and the other windows hear of it). */
@@ -1407,7 +1460,7 @@ export function createChromeVoice(deps = {}) {
      */
     stopFromVoice: () => stopWords({ via: 'voice', say: false }),
     /** Whether a check for a task is on screen (the router's "check" state). */
-    checking: () => !!(S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused),
+    checking: () => !!(S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused && !S.pendingTask.sent),
     /** This window is going away (pagehide): the other windows stop counting on its Voice Mode. */
     bye: () => share({ t: 'bye' }),
     destroy() {
