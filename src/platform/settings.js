@@ -85,6 +85,9 @@ export const DEFAULT_SETTINGS = deepFreeze({
   // on by default). On a computer, a session the owner started (a wake, a tap, a key) goes on listening and
   // speaking while Jarvis is hidden; off: as before v8.1. An iPhone or iPad pauses while hidden either way.
   handsFreeBackground: true,
+  // Settings → Voice → Wake Jarvis → "Open Standby when Jarvis starts (Mac)" (A11): '' automatic (on when "Hey
+  // Jarvis" is on), 'on' or 'off' (the owner's choice). Computers only.
+  standbyAtLaunch: '',
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂
@@ -232,6 +235,7 @@ const VALIDATORS = {
   // ---- mac-dev ◂
   // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
   handsFreeBackground: bool,
+  standbyAtLaunch: oneOf(['', 'on', 'off']),
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂

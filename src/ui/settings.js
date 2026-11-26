@@ -833,6 +833,15 @@ export function createSettingsPanel(o) {
             forId: fieldId('handsFreeBackground'),
             control: switchField('handsFreeBackground', { label: 'Keep talking when Jarvis is in the background (Mac)', get: (st) => st.handsFreeBackground !== false }),
           }),
+      // v8.1 (A11): computers only; automatic until the owner chooses (on when "Hey Jarvis" is on).
+      currentOs() === 'ios' || currentOs() === 'android'
+        ? null
+        : row({
+            label: 'Open Standby when Jarvis starts (Mac)',
+            help: 'After a restart or an update, Jarvis opens Standby by himself, so “Hey Jarvis” works again without a click. On when “Hey Jarvis” is on, until you choose.',
+            forId: fieldId('standbyAtLaunch'),
+            control: switchField('standbyAtLaunch', { label: 'Open Standby when Jarvis starts (Mac)', get: (st) => st.standbyAtLaunch === 'on' || (st.standbyAtLaunch !== 'off' && st.wakeWord === true), patch: (v) => ({ standbyAtLaunch: v ? 'on' : 'off' }) }),
+          }),
       h('div', { class: 'set-row-actions' }, goBtn),
     );
   }
