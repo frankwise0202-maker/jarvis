@@ -10,7 +10,8 @@
 //   STATES             voice's own: T a tour, TD a tour at its decision, LV the live view on, VHW a
 //                      hologram and a window, RL the newest reply has links, CC a Chrome context, CCL a
 //                      Chrome context with reply links, H4 a Chrome prompt, a tour decision and a research
-//                      offer all open (the prompt said last), H4O the same with the offer said last
+//                      offer all open (the prompt said last), H4O the same with the offer said last, NB no
+//                      home base linked
 //   stateFor(name, patch)  a full state: emptyState(surface) with that state's fields (and `patch`)
 //   NOT                T1: ordinary sentences that reach Claude in every state (unless the collision
 //                      table declares a winner for one in a state)
@@ -112,6 +113,7 @@ export const STATES = Object.freeze({
   CCL: { surface: 'voice', ...VOICE_BASE, chrome: CONTEXT, reply: { links: LINKS, hologram: null } },
   H4: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: DECIDING, questions: [RESEARCH_OFFER, TOUR_DECISION], prompt: CHROME_PROMPT, chrome: { ...CONTEXT, task: RUNNING_TASK } },
   H4O: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: DECIDING, questions: [RESEARCH_OFFER, TOUR_DECISION], prompt: { ...CHROME_PROMPT, askedAt: 1500 }, chrome: { ...CONTEXT, task: RUNNING_TASK } },
+  NB: { surface: 'voice', ...VOICE_BASE, homebase: { available: true, linked: false } },
 });
 
 /** A full state by name (HARNESS_STATES or STATES): emptyState(surface) with its fields, then `patch`. */
@@ -307,6 +309,7 @@ export const WAITING_FIXES = Object.freeze(
 export const PARITY_EXCEPTIONS = Object.freeze(
   [
     { id: 'voice-controls', surfaces: ['voice'], why: "Voice Mode's own controls (stop talking, read the full answer, exit Voice Mode)" },
+    { id: 'briefing', surfaces: ['voice'], why: '"brief me" with no home base: Voice Mode asks with the price first (C6); typed, it is a question as before' },
     { id: 'camera', surfaces: ['voice'], why: 'camera words with Optics closed open the camera only in Voice Mode (R1)' },
     { id: 'prompt', surfaces: ['voice'], why: "Chrome's questions are answered in Voice Mode or on their card" },
     { id: 'question', surfaces: ['voice'], why: "Voice Mode's own questions" },

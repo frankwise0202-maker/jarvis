@@ -4301,6 +4301,28 @@ export async function startApp(rootEl) {
         monthUsd: safe(() => getSpend().monthUsd, 0),
         liveUsd: safe(() => createLiveBudget().spent(), 0),
       }),
+      // SHOULD C5: the one-tap button for a Look at the screen (its share picker needs a tap); the
+      // price on it. In the chat, the line is the toast that carries the button.
+      screenLook: ({ surface = 'chat' } = {}) => {
+        if (state.demo || !safe(() => screenLookSupported(), false)) return { supported: false };
+        const fromVoice = surface === 'voice' && !!voiceApi && safe(() => isVoiceModeOpen(), false);
+        const tap = () => openOpticsScreen({ start: 'screen', voice: fromVoice });
+        if (fromVoice) {
+          safe(() => voiceApi.offer({ label: 'Look at my screen · about 3¢', testid: 'voice-screen-look', onTap: tap }));
+          return { supported: true };
+        }
+        if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
+        toast('Tap Look to look at your screen. A Look costs about 3 cents.', { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
+        return { supported: true, shown: true };
+      },
+      // SHOULD C6: "brief me" with no home base (asked first in Voice Mode): the briefing protocol's words.
+      briefing: () => {
+        const p = safe(() => getProtocol('morning-briefing'), null);
+        const text = p ? safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '') : '';
+        if (!text) return false;
+        safe(() => presence.noteBriefing(new Date()));
+        return { send: text, mode: p.mode || 'swarm' };
+      },
       stopTarget: (target) => {
         switch (target) {
           case 'liveview': {

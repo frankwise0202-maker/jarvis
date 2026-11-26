@@ -21,6 +21,11 @@
 //     { do: 'repeat' }                             "repeat that", "say that again"
 //     { do: 'mic-off', mic: true }                 "stop listening"
 //     { do: 'exit-voice', mic: true, undo: false } "exit Voice Mode"
+//   matchScreenLook(text)            SHOULD C5, the `destination` layer: "look at my screen", "what's on my
+//                                    screen": { do: 'screen-look', free: false, camera: true } (a one-tap
+//                                    button: the screen's share picker needs a tap; a Look's price on it)
+//   matchBriefing(text, state)       SHOULD C6, Voice Mode: "brief me" with no home base linked:
+//                                    { do: 'brief', free: false } (the briefing protocol, its price asked first)
 //   matchStopWord(text, state)       the `stop` layer: a bare "stop" stops what runs, all of it:
 //     { do: 'stop', targets }                      targets ⊂ ['tour', 'chrome', 'liveview', 'music',
 //                                                  'speech'] (pause the tour, stop the Chrome task, the
@@ -43,7 +48,13 @@
 // conversation with my boss" or "stop listening to music at night" stay questions for Jarvis. The
 // model and the mode stay in Settings (they change what things cost).
 
+import { matchBrainCommand } from './brain.js';
+
 export const VOICE_RATE = Object.freeze({ min: 0.7, max: 1.5, step: 0.1 });
+/** What a briefing written by Claude costs, typically (an 8-agent research mission: README "What it costs"). */
+export const BRIEFING_USD = 1.7;
+/** What a Look costs, typically (README "What it costs"). */
+export const LOOK_USD = 0.03;
 
 const ACTION_DEFAULTS = Object.freeze({ free: true, undo: true, check: false, camera: false, mic: false });
 
@@ -141,6 +152,24 @@ export function matchAppCommand(text, state = {}) {
   if (m) return act('spend', { period: m[1] === 'today' ? 'today' : m[1] === 'this month' ? 'month' : 'both' });
   if (LIVE_COST.test(s)) return act('spend', { period: 'live' });
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// SHOULD C5 and C6
+
+const SCREEN_LOOK = /^(?:(?:take a )?look at|check|read|see|look over)(?: what is on)? (?:my|the) (?:screen|display|monitor)$|^(?:whats|what is) on (?:my|the) (?:screen|display)$|^(?:can you see|do you see) my screen$|^(?:share|show you) my screen$/;
+
+/** C5: "look at my screen" (a Look at the screen, after a tap on its button), or null. */
+export function matchScreenLook(text) {
+  const s = normalizeAppText(text);
+  return s && SCREEN_LOOK.test(s) ? act('screen-look', { free: false, camera: true }) : null;
+}
+
+/** C6: "brief me" with no home base linked (with one, its own briefing answers, free), or null. */
+export function matchBriefing(text, state = {}) {
+  if (state && state.homebase && state.homebase.linked) return null;
+  const cmd = typeof text === 'string' ? matchBrainCommand(text) : null;
+  return cmd && cmd.kind === 'brief' ? act('brief', { free: false }) : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -313,6 +342,11 @@ export function appCommandLine(action, outcome = {}) {
       return o.woken ? "I've stopped listening. Say 'Hey Jarvis' when you need me." : "I've stopped listening. Tap me when you need me.";
     case 'exit-voice':
       return 'Closing Voice Mode.';
+    case 'screen-look':
+      if (o.supported === false) return "I can't see this screen.";
+      return `Tap Look at my screen when you're ready. A Look costs ${moneyWords(LOOK_USD)}.`;
+    case 'brief':
+      return `Your briefing sends a team of agents to look up the news, ${moneyWords(BRIEFING_USD)}. Shall I run it?`;
     case 'stop': {
       const parts = (Array.isArray(a.targets) ? a.targets : []).map((t) => STOPPED[t]).filter(Boolean);
       if (!parts.length) return 'Okay.';

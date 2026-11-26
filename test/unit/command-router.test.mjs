@@ -493,3 +493,18 @@ test('every section of the fixtures has its arrays (one per builder)', () => {
     for (const row of section.rows) assert.ok(typeof row.words === 'string' && typeof row.state === 'string' && 'winner' in row, JSON.stringify(row));
   }
 });
+
+test('critique H4, before every builder is merged: "continue" never answers the prompt or the research offer; "approve" never a question', () => {
+  const { router } = appRouter();
+  const states = { ...BASE.HARNESS_STATES, ...BASE.STATES };
+  for (const name of ['H4', 'H4O']) {
+    const st = stateOf(states, name);
+    for (const words of ['continue', 'go on', 'keep going', 'yes', 'okay', 'sure', 'go ahead']) {
+      const id = pick(router, words, st);
+      assert.ok(id !== 'prompt' && id !== 'question', `${name}: "${words}" went to ${id}`);
+    }
+    assert.equal(pick(router, 'approve', st), 'prompt', `${name}: approve`);
+    const stop = router.route(['stop'], st);
+    assert.deepEqual([stop.id, [...stop.action.targets]], ['stop', ['tour', 'chrome']], `${name}: stop pauses the tour and stops the task`);
+  }
+});

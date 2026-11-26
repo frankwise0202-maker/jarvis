@@ -43,6 +43,16 @@ async function voiceClosed(t) {
   });
 }
 
+/** Close a sheet by its own close button (Escape could land in a field it focused). */
+async function closeSheet(t, testid, closeTestid) {
+  const sheet = t.page.locator(tid(testid));
+  if (!(await sheet.count())) return;
+  const btn = t.page.locator(tid(closeTestid)).first();
+  if (await btn.isVisible().catch(() => false)) await btn.click();
+  else await t.page.keyboard.press('Escape');
+  await sheet.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+}
+
 /** No request reached Claude (the lead model) so far. */
 function noRequests(t, what) {
   const n = t.requests('lead').length;
@@ -135,8 +145,7 @@ export default [
         await voiceClosed(t);
         await t.visible('settings-sheet', { message: 'Settings open, as its button opens them' });
         await t.screenshot('1-settings');
-        await t.page.keyboard.press('Escape');
-        await t.page.locator(tid('settings-sheet')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await closeSheet(t, 'settings-sheet', 'settings-close');
       });
 
       await t.step('"show mission control" with no mission: said, and Voice Mode stays; "open the library": the library', async () => {
@@ -145,8 +154,7 @@ export default [
         await saysLine(t, 'Your library is open.');
         await voiceClosed(t);
         await t.visible('library-sheet', { message: 'the library opens' });
-        await t.page.keyboard.press('Escape');
-        await t.page.locator(tid('library-sheet')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await closeSheet(t, 'library-sheet', 'sheet-close');
       });
 
       await t.step('"open the home base" with none linked: its setup, in Settings → Home base', async () => {
@@ -156,8 +164,7 @@ export default [
         await t.visible('settings-sheet', { message: 'Settings open at the home base' });
         await t.waitFor(async () => (await t.page.locator('.set-nav-btn.is-active').getAttribute('data-section')) === 'homebase', { timeout: 8000, message: 'the Home base section in view' });
         await t.screenshot('2-homebase-setup');
-        await t.page.keyboard.press('Escape');
-        await t.page.locator(tid('settings-sheet')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await closeSheet(t, 'settings-sheet', 'settings-close');
       });
 
       await t.step('typed in the chat: "open the voice settings" and "open history" act at once with their line', async () => {
@@ -165,13 +172,65 @@ export default [
         await t.visible('settings-sheet');
         await t.waitFor(async () => /Voice settings are open\./.test(await toastText(t)), { timeout: 5000, message: async () => `the line as a toast (${await toastText(t)})` });
         await t.waitFor(async () => (await t.page.locator('.set-nav-btn.is-active').getAttribute('data-section')) === 'voice', { timeout: 8000, message: 'the Voice section in view' });
-        await t.page.keyboard.press('Escape');
-        await t.page.locator(tid('settings-sheet')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await closeSheet(t, 'settings-sheet', 'settings-close');
         await typeCommand(t, 'open history');
         await t.waitFor(async () => (await t.page.locator('[data-sidebar]').first().getAttribute('data-sidebar')) === 'open', { timeout: 5000, message: 'the history list opens (desktop: the sidebar)' });
         await t.waitFor(async () => /Your history is open\./.test(await toastText(t)), { timeout: 5000, message: 'its line' });
         noRequests(t, 'the app commands');
         await t.screenshot('3-typed');
+      });
+    },
+  },
+  {
+    name: 'voice-commands-screen-look',
+    title:
+      'Voice for everything (C5): "look at my screen" in Voice Mode offers a one-tap button with a Look\'s price (the screen\'s share picker needs a tap); typed in the chat, the line is a toast with its Look button; nothing reaches Claude until it is tapped',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await t.step('said in Voice Mode: the line with the price, and the button', async () => {
+        await openVoice(t, ['Jarvis, look at my screen.']);
+        await saysLine(t, "Tap Look at my screen when you're ready. A Look costs about 3 cents.");
+        const btn = await t.visible('voice-screen-look', { message: 'the one-tap button' });
+        t.assert(/Look at my screen · about 3¢/.test(norm(await t.text(btn))), `its label shows the price (${norm(await t.text(btn))})`);
+        noRequests(t, 'the offer');
+        await t.screenshot('1-offer');
+        await (await t.visible('voice-close')).click();
+        await voiceClosed(t);
+      });
+      await t.step('typed in the chat: a toast with its Look button', async () => {
+        await typeCommand(t, 'look at my screen');
+        await t.waitFor(async () => /Tap Look to look at your screen/.test(await toastText(t)), { timeout: 5000, message: async () => `the toast (${await toastText(t)})` });
+        t.assert(await t.page.locator('.toast button', { hasText: 'Look' }).first().isVisible(), 'the toast carries the Look button');
+        noRequests(t, 'the offer');
+      });
+    },
+  },
+  {
+    name: 'voice-commands-brief',
+    title:
+      'Voice for everything (C6): "brief me" with no home base linked says the briefing\'s price and waits; "no" sends nothing',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      await t.step('the price first, then "no": nothing is sent', async () => {
+        await openVoice(t, ['brief me', 'no']);
+        await saysLine(t, 'Your briefing sends a team of agents to look up the news, about $1.70. Shall I run it?');
+        await saysLine(t, 'Okay, no briefing.');
+        noRequests(t, '"no" to the briefing');
+        await t.screenshot('1-no-briefing');
       });
     },
   },
