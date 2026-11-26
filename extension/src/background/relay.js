@@ -69,6 +69,17 @@ export class Relay {
     this.statusAt = 0;
     this.abort = null;
     this.key = null;
+    this.prevKey = null;
+  }
+
+  /**
+   * The same link with its key replaced (Jarvis's `rekey`, REDTEAM-LINK-4): seals with `key` from
+   * now on, and still opens `prev` (the code's key) until `prevUntil`, or until it is dropped.
+   */
+  setKeys({ key, prev = null, prevUntil = 0 }) {
+    if (key !== this.link.key) this.key = null;
+    if (prev !== this.link.prev) this.prevKey = null;
+    this.link = { ...this.link, key, prev: prev || undefined, prevUntil: prev ? prevUntil : undefined };
   }
 
   /** Starts the loop (a second call while it runs does nothing). */
@@ -95,6 +106,13 @@ export class Relay {
   async cryptoKey() {
     if (!this.key) this.key = await importLinkKey(this.link.key);
     return this.key;
+  }
+
+  /** The code's key while it is still taken (REDTEAM-LINK-4), else null. */
+  async previousKey() {
+    if (!this.link.prev || !(this.now() < Number(this.link.prevUntil))) return null;
+    if (!this.prevKey) this.prevKey = await importLinkKey(this.link.prev);
+    return this.prevKey;
   }
 
   /** ms since the home base last answered (Infinity before it ever did). */
@@ -217,16 +235,26 @@ export class Relay {
     await this.store.setRelayState({ after: this.after, seen: this.seen.toJSON(), heardAt: this.heardAt }).catch(() => {});
   }
 
-  /** One message from the box: opened, counted as read (and saved) before it is acted on. */
+  /**
+   * One message from the box: opened, counted as read (and saved) before it is acted on. Under the
+   * link's key, or the code's while it is still taken (the message then says `viaPrev`).
+   */
   async receive(m) {
     if (!isMsg(m)) return;
     let opened;
+    let viaPrev = false;
     try {
       opened = await unseal(await this.cryptoKey(), { box: BOX_TO_EXT, msg: m, now: this.now(), seen: this.seen });
+      const prev = !opened.ok && opened.reason === 'tag' ? await this.previousKey() : null;
+      if (prev) {
+        opened = await unseal(prev, { box: BOX_TO_EXT, msg: m, now: this.now(), seen: this.seen });
+        viaPrev = opened.ok;
+      }
     } catch {
       return;
     }
     if (!opened.ok || !this.running) return; // dropped without a word
+    if (viaPrev) opened.message.viaPrev = true;
     this.heardAt = this.appSeenAt = this.now();
     await this.save();
     this.emitState();

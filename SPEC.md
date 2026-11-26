@@ -4904,13 +4904,33 @@ both ends build to it, and a change needs both.
 key }))`, `core` being the home base's origin as the app uses it (`https://<machine>.<tailnet>.ts.net`: no path, no
 port). The owner copies it (**Copy link code**) and pastes it into Jarvis for Chrome (side panel → Settings → Voice
 from Jarvis); Chrome asks to let the extension reach the home base. The first message sealed with the key (the
-extension's `hello`) proves the extension has it: linked, and the app answers with its own `hello`. If this window
-copied the code in the last 10 minutes, it then writes an empty text to the clipboard (critique L9): at once when
-the page may, else when its window next has the focus. An unused code is forgotten after 30 minutes. Either side can
+extension's `hello`) proves the extension has it: linked, and the app answers with its own `hello`. An unused code is
+forgotten after 30 minutes.
+
+**The code works once** (REDTEAM-LINK-4, added during the review). On that first message the app makes a new key K2
+and sends `rekey { key: K2 }` sealed with the code's key K1, before its `hello`. Jarvis for Chrome switches: it seals
+with K2 from then on (its answer to the rekey too), and still opens K1 for 10 minutes or until a message from the app
+arrives under K2, then forgets K1. The app keeps K1 as `prev` until a message under K2 arrives (the confirmation),
+sending the rekey again (fresh envelopes, after 3, 6, 12, then every 30 s, for 10 minutes, and whenever a message
+under K1 still comes); meanwhile it seals with K1 (for 10 minutes after the rekey, or while the extension is still
+heard using K1) and opens both, K1 for 30 minutes at most. Once confirmed, both have forgotten K1: a message sealed
+with it is dropped, so an old code (clipboard history, a note) opens nothing. A lost rekey or a lost answer is covered:
+the rekey is sent again, a repeated rekey with the same K2 is answered again, and the extension's next message under
+K2 confirms it. The extension refuses a rekey to any other key once it has switched, so the code can't move the link
+later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay in the two
+minutes the rekey is kept there could learn K2 (a key exchange would close that; not in this release).
+
+**The clipboard** (critique L9, REDTEAM-LINK-4, PRIVACY-6). When this tab copied the code (its sessionStorage keeps
+`jarvis.chromeLink.copied.v1` = `{ at, hash }`, a SHA-256 of the code, never the code, so a reload doesn't forget it),
+the app clears the clipboard once linked, for the code's whole 30-minute life: it reads the clipboard first and writes
+an empty text only while it still holds the code (something copied since stays); not allowed now (another window has
+the focus), it tries again when this window gets it; reading refused, it leaves the clipboard and Settings says
+"Jarvis couldn't check your clipboard: if it still holds the link code, copy something else over it.". Either side can
 unlink: it sends `unlinked {}` first if it can (the app waits 5 s at most), then forgets its copy; the other side
 forgets its copy when the message arrives.
 
-The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` in localStorage `jarvis.chromeLink.v1`
+The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` (plus `prev`, `rekeyAt`, `prevSeenAt` while a rekey
+is unconfirmed) in localStorage `jarvis.chromeLink.v1`
 (`linkedAt` is null while it waits for the extension; `extSeenAt`, its last sign of life, is written at most every
 15 s so other windows see it; `madeAt` dates the code) and `{ core, cursor, seen }` in `jarvis.chromeLink.inbox.v1`
 (where it has read up to and the last 500 ids it opened: nothing secret, the relay sees both; so a reload never
@@ -4981,6 +5001,7 @@ exactly one `reply` whose `re` is that id. The app gives up on a reply after 10 
 | `stop` | `{}`: stops the running task |
 | `answer` | `{ promptId, hash, choice, via: 'voice' \| 'card' }` |
 | `unlinked` | `{}` |
+| `rekey` | `{ key }`: the link's new key, sealed with the code's, right after linking (REDTEAM-LINK-4, §32.1.1) |
 
 | Extension → app (`to-app`) | body |
 |---|---|
@@ -5097,7 +5118,7 @@ Jarvis".
 asked for by name when the owner links; the CSP's `connect-src` adds `https://*.ts.net`. Still no
 `externally_connectable` and no content scripts: no web page can message the extension. Version 1.1.0 (the
 extension's own: `extension/build/manifest.mjs` `VERSION`). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
-key, linkedAt }`; `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
+key, linkedAt }` (and `prev`, `prevUntil`: the code's key for a while after the rekey, §32.2.4); `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
 `jarvis.voiceTasks` `{ day, count }` (tasks from Jarvis on this computer's calendar day); `jarvis.relay` `{ after,
 seen, heardAt }` (where reading `to-ext` left off, the last 500 ids read, and when a message from the app last opened
 with this key).
@@ -5153,6 +5174,11 @@ the envelope's 120 s.
   (`decideFromJarvis`), and the step list says "Approved by voice from Jarvis: “Approve” (page step on <site>)."
   (`via: 'card'` says "on its card").
 - `unlinked` → reply, then unlink. Any other kind → `bad`.
+- `rekey { key }` (REDTEAM-LINK-4) → the first one, under the code's key, switches the link: `chromeLink` becomes
+  `{ …, key: <new>, prev: <the code's>, prevUntil: now + 10 min }` (the cursor and the switches stay), the relay seals
+  with the new key from then on (this reply too) and opens the code's key only until `prevUntil` or until a message
+  from Jarvis under the new key, which drops it. The same new key again (Jarvis didn't hear the answer) → `ok` again;
+  any other key → `bad`. Not a new link: nothing pauses, the relay isn't restarted.
 
 **32.2.5 What goes back.** `status` on every change of the running task or the switches, and every 60 s while a task
 runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it started from one

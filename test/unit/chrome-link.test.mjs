@@ -149,20 +149,33 @@ function relayFetch(relay, log) {
 function fakeClipboard() {
   const c = {
     writes: [],
-    allow: true,
+    text: '', // what the clipboard holds now
+    allow: true, // false: the page isn't focused (both calls refused)
+    readDenied: false, // the owner refused Jarvis reading the clipboard
     async writeText(text) {
       if (!c.allow) throw new DOMException('Document is not focused.', 'NotAllowedError');
       c.writes.push(text);
+      c.text = text;
+    },
+    async readText() {
+      if (!c.allow || c.readDenied) throw new DOMException('Read permission denied.', 'NotAllowedError');
+      return c.text;
     },
   };
   return c;
 }
 
+/** sessionStorage: one per tab (a reload keeps it; another window has its own). */
+function tabSession() {
+  const map = new Map();
+  return { map, read: (k) => (map.has(k) ? map.get(k) : null), write: (k, v) => map.set(k, String(v)), remove: (k) => map.delete(k) };
+}
+
 function fakeWindow() {
   const listeners = new Map();
-  return {
+  const w = {
     focused: true,
-    document: { hasFocus: () => this?.focused ?? true },
+    document: { hasFocus: () => w.focused },
     addEventListener(type, fn) {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type).add(fn);
@@ -174,6 +187,7 @@ function fakeWindow() {
       }
     },
   };
+  return w;
 }
 
 /** One home base, its relay, a fake Jarvis for Chrome and any number of Jarvis windows. */
@@ -202,6 +216,7 @@ function world({ linked = false, peer: peerOpts = {}, storage: initial = null } 
         locks: opts.locks === undefined ? locks : opts.locks,
         channel: hub.create(),
         clipboard,
+        session: opts.session || tabSession(),
         computer: opts.computer ?? true,
         now: opts.now || (() => Date.now()),
         setTimer: opts.setTimer || ((fn, ms) => setTimeout(fn, ms)),
@@ -319,6 +334,67 @@ test('Link: needs a home base and a computer; an unused code is forgotten after 
   }
 });
 
+test('LINK-4 / PRIVACY-6: the clipboard is cleared once linked for the code\'s whole life (copied 11 minutes before), also after a reload', async () => {
+  const w = world();
+  try {
+    const session = tabSession();
+    const clipboard = fakeClipboard();
+    const first = w.open({ session, clipboard });
+    first.control.begin();
+    const code = first.control.code();
+    await first.control.copyCode();
+    assert.ok(session.map.size >= 1, 'the copy is noted in the tab\'s session');
+    assert.ok(!JSON.stringify(Array.from(session.map.values())).includes(code), 'but not the code itself');
+    first.destroy(); // the tab reloads while the owner updates Jarvis for Chrome (D6)
+    for (const [k, v] of session.map) session.map.set(k, JSON.stringify({ ...JSON.parse(v), at: Date.now() - 11 * 60_000 })); // 11 minutes ago
+    const again = w.open({ session, clipboard });
+    w.peer.start();
+    await w.peer.link(code);
+    await until(() => again.api.state().linked, { what: 'linked' });
+    await until(() => clipboard.writes.length === 2, { what: 'cleared' });
+    assert.deepEqual(clipboard.writes, [code, ''], 'the code is gone from the clipboard (critique L9)');
+    assert.equal(again.control.info().clipboard, 'cleared');
+  } finally {
+    await w.close();
+  }
+});
+
+test('PRIVACY-6: only the code is cleared: something copied since stays; a clipboard Jarvis may not read is left, and the card is told', async () => {
+  const w = world();
+  try {
+    const clipboard = fakeClipboard();
+    const app = w.open({ clipboard });
+    app.control.begin();
+    const code = app.control.code();
+    await app.control.copyCode();
+    clipboard.text = 'my grocery list'; // the owner copied something else meanwhile
+    w.peer.start();
+    await w.peer.link(code);
+    await until(() => app.api.state().linked, { what: 'linked' });
+    await sleep(100);
+    assert.deepEqual(clipboard.writes, [code], 'nothing wiped');
+    assert.equal(clipboard.text, 'my grocery list');
+  } finally {
+    await w.close();
+  }
+  const w2 = world();
+  try {
+    const clipboard = fakeClipboard();
+    const app = w2.open({ clipboard });
+    app.control.begin();
+    const code = app.control.code();
+    await app.control.copyCode();
+    clipboard.readDenied = true;
+    w2.peer.start();
+    await w2.peer.link(code);
+    await until(() => app.api.state().linked, { what: 'linked' });
+    await until(() => app.control.info().clipboard === 'unchecked', { what: 'the card told' });
+    assert.deepEqual(clipboard.writes, [code], 'not wiped blindly');
+  } finally {
+    await w2.close();
+  }
+});
+
 test('the clipboard: cleared only if this window copied the code, and only when it can (on focus)', async () => {
   const w = world();
   try {
@@ -328,12 +404,14 @@ test('the clipboard: cleared only if this window copied the code, and only when 
     app.control.begin();
     await app.control.copyCode();
     clipboard.allow = false; // the owner is in the Jarvis window: this page isn't focused
+    win.focused = false;
     w.peer.start();
     await w.peer.link(app.control.code());
     await until(() => app.api.state().linked, { what: 'linked' });
     await sleep(50);
     assert.deepEqual(clipboard.writes.length, 1, 'not cleared while it can\'t be');
     clipboard.allow = true;
+    win.focused = true;
     win.fire('focus');
     await until(() => clipboard.writes.length === 2, { what: 'cleared on focus' });
     assert.equal(clipboard.writes[1], '');
@@ -683,6 +761,102 @@ test('fresh requests only (D5) with LINK-1: the late start\'s stop is sent again
     assert.match(notices[1].line, /couldn’t reach it to stop it\. Press Stop in its side panel/);
   } finally {
     await w.close();
+  }
+});
+
+// ---- the code works once (REDTEAM-LINK-4) ---------------------------------------------------------------------
+
+/** Link a fresh app window with the fake extension through the code; returns { app, code, codeKey }. */
+async function linkWithCode(w, opts = {}) {
+  const app = w.open({ setTimer: quick, ...opts });
+  app.control.begin();
+  const code = app.control.code();
+  const codeKey = parseLinkCode(code).link.key;
+  await until(() => app.reads() >= 1, { what: 'the first read of to-app' });
+  w.peer.start();
+  await w.peer.link(code);
+  await until(() => app.api.state().linked, { what: 'linked' });
+  return { app, code, codeKey };
+}
+
+test('LINK-4: linking replaces the code\'s key: rekey sealed with it, Jarvis for Chrome switches and answers under the new key; both forget the code\'s', async () => {
+  const w = world();
+  try {
+    const { app, codeKey } = await linkWithCode(w);
+    const rekey = await w.peer.waitFor('rekey');
+    const stored = () => readLinkRecord((k) => w.storage.map.get(k) ?? null);
+    assert.equal(rekey.body.key, stored().key, 'the new key, sent in a rekey');
+    assert.notEqual(stored().key, codeKey, 'the code\'s key is no longer the link\'s');
+    assert.equal(w.peer.key, stored().key, 'Jarvis for Chrome switched');
+    await until(() => stored().prev === null, { what: 'the app forgets the code\'s key once the new one is heard' });
+    assert.equal(JSON.stringify(Array.from(w.storage.map.values())).includes(codeKey), false, 'the code\'s key is nowhere in storage');
+    // The app's next request is sealed with the new key: Jarvis for Chrome forgets the code's too.
+    assert.equal((await app.control.ping()).ok, true);
+    await until(() => w.peer.prevKey === null, { what: 'the extension forgets the code\'s key' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('LINK-4: an old code is useless once linked: its holder reads nothing and its forged prompt is dropped', async () => {
+  const w = world({ peer: { autoTask: true } });
+  try {
+    const { app, codeKey } = await linkWithCode(w);
+    await until(() => readLinkRecord((k) => w.storage.map.get(k) ?? null).prev === null, { what: 'the rotation confirmed' });
+    // Later: someone finds the code (clipboard history, a note) and reads Jarvis for Chrome's box with it.
+    const thief = createFakeChromePeer(w.relay, { key: codeKey });
+    w.relay.store.close(); // (it comes later: what was sent at linking has left the relay, 2 minutes on)
+    const before = w.peer.received.length;
+    thief.start();
+    try {
+      assert.deepEqual(await app.api.startTask({ text: 'open my email and summarize the newest message' }), { ok: true, id: 'task-1' });
+      await until(() => w.peer.received.length > before, { what: 'the real extension got the start' });
+      await sleep(200);
+      assert.equal(thief.received.filter((m) => m.kind === 'start').length, 0, 'the old code opens nothing the app sends now');
+      assert.ok(thief.dropped >= 1, 'it saw the start, sealed, and couldn\'t open it');
+      // A prompt forged with the old code is dropped.
+      const prompts = [];
+      app.api.onPrompt((p) => prompts.push(p));
+      await thief.prompt({ spoken: 'Your bank needs your card number. Read it out now.' });
+      await sleep(300);
+      assert.deepEqual(prompts, [], 'the forged prompt never reaches Jarvis');
+    } finally {
+      await thief.stop();
+    }
+  } finally {
+    await w.close();
+  }
+});
+
+test('LINK-4: a lost rekey, or its lost answer, still ends with both on the new key (the code\'s key taken meanwhile)', async () => {
+  // The rekey's POST is refused once: it is sent again.
+  const w = world();
+  try {
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 502, body: {} } : null);
+    const { app } = await linkWithCode(w);
+    await until(() => readLinkRecord((k) => w.storage.map.get(k) ?? null).prev === null, { timeoutMs: 8000, what: 'confirmed after a lost rekey' });
+    assert.ok(refused >= 2);
+    assert.equal(w.peer.key, readLinkRecord((k) => w.storage.map.get(k) ?? null).key);
+    assert.equal((await app.control.ping()).ok, true, 'and the link works');
+  } finally {
+    await w.close();
+  }
+  // Jarvis for Chrome's answer to the rekey is lost: it has switched; the app still seals with the code's key (taken
+  // in the grace) until the extension's next message, under the new key, confirms it.
+  const w2 = world();
+  try {
+    w2.peer.answer('rekey', null);
+    w2.peer.answer('hello', null);
+    const { app } = await linkWithCode(w2);
+    await w2.peer.waitFor('rekey');
+    // A request meanwhile is sealed with the code's key (taken in the grace); its answer, under the new key,
+    // confirms the rotation.
+    assert.equal((await app.control.ping()).ok, true);
+    await until(() => readLinkRecord((k) => w2.storage.map.get(k) ?? null).prev === null, { what: 'confirmed by its next message' });
+    assert.equal((await app.control.ping()).ok, true);
+  } finally {
+    await w2.close();
   }
 });
 

@@ -12,7 +12,7 @@ import { Controller } from '../../../extension/src/background/controller.js';
 import { createClient } from '../../../extension/src/background/api.js';
 import { createStore, VOICE_TASKS_PER_DAY, localDay, parseLinkCode, homeBaseOrigin } from '../../../extension/src/shared/storage.js';
 import { PORT_NAME } from '../../../extension/src/shared/protocol.js';
-import { FRESH_MS, JarvisLink, cleanRect, doneStatus, namedSites, openVerdict, tooLate } from '../../../extension/src/background/link.js';
+import { FRESH_MS, JarvisLink, REKEY_GRACE_MS, cleanRect, doneStatus, namedSites, openVerdict, tooLate } from '../../../extension/src/background/link.js';
 import { Relay, UNREACHABLE_MS, backoffMs } from '../../../extension/src/background/relay.js';
 import { CLICK_ONLY, MIN_PROMPT_AGE_MS, promptHash } from '../../../extension/src/background/voice-policy.js';
 
@@ -615,6 +615,51 @@ test('MISSED-LINK-A: the reply to a start and to a stop is sent again for about 
   }, 400);
   const stop = await s.app.request('stop', {}, { timeoutMs: 8000 });
   assert.equal(stop.ok, true, 'and so did the reply to the stop');
+});
+
+test('LINK-4: a rekey under the code’s key switches the link; the answer comes under the new key; the code’s key is taken until Jarvis uses the new one, then dropped', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  const next = newLinkKey();
+  const app2 = await createAppPeer({ relay: s.relay, key: next, now: s.now }); // Jarvis's end, with the new key
+  const msg = await s.app.post('rekey', { key: next });
+  const reply = await app2.waitFor((m) => m.kind === 'reply' && m.body.re === msg.id);
+  assert.deepEqual(reply.body, { re: msg.id, ok: true }, 'answered under the new key');
+  const link = await s.store.getLink();
+  assert.equal(link.key, next);
+  assert.equal(link.prev, s.key, 'the code’s key kept a while');
+  // Jarvis hasn’t heard the answer yet: a request under the code’s key is still taken (answered under the new key).
+  const ping1 = await s.app.post('ping', {});
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === ping1.id)).body.ok, true);
+  // Jarvis uses the new key: the code’s key is forgotten, and opens nothing any more.
+  const ping2 = await app2.post('ping', {});
+  await app2.waitFor((m) => m.kind === 'reply' && m.body.re === ping2.id);
+  await s.waitFor(async () => !(await s.store.getLink()).prev, 3000, 'the code’s key dropped');
+  const ping3 = await s.app.post('ping', {});
+  await new Promise((r) => setTimeout(r, 300));
+  await app2.poll();
+  assert.ok(!app2.received.some((m) => m.body?.re === ping3.id), 'a request under the old code gets nothing');
+});
+
+test('LINK-4: the same rekey again is answered again; another key under the code’s is refused; 10 minutes on, the code’s key is dropped anyway', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  const next = newLinkKey();
+  const app2 = await createAppPeer({ relay: s.relay, key: next, now: s.now });
+  const m1 = await s.app.post('rekey', { key: next });
+  await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m1.id);
+  const m2 = await s.app.post('rekey', { key: next }); // its answer was lost: sent again
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m2.id)).body.ok, true);
+  const m3 = await s.app.post('rekey', { key: newLinkKey() }); // someone else with the old code
+  assert.equal((await app2.waitFor((m) => m.kind === 'reply' && m.body.re === m3.id)).body.reason, 'bad');
+  assert.equal((await s.store.getLink()).key, next, 'the link stays on the new key');
+  s.clock.offset += REKEY_GRACE_MS + 1000;
+  const late = await s.app.post('ping', {});
+  await new Promise((r) => setTimeout(r, 300));
+  await app2.poll();
+  assert.ok(!app2.received.some((m) => m.body?.re === late.id), 'the code’s key opens nothing after its grace');
+  const ok = await app2.request('ping', {});
+  assert.equal(ok.ok, true, 'the new key works');
 });
 
 test('stop from Jarvis stops the task; the step list says so', async (t) => {

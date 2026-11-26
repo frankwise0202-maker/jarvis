@@ -52,7 +52,7 @@ import { readItem, writeItem, removeItem, watchItem } from './storage.js';
 import { requestHomeBase } from './homebase.js';
 import { isIOS, isAndroid } from './env.js';
 import { normalizeHomeBaseUrl } from '../lib/homebase.js';
-import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, makeLinkCode, isLinkKey, isCoreOrigin, ID_CHARS } from '../lib/relay-envelope.js';
+import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, makeLinkCode, isLinkKey, isCoreOrigin, ID_CHARS, ID_BYTES, b64url } from '../lib/relay-envelope.js';
 
 export const CHROME_LINK_KEY = 'jarvis.chromeLink.v1';
 export const CHROME_LINK_INBOX_KEY = 'jarvis.chromeLink.inbox.v1';
@@ -69,12 +69,23 @@ export const ONLINE_MS = 60_000;
 export const POLL_WAIT_S = 20;
 export const STATUS_EVERY_MS = 30_000;
 export const PENDING_MS = 30 * 60_000; // an unused link code is forgotten after half an hour
-export const CLIPBOARD_CLEAR_MS = 10 * 60_000; // the code is cleared from the clipboard once linked, if copied this recently
+// The code is cleared from the clipboard once linked, if this tab copied it during its life (PENDING_MS), and only if
+// the clipboard still holds it (REDTEAM-LINK-4, PRIVACY-6). The tab's sessionStorage keeps that it was copied (a hash
+// of the code, never the code), so a reload while the owner sets up Jarvis for Chrome doesn't forget it.
+export const CHROME_LINK_COPIED_KEY = 'jarvis.chromeLink.copied.v1';
 export const BACKOFF_MS = Object.freeze([2_000, 4_000, 8_000, 15_000, 30_000, 60_000]);
 export const OLD_CORE_RETRY_MS = 5 * 60_000;
 export const TEXT_MAX = 2000; // a task's words, and what comes back about it
 export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
 export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
+// The code works once (REDTEAM-LINK-4): on the first message sealed with the code's key, a new key replaces it, sent
+// to Jarvis for Chrome in a `rekey` sealed with the code's key and sent again until confirmed by a message under the
+// new key (then the code's key is forgotten here). Until then this side still opens messages under the code's key
+// (at most PENDING_MS after the rekey) and seals with it for REKEY_GRACE_MS (Jarvis for Chrome takes it that long
+// after it switched), or while Jarvis for Chrome is still heard using it.
+export const REKEY_GRACE_MS = 10 * 60_000;
+export const REKEY_RESEND_MS = Object.freeze([3_000, 6_000, 12_000, 30_000]);
+const PREV_HEARD_MS = 2 * 60_000; // Jarvis for Chrome used the code's key this recently: it hasn't switched
 export const LATE_START_LINE = 'Chrome started late, so I stopped it.';
 // Stop (REDTEAM-LINK-1): one pending stop at a time, sent again (a fresh envelope each time) until Jarvis for
 // Chrome confirms it: its reply (ok, or 'gone': nothing runs), a `done` for the task, or a status or task news
@@ -235,11 +246,31 @@ function readJson(read, key) {
   }
 }
 
-/** The stored link, checked: { v, core, key, linkedAt, extSeenAt, madeAt } or null. */
+/**
+ * The stored link, checked: { v, core, key, linkedAt, extSeenAt, madeAt, prev, rekeyAt, prevSeenAt } or null. `prev` is
+ * the code's key while the new one isn't confirmed yet (REDTEAM-LINK-4), else null.
+ */
 export function readLinkRecord(read = readItem) {
   const raw = readJson(read, CHROME_LINK_KEY);
   if (!isObj(raw) || raw.v !== 1 || !isCoreOrigin(raw.core) || !isLinkKey(raw.key)) return null;
-  return { v: 1, core: raw.core, key: raw.key, linkedAt: posInt(raw.linkedAt), extSeenAt: posInt(raw.extSeenAt), madeAt: posInt(raw.madeAt) };
+  const prev = isLinkKey(raw.prev) && raw.prev !== raw.key && posInt(raw.linkedAt) ? raw.prev : null;
+  return {
+    v: 1,
+    core: raw.core,
+    key: raw.key,
+    linkedAt: posInt(raw.linkedAt),
+    extSeenAt: posInt(raw.extSeenAt),
+    madeAt: posInt(raw.madeAt),
+    prev,
+    rekeyAt: prev ? posInt(raw.rekeyAt) : null,
+    prevSeenAt: prev ? posInt(raw.prevSeenAt) : null,
+  };
+}
+
+/** The same link, a rekey apart (REDTEAM-LINK-4): a new key replacing the code's is not a new link. */
+export function sameLink(a, b) {
+  if (!a || !b || a.core !== b.core) return false;
+  return a.key === b.key || (!!b.prev && a.key === b.prev) || (!!a.prev && a.prev === b.key);
 }
 
 function defaultComputer() {
@@ -275,6 +306,46 @@ function defaultLocks() {
   } catch {
     return null;
   }
+}
+
+/** This tab's sessionStorage (a reload keeps it; other windows have their own), or a memory stand-in. */
+function defaultSession() {
+  const memory = new Map();
+  const store = () => {
+    try {
+      const s = globalThis.sessionStorage;
+      return s && typeof s.getItem === 'function' ? s : null;
+    } catch {
+      return null;
+    }
+  };
+  return {
+    read(k) {
+      try {
+        const s = store();
+        return s ? s.getItem(k) : memory.has(k) ? memory.get(k) : null;
+      } catch {
+        return memory.has(k) ? memory.get(k) : null;
+      }
+    },
+    write(k, v) {
+      try {
+        const s = store();
+        if (s) s.setItem(k, String(v));
+        else memory.set(k, String(v));
+      } catch {
+        memory.set(k, String(v));
+      }
+    },
+    remove(k) {
+      memory.delete(k);
+      try {
+        store()?.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
 
 function defaultClipboard() {
@@ -313,6 +384,7 @@ export function createChromeLink({
   locks = defaultLocks(),
   channel = defaultChannel(),
   clipboard = defaultClipboard(),
+  session = defaultSession(),
   computer = defaultComputer(),
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
@@ -333,9 +405,12 @@ export function createChromeLink({
   let voiceApprovals = false;
   let task = null;
   let extVersion = '';
-  let copied = null; // { at } when this window put the link code on the clipboard
   let clearedAt = 0;
-  let cryptoKey = null; // { key: the text it came from, value: CryptoKey }
+  let clipState = null; // 'cleared' | 'unchecked' (it couldn't be read, so it was left) | null
+  const cryptoKeys = new Map(); // key text → CryptoKey (the link's key, and the code's while a rekey is unconfirmed)
+  let rekeyTimer = null;
+  let rekeySends = 0;
+  let rekeyLastAt = 0;
   let seen = createSeenIds();
   let cursor = null;
   let onlineTimer = null;
@@ -404,7 +479,8 @@ export function createChromeLink({
   }
 
   function save(rec) {
-    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt }));
+    const rotating = rec.prev ? { prev: rec.prev, rekeyAt: rec.rekeyAt, prevSeenAt: rec.prevSeenAt } : {};
+    storage.write(CHROME_LINK_KEY, JSON.stringify({ v: 1, core: rec.core, key: rec.key, linkedAt: rec.linkedAt, extSeenAt: rec.extSeenAt, madeAt: rec.madeAt, ...rotating }));
   }
 
   function loadInbox() {
@@ -423,9 +499,11 @@ export function createChromeLink({
   function reload() {
     const before = record;
     record = load();
-    const keyChanged = !before || !record || before.key !== record.key;
+    const keyChanged = !before || !record || !sameLink(before, record);
     if (keyChanged) {
-      cryptoKey = null;
+      cryptoKeys.clear();
+      cancelLater(rekeyTimer);
+      rekeyTimer = null;
       cursor = null;
       seen = createSeenIds();
       if (holding && record) loadInbox();
@@ -456,11 +534,55 @@ export function createChromeLink({
     reload();
   }
 
-  async function keyOf(rec) {
-    if (cryptoKey && cryptoKey.key === rec.key) return cryptoKey.value;
-    const value = await importLinkKey(rec.key);
-    cryptoKey = { key: rec.key, value };
+  async function keyOf(text) {
+    if (cryptoKeys.has(text)) return cryptoKeys.get(text);
+    const value = await importLinkKey(text);
+    if (cryptoKeys.size > 3) cryptoKeys.clear();
+    cryptoKeys.set(text, value);
     return value;
+  }
+
+  /**
+   * The key a message to Jarvis for Chrome is sealed with (REDTEAM-LINK-4): the link's own, or while the new key
+   * isn't confirmed, the code's (Jarvis for Chrome takes it for REKEY_GRACE_MS after it switched, and needs it before).
+   */
+  function sealKeyText(rec) {
+    if (!rec.prev) return rec.key;
+    const t = now();
+    if (t - (rec.rekeyAt || 0) < REKEY_GRACE_MS) return rec.prev;
+    if (rec.prevSeenAt && t - rec.prevSeenAt < PREV_HEARD_MS) return rec.prev;
+    return rec.key;
+  }
+
+  /** Whether a message under the code's key is still taken (only before the new key is confirmed, half an hour at most). */
+  const prevOpen = (rec) => !!rec.prev && now() - (rec.rekeyAt || 0) < PENDING_MS;
+
+  /** Send the new key, sealed with the code's (again until confirmed: on a schedule, and when the old key is heard). */
+  function sendRekey({ force = false } = {}) {
+    const rec = record;
+    if (!rec || !rec.prev || !rec.linkedAt) return Promise.resolve(false);
+    const t = now();
+    if (!force && t - rekeyLastAt < 2000) return Promise.resolve(false);
+    rekeyLastAt = t;
+    const sent = tell('rekey', { key: rec.key }, rec, rec.prev);
+    cancelLater(rekeyTimer);
+    rekeyTimer = null;
+    if (holding && t - (rec.rekeyAt || 0) < REKEY_GRACE_MS) {
+      const wait = REKEY_RESEND_MS[Math.min(rekeySends, REKEY_RESEND_MS.length - 1)];
+      rekeySends += 1;
+      rekeyTimer = later(() => sendRekey({ force: true }), wait);
+    }
+    return sent;
+  }
+
+  /** A message under the new key: Jarvis for Chrome has switched. The code's key is forgotten here. */
+  function rekeyConfirmed() {
+    if (!record || !record.prev) return;
+    cryptoKeys.delete(record.prev);
+    record = { ...record, prev: null, rekeyAt: null, prevSeenAt: null };
+    save(record);
+    cancelLater(rekeyTimer);
+    rekeyTimer = null;
   }
 
   // ---- state and changes --------------------------------------------------------------------------------
@@ -494,8 +616,9 @@ export function createChromeLink({
       note,
       extVersion,
       late: lateNoted,
-      copied: !!copied,
+      copied: !!readCopied(),
       clearedAt: clearedAt || null,
+      clipboard: clipState,
     };
   }
 
@@ -512,16 +635,32 @@ export function createChromeLink({
     call(controlListeners, info());
   }
 
-  function noteHeard() {
+  function noteHeard({ viaPrev = false } = {}) {
     heard = now();
     if (record && !record.linkedAt) {
-      // The first message sealed with this key: Jarvis for Chrome has the code. Linked.
-      record = { ...record, linkedAt: heard, extSeenAt: heard };
+      // The first message sealed with this key: Jarvis for Chrome has the code. Linked. A new key replaces the
+      // code's at once, so the code works once (REDTEAM-LINK-4): sent sealed with the code's key, and again until
+      // a message under the new one confirms it.
+      record = { ...record, key: newLinkKey(), prev: record.key, rekeyAt: heard, prevSeenAt: heard, linkedAt: heard, extSeenAt: heard };
       savedSeen = heard;
+      rekeySends = 0;
       save(record);
       maybeClearClipboard();
-      sendHello();
-    } else if (record && heard - savedSeen >= SEEN_SAVE_MS) {
+      sendRekey({ force: true }).finally(() => sendHello()); // the rekey first: it is read before anything else
+      return;
+    }
+    if (record && record.prev) {
+      if (!viaPrev) rekeyConfirmed();
+      else {
+        // Still the code's key: it hasn't switched (the rekey or its answer was lost). Sent again.
+        if (heard - (record.prevSeenAt || 0) >= 5000) {
+          record = { ...record, prevSeenAt: heard };
+          save(record);
+        }
+        sendRekey();
+      }
+    }
+    if (record && heard - savedSeen >= SEEN_SAVE_MS) {
       record = { ...record, extSeenAt: heard };
       savedSeen = heard;
       save(record);
@@ -540,9 +679,9 @@ export function createChromeLink({
   const shareState = (ev = null) => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion, ...(ev ? { ev } : {}) });
 
   // ---- what comes in ------------------------------------------------------------------------------------
-  function handle(message) {
+  function handle(message, { viaPrev = false } = {}) {
     const { kind, body } = message;
-    noteHeard();
+    noteHeard({ viaPrev });
     let ev = null; // what this message says about a pending stop (other windows hear it with the state)
     switch (kind) {
       case 'reply': {
@@ -610,14 +749,19 @@ export function createChromeLink({
 
   async function receive(rec, data) {
     if (!isObj(data) || !Array.isArray(data.messages)) return 0;
-    const value = await keyOf(rec);
     let opened = 0;
     for (const env of data.messages.slice(0, 64)) {
-      if (record !== rec && (!record || record.key !== rec.key)) return opened; // unlinked meanwhile
-      const r = await openEnvelope(value, env, { box: 'to-app', now: now(), seen });
+      if (!record || !sameLink(record, rec)) return opened; // unlinked meanwhile
+      const cur = record; // (the key may have been replaced by the message before: REDTEAM-LINK-4)
+      let r = await openEnvelope(await keyOf(cur.key), env, { box: 'to-app', now: now(), seen });
+      let viaPrev = false;
+      if (!r.ok && r.reason === 'tag' && prevOpen(cur)) {
+        r = await openEnvelope(await keyOf(cur.prev), env, { box: 'to-app', now: now(), seen });
+        viaPrev = r.ok;
+      }
       if (!r.ok) continue; // dropped, silently
       opened += 1;
-      handle(r.message);
+      handle(r.message, { viaPrev });
     }
     if (typeof data.last === 'string' && ID_RE.test(data.last)) cursor = data.last;
     saveInbox();
@@ -629,15 +773,15 @@ export function createChromeLink({
     return requestHomeBase(baseOf(rec.core), 'relay/to-ext', { method: 'POST', body: envelope, timeoutMs: REPLY_TIMEOUT_MS, fetchImpl, signal, probe: false });
   }
 
-  async function sealFor(rec, kind, body) {
-    return sealEnvelope(await keyOf(rec), { box: 'to-ext', kind, body, at: now() });
+  async function sealFor(rec, kind, body, keyText = sealKeyText(rec)) {
+    return sealEnvelope(await keyOf(keyText), { box: 'to-ext', kind, body, at: now() });
   }
 
-  /** A message that wants no reply (hello, unlinked). Resolves when the home base took it (or didn't). */
-  async function tell(kind, body = {}, rec = record) {
+  /** A message that wants no reply (hello, unlinked, rekey). Resolves when the home base took it (or didn't). */
+  async function tell(kind, body = {}, rec = record, keyText = undefined) {
     if (!rec) return false;
     try {
-      const r = await post(rec, await sealFor(rec, kind, body));
+      const r = await post(rec, await sealFor(rec, kind, body, keyText));
       return !!r.ok;
     } catch {
       return false;
@@ -886,7 +1030,7 @@ export function createChromeLink({
    */
   function stopChrome(taskId = null) {
     const id = taskId || (task && task.id) || null;
-    if (stopper && !stopper.over && record && stopper.rec.key === record.key) {
+    if (stopper && !stopper.over && record && sameLink(stopper.rec, record)) {
       if (id && !stopper.taskId) stopper.taskId = id;
       sendStop(stopper, { now: true });
       return stopper.promise;
@@ -908,12 +1052,14 @@ export function createChromeLink({
     s.timer = null;
     const n = s.sends;
     s.sends += 1;
-    // A fresh envelope each time (Jarvis for Chrome takes a stop whatever its age within the envelope's 120 s).
-    sealFor(s.rec, 'stop', {})
+    // A fresh envelope each time (Jarvis for Chrome takes a stop whatever its age within the envelope's 120 s),
+    // sealed as the link stands now (a rotated key, REDTEAM-LINK-4).
+    const rec = record && sameLink(record, s.rec) ? record : s.rec;
+    sealFor(rec, 'stop', {})
       .then((env) => {
         if (s.over) return null;
         s.ids.add(env.id);
-        return post(s.rec, env);
+        return post(rec, env);
       })
       .catch(() => null);
     // The 2 minutes are counted in the waits between sends (a throttled timer only stretches them).
@@ -1075,6 +1221,7 @@ export function createChromeLink({
     }
     holding = ctl;
     loadInbox();
+    if (record && record.prev) sendRekey({ force: true }); // a rotation not yet confirmed goes on here
     if (record && record.linkedAt) sendHello();
     pollLoop(ctl);
     statusLoop(ctl);
@@ -1126,29 +1273,87 @@ export function createChromeLink({
   }
 
   // ---- the clipboard ----------------------------------------------------------------------------------------
+  /** What this tab copied: { at, hash } (the hash of the code, never the code), or null. */
+  function readCopied() {
+    let raw = null;
+    try {
+      raw = JSON.parse(session.read(CHROME_LINK_COPIED_KEY) || 'null');
+    } catch {
+      raw = null;
+    }
+    if (!isObj(raw) || !posInt(raw.at) || typeof raw.hash !== 'string' || !ID_RE.test(raw.hash)) return null;
+    if (now() - raw.at > PENDING_MS + 60_000) return null; // the code it was is dead
+    return { at: raw.at, hash: raw.hash };
+  }
+
+  function forgetCopied() {
+    try {
+      session.remove(CHROME_LINK_COPIED_KEY);
+    } catch {
+      /* no session storage */
+    }
+  }
+
+  async function codeHash(text) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text).trim()));
+    return b64url(new Uint8Array(digest).slice(0, ID_BYTES));
+  }
+
+  /**
+   * Linked: if this tab copied the code (during its 30-minute life, a reload included), the clipboard is cleared,
+   * but only while it still holds the code: it is read first, so whatever the owner copied since stays. Not allowed
+   * now (another window has the focus): tried again when this one gets it. Not allowed at all (reading refused):
+   * left as it is, and Settings says so (`clipboard: 'unchecked'`).
+   */
   function maybeClearClipboard() {
-    if (!copied || !clipboard) return;
-    if (now() - copied.at > CLIPBOARD_CLEAR_MS) {
-      copied = null;
+    const copied = readCopied();
+    if (!copied || !clipboard) {
+      if (!readCopied()) forgetCopied();
       return;
     }
-    const clear = () => {
-      if (!copied) return;
-      Promise.resolve()
-        .then(() => clipboard.writeText(''))
-        .then(
-          () => {
-            copied = null;
-            clearedAt = now();
-            changed();
-          },
-          () => {
-            // Not allowed now (the window isn't focused): try again when it is.
-            if (win && typeof win.addEventListener === 'function') win.addEventListener('focus', clear, { once: true });
-          },
-        );
+    let tries = 0;
+    const clear = async () => {
+      const mine = readCopied();
+      if (!mine) return;
+      tries += 1;
+      let text;
+      try {
+        if (typeof clipboard.readText !== 'function') throw new Error('no reading');
+        text = await clipboard.readText();
+      } catch {
+        const focused = (() => {
+          try {
+            return !win || !win.document || typeof win.document.hasFocus !== 'function' || win.document.hasFocus();
+          } catch {
+            return true;
+          }
+        })();
+        if (!focused && tries < 3 && win && typeof win.addEventListener === 'function') {
+          win.addEventListener('focus', () => clear(), { once: true }); // not now: when this window gets the focus
+          return;
+        }
+        forgetCopied();
+        clipState = 'unchecked';
+        changed();
+        return;
+      }
+      if ((await codeHash(text)) !== mine.hash) {
+        forgetCopied(); // something else is on the clipboard now: nothing to clear
+        changed();
+        return;
+      }
+      try {
+        await clipboard.writeText('');
+      } catch {
+        if (tries < 3 && win && typeof win.addEventListener === 'function') win.addEventListener('focus', () => clear(), { once: true });
+        return;
+      }
+      forgetCopied();
+      clearedAt = now();
+      clipState = 'cleared';
+      changed();
     };
-    clear(); // refused while another window has the focus: then once this one gets it back
+    clear();
   }
 
   // ---- other windows ------------------------------------------------------------------------------------------
@@ -1215,6 +1420,7 @@ export function createChromeLink({
       if (!core || !isCoreOrigin(core)) return { ok: false, reason: 'no-home-base' };
       note = null;
       clearedAt = 0;
+      clipState = null;
       storage.remove(CHROME_LINK_INBOX_KEY);
       storage.remove(CHROME_LINK_STARTS_KEY);
       save({ v: 1, core, key: newLinkKey(), linkedAt: null, extSeenAt: null, madeAt: now() });
@@ -1225,7 +1431,7 @@ export function createChromeLink({
     code() {
       return record && !record.linkedAt ? makeLinkCode({ core: record.core, key: record.key }) : null;
     },
-    /** Put the link code on the clipboard; it is cleared once linked (if within 10 minutes). */
+    /** Put the link code on the clipboard; it is cleared once linked, if it is still there (LINK-4, PRIVACY-6). */
     async copyCode() {
       const code = control.code();
       if (!code) return { ok: false, reason: 'no-code' };
@@ -1235,7 +1441,11 @@ export function createChromeLink({
       } catch {
         return { ok: false, reason: 'clipboard' };
       }
-      copied = { at: now() };
+      try {
+        session.write(CHROME_LINK_COPIED_KEY, JSON.stringify({ at: now(), hash: await codeHash(code) }));
+      } catch {
+        /* no session storage: cleared only if linked before this tab reloads (by memory, below) */
+      }
       changed();
       return { ok: true };
     },

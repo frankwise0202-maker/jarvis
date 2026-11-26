@@ -13,6 +13,10 @@
 //   stop             stops the running task
 //   answer           the owner's answer to a prompt, by voice or on Jarvis's card (voice-policy.js)
 //   unlinked         Jarvis unlinked: so does the extension
+//   rekey            the link's new key, sent by Jarvis under the code's key right after linking
+//                    (REDTEAM-LINK-4): the extension switches and answers under the new key; the
+//                    code's key is still opened until Jarvis uses the new one (or 10 minutes), so
+//                    the code works once
 // An open, start or answer more than 8 s old is refused as 'gone' ("too late") and does nothing
 // (lead decision D5): Jarvis gave up on it at 10 s and told the owner it didn't work, so a worker
 // woken late by its alarm must not start a task the owner was told never started. stop, ping,
@@ -46,6 +50,8 @@ export const FRESH_MS = 8 * 1000; // D5: an open, start or answer older than thi
 export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
 export const REPLY_RETRY_MS = 10 * 1000; // a reply to a start or a stop is tried this long after the request (MISSED-LINK-A)
+export const REKEY_GRACE_MS = 10 * 60 * 1000; // the code's key is still opened this long after a rekey (REDTEAM-LINK-4)
+const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/;
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
 
@@ -188,7 +194,12 @@ export class JarvisLink {
 
   async useLink(link) {
     const same = link && this.link && link.core === this.link.core && link.key === this.link.key;
-    if (same) return this.ensureRunning();
+    if (same) {
+      // (The same link, maybe with the code's key dropped or kept: a rekey isn't a new link.)
+      this.link = link;
+      this.relay?.setKeys(link);
+      return this.ensureRunning();
+    }
     if (this.link) this.pauseForLinkEnd(); // a new link, or none: the old one can't bring a Stop any more
     this.relay?.stop();
     this.relay = null;
@@ -319,11 +330,15 @@ export class JarvisLink {
   // -------------------------------------------------------------------------------------------
   // From Jarvis
 
-  async onMessage({ kind, id, at, body }) {
+  async onMessage({ kind, id, at, body, viaPrev = false }) {
+    // Jarvis seals with the link's new key: the code's key is no longer needed (REDTEAM-LINK-4).
+    if (!viaPrev && this.link?.prev) await this.dropPrevKey();
     // Too late to act on: Jarvis has already told the owner it didn't work (D5).
     if (tooLate(kind, at, this.now())) return this.reply(id, { ok: false, reason: 'gone', why: 'too late' });
     try {
       switch (kind) {
+        case 'rekey':
+          return this.reply(id, await this.rekey(body, viaPrev));
         case 'hello':
           await this.reply(id, { ok: true });
           await this.send('hello', { ext: EXT_NAME, version: this.version });
@@ -347,6 +362,38 @@ export class JarvisLink {
     } catch {
       return this.reply(id, { ok: false, reason: 'bad', why: WHY.bad });
     }
+  }
+
+  /**
+   * `rekey { key }` (REDTEAM-LINK-4): Jarvis replaces the code's key with a new one right after
+   * linking, sealed with the code's key. The first one switches the link: messages go out under the
+   * new key from now on (this reply too), and the code's key is still opened until Jarvis uses the
+   * new one, or REKEY_GRACE_MS. The same new key again (Jarvis didn't hear the answer) is answered
+   * again; any other is refused, so the code can't move the link once it has been used.
+   */
+  async rekey(body, viaPrev) {
+    const next = typeof body?.key === 'string' ? body.key : '';
+    const link = this.link;
+    if (!link || !KEY_TEXT.test(next)) return { ok: false, reason: 'bad', why: WHY.bad };
+    if (link.prev) return next === link.key ? { ok: true } : { ok: false, reason: 'bad', why: WHY.bad };
+    if (viaPrev || next === link.key) return { ok: false, reason: 'bad', why: WHY.bad };
+    const updated = { ...link, key: next, prev: link.key, prevUntil: this.now() + REKEY_GRACE_MS };
+    this.link = updated; // first, so the storage change reads as the same link
+    this.relay?.setKeys(updated);
+    await this.store.rekeyLink(updated).catch(() => {});
+    return { ok: true };
+  }
+
+  /** Jarvis has switched to the new key: the code's key is forgotten here too. */
+  async dropPrevKey() {
+    const link = this.link;
+    if (!link?.prev) return;
+    const updated = { ...link, prev: undefined, prevUntil: undefined };
+    delete updated.prev;
+    delete updated.prevUntil;
+    this.link = updated;
+    this.relay?.setKeys(updated);
+    await this.store.rekeyLink({ key: updated.key }).catch(() => {});
   }
 
   /** `open { url, rect, focus }`: see openVerdict. */
