@@ -5319,30 +5319,52 @@ otherwise Claude's.
 **32.3.3 The task's check** (one check, the lead's D2). In Voice Mode (`api.chrome.check`):
 1. the task card in Voice Mode and in the chat goes to its "starting" state: the owner's words, the line with the
    price, **Cancel** and **Start now**;
-2. Jarvis says "Chrome, up to a dollar: <task>. Say cancel to stop." (`taskCheckLine`; the budget the extension last
-   gave, a dollar by default);
-3. once it is said in full, it counts 2 s (`TASK_CHECK_MS`), or 5 s while Jarvis is hidden (`TASK_CHECK_HIDDEN_MS`),
-   with one listen open; words being heard pause it, words taken back (or silence) let it go on;
-4. "cancel", "no" or "stop" withdraws it ("Okay, nothing sent to Chrome."); "no, I said …" withdraws it and routes
-   the corrected words from the top; "yes", "okay" or "thanks" lets it count on (the full time again: nothing goes
-   sooner); any other words withdraw it and are routed as usual; a barge-in during the line followed by silence
-   withdraws it; closing Voice Mode withdraws it; "start now" (or the card's button) ends it at once. While a yes
-   to Chrome's question counts down ("Approving · say cancel"), the same words come first, before the prompt's:
-   a bare "cancel" or "no" there takes the approval back and is never the prompt's no;
-5. only then `startTask({ text, chat })`. Refusals are said: not linked ("Chrome isn't linked yet. Link it in
-   Settings."), offline ("I can't reach Chrome. Open the Jarvis window and keep it open."), `off`, `cap`, and `busy`
-   ("Chrome is busy with another task. Stop it first?": yes stops it and starts this one). Started: "Chrome is on
-   it." Nothing goes to the extension before the countdown ends.
+2. Jarvis says "Chrome, up to a dollar: <task>. Say cancel to stop." (`taskCheckLine`). The price is the budget the
+   extension reported in `hello` and `status` (`budgetUsd`; failing that, a task's first limit); until it has, "up to
+   your Chrome budget" (MONEY-3);
+3. only once it is said in full does it count 2 s (`TASK_CHECK_MS`), or 5 s while Jarvis is hidden
+   (`TASK_CHECK_HIDDEN_MS`), with one listen open; words being heard pause it (with the home base hearing, which
+   has no live words, its 'speech' and 'sending' do; words that never come within 7 s, or a fallback while the owner
+   talked, withdraw it); words taken back (or silence) let it go on. A line cut short never counts down
+   (REDTEAM-VOICE-1, MAC-1): Stop (the dock's button) or a tap on the core while it is said or counts down withdraws
+   it at once ("Okay, nothing sent to Chrome."); after a barge-in the owner's words decide: silence withdraws it, and
+   "okay" has the line said again in full first;
+4. "cancel", "no" or "stop" (or a sentence starting with a no word: "no no", "wait no") withdraws it ("Okay, nothing
+   sent to Chrome."), and so does any other reading that is a no ("No." heard as "Go."); a stop word also stops a
+   task that runs ("Okay, nothing sent. Chrome is stopping."); "no, I said …" withdraws it and routes the corrected
+   words, a task's as a Chrome task ("in Chrome" kept) unless they name one of Jarvis's things or are a question;
+   "yes", "okay", "thanks", and the short words that sound like a no ("go", "start", "start it", "do it"), let it
+   count on (the full time again: nothing goes sooner); any other words withdraw it and are routed as usual; closing
+   Voice Mode withdraws it; "start now", "send it" (or the card's button) end it at once. While a yes to Chrome's
+   question counts down ("Approving · say cancel"), the same words come first, before the prompt's: a bare "cancel"
+   or "no" there takes the approval back and is never the prompt's no; "stop Chrome" there also stops the task;
+5. only then `startTask({ text, chat, limitUsd })`, with the price said (none while it was "your Chrome budget").
+   Refusals are said: not linked ("Chrome isn't linked yet. Link it in Settings."), offline ("I can't reach Chrome.
+   Open the Jarvis window and keep it open."), `off`, `cap`, and `busy` ("Chrome is busy with another task. Stop it
+   first?": yes, "stop it" or "stop" stops it and, once that is confirmed, starts this one; no, or no answer, drops
+   this one, so a later "stop" reaches the task that runs). Started: "Chrome is on it." Nothing goes to the extension
+   before the countdown ends.
 
-Typed (the chat box, Voice Mode closed): the same card, a 2-s countdown, nothing spoken. Jarvis never says "Jarvis
-for Chrome" (his own name would set off his barge-in, critique M8): the lines say "Chrome".
+Typed (the chat box, Voice Mode closed): the same card, a 2-s countdown, nothing spoken; the line ends "Press Cancel
+to stop." (a hologram's or Optics' field shows it too), and typed "cancel", "no" or "stop" withdraw it, "start now"
+lets it go (the `chrome-typed` matcher, chat, hologram and Optics). Jarvis never says "Jarvis for Chrome" (his own
+name would set off his barge-in, critique M8): the lines say "Chrome", the link's own lines too (REDTEAM-VOICE-15).
 
 **32.3.4 While a task runs.** The controller keeps the latest task from `app.chromeLink.state()` and its `subscribe`,
 and `onDone`: the card shows the status, the latest step (`narration` or `lastStep`), the cost against the budget
-and the final answer; **Stop** stops it. Jarvis says the final answer (the first 400 characters; the card has all
-2,000) once Voice Mode is free, waiting up to a minute; with Voice Mode closed the chat toasts it, and while Jarvis
-is hidden a notification says it (`notify`, tag `chrome-task`). A Chrome task never holds the session
-(critique H5). A page opened in the Jarvis window (`chromeLink.open` resolving `{ ok: true }`, whoever asked)
+and the final answer; **Stop** stops it. A stop ("stop", "stop Chrome", the card's Stop) says "Stopping Chrome…"
+(the card "Stopping…"), and the task is marked stopped only once Jarvis for Chrome confirms it (`stopTask()`
+resolving `{ ok: true }`, or the task's `done`), then "Chrome stopped."; 10 s unconfirmed: "I couldn't reach Chrome
+to stop it. Press Stop in its side panel." (the link keeps sending it). Voice's bare "stop" says what it did
+("Chrome is stopping.", "Okay, nothing sent to Chrome.", or both). "How's it going?" on its own is Chrome's only
+while a task runs (REDTEAM-VOICE-13); on a phone the Chrome words say Chrome tasks run from Jarvis on the Mac.
+Jarvis says the final answer (the first 400 characters; the card has all 2,000) once Voice Mode is free, waiting up
+to a minute; with Voice Mode closed the chat toasts it, and while Jarvis is hidden a notification says it (`notify`,
+tag `chrome-task`). With two Jarvis windows (REDTEAM-VOICE-7), the window holding the link passes the prompts, their
+closing and a task's end to the others (BroadcastChannel `jarvis-chrome-voice`): the window with Voice Mode open says
+them, the link's window notifies only when Voice Mode is open nowhere, every window shows the cards. A task's `done`
+(any status) closes its prompts, and so does the link reporting that task gone or another one (REDTEAM-VOICE-8). A
+Chrome task never holds the session (critique H5). A page opened in the Jarvis window (`chromeLink.open` resolving `{ ok: true }`, whoever asked)
 starts a Chrome context: the controller watches `open()` on the link object (same arguments, same answer).
 
 **32.3.5 Chrome's questions** (`onPrompt`, `onPromptClosed`):
@@ -5362,20 +5384,29 @@ starts a Chrome context: the controller watches `open()` on the link object (sam
   voice is consumed with the click line; a yes of another kind with the right hint. `NEVER_ANSWERS` ("yes", "okay",
   "sure", "go ahead", "continue" …) never answer.
 - Voice Mode's channel says a prompt once it is free (a prompt waiting is said as soon as it is, also when nothing
-  else is spoken first), with one listen after it. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`); cut
-  short (barge-in), it is said again first. A yes (`chooseAnswer`) counts only from the best reading, within the
+  else is spoken first; it waits in its own slot, so an owner question waiting beside it is said too, first:
+  REDTEAM-VOICE-6). One listen follows it only when the session would listen anyway: Continuous on, no brake, and not
+  a hidden session whose follow-up window is over (rule 4; PRIVACY-1). Otherwise it ends "Tap me to answer." (a
+  prompt that takes a yes), no listen opens, and its 30 s start at the owner's next listen; `api.chrome.say` follows
+  the same rule. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`); cut short (a barge-in, a tap,
+  Stop), it is said again by itself once Voice Mode is free. Woken by "Hey Jarvis, stop Chrome" (or "… deny"), the
+  words act instead of the greeting (REDTEAM-VOICE-10). A yes (`chooseAnswer`) counts only from the best reading, within the
   window ('late' and 'unsaid' say it again), and when no other reading is a no, cancel or stop word ('unsure': "I'm
   not sure I heard that right." and the prompt again). Then the check: shown "Approving: <what> · say cancel", said
   "Approving. Say cancel to stop." (the budget names the new limit: what was used plus one more budget; allowing a
   site names the site), 2 s (5 s while hidden), withdrawn by "cancel", "no" or "stop" ("Okay, not approved."). Only
   then `onAnswer`, and the decision goes out as `answer({ promptId, hash, choice, via: 'voice' })` with the hash of
   the prompt as it was said (a changed prompt is said again before a yes counts). A no goes out at once. The card's
-  buttons answer `via: 'card'`. A refusal is said: "Chrome didn't take that: <why>." and the prompt stays open.
+  buttons answer `via: 'card'`. A refusal is said: "Chrome didn't take that: <why>." and the prompt stays open; one
+  refused 'gone' because the question isn't open there any more closes it here too: "That question is no longer
+  open." A sentence with "approve" that isn't a reserved one ("yes I approve") gets the hint, never Claude; another
+  reading "disapprove", "reject", "decline", "refuse", "never" or "hold off" counts as a no (REDTEAM-VOICE-14).
 - Typed in the chat, a no goes out as the card's would; a yes points to the card's button (typing isn't the check).
 - Answered elsewhere (`prompt-closed`): the cards say "Answered." and go, the channel's prompt closes, the
   notification closes.
-- The router state (app.js `routerState`): `chrome: { linked, online, task, lastTask, contextUntil }` from the
-  controller (chrome-relay's block then sets `linked`, `online`, `task` from the link); `prompt` off Voice Mode from
+- The router state (app.js `routerState`): `chrome: { linked, online, task, lastTask, contextUntil, checking, waiting }`
+  from the controller, whose block runs after chrome-relay's (so a countdown's `task` is `starting` before the link
+  has it: REDTEAM-VOICE-5); `prompt` off Voice Mode from
   the controller (`promptState`), in Voice Mode from its channel (`{ id, say, answers, key, chrome, askedAt, saidAt
   }`); `chromeCheck: { kind }` while Voice Mode's check counts down.
 
