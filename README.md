@@ -599,7 +599,8 @@ Jarvis's home screen now tells you what is going on before you ask.
   pick**. Then he tells you what it is and what sits next to it.
 - **While it plays**, say **next**, **back** (or "go back", "previous"), **repeat** ("say that
   again"), **wait** or **pause**, **continue**, **skip to the fan**, or **stop the tour** ("that's
-  enough"). They act at once and cost nothing. Outside a walkthrough these words do what they did
+  enough"). They act at once and cost nothing. **Back** shows and says the step before, then waits
+  there: say "back" again to go further back, or "next" to go on. Outside a walkthrough these words do what they did
   before: "back" alone still turns the hologram to its back view.
 - **The walkthrough bar** under the hologram shows what Jarvis is saying, "3 of 8", **Back**,
   **Pause** (or **Play**), **Next** and **End**, and the choice buttons when he asks. On a Mac, ←

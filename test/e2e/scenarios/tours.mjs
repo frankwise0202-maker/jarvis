@@ -383,10 +383,13 @@ export default [
         await waitStatus(t, 'done', { timeout: 60000 });
         await sayNow(t, 'Previous.');
         await t.waitFor(async () => stepsOf(await tourLog(t)).slice(-2).join() === 'end,neighbours' || (await viewerAttr(t, 'tour-step')) === 'neighbours', { timeout: 30000, message: async () => `"previous" back to the neighbours (${stepsOf(await tourLog(t)).join(' → ')})` });
-        await waitStatus(t, 'done', { timeout: 60000 });
+        // v8.1 (changed on purpose, REGRESS-3): "back" says that step and waits there (B5), so a second "back"
+        // goes one step further; before, it played on to the end and the next "back" landed on the same step.
+        await waitStatus(t, 'waiting', { timeout: 60000 });
+        t.assert((await viewerAttr(t, 'tour-step')) === 'neighbours', 'it waits on the step it went back to');
         const said = (await voice(t)).said.length;
         await sayNow(t, 'Say that again.');
-        await t.waitFor(async () => (await voice(t)).said.slice(said).some((x) => /^That's the battery\./.test(norm(x))), { timeout: 30000, message: 'the last step said again' });
+        await t.waitFor(async () => (await voice(t)).said.slice(said).some((x) => /^Next to it:/.test(norm(x))), { timeout: 30000, message: 'that step said again' });
       });
       await t.step('"skip to the fan": the battery\'s tour has no fan step, so the camera goes to it, paused, and Jarvis says how to go on', async () => {
         await waitStatus(t, 'done', { timeout: 60000 });

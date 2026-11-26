@@ -855,6 +855,51 @@ test('player: next, back, repeat and pause', async () => {
   assert.equal(player.getState().status, 'choice');
 });
 
+test('REGRESS-3: "back" walks back one step at a time, from the end too: it says that step and waits there', async () => {
+  const { clock, narr, asker, player } = setup();
+  await player.start();
+  await clock.tick(0);
+  narr.chunk(0);
+  narr.chunk(1);
+  narr.end();
+  await clock.tick(0);
+  asker.last().onAnswer('enclosed', { via: 'voice' });
+  const lines = narr.last().lines.length;
+  for (let i = 0; i < lines; i++) narr.chunk(i);
+  narr.end();
+  await clock.tick(0);
+  assert.equal(player.getState().status, 'done');
+  // Back, each step said in full before the next Back (as by voice, which listens only when it waits).
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    player.back();
+    if (player.getState().status === 'playing') {
+      assert.equal(narr.last().lines.length, 1, 'only the step gone back to is said');
+      assert.equal(narr.last().listenAfter, null, 'Voice Mode listens after it (it waits for the owner)');
+      narr.chunk(0);
+      narr.end();
+      await clock.tick(0);
+    }
+    seen.push(`${player.getState().stepId}/${player.getState().status}`);
+  }
+  assert.deepEqual(seen, ['neighbours/waiting', 'info/waiting', 'enclosed/waiting', 'ask/choice']);
+  // From a step gone back to, "next" goes on with the tour as before.
+  player.back();
+  player.choose('enclosed');
+  narr.chunk(0);
+  narr.end();
+  await clock.tick(0);
+  assert.equal(player.getState().status, 'done');
+  player.back();
+  narr.chunk(0);
+  narr.end();
+  await clock.tick(0);
+  assert.equal(player.getState().status, 'waiting');
+  player.next();
+  assert.equal(player.getState().status, 'playing');
+  assert.ok(narr.last().lines.length >= 1);
+});
+
 test('player: each step\'s look once per run, also when chunks repeat or skip', async () => {
   const { clock, target, narr, asker, player } = setup();
   await player.start();
