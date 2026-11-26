@@ -9,6 +9,9 @@
 //   orderScreens(screens)                          -> primary first, then left to right
 //   screenWindowFeatures(rect, { fullscreen })     -> 'popup=1,left=…,top=…,width=…,height=…'
 //   rightHalf(screenLike)                          -> { left, top, width, height }
+//   layoutRects({ screens, current, main, count, layout })  -> [{ left, top, width, height }, …]
+//   layoutArea({ screens, current, main, count, layout })   -> { area, region, screen, strip }
+//   windowRect(win)                                -> a window's own rect (screenX/Y, outer size)
 //
 // Modes:
 //   screen  a window maximized on another monitor (Window Management API: getScreenDetails)
@@ -180,6 +183,116 @@ export function planPlacement({ where, kind = 'answer', env = {}, permission = n
   if (pick.same) return { ...windowPlan('same-screen'), label: pick.label };
   const rect = availRect(pick.screen);
   return { mode: 'screen', rect, features: screenWindowFeatures(rect, { fullscreen }), label: pick.label, number: pick.number, screenName: pick.name, internal: pick.internal, fullscreen: !!fullscreen, note: Number.isInteger(screen) && screen > screens.length ? 'no-such-screen' : null };
+}
+
+// ---- layouts (v8.1): several windows at once -------------------------------------------------------
+
+/**
+ * How much of Jarvis's own window stays uncovered when windows share its screen. macOS counts a
+ * window that is fully covered as hidden, and hidden stops the camera, a walkthrough and (without
+ * background listening) Voice Mode. A strip of it keeps Jarvis on screen.
+ */
+export const KEEP_STRIP_PX = 320;
+/** A column narrower than this would be cramped: windows overlap Jarvis (the strip kept) instead. */
+export const MIN_COLUMN_PX = 480;
+export const LAYOUTS = Object.freeze(['side-by-side', 'left-right', 'grid', 'beside']);
+export const MAX_WINDOWS = 4;
+
+/** A window's own rect on the desktop (screenX/Y and its outer size), or null. */
+export function windowRect(win) {
+  if (!win) return null;
+  const left = Number(win.screenX ?? win.screenLeft);
+  const top = Number(win.screenY ?? win.screenTop);
+  const width = Number(win.outerWidth);
+  const height = Number(win.outerHeight);
+  if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  return { left, top, width, height };
+}
+
+/** The other monitor for a layout: like pickTargetScreen without a number (never the current one). */
+function otherScreen(screens, current) {
+  const ordered = orderScreens(screens);
+  const others = ordered.filter((s) => !sameScreen(s, current));
+  if (!others.length) return null;
+  const external = others.filter((s) => !s.isInternal);
+  const pool = current && current.isInternal && external.length ? external : others;
+  return pool.slice().sort((a, b) => num(b.width) * num(b.height) - num(a.width) * num(a.height))[0];
+}
+
+/**
+ * Where a layout goes. The other monitor first (all of its usable area: Jarvis stays in full view
+ * on his own). On Jarvis's screen alone, the windows take the side of his window with more room (or
+ * `side`, when the owner named one), and never cover all of it: `strip` is the part of his window
+ * that stays uncovered (at least KEEP_STRIP_PX wide, or all of it when there is room beside it).
+ *   -> { area, region, screen: 'other' | 'current', strip: { left, top, width, height } | null, side }
+ */
+export function layoutArea({ screens = [], current = null, main = null, count = 1, keep = KEEP_STRIP_PX, side: prefer = null } = {}) {
+  const list = Array.isArray(screens) ? screens.filter((s) => s && typeof s === 'object') : [];
+  const cur = current || orderScreens(list)[0] || null;
+  const other = list.length > 1 ? otherScreen(list, cur) : null;
+  if (other) {
+    const area = availRect(other);
+    return { area, region: area, screen: 'other', strip: null, side: 'right' };
+  }
+  const area = availRect(cur);
+  const right = area.left + area.width;
+  // Jarvis's window, clipped to his screen (a missing rect: he fills it).
+  const m = main && Number.isFinite(main.left) && Number.isFinite(main.width) ? main : area;
+  const jl = Math.max(area.left, Math.min(right, num(m.left)));
+  const jr = Math.max(jl, Math.min(right, num(m.left) + num(m.width)));
+  const n = Math.max(1, Math.min(MAX_WINDOWS, Math.floor(num(count, 1)) || 1));
+  const columns = n === 1 ? 1 : 2;
+  const need = columns * MIN_COLUMN_PX;
+  const roomLeft = jl - area.left;
+  const roomRight = right - jr;
+  // The side with more room, unless the owner named one ("the camera on the left").
+  const side = prefer === 'left' || prefer === 'right' ? prefer : roomRight >= roomLeft ? 'right' : 'left';
+  let lo;
+  let hi;
+  if (side === 'right') {
+    // Room enough beside Jarvis: don't cover him at all. Else cover all but his left strip.
+    lo = roomRight >= need ? jr : Math.min(jr, jl + keep);
+    hi = right;
+  } else {
+    lo = area.left;
+    hi = roomLeft >= need ? jl : Math.max(jl, jr - keep);
+  }
+  const region = { left: lo, top: area.top, width: Math.max(0, hi - lo), height: area.height };
+  const kept = side === 'right' ? { left: jl, width: Math.max(0, lo - jl) } : { left: hi, width: Math.max(0, jr - hi) };
+  const strip = jr > jl ? { left: kept.left, top: area.top, width: Math.min(kept.width, jr - jl), height: area.height } : null;
+  return { area, region, screen: 'current', strip, side };
+}
+
+/**
+ * One rect per window for a layout ('side-by-side' and 'left-right': columns, left to right; 'grid':
+ * two columns, two rows for 3-4; 'beside': one window beside Jarvis). The other monitor first; on
+ * Jarvis's screen alone a strip of his window stays uncovered (layoutArea). One window on his screen
+ * takes at most half of it, so most of Jarvis stays in view. Rects are whole pixels, in screen
+ * coordinates (window.open's left/top and moveTo use them), left to right then top to bottom.
+ */
+export function layoutRects(opts = {}) {
+  const n = Math.max(1, Math.min(MAX_WINDOWS, Math.floor(num(opts.count, 1)) || 1));
+  const { area, region, screen, side } = layoutArea({ ...opts, count: n });
+  const r = { left: Math.round(region.left), top: Math.round(region.top), width: Math.floor(region.width), height: Math.floor(region.height) };
+  if (n === 1) {
+    if (screen === 'other') return [r];
+    // Beside Jarvis: half his screen at most, at the far side from him.
+    const width = Math.min(r.width, Math.max(Math.min(MIN_COLUMN_PX, r.width), Math.floor(area.width / 2)));
+    return [{ left: side === 'right' ? r.left + r.width - width : r.left, top: r.top, width, height: r.height }];
+  }
+  const cols = 2;
+  const rows = n <= 2 ? 1 : 2;
+  const colW = Math.floor(r.width / cols);
+  const rowH = Math.floor(r.height / rows);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    // Three windows: the third one spans the bottom row.
+    const span = n === 3 && i === 2;
+    out.push({ left: r.left + (span ? 0 : col * colW), top: r.top + row * rowH, width: span ? colW * 2 : colW, height: rowH });
+  }
+  return out;
 }
 
 /** A short line for the owner about a fallback ('' when nothing needs saying). */

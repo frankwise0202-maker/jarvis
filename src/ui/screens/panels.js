@@ -5,7 +5,9 @@
 //
 //   hologram   data { spec, status: 'building'|'done'|'error', title }   the 3D renderer (hologram.js)
 //              with a small control deck; in a floating panel whose WebGL fails, a snapshot that
-//              is re-rendered as the model changes (deps.snapshot)
+//              is re-rendered as the model changes (deps.snapshot). panel.command(cmd) runs the
+//              viewer's commands said in the main window (v8.1: explode, views, select, focus,
+//              isolate, labels…); deps.onState({ parts } | { selected }) tells the main window
 //   blueprint  data { spec, status }    full screen: the blueprint viewer (zoom, parts); compact: the
 //              sheet itself, fitted
 //   mission    data { turn, missionId } full screen: Mission Control; compact: a readout of the agents
@@ -247,6 +249,25 @@ function missionCompact({ win, frame }) {
 
 // ---- hologram ----------------------------------------------------------------------------------
 
+const HOLO_WORDS = {
+  explode: 'Exploded view',
+  collapse: 'Assembled',
+  rotate: 'Rotating',
+  stop: 'Rotation stopped',
+  'labels-on': 'Labels on',
+  'labels-off': 'Labels off',
+  reset: 'View reset',
+  'zoom-in': 'Zoomed in',
+  'zoom-out': 'Zoomed out',
+  'show-all': 'Showing every part',
+  deselect: 'Selection cleared',
+};
+const partList = (spec) =>
+  (isObj(spec) && Array.isArray(spec.parts) ? spec.parts : [])
+    .filter(isObj)
+    .slice(0, 200)
+    .map((p) => ({ id: txt(p.id), name: txt(p.name), aka: Array.isArray(p.aka) ? p.aka.filter((x) => typeof x === 'string').slice(0, 8) : [] }));
+
 function hologramPanel({ win, frame, compact, deps }) {
   const stage = h('div', { class: 'scr-holo__stage' });
   const snap = h('img', { class: 'scr-holo__snap', hidden: true, alt: '', attrs: { 'data-testid': 'screen-hologram-snapshot' } });
@@ -285,11 +306,72 @@ function hologramPanel({ win, frame, compact, deps }) {
     else if (action === 'reset') holo.resetView();
   }
 
+  // Voice follows the hologram into its window (v8.1): the viewer's commands, said in the main
+  // window, run here (hologram-commands.js shapes). Before the 3D view is ready they wait.
+  let pendingCmds = [];
+  function runCommand(cmd) {
+    if (!holo || !ready) {
+      if (el.dataset.gl !== 'none' && el.dataset.gl !== 'error' && el.dataset.gl !== 'snapshot') pendingCmds.push(cmd);
+      return '';
+    }
+    const part = (word) => (cmd.partName ? `${word} · ${cmd.partName}` : word);
+    switch (cmd.action) {
+      case 'explode':
+      case 'collapse':
+      case 'labels-on':
+      case 'labels-off':
+      case 'rotate':
+      case 'stop':
+        act(cmd.action);
+        return HOLO_WORDS[cmd.action];
+      case 'reset':
+        holo.isolate(null);
+        holo.select(null);
+        holo.resetView();
+        return HOLO_WORDS.reset;
+      case 'view':
+        holo.setView(cmd.view);
+        return `${String(cmd.view || '').replace(/^\w/, (c) => c.toUpperCase())} view`;
+      case 'zoom-in':
+        holo.zoom(0.7);
+        return HOLO_WORDS['zoom-in'];
+      case 'zoom-out':
+        holo.zoom(1.4);
+        return HOLO_WORDS['zoom-out'];
+      case 'select':
+        holo.select(cmd.partId || null);
+        return cmd.partName || '';
+      case 'focus':
+        holo.focus(cmd.partId || null);
+        return part('Focus');
+      case 'isolate':
+        holo.isolate(cmd.partId || null);
+        return part('Isolated');
+      case 'show-all':
+        holo.isolate(null);
+        return HOLO_WORDS['show-all'];
+      case 'deselect':
+        holo.select(null);
+        return HOLO_WORDS.deselect;
+      default:
+        return '';
+    }
+  }
+
+  /** The parts and the selection, for the main window (its voice commands name them). */
+  function sayState(extra) {
+    if (!deps || typeof deps.onState !== 'function') return;
+    safe(() => deps.onState(extra));
+  }
+
   function syncChrome() {
     const parts = state.parts || (model.spec && Array.isArray(model.spec.parts) ? model.spec.parts.length : 0);
     el.dataset.parts = String(parts);
     el.dataset.state = model.status === 'building' ? 'building' : model.status === 'error' ? 'incomplete' : model.spec ? 'ready' : 'loading';
     el.dataset.exploded = state.exploded > 0.5 ? '1' : '0';
+    el.dataset.view = typeof state.view === 'string' ? state.view : '';
+    el.dataset.isolated = typeof state.isolated === 'string' ? state.isolated : '';
+    el.dataset.labels = state.labels ? '1' : '0';
     bAssembled.setAttribute('aria-pressed', String(state.exploded <= 0.5));
     bExploded.setAttribute('aria-pressed', String(state.exploded > 0.5));
     tLabels.setAttribute('aria-pressed', String(!!state.labels));
@@ -363,6 +445,7 @@ function hologramPanel({ win, frame, compact, deps }) {
           setText(partInfo, txt(part.info));
         }
         el.dataset.selected = id || '';
+        sayState({ selected: id || null });
       },
       labels: true,
       autoRotate: true,
@@ -378,6 +461,9 @@ function hologramPanel({ win, frame, compact, deps }) {
     el.dataset.gl = 'ready';
     applyModel();
     syncChrome();
+    const waiting = pendingCmds;
+    pendingCmds = [];
+    for (const cmd of waiting) runCommand(cmd);
   }
   start();
 
@@ -386,16 +472,21 @@ function hologramPanel({ win, frame, compact, deps }) {
     update(d) {
       if (!isObj(d) || !isObj(d.spec)) return;
       const wasBuilding = model.status === 'building';
+      const count = model.spec && Array.isArray(model.spec.parts) ? model.spec.parts.length : -1;
       model = { spec: d.spec, status: d.status === 'building' || d.status === 'error' ? d.status : 'done' };
       if (wasBuilding && model.status === 'done') frame.scan();
       if (ready) applyModel();
       else if (el.dataset.gl === 'none' || el.dataset.gl === 'snapshot') scheduleSnapshot();
       syncChrome();
+      if ((Array.isArray(d.spec.parts) ? d.spec.parts.length : 0) !== count || model.status !== 'building') sayState({ parts: partList(d.spec) });
     },
     getState: () => ({ exploded: state.exploded, labels: state.labels, selected: el.dataset.selected || null, view: state.view || '' }),
+    /** A viewer command said in the main window (v8.1, D3): runs here; returns a short word for it. */
+    command: (cmd) => (isObj(cmd) && typeof cmd.action === 'string' ? runCommand(cmd) : ''),
     holo: () => holo,
     destroy() {
       disposed = true;
+      pendingCmds = [];
       win.clearTimeout(snapTimer);
       if (holo) safe(() => holo.dispose());
       holo = null;

@@ -1230,6 +1230,21 @@
   line-height: 1.55;
   color: var(--text-2);
 }
+/* v8.1: the address a card is about ("It looks like it adds to a cart. Open it?"), shown in full. */
+.scr-prompt__address {
+  margin: 0;
+  max-height: 6.5em;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 .scr-prompt__actions {
   display: flex;
   flex-wrap: wrap;
