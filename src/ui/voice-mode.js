@@ -3992,10 +3992,9 @@ function createVoiceMode(opts) {
       // the owner next listens (chromeListens).
       if (unheard) C.unheard = p.key;
       else C.saidAt = Date.now();
-    } else if (C.stopped === saying) {
-      // CHROME-VOICE-R2-2: the dock's Stop: Jarvis stays quiet. It stays open on its card, not heard in full: a yes
-      // has it said again first ('unsaid'), and the wake greeting or "what does Chrome want?" say it.
-    } else askQuestion(cur, true); // cut short (a barge-in, a tap): said again once the owner's listen has ended
+    } else if (C.stopped !== saying) askQuestion(cur, true); // cut short (a barge-in, a tap): said again once the owner's listen has ended
+    // (Cut by the dock's Stop, CHROME-VOICE-R2-2: Jarvis stays quiet. It stays open on its card, not heard in full: a yes
+    // has it said again first ('unsaid'), and the wake greeting or "what does Chrome want?" say it.)
   }
 
   /**
