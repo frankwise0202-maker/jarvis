@@ -444,6 +444,7 @@ export function createStandby(deps = {}) {
       event.stopPropagation(); // not the tap that leaves Standby
     }
     if (phase !== 'open' || !lock || lock.state !== 'elsewhere') return;
+    if (clickAsked) clickedOnce(); // v8.1 (A11): this click counts as the one speech needed too
     lock.take();
     render();
   }
