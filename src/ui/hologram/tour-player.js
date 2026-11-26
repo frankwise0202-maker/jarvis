@@ -88,6 +88,9 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
   const steps = plan && Array.isArray(plan.steps) ? plan.steps : [];
   const silent = silentNarrator(c);
   let voice = narrator;
+  let ask = asker;
+  let holdr = holder;
+  let sayLine = say;
 
   let status = 'idle'; // idle | starting | playing | paused | choice | waiting | done | ended
   let pausedFor = null; // owner | touch | speech | hidden | jump
@@ -105,14 +108,14 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
 
   const changed = () => safe(() => onChange(getState()));
   const hold = () => {
-    if (holding || !holder) return;
+    if (holding || !holdr) return;
     holding = true;
-    safe(() => holder.hold());
+    safe(() => holdr.hold());
   };
   const release = () => {
     if (!holding) return;
     holding = false;
-    safe(() => holder.release());
+    if (holdr) safe(() => holdr.release());
   };
 
   function stopActivity() {
@@ -141,7 +144,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
   }
 
   function flyTo(ids, frame, camera, zoom) {
-    const opts = { ids, frame: frame || (ids.length ? 'parts' : 'all') };
+    const opts = { ids, frame: ids.length ? frame || 'parts' : 'all' };
     if (camera && typeof camera === 'object' && Array.isArray(camera.dir)) opts.dir = camera.dir;
     else if (typeof camera === 'string') opts.view = camera;
     if (zoom) opts.zoom = zoom;
@@ -288,11 +291,11 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     pausedFor = null;
     hold();
     const my = token;
-    if (asker) {
+    if (ask) {
       question =
         safe(
           () =>
-            asker.ask({
+            ask.ask({
               id: `tour:${step.id}`,
               say: step.ask,
               choices: step.choices.map((ch) => ({ id: ch.id, label: ch.label, words: ch.words || [] })),
@@ -462,7 +465,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     flyTo([partId], 'parts', null, null);
     status = 'paused';
     pausedFor = 'jump';
-    if (typeof say === 'function') safe(() => say(JUMP_LINE));
+    if (typeof sayLine === 'function') safe(() => sayLine(JUMP_LINE));
     changed();
     return true;
   }
@@ -524,6 +527,24 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     return begin();
   }
 
+  /**
+   * Voice Mode opened or closed under the tour: its narrator, question and hold (null: none). The
+   * next run uses them; an open decision is asked again through the new question.
+   */
+  function setVoice({ narrator: n = null, asker: a = null, holder: hd = null, say: sl = null } = {}) {
+    const wasHolding = holding;
+    release();
+    voice = n;
+    ask = a;
+    holdr = hd;
+    sayLine = sl;
+    if (wasHolding) hold();
+    if (status === 'choice') {
+      const s = current();
+      if (isDecision(s)) askAt(s, { entered: true });
+    }
+  }
+
   function getState() {
     const s = current();
     const path = tourPath(plan, chosen);
@@ -549,7 +570,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     };
   }
 
-  return { start, next, back, repeat, pause, resume, toggle, end, choose, jump, showView, setHidden, getState, get plan() { return plan; } };
+  return { start, next, back, repeat, pause, resume, toggle, end, choose, jump, showView, setHidden, setVoice, getState, get plan() { return plan; } };
 }
 
 // ---- the bar -----------------------------------------------------------------------------------

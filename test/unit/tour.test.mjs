@@ -1043,6 +1043,28 @@ test('player: a wait step listens and waits for "next"', async () => {
   assert.equal(narr.last().lines[0], 'First.');
 });
 
+test('player: Voice Mode opens under a tour: the next run speaks, an open decision is asked again', async () => {
+  const { clock, target, player } = setup({ narrator: null, asker: null });
+  await player.start();
+  await clock.tick(30000);
+  assert.equal(player.getState().status, 'choice');
+  const narr = fakeNarrator();
+  const asker = fakeAsker();
+  const holds = [];
+  player.setVoice({ narrator: narr, asker, holder: { hold: () => holds.push('hold'), release: () => holds.push('release') } });
+  assert.equal(asker.asks.length, 1);
+  assert.equal(asker.last().say, VIEW_QUESTION);
+  asker.last().onAnswer('opened');
+  assert.equal(narr.calls.length, 1);
+  narr.chunk(0);
+  assert.deepEqual(target.emphasis.hide, ['bottom-cover']);
+  // closed again: the rest goes on by estimate
+  player.setVoice({});
+  player.repeat();
+  await clock.tick(60000);
+  assert.equal(player.getState().status, 'done');
+});
+
 test('silent narrator: lines by estimate, then done; cancel stops it', async () => {
   const clock = fakeClock();
   const chunks = [];
