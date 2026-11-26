@@ -547,3 +547,147 @@ test('ROUTING-1: a walkthrough\'s decision open and a task\'s check counting: "C
   assert.deepEqual(expired, [], 'the decision is still open');
   assert.ok(!s.said().includes('Okay.'), `not the decision's "Okay." (${JSON.stringify(s.said())})`);
 });
+
+// ---- v8.1.1: CHROME-VOICE-R2-1, R2V-1: the listen a barge-in opens is the owner's ------------------------------
+
+const asks = (s) => s.said().filter((x) => x.startsWith('Chrome asks:')).length;
+const LONG = 'The bracket has three parts. The base plate is bolted to the wall with four screws, the arm slides into the base, and the clamp holds the monitor. Next, we will look at the clamp in detail.';
+
+test('CHROME-VOICE-R2-1: "Hey Jarvis" over Chrome\'s question, then "Stop." 600 ms later: heard, and the waiting task stops (Continuous on and off)', async (t) => {
+  for (const continuous of [true, false]) {
+    const s = await setup(t, {
+      settings: { voiceContinuous: continuous },
+      before: async ({ fake }) => {
+        await fake.link.startTask({ text: 'find a 4K monitor', chat: 'new' });
+      },
+    });
+    s.env.voice('natural'); // George says it (barge-in listens only over him)
+    await s.env.advance(2000);
+    s.fake.prompt(PROMPTS.purchase);
+    await s.until(() => asks(s) === 1, 'the question said');
+    await s.env.advance(600);
+    s.next({ text: 'Stop.', at: 600 });
+    assert.equal(s.vm.bargeIn('word'), true, 'the barge-in acted');
+    await s.env.advance(10000);
+    assert.deepEqual(s.heardLog, ['Stop.'], `continuous ${continuous}: the words after the barge-in were heard (said ${JSON.stringify(s.said())})`);
+    assert.equal(s.fake.calls.stopTask, 1, `continuous ${continuous}: the waiting task got its stop`);
+    assert.equal(asks(s), 1, `continuous ${continuous}: the question closed with the task, not said again`);
+  }
+});
+
+test('CHROME-VOICE-R2-1: "Hey Jarvis" over the cart question, then "Deny." 300 to 1500 ms later: the no goes out, not said again; silence: said again once that listen has ended', async (t) => {
+  for (const d of [300, 700, 1500, 'silence']) {
+    const s = await setup(t);
+    s.env.voice('natural');
+    await s.env.advance(1500);
+    s.fake.task({ id: 't1', status: 'running', text: 'add the monitor to the cart' });
+    s.fake.prompt(PROMPTS.cart);
+    await s.until(() => asks(s) === 1, 'the question said');
+    await s.env.advance(600);
+    if (d !== 'silence') s.next({ text: 'Deny.', at: d });
+    const t0 = s.env.clock.now();
+    assert.equal(s.vm.bargeIn('word'), true);
+    await s.env.advance(12000);
+    if (d === 'silence') {
+      assert.equal(asks(s), 2, `said again after silence (${JSON.stringify(s.said())})`);
+      const barge = s.env.log.listens.find((l) => l.at >= t0);
+      const again = s.env.log.spoken.filter((x) => x.text.startsWith('Chrome asks:'))[1];
+      assert.ok(again.at >= barge.at + 900, `said again only once the owner's listen ended in silence (listen at ${barge.at}, said again at ${again.at})`);
+      continue;
+    }
+    assert.deepEqual(s.heardLog, ['Deny.'], `${d} ms: heard (said ${JSON.stringify(s.said())})`);
+    assert.deepEqual(s.fake.calls.answer.map((a) => a.choice), ['cancel'], `${d} ms: the no went out`);
+    assert.equal(asks(s), 1, `${d} ms: not said again`);
+  }
+});
+
+test('CHROME-VOICE-R2V-1: a barge-in over a walkthrough\'s narration (or a line) with Chrome\'s question waiting: the owner\'s words reach the router, then the question is said', async (t) => {
+  for (const what of ['narration', 'say']) {
+    const s = await setup(t, { speechMs: 6000 });
+    s.env.voice('natural');
+    await s.env.advance(1500);
+    if (what === 'narration') s.vm.narrate({ text: LONG, kind: 'tour' });
+    else assert.equal(s.vm.say(LONG), true);
+    await s.env.advance(500);
+    s.fake.task({ id: 't1', status: 'running', text: 'add the monitor to the cart' });
+    s.fake.prompt(PROMPTS.cart); // waits: Jarvis is speaking
+    await s.env.advance(1500);
+    assert.equal(asks(s), 0, 'not said over the line');
+    s.next({ text: 'What time is it?', at: 700 });
+    assert.equal(s.vm.bargeIn('word'), true);
+    await s.env.advance(15000);
+    assert.deepEqual(s.heardLog, ['What time is it?'], `${what}: the owner's words were heard (said ${JSON.stringify(s.said())})`);
+    assert.deepEqual(s.env.log.turns, ['What time is it?'], `${what}: and reached the router (a question for Claude)`);
+    assert.equal(asks(s), 1, `${what}: Chrome's question is said after them`);
+  }
+});
+
+test('CHROME-VOICE-R2V-1: a barge-in over a line with "Chrome is done…" waiting to be said: the owner\'s words reach the router, then the line is said', async (t) => {
+  const s = await setup(t, { speechMs: 6000 });
+  s.env.voice('natural');
+  await s.env.advance(1500);
+  await s.fake.link.startTask({ text: 'find a monitor', chat: 'new' });
+  await s.env.advance(300);
+  assert.equal(s.vm.say(LONG), true);
+  await s.env.advance(500);
+  s.fake.done({ status: 'done', answer: 'Added the monitor to your cart.' }); // waits in the controller's queue
+  await s.env.advance(1500);
+  assert.ok(!s.said().some((x) => x.startsWith('Chrome is done')), 'not said over the line');
+  s.next({ text: 'What time is it?', at: 700 });
+  assert.equal(s.vm.bargeIn('word'), true);
+  await s.env.advance(15000);
+  assert.deepEqual(s.heardLog, ['What time is it?'], `the owner's words were heard (said ${JSON.stringify(s.said())})`);
+  assert.deepEqual(s.env.log.turns, ['What time is it?'], 'and reached the router');
+  assert.ok(s.said().some((x) => x.startsWith('Chrome is done.')), `then Chrome's news is said (${JSON.stringify(s.said())})`);
+});
+
+// ---- v8.1.1: CHROME-VOICE-R2-2: the dock's Stop silences Jarvis ------------------------------------------------
+
+test('CHROME-VOICE-R2-2: Stop pressed while Chrome\'s question is said: Jarvis stays quiet (Continuous on and off); it stays open, and a yes has it said again first', async (t) => {
+  for (const continuous of [true, false]) {
+    for (const prompt of ['cart', 'purchase']) {
+      const s = await setup(t, { settings: { voiceContinuous: continuous }, speechMs: 4000 });
+      await s.until(() => s.vm.state !== 'listening', 'the opening listen over', 20000);
+      await s.env.advance(1500);
+      s.fake.task({ id: 't1', status: 'running', text: 'add the monitor to the cart' });
+      s.fake.prompt(PROMPTS[prompt]);
+      await s.until(() => asks(s) === 1, 'the question said');
+      await s.env.advance(600);
+      assert.equal(s.vm.el.find('voice-mic').dataset.action, 'stop', 'the button reads Stop');
+      const spoken = s.env.log.spoken.length;
+      s.click('voice-mic');
+      await s.env.advance(8000);
+      const tag = `continuous ${continuous}, ${prompt}`;
+      assert.equal(s.env.log.spoken.length, spoken, `${tag}: Stop left Jarvis quiet (said after it: ${JSON.stringify(s.said().slice(spoken))})`);
+      assert.notEqual(s.vm.state, 'speaking', `${tag}: not speaking`);
+      assert.equal(s.cv.state().waiting, 1, `${tag}: the question is still open (its card)`);
+      assert.deepEqual(s.fake.calls.answer, [], `${tag}: nothing answered`);
+      if (prompt !== 'cart') continue;
+      // A yes before it was heard in full: it is said again first (never approved unheard).
+      s.next({ text: 'Approve.', at: 500 });
+      s.vm.tap();
+      await s.until(() => asks(s) === 2, `${tag}: said again for the yes`);
+      await s.env.advance(500);
+      assert.ok(!s.said().includes('Approving. Say cancel to stop.'), `${tag}: the yes didn't count unheard`);
+    }
+  }
+});
+
+test('CHROME-VOICE-R2-2: Stop pressed over another line while Chrome\'s question waits: quiet; the question is said after the owner\'s next listen', async (t) => {
+  const s = await setup(t, { speechMs: 6000 });
+  await s.until(() => s.vm.state !== 'listening', 'the opening listen over', 20000);
+  await s.env.advance(1500);
+  assert.equal(s.vm.say(LONG), true);
+  await s.env.advance(500);
+  s.fake.task({ id: 't1', status: 'running', text: 'add the monitor to the cart' });
+  s.fake.prompt(PROMPTS.cart); // waits: Jarvis is speaking
+  await s.env.advance(1000);
+  const spoken = s.env.log.spoken.length;
+  s.click('voice-mic');
+  await s.env.advance(8000);
+  assert.equal(s.env.log.spoken.length, spoken, `quiet after Stop (said ${JSON.stringify(s.said().slice(spoken))})`);
+  assert.equal(s.cv.state().waiting, 1, 'the question is still open (its card)');
+  s.vm.tap(); // the owner's next listen hears nothing: then the question
+  await s.env.advance(8000);
+  assert.equal(asks(s), 1, `said once the owner's listen ended (${JSON.stringify(s.said())})`);
+});
