@@ -191,7 +191,7 @@ const VOICE_STATES = {
 
 function router() {
   const r = createRouter({ order: TODAY_ORDER });
-  registerTodayCommands(r);
+  registerTodayCommands(r, { phase0: true }); // the matchers as Phase 0 moved them in (v8.1 changed a few)
   return r;
 }
 

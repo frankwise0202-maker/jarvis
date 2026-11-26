@@ -1,102 +1,135 @@
-// The base corpora of the one router (v8.1, SPEC §30; tests T1-T5). Plain data, no app imports.
-// Taken from the hands-free study's probes (u-voice corpus.mjs: 199 ordinary sentences, 63 phrases
-// the owner expects to work) and the review's Chrome-context probe, with every laptop brand made
-// generic. Each builder adds its own phrases in its own section of voice-corpus.mjs and
-// collisions.mjs; this file is the shared base they all must keep passing.
+// voice's base corpora of the one router (v8.1, SPEC §30; T1-T5 in test/unit/command-router.test.mjs).
+// Taken from the hands-free study's probes (u-voice corpus.mjs: 199 ordinary sentences, 63 phrases the
+// owner expects to work) and the review's Chrome-context probe, with every laptop brand made generic.
+// Each builder adds its own phrases in its own section of voice-corpus.mjs and collisions.mjs; this
+// file is the shared base every builder's matchers must keep passing.
 //
-//   NO_STEAL           ordinary sentences: each reaches Claude in every state of NO_STEAL_STATES (T1)
-//   ALLOWED_TAKES      the few takes T1 allows, each with why (today's harmless behaviour, or by design)
-//   CHROME_CONTEXT_NOT sentences that never become a Jarvis for Chrome task, even within 2 minutes of
-//                      "pull this up in Chrome" (state CC): the review's probe took 12 ordinary
-//                      sentences and 8 commands (critique H3)
-//   MUST_MATCH         [text, state, layer, owner, does]: who must take each phrase, in which layer (T2).
-//                      owner: the builder whose matcher takes it; does: what it does, in words. Rows
-//                      marked { should: true } belong to a SHOULD item and count once it is built.
-//   ALTERNATIVES       { best, alts, state, want } (T5): want 'claude' (nothing taken) or { layer, does }
-//   STATES             the router states the corpora run in (contract (b)'s `state`), by name
-//   stateFor(name, patch)  a full state: baseState() with that state's fields (and `patch`) on top
-//   LAPTOP_PARTS       a generic laptop hologram's parts (a camera and a display among them, for R10)
-//   COLLISIONS_BASE    voice's rows of the collision table (T3): { text, state, winner, why }, with the
-//                      review's case of a Chrome prompt, a tour decision and a research offer all open
-//                      (H4_STATE, H4_OFFER_LAST; TOUR_DECISION, RESEARCH_OFFER, CHROME_PROMPT)
+//   HARNESS_STATES     the harness's own states (other sections name them): V0 nothing open, S Jarvis
+//                      speaking, VH a laptop hologram, VL / VF Optics live / frozen, VW a Jarvis window,
+//                      C0 the chat box, H0 a hologram's field, OT / OV Optics' field typed / spoken
+//   STATES             voice's own: T a tour, TD a tour at its decision, LV the live view on, VHW a
+//                      hologram and a window, RL the newest reply has links, CC a Chrome context, CCL a
+//                      Chrome context with reply links, H4 a Chrome prompt, a tour decision and a research
+//                      offer all open (the prompt said last), H4O the same with the offer said last
+//   stateFor(name, patch)  a full state: emptyState(surface) with that state's fields (and `patch`)
+//   NOT                T1: ordinary sentences that reach Claude in every state (unless the collision
+//                      table declares a winner for one in a state)
+//   MUST_BASE          T2: { words, state, layer, owner, id, does, should }: the layer (and, for voice's own,
+//                      the id) that must take each phrase. owner: the builder whose matcher takes it
+//                      ('today': a matcher Phase 0 moved in); a row waits until that builder's module
+//                      registers something. should: a SHOULD item's phrase (it waits until it is built)
+//   ALTERNATIVES       T5: { best, alts, state, want: 'claude' | { id }, by? } (by: waits for that builder's fix)
+//   CHROME_CONTEXT_NOT never a Jarvis for Chrome task, even in a Chrome context (critique H3)
+//   PARITY_EXCEPTIONS  T4: matchers that listen on some surfaces only, on purpose: { id, surfaces, why }
+//   WAITING_FIXES      T1: sentences a matcher takes until another builder's fix lands ({ words, states, by })
+//   LAPTOP_PARTS       the generic laptop hologram's parts (a camera and a display among them, for R10)
+
+import { emptyState } from '../../../src/lib/command-router.js';
 
 export const LAPTOP_PARTS = Object.freeze([
   { id: 'bottom-cover', name: 'Bottom cover', aka: ['base cover'] },
   { id: 'palm-rest', name: 'Palm rest', aka: ['top case'] },
   { id: 'lid', name: 'Display lid' },
   { id: 'display', name: 'Display panel', aka: ['screen'] },
-  { id: 'webcam', name: 'Camera module', aka: ['webcam'] },
+  { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] },
   { id: 'hinges', name: 'Hinges' },
   { id: 'keyboard', name: 'Keyboard' },
   { id: 'touchpad', name: 'Touchpad', aka: ['trackpad'] },
-  { id: 'battery', name: 'Battery (57 Wh)', aka: ['battery pack'] },
+  { id: 'battery', name: 'Battery (57 Wh)', aka: ['battery pack', 'battery'] },
   { id: 'battery-connector', name: 'Battery connector' },
   { id: 'mainboard', name: 'Mainboard', aka: ['motherboard', 'system board'] },
   { id: 'ram', name: 'RAM (SO-DIMM)', aka: ['memory'] },
   { id: 'ssd', name: 'M.2 SSD', aka: ['solid state drive'] },
   { id: 'wifi', name: 'Wi-Fi card', aka: ['wireless card'] },
-  { id: 'fan', name: 'Cooling fan' },
+  { id: 'fan', name: 'Cooling fan', aka: ['fan'] },
   { id: 'heatsink', name: 'Heat pipe and heatsink' },
   { id: 'speakers', name: 'Speakers' },
 ]);
 
-/** Every field of contract (b)'s state, as it is with nothing open (Voice Mode on a computer). */
-export function baseState() {
-  return {
-    surface: 'voice',
-    speaking: false,
-    check: null,
-    questions: [],
-    prompt: null,
-    tour: null,
-    hologram: null,
-    blueprintOpen: false,
-    optics: null,
-    windows: [],
-    reply: { links: [], hologram: null },
-    chrome: { linked: false, online: false, task: null, contextUntil: 0 },
-    music: { playing: false },
-    homebase: { linked: true },
-    standby: false,
-    hidden: false,
-    phone: false,
-  };
-}
+// ---------------------------------------------------------------------------------------------- states
 
-const HOLO = { open: true, inWindow: false, parts: LAPTOP_PARTS, selected: null };
-const optics = (mode, extra = {}) => ({ open: true, mode, liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: false, ...extra });
-const WINDOW = { id: 'w1', kind: 'answer', label: 'the answer window', focused: false };
+const HOLO = Object.freeze({ open: true, inWindow: false, parts: LAPTOP_PARTS, selected: null });
+const LIVE = Object.freeze({ open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null });
+const WINDOW = Object.freeze({ id: 'w1', kind: 'camera', label: 'Camera', focused: false });
+const VOICE_BASE = Object.freeze({
+  standby: { available: true, open: false },
+  homebase: { available: true, linked: true },
+  camera: { supported: true, allowed: 'granted', ios: false },
+  voiceOpen: true,
+});
+const LINKS = Object.freeze([
+  { url: 'https://example.com/monitors', title: 'Monitors' },
+  { url: 'https://example.org/review', title: 'A review' },
+]);
+const CONTEXT = Object.freeze({ linked: true, online: true, task: null, contextUntil: Number.MAX_SAFE_INTEGER });
 
-// The states (u-voice §4.4 T1, plus the Chrome context of critique H3 and the live view of v8.0).
-export const STATES = Object.freeze({
-  V0: {}, // nothing open
-  S: { speaking: true }, // Jarvis speaking (heard after a tap or barge-in)
-  T: { hologram: HOLO, tour: { active: true, atChoice: false, choices: [], stepId: 's3' } }, // a walkthrough
-  VH: { hologram: HOLO }, // a laptop hologram open
-  VL: { optics: optics('live') }, // Optics, the camera live
-  VF: { optics: optics('frozen') }, // Optics, an answer on its frozen frame
-  LV: { optics: optics('live', { liveView: true }) }, // Optics with v8.0's live view on
-  VW: { windows: [WINDOW] }, // a Jarvis window open
-  VHW: { hologram: HOLO, windows: [WINDOW] }, // a hologram and a window
-  CH: { surface: 'chat' }, // the chat box
-  HF: { surface: 'hologram', hologram: HOLO }, // the hologram's own field
-  OF: { surface: 'optics', optics: optics('live') }, // Optics' own field
-  CC: { chrome: { linked: true, online: true, task: null, contextUntil: Number.MAX_SAFE_INTEGER } }, // a Chrome context
+const CHOICE = (id, ...words) => ({ id, label: words[0], words });
+/** A tour's decision on the question stack (contract (a)); askedAt: when it was last said. */
+export const TOUR_DECISION = Object.freeze({
+  id: 'tour-choice', say: 'Do you want to see it enclosed, or opened?', keep: true, check: false, askedAt: 1000,
+  choices: [CHOICE('enclosed', 'enclosed', 'show me that enclosed'), CHOICE('opened', 'opened', 'show it opened'), CHOICE('both', 'both'), CHOICE('pick', 'you pick')],
+});
+/** The research offer (E3) on the stack. */
+export const RESEARCH_OFFER = Object.freeze({
+  id: 'research-offer', say: 'Research this? A quick answer with a web search, about 10 cents. A research mission, about $1.70.', keep: false, check: false, askedAt: 2000,
+  choices: [CHOICE('quick', 'quick', 'a quick answer'), CHOICE('mission', 'mission', 'a mission'), CHOICE('homebase', 'home base'), CHOICE('cancel', 'cancel', 'no')],
+});
+/** A Chrome prompt (G5) with its answers as chrome-voice makes them (a `negative` one is its no). */
+export const CHROME_PROMPT = Object.freeze({
+  id: 'p1', say: 'Chrome asks: add the 27-inch monitor, $279.99, to the cart on example-shop.com? Say approve, or cancel.', askedAt: 3000,
+  answers: [
+    { id: 'approve', words: ['approve', 'approve it', 'yes approve'], check: true },
+    { id: 'deny', words: ['deny', 'deny it', 'cancel chrome', 'cancel in chrome'], check: false, negative: true },
+    { id: 'stop', words: ['stop chrome', 'stop the chrome task'], check: false, negative: true },
+  ],
+});
+const RUNNING_TASK = Object.freeze({ id: 't1', status: 'running', text: 'find a 4K monitor under $300 and add it to the cart' });
+const TOURING = Object.freeze({ active: true, atChoice: false, choices: [], stepId: 's3' });
+const DECIDING = Object.freeze({ active: true, atChoice: true, choices: TOUR_DECISION.choices.map((c) => c.id), stepId: 'ask' });
+
+/** The harness's own states (each section of voice-corpus.mjs may name them). */
+export const HARNESS_STATES = Object.freeze({
+  V0: { surface: 'voice', ...VOICE_BASE },
+  S: { surface: 'voice', ...VOICE_BASE, speaking: true },
+  VH: { surface: 'voice', ...VOICE_BASE, hologram: HOLO },
+  VL: { surface: 'voice', ...VOICE_BASE, optics: LIVE },
+  VF: { surface: 'voice', ...VOICE_BASE, optics: { ...LIVE, mode: 'frozen' } },
+  VW: { surface: 'voice', ...VOICE_BASE, windows: [WINDOW] },
+  C0: { surface: 'chat', via: 'typed', standby: { available: true, open: false }, homebase: { available: true, linked: true } },
+  H0: { surface: 'hologram', via: 'typed', standby: { available: true, open: false }, hologram: HOLO },
+  OT: { surface: 'optics', via: 'typed', standby: { available: true, open: false }, optics: LIVE },
+  OV: { surface: 'optics', via: 'voice', standby: { available: true, open: false }, optics: LIVE },
 });
 
-/** The state called `name` (see STATES), complete, with `patch` on top. */
+/** voice's own states (see the header). */
+export const STATES = Object.freeze({
+  T: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: TOURING },
+  TD: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: DECIDING, questions: [TOUR_DECISION] },
+  LV: { surface: 'voice', ...VOICE_BASE, optics: { ...LIVE, liveView: true } },
+  VHW: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, windows: [WINDOW] },
+  RL: { surface: 'voice', ...VOICE_BASE, reply: { links: LINKS, hologram: null } },
+  CC: { surface: 'voice', ...VOICE_BASE, chrome: CONTEXT },
+  CCL: { surface: 'voice', ...VOICE_BASE, chrome: CONTEXT, reply: { links: LINKS, hologram: null } },
+  H4: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: DECIDING, questions: [RESEARCH_OFFER, TOUR_DECISION], prompt: CHROME_PROMPT, chrome: { ...CONTEXT, task: RUNNING_TASK } },
+  H4O: { surface: 'voice', ...VOICE_BASE, hologram: HOLO, tour: DECIDING, questions: [RESEARCH_OFFER, TOUR_DECISION], prompt: { ...CHROME_PROMPT, askedAt: 1500 }, chrome: { ...CONTEXT, task: RUNNING_TASK } },
+});
+
+/** A full state by name (HARNESS_STATES or STATES): emptyState(surface) with its fields, then `patch`. */
 export function stateFor(name, patch = {}) {
-  const s = STATES[name];
-  if (!s) throw new Error(`no state called ${name}`);
-  return { ...baseState(), ...s, ...patch };
+  const over = HARNESS_STATES[name] || STATES[name];
+  if (!over) throw new Error(`no state called ${name}`);
+  return { ...emptyState(over.surface || 'voice'), ...over, ...patch };
 }
 
-export const NO_STEAL_STATES = Object.freeze(['V0', 'S', 'T', 'VH', 'VL', 'VF', 'LV', 'VW', 'VHW', 'CH', 'HF', 'OF', 'CC']);
+/** Every state name, the harness's and voice's. */
+export const ALL_STATE_NAMES = Object.freeze([...Object.keys(HARNESS_STATES), ...Object.keys(STATES)]);
+
+// -------------------------------------------------------------------------------------- the corpora
 
 // Ordinary things the owner might say that must reach Jarvis (Claude) in every state. Many share
 // words with commands (open, close, camera, window, screen, Chrome, search, research, picture, stop,
 // next, back, history, settings, new, chat, live, video, watch, read).
-export const NO_STEAL = Object.freeze([
+export const NOT = Object.freeze([
   // everyday questions
   'what is the weather tomorrow', 'how far is the moon', 'what should I cook tonight', 'is it going to rain this weekend',
   'how do I reset my router', 'tell me a joke', 'what time is it in Tokyo', 'who won the game last night',
@@ -159,17 +192,6 @@ export const NO_STEAL = Object.freeze([
   'exit the voice chat on discord', 'use George Foreman grill tips', 'repeat the last step of the recipe',
 ]);
 
-// Takes T1 allows: today's harmless behaviour, or Optics' own "this" questions (a Look by design).
-export const ALLOWED_TAKES = Object.freeze([
-  { text: 'show me a hologram of a jet engine', states: ['VL', 'VF', 'LV', 'OF'], by: 'optics', why: "Optics' \"hologram of this\": Claude still builds what was named; the frame adds about half a cent" },
-  { text: 'open the hologram of the battery', states: ['T', 'VH', 'VHW', 'HF'], by: 'hologram', why: 'selects the battery part (free, undoable)' },
-  { text: 'stop that', states: ['T', 'VH', 'VHW', 'HF'], by: 'hologram', why: 'holds the model still (free, undoable)' },
-  { text: 'what about now', states: ['VL', 'VF', 'LV', 'OF'], by: 'optics', why: 'a Look of the scene now (by design)' },
-  { text: 'is this ripe', states: ['VL', 'LV', 'OF'], by: 'optics', why: 'a question about "this" with the camera live is a Look (by design)' },
-  { text: 'is this ripe', states: ['VF'], by: 'optics', why: 'a question about "this" on a frozen frame is its follow-up (by design)' },
-  { text: 'this one', states: ['VL', 'VF', 'LV', 'OF'], by: 'optics', why: 'a Look of the scene now (by design)' },
-]);
-
 // Never a Jarvis for Chrome task, even in a Chrome context (critique H3: its probe took these).
 export const CHROME_CONTEXT_NOT = Object.freeze([
   'compare the MacBook Pro and the MacBook Air', 'open the pod bay doors', 'go to bed', 'go to the store', 'open the hologram of the battery',
@@ -179,192 +201,121 @@ export const CHROME_CONTEXT_NOT = Object.freeze([
   'go to standby', 'open the hologram window', 'go to my other screen', 'go to the battery', 'new chat', 'open settings',
 ]);
 
-// [text, state, layer, owner, does]. Layers: contract (b)'s LAYERS. Owners: the builder whose matcher takes it.
-export const MUST_MATCH = Object.freeze([
-  ['open optics', 'V0', 'app', 'optics', 'opens Optics'],
-  ['hey Jarvis, open optics', 'V0', 'app', 'optics', 'opens Optics'],
-  ['open the camera', 'V0', 'app', 'optics', 'opens Optics'],
-  ['turn on the camera', 'V0', 'app', 'optics', 'opens Optics'],
-  ['camera on', 'V0', 'app', 'optics', 'opens Optics'],
-  ['close the camera', 'V0', 'app', 'optics', 'closes Optics'],
-  ['take a picture', 'V0', 'app', 'optics', 'a Look', { should: true }],
-  ['take a photo of this', 'V0', 'app', 'optics', 'a Look', { should: true }],
-  ['snap a picture', 'VL', 'top', 'optics', 'a Look', { should: true }],
-  ['look at my screen', 'V0', 'destination', 'voice', 'a Look at the screen', { should: true }],
-  ['switch cameras', 'V0', 'app', 'optics', 'opens Optics on the next camera'],
-  ['use the Logitech camera', 'V0', 'app', 'optics', 'opens Optics on that camera'],
-  ['new chat', 'V0', 'app', 'voice', 'new-chat'],
-  ['start a new chat', 'VH', 'app', 'voice', 'new-chat'],
-  ['open history', 'V0', 'app', 'voice', 'open history'],
-  ['show me my history', 'V0', 'app', 'voice', 'open history'],
-  ['open settings', 'V0', 'app', 'voice', 'open settings'],
-  ['open the voice settings', 'V0', 'app', 'voice', 'open settings'],
-  ['open my blueprints', 'V0', 'app', 'voice', 'open library'],
-  ['open the library', 'V0', 'app', 'voice', 'open library'],
-  ['show mission control', 'V0', 'app', 'voice', 'open mission'],
-  ['open the home base', 'V0', 'app', 'voice', 'open homebase'],
-  ['stop talking', 'S', 'app', 'voice', 'hush'],
-  ['be quiet', 'S', 'app', 'voice', 'hush'],
-  ['read the full answer', 'V0', 'app', 'voice', 'read-full'],
-  ['repeat that', 'V0', 'app', 'voice', 'repeat'],
-  ['speak slower', 'V0', 'app', 'voice', 'voice-rate'],
-  ['stop listening', 'V0', 'app', 'voice', 'mic-off'],
-  ['exit voice mode', 'V0', 'app', 'voice', 'exit-voice'],
-  ['put the camera and the hologram side by side', 'V0', 'destination', 'windows', 'side by side'],
-  ['side by side', 'VW', 'destination', 'windows', 'side by side'],
-  ['put the camera on the left and the hologram on the right', 'V0', 'destination', 'windows', 'left and right'],
-  ['swap them', 'VW', 'destination', 'windows', 'swap'],
-  ['make the window bigger', 'VW', 'destination', 'windows', 'size'],
-  ['make it full screen', 'VW', 'destination', 'windows', 'size'],
-  ['full screen', 'VW', 'destination', 'windows', 'size'],
-  ['close that window', 'VW', 'destination', 'windows', 'close one'],
-  ['close the camera window', 'VW', 'destination', 'windows', 'close one'],
-  ['close everything', 'VW', 'destination', 'windows', 'close all'],
-  ['show me the hologram window', 'VW', 'destination', 'windows', 'focus'],
-  ["okay, we'll do this in this window", 'VW', 'destination', 'windows', 'here'],
-  ['pull this up in Chrome', 'V0', 'destination', 'windows', 'Chrome: this'],
-  ['pull this up in Google Chrome', 'VL', 'destination', 'windows', 'Chrome: this'],
-  ['open this in Chrome', 'VH', 'destination', 'windows', 'Chrome: this'],
-  ['open that in a new tab', 'V0', 'destination', 'windows', 'Chrome: this'],
-  ['open the first link', 'V0', 'destination', 'windows', 'Chrome: a link'],
-  ['open the second link in Chrome', 'V0', 'destination', 'windows', 'Chrome: a link'],
-  ['open link 3', 'V0', 'destination', 'windows', 'Chrome: a link'],
-  ['google usb c chargers', 'V0', 'destination', 'windows', 'Chrome: a search'],
-  ['search Google for the MacBook Pro battery', 'V0', 'destination', 'windows', 'Chrome: a search'],
-  ['search for usb c chargers in Chrome', 'V0', 'destination', 'windows', 'Chrome: a search'],
-  ['look it up on Google', 'V0', 'destination', 'windows', 'Chrome: a search for this'],
-  ['google it', 'V0', 'destination', 'windows', 'Chrome: a search for this'],
-  ['open youtube', 'V0', 'destination', 'windows', 'Chrome: a site'],
-  ['go to amazon.com', 'V0', 'destination', 'windows', 'Chrome: a site'],
-  ['open the apple support page in Chrome', 'V0', 'destination', 'windows', 'Chrome: a search'],
-  ['start live view', 'V0', 'app', 'optics', 'the live view on'],
-  ['video mode', 'VL', 'top', 'optics', 'the live view on'],
-  ['stop live view', 'LV', 'top', 'optics', 'the live view off'],
-  ['how much has the live view cost', 'LV', 'app', 'voice', 'spend live'],
-  ['next', 'T', 'top', 'tours', 'next step'],
-  ['go back', 'T', 'top', 'tours', 'step back'],
-  ['show me that enclosed', 'T', 'top', 'tours', 'a choice'],
-].map(([text, state, layer, owner, does, extra = {}]) => Object.freeze({ text, state, layer, owner, does, should: !!extra.should })));
+// [words, state, layer, owner, id (when known), does, extra]: who must take each phrase (T2).
+export const MUST_BASE = Object.freeze(
+  [
+    ['open optics', 'V0', 'app', 'optics', null, 'opens Optics'],
+    ['hey Jarvis, open optics', 'V0', 'app', 'optics', null, 'opens Optics'],
+    ['open the camera', 'V0', 'app', 'optics', null, 'opens Optics'],
+    ['turn on the camera', 'V0', 'app', 'optics', null, 'opens Optics'],
+    ['camera on', 'V0', 'app', 'optics', null, 'opens Optics'],
+    ['close the camera', 'V0', 'app', 'optics', null, 'closes Optics'],
+    ['take a picture', 'V0', 'app', 'optics', null, 'a Look', { should: true }],
+    ['take a photo of this', 'V0', 'app', 'optics', null, 'a Look', { should: true }],
+    ['snap a picture', 'VL', 'top', 'optics', null, 'a Look', { should: true }],
+    ['look at my screen', 'V0', 'destination', 'voice', 'screen-look', 'a Look at the screen', { should: true }],
+    ['switch cameras', 'V0', 'app', 'optics', null, 'opens Optics on the next camera'],
+    ['use the Logitech camera', 'V0', 'app', 'optics', null, 'opens Optics on that camera'],
+    ['new chat', 'V0', 'app', 'voice', 'app', 'a new chat'],
+    ['start a new chat', 'VH', 'app', 'voice', 'app', 'a new chat'],
+    ['open history', 'V0', 'app', 'voice', 'app', 'history'],
+    ['show me my history', 'V0', 'app', 'voice', 'app', 'history'],
+    ['open settings', 'V0', 'app', 'voice', 'app', 'settings'],
+    ['open the voice settings', 'V0', 'app', 'voice', 'app', 'settings'],
+    ['open my blueprints', 'V0', 'app', 'voice', 'app', 'the library'],
+    ['open the library', 'V0', 'app', 'voice', 'app', 'the library'],
+    ['show mission control', 'V0', 'app', 'voice', 'app', 'Mission Control'],
+    ['open the home base', 'V0', 'app', 'voice', 'app', 'the home base'],
+    ['stop talking', 'S', 'app', 'voice', 'voice-controls', 'hush'],
+    ['be quiet', 'S', 'app', 'voice', 'voice-controls', 'hush'],
+    ['read the full answer', 'V0', 'app', 'voice', 'voice-controls', 'reads the details'],
+    ['repeat that', 'V0', 'app', 'voice', 'voice-controls', 'says it again'],
+    ['speak slower', 'V0', 'app', 'voice', 'app', 'slower'],
+    ['stop listening', 'V0', 'app', 'voice', 'voice-controls', 'the microphone off'],
+    ['exit voice mode', 'V0', 'app', 'voice', 'voice-controls', 'leaves Voice Mode'],
+    ['put the camera and the hologram side by side', 'V0', 'destination', 'windows', null, 'side by side'],
+    ['side by side', 'VW', 'destination', 'windows', null, 'side by side'],
+    ['put the camera on the left and the hologram on the right', 'V0', 'destination', 'windows', null, 'left and right'],
+    ['swap them', 'VW', 'destination', 'windows', null, 'swap', { should: true }],
+    ['make the window bigger', 'VW', 'destination', 'windows', null, 'size', { should: true }],
+    ['make it full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
+    ['full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
+    ['close that window', 'VW', 'destination', 'windows', null, 'close one'],
+    ['close the camera window', 'VW', 'destination', 'windows', null, 'close one'],
+    ['close everything', 'VW', 'destination', 'windows', null, 'close all'],
+    ['show me the hologram window', 'VW', 'destination', 'windows', null, 'focus', { should: true }],
+    ["okay, we'll do this in this window", 'VW', 'destination', 'windows', null, 'here'],
+    ['pull this up in Chrome', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: this'],
+    ['pull this up in Google Chrome', 'VL', 'destination', 'windows', 'chrome-open', 'Chrome: this'],
+    ['open this in Chrome', 'VH', 'destination', 'windows', 'chrome-open', 'Chrome: this'],
+    ['open that in a new tab', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: this'],
+    ['open the first link', 'RL', 'destination', 'windows', 'chrome-open', 'Chrome: a link'],
+    ['open the second link in Chrome', 'RL', 'destination', 'windows', 'chrome-open', 'Chrome: a link'],
+    ['open link 2', 'RL', 'destination', 'windows', 'chrome-open', 'Chrome: a link'],
+    ['google usb c chargers', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search'],
+    ['search Google for the MacBook Pro battery', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search'],
+    ['search for usb c chargers in Chrome', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search'],
+    ['look it up on Google', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search for this'],
+    ['google it', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search for this'],
+    ['open youtube', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a site'],
+    ['go to amazon.com', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a site'],
+    ['open the apple support page in Chrome', 'V0', 'destination', 'windows', 'chrome-open', 'Chrome: a search'],
+    ['start live view', 'V0', 'camera', 'today', 'camera', 'the live view on (v8.0: opens Optics)'],
+    ['video mode', 'VL', 'top', 'optics', 'optics', 'the live view on (E2)'],
+    ['stop live view', 'LV', 'top', 'today', 'optics', 'the live view off (v8.0)'],
+    ['how much has the live view cost', 'LV', 'app', 'voice', 'app', 'the readout'],
+    ['next', 'T', 'top', 'tours', null, 'the next step'],
+    ['go back', 'T', 'top', 'tours', null, 'the step before'],
+    ['show me that enclosed', 'T', 'top', 'tours', null, 'a choice'],
+  ].map(([words, state, layer, owner, id, does, extra = {}]) => Object.freeze({ words, state, layer, owner, id, does, should: !!extra.should })),
+);
 
 // T5: the recognizer's other readings. Taken only when the best reading isn't a question, and only
 // for an action that is free, undoable, unchecked and touches neither the camera nor the microphone.
-export const ALTERNATIVES = Object.freeze([
-  { best: 'new jacket', alts: ['new chat'], state: 'V0', want: { layer: 'app', does: 'new-chat' } },
-  { best: "what's the best camera", alts: ['open the camera'], state: 'V0', want: 'claude' },
-  { best: 'take a pitcher', alts: ['take a picture'], state: 'V0', want: 'claude' },
-  { best: 'google earth is cool', alts: ['google earth'], state: 'V0', want: 'claude' },
-  { best: 'topics', alts: ['optics'], state: 'V0', want: 'claude' },
-  { best: 'open topics', alts: ['open optics'], state: 'V0', want: 'claude' },
-  { best: 'stop listing', alts: ['stop listening'], state: 'V0', want: 'claude' },
-  { best: 'exit voice mod', alts: ['exit voice mode'], state: 'V0', want: 'claude' },
-  { best: 'open the settings', alts: ['open the satins'], state: 'V0', want: { layer: 'app', does: 'open settings' } },
-  { best: 'open my blue prince', alts: ['open my blueprints'], state: 'V0', want: { layer: 'app', does: 'open library' } },
-]);
+export const ALTERNATIVES = Object.freeze(
+  [
+    { best: 'new jacket', alts: ['new chat'], state: 'V0', want: { id: 'app' } },
+    { best: "what's the best camera", alts: ['open the camera'], state: 'V0', want: 'claude' },
+    { best: 'take a pitcher', alts: ['take a picture'], state: 'V0', want: 'claude' },
+    { best: 'google earth is cool', alts: ['google earth'], state: 'V0', want: 'claude' },
+    { best: 'topics', alts: ['optics'], state: 'V0', want: 'claude' },
+    { best: 'open topics', alts: ['open optics'], state: 'V0', want: 'claude' },
+    { best: 'stop listing', alts: ['stop listening'], state: 'V0', want: 'claude' },
+    { best: 'exit voice mod', alts: ['exit voice mode'], state: 'V0', want: 'claude' },
+    { best: 'open my blue prince', alts: ['open my blueprints'], state: 'V0', want: { id: 'app' } },
+    { best: 'what am I looking hat', alts: ['what am I looking at'], state: 'V0', want: 'claude' },
+    { best: 'what is this', alts: ['what is that'], state: 'VL', want: { id: 'optics' } },
+    { best: 'look at dis', alts: ['look at this'], state: 'VL', want: 'claude', by: 'optics' }, // E4: "look …" no longer a Look by itself
+    { best: 'yes', alts: ['no'], state: 'V0', want: 'claude' },
+    { best: 'yep', alts: ['yes'], state: 'TD', want: 'claude' },
+    { best: 'clay Back in Black', alts: ['play Back in Black'], state: 'V0', want: { id: 'music' } },
+    { best: 'what role does OPEC play in oil prices', alts: ['play oil prices'], state: 'V0', want: 'claude' },
+  ].map((r) => Object.freeze(r)),
+);
 
-// ---------------------------------------------------------------------------------------------
-// The collision table's base rows (T3): words two matchers can claim, the state, and the winner by
-// the router's order (src/lib/command-order.js ORDER ids; null: Claude). From the study's table of
-// words that mean different things (u-voice §4.2), the steals v8.1 fixes (C3), and the review's case
-// of a Chrome prompt, a tour decision and a research offer all open (critique H4). `winner` may list
-// several ids when either is right (a tour decision answered as the top question, or by the tour's
-// own words when another question covers it). Each builder adds its own rows in its own section of
-// collisions.mjs; these are voice's.
+// T1: ordinary sentences another builder's fix takes back from a matcher (they wait until its module
+// registers something, then must reach Claude): Optics' "look …" (E4, Track 5).
+const LOOK_STATES = ['VL', 'VF', 'LV', 'OV'];
+export const WAITING_FIXES = Object.freeze(
+  [
+    'look up the MacBook Pro battery part number', 'look into the warranty', 'look into flights for me', 'take a look at my calendar',
+    'look at my calendar', 'look at my email', 'look it up online', 'look it up',
+  ].map((words) => Object.freeze({ words, states: LOOK_STATES, by: 'optics', why: 'E4: Optics\' "look …" no longer steals' })),
+);
 
-const CHOICE = (id, ...words) => ({ id, label: words[0], words });
-export const TOUR_DECISION = Object.freeze({
-  id: 'tour-choice', say: 'Do you want to see it enclosed, or opened?', keep: true, askedAt: 1000,
-  choices: [CHOICE('enclosed', 'enclosed', 'closed'), CHOICE('opened', 'opened', 'open'), CHOICE('both', 'both'), CHOICE('pick', 'you pick')],
-});
-export const RESEARCH_OFFER = Object.freeze({
-  id: 'research-offer', say: 'Research this? A quick answer with a web search, about 10 cents. A research mission, about $1.70.', askedAt: 2000,
-  choices: [CHOICE('quick', 'quick', 'a quick answer'), CHOICE('mission', 'mission', 'a mission'), CHOICE('homebase', 'home base'), CHOICE('cancel', 'cancel', 'no')],
-});
-export const CHROME_PROMPT = Object.freeze({
-  id: 'p1', hash: 'h1', kind: 'step', category: 'change', consequential: false, site: 'example-shop.com', askedAt: 3000,
-  spoken: 'Chrome asks: add the 27-inch monitor, $279.99, to the cart on example-shop.com? Say approve, or cancel.',
-  voice: { allowed: true, why: '' },
-});
-const RUNNING_TASK = { id: 't1', status: 'running', text: 'find a 4K monitor under $300 and add it to the cart' };
-const DECIDING = { active: true, atChoice: true, choices: TOUR_DECISION.choices.map((c) => c.id), stepId: 'ask' };
-
-// The review's case: all three open; the Chrome prompt was said last (H4), or the research offer was.
-export const H4_STATE = Object.freeze({
-  hologram: HOLO, tour: DECIDING, questions: [TOUR_DECISION, RESEARCH_OFFER], prompt: CHROME_PROMPT,
-  chrome: { linked: true, online: true, task: RUNNING_TASK, contextUntil: Number.MAX_SAFE_INTEGER },
-});
-export const H4_OFFER_LAST = Object.freeze({ ...H4_STATE, prompt: { ...CHROME_PROMPT, askedAt: 1500 } });
-
-// [text, state (a STATES name or a state patch), winner, why]
-export const COLLISIONS_BASE = Object.freeze([
-  // "stop" (3): stops what runs; with a hologram and nothing running, the hologram holds still.
-  ['stop', 'S', 'stop', 'stops the voice'],
-  ['stop', 'T', 'stop', 'pauses the tour'],
-  ['stop', 'VH', 'hologram', 'holds the model still'],
-  ['stop', 'V0', 'stop', '"Okay." (free; never a paid question)'],
-  ['stop', 'LV', 'stop', 'the live view off (stopping is the safe direction)'],
-  ['stop', 'CH', 'stop', 'the same in the chat box'],
-  // back
-  ['go back', 'T', 'tour', 'the previous step'],
-  ['go back', 'VH', 'hologram', '"There\'s nothing to go back to." (C3: no longer swallowed)'],
-  ['back', 'T', 'tour', 'the previous step'],
-  ['back', 'VH', 'hologram', 'the back view'],
-  ['bring everything back', 'VW', 'screens', 'the window comes back'],
-  ['bring everything back', 'VH', 'hologram', 'every part shown (no window open)'],
-  ['bring everything back', 'HF', 'hologram', 'the same in the hologram\'s field (C3)'],
-  ['bring it back', 'V0', 'screens', "Screens' own answer"],
-  // size and windows
-  ['make it bigger', 'VH', 'hologram', 'zoom in'],
-  ['make it bigger', 'VW', 'windows', 'the window'],
-  ['make it bigger', 'VHW', 'hologram', 'zoom in'],
-  ['make the window bigger', 'VHW', 'windows', 'a window noun'],
-  ['expand this in a different window', 'VH', 'screens', 'a window (C3: no longer explodes the hologram)'],
-  ['expand it', 'VH', 'hologram', 'explode'],
-  ['open the hologram in a window', 'VH', 'screens', 'a window'],
-  ['close that window', 'VW', 'windows', 'that window'],
-  ['close it', 'VH', 'hologram', 'closes the hologram'],
-  ['close it', 'VL', 'optics', 'camera off'],
-  // the camera, Optics and the live view
-  ['open the camera', 'V0', 'optics.open', 'opens Optics'],
-  ['open the camera', 'VH', 'hologram', "R10: the laptop's camera part, with the hint \"Say 'open Optics' for your camera.\""],
-  ['open optics', 'VH', 'optics.open', '"Optics" is never a part (R10)'],
-  ['show me the camera', 'VF', 'optics', 'back to live'],
-  ['show me the camera', 'V0', 'optics.open', 'opens Optics'],
-  ['look it up online', 'VL', null, "E4: Optics' \"look …\" no longer steals"],
-  ['look at my calendar', 'VL', null, 'E4'],
-  ['look at this', 'VL', 'optics', 'a Look'],
-  ['look at this battery', 'VL', 'optics', 'a Look'],
-  ['video mode', 'VL', 'optics', "the live view (Optics' own words while it is open)"],
-  ['watch this', 'VL', 'optics', 'Watch, not the live view'],
-  ["that's enough", 'T', 'tour', 'ends the tour'],
-  ["that's enough", 'LV', 'optics', 'the live view off (v8.0)'],
-  ["that's enough", 'S', 'voice.controls', 'stop talking'],
-  ['what is this', 'VH', null, 'about the hologram, for Claude'],
-  ['what is this', 'V0', 'camera', 'opens the camera and looks'],
-  ['how much has the live view cost', 'LV', 'app', 'the readout, free'],
-  // tours and Voice Mode's controls
-  ['next', 'T', 'tour', 'the next step'],
-  ['next', 'V0', null, 'a question for Claude'],
-  ['repeat that', 'T', 'tour', 'says the step again'],
-  ['repeat that', 'V0', 'voice.controls', 'says the last answer again'],
-  ['new chat', 'T', 'app', 'a new chat (the tour stays where it is)'],
-  ['open the library', 'VH', 'app', 'no part is called that'],
-  // Chrome, music, the home base, Standby
-  ['pull this up in Chrome', 'VH', 'chrome.open', 'opens the hologram\'s title in Chrome'],
-  ['open that in a new tab', 'V0', 'chrome.open', 'a tab, not a popup window (W8)'],
-  ['play Back in Black', 'VH', 'music', 'Apple Music'],
-  ['brief me', 'V0', 'brain', 'the home base briefing'],
-  ['go to standby', 'VH', 'standby', 'Standby words everywhere'],
-  ['go to standby', 'HF', 'standby', "the hologram's field too (C2)"],
-  // A Chrome prompt, a tour decision and a research offer all open (critique H4).
-  ['continue', H4_STATE, 'tour', 'the tour only: never the prompt, never the offer'],
-  ['approve', H4_STATE, 'chrome.prompt', 'the Chrome prompt only'],
-  ['cancel', H4_STATE, 'chrome.prompt', 'asked last: the prompt'],
-  ['no', H4_STATE, 'chrome.prompt', 'asked last: the prompt'],
-  ['cancel', H4_OFFER_LAST, 'question', 'asked last: the research offer'],
-  ['no', H4_OFFER_LAST, 'question', 'asked last: the research offer'],
-  ['cancel Chrome', H4_OFFER_LAST, 'chrome.prompt', 'names Chrome'],
-  ['deny', H4_OFFER_LAST, 'chrome.prompt', "the prompt's own word"],
-  ['stop', H4_STATE, 'stop', 'pauses the tour and stops the Chrome task'],
-  ['enclosed', H4_STATE, ['question', 'tour'], 'the tour decision'],
-  ['quick', H4_OFFER_LAST, 'question', 'the research offer'],
-].map(([text, state, winner, why]) => Object.freeze({ text, state, winner, why })));
+// T4: matchers that listen on some surfaces only, on purpose (R1's declared exceptions).
+export const PARITY_EXCEPTIONS = Object.freeze(
+  [
+    { id: 'voice-controls', surfaces: ['voice'], why: "Voice Mode's own controls (stop talking, read the full answer, exit Voice Mode)" },
+    { id: 'camera', surfaces: ['voice'], why: 'camera words with Optics closed open the camera only in Voice Mode (R1)' },
+    { id: 'prompt', surfaces: ['voice'], why: "Chrome's questions are answered in Voice Mode or on their card" },
+    { id: 'question', surfaces: ['voice'], why: "Voice Mode's own questions" },
+    { id: 'reply-building', surfaces: ['voice'], why: "words said while Voice Mode's reply builds a hologram" },
+    { id: 'homebase', surfaces: ['voice', 'chat'], why: "the home base's answers are said in Voice Mode or written in the chat" },
+    { id: 'brain', surfaces: ['voice', 'chat'], why: "the home base's answers are said in Voice Mode or written in the chat" },
+    { id: 'optics', surfaces: ['voice', 'optics'], why: "Optics' own words, where Optics is (typed in its field, the Look's question)" },
+    { id: 'hologram', surfaces: ['voice', 'hologram'], why: "the hologram's own words, where it is" },
+    { id: 'blueprint', surfaces: ['voice'], why: "a blueprint sheet over Voice Mode (the viewer's field closes its own)" },
+    { id: 'music', surfaces: ['voice', 'chat'], why: "typed in a hologram's field over Voice Mode it is Voice Mode's (its card shows there); Optics' field is the Look's question" },
+  ].map((r) => Object.freeze(r)),
+);

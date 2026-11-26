@@ -18,7 +18,7 @@ import {
   nextVoiceRate,
   VOICE_RATE,
 } from '../../src/lib/app-commands.js';
-import { NO_STEAL, NO_STEAL_STATES, stateFor } from './fixtures/voice-corpus-base.mjs';
+import { NOT as NO_STEAL, ALL_STATE_NAMES as NO_STEAL_STATES, stateFor } from './fixtures/voice-corpus-base.mjs';
 
 const pick = (a) => (a ? { do: a.do, ...Object.fromEntries(Object.entries(a).filter(([k]) => !['do', 'free', 'undo', 'check', 'camera', 'mic'].includes(k))) } : null);
 
