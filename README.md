@@ -297,7 +297,7 @@ Mode or Optics first.
 | Spending | "how much have I spent today", "… this month" | A readout of this device's estimates, free |
 | | "how much has the live view cost" | The live view's spending this hour |
 | Optics | "open optics", "open the camera", "camera on" | Optics opens, no Look ("Tap Look" on an iPhone) |
-| | "close the camera", "turn the camera off" | Camera off, from anywhere (with a hologram on screen too) |
+| | "close the camera", "turn the camera off", "cam off" | Camera off, from anywhere (with a hologram on screen, or over Optics, too) |
 | | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
 | | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed (or under a hologram), "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free, a hologram or blueprint on screen or not |

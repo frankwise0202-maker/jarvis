@@ -198,14 +198,18 @@ export function register(router, deps) {
   });
 
   // "Close the camera" with Optics closed (free, from anywhere: a camera on another screen goes off
-  // too), or typed in Optics' own field (where typed words are otherwise a question).
+  // too), or typed in Optics' own field (where typed words are otherwise a question), or with Optics open under a
+  // hologram or blueprint (Optics' own close can't hear them then: ROUTING-R4-1), said or typed, in the hologram's
+  // field too. It only ever turns the camera off.
   router.register({
     id: 'optics-close',
     layer: 'app',
-    surfaces: ['voice', 'chat', 'optics'],
+    surfaces: ['voice', 'chat', 'optics', 'hologram'],
     match(text, s) {
       const open = !!(s.optics && s.optics.open);
-      if (open && !(s.surface === 'optics' && s.via === 'typed')) return null;
+      const covered = open && ((s.hologram && s.hologram.open) || !!s.blueprintOpen);
+      if (s.surface === 'hologram' && !covered) return null;
+      if (open && !covered && !(s.surface === 'optics' && s.via === 'typed')) return null;
       return isCameraCloseRequest(text) ? { do: 'camera-off', open } : null;
     },
     run: (action, ctx) => (action.open ? call('opticsCommand', ctx.reading, ctx) : call('closeCamera', { surface: ctx.surface })),

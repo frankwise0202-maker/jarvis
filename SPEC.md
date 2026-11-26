@@ -4813,7 +4813,11 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   never the model's, on screen, shown last or in a Screens window: Optics closes, or with Optics closed the camera goes
   off (`optics-close`); the hologram's "turn …" never takes a phrase ending in "on" or "off" ("turn the lights on")
   (ROUTING-R3-1). With Optics open, every camera-off form is Optics' own close (`matchOpticsCommand`), and Optics'
-  `question()` never takes a Look for them (ROUTING-R3-S1).
+  `question()` never takes a Look for them (ROUTING-R3-S1). Camera-off forms include "cam" and "web cam" and "shut …
+  off" ("turn off the cam", "cam off", "shut the camera off": ROUTING-R4-4). With Optics open under a hologram or a
+  blueprint, `optics-close` takes them, said or typed (the hologram's field too), and runs Optics' close (ROUTING-R4-1).
+  "Turn the hologram off" is the hologram's close and never Optics' request for a new hologram (ROUTING-R4-2); the
+  hologram's "turn the labels off/on", "turn the rotation off/on" are its labels and rotation (ROUTING-R4-3).
 
 **The app's words** (C2; every surface unless marked):
 | Words | Action | Line |
