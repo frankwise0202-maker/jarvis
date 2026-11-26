@@ -4237,9 +4237,11 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   `arrange` ("side by side", "split the screen", "tile them" with a window open; "put the camera and the hologram side
   by side", "camera on the left, hologram on the right" always; one thing on one side with a window open, never
   "show …"), `here`, `focus` ("show me the hologram window"), and D5's `swap` (two open) and `size` ("make the camera
-  window bigger", "make it full screen" with a window open and no viewer here), D6's `float-jarvis` ("float
-  yourself"). Questions go to Claude, except "do this in this window", checked before the question filter. It takes
-  nothing `matchScreenCommand` takes.
+  window bigger" always; "make the window bigger", "make this window smaller" (`here`) with a window open; "make it
+  full screen", "make it bigger" with a window open and no hologram owning "it": not with a viewer here, and "make
+  it bigger/smaller" not with a hologram in a window, whose zoom it is; "make your window bigger": `which: 'main'`),
+  D6's `float-jarvis` ("float yourself"). Questions go to Claude, except "do this in this window", checked before
+  the question filter. It takes nothing `matchScreenCommand` takes.
 - Every action `{ do: 'window', op, …, free: true, check: false, camera: false }`; `undo: false` for closes (no
   alternative reading closes a window).
 - `matchScreenCommand` also takes "expand" as a command word ("expand this in a different window"), and no longer
