@@ -30,12 +30,15 @@
 //                                    asked first: state.briefingUsd, else BRIEFING_USD)
 //   briefingUsd({ maxAgents, depth, location })   the briefing's price at the owner's team size and depth
 //   matchStopWord(text, state)       the `stop` layer: a bare "stop" stops what runs, all of it:
-//     { do: 'stop', targets }                      targets ⊂ ['tour', 'chrome', 'liveview', 'music',
-//                                                  'speech'] (pause the tour, stop the Chrome task, the
-//                                                  live view, a music preview, Jarvis's voice); [] when
-//                                                  nothing runs ("Okay."). With a hologram or blueprint
-//                                                  on top and nothing running: null, so the viewer's
-//                                                  own "stop" (hold still) takes it.
+//     { do: 'stop', targets }                      targets ⊂ ['tour', 'answer', 'chrome', 'watch',
+//                                                  'liveview', 'music', 'speech'] (pause the tour; stop
+//                                                  the chat's turn: an answer, a mission, a Look's
+//                                                  answer; the Chrome task, Optics' Watch, the live
+//                                                  view, a music preview, Jarvis's voice); [] when
+//                                                  nothing runs ("Okay."). With a hologram on screen
+//                                                  and nothing running: null, so the viewer's own
+//                                                  "stop" (hold still) takes it (a blueprint sheet
+//                                                  alone has none: "Okay.").
 //   appCommandLine(action, outcome)  the one short line Jarvis says once it has acted (R9)
 //   spendLine({ period, todayUsd, monthUsd, liveUsd })   "About 42 cents today." / "Nothing spent today."
 //   moneyWords(usd)                  "about 42 cents", "about $3.20", "less than a cent"
@@ -225,11 +228,17 @@ export function chromeTaskRunning(state = {}) {
   return !!(t && typeof t === 'object' && !TASK_OVER.test(String(t.status || '')));
 }
 
-/** What a bare "stop" stops in `state`, in the order Jarvis says it. */
+/**
+ * What a bare "stop" stops in `state`, in the order Jarvis says it. `state.running`: a turn of the open
+ * chat runs (an answer, a research mission, a Look's answer), stopped as its Stop button stops it;
+ * `state.optics.watch`: Optics' Watch is on. Both cost money while they run (REGRESS-2).
+ */
 export function stopTargets(state = {}) {
   const out = [];
   if (state.tour && state.tour.active) out.push('tour');
+  if (state.running) out.push('answer');
   if (chromeTaskRunning(state)) out.push('chrome');
+  if (state.optics && state.optics.watch) out.push('watch');
   if (state.optics && state.optics.liveView) out.push('liveview');
   if (state.music && state.music.playing) out.push('music');
   if (state.speaking) out.push('speech');
@@ -238,15 +247,17 @@ export function stopTargets(state = {}) {
 
 /**
  * A bare "stop" (also "okay, stop", "stop it", "stop everything"): everything that runs stops at once
- * (a tour pauses; a Chrome task, the live view, a preview and Jarvis's voice stop). Nothing running:
- * "Okay." (free; never a question for Claude), unless a hologram or blueprint is on top, whose own
- * "stop" holds the model still. "Stop the tour" and "stop Chrome" belong to the tour and to Chrome.
+ * (a tour pauses; the chat's turn, a Chrome task, Watch, the live view, a preview and Jarvis's voice
+ * stop). Nothing running:
+ * "Okay." (free; never a question for Claude), unless a hologram is on screen (under a blueprint sheet
+ * too), whose own "stop" holds the model still; a blueprint sheet alone has no "stop" of its own
+ * (ROUTING-6). "Stop the tour" and "stop Chrome" belong to the tour and to Chrome.
  */
 export function matchStopWord(text, state = {}) {
   const s = normalizeAppText(text);
   if (!s || !STOP.test(s)) return null;
   const targets = stopTargets(state);
-  if (!targets.length && ((state.hologram && state.hologram.open) || state.blueprintOpen)) return null;
+  if (!targets.length && state.hologram && state.hologram.open) return null;
   return act('stop', { targets });
 }
 
@@ -310,7 +321,9 @@ const SECTION_NAMES = {
 };
 const STOPPED = {
   tour: 'the tour is paused',
+  answer: 'the answer is stopped',
   chrome: 'Chrome is stopping',
+  watch: 'Watch is off',
   liveview: 'the live view is off',
   music: 'the music is off',
 };

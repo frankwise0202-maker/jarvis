@@ -6,6 +6,7 @@
 //   const player = createTourPlayer({ plan, target, narrator, asker, holder, say, clock, onChange, onEnd })
 //   await player.start()          after target.settled() (at most 10 s): the first step
 //   player.next() / back() / repeat() / pause(reason) / resume() / toggle() / end(reason)
+//                                 (back: the previous step alone, said, then it waits: "next" goes on)
 //   player.choose(choiceId) / jump(partId) / showView('enclosed' | 'opened') / setHidden(hidden)
 //   player.getState()             { status, stepId, shown (the step whose look shows), index, total, say, ask, choices, … }
 //
@@ -173,13 +174,17 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
 
   // ---- runs ------------------------------------------------------------------------------------
 
-  /** Say the steps from `id` up to the next decision or wait step, showing each as it is heard. */
-  function playFrom(id, { replay = false } = {}) {
+  /**
+   * Say the steps from `id` up to the next decision or wait step, showing each as it is heard. `only`:
+   * that one step, then it waits there ("back": B5, the previous step's show and words; "next" goes on).
+   */
+  function playFrom(id, { replay = false, only = false } = {}) {
     stopActivity();
     const first = stepById(plan, id);
     if (!first) return finish();
-    const list = runFrom(plan, id);
-    if (!list.length) return isDecision(first) ? askAt(first, { replay }) : finish();
+    const all = runFrom(plan, id);
+    if (!all.length) return isDecision(first) ? askAt(first, { replay }) : finish();
+    const list = only ? all.slice(0, 1) : all;
     status = 'playing';
     pausedFor = null;
     stepId = first.id;
@@ -200,7 +205,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     const enterGroup = (i) => {
       for (const s of groups[i]) enterStep(s, { replay: replay && entered++ === 0 });
     };
-    run = { sync: null, handle: null, timer: 0, groups, tail, list };
+    run = { sync: null, handle: null, timer: 0, groups, tail, list, only };
     changed();
     if (!lines.length) {
       // Nothing to say (parts only): show them, then go on as if they were said.
@@ -216,7 +221,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
         speaker.narrate({
           text,
           kind: 'tour',
-          listenAfter: listenAfterFor(list),
+          listenAfter: only && !isDecision(list[list.length - 1]) ? null : listenAfterFor(list),
           onChunk: (chunk) => {
             if (my !== token) return;
             if (sync) sync.chunk(chunk);
@@ -232,7 +237,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     if (!handle && speaker !== silent) {
       // The voice couldn't start: the words show in the bar and move on by estimate.
       voice = null;
-      return playFrom(id, { replay });
+      return playFrom(id, { replay, only });
     }
     run.handle = handle;
     const pacing = voicePacing(handle && handle.voice ? handle.voice : speaker === silent ? { kind: 'none' } : {}, rate);
@@ -260,7 +265,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
       run = null;
       const last = r.list[r.list.length - 1];
       if (isDecision(last)) return askAt(last, { entered: true });
-      if (last.wait) {
+      if (last.wait || r.only) {
         status = 'waiting';
         changed();
         return;
@@ -273,7 +278,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     if (reason === 'failed' || reason === 'error' || reason === 'unsupported') {
       // Speech isn't working: the rest is shown in the bar, from the step that was being said.
       voice = null;
-      return playFrom(stepId, { replay: true });
+      return playFrom(stepId, { replay: true, only: r.only });
     }
     // Stopped by someone else (Stop, a tap on the microphone, "Hey Jarvis"): the tour pauses there.
     stopActivity();
@@ -364,8 +369,10 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     const prev = history.pop() || (steps[0] && steps[0].id);
     const s = stepById(plan, prev);
     if (!s) return false;
+    // That step alone, then it waits (REGRESS-3: replaying on to the end put those steps back on the history,
+    // so the next "back" landed on the same step again).
     if (isDecision(s) && !s.say) askAt(s, { replay: true });
-    else playFrom(s.id, { replay: true });
+    else playFrom(s.id, { replay: true, only: true });
     return true;
   }
 

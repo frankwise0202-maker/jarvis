@@ -285,7 +285,7 @@ Mode or Optics first.
 | | "send right away", "show me what you heard first" | The 2-second check, off or on |
 | | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
 | Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
-| Stop | "stop" | Stops whatever runs: a walkthrough pauses; a Chrome task, the live view and a preview stop. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
+| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped."). Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
 | Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
 | Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
 | | "open history", "show me my history" | History |
@@ -338,6 +338,12 @@ Mode or Optics first.
   so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
   itself once you close it, or after a minute with no click or key (it comes back above it, and what you
   opened stays underneath); with Jarvis in the background, right away.
+- **In a hologram's field or Optics' field** a few words are that viewer's question instead. Typed in a
+  hologram's field, "open optics", "close the camera", "research this", "which microphone are you
+  using?", "is Jarvis for Chrome linked?" and "brief me" go to Jarvis as a question. In Optics' field
+  (typed, or said to its microphone), Voice Mode's own words ("repeat that"), Apple Music ("stop the
+  music"), "which microphone are you using?", "is Jarvis for Chrome linked?" and "brief me" become the
+  Look's question (a Look, about 3¢). Say them in Voice Mode instead.
 
 #### Hands-free on a Mac
 
@@ -612,7 +618,8 @@ Jarvis's home screen now tells you what is going on before you ask.
   pick**. Then he tells you what it is and what sits next to it.
 - **While it plays**, say **next**, **back** (or "go back", "previous"), **repeat** ("say that
   again"), **wait** or **pause**, **continue**, **skip to the fan**, or **stop the tour** ("that's
-  enough"). They act at once and cost nothing. Outside a walkthrough these words do what they did
+  enough"). They act at once and cost nothing. **Back** shows and says the step before, then waits
+  there: say "back" again to go further back, or "next" to go on. Outside a walkthrough these words do what they did
   before: "back" alone still turns the hologram to its back view.
 - **The walkthrough bar** under the hologram shows what Jarvis is saying, "3 of 8", **Back**,
   **Pause** (or **Play**), **Next** and **End**, and the choice buttons when he asks. On a Mac, ←
@@ -1470,7 +1477,7 @@ don't see it, close Jarvis completely (swipe it away) and open it again.
 | **Jarvis speaks with the iPhone voice, and Settings → Voice says "George's sound didn't start on this iPhone"** | The iPhone stopped Jarvis's sound for George (after a call, a change of headphones or speaker, or the microphone), so Jarvis switched to the iPhone voice rather than leave you in silence. Tap **Test** in Settings → Voice → Jarvis's voice: the tap starts George's sound afresh, and if the iPhone lets it play, George speaks again. He also comes back by himself once the iPhone plays his sound again. If Test still ends in the iPhone voice (or the Test in Settings → Home base → Hearing and voice says "Nothing played"), the iPhone is still holding the sound back: close Jarvis completely and open it again. |
 | **The label says George, but you hear nothing** | After a call or Siri, an iPhone can keep Jarvis's sound running without letting any of it out, and Jarvis can't tell. Tap **Test** in Settings → Voice → Jarvis's voice (or **Speak** on a reply): if George's sound had stopped earlier (the iPhone voice took over), that tap starts it afresh. If you still hear nothing, close Jarvis completely (swipe it away) and open it again. |
 | **Jarvis's voice sounds robotic** | Download a better voice for free: see [A more natural voice](#a-more-natural-voice), then pick it (or leave **Automatic**) in Settings → Voice. |
-| **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. Reading also pauses while the screen is locked or Jarvis is in the background. |
+| **Reading aloud stops, or a voice says nothing** | Jarvis already retries a voice that stalls or drops a sentence, and says so ("The voice stopped responding") when nothing plays at all. Tap **Speak** to try again; if it keeps happening, pick another voice in Settings → Voice. On an iPhone, reading also pauses while the screen is locked or Jarvis is in the background; on a Mac it goes on. |
 | **No notification when a mission finishes** | Settings → Appearance & sound → **Allow notifications**. On iPhone, notifications only work in the installed app (Share → Add to Home Screen), and iOS may pause Jarvis in the background before the mission ends. |
 | **Two claps don't wake Jarvis** | Check that Standby's pill says **LISTENING ON THIS DEVICE · TWO CLAPS**. Clap sharply, twice, about half a second apart, then wait a second (he checks that no third clap follows). Soft claps or a noisy room: Settings → Voice → Wake Jarvis → **Clap sensitivity** → **High**. From far away the sensitivity doesn't help: clap sharper, or say "Hey Jarvis". On iPhone Jarvis must be open on screen. |
 | **Jarvis wakes up by himself** | Settings → Voice → Wake Jarvis → **Clap sensitivity** → **Low**, or turn off **Clap twice** and use "Hey Jarvis". Woken by claps, he never sends what the room is saying anywhere; he greets you and waits. |

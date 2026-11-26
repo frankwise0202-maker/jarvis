@@ -18,6 +18,22 @@ const target = (t, state = LINKS) => {
   return m && m.do === 'chrome-open' ? { ...m.target, where: m.where, check: m.check } : m && m.do;
 };
 
+test('ROUTING-3: a sentence about a Google product is no search; "google stock price" keeps Google in the query', () => {
+  // Statements about one of Google's products reach Jarvis (never a search for the words after "Google").
+  for (const t of ["Google Home isn't responding", "Google Docs won't open", 'Google Maps keeps freezing', 'Google Photos stopped backing up', 'Google Meet has no sound', 'Google Maps sent me the wrong way', 'Google Calendar deleted my event', 'Google Nest thermostat keeps resetting', 'Google Pixel battery drains fast']) {
+    assert.equal(matchChromeCommand(t, NO_LINKS), null, t);
+  }
+  // A search whose subject is Google itself keeps the word.
+  assert.deepEqual(target('google stock price'), { kind: 'search', query: 'google stock price', where: 'auto', check: true });
+  assert.deepEqual(target('google earnings today'), { kind: 'search', query: 'google earnings today', where: 'auto', check: true });
+  assert.deepEqual(target('google home depot hours'), { kind: 'search', query: 'google home depot hours', where: 'auto', check: true });
+  // Unchanged: a plain search, a question searched, Google Maps opened.
+  assert.deepEqual(target('google USB-C chargers'), { kind: 'search', query: 'usb-c chargers', where: 'auto', check: true });
+  assert.deepEqual(target('google how do I reset Google Home'), { kind: 'search', query: 'how do i reset google home', where: 'auto', check: true });
+  assert.deepEqual(target('google my phone keeps restarting'), { kind: 'search', query: 'my phone keeps restarting', where: 'auto', check: true });
+  assert.deepEqual(target('google maps'), { kind: 'site', url: 'https://maps.google.com/', name: 'Google Maps', where: 'auto', check: false });
+});
+
 test('the owner\'s words: "pull this up in Chrome", links, Google, sites', () => {
   assert.deepEqual(target('Pull this up in Google Chrome.'), { kind: 'this', where: 'auto', check: false });
   assert.deepEqual(target('Hey Jarvis, pull this up in Chrome'), { kind: 'this', where: 'auto', check: false });

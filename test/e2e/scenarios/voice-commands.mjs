@@ -239,6 +239,34 @@ export default [
     },
   },
   {
+    // REGRESS-2: a bare "stop" stops what runs, the chat's own turn included. v8.0 left typed words in the box
+    // during a run; v8.1 before this fix said "Okay." and let the mission run on and be billed.
+    name: 'voice-commands-stop-running',
+    title: '"stop" typed in the chat box while a research mission runs stops it: the turn ends "stopped" and the line says so ("The answer is stopped."), never a bare "Okay."',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      const turn = await t.send('[[swarm:3]] [[slow]] Research tidal power');
+      // Under way: its agents have started (each one paid).
+      await t.waitFor(() => t.requests('worker').length >= 1, { timeout: 20000, message: 'the mission\'s agents to start' });
+      t.assert((await turn.getAttribute('data-status')) === 'running', 'the mission runs');
+      await t.step('"stop" + Enter while it runs', async () => {
+        const input = await t.visible('composer-input');
+        await input.fill('stop');
+        await input.press('Enter');
+        await t.waitForTurn(turn, ['stopped'], { timeout: 20000 });
+        t.assert((await input.inputValue()) !== 'stop', 'the composer took "stop" as a command (not left in the box)');
+        await t.waitFor(async () => (await t.page.locator('.toast-text').allTextContents()).map(norm).includes('The answer is stopped.'), { timeout: 5000, message: 'the line' });
+        const toasts = (await t.page.locator('.toast-text').allTextContents()).map(norm);
+        t.assert(toasts.includes('The answer is stopped.'), `the line says what stopped (toasts: ${JSON.stringify(toasts)})`);
+        t.assert(!toasts.includes('Okay.'), `no bare "Okay." while a mission ran (toasts: ${JSON.stringify(toasts)})`);
+        await t.screenshot('1-stopped');
+      });
+    },
+  },
+  {
     name: 'voice-commands-questions',
     title:
       'Voice for everything: ten ordinary questions, some of them with Optics open, each reach Jarvis exactly once (one request each), and none is taken by a command',

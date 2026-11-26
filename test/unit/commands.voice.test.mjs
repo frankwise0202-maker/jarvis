@@ -62,6 +62,31 @@ test('"stop": each running thing is stopped through the deps, then one line', as
   assert.deepEqual(idle.out, { say: 'Okay.' });
 });
 
+test('REGRESS-2: "stop" with a turn running stops it (and Watch) through the deps, on every surface, and says so', async () => {
+  for (const surface of ['chat', 'voice', 'hologram', 'optics']) {
+    const { run, calls } = setup();
+    const { hit, out } = await run('stop', { surface, via: surface === 'voice' ? 'voice' : 'typed', running: true });
+    assert.equal(hit.id, 'stop', surface);
+    assert.deepEqual(calls, [['stop', 'answer']], surface);
+    assert.deepEqual(out, { say: 'The answer is stopped.' }, surface);
+  }
+  const { run, calls } = setup();
+  const optics = { open: true, mode: 'live', liveView: false, watch: true, card: null, cameraAllowed: 'granted', sceneChanged: null };
+  const { out } = await run('stop', { surface: 'optics', via: 'typed', optics });
+  assert.deepEqual(calls, [['stop', 'watch']]);
+  assert.deepEqual(out, { say: 'Watch is off.' });
+});
+
+test('ROUTING-6: "stop" with only a blueprint sheet open is a free "Okay.", never a question for Claude', async () => {
+  for (const surface of ['voice', 'chat']) {
+    const { run, calls } = setup();
+    const { hit, out } = await run('stop', { surface, via: surface === 'voice' ? 'voice' : 'typed', blueprintOpen: true });
+    assert.equal(hit && hit.id, 'stop', surface);
+    assert.deepEqual(calls, [], surface);
+    assert.deepEqual(out, { say: 'Okay.' }, surface);
+  }
+});
+
 test('the app commands: what they do and say', async () => {
   const { run, calls, settings } = setup();
   assert.deepEqual((await run('new chat')).out, { say: 'New chat.' });

@@ -2304,9 +2304,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
     `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
     Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
-    Voice Mode drops an open question when other words are routed, and "mission" is routed (to the answer entry)
-    before it is checked: so a dropped offer stays answerable by its dear ways for 30 s (its question and card
-    gone), an answer to an offer that has gone is said back ("That research offer has gone…"), never sent to
+    Voice Mode drops an open question when other words are routed, but not for an answer-layer entry's words: the
+    offer stays open while "mission" waits in its check, so a correction there ("no, I said quick") still answers
+    it (ROUTING-12). An offer dropped by other words stays answerable by its dear ways for 30 s (its question and
+    card gone), an answer to an offer that has gone is said back ("That research offer has gone…"), never sent to
     Claude, and in Voice Mode the research turn starts on the next tick (after Voice Mode's own note for the routed
     command).
   - **The ways** (`researchPrompt`): Quick → a follow-up on the open Look (`optics.followUp`) or a quick turn ("Research
@@ -4700,8 +4701,11 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    no is its answer marked `negative`; a question without a choice for it is set aside (`dismissTop`, onExpire
    `'dismissed'`), so it never goes on to Claude. "Stop" is never an answer.
 3. `stop`: a bare "stop" ("okay stop", "stop it", "stop everything") stops everything that runs (`stopTargets`): the
-   tour pauses; a Chrome task, the live view, a music preview and Jarvis's voice stop. Nothing running: "Okay.". With
-   a hologram or blueprint on top and nothing running it yields, and the viewer holds the model still.
+   tour pauses; the chat's turn (`state.running`: an answer, a research mission, a Look's answer; as its Stop button
+   does), a Chrome task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop,
+   and the line says what stopped. Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
+   blueprint over it) on top and nothing running it yields, and the viewer holds the model still (a blueprint sheet
+   alone has no "stop": "Okay.").
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
    `optics-card` (a Look's picture card, only while a Look is on screen: "put the picture to the side" goes back into
    its card, not a Screens float), `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes
@@ -4731,7 +4735,8 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   tasks, Apple Music, the home base's research and watches, Optics' questions about "this").
 - R4: a sentence that starts like a question is never a command, except fixed forms a matcher names ("what am I looking
   at?", "how much have I spent today?"). Optics' "this" question is not one when its only "this" is a time ("this
-  month", "this weekend").
+  month", "this weekend"), the "what's this …" form included ("what's this weekend's weather?" is a question for
+  Jarvis; "what am I looking at this morning?" is still a Look).
 - R5: a matcher claims words only while its thing exists.
 - R6: a command that spends needs an explicit verb and object; the dearer ones say the price first and wait.
 - R7: the recognizer's other readings are tried only when the best reading isn't a question, and only for an action that
@@ -4765,7 +4770,7 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
 | "repeat that", "say that again" (Voice Mode) | `repeat` | the last answer (else the last line) / "I haven't said anything yet." |
 | "stop listening" (Voice Mode) | `mic-off` (mic) | "I've stopped listening. Tap me when you need me." / woken: back to Standby |
 | "exit Voice Mode" (Voice Mode) | `exit-voice` (mic, no undo) | "Closing Voice Mode.", then it closes |
-| "stop" | `stop`, `targets` | "Okay." / "The tour is paused and Chrome is stopping." |
+| "stop" | `stop`, `targets` | "Okay." / "The answer is stopped." / "The tour is paused and Chrome is stopping." / "Watch is off." |
 
 A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says the line, Voice Mode closes with the
 reason `'command'` and the sheet opens. A woken session isn't over for good then (MAC-2): Standby stays woken (its lock
@@ -4855,7 +4860,9 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   `parts-list`, or without BroadcastChannel: the app opens the hologram in the main window as before.
   `screens.shown(kind)` → `{ id, label, mode, kind, title, ref, parts, selected }`.
 - Routing: with no hologram or blueprint viewer open here, `windows-hologram` takes a hologram command for the window
-  showing one (the router's `windows` list carries its parts and selection). Today's `hologram` matcher can still take
+  showing one (the router's `windows` list carries its parts and selection). With Optics open here it takes only words
+  that name the hologram ("explode the hologram"): Optics keeps its own ("close", "expand it", "show me the camera") and
+  the rest go where they go without the window. Today's `hologram` matcher can still take
   it first through the hologram shown last over Voice Mode (`reply.hologram`); then app.js `voiceCommand` sends it to
   the window (`windowHologramCommand`) instead of opening the hologram here again. Its window closed by hand: the
   hologram comes back here, as before.
@@ -4902,7 +4909,9 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   - `this`: "pull/bring/put/open/show this|that|it (up) in|on (Google) Chrome / my browser / a new tab".
   - `link` `{ ordinal }`: "open the (second) link|source (in Chrome)", "open link 3" (1-5, last), only when the
     newest reply has links (`state.reply.links`; otherwise declined: a Chrome task's in a Chrome context).
-  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company"), "search
+  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company", nor about
+    one of its products: "Google Docs won't open"; a product or its stock keeps "google" in the query: "google stock
+    price"), "search
     (for) … in Chrome / on Google", "look up … on Google", "search Google for …", "open <not a site> in Chrome".
     A query that goes on to act ("… and add it to the cart") is left to Jarvis for Chrome's tasks (`TASKISH`);
     "find" is not a search verb.

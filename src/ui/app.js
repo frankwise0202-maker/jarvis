@@ -4856,6 +4856,11 @@ export async function startApp(rootEl) {
       s.optics.sceneChanged = look && look.aside ? safe(() => optics.sceneChanged(), null) : null;
     }
     // ---- optics ◂
+    // ---- fix-routing ▸ (REGRESS-2: what else a bare "stop" stops: the chat's turn, an answer, a mission or a
+    // Look's answer, as its Stop button does; and Optics' Watch)
+    s.running = currentRunning();
+    if (s.optics) s.optics.watch = !!opticsLive.watch;
+    // ---- fix-routing ◂
     // ---- chrome-relay ▸ (s.chrome)
     if (chromeLink) {
       const c = safe(() => chromeLink.state(), null);
@@ -5142,6 +5147,15 @@ export async function startApp(rootEl) {
       },
       stopTarget: (target) => {
         switch (target) {
+          case 'answer':
+            // The chat's turn (an answer, a mission, a Look's answer), as its Stop button stops it (REGRESS-2).
+            safe(() => stop());
+            break;
+          case 'watch': {
+            const optics = currentOptics();
+            if (optics) safe(() => optics.stopWatch());
+            break;
+          }
           case 'liveview': {
             const optics = currentOptics();
             if (optics) safe(() => optics.stopLiveView());
