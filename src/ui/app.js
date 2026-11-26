@@ -102,7 +102,7 @@ import { register as registerChromeCommands } from './commands/chrome.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
 import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
-import { OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { LIVE_VIEW_COUNTS, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
 import { matchOpticsCommand, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { notify as notifyOwner } from './attention.js';
@@ -1329,7 +1329,7 @@ export async function startApp(rootEl) {
     if (extras && extras.optics) input.optics = extras.optics; // a Look: the one image is an Optics frame
     // v8.1 (E0): an answer asked while the live view is on goes through its $1-an-hour gate, as a quick
     // answer (agents are outside the gate); a research mission is outside it (its offer says so).
-    if (!takeOutsideLiveView(extras)) {
+    if (!takeOutsideLiveView(extras, clean)) {
       input.gate = liveTurnGate();
       if (liveViewOn()) input.mode = 'quick';
     }
@@ -2285,12 +2285,14 @@ export async function startApp(rootEl) {
   function liveTurnGate() {
     return state.demo ? null : createTurnGate({ gate: getLiveGate(), isOn: liveViewOn });
   }
-  // A research mission goes outside the live view's dollar (its offer says so): the next send() only.
-  let outsideLiveViewOnce = false;
-  function takeOutsideLiveView(extras) {
-    const once = outsideLiveViewOnce;
-    outsideLiveViewOnce = false;
-    return state.demo || once || !!(extras && extras.outsideLiveView);
+  // A research way outside the live view's dollar (a mission: its offer says so) is the send() of
+  // exactly its words, whenever it comes (Voice Mode may hold a request a moment), once.
+  let outsideLiveViewText = '';
+  function takeOutsideLiveView(extras, text) {
+    if (state.demo || (extras && extras.outsideLiveView)) return true;
+    if (!outsideLiveViewText || text !== outsideLiveViewText) return false;
+    outsideLiveViewText = '';
+    return true;
   }
   /** About what a quick answer in this chat would reserve now (its first request's worst case). */
   function quickAnswerFits(text = 'Research this with a web search.') {
@@ -2455,8 +2457,12 @@ export async function startApp(rootEl) {
     }
     const voice = !!voiceApi && safe(() => isVoiceModeOpen(), false);
     const optics = currentOptics();
+    // Owner question 9 (LIVE_VIEW_COUNTS): a way that doesn't count toward the live view's dollar is
+    // sent outside its gate (the send() of exactly its words).
+    const outside = !LIVE_VIEW_COUNTS[choice];
     if (choice === 'quick') {
       const text = researchPrompt(subject, 'quick');
+      outsideLiveViewText = outside ? text : '';
       // With a Look on screen it is that Look's follow-up (the card shows it); else a quick question.
       if (optics && safe(() => optics.card(), null)) {
         safe(() => optics.followUp(text));
@@ -2468,16 +2474,12 @@ export async function startApp(rootEl) {
     }
     if (choice === 'mission') {
       const text = researchPrompt(subject, 'mission');
+      outsideLiveViewText = outside ? text : '';
       if (voice) {
-        outsideLiveViewOnce = true;
-        try {
-          voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'swarm' }), null));
-        } finally {
-          outsideLiveViewOnce = false;
-        }
+        voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'swarm' }), null));
         return { say: '' };
       }
-      const ok = send(text, 'swarm', { outsideLiveView: true });
+      const ok = send(text, 'swarm');
       if (ok && optics) safe(() => optics.notice('The research mission is under way: it’s in the chat.'));
       return { say: ok ? 'The research mission is under way: it’s in the chat.' : 'I couldn’t start the mission.' };
     }

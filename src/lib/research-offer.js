@@ -41,10 +41,20 @@ export const RESEARCH_COSTS = Object.freeze({
 /** The offer's answer to how many agents a mission sends (Settings → AI → Agents per wave). */
 export const DEFAULT_AGENTS = 8;
 
+/**
+ * Owner question 9: which ways count toward the live view's dollar an hour when "research this" is
+ * asked while it is on. The brief's answer: the quick answer does (it goes through the live view's
+ * gate), a mission and the home base don't, and the offer says so. app.js runResearch sends a way
+ * that doesn't count outside the gate. (Everything counting would also need a mission's agents
+ * gated, which they aren't: only the lead's requests go through the gate.)
+ */
+export const LIVE_VIEW_COUNTS = Object.freeze({ quick: true, mission: false, homebase: false });
+
 export const LOOK_FIRST_LINE = 'Let me look first: about 3¢.';
 export const OFFLINE_LINE = 'I can’t research while offline.';
 export const OUTSIDE_TWO = 'Those two are outside the live view’s dollar an hour.';
 export const OUTSIDE_ONE = 'That one is outside the live view’s dollar an hour.';
+export const OUTSIDE_ALL = 'None of these count toward the live view’s dollar an hour.';
 export const QUICK_TOO_DEAR = 'A quick answer would take the live view past its dollar this hour.';
 
 // ---------------------------------------------------------------------------------------------
@@ -184,7 +194,7 @@ export function researchOffer({ subject, homeBase = false, online = true, liveVi
   if (!online) return { refuse: OFFLINE_LINE };
   if (!subject || !subject.words) return { refuse: LOOK_FIRST_LINE, lookFirst: true };
   const live = !!(liveView && liveView.on);
-  const quickFits = !live || liveView.quickFits !== false;
+  const quickFits = !live || !LIVE_VIEW_COUNTS.quick || liveView.quickFits !== false;
   const homeDepth = deep ? 'deep' : 'quick';
   const costs = {
     quick: estimateResearchCost({ route: 'quick' }),
@@ -209,8 +219,8 @@ export function researchOffer({ subject, homeBase = false, online = true, liveVi
     lines.push(only === 'homebase' ? `The home base can do it in the background${deep ? ', in depth' : ''}, up to ${max}.` : `Or the home base can do it in the background${deep ? ', in depth' : ''}, up to ${max}.`);
     choices.push({ id: 'homebase', label: `Home base · up to ${max}`, words: ['home base', 'the home base', 'homebase', 'in the background', 'background', 'the background', 'on the home base'], dear: true });
   }
-  const outside = choices.filter((c) => c.id !== 'quick').length;
-  if (live && outside) lines.push(outside > 1 ? OUTSIDE_TWO : OUTSIDE_ONE);
+  const outside = choices.filter((c) => !LIVE_VIEW_COUNTS[c.id]).length;
+  if (live && outside) lines.push(!LIVE_VIEW_COUNTS.quick && outside > 1 ? OUTSIDE_ALL : outside > 1 ? OUTSIDE_TWO : OUTSIDE_ONE);
   choices.push({ id: 'cancel', label: 'Cancel', words: ['cancel', 'no', 'no thanks', 'no thank you', 'never mind', 'nevermind', 'forget it', 'none', 'neither', 'not now'], dear: false });
   return { say: lines.join(' '), choices, costs, subject };
 }

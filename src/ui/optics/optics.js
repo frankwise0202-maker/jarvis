@@ -112,6 +112,9 @@ const TURN_ENDED = ['done', 'error', 'stopped', 'interrupted'];
 const SOURCE_LABEL = { rear: 'BACK', front: 'FRONT', camera: 'CAMERA', screen: 'SCREEN' };
 // The two-column desktop layout; a phone held sideways (short) keeps the phone layout (optics.css).
 const DESKTOP_MQ = '(min-width: 900px) and (min-height: 501px)';
+// v8.1, owner question 8: the live view keeps looking while a Look sits aside (false), or pauses as
+// for a Look that fills the screen (true). syncLiveLook reads it.
+const LIVE_VIEW_PAUSES_ASIDE = false;
 
 let current = null;
 
@@ -585,7 +588,7 @@ export function openOptics(deps = {}) {
   function syncLiveLook() {
     const lv = liveView;
     if (!lv || closed) return;
-    const big = !!frozen && (mode === 'frozen' || mode === 'review');
+    const big = !!frozen && (mode === 'frozen' || mode === 'review' || (LIVE_VIEW_PAUSES_ASIDE && mode === 'aside'));
     if (big && lv.paused !== 'look') pauseLiveView('look');
     else if (!big && lv.paused === 'look' && camera.live) resumeLiveView();
   }

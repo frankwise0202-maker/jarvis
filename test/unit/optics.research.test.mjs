@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  LIVE_VIEW_COUNTS,
   LOOK_FIRST_LINE,
   OFFLINE_LINE,
   OUTSIDE_ONE,
@@ -155,6 +156,8 @@ test('with the live view on: the quick answer counts toward its dollar, the othe
   const off = researchOffer({ subject, homeBase: true, liveView: { on: false, quickFits: false } });
   assert.ok(!/live view/.test(off.say));
   assert.equal(off.choices[0].id, 'quick');
+  // Owner question 9, the brief's answer, kept in one constant (app.js routes by it too).
+  assert.deepEqual({ ...LIVE_VIEW_COUNTS }, { quick: true, mission: false, homebase: false });
 });
 
 test('the answers: the choice\'s words after fillers; anything else is not an answer', () => {
