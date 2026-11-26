@@ -16,6 +16,9 @@
 //   STATES             the router states the corpora run in (contract (b)'s `state`), by name
 //   stateFor(name, patch)  a full state: baseState() with that state's fields (and `patch`) on top
 //   LAPTOP_PARTS       a generic laptop hologram's parts (a camera and a display among them, for R10)
+//   COLLISIONS_BASE    voice's rows of the collision table (T3): { text, state, winner, why }, with the
+//                      review's case of a Chrome prompt, a tour decision and a research offer all open
+//                      (H4_STATE, H4_OFFER_LAST; TOUR_DECISION, RESEARCH_OFFER, CHROME_PROMPT)
 
 export const LAPTOP_PARTS = Object.freeze([
   { id: 'bottom-cover', name: 'Bottom cover', aka: ['base cover'] },
@@ -257,3 +260,111 @@ export const ALTERNATIVES = Object.freeze([
   { best: 'open the settings', alts: ['open the satins'], state: 'V0', want: { layer: 'app', does: 'open settings' } },
   { best: 'open my blue prince', alts: ['open my blueprints'], state: 'V0', want: { layer: 'app', does: 'open library' } },
 ]);
+
+// ---------------------------------------------------------------------------------------------
+// The collision table's base rows (T3): words two matchers can claim, the state, and the winner by
+// the router's order (src/lib/command-order.js ORDER ids; null: Claude). From the study's table of
+// words that mean different things (u-voice §4.2), the steals v8.1 fixes (C3), and the review's case
+// of a Chrome prompt, a tour decision and a research offer all open (critique H4). `winner` may list
+// several ids when either is right (a tour decision answered as the top question, or by the tour's
+// own words when another question covers it). Each builder adds its own rows in its own section of
+// collisions.mjs; these are voice's.
+
+const CHOICE = (id, ...words) => ({ id, label: words[0], words });
+export const TOUR_DECISION = Object.freeze({
+  id: 'tour-choice', say: 'Do you want to see it enclosed, or opened?', keep: true, askedAt: 1000,
+  choices: [CHOICE('enclosed', 'enclosed', 'closed'), CHOICE('opened', 'opened', 'open'), CHOICE('both', 'both'), CHOICE('pick', 'you pick')],
+});
+export const RESEARCH_OFFER = Object.freeze({
+  id: 'research-offer', say: 'Research this? A quick answer with a web search, about 10 cents. A research mission, about $1.70.', askedAt: 2000,
+  choices: [CHOICE('quick', 'quick', 'a quick answer'), CHOICE('mission', 'mission', 'a mission'), CHOICE('homebase', 'home base'), CHOICE('cancel', 'cancel', 'no')],
+});
+export const CHROME_PROMPT = Object.freeze({
+  id: 'p1', hash: 'h1', kind: 'step', category: 'change', consequential: false, site: 'example-shop.com', askedAt: 3000,
+  spoken: 'Chrome asks: add the 27-inch monitor, $279.99, to the cart on example-shop.com? Say approve, or cancel.',
+  voice: { allowed: true, why: '' },
+});
+const RUNNING_TASK = { id: 't1', status: 'running', text: 'find a 4K monitor under $300 and add it to the cart' };
+const DECIDING = { active: true, atChoice: true, choices: TOUR_DECISION.choices.map((c) => c.id), stepId: 'ask' };
+
+// The review's case: all three open; the Chrome prompt was said last (H4), or the research offer was.
+export const H4_STATE = Object.freeze({
+  hologram: HOLO, tour: DECIDING, questions: [TOUR_DECISION, RESEARCH_OFFER], prompt: CHROME_PROMPT,
+  chrome: { linked: true, online: true, task: RUNNING_TASK, contextUntil: Number.MAX_SAFE_INTEGER },
+});
+export const H4_OFFER_LAST = Object.freeze({ ...H4_STATE, prompt: { ...CHROME_PROMPT, askedAt: 1500 } });
+
+// [text, state (a STATES name or a state patch), winner, why]
+export const COLLISIONS_BASE = Object.freeze([
+  // "stop" (3): stops what runs; with a hologram and nothing running, the hologram holds still.
+  ['stop', 'S', 'stop', 'stops the voice'],
+  ['stop', 'T', 'stop', 'pauses the tour'],
+  ['stop', 'VH', 'hologram', 'holds the model still'],
+  ['stop', 'V0', 'stop', '"Okay." (free; never a paid question)'],
+  ['stop', 'LV', 'stop', 'the live view off (stopping is the safe direction)'],
+  ['stop', 'CH', 'stop', 'the same in the chat box'],
+  // back
+  ['go back', 'T', 'tour', 'the previous step'],
+  ['go back', 'VH', 'hologram', '"There\'s nothing to go back to." (C3: no longer swallowed)'],
+  ['back', 'T', 'tour', 'the previous step'],
+  ['back', 'VH', 'hologram', 'the back view'],
+  ['bring everything back', 'VW', 'screens', 'the window comes back'],
+  ['bring everything back', 'VH', 'hologram', 'every part shown (no window open)'],
+  ['bring everything back', 'HF', 'hologram', 'the same in the hologram\'s field (C3)'],
+  ['bring it back', 'V0', 'screens', "Screens' own answer"],
+  // size and windows
+  ['make it bigger', 'VH', 'hologram', 'zoom in'],
+  ['make it bigger', 'VW', 'windows', 'the window'],
+  ['make it bigger', 'VHW', 'hologram', 'zoom in'],
+  ['make the window bigger', 'VHW', 'windows', 'a window noun'],
+  ['expand this in a different window', 'VH', 'screens', 'a window (C3: no longer explodes the hologram)'],
+  ['expand it', 'VH', 'hologram', 'explode'],
+  ['open the hologram in a window', 'VH', 'screens', 'a window'],
+  ['close that window', 'VW', 'windows', 'that window'],
+  ['close it', 'VH', 'hologram', 'closes the hologram'],
+  ['close it', 'VL', 'optics', 'camera off'],
+  // the camera, Optics and the live view
+  ['open the camera', 'V0', 'optics.open', 'opens Optics'],
+  ['open the camera', 'VH', 'hologram', "R10: the laptop's camera part, with the hint \"Say 'open Optics' for your camera.\""],
+  ['open optics', 'VH', 'optics.open', '"Optics" is never a part (R10)'],
+  ['show me the camera', 'VF', 'optics', 'back to live'],
+  ['show me the camera', 'V0', 'optics.open', 'opens Optics'],
+  ['look it up online', 'VL', null, "E4: Optics' \"look …\" no longer steals"],
+  ['look at my calendar', 'VL', null, 'E4'],
+  ['look at this', 'VL', 'optics', 'a Look'],
+  ['look at this battery', 'VL', 'optics', 'a Look'],
+  ['video mode', 'VL', 'optics', "the live view (Optics' own words while it is open)"],
+  ['watch this', 'VL', 'optics', 'Watch, not the live view'],
+  ["that's enough", 'T', 'tour', 'ends the tour'],
+  ["that's enough", 'LV', 'optics', 'the live view off (v8.0)'],
+  ["that's enough", 'S', 'voice.controls', 'stop talking'],
+  ['what is this', 'VH', null, 'about the hologram, for Claude'],
+  ['what is this', 'V0', 'camera', 'opens the camera and looks'],
+  ['how much has the live view cost', 'LV', 'app', 'the readout, free'],
+  // tours and Voice Mode's controls
+  ['next', 'T', 'tour', 'the next step'],
+  ['next', 'V0', null, 'a question for Claude'],
+  ['repeat that', 'T', 'tour', 'says the step again'],
+  ['repeat that', 'V0', 'voice.controls', 'says the last answer again'],
+  ['new chat', 'T', 'app', 'a new chat (the tour stays where it is)'],
+  ['open the library', 'VH', 'app', 'no part is called that'],
+  // Chrome, music, the home base, Standby
+  ['pull this up in Chrome', 'VH', 'chrome.open', 'opens the hologram\'s title in Chrome'],
+  ['open that in a new tab', 'V0', 'chrome.open', 'a tab, not a popup window (W8)'],
+  ['play Back in Black', 'VH', 'music', 'Apple Music'],
+  ['brief me', 'V0', 'brain', 'the home base briefing'],
+  ['go to standby', 'VH', 'standby', 'Standby words everywhere'],
+  ['go to standby', 'HF', 'standby', "the hologram's field too (C2)"],
+  // A Chrome prompt, a tour decision and a research offer all open (critique H4).
+  ['continue', H4_STATE, 'tour', 'the tour only: never the prompt, never the offer'],
+  ['approve', H4_STATE, 'chrome.prompt', 'the Chrome prompt only'],
+  ['cancel', H4_STATE, 'chrome.prompt', 'asked last: the prompt'],
+  ['no', H4_STATE, 'chrome.prompt', 'asked last: the prompt'],
+  ['cancel', H4_OFFER_LAST, 'question', 'asked last: the research offer'],
+  ['no', H4_OFFER_LAST, 'question', 'asked last: the research offer'],
+  ['cancel Chrome', H4_OFFER_LAST, 'chrome.prompt', 'names Chrome'],
+  ['deny', H4_OFFER_LAST, 'chrome.prompt', "the prompt's own word"],
+  ['stop', H4_STATE, 'stop', 'pauses the tour and stops the Chrome task'],
+  ['enclosed', H4_STATE, ['question', 'tour'], 'the tour decision'],
+  ['quick', H4_OFFER_LAST, 'question', 'the research offer'],
+].map(([text, state, winner, why]) => Object.freeze({ text, state, winner, why })));
