@@ -587,6 +587,12 @@ export default [
         await t.page.waitForTimeout(600);
         t.assert((await voiceState(t.page)) === 'speaking', `still speaking (${await voiceState(t.page)})`);
       });
+      await t.step('the same detection a few words later (outside the mask): he stops and listens', async () => {
+        await t.page.waitForTimeout(1900); // past about 1 s after "Jarvis"
+        t.assert((await voiceState(t.page)) === 'speaking', 'he is still answering');
+        await t.page.evaluate(() => window.__jarvisWake.say());
+        await waitVoice(t, 'listening', { timeout: 5000 });
+      });
     },
   },
   // ---- SHOULD: A11 and A12 ------------------------------------------------------------------------------------
