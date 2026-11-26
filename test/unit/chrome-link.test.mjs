@@ -626,7 +626,12 @@ test('back-off while the home base can\'t be reached; an old Core (404) waits 5 
     const m = app.log.length;
     await sleep(500); // 5 minutes at 100× is 3 s: at most one more try
     assert.ok(app.log.length - m <= 2, 'an old Core is asked again only every 5 minutes');
+    // The Core is updated: the next status check that works ends the wait at once.
     w.relay.mode = 'ok';
+    const k = app.log.length;
+    await app.control.refresh();
+    await until(() => app.log.slice(k).includes('GET /api/relay/to-app'), { timeoutMs: 1000, what: 'reading again right after the status answered' });
+    assert.equal(app.control.info().problem, null);
   } finally {
     await w.close();
   }
