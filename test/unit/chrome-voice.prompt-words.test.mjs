@@ -194,7 +194,7 @@ test('every answer\'s words are reserved words, and every reserved word answers 
   }
 });
 
-test('the answer layer (chrome.prompt): the prompt\'s words, a bare "cancel" or "no" only when it was asked last, never a bare yes', () => {
+test('the answer layer (chrome-prompt): the prompt\'s words, a bare "cancel" or "no" only when it was asked last, never a bare yes', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   const st = (patch = {}) => ({ prompt, questions: [], ...patch });
   const pick1 = (words, s = st()) => matchChromeAnswer(words, s);
