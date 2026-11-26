@@ -181,6 +181,10 @@ export const CHROME_VOICE = {
     ['stop', 'CV-check', 'chrome-prompt'],
     ['no, I said add the second one to the cart', 'CV-check', 'chrome-prompt'],
     ['start now', 'CV-check', 'chrome-prompt'],
+    // an affirmation lets the check count on (never other words: nothing withdrawn, nothing for Claude)
+    ['yes', 'CV-check', 'chrome-prompt'],
+    ['okay', 'CV-check', 'chrome-prompt'],
+    ['okay, thanks', 'CV-check', 'chrome-prompt'],
   ],
   not: [
     'how do I clear my cookies in Chrome',

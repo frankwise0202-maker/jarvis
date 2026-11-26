@@ -2,8 +2,9 @@
 // answered by voice, against the fake home base relay and a fake Jarvis for Chrome (core-fakes.mjs
 // createFakeChromePeer, wire v1) with the fake recognizer and voice (features.mjs installFakeSpeech).
 //   chrome-voice-task        "… in Chrome": the spoken check with the price, the card in Voice Mode, nothing
-//                            sent before the countdown ends; start; "what are you doing in Chrome?"; "stop
-//                            Chrome"; a second task withdrawn with "cancel" (nothing sent); no Claude request
+//                            sent before the countdown ends ("okay" lets it count on); start; "what are you
+//                            doing in Chrome?"; "stop Chrome"; a second task withdrawn with "cancel" (nothing
+//                            sent); no Claude request
 //   chrome-voice-context     "open YouTube in Chrome" opens it in the Jarvis window: a Chrome context, where
 //                            "add the cheapest one to the cart" is a task and "open the camera" is not
 //   chrome-voice-approve     Chrome asks (a step allowed by voice): said, the card; "approve", "Approving · say
@@ -94,7 +95,7 @@ async function withPeer(peer, fn) {
 export default [
   {
     name: 'chrome-voice-task',
-    title: '"Find a 4K monitor under $300 and add it to the cart in Chrome": the spoken check with the price and the card, nothing sent before it ends; then the task, "what are you doing in Chrome?", "stop Chrome"; a second task withdrawn with "cancel"; never a Claude request',
+    title: '"Find a 4K monitor under $300 and add it to the cart in Chrome": the spoken check with the price and the card, nothing sent before it ends ("okay" lets it count on); then the task, "what are you doing in Chrome?", "stop Chrome"; a second task withdrawn with "cancel"; never a Claude request',
     device: 'mac',
     seed: LINKED_HOME,
     fakeCore: true,
@@ -103,8 +104,10 @@ export default [
     async run(t) {
       const { peer } = await linkedVoiceMode(t, { queue: ['Find a 4K monitor under $300 and add it to the cart in Chrome.'] });
       await withPeer(peer, async () => {
-        await t.step('the check: said and shown with the price; Cancel and Start now; nothing sent yet', async () => {
+        await t.step('the check: said and shown with the price; Cancel and Start now; "okay" lets it count on; nothing sent yet', async () => {
           await waitSaid(t, 'Chrome, up to a dollar: find a 4K monitor under $300 and add it to the cart. Say cancel to stop.', 'the check with the price');
+          // An affirmation during the check: it counts on from the start (never withdrawn, never Claude's).
+          await hear(t, 'Okay.', { at: 200 });
           const card = await t.visible('voice-chrome-task-card');
           t.assert((await card.getAttribute('data-status')) === 'checking', 'the card is starting');
           t.assert(norm(await t.text(card.locator(tid('voice-chrome-task-card-text')))) === '“find a 4K monitor under $300 and add it to the cart”', 'the owner’s words, without "in Chrome"');
@@ -119,6 +122,7 @@ export default [
           t.assert(start.body.text === 'find a 4K monitor under $300 and add it to the cart', `the task's words (${start.body.text})`);
           t.assert(start.body.chat === 'new' && start.body.from === 'voice', `a new chat, from voice (${JSON.stringify(start.body)})`);
           await waitSaid(t, 'Chrome is on it.', '"Chrome is on it."');
+          t.assert(!(await saidLines(t)).includes('Okay, nothing sent to Chrome.'), '"okay" withdrew nothing');
         });
         await t.step('its latest step on the card, and said when asked "what are you doing in Chrome?" (free)', async () => {
           await peer.task({ id: 'task-1', status: 'running', text: 'find a 4K monitor under $300 and add it to the cart', narration: 'Comparing three monitors on bestbuy.com.', costUsd: 0.08, limitUsd: 1 });

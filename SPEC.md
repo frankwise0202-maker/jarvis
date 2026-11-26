@@ -4387,9 +4387,11 @@ otherwise Claude's.
 3. once it is said in full, it counts 2 s (`TASK_CHECK_MS`), or 5 s while Jarvis is hidden (`TASK_CHECK_HIDDEN_MS`),
    with one listen open; words being heard pause it, words taken back (or silence) let it go on;
 4. "cancel", "no" or "stop" withdraws it ("Okay, nothing sent to Chrome."); "no, I said …" withdraws it and routes
-   the corrected words from the top; any other words withdraw it and are routed as usual; a barge-in during the
-   line followed by silence withdraws it; closing Voice Mode withdraws it; "start now" (or the card's button) ends
-   it at once;
+   the corrected words from the top; "yes", "okay" or "thanks" lets it count on (the full time again: nothing goes
+   sooner); any other words withdraw it and are routed as usual; a barge-in during the line followed by silence
+   withdraws it; closing Voice Mode withdraws it; "start now" (or the card's button) ends it at once. While a yes
+   to Chrome's question counts down ("Approving · say cancel"), the same words come first, before the prompt's:
+   a bare "cancel" or "no" there takes the approval back and is never the prompt's no;
 5. only then `startTask({ text, chat })`. Refusals are said: not linked ("Chrome isn't linked yet. Link it in
    Settings."), offline ("I can't reach Chrome. Open the Jarvis window and keep it open."), `off`, `cap`, and `busy`
    ("Chrome is busy with another task. Stop it first?": yes stops it and starts this one). Started: "Chrome is on

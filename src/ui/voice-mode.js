@@ -1069,11 +1069,13 @@ function createVoiceMode(opts) {
     // the same thing): one reading, and no 2-second check (Enter sends; a command acts at once).
     const local = { ...routeLocal([text]), via: 'typed' };
     let hit = routeWords([text], local);
+    chromeOtherWords(hit); // v8.1 chrome-voice: other words withdraw a Chrome check, typed too
     if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
     while (hit) {
       // An approval for Chrome keeps its check, typed too (it approves a step on a web page).
       if (act(hit, [text], { reviewed: hit.id !== 'prompt', typed: true })) return;
       hit = routeWords([text], local, hit);
+      chromeOtherWords(hit);
     }
     send(text);
   }
@@ -3018,8 +3020,10 @@ function createVoiceMode(opts) {
     const local = routeLocal(readings, parts);
     let hit = routeWords(readings, local);
     // v8.1 chrome-voice: words that aren't a Chrome check's own (cancel, start now, "no, I said …")
-    // withdraw it (nothing goes to Chrome), and are routed as usual.
-    if (C.check && !(hit && hit.action && hit.action.do === 'chrome-check')) withdrawCheck(C.check, 'other');
+    // withdraw it (nothing goes to Chrome), and are routed as usual. An answer to Chrome's question is
+    // answerPrompt's to weigh: during a check its own words come first (a bare "cancel" withdraws the
+    // approval; it is never the prompt's no then).
+    chromeOtherWords(hit);
     // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
     // of …?": anything but yes or no drops it, and the words are taken as usual). Words for Chrome's question
     // or its check (chrome-prompt) are an answer too, like the prompt's own.
@@ -3027,6 +3031,7 @@ function createVoiceMode(opts) {
     while (hit) {
       if (act(hit, readings, opts)) return;
       hit = routeWords(readings, local, hit);
+      chromeOtherWords(hit);
     }
     // A question about the hologram on screen: the reading that names one of its parts.
     const words = pickHeard(text, readings.slice(1), parts);
@@ -3720,9 +3725,18 @@ function createVoiceMode(opts) {
   //     and only then onAnswer, which sends it with the prompt's hash.
   //   - The spoken check (a task's "Chrome, up to a dollar: … Say cancel to stop.", or a yes's): said,
   //     then 2 s (5 s while Jarvis is hidden) with the microphone open; talking pauses it; "cancel",
-  //     "no" or "stop" withdraws it; "no, I said …" withdraws it and routes the new words from the top;
-  //     a barge-in followed by silence withdraws it; "start now" lets it go. Nothing goes to Chrome
-  //     before it ends, and closing Voice Mode withdraws it.
+  //     "no" or "stop" withdraws it (before the prompt's own words: never the prompt's no then); "no,
+  //     I said …" withdraws it and routes the new words from the top; "yes" or "okay" lets it count on;
+  //     other words withdraw it; a barge-in followed by silence withdraws it; "start now" lets it go.
+  //     Nothing goes to Chrome before it ends, and closing Voice Mode withdraws it.
+
+  /**
+   * Words heard during a check that no answer layer took for Chrome (`hit`: the router's pick, or null)
+   * withdraw it: nothing goes to Chrome. Answers ('prompt', 'chrome-prompt') are answerPrompt's to weigh.
+   */
+  function chromeOtherWords(hit) {
+    if (C.check && !(hit && (hit.id === 'prompt' || hit.id === 'chrome-prompt'))) withdrawCheck(C.check, 'other');
+  }
 
   /** The open prompt as the router sees it (state.prompt): its answers, when it was asked (voice's order) and said. */
   function chromePromptView() {
@@ -3846,6 +3860,18 @@ function createVoiceMode(opts) {
     if (!K) return false;
     if (a.how === 'go') {
       goCheck(K);
+      return true;
+    }
+    if (a.how === 'keep') {
+      // "Yes", "okay", "thanks": it counts on, the full time again, with the microphone open for a
+      // "cancel" (nothing goes sooner, and the words are never Claude's).
+      countCheck(K);
+      // (Once this recognizer has stopped: finishListening ends it after heard() returns.)
+      clearRetry();
+      S.retryTimer = setTimeout(() => {
+        S.retryTimer = 0;
+        if (C.check === K && !S.closed && !S.listen && !S.speech && !S.run && S.sttOk && !S.typing) startListening({ keepAnswer: true, noSpeechMs: K.ms + 2000, oneTry: true });
+      }, RELISTEN_DELAY_MS);
       return true;
     }
     if (a.how === 'withdraw') {

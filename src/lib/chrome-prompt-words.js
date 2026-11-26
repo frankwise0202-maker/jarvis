@@ -208,10 +208,12 @@ export function chooseAnswer({ readings, answers, saidAt = null, now = Date.now(
 // ------------------------------------------------------------------------- the answer layer
 
 // While a check counts down (a task's, or a yes to a prompt), as whole sentences: words that withdraw
-// it, and words that let it go at once. Anything else isn't the check's: Voice Mode withdraws the
-// check and routes the words as usual.
+// it, words that let it go at once, and an affirmation, which lets it count on (from the start: it
+// never sends anything sooner, and is never other words). Anything else isn't the check's: Voice Mode
+// withdraws the check and routes the words as usual.
 const WITHDRAW_WORDS = /^(?:no|nope|nah|cancel|cancel it|cancel that|stop|stop it|stop now|wait|hold on|hold it|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|deny)$/;
 const GO_WORDS = /^(?:start now|start it now|start it|send it|send it now|go ahead|go|do it|do it now|yes start|yes go ahead|start)$/;
+const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|thanks|thank you|uh huh|mhm|mm hmm)$/;
 // "No, I said the second one": a corrected task, routed again from the top (D2).
 const CORRECTION = /^\W*(?:(?:no|nope|nah)\W+)?(?:I\s+said|I\s+meant|I\s+mean|what\s+I\s+said\s+was)\W+(.+?)\W*$/i;
 
@@ -239,7 +241,8 @@ const answerAction = (a) => ({ free: true, undo: false, check: false, camera: fa
  * the check when it acts.
  *   state.chromeCheck ({ kind: 'task' | 'approve' }, Voice Mode's): while a check counts down, "cancel",
  *     "no", "stop" withdraw it; "no, I said …" corrects a task (routed again from the top); "start now"
- *     / "send it" lets it go. -> { do: 'chrome-check', how: 'withdraw' | 'correct' | 'go', words? }
+ *     / "send it" lets it go; "yes", "okay", "thanks" let it count on, from the start.
+ *     -> { do: 'chrome-check', how: 'withdraw' | 'correct' | 'go' | 'keep', words? }
  *     (Other words aren't its: Voice Mode withdraws the check and routes them as usual.)
  *   state.prompt (the open Chrome prompt, with its answers, or the extension's fields): its reserved
  *     words; a bare "cancel" or "no" when it was asked last. -> { do: 'chrome-answer', answer, bare? }
@@ -256,6 +259,7 @@ export function matchChromeAnswer(text, state = {}) {
     const said = normalizeAnswer(text);
     if (WITHDRAW_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'withdraw' });
     if (GO_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'go' });
+    if (KEEP_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'keep' });
     return null;
   }
   const p = st.prompt && typeof st.prompt === 'object' && st.prompt.id ? st.prompt : null;
