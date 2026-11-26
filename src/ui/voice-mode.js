@@ -3317,6 +3317,7 @@ function createVoiceMode(opts) {
     const line = (outcome) => appCommandLine(a, outcome);
     switch (a.do) {
       case 'hush':
+        chromeOwnerStop(S.speech); // CHROME-VOICE-R3-2: as the dock's Stop: Chrome's question isn't said again by itself
         cancelSpeech();
         speakAck(line());
         return true;
@@ -4066,8 +4067,9 @@ function createVoiceMode(opts) {
   }
 
   /**
-   * The dock's Stop while Jarvis speaks (CHROME-VOICE-R2-2): Chrome's question being said is not said again by itself,
-   * and one waiting to be said waits for the owner's next listen (a tap, a barge-in, Continuous's next listen).
+   * The dock's Stop while Jarvis speaks (CHROME-VOICE-R2-2), or "be quiet" (R3-2): Chrome's question being said is not
+   * said again by itself, and one waiting to be said (a re-ask after a cut too) waits for the owner's next tap or
+   * barge-in listen.
    */
   function chromeOwnerStop(sp) {
     if (sp && sp === C.sayingSp) C.stopped = C.sayings;
@@ -4300,7 +4302,9 @@ function createVoiceMode(opts) {
   /** A listen starts: a prompt said with no listen after it counts as asked from now (its 30 s; PRIVACY-1). */
   function chromeListens(L) {
     if (L && L.gesture) C.hiddenIdle = false;
-    C.hushKey = 0; // a prompt held by the dock's Stop is said once this listen is over (CHROME-VOICE-R2-2)
+    // A prompt held by the dock's Stop (or "be quiet") is said once the owner's next listen is over: a tap's or a
+    // barge-in's, never Continuous's own (CHROME-VOICE-R2-2, R3-2).
+    if (L && (L.gesture || L.owner)) C.hushKey = 0;
     const p = prompts.current();
     if (C.unheard && p && p.key === C.unheard) {
       C.saidKey = p.key;

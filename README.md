@@ -1189,8 +1189,9 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
 
 - **A task, with "in Chrome":** "find a 4K monitor under $300 and add it to the cart in Chrome". You can also start
   with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". It has to be something to do ("find …",
-  "cancel my Netflix subscription …", "email the seller …"): a trouble or a statement ("my Gmail won't load in
-  Chrome", "log in doesn't work in Chrome") is a question for Jarvis, never a task. Before anything happens, Jarvis shows the
+  "cancel my Netflix subscription …", "email the seller …"): a trouble, a statement or a remark ("my Gmail won't load in
+  Chrome", "videos lag in Chrome", "thanks for the help in Chrome") is a question for Jarvis, never a task, and so is
+  "tell Chrome to hold on" ("tell Chrome to stop what it's doing" stops the task). Before anything happens, Jarvis shows the
   task on a card and says it back with its price: "Chrome, up to a dollar: find a 4K monitor under $300 and add it to
   the cart. Say cancel to stop." The price is the budget set in Jarvis for Chrome ("up to your Chrome budget" until
   it has told Jarvis), and the task never spends more than the price he said. Two seconds after he has said it all
@@ -1243,8 +1244,9 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   - **A yes counts only within 30 seconds of the question being said in full.** If Jarvis may have heard "no"
     instead, he asks again.
   - **Interrupting him:** "Hey Jarvis" or two claps while he says Chrome's question stops him and he listens to you
-    ("stop Chrome", "deny", or anything else); if you say nothing, he says the question again. The **Stop** button
-    just makes him stop talking: the question stays on its card, and if you then say "approve" he says it again first. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
+    ("stop Chrome", "deny", or anything else); if you say nothing, he says the question again. The **Stop** button, or
+    "be quiet" said to him, just makes him stop talking: the question stays on its card, and if you then say "approve"
+    he says it again first. "Yes, add it" and the like get the reminder of what to say. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
     other windows): "cancel", "no" or "stop" takes it back.
   - **Purchases always need a click.** So do paying, sending, posting, deleting, account changes and everything else
     Jarvis for Chrome marks. Jarvis and the card say "That's a purchase. It needs a click in the Jarvis window.

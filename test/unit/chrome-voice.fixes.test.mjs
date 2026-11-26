@@ -769,6 +769,184 @@ test('CHROME-VOICE-R2-4: the agent\'s answer, narration and last step never say 
   }
 });
 
+// ---- v8.1.1 round 3: CHROME-VOICE-R3-1, R3-S1 (the verify's sentences: review3/cvv-probes and cv-probes/r3-verbs.mjs) --
+const R3_INSTRUCTIONS = [
+  "Cancel my Peloton membership in Chrome.", "Renew my driver's license in Chrome.",
+  "Email my landlord about the heater in Chrome.", "Request a refund for the broken lamp in Chrome.",
+  "Reschedule my dentist appointment to Friday in Chrome.", "Unfollow that account on Instagram in Chrome.",
+  "Reply to Sarah's email in Chrome.", "Pay the electric bill in Chrome.",
+  "Book two tickets for Saturday in Chrome.", "Archive all the promo emails in Chrome.",
+  "Submit my timesheet in Chrome.", "Transfer 200 dollars to savings in Chrome.", "Sign up for the 10K in Chrome.",
+  "Refill my prescription in Chrome.", "Track my Amazon package in Chrome.",
+  "Change my shipping address on Amazon in Chrome.", "Turn on two-factor for my Google account in Chrome.",
+  "Fill in the visa form in Chrome.", "Message the seller on eBay in Chrome.",
+  "Add milk to my Instacart order in Chrome.", "Confirm Amazon has my new address in Chrome.",
+  "Verify PayPal is linked in Chrome.", "Check Netflix is cancelled in Chrome.",
+  "Make sure autopay is on in Chrome.", "Ensure autopay is on in Chrome.",
+  "Check Gmail has the receipt from Delta in Chrome.", "Make Gmail look less cluttered in Chrome.",
+  "See if Costco has the TV in Chrome.", "Find out whether Target has diapers in stock in Chrome.",
+  "Double-check Venmo says paid in Chrome.", "Tell Sam dinner is at 7 in Chrome.",
+  "Text Sarah the meeting is moved in Chrome.", "Unsubscribe me from the Target emails in Chrome.",
+  "Change my password on Netflix in Chrome.", "Grab the tracking number for my last order in Chrome.",
+  "Fill out the passport renewal form in Chrome.", "Download my bank statements in Chrome.",
+  "Save the recipe to my Pinterest board in Chrome.", "Apply the coupon code SAVE20 in Chrome.",
+  "Check if my package has shipped in Chrome.", "Write a review for the blender in Chrome.",
+  "Turn off autoplay on YouTube in Chrome.", "Set up autopay for my phone bill in Chrome.",
+  "Sign me up for the newsletter in Chrome.", "Text Mom the link in Chrome.",
+  "Message the landlord on Facebook in Chrome.", "Make a reservation at Nobu for 8 in Chrome.",
+  "Make sure my order is going to the new address in Chrome.", "Double check the hotel booking in Chrome.",
+  "Snooze the newsletter emails in Chrome.", "Clean up my Gmail inbox in Chrome.",
+  "Tell my landlord the sink is leaking in Chrome.", "Upload my resume to LinkedIn in Chrome.",
+  "Accept the cookie banner in Chrome.", "See which store has the PS5 in Chrome.",
+  "Find stores that have the PS5 in Chrome.", "Keep an eye on the price of the AirPods in Chrome.",
+  "Help me fill out this form in Chrome.", "Try paying again in Chrome.",
+  "Get me two tickets for Dune on Saturday in Chrome.", "Schedule a pickup with UPS in Chrome.",
+  "Cancel my 3 pm appointment in Chrome.", "Change the delivery date to Friday in Chrome.",
+  "Leave a tip for the driver in Chrome.", "Water bill: pay it in Chrome.", "Unblock pop-ups for my bank in Chrome.",
+  "Undo the last change in the Google Doc in Chrome.", "In Chrome, cancel my Hulu subscription.",
+  "Can you cancel my Hulu subscription in Chrome?", "Could you renew my car registration in Chrome?",
+  "I want you to cancel my gym membership in Chrome.", "I need you to renew my passport in Chrome.",
+  "I’d like you to order more coffee pods in Chrome.", "Please return the shoes on Zappos in Chrome.",
+  "Have Chrome text my sister the address.", "Tell Chrome to cancel the 3 pm meeting.",
+  "Use Chrome to sign me up for the 10K.", "Get Chrome to email the teacher.",
+  "Join my Zoom call with video in Chrome.",
+];
+const R3_NOT_TASKS = [
+  "Videos lag in Chrome.", "Sound cuts out on Spotify in Chrome.", "Gmail loads really slowly in Chrome.",
+  "Tabs freeze in Chrome.", "Videos stop playing after a minute in Chrome.", "Pages take ages to load in Chrome.",
+  "Zoom calls drop in Chrome.", "Facebook logs me out every day in Chrome.", "Twitter shows a blank page in Chrome.",
+  "Disney Plus plays without sound in Chrome.", "Extensions disappeared in Chrome.", "Bookmarks vanished in Chrome.",
+  "Images load half way in Chrome.", "YouTube comments never load in Chrome.",
+  "Notifications pop up all day in Chrome.", "Spotify skips songs in Chrome.", "Chase site errors out in Chrome.",
+  "Popups everywhere in Chrome.", "Endless captchas in Chrome.", "Too many tabs in Chrome.",
+  "Way too slow in Chrome.", "Sound problems in Chrome.", "Login issues with my bank in Chrome.",
+  "Thank you in Chrome.", "Nice work in Chrome.", "Awesome job in Chrome.", "Cool, thanks, in Chrome.",
+  "Forget it in Chrome.", "Forget about it in Chrome.", "Nevermind in Chrome.", "Same thing in Chrome.",
+  "Same here in Chrome.", "Also in Chrome.", "Not in Chrome.", "Just checking in Chrome.",
+  "Any chance you can see why YouTube is slow in Chrome.", "Curious why Netflix buffers in Chrome.",
+  "No idea why Gmail logs me out in Chrome.", "YouTube keeps buffering in Chrome.", "Netflix won't play in Chrome.",
+  "Gmail is slow in Chrome.", "Downloads fail in Chrome.", "Pages load slowly in Chrome.",
+  "Websites take forever to load in Chrome.", "Gmail runs really slow in Chrome.",
+  "Netflix shows a black screen in Chrome.", "YouTube buffers constantly in Chrome.",
+  "Audio cuts out on YouTube in Chrome.", "Hulu gives me an error in Chrome.", "Instagram logs me out in Chrome.",
+  "Popups appear everywhere in Chrome.", "Ads pop up constantly in Chrome.",
+  "Netflix asks for my password every time in Chrome.", "Videos stutter in Chrome.", "Gmail acting up in Chrome.",
+  "Gmail super slow in Chrome.", "Weird error in Chrome.", "Same thing happens in Chrome.",
+  "Same problem in Chrome.", "Thanks for the help in Chrome.", "Good job in Chrome.", "Great job with Chrome.",
+  "Well done on Chrome.", "Wondering why Gmail is slow in Chrome.", "Any idea why Gmail is slow in Chrome.",
+  "Problem with Gmail in Chrome.", "Netflix keeps buffering in Chrome.", "Amazon won’t let me check out in Chrome.",
+  "Spotify web player stopped working in Chrome.", "Videos are choppy in Chrome.", "Facebook looks weird in Chrome.",
+  "Google Docs freezes in Chrome.", "Gmail not loading in Chrome.", "Pictures don’t show up in Chrome.",
+  "Bank site needs a newer version in Chrome.", "Fonts look blurry in Chrome.", "Scrolling feels laggy in Chrome.",
+  "Battery drains fast in Chrome.", "Tabs crash all the time in Chrome.",
+  "Downloads go to the wrong folder in Chrome.", "Autofill fills in the wrong address in Chrome.",
+  "Passwords never save in Chrome.", "Why does Gmail load slowly in Chrome?", "How do I clear cookies in Chrome?",
+  "Is it safe to save passwords in Chrome?", "What extensions do I have in Chrome?",
+  "how come YouTube is slow in Chrome", "any way to make YouTube faster in Chrome",
+  "do you know why Netflix buffers in Chrome", "whats the shortcut for incognito in Chrome", "Never mind in Chrome.",
+  "Same thing in Chrome.",
+];
+const R3_LEADS = [
+  "Tell Chrome to stop.", "Ask Chrome to stop.", "Get Chrome to stop.", "Have Chrome stop.",
+  "Tell Chrome to cancel.", "Tell Chrome to cancel that.", "Tell Chrome to cancel the task.",
+  "Tell Chrome to stop what it's doing.", "Tell Chrome to quit.", "Tell Chrome to hold on.", "Tell Chrome to wait.",
+  "Tell Chrome to pause.", "Tell Chrome never mind.", "Tell Chrome to forget it.", "Tell Chrome to stop clicking.",
+  "Have Chrome stop the task.", "Tell Chrome to approve it.", "Tell Chrome yes.", "Tell Chrome to go ahead.",
+  "Tell Chrome to keep going.", "Tell Chrome to stop that.", "Tell Chrome to stop it now.",
+  "Tell Chrome to stop the search.", "Tell Chrome to stop shopping.", "Tell Chrome to stop working on that.",
+  "Tell Chrome to stop what it is doing.", "Tell Chrome to abort.", "Tell Chrome to give up.",
+  "Tell Chrome to leave it.", "Tell Chrome to drop it.", "Tell Chrome to never mind.",
+  "Tell Chrome to hang on a second.", "Tell Chrome to wait a minute.", "Tell Chrome thanks.",
+  "Tell Chrome to stand by.", "Have Chrome hold off.", "Get Chrome to back off.", "Stop what it's doing in Chrome.",
+  "Chrome, stop what you're doing.", "Stop what Chrome is doing.",
+];
+const R3_CANCELS = [
+  "Yes, cancel it.", "Yes, cancel.", "Okay, cancel that.", "Yes, stop it.", "Sure, cancel it.",
+];
+const R3_JARVIS_THINGS = [
+  "Have Chrome turn on my camera.", "Tell Chrome to open the camera.", "Use Chrome to turn on the microphone.",
+  "Get Chrome to show my screen.", "Have Chrome open my settings.", "Tell Chrome to start the live view.",
+  "Have Chrome turn on the mic.", "Tell Chrome to unmute my mic on Zoom.", "Have Chrome allow the camera on Zoom.",
+  "Turn on my camera on Zoom in Chrome.",
+];
+
+test('CHROME-VOICE-R3-1: an instruction ending "in Chrome" is a task; a trouble, a remark or a question never is (the verify\'s 79 and 92)', () => {
+  const st = { chrome: { linked: true, online: true } };
+  const lost = R3_INSTRUCTIONS.filter((s) => !matchChromeTask(s, st));
+  const taken = R3_NOT_TASKS.filter((s) => matchChromeTask(s, st)).map((s) => `${s} -> "${matchChromeTask(s, st).text}"`);
+  assert.deepEqual({ lost, taken }, { lost: [], taken: [] });
+  // More first words (errands), and troubles that start with them: the shape still makes those the owner's.
+  for (const s of ['Queue up the next episode on Netflix in Chrome.', 'Plan a weekend trip to Rome in Chrome.', 'Shop for a new laptop under $800 in Chrome.', 'Chat with Comcast support in Chrome.', 'Reject the cookie banner in Chrome.', 'Pre-order the new iPhone in Chrome.', 'Rebook my flight to Friday in Chrome.', 'Toggle dark mode on GitHub in Chrome.']) {
+    assert.ok(matchChromeTask(s, st), `${s}: a task`);
+  }
+  for (const s of ['Price is wrong in Chrome.', 'Chat keeps freezing in Chrome.', 'Offer code doesn’t work in Chrome.', 'Queue is stuck in Chrome.', 'Flag icon is missing in Chrome.', 'Help center is down in Chrome.', 'See more button is missing in Chrome.', 'Try again button doesn’t work in Chrome.', 'Get started page is blank in Chrome.']) {
+    assert.equal(matchChromeTask(s, st), null, `${s}: the owner's question`);
+  }
+  // ROUTING-R2-2's residual: a name, then "is" or "has", is the instruction's object.
+  for (const [s, text] of [
+    ['Check Netflix is cancelled in Chrome.', 'check Netflix is cancelled'],
+    ['Tell Sam dinner is at 7 in Chrome.', 'tell Sam dinner is at 7'],
+    ['Ensure autopay is on in Chrome.', 'ensure autopay is on'],
+  ]) assert.equal((matchChromeTask(s, st) || {}).text, text, s);
+});
+
+test('CHROME-VOICE-R3-S1: after "tell / have / get Chrome to …", a stop stops the task that runs and starts nothing; a wait, a withdrawal or a go-on is never a task', async () => {
+  const st = { chrome: { linked: true, online: true } };
+  const asTasks = [...R3_LEADS, ...R3_CANCELS, ...R3_JARVIS_THINGS].filter((s) => matchChromeTask(s, st)).map((s) => `${s} -> "${matchChromeTask(s, st).text}"`);
+  assert.deepEqual(asTasks, [], 'none is a task');
+  const stops = ["Tell Chrome to stop what it's doing.", 'Tell Chrome to stop what it is doing.', 'Tell Chrome to quit.', 'Tell Chrome to stop the search.', 'Tell Chrome to stop shopping.', 'Tell Chrome to stop working on that.', "Stop what it's doing in Chrome.", "Chrome, stop what you're doing.", 'Stop what Chrome is doing.', 'Tell Chrome to stop.', 'Have Chrome stop the task.'];
+  const t = setup();
+  try {
+    const router = routerFor(t.cv);
+    for (const s of stops) assert.equal((router.route(s, 'voice') || {}).id, 'chrome-stop', `${s} (idle)`);
+    for (const s of ['Tell Chrome to hold on.', 'Tell Chrome to forget it.', 'Have Chrome hold off.', 'Tell Chrome to never mind.', 'Tell Chrome to go ahead.', 'Tell Chrome to keep going.']) {
+      assert.equal(router.route(s, 'voice'), null, `${s}: the owner's words for Jarvis, never a task`);
+    }
+    // A task runs: the stop words stop it, and nothing starts.
+    await t.fake.link.startTask({ text: 'find a 4K monitor', chat: 'new' });
+    await flush();
+    for (const s of stops.slice(0, 3)) assert.equal((router.route(s, 'voice') || {}).id, 'chrome-stop', `${s} (a task runs)`);
+    const out = await router.run("Tell Chrome to stop what it's doing.", 'voice');
+    assert.equal(out.id, 'chrome-stop');
+    await flush();
+    assert.equal(t.fake.calls.stopTask, 1, 'the running task got its stop');
+    assert.equal(t.fake.calls.startTask.length, 1, 'nothing started (only the first task)');
+  } finally {
+    t.cv.destroy();
+  }
+});
+
+test('CHROME-VOICE-R3-3: the agent\'s reworded questions ("Chrome is asking …", "Jarvis asks …", "Chrome needs your OK …") and any question of its own stay on the card', async () => {
+  const { taskDoneLine, taskStatusLine } = await import('../../src/lib/chrome-task-words.js');
+  for (const answer of [
+    'Chrome is asking: place the order for $899.99 on bestbuy.com? Tell me yes or no.',
+    'Jarvis asks: place the order for $899.99 on bestbuy.com. Answer yes or no.',
+    'Chrome wants to know: should I place the order for $899.99? Just answer yes.',
+    'Chrome needs your OK to place the order for $899.99. Reply yes to continue.',
+    'Sir, Chrome needs your go-ahead to place the order. Say go ahead.',
+    'Shall I place the order for $899.99?',
+  ]) assert.equal(taskDoneLine({ status: 'done', answer }).say, 'Chrome is done. The answer is on its card.', answer);
+  // An agent's own question goes alone: the rest is said.
+  assert.equal(taskDoneLine({ status: 'done', answer: 'I found the monitor. Shall I place the order for $899.99?' }).say, 'Chrome is done. I found the monitor. Its question is on its card.');
+  assert.equal(taskDoneLine({ status: 'done', answer: 'Added the monitor to your cart.' }).say, 'Chrome is done. Added the monitor to your cart.');
+  assert.equal(taskStatusLine({ status: 'running', text: 'find a monitor', narration: 'Chrome is asking: add the AppleCare plan? Tell me yes or no.' }), 'Chrome is working on: find a monitor.');
+});
+
+test('CHROME-VOICE-R3-4: a yes-led sentence said to Chrome\'s question ("Yes, add it.", "Sure, do it.", "Yes, keep going.", "Yes, allow it.") gets the free hint, never a paid question', () => {
+  for (const [kind, prompt, words] of [
+    ['cart', PROMPTS.cart, ['Yes, add it.', 'Sure, do it.', 'Yes, add it to the cart.', 'Sure, go ahead and add it.']],
+    ['budget', PROMPTS.budget, ['Yes, keep going.', 'Okay, spend a bit more.']],
+    ['site', PROMPTS.site, ['Yes, allow it.', 'Yeah, let it.']],
+  ]) {
+    const p = { id: `chrome:${prompt.promptId}`, askedAt: 3000, ...prompt };
+    for (const w of words) assert.equal((promptWords.matchChromeAnswer(w, { prompt: p, questions: [] }) || {}).do, 'chrome-hint', `${kind}: ${w}`);
+  }
+  const p = { id: 'chrome:p-cart', askedAt: 3000, ...PROMPTS.cart };
+  // Never over a no word or a question, nor with a walkthrough going.
+  for (const w of ['Yes, cancel it.', 'Sure, but wait.', 'Yes, what does it cost?']) assert.notEqual((promptWords.matchChromeAnswer(w, { prompt: p, questions: [] }) || {}).do, 'chrome-hint', w);
+  assert.equal(promptWords.matchChromeAnswer('Yes, add it.', { prompt: p, questions: [], tour: { active: true } }), null, 'a walkthrough going: not the hint');
+});
+
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   for (const w of ['no no no', 'no, cancel that', 'Jarvis, no, cancel that', 'no wait', 'not now', 'nope nope']) {
