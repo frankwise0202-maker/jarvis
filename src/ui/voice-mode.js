@@ -127,12 +127,23 @@
 //                           else is an ordinary question. The routine itself never asks Claude
 //                           anything. After the conversation (silence, Exit) Voice Mode goes back to
 //                           Standby when returnToStandby() says so.
+//   router                v8.1 (contract (b)): the app's command router for what is heard here:
+//                           { route(readings, local, { after }) -> hit | null, run(hit, ctx) }. route()
+//                           merges `local` (what Voice Mode knows: its questions, its prompt, whether
+//                           it speaks …) into the app's state; heard() carries out what it picks
+//                           (act()). Without one, only Voice Mode's own words are local.
+//   listenWhileHidden     v8.1 (Track 1 fills it): () -> boolean, Voice Mode goes on listening while
+//                           Jarvis is hidden (a Mac). Default () => false: away() is document.hidden.
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
 // viewer's mic button: the core's tap, except that while a hologram of the reply builds it listens
 // for a command), stop() (the viewer's "Stop building"), note(text) (a line under the caption) and
 // say(line) (v8.0: a line Jarvis says by himself, Optics' live view; see sayLine()).
+// v8.1 seams (contract (a)): question(spec) (an owner question on the stack), prompt(spec) (the
+// standing channel, Jarvis for Chrome), narrate(spec) (a tour's words, with its chunk events),
+// hold(reason) / release(reason) (a woken session stays out of Standby, at most 2 minutes after the
+// owner's last words). See each below.
 //
 // All text reaches the page through dom.js helpers (textContent). Never innerHTML.
 
@@ -143,6 +154,9 @@ import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply } from '
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
 import { openingIntent, standbyCommand, routineReply, answerParts, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 import { createVoiceTag } from './voice-tag.js';
+import { createQuestionStack, createPromptChannel, boundAction } from '../lib/voice-questions.js';
+import { createVoiceHold } from '../lib/voice-hold.js';
+import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
 
 export { splitSentences };
 
@@ -295,6 +309,8 @@ function createVoiceMode(opts) {
     standby,
     wake,
     voiceLabel,
+    router,
+    listenWhileHidden,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -325,7 +341,7 @@ function createVoiceMode(opts) {
     coreAgentSig: '',
     unlocked: false,
     announced: '',
-    confirm: null, // { proceed, cmd, at }: "Shall I draw a blueprint of …?" waits for yes or no
+    pendingAsk: null, // v8.1: a question (or the prompt) to say once Voice Mode is free (afterSpeech)
     heldWords: '', // said while a hologram built and not a viewer command: handled once the reply is said
     canListen: false, // last value sent to the viewer's mic (a hologram of this reply is building)
     noRelisten: false, // a Music card was just shown: wait for a tap (Preview) instead of listening again
@@ -346,6 +362,15 @@ function createVoiceMode(opts) {
   // speaks, as the mic's bands do while Jarvis listens (Living Core v2).
   const outBands = new Float32Array(8);
   let outBandsOn = false;
+
+  // v8.1 seams (contract (a)). The owner questions stack (the newest asked and answered first), the
+  // standing prompt channel (Jarvis for Chrome) beside it, and the hold (a woken session stays out of
+  // Standby while something holds it, at most 2 minutes after the owner's last words).
+  const questions = createQuestionStack({ onAsk: (q, { again }) => askQuestion(q, again) });
+  const prompts = createPromptChannel({ onSay: (p) => askQuestion(p, false) });
+  const hold = createVoiceHold();
+  const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
+  let ownRouter = null; // without the app's router: one with today's matchers, for Voice Mode's own words
 
   // ------------------------------------------------------------------------------------- DOM
 
@@ -654,6 +679,38 @@ function createVoiceMode(opts) {
     isListening: () => !S.closed && (!!S.listen || !!S.review),
     /** v8.0 Optics' live view: a short line Jarvis says by himself. True when it is said (sayLine()). */
     say: (text) => sayLine(text),
+    /**
+     * v8.1 (contract (a)): an owner question, said now (or once Voice Mode is free) and answered by
+     * voice: { id, say, choices: [{ id, label, words: [...] }], match(text, readings) → choiceId | null,
+     * check = false, keep = false, timeoutMs = 60000, onAnswer(choiceId, { words, via: 'voice' | 'tap' }),
+     * onExpire(reason) } → { cancel(), answer(choiceId) }. Questions stack: the newest is asked and
+     * answered first; when it is answered, cancelled or expires, the one under it is said again (a
+     * covered question's clock stops). keep: other words leave it open (they are routed as usual);
+     * otherwise they drop it (onExpire('dropped')). check: the 2-second check before onAnswer. An
+     * answer is consumed: it never also goes to Claude. onExpire never sends or spends anything.
+     * answer(choiceId): a tap on the question's own button (via 'tap').
+     */
+    question: (spec) => askNew(spec),
+    /**
+     * v8.1 (contract (a); Track 3 fills it for Jarvis for Chrome): the standing prompt, one at a time:
+     * { id, say, answers: [{ id, words: [...], check }], onAnswer(answerId, { words, via }), onClosed() }
+     * → { update({ say, answers }), close() }. Said once Voice Mode is free; its answer words are
+     * reserved (no other feature uses them). Questions never expire it, and it never expires them.
+     */
+    prompt: (spec) => openPrompt(spec),
+    /**
+     * v8.1 (contract (a); Track 2 fills the tour): say `text` (one step per line), spoken as kind
+     * 'tour': { text, kind = 'tour', onChunk({ start, end }) (offsets in `text`, as each chunk starts
+     * playing), onEnd(reason) ('done' | 'interrupted' | 'failed' | 'cancelled'), listenAfter = null
+     * (null: today's rule after speech; false: no listening; { noSpeechMs }: one listen) } → { cancel() }.
+     */
+    narrate: (spec) => narrate(spec),
+    /**
+     * v8.1 (contract (a)): while held, a woken session doesn't go back to Standby, for at most 2
+     * minutes after the owner's last words; then it does, and whatever held it stays where it was.
+     */
+    hold: (reason) => holdSession(reason),
+    release: (reason) => releaseSession(reason),
   };
   const instance = { api, focus: () => focusDefault() };
 
@@ -917,6 +974,7 @@ function createVoiceMode(opts) {
     unlockSpeech();
     input.value = '';
     disarmSleep();
+    hold.heard(); // v8.1: the owner's words
     // Woken: a typed answer to the offer ("yes", "brief me", "no") is taken like a spoken one.
     if (S.wake && wakeHeard([text])) return;
     if (canStandby() && standbyCommand(text)) {
@@ -1119,9 +1177,18 @@ function createVoiceMode(opts) {
     goIdle(kept ? (isOnline() ? 'back-online' : 'offline-kept') : S.idleReason);
   }
 
+  /**
+   * v8.1: Jarvis is away for listening: hidden, unless listening while hidden is allowed (Track 1's
+   * listenWhileHidden, a Mac). With the default it is exactly document.hidden.
+   */
+  function away() {
+    if (!document.hidden) return false;
+    return !probe(() => listenHidden());
+  }
+
   function onVisibility() {
     if (S.closed) return;
-    if (document.hidden) {
+    if (away()) {
       // Pause listening (including a listen that was about to start again).
       const wasListening = !!S.listen || !!S.retryTimer;
       clearRetry();
@@ -1337,7 +1404,7 @@ function createVoiceMode(opts) {
    * stop talking). With the 2-second check on, it keeps listening after that (keepListening): the
    * check takes it over to hear "cancel" or "no, I said …" without starting a new one.
    */
-  function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false, wakeWindow = false } = {}) {
+  function startListening({ gesture = false, retry = false, keepAnswer = false, duringBuild = false, wakeWindow = false, noSpeechMs = 0, oneTry = false } = {}) {
     if (S.closed || (S.run && !duringBuild)) return;
     clearRetry();
     disarmSleep();
@@ -1356,7 +1423,8 @@ function createVoiceMode(opts) {
       unlockSpeech();
     }
     const review = !duringBuild && reviewOn();
-    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer, wakeWindow };
+    // noSpeechMs, oneTry (v8.1, narrate()'s listenAfter): its own silence window, and no second try.
+    const L = { gesture, text: '', stopRequested: false, handle: null, timers: [], heard: false, duringBuild, review, alts: [], sendNow: false, keepAnswer, wakeWindow, noSpeechMs: Number(noSpeechMs) > 0 ? Number(noSpeechMs) : 0, oneTry: !!oneTry };
     S.listen = L;
     S.noRelisten = false;
     // A preview playing now would be heard as speech: it pauses before the mic opens.
@@ -1406,7 +1474,7 @@ function createVoiceMode(opts) {
     L.timers.push(
       setTimeout(() => {
         if (S.listen === L && !L.text && !L.hb) finishListening(L, 'silence');
-      }, SILENCE_MS),
+      }, L.noSpeechMs || SILENCE_MS),
       setTimeout(() => requestSend(L, true), MAX_LISTEN_MS),
     );
     // Woken: if the owner says nothing right away ("wake up, daddy's home"), Jarvis greets.
@@ -1587,17 +1655,17 @@ function createVoiceMode(opts) {
       goIdle('ready');
       return;
     }
-    if (document.hidden) {
+    if (away()) {
       goIdle('paused');
       return;
     }
     S.silentTries += 1;
-    if (S.silentTries < SILENT_TRIES_MAX) {
+    if (S.silentTries < SILENT_TRIES_MAX && !L.oneTry) {
       setStatus('Listening again…', 'mic');
       S.retryTimer = setTimeout(() => {
         S.retryTimer = 0;
         if (S.closed || S.listen || S.run || S.speech) return;
-        if (document.hidden) goIdle('paused');
+        if (away()) goIdle('paused');
         else startListening({ retry: true });
       }, RETRY_DELAY_MS);
       renderControls();
@@ -1720,14 +1788,18 @@ function createVoiceMode(opts) {
    * (S.mic, handed over by finishListening): "cancel" or "never mind" drops it, "no, I said …"
    * corrects it and counts again, "wait" stops the countdown, more words are added. A tap on the
    * words opens a field to fix them (the countdown and the microphone stop).
+   * v8.1 (Phase 0 item 3): `action` binds what the check shows (a router hit: a command, or an answer
+   * to a question or the prompt). Sent unchanged, it runs that action; corrected words ("no, I said
+   * …", an edit) are routed again, as before.
    */
-  function startReview(text) {
+  function startReview(text, { action = null } = {}) {
     const mic = S.mic && S.mic.handle ? S.mic : null;
     S.mic = null;
     if (S.review) endReview();
     // guess: a correction Jarvis wasn't sure how to apply, shown for the owner to confirm ({ from, said })
     // listenTimer: while the owner talks during the check, the fallback that lets it go on (reviewPartial)
-    const R = { text, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, listenTimer: 0, guess: null };
+    // shown: the words as the check first showed them (with `action`, the words it is bound to)
+    const R = { text, shown: text, action: action && typeof action === 'object' ? action : null, L: mic, mode: 'counting', paused: false, remaining: REVIEW_MS, deadline: 0, timer: 0, frame: 0, micTimer: 0, listenTimer: 0, guess: null };
     S.review = R;
     S.karaoke = null;
     S.userEl = null;
@@ -2025,6 +2097,9 @@ function createVoiceMode(opts) {
       goIdle('ready');
       return;
     }
+    // v8.1: unchanged words run the action the check showed (it still has to be possible).
+    const bound = boundAction(R, text);
+    if (bound && act({ ...bound, reading: text }, [text], { reviewed: true })) return;
     // Checked: local commands still come first (a correction may have made it one), then the turn.
     heard(text, [], { reviewed: true });
   }
@@ -2126,7 +2201,7 @@ function createVoiceMode(opts) {
     const words = String(text || '').trim();
     if (!words || S.closed) return { error: 'Nothing to send.' };
     if (S.run) return { error: 'I’m still working on the previous request.' };
-    S.confirm = null; // a new request: a pending "Shall I draw …?" is moot
+    questions.dropUnkept('replaced'); // a new request: a pending "Shall I draw …?" is moot
     clearRetry();
     cancelSpeech();
     stopListening();
@@ -2465,7 +2540,7 @@ function createVoiceMode(opts) {
     const R = S.run;
     if (!R) return;
     S.run = null;
-    S.confirm = null;
+    questions.dropUnkept('replaced');
     S.heldWords = '';
     // "blueprint the …" still looking in the library: whatever it finds, nothing starts.
     if (R.ctl) callQuietly(() => R.ctl.abort());
@@ -2774,9 +2849,14 @@ function createVoiceMode(opts) {
   }
 
   /**
-   * What the owner said: a screen command, a local command while a viewer covers Voice Mode,
-   * otherwise a turn. `alts`: the recognizer's other readings, tried for the local commands too
-   * (the first reading that is a command acts) and for an open hologram's part names. A turn is
+   * What the owner said: a local command, an answer, otherwise a turn. `alts`: the recognizer's other
+   * readings, tried for the local commands too (the first reading that is a command acts) and for an
+   * open hologram's part names. v8.1: the app's router picks the command, in Voice Mode's order
+   * (command-router.js TODAY_ORDER.voice): the Standby words, the prompt's and the question's answers,
+   * words held while a hologram of the reply builds, then for each reading Screens, the home base,
+   * Apple Music (the best reading only), the viewers' words (Optics on top, a blueprint sheet's close
+   * words, the hologram, camera words with Optics closed), then Apple Music by another reading. act()
+   * carries it out; one that can't after all hands the words to the next in the order. A turn is
    * shown for 2 seconds first (the check) unless it was checked already (opts.reviewed), the owner
    * tapped to send it now (opts.sendNow) or Settings say "Send right away".
    */
@@ -2786,65 +2866,146 @@ function createVoiceMode(opts) {
       const t = typeof a === 'string' ? a.trim() : '';
       if (t && !readings.some((r) => r.toLowerCase() === t.toLowerCase())) readings.push(t);
     }
+    hold.heard(); // the owner's words: a held session's 2 minutes start again
     // Woken from Standby: "wake up, daddy's home" (the greeting), then the answer to its offer.
     if (S.wake && wakeHeard(readings)) return;
-    // "Jarvis, standby" / "go to sleep": back to Standby, at once and free.
-    const sleepWords = canStandby() ? readings.find((r) => standbyCommand(r)) : null;
-    if (sleepWords) {
-      goToStandby(sleepWords);
-      return;
-    }
-    // "Shall I draw a blueprint of …?" was asked: yes draws it, no drops it; anything else drops the
-    // question and is taken as usual.
-    const asked = S.confirm;
-    S.confirm = null;
-    if (asked && Date.now() - asked.at < CONFIRM_MS) {
-      for (const words of readings) {
-        const reply = confirmReply(words);
-        if (reply === 'yes') return confirmBlueprint(words, asked);
-        if (reply === 'no') {
-          showCaption('quote', `“${words}”`);
-          speakAck('Okay, no blueprint.');
-          return;
-        }
-      }
-    }
-    // Said while a hologram of the reply builds (the owner tapped the viewer's mic): see below.
-    if (S.run && S.run.run) {
-      heardDuringBuild(text, S.run, readings);
-      return;
-    }
-    // Local commands act at once, without the 2-second check. Each reading in turn, the best first:
-    // a screen command, Apple Music (the best reading only, see below), then the viewers' commands;
-    // the first reading that is one acts.
-    for (const [i, words] of readings.entries()) {
-      // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
-      // (above) and is taken here once the reply has been said.
-      if (screenCommand(words)) return;
-      // Home base (v7.5): "how's the home base?" is answered by the Jarvis Core (free: no turn).
-      if (homeBaseCommand(words)) return;
-      // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
-      if (i === 0 && musicCommand(words)) return;
-      // A 2D request heard here is cancelled by Stop while its library lookup is still running.
-      // With no viewer open, the app may open the hologram shown last for a command about it.
-      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-      const res = viewerWords(words, { signal: ctl ? ctl.signal : null, spoken: true });
-      if (res && res.handled) {
-        viewerCommand(words, res, ctl);
-        return;
-      }
-    }
     const parts = partNamesNow();
-    // Apple Music by another reading ("Clay Back in Black" heard, "play Back in Black" meant): only
-    // when the best reading is nothing else, neither a command (above) nor a question about a part
-    // of the hologram on screen.
-    if (readings.length > 1 && !namesPart(text, parts)) {
-      for (const words of readings.slice(1)) if (musicCommand(words)) return;
+    const local = routeLocal(readings, parts);
+    let hit = routeWords(readings, local);
+    // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
+    // of …?": anything but yes or no drops it, and the words are taken as usual).
+    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
+    while (hit) {
+      if (act(hit, readings, opts)) return;
+      hit = routeWords(readings, local, hit);
     }
     // A question about the hologram on screen: the reading that names one of its parts.
     const words = pickHeard(text, readings.slice(1), parts);
     if (opts.reviewed || opts.sendNow || !reviewOn()) send(words);
     else startReview(words);
+  }
+
+  /** What Voice Mode adds to the router's state (contract (b)): its own part of the moment. */
+  function routeLocal(readings, parts = partNamesNow()) {
+    return {
+      surface: 'voice',
+      via: 'voice',
+      speaking: !!S.speech,
+      check: !!S.review,
+      questions: questions.list(),
+      prompt: prompts.current(),
+      replying: !!(S.run && S.run.run),
+      standby: { available: canStandby(), open: false },
+      voiceOpen: true,
+      bestNamesPart: namesPart(readings[0], parts),
+    };
+  }
+
+  /** The router's pick for `readings` (after `after`: the next one in the order), or null: a turn. */
+  function routeWords(readings, local, after = null) {
+    if (router && typeof router.route === 'function') {
+      try {
+        return router.route(readings, local, after ? { after } : {}) || null;
+      } catch (err) {
+        console.warn('[voice] the router failed', err);
+        return null;
+      }
+    }
+    // No app router: today's matchers, with what Voice Mode itself knows (Standby, its questions).
+    if (!ownRouter) {
+      ownRouter = createRouter();
+      registerTodayCommands(ownRouter);
+    }
+    return ownRouter.route(readings, { ...emptyState('voice'), ...local }, after ? { after } : {});
+  }
+
+  /**
+   * Carry out what the router picked: true when it took the words; false hands them to the next one
+   * in the order (it couldn't after all). Today's matchers are carried out here as before; any other
+   * goes through its own run() (registered by a src/ui/commands module) and Jarvis says its line.
+   */
+  function act(hit, readings, opts = {}) {
+    const words = hit.reading;
+    switch (hit.id) {
+      case 'standby':
+        // "Jarvis, standby" / "go to sleep": back to Standby, at once and free.
+        if (!canStandby()) return false;
+        goToStandby(words);
+        return true;
+      case 'question':
+        return answerQuestion(hit, opts);
+      case 'prompt':
+        return answerPrompt(hit, opts);
+      case 'reply-building':
+        // Said while a hologram of the reply builds (the owner tapped the viewer's mic): see below.
+        if (!(S.run && S.run.run)) return false;
+        heardDuringBuild(readings[0], S.run, readings);
+        return true;
+      case 'screens':
+        // Screens (v7): acts at once (no turn). While a reply streams it waits with the other words
+        // (above) and is taken here once the reply has been said.
+        return screenCommand(words);
+      case 'homebase':
+      case 'brain':
+        // Home base (v7.5): "how's the home base?" is answered by the Jarvis Core (free: no turn).
+        return homeBaseCommand(words);
+      case 'music':
+        // Apple Music: "play Back in Black" searches at once (free: no turn) and shows the card here.
+        return musicCommand(words);
+      case 'optics':
+      case 'blueprint':
+      case 'hologram':
+      case 'camera': {
+        // A 2D request heard here is cancelled by Stop while its library lookup is still running.
+        // With no viewer open, the app may open the hologram shown last for a command about it.
+        const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        const res = viewerWords(words, { signal: ctl ? ctl.signal : null, spoken: true });
+        if (!(res && res.handled)) return false;
+        viewerCommand(words, res, ctl);
+        return true;
+      }
+      default:
+        return actRouted(hit, opts);
+    }
+  }
+
+  /**
+   * A command registered by a src/ui/commands module: its run() acts, and Jarvis says its line. One
+   * whose action has `check` (dear, or carrying the owner's words out) always goes through the
+   * 2-second check first, which then runs it (startReview); only a send from the check skips it.
+   */
+  function actRouted(hit, opts = {}) {
+    if (hit.action && hit.action.check && !opts.reviewed) {
+      startReview(hit.reading, { action: hit });
+      return true;
+    }
+    if (!router || typeof router.run !== 'function') return false;
+    let out;
+    try {
+      out = router.run(hit, { surface: 'voice', via: 'voice', reading: hit.reading, spoken: true, voice: api });
+    } catch (err) {
+      console.warn('[voice] the command failed', err);
+      out = false;
+    }
+    if (out === false) return false;
+    showCaption('quote', `“${hit.reading}”`);
+    const marker = { pending: true, viewer: true, routed: hit.id };
+    S.run = marker;
+    setVoiceState('thinking');
+    setStatus('One moment…', 'sparkle');
+    Promise.resolve(out).then(
+      (o) => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck(o && typeof o.say === 'string' ? o.say : '');
+      },
+      () => {
+        if (S.closed || S.run !== marker) return;
+        S.run = null;
+        speakAck('That didn’t work.');
+      },
+    );
+    return true;
   }
 
   /** visuals.command(), quietly (null when there is no viewer bridge or it fails). */
@@ -3014,8 +3175,7 @@ function createVoiceMode(opts) {
     }
     if (o.confirm && typeof o.confirm.proceed === 'function') {
       // Nothing saved and the words were not an outright request: ask before spending money.
-      S.confirm = { proceed: o.confirm.proceed, cmd, at: Date.now() };
-      speakAck(blueprintQuestion(o.confirm));
+      askBlueprint(o.confirm, cmd);
       return;
     }
     if (o.error) speakAck(asSentence(clip(singleLine(o.error), 220)));
@@ -3035,7 +3195,7 @@ function createVoiceMode(opts) {
   function sayLine(text) {
     const line = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (S.closed || !line || !S.ttsOk) return false;
-    if (S.run || S.speech || S.review || S.confirm || S.wake || S.mic) return false;
+    if (S.run || S.speech || S.review || questions.size() || prompts.current() || S.wake || S.mic) return false;
     const L = S.listen;
     if (L && (L.gesture || !S.continuous)) return false;
     if (L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening'))) return false;
@@ -3072,6 +3232,153 @@ function createVoiceMode(opts) {
     return send(text, { mode: o.mode, blueprintFor: o.blueprintFor || null, attachments: Array.isArray(o.attachments) ? o.attachments : null, optics: o.optics || null });
   }
 
+  // ===================================================================== v8.1 seams (contract (a))
+
+  /** "Shall I draw a blueprint of …?" (v6), on the question stack: yes builds it, no drops it. */
+  function askBlueprint(confirm, cmd) {
+    askNew({
+      id: 'blueprint',
+      say: blueprintQuestion(confirm),
+      match: (text) => {
+        const reply = confirmReply(text);
+        return reply === 'yes' || reply === 'no' ? reply : null;
+      },
+      timeoutMs: CONFIRM_MS,
+      onAnswer: (choice, { words }) => {
+        if (choice === 'yes') {
+          confirmBlueprint(words, { proceed: confirm.proceed, cmd });
+          return;
+        }
+        showCaption('quote', `“${words}”`);
+        speakAck('Okay, no blueprint.');
+      },
+    });
+  }
+
+  /** api.question(): a new question on top of the stack (see the api). */
+  function askNew(spec) {
+    if (S.closed || !spec || typeof spec !== 'object') return { cancel: () => false, answer: () => false };
+    return questions.push(spec);
+  }
+
+  /** api.prompt(): the standing prompt, one at a time (see the api). */
+  function openPrompt(spec) {
+    if (S.closed || !spec || typeof spec !== 'object') return { update: () => false, close: () => false };
+    return prompts.open(spec);
+  }
+
+  /**
+   * Voice Mode can say a line now: no turn, no speech, no check, no routine, and no listen of the
+   * owner's (a tap's, or any with Continuous off) or with words heard (sayLine()'s rule, v8.0).
+   */
+  function canSayNow() {
+    if (S.closed || S.run || S.speech || S.review || S.wake || S.mic) return false;
+    const L = S.listen;
+    if (L && (L.gesture || !S.continuous)) return false;
+    return !(L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening')));
+  }
+
+  /** Say a question's (or the prompt's) line: a listen that has heard nothing yet is put aside for it. */
+  function sayAsked(line) {
+    if (S.listen) stopListening();
+    clearRetry();
+    speakAck(line);
+  }
+
+  /**
+   * A question to say (the stack's onAsk, and the prompt's): a new one at once when Voice Mode is
+   * free; otherwise, and for one asked again (the one over it is done), once Voice Mode is free.
+   */
+  function askQuestion(q, again) {
+    if (S.closed || !q || !q.say) return;
+    const isPrompt = !!q.answers;
+    if (!again && canSayNow()) {
+      sayAsked(q.say);
+      return;
+    }
+    S.pendingAsk = { q, isPrompt };
+    setTimeout(() => {
+      if (S.pendingAsk && S.pendingAsk.q === q && canSayNow()) sayPendingAsk();
+    }, 0);
+  }
+
+  /** The question (or prompt) waiting to be said, if it is still open: true when it is said now. */
+  function sayPendingAsk() {
+    const pending = S.pendingAsk;
+    S.pendingAsk = null;
+    if (!pending || S.closed) return false;
+    const { q, isPrompt } = pending;
+    const open = isPrompt ? (prompts.current() || {}).key === q.key : questions.list().some((x) => x.key === q.key);
+    if (!open) return false;
+    sayAsked(q.say);
+    return true;
+  }
+
+  /** The top question answered by voice: consumed (its onAnswer runs); with `check`, after the check. */
+  function answerQuestion(hit, opts = {}) {
+    const top = questions.top();
+    if (!top || top.id !== hit.action.question) return false;
+    if (top.check && !opts.reviewed) {
+      startReview(hit.reading, { action: hit });
+      return true;
+    }
+    return questions.answer(top.id, hit.action.choice, { words: hit.reading, via: 'voice' });
+  }
+
+  /** The prompt answered by voice (Track 3 adds its rules): its onAnswer runs; with `check`, after the check. */
+  function answerPrompt(hit, opts = {}) {
+    const p = prompts.current();
+    if (!p || p.id !== hit.action.prompt) return false;
+    if (hit.action.check && !opts.reviewed) {
+      startReview(hit.reading, { action: hit });
+      return true;
+    }
+    return prompts.answer(p.id, hit.action.answer, { words: hit.reading, via: 'voice' });
+  }
+
+  /** api.narrate(): a tour's words, spoken as kind 'tour' with its chunk events (see the api). */
+  function narrate(spec = {}) {
+    const o = spec && typeof spec === 'object' ? spec : {};
+    const text = String(o.text ?? '');
+    const kind = typeof o.kind === 'string' && o.kind ? o.kind : 'tour';
+    const onEnd = typeof o.onEnd === 'function' ? o.onEnd : null;
+    if (S.closed || !text.trim() || !S.ttsOk) {
+      if (onEnd) setTimeout(() => callQuietly(() => onEnd(S.closed ? 'cancelled' : 'failed')), 0);
+      return { cancel: () => false };
+    }
+    const listenAfter = o.listenAfter === false || (o.listenAfter && typeof o.listenAfter === 'object') ? o.listenAfter : null;
+    clearRetry();
+    if (S.listen) stopListening();
+    speak(text, kind, 0, { onChunk: typeof o.onChunk === 'function' ? o.onChunk : null, onEnd, listenAfter });
+    const sp = S.speech;
+    return {
+      cancel() {
+        if (!sp || S.speech !== sp) return false;
+        cancelSpeech();
+        if (!S.closed && !S.run && !S.listen && !S.review) goIdle('keep');
+        return true;
+      },
+    };
+  }
+
+  /** A narration ended (once): its onEnd(reason). */
+  function endNarration(sp, reason) {
+    if (!sp || !sp.onEnd || sp.ended) return;
+    sp.ended = true;
+    const fn = sp.onEnd;
+    callQuietly(() => fn(reason));
+  }
+
+  /** api.hold(): a woken session stays out of Standby while held (at most 2 minutes after the owner's last words). */
+  function holdSession(reason) {
+    if (!S.closed) hold.hold(reason);
+  }
+
+  /** api.release(): once nothing holds it, the usual return to Standby applies again. */
+  function releaseSession(reason) {
+    if (hold.release(reason) && !S.closed && S.wakeSession && S.sleepTimer) armSleep(S.idleReason === 'silent' ? SLEEP_SILENT_MS : SLEEP_IDLE_MS);
+  }
+
   // ============================================================================ the wake routine
 
   /**
@@ -3101,7 +3408,7 @@ function createVoiceMode(opts) {
     } catch {
       /* decoration */
     }
-    if (S.sttOk && !document.hidden) startListening({ wakeWindow: true });
+    if (S.sttOk && !away()) startListening({ wakeWindow: true });
     else W.timer = setTimeout(() => greetWake(false), WAKE_BOOT_MS);
   }
 
@@ -3257,6 +3564,12 @@ function createVoiceMode(opts) {
     S.sleepTimer = setTimeout(() => {
       S.sleepTimer = 0;
       if (S.closed || S.listen || S.run || S.speech || S.review || S.typing) return;
+      // v8.1: held (a tour waiting at a decision): not before 2 minutes after the owner's last words.
+      const held = hold.remainingMs();
+      if (held > 0) {
+        armSleep(held);
+        return;
+      }
       if (typeof wake.canSleep === 'function' && !probe(() => wake.canSleep())) {
         armSleep(SLEEP_IDLE_MS); // a preview is playing: later
         return;
@@ -3571,6 +3884,10 @@ function createVoiceMode(opts) {
       idle: false, // live: everything appended so far is spoken; waiting for more text
       finished: false, // live: stream.finish() was called
       chunk: null, // { start, end, at }: the chunk playing now (offsets in text)
+      onChunk: null, // v8.1 narrate(): each chunk as it starts, { start, end } in the display text
+      onEnd: null, // v8.1 narrate(): onEnd(reason), once
+      listenAfter: null, // v8.1 narrate(): null (today's rule) | false | { noSpeechMs }
+      ended: false,
     };
   }
 
@@ -3578,16 +3895,17 @@ function createVoiceMode(opts) {
    * Speak `display` in one go (shown as captions, may contain paragraph breaks). The engine gets
    * the same text, so its offsets (whitespace collapsed) map back to the display with spokenForm().
    */
-  function speak(display, kind, delay = 0) {
+  function speak(display, kind, delay = 0, extra = null) {
     cancelSpeech();
     const sp = newSpeech(kind);
+    if (extra) Object.assign(sp, extra); // narrate(): its chunk and end callbacks, and what follows it
     const form = spokenForm(display);
     sp.display = String(display ?? '');
     sp.text = form.spoken;
     sp.map = form.map;
     S.speech = sp;
     root.dataset.speech = kind;
-    if (kind === 'summary' || kind === 'full' || kind === 'ack') {
+    if (kind === 'summary' || kind === 'full' || kind === 'ack' || kind === 'tour') {
       setVoiceState('speaking');
       setStatus(kind === 'full' ? 'Reading the full answer' : 'Speaking', 'speaker');
       announce(kind === 'ack' ? sp.display : 'Jarvis is speaking');
@@ -3650,6 +3968,12 @@ function createVoiceMode(opts) {
     sp.idle = false;
     if (!sp.started) onSpeechStart(sp);
     if (S.karaoke === sp.karaoke) setKaraokeChar(displayIndex(sp, start));
+    // v8.1 narrate(): the narrator learns each chunk as it starts (offsets in the text it gave).
+    if (sp.onChunk) {
+      const from = displayIndex(sp, start);
+      const to = displayIndex(sp, Math.max(start, sp.chunk.end - 1)) + 1;
+      callQuietly(() => sp.onChunk({ start: from, end: to }));
+    }
     if (sp.kind !== 'live') return;
     if (sp.run && sp.run.answerFrom >= 0 && displayIndex(sp, Math.max(start, sp.chunk.end - 1)) >= sp.run.answerFrom) sp.run.answerHeard = true;
     if (S.run && S.run === sp.run) renderRunNow();
@@ -3744,15 +4068,23 @@ function createVoiceMode(opts) {
       afterApology();
       return;
     }
-    if (how === 'done' || S.sleepAfter) afterSpeech();
+    // v8.1 narrate(): the narrator hears how it ended first; if it went on (its next steps), they keep the floor.
+    if (sp.onEnd) {
+      endNarration(sp, how);
+      if (S.closed || S.speech || S.listen || S.run || S.review) return;
+    }
+    if (how === 'done' || S.sleepAfter) afterSpeech(sp);
     else {
       goIdle('answered'); // interrupted, or speech isn't working: no microphone over it
       takeHeld();
     }
   }
 
-  /** After a reply was spoken to the end: listen again (continuous) or wait for a tap. */
-  function afterSpeech() {
+  /**
+   * After a reply was spoken to the end: listen again (continuous) or wait for a tap. `sp`: the speech
+   * that ended; a narration's listenAfter (v8.1) says false (no listening) or { noSpeechMs } (one listen).
+   */
+  function afterSpeech(sp = null) {
     if (S.closed) return;
     if (S.sleepAfter) {
       S.sleepAfter = false;
@@ -3767,20 +4099,29 @@ function createVoiceMode(opts) {
       /* decoration */
     }
     if (takeHeld()) return; // what the owner said while the hologram built comes first
+    if (sayPendingAsk()) return; // v8.1: a question (or the prompt) that waited for Jarvis to be free
     if (S.noRelisten) {
       // A Music card is up: the owner's next move is probably Preview or Open in Apple Music.
       S.noRelisten = false;
       goIdle('music');
       return;
     }
+    // v8.1 narrate(): no listening after it, or one listen with its own silence window.
+    const after = sp ? sp.listenAfter : null;
+    if (after === false) {
+      goIdle('answered');
+      return;
+    }
+    const once = !!after && typeof after === 'object';
     // Woken: the offer was just made, so Jarvis listens for the answer (Continuous or not).
     const asking = !!S.wake && S.wake.phase === 'asking';
-    if ((S.continuous || asking) && S.sttOk && !S.typing && !S.sttBlocked && !document.hidden) {
+    if ((S.continuous || asking || once) && S.sttOk && !S.typing && !S.sttBlocked && !away()) {
       // Hands-free: listen again once the speaker has gone quiet.
+      const listen = once ? { keepAnswer: true, noSpeechMs: Number(after.noSpeechMs) || 0, oneTry: true } : { keepAnswer: true };
       setStatus('Your turn', 'mic');
       S.retryTimer = setTimeout(() => {
         S.retryTimer = 0;
-        if (!S.closed && !S.listen && !S.run && !S.speech && !document.hidden) startListening({ keepAnswer: true });
+        if (!S.closed && !S.listen && !S.run && !S.speech && !away()) startListening(listen);
         else if (!S.closed && !S.listen && !S.run && !S.speech) goIdle('answered');
       }, RELISTEN_DELAY_MS);
       renderControls();
@@ -3796,6 +4137,8 @@ function createVoiceMode(opts) {
     S.speech = null;
     clearTimers(sp.timers);
     delete root.dataset.speech;
+    // v8.1 narrate(): the narrator hears it was cut (a tap, a listen, another line), after this turn of events.
+    if (sp.onEnd && !sp.ended) setTimeout(() => endNarration(sp, 'cancelled'), 0);
     if (sp.kind === 'live' && sp.run) sp.run.liveOff = true;
     const handle = sp.stream || sp.handle;
     try {
@@ -4005,7 +4348,9 @@ function createVoiceMode(opts) {
     if (levelFrame) cancelAnimationFrame(levelFrame);
     levelFrame = 0;
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
-    S.confirm = null;
+    callQuietly(() => questions.clear('closed'));
+    callQuietly(() => prompts.close());
+    S.pendingAsk = null;
     S.heldWords = '';
     callQuietly(() => clearMusicCard()); // a preview playing carries on (its card is in the chat too)
     if (micBands) callQuietly(() => micBands.destroy());

@@ -32,11 +32,13 @@ export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
   { id: 'ai', label: 'AI', icon: 'chip' },
   { id: 'voice', label: 'Voice', icon: 'wave' },
+  { id: 'holograms', label: 'Holograms', icon: 'hologram' }, // v8.1 slot (tours): shown only with something in it
   { id: 'appearance', label: 'Appearance & sound', short: 'Appearance', icon: 'sparkle' },
   { id: 'location', label: 'Location', icon: 'pin' },
   { id: 'memory', label: 'Memory', icon: 'memory' },
   { id: 'apikey', label: 'API key & spending', short: 'API key', icon: 'key' },
   { id: 'homebase', label: 'Home base', icon: 'server' },
+  { id: 'chrome', label: 'Jarvis for Chrome', short: 'Chrome', icon: 'globe' }, // v8.1 slot (chrome-relay): shown only with something in it
   { id: 'data', label: 'Data', icon: 'layers' },
   { id: 'install', label: 'Install', icon: 'download' },
   { id: 'about', label: 'About', icon: 'info' },
@@ -650,6 +652,21 @@ export function createSettingsPanel(o) {
       naturalCard = null;
     }
   }
+  // ---- v8.1 slots: each builder fills its own (the panel's options `o` bring what it needs from
+  // app.js); an empty slot shows nothing (no card, no section, no nav button) ----------------------
+  // Settings → Voice → Microphone and speaker, after Jarvis's voice (mac-dev): a card element, or null.
+  function micSpeakerSlot() {
+    return null;
+  }
+  // Settings → Holograms (tours): the section's cards ([]: no section).
+  function hologramsSlot() {
+    return [];
+  }
+  // Settings → Jarvis for Chrome (chrome-relay): the section's cards ([]: no section).
+  function chromeSlot() {
+    return [];
+  }
+
   // v7.8: "Jarvis's voice" at the top: the voice in use and where it comes from, Test, George's voice
   // from the home base on or off, the ways to George without one, and a better built-in voice.
   let jarvisVoice = null;
@@ -677,6 +694,7 @@ export function createSettingsPanel(o) {
   const voice = section(
     'voice',
     jarvisVoice ? jarvisVoice.el : null,
+    safeCall(() => micSpeakerSlot(), null),
     card(
       row({
         label: 'Speak replies',
@@ -1625,8 +1643,16 @@ export function createSettingsPanel(o) {
     ),
   );
 
+  // v8.1 slots: Holograms (tours) and Jarvis for Chrome (chrome-relay), only with something in them.
+  const hologramCards = (safeCall(() => hologramsSlot(), []) || []).filter(Boolean);
+  const holograms = hologramCards.length ? section('holograms', ...hologramCards) : null;
+  const chromeCards = (safeCall(() => chromeSlot(), []) || []).filter(Boolean);
+  const chrome = chromeCards.length ? section('chrome', ...chromeCards) : null;
+
   // ---- layout -----------------------------------------------------------------------
-  const navButtons = SETTINGS_SECTIONS.map((sec) =>
+  // The sections shown (an empty v8.1 slot has none), in SETTINGS_SECTIONS' order.
+  const shownSections = SETTINGS_SECTIONS.filter((sec) => sectionEls[sec.id]);
+  const navButtons = shownSections.map((sec) =>
     h(
       'button',
       { class: 'set-nav-btn', type: 'button', attrs: { 'data-section': sec.id }, on: { click: () => scrollToSection(sec.id, true) } },
@@ -1635,7 +1661,7 @@ export function createSettingsPanel(o) {
     ),
   );
   const nav = h('nav', { class: 'set-nav', attrs: { 'aria-label': 'Settings sections' } }, navButtons);
-  const main = h('div', { class: 'set-main' }, profile, ai, voice, appearance, location, memory, apikey, homebase, data, install, about);
+  const main = h('div', { class: 'set-main' }, profile, ai, voice, holograms, appearance, location, memory, apikey, homebase, chrome, data, install, about);
   const el = h('div', { class: 'settings', attrs: { 'data-testid': 'settings-content' } }, nav, main);
 
   function markNav(id) {
@@ -1660,8 +1686,8 @@ export function createSettingsPanel(o) {
       navLock = null;
       const rect = scrollRoot.getBoundingClientRect();
       const atEnd = scrollRoot.scrollTop + scrollRoot.clientHeight >= scrollRoot.scrollHeight - 4;
-      let current = SETTINGS_SECTIONS[0].id;
-      for (const sec of SETTINGS_SECTIONS) {
+      let current = shownSections[0].id;
+      for (const sec of shownSections) {
         const r = sectionEls[sec.id].getBoundingClientRect();
         if (r.top <= rect.top + 100 || (atEnd && r.top < rect.bottom - 48)) current = sec.id;
       }

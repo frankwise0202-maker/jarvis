@@ -44,6 +44,12 @@ const noteText = async (page) => ((await page.locator(tid('optics-liveview-note'
 const meterText = async (page) => ((await page.locator(tid('optics-liveview-meter')).textContent()) || '').replace(/\s+/g, ' ').trim();
 const videoTracks = (page) => page.evaluate(() => (window.__opticsTracks || []).filter((x) => x.track.kind === 'video' && x.track.readyState === 'live').length);
 
+/** A note for the summary table (cut to 90 characters there) and, in full, for the log. */
+function note(t, message) {
+  t.note(message);
+  console.log(`    LIVE2 ${message}`);
+}
+
 const quiet = (summary = 'A desk with a coffee mug, an AA battery and a pothos.') => ({ summary, worth_saying: false, line: '' });
 const talk = (line, summary = 'The owner holds something up to the camera.') => ({ summary, worth_saying: true, line });
 
@@ -165,7 +171,7 @@ export default [
         const m1 = await monthSpend(page);
         const n1 = liveReqs(t).length;
         const look = m1 - m0 - (n1 - n0) * LIVE_LOOK_USD;
-        t.note(`Live before the answer ended: the chat turn "${stats}"; the Look ≈ $${look.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)} (${n1 - n0} live looks)`);
+        note(t, `Live before the answer ended: the chat turn "${stats}"; the Look ≈ $${look.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)} (${n1 - n0} live looks)`);
         t.assert(look > 0.005, `the Look was billed (≈ $${look.toFixed(5)}, chat "${stats}")`);
         t.assert(h1 - h0 >= Math.max(0, n1 - n0 - 1) * LIVE_LOOK_USD + look * 0.85, `the Look counts in the hour: +$${(h1 - h0).toFixed(5)} for ${n1 - n0} live looks and a Look of ≈ $${look.toFixed(5)}`);
       });
@@ -182,7 +188,7 @@ export default [
         const m1 = await monthSpend(page);
         const n1 = liveReqs(t).length;
         const look = m1 - m0 - (n1 - n0) * LIVE_LOOK_USD;
-        t.note(`LIVE pill before the answer ended: the chat turn "${stats}"; the Look ≈ $${look.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)}`);
+        note(t, `LIVE pill before the answer ended: the chat turn "${stats}"; the Look ≈ $${look.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)}`);
         t.assert(look > 0.005 && h1 - h0 >= look * 0.85, `the Look counts in the hour although Optics closed: +$${(h1 - h0).toFixed(5)} for a Look of ≈ $${look.toFixed(5)}`);
         t.assert((await liveTracks(page)) === 0, 'the camera is released');
       });
@@ -212,7 +218,7 @@ export default [
         const m1 = await monthSpend(page);
         const n1 = liveReqs(t).length;
         const more = m1 - m0 - (n1 - n0) * LIVE_LOOK_USD;
-        t.note(`Tell me more, then Live: the chat turn "${stats}"; the follow-up ≈ $${more.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)} (${n1 - n0} live looks)`);
+        note(t, `Tell me more, then Live: the chat turn "${stats}"; the follow-up ≈ $${more.toFixed(5)}; hour +$${(h1 - h0).toFixed(5)} (${n1 - n0} live looks)`);
         t.assert(more > 0.001, `the follow-up was billed (≈ $${more.toFixed(5)})`);
         t.assert(h1 - h0 >= Math.max(0, n1 - n0 - 1) * LIVE_LOOK_USD + more * 0.85, `the follow-up counts in the hour: +$${(h1 - h0).toFixed(5)} for ${n1 - n0} live looks and ≈ $${more.toFixed(5)}`);
         await page.locator(tid('optics-live-pill')).click();
@@ -248,7 +254,7 @@ export default [
       await t.waitFor(async () => (await t.count('optics')) > 0 || t.requests('lead').length > leadBefore, { timeout: 30000, message: 'something to happen for "keep watching"' });
       await page.waitForTimeout(3000);
       const obs = { opticsOpen: await t.count('optics'), videoTracks: await videoTracks(page), liveLooks: liveReqs(t).length, hologramOpen: await t.count('hologram-viewer'), leadTurnsSince: t.requests('lead').length - leadBefore };
-      t.note(`"keep watching" over the hologram: ${JSON.stringify(obs)}`);
+      note(t, `"keep watching" over the hologram: ${JSON.stringify(obs)}`);
       await shot(t, 'mac-live-view-voice-hologram');
       t.assert(obs.opticsOpen === 0 && obs.videoTracks === 0 && obs.liveLooks === 0, `the camera stays off with a hologram on screen (${JSON.stringify(obs)})`);
       t.assert(obs.leadTurnsSince >= 1, `the words went to Jarvis, as "what am I looking at?" does (${JSON.stringify(obs)})`);
@@ -284,7 +290,7 @@ export default [
       const spoken = await said(page);
       const note = await noteText(page);
       const meter = await meterText(page);
-      t.note(`said ${JSON.stringify(spoken)}; note "${note}"; meter "${meter}"`);
+      note(t, `said ${JSON.stringify(spoken)}; note "${note}"; meter "${meter}"`);
       await shot(t, 'mac-live-view-voice-cap');
       t.assert(!spoken.some((s) => /^Live view on/.test(s)), `never "Live view on" while it is paused at the limit (${JSON.stringify(spoken)})`);
       const all = spoken.join(' ');
@@ -324,7 +330,7 @@ export default [
       await t.waitFor(async () => (await said(page)).some((s) => /camera/i.test(s)), { timeout: 15000, message: async () => `Jarvis to say why (${JSON.stringify(await said(page))})` });
       await page.waitForTimeout(1500);
       const spoken = await said(page);
-      t.note(`said ${JSON.stringify(spoken)}`);
+      note(t, `said ${JSON.stringify(spoken)}`);
       t.assert(!spoken.some((s) => /^Live view on/.test(s)), `never "Live view on" when the camera couldn't start (${JSON.stringify(spoken)})`);
       t.assert(spoken.some((s) => /The camera is in use by another app/.test(s)), `Jarvis says the camera is in use (${JSON.stringify(spoken)})`);
       t.assert(liveReqs(t).length === 0 && (await attr(page, 'liveview')) !== 'on', 'nothing is watched');
@@ -366,7 +372,7 @@ export default [
         const reply = await nextSaid(t, page, n, '"live view"');
         await t.waitFor(async () => (await attr(page, 'liveview-paused')) === '', { timeout: 5000, message: 'the live view to go on' });
         await waitRequests(t, before + 1, 8000);
-        t.note(`"live view" after a question: ${JSON.stringify(reply)}`);
+        note(t, `"live view" after a question: ${JSON.stringify(reply)}`);
         t.assert(!reply.some((s) => /already watching/i.test(s)), `not "I'm already watching" (${JSON.stringify(reply)})`);
         t.assert(reply.some((s) => /^Back to the live view\.$/.test(s)), `says so (${JSON.stringify(reply)})`);
         t.assert((await attr(page, 'frozen')) !== 'true', 'the Look is put away');
@@ -382,7 +388,7 @@ export default [
           const reply = await nextSaid(t, page, n, `"${words}"`);
           await waitOn(t, page, true, `"${words}" to start it`);
           await waitRequests(t, before + 1, 8000);
-          t.note(`"${words}": ${JSON.stringify(reply)}`);
+          note(t, `"${words}": ${JSON.stringify(reply)}`);
           t.assert(reply.some((s) => /^Live view on\./.test(s)), `"Live view on" (${JSON.stringify(reply)})`);
           t.assert(!reply.some((s) => /This is the live view/.test(s)), 'never "This is the live view." while nothing starts');
         });
@@ -392,7 +398,7 @@ export default [
         const n = (await said(page)).length;
         await sayInOptics(t, page, 'Go live.');
         const reply = await nextSaid(t, page, n, '"go live"');
-        t.note(`"go live": ${JSON.stringify(reply)}`);
+        note(t, `"go live": ${JSON.stringify(reply)}`);
         t.assert(reply.some((s) => /^This is the camera\.$/.test(s)), `"This is the camera." (${JSON.stringify(reply)})`);
         t.assert((await attr(page, 'liveview')) === 'on', 'the live view goes on');
       });
@@ -428,7 +434,7 @@ export default [
       await waitOn(t, page, false, 'the session to end by itself');
       await t.waitFor(async () => (await said(page)).some((s) => /^Live view stopped after 8 seconds/.test(s)), { timeout: 30000, message: async () => `the end said aloud (${JSON.stringify(await said(page))})` });
       const spoken = await said(page);
-      t.note(`said ${JSON.stringify(spoken)}; note "${await noteText(page)}"`);
+      note(t, `said ${JSON.stringify(spoken)}; note "${await noteText(page)}"`);
       t.assert(spoken.some((s) => /^Live view on\./.test(s)), 'it started');
       t.assert(spoken.some((s) => /Live view paused: it has spent \$1 in the last hour/.test(s)), `the pause at the limit said aloud (${JSON.stringify(spoken)})`);
       t.assert(spoken.filter((s) => /^Live view stopped after 8 seconds/.test(s)).length === 1, `the end said once (${JSON.stringify(spoken)})`);
@@ -462,7 +468,7 @@ export default [
       await page.waitForTimeout(6000);
       const first = await page.evaluate(() => window.__notify.map(Math.round));
       const lines = await t.count('optics-liveview-line');
-      t.note(`bells ${JSON.stringify(first)} for ${lines} lines listed in about 6 s`);
+      note(t, `bells ${JSON.stringify(first)} for ${lines} lines listed in about 6 s`);
       t.assert(first.length === 1, `one bell for the first line, none for the next ones within 15 s (${first.length} bells, ${lines} lines)`);
       // The owner talks into Optics' mic (about 4 s) while more lines arrive, past the 15 s.
       await page.waitForTimeout(Math.max(0, 15500 - 6000 - 4000));
@@ -483,7 +489,7 @@ export default [
       const endAt = await page.evaluate(() => performance.now());
       const all = await page.evaluate(() => window.__notify.slice());
       const during = all.filter((n) => n >= tapAt + 150 && n <= endAt);
-      t.note(`the owner talked ${Math.round(tapAt)}–${Math.round(endAt)} ms; bells ${JSON.stringify(all.map(Math.round))}`);
+      note(t, `the owner talked ${Math.round(tapAt)}–${Math.round(endAt)} ms; bells ${JSON.stringify(all.map(Math.round))}`);
       t.assert(during.length === 0, `no bell while the owner talks (${during.map(Math.round).join(', ')})`);
       for (let i = 1; i < all.length; i++) t.assert(all[i] - all[i - 1] >= 14900, `at most one bell every 15 s (${Math.round(all[i] - all[i - 1])} ms apart)`);
       await page.keyboard.press('Escape');
@@ -531,7 +537,7 @@ export default [
       await page.waitForTimeout(1500);
       const data = await page.evaluate(() => ({ notify: window.__notify.map(Math.round), speech: window.__voice.log.map((e) => ({ text: e.text.slice(0, 30), at: Math.round(e.at), endAt: Math.round(e.endAt || 0) })) }));
       const lines = await page.locator(tid('optics-liveview-line')).evaluateAll((els) => els.map((e) => e.dataset.spoken));
-      t.note(`bells ${JSON.stringify(data.notify)}; lines spoken ${JSON.stringify(lines)}; speech ${JSON.stringify(data.speech)}`);
+      note(t, `bells ${JSON.stringify(data.notify)}; lines spoken ${JSON.stringify(lines)}; speech ${JSON.stringify(data.speech)}`);
       t.assert(lines.filter((x) => x === 'false').length >= 2, `some lines were held back (${JSON.stringify(lines)})`);
       t.assert(data.notify.length === 0, `no bell for a held-back line where Jarvis may speak (${data.notify.join(', ')} ms)`);
     },
@@ -562,7 +568,7 @@ export default [
       await page.locator(tid('optics-mic')).click();
       await page.waitForTimeout(500);
       const after = await page.evaluate(() => ({ speaking: window.speechSynthesis.speaking, cancels: window.__voice.cancels, listens: window.__voice.listens, micOpen: !!document.querySelector('[data-testid="optics-mic"][aria-pressed="true"]') }));
-      t.note(`before the tap ${JSON.stringify(before)}; after ${JSON.stringify(after)}`);
+      note(t, `before the tap ${JSON.stringify(before)}; after ${JSON.stringify(after)}`);
       t.assert(before.speaking, 'Jarvis was reading the line');
       t.assert(after.listens > before.listens, 'the mic listens');
       t.assert(!after.speaking && after.cancels > before.cancels, `Jarvis stopped before the mic listened (${JSON.stringify(after)})`);
@@ -605,7 +611,7 @@ export default [
       await t.waitFor(() => t.requests('lead').length >= 1, { timeout: 20000, message: 'the owner\'s question to go out' });
       const obs = await page.evaluate(() => ({ speech: window.__voice.log.map((e) => ({ text: e.text.slice(0, 40), at: Math.round(e.at) })) }));
       const spokenDuring = obs.speech.filter((s) => s.at > tapAt && /^Item number/.test(s.text));
-      t.note(`tap at ${Math.round(tapAt)} ms; speech ${JSON.stringify(obs.speech)}; lead turns ${t.requests('lead').length}`);
+      note(t, `tap at ${Math.round(tapAt)} ms; speech ${JSON.stringify(obs.speech)}; lead turns ${t.requests('lead').length}`);
       t.assert(spokenDuring.length === 0 || spokenDuring[0].at > tapAt + 4500, `no live line said while the owner's own listen was open (${JSON.stringify(spokenDuring)})`);
       const sent = t.requests('lead').at(-1);
       const text = JSON.stringify(sent.body.messages.at(-1).content);
@@ -663,7 +669,7 @@ export default [
       await page.waitForTimeout(800);
       out.small = await measure();
       await shot(t, 'phone320-live-view-5lines');
-      t.note(`covered: portrait ${out.portrait.coveredPct}%, sideways ${out.sideways.coveredPct}%, 320 px ${out.small.coveredPct}% (${JSON.stringify(out)})`);
+      note(t, `covered: portrait ${out.portrait.coveredPct}%, sideways ${out.sideways.coveredPct}%, 320 px ${out.small.coveredPct}% (${JSON.stringify(out)})`);
       t.assert(out.portrait.coveredPct <= 30, `portrait: the panel and caption cover at most 30% of the picture (${out.portrait.coveredPct}%)`);
       t.assert(out.sideways.coveredPct <= 40, `sideways: at most 40% (${out.sideways.coveredPct}%)`);
       t.assert(out.small.coveredPct <= 40, `320 px: at most 40% (${out.small.coveredPct}%)`);

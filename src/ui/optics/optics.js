@@ -44,8 +44,9 @@
 //           "Look in a new chat" (look({ …, newChat: true })) or Wait instead of freezing a frame,
 //           fallbackPhoto?(), onLiveChange?({ camera, watch, watchEndsAt, liveView }), onClose?(), watchOptions?, review?,
 //           onCapture?({ source }) (a frame was taken: Presence flares the core),
-//           screenCommand?(text, { spoken }) -> true when Screens took the words ("put the camera on
-//           my other screen"), asked first for what is typed or said here,
+//           route?(text, { spoken }) -> { handled: true, ack, done? } | null (v8.1: the app's command
+//           router, asked first for what is typed or said here: today Screens ("put the camera on my
+//           other screen"), then Optics' own words; typed, only the live view's and "stop watching"),
 //           cameraChoice?: { get() -> { id, label } | null, set({ id, label }) },
 //           hologram?({ subject, frameId }) -> { run } | { error }, canHologram?() -> boolean,
 //           hologramEstimate?() -> usd, openHologram?(run, segment),
@@ -1330,32 +1331,41 @@ export function openOptics(deps = {}) {
     releaseCanvas(schematic);
   }
 
-  /** Screens takes "put the camera on my other screen" first (it acts at once, no Look). */
-  function screenWords(text, spoken) {
+  /**
+   * v8.1: words typed here (spoken: heard by this mic) go to the app's command router first (deps.route):
+   * today Screens ("put the camera on my other screen") acts at once, then Optics' own words (typed,
+   * only the live view's words and "stop watching": v8.0). True when a command took them (its line is
+   * announced); false: they are the Look's question (live) or a follow-up (frozen).
+   */
+  function routed(text, spoken) {
+    if (!text || typeof deps.route !== 'function') return false;
+    let r = null;
     try {
-      return !!(text && deps.screenCommand && deps.screenCommand(text, { spoken }));
-    } catch {
-      return false;
+      r = deps.route(text, { spoken });
+    } catch (err) {
+      console.warn('[jarvis] the router failed:', err);
+      r = null;
     }
+    if (!r || !r.handled) return false;
+    if (r.ack) announce(r.ack);
+    if (r.done) {
+      Promise.resolve(r.done).then(
+        (line) => {
+          if (!closed && line) announce(line);
+        },
+        () => {},
+      );
+    }
+    return true;
   }
 
   function onAskKey(e) {
     if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
     const q = askInput.value.trim();
-    if (screenWords(q, false)) {
+    if (routed(q, false)) {
       askInput.value = '';
       return;
-    }
-    // "Live view", "watch me", "stop live view", "that's enough", "stop watching" typed here (v8.0).
-    const typed = q ? matchOpticsCommand(q, { frozen: !!frozen && (mode === 'frozen' || mode === 'review') }) : null;
-    if (typed && (typed.action === 'liveview' || (typed.action === 'watch' && !typed.on))) {
-      const res = command(q);
-      if (res && res.handled) {
-        askInput.value = '';
-        if (res.command && res.command.ack) announce(res.command.ack);
-        return;
-      }
     }
     if (frozen && (mode === 'frozen' || mode === 'review')) {
       if (!q) return;
@@ -2523,16 +2533,10 @@ export function openOptics(deps = {}) {
         const t = commandReading(heardText, info);
         askInput.value = t;
         // Spoken words: a screen command or an Optics command first ("flip", "hologram of this",
-        // "tell me more"), else a question that goes straight out: a Look when live, a follow-up
-        // when frozen.
-        if (screenWords(t.trim(), true)) {
+        // "tell me more"; v8.1: the app's router picks it), else a question that goes straight out:
+        // a Look when live, a follow-up when frozen.
+        if (routed(t.trim(), true)) {
           askInput.value = '';
-          return;
-        }
-        const res = command(t);
-        if (res && res.handled) {
-          askInput.value = '';
-          if (res.command && res.command.ack) announce(res.command.ack);
           return;
         }
         if (frozen && (mode === 'frozen' || mode === 'review')) {
