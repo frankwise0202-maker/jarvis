@@ -20,7 +20,8 @@
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
 import { UNREACHABLE_MESSAGE, DOWN_MESSAGE, REFUSED_MESSAGE } from '../lib/homebase.js';
-import '../styles/chrome-link.css';
+// Its styles: src/styles/chrome-link.css, @imported by src/styles/app.css (no CSS import here: Node tests load
+// settings.js, and this module with it).
 
 export const CHROME_LINK_WORDS = Object.freeze({
   intro: 'Jarvis for Chrome is the Chrome extension that clicks and types for you, in its own “Jarvis” Chrome profile. Once linked, “pull this up in Chrome” opens the page in that window, beside Jarvis, and you can give it tasks by voice. Every step that changes something still asks you first, in the Jarvis window.',
