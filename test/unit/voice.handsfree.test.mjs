@@ -184,7 +184,7 @@ test('A2 (contract (a)): a held session waits 2 minutes after the owner’s last
 test('A6: woken — after an answer one listen with an 8 s window (one try); a follow-up said in it is answered; then silence: Standby', async (t) => {
   const env = await voiceEnv(t, { noSpeechMs: 60000 }); // the recognizer never gives up by itself
   env.say((n) => (n === 1 ? Q : n === 2 ? 'and what about Germany' : null));
-  env.open({ wake: env.wakeHooks(), answer: (q) => (/Germany/.test(q) ? 'The capital of Germany is Berlin.' : ANSWER) });
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: (q) => (/Germany/.test(q) ? 'The capital of Germany is Berlin.' : ANSWER) });
   await until(env, () => env.log.turns.length >= 2, 'the follow-up question');
   assert.equal(env.log.listens[2].noSpeechMs, 8000, 'the follow-up listen has the 8 s window');
   await until(env, () => env.log.listens.length >= 4, 'the second follow-up listen');
@@ -195,6 +195,23 @@ test('A6: woken — after an answer one listen with an 8 s window (one try); a f
   assert.ok(took >= 8000 && took <= 11500, `Standby ${took} ms after the follow-up listen began (8 s, then 2.5 s)`);
   assert.equal(env.log.listens.length, 4, 'one try');
   assert.equal(env.log.turns.length, 2);
+});
+
+test('A6: an iPhone (or the setting off) keeps today’s rule — woken: no 8 s window, two tries; three questions, then hidden while he answers: no brake', async (t) => {
+  const env = await voiceEnv(t, { noSpeechMs: 60000 });
+  env.say(onlyAfter(1, Q));
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => false, answer: ANSWER });
+  await until(env, () => env.log.listens.length >= 3, 'the listen after the answer');
+  assert.equal(env.log.listens[1].noSpeechMs, undefined, 'the offer: no window');
+  assert.equal(env.log.listens[2].noSpeechMs, undefined, 'after the answer: no window');
+  const phone = await voiceEnv(t, { speechMs: 3000 });
+  phone.say((n) => (n < 3 ? 'what is the capital of Spain' : null));
+  phone.open({ listenWhileHidden: () => false, answer: 'Madrid.' });
+  await until(phone, () => phone.log.turns.length >= 3, 'three questions on screen');
+  await until(phone, () => phone.log.spoken.length >= 3, 'the third answer');
+  phone.setHidden(true);
+  await phone.advance(20000);
+  assert.ok(!phone.log.spoken.some((x) => /Hey Jarvis/.test(x.text)), 'no brake said');
 });
 
 test('A6: a session opened by a tap, on screen: today’s Continuous rule (no window, two tries)', async (t) => {
