@@ -10,6 +10,8 @@
 //   notifyPermission(), explainNotifyPermission(state)       // for the Settings UI
 //   const note = notify({ tag, title, body, onClick })       // v8.1: a tagged notification
 //   note.close() / closeNotify(tag)
+//   sessionTitle(state)                         // v8.1: a hands-free session's state in the tab title
+//                                               // while Jarvis is in the background (see below)
 //
 // Reads settings.notifyOnFinish (default true) through the injected getter. Never throws.
 
@@ -227,6 +229,32 @@ export function explainNotifyPermission(state = notifyPermission()) {
   }
 }
 
+const SESSION_WORDS = { listening: 'Listening', thinking: 'Thinking', working: 'Thinking', speaking: 'Speaking' };
+let sessionWord = ''; // 'Listening' | 'Thinking' | 'Speaking' while a hands-free session runs, else ''
+let watchingTitle = false;
+
+/**
+ * v8.1 (SPEC §28.1): the tab title while a hands-free session runs with Jarvis in the background, so the
+ * tab (and the window's title) says honestly what he is doing: Voice Mode's state 'listening' → "Listening
+ * · Jarvis", 'thinking' or 'working' → "Thinking · Jarvis", 'speaking' → "Speaking · Jarvis"; anything else
+ * (null at the end of the session, 'idle') restores the title. Only while the page is hidden: on screen the
+ * title is the app's own. Works with missionFinished's "(n) " marker ("(1) Listening · Jarvis").
+ */
+export function sessionTitle(state) {
+  try {
+    const word = Object.prototype.hasOwnProperty.call(SESSION_WORDS, state) ? SESSION_WORDS[state] : '';
+    if (word && !watchingTitle && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      watchingTitle = true;
+      document.addEventListener('visibilitychange', () => retitle(unseen));
+    }
+    if (word === sessionWord) return;
+    sessionWord = word;
+    retitle(unseen);
+  } catch (err) {
+    warnOnce('sessionTitle failed', err);
+  }
+}
+
 /**
  * Decide whether a finished Jarvis turn deserves a ping and word it. Returns
  * { title, summary } for a turn that ran agents or took at least `minDurationMs`, finished
@@ -339,19 +367,32 @@ function setBadge(count) {
 }
 
 function markTitle(count) {
+  retitle(count);
+}
+
+function unmarkTitle() {
+  retitle(0);
+}
+
+/**
+ * The tab title with our markers: "(n) " for unseen finishes, then the session word while hidden
+ * ("(1) Listening · Jarvis"). With neither, the app's own title is put back (if the app retitled the page
+ * meanwhile, its title stands).
+ */
+function retitle(count) {
   if (typeof document === 'undefined') return;
   const current = document.title;
   // Keep the app's own title as the base even if it changed while we were marking it.
   const base = titleMark && current === titleMark.marked ? titleMark.base : current;
-  const marked = `(${count}) ${base}`;
+  const word = sessionWord && isHidden() ? `${sessionWord} · ` : '';
+  const marked = `${count > 0 ? `(${count}) ` : ''}${word}${base}`;
+  if (marked === base) {
+    if (titleMark && current === titleMark.marked) document.title = base;
+    titleMark = null;
+    return;
+  }
   titleMark = { base, marked };
   document.title = marked;
-}
-
-function unmarkTitle() {
-  if (!titleMark || typeof document === 'undefined') return;
-  if (document.title === titleMark.marked) document.title = titleMark.base;
-  titleMark = null; // if the app retitled the page meanwhile, its title stands
 }
 
 function appBase() {
