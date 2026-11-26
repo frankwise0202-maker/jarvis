@@ -1129,7 +1129,8 @@ Buy and add it to the cart".
   **<https://frankwise0202-maker.github.io/jarvis/jarvis-for-chrome.zip>**, unzip it, open
   `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the
   unzipped `jarvis-for-chrome` folder. The step-by-step guide, with the profile steps, is in
-  [extension/README.md](extension/README.md#install-on-a-mac).
+  [extension/README.md](extension/README.md#install-on-a-mac). The newest version is **1.1.1**, an optional
+  update: 1.1.0 keeps working with Jarvis (how to update: Linking, below).
 - **Safety:** Jarvis asks before every step that changes a page, always asks before paying,
   sending, posting or deleting, never types passwords or card numbers (he hands those to you),
   treats what web pages say as information, never as orders, and shows a glowing border with a

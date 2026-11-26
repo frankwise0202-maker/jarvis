@@ -5311,7 +5311,7 @@ clearing with Universal Clipboard on the owner's devices.
 
 ### 32.2 The extension's side and the voice policy
 
-Jarvis for Chrome 1.1.0 is the other end of the link (§32.1). Files: `extension/src/background/envelope.js` (the
+Jarvis for Chrome (1.1.0 or later) is the other end of the link (§32.1). Files: `extension/src/background/envelope.js` (the
 envelope, WebCrypto, the extension's own copy), `relay.js` (the long poll and the alarm), `link.js` (what Jarvis may
 ask and what goes back), `voice-policy.js` (the table, the 1.5 s rule, the prompt's hash, the spoken question and
 `voice.why`); the side panel's Settings → Voice from Jarvis (`sidepanel/main.js`), `sidepanel/cards.js` (the cards
