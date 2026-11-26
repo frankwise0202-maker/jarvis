@@ -2060,8 +2060,17 @@ export async function startApp(rootEl) {
         return;
       }
       // MAC-R2-2: the owner talks to Jarvis (a tap on the voice button): wait; its close starts the quiet spell again.
+      // MAC-R3-4: only while it listens or answers. Left open and idle, it closes once Jarvis is in the background or
+      // the quiet spell has passed, and Standby comes back.
       if (isVoiceModeOpen()) {
-        R.last = Date.now();
+        const busy = safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
+        if (!busy && (document.hidden || Date.now() - R.last >= quiet)) {
+          cancelSheetReturn();
+          safe(() => voiceApi.close());
+          safe(() => standby.resume()); // before onClose's own step: release() leaves a Standby that is back alone
+          return;
+        }
+        if (busy) R.last = Date.now();
         R.timer = setTimeout(tick, 1000);
         return;
       }

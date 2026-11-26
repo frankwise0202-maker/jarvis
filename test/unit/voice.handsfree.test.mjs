@@ -686,6 +686,21 @@ test('MAC-R3-1: braked, Standby’s kept microphone hears "Hey Jarvis" during th
   assert.ok(!env.log.spoken.some((x) => x.text === BRAKE_LINE), 'no brake line');
 });
 
+// MAC-R3-4: the app asks a tapped Voice Mode whether it listens or answers (isActive()); idle, it may be closed so a
+// woken Standby waiting behind a sheet comes back.
+test('MAC-R3-4: api.isActive(): true while it listens or answers, false once idle, and false after close', async (t) => {
+  const env = await voiceEnv(t);
+  env.say((n) => (n === 0 ? Q : null));
+  const vm = env.open({ answer: ANSWER });
+  await until(env, () => vm.isListening(), 'the listen');
+  assert.equal(vm.isActive(), true, 'listening');
+  await until(env, () => env.log.spoken.some((x) => x.text === ANSWER), 'the answer');
+  await until(env, () => !vm.isActive(), 'idle', 120000);
+  assert.equal(vm.isListening(), false);
+  vm.close();
+  assert.equal(vm.isActive(), false);
+});
+
 // MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
 // preface that never came: the line was never said. Now it is asked for only when an answer says it.
 test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {

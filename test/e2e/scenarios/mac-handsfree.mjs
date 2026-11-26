@@ -1253,6 +1253,33 @@ export default [
       });
     },
   },
+  {
+    // Ported from the verify's r3-mac-woken-sheet-tap-left-open.
+    name: 'standby-woken-sheet-tap-left-open',
+    title: 'MAC-R3-4: woken by claps, "open my history"; the owner taps the voice button, asks nothing, leaves the idle Voice Mode open and switches away (Jarvis hidden): it closes and Standby comes back, listening',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t, { devVoice: { sheetReturnMs: 6000 } });
+      await enterStandby(t);
+      await queue(t.page, '', 'Open my history.');
+      await wakeByClaps(t);
+      await waitSaid(t, /history is open/i, { timeout: 30000 });
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+      await queue(t.page, '', '');
+      await (await t.visible('voice-open')).click();
+      await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+      await t.waitFor(async () => (await voiceState(t.page)) === 'idle', { timeout: 30000, message: 'the tapped Voice Mode idle' });
+      await setHidden(t.page, true); // the owner walks away, Voice Mode left open
+      await t.waitFor(async () => (await standbyState(t.page))?.listening === 'live', {
+        timeout: 15000,
+        message: async () => `Standby back and listening (${JSON.stringify(await standbyState(t.page))}; Voice Mode open ${(await t.page.locator(tid('voice-mode')).count()) > 0})`,
+      });
+      t.assert((await t.page.locator(tid('voice-mode')).count()) === 0, 'the idle Voice Mode closed');
+    },
+  },
+  {
     name: 'mac-handsfree-owner-10x',
     title: 'The owner’s setup, ten rounds: setup 1 (the speakerphone speaks, the Mac’s microphone listens), the Test passed, George, Jarvis hidden the whole time; wake by claps or "Hey Jarvis", ask, answer, barge-in by "Hey Jarvis", claps or none, follow-up, back to Standby: never deaf, never stuck, never two listens at once, never talking over himself',
     device: 'mac',
