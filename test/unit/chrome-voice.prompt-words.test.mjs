@@ -200,7 +200,11 @@ test('the answer layer (chrome.prompt): the prompt\'s words, a bare "cancel" or 
   assert.deepEqual(pick1('approve'), { free: true, undo: false, check: false, camera: false, do: 'chrome-answer', answer: 'approve' }, 'never from another reading (undo: false)');
   assert.equal(pick1('cancel Chrome').answer, 'deny');
   assert.equal(pick1('stop Chrome').answer, 'stop');
-  for (const w of ['yes', 'okay', 'continue', 'go ahead', 'sure', 'stop', 'tell me a joke']) assert.equal(pick1(w), null, w);
+  for (const w of ['stop', 'tell me a joke', 'approve it now please do']) assert.equal(pick1(w), null, w);
+  // A bare yes never answers it: asked last, with nothing else open, Jarvis says what to say.
+  for (const w of ['yes', 'okay', 'continue', 'go ahead', 'sure']) assert.equal(pick1(w).do, 'chrome-hint', w);
+  assert.equal(pick1('continue', st({ tour: { active: true } })), null, 'a tour: "continue" is the tour\'s');
+  assert.equal(pick1('yes', st({ questions: [{ id: 'q', askedAt: 1000 }] })), null, 'another question open: not the prompt\'s');
   assert.deepEqual(pick1('cancel'), { free: true, undo: false, check: false, camera: false, do: 'chrome-answer', answer: 'deny', bare: true });
   // A question asked after the prompt takes the bare words; one asked before doesn't.
   assert.equal(pick1('cancel', st({ questions: [{ id: 'research-offer', askedAt: 4000 }] })), null);

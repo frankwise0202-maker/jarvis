@@ -345,7 +345,7 @@ export function matchTaskAnswer(text, state = {}) {
   const p = parse(text);
   if (!p) return null;
   if (/^(?:no|nope|nah|nothing|none|cancel|stop|never ?mind|forget it|not now|nothing for now|no thanks|no thank you|leave it)$/.test(p.s)) return null;
-  if (namesJarvisThing(p.all) || (QUESTION.test(p.s) && !PAGE_WORDS.test(p.s))) return null;
+  if (ANSWER_WORDS.test(p.s) || namesJarvisThing(p.all) || (QUESTION.test(p.s) && !PAGE_WORDS.test(p.s))) return null;
   const holo = state && state.hologram && typeof state.hologram === 'object' ? state.hologram : null;
   if (holo && holo.open && namesPart(p.all, holo.parts)) return null;
   const words = taskWords(p.words);

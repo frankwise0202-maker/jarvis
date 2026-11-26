@@ -46,6 +46,8 @@ export const CHROME_VOICE = {
     { words: 'cancel Chrome', state: 'CV-buy', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
     { words: 'stop Chrome', state: 'CV-budget', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (which closes the question)' },
     { words: 'cancel Chrome', state: 'CV-budget', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
+    { words: 'stop Chrome', state: 'CV-prompt-tour', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (the tour is the bare "stop"\'s)' },
+    { words: 'cancel Chrome', state: 'CV-prompt-tour', winner: 'chrome.prompt', why: 'Chrome asked: its no, at once' },
     { words: 'stop Chrome', state: 'CV-check', winner: 'chrome.prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
     { words: 'cancel Chrome', state: 'CV-check', winner: 'chrome.prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
   ],

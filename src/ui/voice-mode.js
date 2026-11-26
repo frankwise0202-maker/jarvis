@@ -403,7 +403,7 @@ function createVoiceMode(opts) {
   //   askedAt    when the open prompt (askedKey) was last said; saidAt when that ended in full (the 30 s)
   //   greeting   { id, line }: a prompt the wake greeting says ("Chrome is waiting for you: …")
   //   lastDone   { text, at }: the last line spoken to the end
-  const C = { check: null, askedAt: 0, askedKey: 0, saidAt: 0, saidKey: 0, greeting: null, lastDone: null };
+  const C = { check: null, askedAt: 0, askedKey: 0, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '' };
   // holdCapMs (v8.1, tests only: 'jarvis.dev.voice' through app.js): a shorter hold, never a longer one.
   const hold = createVoiceHold(Number(holdCapMs) > 0 ? { capMs: Math.min(HOLD_CAP_MS, Number(holdCapMs)) } : {});
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
@@ -3389,8 +3389,8 @@ function createVoiceMode(opts) {
   /** api.prompt(): the standing prompt, one at a time (see the api). */
   function openPrompt(spec) {
     if (S.closed || !spec || typeof spec !== 'object') return { update: () => false, close: () => false };
-    // v8.1 chrome-voice: a prompt already said in the wake greeting ("Chrome is waiting for you: …").
-    C.greeting = typeof spec.greeting === 'string' && spec.greeting ? { id: spec.id, line: spec.greeting } : null;
+    // v8.1 chrome-voice: what to say to it (a bare "yes" never answers it: Jarvis says this instead).
+    C.hint = typeof spec.hint === 'string' ? spec.hint.slice(0, 200) : '';
     return prompts.open(spec);
   }
 
@@ -3576,6 +3576,13 @@ function createVoiceMode(opts) {
     if (a.do === 'chrome-nothing-asked') {
       showCaption('quote', `“${hit.reading}”`);
       speakAck(NOTHING_ASKED_LINE);
+      return true;
+    }
+    if (a.do === 'chrome-hint') {
+      // A bare "yes" (or "okay", "continue") never answers Chrome: Jarvis says what does.
+      if (!prompts.current() || !C.hint) return false;
+      showCaption('quote', `“${hit.reading}”`);
+      speakAck(C.hint);
       return true;
     }
     const p = prompts.current();

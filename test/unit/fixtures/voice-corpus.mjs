@@ -107,10 +107,11 @@ export const CHROME_VOICE = {
     ['approve', 'CV-buy', 'chrome.prompt'],
     ['spend more in Chrome', 'CV-budget', 'chrome.prompt'],
     ['approve', 'CV-prompt-chat', 'chrome.prompt'],
-    // bare yes words never answer it
-    ['yes', 'CV-prompt', null],
-    ['continue', 'CV-prompt', null],
-    ['go ahead', 'CV-prompt', null],
+    // bare yes words never answer it: asked last with nothing else open, Jarvis says what to say
+    ['yes', 'CV-prompt', 'chrome.prompt:chrome-hint'],
+    ['continue', 'CV-prompt', 'chrome.prompt:chrome-hint'],
+    ['go ahead', 'CV-prompt', 'chrome.prompt:chrome-hint'],
+    ['continue', 'CV-prompt-tour', null],
     // nothing asked: a yes that names Chrome is still Chrome's
     ['spend more in Chrome', 'V0', 'chrome.prompt'],
     ['allow once in Chrome', 'V0', 'chrome.prompt'],
@@ -145,6 +146,7 @@ export const CHROME_VOICE = {
     'CV-buy': { surface: 'voice', prompt: { ...CV_PROMPT, id: 'chrome:p2', category: 'purchase', consequential: true, voice: { allowed: false, why: 'That’s a purchase.' } } },
     'CV-budget': { surface: 'voice', prompt: { ...CV_PROMPT, id: 'chrome:p3', kind: 'budget', choices: [{ id: 'continue', label: 'Continue' }, { id: 'stop', label: 'Stop' }] } },
     'CV-check': { surface: 'voice', chromeCheck: { kind: 'task' } },
+    'CV-prompt-tour': { surface: 'voice', prompt: CV_PROMPT, tour: { active: true, atChoice: false, choices: [], stepId: 's2' } },
   },
 };
 

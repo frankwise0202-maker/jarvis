@@ -819,6 +819,7 @@ export function createChromeVoice(deps = {}) {
             adapter.prompt({
               id: `chrome:${entry.prompt.promptId}`,
               say: line.say,
+              hint: hintLine(entry.prompt),
               answers: channelAnswers(entry),
               onAnswer: (answerId, info) => answerFromVoice(entry, answerId, info),
               onClosed: () => {
@@ -964,6 +965,10 @@ export function createChromeVoice(deps = {}) {
         return typedAnswer(a.answer);
       case 'chrome-nothing-asked':
         return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
+      case 'chrome-hint': {
+        const entry = [...S.prompts.values()].pop();
+        return entry ? { ack: hintLine(entry.prompt), show: hintLine(entry.prompt) } : null;
+      }
       default:
         return null; // 'chrome-check' is Voice Mode's alone
     }

@@ -242,6 +242,8 @@ const answerAction = (a) => ({ free: true, undo: false, check: false, camera: fa
  *     (Other words aren't its: Voice Mode withdraws the check and routes them as usual.)
  *   state.prompt (the open Chrome prompt, with its answers, or the extension's fields): its reserved
  *     words; a bare "cancel" or "no" when it was asked last. -> { do: 'chrome-answer', answer, bare? }
+ *     A bare "yes", "okay", "continue" … never answers it; asked last, with no tour and no other
+ *     question open, Jarvis says what to say instead. -> { do: 'chrome-hint' }
  *   no prompt: a yes that names Chrome ("spend more in Chrome") -> { do: 'chrome-nothing-asked' }
  */
 export function matchChromeAnswer(text, state = {}) {
@@ -259,7 +261,11 @@ export function matchChromeAnswer(text, state = {}) {
   if (p) {
     const answers = Array.isArray(p.answers) && p.answers.length ? p.answers : promptAnswers(p);
     const said = normalizeAnswer(text);
-    if (!said || NEVER_ANSWERS.includes(said)) return null;
+    if (!said) return null;
+    if (NEVER_ANSWERS.includes(said)) {
+      const others = (Array.isArray(st.questions) && st.questions.length) || (st.tour && st.tour.active);
+      return !others && askedLast(st) ? answerAction({ do: 'chrome-hint' }) : null;
+    }
     const hit = answers.find((a) => a && Array.isArray(a.words) && a.words.some((w) => normalizeAnswer(w) === said));
     if (hit) return answerAction({ do: 'chrome-answer', answer: hit.id });
     if (isBareNo(text) && askedLast(st)) {
