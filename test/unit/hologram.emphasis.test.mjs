@@ -22,6 +22,9 @@ import { accessAngles, anglesOfDir, shellIdsOf } from '../../src/ui/hologram/hol
 import { FILL_FS, LINE_FS, PULSE_AMPLITUDE, PULSE_RATE } from '../../src/ui/hologram/shaders.js';
 
 const DEG = 180 / Math.PI;
+// the hologram's own styles: the renderer's box fills its host, labels are placed boxes (without
+// them its height would follow the unstyled labels, and every resize refits the camera)
+const CSS = ['tokens.css', 'base.css', 'hologram.css'].map((f) => readFileSync(path.join(ROOT, 'src', 'styles', f), 'utf8')).join('\n');
 const SLOW = { timeout: 120000 }; // a browser test that hangs fails instead of holding the browser
 const TARGET_KEYS = ['explode', 'flyTo', 'focus', 'getState', 'holdAutoRotate', 'parts', 'select', 'setEmphasis', 'setLabels', 'settled'];
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -42,6 +45,7 @@ after(async () => {
  */
 async function open({ spec = LAPTOP, reduced = false, options = {}, init } = {}) {
   const page = await harness.newPage({ init, contextOptions: { reducedMotion: reduced ? 'reduce' : 'no-preference' } });
+  await page.addStyleTag({ content: CSS });
   await page.clock.install();
   await page.clock.pauseAt(Date.now() + 5000);
   await page.evaluate(
