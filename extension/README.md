@@ -282,7 +282,8 @@ purchase."*) and that it needs a click in the Jarvis window.
   one step, on that one element, once (see [Approving steps](#approving-steps)). The step list
   says **Approved by voice from Jarvis**.
 - When no side panel is open, a question that needs a click opens a small Jarvis for Chrome
-  window with the same card, and **Stop**. It closes by itself once nothing waits.
+  window with the same card, and **Stop**. Its answers take a click only after a second, so a
+  click meant for another window can't answer it; it closes by itself once nothing waits.
 - If Jarvis for Chrome can't reach your home base for 20 seconds while a task from Jarvis runs,
   the task pauses itself (as **Take over** does), so a *"stop"* said to Jarvis can't be lost on the
   way; press **Continue** in the side panel to go on. **⌘⇧.** and the side panel's **Stop** always

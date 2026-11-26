@@ -13,6 +13,10 @@ import { displayText } from '../shared/util.js';
 const app = document.getElementById('app');
 const state = { tasks: [], cards: [], port: null, idleSince: 0 };
 const CLOSE_AFTER_MS = 1500;
+// The window appears in front of whatever the owner was doing: a click meant for that spot must
+// not answer. A new card's answers take clicks only after this long (Stop always does).
+const ARM_MS = 1000;
+let renderGen = 0;
 
 function connect() {
   const port = chrome.runtime.connect({ name: APPROVE_PORT_NAME });
@@ -73,6 +77,12 @@ function render() {
   document.title = waiting ? 'Jarvis for Chrome needs you' : 'Jarvis for Chrome';
   // (No button takes the focus: the window appears in front while the owner may be typing
   // elsewhere, and a Space or Enter meant for that must not press Approve. A click answers.)
+  const gen = ++renderGen;
+  const answers = () => app.querySelectorAll('.prompt__choices button');
+  for (const b of answers()) b.disabled = true;
+  setTimeout(() => {
+    if (gen === renderGen) for (const b of answers()) b.disabled = false;
+  }, ARM_MS);
 }
 
 // Nothing has waited for a moment: the window goes (the service worker opens it again if needed).
