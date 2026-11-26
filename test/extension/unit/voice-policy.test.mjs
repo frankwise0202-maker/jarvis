@@ -225,6 +225,18 @@ test('quotes of page text: at most about 40 characters, never one with an answer
   }
 });
 
+test('CHROME-LINK-R2-6: the answer words’ nearest sound-alikes are never quoted either; everyday labels still are', () => {
+  // Ported from the second review's quote probes (review2/quote-probe.mjs, chrome-link-v-probes/v-quote.mjs): each of
+  // these was still quoted on 00bcf99.
+  for (const label of ['Uh-prove', 'Uprove', 'Upprove', 'Uhh prove', 'Uprov', 'Apruve', 'Appruv', 'Spend mor in Chrome', 'Spendmor', 'Spend moar', 'More step in Chrome', 'Mor steps', 'Moar steps', 'More stepz', 'Mor step', 'Cansul', 'Kansul', 'Yeh', 'Yea', 'Yeah', 'Yep', 'Yup', 'Jarvas', 'Jarviz']) {
+    assert.equal(quoteForVoice(label), '', label);
+  }
+  // A short yes-word only as a word: the labels that hold its letters are still quoted.
+  for (const label of ['Add to cart', 'Place order', 'Staples', 'Continue', 'Submit', 'Sign in', 'Next', 'Buy now', 'Checkout', 'Proceed to checkout', 'Yearly plan', 'Year in review', 'Eye drops', 'Yuppie Coffee', 'Group overview', 'Morning steps', 'Moore Road', 'Consultation', 'Boat tours', 'Sizes']) {
+    assert.equal(quoteForVoice(label), label, label);
+  }
+});
+
 test('the site said aloud; a name holding an answer word is left on the card', () => {
   assert.equal(spokenSite('bestbuy.com'), 'bestbuy.com');
   assert.match(spokenSite('say-approve.com'), /on the card/);
