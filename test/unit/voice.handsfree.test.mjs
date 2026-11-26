@@ -826,6 +826,47 @@ test('MAC-R4-2: api.isActive() stays true while Chrome’s question is open (Con
   }
 });
 
+// MAC-R5-1: a question left unanswered on its card (Jarvis for Chrome 1.1.0's prompts never expire) keeps Voice Mode busy
+// only for its voice window, 30 s after it was said in full: then the sheet return may close an idle tapped Voice Mode.
+test('MAC-R5-1: api.isActive() is false once Chrome’s question has waited 30 s unanswered (Continuous off or on)', async (t) => {
+  for (const continuous of [false, true]) {
+    const env = await voiceEnv(t);
+    env.voice('natural');
+    env.say(() => null);
+    const vm = env.open({ settings: { voiceContinuous: continuous } });
+    await until(env, () => !vm.isActive(), 'idle after the first listen', 60000);
+    vm.prompt({ id: 'chrome:p2', say: 'Chrome asks: add the monitor to the cart?', answers: [{ id: 'deny', words: ['no', 'cancel'], negative: true }], onAnswer: () => {} });
+    await until(env, () => env.log.spoken.some((x) => x.text.startsWith('Chrome asks:') && x.done), 'the question said in full');
+    await env.advance(20000);
+    assert.equal(vm.isActive(), true, `continuous ${continuous}: within the window`);
+    await env.advance(12000);
+    await until(env, () => !vm.isActive(), 'idle after the window', 30000);
+    for (const ms of [60000, 300000]) {
+      await env.advance(ms);
+      assert.equal(vm.isActive(), false, `continuous ${continuous}: still idle ${ms} ms later, the question on its card`);
+    }
+  }
+});
+
+// MAC-R5-2: over the Mac's own voice (outside the echo reference), Jarvis's own brake line heard just past the self-mask
+// must not lift the brake.
+test('MAC-R5-2: braked, the Mac’s own voice: "Hey Jarvis" heard during the brake line’s last word leaves the count braked', async (t) => {
+  for (const ms of [1100, 1300, 1500, 1700, 1900]) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    env.say((n) => (n === 1 || n === 2 ? Q : null));
+    let carried = { asked: 3, braked: true };
+    const hiddenCount = { get: () => carried, set: (c) => (carried = { ...c }) };
+    const vm = env.open({ wake: env.wakeHooks({ trigger: 'clap' }), listenWhileHidden: () => true, answer: ANSWER, extra: { hiddenCount } });
+    for (let i = 0; i < 12000 && !env.log.spoken.some((x) => x.text === BRAKE_LINE); i++) await env.advance(10); // its start, to 10 ms
+    assert.ok(env.log.spoken.some((x) => x.text === BRAKE_LINE), 'the brake line');
+    await env.advance(ms);
+    vm.bargeIn('word');
+    await until(env, () => env.log.closes.length >= 1, 'the session to end', 120000);
+    assert.deepEqual({ asked: carried.asked >= 3, braked: carried.braked }, { asked: true, braked: true }, `${ms} ms into the brake line: still braked (${JSON.stringify(carried)})`);
+  }
+});
+
 // MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
 // preface that never came: the line was never said. Now it is asked for only when an answer says it.
 test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {
