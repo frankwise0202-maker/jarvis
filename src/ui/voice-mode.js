@@ -2971,10 +2971,11 @@ function createVoiceMode(opts) {
 
   /**
    * A command registered by a src/ui/commands module: its run() acts, and Jarvis says its line. One
-   * whose action has `check` goes through the 2-second check first, which then runs it (startReview).
+   * whose action has `check` (dear, or carrying the owner's words out) always goes through the
+   * 2-second check first, which then runs it (startReview); only a send from the check skips it.
    */
   function actRouted(hit, opts = {}) {
-    if (hit.action && hit.action.check && !(opts.reviewed || opts.sendNow || !reviewOn())) {
+    if (hit.action && hit.action.check && !opts.reviewed) {
       startReview(hit.reading, { action: hit });
       return true;
     }
