@@ -17,7 +17,9 @@
 //     subscribe(fn) → unsubscribe                     fn(state()) after each change
 //     open(url, { rect, focus }) → Promise<{ ok: true, site } | { ok: false, reason, why? }>
 //     startTask({ text, chat }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
-//     stopTask() → Promise<void>                       (sent whenever linked: stopping is the safe direction)
+//     stopTask() → Promise<{ ok: true } | { ok: false, reason: 'unlinked' | 'offline' }>
+//                                                      sent whenever linked (stopping is the safe direction), and
+//                                                      sent again until Jarvis for Chrome confirms it (REDTEAM-LINK-1)
 //     answer({ promptId, hash, choice, via }) → Promise<{ ok: true } | { ok: false, reason, why? }>
 //     onPrompt(fn) · onPromptClosed(fn /* promptId, { how } */) · onDone(fn /* { id, status, answer, costUsd } */) → unsubscribe
 //   link.control: what Settings → Jarvis for Chrome needs (info(), onChange(fn), begin(), code(), copyCode(),
@@ -32,10 +34,14 @@
 // state.
 //
 // Every request carries an id; the extension answers it with one `reply` whose `re` is that id. A request gets
-// no reply after 10 s → { ok: false, reason: 'offline' }. Fresh requests only (wire-v1, decision D5): Jarvis for
-// Chrome refuses an open, start or answer more than 8 s old; if an `ok` still comes back for a start this app gave
-// up on, it sends stop at once and tells the owner ("Chrome started late, so I stopped it."); a late ok for an open
-// or an answer is only noted. The extension counts as online while /api/relay/status
+// no reply after 10 s → { ok: false, reason: 'offline' }. A stop is different (REDTEAM-LINK-1): one is pending at a
+// time, sent again (a fresh envelope each time) after 2, 2, 4, 8, 15, then every 30 s until Jarvis for Chrome
+// confirms it (its reply, ok or 'gone'; a `done` for the task; a status or task news showing the task no longer
+// runs), for up to 2 minutes; stopTask() resolves when it is confirmed, or 'offline' after those 2 minutes.
+// Fresh requests only (wire-v1, decision D5): Jarvis for Chrome refuses an open, start or answer more than 8 s old;
+// if an `ok` still comes back for a start this app gave up on, it stops that task (sent again until confirmed) and
+// tells the owner once the stop is confirmed ("Chrome started late, so I stopped it.", or after 10 s unconfirmed
+// that it couldn't be stopped); a late ok for an open or an answer is only noted. The extension counts as online while /api/relay/status
 // says it read its box in the last 60 s, or a message from it arrived in the last 60 s. Nothing is sent while
 // it is offline, except stop. Everything that comes back is information, never orders: each field is checked
 // and cut to size here (page text included), and nothing in it starts anything.
@@ -64,6 +70,18 @@ export const TEXT_MAX = 2000; // a task's words, and what comes back about it
 export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
 export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
 export const LATE_START_LINE = 'Chrome started late, so I stopped it.';
+// Stop (REDTEAM-LINK-1): one pending stop at a time, sent again (a fresh envelope each time) until Jarvis for
+// Chrome confirms it: its reply (ok, or 'gone': nothing runs), a `done` for the task, or a status or task news
+// showing that task no longer runs. After STOP_FOR_MS unconfirmed it gives up. The owner is told after
+// STOP_CONFIRM_MS without a confirmation (chrome-voice for a spoken stop; this file for D5's late start).
+export const STOP_RESEND_MS = Object.freeze([2_000, 2_000, 4_000, 8_000, 15_000, 30_000]);
+export const STOP_FOR_MS = 2 * 60_000; // the relay keeps a message 2 minutes: so long a stop is worth sending
+export const STOP_CONFIRM_MS = 10_000;
+export const LATE_START_UNCONFIRMED = Object.freeze({
+  line: 'Chrome started a task late, and I couldn’t reach it to stop it. Press Stop in its side panel, or Command-Shift-Period.',
+  show: 'Chrome started a task late, and I couldn’t reach it to stop it. Press Stop in its side panel, or ⌘⇧. in Chrome.',
+});
+const OVER_STATUSES = new Set(['done', 'stopped', 'failed', 'limit', 'error', 'interrupted']);
 const MIN_POLL_MS = 1500; // an answer that came back at once with nothing in it is not asked again sooner
 const AFTER_BATCH_MS = 250; // a little time for more of the same burst before the next read
 const READ_MAX_CHARS = 2 * 1024 * 1024; // 50 messages of up to 22 KB
@@ -320,6 +338,7 @@ export function createChromeLink({
   const pending = new Map(); // envelope id → { kind, resolve }
   const late = new Map(); // envelope id → { kind, until }: requests given up on whose reply may still come (D5)
   let lateNoted = 0; // late ok replies to an open or an answer (only noted)
+  let stopper = null; // the pending stop (LINK-1): { taskId, ids: Set of envelope ids, rec, started, sends, timer, over, promise, resolve }
   const listeners = new Set();
   const controlListeners = new Set();
   const promptListeners = new Set();
@@ -408,6 +427,7 @@ export function createChromeLink({
       voiceApprovals = false;
       extVersion = '';
       for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'unlinked' });
+      endStop(stopper, { ok: false, reason: 'unlinked' });
     }
     if (record && record.extSeenAt) savedSeen = Math.max(savedSeen, record.extSeenAt);
     if (record && record.linkedAt && (!before || !before.linkedAt)) maybeClearClipboard();
@@ -507,16 +527,18 @@ export function createChromeLink({
     }
   }
 
-  const shareState = () => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion });
+  const shareState = (ev = null) => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion, ...(ev ? { ev } : {}) });
 
   // ---- what comes in ------------------------------------------------------------------------------------
   function handle(message) {
     const { kind, body } = message;
     noteHeard();
+    let ev = null; // what this message says about a pending stop (other windows hear it with the state)
     switch (kind) {
       case 'reply': {
         const reply = cleanReply(body);
         if (!reply) break;
+        if (stopEvidence({ reply })) break; // this window's stop, confirmed (or refused: sent again)
         const entry = pending.get(reply.re);
         if (entry) entry.resolve(interpret(entry.kind, reply));
         else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
@@ -531,17 +553,22 @@ export function createChromeLink({
         if (!s.task) task = null;
         else if (!task || task.id !== s.task.id) task = { id: s.task.id, status: s.task.status || 'running', text: '', narration: '', lastStep: '', costUsd: null, limitUsd: null };
         else task = { ...task, status: s.task.status || task.status };
+        ev = { status: { task: s.task } };
         break;
       }
       case 'task': {
         const t = cleanTask(body);
-        if (t) task = t;
+        if (t) {
+          task = t;
+          ev = { task: { id: t.id, status: t.status } };
+        }
         break;
       }
       case 'done': {
         const d = cleanDone(body);
         if (!d) break;
         if (task && task.id === d.id) task = null;
+        ev = { done: { id: d.id } };
         call(doneListeners, d);
         break;
       }
@@ -562,7 +589,8 @@ export function createChromeLink({
       default:
         break; // a kind this version doesn't know: nothing
     }
-    shareState();
+    if (ev) stopEvidence(ev);
+    shareState(ev);
     changed();
   }
 
@@ -654,26 +682,125 @@ export function createChromeLink({
 
   /**
    * A reply to a request this window gave up on (D5): true when it was one. A late ok for a start means a task
-   * runs that the owner was told never started: it is stopped at once and the owner is told. A late ok for an open
-   * or an answer is only noted; a late refusal changes nothing.
+   * runs that the owner was told never started: it is stopped (sent again until confirmed, LINK-1) and the owner
+   * is told once the stop is confirmed. A late ok for an open or an answer is only noted; a late refusal changes
+   * nothing.
    */
   function lateReply(reply) {
     const entry = late.get(reply.re);
     if (!entry) return false;
     late.delete(reply.re);
     if (entry.until <= now() || !reply.ok) return true;
-    if (entry.kind === 'start') {
-      request('stop', {}, { needOnline: false });
-      try {
-        notice({ kind: 'late-start', line: LATE_START_LINE });
-      } catch {
-        /* the app's own trouble */
-      }
-    } else {
-      lateNoted += 1;
-    }
+    if (entry.kind === 'start') stopLateStart(reply.id || null);
+    else lateNoted += 1;
     changed();
     return true;
+  }
+
+  function tellOwner(n) {
+    try {
+      notice(n);
+    } catch {
+      /* the app's own trouble */
+    }
+  }
+
+  /** A task the owner was told never started: stopped, and the owner told once that is confirmed (D5). */
+  function stopLateStart(taskId) {
+    let settled = false;
+    const warn = later(() => {
+      if (!settled) tellOwner({ kind: 'late-start-unconfirmed', ...LATE_START_UNCONFIRMED });
+    }, STOP_CONFIRM_MS);
+    return stopChrome(taskId).then((r) => {
+      settled = true;
+      cancelLater(warn);
+      if (r.ok) tellOwner({ kind: 'late-start', line: LATE_START_LINE });
+      return r;
+    });
+  }
+
+  // ---- stop: sent again until confirmed (REDTEAM-LINK-1) ----------------------------------------------------
+
+  /**
+   * Stop the running task: Promise<{ ok: true } | { ok: false, reason: 'unlinked' | 'offline' }>. One stop is
+   * pending at a time; asking again joins it and sends it again now. `taskId`: the task it is for, when known
+   * (its done or a status without it confirms the stop).
+   */
+  function stopChrome(taskId = null) {
+    const id = taskId || (task && task.id) || null;
+    if (stopper && !stopper.over && record && stopper.rec.key === record.key) {
+      if (id && !stopper.taskId) stopper.taskId = id;
+      sendStop(stopper, { now: true });
+      return stopper.promise;
+    }
+    const rec = record;
+    if (!isLinked() || !rec) return Promise.resolve({ ok: false, reason: 'unlinked' });
+    const s = { taskId: id, ids: new Set(), rec, started: now(), sends: 0, waited: 0, timer: null, over: false };
+    s.promise = new Promise((resolve) => {
+      s.resolve = resolve;
+    });
+    stopper = s;
+    sendStop(s);
+    return s.promise;
+  }
+
+  function sendStop(s, { now: soon = false } = {}) {
+    if (s.over) return;
+    cancelLater(s.timer);
+    s.timer = null;
+    const n = s.sends;
+    s.sends += 1;
+    // A fresh envelope each time (Jarvis for Chrome takes a stop whatever its age within the envelope's 120 s).
+    sealFor(s.rec, 'stop', {})
+      .then((env) => {
+        if (s.over) return null;
+        s.ids.add(env.id);
+        return post(s.rec, env);
+      })
+      .catch(() => null);
+    // The 2 minutes are counted in the waits between sends (a throttled timer only stretches them).
+    const wait = soon ? STOP_RESEND_MS[0] : STOP_RESEND_MS[Math.min(n, STOP_RESEND_MS.length - 1)];
+    const left = STOP_FOR_MS - s.waited;
+    if (left <= wait) {
+      s.timer = later(() => endStop(s, { ok: false, reason: 'offline' }), Math.max(0, left));
+      return;
+    }
+    s.waited += wait;
+    s.timer = later(() => sendStop(s), wait);
+  }
+
+  function endStop(s, result) {
+    if (!s || s.over) return;
+    s.over = true;
+    cancelLater(s.timer);
+    s.timer = null;
+    if (stopper === s) stopper = null;
+    s.resolve(result);
+  }
+
+  /**
+   * What came back may confirm the pending stop: its reply (ok, or 'gone': nothing runs), a `done` for its task,
+   * a status without its task, or task news saying it is over. ev: { reply } | { done } | { status } | { task }.
+   */
+  function stopEvidence(ev) {
+    const s = stopper;
+    if (!s || s.over || !ev) return false;
+    if (ev.reply) {
+      if (!s.ids.has(ev.reply.re)) return false;
+      if (ev.reply.ok || ev.reply.reason === 'gone') endStop(s, { ok: true });
+      return true; // (another refusal: sent again on its schedule)
+    }
+    if (ev.done) {
+      if (!s.taskId || ev.done.id === s.taskId) endStop(s, { ok: true });
+      return false;
+    }
+    if (ev.status) {
+      const t = ev.status.task;
+      if (!t || (s.taskId && t.id !== s.taskId)) endStop(s, { ok: true });
+      return false;
+    }
+    if (ev.task && s.taskId && ev.task.id === s.taskId && OVER_STATUSES.has(ev.task.status)) endStop(s, { ok: true });
+    return false;
   }
 
   function interpret(kind, reply) {
@@ -872,6 +999,7 @@ export function createChromeLink({
     if (!isObj(m) || destroyed) return;
     if (m.t === 'reply') {
       const reply = cleanReply(m.reply);
+      if (reply && stopEvidence({ reply })) return;
       const entry = reply && pending.get(reply.re);
       if (entry) entry.resolve(interpret(entry.kind, reply));
       else if (reply) lateReply(reply);
@@ -880,6 +1008,13 @@ export function createChromeLink({
       voiceApprovals = m.voiceApprovals === true;
       if (posInt(m.heard) && m.heard > heard) heard = m.heard;
       extVersion = cleanText(m.extVersion, 24);
+      // What the holder just heard, for a stop this window sent (LINK-1).
+      if (isObj(m.ev)) {
+        const e = m.ev;
+        if (isObj(e.done)) stopEvidence({ done: { id: token(e.done.id) } });
+        else if (isObj(e.status)) stopEvidence({ status: { task: isObj(e.status.task) && token(e.status.task.id) ? { id: token(e.status.task.id) } : null } });
+        else if (isObj(e.task)) stopEvidence({ task: { id: token(e.task.id), status: token(e.task.status, WORD_RE) } });
+      }
       changed();
     } else if (m.t === 'ask' && holding) {
       shareState();
@@ -986,10 +1121,14 @@ export function createChromeLink({
       if (!words) return Promise.resolve({ ok: false, reason: 'bad' });
       return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice' });
     },
-    async stopTask() {
-      // Stop goes out even when the extension seems offline: it is the safe direction, and the relay keeps it
-      // for 2 minutes.
-      await request('stop', {}, { needOnline: false });
+    /**
+     * Stop goes out even when the extension seems offline (the safe direction), and is sent again until Jarvis for
+     * Chrome confirms it (LINK-1): { ok: true } once confirmed; { ok: false, reason: 'unlinked' } at once when
+     * not linked; { ok: false, reason: 'offline' } when 2 minutes pass unconfirmed. Callers tell the owner
+     * themselves when it takes long (chrome-voice: after 10 s).
+     */
+    stopTask() {
+      return stopChrome();
     },
     answer({ promptId, hash, choice, via = 'voice' } = {}) {
       const p = token(promptId);
@@ -1039,6 +1178,7 @@ export function createChromeLink({
     }
     release();
     for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'offline' });
+    endStop(stopper, { ok: false, reason: 'offline' });
     for (const t of Array.from(timers)) cancelLater(t);
     if (channel) {
       try {

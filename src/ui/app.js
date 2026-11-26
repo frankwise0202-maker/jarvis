@@ -438,10 +438,11 @@ export async function startApp(rootEl) {
   function chromeLinkNotice(n) {
     const line = n && typeof n.line === 'string' ? n.line : '';
     if (!line) return;
-    safe(() => toast(line, { level: 'warn', timeout: 8000 }));
+    const shown = typeof n.show === 'string' && n.show ? n.show : line; // (`line` is said; `show` may hold ⌘⇧.)
+    safe(() => toast(shown, { level: 'warn', timeout: 8000 }));
     const voice = safe(() => (voiceApi && isVoiceModeOpen() ? voiceApi : null), null);
     if (voice && typeof voice.say === 'function') safe(() => voice.say(line));
-    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: line }));
+    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: shown }));
   }
   // ---- chrome-relay ◂
   const morningCard = brain

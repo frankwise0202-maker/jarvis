@@ -4997,15 +4997,24 @@ message for 120 s and the relay holds it for 2 minutes, so a request could be pi
 30-s alarm). Jarvis for Chrome answers an `open`, `start` or `answer` whose `at` is more than 8 s old with `reply
 { ok: false, reason: 'gone', why: 'too late' }` and does nothing else (`stop`, `ping`, `hello` and `unlinked` are
 always taken). The app remembers for 2 minutes each `start`, `open` and `answer` it gave up on; if an `ok` still comes
-back for a `start`, it sends `stop` at once and tells the owner "Chrome started late, so I stopped it." (said in
-Voice Mode when it is open, a toast, and a notification while Jarvis is hidden); a late `ok` for an `open` or an
-`answer` is only noted, and a late refusal changes nothing. The window that gave up is the one that tells (the
-holder passes it the reply).
+back for a `start`, it stops that task at once (sent again until confirmed, §32.1.5) and, once the stop is confirmed,
+tells the owner "Chrome started late, so I stopped it." (said in Voice Mode when it is open, a toast, and a
+notification while Jarvis is hidden); not confirmed within 10 s, it says instead that it couldn't reach Chrome to stop
+the task and to press Stop in its side panel. A late `ok` for an `open` or an `answer` is only noted, and a late
+refusal changes nothing. The window that gave up is the one that tells (the holder passes it the reply).
 
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
 `state()` → `{ linked, online, voiceApprovals, task }`, `subscribe(fn)`, `open(url, { rect, focus })`,
-`startTask({ text, chat })`, `stopTask()`, `answer({ promptId, hash, choice, via })`, `onPrompt(fn)`,
-`onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
+`startTask({ text, chat })`, `stopTask()` → `{ ok: true }` or `{ ok: false, reason: 'unlinked' | 'offline' }`
+(changed during the red-team review, REDTEAM-LINK-1: it was `Promise<void>`), `answer({ promptId, hash, choice,
+via })`, `onPrompt(fn)`, `onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
+- **Stop is confirmed and sent again** (REDTEAM-LINK-1). One stop is pending at a time; it is sent again, a fresh
+  envelope each time, after 2, 2, 4, 8 and 15 s, then every 30 s, until Jarvis for Chrome confirms it: its `reply`
+  (ok, or `gone`: nothing runs), a `done` for the task, a `status` without that task, or task news saying it is over.
+  `stopTask()` resolves `{ ok: true }` then; `{ ok: false, reason: 'unlinked' }` at once when not linked; `{ ok:
+  false, reason: 'offline' }` once 2 minutes of tries pass unconfirmed. Asking again while one is pending joins it
+  and sends it again at once. A caller that speaks tells the owner itself when the stop takes long (chrome-voice:
+  after 10 s, to press Stop in the side panel).
 - **Where it runs:** on computers only (never on an iPhone, iPad or Android phone: not a single request there),
   while Jarvis is open, hidden too (hands-free on the Mac).
 - **One window per device holds the link** (the Web Lock `jarvis-chrome-link`, critique M6). It alone long-polls
@@ -5019,7 +5028,7 @@ holder passes it the reply).
 - **Online:** the status says the extension read its box less than 60 s ago, or a message from it arrived in the
   last 60 s (a time more than a minute ahead of this clock isn't believed). While it is offline or not linked,
   `open`, `startTask` and `answer` answer at once (`offline` / `unlinked`) and send nothing; `stopTask` is always
-  sent (the safe direction: the relay keeps it 2 minutes).
+  sent while linked (the safe direction), and sent again until confirmed.
 - **What comes back is information, never orders** (rule 5): every field is checked and cut to size here (no control
   or bidi characters; a prompt's title 200 characters, `spoken` 400, `body` 1,000, `address` 2,048; a task's text and
   a result's answer 2,000; ids as plain tokens); `consequential` counts as true unless it says false, and

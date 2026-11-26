@@ -134,6 +134,10 @@ function relayFetch(relay, log) {
     log.push(`${method} ${u.pathname}`);
     const signal = init.signal;
     if (signal && signal.aborted) throw new DOMException('aborted', 'AbortError');
+    // A test may answer a request itself first (a 429, a dropped connection): relay.intercept(method, path).
+    const forced = typeof relay.intercept === 'function' ? relay.intercept(method, u.pathname) : null;
+    if (forced === 'drop') throw new TypeError('Failed to fetch');
+    if (forced) return new Response(JSON.stringify(forced.body || {}), { status: forced.status, headers: { 'content-type': 'application/json', ...(forced.headers || {}) } });
     const answer = answerRelay(relay, { method, pathname: u.pathname, search: u.search, body: typeof init.body === 'string' ? init.body : '', contentType: (init.headers && init.headers['Content-Type']) || '', signal });
     const aborted = new Promise((_, reject) => signal && signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true }));
     const out = await Promise.race([answer, aborted]);
@@ -496,13 +500,15 @@ test('offline: nothing sent while Jarvis for Chrome is away (stop excepted); no 
     assert.deepEqual(await app.api.open('https://www.example.com/'), { ok: false, reason: 'offline' });
     assert.deepEqual(await app.api.startTask({ text: 'buy it' }), { ok: false, reason: 'offline' });
     assert.equal(w.relay.posts['to-ext'], before, 'nothing went out');
-    await app.api.stopTask(); // goes out all the same, and gives up after the timeout
+    const stopping = app.api.stopTask(); // goes out all the same, and is sent again until confirmed (LINK-1)
+    await until(() => w.relay.posts['to-ext'] === before + 1, { what: 'the stop sent' });
     assert.equal(w.relay.posts['to-ext'], before + 1, 'stop is sent even offline');
     assert.deepEqual(await app.control.ping(), { ok: false, reason: 'offline' }, 'Settings → Test asks anyway, and says when nothing answers');
-    assert.equal(w.relay.posts['to-ext'], before + 2);
+    assert.equal(w.relay.posts['to-ext'] >= before + 2, true);
     // Online by the status (it reads its box), but it never answers: the request gives up.
     w.peer.setOnline(true);
     w.peer.start();
+    assert.deepEqual(await stopping, { ok: true }, 'the stop is confirmed once Jarvis for Chrome reads it');
     w.peer.answer('open', null);
     await until(async () => (await app.control.refresh()).online, { what: 'online by the status' });
     const t0 = Date.now();
@@ -548,6 +554,133 @@ test('fresh requests only (D5): a late ok for a start given up on is stopped at 
     await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
     await sleep(150);
     assert.equal(stops(), 1);
+  } finally {
+    await w.close();
+  }
+});
+
+// ---- stop is confirmed and sent again (REDTEAM-LINK-1) -------------------------------------------------------
+
+/** Timers 20 times faster (a stop's 2-s resends, its 2 minutes, the poll's pauses). */
+const quick = (fn, ms) => setTimeout(fn, Math.max(1, ms / 20));
+
+test('stop (LINK-1): a stop whose POST is refused (429) is sent again until Jarvis for Chrome confirms it; stopTask says so', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: true, id: 'task-1' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 429, body: { error: 'rate_limited' }, headers: { 'retry-after': '1' } } : null);
+    const r = await app.api.stopTask();
+    assert.deepEqual(r, { ok: true }, 'confirmed by Jarvis for Chrome');
+    assert.equal(refused >= 2, true, 'the first POST was refused, a later one went through');
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length >= 1, true, 'the extension got the stop');
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.status === 'stopped'), 'and the task stopped');
+  } finally {
+    await w.close();
+  }
+});
+
+test('stop (LINK-1): a stop the relay lost (a restart before the extension read it) is sent again; the extension stops', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    await app.api.startTask({ text: 'find a 4K monitor' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    w.peer.setOnline(false); // between two reads
+    const posts = w.relay.posts['to-ext'];
+    const stopping = app.api.stopTask();
+    await until(() => w.relay.posts['to-ext'] > posts, { what: 'the stop posted' });
+    w.relay.store.close(); // the home base restarts: its boxes are empty
+    w.peer.setOnline(true);
+    assert.deepEqual(await stopping, { ok: true });
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length >= 1, true, 'a stop sent again reached it');
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.status === 'stopped'), 'and the task stopped');
+  } finally {
+    await w.close();
+  }
+});
+
+test('stop (LINK-1): one pending stop, resent with back-off; a done or a status without the task confirms it; unlinked and 2 minutes say so', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    await app.api.startTask({ text: 'find a 4K monitor' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    // Jarvis for Chrome reads but never answers the stop; its status then shows no task: confirmed.
+    w.peer.answer('stop', null);
+    const t0 = w.relay.posts['to-ext'];
+    const a = app.api.stopTask();
+    const b = app.api.stopTask(); // a second "stop": the same pending stop, sent again now
+    await until(() => w.relay.posts['to-ext'] >= t0 + 3, { what: 'resent' });
+    await w.peer.status({ task: null });
+    assert.deepEqual(await a, { ok: true });
+    assert.deepEqual(await b, { ok: true });
+    const sent = w.relay.posts['to-ext'] - t0;
+    await sleep(400);
+    assert.equal(w.relay.posts['to-ext'] - t0, sent, 'no more resends once confirmed');
+    // A done for the task confirms it too.
+    w.peer.answer('start', undefined);
+    await app.api.startTask({ text: 'another' });
+    await until(() => app.api.state().task && app.api.state().task.id === 'task-2', { what: 'task-2' });
+    const c = app.api.stopTask();
+    await sleep(30);
+    await w.peer.done({ id: 'task-2', status: 'stopped' });
+    assert.deepEqual(await c, { ok: true });
+    // Nobody reads: resent with back-off, then offline after 2 minutes (scaled).
+    w.peer.setOnline(false);
+    const t1 = w.relay.posts['to-ext'];
+    const started = Date.now();
+    const d = await app.api.stopTask();
+    assert.deepEqual(d, { ok: false, reason: 'offline' });
+    const tries = w.relay.posts['to-ext'] - t1;
+    assert.ok(tries >= 5 && tries <= 15, `sent again with back-off (${tries} sends in 2 minutes)`);
+    assert.ok(Date.now() - started >= (2 * 60_000) / 20 - 50, 'it kept trying for 2 minutes');
+    // Not linked: said at once.
+    await app.control.unlink();
+    assert.deepEqual(await app.api.stopTask(), { ok: false, reason: 'unlinked' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('fresh requests only (D5) with LINK-1: the late start\'s stop is sent again until confirmed, and only then is the owner told', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    // The late ok comes, but the first stop's POST is refused.
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 502, body: {} } : null);
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await sleep(60);
+    assert.deepEqual(notices, [], 'not said before the stop is confirmed');
+    await w.peer.waitFor('stop');
+    await until(() => notices.length === 1, { what: 'the notice' });
+    assert.deepEqual(notices[0], { kind: 'late-start', line: LATE_START_LINE });
+    // Never confirmed: after 10 s the owner hears that it couldn't be stopped.
+    w.relay.intercept = null;
+    w.peer.answer('start', null);
+    await app.api.startTask({ text: 'again' });
+    const start2 = await w.peer.waitFor('start');
+    w.peer.answer('stop', null);
+    w.peer.setOnline(false);
+    await w.peer.send('reply', { re: start2.id, ok: true, id: 'task-late-2' });
+    await until(() => notices.length === 2, { timeoutMs: 8000, what: 'the unconfirmed notice' });
+    assert.equal(notices[1].kind, 'late-start-unconfirmed');
+    assert.match(notices[1].line, /couldn’t reach it to stop it\. Press Stop in its side panel/);
   } finally {
     await w.close();
   }
