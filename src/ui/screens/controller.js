@@ -403,6 +403,16 @@ export function createScreens(deps = {}) {
     if (ok) e.rect = { ...r };
     return ok;
   }
+  /**
+   * Has the owner moved this window since Jarvis placed it? (Its corner is more than 30 px from where
+   * he put it. Only the position counts: Chrome sizes a popup's frame around the size asked for.)
+   */
+  function movedByHand(e) {
+    if (!e || !e.rect || !e.win) return false;
+    const now = safe(() => windowRect(e.win), null);
+    return !!now && (Math.abs(now.left - e.rect.left) > 30 || Math.abs(now.top - e.rect.top) > 30);
+  }
+
   /** The screens to lay windows out on: every monitor when Window Management is allowed, else this one. */
   async function layoutScreens() {
     if (!details && (await wmPermission()) === 'granted' && typeof window.getScreenDetails === 'function') {
@@ -531,8 +541,9 @@ export function createScreens(deps = {}) {
    * once the new window has opened).
    */
   function placeAmong(plan, skip = null) {
+    // A window the owner moved by hand stays where they put it.
     const others = popups()
-      .filter((s) => s.mode === 'window' && !s.external && s !== skip)
+      .filter((s) => s.mode === 'window' && !s.external && s !== skip && !movedByHand(s))
       .sort((a, b) => (a.at || 0) - (b.at || 0));
     if (!others.length || plan.mode !== 'window' || plan.note) return { plan, moves: [] };
     const keep = others.slice(-(MAX_WINDOWS - 1));

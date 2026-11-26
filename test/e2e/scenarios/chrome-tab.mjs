@@ -141,6 +141,65 @@ export default [
   },
 
   {
+    name: 'chrome-tab-search-check',
+    title: '"Google USB-C chargers" said: the 2-second check shows the words and nothing opens before it ends, then a Google search tab; "no, I said …" fixes the words; "cancel" opens nothing; free',
+    device: 'desktop',
+    timeout: 180000,
+    async run(t) {
+      await t.newPage();
+      await t.page.addInitScript(installFakeTabs);
+      await t.page.addInitScript(installFakeSpeech);
+      await t.page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      const lead = t.requests('lead').length;
+      await (await t.visible('voice-open')).click();
+      const vm = await t.visible('voice-mode');
+      const norm = (x) => String(x ?? '').replace(/\s+/g, ' ').trim();
+      const checkText = async () => norm(await t.text(t.page.locator(tid('voice-review-text'))));
+      /** The next words Voice Mode hears (a tap on the core when it waits). */
+      const hear = async (words) => {
+        await t.page.evaluate((w) => window.__voice.queue.push(w), words);
+        await t.waitFor(async () => ['idle', 'listening'].includes(await vm.getAttribute('data-state')), { timeout: 20000, message: 'Voice Mode to listen or wait' });
+        if ((await vm.getAttribute('data-state')) === 'idle') await (await t.visible('voice-core')).click();
+      };
+
+      await t.step('the check shows the words; the search opens only when it ends', async () => {
+        await hear('Google USB-C chargers.');
+        await t.waitFor(async () => /^Google USB-C chargers\.?$/i.test(await checkText()), { timeout: 10000, message: async () => `the check to show the words (${await checkText()})` });
+        t.assert((await tabs(t)).length === 0, 'nothing opened while the words are shown');
+        const tab = await t.waitFor(async () => (await tabs(t)).find((x) => x.sent) || null, { timeout: 10000, message: 'the search to open after the check' });
+        t.assert(tab.sent === 'https://www.google.com/search?q=usb-c%20chargers', `a Google search for the words (${tab.sent})`);
+        t.assert(tab.name === '_blank' && tab.features === null && tab.opener === null, `a plain tab (${JSON.stringify(tab)})`);
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.said.join(' | '))).includes('Searching Google for usb-c chargers'), { timeout: 10000, message: 'Jarvis to say so' });
+      });
+
+      await t.step('"no, I said …" fixes the words before they leave', async () => {
+        const before = (await tabs(t)).length;
+        await hear('Google heat pipes.');
+        await t.waitFor(async () => /heat pipes/i.test(await checkText()), { timeout: 10000, message: 'the check to show the words' });
+        await t.page.evaluate(() => window.__voice.say({ parts: [{ at: 100, text: 'No, I said google heat sinks' }] }));
+        const tab = await t.waitFor(async () => (await tabs(t)).slice(before).find((x) => x.sent) || null, { timeout: 15000, message: 'the corrected search to open' });
+        t.assert(tab.sent === 'https://www.google.com/search?q=heat%20sinks', `the corrected words (${tab.sent})`);
+        t.assert(!(await tabs(t)).some((x) => /heat%20pipes/.test(x.sent || '')), 'the misheard words never went to Google');
+      });
+
+      await t.step('"cancel" during the check: nothing opens', async () => {
+        const before = (await tabs(t)).length;
+        await hear('Google robot vacuums.');
+        await t.waitFor(async () => /robot vacuums/i.test(await checkText()), { timeout: 10000, message: 'the check to show the words' });
+        await t.page.evaluate(() => window.__voice.say({ parts: [{ at: 100, text: 'Cancel.' }] }));
+        await t.waitFor(async () => !(await t.page.locator(tid('voice-review')).isVisible()), { timeout: 8000, message: 'the check to close' });
+        await t.page.waitForTimeout(2600);
+        t.assert((await tabs(t)).length === before, 'nothing opened');
+        t.assert(t.requests('lead').length === lead, `nothing went to Claude (${t.requests('lead').length - lead})`);
+        await (await t.visible('voice-close')).click();
+      });
+    },
+  },
+
+  {
     name: 'chrome-tab-beside',
     title: 'Optics open, the camera live: "pull this up in Chrome" opens a window placed beside Jarvis (a strip of him in view), not a tab; the camera stays live; free',
     device: 'mac',

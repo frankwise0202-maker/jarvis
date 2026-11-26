@@ -46,6 +46,7 @@ function stubs(opts) {
     try {
       const f = Object.fromEntries(String(features || '').split(',').map((kv) => kv.split('=')).filter((x) => x.length === 2).map(([k, v]) => [k.trim(), Number(v)]));
       const geo = { left: f.left || 0, top: f.top || 0, width: f.width || 800, height: f.height || 600 };
+      w.__geo = geo; // the owner dragging it: the test changes this
       for (const [prop, key] of [['screenX', 'left'], ['screenLeft', 'left'], ['screenY', 'top'], ['screenTop', 'top'], ['outerWidth', 'width'], ['outerHeight', 'height']]) Object.defineProperty(w, prop, { configurable: true, get: () => geo[key] });
       w.moveTo = (x, y) => {
         window.__moves.push([n, 'move', x, y]);
@@ -506,4 +507,22 @@ test('D6: no floating panels in this browser: Jarvis says he can\'t', async () =
   const p = await page({ noPip: true });
   const o = await p.evaluate(async () => (await window.win({ op: 'float-jarvis' })).message);
   assert.equal(o, 'This browser can’t float me. Chrome on a computer can.');
+});
+
+test('D1: a window the owner moved by hand stays where they put it when another one opens', async () => {
+  const p = await page();
+  await p.evaluate(() => window.say('put the camera in a window'));
+  await p.evaluate(() => {
+    const g = window.__wins[window.nameOf('camera')].__geo;
+    g.left = 100;
+    g.top = 300;
+  });
+  await p.evaluate(() => window.say('put the hologram in a window'));
+  const camMoves = await p.evaluate(() => window.__moves.filter((m) => m[0] === window.nameOf('camera')).length);
+  assert.equal(camMoves, 0, 'the camera window was left alone');
+  assert.equal(await p.evaluate(() => window.__opens.at(-1).features), 'popup=1,left=720,top=25,width=720,height=875', 'the new one takes today\'s place');
+  // Asked for a layout, every window moves (the owner asked).
+  const o = await p.evaluate(async () => (await window.win({ op: 'arrange', layout: 'side-by-side' })).count);
+  assert.equal(o, 2);
+  assert.ok(await p.evaluate(() => window.__moves.some((m) => m[0] === window.nameOf('camera'))), 'moved by the layout');
 });
