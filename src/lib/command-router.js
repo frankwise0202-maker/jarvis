@@ -27,7 +27,7 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText, isOpticsOpenRequest, matchOpticsClosedWords } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText, isOpticsOpenRequest, matchOpticsClosedWords, isCameraCloseRequest } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
 import { LAYERS, FINAL_ORDER, MAX_WORDS, isQuestion, isBareNo, isStopWord, askedLast } from './command-order.js';
 
@@ -323,6 +323,8 @@ export function createRouter({ order = FINAL_ORDER, wordCap = order === TODAY_OR
 export const REOPEN_ACTIONS = Object.freeze(new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']));
 
 const opticsOnTop = (s) => !!(s.optics && s.optics.open) && !s.hologram && !s.blueprintOpen;
+// "Would you …", "will you …", "could you …", "can you …": a request, not a question (ROUTING-R3-7).
+const POLITE = /^\W*(?:(?:hey|hi|ok|okay|so|um|uh|and|well|oh)\W+)*(?:jarvis\W+)?(?:(?:hey|ok|okay|so|um|uh)\W+)*(?:would|will|could|can) you\b/i;
 // "My screen", "my camera": the owner's own, never a hologram's part (R10's "my …": ROUTING-7, ROUTING-R2-8).
 const MY_THING = /\bmy (?:screen|display|monitor|camera|webcam|web cam|cam)\b/i;
 /** R10's "my …" in the best reading (a matcher's ctx): another reading never makes it a hologram's part. */
@@ -523,11 +525,15 @@ const TODAY_COMMANDS = [
     match: (text, s, ctx) => {
       if (s.surface === 'voice' && opticsOnTop(s)) return null;
       if (MY_THING.test(String(text || '')) || namesMyThing(ctx)) return null;
+      // "Turn the camera off": the camera's (optics-close), never the model's, on screen or shown last (ROUTING-R3-1).
+      if (isCameraCloseRequest(text)) return null;
       if (s.hologram && s.hologram.open) return partsCommand(text, s.hologram.parts, s.hologram.selected);
       if (s.surface !== 'voice' || s.blueprintOpen) return null;
       const last = s.reply && s.reply.hologram;
       if (!last || !Array.isArray(last.parts) || !last.parts.length) return null;
-      if (isOpticsOpenRequest(text) || isQuestion(text) || matchOpticsClosedWords(text)) return null;
+      // A polite request ("would you rotate it", "will you explode it") is no question here (ROUTING-R3-7).
+      const asks = isQuestion(text) && !POLITE.test(String(text || ''));
+      if (isOpticsOpenRequest(text) || asks || matchOpticsClosedWords(text)) return null;
       const cmd = matchHologramCommand(String(text || ''), last.parts, {});
       return cmd && REOPEN_ACTIONS.has(cmd.action) ? { do: 'hologram', command: cmd, reopen: true, free: cmd.action !== 'blueprint' } : null;
     },

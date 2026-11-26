@@ -203,7 +203,8 @@ const HUSH = /^(?:stop (?:talking|speaking|reading)(?: please)?|be quiet|quiet|h
 const READ_FULL = /^(?:read (?:me |out )?(?:the )?(?:full|whole|entire|complete|long) (?:answer|reply|response|thing|text|version)|read (?:me |out )?(?:the )?rest(?: of it| of the answer| of the reply)?|read (?:me |out )?(?:all )?(?:the )?details|read (?:me )?(?:all of it|everything|it all)|keep reading|read on)$/;
 // ("Again" at the end is a filler, so "say that again" arrives as "say that".)
 const REPEAT = /^(?:sorry )?(?:repeat(?: that| it| yourself| the answer| the last part| what you said)?|say (?:that|it)(?: again)?|(?:say|repeat) (?:that|it) one more time|what did you (?:just )?say|what was that|come again|pardon(?: me)?|i didnt (?:catch|hear|get) (?:that|it|what you said))$/;
-const MIC_OFF = /^(?:stop listening(?: to me)?|dont listen|quit listening|pause listening|stop the (?:mic|microphone)|(?:mute|turn off|switch off|close) (?:the |your )?(?:mic|microphone)|(?:mic|microphone) off)$/;
+// ("Turn the mic off", "switch your microphone off" too: ROUTING-R3-S2.)
+const MIC_OFF = /^(?:stop listening(?: to me)?|dont listen|quit listening|pause listening|stop the (?:mic|microphone)|(?:mute|turn off|switch off|close) (?:the |your |my )?(?:mic|microphone)|(?:turn|switch|shut) (?:the |your |my )?(?:mic|microphone) off|(?:mic|microphone) off)$/;
 const EXIT_VOICE = /^(?:exit|close|leave|quit|end|turn off|stop|get out of|switch off|shut) (?:the )?voice(?: mode)?$/;
 
 /** One of Voice Mode's controls in `text` (see the header), or null. */
@@ -258,11 +259,22 @@ export function stopTargets(state = {}) {
  * too), whose own "stop" holds the model still; a blueprint sheet alone has no "stop" of its own
  * (ROUTING-6). "Stop the tour" and "stop Chrome" belong to the tour and to Chrome.
  */
+// "Stop the mission", "cancel the research", "stop researching": the run's own words, only while one runs (ROUTING-R3-6).
+const RUN_STOP = /^(?:(?:stop|cancel|end|abort|kill)(?: the| that| this| my| your)? (?:mission|research|answer|search)|stop (?:researching|searching))$/;
+
 export function matchStopWord(text, state = {}) {
   const s = normalizeAppText(text);
-  if (!s || !STOP.test(s)) return null;
+  if (!s) return null;
+  if (!STOP.test(s)) {
+    if (!RUN_STOP.test(s) || !(state.running || state.runningElsewhere)) return null;
+    return act('stop', { targets: [state.running ? 'answer' : '', state.runningElsewhere ? 'elsewhere' : ''].filter(Boolean) });
+  }
   const targets = stopTargets(state);
-  if (!targets.length && state.hologram && state.hologram.open) return null;
+  const holo = !!(state.hologram && state.hologram.open);
+  if (!targets.length && holo) return null;
+  // Only another window's run, a hologram on screen: the model holds still as its own "stop" does, then the line says
+  // where the run is (ROUTING-R3-5).
+  if (holo && targets.length === 1 && targets[0] === 'elsewhere') return act('stop', { targets: ['hologram', 'elsewhere'] });
   return act('stop', { targets });
 }
 
@@ -338,6 +350,7 @@ function answersStopped({ here = 0, other = 0 } = {}) {
 }
 
 const STOPPED = {
+  hologram: 'holding it still',
   tour: 'the tour is paused',
   answer: 'the answer is stopped',
   chrome: 'Chrome is stopping',

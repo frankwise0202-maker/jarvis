@@ -30,7 +30,7 @@
 import { matchWindowCommand } from '../../lib/window-commands.js';
 import { matchChromeCommand } from '../../lib/chrome-commands.js';
 import { matchHologramCommand } from '../../lib/hologram-commands.js';
-import { matchOpticsCommand } from '../../lib/optics-commands.js';
+import { matchOpticsCommand, isCameraCloseRequest } from '../../lib/optics-commands.js';
 import { resolveThis } from '../../lib/this-target.js';
 import { WINDOW_HOLOGRAM_ACTIONS, screenAck, screenMessage } from '../screens/controller.js';
 import { commandAck } from '../voice-visuals.js';
@@ -116,6 +116,8 @@ export function register(router, deps = {}) {
     match: (text, state) => {
       if ((state.hologram && state.hologram.open) || state.blueprintOpen) return null;
       if (opticsKeeps(text, state)) return null;
+      // "Turn the camera off" is the camera's (Optics' or optics-close's), never the window's model (ROUTING-R3-1).
+      if (isCameraCloseRequest(text)) return null;
       const w = hologramWindow(state);
       if (!w) return null;
       const cmd = matchHologramCommand(String(text || ''), Array.isArray(w.parts) ? w.parts : [], { selected: w.selected || null });

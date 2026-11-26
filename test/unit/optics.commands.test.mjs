@@ -234,3 +234,14 @@ test('Voice Mode with the camera closed: a Mac where it is allowed looks; iPhone
   for (const words of ["What's that?", 'What is it?', 'Tell me more.', 'How does the separator work?', '']) assert.equal(voiceCameraRequest(words, mac), null, words);
   assert.equal(voiceCameraRequest('What is this?'), 'need-tap', 'defaults: permission unknown');
 });
+
+test('ROUTING-R3-S1: every camera-off form isCameraCloseRequest takes is Optics\' own close (never a Look\'s question)', async () => {
+  const { isCameraCloseRequest } = await import('../../src/lib/optics-commands.js');
+  const forms = ['turn the camera off', 'turn the webcam off', 'switch the camera off', 'switch off the camera', 'turn my camera off', 'Turn the camera off, please.', 'turn off the camera', 'camera off', 'close the camera', 'switch off the webcam', 'shut off the camera', 'turn optics off'];
+  for (const words of forms) {
+    assert.equal(isCameraCloseRequest(words), true, words);
+    for (const frozen of [false, true]) assert.deepEqual(matchOpticsCommand(words, { frozen }), { action: 'close' }, `${words} (frozen ${frozen})`);
+  }
+  // Not camera-off words: unchanged.
+  for (const words of ['turn the camera around', 'what is this', 'is the camera off']) assert.notDeepEqual(matchOpticsCommand(words), { action: 'close' }, words);
+});

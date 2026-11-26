@@ -4783,7 +4783,9 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    the open chat or another; as each chat's Stop button does: "The answer in your other chat is stopped."), a Chrome
    task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop, and the line
    says what stopped. A turn another Jarvis window runs (`state.runningElsewhere`) can't be stopped here: "I'm still
-   answering in another window. Stop it there." Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
+   answering in another window. Stop it there." (with a hologram on screen and only that, the model holds still too:
+   "Holding it still. …", ROUTING-R3-5). While a turn runs, "stop the mission", "cancel the research", "stop
+   researching" are stop words too (ROUTING-R3-6). Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
    blueprint over it) on top and nothing running it yields, and the viewer holds the model still (a blueprint sheet
    alone has no "stop": "Okay.").
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
@@ -4833,7 +4835,12 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   another reading of them ("open my camera" heard, "open the camera" the other reading: v8.1.1). The
   hologram shown last over Voice Mode, closed, opens again only for a command about it: never for E2's camera words
   ("open the camera": Optics opens), Optics' own words with Optics closed ("expand the picture") or a question
-  ("is the camera on?"): ROUTING-R2-7.
+  ("is the camera on?"): ROUTING-R2-7. A polite request ("would you rotate it", "will you explode it") is no question
+  there: it reopens the model (ROUTING-R3-7). Camera-off words ("turn the camera off", `isCameraCloseRequest`) are
+  never the model's, on screen, shown last or in a Screens window: Optics closes, or with Optics closed the camera goes
+  off (`optics-close`); the hologram's "turn …" never takes a phrase ending in "on" or "off" ("turn the lights on")
+  (ROUTING-R3-1). With Optics open, every camera-off form is Optics' own close (`matchOpticsCommand`), and Optics'
+  `question()` never takes a Look for them (ROUTING-R3-S1).
 
 **The app's words** (C2; every surface unless marked):
 | Words | Action | Line |
@@ -5004,7 +5011,7 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
     word on by a finite verb, "Google Docs won't open (in Chrome)"; Google itself as the subject keeps "google" in the
     query, "google stock price", and so does a product word with at most a short attribute, "google drive storage";
     any other search starting with a product's word is searched as said, "google TV shows like …" searches "tv shows
-    like …"), "search
+    like …"; "google chrome …" and "google chromecast …" keep the product's whole name, ROUTING-R3-2), "search
     (for) … in Chrome / on Google", "look up … on Google", "search Google for …", "open <not a site> in Chrome".
     A query that goes on to act ("… and add it to the cart") is left to Jarvis for Chrome's tasks (`TASKISH`);
     "find" is not a search verb.

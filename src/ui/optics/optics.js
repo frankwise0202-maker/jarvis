@@ -94,7 +94,7 @@ import {
   screenLookSupported,
 } from '../../platform/camera.js';
 import { OPTICS_LIMITS, WATCH_DEFAULTS, changedFraction, createChangeDetector, estimateLookCost, estimateWatchCost, fitTransform, formatUsd, frameToView, layoutPins } from '../../lib/optics.js';
-import { FRESH_LOOK_QUESTION, asideQuestionRoute, findNamedCamera, hologramRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
+import { FRESH_LOOK_QUESTION, asideQuestionRoute, findNamedCamera, hologramRequest, isCameraCloseRequest, matchOpticsCommand, partQuestion, theName } from '../../lib/optics-commands.js';
 import { LIVE_DEFAULTS, canSpeakLive, createLiveBudget, estimateLiveLookUsd, liveBackoff, liveMeterText, liveResumeShownAt, liveSpentText, nextLiveDelay } from '../../lib/live-view.js';
 import { listenPhrases } from '../voice-heard.js';
 import { drawSchematic } from './schematic.js';
@@ -1667,6 +1667,11 @@ export function openOptics(deps = {}) {
    */
   function question(text, { cmd } = {}) {
     const q = String(text ?? '').trim();
+    // Words that ask for the camera off never take a Look or a follow-up: Optics closes (ROUTING-R3-S1).
+    if (q && isCameraCloseRequest(q)) {
+      setTimeout(() => close('voice'), 0);
+      return Promise.resolve(null);
+    }
     const c = cmd !== undefined ? cmd : q ? matchOpticsCommand(q, { frozen: !!frozen }) : null;
     // "Look again", "new look", "what about now", "take a picture": always a new picture.
     if (c && c.action === 'look' && c.fresh && camera.live && (mode === 'live' || mode === 'aside' || mode === 'frozen')) {

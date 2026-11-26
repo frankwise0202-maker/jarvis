@@ -266,7 +266,9 @@ const SIMPLE = [
   // rotation
   { re: new RegExp(`^(stop|pause|freeze|halt|hold)( (it|that|this))?( (rotating|spinning|turning|the rotation|the spin|moving|still))?$`), action: 'stop' },
   { re: /^(stop|don't|do not) (rotating|spinning|turning|rotate|spin|turn)( it)?$|^(stay|hold|keep) still$|^(no|stop) (rotation|spin|spinning)$/, action: 'stop' },
-  { re: new RegExp(`^(rotate|spin|turn|revolve|orbit|auto rotate|autorotate)${OBJ}( around| round)?$`), action: 'rotate' },
+  // (never a phrase ending in "on" or "off": "turn the camera off", "turn the lights on" are switches, not turns:
+  // ROUTING-R3-1)
+  { re: new RegExp(`^(?!.* (?:on|off)$)(rotate|spin|turn|revolve|orbit|auto rotate|autorotate)${OBJ}( around| round)?$`), action: 'rotate' },
   { re: /^(start|keep|resume) (rotating|spinning|turning)( it)?$|^(spin|rotate|turn) it around$|^(turn on|start) (auto )?rotat(e|ion)$/, action: 'rotate' },
   // camera
   { re: /^(reset|reset (the )?(view|camera|it|everything|zoom)|recenter|re center|center (it|the view|the model)|centre (it|the view)|default view|start view|home view|back to (the )?(start|default view))$/, action: 'reset' },

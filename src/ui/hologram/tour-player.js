@@ -96,6 +96,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
   let status = 'idle'; // idle | starting | playing | paused | choice | waiting | done | ended
   let pausedFor = null; // owner | touch | speech | hidden | jump
   let hiddenFrom = null; // what it was doing when the page was hidden
+  let pausedOnly = false; // paused while "back" said its one step: "repeat" and "continue" say it alone again (R3-4)
   let stepId = steps.length ? steps[0].id : null; // the step being said (or about to be)
   let shownId = null; // the step whose look was shown last (when its words began: B5)
   let history = []; // the steps visited, in order (back goes through it)
@@ -180,6 +181,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
    */
   function playFrom(id, { replay = false, only = false } = {}) {
     stopActivity();
+    pausedOnly = false;
     const first = stepById(plan, id);
     if (!first) return finish();
     const all = runFrom(plan, id);
@@ -282,6 +284,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     }
     // Stopped by someone else (Stop, a tap on the microphone, "Hey Jarvis"): the tour pauses there.
     stopActivity();
+    pausedOnly = !!r.only;
     status = 'paused';
     pausedFor = 'speech';
     changed();
@@ -380,9 +383,9 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     if (!live() || status === 'starting') return false;
     const s = current();
     if (!s) return false;
-    // On a step the tour waits at (after "back", or a wait step), or while "back" says it: that step again, then it
-    // waits again (B5: "repeat" says the step again; ROUTING-R2-9).
-    const only = status === 'waiting' || !!(run && run.only);
+    // On a step the tour waits at (after "back", or a wait step), or while "back" says it, or paused while it said it:
+    // that step again, then it waits again (B5: "repeat" says the step again; ROUTING-R2-9, ROUTING-R3-4).
+    const only = status === 'waiting' || !!(run && run.only) || (status === 'paused' && pausedOnly);
     if (isDecision(s) && !s.say) askAt(s, { replay: true });
     else playFrom(s.id, { replay: true, only });
     return true;
@@ -397,6 +400,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     } else if (status === 'playing' || status === 'waiting' || status === 'starting') {
       if (status === 'waiting' && reason === 'touch') return false; // it waits for "next" already
       if (reason === 'hidden') hiddenFrom = status;
+      pausedOnly = !!(run && run.only); // paused while "back" said its step (ROUTING-R3-4)
       stopActivity();
     } else if (status === 'paused') {
       if (reason === 'hidden' && !hiddenFrom) hiddenFrom = 'paused';
@@ -427,7 +431,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
       return true;
     }
     if (isDecision(s) && !s.say) askAt(s, { entered: true });
-    else playFrom(s.id, { replay: true });
+    else playFrom(s.id, { replay: true, only: pausedOnly }); // paused while "back" said its step: that step again (R3-4)
     return true;
   }
 

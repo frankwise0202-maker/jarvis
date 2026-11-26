@@ -133,6 +133,8 @@ function googleQuery(q) {
   const product = GOOGLE_PRODUCT.exec(q);
   if (!product) return q;
   if (!asks && PRODUCT_STATEMENT.test(q)) return null;
+  // "Google Chrome", "Google Chromecast": the product's own name always has "google" in it (ROUTING-R3-2).
+  if (product[0] === 'chrome' || product[0] === 'chromecast') return `google ${q}`;
   const rest = q.slice(product[0].length).trim();
   return !rest || rest.split(' ').length <= 1 ? `google ${q}` : q;
 }
@@ -159,11 +161,15 @@ function searchAction(query, said) {
   return chromeAction({ kind: 'search', query: q }, whereOf(said), { check: true });
 }
 
-/** A search for googleQuery's words: as searchAction, but "google" kept when the query starts with it. */
+/**
+ * A search for googleQuery's words: as searchAction, but the words kept as googleQuery gave them (never a leading
+ * "google" or "chrome" taken off again: "chrome dark mode settings" stays so, ROUTING-R3-2).
+ */
 function googleSearch(query, said) {
-  if (!/^google /.test(query)) return searchAction(query, said);
-  if (query.split(' ').length > 16 || TASKISH.test(query) || PAGE_OBJECT.test(query)) return null;
-  return chromeAction({ kind: 'search', query }, whereOf(said), { check: true });
+  const q = String(query || '').replace(/^(?:for|up) /, '').trim();
+  if (!q || /^(?:it|this|that|them)$/.test(q)) return chromeAction({ kind: 'this-search' }, whereOf(said));
+  if (q.split(' ').length > 16 || TASKISH.test(q) || PAGE_OBJECT.test(q)) return null;
+  return chromeAction({ kind: 'search', query: q }, whereOf(said), { check: true });
 }
 
 /** How many links the newest reply has (the router's state.reply.links: a list, or a count). */

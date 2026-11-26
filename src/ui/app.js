@@ -5279,6 +5279,12 @@ export async function startApp(rootEl) {
             if (optics) safe(() => optics.stopWatch());
             break;
           }
+          case 'hologram': {
+            // ROUTING-R3-5: the hologram on screen holds still, as its own "stop" does (only another window's run is on).
+            const viewer = getHologramViewer();
+            if (viewer && typeof viewer.command === 'function') safe(() => viewer.command('stop rotating'));
+            break;
+          }
           case 'liveview': {
             const optics = currentOptics();
             if (optics) safe(() => optics.stopLiveView());

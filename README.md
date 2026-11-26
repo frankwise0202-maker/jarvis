@@ -278,14 +278,14 @@ Mode or Optics first.
 | Voice Mode | "stop talking", "be quiet", "that's enough" | He stops talking |
 | | "read the full answer", "read me the rest" | He reads the details too |
 | | "repeat that", "say that again" | He says the last answer again |
-| | "stop listening" | He stops listening (back to Standby when Standby woke him) |
+| | "stop listening", "turn the mic off" | He stops listening (back to Standby when Standby woke him) |
 | | "exit Voice Mode" | Voice Mode closes |
 | | "speak slower", "speak faster" | His speed, a step at a time (Settings → Voice) |
 | | "turn off continuous", "turn on continuous" | Listening again after each answer, off or on |
 | | "send right away", "show me what you heard first" | The 2-second check, off or on |
 | | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
 | Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
-| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission in any chat of this window (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped.", "The answer in your other chat is stopped."). One running in another Jarvis window: he says so, to stop it there. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
+| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission in any chat of this window (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped.", "The answer in your other chat is stopped."). One running in another Jarvis window: he says so, to stop it there. While one runs, "stop the mission", "cancel the research" and "stop researching" stop it too. Nothing running: "Okay." (With a hologram on screen and nothing running here, it holds the model still.) |
 | Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
 | Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
 | | "open history", "show me my history" | History |
@@ -297,7 +297,7 @@ Mode or Optics first.
 | Spending | "how much have I spent today", "… this month" | A readout of this device's estimates, free |
 | | "how much has the live view cost" | The live view's spending this hour |
 | Optics | "open optics", "open the camera", "camera on" | Optics opens, no Look ("Tap Look" on an iPhone) |
-| | "close the camera" | Camera off, from anywhere |
+| | "close the camera", "turn the camera off" | Camera off, from anywhere (with a hologram on screen too) |
 | | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
 | | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed (or under a hologram), "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free, a hologram or blueprint on screen or not |
@@ -625,7 +625,7 @@ Jarvis's home screen now tells you what is going on before you ask.
 - **While it plays**, say **next**, **back** (or "go back", "previous"), **repeat** ("say that
   again"), **wait** or **pause**, **continue**, **skip to the fan**, or **stop the tour** ("that's
   enough"). They act at once and cost nothing. **Back** shows and says the step before, then waits
-  there: say "back" again to go further back, "repeat" to hear it again, or "next" to go on. Outside a walkthrough these words do what they did
+  there: say "back" again to go further back, "repeat" to hear it again (also after a pause), or "next" to go on. Outside a walkthrough these words do what they did
   before: "back" alone still turns the hologram to its back view.
 - **The walkthrough bar** under the hologram shows what Jarvis is saying, "3 of 8", **Back**,
   **Pause** (or **Play**), **Next** and **End**, and the choice buttons when he asks. On a Mac, ←
