@@ -1729,6 +1729,9 @@ button {
 .approve-shell .bubble {
   max-width: none;
 }
+.approve-shell > .chip {
+  align-self: flex-start;
+}
 .approve-head {
   display: flex;
   align-items: center;

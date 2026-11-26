@@ -85,7 +85,10 @@ export function openVerdict(input) {
   if (!site) return bad;
   const concern = addressConcern(u.href);
   const acts = addressAction(u.href);
-  if (concern || acts) return { ok: false, reason: 'needs-click', why: WHY.needsClick, url: u.href, site, detail: concern ? `It has ${concern} in it.` : `It looks like ${acts.reason}.` };
+  if (concern || acts) {
+    const detail = concern ? `It has ${concern} in it.` : acts.file ? 'It looks like a file to download.' : `Its address says “${acts.word}”.`;
+    return { ok: false, reason: 'needs-click', why: WHY.needsClick, url: u.href, site, detail };
+  }
   return { ok: true, url: u.href, site };
 }
 
