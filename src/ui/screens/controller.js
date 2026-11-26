@@ -24,6 +24,7 @@
 //   screens.shown(kind)                the window showing `kind`: { id, label, mode, parts, selected } | null
 //   screens.openPage(url, { title, rect, button }, { source })  a web page in a window placed at rect
 //   screens.noteRecent(target)         what "it" is now (a page just opened in Chrome)
+//   deps.jarvisState()                 optional (D6): { core, word, heard } for Jarvis floating ("float yourself")
 //
 // Placement (lib/screen-placement.js): another monitor with the Window Management API (asked once,
 // after a short explanation), a floating always-on-top panel (Document Picture-in-Picture), a
@@ -148,6 +149,7 @@ export function screenMessage(o) {
   switch (o.status) {
     case 'opened':
       if (o.mode === 'screen') return `${Name} is on ${txt(o.label).toLowerCase() || 'your other screen'}.${note ? ` ${note}` : ''}${replaced}`;
+      if (o.mode === 'pip' && o.kind === 'jarvis') return o.already ? 'Jarvis is already floating.' : isObj(o.replaced) ? `Jarvis is floating, in place of ${screenKindName(o.replaced.kind, { report: !!o.replaced.report })}.` : 'Jarvis is floating beside you.';
       if (o.mode === 'pip') return note || `${Name} is floating beside you.`;
       if (o.mode === 'window') return o.already ? `${Name} is already in its own window.` : note || `${Name} is open in its own window.${replaced}`;
       if (o.mode === 'tab') return 'The link is open in a new tab.';
@@ -181,6 +183,7 @@ export function screenAck(o) {
   if (!isObj(o)) return '';
   switch (o.status) {
     case 'opened':
+      if (o.mode === 'pip' && o.kind === 'jarvis') return o.already ? "I'm already floating." : isObj(o.replaced) ? `I'm floating beside you, in place of ${screenKindName(o.replaced.kind, { report: !!o.replaced.report })}.` : "I'm floating beside you.";
       if (isObj(o.replaced)) return `That's ${MAX_WINDOWS} windows, so it took the place of ${windowName(o.replaced.kind, { report: !!o.replaced.report })}.`;
       if (o.mode === 'screen') return o.note === 'no-such-screen' ? `There's no such screen, so it's on ${txt(o.label).toLowerCase()}.` : `It's on ${txt(o.label).toLowerCase() || 'your other screen'}.`;
       if (o.mode === 'pip') return o.note === 'single-screen' ? "Only one screen is connected, so it's floating beside you." : 'Floating beside you.';
@@ -649,7 +652,7 @@ export function createScreens(deps = {}) {
       frame,
       compact: true,
       autoStart: true,
-      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st), onState: (st) => noteState(entry, st) },
+      deps: { ...panelDeps, snapshot: typeof deps.snapshot === 'function' ? (spec, size) => deps.snapshot(spec, size) : null, onCameraState: (st) => setCameraState(entry, st), onState: (st) => noteState(entry, st), jarvisState: typeof deps.jarvisState === 'function' ? () => deps.jarvisState() : null },
     });
     frame.body.append(panel.el);
     entry.view = { frame, panel };
@@ -1183,6 +1186,27 @@ export function createScreens(deps = {}) {
     return { status: 'sized', size, kind: e.kind, report: !!e.report, beside: onJarvis };
   }
 
+  /**
+   * "Float yourself" (D6): Jarvis himself in the floating panel (Document Picture-in-Picture): his core,
+   * the state word and the words heard (deps.jarvisState). One floating panel at a time: an open one
+   * takes him in place of what it showed (said). A new one needs a tap (Chrome's rule): the one-tap
+   * "Float Jarvis" button. No Document Picture-in-Picture: he says he can't.
+   */
+  async function floatJarvis({ source = 'voice', gesture } = {}) {
+    const env = detectScreenEnv(window);
+    if (!env.pip) return { status: 'nothing', kind: 'jarvis', message: env.mobile ? 'I can’t float on this device.' : 'This browser can’t float me. Chrome on a computer can.' };
+    const target = { kind: 'jarvis', ref: {}, title: 'Jarvis', live: true };
+    const open = [...screens.values()].find((e) => e.mode === 'pip' && e.win && !e.win.closed);
+    if (open && open.kind === 'jarvis') return { status: 'opened', mode: 'pip', kind: 'jarvis', label: 'FLOAT', reused: true, already: true };
+    if (open) {
+      const replaced = { kind: open.kind, report: !!open.report, title: open.title };
+      showIn(open, target, false);
+      return { status: 'opened', mode: 'pip', kind: 'jarvis', label: 'FLOAT', reused: true, replaced };
+    }
+    const g = gesture === undefined ? hasGesture(source) : gesture;
+    return place(target, { action: 'open', what: 'jarvis', where: 'beside', screen: null, target: null, ordinal: null, fullscreen: false, button: 'Float Jarvis' }, { gesture: g });
+  }
+
   /** "Show me the hologram window": brought to the front (a page or a floating panel too). */
   function focusWindow({ which = null } = {}) {
     const e = pickOf([...screens.values()].filter((s) => s.kind === which && s.mode !== 'inapp'));
@@ -1334,6 +1358,8 @@ export function createScreens(deps = {}) {
             return swapWindows();
           case 'size':
             return sizeWindow(a);
+          case 'float-jarvis':
+            return floatJarvis({ source, gesture });
           default:
             return { status: 'nothing', message: 'I can’t do that with windows yet.' };
         }

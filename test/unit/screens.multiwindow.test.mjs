@@ -81,6 +81,20 @@ function stubs(opts) {
       /* not configurable */
     }
     Object.defineProperty(window, 'documentPictureInPicture', { value: undefined, configurable: true, writable: true });
+  } else {
+    // A floating panel that needs a gesture, as Chrome's does (a same-origin popup stands in for it).
+    const pip = {
+      window: null,
+      async requestWindow({ width, height }) {
+        if (!window.__gesture) throw new DOMException('needs a gesture', 'NotAllowedError');
+        window.__gesture = false;
+        const w = realOpen('', '', `popup,width=${width},height=${height}`);
+        pip.window = w;
+        window.__pipSize = { width, height };
+        return w;
+      },
+    };
+    Object.defineProperty(window, 'documentPictureInPicture', { value: pip, configurable: true, writable: true });
   }
 }
 
@@ -111,6 +125,7 @@ async function page(opts = {}) {
       showInApp: (t, o) => window.__app.shownInApp.push({ kind: t.kind, reason: o && o.reason }),
       getLibraryItem: async () => null,
       cameraLive: () => false,
+      jarvisState: () => window.__jarvis || { core: 'idle', word: 'ONLINE', heard: '' },
     });
     const pick = (o) => o && { status: o.status, mode: o.mode || null, kind: o.kind || null, count: o.count, reused: !!o.reused, replaced: o.replaced ? o.replaced.kind : null, which: o.which || null };
     window.say = async (text) => {
@@ -448,4 +463,47 @@ test('D5: a floating panel can\'t be resized by script, and a page can\'t be mov
   await p.evaluate(() => window.say('open the link in a window'));
   const page2 = await p.evaluate(async () => (await window.win({ op: 'size', size: 'fill', which: 'link' })).message);
   assert.equal(page2, 'I can’t move a page from another site. Close it and open it again where you want it.');
+});
+
+test('D6: "float yourself": one tap opens Jarvis on top (his core, the state word, the words heard); he takes a floating hologram\'s place, and says so', async () => {
+  const p = await page();
+  const first = await p.evaluate(async () => {
+    window.__gesture = false;
+    const o = await window.win({ op: 'float-jarvis' });
+    return [o.status, o.button];
+  });
+  assert.deepEqual(first, ['needs_tap', 'Float Jarvis'], 'a floating panel needs a tap (Chrome\'s rule)');
+  await p.evaluate(() => document.querySelector('[data-testid="screens-tap-button"]').addEventListener('click', () => (window.__gesture = true), { capture: true }));
+  await p.click('[data-testid="screens-tap-button"]');
+  await p.waitForFunction(() => window.ctl.list().some((s) => s.kind === 'jarvis' && s.mode === 'pip'));
+  assert.deepEqual(await p.evaluate(() => window.__pipSize), { width: 300, height: 260 });
+  const shown = () => p.evaluate(() => {
+    const d = window.documentPictureInPicture.window.document;
+    const el = d.querySelector('[data-testid="float-jarvis"]');
+    return el && { state: el.dataset.state, word: d.querySelector('[data-testid="float-jarvis-word"]').textContent, heard: d.querySelector('[data-testid="float-jarvis-heard"]').textContent, eyebrow: d.querySelector('.scr__eyebrow').textContent };
+  });
+  assert.deepEqual(await shown(), { state: 'idle', word: 'ONLINE', heard: '', eyebrow: 'FLOAT·JARVIS' });
+  await p.evaluate(() => {
+    window.__jarvis = { core: 'listening', word: 'LISTENING', heard: 'what time is it' };
+  });
+  await p.waitForFunction(() => window.documentPictureInPicture.window.document.querySelector('[data-testid="float-jarvis"]').dataset.state === 'listening');
+  assert.deepEqual(await shown(), { state: 'listening', word: 'LISTENING', heard: '“what time is it”', eyebrow: 'FLOAT·JARVIS' });
+  const again = await p.evaluate(async () => window.__mods.ctl.screenAck(await window.win({ op: 'float-jarvis' })));
+  assert.equal(again, "I'm already floating.");
+  // A floating hologram: Jarvis takes its place (no new panel, no tap), and says so.
+  await p.evaluate(() => window.say('float the hologram'));
+  assert.deepEqual(await p.evaluate(() => window.kinds()), ['hologram']);
+  const replaced = await p.evaluate(async () => {
+    window.__gesture = false;
+    const o = await window.win({ op: 'float-jarvis' });
+    return [o.status, o.replaced && o.replaced.kind, window.__mods.ctl.screenAck(o)];
+  });
+  assert.deepEqual(replaced, ['opened', 'hologram', "I'm floating beside you, in place of the hologram."]);
+  assert.deepEqual(await p.evaluate(() => window.kinds()), ['jarvis']);
+});
+
+test('D6: no floating panels in this browser: Jarvis says he can\'t', async () => {
+  const p = await page({ noPip: true });
+  const o = await p.evaluate(async () => (await window.win({ op: 'float-jarvis' })).message);
+  assert.equal(o, 'This browser can’t float me. Chrome on a computer can.');
 });

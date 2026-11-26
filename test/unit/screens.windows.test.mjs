@@ -133,3 +133,12 @@ test('D5: size and swap words (a named window always; "it" only with a window op
   assert.deepEqual(pick(matchWindowCommand('switch sides', TWO)), { op: 'swap' });
   assert.equal(matchWindowCommand('swap the windows on my house', TWO), null);
 });
+
+test('D6: "float yourself" (Jarvis himself on top); nothing else that floats', () => {
+  for (const t of ['float yourself', 'Jarvis, float yourself.', 'float Jarvis', 'keep yourself on top', 'pop yourself out', 'hey Jarvis can you float yourself beside me please']) {
+    assert.equal(matchWindowCommand(t, NONE)?.op, 'float-jarvis', t);
+  }
+  for (const t of ['float', 'float it', 'float the hologram', 'I float myself in the pool', 'keep yourself safe', 'float yourself a loan']) {
+    assert.notEqual(matchWindowCommand(t, NONE)?.op, 'float-jarvis', t);
+  }
+});

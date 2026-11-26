@@ -12,6 +12,7 @@
 //   matchWindowCommand('close everything')             -> { op: 'close-all', viewers: true }
 //   matchWindowCommand('make the camera window bigger') -> { op: 'size', size: 'bigger', which: 'camera' } (D5)
 //   matchWindowCommand('swap them')                    -> { op: 'swap' } (two windows open; D5)
+//   matchWindowCommand('float yourself')               -> { op: 'float-jarvis' } (Jarvis himself on top; D6)
 //   matchWindowCommand('how do I split my screen')     -> null (a question for Jarvis)
 //
 // state (the router's, all optional): { windows: [{ id, kind, label, focused }], hologram: { open } }.
@@ -23,7 +24,7 @@
 
 import { normalizeScreenText } from './screen-commands.js';
 
-export const WINDOW_OPS = Object.freeze(['close', 'close-all', 'arrange', 'here', 'focus', 'swap', 'size']);
+export const WINDOW_OPS = Object.freeze(['close', 'close-all', 'arrange', 'here', 'focus', 'swap', 'size', 'float-jarvis']);
 
 const MAX_WORDS = 16;
 
@@ -88,6 +89,10 @@ const SIZE_IT_RE = new RegExp(`^(?:make|set) (?:it|this|that|${THE}${WIN}) ${SIZ
 const FILL_RE = /^(?:(?:go )?full ?screen|fill the screen|(?:make it|have it|let it) fill the screen|maximi[sz]e(?: it| this| that| the window)?)$/;
 const sizeOf = (w) => (/small/.test(w) ? 'smaller' : /big|large/.test(w) ? 'bigger' : 'fill');
 
+// Jarvis himself, floating (D6): "float yourself", "keep yourself on top". Read before the fillers go
+// ("jarvis" is one of them).
+const FLOAT_ME_RE = /^(?:(?:hey|ok|okay) )?(?:jarvis )?(?:(?:can you|could you|would you|please) )?(?:float (?:yourself|jarvis)(?: (?:on top|beside me|over everything))?|pop (?:yourself|jarvis) out|(?:keep|put) (?:yourself|jarvis) on top(?: of everything)?)(?: please| for me)?$/;
+
 function action(op, extra = {}) {
   // Free and local. Closing can lose something (a camera stops), so no alternative reading closes.
   return { do: 'window', op, free: true, undo: op !== 'close' && op !== 'close-all', check: false, camera: false, ...extra };
@@ -100,6 +105,12 @@ const kindOf = (w) => (w ? windowKindOf(w) : null);
  * Jarvis has open (the floating panel counts).
  */
 export function matchWindowCommand(text, state = {}) {
+  const raw = String(text ?? '')
+    .toLowerCase()
+    .replace(/[^a-z ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (FLOAT_ME_RE.test(raw)) return action('float-jarvis');
   const s = normalizeScreenText(text).replace(/\bpop up\b/g, 'popup');
   if (!s) return null;
   const words = s.split(' ');

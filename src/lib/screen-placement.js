@@ -31,6 +31,7 @@ export const PIP_SIZES = Object.freeze({
   mission: [440, 500],
   answer: [460, 540],
   link: [420, 260],
+  jarvis: [300, 260], // v8.1 D6: Jarvis himself, floating
 });
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);

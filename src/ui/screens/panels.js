@@ -19,6 +19,8 @@
 //              on by itself only with ctx.autoStart (the owner just asked for it here)
 //   look       data { src, width, height, pins, question, markdown, status }   a Look: the frozen
 //              frame with its pinned labels (EDITH plates, as in Optics) and the answer
+//   jarvis     Jarvis himself (v8.1 D6, a floating panel only): his core, the state word and the words
+//              heard, from deps.jarvisState() -> { core, word, heard }
 //
 // `win` is the window the panel lives in (a floating panel is another window): frames, timers and
 // window.open come from it. deps (all optional): loadHologram() -> the renderer module,
@@ -31,6 +33,7 @@ import { renderMarkdown } from '../../lib/markdown.js';
 import { createMissionControl } from '../hud/mission-control.js';
 import { hostOf } from '../../lib/screen-targets.js';
 import { createCameraScreenPanel } from '../optics/screen-camera.js';
+import { coreGlyph } from './frame.js';
 import { fitTransform, frameToView, layoutPins } from '../../lib/optics.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -767,6 +770,51 @@ function lookPanel({ win, frame, compact }) {
   };
 }
 
+// ---- Jarvis himself, floating (v8.1 D6: "float yourself") ---------------------------------------------
+
+const JARVIS_WORDS = { idle: 'ONLINE', listening: 'LISTENING', speaking: 'SPEAKING', thinking: 'THINKING', working: 'WORKING', optics: 'OPTICS', standby: 'STANDBY', offline: 'OFFLINE', error: 'CHECK REPLY' };
+const JARVIS_TONES = { listening: 'live', speaking: 'live', thinking: 'live', working: 'live', optics: 'live', offline: 'warn', error: 'warn' };
+
+/**
+ * A small always-on-top Jarvis: his core, the state word and the words heard, the most honest sign of
+ * what he is doing while his own window is hidden. deps.jarvisState() -> { core, word, heard } is read
+ * a few times a second with this window's own timers (they keep running while the app's tab is hidden).
+ */
+function jarvisPanel({ win, frame, deps }) {
+  const glyph = coreGlyph(88);
+  const word = h('p', { class: 'scr-jarvis__word', attrs: { 'data-testid': 'float-jarvis-word' } });
+  const heard = h('p', { class: 'scr-jarvis__heard', attrs: { 'data-testid': 'float-jarvis-heard', 'aria-live': 'polite' } });
+  const el = h('div', { class: 'scr-jarvis', attrs: { 'data-testid': 'float-jarvis', 'data-state': 'idle' } }, h('div', { class: 'scr-jarvis__core', attrs: { 'aria-hidden': 'true' } }, glyph), word, heard);
+  let last = '';
+  function render(d) {
+    const st = isObj(d) ? d : {};
+    const core = txt(st.core) || 'idle';
+    const shown = txt(st.word) || JARVIS_WORDS[core] || core.toUpperCase();
+    const said = txt(st.heard).replace(/\s+/g, ' ').trim();
+    const key = `${core}|${shown}|${said}`;
+    if (key === last) return;
+    last = key;
+    el.dataset.state = core;
+    setText(word, shown);
+    setText(heard, said ? `“${said.length > 140 ? `${said.slice(0, 139)}…` : said}”` : '');
+    heard.hidden = !said;
+    frame.setStatus(shown, JARVIS_TONES[core] || 'idle');
+  }
+  const poll = () => {
+    if (deps && typeof deps.jarvisState === 'function') render(safe(() => deps.jarvisState(), null));
+  };
+  frame.setTitle('Jarvis');
+  frame.setState('ready');
+  poll();
+  const timer = win.setInterval(poll, 400);
+  return {
+    el,
+    update: (d) => render(d),
+    getState: () => ({ state: el.dataset.state }),
+    destroy: () => win.clearInterval(timer),
+  };
+}
+
 /** The panel for `kind` (see the header). ctx: { win, frame, compact, deps, autoStart }. */
 export function createScreenPanel(kind, ctx) {
   const c = { win: window, compact: false, deps: {}, ...ctx };
@@ -795,6 +843,8 @@ export function createScreenPanel(kind, ctx) {
       return createCameraScreenPanel(c);
     case 'look':
       return lookPanel(c);
+    case 'jarvis':
+      return jarvisPanel(c);
     default: {
       const el = message('Nothing to show here.');
       return { el, update() {}, getState: () => ({}), destroy() {} };
