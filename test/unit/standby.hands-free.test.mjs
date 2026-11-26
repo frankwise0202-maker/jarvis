@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeLocks } from './standby.fakes.mjs';
-import { createStandbyLock } from '../../src/platform/standby-lock.js';
+import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere } from '../../src/platform/standby-lock.js';
 
 // ---- a tiny DOM (enough for standby.js and dom.js) -------------------------------------------------------
 
@@ -190,7 +190,7 @@ async function setup(t) {
   const locks = createFakeLocks();
   const log = [];
   log.caps = {};
-  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null, needsClick, unlock } = {}) => {
+  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null, needsClick, unlock, ...more } = {}) => {
     const woken = [];
     const sb = createStandby({
       getSettings: () => settings,
@@ -199,8 +199,10 @@ async function setup(t) {
       needsClick,
       unlock,
       onWake: (w) => woken.push(w.trigger),
+      onExit: more.onExit,
       createLock: lock ? (onChange) => createStandbyLock({ locks: locks.as(who), onChange }) : null,
       bargeIn,
+      ...more, // voiceElsewhere, pauseWhenHidden, …
     });
     made.push(sb);
     return { sb, woken, cap: () => log.caps[who] };
@@ -236,7 +238,7 @@ test('two windows on Standby: only the one holding the lock listens; the other s
   assert.equal(rootB.dataset.listening, 'elsewhere');
 });
 
-test('Use this window: Standby moves to B (B listens, A stops and says so); A takes it back when B leaves', async (t) => {
+test('Use this window: Standby moves to B (B listens, A stops and says so); when the owner leaves Standby in B, A leaves too and no microphone opens (PRIVACY-7)', async (t) => {
   const { make, shown } = await setup(t);
   const a = make('A');
   a.sb.enter();
@@ -255,10 +257,28 @@ test('Use this window: Standby moves to B (B listens, A stops and says so); A ta
   assert.equal(a.cap().live, false, 'A released its microphone');
   assert.equal(pill(rootA), 'NOT LISTENING IN THIS WINDOW');
   assert.equal(b.sb.isOpen(), true, 'B is still on Standby (the button didn’t leave it)');
+  const starts = a.cap().starts;
   b.sb.exit();
   await settle();
-  assert.equal(a.sb.listening, 'live', 'A listens again by itself');
-  assert.equal(a.cap().live, true);
+  assert.equal(a.sb.isOpen(), false, 'A left Standby too: leaving Standby turns the microphone off');
+  assert.equal(a.cap().live, false);
+  assert.equal(a.cap().starts, starts, 'A never opened the microphone again');
+  assert.equal(shown().length, 0, 'no Standby on screen in either window');
+});
+
+test('PRIVACY-7: the window listening on Standby closes: the one waiting behind it takes over by itself', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A');
+  a.sb.enter();
+  await settle();
+  const b = make('B');
+  b.sb.enter();
+  await settle();
+  assert.equal(b.sb.listening, 'elsewhere');
+  locks.close('A'); // A's tab closes: the browser lets go of its locks
+  await settle();
+  assert.equal(b.sb.listening, 'live', 'B listens by itself');
+  assert.equal(b.cap().live, true);
 });
 
 test('a window that leaves Standby lets go; one opened later listens at once', async (t) => {
@@ -304,7 +324,8 @@ test('a woken window keeps the lock through the session: another window opened m
   a.sb.release();
   a.sb.exit();
   await settle();
-  assert.equal(b.sb.listening, 'live');
+  assert.equal(b.sb.isOpen(), false, 'the owner left Standby in A: B leaves too (PRIVACY-7)');
+  assert.equal(b.cap().starts, 0, 'B never opened the microphone');
 });
 
 test('barge-in allowed (keep()): the microphone stays on through the session; claps then go to detected(), and after the session the same microphone listens on', async (t) => {
@@ -349,6 +370,125 @@ test('barge-in not allowed (keep() false, or none): the microphone is released a
     assert.equal(a.cap().stops, 1);
     a.sb.release();
   }
+});
+
+test('MAC-2: the woken session left for a sheet ("open settings"): Standby rests — still woken and holding the lock, the kept microphone let go — and resume() listens again', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A', { bargeIn: { keep: () => true, detected: () => assert.fail('nothing to interrupt behind a sheet') } });
+  a.sb.enter();
+  await settle();
+  a.cap().clap();
+  assert.equal(a.cap().live, true, 'kept for barge-in during the session');
+  a.sb.rest();
+  assert.equal(a.cap().live, false, 'let go while the owner looks at the sheet');
+  assert.equal(a.sb.isAwaiting(), true, 'still woken: Standby keeps its place');
+  assert.equal(locks.holder('jarvis-standby'), 'A', 'and its lock: no other window takes over meanwhile');
+  await new Promise((r) => setTimeout(r, 1600));
+  a.cap().clap(); // a bang behind the sheet: nothing listens for it
+  a.sb.resume();
+  await settle();
+  assert.equal(a.sb.listening, 'live', 'back on Standby, listening');
+  assert.equal(a.cap().live, true);
+  assert.equal(a.cap().starts, 2, 'a fresh start');
+});
+
+// MAC-6: the lock keeps two Standbys apart, but an open Voice Mode doesn't take it. A forgotten tab on Standby then
+// answered "Hey Jarvis, …" said to Voice Mode in the other window too: two voices, two paid requests.
+test('MAC-6: Voice Mode open in another Jarvis window: two claps or "Hey Jarvis" heard here don’t wake this Standby (it stays on, listening); once that Voice Mode closes, they do', async (t) => {
+  const { make, locks } = await setup(t);
+  const a = make('A', { voiceElsewhere: () => voiceOpenSomewhere({ locks: locks.as('A') }) });
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  const closeB = holdVoiceLock({ locks: locks.as('B') }); // Voice Mode opened by a tap in window B
+  await settle();
+  a.cap().clap();
+  await settle();
+  assert.deepEqual(a.woken, [], 'A stays asleep: the owner is talking to Voice Mode in B');
+  assert.equal(a.sb.isOpen(), true, 'still on Standby');
+  assert.equal(a.sb.listening, 'live', 'and listening');
+  assert.equal(a.cap().live, true);
+  closeB();
+  await settle();
+  await new Promise((r) => setTimeout(r, 1600)); // past the 1.5 s between two wakes
+  a.cap().clap();
+  await settle();
+  assert.deepEqual(a.woken, ['clap'], 'Voice Mode closed there: claps wake A again');
+});
+
+test('MAC-6: without the check (an iPhone, no Web Locks) Standby wakes at once, as before', async (t) => {
+  const { make } = await setup(t);
+  const a = make('A', { lock: false });
+  a.sb.enter();
+  await settle();
+  a.cap().clap();
+  assert.deepEqual(a.woken, ['clap'], 'synchronously, the microphone released first (iOS)');
+  assert.equal(a.cap().live, false);
+});
+
+// MAC-10: on a phone Standby listens only on screen (pauseWhenHidden); a hidden, paused Standby kept the lock, so a
+// second Jarvis window on screen said "NOT LISTENING IN THIS WINDOW". Phones use no lock, as before v8.1.
+test('MAC-10: a phone (Standby pauses while hidden) takes no lock: a hidden, paused Standby doesn’t keep another window on screen from listening', async (t) => {
+  const { make, locks, dom } = await setup(t);
+  const a = make('A', { pauseWhenHidden: true });
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  dom.doc.hidden = true;
+  dom.doc.dispatch('visibilitychange');
+  await settle();
+  assert.equal(a.sb.listening, 'paused', 'A paused while hidden (as before)');
+  assert.equal(a.cap().live, false);
+  dom.doc.hidden = false; // window B on screen (A, another window, hears nothing of it)
+  const b = make('B', { pauseWhenHidden: true });
+  b.sb.enter();
+  await settle();
+  assert.equal(b.sb.listening, 'live', 'B listens, as before v8.1');
+  assert.equal(locks.holder('jarvis-standby'), null, 'no lock on a phone');
+});
+
+// REGRESS-1 and MISSED-1: with "Hey Jarvis" on, every Jarvis page on a Mac opened Standby by itself at launch. A
+// second tab then came up behind a full-screen Standby that couldn't listen, and waited in line for the microphone.
+test('REGRESS-1: Standby opened by itself at launch while another window has it steps back at once (no screen that can’t listen, nothing waiting in line)', async (t) => {
+  const { make, locks, shown } = await setup(t);
+  const a = make('A');
+  a.sb.enter();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
+  const exits = [];
+  const b = make('B', { onExit: (e) => exits.push(e) });
+  b.sb.enter({ again: true, launch: true }); // A11: opened by itself as the page loaded
+  await settle();
+  assert.equal(b.sb.isOpen(), false, 'B is back on the app');
+  assert.equal(shown().length, 1, 'only A’s Standby is on screen');
+  assert.deepEqual(locks.waiting('jarvis-standby'), [], 'B doesn’t wait in line');
+  assert.equal(b.cap().starts, 0, 'B never opened the microphone');
+  assert.deepEqual(exits, [{ from: 'open' }], 'the app is told (its Standby key is up to date)');
+  a.sb.exit(); // MISSED-1: the owner leaves Standby in A
+  await settle();
+  assert.equal(b.cap().starts, 0, 'B still never opened the microphone');
+  assert.equal(locks.holder('jarvis-standby'), null, 'nobody holds Standby');
+});
+
+test('REGRESS-1: Standby at launch with no other window on Standby opens and listens as before; one the owner opens waits as before', async (t) => {
+  const { make } = await setup(t);
+  const a = make('A');
+  a.sb.enter({ again: true, launch: true });
+  await settle();
+  assert.equal(a.sb.listening, 'live', 'the launch Standby listens');
+  const b = make('B');
+  b.sb.enter(); // the owner's own tap: it waits, with Use this window
+  await settle();
+  assert.equal(b.sb.listening, 'elsewhere');
+  b.sb.exit();
+  await settle();
+  // Taken later by Use this window, a launch Standby that listened steps back like any other (it waits).
+  const c = make('C');
+  c.sb.enter();
+  await settle();
+  c.sb.exit();
+  await settle();
+  assert.equal(a.sb.listening, 'live');
 });
 
 test('Standby taken by another window during a kept session: the barge-in microphone goes too', async (t) => {

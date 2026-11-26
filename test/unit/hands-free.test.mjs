@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HANDS_FREE, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask } from '../../src/lib/hands-free.js';
+import { HANDS_FREE, followUp, bargeInAllowed, readHandsFreeTest, jarvisSpans, createSelfMask, startsWithWakeWords } from '../../src/lib/hands-free.js';
 import { HANDS_FREE_TEST_KEY } from '../../src/lib/audio-devices.js';
 
 test('the owner’s numbers, each in one place: 8 s to start a follow-up, 3 questions in a row while hidden, barge-in in setups 1 and 3', () => {
@@ -42,23 +42,43 @@ test('followUp: the brake — while hidden, after the 3rd question in a row no f
   }
 });
 
-test('bargeInAllowed: a computer, setup 1 or 3, and the hands-free Test’s self-trigger step passed — nothing less', () => {
-  const passed = { selfTrigger: 'passed' };
-  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: passed }), true);
-  assert.equal(bargeInAllowed({ computer: true, setup: 'switch', test: passed }), true);
-  assert.equal(bargeInAllowed({ computer: true, setup: 'speakerphone-both', test: passed }), false, 'setup 2: the speakerphone’s microphone open while he speaks would make George a phone call');
-  assert.equal(bargeInAllowed({ computer: true, setup: undefined, test: passed }), false, 'no setup chosen: today’s behaviour');
-  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: { selfTrigger: 'failed' } }), false, 'George woke the detector in the Test');
-  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: { selfTrigger: null } }), false, 'the Test not run');
-  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: null }), false);
-  assert.equal(bargeInAllowed({ computer: false, setup: 'speaker-mac-mic', test: passed }), false, 'never on an iPhone');
+// The setup and devices now (handsFreeMeasure in src/lib/audio-devices.js) and what the Test's step measured.
+const NOW1 = Object.freeze({ setup: 'speaker-mac-mic', wakeMic: 'mac-mic', speaker: 'sp-out', clap: true, word: true });
+const passedOn = (measured = NOW1) => ({ selfTrigger: 'passed', measured });
+
+test('bargeInAllowed: a computer, setup 1 or 3, and the hands-free Test’s self-trigger step passed on this setup — nothing less', () => {
+  const now3 = { ...NOW1, setup: 'switch' };
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: passedOn(), now: NOW1 }), true);
+  assert.equal(bargeInAllowed({ computer: true, setup: 'switch', test: passedOn(now3), now: now3 }), true);
+  const now2 = { ...NOW1, setup: 'speakerphone-both' };
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speakerphone-both', test: passedOn(now2), now: now2 }), false, 'setup 2: the speakerphone’s microphone open while he speaks would make George a phone call');
+  assert.equal(bargeInAllowed({ computer: true, setup: undefined, test: passedOn(), now: NOW1 }), false, 'no setup chosen: today’s behaviour');
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: { selfTrigger: 'failed', measured: NOW1 }, now: NOW1 }), false, 'George woke the detector in the Test');
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: { selfTrigger: null }, now: NOW1 }), false, 'the Test not run');
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: null, now: NOW1 }), false);
+  assert.equal(bargeInAllowed({ computer: false, setup: 'speaker-mac-mic', test: passedOn(), now: NOW1 }), false, 'never on an iPhone');
   assert.equal(bargeInAllowed(), false);
+});
+
+// MAC-9: a "passed" measured in another setup, or with another microphone or speaker, or before "Hey Jarvis" was on,
+// turned barge-in on untested. Now it counts only for what it measured; otherwise the card says to run it again.
+test('MAC-9: a passed self-trigger step counts only for the setup, wake microphone and speaker it measured, and the wake detectors that listened', () => {
+  const allowed = (measured, now = NOW1) => bargeInAllowed({ computer: true, setup: now.setup, test: passedOn(measured), now });
+  assert.equal(allowed(NOW1), true, 'the same: on');
+  assert.equal(allowed({ ...NOW1, setup: 'speakerphone-both' }), false, 'measured in “Speakerphone for both”: untested on setup 1');
+  assert.equal(allowed({ ...NOW1, wakeMic: 'sp-mic' }), false, 'another wake microphone');
+  assert.equal(allowed({ ...NOW1, speaker: 'usb-out' }), false, 'another speaker (or the speakerphone gone: the Mac’s speakers)');
+  assert.equal(allowed({ ...NOW1, word: false }), false, '“Hey Jarvis” turned on after a Test on claps alone');
+  assert.equal(allowed({ ...NOW1, clap: false }), false, 'claps turned on after a Test on “Hey Jarvis” alone');
+  assert.equal(allowed(NOW1, { ...NOW1, clap: false }), true, 'claps turned off since: what listens was tested');
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: { selfTrigger: 'passed' }, now: NOW1 }), false, 'a result that doesn’t say what it measured: run it again');
+  assert.equal(bargeInAllowed({ computer: true, setup: 'speaker-mac-mic', test: passedOn() }), false, 'nothing known about now: off');
 });
 
 test('readHandsFreeTest: the Test’s results as Settings → Voice → Microphone and speaker writes them; anything else is null', () => {
   const store = (v) => ({ getItem: (k) => (k === 'jarvis.handsFreeTest.v1' ? v : null) });
-  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false }))), { at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false });
-  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 9, selfTrigger: 'yes', hiddenWords: 'x' }))), { at: 9, hiddenWords: null, selfTrigger: null, heardSpeaker: null });
+  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false, measured: NOW1 }))), { at: 5, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false, measured: { ...NOW1 } });
+  assert.deepEqual(readHandsFreeTest(store(JSON.stringify({ at: 9, selfTrigger: 'yes', hiddenWords: 'x' }))), { at: 9, hiddenWords: null, selfTrigger: null, heardSpeaker: null, measured: null });
   assert.equal(readHandsFreeTest(store(JSON.stringify({ selfTrigger: 'passed' }))), null, 'no time: not a result');
   assert.equal(readHandsFreeTest(store(null)), null);
   assert.equal(readHandsFreeTest(store('{oops')), null);
@@ -138,5 +158,15 @@ test('the self-mask: no "Jarvis" in the text, never masked; bad events are ignor
   for (let i = 0; i < 40; i += 4) {
     m.mask.boundary({ charIndex: i });
     assert.equal(m.mask.masked(), false);
+  }
+});
+
+// MAC-V-1: "Hey Jarvis, …" said in a hidden follow-up listen is the owner calling him, not room talk.
+test('startsWithWakeWords: a sentence that starts with "Hey Jarvis" (as the recognizer writes it); not one that only mentions him', () => {
+  for (const s of ['hey Jarvis what is the capital of France', 'Hey, Jarvis, what time is it?', 'Hey Jarvis.', 'hi jarvis how are you', 'OK Jarvis, play some music', 'okay Jarvis what about Spain', 'A Jarvis what is the weather', 'hey Jervis turn it down', '  HEY JARVIS  ']) {
+    assert.equal(startsWithWakeWords(s), true, s);
+  }
+  for (const s of ['Jarvis, run a diagnostic', 'what is the capital of France', 'tell Jarvis hey', 'hey what is up Jarvis', 'they jarvis', 'hey jarvisx', 'hey', '', null, undefined, 42]) {
+    assert.equal(startsWithWakeWords(s), false, String(s));
   }
 });

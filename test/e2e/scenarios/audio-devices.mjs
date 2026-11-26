@@ -175,7 +175,10 @@ export default [
         await t.waitFor(async () => !!(await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.handsFreeTest.v1') || 'null')))?.heardSpeaker, { timeout: 3000, message: 'the result kept' });
         const r = await t.page.evaluate(() => JSON.parse(localStorage.getItem('jarvis.handsFreeTest.v1')));
         t.assert(Number.isFinite(r.at) && r.hiddenWords === true && r.selfTrigger === 'passed' && r.heardSpeaker === true, `The stored shape (${JSON.stringify(r)})`);
-        t.assert(Object.keys(r).sort().join(',') === 'at,heardSpeaker,hiddenWords,selfTrigger', `Exactly these keys (${Object.keys(r)})`);
+        t.assert(Object.keys(r).sort().join(',') === 'at,heardSpeaker,hiddenWords,measured,selfTrigger', `Exactly these keys (${Object.keys(r)})`);
+        // MAC-9: what the self-trigger step measured is kept with it (setup 1: the Mac's microphone, the speakerphone;
+        // claps listened, "Hey Jarvis" is off here).
+        t.assert(JSON.stringify(r.measured) === JSON.stringify({ setup: 'speaker-mac-mic', wakeMic: 'mac-mic', speaker: 'sp-out', clap: true, word: false }), `What it measured (${JSON.stringify(r.measured)})`);
         const lines = await t.page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="audio-handsfree-result"]')).map((li) => `${li.dataset.step}:${li.dataset.ok}`));
         t.assert(lines.join(',') === 'hidden:true,self:true,speaker:true', `Shown on the card (${lines})`);
         t.assert(t.requests('lead').length === 0, 'Nothing was sent to Claude');
@@ -201,6 +204,19 @@ export default [
         t.assert(lines === 3, `The results kept (${lines})`);
         t.assert((await t.locator('audio-input').inputValue()) === 'mac-mic', 'The setup kept');
         t.assert((await A(t)).gets.length === 0, 'Opening Settings again opened no microphone');
+      });
+      await t.step('MAC-9: another setup: the Test’s step says to run it again (barge-in off there); setup 1 again: passed again', async () => {
+        const self = () => t.page.evaluate(() => {
+          const li = document.querySelector('[data-testid="audio-handsfree-result"][data-step="self"]');
+          return li ? { ok: li.dataset.ok, text: li.textContent.trim() } : null;
+        });
+        t.assert((await self())?.ok === 'true', `passed on setup 1 (${JSON.stringify(await self())})`);
+        t.assert(/two claps can interrupt him/.test((await self()).text), `tested on claps alone, it says so (${(await self()).text})`);
+        await t.page.locator(tid('audio-setup', { 'data-setup': 'speakerphone-both' })).check();
+        await t.waitFor(async () => (await stored(t)).audioSetup === 'speakerphone-both', { timeout: 3000, message: 'setup 2 saved' });
+        await t.waitFor(async () => (await self())?.ok === 'unknown' && /^Run Test hands-free again/.test((await self()).text), { timeout: 3000, message: async () => `the card to say run it again (${JSON.stringify(await self())})` });
+        await t.page.locator(tid('audio-setup', { 'data-setup': 'speaker-mac-mic' })).check();
+        await t.waitFor(async () => (await self())?.ok === 'true', { timeout: 3000, message: async () => `passed again on setup 1 (${JSON.stringify(await self())})` });
       });
     },
   },

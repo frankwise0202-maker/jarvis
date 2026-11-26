@@ -143,7 +143,7 @@
 //                           ("Jarvis is listening. Ask away, or say “go back to sleep”."), closed at the end.
 //                           After an answer, a woken session and every session while hidden listen once for
 //                           a follow-up (8 s), and while hidden at most 3 questions in a row are taken
-//                           without the wake words, claps, a tap or a key (src/lib/hands-free.js followUp).
+//                           without the wake words, a tap or a key (src/lib/hands-free.js followUp).
 // The returned api also has ask(text, { mode, blueprintFor, signal }) -> { run } | { held } |
 // { error } (words typed in a viewer over Voice Mode, or a 2D request: sent as a Voice Mode turn;
 // one whose signal was aborted by Stop never starts), tap() (the core's tap), viewerTap() (the
@@ -174,7 +174,7 @@ import { createVoiceHold, HOLD_CAP_MS } from '../lib/voice-hold.js';
 import { ANSWER_WINDOW_MS, WITHDRAWN_LINE, againLine, chooseAnswer, isNoWord, matchChromeAnswer } from '../lib/chrome-prompt-words.js';
 import { TASK_CHECK_HIDDEN_MS, TASK_CHECK_MS } from '../lib/chrome-task-words.js';
 import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
-import { followUp, createSelfMask } from '../lib/hands-free.js';
+import { followUp, createSelfMask, HANDS_FREE, startsWithWakeWords } from '../lib/hands-free.js';
 import { sessionTitle, notify, closeNotify } from './attention.js';
 
 export { splitSentences };
@@ -381,7 +381,7 @@ function createVoiceMode(opts) {
     sleepAfter: false, // "go back to sleep": Standby once the short reply has been said
     sleepTimer: 0,
     // v8.1 hands-free (A1, A2, A6)
-    asked: 0, // questions taken since the last wake words, claps, tap or key (the hidden brake)
+    asked: 0, // questions taken since the last wake words, tap or key (the hidden brake; claps don't reset it)
     braked: false, // the brake was said: no more follow-up listens until the owner calls him again
     typingForced: false, // S.typing was set by a voice-input error, not by the owner (it doesn't hold off Standby)
     awayNoted: false, // this session's "Jarvis is listening" notification was shown
@@ -1571,6 +1571,7 @@ function createVoiceMode(opts) {
       S.braked = false;
       S.deaf = false;
       S.typingForced = false;
+      S.sleepAfter = false; // MAC-8: a tap during "Very good, Tony." (or the brake line): they changed their mind
     }
     const review = !duringBuild && reviewOn();
     // noSpeechMs, oneTry (v8.1, narrate()'s listenAfter): its own silence window, and no second try.
@@ -1798,7 +1799,11 @@ function createVoiceMode(opts) {
     C.hiddenIdle = !text && !!document.hidden; // v8.1 chrome-voice: a hidden listen ended with nothing (words: the owner is here)
     if (text) {
       S.silentTries = 0;
-      if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
+      if (startsWithWakeWords(text)) {
+        // MAC-V-1: "Hey Jarvis, …": the owner calling him, not the room's talk: the hidden count starts again.
+        S.asked = 0;
+        S.braked = false;
+      } else if (!L.wakeWindow) S.asked += 1; // v8.1 (A6): one more question without the wake words or a tap
       play('listen-stop');
       // The check may keep this recognizer (to hear "cancel" or "no, I said …"); otherwise it stops.
       S.mic = reason === 'final' && L.review ? L : null;
@@ -4428,6 +4433,7 @@ function createVoiceMode(opts) {
     }
     if (S.sttOk && !away()) startListening({ wakeWindow: true });
     else W.timer = setTimeout(() => greetWake(false), WAKE_BOOT_MS);
+    noteAway(); // MAC-7: woken in the background on a Mac: the notification at once (a question may skip the greeting)
   }
 
   /** The greeting and the offer: "Good evening, Frank. Shall I put on some AC/DC? Or I can …". */
@@ -4521,9 +4527,12 @@ function createVoiceMode(opts) {
         greetWake(false);
         return true;
       }
-      // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question.
+      // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question. MAC-7: what waited for
+      // the owner (D3: the speakerphone line, Chrome's question) is said before its answer instead of the greeting.
       S.wake = null;
       clearTimeout(W.timer);
+      const waited = wakePendingLines().join(' ');
+      if (waited) S.preface = { text: waited, at: Date.now() };
       return false;
     }
     if (W.phase !== 'asking') return false;
@@ -5225,7 +5234,7 @@ function createVoiceMode(opts) {
     const asking = (!!S.wake && S.wake.phase === 'asking') || decisionWaits();
     // v8.1 (A6): in a hands-free session (a computer: handsFree()), a woken session and every session while Jarvis
     // is hidden listen once for a follow-up (8 s); while hidden, after 3 questions in a row without the wake words,
-    // claps, a tap or a key: the brake. Elsewhere (an iPhone, the setting off): today's rule.
+    // a tap or a key: the brake. Elsewhere (an iPhone, the setting off): today's rule.
     const hf = handsFree();
     const plan = once ? null : followUp({ woken: S.wakeSession && hf, away: !!document.hidden && hf, continuous: S.continuous, asking, asked: S.asked });
     if (plan && plan.brake) {
@@ -5249,9 +5258,9 @@ function createVoiceMode(opts) {
   }
 
   /**
-   * v8.1 (A6): the brake. While Jarvis is hidden, 3 questions in a row were taken without the wake words, claps,
-   * a tap or a key (a TV can't run up paid questions): he says so, then goes back to Standby (woken, Return to
-   * standby on) or stops listening. The wake words, claps, a tap or a key start the count again.
+   * v8.1 (A6): the brake. While Jarvis is hidden, 3 questions in a row were taken without the wake words, a tap
+   * or a key (a TV can't run up paid questions): he says so, then goes back to Standby (woken, Return to standby
+   * on) or stops listening. The wake words, a tap or a key start the count again (claps don't: MAC-4).
    */
   function brake() {
     S.braked = true;
@@ -5266,14 +5275,28 @@ function createVoiceMode(opts) {
    * he speaks: he stops and listens; a tour's narration ends ('cancelled') and the tour pauses at its step.
    */
   function bargeIn(trigger) {
+    if (trigger === 'word' && !S.closed && !S.speech && (S.listen || S.review)) {
+      // MAC-V-1: "Hey Jarvis" while he listens: nothing to interrupt, but it is the owner calling him.
+      S.asked = 0;
+      S.braked = false;
+      return false;
+    }
     if (S.closed || !S.speech || S.review || S.listen) return false;
     const voice = valueOf(() => (tts && typeof tts.voiceNow === 'function' ? tts.voiceNow() : null));
     if (voice !== 'natural' && voice !== 'homebase') return false;
-    if (trigger === 'word' && selfMask.masked()) return false;
-    S.asked = 0; // the owner called him: the hidden count starts again
-    S.braked = false;
+    const word = trigger === 'word';
+    if (word && selfMask.masked()) return false;
+    // MAC-4: claps are the weak signal (a door, knocks, a TV's bang). They stop him but don't start the hidden count
+    // again; at its limit they open no more listens (he finishes, then the brake). Only the wake words do.
+    if (!word && document.hidden && handsFree() && (S.braked || S.asked >= HANDS_FREE.hiddenQuestions)) return false;
+    if (word) {
+      S.asked = 0; // the owner called him: the hidden count starts again
+      S.braked = false;
+    }
+    const count = { asked: S.asked, braked: S.braked };
     S.deaf = false;
     C.hiddenIdle = false; // v8.1 chrome-voice
+    S.sleepAfter = false; // MAC-8: the sleep or brake line was cut: the owner wants him after all
     hold.heard();
     disarmSleep();
     clearRetry();
@@ -5283,6 +5306,9 @@ function createVoiceMode(opts) {
       cancelSpeech();
       startListening({ keepAnswer: !!S.answer });
     }
+    // The listen a reply's interruption opens is a tap's (it starts the count again): not after claps.
+    S.asked = count.asked;
+    S.braked = count.braked;
     return true;
   }
 

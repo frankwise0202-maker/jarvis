@@ -26,7 +26,10 @@
 //   clockJumped(lastAt, now, everyMs)      a long jump in Date.now(): the Mac slept
 //   micPillName(device) / goneName(device) / awayLine(plan)   what the Standby pill and the wake line say
 //   trackStartSupport(env)                 the recognizer hears a given track (recognition.start(track))
-//   HANDS_FREE_TEST_KEY, normalizeHandsFreeTest(raw), handsFreeLines(result)
+//   HANDS_FREE_TEST_KEY, normalizeHandsFreeTest(raw), handsFreeLines(result, { now })
+//   handsFreeMeasure({ plan, settings }) / handsFreeTestFits(result, now)   MAC-9: what the Test's self-trigger step
+//                                          measured (setup, wake microphone, speaker, wake detectors), and whether a
+//                                          result still holds for now
 //   alwaysOnChecks(env), ALWAYS_ON_TOLD     A10's "Always on" card: what is checked, and what is only told
 //   audioStatusLine(plan, devices)         "which microphone are you using?" (src/ui/commands/audio.js)
 //
@@ -579,8 +582,47 @@ export function trackStartSupport(env = {}) {
 export const HANDS_FREE_TEST_KEY = 'jarvis.handsFreeTest.v1';
 
 /**
+ * MAC-9: what barge-in would run on now, and what the Test's self-trigger step measured (kept with its result):
+ * { setup, wakeMic, speaker, clap, word }. wakeMic and speaker are device ids ('' for the default: nothing chosen, or
+ * the chosen one gone); clap and word: which wake detectors listen. `plan`: planSetup() now (null: no device list).
+ */
+export function handsFreeMeasure({ plan = null, settings = {} } = {}) {
+  const p = plan && typeof plan === 'object' ? plan : {};
+  const s = settings && typeof settings === 'object' ? settings : {};
+  const id = (d) => (d && typeof d.id === 'string' && d.id && d.id !== 'default' ? d.id : '');
+  return {
+    setup: SETUP_IDS.includes(p.setup) ? p.setup : setupOf(s),
+    wakeMic: id(p.wakeMic),
+    speaker: id(p.speaker),
+    clap: s.wakeClap !== false,
+    word: s.wakeWord === true,
+  };
+}
+
+function normalizeMeasure(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const str = (x) => typeof x === 'string' && x.length <= 256 && /^[\x20-\x7e]*$/.test(x);
+  if (!(v.setup === '' || SETUP_IDS.includes(v.setup)) || !str(v.wakeMic) || !str(v.speaker)) return null;
+  if (typeof v.clap !== 'boolean' || typeof v.word !== 'boolean') return null;
+  return { setup: v.setup, wakeMic: v.wakeMic, speaker: v.speaker, clap: v.clap, word: v.word };
+}
+
+/**
+ * MAC-9: the Test's self-trigger result holds for `now` (handsFreeMeasure()): measured in this setup, with this wake
+ * microphone and this speaker, and with every wake detector listening now (one turned on since was never tested
+ * against George's voice). A result that doesn't say what it measured doesn't hold.
+ */
+export function handsFreeTestFits(result, now) {
+  const m = result && typeof result === 'object' ? normalizeMeasure(result.measured) : null;
+  const n = normalizeMeasure(now);
+  if (!m || !n) return false;
+  return m.setup === n.setup && m.wakeMic === n.wakeMic && m.speaker === n.speaker && (!n.clap || m.clap) && (!n.word || m.word);
+}
+
+/**
  * The stored result, checked: { at, hiddenWords: true|false|null, selfTrigger: 'passed'|'failed'|null,
- * heardSpeaker: true|false|null }, or null when there is none (or it is not one).
+ * heardSpeaker: true|false|null, measured: { setup, wakeMic, speaker, clap, word } | null } (MAC-9: what the
+ * self-trigger step measured), or null when there is none (or it is not one).
  */
 export function normalizeHandsFreeTest(raw) {
   let v = raw;
@@ -600,13 +642,20 @@ export function normalizeHandsFreeTest(raw) {
     hiddenWords: tri(v.hiddenWords),
     selfTrigger: v.selfTrigger === 'passed' || v.selfTrigger === 'failed' ? v.selfTrigger : null,
     heardSpeaker: tri(v.heardSpeaker),
+    measured: normalizeMeasure(v.measured),
   };
 }
 
-/** The Test's three steps as the card shows them: [{ step, ok: true | false | null, text }]. */
-export function handsFreeLines(result) {
+/**
+ * The Test's three steps as the card shows them: [{ step, ok: true | false | null, text }]. `now`
+ * (handsFreeMeasure()): a passed self-trigger step measured in another setup, or with other devices or wake
+ * detectors, says to run the Test again (MAC-9: barge-in is off until then).
+ */
+export function handsFreeLines(result, { now = null } = {}) {
   const r = normalizeHandsFreeTest(result);
   if (!r) return [];
+  const stale = r.selfTrigger === 'passed' && !!now && !handsFreeTestFits(r, now);
+  const by = r.measured && !r.measured.word ? 'two claps' : '“Hey Jarvis”';
   return [
     {
       step: 'hidden',
@@ -615,10 +664,11 @@ export function handsFreeLines(result) {
     },
     {
       step: 'self',
-      ok: r.selfTrigger === 'passed' ? true : r.selfTrigger === 'failed' ? false : null,
-      text:
-        r.selfTrigger === 'passed'
-          ? 'George saying “Jarvis” didn’t wake Jarvis: “Hey Jarvis” can interrupt him.'
+      ok: stale ? null : r.selfTrigger === 'passed' ? true : r.selfTrigger === 'failed' ? false : null,
+      text: stale
+        ? 'Run Test hands-free again: the setup, a device or the wake words changed since it passed, so interrupting him by voice is off.'
+        : r.selfTrigger === 'passed'
+          ? `George saying “Jarvis” didn’t wake Jarvis: ${by} can interrupt him.`
           : r.selfTrigger === 'failed'
             ? 'George’s own voice woke Jarvis, so interrupting him by voice stays off.'
             : 'Not checked: George or the wake microphone wasn’t ready.',
@@ -672,7 +722,7 @@ export function alwaysOnChecks(env = {}) {
     else if (e.trackUse) add('recognizer', !!e.trackUse.used, e.trackUse.used ? `Your last question was heard on ${p.questionMic.name}.` : `Your last question was heard on Chrome’s own microphone: set it to ${p.questionMic.name}.`);
     else add('recognizer', null, `Your questions will be heard on ${p.questionMic.name} (not checked yet: after your next question).`);
   }
-  for (const l of handsFreeLines(e.test)) add(`test-${l.step}`, l.ok, `Hands-free Test: ${l.text}`);
+  for (const l of handsFreeLines(e.test, { now: handsFreeMeasure({ plan: e.plan, settings: s }) })) add(`test-${l.step}`, l.ok, `Hands-free Test: ${l.text}`);
   if (!normalizeHandsFreeTest(e.test)) add('test', null, 'Hands-free Test: not run yet (Microphone and speaker → Test hands-free).');
   return out;
 }

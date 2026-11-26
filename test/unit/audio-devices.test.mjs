@@ -25,6 +25,8 @@ import {
   goneName,
   goneOf,
   handsFreeLines,
+  handsFreeMeasure,
+  handsFreeTestFits,
   initialHotplugState,
   listAudioDevices,
   micPillName,
@@ -307,8 +309,8 @@ test('the recognizer hears a track in Chrome and Edge 135+ on a computer and Fir
 
 test('the hands-free Test: the stored shape Voice Mode’s barge-in reads, checked, and the card’s lines', () => {
   const r = normalizeHandsFreeTest({ at: 1764100000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false, extra: 'x' });
-  assert.deepEqual(r, { at: 1764100000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false });
-  assert.deepEqual(normalizeHandsFreeTest(JSON.stringify({ at: 5, hiddenWords: 'yes', selfTrigger: 'maybe', heardSpeaker: null })), { at: 5, hiddenWords: null, selfTrigger: null, heardSpeaker: null });
+  assert.deepEqual(r, { at: 1764100000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: false, measured: null });
+  assert.deepEqual(normalizeHandsFreeTest(JSON.stringify({ at: 5, hiddenWords: 'yes', selfTrigger: 'maybe', heardSpeaker: null })), { at: 5, hiddenWords: null, selfTrigger: null, heardSpeaker: null, measured: null });
   assert.equal(normalizeHandsFreeTest('{not json'), null);
   assert.equal(normalizeHandsFreeTest({ hiddenWords: true }), null, 'no time: not a result');
   assert.equal(normalizeHandsFreeTest([]), null);
@@ -317,6 +319,41 @@ test('the hands-free Test: the stored shape Voice Mode’s barge-in reads, check
   assert.deepEqual(lines.map((x) => [x.step, x.ok]), [['hidden', false], ['self', false], ['speaker', true]]);
   assert.match(lines[1].text, /interrupting him by voice stays off/);
   assert.deepEqual(handsFreeLines(null), []);
+});
+
+// MAC-9: what the Test's self-trigger step measured is kept with its result; a passed step counts only for that.
+test('MAC-9: handsFreeMeasure (the setup, wake microphone, speaker and wake detectors), kept with the result; a passed step measured elsewhere says to run the Test again', () => {
+  const l = listAudioDevices(MAC_BT);
+  const chosen1 = { input: { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }, output: { id: 'sp-out', label: 'Desk Speakerphone (Bluetooth)' } };
+  const s1 = { audioSetup: 'speaker-mac-mic', wakeWord: true };
+  const m1 = handsFreeMeasure({ plan: planSetup('speaker-mac-mic', l, chosen1), settings: s1 });
+  assert.deepEqual(m1, { setup: 'speaker-mac-mic', wakeMic: 'mac-mic', speaker: 'sp-out', clap: true, word: true });
+  assert.deepEqual(handsFreeMeasure({ plan: planSetup('speaker-mac-mic', l, chosen1, { output: true }), settings: s1 }), { ...m1, speaker: '' }, 'the speakerphone gone: the default speaker');
+  assert.deepEqual(handsFreeMeasure({ plan: null, settings: { audioSetup: 'switch', wakeClap: false } }), { setup: 'switch', wakeMic: '', speaker: '', clap: false, word: false }, 'no device list: the defaults');
+  assert.deepEqual(handsFreeMeasure(), { setup: '', wakeMic: '', speaker: '', clap: true, word: false });
+  // Kept, checked.
+  assert.deepEqual(normalizeHandsFreeTest({ at: 5, selfTrigger: 'passed', measured: m1 }).measured, m1);
+  assert.equal(normalizeHandsFreeTest({ at: 5, selfTrigger: 'passed', measured: { setup: 7 } }).measured, null);
+  assert.equal(normalizeHandsFreeTest({ at: 5, selfTrigger: 'passed', measured: { ...m1, setup: 'mine' } }).measured, null);
+  assert.equal(handsFreeTestFits({ selfTrigger: 'passed', measured: m1 }, m1), true);
+  assert.equal(handsFreeTestFits({ selfTrigger: 'passed', measured: { ...m1, setup: 'speakerphone-both' } }, m1), false);
+  assert.equal(handsFreeTestFits({ selfTrigger: 'passed' }, m1), false);
+  // The card: the step's line says to run it again (barge-in is off).
+  const result = (measured) => ({ at: 1, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured });
+  const stale = handsFreeLines(result({ ...m1, setup: 'speakerphone-both' }), { now: m1 });
+  assert.equal(stale[1].ok, null);
+  assert.match(stale[1].text, /^Run Test hands-free again/);
+  assert.match(handsFreeLines(result(null), { now: m1 })[1].text, /^Run Test hands-free again/, 'a result that doesn’t say what it measured');
+  const same = handsFreeLines(result(m1), { now: m1 });
+  assert.equal(same[1].ok, true);
+  assert.match(same[1].text, /“Hey Jarvis” can interrupt him/);
+  assert.match(handsFreeLines(result({ ...m1, word: false }), { now: { ...m1, word: false } })[1].text, /two claps can interrupt him/, 'tested on claps alone: it says so');
+  assert.equal(handsFreeLines(result({ ...m1, word: false }), { now: m1 })[1].ok, null, '“Hey Jarvis” turned on since');
+  // The "Always on" card too.
+  const rows = alwaysOnChecks({ plan: planSetup('speakerphone-both', l, chosen1), devices: l, settings: { ...s1, audioSetup: 'speakerphone-both' }, test: result(m1) });
+  const row = rows.find((x) => x.check === 'test-self');
+  assert.equal(row.ok, null);
+  assert.match(row.text, /Run Test hands-free again/);
 });
 
 test('A10, the "Always on" card: each line checked from what the page can see, or said when it can’t', () => {
@@ -333,7 +370,7 @@ test('A10, the "Always on" card: each line checked from what the page can see, o
     george: { ready: true, label: 'George (home base)' },
     trackUse: { used: true },
     takesTrack: true,
-    test: { at: 1, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true },
+    test: { at: 1, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured: { setup: 'speaker-mac-mic', wakeMic: 'mac-mic', speaker: 'sp-out', clap: true, word: true } },
   });
   const by = (rows) => Object.fromEntries(rows.map((r) => [r.check, r.ok]));
   assert.deepEqual(by(good), { mic: true, device: true, bluetooth: true, power: true, installed: true, notifications: true, wake: true, george: true, recognizer: true, 'test-hidden': true, 'test-self': true, 'test-speaker': true });

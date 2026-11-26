@@ -732,7 +732,8 @@ export const tourBargeIn = {
     await page.addInitScript(() => {
       window.__voice.queue = [];
       try {
-        localStorage.setItem('jarvis.handsFreeTest.v1', JSON.stringify({ at: 1800000000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true }));
+        // MAC-9: the result says what it measured (setup 1, the default devices here, claps and "Hey Jarvis").
+        localStorage.setItem('jarvis.handsFreeTest.v1', JSON.stringify({ at: 1800000000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured: { setup: 'speaker-mac-mic', wakeMic: '', speaker: '', clap: true, word: true } }));
         localStorage.setItem('jarvis.dev.wakeWord', 'stub');
       } catch {
         /* storage unavailable */

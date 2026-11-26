@@ -335,8 +335,9 @@ Mode or Optics first.
 - **While he talks** he can't hear you, except "Hey Jarvis" or two claps on a Mac (see
   [Hands-free on a Mac](#hands-free-on-a-mac)): interrupt him first, then say the command.
 - **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
-  so, Voice Mode closes, and it opens as if you had tapped it (it doesn't go back to Standby, since you
-  asked to look at it).
+  so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
+  itself once you close it, or after a minute with no click or key (it comes back above it, and what you
+  opened stays underneath); with Jarvis in the background, right away.
 
 #### Hands-free on a Mac
 
@@ -354,22 +355,29 @@ other windows, minimized, or with the display asleep.
   is waiting for "Hey Jarvis" or hearing your question. The chimes and the title can.
 - **After an answer he listens about 8 seconds** for a follow-up. If nobody speaks, he goes back to Standby.
 - **The brake.** While his window is in the background, he takes at most 3 questions in a row without "Hey
-  Jarvis", two claps, a tap or a key. Then he says "Say “Hey Jarvis” when you need me." and goes back to Standby
-  (or just stops listening, if you started with a tap). A TV left on can't run up paid questions.
+  Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you
+  need me." and goes back to Standby (or just stops listening, if you started with a tap). A TV left on can't run
+  up paid questions. Two claps can still stop him while he talks, but they don't start the count again (a door or
+  a bang on TV sounds like claps).
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
-  has passed. His own "Jarvis" never interrupts him: for about a second around it, the wake word doesn't count.
+  has passed with that setup and those devices. Change the setup, the microphone or the speaker, or turn on "Hey
+  Jarvis" after a Test on claps alone, and it's off until you run the Test again (the card says so). His own
+  "Jarvis" never interrupts him: for about a second around it, the wake word doesn't count.
   With **Speakerphone for both**, while the Mac's own voice is speaking, or if that step of the test failed, tap the
   core or press Space, as before.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
   only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
-  move Standby there. When the one listening leaves Standby or closes, the other takes over by itself.
+  move Standby there. When you leave Standby in the one listening, the others leave Standby too, so no microphone
+  turns on by itself; only when its window closes does the next one take over by itself. While Voice Mode is open
+  in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a
-  restart or an update, say). Settings → Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)** turns that
-  on or off. Chrome lets a page speak only after one click, so until you click, Standby says **CLICK ONCE SO JARVIS
+  restart or an update, say), unless another Jarvis window is already on Standby: a second window or tab opens on
+  the app, as before. Settings → Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)** turns that on or
+  off. Chrome lets a page speak only after one click, so until you click, Standby says **CLICK ONCE SO JARVIS
   CAN SPEAK**: that click (or Enter) lets him speak, and Standby stays. If George can already speak (installed
   Jarvis, his voice ready), there is no such line.
 - **If he can't hear you in the background** (a Chrome or Mac setting can stop that), he says once "I can't hear you
@@ -848,7 +856,8 @@ Mac; the card isn't there on iPhone).
   - **Test hands-free**, three steps: (1) switch to another app and say "testing" within 10 seconds (did Jarvis
     hear you in the background?); (2) George says a sentence with "Jarvis" in it while the wake microphone
     listens (if that wakes him, interrupting him by voice stays off, and the card says why); (3) "Did you hear
-    that from the speakerphone?" The results are kept on this Mac and shown on the card.
+    that from the speakerphone?" The results are kept on this Mac and shown on the card. The second step counts
+    only for the setup and devices it ran with: after a change, the card says **Run Test hands-free again**.
 - **Notes.** When George isn't speaking, the Mac's own voice uses the Mac's sound output (System Settings →
   Sound). "Speakerphone speaks, Mac listens" needs the lid open. Chrome's own microphone setting is
   `chrome://settings/content/microphone` (a page can't open it: the card has a **Copy** button). Chrome 135 or
@@ -1322,15 +1331,36 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   claps and, if you turned it on, "Hey Jarvis". The sound is checked on the device and thrown
   away: nothing is recorded or sent, and the red **LISTENING ON THIS DEVICE** pill shows it the
   whole time (the pill says whenever the microphone is on; with only "Hey Jarvis" on, the
-  microphone stays off until it is ready). Leaving Standby turns the microphone off. On a phone it
-  also stops while Jarvis is not on screen; on a Mac it keeps listening in a background tab while
-  Standby is open. When he wakes, Voice Mode takes over as usual (your browser's speech service
-  hears what you say next; on a Mac that goes on while his window is in the background, with the
-  chimes and the tab's title saying when he listens: see [Hands-free on a Mac](#hands-free-on-a-mac),
-  and Settings → Voice → Wake Jarvis to turn it off); woken by claps, words heard in that first moment are not sent to
-  Claude (they may be the room talking). The "Hey Jarvis" models download once from the Jarvis
-  site itself, and what you played lately (for the music he offers, with Apple's ids for it)
-  stays on this device.
+  microphone stays off until it is ready). Leaving Standby turns the microphone off, in every
+  Jarvis window. On a phone it also stops while Jarvis is not on screen; on a Mac it keeps listening
+  in a background tab while Standby is open. When he wakes, Voice Mode takes over: your browser's
+  speech service hears what you say next (on a Mac, also in the background: next point). Woken by
+  claps, words heard in that first moment are not sent to Claude (they may be the room talking). The
+  "Hey Jarvis" models download once from the Jarvis site itself, and what you played lately (for the
+  music he offers, with Apple's ids for it) stays on this device.
+- **Hands-free on a Mac.** A conversation you started (two claps or "Hey Jarvis" on Standby, a tap, a
+  key) goes on while Jarvis's window is in the background or the display is asleep: your browser's
+  speech service hears the room then, as it does on screen. Nothing else opens the microphone for
+  questions, and Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background
+  (Mac)** turns this off. See [Hands-free on a Mac](#hands-free-on-a-mac).
+  - **It ends by itself.** After each answer he listens about 8 seconds for a follow-up, then goes back
+    to Standby. In the background he takes at most 3 questions in a row without "Hey Jarvis", a tap or
+    a key, then stops taking questions, so a TV can't keep him going.
+  - **Interrupting him by voice** (with "Speakerphone speaks, Mac listens" or "Switch", once the
+    hands-free Test passed) keeps Standby's microphone on through the whole conversation, listening on
+    the Mac for "Hey Jarvis" or two claps, as on Standby: nothing it hears is recorded or sent.
+  - **One window listens.** With Jarvis open in two windows, only one listens on Standby. Another
+    takes over by itself only when that window closes; when you leave Standby, the others leave it
+    too, so no microphone turns on by itself. **Use this window** moves it when you choose. A window
+    you open while another is on Standby doesn't open Standby by itself. While Voice Mode is open in
+    one window, Standby in another doesn't wake.
+  - **Chrome's questions are said out loud** (Jarvis for Chrome: "Chrome asks: …"), in Voice Mode and
+    at the next wake, and he listens up to 30 seconds for your answer, so anyone in the room can hear
+    them. With Voice Mode closed, a notification says Chrome is asking instead.
+  - **How to tell he is listening:** the chimes when he starts and stops, the tab's title ("Listening ·
+    Jarvis", "Thinking · Jarvis", "Speaking · Jarvis"), and one notification per conversation ("Jarvis
+    is listening"), gone when it ends. Chrome's red dot and the Mac's orange dot are on whenever
+    Standby listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question".
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in

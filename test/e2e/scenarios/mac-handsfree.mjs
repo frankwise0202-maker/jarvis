@@ -21,9 +21,10 @@ const DOUBLE_CLAP = Array.from(pad(S.doubleClap({ gapMs: 420, at: 0.2, seconds: 
 const QUESTION = 'What is the capital of France?';
 const ANSWER = /The capital of France is Paris\./;
 const GEORGE = { homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'owner' };
-// Barge-in's gate (A8): setup 1 chosen, the hands-free Test's self-trigger step passed (mac-dev writes both).
+// Barge-in's gate (A8): setup 1 chosen, the hands-free Test's self-trigger step passed (mac-dev writes both), on what
+// it measured (MAC-9: setup 1, the default microphone and speaker here, claps and "Hey Jarvis").
 const BARGE_IN = { audioSetup: 'speaker-mac-mic' };
-const TEST_PASSED = JSON.stringify({ at: 1_800_000_000_000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true });
+const TEST_PASSED = JSON.stringify({ at: 1_800_000_000_000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured: { setup: 'speaker-mac-mic', wakeMic: '', speaker: '', clap: true, word: true } });
 
 // ---- probes (init scripts) ------------------------------------------------------------------------------
 
@@ -584,6 +585,41 @@ export default [
     },
   },
   {
+    name: 'mac-handsfree-brake-claps',
+    title: 'MAC-4: Mac, setup 1 with barge-in, woken in the background by claps, a TV heard in every listen and a double bang during each of George’s answers: the claps stop him, yet at most 3 paid questions, then the brake and Standby',
+    device: 'mac',
+    fakeMusic: true,
+    fakeCore: { senses: { speak: 'ready' } },
+    timeout: 240000,
+    async run(t) {
+      await setup(t, { george: true, bargeIn: true });
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      const tv = 'Tell me about solar panels [[long]]';
+      await queue(t.page, '', tv, tv, tv, tv, tv, tv, tv);
+      await wakeByClaps(t);
+      let bangs = 0;
+      let clappedFor = 0;
+      const end = Date.now() + 200000;
+      while (Date.now() < end && (await t.page.locator(tid('voice-mode')).count())) {
+        const n = leadCount(t);
+        if (n > clappedFor && (await voiceState(t.page)) === 'speaking' && t.core.senses.speaks.length >= 2) {
+          clappedFor = n;
+          await t.page.waitForTimeout(1600); // George well into the answer, past the 1.5 s between two triggers
+          await play(t.page, DOUBLE_CLAP);
+          bangs += 1;
+        }
+        await t.page.waitForTimeout(250);
+      }
+      t.assert(bangs >= 3, `a double bang during each answer (${bangs})`);
+      t.assert(leadCount(t) === 3, `at most 3 paid questions while hidden without "Hey Jarvis" or a tap (${leadCount(t)} requests, ${bangs} bangs)`);
+      t.assert((await said(t.page)).some((x) => /Say “Hey Jarvis” when you need me\./.test(x)) || t.core.senses.speaks.some((s) => /when you need me/.test(s.text)), 'the brake was said');
+      await t.visible('standby', { message: 'back to Standby' });
+      await waitListening(t);
+    },
+  },
+  {
     name: 'mac-barge-in-self',
     title: 'Mac, barge-in on: George says "Jarvis" and the wake detector is fed his own word at that moment — nothing interrupts him; the same detection at another word does',
     device: 'mac',
@@ -663,6 +699,47 @@ export default [
     },
   },
   {
+    name: 'mac-standby-at-launch-two-windows',
+    title: 'REGRESS-1, MISSED-1: Standby at launch with a second Jarvis window on the Mac: the window opened second comes up on the app, not on a Standby that can’t listen, and waits for nothing; when the owner leaves Standby in the first, the second’s microphone stays closed and claps wake nothing there',
+    device: 'mac',
+    settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
+    timeout: 120000,
+    async run(t) {
+      const a = await setup(t, { wordStub: true });
+      await t.step('A opens Standby by itself and listens', async () => {
+        await t.visible('standby', { page: a, message: 'Standby at launch in A' });
+        await waitListening(t, a);
+      });
+      const b = await t.page.context().newPage();
+      t.attachPageGuards(b);
+      await setup(t, { page: b });
+      await t.step('B, opened second, comes up on the app', async () => {
+        await b.waitForTimeout(2000);
+        const st = await standbyState(b);
+        t.assert(!st, `no Standby in B (${JSON.stringify(st)})`);
+        const covered = await b.evaluate(() => {
+          const c = document.querySelector('[data-testid="composer-input"]');
+          if (!c) return 'no composer';
+          const r = c.getBoundingClientRect();
+          const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return el && el.closest('[data-testid="standby"]') ? 'standby' : '';
+        });
+        t.assert(covered === '', `the chat isn’t covered (${covered})`);
+        t.assert((await b.evaluate(() => window.__fakeMic.gets)) === 0, 'B never opened the microphone');
+      });
+      await t.step('the owner leaves Standby in A: B’s microphone stays closed, and claps wake nothing in B', async () => {
+        await setHidden(b, true);
+        await a.keyboard.press('Escape');
+        await a.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await b.waitForTimeout(1500);
+        t.assert((await b.evaluate(() => window.__fakeMic.gets)) === 0, 'B’s microphone never opened');
+        await play(b, DOUBLE_CLAP);
+        await b.waitForTimeout(2000);
+        t.assert(!(await b.locator(tid('voice-mode')).count()), 'claps wake nothing in B');
+      });
+    },
+  },
+  {
     name: 'standby-word-restart',
     title: '"Hey Jarvis" whose download failed starts again by itself with back-off (the hint says so); once the download works, Standby listens for it',
     device: 'mac',
@@ -725,10 +802,125 @@ export default [
         t.assert((await a.evaluate(() => window.__fakeMic.standby)) === 0, 'A released its microphone');
         t.assert(await b.locator(tid('standby')).isVisible(), 'B is still on Standby');
       });
-      await t.step('B leaves Standby: A listens again by itself', async () => {
+      // PRIVACY-7: leaving Standby turns the microphone off. The window waiting behind leaves Standby too (it
+      // used to start listening by itself); it takes over by itself only when the one listening closes.
+      await t.step('B leaves Standby: A leaves too, and no microphone opens there', async () => {
+        const gets = await a.evaluate(() => window.__fakeMic.gets);
         await b.keyboard.press('Escape');
         await b.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await a.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+        await a.waitForTimeout(1500);
+        const st = await standbyState(a);
+        t.assert(!st, `A left Standby too (${JSON.stringify(st)})`);
+        t.assert((await a.evaluate(() => window.__fakeMic.gets)) === gets && (await a.evaluate(() => window.__fakeMic.standby)) === 0, 'A never opened the microphone');
+      });
+      await t.step('the window on Standby closes: the one waiting behind it takes over by itself', async () => {
+        await (await t.visible('quick-key-standby', { page: b })).click();
+        await waitListening(t, b);
+        await (await t.visible('quick-key-standby', { page: a })).click();
+        await t.waitFor(async () => (await standbyState(a))?.listening === 'elsewhere', { message: async () => `A to wait (${JSON.stringify(await standbyState(a))})` });
+        await b.close();
         await waitListening(t, a);
+      });
+    },
+  },
+  // ---- review fixes (v8.1) ----------------------------------------------------------------------------------
+  {
+    name: 'standby-woken-sheet',
+    title: 'MAC-2: a woken session ended by "open settings" keeps Standby’s place: Standby comes back by itself once Settings is closed, or after a quiet spell (shortened to 6 s) over the sheet, which stays underneath',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 180000,
+    async run(t) {
+      await setup(t, { devVoice: { sheetReturnMs: 6000 } });
+      await enterStandby(t);
+      await t.step('woken by claps, "open settings": the line, then Settings', async () => {
+        await queue(t.page, '', 'Open settings.');
+        await wakeByClaps(t);
+        await waitSaid(t, /Settings are open\./);
+        await t.visible('settings-sheet', { message: 'Settings opens' });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+      });
+      await t.step('Settings closed: Standby comes back and listens', async () => {
+        await t.page.keyboard.press('Escape');
+        await t.visible('standby', { timeout: 5000, message: 'Standby comes back once Settings is closed' });
+        await waitListening(t);
+      });
+      await t.step('two claps wake him again; "open settings", then nobody touches anything: Standby comes back over the sheet', async () => {
+        await t.page.waitForTimeout(1600); // past Standby's own 1.5 s guard
+        await queue(t.page, '', 'Open settings.');
+        await wakeByClaps(t);
+        await t.visible('settings-sheet', { timeout: 20000, message: 'Settings opens again' });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 10000 });
+        await t.visible('standby', { timeout: 15000, message: 'Standby comes back after the quiet spell' });
+        await waitListening(t);
+        await t.page.locator(tid('standby')).click(); // a tap leaves Standby: Settings is still there
+        await t.page.locator(tid('standby')).waitFor({ state: 'detached', timeout: 5000 });
+        await t.visible('settings-sheet', { message: 'Settings stayed open under Standby' });
+      });
+    },
+  },
+  {
+    name: 'standby-woken-sheet-hidden',
+    title: 'MAC-2: Jarvis in the background, a woken session ended by "open settings" (nobody looks at the sheet there) goes back to Standby at once, listening; claps wake him again',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 150000,
+    async run(t) {
+      await setup(t);
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      await queue(t.page, '', 'Open settings.');
+      await wakeByClaps(t);
+      await waitSaid(t, /Settings are open\./);
+      await t.step('back to Standby at once, listening, still hidden', async () => {
+        await backInStandby(t, t.page, 10000);
+        t.assert(await t.page.evaluate(() => document.hidden), 'still in the background');
+      });
+      await t.step('two claps wake him again there', async () => {
+        await t.page.waitForTimeout(1600);
+        await queue(t.page, '');
+        await wakeByClaps(t);
+      });
+    },
+  },
+  {
+    name: 'standby-voice-elsewhere',
+    title: 'MAC-6: two Jarvis windows, a forgotten one on Standby in the background while the owner talks to Voice Mode in the other: "Hey Jarvis, …" said to Voice Mode doesn’t wake the Standby too (one answer, one request); once Voice Mode is closed, it wakes again',
+    device: 'mac',
+    fakeMusic: true,
+    settings: { wakeWord: true },
+    timeout: 150000,
+    async run(t) {
+      const a = await setup(t, { wordStub: true });
+      const b = await t.page.context().newPage();
+      t.attachPageGuards(b);
+      await setup(t, { page: b });
+      await (await t.visible('quick-key-standby', { page: a })).click();
+      await t.waitFor(async () => (await standbyState(a))?.word === 'ready', { timeout: 15000, message: 'A on Standby with the "Hey Jarvis" stand-in ready' });
+      await setHidden(a, true);
+      await queue(a, 'what is the capital of France'); // what A would hear if it woke: the rest of the sentence
+      await queue(b, { parts: [{ at: 1500, text: 'Hey Jarvis, what is the capital of France?' }] });
+      await (await t.visible('voice-open', { page: b })).click();
+      await waitVoice(t, 'listening', { page: b });
+      await t.step('"Hey Jarvis" heard by A too while B’s Voice Mode listens: A stays asleep', async () => {
+        t.assert(await a.evaluate(() => window.__jarvisWake.say()), 'A’s stand-in heard it');
+        await t.waitFor(() => leadCount(t) >= 1, { timeout: 20000, message: 'B to send the question' });
+        await a.waitForTimeout(4000);
+        t.assert(!(await a.locator(tid('voice-mode')).count()), 'A did not wake');
+        t.assert(leadCount(t) === 1, `one request (${leadCount(t)})`);
+        t.assert((await standbyState(a))?.listening === 'live', `A is still on Standby, listening (${JSON.stringify(await standbyState(a))})`);
+      });
+      await t.step('B’s Voice Mode closed: "Hey Jarvis" wakes A again', async () => {
+        await b.keyboard.press('Escape');
+        await b.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 5000 });
+        await a.evaluate(() => {
+          window.__voice.queue.length = 0;
+        });
+        await queue(a, '');
+        await a.waitForTimeout(1600);
+        await a.evaluate(() => window.__jarvisWake.say());
+        await a.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
       });
     },
   },

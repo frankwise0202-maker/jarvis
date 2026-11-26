@@ -4,11 +4,13 @@
 //   HANDS_FREE                        the numbers below (each owner choice in one place)
 //   followUp({ woken, away, continuous, asking, asked }) -> { listen, brake, noSpeechMs, tries }
 //                                     what Voice Mode does after an answer (A6)
-//   bargeInAllowed({ computer, setup, test }) -> boolean
+//   bargeInAllowed({ computer, setup, test, now }) -> boolean
 //                                     "Hey Jarvis" or two claps may stop him while George speaks (A8)
-//   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker } | null
+//   readHandsFreeTest(storage) -> { at, hiddenWords, selfTrigger, heardSpeaker, measured } | null
 //                                     the hands-free Test's last results (Settings → Voice → Microphone and
 //                                     speaker writes them: src/lib/audio-devices.js normalizeHandsFreeTest)
+//   startsWithWakeWords(text) -> boolean      a heard sentence starts with "Hey Jarvis" (MAC-V-1: the owner calling
+//                                     him; the hidden count starts again)
 //   jarvisSpans(text) -> [{ start, end }]    where "Jarvis" is in a text he says
 //   createSelfMask({ cps, beforeMs, afterMs, now }) -> mask
 //                                     while he speaks, whether a "Hey Jarvis" heard now may be his own
@@ -16,8 +18,8 @@
 // The follow-up window (A6, owner question 3): after an answer, a woken session, and every session while
 // Jarvis is in the background, listens once for HANDS_FREE.followUpMs; nobody speaks: back to Standby (or
 // idle). While he is in the background, at most HANDS_FREE.hiddenQuestions questions in a row are taken
-// without "Hey Jarvis", claps, a tap or a key; then no more follow-up listens (the brake: a TV left on can't
-// run up paid questions). On screen, a session the owner tapped keeps today's Continuous rule.
+// without "Hey Jarvis", a tap or a key (claps are the weak signal: they don't count); then no more follow-up
+// listens (the brake: a TV left on can't run up paid questions). On screen, a session the owner tapped keeps today's Continuous rule.
 //
 // Barge-in (A8): only on a computer, only in the setups where the wake microphone is the Mac's own
 // (HANDS_FREE.bargeInSetups; owner question 10), and only once the hands-free Test's self-trigger step has
@@ -25,7 +27,7 @@
 // hears one: George is the voice speaking (the Mac's own voice is played by macOS, outside Chrome's echo
 // reference), and the self-mask is clear.
 
-import { HANDS_FREE_TEST_KEY, normalizeHandsFreeTest } from './audio-devices.js';
+import { HANDS_FREE_TEST_KEY, normalizeHandsFreeTest, handsFreeTestFits } from './audio-devices.js';
 
 export const HANDS_FREE = Object.freeze({
   followUpMs: 8000, // owner question 3: how long the listen after an answer waits for words
@@ -40,7 +42,7 @@ export const HANDS_FREE = Object.freeze({
  * After an answer: listen for a follow-up, and how. `woken`: a session opened from Standby; `away`: Jarvis
  * is not on screen and listens there (a computer, the setting on); `continuous`: Settings (Continuous);
  * `asking`: the wake routine just made its offer (it listens for the answer, Continuous or not); `asked`:
- * the questions taken since the last wake words, claps, tap or key.
+ * the questions taken since the last wake words, tap or key.
  *   { listen: false, brake: false }       today's rule says no (Continuous off)
  *   { listen: false, brake: true }        the brake: hidden, and `asked` reached HANDS_FREE.hiddenQuestions
  *   { listen: true, noSpeechMs, tries }   noSpeechMs 0 and tries 0 mean today's (two tries of up to 12 s)
@@ -54,10 +56,12 @@ export function followUp({ woken = false, away = false, continuous = true, askin
 
 /**
  * Barge-in may be on: a computer, one of HANDS_FREE.bargeInSetups chosen (Settings `audioSetup`), and the
- * hands-free Test's self-trigger step passed (`test`: readHandsFreeTest()).
+ * hands-free Test's self-trigger step passed (`test`: readHandsFreeTest()) on what barge-in runs on now (`now`:
+ * audio-devices.js handsFreeMeasure(); MAC-9: the same setup, wake microphone and speaker, and every wake detector
+ * listening now tested; otherwise the card says to run the Test again).
  */
-export function bargeInAllowed({ computer = false, setup = '', test = null } = {}) {
-  return computer === true && HANDS_FREE.bargeInSetups.includes(setup) && !!test && test.selfTrigger === 'passed';
+export function bargeInAllowed({ computer = false, setup = '', test = null, now = null } = {}) {
+  return computer === true && HANDS_FREE.bargeInSetups.includes(setup) && !!test && test.selfTrigger === 'passed' && handsFreeTestFits(test, now);
 }
 
 /** The hands-free Test's last results from `storage` (localStorage), or null when there are none. */
@@ -67,6 +71,16 @@ export function readHandsFreeTest(storage) {
   } catch {
     return null;
   }
+}
+
+/**
+ * MAC-V-1: a heard sentence starts with the wake words: "Hey Jarvis, …" as the recognizer writes it ("hi", "OK",
+ * "okay" or "a" for "hey"; "Jervis"). A bare "Jarvis, …" doesn't count: a film or the TV says that more often.
+ */
+export function startsWithWakeWords(text) {
+  if (typeof text !== 'string') return false;
+  const s = text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  return /^(?:hey|hi|ok|okay|a) (?:jarvis|jervis)(?: |$)/.test(s);
 }
 
 /** Where "Jarvis" is in `text`, as character offsets [{ start, end }] (any case; "Jarvis's" too). */

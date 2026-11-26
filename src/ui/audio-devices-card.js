@@ -44,6 +44,7 @@ import {
   describeAudioDevice,
   deviceTitle,
   handsFreeLines,
+  handsFreeMeasure,
   isBluetooth,
   normalizeHandsFreeTest,
   pickDevice,
@@ -215,7 +216,8 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
 
   function renderResults() {
     const r = normalizeHandsFreeTest(store.get(HANDS_FREE_TEST_KEY));
-    const lines = handsFreeLines(r);
+    // MAC-9: a passed step measured on another setup or other devices says to run the Test again.
+    const lines = handsFreeLines(r, { now: handsFreeMeasure({ plan: safe(() => audio.plan(), null), settings: settings() }) });
     hfResults.hidden = !lines.length || running?.kind === 'handsfree';
     hfResults.replaceChildren(
       ...lines.map((l) => h('li', { class: 'ad-result', attrs: { 'data-testid': 'audio-handsfree-result', 'data-step': l.step, 'data-ok': l.ok === null ? 'unknown' : String(l.ok) } }, icon(l.ok === true ? 'check' : l.ok === false ? 'alert' : 'info', { size: 14 }), h('span', { text: l.text }))),
@@ -510,7 +512,7 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
     setText(hfStep, '2 of 3: George says “Jarvis” while the wake microphone listens. Stay quiet.');
     const self = await selfTrigger(run);
     if (run.cancelled) return;
-    saveResult({ selfTrigger: self });
+    saveResult({ selfTrigger: self, measured: self ? run.measured || null : null }); // MAC-9: and what it measured
     // Step 3: where George came from.
     hfStep.dataset.step = '3';
     setText(hfStep, '3 of 3: Did you hear that from the speakerphone?');
@@ -594,7 +596,9 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
     run.cleanups.push(() => cap.close());
     safe(() => cap.prepare());
     const s = settings();
+    const plan = safe(() => audio.plan(), null); // the wake microphone and the speaker this step measures
     const wordOn = s.wakeWord === true && typeof createWakeWord === 'function';
+    let wordHeard = false; // "Hey Jarvis" really listened (its download may not be ready)
     const r = await cap.start({ clap: s.wakeClap !== false, word: wordOn, sensitivity: s.wakeClapSensitivity || 'normal' }).catch(() => ({ ok: false }));
     if (run.cancelled || !r || !r.ok) return null;
     if (wordOn) {
@@ -606,7 +610,10 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
         await Promise.race([Promise.resolve(word.start()).catch(() => null), wait(4000)]);
         if (word.status && word.status().state === 'ready') {
           const port = cap.wordPort();
-          if (port && word.attach(port)) cap.configure({ word: true });
+          if (port && word.attach(port)) {
+            cap.configure({ word: true });
+            wordHeard = true;
+          }
         }
       }
     }
@@ -617,6 +624,9 @@ export function createAudioDevicesCard({ audio, stt = null, tts = null, createCa
     // Barge-in works only while George speaks: the Mac's own voice is played by macOS, outside Chrome's echo
     // reference, so a sentence it said tells nothing either way.
     if (!georgeSpoke(engine)) return null;
+    // MAC-9: barge-in counts this result only for what it measured: this setup, wake microphone and speaker, and
+    // the wake detectors that listened (claps, and "Hey Jarvis" only if it was ready).
+    run.measured = handsFreeMeasure({ plan, settings: { ...s, wakeWord: wordHeard } });
     return fired ? 'failed' : 'passed';
   }
 

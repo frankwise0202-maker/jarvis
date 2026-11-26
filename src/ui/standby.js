@@ -5,7 +5,8 @@
 //
 //   const standby = createStandby({ getSettings, onSettingsChange, createCore, wakeLock,
 //                                   createCapture, createWakeWord, statusLine, stateWord, chronometer,
-//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, audio, createLock, bargeIn });
+//                                   onWake, onExit, unlock, pauseWhenHidden, isIOS, audio, createLock, bargeIn,
+//                                   needsClick, voiceElsewhere });
 //   audio (v8.1, a computer; src/platform/audio-devices.js through app.js): { pill(captureDevice) -> { name,
 //                         gone } | null, wakeKey(fellBack) -> string, subscribe(fn) -> off, check(),
 //                         onWoke(fn) -> off, firstTimeLine() -> Promise<string> }: the pill names the
@@ -15,7 +16,12 @@
 //   standby.enter()       inside a tap where possible (iOS starts audio only there): show it, listen
 //   standby.enter({ again: true })   v7.8.1: entered again without a tap (Voice Mode closed into Standby):
 //                         unlock({ tap: false }), so what the voice knows about stuck audio stays
+//   standby.enter({ again: true, launch: true })   REGRESS-1: opened by itself as Jarvis started (A11): if another
+//                         Jarvis window has Standby, it steps back to the app at once (no Standby that can't listen,
+//                         nothing waiting in line for the microphone)
 //   standby.resume()      after the wake routine (Voice Mode closed): show it again, listen again
+//   standby.rest()        MAC-2: the woken session left for a sheet: still woken (resume() later), but a microphone
+//                         kept for barge-in is let go meanwhile
 //   standby.exit()        leave (a tap on the screen, Escape): the microphone is released
 //   standby.isOpen() / standby.isAwaiting()   on screen / woken (Voice Mode up, coming back after)
 //   standby.update()      the app's state changed (the status line)
@@ -32,7 +38,10 @@
 // So is "Hey Jarvis" when its download or its worker fails (A12), and at once when the network comes back.
 //
 // v8.1 (SPEC §28.4, §28.5):
-//   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js. Standby takes the lock
+//   createLock(onChange)  one Jarvis per Mac answers (A9): platform/standby-lock.js (not with pauseWhenHidden: a
+//                         phone listens only on screen, as before; MAC-10). When the owner leaves Standby in the
+//                         window that listens, the windows waiting leave too (PRIVACY-7: 'left'); only its window
+//                         closing hands Standby on. Standby takes the lock
 //                         before it listens and keeps it through a woken session; while another window
 //                         holds it, this one doesn't listen and says so ("Standby is on in another Jarvis
 //                         window"), with Use this window. Without it (or without Web Locks): as before.
@@ -41,6 +50,9 @@
 //                         microphone and "Hey Jarvis" stay on through the session instead of being released;
 //                         two claps or "Hey Jarvis" then go to detected() (Voice Mode decides: George
 //                         speaking, not his own "Jarvis"), and Standby takes the same microphone back after.
+//   voiceElsewhere() -> Promise<boolean>  (MAC-6) Voice Mode is open in another Jarvis window: a wake heard now is
+//                         the owner talking to it there, so this Standby stays asleep (still listening). Without it
+//                         (an iPhone) a wake is at once, as before.
 //   needsClick() -> boolean  (A11) the page has had no click yet and George can't speak (Chrome lets the built-in
 //                         voice speak only after one, e.g. after a restart): Standby says "CLICK ONCE SO JARVIS CAN
 //                         SPEAK", and a click (or Enter, Space) then unlocks speech instead of leaving Standby.
@@ -84,6 +96,7 @@ export function createStandby(deps = {}) {
     createLock = null,
     bargeIn = null,
     needsClick = () => false,
+    voiceElsewhere = null,
   } = deps;
 
   let phase = 'closed'; // 'closed' | 'open' | 'awaiting' (woken: Voice Mode is up)
@@ -104,6 +117,8 @@ export function createStandby(deps = {}) {
   let lastTrigger = 0;
   let prevFocus = null;
   let kept = false; // v8.1: the microphone stayed on through the woken session (barge-in)
+  let checking = false; // MAC-6: a wake waits for voiceElsewhere()'s answer
+  let atLaunch = false; // REGRESS-1: opened by itself at launch, and the lock hasn't answered yet
   const els = {};
   // v8.1: the capture's retries (2 s, 5 s, 15 s, 60 s, then every 5 minutes), the microphone it started on,
   // and the watchers of the chosen devices and of the Mac's sleep while Standby is open.
@@ -116,7 +131,9 @@ export function createStandby(deps = {}) {
   // before the click or key reaches Standby), and whether this opening already took that click.
   let clickAsked = false;
   let clickTaken = false;
-  const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
+  // MAC-10: a phone (pauseWhenHidden) listens only on screen, so two of its windows can't both listen: no lock there,
+  // as before v8.1 (a hidden, paused Standby holding it kept another window on screen from listening).
+  const lock = typeof createLock === 'function' && !pauseWhenHidden ? safeLock(() => createLock((st) => onLockChange(st))) : null;
   const wordRetry = createBackoff(() => restartWord()); // v8.1 (A12): "Hey Jarvis" started again after a failure
 
   const settings = () => {
@@ -234,9 +251,10 @@ export function createStandby(deps = {}) {
    * Open Standby (call inside the tap that asked for it where possible). `again`: entered without a tap (Voice
    * Mode closed into Standby): the voice is told so (v7.8.1: what it knows about stuck audio stays).
    */
-  function enter({ again = false } = {}) {
+  function enter({ again = false, launch = false } = {}) {
     if (phase === 'open') return;
     if (typeof createCapture !== 'function') return;
+    atLaunch = !!launch;
     try {
       unlock({ tap: !again }); // the voice that will greet the owner later is unlocked in this tap (iOS)
     } catch {
@@ -254,6 +272,7 @@ export function createStandby(deps = {}) {
   /** Back to Standby after the wake routine or a conversation (no tap needed: the context is ready). */
   function resume() {
     if (phase === 'open') return;
+    atLaunch = false;
     if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     open();
   }
@@ -291,6 +310,7 @@ export function createStandby(deps = {}) {
     const was = phase;
     phase = 'closed';
     kept = false;
+    atLaunch = false;
     wordRetry.cancel();
     teardown();
     stopWord({ terminate: true });
@@ -351,10 +371,27 @@ export function createStandby(deps = {}) {
   /** Two claps or "Hey Jarvis": release the microphone, then wake (Voice Mode, the routine). */
   function trigger(kind) {
     if (phase === 'awaiting') return kept ? interrupt(kind) : false;
-    if (phase !== 'open') return false;
+    if (phase !== 'open' || checking) return false;
     const now = Date.now();
     if (now - lastTrigger < 1500) return false;
     lastTrigger = now;
+    if (typeof voiceElsewhere === 'function') {
+      // MAC-6: Voice Mode is open in another Jarvis window (the owner talks to it there, maybe "Hey Jarvis, …"):
+      // this one stays asleep, still listening. Asked of the browser (a Web Lock), so it takes a moment.
+      checking = true;
+      Promise.resolve()
+        .then(() => voiceElsewhere())
+        .catch(() => false)
+        .then((busy) => {
+          checking = false;
+          if (busy !== true && phase === 'open') wake(kind);
+        });
+      return true;
+    }
+    return wake(kind);
+  }
+
+  function wake(kind) {
     phase = 'awaiting';
     // v8.1 barge-in (a Mac in setup 1 or 3): the microphone and "Hey Jarvis" stay on through the session.
     kept = listen === 'live' && !!capture && capture.live === true && keepForBargeIn();
@@ -381,6 +418,19 @@ export function createStandby(deps = {}) {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * MAC-2: the woken session left Voice Mode for a sheet ("open settings"): Standby keeps its place (woken, the lock
+   * held) until resume(), but a microphone kept for barge-in is let go meanwhile (nothing could be interrupted).
+   */
+  function rest() {
+    if (phase !== 'awaiting' || !kept) return;
+    kept = false;
+    if (capture) capture.stop();
+    if (word) word.reset();
+    wordPortGiven = false;
+    listen = 'off';
   }
 
   /** v8.1: two claps or "Hey Jarvis" heard during the woken session (the microphone kept): Voice Mode decides. */
@@ -417,6 +467,20 @@ export function createStandby(deps = {}) {
   }
 
   function onLockChange(st) {
+    if (phase === 'open' && atLaunch && st === 'elsewhere') {
+      // REGRESS-1: opened by itself at launch, but another Jarvis window has Standby: back to the app (this window
+      // couldn't listen, and mustn't wait in line to take the microphone later).
+      atLaunch = false;
+      exit();
+      return;
+    }
+    if (st === 'held') atLaunch = false; // from now on an ordinary Standby (Use this window elsewhere: it waits)
+    if (phase === 'open' && st === 'left') {
+      // PRIVACY-7: the owner left Standby in the window that listened: this one leaves too (it doesn't start
+      // listening by itself). Only that window closing hands Standby on.
+      exit();
+      return;
+    }
     if (phase === 'open') {
       if (st === 'held') startListening();
       else if (st === 'elsewhere' && listen !== 'elsewhere') {
@@ -428,7 +492,7 @@ export function createStandby(deps = {}) {
         announce('Standby is on in another Jarvis window.');
       }
       render();
-    } else if (phase === 'awaiting' && st === 'elsewhere' && kept) {
+    } else if (phase === 'awaiting' && (st === 'elsewhere' || st === 'left') && kept) {
       // Taken during a woken session: the microphone kept for barge-in goes too.
       kept = false;
       if (capture) capture.stop();
@@ -1015,6 +1079,7 @@ export function createStandby(deps = {}) {
     release: () => {
       if (phase === 'awaiting') exit({ silent: true });
     },
+    rest,
     get listening() {
       return listen;
     },

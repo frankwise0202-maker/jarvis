@@ -318,7 +318,7 @@ test('A8 (critique M8): George says “Jarvis” and the detector hears it — m
   }
 });
 
-test('A8: a barge-in counts as the owner calling him: the hidden count starts again', async (t) => {
+test('A8: a "Hey Jarvis" barge-in counts as the owner calling him: the hidden count starts again', async (t) => {
   const env = await voiceEnv(t, { speechMs: 6000 });
   env.voice('natural');
   env.say(() => 'what is the capital of Spain');
@@ -328,9 +328,161 @@ test('A8: a barge-in counts as the owner calling him: the hidden count starts ag
   await until(env, () => env.log.turns.length >= 3, 'three questions');
   await until(env, () => vm.state === 'speaking', 'the third answer');
   await env.advance(1000);
-  assert.equal(vm.bargeIn('clap'), true);
+  assert.equal(vm.bargeIn('word'), true);
   await env.advance(8000);
   assert.equal(env.log.turns.length, 4, 'a fourth question after the barge-in');
+});
+
+// MAC-4: claps are the weak signal (a door, knocks, a TV's bang): they may stop George, but only the wake words, a
+// tap or a key start the hidden count again. Before, a double bang during each answer let a TV run up questions.
+test('MAC-4: woken hidden by claps, the TV heard in every listen, two claps during each answer: he stops each time, yet at most 3 questions, then the brake and Standby', async (t) => {
+  for (const tapped of [false, true]) {
+    const env = await voiceEnv(t, { speechMs: 6000 });
+    env.voice('natural');
+    if (!tapped) env.setHidden(true);
+    env.say((n) => (n === 0 && !tapped ? null : 'what is the capital of Spain'));
+    const vm = tapped ? env.open({ listenWhileHidden: () => true, answer: LONG }) : env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: LONG });
+    if (tapped) {
+      await env.advance(300);
+      env.setHidden(true);
+    }
+    const clapped = new Set();
+    const acted = [];
+    const end = env.clock.now() + 300000;
+    while (env.clock.now() < end && !env.log.closes.length && env.log.turns.length < 8) {
+      await env.advance(250);
+      const sp = env.log.spoken.at(-1);
+      if (vm.state === 'speaking' && sp && sp.text.startsWith('Here is the plan') && !sp.cancelled && !clapped.has(sp)) {
+        clapped.add(sp);
+        await env.advance(1000);
+        acted.push(vm.bargeIn('clap'));
+      }
+      if (tapped && env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.')) break;
+    }
+    assert.equal(env.log.turns.length, 3, `${tapped ? 'tapped' : 'woken'}: ${env.log.turns.length} questions taken (claps acted: ${JSON.stringify(acted)})`);
+    assert.deepEqual(acted.slice(0, 2), [true, true], 'the claps stopped him during the first two answers');
+    assert.ok(env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'the brake was said');
+    if (!tapped) assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], 'then Standby');
+  }
+});
+
+test('MAC-4: on screen, two claps during an answer still stop him and he listens (the brake is for the background)', async (t) => {
+  const { env, vm } = await speakingGeorge(t);
+  assert.equal(vm.bargeIn('clap'), true);
+  await env.advance(50);
+  assert.equal(vm.state, 'listening');
+});
+
+// MAC-8: "go back to sleep" (or the brake) sets S.sleepAfter for the line said next. When the owner cut that line
+// ("Hey Jarvis", a tap) and asked something, the answer used to drop straight to Standby, without its follow-up.
+test('MAC-8: “go back to sleep”, then “Hey Jarvis” or a tap during “Very good, Tony.” and a question: the answer gets its follow-up listen, not Standby at once', async (t) => {
+  for (const how of ['word', 'tap']) {
+    const env = await voiceEnv(t, { speechMs: 3000, noSpeechMs: 60000 });
+    env.voice('natural');
+    env.say((n) => (n === 1 ? 'go back to sleep' : n === 2 ? Q : null));
+    const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: ANSWER });
+    await until(env, () => env.log.spoken.some((s) => /^Very good, Tony/.test(s.text)), 'the sleep line');
+    await env.advance(1000);
+    if (how === 'word') assert.equal(vm.bargeIn('word'), true, 'the line is cut');
+    else vm.tap();
+    await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), `${how}: the answer, said to the end`);
+    await env.advance(1500);
+    assert.deepEqual(env.log.closes, [], `${how}: not straight back to Standby`);
+    assert.equal(env.log.listens.length, 4, `${how}: the follow-up listen`);
+    assert.equal(env.log.listens[3].noSpeechMs, 8000);
+    await env.advance(12000);
+    assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], `${how}: Standby after the quiet follow-up`);
+  }
+});
+
+test('MAC-8: the brake line cut by a tap (his own “Jarvis” in it masks the wake word) and a question: answered, then the follow-up window (not Standby at once)', async (t) => {
+  const env = await voiceEnv(t, { speechMs: 3000, noSpeechMs: 60000 });
+  env.voice('natural');
+  env.setHidden(true);
+  let cut = false;
+  env.say((n) => (n === 0 ? null : n <= 3 ? 'what is the capital of Spain' : n === 4 && cut ? Q : null));
+  const vm = env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: (q) => (/France/.test(q) ? ANSWER : 'Madrid.') });
+  await until(env, () => env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'the brake line');
+  await env.advance(800);
+  cut = true;
+  assert.equal(vm.bargeIn('word'), false, 'masked: George is saying “Jarvis”');
+  vm.tap();
+  await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), 'the answer');
+  await env.advance(1500);
+  assert.deepEqual(env.log.closes, [], 'not straight back to Standby');
+  assert.equal(env.log.listens.at(-1).noSpeechMs, 8000, 'the follow-up listen');
+});
+
+// MAC-V-1: the brake counts questions "since the last wake word, tap or key". Across the room, an owner who starts each
+// follow-up with "Hey Jarvis, …" was counted as room talk: after three, "Say “Hey Jarvis” when you need me." (which
+// they just did) and back to Standby.
+test('MAC-V-1: woken hidden by “Hey Jarvis”, five follow-ups each said “Hey Jarvis, …”: all five are taken, no brake', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  const qs = ['France', 'Spain', 'Italy', 'Peru', 'Chile'].map((c) => `hey Jarvis what is the capital of ${c}`);
+  env.say((n) => (n === 0 ? null : qs[n - 1] || null));
+  env.open({ wake: env.wakeHooks({ trigger: 'word' }), listenWhileHidden: () => true, answer: 'Here it is.' });
+  await until(env, () => env.log.closes.length > 0, 'the session to end', 240000);
+  assert.deepEqual(env.log.turns, qs, 'every question taken');
+  assert.ok(!env.log.spoken.some((s) => /when you need me/.test(s.text)), 'no brake');
+  assert.deepEqual(env.log.closes, [{ reason: 'standby', wakeSession: true }], 'Standby after the quiet follow-up');
+});
+
+test('MAC-V-1: “Hey Jarvis” heard by Standby’s kept detector while he listens: no barge-in (nothing to interrupt), but the hidden count starts again', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(() => 'what is the capital of Spain'); // the TV, in every listen
+  const vm = env.open({ listenWhileHidden: () => true, answer: 'Madrid.' });
+  await env.advance(300);
+  env.setHidden(true);
+  await until(env, () => env.log.listens.length >= 3 && vm.state === 'listening', 'the third listen');
+  assert.equal(env.log.turns.length, 2);
+  assert.equal(vm.bargeIn('word'), false, 'nothing to interrupt');
+  await env.advance(120000);
+  assert.equal(env.log.turns.length, 5, `the count started again at the wake word: ${env.log.turns.length} questions`);
+  assert.ok(env.log.spoken.some((s) => s.text === 'Say “Hey Jarvis” when you need me.'), 'then the brake, three questions later');
+});
+
+test('MAC-V-1: two claps heard while he listens do nothing to the count', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(() => 'what is the capital of Spain');
+  const vm = env.open({ listenWhileHidden: () => true, answer: 'Madrid.' });
+  await env.advance(300);
+  env.setHidden(true);
+  await until(env, () => env.log.listens.length >= 3 && vm.state === 'listening', 'the third listen');
+  assert.equal(vm.bargeIn('clap'), false);
+  await env.advance(120000);
+  assert.equal(env.log.turns.length, 3, 'the brake after three, as without them');
+});
+
+// MAC-7: the most natural hidden wake, a question straight after "Hey Jarvis" in one breath, never reached greetWake:
+// no "Jarvis is listening" notification, and the lines that waited (D3) weren't said.
+test('MAC-7: woken hidden by “Hey Jarvis, what is …” in one breath: one “Jarvis is listening” notification, and the lines that waited (wake.pending()) are said before the answer', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say(onlyAfter(0, Q)); // the wake window hears the question
+  let asked = 0;
+  const pending = () => {
+    asked += 1;
+    return ['I’m on the Mac’s speakers; the speakerphone isn’t connected.'];
+  };
+  env.open({ wake: env.wakeHooks({ trigger: 'word', pending }), listenWhileHidden: () => true, answer: ANSWER });
+  await until(env, () => env.log.spoken.some((s) => s.text.includes(ANSWER)), 'the answer');
+  assert.deepEqual(env.log.turns, [Q], 'the question was asked (the routine stepped aside)');
+  assert.equal(env.log.notes.length, 1, 'one notification');
+  assert.equal(env.log.notes[0].title, 'Jarvis is listening');
+  assert.equal(asked, 1, 'the lines were asked for once');
+  assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, `I’m on the Mac’s speakers; the speakerphone isn’t connected. ${ANSWER}`);
+  await until(env, () => env.log.closes.length > 0, 'the end of the session');
+  assert.equal(env.log.notes[0].closed, true, 'closed with the session');
+});
+
+test('MAC-7: on screen, the same one-breath wake shows no notification; with nothing waiting the answer is said as before', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(onlyAfter(0, Q));
+  env.open({ wake: env.wakeHooks({ trigger: 'word' }), listenWhileHidden: () => true, answer: ANSWER });
+  await until(env, () => env.log.spoken.some((s) => s.text.includes(ANSWER)), 'the answer');
+  assert.equal(env.log.notes.length, 0);
+  assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, ANSWER);
 });
 
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------

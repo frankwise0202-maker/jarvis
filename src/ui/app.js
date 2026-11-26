@@ -98,9 +98,9 @@ import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
 import { createWakePending } from '../lib/wake/pending.js';
 import { setPausesWhenHidden as naturalPausesWhenHidden } from '../platform/voice/natural/natural-stream.js';
-import { createStandbyLock } from '../platform/standby-lock.js';
+import { createStandbyLock, holdVoiceLock, voiceOpenSomewhere, standbyHeldSomewhere } from '../platform/standby-lock.js';
 import { bargeInAllowed, readHandsFreeTest } from '../lib/hands-free.js';
-import { setupOf } from '../lib/audio-devices.js';
+import { setupOf, handsFreeMeasure } from '../lib/audio-devices.js';
 // v8.1: one router for what the owner says (SPEC §30), and each track's commands in its own module.
 import { createRouter, registerTodayCommands, emptyState, REOPEN_ACTIONS } from '../lib/command-router.js';
 import { register as registerMacCommands } from './commands/mac.js';
@@ -1542,6 +1542,7 @@ export async function startApp(rootEl) {
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
   let voiceOwnerStarted = false; // v8.1 (A1): the owner opened it (a tap, a key, a wake): it may go on hidden
+  let voiceLockClose = null; // MAC-6: Voice Mode open here holds the voice lock (Standby elsewhere stays asleep)
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
@@ -1788,14 +1789,20 @@ export async function startApp(rootEl) {
           voiceApi = null;
           voiceInfo = null;
           withdrawCameraNote(); // PRIVACY-2: what was asked for in this session goes with it
+          if (voiceLockClose) safe(voiceLockClose);
+          voiceLockClose = null;
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
           const reason = info && info.reason;
           // v8.1: a sheet the owner asked for by voice ("open settings") is what they look at next.
-          const back = reason === 'standby' || (reason !== 'command' && info && info.wakeSession && safe(() => getSettings().wakeReturn !== false, true));
+          const woken = !!(info && info.wakeSession) && safe(() => getSettings().wakeReturn !== false, true);
+          const back = reason === 'standby' || (reason !== 'command' && woken);
+          // MAC-2: ...but a woken session never leaves Standby for good: it comes back after the sheet.
+          const afterSheet = reason === 'command' && woken && !state.demo;
           setTimeout(() => {
             if (back && !state.demo) enterStandby({ again: true });
+            else if (afterSheet && standby && safe(() => standby.isAwaiting(), false)) returnAfterSheet();
             else if (standby) safe(() => standby.release());
           }, 0);
           // Optics opened from Voice Mode goes with it (its mic and its turns were Voice Mode's).
@@ -1809,6 +1816,8 @@ export async function startApp(rootEl) {
         },
       });
       safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts and cards come to Voice Mode
+      // MAC-6: while it is open, a Standby in another Jarvis window (a forgotten tab) doesn't wake on the same words.
+      if (!voiceLockClose && !safe(() => phoneLike, true) && !state.demo && safe(() => isVoiceModeOpen(), false)) voiceLockClose = safe(() => holdVoiceLock(), null);
     } catch (err) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
@@ -1879,17 +1888,22 @@ export async function startApp(rootEl) {
     isIOS: safe(() => isIOS(), false),
     // v8.1: the pill names the chosen microphone, the capture follows it, the one-time Bluetooth line.
     audio: audioDevices ? audioDevices.standbyHooks() : null,
-    // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it).
-    createLock: (onChange) => createStandbyLock({ onChange }),
+    // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it). Not on a
+    // phone (MAC-10): Standby there listens only on screen, as before.
+    createLock: phoneLike ? null : (onChange) => createStandbyLock({ onChange }),
     // v8.1 (A8, SPEC §28.4): barge-in. In setup 1 or 3, once the hands-free Test's self-trigger step passed,
     // Standby's microphone and "Hey Jarvis" stay on through a woken session; what they hear goes to Voice Mode.
     bargeIn: {
-      keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage) }), false),
+      // MAC-9: only on what the Test's self-trigger step measured (the setup, wake microphone, speaker, wake words).
+      keep: () => !phoneLike && safe(() => bargeInAllowed({ computer: true, setup: setupOf(getSettings()), test: readHandsFreeTest(localStorage), now: handsFreeMeasure({ plan: audioDevices ? audioDevices.plan() : null, settings: getSettings() }) }), false),
       detected: ({ trigger }) => !!voiceApi && safe(() => voiceApi.bargeIn(trigger) === true, false),
     },
     // v8.1 (A11): no click yet (a restart, an update) and George can't speak without one: Standby says
     // "CLICK ONCE SO JARVIS CAN SPEAK", and that click unlocks speech instead of leaving Standby.
     needsClick: () => !phoneLike && !safe(() => navigator.userActivation.hasBeenActive === true, true) && !georgeWithoutClick(),
+    // MAC-6: Voice Mode open in another Jarvis window (the owner talks to it there): this Standby stays asleep.
+    // Not on a phone (Standby there listens only on screen, as before).
+    voiceElsewhere: phoneLike ? null : () => voiceOpenSomewhere(),
   });
 
   /**
@@ -1929,17 +1943,79 @@ export async function startApp(rootEl) {
    * Call inside the tap where possible (iOS starts the microphone's audio only there). `again`: back
    * after the wake routine or a conversation (no tap needed then).
    */
-  function enterStandby({ again = false } = {}) {
+  function enterStandby({ again = false, launch = false } = {}) {
     if (state.demo) return false;
     if (isVoiceModeOpen()) return false; // Voice Mode closes itself into Standby ("go to sleep")
+    cancelSheetReturn();
     if (state.listening) safe(() => state.listening.stop());
     safe(() => composer.cancelCountdown());
     if (settingsSheet) settingsSheet.close('navigate');
     closePhoneSheets();
     if (!standby) return false;
     if (again && standby.isAwaiting()) standby.resume();
-    else standby.enter({ again }); // v7.8.1: again = no tap behind it
+    else standby.enter({ again, launch }); // v7.8.1: again = no tap behind it; REGRESS-1: launch = by itself at start
     return true;
+  }
+
+  // MAC-2: a woken session that left for a sheet ("open settings", history, the library, Mission Control, the home
+  // base) never leaves Standby for good. Standby keeps its place meanwhile (the lock stays with this window; a
+  // microphone kept for barge-in is let go) and comes back by itself: once that sheet is closed, after a quiet spell
+  // (no click, key, scroll or touch for a minute), or at once while Jarvis is in the background, where nobody looks
+  // at the sheet. It comes back above a sheet still open, which stays underneath.
+  const SHEET_RETURN_MS = 60000;
+  let sheetReturn = null; // { sheet, last, timer, offs }
+
+  function returnAfterSheet() {
+    cancelSheetReturn();
+    safe(() => standby.rest());
+    const R = { sheet: safe(() => anySheetOpen(), false), last: Date.now(), timer: 0, offs: [] };
+    sheetReturn = R;
+    const input = () => {
+      R.last = Date.now();
+    };
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      window.addEventListener(type, input, { capture: true, passive: true });
+      R.offs.push(() => window.removeEventListener(type, input, { capture: true, passive: true }));
+    }
+    const quiet = sheetReturnMs();
+    const tick = () => {
+      R.timer = 0;
+      if (sheetReturn !== R) return;
+      // Back already (the Standby key), let go of, or a new conversation: nothing left to do.
+      if (!standby || !safe(() => standby.isAwaiting(), false) || isVoiceModeOpen()) {
+        cancelSheetReturn();
+        return;
+      }
+      const closed = R.sheet && !safe(() => anySheetOpen(), false);
+      if (document.hidden || closed || Date.now() - R.last >= quiet) {
+        cancelSheetReturn();
+        safe(() => standby.resume());
+        return;
+      }
+      R.timer = setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
+  function cancelSheetReturn() {
+    const R = sheetReturn;
+    sheetReturn = null;
+    if (!R) return;
+    clearTimeout(R.timer);
+    for (const off of R.offs) safe(off);
+  }
+
+  /** MAC-2's quiet spell (tests on localhost: 'jarvis.dev.voice' { sheetReturnMs }, shorter only, 2 s at least). */
+  function sheetReturnMs() {
+    try {
+      const host = location.hostname;
+      if (host !== 'localhost' && host !== '127.0.0.1') return SHEET_RETURN_MS;
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.voice') || 'null');
+      const v = raw && typeof raw === 'object' ? Number(raw.sheetReturnMs) : Number.NaN;
+      return Number.isFinite(v) ? Math.min(SHEET_RETURN_MS, Math.max(2000, v)) : SHEET_RETURN_MS;
+    } catch {
+      return SHEET_RETURN_MS;
+    }
   }
 
   /** "standby" / "go to sleep" typed (or dictated) in the chat. */
@@ -5188,7 +5264,15 @@ export async function startApp(rootEl) {
 
   if (!state.demo && !getSettings().onboarded) openOnboarding();
   // v8.1 (A11): back on Standby after a restart or an update, without a click (a Mac whose owner wakes Jarvis by voice).
-  else if (safe(() => standbyAtLaunch(), false)) safe(() => enterStandby({ again: true }));
+  // REGRESS-1: only where it can listen. Another Jarvis window holding Standby (the lock): this one opens on the app as
+  // in v8.0, and never waits in line for the microphone; one that loses a race to it steps back by itself (launch).
+  else if (safe(() => standbyAtLaunch(), false)) {
+    Promise.resolve(safe(() => standbyHeldSomewhere(), false))
+      .catch(() => false)
+      .then((held) => {
+        if (!held && !isVoiceModeOpen() && safe(() => standbyAtLaunch(), false)) safe(() => enterStandby({ again: true, launch: true }));
+      });
+  }
 
   {
     try {
