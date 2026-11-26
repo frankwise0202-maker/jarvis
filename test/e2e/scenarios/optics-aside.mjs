@@ -104,8 +104,9 @@ function sceneDiff(page) {
     const v = document.querySelector('[data-testid="optics-video"]');
     const card = document.querySelector('[data-testid="optics-aside-picture"] .optics-frozen-media');
     if (!v || !card || !v.videoWidth) return 1;
-    const cw = card.width || card.naturalWidth;
-    const ch = card.height || card.naturalHeight;
+    // An <img>'s width is its size on screen; its picture is naturalWidth × naturalHeight (a canvas has width).
+    const cw = card.naturalWidth || card.width;
+    const ch = card.naturalHeight || card.height;
     const a = gray(v, v.videoWidth, v.videoHeight);
     const b = gray(card, cw, ch);
     let n = 0;
