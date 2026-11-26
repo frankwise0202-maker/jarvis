@@ -37,6 +37,12 @@ export const TOURS = {
     ...TOUR_STATES.flatMap((state) => TOUR_OVER_HOLOGRAM.map(([words, why]) => ({ words, state, winner: 'tour', why }))),
     { words: 'open it up', state: 'TOUR_AT', winner: 'tour', why: 'the "opened" choice at the decision (the hologram would explode)' },
     ...TOUR_ASKED_WORDS.map((words) => ({ words, state: 'TOUR_ASKED', winner: 'question', why: "the tour's decision, answered as Voice Mode's question" })),
+    // Today's harmless takes with a hologram on screen (voice's base allows them in its hologram states): the same
+    // in these states, where a hologram is on screen too.
+    ...[...TOUR_STATES, 'HOLO_PICKED'].flatMap((state) => [
+      { words: 'stop that', state, winner: 'hologram', why: 'holds the model still (free, undoable), as with any hologram on screen' },
+      { words: 'open the hologram of the battery', state, winner: 'hologram', why: 'selects the battery part (free, undoable), as with any hologram on screen' },
+    ]),
   ],
 };
 
