@@ -1170,8 +1170,10 @@ leave each other messages on your home base. You link them once, on the Mac:
 The code works once, for 30 minutes: as the two link, they agree a new key, and within a second or two of Jarvis
 showing **Linked · online** both have forgotten the code's, so an old code (in your clipboard history, say) opens
 nothing. If Jarvis is closed in those first seconds, Jarvis for Chrome 1.1.1 still refuses any task, page or answer
-sent with the code (1.1.0 forgets it at Jarvis's next message, or after 10 minutes). Until you link, the code holds
-the key that locks your messages, so don't share it. Jarvis never sends it to Claude: pasted in the chat box, Voice
+sent with the code (1.1.0 forgets it at Jarvis's next message, or after 10 minutes). If Jarvis for Chrome went away
+right after the paste and never took the new key, Jarvis keeps trying for half an hour, then gives the link up and
+Settings says "Jarvis for Chrome never confirmed the new key. Link again.": an old code is never taken after that.
+Until you link, the code holds the key that locks your messages, so don't share it. Jarvis never sends it to Claude: pasted in the chat box, Voice
 Mode's Type field, a hologram's field or Optics' Ask field, it's refused with where to paste it instead (so is an API
 key, which only the chat box's **Send anyway** lets through). Keep the Jarvis
 window open (it can sit behind other windows): if it's closed, Settings says **Linked · offline**, "pull this up in

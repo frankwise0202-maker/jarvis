@@ -47,6 +47,7 @@ export const CHROME_LINK_WORDS = Object.freeze({
   unlinked: 'Unlinked. Jarvis for Chrome was told, if it could be reached.',
   extUnlinked: 'Jarvis for Chrome unlinked itself. Link again whenever you like.',
   expired: 'The link code expired before it was used. Press Link for a new one.',
+  unconfirmed: 'Jarvis for Chrome never confirmed the new key. Link again.',
   oldCore: 'Your home base needs Jarvis Core 1.3 or later for this. It updates itself; or run jarvis-core update on the Alienware.',
   testing: 'Asking Jarvis for Chrome…',
   answered: (s) => `Jarvis for Chrome answered in ${s} s.`,
@@ -187,6 +188,8 @@ export function createChromeLinkSettings(control, { toast } = {}) {
       out(result, CHROME_LINK_WORDS.extUnlinked, 'info');
     } else if (info.note === 'expired' && stateName !== 'pending' && stateName !== 'linked') {
       out(result, CHROME_LINK_WORDS.expired, 'info');
+    } else if (info.note === 'unconfirmed' && stateName !== 'pending' && stateName !== 'linked') {
+      out(result, CHROME_LINK_WORDS.unconfirmed, 'warn'); // CHROME-LINK-R3-1: the link was given up
     }
     lastCleared = info.clearedAt || 0;
     lastClip = info.clipboard || null;

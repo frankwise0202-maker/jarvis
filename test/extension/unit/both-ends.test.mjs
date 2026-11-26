@@ -18,6 +18,7 @@ import { createStore, parseLinkCode } from '../../../extension/src/shared/storag
 import { JarvisLink } from '../../../extension/src/background/link.js';
 import { createChromeLink, readLinkRecord, CHROME_LINK_KEY } from '../../../src/platform/chrome-link.js';
 import { fakeRelay, answerRelay, CORE_URL } from '../../e2e/core-fakes.mjs';
+import { importLinkKey, openEnvelope } from '../../../src/lib/relay-envelope.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, { timeoutMs = 8000, what = 'condition', step = 20 } = {}) {
@@ -328,48 +329,55 @@ test('both ends: two Jarvis windows; Link pressed in the one that does NOT hold 
   }
 });
 
-test('R2-3: the extension never got the rekey and comes back 31 minutes later (the Jarvis window stayed open): the link comes back without a reload', async () => {
-  let skew = 0;
-  const appNow = () => Date.now() + skew;
-  const extNow = () => Date.now() + skew;
-  const w = await world({ appNow, extNow });
+/** The extension never read the rekey (its profile closed right after the paste) and is opened again `minutes` on. */
+async function lateExtension(minutes) {
+  const clock = { skew: 0 };
+  const now = () => Date.now() + clock.skew;
+  const w = await world({ appNow: now, extNow: now });
+  const app = w.open();
+  app.control.begin();
+  const code = app.control.code();
+  let block = true;
+  w.relay.block = (who, method, path) => (who === 'ext' && method === 'GET' && path === '/api/relay/to-ext' && block ? 'drop' : null);
+  await w.ext.paste(code);
+  await until(() => app.api.state().linked, { what: 'Jarvis linked' });
+  w.ext.kill(); // the Jarvis profile closed right after the paste (or the Mac slept)
+  await sleep(500);
+  clock.skew = minutes * 60_000;
+  w.relay.store.close(); // (what was in the boxes has expired)
+  block = false;
+  await sleep(4000); // the app's rekey timer that was pending fires once now
+  w.relay.store.close(); // ... and its one rekey also expires before the profile is opened again (2 minutes)
+  await w.ext.boot(); // the owner opens the Jarvis profile again
+  return { w, app, code };
+}
+
+test('R2-3: the extension never got the rekey and comes back 20 minutes later (the Jarvis window stayed open): within the code\'s half hour, the link comes back without a reload', async () => {
+  const { w, app } = await lateExtension(20);
   try {
-    const app = w.open();
-    app.control.begin();
-    const code = app.control.code();
-    let block = true;
-    w.relay.block = (who, method, path) => (who === 'ext' && method === 'GET' && path === '/api/relay/to-ext' && block ? 'drop' : null);
-    await w.ext.paste(code);
-    await until(() => app.api.state().linked, { what: 'Jarvis linked' });
-    w.ext.kill(); // the Jarvis profile closed right after the paste (or the Mac slept)
-    await sleep(500);
-    skew = 31 * 60_000; // 31 minutes on
-    w.relay.store.close(); // (what was in the boxes has expired)
-    block = false;
-    await sleep(4000); // the app's rekey timer that was pending fires once now
-    w.relay.store.close(); // ... and its one rekey also expires before the profile is opened again (2 minutes)
-    await w.ext.boot(); // the owner opens the Jarvis profile again
-    let ok = false;
-    let ping = null;
-    try {
-      await until(() => app.api.state().online, { timeoutMs: 20000, what: 'online' });
-      ping = await app.control.ping();
-      ok = ping.ok;
-    } catch (e) {
-      ping = String(e.message);
+    await until(() => app.api.state().online, { timeoutMs: 20000, what: 'online' });
+    const ping = await app.control.ping();
+    assert.equal(ping.ok, true, 'the link should come back');
+    await until(() => w.appRecord() && w.appRecord().prev === null, { timeoutMs: 15000, what: 'the new key confirmed' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('R3-1: the extension never got the rekey and comes back 31 minutes later: past the code\'s half hour Jarvis gave the link up ("never confirmed the new key. Link again."), and the code\'s key gets no answer', async () => {
+  const { w, app, code } = await lateExtension(31);
+  try {
+    await sleep(3000); // the extension says hello (and the status) with the code's key
+    assert.equal(app.api.state().online, false, 'the code\'s key brought the link back past its half hour');
+    assert.equal(app.api.state().linked, false, 'Jarvis still holds a link whose new key was never confirmed');
+    assert.equal(app.control.info().note, 'unconfirmed', 'Settings says "Jarvis for Chrome never confirmed the new key. Link again."');
+    assert.equal(w.appRecord(), null, 'no key kept');
+    // Nothing in to-ext opens with the code's key: no rekey (the new key) for whoever holds the code.
+    const codeKey = await importLinkKey(parseLinkCode(code).link.key);
+    for (const env of w.relay.store.read('to-ext', null).messages) {
+      const o = await openEnvelope(codeKey, env, { box: 'to-ext', now: Date.now() + 31 * 60_000 });
+      assert.equal(o.ok, false, `to-ext holds a ${o.message && o.message.kind} sealed with the code's key`);
     }
-    const ext = await w.ext.stored();
-    // Does a reload of Jarvis bring it back?
-    app.destroy();
-    const again = w.open();
-    let back = false;
-    try {
-      await until(() => again.api.state().online, { timeoutMs: 15000, what: 'online after a reload' });
-      back = (await again.control.ping()).ok;
-    } catch {
-      back = false;
-    }
-    assert.equal(ok, true, 'the link should still come back');
   } finally {
     await w.close();
   }

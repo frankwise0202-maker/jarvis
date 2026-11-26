@@ -444,7 +444,7 @@ export function createChromeLink({
   let holding = null; // { abort, release } while this window holds the link
   let lockCtl = null; // the lock request in flight or held
   let problem = null; // 'unreachable' | 'down' | 'refused' | 'old-core' | 'rate' | 'error' | null
-  let note = null; // 'ext-unlinked' | 'expired' | null: shown once by Settings
+  let note = null; // 'ext-unlinked' | 'expired' | 'unconfirmed' (R3-1) | null: shown once by Settings
   let heard = 0; // the last authenticated message from the extension (ms)
   let statusSeen = 0; // the relay's extSeenAt (ms)
   let savedSeen = 0; // the extSeenAt last written to storage
@@ -522,6 +522,16 @@ export function createChromeLink({
       rec = null;
       note = 'expired';
     }
+    if (rec && rotationOver(rec)) {
+      // CHROME-LINK-R3-1: Jarvis for Chrome never confirmed the new key within PENDING_MS of the rekey. The link is
+      // given up, never recovered through the code's key (whoever holds the code could get the new key that way):
+      // Settings says "Jarvis for Chrome never confirmed the new key. Link again."
+      storage.remove(CHROME_LINK_KEY);
+      storage.remove(CHROME_LINK_INBOX_KEY);
+      storage.remove(CHROME_LINK_STARTS_KEY);
+      rec = null;
+      note = 'unconfirmed';
+    }
     return rec;
   }
 
@@ -566,9 +576,10 @@ export function createChromeLink({
     }
     if (record && record.extSeenAt) savedSeen = Math.max(savedSeen, record.extSeenAt);
     if (record && record.linkedAt && (!before || !before.linkedAt)) maybeClearClipboard();
-    // A link code nobody used is forgotten after half an hour, even in a window left open.
+    // A link code nobody used is forgotten after half an hour, even in a window left open; so is a rotation never
+    // confirmed half an hour after the rekey (R3-1).
     cancelLater(pendingTimer);
-    pendingTimer = record && !record.linkedAt ? later(reload, Math.max(1000, record.madeAt + PENDING_MS - now() + 1000)) : null;
+    pendingTimer = record && !record.linkedAt ? later(reload, Math.max(1000, record.madeAt + PENDING_MS - now() + 1000)) : record && record.prev ? later(reload, Math.max(1000, (record.rekeyAt || 0) + PENDING_MS - now() + 1000)) : null;
     syncLock();
     changed();
   }
@@ -590,12 +601,17 @@ export function createChromeLink({
     return value;
   }
 
+  /** CHROME-LINK-R3-1: the rotation is still unconfirmed PENDING_MS after the rekey (then given up: load()). */
+  function rotationOver(rec, t = now()) {
+    return !!(rec && rec.prev && rec.linkedAt && t - (rec.rekeyAt || 0) >= PENDING_MS);
+  }
+
   /**
    * The key a message to Jarvis for Chrome is sealed with (REDTEAM-LINK-4): the link's own, or while the new key
    * isn't confirmed, the code's (Jarvis for Chrome takes it for REKEY_GRACE_MS after it switched, and needs it before).
    */
   function sealKeyText(rec) {
-    if (!rec.prev) return rec.key;
+    if (!rec.prev || rotationOver(rec)) return rec.key; // (never the code's key past the limit: R3-1)
     const t = now();
     if (t - (rec.rekeyAt || 0) < REKEY_GRACE_MS) return rec.prev;
     if (rec.prevSeenAt && t - rec.prevSeenAt < PREV_HEARD_MS) return rec.prev;
@@ -603,18 +619,30 @@ export function createChromeLink({
   }
 
   /**
-   * Whether a message under the code's key is still taken: until the new key is confirmed, however long. An extension
-   * that missed every rekey still uses the code's key, and is only heard, and sent the rekey again, through it
-   * (CHROME-LINK-R2-3: it was 30 minutes, then nothing until a reload).
+   * Whether a message under the code's key is still taken: until the new key is confirmed, and at most PENDING_MS after
+   * the rekey. An extension that missed every rekey still uses the code's key, and is heard, and sent the rekey again,
+   * through it, within that time (CHROME-LINK-R2-3); past it the link is given up and Settings asks to link again
+   * (CHROME-LINK-R3-1: without a limit, whoever holds the code could get the new key).
    */
-  const prevOpen = (rec) => !!rec.prev;
+  const prevOpen = (rec) => !!rec.prev && !rotationOver(rec);
 
   /** Send the new key, sealed with the code's (again until confirmed: on a schedule, and when the old key is heard). */
   function sendRekey({ force = false } = {}) {
     const rec = record;
     if (!rec || !rec.prev || !rec.linkedAt) return Promise.resolve(false);
+    // Past the limit the new key is never sent, whoever asks (hold, a message under the code's key, the resend timer,
+    // the status): it travels sealed with the code's key. The link is given up instead (R3-1, R3-S1).
+    if (rotationOver(rec)) {
+      later(reload, 0);
+      return Promise.resolve(false);
+    }
     const t = now();
-    if (!force && t - rekeyLastAt < 2000) return Promise.resolve(false);
+    if (!force && t - rekeyLastAt < 2000) {
+      // (A message under the code's key just after a rekey went: the rekey goes again once the 2 s are over, not
+      // never, so a late extension's first words still bring it the new key: R2-3 within the limit.)
+      if (!rekeyTimer) rekeyTimer = later(() => sendRekey({ force: true }), 2000 - (t - rekeyLastAt));
+      return Promise.resolve(false);
+    }
     rekeyLastAt = t;
     const sent = tell('rekey', { key: rec.key }, rec, rec.prev);
     cancelLater(rekeyTimer);
@@ -1338,6 +1366,10 @@ export function createChromeLink({
   }
 
   async function checkStatus(signal) {
+    if (rotationOver(record)) {
+      reload(); // the rotation's limit passed (R3-1): given up here too, if its timer hasn't fired (a Mac asleep)
+      return;
+    }
     const rec = record;
     if (!rec) return;
     let r;
