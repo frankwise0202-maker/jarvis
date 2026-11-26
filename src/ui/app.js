@@ -4231,7 +4231,8 @@ export async function startApp(rootEl) {
           saveSettings({ naturalVoice: false, homeBaseSpeak: false, homeBaseSpeakBy: 'owner' });
           return { ok: true, device };
         }
-        if (getSettings().homeBaseUrl && senses && !state.demo) {
+        // George from the home base when its voice can speak now; else the one on this device.
+        if (getSettings().homeBaseUrl && homeBaseVoice && !state.demo && safe(() => homeBaseVoice.canSpeak(), false)) {
           saveSettings({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' });
           return { ok: true, device };
         }
