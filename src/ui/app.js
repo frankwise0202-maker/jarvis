@@ -2523,9 +2523,13 @@ export async function startApp(rootEl) {
           const fresh = cameraNote === note && Date.now() - note.at <= PENDING_LOOK_MS;
           withdrawCameraNote();
           if (fresh) return safe(() => open());
-          // Late: the camera comes on, and nothing more.
+          // Late: the camera comes on, and nothing more. Once Optics is up, a line where Jarvis may speak
+          // (Voice Mode free), else shown.
           safe(() => openOpticsScreen({ voice: !!voiceApi }));
-          safe(() => sayLiveLine('Optics is on. Ask me again, or tap Look.'));
+          const line = 'Optics is on. Ask me again, or tap Look.';
+          setTimeout(() => {
+            if (!safe(() => sayLiveLine(line), false)) safe(() => toast(line, { level: 'info', id: 'optics-late' }));
+          }, 1200);
           return undefined;
         },
       }),

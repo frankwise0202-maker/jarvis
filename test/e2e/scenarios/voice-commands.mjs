@@ -229,7 +229,9 @@ export default [
       await t.goto('/');
       await t.step('the price first, then "no": nothing is sent', async () => {
         await openVoice(t, ['brief me', 'no']);
-        await saysLine(t, 'Your briefing sends a team of agents to look up the news, about $1.70. Shall I run it?');
+        // Changed on purpose (v8.1 fix MONEY-5): the price at the owner's team size and depth. Here 8 agents at
+        // Balanced and no location: six angles (five news ones and the owner's interests), about $1.35.
+        await saysLine(t, 'Your briefing sends a team of agents to look up the news, about $1.35. Shall I run it?');
         await saysLine(t, 'Okay, no briefing.');
         noRequests(t, '"no" to the briefing');
         await t.screenshot('1-no-briefing');

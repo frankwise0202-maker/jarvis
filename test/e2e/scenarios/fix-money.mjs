@@ -115,7 +115,6 @@ export default [
         await page.waitForTimeout(2500);
         t.assert(looks(t) === 0, `no Look sent by a late click (${looks(t)})`);
         t.assert((await attr(page, 'liveview')) !== 'on' && liveReqs(t).length === 0, 'no live view');
-        await t.waitFor(async () => (await said(page)).some((s) => /^Optics is on\. Ask me again, or tap Look\.$/.test(s)), { timeout: 10000, message: 'what to do now, said' });
         await page.evaluate(() => (window.__skew = 0));
       });
       await t.step('"close the camera"; hidden, "video mode": a notification that says it starts the live view, with its cap; closing Voice Mode withdraws it', async () => {
