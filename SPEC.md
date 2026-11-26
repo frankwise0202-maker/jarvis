@@ -4288,7 +4288,9 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   3. `app.chromeLink` linked, online and `where !== 'mine'` → `open(url, { rect, focus: !rect })`: ok → "It's open in
      the Jarvis window(, beside me)."; `needs-click` → "…waits for your click in the Jarvis window." (the extension's
      card; the app doesn't ask too); `blocked`/`refused`/`bad` → "I can't open that address: <why>."; anything else
-     (offline, unlinked, off, busy) → step 4, with "I can't reach Jarvis for Chrome, so it's in a normal tab." once;
+     (offline, unlinked, off, busy) → step 4, with "I can't reach Jarvis for Chrome, so it's in a normal tab." once
+     an outage (any answer from the link resets it). Linked but not online by `state()` (the Jarvis window closed):
+     step 4 without asking the link, said once the same way. Never linked: step 4, nothing said about the link;
   4. an acting address (not a search) → the card `chrome-act` ("It looks like it adds to a cart. Open it?", the
      address in full, **Open** / **Not now**); only the click opens it;
   5. `rect` → `screens.openPage(url, { rect, button: 'Open in Chrome' })` (a tracked page window at that rect;

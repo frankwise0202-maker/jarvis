@@ -222,13 +222,30 @@ test('linked and online: the Jarvis window (beside: at a rect, not focused); "in
   assert.deepEqual([down.via, down.line], ['tab', 'I can’t reach Jarvis for Chrome, so it’s in a normal tab. It’s open in Chrome.']);
   const again = await p.evaluate(() => window.pull({ kind: 'site', url: `${location.origin}/down2` }));
   assert.equal(again.line, 'It’s open in Chrome.', 'said once');
-  // Not online (the status says so): a tab, without asking the link.
+  // Back, then not online (the status says so: the Jarvis window closed): a tab, without asking the link;
+  // this outage is said once too.
+  await p.evaluate(() => {
+    window.__link.reply = { ok: true, site: 'x' };
+  });
+  assert.equal((await p.evaluate(() => window.pull({ kind: 'site', url: 'https://www.youtube.com/', name: 'YouTube' }))).via, 'jarvis');
   await p.evaluate(() => {
     window.__link.online = false;
   });
   const before = await p.evaluate(() => window.__linkCalls.length);
-  await p.evaluate(() => window.pull({ kind: 'site', url: `${location.origin}/off` }));
+  const off = await p.evaluate(() => window.pull({ kind: 'site', url: `${location.origin}/off` }));
   assert.equal(await p.evaluate(() => window.__linkCalls.length), before);
+  assert.deepEqual([off.via, off.line], ['tab', 'I can’t reach Jarvis for Chrome, so it’s in a normal tab. It’s open in Chrome.']);
+  assert.equal((await p.evaluate(() => window.pull({ kind: 'site', url: `${location.origin}/off2` }))).line, 'It’s open in Chrome.', 'said once');
+  // Never linked (or unlinked): a normal tab, and nothing said about the link.
+  await p.evaluate(() => {
+    window.__link.online = true;
+  });
+  await p.evaluate(() => window.pull({ kind: 'site', url: 'https://www.youtube.com/', name: 'YouTube' }));
+  await p.evaluate(() => {
+    window.__link.linked = false;
+  });
+  const unlinked = await p.evaluate(() => window.pull({ kind: 'site', url: `${location.origin}/unlinked` }));
+  assert.deepEqual([unlinked.via, unlinked.line], ['tab', 'It’s open in Chrome.']);
 });
 
 test('from a Jarvis tab that can\'t listen while covered: "open it in a window" is offered once, and "it" is the page', async () => {

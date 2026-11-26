@@ -647,8 +647,8 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
   a tab, so he stays in view ("It's open beside me.").
 - **With Jarvis for Chrome linked and online**, the page opens in the Jarvis window, where Jarvis for Chrome can work
   in it (beside Jarvis when something is on screen, without taking the focus). Say **"in my Chrome"** or **"in a
-  normal tab"** for your usual Chrome window, with your sign-ins. Not linked, or offline: a normal tab, and he says
-  so once.
+  normal tab"** for your usual Chrome window, with your sign-ins. Not linked: a normal tab. Linked but offline (the
+  Jarvis window closed): a normal tab, and he says so once.
 - **Pop-ups blocked**: an **Open in Chrome** button appears; one tap opens the page. While Jarvis is hidden he says
   "I couldn't open it: allow pop-ups for Jarvis once."
 - **"Close that tab"** closes the last tab he opened.
