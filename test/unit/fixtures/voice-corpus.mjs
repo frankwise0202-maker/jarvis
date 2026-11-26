@@ -485,6 +485,12 @@ export const OPTICS = {
     ['video mode off', 'OT', 'optics'],
     ['show the live video', 'OPA', 'optics'],
     ['back to live', 'OPA', 'optics'],
+    // v8.1 fix MONEY-7: with Optics closed these have nothing to act on: a free line (optics-idle), in
+    // Voice Mode and the chat alike, never a paid question.
+    ...['stop video mode', 'video mode off', 'stop live view', 'stop watching', 'expand the picture', 'back to live', 'close the picture'].flatMap((w) => [
+      [w, 'V0', 'optics-idle'],
+      [w, 'C0', 'optics-idle'],
+    ]),
     // E7: "take a picture" is a Look (the camera rules first with Optics closed).
     ['take a picture', 'V0', 'camera'],
     ['take a photo of this', 'V0', 'camera'],

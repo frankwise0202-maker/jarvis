@@ -102,7 +102,11 @@ const FLOAT_ME_RE = /^(?:(?:hey|ok|okay) )?(?:jarvis )?(?:(?:can you|could you|w
 
 function action(op, extra = {}) {
   // Free and local. Closing can lose something (a camera stops), so no alternative reading closes.
-  return { do: 'window', op, free: true, undo: op !== 'close' && op !== 'close-all', check: false, camera: false, ...extra };
+  // PRIVACY-5: a command about the camera's window that can turn the camera on (opened, moved, arranged
+  // or sized) is taken from the best reading only (R7); closing it already is (undo: false).
+  const closing = op === 'close' || op === 'close-all';
+  const camera = !closing && (extra.which === 'camera' || extra.a === 'camera' || extra.b === 'camera');
+  return { do: 'window', op, free: true, undo: op !== 'close' && op !== 'close-all', check: false, camera, ...extra };
 }
 
 const kindOf = (w) => (w ? windowKindOf(w) : null);

@@ -261,10 +261,17 @@ you off.
 #### Everything by voice
 
 Say these in Voice Mode (after "Hey Jarvis" or two claps from Standby), or type them in the chat box,
-a hologram's field or Optics' field: the same words do the same thing everywhere. They act at once,
+a hologram's field or Optics' field: most of them do the same thing everywhere. They act at once,
 cost nothing unless the table says so, and Jarvis says one short line so you know what he did ("New
 chat.", "Settings are open."). Anything else is a question for Jarvis, as before: it waits 2 seconds
 on screen first, and costs what a question costs.
+
+A few act only where they make sense, and typed in the chat box they are ordinary questions for
+Jarvis (paid like any question, with no price said first): Voice Mode's own controls; "brief me" with
+no home base linked (in Voice Mode Jarvis says its price first); "research this" and its answers (in
+Voice Mode and Optics' field, with the price first); and the camera's words with Optics closed ("what
+am I looking at?", "take a picture", "video mode": in Voice Mode). To use them from the chat, open Voice
+Mode or Optics first.
 
 | Feature | Say | What happens |
 |---|---|---|
@@ -293,9 +300,9 @@ on screen first, and costs what a question costs.
 | | "close the camera" | Camera off, from anywhere |
 | | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
-| | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs) |
-| | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac |
-| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose |
+| | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed, "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free |
+| | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac (with no picture on screen: "There's no picture on screen.", free) |
+| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field; typed in the chat it is a question) |
 | | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
 | Holograms | "expand it", "show the battery", "front view", "labels off", "photos of the fan" | As before, free |
 | Walkthroughs | "walk me through it", "walk me through the battery" | A walkthrough of the hologram on screen, free |

@@ -2263,7 +2263,22 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   'open Optics' for your camera." (`hologramPartByWords`). "Close the camera" with Optics closed
   (`optics-close`): a camera view on another screen goes off ("Camera off."), else "The camera is off."; typed in
   Optics' own field it closes Optics. "Video mode" is the live view (`LIVE_VIEW_ON` / `LIVE_VIEW_OFF`: "video mode",
-  "go into / switch to video mode", "stop / exit / leave video mode").
+  "go into / switch to video mode", "stop / exit / leave video mode"). With Optics closed (and no hologram, blueprint
+  or window those words could be about), the live view's and Watch's off words and the picture's own words ("stop
+  video mode", "video mode off", "stop live view", "stop watching", "expand the picture", "back to live", "close the
+  picture") get a free line on every surface (`optics-idle`, app layer, `matchOpticsClosedWords`: "The live view is
+  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude.
+- **Never from another reading (v8.1 fixes PRIVACY-2 to PRIVACY-5).** Optics' own microphone gives the router every
+  reading, best first (`deps.route(best, { spoken, alternatives })` → `routeFromOptics`), so R7 decides there as in
+  Voice Mode and the chat; the old promotion of a less-sure reading (`commandReading`) is gone, and a switch to a
+  named camera is a camera action (`OPTICS_CAMERA`). "Research this" with Optics open (`optics-research`) is
+  `camera: true, free: false` (it may take a Look first). Screens' camera views (`what: 'camera'`) and the camera's
+  window (window-commands.js `action()` with `which`, `a` or `b` 'camera') are `camera: true`. Hidden on a Mac,
+  camera words leave one notification that says what its click does, with the price ("…look through the camera
+  (about 8¢)", "…start the live view (up to $1 an hour)", else "…turn the camera on"): good for 30 s like a tap on
+  Look, withdrawn then and when Voice Mode closes; a later click only opens Optics. A Look waiting for the camera
+  (`autoLook`) ends when the camera pauses ("The camera turns off while Jarvis is in the background."; MAC-3), so
+  it is never sent later by itself.
 - **A Look on another screen (E5).** Screens' look panel taking the Look calls `optics.sendAway(frameId)` (app.js
   `closeViewerFor`): with the camera live the card folds (`closeCard`), the Look's row in the log reads "ON YOUR OTHER
   SCREEN" (`data-away`) and keeps its whole picture, the notice says "On your other screen.", and the camera and the

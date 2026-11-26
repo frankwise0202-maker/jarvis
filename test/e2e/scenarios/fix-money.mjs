@@ -8,12 +8,15 @@
 //                            PRIVACY-3: Optics opened on its own; its microphone hears "Lie view." (another
 //                            reading: "Live view.") and "Use the Logic tech camera." ("Use the Logitech
 //                            camera."): neither the live view nor a camera switch comes from the other reading
+//   fix-optics-closed-words  MONEY-7: with Optics closed, the live view's and the picture's words said in Voice
+//                            Mode, and typed in the chat, get a free line: nothing is sent
 
 import { tid } from '../harness.mjs';
 import { installCameraRig } from '../camera-rig.mjs';
 import { configureLive, isLiveRequest } from '../../mock/optics.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { cameraArgs, instrument, openFromComposer, setHidden, slowCamera, waitLive } from './optics.mjs';
+import { toastText, typeCommand } from './screens.mjs';
 
 const MAC_CAMERAS = [{ label: 'FaceTime HD Camera (Built-in) (05ac:8514)' }, { label: 'Logitech BRIO (046d:085e)' }];
 const said = (page) => page.evaluate(() => (window.__voice ? window.__voice.said.slice() : []));
@@ -203,6 +206,48 @@ export default [
         await page.waitForTimeout(4000);
         const after = await cameraLabel();
         t.assert(!/Logitech/i.test(after), `the camera wasn't switched by another reading (${before} → ${after})`);
+      });
+    },
+  },
+  {
+    name: 'fix-optics-closed-words',
+    title: 'MONEY-7: with Optics closed, "stop video mode", "video mode off", "stop live view", "stop watching", "expand the picture", "back to live" and "close the picture" said in Voice Mode, and "stop live view" typed in the chat, each get a free line: nothing is sent',
+    device: 'mac',
+    timeout: 120000,
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await t.goto('/');
+      const LINES = {
+        'Stop video mode.': 'The live view is off.',
+        'Video mode off.': 'The live view is off.',
+        'Stop live view.': 'The live view is off.',
+        'Stop watching.': 'Watch is off.',
+        'Expand the picture.': 'There’s no picture on screen.',
+        'Back to live.': 'There’s no picture on screen.',
+        'Close the picture.': 'There’s no picture on screen.',
+      };
+      await t.step('said in Voice Mode, one at a time: each its line, nothing sent', async () => {
+        await (await t.visible('voice-open')).click();
+        await t.visible('voice-mode');
+        for (const [words, line] of Object.entries(LINES)) {
+          await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle', { timeout: 20000, message: 'Voice Mode to wait for a tap' });
+          const n = (await said(page)).length;
+          await page.evaluate((w) => window.__voice.queue.push(w), words);
+          await page.locator(tid('voice-core')).click();
+          await t.waitFor(async () => (await said(page)).slice(n).includes(line), { timeout: 15000, message: async () => `"${line}" for "${words}" (said ${JSON.stringify((await said(page)).slice(n))})` });
+        }
+        t.assert(t.requests('lead').length === 0, `nothing sent to Claude (${t.requests('lead').length})`);
+        await (await t.visible('voice-close')).click();
+        await t.waitFor(async () => (await t.count('voice-mode')) === 0, { timeout: 10000, message: 'Voice Mode to close' });
+      });
+      await t.step('typed in the chat: the line, nothing sent', async () => {
+        await typeCommand(t, 'stop live view');
+        await t.waitFor(async () => /The live view is off\./.test(await toastText(t)), { timeout: 5000, message: async () => `the line (${await toastText(t)})` });
+        t.assert(t.requests('lead').length === 0, 'nothing sent to Claude');
       });
     },
   },
