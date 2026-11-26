@@ -5430,11 +5430,19 @@ otherwise Claude's.
   "the screen protector" and "order history" are a page's); a question without page words (R4); with a hologram
   open, one of its parts' names or aliases (R10); what opening takes (above), unless it also asks for an action
   ("and add it to the cart") or names a page object; a reserved answer word.
-- **Only an instruction** (ROUTING-2): with a carrier, the words must start with a page verb (`INSTRUCTION_VERBS`:
-  "find", "add", "open", "book", …; "let's", "please" or a site and a colon may come first), or ask about the page
-  itself; "my Gmail won't load in Chrome", "explain how cookies work in Chrome" are questions for Jarvis.
-- **The task text** is the owner's words with their spelling ("$300", "4K"), without the carrier and fillers; a
-  leading verb is lower-cased for the check line. `chat: 'same'` carries on the last task's chat (`state.chrome
+- **Only an instruction** (ROUTING-2), told by the sentence's shape, never by a list of verbs (CHROME-VOICE-R2-3,
+  ROUTING-R2-2). The lead carriers that ask ("use Jarvis for Chrome to …", "have Chrome …", "ask / tell / get Chrome to
+  …") carry a task whatever its verb ("have Chrome renew my library books"). After "… in Chrome" or "in Chrome, …",
+  any imperative is a task ("cancel my Netflix subscription", "email the seller", "request a refund"); a statement or a
+  trouble is the owner's question: a subject first ("my Gmail won't load", "it says access denied", "the page keeps
+  reloading", "nothing loads"), a short noun phrase (one to four words) and then its verb ("log in doesn't work",
+  "order history is empty", "Zoom keeps crashing", "pay button is greyed out"; before a plain "is", "has" or "says" the
+  phrase has no determiner after its first word, so "confirm the order is right" stays an instruction), or "… not
+  working". So are requests for help ("explain …", "describe …", "teach me …", "tell me how …", "remind me how …",
+  "show me how …"), and a question without page words (R4). A site and a colon may come first ("Best Buy: add …").
+- **The task text** is the owner's words with their spelling ("$300", "4K"), without the carrier and fillers; the
+  instruction's first word is lower-cased for the check line ("Chrome, up to a dollar: cancel my Netflix subscription"),
+  not a site before a colon. `chat: 'same'` carries on the last task's chat (`state.chrome
   .lastTask`, kept after it ends): a context sentence after a task, or a follow-up word ("now …", "… too", "also",
   "again") with a carrier.
 
@@ -5455,9 +5463,11 @@ otherwise Claude's.
    sent to Chrome."), and so does any other reading that is a no ("No." heard as "Go."); a stop word also stops a
    task that runs ("Okay, nothing sent. Chrome is stopping."); "no, I said …" withdraws it and routes the corrected
    words, a task's as a Chrome task ("in Chrome" kept) unless they name one of Jarvis's things or are a question;
-   "yes", "okay", "thanks", and the short words that sound like a no ("go", "start", "start it", "do it"), let it
-   count on (the full time again: nothing goes sooner); any other words withdraw it and are routed as usual; closing
-   Voice Mode withdraws it; "start now", "send it" (or the card's button) end it at once. While a yes to Chrome's
+   "yes", "okay", "thanks", "continue", "carry on", "keep going", "go on", "done", a sentence that starts with a yes
+   word, has no no word and goes on agreeing ("yes, continue", "sure, go on"), and the short words that sound like a
+   no ("go", "start", "start it", "do it"), let it count on (the full time again: nothing goes sooner; ROUTING-R2-5);
+   any other spoken words withdraw it out loud first ("Okay, nothing sent to Chrome.") and are routed as usual once
+   that is said (a tap or a barge-in over it drops them); closing Voice Mode withdraws it; "start now", "send it" (or the card's button) end it at once. While a yes to Chrome's
    question counts down ("Approving · say cancel"), the same words come first, before the prompt's: a bare "cancel"
    or "no" there takes the approval back and is never the prompt's no; "stop Chrome" there also stops the task;
 5. only then `startTask({ text, chat, limitUsd })`, with the price said (none while it was "your Chrome budget").
@@ -5476,7 +5486,9 @@ name would set off his barge-in, critique M8): the lines say "Chrome", the link'
 and `onDone`: the card shows the status, the latest step (`narration` or `lastStep`), the cost against the budget
 and the final answer; **Stop** stops it. While a task runs (or waits, or its start is on its way), "stop that",
 "stop the task", "cancel the task", "abort", "halt", a bare "cancel" and "pause / end / kill" with what they stop are
-`chrome-stop`'s too (ROUTING-5). A start on its way (the countdown over, no reply yet) is no check any more: a stop
+`chrome-stop`'s too (ROUTING-5); with a walkthrough going or a hologram open, "pause it", "pause that", "halt" and the
+bare "end it" / "kill it" stay theirs, and only the words that name the task stop it ("stop", "stop Chrome", "stop the
+task"; MISSED-R2V-1). A start on its way (the countdown over, no reply yet) is no check any more: a stop
 then stops the task as soon as it has an id, never "nothing sent", never "Chrome is on it." (ROUTING-11). A bare
 "cancel" or "no" while a check counts is the check's, even with an owner question under it (ROUTING-1). A stop
 ("stop", "stop Chrome", the card's Stop) says "Stopping Chrome…"
@@ -5487,9 +5499,17 @@ to stop it. Press Stop in its side panel." (the link keeps sending it). Voice's 
 while a task runs (REDTEAM-VOICE-13); on a phone the Chrome words say Chrome tasks run from Jarvis on the Mac.
 Jarvis says the final answer (the first 400 characters; the card has all 2,000) once Voice Mode is free, waiting up
 to a minute; with Voice Mode closed the chat toasts it, and while Jarvis is hidden a notification says it (`notify`,
-tag `chrome-task`). With two Jarvis windows (REDTEAM-VOICE-7), the window holding the link passes the prompts, their
-closing and a task's end to the others (BroadcastChannel `jarvis-chrome-voice`): the window with Voice Mode open says
-them, the link's window notifies only when Voice Mode is open nowhere, every window shows the cards. A task's `done`
+tag `chrome-task`). The agent writes its answer, narration and last step after reading web pages, so a sentence in
+them that sounds like Jarvis's own question or his answer words ("Chrome asks", "Chrome is waiting for you",
+"Approving", "Tap me to answer", "say approve" and its kin, a reserved answer) is never said, toasted or notified:
+"Chrome is done. The answer is on its card." (the card keeps the full text), and "what are you doing in Chrome?"
+leaves such a step out (`sayableAnswer`; CHROME-VOICE-R2-4). With two Jarvis windows (REDTEAM-VOICE-7), the window
+holding the link passes the prompts, their closing and a task's end to the others (BroadcastChannel
+`jarvis-chrome-voice`): the window with Voice Mode open says them, the link's window notifies only when Voice Mode is
+open nowhere, every window shows the cards. When the window that passed a question on closes ("bye"), a window that
+has it notifies for it from then on (CHROME-VOICE-R2-6). The link's own notices (a late start, D5) are said as any
+line from Chrome is (`api.chrome.say`: no microphone after them unless the session would listen anyway;
+CHROME-VOICE-R2-5). A task's `done`
 (any status) closes its prompts, and so does the link reporting that task gone or another one (REDTEAM-VOICE-8). A
 Chrome task never holds the session (critique H5). A page opened in the Jarvis window (`chromeLink.open` resolving `{ ok: true }`, whoever asked)
 starts a Chrome context: the controller watches `open()` on the link object (same arguments, same answer).
@@ -5515,9 +5535,14 @@ starts a Chrome context: the controller watches `open()` on the link object (sam
   REDTEAM-VOICE-6). One listen follows it only when the session would listen anyway: Continuous on, no brake, and not
   a hidden session whose follow-up window is over (rule 4; PRIVACY-1). Otherwise it ends "Tap me to answer." (a
   prompt that takes a yes), no listen opens, and its 30 s start at the owner's next listen; `api.chrome.say` follows
-  the same rule. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`); cut short (a barge-in, a tap,
-  Stop), it is said again by itself once Voice Mode is free. Woken by "Hey Jarvis, stop Chrome" (or "… deny"), the
-  words act instead of the greeting (REDTEAM-VOICE-10). A yes (`chooseAnswer`) counts only from the best reading, within the
+  the same rule. Said to the end, it opens the 30-s window (`ANSWER_WINDOW_MS`). Cut short by a barge-in or a tap,
+  it is said again by itself once the owner's listen has ended with no words (words that answered or closed it, "deny"
+  or "stop Chrome", leave it unsaid). The listen a barge-in opens is the owner's, as a tap's is: Chrome's question
+  (said again, or waiting to be said) and its news wait until it ends, so the words after "Hey Jarvis" are heard
+  (CHROME-VOICE-R2-1, R2V-1). The dock's Stop silences it (CHROME-VOICE-R2-2): it isn't said again by itself and stays
+  open on its card and in the other windows; not heard in full, a yes has it said again first ('unsaid'); a question
+  waiting to be said when Stop is pressed waits for the owner's next listen. Woken by "Hey Jarvis, stop Chrome" (or
+  "… deny"), the words act instead of the greeting (REDTEAM-VOICE-10). A yes (`chooseAnswer`) counts only from the best reading, within the
   window ('late' and 'unsaid' say it again), and when no other reading is a no, cancel or stop word ('unsure': "I'm
   not sure I heard that right." and the prompt again). Then the check: shown "Approving: <what> · say cancel", said
   "Approving. Say cancel to stop." (the budget names the new limit: what was used plus one more budget; allowing a
@@ -5544,4 +5569,6 @@ the draft's commands, carriers and the task text, G1's words, the context and it
 (Chromium: the cards, the dock, 320 px); the router's T1-T3 over the chrome-voice sections of
 `test/unit/fixtures/voice-corpus.mjs` and `collisions.mjs`. E2E (`test/e2e/scenarios/chrome-voice.mjs`, against the
 fake relay and the fake Jarvis for Chrome): `chrome-voice-task`, `chrome-voice-context`, `chrome-voice-approve`,
-`chrome-voice-misheard`, `chrome-voice-click-only`, `chrome-voice-stack`.
+`chrome-voice-misheard`, `chrome-voice-click-only`, `chrome-voice-stack`; after the second review (v8.1.1)
+`chrome-voice-stop-quiet` and `chrome-voice-stop-quiet-off` (Stop leaves Jarvis quiet, Continuous on and off) and
+`chrome-voice-bargein-stop` ("Hey Jarvis" over Chrome's question, then "Stop.": heard, the task stops).
