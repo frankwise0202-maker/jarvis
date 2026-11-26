@@ -5,7 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ALWAYS_ON_TOLD,
   AUDIO_SETUPS,
+  alwaysOnChecks,
+  audioStatusLine,
   RECOMMENDED_SETUP,
   SETUP_IDS,
   audioConstraints,
@@ -314,4 +317,71 @@ test('the hands-free Test: the stored shape Voice Mode’s barge-in reads, check
   assert.deepEqual(lines.map((x) => [x.step, x.ok]), [['hidden', false], ['self', false], ['speaker', true]]);
   assert.match(lines[1].text, /interrupting him by voice stays off/);
   assert.deepEqual(handsFreeLines(null), []);
+});
+
+test('A10, the "Always on" card: each line checked from what the page can see, or said when it can’t', () => {
+  const l = listAudioDevices(MAC_BT);
+  const chosen1 = { input: { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }, output: { id: 'sp-out', label: 'Desk Speakerphone (Bluetooth)' } };
+  const good = alwaysOnChecks({
+    mic: 'granted',
+    plan: planSetup('speaker-mac-mic', l, chosen1),
+    devices: l,
+    power: true,
+    installed: true,
+    notifications: 'granted',
+    settings: { wakeClap: true, wakeWord: true },
+    george: { ready: true, label: 'George (home base)' },
+    trackUse: { used: true },
+    takesTrack: true,
+    test: { at: 1, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true },
+  });
+  const by = (rows) => Object.fromEntries(rows.map((r) => [r.check, r.ok]));
+  assert.deepEqual(by(good), { mic: true, device: true, bluetooth: true, power: true, installed: true, notifications: true, wake: true, george: true, recognizer: true, 'test-hidden': true, 'test-self': true, 'test-speaker': true });
+  assert.match(good.find((r) => r.check === 'device').text, /Listening on MacBook Pro Microphone; speaking on Desk Speakerphone/);
+
+  const chosen2 = { input: { id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' }, output: chosen1.output };
+  const bad = alwaysOnChecks({
+    mic: 'prompt',
+    plan: planSetup('speakerphone-both', l, chosen2, { output: true }),
+    devices: l,
+    power: false,
+    installed: false,
+    notifications: 'default',
+    settings: { wakeClap: false, wakeWord: false },
+    george: { ready: false },
+    trackUse: null,
+    takesTrack: false,
+    test: null,
+  });
+  const b = by(bad);
+  assert.deepEqual([b.mic, b.device, b.bluetooth, b.power, b.installed, b.notifications, b.wake, b.george, b.recognizer, b.test], [false, false, false, false, false, false, false, false, false, null]);
+  assert.match(bad.find((r) => r.check === 'mic').text, /Allow on every visit/);
+  assert.match(bad.find((r) => r.check === 'bluetooth').text, /phone call/);
+  assert.match(bad.find((r) => r.check === 'recognizer').text, /set Chrome’s microphone to Desk Speakerphone/);
+  // Nothing chosen, no battery API: said, not judged.
+  const none = by(alwaysOnChecks({ mic: 'granted', plan: planSetup('', l, {}), devices: l, power: null, settings: {} }));
+  assert.equal(none.device, null);
+  assert.equal(none.power, null);
+  assert.equal('recognizer' in none, false, 'no question microphone chosen: nothing to say about it');
+  assert.ok(ALWAYS_ON_TOLD.some((t) => /Prevent automatic sleeping on power adapter when the display is off/.test(t)) && ALWAYS_ON_TOLD.some((t) => /Always keep these sites active/.test(t)));
+});
+
+test('"Which microphone are you using?": the line from the plan, the matcher takes whole sentences only', async () => {
+  const { matchAudioStatus, register } = await import('../../src/ui/commands/audio.js');
+  const l = listAudioDevices(MAC_BT);
+  const chosen1 = { input: { id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }, output: { id: 'sp-out', label: 'Desk Speakerphone (Bluetooth)' } };
+  const chosen2 = { input: { id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' }, output: chosen1.output };
+  assert.equal(audioStatusLine(planSetup('speaker-mac-mic', l, chosen1), l), 'I’m listening on the Mac’s microphone and speaking on Desk Speakerphone.');
+  assert.equal(audioStatusLine(planSetup('switch', l, chosen2), l), 'I’m listening and speaking on Desk Speakerphone. “Hey Jarvis” and claps are heard on the Mac’s microphone.');
+  assert.equal(audioStatusLine(planSetup('speakerphone-both', l, chosen2, { input: true, output: true }), l), 'The speakerphone isn’t connected: I’m on the Mac’s microphone and speakers until it’s back.');
+  assert.equal(audioStatusLine(planSetup('', l, {}), l), 'I’m following the Mac’s sound settings: listening on the Mac’s microphone and speaking on Desk Speakerphone.');
+  assert.equal(audioStatusLine(null, null), 'I’m using this device’s own microphone and speaker.', 'an iPhone, or no device list');
+  for (const yes of ['Which microphone are you using?', 'Hey Jarvis, which mic are you using', 'what speaker are you using', 'Is the speakerphone connected?', 'where are you listening and speaking']) assert.ok(matchAudioStatus(yes), yes);
+  for (const no of ['which microphone should I buy', 'what microphone does the iPhone use', 'where are you from', 'which speaker is better for a living room', '']) assert.equal(matchAudioStatus(no), null, no);
+  assert.deepEqual(matchAudioStatus('which mic are you using'), { do: 'audio-status', free: true, undo: true });
+  // Registered on Voice Mode and the chat; run says the line (no controller: this device's own).
+  const got = [];
+  register({ register: (e) => got.push(e) }, { audio: null });
+  assert.deepEqual([got[0].id, got[0].layer, got[0].surfaces], ['audio-status', 'app', ['voice', 'chat']]);
+  assert.deepEqual(got[0].run(), { say: 'I’m using this device’s own microphone and speaker.' });
 });

@@ -27,6 +27,8 @@
 //   micPillName(device) / goneName(device) / awayLine(plan)   what the Standby pill and the wake line say
 //   trackStartSupport(env)                 the recognizer hears a given track (recognition.start(track))
 //   HANDS_FREE_TEST_KEY, normalizeHandsFreeTest(raw), handsFreeLines(result)
+//   alwaysOnChecks(env), ALWAYS_ON_TOLD     A10's "Always on" card: what is checked, and what is only told
+//   audioStatusLine(plan, devices)         "which microphone are you using?" (src/ui/commands/audio.js)
 //
 // Labels on a Mac carry the transport (Chromium media/audio/mac/core_audio_util_mac.cc): "MacBook Pro
 // Microphone (Built-in)", "<speakerphone> (Bluetooth)", "(Bluetooth LE)", "(Virtual)", "(Aggregate)", and
@@ -627,4 +629,77 @@ export function handsFreeLines(result) {
       text: r.heardSpeaker === true ? 'George came from the speakerphone.' : r.heardSpeaker === false ? 'George didn’t come from the speakerphone.' : 'Not answered.',
     },
   ];
+}
+
+// ---- A10 (SHOULD): the "Always on" card ------------------------------------------------------------------------
+
+/** What a page can't check: said, not checked (the README's "Always on: the Mac checklist"). */
+export const ALWAYS_ON_TOLD = Object.freeze([
+  'System Settings → Battery → Options → “Prevent automatic sleeping on power adapter when the display is off”: on (the display may sleep; the Mac must not).',
+  'The MacBook’s lid open: its microphone is off while the lid is closed.',
+  'Chrome’s Settings → Performance → “Always keep these sites active”: the Jarvis site.',
+  'Chrome up to date, and no Focus mode silencing Jarvis’s notifications.',
+]);
+
+/**
+ * The "Always on" card's checks, from what the page can see: [{ check, ok: true | false | null, text }].
+ * env: { mic ('granted' | 'denied' | 'prompt' | 'unknown'), plan, devices, power (true | false | null), installed,
+ * notifications ('granted' | 'denied' | 'default' | 'unsupported'), settings, george ({ ready, label } | null),
+ * trackUse ({ used } | null), takesTrack (bool), test (the hands-free Test's stored result) }. Pure.
+ */
+export function alwaysOnChecks(env = {}) {
+  const e = env && typeof env === 'object' ? env : {};
+  const out = [];
+  const add = (check, ok, text) => out.push({ check, ok, text });
+  const p = e.plan || { none: true, missing: {} };
+  const s = e.settings || {};
+  add('mic', e.mic === 'granted', e.mic === 'granted' ? 'The microphone is allowed for Jarvis.' : e.mic === 'denied' ? 'The microphone is blocked: allow it in Chrome’s site settings, and choose “Allow on every visit”.' : 'Allow the microphone, and choose “Allow on every visit” (not “Allow this time”: it ends after 16 hours).');
+  if (p.none) add('device', null, 'No microphone or speaker chosen: Jarvis follows the Mac’s sound settings.');
+  else if (p.missing && (p.missing.input || p.missing.output)) add('device', false, 'The chosen speakerphone isn’t connected: Jarvis uses the Mac’s microphone and speakers until it’s back.');
+  else add('device', true, `Listening on ${p.questionMic ? p.questionMic.name : 'the default microphone'}; speaking on ${p.speaker ? p.speaker.name : 'the default speaker'}.`);
+  if (p.setup === 'speakerphone-both' || (p.custom && p.bluetoothMic)) add('bluetooth', false, 'The speakerphone’s Bluetooth microphone listens: George sounds like a phone call while Standby listens. “Speakerphone speaks, Mac listens” keeps his full sound.');
+  else if (p.bluetoothSpeaker) add('bluetooth', true, 'The speakerphone only speaks: George keeps his full sound.');
+  add('power', e.power === true ? true : e.power === false ? false : null, e.power === true ? 'On power.' : e.power === false ? 'On battery: plug the Mac in.' : 'Keep the Mac on power (this browser doesn’t say).');
+  add('installed', !!e.installed, e.installed ? 'Installed as an app: George can speak after a restart without a click.' : 'Install Jarvis as an app (the install icon in Chrome’s address bar): then George can speak after a restart without a click.');
+  add('notifications', e.notifications === 'granted', e.notifications === 'granted' ? 'Notifications are on.' : 'Turn on notifications (Settings → Appearance & sound), so a wake in the background can tell you he’s listening.');
+  const clap = s.wakeClap !== false;
+  const word = s.wakeWord === true;
+  add('wake', clap || word, clap && word ? 'Two claps and “Hey Jarvis” wake him.' : clap ? 'Two claps wake him (“Hey Jarvis” is off: Wake Jarvis).' : word ? '“Hey Jarvis” wakes him (claps are off).' : 'Nothing wakes him: turn on Clap twice or Say “Hey Jarvis” in Wake Jarvis.');
+  const g = e.george || null;
+  add('george', g ? !!g.ready : null, g && g.ready ? `${g.label || 'George'} is ready.` : 'George isn’t ready: the Mac’s own voice speaks meanwhile (Jarvis’s voice, above).');
+  if (!p.none && p.questionMic) {
+    if (!e.takesTrack) add('recognizer', false, `This Chrome can’t hand its recognizer a microphone: set Chrome’s microphone to ${p.questionMic.name}.`);
+    else if (e.trackUse) add('recognizer', !!e.trackUse.used, e.trackUse.used ? `Your last question was heard on ${p.questionMic.name}.` : `Your last question was heard on Chrome’s own microphone: set it to ${p.questionMic.name}.`);
+    else add('recognizer', null, `Your questions will be heard on ${p.questionMic.name} (not checked yet: after your next question).`);
+  }
+  for (const l of handsFreeLines(e.test)) add(`test-${l.step}`, l.ok, `Hands-free Test: ${l.text}`);
+  if (!normalizeHandsFreeTest(e.test)) add('test', null, 'Hands-free Test: not run yet (Microphone and speaker → Test hands-free).');
+  return out;
+}
+
+// ---- "Which microphone are you using?" -----------------------------------------------------------------------
+
+/**
+ * What Jarvis says when asked where he listens and speaks (src/ui/commands/audio.js): from the plan of the
+ * moment and the devices listed. Plain, one sentence; never names more than it knows.
+ */
+export function audioStatusLine(plan, devices) {
+  const p = plan && typeof plan === 'object' ? plan : null;
+  const list = devices && typeof devices === 'object' ? devices : {};
+  const micName = (d) => (!d ? '' : d.transport === 'builtin' ? 'the Mac’s microphone' : d.name);
+  const speakerName = (d) => (!d ? '' : d.transport === 'builtin' ? 'the Mac’s speakers' : d.name);
+  if (!p || p.none) {
+    const mic = micName(list.defaultInput);
+    const out = speakerName(list.defaultOutput);
+    if (mic && out) return `I’m following the Mac’s sound settings: listening on ${mic} and speaking on ${out}.`;
+    return 'I’m using this device’s own microphone and speaker.';
+  }
+  if (p.missing && (p.missing.input || p.missing.output)) {
+    const which = p.missing.input && p.missing.output ? 'microphone and speakers' : p.missing.input ? 'microphone' : 'speakers';
+    return `The speakerphone isn’t connected: I’m on the Mac’s ${which} until it’s back.`;
+  }
+  const mic = micName(p.questionMic) || micName(list.defaultInput) || 'the default microphone';
+  const out = speakerName(p.speaker) || speakerName(list.defaultOutput) || 'the default speaker';
+  const wake = p.setup === 'switch' && p.wakeMic && p.wakeMic !== p.questionMic ? ` “Hey Jarvis” and claps are heard on ${micName(p.wakeMic)}.` : '';
+  return mic === out ? `I’m listening and speaking on ${mic}.${wake}` : `I’m listening on ${mic} and speaking on ${out}.${wake}`;
 }

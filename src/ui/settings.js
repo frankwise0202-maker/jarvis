@@ -27,6 +27,7 @@ import { createBrainSettings } from './brain-settings.js';
 import { createSyncSettings } from './sync.js';
 import { createSensesSettings } from './senses-settings.js';
 import { createJarvisVoiceCard } from './voice-card.js';
+import { createAudioDevicesCard, createAlwaysOnCard } from './audio-devices-card.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -655,8 +656,19 @@ export function createSettingsPanel(o) {
   // ---- v8.1 slots: each builder fills its own (the panel's options `o` bring what it needs from
   // app.js); an empty slot shows nothing (no card, no section, no nav button) ----------------------
   // Settings → Voice → Microphone and speaker, after Jarvis's voice (mac-dev): a card element, or null.
+  // v8.1 (SPEC §28.2): only on a computer in Chrome or Edge (AudioContext.setSinkId); nothing in the demo.
+  // A10 (SHOULD): the "Always on" card follows it.
   function micSpeakerSlot() {
-    return null;
+    const a = o.audioDevices;
+    if (!a || !a.audio) return null;
+    const audioCard = createAudioDevicesCard({ audio: a.audio, stt: a.stt, tts: a.tts, createCapture: a.createCapture, createWakeWord: a.createWakeWord, getSettings, commit, toast: o.toast });
+    if (!audioCard) return null;
+    const alwaysCard = safeCall(() => createAlwaysOnCard({ audio: a.audio, getSettings, george: a.george }), null);
+    const cards = alwaysCard ? [audioCard, alwaysCard] : [audioCard];
+    for (const c of cards) cleanups.push(() => c.destroy());
+    const offChange = safeCall(() => onSettingsChange(() => cards.forEach((c) => c.sync())), null);
+    if (typeof offChange === 'function') cleanups.push(offChange);
+    return h('div', { class: 'ad-slot' }, ...cards.map((c) => c.el));
   }
   // Settings → Holograms (tours): the section's cards ([]: no section).
   function hologramsSlot() {

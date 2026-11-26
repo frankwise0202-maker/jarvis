@@ -43,7 +43,16 @@ function fakeScope({ devices = [...MAC, ...SP], userAgent = MAC_UA, permission =
         throw e;
       }
       md.live += 1;
-      const track = { kind: 'audio', label: dev.label, readyState: 'live', getSettings: () => ({ deviceId: dev.deviceId }), addEventListener() {} };
+      const on = new Map();
+      const track = {
+        kind: 'audio',
+        label: dev.label,
+        readyState: 'live',
+        getSettings: () => ({ deviceId: dev.deviceId }),
+        addEventListener: (type, fn) => on.set(type, [...(on.get(type) || []), fn]),
+        fire: (type) => (on.get(type) || []).forEach((fn) => fn({ type })),
+      };
+      md.tracks = [...(md.tracks || []), track];
       track.stop = () => {
         if (track.readyState === 'live') md.live -= 1;
         track.readyState = 'ended';
@@ -143,6 +152,18 @@ test('Standby’s capture: today’s request with nothing chosen; the chosen dev
   cap.stop();
   assert.deepEqual(released, [{ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)', fellBack: false }]);
 
+  // The system mutes, unmutes or ends the live track: the device watcher is told (onTrack).
+  const told = [];
+  const watched = createStandbyCapture({ scope, device: () => ({ id: 'sp-mic', processing: null }), onTrack: (type) => told.push(type) });
+  await watched.start({ clap: true });
+  const tr = scope.md.tracks[scope.md.tracks.length - 1];
+  tr.fire('mute');
+  tr.fire('unmute');
+  tr.fire('ended');
+  assert.deepEqual(told, ['mute', 'unmute', 'ended']);
+  assert.equal(watched.state, 'off', 'an ended track stops the capture, as before');
+  watched.close();
+
   // The speakerphone is off: OverconstrainedError → the default device, with a note (not 'no-mic').
   const states = [];
   const gone = createStandbyCapture({ scope, device: () => ({ id: 'missing', processing: null }), onState: (s) => states.push(s) });
@@ -176,6 +197,9 @@ test('nothing chosen: no device anywhere, no setSinkId, listens as before', asyn
   const stt = audio.wrapStt({ startListening: (o) => (given = o), sttSupported: () => true });
   stt.startListening({ lang: 'en-GB' });
   assert.deepEqual(given, { lang: 'en-GB' }, 'no audioTrack');
+  const bands = await audio.getQuestionMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+  assert.deepEqual(scope.md.gets[scope.md.gets.length - 1], { audio: { echoCancellation: true, noiseSuppression: true }, video: false }, 'the mic bands ask exactly as before');
+  bands.getTracks().forEach((tr) => tr.stop());
   assert.equal(scope.md.watchers, 0, 'nothing to watch');
   audio.destroy();
 });
@@ -198,6 +222,19 @@ test('a setup chosen: Standby’s and the questions’ microphones, the speaker 
   const music = sink();
   audio.addSink(music);
   assert.deepEqual(music.ids, ['sp-out']);
+  // George's context reports an error (its output device went away): the devices are checked.
+  let tell = null;
+  const before = scope.md.list.length;
+  audio.addSink({ setSink: () => Promise.resolve(true), onDevice: (fn) => ((tell = fn), () => (tell = null)) });
+  const listed = [];
+  const enumerate = scope.md.enumerateDevices;
+  scope.md.enumerateDevices = async () => (listed.push(1), enumerate());
+  tell({ type: 'error', state: 'suspended' });
+  clock.advance(250);
+  await flush();
+  assert.equal(listed.length, 1, 'enumerated once the burst settled');
+  scope.md.enumerateDevices = enumerate;
+  assert.equal(scope.md.list.length, before);
   assert.deepEqual(audio.standbyPill({ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }), { name: 'THE MAC’S MICROPHONE', gone: '' });
 
   // The recognizer gets a processed track on the question microphone, closed at the end.
@@ -224,6 +261,12 @@ test('a setup chosen: Standby’s and the questions’ microphones, the speaker 
   audio.noteMicClosed({ id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' });
   audio.noteMicClosed({ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' });
   assert.deepEqual(george.settles, [800, 800]);
+
+  // Voice Mode's mic bands open the question microphone too (else Chrome's own, perhaps the speakerphone's).
+  const n0 = scope.md.gets.length;
+  const bands = await audio.getQuestionMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+  assert.deepEqual(scope.md.gets[n0].audio, { echoCancellation: true, noiseSuppression: true, deviceId: { exact: 'sp-mic' } });
+  bands.getTracks().forEach((tr) => tr.stop());
 
   // Old Chrome (no start(track)): no track, the recognizer opens Chrome's own microphone.
   const old = createAudioDevices({ getSettings: () => SETUP1, scope: fakeScope({ userAgent: MAC_UA.replace('142', '130') }) });

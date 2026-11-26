@@ -6,7 +6,8 @@
 //
 // Messages from the page (node.port): { type: 'config', clap, sensitivity, word }, { type: 'word-port'
 // } with a MessagePort (the worker's end), { type: 'stop' }.
-// To the page: { type: 'clap', gapMs, levels, t }, { type: 'ready', rate }.
+// To the page: { type: 'clap', gapMs, levels, t }, { type: 'ready', rate }, and v8.1's { type: 'silence', silent }
+// (exact digital silence for 10 s: a muted microphone; then false at the first sound).
 
 import { createWakeTap } from '../../lib/wake/tap.js';
 
@@ -23,6 +24,7 @@ class JarvisWakeProcessor extends AudioWorkletProcessor {
       sensitivity: typeof o.sensitivity === 'string' ? o.sensitivity : 'normal',
       word: false,
       onClap: (ev) => this.port.postMessage({ type: 'clap', gapMs: ev.gapMs, levels: ev.levels, t: ev.t }),
+      onSilence: (silent) => this.port.postMessage({ type: 'silence', silent }),
       onFrame: (frame) => {
         if (!this.wordPort) return;
         try {

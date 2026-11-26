@@ -86,6 +86,8 @@ import { createSync } from './sync.js';
 import { createHomeBaseView } from './homebase-sheet.js';
 import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, briefingFallback, NO_KEY_MESSAGE, FRESH_BRIEFING_MS, deviceLabel } from '../lib/brain.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
+import { createAudioDevices } from '../platform/audio-devices.js';
+import '../styles/audio-devices.css'; // v8.1: Settings → Voice → Microphone and speaker, Always on, Standby's one-time line
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';
@@ -105,7 +107,18 @@ import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
 
-const { sttSupported, startListening } = stt;
+// v8.1 (SPEC §28.2-§28.3): Settings → Voice → Microphone and speaker (a computer in Chrome or Edge). Standby's
+// capture and every listen use the microphones chosen there, and George, the chimes and music previews the
+// speaker; one watcher follows them when they come and go. Nothing chosen: everything as before. Not in a
+// screen window (it never listens or speaks).
+const audioDevices = isScreenMode()
+  ? null
+  : safeInit(() => createAudioDevices({ getSettings, phoneLike: safeInit(() => isIOS() || isAndroid() || (isTouch() && window.matchMedia('(max-width: 1024px)').matches)) === true, playChime: (name, o) => sounds.play(name, o) }));
+// Every recognizer listen hears the chosen question microphone (recognition.start(track), Chrome 135+).
+const sttDevice = audioDevices ? audioDevices.wrapStt(stt) : stt;
+// Voice Mode's chimes: in "Switch" (setup 3) the listen chime waits for the speakerphone's microphone.
+const voiceSounds = audioDevices ? { ...sounds, play: (name, o) => (audioDevices.holdChime(name, o) ? true : sounds.play(name, o)) } : sounds;
+const { sttSupported, startListening } = sttDevice;
 // Speech: the device voice (tts.js), or the opt-in natural voice (Kokoro in a Worker) when it
 // is on and ready; the router has tts.js's API, so Voice Mode and the chat use it unchanged.
 // Not in a screen window (?screen=…, src/main.js starts the screen page there, which never speaks):
@@ -122,7 +135,26 @@ const tts = createVoiceRouter({ device: deviceTts, natural: naturalVoice, homeba
 // it with homeBase: true; every other caller keeps stt.js itself). hearPrompt: the conversation's
 // context words for Whisper (set once the app runs).
 let hearPrompt = () => '';
-const listening = senses ? safeInit(() => createHomeBaseHearing({ stt, senses, createCapture: (o) => createStandbyCapture(o), getPrompt: () => hearPrompt(), getSettings })) || stt : stt;
+const listening = senses ? safeInit(() => createHomeBaseHearing({ stt: sttDevice, senses, createCapture: (o) => createStandbyCapture({ ...o, ...captureOn('question') }), getPrompt: () => hearPrompt(), getSettings })) || sttDevice : sttDevice;
+// v8.1: George (on this device and from the home base: one output) and the chimes play on the chosen speaker.
+if (audioDevices) {
+  if (naturalVoice) safeInit(() => audioDevices.addSink(naturalVoice.audio));
+  audioDevices.addSink({ setSink: (id) => sounds.setSoundsSink(id) });
+  onSettingsChange(() => audioDevices.settingsChanged());
+}
+
+/**
+ * v8.1: what a microphone capture (capture.js) needs to use the chosen microphones: Standby's ('wake') or the
+ * questions' ('question': the home base's hearing). Nothing chosen: {} (as before).
+ */
+function captureOn(role) {
+  if (!audioDevices) return {};
+  return {
+    device: () => (role === 'wake' ? audioDevices.wakeAudio() : audioDevices.questionAudio()),
+    onRelease: (d) => audioDevices.noteMicClosed(d),
+    onTrack: () => audioDevices.check(),
+  };
+}
 // With the natural voice on, ask once which engine this device runs (a WebGPU adapter or not), so a
 // device already measured too slow speaks with the built-in voice at once (engine knownSlow()).
 if (naturalVoice && safeInit(() => getSettings().naturalVoice)) naturalVoice.choosePlan().catch(() => {});
@@ -482,13 +514,14 @@ export async function startApp(rootEl) {
       if (item) safe(() => noteMusicPlayed(item)); // the wake routine offers what was played lately
     },
   });
+  if (audioDevices) audioDevices.addSink(musicPlayer); // v8.1: previews play on the chosen speaker too
   const onMac = safe(() => isMacDevice(), false);
   // The hologram viewer's and Optics' own microphones: a preview playing would be heard as speech,
   // so it pauses before they listen, and none starts until they have stopped (the chat's mic and
   // Voice Mode see to it themselves).
   let otherMics = 0;
   const sttPausingPreviews = {
-    ...stt,
+    ...sttDevice,
     startListening: (options = {}) => {
       // Jarvis stops talking first, as the chat mic does (v8.0): a live view line or a reply read
       // aloud through the Mac's speakerphone would otherwise be heard as the owner's question.
@@ -502,7 +535,7 @@ export async function startApp(rootEl) {
         otherMics = Math.max(0, otherMics - 1);
       };
       try {
-        return stt.startListening({
+        return sttDevice.startListening({
           ...options,
           // stt.js calls onEnd exactly once, however listening ended.
           onEnd: (...args) => {
@@ -1527,7 +1560,7 @@ export async function startApp(rootEl) {
         stt: state.demo ? stt : listening,
         tts,
         markdownToPlainText,
-        sounds,
+        sounds: voiceSounds,
         // Its own owner: closing Voice Mode must not let the screen sleep while a run continues.
         wakeLock: { keepAwake: () => keepAwake('voice'), allowSleep: () => allowSleep('voice') },
         activeRun: entry ? entry.run : null,
@@ -1550,7 +1583,8 @@ export async function startApp(rootEl) {
         ...devVoiceOptions(), // v8.1 tests: a shorter hold
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
-        createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
+        // v8.1: on the microphone chosen for questions (Settings → Voice → Microphone and speaker).
+        createMicBands: safe(() => isIOS(), false) ? null : audioDevices ? (o) => createMicBands({ ...o, getUserMedia: (c) => audioDevices.getQuestionMedia(c) }) : createMicBands,
         // Screens (v7): spoken "put it on my other screen" acts at once; Jarvis says a short line.
         screens: {
           command: (text) => {
@@ -1654,12 +1688,14 @@ export async function startApp(rootEl) {
   // fn() -> a line or null, asked at each wake; waits: it asks something and waits for the answer (Chrome's
   // question), said first. The command modules get it as deps.wakePending (src/lib/wake/pending.js).
   const wakePending = createWakePending();
+  // mac-dev (A5): "I’m on the Mac’s speakers; the speakerphone isn’t connected.", once per absence.
+  wakePending.add(() => audioWakeLine());
   standby = createStandby({
     getSettings,
     onSettingsChange,
     createCore,
     wakeLock: { keepAwake: () => keepAwake('standby'), allowSleep: () => allowSleep('standby') },
-    createCapture: (o) => createStandbyCapture(o),
+    createCapture: (o) => createStandbyCapture({ ...o, ...captureOn('wake') }),
     createWakeWord: () => (wakeStubAllowed() ? createWakeWordStub() : createWakeWord()),
     statusLine: () => safe(() => String(presence.home.situationEl.textContent || '').trim(), ''),
     stateWord: () => safe(() => presence.word().word, ''),
@@ -1669,6 +1705,8 @@ export async function startApp(rootEl) {
     unlock: (o) => safe(() => unlockSpeech(o)), // v7.8.1: { tap: false } when Standby is entered again
     pauseWhenHidden: phoneLike,
     isIOS: safe(() => isIOS(), false),
+    // v8.1: the pill names the chosen microphone, the capture follows it, the one-time Bluetooth line.
+    audio: audioDevices ? audioDevices.standbyHooks() : null,
     // v8.1 (A9, SPEC §28.5): one Jarvis per Mac listens on Standby (a Web Lock; "Use this window" moves it).
     createLock: (onChange) => createStandbyLock({ onChange }),
     // v8.1 (A8, SPEC §28.4): barge-in. In setup 1 or 3, once the hands-free Test's self-trigger step passed,
@@ -1925,6 +1963,15 @@ export async function startApp(rootEl) {
   }
 
   /** Two claps or "Hey Jarvis" in Standby (its microphone is already released): the routine. */
+  /**
+   * v8.1 (A5, decision D3): the one short line before the wake greeting when the chosen speakerphone isn't
+   * connected ("I’m on the Mac’s speakers; the speakerphone isn’t connected."), once per absence; else null.
+   * Said only at a wake the owner made, never out loud by itself. For mac-hf's wake.pending() hook.
+   */
+  function audioWakeLine() {
+    return (audioDevices && safe(() => audioDevices.awayLine(), '')) || null;
+  }
+
   function wakeUp(trigger) {
     if (isVoiceModeOpen()) return;
     if (state.listening) safe(() => state.listening.stop());
@@ -3564,7 +3611,7 @@ export async function startApp(rootEl) {
       // v7.7 (beta): Settings → Home base → Hearing and voice.
       // v7.8.1: its Test unlocks through the voice router (a stuck output is started afresh in the tap), and
       // a sample that didn't play marks George's sound stuck (replies use the device voice meanwhile).
-      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture(o), stopSpeaking: () => safe(() => stopSpeakingNow()), unlockVoice: () => safe(() => unlockSpeech()), onSilent: (a) => safe(() => tts.noteAudioStuck(a)) } : null,
+      senses: senses && !state.demo ? { senses, audio: naturalVoice ? naturalVoice.audio : null, createCapture: (o) => createStandbyCapture({ ...o, ...captureOn('question') }), stopSpeaking: () => safe(() => stopSpeakingNow()), unlockVoice: () => safe(() => unlockSpeech()), onSilent: (a) => safe(() => tts.noteAudioStuck(a)) } : null,
       testApiKey: (key) => engine.testApiKey(key),
       onKeyChanged: () => updateAll(),
       openInstallGuide: () => openInstallGuide(),
@@ -3619,6 +3666,24 @@ export async function startApp(rootEl) {
       toast,
       // ==== v8.1: what each builder's Settings slot needs, between its markers (keep them) ====
       // ---- mac-dev ▸ (Voice → Microphone and speaker)
+      audioDevices:
+        audioDevices && !state.demo
+          ? {
+              audio: audioDevices,
+              stt: sttDevice,
+              tts,
+              createCapture: (o) => createStandbyCapture({ ...o, ...captureOn('wake') }),
+              createWakeWord: () => (wakeStubAllowed() ? createWakeWordStub() : createWakeWord()),
+              // A10's card: is George ready to speak (from the home base, or on this Mac)?
+              george: () => {
+                const st = getSettings();
+                if (safe(() => tts.audioStuck(), false)) return { ready: false };
+                if (senses && sensesAllowed && st.homeBaseSpeak === true && safe(() => senses.canSpeak(), false)) return { ready: true, label: 'George (home base)' };
+                if (naturalVoice && st.naturalVoice === true && safe(() => naturalVoice.engine.status().state, 'off') === 'ready') return { ready: true, label: 'George (this Mac)' };
+                return { ready: false };
+              },
+            }
+          : null,
       // ---- mac-dev ◂
       // ---- mac-hf ▸
       // ---- mac-hf ◂
@@ -4236,7 +4301,7 @@ export async function startApp(rootEl) {
     // mac-hf (src/ui/commands/mac.js):
     register('mac', registerMacCommands, { ...shared });
     // mac-dev (src/ui/commands/audio.js):
-    register('audio', registerAudioCommands, { ...shared });
+    register('audio', registerAudioCommands, { ...shared, audio: audioDevices });
     // tours (src/ui/commands/tours.js):
     register('tour', registerTourCommands, { ...shared });
     // voice (src/ui/commands/voice.js):

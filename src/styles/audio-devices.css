@@ -1,0 +1,300 @@
+/* v8.1 (SPEC §28.2): Settings → Voice → Microphone and speaker (src/ui/audio-devices-card.js), on a computer;
+   imported by src/ui/app.js.
+   The same quiet card style as Jarvis's voice: hairlines, plain notes, one accent for the recommended setup,
+   the warning colour only for a device that isn't connected or a Chrome that can't be given a microphone.
+   Standby's one-time line (.standby-tip) sits under its hint. */
+
+.ad-card {
+  display: grid;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-3);
+}
+
+.ad-card .set-help {
+  margin: 0;
+}
+
+.ad-status {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ad-perm {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+}
+
+.ad-facts {
+  display: grid;
+  gap: 6px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+}
+
+.ad-facts-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.ad-setups {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.ad-setups > legend {
+  margin-bottom: var(--sp-1);
+  padding: 0;
+}
+
+.ad-setup {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.ad-setup:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.ad-setup input {
+  flex: none;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.ad-setup-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ad-setup-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+
+.ad-setup-text {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ad-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ad-badge--rec {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-2);
+}
+
+.ad-custom {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.ad-custom[hidden],
+.ad-facts[hidden],
+.ad-setups[hidden],
+.ad-perm[hidden],
+.ad-status[hidden],
+.ad-level[hidden],
+.ad-ask[hidden],
+.ad-step[hidden],
+.ad-results[hidden] {
+  display: none;
+}
+
+.ad-pickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+
+.ad-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ad-field .select {
+  width: 100%;
+  min-width: 0;
+}
+
+.ad-buttons {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: var(--sp-2);
+}
+
+.ad-buttons .btn.is-running {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+.ad-tests {
+  display: grid;
+  gap: 6px;
+}
+
+.ad-tests:empty {
+  display: none;
+}
+
+.ad-level {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--line);
+}
+
+.ad-level-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 80ms linear;
+}
+
+.ad-step {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.ad-ask {
+  justify-content: flex-start;
+  gap: var(--sp-2);
+}
+
+.ad-results {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ad-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ad-result .icon {
+  flex: none;
+  margin-top: 3px;
+  color: var(--text-4);
+}
+
+.ad-result[data-ok='true'] .icon {
+  color: var(--accent);
+}
+
+.ad-result[data-ok='false'] .icon {
+  color: var(--warn);
+}
+
+.ad-notes {
+  display: grid;
+  gap: 6px;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+
+.ad-chrome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.ad-chrome.is-warn {
+  color: var(--warn);
+}
+
+.ad-code {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Standby: the one-time line about setting up a Bluetooth speakerphone. */
+.standby-tip[hidden] {
+  display: none;
+}
+
+/* The slot: the Microphone and speaker card, then the Always on card (A10), spaced like the cards around it
+   (.set-card + .set-card). */
+.ad-slot {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.set-card + .ad-slot,
+.ad-slot + .set-card {
+  margin-top: var(--sp-3);
+}
+
+.ad-slot > .set-card + .set-card {
+  margin-top: 0;
+}
+
+.ao-told-title {
+  margin: 0;
+}
+
+.ao-told .icon {
+  color: var(--text-4);
+}
