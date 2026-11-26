@@ -2213,7 +2213,9 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   layer, only while a card is on screen): "expand the picture", "show the picture big" → `expand`; "put the picture
   aside", "set it aside", "shrink the picture" → `aside`; "close the picture", "hide the photo" → `close-card`, all
   free. `setMode` keeps `aside` only while `asideAllowed()` (the camera going off folds it to `frozen`). A phone, a
-  narrow window, the screen look and a reviewed Look stay `frozen` / `review` as in v7.
+  narrow window, the screen look and a reviewed Look stay `frozen` / `review` as in v7. A Look aside when something
+  covered Optics (Hologram of this) goes back aside once Optics shows again: the camera restarts on a computer, as it
+  does with no Look on screen (`asideWhenCovered`, `restoreAside`).
 - **Which picture a question is about** (`question(text)`, `asideQuestionRoute(text, { cmd, labels, sceneChanged })`).
   While aside: Tell me more, What's this part?, a question naming one of the Look's labels (its words, three letters or
   more) or "about / in / from the picture" → `card` (a follow-up on the Look's frame, `ask`); fresh words ("look
@@ -2228,7 +2230,7 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   final words, through `routed()`).
 - **The live view while aside** (`syncLiveLook`, from `setMode`): it pauses (`look`) only while a Look fills the stage
   (`frozen`, `review`) and goes on as soon as none does (aside, Live, the card closed). A phone's Look is `frozen`, so
-  phones pause as in v8.0.
+  phones pause as in v8.0. Owner question 8's answer is the constant `LIVE_VIEW_PAUSES_ASIDE` (false).
 - **"look …" (E4).** Optics' explicit Look words are whole sentences: "look", "look here", "look now", "take / have a
   (quick) look", and "look at this / that / it / these / those / me" with at most three more words ("look at this one
   here"). Before, any sentence that started "look" in Optics' field or mic was a Look ("look up the weather", "look, I
@@ -2246,7 +2248,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   whose click opens Optics, and "The camera only runs while I'm on screen. Click the notification to bring me up.";
   the permission `granted`: `open` (Optics over Voice Mode, no Look, "Optics is on."); else `need-tap`. A camera switch
   in the words runs once the camera is live (`autoCommand`). v8.0's live view words and the v7 Look words take the
-  same `hidden` rule (`voiceLiveViewRequest`, `voiceCameraRequest`). "Close the camera" with Optics closed
+  same `hidden` rule (`voiceLiveViewRequest`, `voiceCameraRequest`). With a laptop hologram on top, "open the camera",
+  "camera on" and "show me the camera" are its camera part (R10): the router's `optics-camera-part` (top layer, Voice
+  Mode and the hologram's field, before the hologram's own entry) lets the hologram select it as today and adds "Say
+  'open Optics' for your camera." (`hologramPartByWords`). "Close the camera" with Optics closed
   (`optics-close`): a camera view on another screen goes off ("Camera off."), else "The camera is off."; typed in
   Optics' own field it closes Optics. "Video mode" is the live view (`LIVE_VIEW_ON` / `LIVE_VIEW_OFF`: "video mode",
   "go into / switch to video mode", "stop / exit / leave video mode").
@@ -2278,26 +2283,31 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     this with a web search and give me a quick answer: <words>."); Mission → a swarm turn in words ("Research <words>:
     what it is, its specifications, prices and reviews, and anything to watch out for."; the agents can't see the
     picture); Home base → `runBrainCommand({ kind: 'research', prompt, depth })`.
-  - **With the live view on**, the quick answer goes through its gate (§27) and the mission and the home base don't
-    (`outsideLiveView`), which the offer says ("Those two are outside the live view's dollar an hour."); when a quick
-    answer's worst case wouldn't fit (`quickAnswerFits`), the offer says "A quick answer would take the live view past
-    its dollar this hour." instead of offering it.
+  - **With the live view on**, the quick answer goes through its gate (§27) and the mission and the home base don't,
+    which the offer says ("Those two are outside the live view's dollar an hour."); when a quick answer's worst case
+    wouldn't fit (`quickAnswerFits`), the offer says "A quick answer would take the live view past its dollar this
+    hour." instead of offering it. Owner question 9's answer is the constant `LIVE_VIEW_COUNTS` (`{ quick: true,
+    mission: false, homebase: false }`): the offer's wording reads it, and app.js sends a way that doesn't count
+    outside the gate (`outsideLiveViewText`: the `send()` of exactly that way's words, once, also when Voice Mode
+    holds the request a moment).
 - **Router state** (app.js `routerState`, the optics block): `s.optics.mode` (`aside` among the others),
   `s.optics.card` (`{ frameId, labels, aside }` while a Look's card is on screen) and `s.optics.sceneChanged` (while
   aside). Optics' api adds `question`, `card()`, `sceneChanged()`, `sendAway`, `bringBack`, `liveSummary`, `mode`,
   `canLook()`, `followUp`, `notice` and `offerResearch`.
 - **Tests.** Unit `optics.handsfree` (E4's 16 sentences, the Look forms, fresh words, the card words, video mode,
-  `voiceOpticsOpen`, E7, the aside rule, `findNamedCamera`, the no-steal corpus), `optics.research` (words, subject,
+  `voiceOpticsOpen`, E7, the aside rule, `findNamedCamera`, the no-steal corpus, R10's entry and its hint), `optics.research` (words, subject,
   prices, the offer with and without the home base and the live view, answers, prompts; the strict mock answering the
   quick way with one web search), `live-gate` and `optics.gate-engine` (§27), and the optics rows of `voice-corpus.mjs`
   and `collisions.mjs`. E2E `optics-aside.mjs`: `optics-aside` (Mac: the live video stays big after LOOK, its track
   live, and the Look sits in its card with NEW LOOK; Expand, Live and the tile; the typed card words; the log reopens
-  the card), `optics-aside-followups` (a scene that changes: a question with the card's scene is a follow-up with no
+  the card; after Hologram of this the card is back aside, the camera live), `optics-aside-followups` (a scene that
+  changes: a question with the card's scene is a follow-up with no
   frame, ABOUT THIS PICTURE; with a new scene a new Look; "look again" always looks), `optics-aside-live-view` (the
   live view keeps looking while aside, pauses while expanded, goes on with Live; the hour counts the Look),
   `optics-aside-live-cap` (§27), `optics-aside-screen` (two monitors: Other screen; Optics stays live, the card folds;
   "bring it back"), `optics-open-by-voice` (Mac Voice Mode: "open optics" with no request to Claude, "close the
-  camera", "video mode"), `optics-open-by-voice-iphone` ("Tap Look to turn the camera on."; the tap opens Optics with no
+  camera", "video mode"; Jarvis hidden: the line and one notification, whose click opens Optics),
+  `optics-open-by-voice-iphone` ("Tap Look to turn the camera on."; the tap opens Optics with no
   Look) and `optics-research` (the offer shown and said; Cancel sends nothing; Quick one quick-mode request with a web
   search; Mission one swarm turn; Home base one job on the Core; with the live view on, the offer's wording, and at
   97¢ no quick answer offered). Changed on purpose: `optics-look-screen` (Optics stays open and live, the card folds,

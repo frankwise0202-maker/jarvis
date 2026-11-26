@@ -771,7 +771,8 @@ browser asks for permission.
   iPhone, or before you've allowed the camera, he says "Tap Look to turn the camera on." Typed
   in the chat, the words open Optics on any device. "Close the camera" closes it (with Optics
   closed it turns off a camera you put on your other screen). "Video mode" is the live view:
-  "video mode", "go into video mode", "stop video mode".
+  "video mode", "go into video mode", "stop video mode". With a laptop hologram on screen, "open
+  the camera" shows the hologram's camera, and Jarvis reminds you to say "open Optics" for yours.
 - **Research this.** Hold something up and say or type "research this" (or "look this up", "dig
   into this", "find out more about this"). Jarvis names it and says what each way costs before
   anything is spent: "Research this coffee mug? A quick answer with a web search, about 10¢. A
