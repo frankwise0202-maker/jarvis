@@ -505,6 +505,9 @@ export const WINDOWS = {
 // typed; the research offer open in Voice Mode; the chat with a camera (typed "open optics").
 const OPTICS_CARD = { open: true, mode: 'aside', liveView: true, card: { frameId: 'f1', labels: ['USB-C charger', 'Desk lamp'], aside: true }, cameraAllowed: 'granted', sceneChanged: false };
 const OPTICS_CAMERA = { supported: true, allowed: 'granted', ios: false };
+// v8.1.1 fix MONEY-R2-4: a hologram on screen, and Optics open under it (covering Optics stops its live view).
+const OPTICS_HOLO = { open: true, inWindow: false, parts: [{ id: 'battery', name: 'Battery' }], selected: null, title: 'Charger' };
+const OPTICS_UNDER = { open: true, mode: 'live', liveView: false, watch: false, card: null, cameraAllowed: 'granted', sceneChanged: null };
 const RESEARCH_CHOICES = [
   { id: 'quick', label: 'Quick · about 10¢', words: ['quick', 'quick answer', 'the quick one'], dear: false },
   { id: 'mission', label: 'Mission · about $1.70', words: ['mission', 'the mission', 'research mission'], dear: true },
@@ -590,6 +593,15 @@ export const OPTICS = {
     ['look here', 'VL', 'optics'],
     ['look at this', 'VL', 'optics'],
     ['take a look at this', 'VF', 'optics'],
+    // v8.1.1 fix MONEY-R2-4: the off words are never about a hologram or a blueprint: with one on screen, or a
+    // hologram over Optics (its live view stopped), the free line too, said or typed in the hologram's field.
+    ...['stop video mode', 'video mode off', 'stop live view', 'stop watching'].flatMap((w) => [
+      [w, 'VH', 'optics-idle'],
+      [w, 'H0', 'optics-idle'],
+      [w, 'OBP', 'optics-idle'],
+      [w, 'OHO', 'optics-idle'],
+      [w, 'OHOT', 'optics-idle'],
+    ]),
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
@@ -619,6 +631,9 @@ export const OPTICS = {
     OPA: { surface: 'voice', standby: { available: true, open: false }, homebase: { available: true, linked: true }, camera: OPTICS_CAMERA, voiceOpen: true, optics: OPTICS_CARD },
     OPT: { surface: 'optics', via: 'typed', optics: OPTICS_CARD },
     OC0: { surface: 'chat', via: 'typed', camera: OPTICS_CAMERA },
+    OBP: { surface: 'voice', camera: OPTICS_CAMERA, voiceOpen: true, blueprintOpen: true },
+    OHO: { surface: 'voice', camera: OPTICS_CAMERA, voiceOpen: true, hologram: OPTICS_HOLO, optics: OPTICS_UNDER },
+    OHOT: { surface: 'hologram', via: 'typed', hologram: OPTICS_HOLO, optics: OPTICS_UNDER },
     VQ: {
       surface: 'voice',
       camera: OPTICS_CAMERA,

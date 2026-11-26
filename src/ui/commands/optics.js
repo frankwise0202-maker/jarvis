@@ -31,6 +31,8 @@
 //   optics-idle      (app) v8.1 fix MONEY-7: with Optics closed, "stop video mode", "video mode off",
 //                    "stop live view", "stop watching", "expand the picture", "back to live", "close the
 //                    picture": a free line ("The live view is off.", "There's no picture on screen.").
+//                    v8.1.1 fix MONEY-R2-4: the off words also with a hologram or blueprint on screen, or
+//                    Optics under a hologram (its live view and Watch stopped there).
 //
 // What acts is the app's (its deps, below): this module stays importable in Node (no DOM): the T3
 // harness (test/unit/command-router.test.mjs) registers it with fake deps. Its phrases are in the
@@ -182,14 +184,23 @@ export function register(router, deps) {
   // MONEY-7: with Optics closed, the live view's and Watch's off words and the picture's own words
   // ("stop video mode", "stop live view", "stop watching", "expand the picture", "back to live", "close
   // the picture") have nothing to act on: a free line ("The live view is off."), never a paid question.
+  // v8.1.1 fix MONEY-R2-4: the off words are never about a hologram, a blueprint or a window: the free
+  // line whenever this window's live view (or Watch) isn't running, Optics open under a hologram included
+  // (covering Optics stops both). With Optics on top they stay Optics' own, as before.
   router.register({
     id: 'optics-idle',
     layer: 'app',
     match(text, s) {
-      // Only with nothing those words could be about: Optics, a hologram or blueprint, a window.
-      if ((s.optics && s.optics.open) || (s.hologram && s.hologram.open) || s.blueprintOpen) return null;
       const m = matchOpticsClosedWords(text);
-      if (!m || (m.kind === 'picture' && Array.isArray(s.windows) && s.windows.length)) return null;
+      if (!m) return null;
+      const optics = s.optics && s.optics.open ? s.optics : null;
+      if (m.kind === 'picture') {
+        // Only with nothing the picture's words could be about: Optics, a hologram or blueprint, a window.
+        if (optics || (s.hologram && s.hologram.open) || s.blueprintOpen) return null;
+        if (Array.isArray(s.windows) && s.windows.length) return null;
+        return { do: 'optics-idle', kind: m.kind };
+      }
+      if (optics && (opticsOnTop(s) || (m.kind === 'watch' ? optics.watch : optics.liveView))) return null;
       return { do: 'optics-idle', kind: m.kind };
     },
     run: (action) => ({ say: opticsClosedLine(action.kind) }),

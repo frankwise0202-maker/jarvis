@@ -45,3 +45,39 @@ test('MONEY-7: not taken: "that\'s enough" (Voice Mode\'s hush), "expand it", or
     assert.notEqual(hit && hit.id, 'optics-idle', `"${words}" with Optics open is Optics' own`);
   }
 });
+
+// v8.1.1 fix MONEY-R2-4: the live view's and Watch's off words are never about a hologram, a blueprint or
+// a window. With one on screen, or with Optics open under a hologram (which stops the live view and Watch),
+// they get the free line too: in Voice Mode, the chat and the hologram's own field. The picture's words
+// still could be about what is on screen, so they are left to it (or to the question).
+const HOLO = { open: true, inWindow: false, parts: [{ id: 'battery', name: 'Battery' }], selected: null, title: 'Charger' };
+const COVERED = { open: true, mode: 'live', liveView: false, watch: false, card: null, cameraAllowed: 'granted', sceneChanged: null };
+
+test('MONEY-R2-4: the off words with a hologram or a blueprint on screen, or a hologram over Optics: the free line; the picture words stay theirs', () => {
+  const r = router();
+  const states = {
+    'a hologram (Voice Mode)': { ...emptyState('voice'), surface: 'voice', hologram: HOLO },
+    "a hologram (typed in its field)": { ...emptyState('hologram'), surface: 'hologram', via: 'typed', hologram: HOLO },
+    'a hologram (the chat)': { ...emptyState('chat'), surface: 'chat', via: 'typed', hologram: HOLO },
+    'a blueprint (Voice Mode)': { ...emptyState('voice'), surface: 'voice', blueprintOpen: true },
+    'a hologram over Optics (Voice Mode)': { ...emptyState('voice'), surface: 'voice', hologram: HOLO, optics: COVERED },
+    'a hologram over Optics (its field)': { ...emptyState('hologram'), surface: 'hologram', via: 'typed', hologram: HOLO, optics: COVERED },
+  };
+  for (const [name, st] of Object.entries(states)) {
+    for (const words of ['stop video mode', 'video mode off', 'stop live view', 'stop watching']) {
+      const hit = r.route([words], st);
+      assert.equal(hit && hit.id, 'optics-idle', `"${words}" with ${name}: ${hit ? hit.id : 'Claude (a paid question)'}`);
+      assert.match(r.run(hit, { surface: st.surface, reading: words }).say, /^(?:The live view is off\.|Watch is off\.)$/, words);
+    }
+    for (const words of ['expand the picture', 'back to live', 'close the picture']) {
+      const hit = r.route([words], st);
+      assert.notEqual(hit && hit.id, 'optics-idle', `"${words}" with ${name} may be about it`);
+    }
+  }
+  // Still running in this window (never so under a hologram, but if it were): never "it's off".
+  const running = { ...emptyState('voice'), surface: 'voice', hologram: HOLO, optics: { ...COVERED, liveView: true, watch: true } };
+  for (const words of ['stop live view', 'stop watching']) {
+    const hit = r.route([words], running);
+    assert.notEqual(hit && hit.id, 'optics-idle', `"${words}" with it running`);
+  }
+});

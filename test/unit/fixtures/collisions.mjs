@@ -341,6 +341,8 @@ export const OPTICS = {
     { words: 'put the picture to the side', state: 'OPA', winner: 'optics-card', why: 'A Look is on screen: back into its card, not a Screens float.' },
     { words: 'close the picture', state: 'OPA', winner: 'optics-card', why: 'The card goes; the camera stays on.' },
     { words: 'put the picture to the side', state: 'OPT', winner: 'optics-card', why: 'Typed with a Look on screen: back into its card.' },
+    // v8.1.1 (MONEY-R2-4's states): a hologram over Optics is a hologram on screen, for its words as for VH and H0.
+    ...['OHO', 'OHOT'].map((state) => ({ words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), as with any hologram on screen (Optics under it).' })),
   ],
 };
 

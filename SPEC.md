@@ -2267,7 +2267,11 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   or window those words could be about), the live view's and Watch's off words and the picture's own words ("stop
   video mode", "video mode off", "stop live view", "stop watching", "expand the picture", "back to live", "close the
   picture") get a free line on every surface (`optics-idle`, app layer, `matchOpticsClosedWords`: "The live view is
-  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude.
+  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude. The off
+  words are never about a hologram, a blueprint or a window: they get the free line whenever this window's live view
+  (or Watch) isn't running, with a hologram or blueprint on screen too, and with Optics open under a hologram (which
+  stops both); with Optics on top they stay Optics' own (v8.1.1 fix MONEY-R2-4). Only the picture's words keep the
+  exclusion.
 - **Never from another reading (v8.1 fixes PRIVACY-2 to PRIVACY-5).** Optics' own microphone gives the router every
   reading, best first (`deps.route(best, { spoken, alternatives })` → `routeFromOptics`), so R7 decides there as in
   Voice Mode and the chat; the old promotion of a less-sure reading (`commandReading`) is gone, and a switch to a
