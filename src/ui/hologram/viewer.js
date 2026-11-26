@@ -1571,6 +1571,8 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     endTour('replaced');
     clearViewLook();
     if (panel) closePanel();
+    // A finished reply's caption (said or read already) makes room for the tour; one still coming stays.
+    if (!caption.hidden && caption.dataset.state !== 'thinking' && caption.dataset.state !== 'streaming') hideCaption();
     const t = { plan: p, player: null, bar: null, voiced: !!liveVoice() };
     t.bar = createTourBar({
       onBack: () => tour === t && t.player.back(),
