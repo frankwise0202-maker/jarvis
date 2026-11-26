@@ -34,6 +34,7 @@
 //               whichever is on. "Show the live video" is Live, never the live view.
 //   Anything else is null: it goes to Jarvis as a normal message (in Voice Mode, a spoken turn).
 //
+//   findNamedCamera(cameras, name)    (v8.1) the camera "use the Logitech camera" names, or null
 //   asideQuestionRoute(text, { cmd, labels, sceneChanged })
 //                                     (v8.1) a question asked while a Look sits in its card beside
 //                                     the live video: 'card' (a follow-up on that picture, no new
@@ -234,6 +235,21 @@ export function isOpticsOpenRequest(text) {
 export function voiceOpticsOpen(text, { cameraAllowed = 'unknown', ios = false, hidden = false } = {}) {
   if (!isOpticsOpenRequest(text)) return null;
   return openRule({ cameraAllowed, ios, hidden }, 'open');
+}
+
+/**
+ * v8.1: the camera a word names ("logitech", "macbook", "built-in", "iphone", "external" …), among
+ * cameras.js's described cameras ({ id, name, label, detail, kind }), or null.
+ */
+export function findNamedCamera(cameras, name) {
+  const list = Array.isArray(cameras) ? cameras.filter((c) => c && c.id) : [];
+  const want = String(name || '').toLowerCase();
+  const text = (c) => `${c.name || ''} ${c.label || ''} ${c.detail || ''}`.toLowerCase();
+  const byKind = { macbook: 'builtin', mac: 'builtin', 'built-in': 'builtin', iphone: 'continuity', continuity: 'continuity', external: 'usb', usb: 'usb', 'studio display': 'display' };
+  if (want === 'desk view') return list.find((c) => /desk view/.test(text(c))) || null;
+  if (want === 'iphone' || want === 'continuity') return list.find((c) => c.kind === 'continuity' && !/desk view/.test(text(c))) || list.find((c) => /iphone/.test(text(c))) || null;
+  const kind = byKind[want];
+  return (kind && list.find((c) => c.kind === kind)) || (want && list.find((c) => text(c).includes(want))) || null;
 }
 
 /** A label as the owner would say it: lower case, words only ("USB-C charger" -> "usb c charger"). */

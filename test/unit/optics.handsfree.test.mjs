@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   FRESH_LOOK_QUESTION,
   asideQuestionRoute,
+  findNamedCamera,
   isCameraRequest,
   isLiveViewRequest,
   isOpticsOpenRequest,
@@ -151,6 +152,26 @@ test('E2: "open optics" and its cousins open the camera, free: a Mac where it is
   assert.deepEqual(cmd('use the built-in camera'), { action: 'camera', name: 'built-in' });
   assert.deepEqual(cmd('use the other camera'), { action: 'flip', side: null });
   assert.deepEqual(cmd('use the front camera'), { action: 'flip', side: 'front' });
+});
+
+test('a camera by its name: the word finds it among the described cameras (cameras.js)', () => {
+  const cams = [
+    { id: 'mb', name: 'MacBook camera', label: 'FaceTime HD Camera (Built-in)', detail: 'FaceTime HD Camera', kind: 'builtin' },
+    { id: 'lg', name: 'Logitech webcam', label: 'HD Pro Webcam C920 (046d:082d)', detail: 'C920', kind: 'usb' },
+    { id: 'ip', name: 'iPhone (Continuity Camera)', label: 'Phone Camera', detail: '', kind: 'continuity' },
+    { id: 'dv', name: 'Desk View', label: 'Desk View Camera', detail: 'iPhone desk camera', kind: 'continuity' },
+  ];
+  assert.equal(findNamedCamera(cams, 'logitech').id, 'lg');
+  assert.equal(findNamedCamera(cams, 'macbook').id, 'mb');
+  assert.equal(findNamedCamera(cams, 'mac').id, 'mb');
+  assert.equal(findNamedCamera(cams, 'built-in').id, 'mb');
+  assert.equal(findNamedCamera(cams, 'external').id, 'lg');
+  assert.equal(findNamedCamera(cams, 'usb').id, 'lg');
+  assert.equal(findNamedCamera(cams, 'iphone').id, 'ip', 'the iPhone itself, not its Desk View');
+  assert.equal(findNamedCamera(cams, 'desk view').id, 'dv');
+  assert.equal(findNamedCamera(cams, 'studio display'), null);
+  assert.equal(findNamedCamera([], 'logitech'), null);
+  assert.equal(findNamedCamera(null, 'logitech'), null);
 });
 
 test('E7 with Optics closed: "take a picture" follows the camera rules first (never a Look before the camera is on)', () => {

@@ -15,8 +15,8 @@
 //   requestWorstUsd(params) the worst case of one request: its input at the cache-write price,
 //                          max_tokens at the output price, and $0.01 per web search it may make
 //   createLiveGate({ budget, storage, now, lock })
-//                          { reserve(usd), settle(id, usd), release(id), keep(id), reserved(),
-//                            fits(usd), resumeAt(usd) }
+//                          { budget, reserve(usd), settle(id, usd), release(id), keep(id),
+//                            reserved(), fits(usd), resumeAt(usd) }
 //   capLine(resumeAt)      "That would take the live view past its dollar this hour. It can go on at
 //                          2:41 PM, or say 'stop live view' and ask again."
 //   createTurnGate({ gate, isOn })
@@ -284,6 +284,8 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
 
   return {
     key: ownKey,
+    /** v8.0's budget this gate reserves beside (the live view's own looks add to it). */
+    budget,
     reserve: (usd) => run(() => tryReserve(usd)),
     settle: (id, usd) =>
       run(() => {
