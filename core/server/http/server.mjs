@@ -11,19 +11,24 @@
 //   /api/brain, /api/spend, /api/jobs, /api/watchers, /api/briefing, /api/push, /api/sync
 //                                       the home base brain, push and sync: http/brain-routes.mjs
 //   /api/senses, /api/hear, /api/speak  hearing and George's voice (opt-in): http/senses-routes.mjs
+//   /api/relay/to-ext, /api/relay/to-app, /api/relay/status
+//                                       Jarvis for Chrome's relay (Core 1.3): sealed messages between the app
+//                                       and the extension, in memory only: http/relay-routes.mjs
 //   GET  /*                             static files (the dashboard)
 //
-// Every request passes the access check (http/access.mjs) and the origin check first. The SSE stream also
-// carries the brain's events: job, watcher, briefing, spend.
+// Every request passes the access check (http/access.mjs) and the origin check first (for /api/relay/* the
+// relay's rule, checkRelayOrigin, which also allows chrome-extension:// origins). The SSE stream also carries
+// the brain's events: job, watcher, briefing, spend.
 
 import http from 'node:http';
-import { checkAccess, checkOrigin, corsHeaders } from './access.mjs';
+import { checkAccess, checkOrigin, checkRelayOrigin, corsHeaders } from './access.mjs';
 import { createRateLimiter } from './ratelimit.mjs';
 import { createSseHub } from './sse.mjs';
 import { createStatic } from './static.mjs';
 import { RANGES, SERIES_NAMES } from '../history.mjs';
 import { createBrainRoutes, isBrainRoute } from './brain-routes.mjs';
 import { createSensesRoutes, isSensesRoute } from './senses-routes.mjs';
+import { createRelayRoutes, isRelayRoute } from './relay-routes.mjs';
 import { redact } from '../brain/util.mjs';
 
 /** How long a request may take to arrive (headers and body); an upload to PUT /api/sync/* gets longer. */
@@ -96,13 +101,15 @@ function readBody(req, limit) {
 }
 
 /**
- * createApiServer({ getCore, config, ask, info, fixture, log }) → { server, sse, listen(), close() }
+ * createApiServer({ getCore, config, ask, info, fixture, log }) → { server, sse, relay, listen(), close() }
  *   getCore()          the current core (fixture mode can swap it)
  *   ask(q, ctx)        the status assistant
  *   info(access)       the /api/info body
  *   fixture            { get(), set(name) } in fixture mode, else null
+ *   relay              options for Jarvis for Chrome's relay (tests: { now, perMinute }); `relay` on the result
+ *                      is its routes ({ store }: sizes and status, never the contents)
  */
-export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {}, getBrain = () => null, getPush = () => null, getSync = () => null, getSenses = () => null }) {
+export function createApiServer({ getCore, config, ask, info, fixture = null, log = () => {}, getBrain = () => null, getPush = () => null, getSync = () => null, getSenses = () => null, relay: relayOptions = {} }) {
   const limits = config.limits;
   const askLimiter = createRateLimiter({ capacity: limits.askBurst, refillPerSec: limits.askPerMinute / 60 });
   const apiLimiter = createRateLimiter({ capacity: limits.apiBurst, refillPerSec: limits.apiPerSecond });
@@ -130,6 +137,8 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
   }
   const brainRoutes = createBrainRoutes({ getBrain, getPush, getSync, readBody, sendJson, HttpError, log });
   const sensesRoutes = createSensesRoutes({ getSenses, readBody, sendJson, HttpError, log });
+  // Jarvis for Chrome's relay: no log at all (it never logs what it holds).
+  const relayRoutes = createRelayRoutes({ readBody, sendJson, HttpError, ...relayOptions });
 
   function accessOptions() {
     // The port a direct request's Host must name: the one actually bound (tests listen on port 0).
@@ -249,6 +258,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       }
     }
 
+    if (isRelayRoute(route)) return relayRoutes.handle(req, res, { route, url, cors });
     if (isBrainRoute(route)) return brainRoutes.handle(req, res, { route, method, url, access, cors });
     if (isSensesRoute(route)) return sensesRoutes.handle(req, res, { route, method, url, access, cors });
 
@@ -269,7 +279,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
       return {};
     }
     if (pathname !== '/api' && !pathname.startsWith('/api/')) return {};
-    const origin = checkOrigin(req, null, { allowedOrigins: config.allowedOrigins });
+    const origin = (isRelayRoute(pathname) ? checkRelayOrigin : checkOrigin)(req, null, { allowedOrigins: config.allowedOrigins });
     return origin.ok && origin.allow ? corsHeaders(origin.allow, req) : {};
   }
 
@@ -309,7 +319,8 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
         throw new HttpError(400, 'bad_url', 'malformed address');
       }
       const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
-      const origin = checkOrigin(req, access, { allowedOrigins: config.allowedOrigins });
+      // Jarvis for Chrome's relay alone also takes chrome-extension:// origins; every other route keeps checkOrigin.
+      const origin = (isRelayRoute(url.pathname) ? checkRelayOrigin : checkOrigin)(req, access, { allowedOrigins: config.allowedOrigins });
       if (!origin.ok) {
         counters.refused += 1;
         throw new HttpError(403, 'origin_not_allowed', origin.reason);
@@ -359,6 +370,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     server,
     sse,
     counters,
+    relay: relayRoutes,
     attach,
     listen(port = config.port, host = config.host) {
       return new Promise((resolve, reject) => {
@@ -377,6 +389,7 @@ export function createApiServer({ getCore, config, ask, info, fixture = null, lo
     },
     close() {
       sse.closeAll();
+      relayRoutes.close();
       for (const off of detach) off();
       for (const off of brainDetach) off();
       return new Promise((resolve) => {

@@ -18,6 +18,11 @@
 // No-cors requests from another site or another port (Sec-Fetch-Site cross-site / same-site) are refused
 // as well. Preflights that ask for private-network access (Chrome, when a public page calls a 100.x
 // Tailscale address) get Access-Control-Allow-Private-Network: true, for allowed origins only.
+//
+// Core 1.3, Jarvis for Chrome's relay (/api/relay/* only, http/relay-routes.mjs): checkRelayOrigin allows what
+// checkOrigin allows, plus any chrome-extension:// origin (Jarvis for Chrome lives in its own Chrome profile, and
+// what the relay holds is sealed end to end, so it gives an extension nothing it could read), plus an
+// extension's own fetch that carries no Origin. Every other route keeps checkOrigin exactly as it is.
 
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -152,6 +157,29 @@ export function checkOrigin(req, access, { allowedOrigins = [] } = {}) {
   if (allowedOrigins.includes(origin)) return { ok: true, allow: origin };
   if (ownOrigins(access).includes(origin)) return { ok: true, allow: origin };
   return { ok: false, allow: null, reason: `origin ${origin} is not allowed (only the Jarvis app and this Core's own pages; add others to allowedOrigins in config.json)` };
+}
+
+/** A Chrome extension's origin: chrome-extension:// and its 32-letter id (letters a to p). */
+export const EXTENSION_ORIGIN_RE = /^chrome-extension:\/\/[a-p]{32}$/;
+
+/**
+ * The relay's origin rule (/api/relay/* only): { ok, allow } like checkOrigin. On top of what checkOrigin allows:
+ *   - an Origin of chrome-extension://<id> (echoed in Access-Control-Allow-Origin; its private-network preflight
+ *     is answered like the app's);
+ *   - no Origin on a CORS-mode fetch (Sec-Fetch-Mode: cors, Sec-Fetch-Dest: empty): an extension's own request
+ *     to a host it has permission for. A web page's CORS request to another site always carries its Origin, so
+ *     this never lets a page in, and a page's no-cors request (an <img>, a <script>) is still refused.
+ */
+export function checkRelayOrigin(req, access, opts = {}) {
+  const base = checkOrigin(req, access, opts);
+  if (base.ok) return base;
+  const h = req.headers ?? {};
+  const origin = one(h.origin);
+  if (typeof origin === 'string' && EXTENSION_ORIGIN_RE.test(origin)) return { ok: true, allow: origin };
+  const mode = String(one(h['sec-fetch-mode']) ?? '').toLowerCase();
+  const dest = String(one(h['sec-fetch-dest']) ?? '').toLowerCase();
+  if (!origin && mode === 'cors' && dest === 'empty') return { ok: true, allow: null };
+  return base;
 }
 
 /** CORS response headers for an allowed origin. */

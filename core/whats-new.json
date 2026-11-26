@@ -1,5 +1,10 @@
 [
   {
+    "date": "2026-11-26",
+    "title": "Jarvis for Chrome by voice, through your home base",
+    "detail": "Link it once in Jarvis: Settings, Jarvis for Chrome. Then say \"pull this up in Chrome\" and the page opens in your Jarvis window, or give Jarvis for Chrome a task there. The home base only passes along sealed messages it can't read, kept two minutes in memory and never saved."
+  },
+  {
     "date": "2026-11-25",
     "title": "Better hearing and George's voice from the home base (beta)",
     "detail": "Turn them on in Jarvis, Settings, Home base, Hearing and voice. Whisper on the Alienware hears you, and George's voice comes from the Alienware, kept ready for six hours so his first words come quickly. Free: it all runs on your own computer."
