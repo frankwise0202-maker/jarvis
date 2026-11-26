@@ -140,6 +140,16 @@ export class JarvisLink {
   async init() {
     const link = await this.store.getLink().catch(() => null);
     await this.useLink(link);
+    // A task from Jarvis that a restart of the worker cut off (Controller.restore): Jarvis hears,
+    // once, that it ended.
+    let told = false;
+    for (const t of this.controller.tasks) {
+      if (t.from !== 'voice' || t.status !== 'interrupted' || t.toldJarvis || !this.relay) continue;
+      t.toldJarvis = told = true;
+      this.doneSent.add(t.id);
+      this.send('done', { id: t.id, status: 'failed', answer: truncate(t.error || '', MAX_ANSWER), costUsd: t.cost || 0 });
+    }
+    if (told) this.controller.persistSoon();
   }
 
   /** chrome.storage changed: the link (the side panel linked or unlinked) or the switches. */

@@ -507,6 +507,25 @@ test('no side panel open: a question that needs a click opens the approval windo
   assert.equal(s.calls.windows.filter((c) => c.op === 'create').length, 2, 'one more window, not two');
 });
 
+test('a task from Jarvis cut off by a restart of the worker: Jarvis hears once that it failed', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  s.controller.tasks.push({ id: 'task_cut', text: 'Find a monitor', status: 'interrupted', from: 'voice', error: 'Chrome restarted Jarvis’s background worker during this task. Press Retry to run it again.', cost: 0.12, steps: [] });
+  const again = new JarvisLink({ chrome: s.fb.chrome, controller: s.controller, store: s.store, version: '1.1.0', relayDeps: { fetch: s.relay.fetch, sleep: fast } });
+  t.after(() => again.relay?.stop());
+  s.link.relay.stop();
+  await again.init();
+  const done = await s.app.waitFor((m) => m.kind === 'done' && m.body.id === 'task_cut');
+  assert.deepEqual(done.body, { id: 'task_cut', status: 'failed', answer: 'Chrome restarted Jarvis’s background worker during this task. Press Retry to run it again.', costUsd: 0.12 });
+  // Once: the next start of the worker doesn't say it again.
+  const third = new JarvisLink({ chrome: s.fb.chrome, controller: s.controller, store: s.store, version: '1.1.0', relayDeps: { fetch: s.relay.fetch, sleep: fast } });
+  t.after(() => third.relay?.stop());
+  await third.init();
+  await new Promise((r) => setTimeout(r, 200));
+  await s.app.poll();
+  assert.equal(s.app.received.filter((m) => m.kind === 'done' && m.body.id === 'task_cut').length, 1);
+});
+
 test('unlink: from the panel, Jarvis is told first; from Jarvis, the link goes; the key is forgotten', async (t) => {
   const s = await setup();
   t.after(s.done);
