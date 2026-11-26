@@ -241,7 +241,7 @@ export const MUST_BASE = Object.freeze(
     ['put the camera and the hologram side by side', 'V0', 'destination', 'windows', null, 'side by side'],
     ['side by side', 'VW', 'destination', 'windows', null, 'side by side'],
     ['put the camera on the left and the hologram on the right', 'V0', 'destination', 'windows', null, 'left and right'],
-    ['swap them', 'VW', 'destination', 'windows', null, 'swap', { should: true }],
+    ['swap them', 'WIN2', 'destination', 'windows', null, 'swap (two windows open: windows\' state WIN2)'],
     ['make the window bigger', 'VW', 'destination', 'windows', null, 'size', { should: true }],
     ['make it full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
     ['full screen', 'VW', 'destination', 'windows', null, 'size', { should: true }],
