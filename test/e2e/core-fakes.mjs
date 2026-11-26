@@ -646,7 +646,7 @@ export async function seedChromeLink(context, opts = {}) {
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fake Jarvis for Chrome on `relay` (see the header). */
-export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '1.1.0', online = true, answers = {}, replyDelayMs = 0, autoTask = false, tasksFromJarvis = true, voiceApprovals = false } = {}) {
+export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '1.1.0', online = true, answers = {}, replyDelayMs = 0, autoTask = false, tasksFromJarvis = true, voiceApprovals = false, budgetUsd = 1, maxSteps = 40 } = {}) {
   let linkKey = key;
   let cryptoKey = null;
   let prevKey = null; // the code's key after a rekey, until a message under the new key comes (REDTEAM-LINK-4)
@@ -735,7 +735,7 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
       return peer.send('prompt-closed', { promptId, how });
     },
     status(fields = {}) {
-      return peer.send('status', { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, ...fields });
+      return peer.send('status', { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, budgetUsd, maxSteps, ...fields });
     },
     /** Take a link code the app made (as pasting it into Jarvis for Chrome): its key, then hello. */
     async link(code) {
@@ -747,7 +747,7 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
       prevKey = null;
       prevCrypto = null;
       seen = createSeenIds();
-      await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+      await peer.send('hello', { ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps });
       return parsed.link;
     },
     async unlink() {
@@ -801,7 +801,7 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
     switch (kind) {
       case 'hello':
         if (pick({}) === null) return; // (peer.answer('hello', null): it says nothing back)
-        await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+        await peer.send('hello', { ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps });
         return;
       case 'unlinked':
         linkKey = null;
@@ -820,7 +820,7 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
         return reply(message, pick({ ok: true })); // sealed with the new key
       }
       case 'ping':
-        return reply(message, pick({ ok: true, status: { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null } }));
+        return reply(message, pick({ ok: true, status: { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, budgetUsd, maxSteps } }));
       case 'open':
         return reply(message, pick({ ok: true, url: body.url, site: hostOf(body.url) }));
       case 'start': {

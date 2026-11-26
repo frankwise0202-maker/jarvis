@@ -290,13 +290,13 @@ test('linked: hello and the status go to Jarvis; the alarm is set; ping answers 
   const s = await setup();
   t.after(s.done);
   const hello = await s.app.waitFor((m) => m.kind === 'hello');
-  assert.deepEqual(hello.body, { ext: 'jarvis-for-chrome', version: '1.1.0' });
+  assert.deepEqual(hello.body, { ext: 'jarvis-for-chrome', version: '1.1.0', budgetUsd: 1, maxSteps: 40 }, 'with the task budget (MONEY-3)');
   const status = await s.app.waitFor((m) => m.kind === 'status');
-  assert.deepEqual(status.body, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null });
+  assert.deepEqual(status.body, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null, budgetUsd: 1, maxSteps: 40 });
   assert.ok(s.calls.alarms.some((a) => a.op === 'create' && a.name === 'jarvis-relay' && a.opts.periodInMinutes === 0.5));
   const pong = await s.app.request('ping');
   assert.equal(pong.ok, true);
-  assert.deepEqual(pong.status, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null });
+  assert.deepEqual(pong.status, { online: true, tasksFromJarvis: true, voiceApprovals: false, task: null, budgetUsd: 1, maxSteps: 40 });
   // Jarvis's hello is answered with a reply, a hello and the status.
   const n = s.app.of('hello').length;
   assert.equal((await s.app.request('hello', { app: 'jarvis', version: '8.1' })).ok, true);
@@ -660,6 +660,31 @@ test('LINK-4: the same rekey again is answered again; another key under the code
   assert.ok(!app2.received.some((m) => m.body?.re === late.id), 'the code’s key opens nothing after its grace');
   const ok = await app2.request('ping', {});
   assert.equal(ok.ok, true, 'the new key works');
+});
+
+test('MONEY-3: the budget goes to Jarvis (hello, status, and again when it changes); a task from Jarvis runs within the limit the owner heard', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await s.app.waitFor((m) => m.kind === 'status');
+  await s.store.setSettings({ budgetUsd: 5, maxSteps: 60 });
+  await s.link.onStorageChanged({ 'jarvis.settings': {} });
+  const status = await s.app.waitFor((m) => m.kind === 'status' && m.body.budgetUsd === 5);
+  assert.equal(status.body.maxSteps, 60);
+  await s.store.allowSiteAlways('shop.example');
+  const runWith = async (limitUsd) => {
+    s.mock.script([() => ({ hold: true })]);
+    const r = await s.app.request('start', { text: 'Find a monitor on shop.example', chat: 'new', from: 'voice', ...(limitUsd === undefined ? {} : { limitUsd }) });
+    assert.equal(r.ok, true);
+    await s.waitFor(() => s.controller.run?.task.id === r.id);
+    const limit = s.controller.run.limits.budgetLimit;
+    await s.controller.stop('panel');
+    await s.waitFor(() => !s.controller.run);
+    return limit;
+  };
+  assert.equal(await runWith(1), 1, 'heard "up to a dollar": a dollar, though the extension\'s budget is $5');
+  assert.equal(await runWith(10), 5, 'never above the extension\'s own budget');
+  assert.equal(await runWith(undefined), 5, 'no limit heard: its own budget');
+  assert.equal(await runWith('lots'), 5, 'a limit that isn\'t a sum is ignored');
 });
 
 test('stop from Jarvis stops the task; the step list says so', async (t) => {

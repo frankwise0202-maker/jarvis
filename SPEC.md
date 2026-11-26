@@ -4997,7 +4997,7 @@ exactly one `reply` whose `re` is that id. The app gives up on a reply after 10 
 | `hello` | `{ app: 'jarvis', version }`: when linked, and when a window starts holding the link while linked |
 | `ping` | `{}` (Settings → Jarvis for Chrome → Test) |
 | `open` | `{ url, rect: { left, top, width, height } \| null, focus }` |
-| `start` | `{ text, chat: 'new' \| 'same', from: 'voice' }` |
+| `start` | `{ text, chat: 'new' \| 'same', from: 'voice', limitUsd? }` (`limitUsd`: the budget the owner heard; MONEY-3) |
 | `stop` | `{}`: stops the running task |
 | `answer` | `{ promptId, hash, choice, via: 'voice' \| 'card' }` |
 | `unlinked` | `{}` |
@@ -5006,8 +5006,8 @@ exactly one `reply` whose `re` is that id. The app gives up on a reply after 10 
 | Extension → app (`to-app`) | body |
 |---|---|
 | `reply` | `{ re, ok: true, … }` (ping → `{ status }`, open → `{ url, site }`, start → `{ id }`, stop → `{}`, answer → `{ promptId }`) or `{ re, ok: false, reason, why }`, reason one of `off`, `busy`, `cap`, `blocked`, `needs-click`, `refused`, `gone`, `bad` |
-| `hello` | `{ ext: 'jarvis-for-chrome', version }`: when linked, and in answer to the app's |
-| `status` | `{ online: true, tasksFromJarvis, voiceApprovals, task: null \| { id, status } }`: on every change, every 60 s while a task runs |
+| `hello` | `{ ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps }`: when linked, and in answer to the app's |
+| `status` | `{ online: true, tasksFromJarvis, voiceApprovals, task: null \| { id, status, from }, budgetUsd, maxSteps }`: on every change (the budget too), every 60 s while a task runs |
 | `task` | `{ id, status, text, narration, lastStep, costUsd, limitUsd, from: 'voice' }` (no pictures) |
 | `done` | `{ id, status: 'done' \| 'stopped' \| 'failed' \| 'limit', answer (2,000 characters at most), costUsd }` |
 | `prompt` | `{ promptId, hash, kind, category, consequential, site, title, spoken, body, address, choices: [{ id, label }], voice: { allowed, why } }` (§32.2) |
@@ -5041,8 +5041,9 @@ Chrome, for its part, sends its reply to a `start` or a `stop` again (the same e
 request was made, instead of once or twice.
 
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
-`state()` → `{ linked, online, voiceApprovals, task }`, `subscribe(fn)`, `open(url, { rect, focus })`,
-`startTask({ text, chat })`, `stopTask()` → `{ ok: true }` or `{ ok: false, reason: 'unlinked' | 'offline' }`
+`state()` → `{ linked, online, voiceApprovals, task }` (plus `budgetUsd` and `maxSteps`, the extension's task budget
+and step limit, once its `hello` or `status` has said them: MONEY-3), `subscribe(fn)`, `open(url, { rect, focus })`,
+`startTask({ text, chat, limitUsd })` (`limitUsd`: the budget the owner heard, MONEY-3), `stopTask()` → `{ ok: true }` or `{ ok: false, reason: 'unlinked' | 'offline' }`
 (changed during the red-team review, REDTEAM-LINK-1: it was `Promise<void>`), `answer({ promptId, hash, choice,
 via })`, `onPrompt(fn)`, `onPromptClosed(fn)`, `onDone(fn)` (each `on…` returns its unsubscribe).
 - **Stop is confirmed and sent again** (REDTEAM-LINK-1). One stop is pending at a time; it is sent again, a fresh
@@ -5161,10 +5162,11 @@ the envelope's 120 s.
   (`state: 'normal'`) without focusing it; without one the window is focused unless `focus` is false. → `{ url,
   site }` (`site` the registrable domain). The site counts as opened by voice for the next task from Jarvis (10
   minutes).
-- `start { text, chat, from }` → `bad` (empty, or over 2,000 characters), `off` (Tasks from Jarvis off, or the
-  panel's setup unfinished), `busy` (a task runs), `cap` (30 today); else `chat: 'new'` starts a fresh conversation
-  and the controller runs it with the extension's own model, budget and step limit in the last focused Jarvis
-  window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
+- `start { text, chat, from, limitUsd }` → `bad` (empty, or over 2,000 characters), `off` (Tasks from Jarvis off, or
+  the panel's setup unfinished), `busy` (a task runs), `cap` (30 today); else `chat: 'new'` starts a fresh
+  conversation and the controller runs it with the extension's own model and step limit, and a budget of
+  min(its own budget, `limitUsd`) when Jarvis says what the owner heard (MONEY-3: what is said is what is
+  enforced; Continue at the budget adds that much again), in the last focused Jarvis window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
 - `stop` → the running task stops (the step list says "Stopped by voice from Jarvis."); `gone` when none runs.
 - The reply to a `start` or a `stop` is tried again (the same envelope) until about 10 s after the request's `at`
   (and at least 2 s), so a moment's failure of the extension's posts can't lose it (MISSED-LINK-A).
@@ -5180,9 +5182,9 @@ the envelope's 120 s.
   from Jarvis under the new key, which drops it. The same new key again (Jarvis didn't hear the answer) → `ok` again;
   any other key → `bad`. Not a new link: nothing pauses, the relay isn't restarted.
 
-**32.2.5 What goes back.** `status` on every change of the running task or the switches, and every 60 s while a task
-runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it started from one
-typed in the panel); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+**32.2.5 What goes back.** `status` on every change of the running task, the switches or the task budget, and every
+60 s while a task runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it
+started from one typed in the panel; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
 how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
 for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
 last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;

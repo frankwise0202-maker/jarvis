@@ -764,6 +764,30 @@ test('fresh requests only (D5) with LINK-1: the late start\'s stop is sent again
   }
 });
 
+// ---- what a task may cost (MONEY-3) ---------------------------------------------------------------------------
+
+test('MONEY-3: the extension\'s task budget is known from its hello and status; startTask passes the limit the owner heard', async () => {
+  const w = world({ linked: true, peer: { budgetUsd: 5, maxSteps: 60 } });
+  try {
+    w.peer.start();
+    const app = w.open();
+    await online(app);
+    await until(() => app.api.state().budgetUsd === 5, { what: 'the budget from its hello' });
+    assert.equal(app.api.state().maxSteps, 60);
+    await w.peer.status({ budgetUsd: 2.5 });
+    await until(() => app.api.state().budgetUsd === 2.5, { what: 'a changed budget from the status' });
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor', limitUsd: 2.5 }), { ok: true, id: 'task-1' });
+    assert.equal((await w.peer.waitFor('start')).body.limitUsd, 2.5, 'the limit said goes with the task');
+    await app.api.startTask({ text: 'another', limitUsd: 'a lot' });
+    assert.equal('limitUsd' in (await w.peer.waitFor('start')).body, false, 'not a sum: left out');
+    // Another window sees it too.
+    const other = w.open();
+    await until(() => other.api.state().budgetUsd === 2.5, { what: 'the other window' });
+  } finally {
+    await w.close();
+  }
+});
+
 // ---- the code works once (REDTEAM-LINK-4) ---------------------------------------------------------------------
 
 /** Link a fresh app window with the fake extension through the code; returns { app, code, codeKey }. */

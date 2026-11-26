@@ -13,10 +13,14 @@
 //
 //   const link = createChromeLink({ getHomeBase, version, ... })   (installChromeLink in app.js)
 //   link.api = app.chromeLink, exactly contract (f):
-//     state() → { linked, online, voiceApprovals, task: null | { id, status, text, narration, lastStep, costUsd, limitUsd } }
+//     state() → { linked, online, voiceApprovals, task: null | { id, status, text, narration, lastStep, costUsd, limitUsd },
+//                 budgetUsd?, maxSteps? }   (the extension's task budget and step limit, once its hello or status said them:
+//                                           MONEY-3, so the check says what will be enforced)
 //     subscribe(fn) → unsubscribe                     fn(state()) after each change
 //     open(url, { rect, focus }) → Promise<{ ok: true, site } | { ok: false, reason, why? }>
-//     startTask({ text, chat }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
+//     startTask({ text, chat, limitUsd? }) → Promise<{ ok: true, id } | { ok: false, reason: 'unlinked'|'offline'|'off'|'busy'|'cap'|… }>
+//                                                      limitUsd: the budget the owner heard; the extension keeps the task
+//                                                      within it, never above its own (MONEY-3)
 //     stopTask() → Promise<{ ok: true } | { ok: false, reason: 'unlinked' | 'offline' }>
 //                                                      sent whenever linked (stopping is the safe direction), and
 //                                                      sent again until Jarvis for Chrome confirms it (REDTEAM-LINK-1)
@@ -147,12 +151,19 @@ export function cleanReply(body) {
   return out;
 }
 
-/** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status } }. */
+/** A task budget the extension reports ($0.05-$50 in its settings), or null. */
+const budgetOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1000 ? Math.round(v * 100) / 100 : null);
+const stepsOf = (v) => (Number.isSafeInteger(v) && v > 0 && v <= 10_000 ? v : null);
+
+/** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status, from? }, budgetUsd?, maxSteps? }. */
 export function cleanStatus(body) {
   const b = isObj(body) ? body : {};
   // (`from`: 'voice' for a task from Jarvis, 'panel' for one typed in the side panel; since the review.)
   const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE), ...(token(b.task.from, WORD_RE) ? { from: token(b.task.from, WORD_RE) } : {}) } : null;
-  return { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
+  const out = { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
+  if (budgetOf(b.budgetUsd) !== null) out.budgetUsd = budgetOf(b.budgetUsd);
+  if (stepsOf(b.maxSteps) !== null) out.maxSteps = stepsOf(b.maxSteps);
+  return out;
 }
 
 /** task { id, status, text, narration, lastStep, costUsd, limitUsd } (no pictures). */
@@ -403,6 +414,7 @@ export function createChromeLink({
   let statusSeen = 0; // the relay's extSeenAt (ms)
   let savedSeen = 0; // the extSeenAt last written to storage
   let voiceApprovals = false;
+  let budget = null; // { budgetUsd, maxSteps } from the extension's hello or status (MONEY-3)
   let task = null;
   let extVersion = '';
   let clearedAt = 0;
@@ -512,6 +524,7 @@ export function createChromeLink({
       savedSeen = record ? record.extSeenAt || 0 : 0;
       task = null;
       voiceApprovals = false;
+      budget = null;
       extVersion = '';
       for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'unlinked' });
       endStop(stopper, { ok: false, reason: 'unlinked' });
@@ -599,7 +612,16 @@ export function createChromeLink({
 
   function state() {
     const linked = isLinked();
-    return { linked, online: linked && isOnlineNow(), voiceApprovals: linked && voiceApprovals, task: linked && task ? { ...task } : null };
+    const out = { linked, online: linked && isOnlineNow(), voiceApprovals: linked && voiceApprovals, task: linked && task ? { ...task } : null };
+    if (linked && budget) Object.assign(out, budget);
+    return out;
+  }
+
+  function noteBudget(body) {
+    const usd = budgetOf(body && body.budgetUsd);
+    if (usd === null) return;
+    const steps = stepsOf(body.maxSteps);
+    budget = { budgetUsd: usd, ...(steps !== null ? { maxSteps: steps } : budget && budget.maxSteps ? { maxSteps: budget.maxSteps } : {}) };
   }
 
   function info() {
@@ -676,7 +698,7 @@ export function createChromeLink({
     }
   }
 
-  const shareState = (ev = null) => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion, ...(ev ? { ev } : {}) });
+  const shareState = (ev = null) => broadcast({ t: 'state', task, voiceApprovals, heard, extVersion, budget, ...(ev ? { ev } : {}) });
 
   // ---- what comes in ------------------------------------------------------------------------------------
   function handle(message, { viaPrev = false } = {}) {
@@ -696,11 +718,15 @@ export function createChromeLink({
         break;
       }
       case 'hello':
-        if (body.ext === 'jarvis-for-chrome') extVersion = cleanText(body.version, 24);
+        if (body.ext === 'jarvis-for-chrome') {
+          extVersion = cleanText(body.version, 24);
+          noteBudget(body);
+        }
         break;
       case 'status': {
         const s = cleanStatus(body);
         voiceApprovals = s.voiceApprovals;
+        noteBudget(s);
         if (!s.task) task = null;
         else if (!task || task.id !== s.task.id) task = { id: s.task.id, status: s.task.status || 'running', text: '', narration: '', lastStep: '', costUsd: null, limitUsd: null };
         else task = { ...task, status: s.task.status || task.status };
@@ -1122,7 +1148,10 @@ export function createChromeLink({
     }
     if (kind === 'start') return reply.id ? { ok: true, id: reply.id } : { ok: false, reason: 'bad' };
     if (kind === 'ping') {
-      if (reply.status) voiceApprovals = reply.status.voiceApprovals;
+      if (reply.status) {
+        voiceApprovals = reply.status.voiceApprovals;
+        noteBudget(reply.status);
+      }
       return { ok: true, status: reply.status || null };
     }
     return { ok: true };
@@ -1373,6 +1402,7 @@ export function createChromeLink({
       voiceApprovals = m.voiceApprovals === true;
       if (posInt(m.heard) && m.heard > heard) heard = m.heard;
       extVersion = cleanText(m.extVersion, 24);
+      if (isObj(m.budget)) noteBudget(m.budget);
       // What the holder just heard, for a stop this window sent (LINK-1).
       if (isObj(m.ev)) {
         const e = m.ev;
@@ -1493,10 +1523,12 @@ export function createChromeLink({
       const where = cleanRect(rect);
       return request('open', { url: href, rect: where, focus: typeof focus === 'boolean' ? focus : !where });
     },
-    startTask({ text, chat = 'new' } = {}) {
+    startTask({ text, chat = 'new', limitUsd } = {}) {
       const words = cleanText(text, TEXT_MAX);
       if (!words) return Promise.resolve({ ok: false, reason: 'bad' });
-      return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice' });
+      // The budget the owner heard in the check: the extension keeps the task within it (MONEY-3).
+      const limit = budgetOf(limitUsd);
+      return request('start', { text: words, chat: chat === 'same' ? 'same' : 'new', from: 'voice', ...(limit !== null ? { limitUsd: limit } : {}) });
     },
     /**
      * Stop goes out even when the extension seems offline (the safe direction), and is sent again until Jarvis for

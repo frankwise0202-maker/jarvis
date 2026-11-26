@@ -9,7 +9,8 @@
 //   open             open an address in the Jarvis window, beside Jarvis (no debugger, no task).
 //                    An address that does something waits for the owner's click on its card here.
 //   start            a task from the owner's spoken words (only while "Tasks from Jarvis" is on, at
-//                    most 30 a day, one task at a time), marked "From Jarvis (voice)"
+//                    most 30 a day, one task at a time), marked "From Jarvis (voice)"; it runs within
+//                    `limitUsd`, the budget the owner heard, never above this profile's (MONEY-3)
 //   stop             stops the running task
 //   answer           the owner's answer to a prompt, by voice or on Jarvis's card (voice-policy.js)
 //   unlinked         Jarvis unlinked: so does the extension
@@ -178,10 +179,10 @@ export class JarvisLink {
     if (told) this.controller.persistSoon();
   }
 
-  /** chrome.storage changed: the link (the side panel linked or unlinked) or the switches. */
+  /** chrome.storage changed: the link (the side panel linked or unlinked), the switches or the budget. */
   onStorageChanged(changes) {
     if (changes?.chromeLink) this.store.getLink().then((link) => this.useLink(link), () => {});
-    if (changes?.['jarvis.voice'] || changes?.['jarvis.sites']) {
+    if (changes?.['jarvis.voice'] || changes?.['jarvis.sites'] || changes?.['jarvis.settings']) {
       this.sendStatus();
       this.sendState();
     }
@@ -227,8 +228,18 @@ export class JarvisLink {
       /* the loop still runs while the worker does */
     }
     this.sendState();
-    await this.send('hello', { ext: EXT_NAME, version: this.version });
+    await this.send('hello', await this.helloBody());
     await this.sendStatus({ force: true });
+  }
+
+  /** `hello`: who is there, and the task budget a task from Jarvis gets (MONEY-3: what Jarvis says is enforced). */
+  async helloBody() {
+    return { ext: EXT_NAME, version: this.version, ...(await this.budgetFields()) };
+  }
+
+  async budgetFields() {
+    const settings = await this.store.getSettings().catch(() => null);
+    return settings ? { budgetUsd: settings.budgetUsd, maxSteps: settings.maxSteps } : {};
   }
 
   /** Unlinks: tells Jarvis (when it can), then forgets the key and the home base's permission. */
@@ -341,7 +352,7 @@ export class JarvisLink {
           return this.reply(id, await this.rekey(body, viaPrev));
         case 'hello':
           await this.reply(id, { ok: true });
-          await this.send('hello', { ext: EXT_NAME, version: this.version });
+          await this.send('hello', await this.helloBody());
           return this.sendStatus({ force: true });
         case 'ping':
           return this.reply(id, { ok: true, status: await this.statusBody() });
@@ -490,9 +501,12 @@ export class JarvisLink {
       windowId = undefined;
     }
     const taskId = uid('task_');
+    // The budget the owner heard ("Chrome, up to a dollar: …"): the task never goes past it without asking (MONEY-3).
+    const heard = Number(body.limitUsd);
+    const budgetCapUsd = Number.isFinite(heard) && heard > 0 && heard <= 1000 ? heard : null;
     const started = await new Promise((resolve) => {
       this.controller
-        .start({ text, windowId, from: 'voice', taskId, voiceSites, onStarted: (task) => resolve(task) })
+        .start({ text, windowId, from: 'voice', taskId, voiceSites, budgetCapUsd, onStarted: (task) => resolve(task) })
         .catch(() => {})
         .finally(() => resolve(null));
     });
@@ -545,7 +559,7 @@ export class JarvisLink {
     const voice = await this.store.getVoice().catch(() => ({ tasksFromJarvis: false }));
     const run = this.controller.run;
     // (`from` since the review: Jarvis tells a task it started from one typed in the panel, MISSED-LINK-A.)
-    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel' } : null };
+    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel' } : null, ...(await this.budgetFields()) };
   }
 
   /** `status` when it changed (or `force`), and every 60 s while a task runs. */
