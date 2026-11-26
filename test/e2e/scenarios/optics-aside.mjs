@@ -485,6 +485,8 @@ export default [
         await waitAside(t);
         await waitAnswer(t);
         t.assert(looks() === 1, `one Look (${looks()})`);
+        // Only what is said after "look again" counts: the first answer said in full first.
+        await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle', { timeout: 30000, message: 'Voice Mode to have said the answer' });
         const n = (await said(page)).length;
         await tapToTalk(['Look again.']);
         await t.waitFor(() => looks() === 2, { timeout: 20000, message: 'the new Look' });
