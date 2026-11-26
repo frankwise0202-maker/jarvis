@@ -310,6 +310,10 @@ export default [
         await typeCommand(t, 'side by side');
         t.assert(/side by side/i.test(await toastText(t)), `said so (${await toastText(t)})`);
         for (const place of [await placeOf(t, report), await placeOf(t, holo)]) t.assert(place[0] >= 320, `nothing over Jarvis's strip (${place})`);
+        // The next step starts a new main page: windows still open would answer its "who" and be adopted, as
+        // after a reload (then "put the hologram in a window" only raises the adopted one).
+        await holo.close();
+        await report.close();
       });
 
       await t.step('two monitors: the windows go to the other one', async () => {
