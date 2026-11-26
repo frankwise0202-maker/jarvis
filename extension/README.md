@@ -568,8 +568,9 @@ at a local mock (`jarvis.dev.apiBase` in `chrome.storage.local`), link to a loca
 (`jarvis.dev.voiceApprovals`) so the tests can reach that path. Release builds cannot: the build
 refuses a release that contains any of these.
 
-The Voice from Jarvis tests: unit (`envelope`, `voice-policy`, `link`: the policy table cell by
-cell, the envelope on the shared vectors, the relay loop's back-off and pause) and end to end
+The Voice from Jarvis tests: unit (`envelope`, `voice-policy`, `link`, `relay-core`, `storage`: the
+policy table cell by cell, the envelope on the shared vectors, the relay loop's back-off and pause,
+the relay loop against the home base's own relay server in `core/`) and end to end
 (`relay-open`, `relay-task-voice`, `relay-approve-voice`, `relay-approve-refused`, `relay-replay`,
 `relay-approve-window`), against a fake home base relay (`test/extension/helpers/fake-relay.mjs`)
 with Jarvis's end played from Node. `chrome-relay-roundtrip` runs the extension, the real Jarvis
