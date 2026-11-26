@@ -186,13 +186,23 @@ async function openBoth(t) {
 /** Say words in Voice Mode (it listens for the next queued words) and wait for Jarvis's line. */
 async function speak(t, words, expect, { timeout = 20000 } = {}) {
   const before = await t.page.evaluate(() => window.__voice.said.length);
-  await t.page.evaluate((w) => window.__voice.queue.push(w), words);
   const vm = t.page.locator(tid('voice-mode'));
-  if ((await vm.getAttribute('data-state')) === 'idle') await (await t.visible('voice-core')).click();
+  // The fake speaker: a listen already running hears only what is said during it (say()); a queued item goes to the
+  // next listen started. A queued item pushed during Voice Mode's last silent retry was never heard: it stopped
+  // listening after that retry. So say it into a running listen, else queue it; and if Voice Mode waits for a tap
+  // with nothing heard yet, tap the core (as the owner would).
+  if ((await vm.getAttribute('data-state')) === 'listening') await t.page.evaluate((w) => window.__voice.say(w), words);
+  else await t.page.evaluate((w) => window.__voice.queue.push(w), words);
+  let taps = 0;
   return t.waitFor(async () => {
     const said = await t.page.evaluate((n) => window.__voice.said.slice(n), before);
     const line = said.map(norm).find((x) => (typeof expect === 'string' ? x === expect : expect.test(x)));
-    return line || null;
+    if (line) return line;
+    if (taps < 2 && (await vm.getAttribute('data-state')) === 'idle') {
+      taps += 1;
+      await (await t.visible('voice-core')).click();
+    }
+    return null;
   }, { timeout, message: async () => `Jarvis to say ${expect} after "${words}" (said: ${(await t.page.evaluate(() => window.__voice.said)).slice(-4).join(' | ')})` });
 }
 
