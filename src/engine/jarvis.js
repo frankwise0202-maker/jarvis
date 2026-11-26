@@ -591,10 +591,12 @@ export function createJarvis(deps = {}) {
     return Number.isInteger(max) && max >= 1 && max <= 20 ? { ...settings, maxAgents: max } : settings;
   }
 
-  function launch(conv, turn, settings, { resume, req, keepOnStop = false }) {
+  function launch(conv, turn, settings, { resume, req, keepOnStop = false, gate = null }) {
     const emitter = createEmitter();
     const ctx = createContext(conv, turn, turnSettings(settings, turn), emitter, { req });
     ctx.keepOnStop = keepOnStop === true; // Stop keeps the message even before any reply (lead.js)
+    // v8.1 (E0): the live view's gate, consulted before each lead request (lead.js gateRequest).
+    ctx.gate = gate && typeof gate.maxTokens === 'function' && typeof gate.reserve === 'function' ? gate : null;
     runs.set(conv.id, ctx);
     let resolveDone;
     const done = new Promise((resolve) => {
@@ -673,9 +675,11 @@ export function createJarvis(deps = {}) {
      * the turn context gets a "Blueprint request" block and the blueprint is linked to that part
      * (only in conversations with the version 4 tools). Throws (before anything is appended) when
      * the input is invalid, e.g. an attachment Claude would reject; the error message is worded for
-     * the owner.
+     * the owner. `gate` (v8.1, E0; src/lib/live-gate.js createTurnGate): while the live view is on,
+     * each lead request of the turn is kept short and reserves its worst case in the live view's
+     * hour first, or is refused (the turn ends with error kind 'live_cap'); without it, as before.
      */
-    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics } = {}) {
+    startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics, gate } = {}) {
       assertConversation(conv, 'startTurn');
       const body = typeof text === 'string' ? text.trim() : '';
       const files = normalizeAttachments(attachments);
@@ -746,7 +750,7 @@ export function createJarvis(deps = {}) {
       conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: fullContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
-      return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true });
+      return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true, gate });
     },
 
     canResume,

@@ -17,6 +17,7 @@ import {
   readFetchResult,
   readSearchResult,
   requestWithFeatureFallback,
+  responseCost,
   sourceFromCitation,
 } from './stream.js';
 import { ERROR_MESSAGES, classifyError, isAbortError, isToolInputParseError } from './client.js';
@@ -347,9 +348,11 @@ function leadMaxTokens(ctx) {
 }
 
 function leadParams(ctx, features) {
+  const maxTokens = ctx.maxTokensFor(ctx.leadModel, leadMaxTokens(ctx));
   return buildMessageParams({
     model: ctx.leadModel,
-    maxTokens: ctx.maxTokensFor(ctx.leadModel, leadMaxTokens(ctx)),
+    // v8.1 (E0): while the live view is on, its gate keeps each answer short (gateRequest).
+    maxTokens: ctx.gateMaxTokens > 0 ? Math.min(maxTokens, ctx.gateMaxTokens) : maxTokens,
     system: ctx.conv.system,
     tools: ctx.conv.tools,
     messages: [...ctx.conv.apiMessages, ...ctx.paused],
@@ -382,6 +385,50 @@ async function waitToRetry(ctx, req, ms, label) {
   }
 }
 
+/** v8.1 (E0): a request the live view's gate refused: it would take the hour past its dollar. */
+export class LiveCapRefused extends Error {
+  constructor(message, req) {
+    super(message);
+    this.name = 'LiveCapRefused';
+    this.req = req;
+  }
+}
+
+/**
+ * v8.1 (E0): the live view's gate (startTurn({ gate }); src/lib/live-gate.js createTurnGate), before
+ * each attempt of a lead request. While the live view is on: max_tokens comes down (4,000 for the
+ * turn's first request, 1,000 for later ones) and the request's worst case is reserved, or it is not
+ * sent at all (LiveCapRefused: the turn ends with the gate's line). Returns the ticket (settle,
+ * release, keep) or null (no gate, or the live view is off: the request goes out as today).
+ */
+async function gateRequest(ctx, req) {
+  ctx.gateMaxTokens = null;
+  const gate = ctx.gate;
+  if (!gate) return null;
+  const limit = gate.maxTokens(req === 0);
+  if (!(limit > 0)) return null;
+  ctx.gateMaxTokens = limit;
+  const ticket = await gate.reserve({ params: leadParams(ctx, ctx.features), model: ctx.leadModel });
+  if (ctx.stopped) {
+    if (ticket && !ticket.refused) ticket.release(); // stopped before it was sent: nothing billed
+    throw abortError();
+  }
+  if (ticket && ticket.refused) throw new LiveCapRefused(ticket.message, req);
+  return ticket || null;
+}
+
+/**
+ * A gated request that failed: released when the API turned it down before any output (an HTTP
+ * error: not billed); kept when it may have been billed (stopped after it was sent, cut off
+ * mid-stream, or a connection that dropped): the worst is assumed.
+ */
+function settleFailedTicket(ticket, err) {
+  const e = err && typeof err === 'object' ? err : {};
+  const turnedDown = typeof e.status === 'number' && !e.jarvisStarted && !e.jarvisPartial && !isAbortError(err);
+  if (turnedDown) ticket.release();
+  else ticket.keep();
+}
+
 /**
  * One lead request (index `req`), retried in place for a malformed tool-input stream and, with
  * visible waits, for rate limits, overload, transient server errors (also mid-stream) and
@@ -392,6 +439,8 @@ async function leadRequest(ctx, req) {
   let attempts = 0;
   for (;;) {
     const view = createLeadView(ctx, req);
+    // v8.1 (E0): each attempt goes through the live view's gate while it is on.
+    const ticket = await gateRequest(ctx, req);
     try {
       const result = await requestWithFeatureFallback(ctx, (features) => leadParams(ctx, features), view.onEvent, {
         requestOptions: { maxRetries: ctx.sdkRetries(LEAD_SDK_MAX_RETRIES) },
@@ -402,10 +451,13 @@ async function leadRequest(ctx, req) {
           ctx.conv.dropMismatchedThinking = true; // keep sending drop_block for this conversation
         },
       });
+      // The real cost replaces the reservation (the same cost accountUsage adds to the turn).
+      if (ticket) ticket.settle(responseCost(result.message.model || ctx.leadModel, result.message.usage, ctx.leadModel));
       view.finalize(result.message.content);
       ctx.adoptContainer(result.message.container);
       return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
+      if (ticket) settleFailedTicket(ticket, err);
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
       if (ctx.stopped || isAbortError(err)) throw err;
@@ -932,6 +984,12 @@ export async function runLeadTurn(ctx, { resume = false } = {}) {
       if (err instanceof Refused) {
         removeTurnFromHistory(ctx);
         return failTurn(ctx, err.info, err.req);
+      }
+      if (err instanceof LiveCapRefused) {
+        // v8.1 (E0): nothing of this request was sent. Refused before the turn's first request, the
+        // owner's message leaves the history (nothing was built on it), so asked again it goes once.
+        if (err.req === 0 && !ctx.resumed) removeTurnFromHistory(ctx);
+        return failTurn(ctx, { kind: 'live_cap', message: err.message, retryable: false }, err.req);
       }
       const info = classifyError(err, { model: ctx.leadModel });
       if (info.kind === 'network') return interruptTurn(ctx, info);
