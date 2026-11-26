@@ -1689,6 +1689,9 @@ button {
   background: var(--ok);
   box-shadow: 0 0 8px var(--ok-soft);
 }
+.hint--warn {
+  color: var(--warn);
+}
 .field__input--code {
   height: auto;
   min-height: 52px;

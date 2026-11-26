@@ -221,14 +221,22 @@ only they have: the home base passes them on without being able to read them, ke
 
 ### Link it (once)
 
-1. In Jarvis: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link code**.
-2. In the Jarvis window: open the side panel → **Settings** → **Voice from Jarvis**, paste the
-   code and press **Link**.
+You need Jarvis for Chrome **1.1.0** or later: the side panel's **Settings** shows its version at
+the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, update it as in
+[Updating and removing](#updating-and-removing) (your key, settings and history are kept). Jarvis
+needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
+
+1. In Jarvis, in your usual Chrome: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link
+   code**. The code works once, for 30 minutes.
+2. In the Jarvis window: open the side panel (⌥⇧J) → **Settings** → **Voice from Jarvis**, paste
+   the code and press **Link**.
 3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.
    That is the only site it gets this way.
-4. Both sides show **Linked · online**. Linking turns on **Tasks from Jarvis**; you can turn it
-   off in the same place. **Unlink**, on either side, forgets the key on that side and tells the
-   other.
+4. Within a few seconds both sides show **Linked · online**. Linking turns on **Tasks from
+   Jarvis**; you can turn it off in the same place. **Unlink**, on either side, forgets the key on
+   that side and tells the other.
+
+If it doesn't say **Linked · online**, see [If something doesn't work](#if-something-doesnt-work).
 
 The key stays in Chrome's storage for this extension, in the Jarvis profile; it is never synced
 or sent anywhere. Linking works only with your home base's Tailscale address, as Jarvis has it.
@@ -519,6 +527,17 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
   one.
 - **"Out of credits":** add credits at console.anthropic.com → Billing.
 - **The microphone doesn't work:** click the mic again and allow it in the tab Chrome opens.
+- **There's no "Voice from Jarvis" in Settings:** this is Jarvis for Chrome 1.0. Update it to 1.1.0
+  (above).
+- **"Linked · waiting for Jarvis":** your home base answers, but Jarvis hasn't been heard from for a
+  minute. Open Jarvis in your usual Chrome and keep it open. If Jarvis doesn't show **Linked**, the
+  code you pasted was replaced or had expired: press **Link** in Jarvis for a new one, then
+  **Unlink** in the side panel and paste the new code.
+- **"Linked · can't reach your home base":** check that this Mac is on Tailscale and that the home
+  base is running. Jarvis for Chrome tries again by itself. A task from Jarvis pauses after 20
+  seconds of this; press **Continue** in the side panel to go on, or **Stop**.
+- **"Jarvis for Chrome needs your OK to reach your home base":** Chrome's question was closed
+  without allowing it. Press **Link** again and allow it.
 
 ---
 

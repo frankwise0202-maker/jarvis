@@ -938,8 +938,16 @@ const VOICE_STEPS_TEXT = Object.freeze([
 /** "Linked · online" and its kin. */
 function linkStatusText(l) {
   if (!l?.linked) return 'Not linked';
-  if (l.reachable) return l.appOnline ? 'Linked · online' : 'Linked · Jarvis isn’t open';
+  if (l.reachable) return l.appOnline ? 'Linked · online' : 'Linked · waiting for Jarvis';
   return l.failing ? 'Linked · can’t reach your home base' : 'Linked · connecting…';
+}
+
+/** What to do when the link isn't online yet (the owner links once, often across two profiles). */
+function linkStatusHint(l) {
+  if (!l?.linked || (l.reachable && l.appOnline)) return '';
+  if (l.reachable) return 'Keep Jarvis open on this Mac. If Jarvis doesn’t say it is linked within a minute, copy a new link code there (Settings → Jarvis for Chrome → Link), press Unlink here and paste the new code.';
+  if (l.failing) return 'Jarvis for Chrome can’t reach your home base. Check that this Mac is on Tailscale and that the home base is running; it tries again by itself.';
+  return '';
 }
 
 function renderVoiceSection() {
@@ -984,6 +992,7 @@ function renderVoiceSection() {
     section,
     head,
     h('p', { class: 'link-status', attrs: { 'data-testid': 'link-status', 'data-online': String(!!(l.reachable && l.appOnline)) } }, h('span', { class: 'dot' }), h('span', { text: linkStatusText(l) })),
+    linkStatusHint(l) ? h('p', { class: 'hint hint--warn', attrs: { 'data-testid': 'link-hint' }, text: linkStatusHint(l) }) : null,
     h('p', { class: 'hint', text: `Through your home base, ${l.host}. It passes on sealed messages it can’t read.` }),
     h('label', { class: 'toggle' }, tasks, h('span', { class: 'toggle__ui' }), h('span', null, h('strong', { text: 'Tasks from Jarvis' }), h('span', { class: 'sub', text: `Jarvis may start a task here when you ask it by voice: at most ${VOICE_TASKS_PER_DAY} a day, each with its budget, each asking you here as usual.` }))),
     approvals,

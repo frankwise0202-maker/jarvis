@@ -63,6 +63,10 @@ const relayOpen = {
     const key = newLinkKey();
     await section.locator(tid('link-code')).fill(linkCode({ core: run.server.apiBase, key }));
     await section.locator(tid('link-button')).click();
+    // Linked, but Jarvis hasn't been heard from yet: the panel says so, and what to do.
+    const status = () => section.locator(tid('link-status')).textContent();
+    await waitFor(async () => (await status()) === 'Linked · waiting for Jarvis', { message: async () => `“Linked · waiting for Jarvis” (is “${await status()}”)` });
+    assert((await section.locator(tid('link-hint')).textContent()).includes('Settings → Jarvis for Chrome → Link'), 'what to do while Jarvis isn’t heard from');
     const app = await createAppPeer({ relay: run.server.relay, key });
     const hello = await app.waitFor((m) => m.kind === 'hello', { timeoutMs: 15000 });
     assert(hello.body.ext === 'jarvis-for-chrome' && hello.body.version === '1.1.0', JSON.stringify(hello.body));
@@ -70,7 +74,8 @@ const relayOpen = {
     assert(stored.chromeLink?.key === key && stored.chromeLink.core === run.server.apiBase && stored.chromeLink.v === 1, 'the key in chrome.storage.local');
     assert(stored['jarvis.voice']?.tasksFromJarvis === true, 'Link turns Tasks from Jarvis on');
     assert((await app.request('ping')).ok === true, 'ping');
-    await waitFor(async () => (await section.locator(tid('link-status')).textContent()) === 'Linked · online', { message: async () => `“Linked · online” (is “${await section.locator(tid('link-status')).textContent()}”)` });
+    await waitFor(async () => (await status()) === 'Linked · online', { message: async () => `“Linked · online” (is “${await status()}”)` });
+    assert((await section.locator(tid('link-hint')).count()) === 0, 'no hint once online');
     assert((await section.locator(tid('voice-approvals')).count()) === 0, 'Approve everyday steps by voice is hidden until its red-team round');
     await run.shot('1-linked');
     await p.click(tid('sheet-back'));
