@@ -312,7 +312,7 @@ export default [
     // ROUTING-R2-10 (the reviewer's zzv-optics-offer-typed, kept): the research offer answered by typing its way in
     // Optics' field, as its buttons answer it. Before, "mission" and "quick" went to Claude as one-word questions.
     name: 'voice-commands-optics-offer',
-    title: 'Mac, Optics: "research this" typed in Optics\' field shows the offer; "mission" typed there starts the research mission (agents, the research words), "quick" the quick research; never a one-word question',
+    title: 'Mac, Optics: "research this" typed in Optics\' field shows the offer; "mission" typed there starts the research mission (a swarm turn in the research words), "quick" the quick research; never a one-word question',
     device: 'mac',
     timeout: 180000,
     seed: { settings: { homeBaseUrl: CORE_URL, speakReplies: 'summary' } },
@@ -343,14 +343,16 @@ export default [
           await ask.press('Enter');
           await t.waitFor(async () => (await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'research', { timeout: 8000, message: 'the offer card' });
           const l0 = t.requests('lead').length;
-          const w0 = t.requests('worker').length;
           await ask.fill(word);
           await ask.press('Enter');
           await t.waitFor(() => t.requests('lead').length > l0, { timeout: 15000, message: `the research after "${word}"` });
-          const texts = t.requests('lead').slice(l0).map((r) => lastUserText(r).split('\n').filter(Boolean).at(-1) || '');
+          const sent = t.requests('lead').slice(l0);
+          const texts = sent.map((r) => lastUserText(r).split('\n').filter(Boolean).at(-1) || '');
           t.assert(texts.some((x) => want.test(x)), `"${word}" picked that way (requests: ${JSON.stringify(texts)})`);
           t.assert(!texts.some((x) => x.trim().toLowerCase() === word), `never a one-word question "${word}" (requests: ${JSON.stringify(texts)})`);
-          if (word === 'mission') await t.waitFor(() => t.requests('worker').length > w0, { timeout: 20000, message: 'the mission\'s agents' });
+          // The way's own mode, as its button sends it (optics-research): a swarm turn for the mission, quick mode for quick.
+          const mode = word === 'mission' ? /Mode: swarm/ : /Mode: quick/;
+          t.assert(sent.some((r) => mode.test(JSON.stringify(r.body.messages.at(-1)))), `"${word}" in its mode (${mode})`);
           await waitAnswer(t, page).catch(() => null);
           await page.waitForTimeout(800);
         });
