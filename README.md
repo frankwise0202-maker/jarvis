@@ -277,6 +277,7 @@ on screen first, and costs what a question costs.
 | | "turn off continuous", "turn on continuous" | Listening again after each answer, off or on |
 | | "send right away", "show me what you heard first" | The 2-second check, off or on |
 | | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
+| Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
 | Stop | "stop" | Stops whatever runs: a walkthrough pauses; a Chrome task, the live view and a preview stop. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
 | Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
 | Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
@@ -291,21 +292,24 @@ on screen first, and costs what a question costs.
 | Optics | "open optics", "open the camera", "camera on" | Optics opens, no Look ("Tap Look" on an iPhone) |
 | | "close the camera" | Camera off, from anywhere |
 | | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
-| | "what am I looking at?", "look at this", "take a picture" | A Look, about 3¢ |
+| | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
 | | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs) |
-| | "expand the picture", "back to live", "close the picture", "put the picture aside" | The picture and the live video, on a Mac |
-| | "research this", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose |
+| | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac |
+| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose |
+| | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
 | Holograms | "expand it", "show the battery", "front view", "labels off", "photos of the fan" | As before, free |
 | Walkthroughs | "walk me through it", "walk me through the battery" | A walkthrough of the hologram on screen, free |
-| | "next", "back", "repeat", "pause", "continue", "skip to the fan", "stop the tour" | Moves through it |
+| | "next", "back", "previous", "repeat", "pause", "resume", "continue", "skip to the fan", "take me to the battery", "stop the tour", "end the tour" | Moves through it |
 | | "enclosed", "opened", "both", "you pick" | Answers "enclosed or opened?" |
 | Screens and windows | "put it on my other screen", "float it", "bring it back" | As before |
 | | "put the camera in a window", "put the hologram in another window", "side by side", "camera on the left, hologram on the right" | Windows by voice (see [Windows by voice](#windows-by-voice)) |
-| | "close the camera window", "close everything", "do this in this window" | That window, all of them, or here |
+| | "close the camera window", "close everything", "do this in this window", "show it here" | That window, all of them, or here |
+| | "swap them", "make the camera window bigger", "show me the hologram window", "float yourself" | Swap, resize, raise; Jarvis in a small panel on top |
 | Chrome | "pull this up in Chrome", "open the second link", "google USB-C chargers", "open YouTube" | A page in Chrome, free (a search waits 2 seconds on screen) |
-| | "find a 4K monitor under $300 and add it to the cart in Chrome" | A Jarvis for Chrome task: Jarvis says what it will do and its limit first (see [By voice from Jarvis](#by-voice-from-jarvis)) |
+| | "find a 4K monitor under $300 and add it to the cart in Chrome", "in Chrome, …", "have Chrome …", "click around for me" | A Jarvis for Chrome task: Jarvis says what it will do and its limit first (see [By voice from Jarvis](#by-voice-from-jarvis)); within 2 minutes, "add the cheapest one to the cart" or "sort by price" too |
 | | "approve", "allow once", "deny", "cancel Chrome", "stop Chrome" | Answers Chrome's question (purchases always need a click) |
 | | "what are you doing in Chrome?" | The task's latest step |
+| | "is Jarvis for Chrome linked?", "link Jarvis for Chrome" | Its status, or its link in Settings |
 | Apple Music | "play Back in Black", "stop the music" | As before |
 
 - **One sentence, one place.** When two features could take the same words, the one in front wins: a
