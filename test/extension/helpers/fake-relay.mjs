@@ -127,7 +127,7 @@ export function createFakeRelay({ waitScaleMs = 1000, now = () => Date.now() } =
         new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(abortErr()), { once: true })),
       ]);
       if (relay.down) throw new TypeError('Failed to fetch');
-      return { ok: res.status >= 200 && res.status < 300, status: res.status, headers: { get: () => null }, json: async () => res.json };
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, headers: { get: () => null }, json: async () => res.json, text: async () => JSON.stringify(res.json ?? null) };
     },
     /** For an http server: answers one request (CORS as Core does for /api/relay/*). */
     async serve(req, res, bodyText) {

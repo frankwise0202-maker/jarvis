@@ -34,6 +34,7 @@ export const ONLINE_MS = 60 * 1000;
 export const STATUS_EVERY_MS = 30 * 1000;
 export const BACKOFF_MS = Object.freeze([1000, 2000, 5000, 10000, 20000, 30000]);
 export const QUICK_EMPTY_MS = 1000; // a poll answered sooner than this with nothing in it didn't wait
+export const MAX_ANSWER_CHARS = 2 * 1024 * 1024; // 50 messages of up to 22 KB: an answer over this is refused unread (LINK-10)
 export const MIN_POLL_MS = 1500; // ... and the next one waits at least this long (REDTEAM-LINK-2)
 export const ALARM = 'jarvis-relay';
 export const ALARM_PERIOD_MIN = 0.5; // 30 s: Chrome's shortest
@@ -172,12 +173,19 @@ export class Relay {
         credentials: 'omit',
         signal: abort.signal,
       });
+      // Read as text, and refused before it is parsed when it is over 2 MB (REDTEAM-LINK-10: a home base or a
+      // proxy that misbehaves must not make the worker chew megabytes), as the app does.
       let data = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
+      const declared = Number(res.headers?.get?.('content-length'));
+      if (!(Number.isFinite(declared) && declared > MAX_ANSWER_CHARS)) {
+        try {
+          const text = await res.text();
+          data = typeof text === 'string' && text.length <= MAX_ANSWER_CHARS ? JSON.parse(text) : null;
+        } catch {
+          data = null;
+        }
       }
+      // (A read whose answer was refused has no data: the loop counts it as a failed read.)
       return { ok: res.ok, status: res.status, data, retryAfter: Number(res.headers?.get?.('retry-after')) || 0 };
     } finally {
       clearTimeout(timer);

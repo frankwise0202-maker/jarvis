@@ -5150,7 +5150,10 @@ relay (`http://127.0.0.1:<port>`).
 **32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
 runs, so 20 s without an answer means the home base is gone), each poll after one extension API call
 (`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. A poll answered in under a
-second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). Failures back off 1, 2, 5,
+second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). An answer
+is read as text and refused unparsed when it is over 2 MB (a declared Content-Length too); an envelope's `id`, `iv`
+and `ct` lengths are checked on the strings before anything is decoded, as the app does (REDTEAM-LINK-10: a home base
+or a proxy that misbehaves can't make the worker chew megabytes). Failures back off 1, 2, 5,
 10, 20, 30 s (a 429's Retry-After counts, up to 60 s); a 400 drops the cursor. Each message is opened (§32.1.2's
 drops), counted as read and saved before it is acted on, so none is taken twice, also across a worker or browser
 restart. `/api/relay/status` is read at most every 30 s for the panel. Messages to `to-app` leave in the order they

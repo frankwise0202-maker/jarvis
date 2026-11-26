@@ -232,6 +232,30 @@ test('LINK-2: a poll answered at once with nothing doesn’t loop right away: at
   assert.deepEqual(slept2.filter((ms) => ms >= 1500), [], 'no pause after a poll that waited');
 });
 
+test('LINK-10: an answer over 2 MB is refused before it is parsed (a home base or proxy that misbehaves)', async () => {
+  let parsed = 0;
+  const big = JSON.stringify({ messages: [{ id: 'x'.repeat(22), iv: 'y'.repeat(16), ct: 'z'.repeat(3 * 1024 * 1024) }], last: null });
+  const answers = [];
+  const store = createStore(createFakeBrowser().chrome);
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store, onMessage: (m) => answers.push(m), sleep: fast, fetch: async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => big,
+    json: async () => {
+      parsed += 1;
+      return JSON.parse(big);
+    },
+  }) });
+  r.start();
+  const end = Date.now() + 3000;
+  while (r.failures < 2 && Date.now() < end) await new Promise((res) => setTimeout(res, 5));
+  r.stop();
+  assert.ok(r.failures >= 2, 'counted as a failed read');
+  assert.equal(parsed, 0, 'never parsed');
+  assert.deepEqual(answers, []);
+});
+
 test('online (the side panel): only once Jarvis has answered with this link’s key, and while it is heard from or reads its box', async () => {
   let t = 1_800_000_000_000;
   const now = () => t;
