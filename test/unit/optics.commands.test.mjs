@@ -245,3 +245,15 @@ test('ROUTING-R3-S1: every camera-off form isCameraCloseRequest takes is Optics\
   // Not camera-off words: unchanged.
   for (const words of ['turn the camera around', 'what is this', 'is the camera off']) assert.notDeepEqual(matchOpticsCommand(words), { action: 'close' }, words);
 });
+
+test('ROUTING-R4-4, R4-2: "cam" and "shut … off" are camera-off words; "turn the hologram off/on" is never a new hologram', async () => {
+  const { isCameraCloseRequest } = await import('../../src/lib/optics-commands.js');
+  for (const words of ['turn off the cam', 'turn the cam off', 'cam off', 'shut the camera off', 'turn off my cam', 'close the cam', 'stop the cam', 'switch the cam off', 'web cam off']) {
+    assert.equal(isCameraCloseRequest(words), true, words);
+    assert.deepEqual(matchOpticsCommand(words), { action: 'close' }, words);
+  }
+  // Questions that mention the camera stay questions; nothing here turns a camera on.
+  for (const words of ['is the cam off', 'why is my cam off', 'turn on the cam']) assert.equal(isCameraCloseRequest(words), false, words);
+  for (const words of ['turn the hologram off', 'turn the hologram on', 'switch the hologram off']) assert.equal(matchOpticsCommand(words), null, words);
+  assert.equal(matchOpticsCommand('make a hologram of this').action, 'hologram');
+});

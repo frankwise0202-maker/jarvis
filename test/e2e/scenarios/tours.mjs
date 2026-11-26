@@ -453,6 +453,11 @@ export default [
         await noteHeight();
         await t.page.keyboard.press('ArrowLeft');
         await waitStep(t, 'overview', { timeout: 5000 });
+        // v8.1.1 (changed on purpose, ROUTING-R3-4): "back" says that step alone and waits there (B5), and a pause and
+        // play during it says it alone again and waits. → once more, so Space and the touch below act on a step that
+        // plays on to the decision, as before.
+        await t.page.keyboard.press('ArrowRight');
+        await waitStep(t, 'apart', { timeout: 5000 });
       });
       await t.step('Space pauses and plays; a touch on the model pauses', async () => {
         await waitStatus(t, 'playing');

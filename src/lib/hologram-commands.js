@@ -266,6 +266,12 @@ const SIMPLE = [
   // rotation
   { re: new RegExp(`^(stop|pause|freeze|halt|hold)( (it|that|this))?( (rotating|spinning|turning|the rotation|the spin|moving|still))?$`), action: 'stop' },
   { re: /^(stop|don't|do not) (rotating|spinning|turning|rotate|spin|turn)( it)?$|^(stay|hold|keep) still$|^(no|stop) (rotation|spin|spinning)$/, action: 'stop' },
+  // The hologram's own switches in the "turn the X on/off" order (ROUTING-R4-3, R4-2), before the rotate rule:
+  { re: /^(?:turn|switch) (?:the |all the )?(?:labels?|names|tags) (?:back )?on$/, action: 'labels-on' },
+  { re: /^(?:turn|switch) (?:the |all the )?(?:labels?|names|tags) off$/, action: 'labels-off' },
+  { re: /^(?:turn|switch) (?:the )?(?:rotation|spinning|spin|auto rotate|autorotate) off$/, action: 'stop' },
+  { re: /^(?:turn|switch) (?:the )?(?:rotation|spinning|auto rotate|autorotate) (?:back )?on$/, action: 'rotate' },
+  { re: /^(?:turn|switch) (?:the |this |that )?(?:hologram|model|3d model) off$|^(?:turn|switch) off (?:the |this |that )?(?:hologram|model|3d model)$/, action: 'close' },
   // (never a phrase ending in "on" or "off": "turn the camera off", "turn the lights on" are switches, not turns:
   // ROUTING-R3-1)
   { re: new RegExp(`^(?!.* (?:on|off)$)(rotate|spin|turn|revolve|orbit|auto rotate|autorotate)${OBJ}( around| round)?$`), action: 'rotate' },

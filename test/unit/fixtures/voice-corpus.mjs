@@ -278,6 +278,14 @@ export const VOICE = {
       [w, 'C0R', 'stop:stop'],
       [w, 'V0', null],
     ]),
+    // ROUTING-R4-3: the hologram's switches in the "turn the X on/off" order (on screen; the labels shown last too).
+    ['turn the labels off', 'VH', 'hologram:hologram'],
+    ['turn the labels on', 'VH', 'hologram:hologram'],
+    ['turn the labels back on', 'VH', 'hologram:hologram'],
+    ['turn the rotation off', 'VH', 'hologram:hologram'],
+    ['turn the hologram off', 'VH', 'hologram:hologram'],
+    ['turn the labels off', 'VLC', 'hologram:hologram'],
+    ['turn the labels on', 'VLC', 'hologram:hologram'],
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',
@@ -1017,6 +1025,14 @@ export const WINDOWS = {
       ['expand the picture', state, 'optics'],
       ['show me the camera', state, 'optics'],
     ]),
+    // ROUTING-R4-2: with Optics open and the hologram in a Screens window, "turn the hologram off" closes that window;
+    // "turn the hologram on" is never Optics' hologram (a new paid Look).
+    ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
+      ['turn the hologram off', state, 'windows-hologram:windows-hologram'],
+      ['turn off the hologram', state, 'windows-hologram:windows-hologram'],
+      ['turn the hologram on', state, null],
+      ['hologram off', state, null],
+    ]),
     // MISSED-R2V-2: everyday searches that start with a Google product's word stay searches (of exactly those words:
     // test/unit/screens.chrome.test.mjs), never a paid question.
     ['google TV shows like Breaking Bad', 'V0', 'chrome-open:chrome-open'],
@@ -1178,6 +1194,28 @@ export const OPTICS = {
       [w, 'OTQ', 'optics-research-field:research-answer'],
       [w, 'OVQ', 'optics-research-field:research-answer'],
     ]),
+    // ROUTING-R4-4: "cam", "web cam" and "shut … off" are camera-off words too: Optics' close, never a Look.
+    ...['turn off the cam', 'turn the cam off', 'cam off', 'shut the camera off', 'turn off my cam', 'close the cam', 'stop the cam', 'switch the cam off'].flatMap((w) => [
+      [w, 'VL', 'optics:optics'],
+      [w, 'OV', 'optics:optics'],
+      [w, 'OVLV', 'optics:optics'],
+      [w, 'OT', 'optics-close'],
+    ]),
+    // ROUTING-R4-1: with a hologram over an open Optics (OHO; typed in the hologram's field, OHOT), every camera-off form
+    // closes Optics (optics-close runs Optics' own close), never a paid question.
+    ...['turn the camera off', 'turn off the camera', 'camera off', 'close the camera', 'stop the camera', 'close optics', 'turn the camera off please', 'turn off the cam'].flatMap((w) => [
+      [w, 'OHO', 'optics-close:camera-off'],
+      [w, 'OHOT', 'optics-close:camera-off'],
+    ]),
+    // ROUTING-R4-2: "turn the hologram off/on" is never Optics' request for a new hologram (no Look, no picture).
+    ...['VL', 'OV', 'VF'].flatMap((st) => [
+      ['turn the hologram off', st, null],
+      ['turn the hologram on', st, null],
+    ]),
+    // ROUTING-R5-1: a request to turn this into a hologram is Optics' hologram, whatever its last word.
+    ...['VL', 'OV'].flatMap((st) =>
+      ['turn this into a hologram with the labels on', 'turn it into a hologram with the lid off', 'turn this into a hologram so I can see what is going on', "turn this into a hologram of what I'm working on"].map((w) => [w, st, 'optics:optics']),
+    ),
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
