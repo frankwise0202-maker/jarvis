@@ -197,6 +197,7 @@ const FEED_DELAY_MS = 40; // streamed text: look for newly complete sentences at
 const CHARS_PER_SEC = 14.5; // typical speech rate at voiceRate 1.0 (caption timing estimate)
 const CONFIRM_MS = 60000; // "Shall I draw a blueprint of …?" waits this long for a yes
 const REVIEW_MIC_MS = 30000; // a paused 2-second check keeps listening for a correction this long
+const PROMPT_VOICE_MS = 30000; // MAC-R5-1: a Chrome question said in full keeps a tapped Voice Mode busy this long
 const WAKE_WINDOW_MS = 2400; // woken: how long the microphone waits for "wake up, daddy's home" before the greeting
 // Hearing through the home base (v7.7, beta, SPEC §25): its words come once the owner has finished
 // (Whisper hears whole utterances), so a tap that says "I'm done" waits for them this long at most
@@ -749,8 +750,17 @@ function createVoiceMode(opts) {
      * be listening for "cancel" or "no, I said …"): previews never start then.
      */
     isListening: () => !S.closed && (!!S.listen || !!S.review),
-    /** MAC-R3-4: whether it can hear the owner or is answering (what onActive reports); idle, an error or offline: false. */
-    isActive: () => !S.closed && (S.active || !!(S.listen || S.review || S.run || S.speech || S.retryTimer)),
+    /**
+     * MAC-R3-4: whether it can hear the owner or is answering (what onActive reports), or (MAC-R4-2) Chrome's question
+     * waits to be said, its check runs, or (MAC-R5-1) the question is in its voice window: 30 s after it was said in
+     * full (said or heard: speech and the listen above). Left on its card after that: not. Idle or offline: false.
+     */
+    isActive: () =>
+      !S.closed &&
+      (S.active ||
+        !!(S.listen || S.review || S.run || S.speech || S.retryTimer) ||
+        !!(C.pendingPrompt || C.check) ||
+        ((prompts.current() || {}).key === C.saidKey && Math.max(C.saidAt || 0, C.voiceAt || 0) > 0 && Date.now() - Math.max(C.saidAt || 0, C.voiceAt || 0) < PROMPT_VOICE_MS)),
     /** v8.0 Optics' live view: a short line Jarvis says by himself. True when it is said (sayLine()). */
     say: (text) => sayLine(text),
     /** v8.1 (A8): Standby heard two claps ('clap') or "Hey Jarvis" ('word') while he speaks. True when it acted. */
@@ -3133,14 +3143,16 @@ function createVoiceMode(opts) {
   /**
    * MAC-R3-3: whether carrying out `hit` may cost money, turn the camera on or send the words out (a question in the
    * hidden count, A6; refused while braked in the background): what the router's flags mark (not free, the camera, the
-   * check), a Chrome task (asked for or started), the briefing, and a question's answer other than no (a price
-   * question's "yes" is what pays). "Stop watching" and the other stops are free.
+   * check), a Chrome task (asked for or started), the briefing, a home base job (MAC-R4-1: research and a watch run on
+   * the owner's key, though the router calls them free; only its results are free), and a question's answer other
+   * than no (a price question's "yes" is what pays). "Stop watching" and the other stops are free.
    */
   function paidHit(hit) {
     if (!hit) return true;
     const a = hit.action || {};
     if (a.free === false || a.camera === true || a.check === true) return true;
     if (hit.id === 'chrome-task' || hit.id === 'chrome-ask' || hit.id === 'briefing') return true;
+    if (hit.id === 'brain' && a.kind !== 'results') return true;
     if (hit.id === 'question') return !a.dismiss && a.choice !== 'no';
     return false;
   }
@@ -4049,7 +4061,11 @@ function createVoiceMode(opts) {
       return;
     }
     const listenAfter = rule !== 'listen' ? false : yes ? { noSpeechMs: ANSWER_WINDOW_MS } : null;
-    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how, rule === 'withheld', saying), listenAfter });
+    const spoken = (how) => {
+      if (how === 'done' || how === 'failed') C.voiceAt = Date.now(); // MAC-R5-1: its voice window (isActive) starts
+      promptSpoken(p, how, rule === 'withheld', saying);
+    };
+    speak(line, 'ack', 0, { onEnd: spoken, listenAfter });
     C.sayingSp = S.speech; // (the dock's Stop knows its own saying: CHROME-VOICE-R2-2)
   }
 
@@ -5439,6 +5455,17 @@ function createVoiceMode(opts) {
    * he speaks: he stops and listens; a tour's narration ends ('cancelled') and the tour pauses at its step.
    */
   function bargeIn(trigger) {
+    // MAC-R4-4: "Hey Jarvis" (not his own: the self-mask) is the owner calling him, whatever happens next: over the Mac's
+    // own voice or in the gap before a listen too, the hidden count starts again. MAC-R5-2: but the Mac's own voice is
+    // outside the echo reference, so over it only a line without "Jarvis" of his own; never the brake line, nor once he
+    // is going back to sleep.
+    const saying = S.speech ? String(S.speech.text || '') : '';
+    const echoFree = valueOf(() => (tts && typeof tts.voiceNow === 'function' ? tts.voiceNow() : null));
+    const ownJarvis = !!S.speech && echoFree !== 'natural' && echoFree !== 'homebase' && /jarvis/i.test(saying);
+    if (trigger === 'word' && !S.closed && !selfMask.masked() && !S.sleepAfter && !ownJarvis && !/when you need me/i.test(saying)) {
+      S.asked = 0;
+      S.braked = false;
+    }
     if (trigger === 'word' && !S.closed && !S.speech && (S.listen || S.review)) {
       // MAC-V-1: "Hey Jarvis" while he listens: nothing to interrupt, but it is the owner calling him.
       S.asked = 0;

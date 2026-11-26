@@ -2042,6 +2042,7 @@ export async function startApp(rootEl) {
   // (no click, key, scroll or touch for a minute), or at once while Jarvis is in the background, where nobody looks
   // at the sheet. It comes back above a sheet still open, which stays underneath.
   const SHEET_RETURN_MS = 60000;
+  const SHEET_CHROME_CAP_MS = 180000; // MAC-R5-1: hidden, a Chrome task keeps a tapped Voice Mode open at most this long
   let sheetReturn = null; // { sheet, last, timer, offs }
 
   function returnAfterSheet() {
@@ -2069,7 +2070,18 @@ export async function startApp(rootEl) {
       // MAC-R3-4: only while it listens or answers. Left open and idle, it closes once Jarvis is in the background or
       // the quiet spell has passed, and Standby comes back.
       if (isVoiceModeOpen()) {
-        const busy = safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
+        // MAC-R4-2: a Chrome task running from here (or its check) keeps it too. MAC-R5-1: only while the link is online
+        // (a question left on its card counts in Voice Mode's own window, isActive()), and hidden at most 3 minutes: the
+        // task's end and its questions still reach the card and the notifications.
+        const chromeBusy = safe(() => {
+          const st = chromeVoice && chromeVoice.state();
+          const status = st && st.task ? st.task.status : '';
+          return !!st && (!!st.checking || (!!st.online && (status === 'starting' || status === 'running' || status === 'waiting')));
+        }, false);
+        if (!chromeBusy) R.chromeSince = 0;
+        else if (!R.chromeSince) R.chromeSince = Date.now();
+        const chromeCapped = chromeBusy && document.hidden && Date.now() - R.chromeSince >= SHEET_CHROME_CAP_MS;
+        const busy = (chromeBusy && !chromeCapped) || safe(() => !voiceApi || typeof voiceApi.isActive !== 'function' || voiceApi.isActive() !== false, true);
         if (!busy && (document.hidden || Date.now() - R.last >= quiet)) {
           cancelSheetReturn();
           safe(() => voiceApi.close());
