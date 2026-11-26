@@ -12,7 +12,7 @@ import { Controller } from '../../../extension/src/background/controller.js';
 import { createClient } from '../../../extension/src/background/api.js';
 import { createStore, VOICE_TASKS_PER_DAY, localDay, parseLinkCode, homeBaseOrigin } from '../../../extension/src/shared/storage.js';
 import { PORT_NAME } from '../../../extension/src/shared/protocol.js';
-import { JarvisLink, cleanRect, doneStatus, namedSites, openVerdict } from '../../../extension/src/background/link.js';
+import { FRESH_MS, JarvisLink, cleanRect, doneStatus, namedSites, openVerdict, tooLate } from '../../../extension/src/background/link.js';
 import { Relay, UNREACHABLE_MS, backoffMs } from '../../../extension/src/background/relay.js';
 import { CLICK_ONLY, MIN_PROMPT_AGE_MS, promptHash } from '../../../extension/src/background/voice-policy.js';
 
@@ -27,8 +27,8 @@ const PAGE = {
 const fast = (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5)));
 
 async function setup({ approvalsAvailable = false, voice = null, panel = true, linked = true } = {}) {
-  const clock = { offset: 0 };
-  const now = () => Date.now() + clock.offset;
+  const clock = { offset: 0, frozen: null };
+  const now = () => clock.frozen ?? Date.now() + clock.offset;
   const fb = createFakeBrowser();
   const calls = { windows: [], alarms: [], permissions: [] };
   fb.chrome.windows = {
@@ -150,6 +150,18 @@ test('a window’s place from Jarvis: whole numbers in sane ranges, else none', 
   assert.deepEqual(cleanRect({ left: 10.4, top: 20, width: 800, height: 600 }), { left: 10, top: 20, width: 800, height: 600 });
   for (const r of [null, {}, { left: 0, top: 0, width: 99, height: 600 }, { left: 'a', top: 0, width: 800, height: 600 }, { left: 0, top: 0, width: 800, height: Infinity }, { left: 200000, top: 0, width: 800, height: 600 }]) assert.equal(cleanRect(r), null);
   assert.deepEqual(cleanRect({ left: -40, top: 0, width: 100, height: 100 }), { left: -40, top: 0, width: 100, height: 100 });
+});
+
+test('D5: an open, start or answer more than 8 s old is too late; stop, ping, hello and unlinked never are', () => {
+  const T = 1_800_000_000_000;
+  assert.equal(FRESH_MS, 8000);
+  for (const kind of ['open', 'start', 'answer']) {
+    assert.equal(tooLate(kind, T - 8000, T), false, `${kind}: exactly 8 s still counts`);
+    assert.equal(tooLate(kind, T - 8001, T), true, `${kind}: 8.001 s is too late`);
+    assert.equal(tooLate(kind, T - 9000, T), true, kind);
+    assert.equal(tooLate(kind, T + 20000, T), false, `${kind}: from a clock a little ahead`);
+  }
+  for (const kind of ['stop', 'ping', 'hello', 'unlinked']) assert.equal(tooLate(kind, T - 119000, T), false, kind);
 });
 
 test('done: limits are told apart from a Stop', () => {
@@ -425,6 +437,62 @@ test('a replayed decision is dropped: no second reply, nothing decided twice', a
   await new Promise((r) => setTimeout(r, 300));
   again.relay.stop();
   assert.equal(s.app.received.filter((m) => m.kind === 'reply' && m.body.re === msg.id).length, 1);
+});
+
+/** Posts a request sealed at `at` and waits for the reply to it. */
+async function requestAt(s, kind, body, at) {
+  const msg = await s.app.post(kind, body, { at });
+  return (await s.app.waitFor((m) => m.kind === 'reply' && m.body.re === msg.id, { what: `the reply to ${kind}` })).body;
+}
+
+test('D5: a start 9 s old is refused as gone (too late) and starts nothing', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  s.mock.script([() => ({ answer: 'should not run' })]);
+  const r = await requestAt(s, 'start', { text: 'Find a monitor', chat: 'new', from: 'voice' }, s.now() - 9000);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'gone');
+  assert.equal(r.why, 'too late');
+  await new Promise((res) => setTimeout(res, 100));
+  assert.equal(s.controller.tasks.length, 0, 'no task');
+  assert.equal(s.controller.run, null);
+  assert.equal(s.mock.requests.length, 0, 'nothing reached the API');
+  assert.equal(await s.store.voiceTasksToday(s.now()), 0, 'not counted');
+  // An open and an answer that late do nothing either.
+  const n = s.fb.tabs.size;
+  const o = await requestAt(s, 'open', { url: 'https://www.bestbuy.com/', rect: null, focus: true }, s.now() - 9000);
+  assert.deepEqual([o.ok, o.reason, o.why], [false, 'gone', 'too late']);
+  assert.equal(s.fb.tabs.size, n, 'no tab');
+  const late = await requestAt(s, 'open', { url: 'https://shop.example/cart?add-to-cart=1', rect: null, focus: true }, s.now() - 9000);
+  assert.equal(late.reason, 'gone');
+  assert.equal(s.link.cards.length, 0, 'and no card');
+});
+
+test('D5: a stop 30 s old is still taken', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  s.mock.script([() => ({ hold: true })]);
+  const started = await s.app.request('start', { text: 'Look around', chat: 'new', from: 'voice' });
+  assert.equal(started.ok, true);
+  await s.waitFor(() => s.controller.run);
+  const r = await requestAt(s, 'stop', {}, s.now() - 30000);
+  assert.equal(r.ok, true);
+  await s.waitFor(() => s.controller.tasks.at(-1).status === 'stopped');
+  assert.equal((await requestAt(s, 'ping', {}, s.now() - 60000)).ok, true, 'a ping too');
+});
+
+test('D5: the boundary: exactly 8 s old is taken, 8.001 s is too late (the same clock at both ends)', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  s.mock.script([() => ({ hold: true })]);
+  s.clock.frozen = Date.now();
+  const late = await requestAt(s, 'start', { text: 'Find a monitor', chat: 'new', from: 'voice' }, s.clock.frozen - 8001);
+  assert.deepEqual([late.ok, late.reason, late.why], [false, 'gone', 'too late']);
+  assert.equal(s.controller.tasks.length, 0);
+  const onTime = await requestAt(s, 'start', { text: 'Find a monitor', chat: 'new', from: 'voice' }, s.clock.frozen - 8000);
+  assert.equal(onTime.ok, true, JSON.stringify(onTime));
+  assert.equal(s.controller.tasks.length, 1);
+  s.clock.frozen = null;
 });
 
 test('a message sealed with another key, or too old, gets no answer at all', async (t) => {

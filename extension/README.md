@@ -251,6 +251,10 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
 - **Stop the task**: *"stop Chrome"*.
 - **Answer a question the task asks**, as far as the table below allows.
 
+A request to open a page, start a task or answer a question that reaches Jarvis for Chrome more than
+8 seconds after Jarvis sent it does nothing (Jarvis has told you by then that it didn't work); a
+stop always counts.
+
 Every question the side panel shows is also sent to Jarvis, which asks it aloud and shows it on
 its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add to cart”. Say
 approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of

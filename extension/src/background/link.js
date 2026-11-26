@@ -13,6 +13,10 @@
 //   stop             stops the running task
 //   answer           the owner's answer to a prompt, by voice or on Jarvis's card (voice-policy.js)
 //   unlinked         Jarvis unlinked: so does the extension
+// An open, start or answer more than 8 s old is refused as 'gone' ("too late") and does nothing
+// (lead decision D5): Jarvis gave up on it at 10 s and told the owner it didn't work, so a worker
+// woken late by its alarm must not start a task the owner was told never started. stop, ping,
+// hello and unlinked are always taken (within the envelope's 120 s).
 // To Jarvis: reply, hello, status (on every change, every 60 s while a task runs), task and done
 // (tasks from Jarvis only; no pictures), prompt (every prompt the side panel shows), prompt-closed.
 //
@@ -36,6 +40,8 @@ export const TASK_EVERY_MS = 2000; // (the to-app box takes 120 requests a minut
 export const CARD_LIFE_MS = 5 * 60 * 1000;
 export const OPENED_SITE_LIFE_MS = 10 * 60 * 1000;
 export const APPROVAL_WINDOW = Object.freeze({ width: 420, height: 620 });
+export const FRESH_MS = 8 * 1000; // D5: an open, start or answer older than this is too late
+export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
@@ -103,6 +109,14 @@ export function cleanRect(rect) {
   // (The same bounds as the app's cleanRect.)
   if (r.width < 100 || r.height < 100 || r.width > 100000 || r.height > 100000 || Math.abs(r.left) > 100000 || Math.abs(r.top) > 100000) return null;
   return r;
+}
+
+/**
+ * Whether a request from Jarvis came too late to act on (D5): an open, start or answer whose `at`
+ * (Jarvis's clock: the same Mac) is more than FRESH_MS old. Exactly FRESH_MS still counts.
+ */
+export function tooLate(kind, at, now) {
+  return FRESH_KINDS.has(kind) && now - at > FRESH_MS;
 }
 
 /** A task's status for Jarvis's `done`: 'done' | 'stopped' | 'failed' | 'limit'. */
@@ -288,7 +302,9 @@ export class JarvisLink {
   // -------------------------------------------------------------------------------------------
   // From Jarvis
 
-  async onMessage({ kind, id, body }) {
+  async onMessage({ kind, id, at, body }) {
+    // Too late to act on: Jarvis has already told the owner it didn't work (D5).
+    if (tooLate(kind, at, this.now())) return this.reply(id, { ok: false, reason: 'gone', why: 'too late' });
     try {
       switch (kind) {
         case 'hello':
