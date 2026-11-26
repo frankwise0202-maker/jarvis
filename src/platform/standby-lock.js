@@ -25,12 +25,17 @@
 // Without Web Locks: 'unsupported' at once; Standby listens as before (each window decides alone).
 // The lock covers the windows of one browser profile on one device (Web Locks are per origin and storage).
 //
-// MAC-6: Voice Mode open in any window counts as "Jarvis is busy here". It holds VOICE_LOCK (shared: one per
-// window) for its life, and Standby asks before it wakes, so a forgotten tab on Standby doesn't answer the owner
-// talking to Voice Mode in another window (two voices, two paid requests):
-//   const close = holdVoiceLock({ locks });   Voice Mode opened; close() when it closes (a closed window lets go too)
-//   voiceOpenSomewhere({ locks })             Promise<boolean>: Voice Mode is open in some window (false without
-//                                             Web Locks: as before)
+// MAC-6, MAC-R2-1, MAC-R2-4: a window that can hear the owner, or is answering, counts as "Jarvis is busy here":
+// a listen on any surface (the chat box's microphone, Voice Mode, a viewer's or Optics' microphone), Voice Mode's
+// 2-second check, a turn or speech. It holds VOICE_LOCK (shared: one per window) meanwhile, and lets go about 2 s
+// after it is idle (at once when Voice Mode closes). Standby asks before it wakes, so a forgotten tab on Standby
+// doesn't answer the owner talking to Jarvis in another window (two voices, two paid requests); an idle Voice Mode
+// left open elsewhere no longer keeps it deaf.
+//   const busy = createVoiceBusy({ locks, idleMs });   busy.set(tag, on, { now }), busy.held
+//   voiceBusyElsewhere({ locks, own: busy })   Promise<boolean>: another window holds VOICE_LOCK (this window's own
+//                                             hold doesn't count; false without Web Locks: as before)
+//   const close = holdVoiceLock({ locks });   hold VOICE_LOCK until close() (a closed window lets go too)
+//   voiceOpenSomewhere({ locks })             Promise<boolean>: some window holds VOICE_LOCK
 //
 // REGRESS-1: Standby at launch (A11) opens only where it can listen. app.js asks standbyHeldSomewhere({ locks })
 // (Promise<boolean>, read-only: navigator.locks.query()) before opening it, and a launch that still finds Standby
@@ -282,6 +287,67 @@ export function holdVoiceLock({ locks = defaultLocks(), name = VOICE_LOCK } = {}
     letGo = null;
     if (r) r();
   };
+}
+
+/**
+ * MAC-R2-1, MAC-R2-4: this window can hear the owner or is answering while any of its parts says so (`set(tag, true)`:
+ * each listen, Voice Mode's own state); VOICE_LOCK is held meanwhile, one shared hold for the window, and let go
+ * `idleMs` after the last part stops (a moment between Voice Mode's states keeps one hold), or at once with
+ * `{ now: true }` (Voice Mode closed). Without Web Locks: nothing is held.
+ */
+export function createVoiceBusy({ locks = defaultLocks(), idleMs = 2000, name = VOICE_LOCK } = {}) {
+  const tags = new Set();
+  let close = null; // the hold's close(), while held
+  let timer = 0;
+  const letGo = () => {
+    clearTimeout(timer);
+    timer = 0;
+    if (tags.size || !close) return;
+    const c = close;
+    close = null;
+    c();
+  };
+  return {
+    set(tag, on, { now = false } = {}) {
+      if (on) {
+        tags.add(tag);
+        clearTimeout(timer);
+        timer = 0;
+        if (!close && locks) close = holdVoiceLock({ locks, name });
+        return;
+      }
+      tags.delete(tag);
+      if (tags.size || !close) return;
+      if (now) letGo();
+      else if (!timer) timer = later(letGo, idleMs);
+    },
+    get held() {
+      return !!close;
+    },
+  };
+}
+
+/**
+ * MAC-R2-1: whether another Jarvis window can hear the owner or is answering (VOICE_LOCK held there), from
+ * navigator.locks.query(): this window's own hold (`own`: its createVoiceBusy) doesn't count, so a Standby is never
+ * kept asleep by the Voice Mode it just closed. Without query(): ask as voiceOpenSomewhere() does, and only when
+ * this window holds nothing. Unknown: false (it wakes, as before).
+ */
+export function voiceBusyElsewhere({ locks = defaultLocks(), own = null, name = VOICE_LOCK } = {}) {
+  if (!locks) return Promise.resolve(false);
+  const mine = own && own.held ? 1 : 0;
+  if (typeof locks.query !== 'function') return mine ? Promise.resolve(false) : voiceOpenSomewhere({ locks, name });
+  try {
+    return Promise.resolve(locks.query()).then(
+      (snap) => {
+        const held = snap && Array.isArray(snap.held) ? snap.held.filter((l) => l && l.name === name).length : 0;
+        return held - mine > 0;
+      },
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
 }
 
 /** MAC-6: whether Voice Mode is open in some Jarvis window (VOICE_LOCK held), without taking it from anyone. */

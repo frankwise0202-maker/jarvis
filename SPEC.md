@@ -4177,13 +4177,14 @@ gets its second try. Settings → Voice → Wake Jarvis → **Keep talking when 
 and the live view stop while hidden (camera.js; v8.0). Chrome's red dot and macOS's orange dot are on whenever Standby
 listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question" (README).
 
-**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` →
-`{ add(fn, { waits }) → remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command
-modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`; when a
-question said in one breath with "Hey Jarvis" takes the greeting's place, the lines are said before its answer
-(`S.preface`, MAC-7). Each
-`fn()` returns a line or null at each wake; lines with `waits: true` (Chrome's question) come first, then the others
-in the order added; a throwing `fn` counts as null; lines are tidied and cut at 240 characters.
+**Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` → `{ add(fn, { waits })
+→ remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command modules) and passes
+`wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`; when a question said in one
+breath with "Hey Jarvis" takes the greeting's place, the lines are said before its answer (`S.preface`, MAC-7), asked
+for only as that answer starts to say them (MAC-R2-5: a free command, a withdrawn check or a turn that fails first leave
+them for the next greeting, since a hook counts a line it gives as said). Each `fn()` returns a line or null at each
+wake; lines with `waits: true` (Chrome's question) come first, then the others in the order added; a throwing `fn`
+counts as null; lines are tidied and cut at 240 characters.
 
 **Tests.** Unit `stt.background`, `sounds.hidden`, `attention.title`, `voice.handsfree` (Voice Mode on a Node
 harness, `voice-mode.fakes.mjs`), `wake.pending`. E2E `mac-handsfree-hidden-wake`, `mac-handsfree-hidden-mid-listen`,
@@ -4409,14 +4410,17 @@ watchdog, and `oneTry` (before: two tries of up to 12 s). Nobody speaks: a woken
 later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way (Continuous or not). A session opened
 by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
 
-**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last wake
-(the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in keeps
-the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes, then the
-brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js;
-not a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector while he
-listens (MAC-V-1; nothing to interrupt there). While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no
-follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and goes back to Standby (woken, Return to standby
-on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls him again). A TV left on can't run up paid
+**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last "Hey
+Jarvis" (a word wake's greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`), or
+Jarvis on screen. It goes on across sessions (MAC-R2-3: app.js keeps it, `hiddenCount`): woken by claps in the
+background, a session starts from it, braked once it reached 3; it then hears its offer's answer once and takes only the
+routine's free answers (music, sleep); anything else gets the brake line and nothing is sent. A claps barge-in keeps the
+count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes, then the
+brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js; not
+a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector while he listens
+(MAC-V-1; nothing to interrupt there). While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up
+listen: Jarvis says "Say “Hey Jarvis” when you need me." and goes back to Standby (woken, Return to standby on:
+`S.sleepAfter`) or stops listening (`S.braked`, until the owner calls him again). A TV left on can't run up paid
 questions. On screen the count doesn't matter. The claps' room-talk guard stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →
@@ -4439,12 +4443,16 @@ no message and can't be missed.) No Web Locks (or a request that throws): `unsup
 (MAC-10: app.js passes no `createLock`, and Standby ignores one with `pauseWhenHidden`): a phone's Standby listens only
 on screen, so its windows can't both listen; a hidden, paused one holding the lock kept a second window on screen deaf.
 
-**Voice Mode in another window** (MAC-6): the Standby lock keeps two Standbys apart, but the owner may talk to Voice
-Mode (opened by a tap) in one window while a forgotten tab is on Standby. Voice Mode open in any window holds the Web
-Lock `jarvis-voice` in shared mode for its life (`holdVoiceLock()`, app.js, computers only). Standby's `voiceElsewhere`
-dep (`voiceOpenSomewhere()`: an exclusive `ifAvailable` request that gets nothing while any window holds it) is asked
-before each wake: while Voice Mode is open somewhere, two claps or "Hey Jarvis" don't wake this Standby (it stays on,
-listening). A window that closes lets go of the lock with it. Not on a phone (no check: a wake is at once, as before).
+**Jarvis busy in another window** (MAC-6, MAC-R2-1, MAC-R2-4): the Standby lock keeps two Standbys apart, but the owner
+may talk to Jarvis in one window while a forgotten tab is on Standby. A window holds the Web Lock `jarvis-voice`
+(shared: one hold per window, `createVoiceBusy()`, app.js, computers only) while it can hear the owner or is answering:
+every listen of the shared `sttDevice` (the chat box's microphone, Voice Mode, a viewer's or Optics' microphone, the
+hands-free Test), and Voice Mode's own work (`onActive`: a listen, the 2-second check, a turn, speech). It lets go about
+2 s after the last one stops, and at once when Voice Mode closes. Standby's `voiceElsewhere` dep
+(`voiceBusyElsewhere()`: `navigator.locks.query()`, this window's own hold not counted) is asked before each wake: while
+another window is busy, two claps or "Hey Jarvis" don't wake this Standby (it stays on, listening). An idle Voice Mode
+left open holds nothing, so it no longer keeps Standby deaf. A window that closes lets go of the lock with it. Not on a
+phone (no check: a wake is at once, as before).
 
 **Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
 Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,
@@ -4776,9 +4784,10 @@ A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says t
 reason `'command'` and the sheet opens. A woken session isn't over for good then (MAC-2): Standby stays woken (its lock
 held, a microphone kept for barge-in let go: `standby.rest()`) and app.js resumes it once the sheet that opened is
 closed, after a minute without a click, key, scroll or touch, or at once while Jarvis is hidden (nobody looks at the
-sheet there); it comes back above a sheet still open. A tapped session, or Return to standby off: as before. From a
-hologram's or Optics' field the viewers close first and the line is a toast. The model and the mode stay in Settings
-(they change costs).
+sheet there); it comes back above a sheet still open. While the owner talks to Jarvis meanwhile (the voice button), the
+wait pauses; that tapped session's close starts it again instead of letting Standby go (MAC-R2-2). Otherwise a tapped
+session, or Return to standby off: as before. From a hologram's or Optics' field the viewers close first and the line is
+a toast. The model and the mode stay in Settings (they change costs).
 
 **Tests.** test/unit/command-router.test.mjs registers today's matchers and every src/ui/commands module (with fake deps),
 as app.js does, and runs over every builder's section of test/unit/fixtures/voice-corpus.mjs and collisions.mjs and

@@ -337,7 +337,8 @@ Mode or Optics first.
 - **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
   so, Voice Mode closes, and it opens as if you had tapped it. If Standby woke him, Standby comes back by
   itself once you close it, or after a minute with no click or key (it comes back above it, and what you
-  opened stays underneath); with Jarvis in the background, right away.
+  opened stays underneath); with Jarvis in the background, right away. If you talk to Jarvis meanwhile (the
+  voice button), Standby comes back after that conversation the same way.
 - **In a hologram's field or Optics' field** a few words are that viewer's question instead. Typed in a
   hologram's field, "open optics", "close the camera", "research this", "which microphone are you
   using?", "is Jarvis for Chrome linked?" and "brief me" go to Jarvis as a question. In Optics' field
@@ -364,7 +365,9 @@ other windows, minimized, or with the display asleep.
   Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you
   need me." and goes back to Standby (or just stops listening, if you started with a tap). A TV left on can't run
   up paid questions. Two claps can still stop him while he talks, but they don't start the count again (a door or
-  a bang on TV sounds like claps).
+  a bang on TV sounds like claps), not even by waking him again: after the brake, a wake by claps in the background
+  takes only his free answers ("play it", "go back to sleep"), until "Hey Jarvis", a tap or a key, or Jarvis on
+  screen.
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
@@ -376,8 +379,9 @@ other windows, minimized, or with the display asleep.
 - **One Jarvis per Mac answers.** If Jarvis is open in two windows (the installed app and a forgotten tab, say),
   only one listens on Standby. The other says "Standby is on in another Jarvis window"; click **Use this window** to
   move Standby there. When you leave Standby in the one listening, the others leave Standby too, so no microphone
-  turns on by itself; only when its window closes does the next one take over by itself. While Voice Mode is open
-  in one window, Standby in another doesn't wake: "Hey Jarvis, …" said to Voice Mode gets one answer.
+  turns on by itself; only when its window closes does the next one take over by itself. While Jarvis listens or
+  answers in one window (Voice Mode, the chat box's microphone, a hologram's or Optics' microphone), Standby in
+  another doesn't wake: "Hey Jarvis, …" said there gets one answer. A Voice Mode left open and idle doesn't stop it.
 - **Turn it off** with Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background (Mac)**.
   Then he greets you from the background and waits for you to switch to him, as before.
 - **Standby when Jarvis starts.** With "Hey Jarvis" on, Jarvis opens Standby by himself when he starts (after a
@@ -1359,8 +1363,8 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   - **One window listens.** With Jarvis open in two windows, only one listens on Standby. Another
     takes over by itself only when that window closes; when you leave Standby, the others leave it
     too, so no microphone turns on by itself. **Use this window** moves it when you choose. A window
-    you open while another is on Standby doesn't open Standby by itself. While Voice Mode is open in
-    one window, Standby in another doesn't wake.
+    you open while another is on Standby doesn't open Standby by itself. While Jarvis listens or
+    answers in one window, Standby in another doesn't wake (an idle Voice Mode left open doesn't count).
   - **Chrome's questions are said out loud** (Jarvis for Chrome: "Chrome asks: …"), in Voice Mode and
     at the next wake, and he listens up to 30 seconds for your answer, so anyone in the room can hear
     them. With Voice Mode closed, a notification says Chrome is asking instead.

@@ -135,6 +135,13 @@
 //                           it speaks …) into the app's state; heard() carries out what it picks
 //                           (act()). Without one, only Voice Mode's own words are local.
 //   holdCapMs             v8.1 (tests: 'jarvis.dev.voice'): a shorter cap for hold() than its 2 minutes
+//   hiddenCount           MAC-R2-3: { get() -> { asked, braked }, set({ asked, braked }) }: the hidden count (A6) kept
+//                           by the app across sessions. Woken by claps in the background, a session goes on from it
+//                           (after the brake it starts braked: only the routine's free answers); "Hey Jarvis", a tap or
+//                           key, or Jarvis on screen start it again. Without it: each session from 0, as before.
+//   onActive(on, { now }) MAC-R2-1: true while Voice Mode can hear the owner or is answering (a listen, the 2-second
+//                           check, a turn, speech), false when it sits idle; at close, false with { now: true }. The
+//                           app's voice lock follows it (a Standby in another window stays asleep only meanwhile).
 //   listenWhileHidden     v8.1 (Track 1 fills it): () -> boolean, Voice Mode goes on listening while
 //                           Jarvis is hidden (a Mac). Default () => false: away() is document.hidden.
 //                           v8.1 hands-free (SPEC §28.1): with it, such a session also restarts its
@@ -338,6 +345,8 @@ function createVoiceMode(opts) {
     router,
     listenWhileHidden,
     holdCapMs,
+    onActive,
+    hiddenCount,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -386,6 +395,7 @@ function createVoiceMode(opts) {
     typingForced: false, // S.typing was set by a voice-input error, not by the owner (it doesn't hold off Standby)
     awayNoted: false, // this session's "Jarvis is listening" notification was shown
     deaf: false, // the recognizer failed in the background: said once; no more listening there
+    active: false, // MAC-R2-1: last told to onActive (he can hear the owner or is answering)
   };
   let runFrame = 0; // pending requestAnimationFrame for run rendering
   let levelFrame = 0; // audio-level animation loop
@@ -1163,6 +1173,7 @@ function createVoiceMode(opts) {
   function setVoiceState(next) {
     S.state = next;
     root.dataset.state = next;
+    reportActive(next);
     if (handsFree()) callQuietly(() => sessionTitle(next)); // v8.1 (A1): "Listening · Jarvis" while hidden
     if (next !== 'idle' && next !== 'offline') disarmSleep();
     try {
@@ -1177,6 +1188,19 @@ function createVoiceMode(opts) {
     renderControls();
     updateLevelLoop();
     if (next === 'listening' || next === 'speaking') keepAwake();
+  }
+
+  /**
+   * MAC-R2-1: tell the app (onActive) whether this Voice Mode can hear the owner or is answering: a listen (or one about
+   * to start again), the 2-second check, a turn or speech. Idle, an error or offline: not. The app's voice lock follows
+   * it, so a Standby in another window stays asleep only while Jarvis is busy here, never while he merely sits open.
+   */
+  function reportActive(state) {
+    if (typeof onActive !== 'function' || S.closed) return;
+    const on = state === 'listening' || state === 'thinking' || state === 'working' || state === 'speaking' || !!(S.listen || S.review || S.run || S.speech || S.retryTimer);
+    if (on === S.active) return;
+    S.active = on;
+    callQuietly(() => onActive(on));
   }
 
   function setStatus(text, ic) {
@@ -1330,6 +1354,10 @@ function createVoiceMode(opts) {
 
   function onVisibility() {
     if (S.closed) return;
+    if (!document.hidden) {
+      S.asked = 0; // MAC-R2-3: Jarvis on screen: the hidden count starts again
+      S.braked = false;
+    }
     if (away()) {
       // Pause listening (including a listen that was about to start again).
       const wasListening = !!S.listen || !!S.retryTimer;
@@ -3051,6 +3079,14 @@ function createVoiceMode(opts) {
     hold.heard(); // the owner's words: a held session's 2 minutes start again
     // Woken from Standby: "wake up, daddy's home" (the greeting), then the answer to its offer.
     if (S.wake && wakeHeard(readings)) return;
+    // MAC-R2-3: braked in the background (woken by claps after the brake): nothing but the routine's free answers;
+    // other words get the brake line again, and nothing is sent.
+    if (brakedHidden()) {
+      S.wake = null;
+      showCaption('quote', `“${text}”`);
+      brake();
+      return;
+    }
     const parts = partNamesNow();
     const local = routeLocal(readings, parts);
     let hit = chromeCheckFirst(routeWords(readings, local)); // v8.1 chrome-voice: a check counting was asked last
@@ -4422,6 +4458,7 @@ function createVoiceMode(opts) {
    */
   function startWake() {
     S.wakeSession = true;
+    startCount();
     C.hiddenIdle = false; // v8.1 chrome-voice: woken, the owner is here
     const W = { phase: 'opening', offer: null, timer: 0, hidden: !!document.hidden };
     S.wake = W;
@@ -4472,8 +4509,8 @@ function createVoiceMode(opts) {
     // v8.1 (D3): what waited for the owner comes first ("Chrome is waiting for you: …"), then the greeting.
     const line = [...wakePendingLines(), greetingLine({ now: new Date(), name, home }), suggestionLine({ artist: music ? music.artist : '', part })].join(' ');
     W.line = line;
-    S.asked = 0; // v8.1 (A6): woken: the questions count from here
-    S.braked = false;
+    startCount(); // v8.1 (A6), MAC-R2-3: woken by "Hey Jarvis" (or on screen) the questions count from here; by claps
+    // in the background they go on from the last sessions
     if (music) {
       showMusicCard(music.segment, { fresh: true });
       S.noRelisten = false; // the offer waits for an answer, not for a tap
@@ -4485,6 +4522,33 @@ function createVoiceMode(opts) {
     }
     speakAck(line);
     noteAway(); // v8.1 (A1): woken in the background on a Mac: one notification ("Jarvis is listening …")
+  }
+
+  /**
+   * MAC-R2-3: where this woken session's hidden count starts. "Hey Jarvis", or Jarvis on screen (or no hands-free here):
+   * from 0. Two claps in the background (the weak signal: a knock, a bang on TV): from the count the app kept across
+   * sessions, braked once it reached HANDS_FREE.hiddenQuestions (a TV can't buy 3 more paid questions per false bang).
+   */
+  function startCount() {
+    if (wake.trigger === 'word' || !document.hidden || !handsFree()) {
+      S.asked = 0;
+      S.braked = false;
+      return;
+    }
+    let c = null;
+    try {
+      c = hiddenCount && typeof hiddenCount.get === 'function' ? hiddenCount.get() : null;
+    } catch {
+      c = null;
+    }
+    const asked = c && Number.isFinite(Number(c.asked)) ? Math.max(0, Number(c.asked)) : 0;
+    S.asked = asked;
+    S.braked = !!(c && c.braked) || asked >= HANDS_FREE.hiddenQuestions;
+  }
+
+  /** MAC-R2-3: braked in the background (a session that started braked): only the routine's free answers are taken. */
+  function brakedHidden() {
+    return S.braked && !!document.hidden && handsFree();
   }
 
   /** v8.1 (D3): the lines said before the greeting (wake.pending()), tidied; [] without the hook. */
@@ -4543,8 +4607,9 @@ function createVoiceMode(opts) {
       // the owner (D3: the speakerphone line, Chrome's question) is said before its answer instead of the greeting.
       S.wake = null;
       clearTimeout(W.timer);
-      const waited = wakePendingLines().join(' ');
-      if (waited) S.preface = { text: waited, at: Date.now() };
+      // MAC-R2-5: asked for only when an answer says them (a free command, a check withdrawn or a turn that fails
+      // first leave them for the next greeting: wake.pending() counts a line it gives as said).
+      S.preface = { lazy: true, at: Date.now() };
       return false;
     }
     if (W.phase !== 'asking') return false;
@@ -4559,6 +4624,10 @@ function createVoiceMode(opts) {
         if (offer && offer.playText && musicCommand(offer.playText, offer.found ? { found: offer.found } : null)) return true;
         showCaption('quote', `“${words}”`);
         speakAck('I couldn’t find the music just now.');
+        return true;
+      }
+      if (reply === 'brief' && brakedHidden()) {
+        brake(); // MAC-R2-3: braked: the briefing waits for "Hey Jarvis" or a tap
         return true;
       }
       if (reply === 'brief') {
@@ -4791,18 +4860,32 @@ function createVoiceMode(opts) {
     startEstimator(sp);
     renderControls();
     if (R.preface) {
-      const line = R.preface;
+      const line = prefaceText(R.preface);
       R.preface = '';
-      appendLive(sp, `${line} `);
+      if (line) appendLive(sp, `${line} `);
     }
     return sp;
   }
 
-  /** v8.1: a short line said before the next turn's answer ("New look."), if it is still fresh. */
+  /**
+   * v8.1: a short line said before the next turn's answer ("New look."), if it is still fresh. MAC-R2-5: the wake's
+   * waiting lines come as a function, asked for only as the answer starts to say them (prefaceText()).
+   */
   function takePreface() {
     const p = S.preface;
     S.preface = null;
-    return p && Date.now() - p.at < 15000 ? p.text : '';
+    if (!p || Date.now() - p.at >= 15000) return '';
+    return p.lazy ? () => wakePendingLines().join(' ') : p.text;
+  }
+
+  /** MAC-R2-5: a turn's preface as text (a lazy one is asked for now, as it is said). */
+  function prefaceText(p) {
+    if (typeof p !== 'function') return p || '';
+    try {
+      return String(p() || '');
+    } catch {
+      return '';
+    }
   }
 
   function appendLive(sp, piece) {
@@ -4834,7 +4917,7 @@ function createVoiceMode(opts) {
 
   /** The answer said at the end, after the turn's preface ("New look.") when its live speech never said it. */
   function withPreface(R, text) {
-    const line = R && R.preface ? R.preface : '';
+    const line = R && R.preface ? prefaceText(R.preface) : '';
     if (R) R.preface = '';
     return line ? `${line} ${text}` : text;
   }
@@ -5234,8 +5317,11 @@ function createVoiceMode(opts) {
       goIdle('answered');
       return;
     }
+    // MAC-R2-3: a woken session that started braked still hears the answer to its offer, once (only the routine's free
+    // answers count: anything else gets the brake line).
+    const offerBraked = S.braked && !!S.wake && S.wake.phase === 'asking' && !(S.deaf && document.hidden);
     // v8.1 (A1, A6): the brake was said, or he can't hear in the background: no more listening there.
-    if (S.braked || (S.deaf && document.hidden)) {
+    if ((S.braked && !offerBraked) || (S.deaf && document.hidden)) {
       goIdle('answered');
       if (S.deaf && S.wakeSession) armSleep(SLEEP_FAILED_MS);
       return;
@@ -5248,7 +5334,7 @@ function createVoiceMode(opts) {
     // is hidden listen once for a follow-up (8 s); while hidden, after 3 questions in a row without the wake words,
     // a tap or a key: the brake. Elsewhere (an iPhone, the setting off): today's rule.
     const hf = handsFree();
-    const plan = once ? null : followUp({ woken: S.wakeSession && hf, away: !!document.hidden && hf, continuous: S.continuous, asking, asked: S.asked });
+    const plan = once ? null : offerBraked ? { listen: true, brake: false, noSpeechMs: HANDS_FREE.followUpMs, tries: 1 } : followUp({ woken: S.wakeSession && hf, away: !!document.hidden && hf, continuous: S.continuous, asking, asked: S.asked });
     if (plan && plan.brake) {
       brake();
       return;
@@ -5518,6 +5604,11 @@ function createVoiceMode(opts) {
     if (S.closed) return;
     S.closed = true;
     disarmSleep();
+    // MAC-R2-1: closed: the app's voice lock goes at once (also when it was idle, waiting its moment to go).
+    if (typeof onActive === 'function') callQuietly(() => onActive(false, { now: true }));
+    S.active = false;
+    // MAC-R2-3: the hidden count goes on in the next session (only while Jarvis is in the background).
+    if (hiddenCount && typeof hiddenCount.set === 'function') callQuietly(() => hiddenCount.set(document.hidden && handsFree() ? { asked: S.asked, braked: S.braked } : { asked: 0, braked: false }));
     callQuietly(() => sessionTitle(null)); // v8.1 (A1): the tab title comes back
     if (S.awayNoted) callQuietly(() => closeNotify(SESSION_NOTE)); // and the session's notification goes
     if (current === instance) current = null;

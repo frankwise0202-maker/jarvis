@@ -485,6 +485,100 @@ test('MAC-7: on screen, the same one-breath wake shows no notification; with not
   assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, ANSWER);
 });
 
+// MAC-R2-1: the app's voice lock follows what Voice Mode does, not whether it is open: it is active while he listens,
+// checks, thinks or speaks, and not while he sits idle ("Ready"); closed, it ends at once.
+test('MAC-R2-1: Voice Mode tells the app when it can hear the owner or is answering, and when it sits idle; closing ends it at once', async (t) => {
+  const env = await voiceEnv(t, { noSpeechMs: 900 });
+  env.say(onlyAfter(0, Q));
+  const seen = [];
+  const vm = env.open({ answer: ANSWER, settings: { listenSend: 'show' }, extra: { onActive: (on, o = {}) => seen.push(o.now ? `${on}:now` : on) } });
+  await env.advance(200);
+  assert.equal(seen.at(-1), true, 'listening: active');
+  await until(env, () => env.log.spoken.some((s) => s.text === ANSWER && s.done), 'the answer, through the 2-second check');
+  assert.ok(!seen.includes(false), `active all through the check, the turn and the answer (${JSON.stringify(seen)})`);
+  await until(env, () => vm.state === 'idle', 'idle after the follow-ups heard nobody', 60000);
+  assert.equal(seen.at(-1), false, 'idle: no longer active');
+  vm.close();
+  assert.equal(seen.at(-1), 'false:now', 'closed: at once');
+});
+
+// MAC-R2-3: the hidden count (A6) goes on across sessions until "Hey Jarvis", a tap or key, or Jarvis on screen: a
+// false double bang after the brake used to start it again, and a TV got 3 more paid questions every time.
+test('MAC-R2-3: after the brake, two more claps-woken hidden sessions take no question (only the routine’s free answers), each ends with the brake line; a "Hey Jarvis" wake starts the count again', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say(() => 'what is the capital of Spain'); // the TV, in every listen (the claps' wake window ignores it)
+  let carried = { asked: 0, braked: false };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  const session = async (trigger, n) => {
+    env.open({ wake: env.wakeHooks({ trigger }), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+    await until(env, () => env.log.closes.length >= n, `session ${n} to end`, 240000);
+  };
+  await session('clap', 1);
+  assert.equal(env.log.turns.length, 3, 'the first: 3 questions, then the brake');
+  for (const n of [2, 3]) {
+    await session('clap', n);
+    assert.equal(env.log.turns.length, 3, `claps wake ${n}: no paid question (${env.log.turns.length})`);
+    assert.deepEqual(env.log.closes.at(-1), { reason: 'standby', wakeSession: true }, 'back to Standby');
+  }
+  assert.equal(env.log.spoken.filter((s) => s.text === 'Say “Hey Jarvis” when you need me.').length, 3, 'each wake ended with the brake line');
+  await session('word', 4); // "Hey Jarvis": the owner calls him
+  assert.ok(env.log.turns.length > 3, `"Hey Jarvis" starts the count again (${env.log.turns.length})`);
+});
+
+test('MAC-R2-3: braked after claps, the routine’s free answers still work ("play it", "go back to sleep"), and on screen the count doesn’t carry', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say((n) => (n === 0 ? null : 'go back to sleep'));
+  let carried = { asked: 3, braked: true };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+  await until(env, () => env.log.closes.length >= 1, 'the session to end', 60000);
+  assert.ok(env.log.spoken.some((s) => /^Very good, Tony/.test(s.text)), '"go back to sleep" taken (free)');
+  assert.equal(env.log.turns.length, 0);
+  // Jarvis on screen: the count starts again.
+  env.setHidden(false);
+  carried = { asked: 3, braked: true };
+  env.say(() => 'what is the capital of Spain');
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+  await until(env, () => env.log.turns.length >= 1, 'a question taken on screen', 60000);
+});
+
+// MAC-R2-5: a one-breath "Hey Jarvis, <free command>" took the speakerphone line (given once per absence) for a turn's
+// preface that never came: the line was never said. Now it is asked for only when an answer says it.
+test('MAC-R2-5: one breath "Hey Jarvis, play some AC/DC" (a free command) with the speakerphone away: the line isn’t taken, and the next wake’s greeting says it; a one-breath question still says it before its answer', async (t) => {
+  const LINE = 'I’m on the Mac’s speakers; the speakerphone isn’t connected.';
+  const { createWakePending } = await import('../../src/lib/wake/pending.js');
+  const music = { command: () => ({ handled: true, done: Promise.resolve({ ack: 'Here’s some AC/DC.' }) }) };
+  const router = { route: (readings) => (/^play\b/i.test(readings[0]) ? { id: 'music', layer: 'media', reading: readings[0], action: {} } : null), run: () => false };
+  for (const words of ['play some AC/DC', Q]) {
+    const env = await voiceEnv(t);
+    env.setHidden(true);
+    const st = { away: true, given: 0 };
+    const wp = createWakePending();
+    wp.add(() => {
+      if (!st.away) return null;
+      st.away = false; // awayLine(): given once per absence
+      st.given += 1;
+      return LINE;
+    });
+    env.say((n) => (n === 0 ? words : null));
+    env.open({ wake: env.wakeHooks({ trigger: 'word', pending: () => wp.lines() }), listenWhileHidden: () => true, answer: ANSWER, extra: { router, music } });
+    await until(env, () => env.log.spoken.some((s) => /AC\/DC|Paris/.test(s.text)), 'the answer');
+    await env.advance(30000);
+    const first = env.log.spoken.map((s) => s.text);
+    if (words === Q) {
+      assert.ok(first.some((x) => x.startsWith(`${LINE} `) && x.includes('Paris')), `said before the answer (${JSON.stringify(first)})`);
+      continue;
+    }
+    assert.equal(st.given, 0, 'not taken by a free command');
+    env.say(() => null);
+    env.open({ wake: env.wakeHooks({ trigger: 'clap', pending: () => wp.lines() }), listenWhileHidden: () => true });
+    await env.advance(8000);
+    assert.ok(env.log.spoken.some((s) => s.text.startsWith(`${LINE} Good`)), `the next greeting says it (${JSON.stringify(env.log.spoken.map((s) => s.text))})`);
+  }
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {
