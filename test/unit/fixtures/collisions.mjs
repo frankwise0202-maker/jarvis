@@ -34,8 +34,20 @@ export const VOICE = {
 };
 
 // ==== chrome-voice ====================================================================================
+// With Chrome's question open (or a Chrome check counting down), "stop Chrome" and "cancel Chrome" are
+// answers first (layer answer), before the stop layer's "stop Chrome".
 export const CHROME_VOICE = {
   rows: [
+    { words: 'stop Chrome', state: 'CV-prompt', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (which closes the question)' },
+    { words: 'cancel Chrome', state: 'CV-prompt', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
+    { words: 'stop Chrome', state: 'CV-prompt-chat', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (which closes the question)' },
+    { words: 'cancel Chrome', state: 'CV-prompt-chat', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
+    { words: 'stop Chrome', state: 'CV-buy', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (which closes the question)' },
+    { words: 'cancel Chrome', state: 'CV-buy', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
+    { words: 'stop Chrome', state: 'CV-budget', winner: 'chrome.prompt', why: 'Chrome asked: the answer layer takes it, and it stops the task (which closes the question)' },
+    { words: 'cancel Chrome', state: 'CV-budget', winner: 'chrome.prompt', why: 'Chrome asked: its no (Cancel, Deny or Stop), at once' },
+    { words: 'stop Chrome', state: 'CV-check', winner: 'chrome.prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
+    { words: 'cancel Chrome', state: 'CV-check', winner: 'chrome.prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
   ],
 };
 

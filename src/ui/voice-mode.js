@@ -156,6 +156,8 @@ import { openingIntent, standbyCommand, routineReply, answerParts, greetingLine,
 import { createVoiceTag } from './voice-tag.js';
 import { createQuestionStack, createPromptChannel, boundAction } from '../lib/voice-questions.js';
 import { createVoiceHold } from '../lib/voice-hold.js';
+import { ANSWER_WINDOW_MS, NOTHING_ASKED_LINE, WITHDRAWN_LINE, againLine, chooseAnswer } from '../lib/chrome-prompt-words.js';
+import { TASK_CHECK_HIDDEN_MS, TASK_CHECK_MS } from '../lib/chrome-task-words.js';
 import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
 
 export { splitSentences };
@@ -368,6 +370,13 @@ function createVoiceMode(opts) {
   // Standby while something holds it, at most 2 minutes after the owner's last words).
   const questions = createQuestionStack({ onAsk: (q, { again }) => askQuestion(q, again) });
   const prompts = createPromptChannel({ onSay: (p) => askQuestion(p, false) });
+  // v8.1 chrome-voice: the prompt channel's own part (see "v8.1 Jarvis for Chrome by voice" below).
+  //   check      the spoken check counting down: { kind: 'task' | 'approve', phase: 'saying' | 'counting' |
+  //              'paused', timer, until, ms, interrupted, spec }
+  //   askedAt    when the open prompt (askedKey) was last said; saidAt when that ended in full (the 30 s)
+  //   greeting   { id, line }: a prompt the wake greeting says ("Chrome is waiting for you: …")
+  //   lastDone   { text, at }: the last line spoken to the end
+  const C = { check: null, askedAt: 0, askedKey: 0, saidAt: 0, saidKey: 0, greeting: null, lastDone: null };
   const hold = createVoiceHold();
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
   let ownRouter = null; // without the app's router: one with today's matchers, for Voice Mode's own words
@@ -419,6 +428,8 @@ function createVoiceMode(opts) {
   // Apple Music: the Music card of a "play …" (or the cards of a reply's find_music calls, stacked)
   // sits under the captions.
   const musicEl = h('div', { class: 'vm-music', hidden: true, attrs: { 'data-testid': 'voice-music' } });
+  // v8.1 Jarvis for Chrome: its task card and prompt cards (src/ui/chrome-task.js) sit under the captions too.
+  const chromeEl = h('div', { class: 'vm-chrome', attrs: { 'data-testid': 'voice-chrome' } });
   const musicViews = new Map(); // segment id -> card view, in the order shown
   const MAX_VOICE_CARDS = 6;
   const capSub = h('p', { class: 'vm-cap-sub', hidden: true });
@@ -536,7 +547,7 @@ function createVoiceMode(opts) {
     },
     h('div', { class: 'vm-aura', attrs: { 'aria-hidden': 'true' } }),
     h('div', { class: 'vm-top' }, brand, contSwitch),
-    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, missionEl, readFull),
+    h('div', { class: 'vm-stage' }, coreBtn, statusEl, captions, reviewEl, capSub, musicEl, chromeEl, missionEl, readFull),
     h(
       'div',
       { class: 'vm-bottom' },
@@ -698,6 +709,24 @@ function createVoiceMode(opts) {
      * reserved (no other feature uses them). Questions never expire it, and it never expires them.
      */
     prompt: (spec) => openPrompt(spec),
+    /**
+     * v8.1 Jarvis for Chrome (chrome-voice, src/ui/chrome-task.js): say(line) says a line when Voice
+     * Mode is free (an open prompt doesn't stop it; a check does), false otherwise; check({ kind, show,
+     * say, cancelLine, onGo, onCancel(how), onCount(ms) }) the spoken check (said, then 2 s, or 5 s
+     * while hidden, with the microphone open: "cancel", "no", "stop" withdraw it; nothing goes out
+     * before it ends) -> { cancel(), go() }; card(view) shows a card under the captions; greeted(id,
+     * line) says the wake greeting carries prompt `id`'s line.
+     */
+    chrome: {
+      say: (line) => chromeSay(line),
+      check: (spec) => startCheck(spec),
+      card: (view) => showChromeCard(view),
+      // The wake greeting says the prompt `id` ("Chrome is waiting for you: …", the line): said there once.
+      greeted: (id, line) => {
+        C.greeting = typeof id === 'string' && typeof line === 'string' && line ? { id, line } : null;
+        return !!C.greeting;
+      },
+    },
     /**
      * v8.1 (contract (a); Track 2 fills the tour): say `text` (one step per line), spoken as kind
      * 'tour': { text, kind = 'tour', onChunk({ start, end }) (offsets in `text`, as each chunk starts
@@ -1490,6 +1519,7 @@ function createVoiceMode(opts) {
   function onPartial(L, value) {
     if (S.listen !== L) return;
     const text = toText(value).trim();
+    chromeHeard(text); // v8.1 chrome-voice: talking pauses a Chrome check; words taken back let it go on
     if (!text) {
       // The recognizer took the words back (a noise first heard as "uh"): they are never sent, and
       // the listen goes on as before them.
@@ -1651,6 +1681,7 @@ function createVoiceMode(opts) {
       }
       return;
     }
+    if (C.check && chromeHeard('')) return; // v8.1 chrome-voice: a Chrome check goes on (or ends) by itself
     if (L.stopRequested) {
       goIdle('ready');
       return;
@@ -2872,6 +2903,9 @@ function createVoiceMode(opts) {
     const parts = partNamesNow();
     const local = routeLocal(readings, parts);
     let hit = routeWords(readings, local);
+    // v8.1 chrome-voice: words that aren't a Chrome check's own (cancel, start now, "no, I said …")
+    // withdraw it (nothing goes to Chrome), and are routed as usual.
+    if (C.check && !(hit && hit.action && hit.action.do === 'chrome-check')) withdrawCheck(C.check, 'other');
     // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
     // of …?": anything but yes or no drops it, and the words are taken as usual).
     if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt')) questions.dropTop('dropped');
@@ -2893,7 +2927,8 @@ function createVoiceMode(opts) {
       speaking: !!S.speech,
       check: !!S.review,
       questions: questions.list(),
-      prompt: prompts.current(),
+      prompt: chromePromptView(),
+      chromeCheck: C.check ? { kind: C.check.kind } : null,
       replying: !!(S.run && S.run.run),
       standby: { available: canStandby(), open: false },
       voiceOpen: true,
@@ -2935,7 +2970,13 @@ function createVoiceMode(opts) {
       case 'question':
         return answerQuestion(hit, opts);
       case 'prompt':
-        return answerPrompt(hit, opts);
+      case 'chrome.prompt':
+        return answerPrompt(hit, readings, opts);
+      case 'chrome.task':
+      case 'chrome.ask':
+      case 'chrome.stop':
+      case 'chrome.status':
+        return actChrome(hit);
       case 'reply-building':
         // Said while a hologram of the reply builds (the owner tapped the viewer's mic): see below.
         if (!(S.run && S.run.run)) return false;
@@ -3195,7 +3236,7 @@ function createVoiceMode(opts) {
   function sayLine(text) {
     const line = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (S.closed || !line || !S.ttsOk) return false;
-    if (S.run || S.speech || S.review || questions.size() || prompts.current() || S.wake || S.mic) return false;
+    if (S.run || S.speech || S.review || questions.size() || prompts.current() || S.wake || S.mic || C.check) return false;
     const L = S.listen;
     if (L && (L.gesture || !S.continuous)) return false;
     if (L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening'))) return false;
@@ -3264,6 +3305,8 @@ function createVoiceMode(opts) {
   /** api.prompt(): the standing prompt, one at a time (see the api). */
   function openPrompt(spec) {
     if (S.closed || !spec || typeof spec !== 'object') return { update: () => false, close: () => false };
+    // v8.1 chrome-voice: a prompt already said in the wake greeting ("Chrome is waiting for you: …").
+    C.greeting = typeof spec.greeting === 'string' && spec.greeting ? { id: spec.id, line: spec.greeting } : null;
     return prompts.open(spec);
   }
 
@@ -3272,7 +3315,7 @@ function createVoiceMode(opts) {
    * owner's (a tap's, or any with Continuous off) or with words heard (sayLine()'s rule, v8.0).
    */
   function canSayNow() {
-    if (S.closed || S.run || S.speech || S.review || S.wake || S.mic) return false;
+    if (S.closed || S.run || S.speech || S.review || S.wake || S.mic || C.check) return false;
     const L = S.listen;
     if (L && (L.gesture || !S.continuous)) return false;
     return !(L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening')));
@@ -3293,7 +3336,8 @@ function createVoiceMode(opts) {
     if (S.closed || !q || !q.say) return;
     const isPrompt = !!q.answers;
     if (!again && canSayNow()) {
-      sayAsked(q.say);
+      if (isPrompt) sayPrompt(q);
+      else sayAsked(q.say);
       return;
     }
     S.pendingAsk = { q, isPrompt };
@@ -3305,12 +3349,16 @@ function createVoiceMode(opts) {
   /** The question (or prompt) waiting to be said, if it is still open: true when it is said now. */
   function sayPendingAsk() {
     const pending = S.pendingAsk;
+    if (C.check) return false; // v8.1 chrome-voice: never over a Chrome check; it is said after it
     S.pendingAsk = null;
     if (!pending || S.closed) return false;
     const { q, isPrompt } = pending;
     const open = isPrompt ? (prompts.current() || {}).key === q.key : questions.list().some((x) => x.key === q.key);
     if (!open) return false;
-    sayAsked(q.say);
+    if (isPrompt) {
+      if (greetedPrompt(q)) return false; // the wake greeting has just said it
+      sayPrompt(q);
+    } else sayAsked(q.say);
     return true;
   }
 
@@ -3325,16 +3373,7 @@ function createVoiceMode(opts) {
     return questions.answer(top.id, hit.action.choice, { words: hit.reading, via: 'voice' });
   }
 
-  /** The prompt answered by voice (Track 3 adds its rules): its onAnswer runs; with `check`, after the check. */
-  function answerPrompt(hit, opts = {}) {
-    const p = prompts.current();
-    if (!p || p.id !== hit.action.prompt) return false;
-    if (hit.action.check && !opts.reviewed) {
-      startReview(hit.reading, { action: hit });
-      return true;
-    }
-    return prompts.answer(p.id, hit.action.answer, { words: hit.reading, via: 'voice' });
-  }
+  // answerPrompt(): see "v8.1 Jarvis for Chrome by voice" below.
 
   /** api.narrate(): a tour's words, spoken as kind 'tour' with its chunk events (see the api). */
   function narrate(spec = {}) {
@@ -3377,6 +3416,284 @@ function createVoiceMode(opts) {
   /** api.release(): once nothing holds it, the usual return to Standby applies again. */
   function releaseSession(reason) {
     if (hold.release(reason) && !S.closed && S.wakeSession && S.sleepTimer) armSleep(S.idleReason === 'silent' ? SLEEP_SILENT_MS : SLEEP_IDLE_MS);
+  }
+
+
+  // ================================================== v8.1 Jarvis for Chrome by voice (chrome-voice)
+  // The prompt channel's internals (contract (a) api.prompt; brief G5) and the spoken check (G4; the
+  // lead's decision D2). src/ui/chrome-task.js drives them through api.prompt and api.chrome.
+  //   - A prompt is said once Voice Mode is free (askQuestion → sayPrompt), with one listen after it.
+  //     Said to the end, it opens the 30-second window for a yes; cut short (barge-in), it is said again
+  //     first. A prompt the wake greeting said ("Chrome is waiting for you: …") counts as said there.
+  //   - Its answers (the router's 'chrome.prompt', matchChromeAnswer): a no acts at once. A yes counts
+  //     only from the best reading, within the window, and when no other reading is a no, cancel or
+  //     stop word (else Jarvis says why and asks again); then the check ("Approving: … · say cancel"),
+  //     and only then onAnswer, which sends it with the prompt's hash.
+  //   - The spoken check (a task's "Chrome, up to a dollar: … Say cancel to stop.", or a yes's): said,
+  //     then 2 s (5 s while Jarvis is hidden) with the microphone open; talking pauses it; "cancel",
+  //     "no" or "stop" withdraws it; "no, I said …" withdraws it and routes the new words from the top;
+  //     a barge-in followed by silence withdraws it; "start now" lets it go. Nothing goes to Chrome
+  //     before it ends, and closing Voice Mode withdraws it.
+
+  /** The open prompt as the router sees it (state.prompt): its answers, and when it was asked and said. */
+  function chromePromptView() {
+    const p = prompts.current();
+    if (!p) return null;
+    return { ...p, chrome: true, askedAt: C.askedKey === p.key ? C.askedAt : 0, saidAt: C.saidKey === p.key ? C.saidAt : 0 };
+  }
+
+  /** Say the prompt (`before`: a line first, said with it), with one listen for its answer after it. */
+  function sayPrompt(p, before = '') {
+    if (S.listen) stopListening();
+    clearRetry();
+    C.askedAt = Date.now();
+    C.askedKey = p.key;
+    C.saidKey = p.key;
+    C.saidAt = 0; // the window opens when this saying ends
+    const line = before ? `${before} ${p.say}` : p.say;
+    if (!S.ttsOk) {
+      // No voice here: shown is all there is, so it counts as said.
+      renderSpoken(line, 'answer');
+      finishKaraoke();
+      C.saidAt = Date.now();
+      afterSpeech();
+      return;
+    }
+    speak(line, 'ack', 0, { onEnd: (how) => promptSpoken(p, how), listenAfter: { noSpeechMs: ANSWER_WINDOW_MS } });
+  }
+
+  function promptSpoken(p, how) {
+    const cur = prompts.current();
+    if (!cur || cur.key !== p.key) return;
+    if (how === 'done') C.saidAt = Date.now();
+    else if (how === 'interrupted') askQuestion(cur, true); // cut short: said again first, once Voice Mode is free
+  }
+
+  /** The wake greeting said this prompt to the end just now: it counts as said (and isn't said twice). */
+  function greetedPrompt(p) {
+    const g = C.greeting;
+    const done = C.lastDone;
+    if (!g || g.id !== p.id || !done || Date.now() - done.at > 3000 || !done.text.includes(g.line)) return false;
+    C.greeting = null;
+    C.askedAt = done.at;
+    C.askedKey = p.key;
+    C.saidKey = p.key;
+    C.saidAt = done.at;
+    return true;
+  }
+
+  /**
+   * The open prompt answered by voice (router ids 'chrome.prompt' and 'prompt'), a word for the check
+   * that counts down, or a Chrome answer with nothing asked. True when the words were taken.
+   */
+  function answerPrompt(hit, readings = [hit.reading], opts = {}) {
+    const a = hit.action || {};
+    if (a.do === 'chrome-check') return checkWords(a, readings);
+    if (a.do === 'chrome-nothing-asked') {
+      showCaption('quote', `“${hit.reading}”`);
+      speakAck(NOTHING_ASKED_LINE);
+      return true;
+    }
+    const p = prompts.current();
+    if (!p) return false;
+    const answerId = a.do === 'prompt-answer' ? (a.prompt === p.id ? a.answer : null) : a.answer;
+    const answer = (Array.isArray(p.answers) ? p.answers : []).find((x) => x && x.id === answerId);
+    if (!answer) return false;
+    showCaption('quote', `“${hit.reading}”`);
+    const words = hit.reading;
+    if (!answer.check) {
+      prompts.answer(p.id, answer.id, { words, via: 'voice' });
+      if (!S.speech && !S.closed && !C.check) goIdle('ready');
+      return true;
+    }
+    // A yes: only from the best reading (the router never takes it from another), in the window, and
+    // when no other reading is a no; then the check.
+    const verdict = chooseAnswer({ readings: [words, ...readings.filter((r) => r !== words)], answers: [answer], saidAt: C.saidKey === p.key && C.saidAt ? C.saidAt : null, now: Date.now() });
+    if (!verdict) return false;
+    if (verdict.again) {
+      sayPrompt(p, againLine(verdict.again));
+      return true;
+    }
+    const lines = answer.check && typeof answer.check === 'object' ? answer.check : {};
+    startCheck({
+      kind: 'approve',
+      show: lines.show || 'Approving · say cancel',
+      say: lines.say || 'Approving. Say cancel to stop.',
+      cancelLine: WITHDRAWN_LINE,
+      onGo: () => {
+        const now = prompts.current();
+        if (now && now.key === p.key) prompts.answer(p.id, answer.id, { words, via: 'voice' });
+      },
+    });
+    return true;
+  }
+
+  /** Words heard while a check counts down (matchChromeAnswer's 'chrome-check'). */
+  function checkWords(a, readings) {
+    const K = C.check;
+    if (!K) return false;
+    if (a.how === 'go') {
+      goCheck(K);
+      return true;
+    }
+    if (a.how === 'withdraw') {
+      withdrawCheck(K, 'voice');
+      return true;
+    }
+    // "No, I said …": the check goes, and the corrected words are routed again from the top (D2).
+    withdrawCheck(K, 'corrected');
+    if (a.words) heard(a.words, []);
+    return true;
+  }
+
+  /**
+   * The spoken check (api.chrome.check): `say` is said and `show` shown; once said, it counts 2 s (5 s
+   * while Jarvis is hidden) with one listen open, then onGo(). Never two at once (a new one withdraws
+   * the old one). -> { cancel(), go() }
+   */
+  function startCheck(spec = {}) {
+    const o = spec && typeof spec === 'object' ? spec : {};
+    if (S.closed) {
+      callQuietly(() => o.onCancel && o.onCancel('closed'));
+      return { cancel: () => false, go: () => false };
+    }
+    if (C.check) withdrawCheck(C.check, 'replaced');
+    const K = { kind: o.kind === 'approve' ? 'approve' : 'task', phase: 'saying', timer: 0, until: 0, ms: 0, interrupted: false, spec: o };
+    C.check = K;
+    clearRetry();
+    if (S.listen) stopListening();
+    const say = String(o.say || '').trim();
+    const done = (how) => {
+      if (C.check !== K) return;
+      if (how === 'interrupted') {
+        // A barge-in: the owner wants to talk. Their words decide; silence withdraws it.
+        K.phase = 'paused';
+        K.interrupted = true;
+        return;
+      }
+      countCheck(K); // said in full (or speech isn't working: the card and the caption show it)
+    };
+    if (say && S.ttsOk) speak(say, 'ack', 0, { onEnd: done, listenAfter: { noSpeechMs: TASK_CHECK_HIDDEN_MS + 2000 } });
+    else done('done');
+    return {
+      cancel: () => {
+        if (C.check !== K) return false;
+        endCheck();
+        if (S.speech) cancelSpeech();
+        if (!S.closed && !S.listen && !S.run) goIdle('ready');
+        return true;
+      },
+      go: () => (C.check === K ? (goCheck(K), true) : false),
+    };
+  }
+
+  /** Count the check down: 2 s after it was said, or 5 s while Jarvis is hidden. */
+  function countCheck(K) {
+    if (C.check !== K || S.closed) return;
+    clearTimeout(K.timer);
+    K.phase = 'counting';
+    K.ms = document.hidden ? TASK_CHECK_HIDDEN_MS : TASK_CHECK_MS;
+    K.until = Date.now() + K.ms;
+    K.timer = setTimeout(() => goCheck(K), K.ms);
+    showCaption('hint', String(K.spec.show || K.spec.say || ''));
+    setStatus(K.kind === 'task' ? 'Starting soon…' : 'Approving…', 'send');
+    callQuietly(() => K.spec.onCount && K.spec.onCount(K.ms));
+  }
+
+  /** The owner talks during a check (text), or the words were taken back or never came (''). True when the check took it. */
+  function chromeHeard(text) {
+    const K = C.check;
+    if (!K) return false;
+    if (text) {
+      if (K.phase === 'counting') {
+        clearTimeout(K.timer);
+        K.timer = 0;
+        K.phase = 'paused';
+      }
+      return true;
+    }
+    if (K.phase !== 'paused') return K.phase === 'counting';
+    if (K.interrupted) withdrawCheck(K, 'voice'); // cut short, and nothing said: nothing goes
+    else countCheck(K); // nothing said after all: the full time again
+    return true;
+  }
+
+  function endCheck(reason = '') {
+    const K = C.check;
+    if (!K) return null;
+    C.check = null;
+    clearTimeout(K.timer);
+    K.timer = 0;
+    if (reason === 'closed') callQuietly(() => K.spec.onCancel && K.spec.onCancel('closed'));
+    return K;
+  }
+
+  /** The check withdrawn: nothing goes out. `how`: 'voice' (said why), 'corrected', 'other', 'replaced'. */
+  function withdrawCheck(K, how) {
+    if (C.check !== K) return;
+    endCheck();
+    if (S.speech) cancelSpeech();
+    callQuietly(() => K.spec.onCancel && K.spec.onCancel(how));
+    if (how === 'voice' && !S.closed) {
+      showCaption('hint', '');
+      speakAck(String(K.spec.cancelLine || 'Okay.'));
+    }
+  }
+
+  /** The check ran out (or "start now"): it goes. */
+  function goCheck(K) {
+    if (C.check !== K || S.closed) return;
+    endCheck();
+    // Its listen, if it heard nothing, makes way for what comes next ("Chrome is on it.").
+    if (S.listen && !S.listen.text && !S.listen.heard) stopListening();
+    if (!S.speech && !S.listen && !S.run) goIdle('ready');
+    callQuietly(() => K.spec.onGo && K.spec.onGo());
+  }
+
+  /** api.chrome.say(): a line when Voice Mode is free (an open prompt doesn't stop it; a check does). */
+  function chromeSay(text) {
+    const line = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (!line) return true;
+    if (!canSayNow()) return false;
+    sayAsked(line);
+    return true;
+  }
+
+  /** api.chrome.card(): a Chrome card under the captions (it leaves when its view is destroyed). */
+  function showChromeCard(view) {
+    if (S.closed || !view || !view.el) return false;
+    chromeEl.appendChild(view.el);
+    return true;
+  }
+
+  /** "In Chrome, …", "click around for me", "stop Chrome", "what are you doing in Chrome?": run, then its line. */
+  function actChrome(hit) {
+    if (!router || typeof router.run !== 'function') return false;
+    let out;
+    try {
+      out = router.run(hit, { surface: 'voice', via: 'voice', reading: hit.reading, spoken: true, voice: api });
+    } catch (err) {
+      console.warn('[voice] the Chrome command failed', err);
+      out = false;
+    }
+    if (out === false) return false;
+    showCaption('quote', `“${hit.reading}”`);
+    Promise.resolve(out).then(
+      (o) => {
+        const line = o && typeof o.say === 'string' ? o.say : '';
+        if (S.closed || !line) return;
+        let tries = 0;
+        const sayIt = () => {
+          if (S.closed) return;
+          if (chromeSay(line)) return;
+          if ((tries += 1) < 25) setTimeout(sayIt, 400);
+        };
+        sayIt();
+      },
+      () => {},
+    );
+    if (!S.speech && !S.listen && !C.check && !S.run) goIdle('ready');
+    return true;
   }
 
   // ============================================================================ the wake routine
@@ -4086,6 +4403,7 @@ function createVoiceMode(opts) {
    */
   function afterSpeech(sp = null) {
     if (S.closed) return;
+    if (sp && sp.display) C.lastDone = { text: String(sp.display), at: Date.now() }; // v8.1 chrome-voice
     if (S.sleepAfter) {
       S.sleepAfter = false;
       closeToStandby();
@@ -4349,6 +4667,7 @@ function createVoiceMode(opts) {
     levelFrame = 0;
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
     callQuietly(() => questions.clear('closed'));
+    callQuietly(() => endCheck('closed')); // v8.1 chrome-voice: a Chrome check withdrawn, nothing sent
     callQuietly(() => prompts.close());
     S.pendingAsk = null;
     S.heldWords = '';

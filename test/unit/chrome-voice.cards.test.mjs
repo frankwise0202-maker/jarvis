@@ -62,13 +62,16 @@ test('the task card: the check with the price and Cancel, then the status, the l
   const r = await p.evaluate(() => {
     const { createTaskCard } = window.__mods.cards;
     const seen = [];
-    const view = createTaskCard({ onStop: () => seen.push('stop'), onCancel: () => seen.push('cancel'), onDismiss: () => seen.push('dismiss') });
+    const view = createTaskCard({ onStop: () => seen.push('stop'), onCancel: () => seen.push('cancel'), onStartNow: () => seen.push('start'), onDismiss: () => seen.push('dismiss') });
     document.body.append(view.el);
     const q = (id) => view.el.querySelector(`[data-testid="chrome-task-card-${id}"]`);
     const vis = (el) => !!el && !el.hidden && el.getClientRects().length > 0;
     const out = {};
-    view.update({ phase: 'checking', text: 'find a 4K monitor under $300 <img src=x onerror=alert(1)>', line: 'Chrome, up to a dollar: find a 4K monitor. Say cancel to stop.', checkMs: 2000 });
-    out.checking = { status: view.el.dataset.status, pill: q('status').textContent, text: q('text').textContent, check: q('check').textContent, cancel: vis(q('cancel')), stop: vis(q('stop')), imgs: view.el.querySelectorAll('img').length };
+    view.update({ phase: 'checking', text: 'find a 4K monitor under $300 <img src=x onerror=alert(1)>', line: 'Chrome, up to a dollar: find a 4K monitor. Say cancel to stop.' });
+    out.saying = { counting: view.el.dataset.counting || null };
+    view.update({ phase: 'checking', text: 'find a 4K monitor under $300 <img src=x onerror=alert(1)>', line: 'Chrome, up to a dollar: find a 4K monitor. Say cancel to stop.', checkMs: 2000, countAt: Date.now() });
+    out.checking = { status: view.el.dataset.status, pill: q('status').textContent, text: q('text').textContent, check: q('check').textContent, cancel: vis(q('cancel')), start: vis(q('start')), stop: vis(q('stop')), imgs: view.el.querySelectorAll('img').length };
+    q('start').click();
     q('cancel').click();
     view.update({ phase: 'running', text: 'find a 4K monitor', step: 'Clicked "Add to Cart" next to the 27-inch monitor', costUsd: 0.08, limitUsd: 1 });
     out.running = { pill: q('status').textContent, step: q('step').textContent, cost: q('cost').textContent, stop: vis(q('stop')), cancel: vis(q('cancel')), check: vis(q('check')), dismiss: vis(q('dismiss')) };
@@ -79,18 +82,20 @@ test('the task card: the check with the price and Cancel, then the status, the l
     out.seen = seen;
     return out;
   });
+  assert.deepEqual(r.saying, { counting: null }, 'no countdown until the line is said');
   assert.deepEqual(r.checking, {
     status: 'checking',
-    pill: 'Starting soon',
+    pill: 'Starting',
     text: '“find a 4K monitor under $300 <img src=x onerror=alert(1)>”',
     check: 'Chrome, up to a dollar: find a 4K monitor. Say cancel to stop.',
     cancel: true,
+    start: true,
     stop: false,
     imgs: 0,
   });
   assert.deepEqual(r.running, { pill: 'Working', step: 'Clicked "Add to Cart" next to the 27-inch monitor', cost: '8¢ of $1.00', stop: true, cancel: false, check: false, dismiss: false });
   assert.deepEqual(r.done, { pill: 'Done', answer: 'Added it.\nTotal $279.99.', step: false, cost: '$1.23 of $2.00', stop: false, dismiss: true });
-  assert.deepEqual(r.seen, ['cancel', 'stop', 'dismiss']);
+  assert.deepEqual(r.seen, ['start', 'cancel', 'stop', 'dismiss']);
   assert.deepEqual(p.problems, []);
 });
 

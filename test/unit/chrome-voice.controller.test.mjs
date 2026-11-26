@@ -66,12 +66,14 @@ test('a task by voice: the spoken check with the price binds the task, then it s
   assert.deepEqual(res, { ack: '', show: '' });
   assert.equal(t.v.checks.length, 1);
   const { spec } = t.v.checks[0];
+  assert.equal(spec.kind, 'task');
   assert.equal(spec.say, 'Chrome, up to a dollar: find a 4K monitor under $300 and add it to the cart. Say cancel to stop.');
   assert.equal(spec.show, spec.say);
-  assert.equal(spec.ms, 2000);
+  assert.equal(spec.cancelLine, 'Okay, nothing sent to Chrome.');
   assert.equal(t.fake.calls.startTask.length, 0, 'nothing is sent during the check');
   assert.equal(t.cv.checking(), true);
   assert.equal(t.cv.state().task.status, 'starting');
+  spec.onCount(2000); // Voice Mode said it in full and counts
   spec.onGo();
   await flush();
   assert.deepEqual(t.fake.calls.startTask, [{ text: TASK.text, chat: 'new' }], 'exactly the checked words');
@@ -87,18 +89,52 @@ test('a task by voice: the spoken check with the price binds the task, then it s
   assert.equal(t.cv.state().task.status, 'done');
 });
 
-test('the check waits 5 s while Jarvis is hidden, and "cancel" withdraws it: nothing is sent', async () => {
+test('"cancel" withdraws the check (Voice Mode says why), and a late go after it sends nothing', async () => {
   const t = setup({ hidden: true });
   t.cv.run(TASK);
-  assert.equal(t.v.checks[0].spec.ms, 5000);
-  t.v.checks[0].spec.onCancel();
+  t.v.checks[0].spec.onCancel('voice');
   await flush();
   assert.equal(t.fake.calls.startTask.length, 0);
-  assert.deepEqual(t.v.said, ['Okay, nothing sent to Chrome.']);
+  assert.deepEqual(t.v.said, [], 'the line is Voice Mode\'s (cancelLine), not said twice');
+  assert.equal(t.v.checks[0].cancelled, false, 'withdrawn by the check itself: not cancelled back');
   assert.equal(t.cv.checking(), false);
   t.v.checks[0].spec.onGo(); // a late timer after the cancel
   await flush();
   assert.equal(t.fake.calls.startTask.length, 0, 'a withdrawn check never sends');
+  // Corrected words or other words withdraw it quietly; Voice Mode closing too (the card shows it).
+  for (const how of ['corrected', 'other', 'replaced', 'closed']) {
+    const u = setup();
+    u.cv.run(TASK);
+    u.v.checks[0].spec.onCancel(how);
+    await flush();
+    assert.equal(u.fake.calls.startTask.length, 0, how);
+    assert.deepEqual(u.v.said, [], how);
+  }
+});
+
+test('Start now: the check ends at once (through Voice Mode\'s check, or the card\'s own countdown)', async () => {
+  const t = setup();
+  let went = 0;
+  t.v.check = (spec) => {
+    t.v.checks.push({ spec, cancelled: false });
+    return { cancel() {}, go: () => (went += 1, spec.onGo(), true) };
+  };
+  t.cv.run(TASK);
+  t.cv.startNow();
+  await flush();
+  assert.equal(went, 1);
+  assert.equal(t.fake.calls.startTask.length, 1);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const typed = setup({ voice: false });
+    typed.cv.run(TASK, { surface: 'chat' });
+    typed.cv.startNow();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(typed.fake.calls.startTask.length, 1, 'no wait for the 2 s');
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('"stop" during the check withdraws it; "stop" while a task runs stops it at once; nothing running: "Okay."', async () => {
@@ -145,7 +181,8 @@ test('not linked, offline, off, busy, at the cap: said plainly, nothing runs any
   assert.deepEqual(late.v.said, ['I can’t reach Chrome. Open the Jarvis window and keep it open.']);
   // No link at all (before chrome-relay's link exists): "not linked".
   const none = createChromeVoice({ link: null, voice: () => null, toast: () => {} });
-  assert.deepEqual(none.state(), { linked: false, online: false, task: null, contextUntil: 0, prompt: null });
+  assert.deepEqual(none.state(), { linked: false, online: false, task: null, contextUntil: 0 });
+  assert.equal(none.promptState(), null);
   assert.deepEqual(none.run({ do: 'chrome-ask' }), { ack: 'Chrome isn’t linked yet. Link it in Settings.', show: 'Jarvis for Chrome isn’t linked yet. Link it in Settings → Jarvis for Chrome.' });
 });
 
@@ -215,13 +252,13 @@ test('a prompt reaches Voice Mode\'s channel with the reserved answers; a yes go
   assert.equal(p.say, 'Chrome asks: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com? Say approve, or cancel.');
   const approve = p.answers.find((a) => a.id === 'approve');
   assert.deepEqual(approve.check, { show: 'Approving: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com · say cancel', say: 'Approving. Say cancel to stop.', ms: 2000 });
-  assert.equal(t.cv.state().prompt.id, 'p-cart');
+  assert.equal(t.cv.promptState().id, 'chrome:p-cart');
   assert.equal(t.cv.state().task.status, 'waiting');
   assert.equal(t.notices.length, 0, 'Voice Mode is open: no notification');
   // The channel did its check and hands over the answer: one decision, bound to the hash.
   await p.onAnswer('approve', { words: 'approve', via: 'voice' });
   assert.deepEqual(t.fake.calls.answer, [{ promptId: 'p-cart', hash: 'h-cart-1', choice: 'approve', via: 'voice' }]);
-  assert.equal(t.cv.state().prompt, null, 'answered: the extension closed it');
+  assert.equal(t.cv.promptState(), null, 'answered: the extension closed it');
   assert.equal(t.v.prompts[0].closed, true);
 });
 
@@ -251,7 +288,7 @@ test('a refusal is said, and the prompt stays open; a changed prompt goes out wi
   assert.deepEqual(stale.fake.calls.answer, [{ promptId: 'p-cart', hash: 'h-cart-1', choice: 'approve', via: 'voice' }]);
   assert.equal(stale.v.said.at(-1), 'Chrome didn’t take that: the question changed.');
   assert.deepEqual(stale.fake.openPrompts(), ['p-cart']);
-  assert.equal(stale.cv.state().prompt.id, 'p-cart');
+  assert.equal(stale.cv.promptState().id, 'chrome:p-cart');
 });
 
 test('"deny" and "cancel Chrome" go out at once; "stop Chrome" stops the task; a yes of another kind says what to say', async () => {
@@ -269,7 +306,7 @@ test('"deny" and "cancel Chrome" go out at once; "stop Chrome" stops the task; a
   t.fake.prompt(PROMPTS.budget);
   await t.v.prompts.at(-1).spec.onAnswer('stop', { words: 'stop Chrome', via: 'voice' });
   assert.equal(t.fake.calls.stopTask, 1);
-  assert.equal(t.cv.state().prompt, null, 'stopping closes the prompt');
+  assert.equal(t.cv.promptState(), null, 'stopping closes the prompt');
 });
 
 test('with Voice Mode closed or on Standby: a notification, closed when answered; waking says "Chrome is waiting for you: …"', async () => {
@@ -294,7 +331,7 @@ test('with Voice Mode closed or on Standby: a notification, closed when answered
   // Answered in the side panel: the notification closes, nothing is pending.
   t.fake.closePrompt('p-cart', 'clicked');
   assert.deepEqual(t.closed, ['chrome-prompt-p-cart', 'chrome-prompt-p-cart']);
-  assert.equal(t.cv.pending(), '');
+  assert.equal(t.cv.pending(), null);
 });
 
 test('the final answer with Voice Mode closed: a notification while hidden, a toast while on screen; lines wait while Voice Mode is busy', async () => {
@@ -330,4 +367,57 @@ test('a Chrome task never holds the session, and only the owner\'s words start o
   assert.equal(t.v.checks.length, 1);
   assert.equal(typeof t.v.hold, 'undefined');
   assert.ok(!('hold' in t.cv));
+});
+
+test('the link may come later (a getter): its listeners attach once it is there; a page it opens starts a Chrome context', async () => {
+  const fake = createFakeChromeLink();
+  let made = null;
+  const v = createFakeVoice();
+  delete v.card;
+  const cv = createChromeVoice({ link: () => made, voice: () => v, toast: () => {}, hidden: () => false });
+  assert.equal(cv.state().linked, false, 'no link yet');
+  made = fake.link;
+  assert.equal(cv.state().linked, true, 'found on the next look');
+  fake.prompt(PROMPTS.cart);
+  assert.equal(v.prompts.length, 1, 'its prompts reach Voice Mode');
+  assert.equal(cv.state().contextUntil, 0);
+  const r = await fake.link.open('https://www.bestbuy.com/', { rect: null, focus: true });
+  assert.deepEqual(r, { ok: true, site: 'bestbuy.com' }, 'open() answers as before');
+  assert.ok(cv.state().contextUntil > Date.now(), '"pull this up in Chrome" opened in the Jarvis window: a Chrome context');
+  const off = createFakeChromeLink({ online: false });
+  const cv2 = createChromeVoice({ link: off.link, voice: () => null, toast: () => {} });
+  await off.link.open('https://example.com/');
+  assert.equal(cv2.state().contextUntil, 0, 'not opened: no context');
+  cv.destroy();
+  cv2.destroy();
+});
+
+test('typed answers (the chat box): a no goes out via the card\'s path, a yes points to the card, click-only says where', async () => {
+  const t = setup({ voice: false });
+  t.fake.prompt(PROMPTS.cart);
+  const st = t.cv.promptState();
+  assert.equal(st.id, 'chrome:p-cart');
+  assert.equal(st.chrome, true);
+  assert.ok(st.askedAt > 0);
+  assert.deepEqual(st.answers.map((a) => a.id), ['approve', 'deny', 'stop', 'other']);
+  assert.deepEqual(t.cv.run({ do: 'chrome-answer', answer: 'approve' }, { surface: 'chat' }), { ack: 'Tap its button on the card to answer Chrome.', show: 'Tap its button on the card to answer Chrome.' });
+  assert.equal(t.fake.calls.answer.length, 0, 'typing isn\'t the check: no yes goes out');
+  assert.deepEqual(t.cv.run({ do: 'chrome-answer', answer: 'deny' }, { surface: 'chat' }), { ack: '', show: '' });
+  await flush();
+  assert.deepEqual(t.fake.calls.answer, [{ promptId: 'p-cart', hash: 'h-cart-1', choice: 'cancel', via: 'card' }]);
+  t.fake.prompt(PROMPTS.purchase);
+  assert.equal(t.cv.run({ do: 'chrome-answer', answer: 'click' }, { surface: 'chat' }).show, 'That’s a purchase. It needs a click in the Jarvis window. ⌥⇧J opens its side panel.');
+  assert.deepEqual(t.cv.run({ do: 'chrome-nothing-asked' }, { surface: 'chat' }), { ack: 'Chrome isn’t asking anything right now.', show: 'Chrome isn’t asking anything right now.' });
+  assert.equal(t.cv.run({ do: 'chrome-check', how: 'withdraw' }, { surface: 'chat' }), null, 'a check is Voice Mode\'s alone');
+});
+
+test('the wake greeting: pending() gives "Chrome is waiting for you: …" and tells Voice Mode the greeting says it', () => {
+  const t = setup();
+  const greeted = [];
+  t.v.greeted = (id, line) => greeted.push([id, line]);
+  assert.equal(t.cv.pending(), null, 'nothing waiting: no line');
+  t.fake.prompt(PROMPTS.cart);
+  const line = t.cv.pending();
+  assert.equal(line, 'Chrome is waiting for you: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com? Say approve, or cancel.');
+  assert.deepEqual(greeted, [['chrome:p-cart', line]]);
 });

@@ -18,12 +18,14 @@
 //   - The extension decides again when the answer comes (its voice policy, the prompt's hash, its age):
 //     the app only mirrors voice.allowed so it doesn't offer what will be refused.
 //
+//   matchChromeAnswer(text, state)    -> the router's answer layer ('chrome.prompt'): a check's words, a
+//                                        prompt's reserved words, a bare no asked last, or null
 //   promptAnswers(prompt)             -> the answers for api.prompt(): [{ id, choice, words, check, … }]
 //   chooseAnswer({ readings, answers, saidAt, now }) -> null | { answer, check } | { answer, again }
 //   promptLine(prompt)                -> { say, show }: "Chrome asks: …? Say approve, or cancel."
 //   approvingLine(prompt, answer, task) -> { say, show }: "Approving: … · say cancel"
 
-import { dollarsSaid, dollarsShown, sayable } from './chrome-task-words.js';
+import { dollarsSaid, dollarsShown, matchChromeStop, sayable } from './chrome-task-words.js';
 
 /** An answer counts this long after the prompt was said in full. */
 export const ANSWER_WINDOW_MS = 30000;
@@ -200,6 +202,77 @@ export function chooseAnswer({ readings, answers, saidAt = null, now = Date.now(
   if (now - saidAt > windowMs || now < saidAt) return { answer, again: 'late' };
   if (list.slice(1).some((r) => isNoWord(r))) return { answer, again: 'unsure' };
   return { answer, check: true };
+}
+
+// ------------------------------------------------------------------------- the answer layer
+
+// While a check counts down (a task's, or a yes to a prompt), as whole sentences: words that withdraw
+// it, and words that let it go at once. Anything else isn't the check's: Voice Mode withdraws the
+// check and routes the words as usual.
+const WITHDRAW_WORDS = /^(?:no|nope|nah|cancel|cancel it|cancel that|stop|stop it|stop now|wait|hold on|hold it|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|deny)$/;
+const GO_WORDS = /^(?:start now|start it now|start it|send it|send it now|go ahead|go|do it|do it now|yes start|yes go ahead|start)$/;
+// "No, I said the second one": a corrected task, routed again from the top (D2).
+const CORRECTION = /^\W*(?:(?:no|nope|nah)\W+)?(?:I\s+said|I\s+meant|I\s+mean|what\s+I\s+said\s+was)\W+(.+?)\W*$/i;
+
+/** The corrected words of "no, I said …" (with the owner's spelling), or ''. */
+export function correctionOf(text) {
+  const m = CORRECTION.exec(String(text ?? ''));
+  return m && m[1].trim().split(/\s+/).length >= 1 ? m[1].trim() : '';
+}
+
+/** The prompt was asked last: no open question was asked after it (one without a time loses to it only when alone). */
+function askedLast(state) {
+  const p = state.prompt;
+  const qs = Array.isArray(state.questions) ? state.questions.filter(Boolean) : [];
+  if (!qs.length) return true;
+  const at = Number(p && p.askedAt);
+  if (!Number.isFinite(at)) return false;
+  return qs.every((q) => Number.isFinite(q.askedAt) && q.askedAt <= at);
+}
+
+const answerAction = (a) => ({ free: true, undo: false, check: false, camera: false, ...a });
+
+/**
+ * The router's answer layer for Jarvis for Chrome (id 'chrome.prompt'). Pure. Never from another
+ * reading (undo: false); Voice Mode's prompt channel applies the 30-s window, the other readings and
+ * the check when it acts.
+ *   state.chromeCheck ({ kind: 'task' | 'approve' }, Voice Mode's): while a check counts down, "cancel",
+ *     "no", "stop" withdraw it; "no, I said …" corrects a task (routed again from the top); "start now"
+ *     / "send it" lets it go. -> { do: 'chrome-check', how: 'withdraw' | 'correct' | 'go', words? }
+ *     (Other words aren't its: Voice Mode withdraws the check and routes them as usual.)
+ *   state.prompt (the open Chrome prompt, with its answers, or the extension's fields): its reserved
+ *     words; a bare "cancel" or "no" when it was asked last. -> { do: 'chrome-answer', answer, bare? }
+ *   no prompt: a yes that names Chrome ("spend more in Chrome") -> { do: 'chrome-nothing-asked' }
+ */
+export function matchChromeAnswer(text, state = {}) {
+  const st = state && typeof state === 'object' ? state : {};
+  const check = st.chromeCheck && typeof st.chromeCheck === 'object' ? st.chromeCheck : null;
+  if (check) {
+    const fixed = check.kind === 'task' ? correctionOf(text) : '';
+    if (fixed) return answerAction({ do: 'chrome-check', how: 'correct', words: fixed });
+    const said = normalizeAnswer(text);
+    if (WITHDRAW_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'withdraw' });
+    if (GO_WORDS.test(said)) return answerAction({ do: 'chrome-check', how: 'go' });
+    return null;
+  }
+  const p = st.prompt && typeof st.prompt === 'object' && st.prompt.id ? st.prompt : null;
+  if (p) {
+    const answers = Array.isArray(p.answers) && p.answers.length ? p.answers : promptAnswers(p);
+    const said = normalizeAnswer(text);
+    if (!said || NEVER_ANSWERS.includes(said)) return null;
+    const hit = answers.find((a) => a && Array.isArray(a.words) && a.words.some((w) => normalizeAnswer(w) === said));
+    if (hit) return answerAction({ do: 'chrome-answer', answer: hit.id });
+    if (isBareNo(text) && askedLast(st)) {
+      const no = answers.find((a) => a && a.negative && !a.stopTask);
+      if (no) return answerAction({ do: 'chrome-answer', answer: no.id, bare: true });
+    }
+    return null;
+  }
+  // Nothing asked: a yes that names Chrome is still Chrome's, never Claude's. (A no or a stop that
+  // names Chrome goes on to the stop layer: "stop Chrome", "cancel Chrome".)
+  const kind = reservedKind(text);
+  if (kind && kind !== 'stop' && kind !== 'deny' && namesChromeAnswer(text) && !matchChromeStop(text)) return answerAction({ do: 'chrome-nothing-asked' });
+  return null;
 }
 
 /** How long the check after a yes waits: 2 s, or 5 s while Jarvis is hidden. */

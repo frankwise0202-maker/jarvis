@@ -27,6 +27,7 @@ import {
   DEFAULT_TASK_LIMIT_USD,
   NOTHING_TO_STOP_LINE,
   TASK_ASK_LINE,
+  TASK_CHECK_MS,
   TASK_CANCELLED_LINE,
   TASK_STARTED_LINE,
   dollarsShown,
@@ -41,6 +42,7 @@ import {
 } from '../lib/chrome-task-words.js';
 import {
   DENIED_LINE,
+  NOTHING_ASKED_LINE,
   answerHint,
   approveCheckMs,
   approvingLine,
@@ -66,7 +68,7 @@ const CLOSED_CARD_MS = 4000; // a prompt answered elsewhere: its card says so th
 // ---------------------------------------------------------------------------------- the views
 
 const STATUS_WORDS = {
-  checking: 'Starting soon',
+  checking: 'Starting',
   starting: 'Starting…',
   running: 'Working',
   waiting: 'Waiting for you',
@@ -90,10 +92,12 @@ function money(usd) {
 
 /**
  * The task card (in the chat and in Voice Mode): the owner's words, the status, the latest step,
- * the cost against its budget, the final answer; Cancel during the check, Stop while it runs.
- *   view.update({ phase, text, step, costUsd, limitUsd, answer, line, checkMs, checkUntil })
+ * the cost against its budget, the final answer; Cancel and Start now during the check (the lead's D2),
+ * Stop while it runs.
+ *   view.update({ phase, text, step, costUsd, limitUsd, answer, line, checkMs, countAt })
+ *   (countAt: when the check's countdown started, checkMs its length; the bar fills over it)
  */
-export function createTaskCard({ onStop = null, onCancel = null, onDismiss = null, testid = 'chrome-task-card' } = {}) {
+export function createTaskCard({ onStop = null, onCancel = null, onStartNow = null, onDismiss = null, testid = 'chrome-task-card' } = {}) {
   const kicker = h('span', { class: 'chrome-card-kicker hud-label', text: 'Chrome · from Jarvis' });
   const pill = h('span', { class: 'chrome-card-pill', attrs: { 'data-testid': `${testid}-status` } });
   const dismiss = h(
@@ -109,13 +113,14 @@ export function createTaskCard({ onStop = null, onCancel = null, onDismiss = nul
   const answer = h('p', { class: 'chrome-card-answer', hidden: true, attrs: { 'data-testid': `${testid}-answer` } });
   const meta = h('p', { class: 'chrome-card-meta', hidden: true, attrs: { 'data-testid': `${testid}-cost` } });
   const cancelBtn = h('button', { class: 'btn btn-sm chrome-card-cancel', type: 'button', hidden: true, attrs: { 'data-testid': `${testid}-cancel` }, on: { click: () => onCancel && onCancel() } }, h('span', { text: 'Cancel' }));
+  const startBtn = h('button', { class: 'btn btn-sm btn-primary chrome-card-start', type: 'button', hidden: true, attrs: { 'data-testid': `${testid}-start` }, on: { click: () => onStartNow && onStartNow() } }, h('span', { text: 'Start now' }));
   const stopBtn = h(
     'button',
     { class: 'btn btn-sm btn-danger-ghost chrome-card-stop', type: 'button', hidden: true, attrs: { 'data-testid': `${testid}-stop` }, on: { click: () => onStop && onStop() } },
     icon('stop', { size: 14 }),
     h('span', { text: 'Stop' }),
   );
-  const actions = h('div', { class: 'chrome-card-actions' }, cancelBtn, stopBtn);
+  const actions = h('div', { class: 'chrome-card-actions' }, startBtn, cancelBtn, stopBtn);
   const el = h(
     'section',
     { class: ['chrome-card', 'chrome-card--task', 'hud-frame'], attrs: { 'data-testid': testid, 'data-status': 'checking', role: 'group', 'aria-label': 'Chrome task' } },
@@ -129,6 +134,7 @@ export function createTaskCard({ onStop = null, onCancel = null, onDismiss = nul
     actions,
   );
   let barTimer = 0;
+  let barFrom = 0; // the countdown the bar shows (its start), so other updates don't restart it
 
   function update(m = {}) {
     const phase = STATUS_WORDS[m.phase] ? m.phase : 'running';
@@ -139,16 +145,21 @@ export function createTaskCard({ onStop = null, onCancel = null, onDismiss = nul
     const checking = phase === 'checking';
     setText(check, checking ? m.line || '' : phase === 'refused' || phase === 'cancelled' ? m.line || '' : '');
     check.hidden = !check.textContent;
+    const counting = checking && Number(m.checkMs) > 0 && Number(m.countAt) > 0;
     bar.hidden = !checking;
-    clearTimeout(barTimer);
-    if (checking && Number(m.checkMs) > 0) {
-      // The countdown: the bar fills over the check's time (CSS transition from 0 to 1).
-      el.style.setProperty('--chrome-check-ms', `${Math.round(Number(m.checkMs))}ms`);
+    if (counting && m.countAt !== barFrom) {
+      // The countdown: the bar fills over what is left of the check's time (a CSS transition).
+      barFrom = m.countAt;
+      clearTimeout(barTimer);
+      const left = Math.max(0, Number(m.checkMs) - Math.max(0, Date.now() - Number(m.countAt)));
+      el.style.setProperty('--chrome-check-ms', `${Math.round(left)}ms`);
       el.dataset.counting = 'false';
       barTimer = setTimeout(() => {
         el.dataset.counting = 'true';
       }, 30);
-    } else {
+    } else if (!counting) {
+      barFrom = 0;
+      clearTimeout(barTimer);
       delete el.dataset.counting;
     }
     const stepText = sayable(m.step, 240);
@@ -162,6 +173,7 @@ export function createTaskCard({ onStop = null, onCancel = null, onDismiss = nul
     setText(meta, spent ? (budget ? `${spent} of ${budget}` : spent) : '');
     meta.hidden = !meta.textContent || checking;
     cancelBtn.hidden = !checking;
+    startBtn.hidden = !checking;
     stopBtn.hidden = !RUNNING.has(phase);
     dismiss.hidden = !(FINAL.has(phase) || phase === 'refused' || phase === 'cancelled');
   }
@@ -291,8 +303,25 @@ const quiet = (fn, fallback = null) => {
 };
 
 /**
+ * The Voice Mode adapter the controller uses, made from Voice Mode's api (contract (a) and its
+ * api.chrome), or null when it has none.
+ */
+export function voiceAdapter(api) {
+  if (!api || typeof api !== 'object' || !api.chrome || typeof api.prompt !== 'function') return null;
+  return {
+    say: (line) => api.chrome.say(line),
+    check: (spec) => api.chrome.check(spec),
+    card: (view) => api.chrome.card(view),
+    greeted: (id, line) => (typeof api.chrome.greeted === 'function' ? api.chrome.greeted(id, line) : false),
+    prompt: (spec) => api.prompt(spec),
+    question: (spec) => api.question(spec),
+  };
+}
+
+/**
  * The controller. deps:
- *   link        app.chromeLink (contract (f)), or null before it exists (everything says "not linked")
+ *   link        app.chromeLink (contract (f)), or a function giving it (null until it exists: everything
+ *               says "not linked"). Its listeners are attached as soon as it is there.
  *   voice()     the Voice Mode adapter while Voice Mode is open and awake (not on Standby), else null
  *   dock        an element in the chat for the cards (optional)
  *   notify({ tag, title, body, onClick }), closeNotice(tag)   system notifications (attention.js)
@@ -303,7 +332,7 @@ const quiet = (fn, fallback = null) => {
  */
 export function createChromeVoice(deps = {}) {
   const {
-    link = null,
+    link: linkDep = null,
     voice = () => null,
     dock = null,
     notify = null,
@@ -327,9 +356,18 @@ export function createChromeVoice(deps = {}) {
     voiceOn: false, // the adapter was there last time we looked
     destroyed: false,
   };
-  const offs = [];
-  const linkOk = () => !!link && typeof link.state === 'function';
-  const linkState = () => (linkOk() ? quiet(() => link.state(), null) : null) || { linked: false, online: false, voiceApprovals: false, task: null };
+  let offs = [];
+  let attached = null; // the link our listeners are on
+  let attachTimer = 0;
+  const L = () => {
+    const l = typeof linkDep === 'function' ? quiet(() => linkDep(), null) : linkDep;
+    return l && typeof l === 'object' && typeof l.state === 'function' ? l : null;
+  };
+  const linkOk = () => !!attach();
+  const linkState = () => {
+    const l = attach();
+    return (l ? quiet(() => l.state(), null) : null) || { linked: false, online: false, voiceApprovals: false, task: null };
+  };
   const v = () => (S.destroyed ? null : quiet(() => voice(), null));
 
   // ---- lines: said in Voice Mode, else shown ----------------------------------------------------
@@ -365,13 +403,47 @@ export function createChromeVoice(deps = {}) {
     S.contextUntil = Math.max(S.contextUntil, now() + CHROME_CONTEXT_MS);
   }
 
+  // ---- the link ---------------------------------------------------------------------------------
+
+  /**
+   * The link, with our listeners on it (attached once it exists; again if it is replaced). A page that
+   * opens in the Jarvis window (G3, "pull this up in Chrome") starts a Chrome context: open() is watched
+   * for that (same arguments, same answer).
+   */
+  function attach() {
+    const l = L();
+    if (!l || l === attached || S.destroyed) return l;
+    for (const off of offs) if (typeof off === 'function') quiet(off);
+    offs = [];
+    attached = l;
+    clearInterval(attachTimer);
+    attachTimer = 0;
+    if (typeof l.subscribe === 'function') offs.push(quiet(() => l.subscribe(() => syncFromLink())));
+    if (typeof l.onPrompt === 'function') offs.push(quiet(() => l.onPrompt((p) => onPrompt(p))));
+    if (typeof l.onPromptClosed === 'function') offs.push(quiet(() => l.onPromptClosed((id) => onPromptClosed(id))));
+    if (typeof l.onDone === 'function') offs.push(quiet(() => l.onDone((d) => onDone(d))));
+    if (typeof l.open === 'function' && !l.__chromeVoiceOpen) {
+      const open = l.open;
+      quiet(() => {
+        l.open = function openWatched(...args) {
+          return Promise.resolve(open.apply(this, args)).then((r) => {
+            if (r && r.ok) noteContext();
+            return r;
+          });
+        };
+        Object.defineProperty(l, '__chromeVoiceOpen', { value: true });
+      });
+    }
+    return l;
+  }
+
   // ---- the task card ----------------------------------------------------------------------------
 
   function taskModel() {
     const pend = S.pendingTask;
     // A check (or a start refused) shows over the last task, except a refusal while one runs.
     if (pend && !pend.done && !(pend.refused && S.task && RUNNING.has(S.task.status))) {
-      return { phase: pend.cancelled ? 'cancelled' : pend.refused ? 'refused' : 'checking', text: pend.text, line: pend.line, checkMs: pend.ms };
+      return { phase: pend.cancelled ? 'cancelled' : pend.refused ? 'refused' : 'checking', text: pend.text, line: pend.line, checkMs: pend.ms, countAt: pend.countAt };
     }
     const t = S.task;
     if (!t) return null;
@@ -395,6 +467,7 @@ export function createChromeVoice(deps = {}) {
       testid,
       onStop: () => stopTask({ via: 'card' }),
       onCancel: () => cancelCheck('card'),
+      onStartNow: () => startNow(),
       onDismiss: () => dismissTask(),
     });
   }
@@ -446,9 +519,11 @@ export function createChromeVoice(deps = {}) {
   }
 
   /**
-   * A task from the owner's checked words: the spoken check with the price ("Chrome, up to a dollar:
-   * …. Say cancel to stop."), 2 s after it is said (5 s while hidden), then the start. In the chat (or
-   * with Voice Mode closed) the card counts down with its Cancel button instead.
+   * A task from the owner's checked words: one check (the lead's D2). In Voice Mode it is spoken with
+   * the price ("Chrome, up to a dollar: …. Say cancel to stop.") and counts 2 s once said (5 s while
+   * hidden) with the microphone open (voice-mode.js api.chrome.check). Typed (Voice Mode closed), the
+   * card shows the price and counts 2 s, nothing spoken. Either way the card has Cancel and Start now,
+   * and nothing goes to the extension before the countdown ends.
    */
   function startTaskFlow({ text, chat = 'new' }) {
     const words = String(text || '').trim();
@@ -461,8 +536,7 @@ export function createChromeVoice(deps = {}) {
     }
     cancelCheck('replaced', { quietly: true });
     const line = taskCheckLine({ text: words, limitUsd: S.baseUsd });
-    const ms = taskCheckMs({ hidden: quiet(() => hidden(), false) });
-    const pend = { text: words, chat: chat === 'same' ? 'same' : 'new', line, ms, check: null, timer: 0, cancelled: false, refused: false, done: false };
+    const pend = { text: words, chat: chat === 'same' ? 'same' : 'new', line, ms: 0, countAt: 0, check: null, timer: 0, cancelled: false, refused: false, done: false };
     S.pendingTask = pend;
     noteContext();
     renderTask();
@@ -471,30 +545,51 @@ export function createChromeVoice(deps = {}) {
       pend.check = quiet(
         () =>
           adapter.check({
+            kind: 'task',
             show: line,
             say: line,
-            ms,
+            cancelLine: TASK_CANCELLED_LINE,
             onGo: () => goTask(pend),
-            onCancel: () => cancelCheck('voice'),
+            onCancel: (how) => cancelCheck(how, { quietly: how !== 'closed', fromCheck: true }),
+            onCount: (ms) => {
+              if (S.pendingTask !== pend) return;
+              pend.ms = ms;
+              pend.countAt = now();
+              renderTask();
+            },
           }),
         null,
       );
       if (pend.check) return;
     }
-    // No Voice Mode: the card shows the price and counts down; its Cancel withdraws it.
-    pend.timer = setTimeout(() => goTask(pend), ms);
+    // Typed (no Voice Mode): the card shows the price and counts 2 s; Cancel withdraws it.
+    pend.ms = TASK_CHECK_MS;
+    pend.countAt = now();
+    renderTask();
+    pend.timer = setTimeout(() => goTask(pend), pend.ms);
   }
 
-  /** The check withdrawn ("cancel", Cancel, or a new task): nothing is sent. */
-  function cancelCheck(how, { quietly = false } = {}) {
+  /** "Start now" on the card: the check ends at once and the task goes. */
+  function startNow() {
+    const pend = S.pendingTask;
+    if (!pend || pend.done || pend.cancelled || pend.refused) return;
+    if (pend.check && typeof pend.check.go === 'function' && quiet(() => pend.check.go(), false)) return;
+    goTask(pend);
+  }
+
+  /**
+   * The check withdrawn: "cancel" (Voice Mode says why itself), the card's Cancel, a correction or other
+   * words (routed again), a new task, Voice Mode closing. Nothing is sent.
+   */
+  function cancelCheck(how, { quietly = false, fromCheck = false } = {}) {
     const pend = S.pendingTask;
     if (!pend || pend.done || pend.cancelled) return false;
     clearTimeout(pend.timer);
     pend.cancelled = true;
-    if (how !== 'voice' && pend.check && typeof pend.check.cancel === 'function') quiet(() => pend.check.cancel());
+    if (!fromCheck && pend.check && typeof pend.check.cancel === 'function') quiet(() => pend.check.cancel());
     pend.line = TASK_CANCELLED_LINE;
     renderTask();
-    if (!quietly) tell(how === 'voice' ? TASK_CANCELLED_LINE : '', TASK_CANCELLED_LINE);
+    if (!quietly) tell(how === 'card' && v() ? TASK_CANCELLED_LINE : '', TASK_CANCELLED_LINE);
     return true;
   }
 
@@ -508,7 +603,7 @@ export function createChromeVoice(deps = {}) {
     }
     let res = null;
     try {
-      res = await link.startTask({ text: pend.text, chat: pend.chat });
+      res = await L().startTask({ text: pend.text, chat: pend.chat });
     } catch {
       res = { ok: false, reason: 'offline' };
     }
@@ -595,7 +690,7 @@ export function createChromeVoice(deps = {}) {
     }
     t.stoppedByOwner = true;
     try {
-      await link.stopTask();
+      await L().stopTask();
     } catch {
       /* the extension pauses a voice task by itself once the relay is gone for 20 s */
     }
@@ -668,11 +763,12 @@ export function createChromeVoice(deps = {}) {
     const prompt = { ...raw, promptId: String(raw.promptId) };
     let entry = S.prompts.get(prompt.promptId);
     if (!entry) {
-      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0 };
+      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now() };
       S.prompts.set(prompt.promptId, entry);
     } else {
       entry.prompt = prompt;
       entry.hash = prompt.hash; // a changed prompt is said again before a yes counts (update)
+      entry.shownAt = now();
     }
     if (S.task && RUNNING.has(S.task.status)) S.task.status = 'waiting';
     renderTask();
@@ -797,7 +893,7 @@ export function createChromeVoice(deps = {}) {
     }
     let res = null;
     try {
-      res = await link.answer({ promptId: entry.prompt.promptId, hash, choice: answer.choice, via });
+      res = await L().answer({ promptId: entry.prompt.promptId, hash, choice: answer.choice, via });
     } catch {
       res = { ok: false, reason: 'offline', why: 'Chrome couldn’t be reached' };
     }
@@ -831,6 +927,8 @@ export function createChromeVoice(deps = {}) {
     }
     if (S.task && S.task.status === 'waiting' && ![...S.prompts.values()].length) S.task.status = 'running';
     renderTask();
+    // Voice Mode's channel holds one prompt at a time: one still open (rare) goes back to it.
+    for (const other of S.prompts.values()) if (!other.handle) toVoiceOrNotice(other);
   }
 
   // ---- what the router runs ---------------------------------------------------------------------
@@ -861,9 +959,40 @@ export function createChromeVoice(deps = {}) {
         const line = open ? waitingLine(open.prompt).say : taskStatusLine(S.task);
         return { ack: line, show: open ? waitingLine(open.prompt).show : line };
       }
+      case 'chrome-answer':
+        // Typed in the chat (Voice Mode answers its own through its prompt channel).
+        return typedAnswer(a.answer);
+      case 'chrome-nothing-asked':
+        return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
       default:
-        return null;
+        return null; // 'chrome-check' is Voice Mode's alone
     }
+  }
+
+  /**
+   * A reserved answer typed in the chat (or a hologram's or Optics' field): a no goes out at once (as
+   * the card's would); a yes is the card's button (typing isn't the check); click-only says where.
+   */
+  function typedAnswer(answerId) {
+    const entry = [...S.prompts.values()].pop();
+    if (!entry) return { ack: NOTHING_ASKED_LINE, show: NOTHING_ASKED_LINE };
+    const answer = promptAnswers(entry.prompt).find((x) => x.id === answerId);
+    if (!answer) return null;
+    if (answer.stopTask) {
+      stopTask({ via: 'card', quietly: true });
+      return { ack: 'Chrome stopped.', show: 'Chrome stopped.' };
+    }
+    if (answer.negative) {
+      if (!answer.choice) return null;
+      send(entry, answer, 'card');
+      return { ack: '', show: '' };
+    }
+    if (answer.clickOnly) {
+      const line = clickOnlyLine(entry.prompt);
+      return { ack: line.say, show: line.show };
+    }
+    if (answer.id === 'other') return { ack: hintLine(entry.prompt), show: hintLine(entry.prompt) };
+    return { ack: 'Tap its button on the card to answer Chrome.', show: 'Tap its button on the card to answer Chrome.' };
   }
 
   /** "Click around for me": "What should I do in Chrome?", and the answer is the task (checked). */
@@ -903,17 +1032,28 @@ export function createChromeVoice(deps = {}) {
     return asking.handle ? { ack: '', show: TASK_ASK_LINE } : { ack: TASK_ASK_LINE, show: TASK_ASK_LINE };
   }
 
-  /** The router state's `chrome` (contract (b)), plus the open prompt for the answer layer. */
+  /** The router state's `chrome` (contract (b)): the link, the latest task (also a finished one), the context. */
   function state() {
     const st = linkState();
-    const t = S.task ? { id: S.task.id, status: S.task.status, text: S.task.text } : S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled ? { id: '', status: 'starting', text: S.pendingTask.text } : null;
-    const open = [...S.prompts.values()].pop();
+    const pend = S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused ? S.pendingTask : null;
+    const t = pend ? { id: S.task ? S.task.id : '', status: 'starting', text: pend.text } : S.task ? { id: S.task.id, status: S.task.status, text: S.task.text } : null;
+    return { linked: !!st.linked, online: !!st.online, task: t, contextUntil: S.contextUntil };
+  }
+
+  /**
+   * The open prompt as the router's answer layer sees it where Voice Mode isn't (state.prompt: the chat,
+   * a hologram's or Optics' field), or null: { id, chrome, answers, askedAt, kind, voice }.
+   */
+  function promptState() {
+    const entry = [...S.prompts.values()].pop();
+    if (!entry) return null;
     return {
-      linked: !!st.linked,
-      online: !!st.online,
-      task: t,
-      contextUntil: S.contextUntil,
-      prompt: open ? { id: open.prompt.promptId, kind: promptKind(open.prompt), voice: takesVoiceYes(open.prompt) } : null,
+      id: `chrome:${entry.prompt.promptId}`,
+      chrome: true,
+      answers: promptAnswers(entry.prompt),
+      askedAt: entry.shownAt || 0,
+      kind: promptKind(entry.prompt),
+      voice: { allowed: takesVoiceYes(entry.prompt) },
     };
   }
 
@@ -939,30 +1079,43 @@ export function createChromeVoice(deps = {}) {
     S.voiceOn = on;
   }
 
-  /** The wake greeting's first words while a prompt waits ("Chrome is waiting for you: …"), or ''. */
+  /**
+   * The wake greeting's first words while a prompt waits ("Chrome is waiting for you: …"), or null
+   * (mac-hf's wake.pending(), the lead's D3). Voice Mode's channel is told, so the greeting counts as the
+   * prompt said and it isn't said twice.
+   */
   function pending() {
     const open = [...S.prompts.values()].pop();
-    return open ? waitingLine(open.prompt).say : '';
+    if (!open) return null;
+    const line = waitingLine(open.prompt).say;
+    const adapter = v();
+    if (adapter && typeof adapter.greeted === 'function') quiet(() => adapter.greeted(`chrome:${open.prompt.promptId}`, line));
+    return line;
   }
 
-  if (linkOk()) {
-    if (typeof link.subscribe === 'function') offs.push(quiet(() => link.subscribe(() => syncFromLink())));
-    if (typeof link.onPrompt === 'function') offs.push(quiet(() => link.onPrompt((p) => onPrompt(p))));
-    if (typeof link.onPromptClosed === 'function') offs.push(quiet(() => link.onPromptClosed((id) => onPromptClosed(id))));
-    if (typeof link.onDone === 'function') offs.push(quiet(() => link.onDone((d) => onDone(d))));
+  attach();
+  if (!attached && typeof linkDep === 'function') {
+    // The link may be made after us (app.js): look for it until it is there.
+    attachTimer = setInterval(() => {
+      if (S.destroyed || attach()) clearInterval(attachTimer);
+    }, 1000);
   }
 
   return {
     run,
     state,
+    promptState,
     noteOpened: () => noteContext(),
     pending,
     voiceChanged,
+    /** "Start now": the task's check ends at once. */
+    startNow: () => startNow(),
     /** Whether a check for a task is on screen (the router's "check" state). */
     checking: () => !!(S.pendingTask && !S.pendingTask.done && !S.pendingTask.cancelled && !S.pendingTask.refused),
     destroy() {
       S.destroyed = true;
       clearTimeout(S.sayTimer);
+      clearInterval(attachTimer);
       if (S.pendingTask) clearTimeout(S.pendingTask.timer);
       for (const off of offs) if (typeof off === 'function') quiet(off);
       for (const view of S.taskViews) view.destroy();

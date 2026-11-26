@@ -96,6 +96,8 @@ import { register as registerAudioCommands } from './commands/audio.js';
 import { register as registerTourCommands } from './commands/tours.js';
 import { register as registerVoiceCommands } from './commands/voice.js';
 import { register as registerChromeVoiceCommands } from './commands/chrome-voice.js';
+import { createChromeVoice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
+import { notify as notifyAttention, closeNotify } from './attention.js'; // v8.1 chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
@@ -1575,6 +1577,7 @@ export async function startApp(rootEl) {
         onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
+          safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
           const reason = info && info.reason;
@@ -1593,6 +1596,7 @@ export async function startApp(rootEl) {
           updateAll();
         },
       });
+      safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts and cards come to Voice Mode
     } catch (err) {
       console.error('[jarvis] voice mode failed:', err);
       toast('Voice mode couldn’t start in this browser.', { level: 'warn' });
@@ -3993,7 +3997,11 @@ export async function startApp(rootEl) {
     // ---- tours ◂
     // ---- voice ▸
     // ---- voice ◂
-    // ---- chrome-voice ▸
+    // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context; s.prompt off Voice Mode)
+    if (chromeVoice) {
+      s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
+      if (surface !== 'voice') s.prompt = safe(() => chromeVoice.promptState(), null);
+    }
     // ---- chrome-voice ◂
     // ---- windows ▸ (s.windows, s.reply.links)
     // ---- windows ◂
@@ -4136,6 +4144,32 @@ export async function startApp(rootEl) {
    * Each track's commands, registered once (contract (b)): every module gets the shared deps plus its
    * own, added in its own call below (keep one line between calls).
    */
+  // ---- chrome-voice ▸ Jarvis for Chrome by voice (v8.1 G4, G5): the controller and its cards in the chat
+  // (src/ui/chrome-task.js). Tasks, prompts and the final answer reach Jarvis here: Voice Mode says them
+  // (api.prompt, api.chrome), the chat shows the cards above the composer, and with Voice Mode closed or
+  // on Standby a prompt is a notification.
+  const chromeDock = h('div', { class: 'chrome-dock', attrs: { 'data-testid': 'chrome-dock' } });
+  main.insertBefore(chromeDock, composer.el);
+  const chromeVoice = safe(
+    () =>
+      createChromeVoice({
+        link: () => chromeLinkForVoice(),
+        voice: () => voiceAdapter(voiceApi && safe(() => isVoiceModeOpen(), false) ? voiceApi : null),
+        dock: chromeDock,
+        notify: (n) => notifyAttention(n),
+        closeNotice: (tag) => closeNotify(tag),
+        focusApp: () => safe(() => window.focus()),
+        toast: (msg, opts) => toast(msg, opts),
+        hidden: () => !!document.hidden,
+      }),
+    null,
+  );
+  /** app.chromeLink (contract (f)): chrome-relay's installChromeLink makes it; null until it is there. */
+  function chromeLinkForVoice() {
+    return null;
+  }
+  // ---- chrome-voice ◂
+
   function registerCommandModules() {
     const shared = {
       getSettings,
@@ -4162,7 +4196,7 @@ export async function startApp(rootEl) {
     // voice (src/ui/commands/voice.js):
     register('voice', registerVoiceCommands, { ...shared });
     // chrome-voice (src/ui/commands/chrome-voice.js):
-    register('chrome-voice', registerChromeVoiceCommands, { ...shared });
+    register('chrome-voice', registerChromeVoiceCommands, { ...shared, chromeVoice: () => chromeVoice });
     // windows (src/ui/commands/windows.js):
     register('windows', registerWindowCommands, { ...shared });
     // optics (src/ui/commands/optics.js):

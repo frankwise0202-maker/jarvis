@@ -186,7 +186,8 @@ export function createRouter({ order = TODAY_ORDER, wordCap = Infinity } = {}) {
    *              their surfaces themselves, by id, and have no run.
    */
   function register({ id, layer, surfaces = SURFACES, carrier = false, match, run = null } = {}) {
-    if (typeof id !== 'string' || !/^[a-z][a-z0-9-]*$/.test(id)) throw new TypeError(`router: a matcher needs an id (got ${JSON.stringify(id)})`);
+    // Ids may be dotted, as the final order names them ('chrome.prompt', 'voice.controls': command-order.js).
+    if (typeof id !== 'string' || !/^[a-z][a-z0-9.-]*$/.test(id)) throw new TypeError(`router: a matcher needs an id (got ${JSON.stringify(id)})`);
     if (entries.has(id)) throw new Error(`router: "${id}" is registered already`);
     if (!LAYERS.includes(layer)) throw new TypeError(`router: "${id}" has an unknown layer ${JSON.stringify(layer)}`);
     if (typeof match !== 'function') throw new TypeError(`router: "${id}" needs match(text, state)`);
