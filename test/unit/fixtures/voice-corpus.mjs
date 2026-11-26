@@ -489,6 +489,12 @@ export const OPTICS = {
     ['open the camera', 'VH', 'optics-camera-part'],
     ['camera on', 'H0', 'optics-camera-part'],
     ['open optics', 'VH', 'optics-open'],
+    // ROUTING-7, R10's "my …": "open my camera" said over a hologram is the owner's camera (Optics), not the part.
+    // Typed in the hologram's field (no "open optics" there) it stays the part, with the hint.
+    ['open my camera', 'VH', 'optics-open'],
+    ['show me my camera', 'VH', 'optics-open'],
+    ['open my webcam', 'VH', 'optics-open'],
+    ['open my camera', 'H0', 'optics-camera-part'],
     ['close the camera', 'V0', 'optics-close'],
     ['camera off', 'OC0', 'optics-close'],
     ['close the camera', 'VL', 'optics'],

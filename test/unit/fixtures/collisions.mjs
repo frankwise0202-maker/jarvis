@@ -301,6 +301,8 @@ export const OPTICS = {
     { words: 'camera on', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'open the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
+    // ROUTING-7: "my camera" typed in the hologram's field stays its camera part with the hint (no "open optics" there).
+    ...['open my camera', 'show me my camera', 'open my webcam'].map((words) => ({ words, state: 'H0', winner: 'optics-camera-part', why: "Typed in the hologram's field: its camera part, with the hint for Optics." })),
     { words: 'camera on', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'open optics', state: 'VH', winner: 'optics-open', why: '"Open Optics" always opens Optics, a hologram on screen or not.' },

@@ -27,7 +27,7 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText, isOpticsOpenRequest } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
 import { LAYERS, FINAL_ORDER, MAX_WORDS, isQuestion, isBareNo, isStopWord, askedLast } from './command-order.js';
 
@@ -317,6 +317,8 @@ export function createRouter({ order = FINAL_ORDER, wordCap = order === TODAY_OR
 export const REOPEN_ACTIONS = Object.freeze(new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']));
 
 const opticsOnTop = (s) => !!(s.optics && s.optics.open) && !s.hologram && !s.blueprintOpen;
+// "My camera", "my webcam": the owner's own camera, never a hologram's camera part (R10's "my …", ROUTING-7).
+const MY_CAMERA = /\bmy (?:camera|webcam|web cam|cam)\b/i;
 
 /** A hologram command for the parts given (or one that needs a part: "isolate it"). */
 function partsCommand(text, parts, selected) {
@@ -488,12 +490,14 @@ const TODAY_COMMANDS = [
     },
   },
   // The hologram's commands: on screen, or (Voice Mode) the one shown last, which opens again for them.
+  // R10's "my …": "open my camera" said in Voice Mode opens Optics (optics-open), not the camera part.
   {
     id: 'hologram',
     layer: 'top',
     surfaces: ['voice', 'hologram'],
     match: (text, s) => {
       if (s.surface === 'voice' && opticsOnTop(s)) return null;
+      if (s.surface === 'voice' && MY_CAMERA.test(String(text || '')) && isOpticsOpenRequest(text)) return null;
       if (s.hologram && s.hologram.open) return partsCommand(text, s.hologram.parts, s.hologram.selected);
       if (s.surface !== 'voice' || s.blueprintOpen) return null;
       const last = s.reply && s.reply.hologram;
