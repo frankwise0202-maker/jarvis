@@ -5,7 +5,8 @@
 //     paste; Chrome asks to let it reach the home base), and Cancel. The code works for 30 minutes; Jarvis
 //     clears it from the clipboard once linked (critique L9). If the clipboard can't be written, the code is
 //     shown to copy by hand.
-//   · Linked: "Linked · online" (or offline, with what to do), and Unlink (tap twice).
+//   · Linked: "Linked · online" (or offline, with what to do), Test (a ping: the round trip and whether "Tasks
+//     from Jarvis" is on there), and Unlink (tap twice).
 //   · On an iPhone: one line (the link is made on the computer).
 // The key never appears here, and the code only while linking.
 //
@@ -14,7 +15,7 @@
 //
 // Test ids: chrome-link-settings (data-state: phone | no-home-base | off | pending | linked; data-online),
 // chrome-link-state, chrome-link-link, chrome-link-steps, chrome-link-copy, chrome-link-code, chrome-link-cancel,
-// chrome-link-unlink, chrome-link-result, chrome-link-problem. All text goes through dom.js (textContent only).
+// chrome-link-test, chrome-link-unlink, chrome-link-result, chrome-link-problem. All text goes through dom.js (textContent only).
 
 import { h, setText } from './dom.js';
 import { icon } from './icons.js';
@@ -44,6 +45,11 @@ export const CHROME_LINK_WORDS = Object.freeze({
   extUnlinked: 'Jarvis for Chrome unlinked itself. Link again whenever you like.',
   expired: 'The link code expired before it was used. Press Link for a new one.',
   oldCore: 'Your home base needs Jarvis Core 1.3 or later for this. It updates itself; or run jarvis-core update on the Alienware.',
+  testing: 'Asking Jarvis for Chrome…',
+  answered: (s) => `Jarvis for Chrome answered in ${s} s.`,
+  tasksOff: 'Tasks from Jarvis are off there: turn them on in its side panel, Settings → Voice from Jarvis.',
+  tasksOn: 'Tasks from Jarvis are on.',
+  noAnswer: 'No answer in 10 seconds. Open the Jarvis window (the Chrome profile with Jarvis for Chrome) and keep it open.',
   privacy: 'The home base only passes messages along: they’re locked with a key that only Jarvis and Jarvis for Chrome have, kept for two minutes in memory. The key stays on this computer, never in backups or sync.',
 });
 
@@ -59,7 +65,7 @@ const PROBLEMS = {
 function out(el, text, tone = 'info') {
   el.hidden = !text;
   el.dataset.tone = tone;
-  el.replaceChildren(...(text ? [icon(tone === 'ok' ? 'check' : tone === 'info' ? 'info' : 'alert', { size: 16 }), h('span', { text })] : []));
+  el.replaceChildren(...(text ? [icon(tone === 'ok' ? 'check' : tone === 'busy' ? 'spinner' : tone === 'info' ? 'info' : 'alert', { size: 16 }), h('span', { text })] : []));
 }
 
 export function createChromeLinkSettings(control, { toast } = {}) {
@@ -88,6 +94,7 @@ export function createChromeLinkSettings(control, { toast } = {}) {
   const copyLabel = h('span', { text: 'Copy link code' });
   const copyBtn = h('button', { class: 'btn btn-primary', type: 'button', attrs: { 'data-testid': 'chrome-link-copy' }, on: { click: () => onCopy() } }, icon('copy', { size: 16 }), copyLabel);
   const cancelBtn = h('button', { class: 'btn', type: 'button', attrs: { 'data-testid': 'chrome-link-cancel' }, on: { click: () => onCancel() } }, h('span', { text: 'Cancel' }));
+  const testBtn = h('button', { class: 'btn', type: 'button', attrs: { 'data-testid': 'chrome-link-test' }, on: { click: () => onTest() } }, icon('bolt', { size: 16 }), h('span', { text: 'Test' }));
   const unlinkLabel = h('span', { text: 'Unlink' });
   const unlinkBtn = h('button', { class: 'btn btn-danger-ghost', type: 'button', attrs: { 'data-testid': 'chrome-link-unlink' }, on: { click: () => onUnlink(), blur: () => setTimeout(disarm, 150) } }, icon('close', { size: 16 }), unlinkLabel);
   const codeField = h('input', {
@@ -105,7 +112,7 @@ export function createChromeLinkSettings(control, { toast } = {}) {
   );
   const pendingBox = h('div', { class: 'cl-pending', hidden: true }, steps, codeField, h('p', { class: 'set-help', text: CHROME_LINK_WORDS.codeNote }), h('div', { class: 'set-row-actions set-row-actions--start' }, cancelBtn));
   const offBox = h('div', { class: 'cl-off', hidden: true }, h('div', { class: 'set-row-actions set-row-actions--start' }, linkBtn));
-  const linkedBox = h('div', { class: 'cl-linked', hidden: true }, h('div', { class: 'set-row-actions set-row-actions--start' }, unlinkBtn));
+  const linkedBox = h('div', { class: 'cl-linked', hidden: true }, h('div', { class: 'set-row-actions set-row-actions--start' }, testBtn, unlinkBtn));
   const intro = h('p', { class: 'set-help', text: CHROME_LINK_WORDS.intro });
   const privacy = h('p', { class: 'set-help key-privacy' }, icon('lock', { size: 14 }), h('span', { text: CHROME_LINK_WORDS.privacy }));
 
@@ -160,6 +167,7 @@ export function createChromeLinkSettings(control, { toast } = {}) {
     linkedBox.hidden = stateName !== 'linked';
     if (stateName !== 'pending') codeField.hidden = true;
     unlinkBtn.disabled = busy;
+    testBtn.disabled = busy;
     // A problem with the home base, while linking or linked.
     const problem = (stateName === 'pending' || stateName === 'linked') && info.problem ? PROBLEMS[info.problem] || PROBLEMS.error : '';
     out(problemOut, problem, 'warn');
@@ -224,6 +232,31 @@ export function createChromeLinkSettings(control, { toast } = {}) {
     codeField.hidden = true;
     setText(copyLabel, 'Copy link code');
     out(result, '', 'info');
+    render();
+  }
+
+  async function onTest() {
+    if (busy) return;
+    busy = true;
+    render();
+    out(result, CHROME_LINK_WORDS.testing, 'busy');
+    const t0 = Date.now();
+    let r;
+    try {
+      r = await control.ping();
+    } catch {
+      r = { ok: false, reason: 'offline' };
+    } finally {
+      busy = false;
+    }
+    if (destroyed) return;
+    if (r && r.ok) {
+      const secs = Math.max(0.1, Math.round((Date.now() - t0) / 100) / 10).toFixed(1);
+      const tasks = r.status ? (r.status.tasksFromJarvis ? CHROME_LINK_WORDS.tasksOn : CHROME_LINK_WORDS.tasksOff) : '';
+      out(result, `${CHROME_LINK_WORDS.answered(secs)}${tasks ? ` ${tasks}` : ''}`, 'ok');
+    } else {
+      out(result, r && r.reason === 'unlinked' ? CHROME_LINK_WORDS.off : CHROME_LINK_WORDS.noAnswer, 'warn');
+    }
     render();
   }
 

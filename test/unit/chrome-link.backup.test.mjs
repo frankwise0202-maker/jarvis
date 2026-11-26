@@ -62,9 +62,10 @@ test('the link key and code are in no export, no sync backup and no sync upload;
       };
       const gz = await sync.gzipText(built.json);
       await sync.uploadSyncBackup(BASE, 'jd-0123456789abcdef', built.json, { label: 'Mac', gzipped: gz, fetchImpl });
+      const gzipped = uploaded.body;
       const plain = [];
       await sync.uploadSyncBackup(BASE, 'jd-0123456789abcdef', built.json, { label: 'Mac', gzipped: null, fetchImpl: async (url, init) => { plain.push(init.body); return fetchImpl(url, init); } });
-      texts[label] = { file, built: built.json, gzipped: uploaded.body, plain: plain[0], settings: localStorage.getItem('jarvis.settings.v1') };
+      texts[label] = { file, built: built.json, gzipped, plain: plain[0], settings: localStorage.getItem('jarvis.settings.v1') };
     };
     await check('pending');
     // Linked (the extension answered): the stored record gains linkedAt; nothing else changes.

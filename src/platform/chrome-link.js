@@ -907,9 +907,10 @@ export function createChromeLink({
       await checkStatus(null);
       return info();
     },
-    /** A round trip to Jarvis for Chrome: { ok: true, status } or { ok: false, reason }. */
+    /** A round trip to Jarvis for Chrome (Settings → Test): { ok: true, status } or { ok: false, reason }. Sent even
+     *  when the status says offline (it may be out of date); a ping does nothing there. */
     ping() {
-      return request('ping', {});
+      return request('ping', {}, { needOnline: false });
     },
     dismissNote() {
       note = null;

@@ -277,6 +277,9 @@ test('Link: a key made here, the code copied, Jarvis for Chrome pastes it and sa
     const hello = await w.peer.waitFor('hello');
     assert.deepEqual(hello.body, { app: 'jarvis', version: '8.1.0' });
     assert.equal(app.control.info().extVersion, '1.1.0');
+    const ping = await app.control.ping();
+    assert.equal(ping.ok, true, 'Settings → Test: a round trip');
+    assert.equal(ping.status.tasksFromJarvis, true);
     assert.deepEqual(app.control.begin(), { ok: false, reason: 'linked' });
   } finally {
     await w.close();
@@ -494,6 +497,8 @@ test('offline: nothing sent while Jarvis for Chrome is away (stop excepted); no 
     assert.equal(w.relay.posts['to-ext'], before, 'nothing went out');
     await app.api.stopTask(); // goes out all the same, and gives up after the timeout
     assert.equal(w.relay.posts['to-ext'], before + 1, 'stop is sent even offline');
+    assert.deepEqual(await app.control.ping(), { ok: false, reason: 'offline' }, 'Settings → Test asks anyway, and says when nothing answers');
+    assert.equal(w.relay.posts['to-ext'], before + 2);
     // Online by the status (it reads its box), but it never answers: the request gives up.
     w.peer.setOnline(true);
     w.peer.start();

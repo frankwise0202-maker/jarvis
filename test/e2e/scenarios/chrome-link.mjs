@@ -1,7 +1,8 @@
 // Jarvis for Chrome, linked through the home base (v8.1, SPEC §32.1, wire v1). The fake Core's relay
 // (core-fakes.mjs: the Core's own relay store) and a fake Jarvis for Chrome (createFakeChromePeer) at the other end.
 //   chrome-link-settings  Settings → Jarvis for Chrome on a Mac: Link, Copy link code, the fake extension pastes
-//                         it, "Linked · online", the clipboard cleared, hello both ways, a reload stays linked,
+//                         it, "Linked · online", the clipboard cleared, hello both ways, Test (a ping round trip),
+//                         a reload stays linked,
 //                         the key in no export, Unlink tells the extension; offline when it stops reading; the
 //                         iPhone only says where to link and never reads the relay.
 //   chrome-link-open      "open YouTube in Chrome" with the link online: the open message (url, no rectangle,
@@ -94,6 +95,10 @@ export default [
           const hello = await peer.waitFor('hello');
           t.assert(hello.body.app === 'jarvis' && typeof hello.body.version === 'string', `the app says hello (${JSON.stringify(hello.body)})`);
           await t.waitFor(async () => (await clipboard()) === '', { timeout: 5000, message: 'the link code cleared from the clipboard' });
+          // Test: a round trip to Jarvis for Chrome, and whether it takes tasks from Jarvis.
+          await card.locator(tid('chrome-link-test')).click();
+          await t.waitFor(async () => /Jarvis for Chrome answered in [\d.]+ s\. Tasks from Jarvis are on\./.test(await t.text(card.locator(tid('chrome-link-result')))), { timeout: 10000, message: async () => `Test to say it answered (got "${await t.text(card.locator(tid('chrome-link-result')))}")` });
+          t.assert((await peer.waitFor('ping')).kind === 'ping', 'the ping reached it');
           await t.screenshot('3-linked');
         });
 
