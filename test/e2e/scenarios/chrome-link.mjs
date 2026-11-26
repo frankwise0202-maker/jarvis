@@ -222,6 +222,12 @@ export default [
       const opened = () => page.evaluate(() => window.__opened.map((r) => (r.url === 'about:blank' ? r.sent : r.url)).filter(Boolean));
       await t.goto('/');
       const peer = createFakeChromePeer(t.core.relay).start();
+      // A typed command's line is a toast (app.js runChat).
+      const toastSays = (re, what) =>
+        t.waitFor(async () => {
+          const texts = await page.locator(tid('toast')).allTextContents();
+          return texts.some((x) => re.test(x.replace(/\s+/g, ' ')));
+        }, { timeout: 10000, message: async () => `${what} (toasts: ${JSON.stringify(await page.locator(tid('toast')).allTextContents())})` });
       try {
         await t.step('linked and online: the extension opens it', async () => {
           await t.waitFor(() => peer.received.some((m) => m.kind === 'hello'), { timeout: 10000, message: 'the app’s hello' });
@@ -231,6 +237,7 @@ export default [
           const open = await peer.waitFor('open');
           t.assert(open.body.url === 'https://www.youtube.com/', `the address (${open.body.url})`);
           t.assert(open.body.rect === null && open.body.focus === true, `no rectangle, focused (${JSON.stringify(open.body)})`);
+          await toastSays(/open in the Jarvis window/, 'Jarvis to say it is open in the Jarvis window');
           t.assert((await opened()).length === 0, 'no normal tab');
           t.assert(t.requests('lead').length === 0, 'free: no Claude request');
           await t.screenshot('1-opened');
@@ -242,7 +249,7 @@ export default [
           await input.fill('open YouTube in Chrome');
           await (await t.visible('composer-send')).click();
           await peer.waitFor('open');
-          await t.waitFor(async () => /blocked list/.test(await t.text(page.locator(tid('turn-jarvis')).last())), { timeout: 10000, message: 'the reason, said' });
+          await toastSays(/can’t open that address: .*blocked list/, 'the reason, said');
           t.assert((await opened()).length === 0, 'no normal tab for a refusal');
           peer.answer('open', undefined);
         });
