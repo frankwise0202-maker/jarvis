@@ -14,9 +14,10 @@
 //                           confirm.proceed()) | { error } | { error, stopped } (signal aborted)
 //                           spoken: Voice Mode says the acknowledgement, so no toast; later: the
 //                           reply that builds it still streams, so a 2D request waits ({ later: true })
-//   v.submit(text)          what the command field does: local command first, else a chat message
+//   v.submit(text, opts)    what the command field does: local command first, else a chat message
 //                           (v8.1: deps.route(text, opts), the app's router, picks the command:
-//                           this hologram's, Screens or Apple Music; without it, this hologram's)
+//                           this hologram's, Screens or Apple Music; without it, this hologram's).
+//                           Its microphone passes every other reading (opts.alternatives, v8.1.1)
 //   v.parts()               [{ id, name, aka }]: the parts its commands match (the router's state)
 //   v.follow(run)           caption a reply that Voice Mode follows (text only: Voice Mode opens
 //                           what it shows)
@@ -952,12 +953,6 @@ export function openHologramViewer({ source, deps = {} } = {}) {
 
   // ---- commands -------------------------------------------------------------------------------
 
-  /** True when `text` is a local command for this hologram (nothing is done). */
-  function isCommand(text) {
-    const words = String(text || '');
-    return !!(safe(() => matchHologramCommand(words, partsForMatcher(), { selected: state.selected }), null) || safe(() => commandNeedingPart(words), null));
-  }
-
   function partNamesForVoice() {
     const out = [];
     for (const p of partsForMatcher()) {
@@ -1290,11 +1285,11 @@ export function openHologramViewer({ source, deps = {} } = {}) {
           cmdInput.value = '';
           syncSend();
           if (!text) return;
-          // A reading the recognizer was less sure of that is a command (a part's name) wins over
-          // a best reading that isn't one.
-          const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
-          const alt = isCommand(text) ? '' : alts.find((a) => typeof a === 'string' && a.trim() && isCommand(a));
-          api.submit(alt ? alt.trim() : text, { source: 'voice' });
+          // v8.1.1 fix MONEY-R2-5 (as PRIVACY-3 for Optics' microphone): every reading goes to the app's
+          // router, best first (deps.route), which takes another one only for what R7 allows: never a paid
+          // blueprint, the camera or the microphone. The best reading is what Jarvis gets otherwise.
+          const alts = info && Array.isArray(info.alternatives) ? info.alternatives.filter((a) => typeof a === 'string' && a.trim()).map((a) => a.trim()) : [];
+          api.submit(text, { source: 'voice', alternatives: alts });
         },
         onEnd: finish,
         onError: (e) => {

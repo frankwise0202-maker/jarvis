@@ -2275,7 +2275,11 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
 - **Never from another reading (v8.1 fixes PRIVACY-2 to PRIVACY-5).** Optics' own microphone gives the router every
   reading, best first (`deps.route(best, { spoken, alternatives })` → `routeFromOptics`), so R7 decides there as in
   Voice Mode and the chat; the old promotion of a less-sure reading (`commandReading`) is gone, and a switch to a
-  named camera is a camera action (`OPTICS_CAMERA`). "Research this" with Optics open (`optics-research`) is
+  named camera is a camera action (`OPTICS_CAMERA`). The hologram viewer's own microphone does the same (v8.1.1 fix
+  MONEY-R2-5): `submit(best, { source: 'voice', alternatives })` → `deps.route` (`routeFromViewer`, which routes
+  every reading and acts on the one the router chose), so "what is the battery" heard with "blueprint the battery"
+  as another reading is the question, never a paid blueprint with no price said; free hologram commands from
+  another reading still act. "Research this" with Optics open (`optics-research`) is
   `camera: true, free: false` (it may take a Look first). Screens' camera views (`what: 'camera'`) and the camera's
   window (window-commands.js `action()` with `which`, `a` or `b` 'camera') are `camera: true`. Hidden on a Mac,
   camera words leave one notification that says what its click does, with the price ("…look through the camera
@@ -2826,7 +2830,8 @@ seconds, then send" | 'now' "Send right away"; both new keys are restored from b
 - The recognizer's alternatives (whole-turn readings, swapping one result's reading at a time) are tried for local
   commands: in Voice Mode every reading goes through Screens and the viewers in turn (the first that is a command acts,
   the blueprint yes/no included); the chat's mic prefers a reading that is a screen command; the hologram viewer's own
-  mic one that is a viewer command; Optics' mic one that is a screen or Optics command. For a question, a reading that
+  mic and Optics' mic give the router every reading, best first, and the router's R7 decides (v8.1 PRIVACY-3, v8.1.1
+  MONEY-R2-5: never a paid blueprint, the camera or the microphone from another reading). For a question, a reading that
   names a part of the open (or last shown) hologram is preferred when the best one names none (`pickHeard`;
   `visuals.vocabulary()` → `{ parts }`, the viewer's `partNames()`).
 - Apple Music joins them with one rule: another reading is taken for a music command only when the best reading is

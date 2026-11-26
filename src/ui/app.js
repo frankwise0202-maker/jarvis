@@ -4947,9 +4947,17 @@ export async function startApp(rootEl) {
   function routeFromViewer(text, opts = {}) {
     const words = String(text || '');
     const viewer = opts.viewer || getHologramViewer();
+    // MONEY-R2-5 (as PRIVACY-3 for Optics): the viewer's own microphone gives every reading, best first;
+    // the router takes another one only for what R7 allows, and the command acts on the reading it chose.
+    const readings = [words];
+    for (const a of Array.isArray(opts.alternatives) ? opts.alternatives : []) {
+      const r = typeof a === 'string' ? a.trim() : '';
+      if (r && !readings.some((x) => x.toLowerCase() === r.toLowerCase())) readings.push(r);
+    }
     const st = routerState('hologram', { via: opts.source === 'voice' ? 'voice' : 'typed' });
-    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
-      const out = runFromViewer(hit, words, viewer, opts);
+    for (let hit = commandRouter.route(readings, st); hit; hit = commandRouter.route(readings, st, { after: hit })) {
+      const chosen = typeof hit.reading === 'string' && hit.reading ? hit.reading : words;
+      const out = runFromViewer(hit, chosen, viewer, opts);
       if (out) return out;
     }
     return null;

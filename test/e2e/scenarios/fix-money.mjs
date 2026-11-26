@@ -10,6 +10,14 @@
 //                            camera."): neither the live view nor a camera switch comes from the other reading
 //   fix-optics-closed-words  MONEY-7: with Optics closed, the live view's and the picture's words said in Voice
 //                            Mode, and typed in the chat, get a free line: nothing is sent
+//   fix811-holo-field        v8.1.1 MONEY-R2-4: a hologram opened from the chat; "stop live view" and "stop
+//                            watching" typed in its field: the free line, nothing sent
+//   fix811-holo-voice        v8.1.1 MONEY-R2-4: Voice Mode on a Mac, a hologram over it; "Stop live view." said:
+//                            "The live view is off.", nothing sent
+//   fix811-holo-mic          v8.1.1 MONEY-R2-5: a hologram opened from the chat; its own microphone hears "What is
+//                            the separator made of?" (another reading: "Blueprint the separator."): the question
+//                            goes to Jarvis, no blueprint is built from the other reading
+// (The three hologram scenarios are ported from the second review's probes, review2/money-v-*/test/e2e.)
 
 import { tid } from '../harness.mjs';
 import { installCameraRig } from '../camera-rig.mjs';
@@ -28,6 +36,28 @@ const hasImage = (r) => {
 const looks = (t) => leads(t).filter(hasImage).length;
 const liveReqs = (t) => t.requests().filter((r) => r.body && typeof r.body === 'object' && isLiveRequest(r.body));
 const attr = (page, name) => page.locator(tid('optics')).getAttribute(`data-${name}`);
+
+// v8.1.1: the hologram viewer's state hooks, and the words of a request's newest user message.
+const viewerAttr = (t, name) => t.page.locator(tid('hologram-viewer')).getAttribute(`data-${name}`);
+async function waitViewer(t, name, value, { timeout = 30000 } = {}) {
+  await t.waitFor(async () => (await viewerAttr(t, name)) === value, { timeout, message: async () => `viewer data-${name} "${value}" (is "${await viewerAttr(t, name)}")` });
+}
+function newestUserTexts(body) {
+  const msgs = Array.isArray(body && body.messages) ? body.messages : [];
+  const msg = [...msgs].reverse().find((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((b) => b.type === 'text'));
+  return msg ? msg.content.filter((b) => b.type === 'text').map((b) => b.text) : [];
+}
+/** A hologram asked for in the chat, built by the mock, opened in the viewer (saved to the library). */
+async function hologramFromChat(t) {
+  const turn = await t.send('[[hologram:battery]] Show me an AA battery');
+  const card = turn.locator(tid('hologram-card'));
+  await card.waitFor({ state: 'visible', timeout: 30000 });
+  await t.waitFor(async () => (await card.getAttribute('data-status')) !== 'building', { timeout: 60000, message: 'the build to finish' });
+  await card.locator(tid('hologram-open')).click();
+  await t.visible('hologram-viewer');
+  await waitViewer(t, 'state', 'ready', { timeout: 60000 });
+  t.assert(/^lib_/.test((await viewerAttr(t, 'model')) || ''), 'saved to the library');
+}
 
 /** Init script: notifications recorded (window.__notes, each with `closed`), and a page clock that can run ahead. */
 function installNotesAndClock() {
@@ -247,6 +277,92 @@ export default [
         await typeCommand(t, 'stop live view');
         await t.waitFor(async () => /The live view is off\./.test(await toastText(t)), { timeout: 5000, message: async () => `the line (${await toastText(t)})` });
         t.assert(t.requests('lead').length === 0, 'nothing sent to Claude');
+      });
+    },
+  },
+  {
+    name: 'fix811-holo-field',
+    title: 'MONEY-R2-4: a hologram opened from the chat; "stop live view" and "stop watching" typed in its field get the free line, nothing is sent',
+    device: 'desktop',
+    timeout: 240000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      await t.step('a hologram from the chat, open in the viewer', () => hologramFromChat(t));
+      for (const [words, line] of [['stop live view', 'The live view is off.'], ['stop watching', 'Watch is off.']]) {
+        await t.step(`"${words}" typed in the hologram's field: "${line}", nothing sent`, async () => {
+          const before = t.requests('lead').length;
+          const input = t.page.locator(tid('hologram-command'));
+          await input.fill(words);
+          await input.press('Enter');
+          await t.waitFor(async () => ((await t.page.locator(tid('hologram-viewer')).textContent()) || '').includes(line), { timeout: 8000, message: `"${line}" shown in the viewer` });
+          await t.page.waitForTimeout(1500);
+          const sent = t.requests('lead').slice(before).map((r) => newestUserTexts(r.body).join(' | '));
+          t.assert(sent.length === 0, `nothing sent to Claude (${JSON.stringify(sent)})`);
+        });
+      }
+    },
+  },
+  {
+    name: 'fix811-holo-voice',
+    title: 'MONEY-R2-4: Voice Mode on a Mac with a hologram over it; "Stop live view." said: "The live view is off.", nothing is sent',
+    device: 'mac',
+    timeout: 240000,
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = ['[[hologram:battery]] Show me an AA battery'];
+      });
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      await t.step('the hologram opens over Voice Mode and is said', async () => {
+        await t.visible('hologram-viewer', { timeout: 30000 });
+        await waitViewer(t, 'state', 'ready', { timeout: 60000 });
+        await t.waitFor(async () => /Say "expand it", or tap any part\./.test((await said(page)).join(' ')), { timeout: 40000, message: 'the hologram to be said' });
+      });
+      await t.step('"Stop live view." said with the hologram on screen: the free line, nothing sent', async () => {
+        const before = t.requests('lead').length;
+        // Voice Mode drives the viewer's mic: tap once it has said the hologram and waits (a tap while it
+        // speaks only stops the speech).
+        await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle' && (await viewerAttr(t, 'voice')) === 'idle', { timeout: 20000, message: 'Voice Mode to wait for a tap' });
+        await page.waitForTimeout(500);
+        const n = (await said(page)).length;
+        await page.evaluate(() => window.__voice.queue.push('Stop live view.'));
+        await (await t.visible('hologram-mic')).click();
+        await t.waitFor(async () => (await said(page)).slice(n).includes('The live view is off.'), { timeout: 15000, message: async () => `"The live view is off." said (said ${JSON.stringify((await said(page)).slice(n))})` });
+        await page.waitForTimeout(1500);
+        const sent = t.requests('lead').slice(before).map((r) => newestUserTexts(r.body).join(' | '));
+        t.assert(sent.length === 0, `nothing sent to Claude (${JSON.stringify(sent)})`);
+      });
+    },
+  },
+  {
+    name: 'fix811-holo-mic',
+    title: 'MONEY-R2-5: a hologram opened from the chat; its own microphone hears "What is the separator made of?" (other reading "Blueprint the separator."): the question goes to Jarvis, no blueprint is built',
+    device: 'desktop',
+    timeout: 240000,
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await page.context().grantPermissions(['microphone']);
+      await t.goto('/');
+      await t.step('a hologram from the chat, open in the viewer', () => hologramFromChat(t));
+      await t.step('its microphone: best "What is the separator made of?", other reading "Blueprint the separator."', async () => {
+        const before = t.requests('lead').length;
+        await page.evaluate(() => window.__voice.queue.push({ parts: [{ at: 300, text: 'What is the separator made of?', final: true, alts: ['Blueprint the separator.'] }] }));
+        await (await t.visible('hologram-mic')).click();
+        const req = await t.waitFor(() => t.requests('lead').slice(before)[0] || null, { timeout: 30000, message: 'a request to go out' });
+        const texts = newestUserTexts(req.body).join('\n');
+        t.assert(!/Blueprint request/i.test(texts), `no blueprint built from the other reading (${texts.slice(0, 200)})`);
+        t.assert(/What is the separator made of\?/.test(texts), `the owner's question went to Jarvis (${texts.slice(0, 200)})`);
+        await page.waitForTimeout(2000);
+        const blueprints = t.requests('lead').slice(before).filter((r) => /Blueprint request/i.test(newestUserTexts(r.body).join('\n')));
+        t.assert(blueprints.length === 0, `no blueprint request at all (${blueprints.length})`);
       });
     },
   },
