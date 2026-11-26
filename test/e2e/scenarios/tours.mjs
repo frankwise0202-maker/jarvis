@@ -18,7 +18,7 @@
 //                         at), then opened with the bottom cover hidden
 //   tour-hidden           the page hidden mid-tour: paused, Voice Mode's hold let go; shown: it goes on
 //   tour-george-sync      George from a fake home base: each step shown within 300 ms of its words
-//   tour-device-voice     the device's voice with start events (each step within 300 ms of its words)
+//   tour-device-voice     the device's voice with start events (each step as its words begin: within 500 ms)
 //                         and without (never before its words, within the 3 s assumption)
 //   tour-decision-voice   at the question, "what does that do?" is one paid turn about the glowing
 //                         battery and the tour waits; Voice Mode keeps listening; "enclosed" by voice
@@ -609,7 +609,7 @@ export default [
   },
   {
     name: 'tour-device-voice',
-    title: 'The device\'s own voice: with start events each step is shown within 300 ms of its words; without them (the engine assumes a chunk plays after 3 s) a step is never shown before its words and is shown within about 3.5 s of them; each step once',
+    title: 'The device\'s own voice: with start events each step is shown as its words begin (within 500 ms on this machine); without them (the engine assumes a chunk plays after 3 s) a step is never shown before its words and is shown within about 3.5 s of them; each step once',
     device: 'desktop',
     timeout: 300000,
     async run(t) {
@@ -637,7 +637,10 @@ export default [
       };
       await t.step('with start events', async () => {
         await voiceLaptop(t, { queue: ['Walk me through it.'], speech: { cps: 40 } });
-        await check(t.page, { label: 'start events', early: -60, late: 300 });
+        // The fake's start event is a page timer: with another browser run beside it, it comes 100-330 ms late
+        // here. A sync bug is early (shown at speak()) or a second and more late (the 1.5 s fallback, an
+        // estimate, a sentence behind), so 500 ms still tells them apart.
+        await check(t.page, { label: 'start events', early: -60, late: 500 });
       });
       await t.step('without start events', async () => {
         const page = await t.newPage();
