@@ -70,7 +70,7 @@ import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './o
 import { runWatchLook } from '../engine/watch.js';
 import { LIVE_DEFAULT_MODEL, runLiveLook } from '../engine/live.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
-import { createLiveBudget } from '../lib/live-view.js';
+import { createLiveBudget as liveViewBudget } from '../lib/live-view.js'; // v8.1 voice: the spend readout's live view hour
 import { voiceCameraRequest, voiceLiveViewRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
@@ -4284,7 +4284,8 @@ export async function startApp(rootEl) {
           saveSettings({ naturalVoice: false, homeBaseSpeak: false, homeBaseSpeakBy: 'owner' });
           return { ok: true, device };
         }
-        if (getSettings().homeBaseUrl && senses && !state.demo) {
+        // George from the home base when its voice can speak now; else the one on this device.
+        if (getSettings().homeBaseUrl && homeBaseVoice && !state.demo && safe(() => homeBaseVoice.canSpeak(), false)) {
           saveSettings({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' });
           return { ok: true, device };
         }
@@ -4299,7 +4300,7 @@ export async function startApp(rootEl) {
       spend: () => ({
         todayUsd: safe(() => todaySpend(), 0),
         monthUsd: safe(() => getSpend().monthUsd, 0),
-        liveUsd: safe(() => createLiveBudget().spent(), 0),
+        liveUsd: safe(() => liveViewBudget().spent(), 0),
       }),
       // SHOULD C5: the one-tap button for a Look at the screen (its share picker needs a tap); the
       // price on it. In the chat, the line is the toast that carries the button.

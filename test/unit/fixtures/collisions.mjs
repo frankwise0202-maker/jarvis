@@ -107,7 +107,9 @@ export const VOICE = {
     r('close it', 'VL', 'optics', 'camera off'),
     // the camera, Optics and the live view
     r('open the camera', 'V0', 'optics-open', 'opens Optics'),
-    r('open the camera', 'VH', 'hologram', "R10: the laptop's camera part, with \"Say 'open Optics' for your camera.\""),
+    // R10: the laptop's camera part, with "Say 'open Optics' for your camera." (optics' optics-camera-part
+    // once merged, before the hologram's own entry; the hologram's entry and its hint until then).
+    r('open the camera', 'VH', ['optics-camera-part', 'hologram'], "R10: the laptop's camera part, with \"Say 'open Optics' for your camera.\""),
     r('open optics', 'VH', 'optics-open', '"Optics" is never a part (R10)'),
     r('show me the camera', 'VF', 'optics', 'back to live'),
     r('look at this', 'VL', 'optics', 'a Look'),
@@ -180,6 +182,19 @@ export const VOICE = {
     r('stop', 'H4O', 'stop', 'pauses the tour and stops the Chrome task'),
     r('enclosed', 'H4', 'tour', "the tour's own word (the research offer covers its decision)"),
     r('quick', 'H4O', 'question', 'the research offer'),
+    // Every builder together (found by a trial merge of every branch): rows for one builder's state or
+    // matcher next to another's. Each waits until the builder named is merged (its state, its matcher).
+    ...['T', 'TD', 'VHW', 'H4', 'H4O'].flatMap((st) => ['open the camera', 'camera on', 'show me the camera'].map((w) => r(w, st, 'optics-camera-part', "R10: a laptop hologram is on screen: its camera part, with the hint for Optics", 'optics'))),
+    r('put the picture to the side', 'LV', 'screens', 'no Look on screen: a Screens float, as today', 'optics'),
+    r("that's enough", 'OPA', 'optics', "Optics' own words come first while it is on top (v8.0)", 'optics'),
+    r("what's on my screen", 'OPA', 'screen-look', "the owner's screen, not a Look of the camera (C5)", 'optics'),
+    r('do this in this window', 'OPA', 'windows', 'a window the owner names, not a question about "this"', 'optics'),
+    r('show me the hologram window', 'OPA', 'windows', 'a window the owner names, not a question about the picture', 'optics'),
+    r('expand it', 'OPA', 'optics-card', "a Look is on screen: its picture, big", 'optics'),
+    ...['repeat', 'say that again', 'repeat that'].map((w) => r(w, 'CV-prompt-tour', 'tour', "the tour's step again: the tour is on top (Chrome's question waits)", 'chrome-voice')),
+    r("that's enough", 'CV-prompt-tour', 'tour', 'ends the tour (Chrome\'s question waits)', 'chrome-voice'),
+    r('stop', 'CV-prompt-tour', 'stop', 'pauses the tour; a bare "stop" is never an answer to Chrome', 'chrome-voice'),
+    r('okay stop', 'CV-prompt-tour', 'stop', 'pauses the tour; a bare "stop" is never an answer to Chrome', 'chrome-voice'),
     // Today's takes that stay on purpose (T1 lets them through).
     ...ALL_HOLOS.flatMap((s) => [
       r('is the camera on', s, 'hologram', "R10: the laptop's camera part is selected (free, undoable)"),
