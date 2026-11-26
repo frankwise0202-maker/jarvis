@@ -251,12 +251,14 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
 - **Stop the task**: *"stop Chrome"*.
 - **Answer a question the task asks**, as far as the table below allows.
 
-Every question the side panel shows is also sent to Jarvis, which says it aloud and shows it on
-its card. Jarvis for Chrome writes what is said, from its own facts: the kind of step, the site,
-what it looks like (a purchase…), a price. Of the page's own words it quotes at most about 40
-characters, after "the button says", and never words that sound like an answer ("approve",
-"cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words in Jarvis's
-mouth.
+Every question the side panel shows is also sent to Jarvis, which asks it aloud and shows it on
+its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add to cart”. Say
+approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of
+step, the site, what it looks like (a purchase…), a price. Of the page's own words it quotes at most
+about 40 characters, after "the button says", and never words that sound like an answer
+("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words
+in Jarvis's mouth. When a question needs a click, Jarvis says why in a few words (*"That's a
+purchase."*) and that it needs a click in the Jarvis window.
 
 | Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |
 | --- | --- | --- |
@@ -264,7 +266,7 @@ mouth.
 | A new site: **Always for this site** | no | yes |
 | **Deny**, **Cancel**, **Stop** | yes, at once | yes |
 | An everyday page step on a site set to Always: a click, picking an option, adding to the cart; typing only while the task has read no other site | *"approve"* | yes |
-| A purchase or payment, sending, posting, deleting, account or security, accepting terms, a download, another site's box, a keyboard shortcut, the page's own "Are you sure?", a page load nobody approved, **"Carry on to …?"**, **"Send this address to …?"**, and any other step (a key, a drag, an address) | no: *"That needs a click in the Jarvis window."* | yes |
+| A purchase or payment, sending, posting, deleting, account or security, accepting terms, a download, another site's box, a keyboard shortcut, the page's own "Are you sure?", a page load nobody approved, **"Carry on to …?"**, **"Send this address to …?"**, and any other step (a key, a drag, an address) | no: *"That's a purchase. It needs a click in the Jarvis window."* | yes |
 | **Budget reached**: Continue (one more budget each time) | *"spend more in Chrome"*, with the new limit said first | yes |
 | **Step limit reached**: Continue | *"more steps in Chrome"* | yes |
 

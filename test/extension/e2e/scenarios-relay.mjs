@@ -134,7 +134,7 @@ const relayTaskVoice = {
     await run.waitStatus('done');
     assert(await lastCardFrom(run), 'the card says From Jarvis (voice)');
     assert(app.of('task').length >= 1 && app.of('task').every((m) => m.body.id === r.id && !JSON.stringify(m.body).includes('data:image')), 'task updates, no pictures');
-    assert(app.of('prompt').some((m) => m.body.kind === 'site' && m.body.spoken === 'Jarvis for Chrome asks to work on shop.localhost.'), 'the site question went to Jarvis with its spoken line');
+    assert(app.of('prompt').some((m) => m.body.kind === 'site' && m.body.spoken === 'Let it work on shop.localhost for this task?'), 'the site question went to Jarvis with its spoken line');
     await run.shot('1-done');
 
     // Tasks from Jarvis off (the panel's switch): refused.
@@ -202,7 +202,7 @@ const relayApproveVoice = {
     const { prompt } = await startStep(run, 'Add to cart');
     assert(prompt.category === 'change' && prompt.consequential === false, JSON.stringify(prompt));
     assert(prompt.voice.allowed === true, `voice may answer it (${JSON.stringify(prompt.voice)})`);
-    assert(prompt.spoken === 'Jarvis for Chrome wants to click on shop.localhost. The button says “Add to cart”.', prompt.spoken);
+    assert(/^Click a button on shop\.localhost\? The button says “Add to cart”\.( The price shown is \$279\.99\.)?$/.test(prompt.spoken), prompt.spoken);
     const status = app => app.of('status').at(-1)?.body;
     assert(status(run.app)?.voiceApprovals === true, 'the status says voice approvals are on');
     // At once: too soon (the prompt stays).
@@ -233,11 +233,12 @@ const relayApproveRefused = {
     const { sites } = run.server;
     const { prompt } = await startStep(run, 'Buy now');
     assert(prompt.consequential === true && prompt.category === 'purchase', JSON.stringify(prompt));
-    assert(prompt.voice.allowed === false && prompt.voice.why === 'That needs a click in the Jarvis window.', JSON.stringify(prompt.voice));
+    assert(prompt.voice.allowed === false && prompt.voice.why === 'That’s a purchase.', JSON.stringify(prompt.voice));
+    assert(/^Make a purchase or payment on shop\.localhost\? The button says “Buy now”\.( The price shown is \$279\.99\.)?$/.test(prompt.spoken), prompt.spoken);
     await sleep(1600);
     for (const via of ['voice', 'card']) {
       const no = await run.app.request('answer', { promptId: prompt.promptId, hash: prompt.hash, choice: 'approve', via });
-      assert(no.ok === false && no.reason === 'refused' && no.why === 'That needs a click in the Jarvis window.', JSON.stringify(no));
+      assert(no.ok === false && no.reason === 'refused' && no.why === 'That’s a purchase.', JSON.stringify(no));
     }
     await sleep(300);
     const card = run.lastCard().locator(tid('prompt'));

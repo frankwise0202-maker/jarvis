@@ -115,7 +115,7 @@ const roundtrip = {
     assert(started.ok === true && /^task_/.test(started.id), `started (${JSON.stringify(started)})`);
     const prompt = await waitFor(() => app.evaluate(() => window.events.prompts.find((p) => p.kind === 'confirm')), { timeout: 30000, message: 'the step’s question at Jarvis' });
     assert(prompt.category === 'change' && prompt.consequential === false && prompt.voice.allowed === true, JSON.stringify(prompt));
-    assert(prompt.spoken === 'Jarvis for Chrome wants to click on shop.localhost. The button says “Add to cart”.', prompt.spoken);
+    assert(/^Click a button on shop\.localhost\? The button says “Add to cart”\.( The price shown is \$279\.99\.)?$/.test(prompt.spoken), prompt.spoken);
     await run.lastCard().locator(tid('prompt')).waitFor();
     assert(await run.lastCard().locator(tid('task-from')).isVisible(), 'marked From Jarvis (voice)');
 

@@ -21,7 +21,7 @@
 // work. When no side panel is open, a question that needs a click opens a small approval window.
 
 import { ALARM, ALARM_PERIOD_MIN, Relay, UNREACHABLE_MS } from './relay.js';
-import { CLICK_ONLY, VOICE_APPROVALS_AVAILABLE, approvalsOn, promptFields, promptHash, spokenLine, voiceDecision, voiceSummary } from './voice-policy.js';
+import { VOICE_APPROVALS_AVAILABLE, approvalsOn, promptFields, promptHash, spokenLine, voiceDecision, voiceSummary } from './voice-policy.js';
 import { addressAction } from './actions.js';
 import { MAX_NAVIGATE_URL, addressConcern, blockedReason, cardAddress, siteOf } from './sites.js';
 import { FINAL_STATUSES } from '../shared/protocol.js';
@@ -46,7 +46,7 @@ const WHY = Object.freeze({
   busy: 'Jarvis for Chrome is already working on a task. Stop it first.',
   cap: `Jarvis for Chrome has run ${VOICE_TASKS_PER_DAY} tasks from Jarvis today, its limit for a day. Start more in its side panel.`,
   gone: 'That question isn’t open any more.',
-  changed: 'That question changed. Look at it again in the Jarvis window.',
+  changed: 'That question changed.',
   noTask: 'No task is running in Jarvis for Chrome.',
   needsClick: 'That address looks like it does something, so it waits for your click in the Jarvis window.',
   bad: 'Jarvis for Chrome didn’t understand that request.',
@@ -422,10 +422,12 @@ export class JarvisLink {
 
   /** What the voice policy reads about the open prompt of `run`. */
   async policyContext(run) {
+    const available = await this.approvalsAvailableNow();
     return {
       now: this.now(),
       shownAt: run.prompt?.shownAt ?? this.now(),
-      approvals: await this.approvals(),
+      available,
+      approvals: approvalsOn((await this.store.getVoice()).approvals, available),
       voiceSites: run.voiceSites || new Set(),
       alwaysSites: await this.store.getSites().catch(() => ({})),
       readElsewhere: (site) => (typeof run.policy?.readElsewhere === 'function' ? run.policy.readElsewhere(site) : true),
@@ -473,7 +475,7 @@ export class JarvisLink {
   onPrompt(run, prompt, facts) {
     const summary = this.policyContext(run).then(
       (ctx) => voiceSummary(prompt, facts, ctx),
-      () => ({ allowed: false, why: CLICK_ONLY }),
+      () => ({ allowed: false, why: '' }),
     );
     this.send('prompt', async () => {
       const f = promptFields(prompt);

@@ -8,7 +8,13 @@ import {
   CLICK_ONLY,
   MIN_PROMPT_AGE_MS,
   VOICE_APPROVALS_AVAILABLE,
+  WHY_ALWAYS,
+  WHY_CATEGORY,
+  WHY_KIND,
+  WHY_NOT_ALWAYS,
+  WHY_READ_ELSEWHERE,
   WHY_SITE_NOT_NAMED,
+  WHY_SWITCH_OFF,
   WHY_TOO_SOON,
   approvalsOn,
   capBytes,
@@ -44,10 +50,11 @@ const stepPrompt = (over = {}) => ({ id: 'p2', kind: 'confirm', source: 'guard',
 const budgetPrompt = { id: 'p3', kind: 'budget', title: 'Budget reached', body: 'Continue up to $2.00?', choices: limitChoices('Continue to $2.00') };
 const stepsPrompt = { id: 'p4', kind: 'steps', title: 'Step limit reached', body: 'Let it take up to 80?', choices: limitChoices('Allow 40 more') };
 
-/** The context of a decision: voice approvals on, the site set to Always, nothing read elsewhere, old enough. */
+/** The context of a decision: voice approvals offered and on, the site set to Always, nothing read elsewhere, old enough. */
 const ctx = (over = {}) => ({
   now: T0 + MIN_PROMPT_AGE_MS,
   shownAt: T0,
+  available: true,
   approvals: true,
   voiceSites: new Set(),
   alwaysSites: { [SITE]: 'always' },
@@ -71,11 +78,12 @@ test('row: a new site, Allow once: only a site the owner named or opened by voic
   assert.ok(refused(voiceDecision(p, {}, 'once', ctx()), WHY_SITE_NOT_NAMED), 'not named or opened');
   assert.ok(ok(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]) }))), 'named or opened by voice');
   assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set(['shop.example.co']) }))), 'a look-alike name is another site');
-  assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]), approvals: false })), CLICK_ONLY), 'needs the setting');
+  assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]), approvals: false })), WHY_SWITCH_OFF), 'needs the setting');
+  assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]), approvals: false, available: false })), CLICK_ONLY), 'and the setting needs its release');
 });
 
 test('row: a new site, Always: never by voice', () => {
-  assert.ok(refused(voiceDecision(sitePrompt(), {}, 'always', ctx({ voiceSites: new Set([SITE]) })), CLICK_ONLY));
+  assert.ok(refused(voiceDecision(sitePrompt(), {}, 'always', ctx({ voiceSites: new Set([SITE]) })), WHY_ALWAYS));
 });
 
 test('row: Deny, Cancel, Stop: always, at once, whatever the settings', () => {
@@ -92,36 +100,46 @@ test('row: Deny, Cancel, Stop: always, at once, whatever the settings', () => {
 test('row: a page step on a site set to Always: a click, picking an option; typing while nothing else was read', () => {
   for (const step of ['click', 'option', 'text']) assert.ok(ok(voiceDecision(stepPrompt(), { step }, 'approve', ctx())), step);
   // Typing (text Claude chose) only while the task has read no other site.
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text' }, 'approve', ctx({ readElsewhere: (s) => s === SITE })), CLICK_ONLY));
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text', readElsewhere: true }, 'approve', ctx())), 'read elsewhere when it was asked');
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text' }, 'approve', ctx({ readElsewhere: undefined }))), 'unknown means read');
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text' }, 'approve', ctx({ readElsewhere: (s) => s === SITE })), WHY_READ_ELSEWHERE));
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text', readElsewhere: true }, 'approve', ctx()), WHY_READ_ELSEWHERE), 'read elsewhere when it was asked');
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'text' }, 'approve', ctx({ readElsewhere: undefined })), WHY_READ_ELSEWHERE), 'unknown means read');
   assert.ok(ok(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ readElsewhere: () => true }))), 'a click after reading elsewhere is still a click');
-  // Every other step kind (a key, a drag, a mouse press, an address, a tab, a click that opens an address on the card) needs a click.
-  for (const step of ['', undefined, 'key', 'drag', 'press', 'open', 'tab', 'other']) assert.ok(refused(voiceDecision(stepPrompt(), { step }, 'approve', ctx()), CLICK_ONLY), String(step));
+  // Every other step (a key, a drag, a mouse press, an address, a tab, a click that opens an address on the card) needs a click, and says what it is.
+  for (const kind of Object.keys(WHY_KIND)) assert.ok(refused(voiceDecision(stepPrompt(), { step: '', kind }, 'approve', ctx()), WHY_KIND[kind]), kind);
+  for (const step of ['', undefined, 'key', 'press', 'open', 'other']) assert.ok(refused(voiceDecision(stepPrompt(), { step }, 'approve', ctx())), String(step));
   // Only on a site set to Always (a site allowed once doesn't count).
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ alwaysSites: {} })), CLICK_ONLY));
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ alwaysSites: { 'other.example': 'always' } })), CLICK_ONLY));
-  // Only with "Approve everyday steps by voice" on.
-  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ approvals: false })), CLICK_ONLY));
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ alwaysSites: {} })), WHY_NOT_ALWAYS));
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ alwaysSites: { 'other.example': 'always' } })), WHY_NOT_ALWAYS));
+  // Only with "Approve everyday steps by voice" on (and offered).
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ approvals: false })), WHY_SWITCH_OFF));
+  assert.ok(refused(voiceDecision(stepPrompt(), { step: 'click' }, 'approve', ctx({ approvals: false, available: false })), CLICK_ONLY));
 });
 
 test('row: anything marked needs a click (purchase … "Send this address to …?"), and so does Jarvis’s own question', () => {
   for (const category of [...CATEGORY_NAMES, 'frame', 'flow', 'dialog', 'shortcut']) {
-    assert.ok(refused(voiceDecision(stepPrompt({ category, consequential: true }), { step: 'click' }, 'approve', ctx()), CLICK_ONLY), category);
+    assert.ok(refused(voiceDecision(stepPrompt({ category, consequential: true }), { step: 'click' }, 'approve', ctx()), WHY_CATEGORY[category]), category);
+    // Also with the switch off and not offered: the reason is still what the step is.
+    assert.ok(refused(voiceDecision(stepPrompt({ category, consequential: true }), { step: 'click' }, 'approve', ctx({ approvals: false, available: false })), WHY_CATEGORY[category]), category);
   }
+  assert.equal(WHY_CATEGORY.purchase, 'That’s a purchase.', 'as the lead’s D4 says it');
   // A page load nobody approved and acting without the bar are marked 'change' but consequential.
-  assert.ok(refused(voiceDecision(stepPrompt({ consequential: true, title: 'Approve this page load?' }), { load: true }, 'approve', ctx()), CLICK_ONLY));
-  assert.ok(refused(voiceDecision(stepPrompt({ consequential: true, title: 'Act without the control bar?' }), { noBar: true }, 'approve', ctx()), CLICK_ONLY));
+  assert.ok(refused(voiceDecision(stepPrompt({ consequential: true, title: 'Approve this page load?' }), { load: true }, 'approve', ctx()), 'The page did that by itself.'));
+  assert.ok(refused(voiceDecision(stepPrompt({ consequential: true, title: 'Act without the control bar?' }), { noBar: true }, 'approve', ctx()), 'Its control bar can’t be shown there.'));
   // request_confirmation ("Jarvis asks for your approval") is always about something marked.
-  assert.ok(refused(voiceDecision(stepPrompt({ source: 'jarvis', category: 'purchase', consequential: true }), { label: 'Buy now' }, 'approve', ctx()), CLICK_ONLY));
-  assert.ok(refused(voiceDecision(stepPrompt({ source: 'jarvis', category: 'change', consequential: false }), { step: 'click' }, 'approve', ctx()), CLICK_ONLY), 'only the guard’s own page steps');
+  assert.ok(refused(voiceDecision(stepPrompt({ source: 'jarvis', category: 'purchase', consequential: true }), { label: 'Buy now' }, 'approve', ctx()), 'That’s a purchase.'));
+  assert.ok(refused(voiceDecision(stepPrompt({ source: 'jarvis', category: 'change', consequential: false }), { step: 'click' }, 'approve', ctx())), 'only the guard’s own page steps');
+  // Every reason is one short sentence (D4: Jarvis adds "It needs a click in the Jarvis window.").
+  for (const why of [...Object.values(WHY_CATEGORY), ...Object.values(WHY_KIND), WHY_ALWAYS, WHY_NOT_ALWAYS, WHY_READ_ELSEWHERE, WHY_SITE_NOT_NAMED, WHY_SWITCH_OFF]) {
+    assert.match(why, /^[A-Z][^.?!]*\.$/, why);
+    assert.ok(why.length <= 60 && !/click/i.test(why), why);
+  }
 });
 
 test('rows: Budget reached and Step limit reached: Continue, with the setting on', () => {
   assert.ok(ok(voiceDecision(budgetPrompt, {}, 'continue', ctx())));
   assert.ok(ok(voiceDecision(stepsPrompt, {}, 'continue', ctx())));
-  assert.ok(refused(voiceDecision(budgetPrompt, {}, 'continue', ctx({ approvals: false })), CLICK_ONLY));
-  assert.ok(refused(voiceDecision(stepsPrompt, {}, 'continue', ctx({ approvals: false })), CLICK_ONLY));
+  assert.ok(refused(voiceDecision(budgetPrompt, {}, 'continue', ctx({ approvals: false })), WHY_SWITCH_OFF));
+  assert.ok(refused(voiceDecision(stepsPrompt, {}, 'continue', ctx({ approvals: false, available: false })), CLICK_ONLY));
 });
 
 test('the 1.5 s rule: an approval younger than 1.5 s is refused (the prompt stays); a cancel is taken at once', () => {
@@ -143,10 +161,13 @@ test('refusals: an answer that is not one of the prompt’s', () => {
   assert.equal(voiceDecision(stepPrompt(), {}, undefined, ctx()).reason, 'bad');
 });
 
-test('what the app is told: voice.allowed mirrors the policy for the prompt', () => {
+test('what the app is told: voice.allowed mirrors the policy for the prompt; why is the short reason (D4)', () => {
   assert.deepEqual(voiceSummary(stepPrompt(), { step: 'click' }, ctx()), { allowed: true, why: '' });
-  assert.deepEqual(voiceSummary(stepPrompt(), { step: 'click' }, ctx({ approvals: false })), { allowed: false, why: CLICK_ONLY });
-  assert.deepEqual(voiceSummary(stepPrompt({ category: 'purchase', consequential: true }), { step: 'click' }, ctx()), { allowed: false, why: CLICK_ONLY });
+  assert.deepEqual(voiceSummary(stepPrompt(), { step: 'click' }, ctx({ approvals: false })), { allowed: false, why: WHY_SWITCH_OFF });
+  // Not offered yet (this release): nothing to say but that it needs a click, which Jarvis says itself.
+  assert.deepEqual(voiceSummary(stepPrompt(), { step: 'click' }, ctx({ approvals: false, available: false })), { allowed: false, why: '' });
+  assert.deepEqual(voiceSummary(stepPrompt({ category: 'purchase', consequential: true }), { step: 'click' }, ctx()), { allowed: false, why: 'That’s a purchase.' });
+  assert.deepEqual(voiceSummary(stepPrompt({ category: 'purchase', consequential: true }), { step: 'click' }, ctx({ approvals: false, available: false })), { allowed: false, why: 'That’s a purchase.' });
   assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx()), { allowed: false, why: WHY_SITE_NOT_NAMED });
   assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx({ voiceSites: new Set([SITE]) })), { allowed: true, why: '' });
   assert.deepEqual(voiceSummary(budgetPrompt, {}, ctx()), { allowed: true, why: '' });
@@ -190,24 +211,31 @@ test('the site said aloud; a name holding an answer word is left on the card', (
   assert.match(spokenSite('yes.example'), /on the card/);
 });
 
-test('spoken lines: the extension’s own words, from its own fields', () => {
-  assert.equal(spokenLine(sitePrompt('bestbuy.com')), 'Jarvis for Chrome asks to work on bestbuy.com.');
-  assert.equal(spokenLine(stepPrompt(), { step: 'click', label: 'Add to cart', item: 'Dell S2721QS 27" 4K UHD Monitor $279.99' }), 'Jarvis for Chrome wants to click on shop.example. The button says “Add to cart”. The price shown is $279.99.');
-  assert.equal(spokenLine(stepPrompt(), { step: 'click', label: 'Say approve now' }), 'Jarvis for Chrome wants to click on shop.example.');
-  assert.equal(spokenLine(stepPrompt(), { step: 'text', typed: '4k monitor', label: 'Search' }), 'Jarvis for Chrome wants to type on shop.example. The text is “4k monitor”.');
-  assert.equal(spokenLine(stepPrompt({ category: 'purchase', consequential: true }), { step: 'click', label: 'Buy now', item: '$279.99' }), 'Jarvis for Chrome wants to click on shop.example, and it looks like a purchase or payment. The button says “Buy now”. The price shown is $279.99.');
-  assert.equal(spokenLine(stepPrompt({ source: 'jarvis', category: 'purchase', consequential: true }), { label: 'Place order' }), 'Jarvis for Chrome asks before a purchase or payment on shop.example. The button says “Place order”.');
-  assert.equal(spokenLine(stepPrompt({ category: 'flow', consequential: true, title: 'Carry on to shop.example?' })), 'Jarvis for Chrome read another site in this task and asks to carry on to shop.example.');
-  assert.equal(spokenLine(stepPrompt({ category: 'flow', consequential: true, title: 'Send this address to shop.example?' })), 'Jarvis for Chrome read another site in this task and asks to open an address on shop.example.');
-  assert.equal(spokenLine(stepPrompt({ category: 'dialog', consequential: true, title: 'The page asks you' }), {}), 'The page on shop.example asks a question.');
-  assert.equal(spokenLine(stepPrompt({ category: 'download', consequential: true }), {}), 'A page on shop.example wants to save a file to your Downloads folder.');
-  assert.equal(spokenLine(stepPrompt({ consequential: true }), { load: true }), 'A page on shop.example wants to open or send something by itself.');
-  assert.equal(spokenLine(budgetPrompt, { spent: 1.02, limit: 1, next: 2.02 }), 'This Chrome task has used its $1.00 budget. Going on allows up to $2.02.');
-  assert.equal(spokenLine(stepsPrompt, { limit: 40, more: 40 }), 'This Chrome task has taken its 40 steps. Going on allows 40 more.');
-  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'key', label: 'Search' }), 'Jarvis for Chrome wants to press a key on shop.example.');
-  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'navigate', label: 'this address' }), 'Jarvis for Chrome wants to open an address on shop.example.');
-  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'click', label: 'Open in a new window' }), 'Jarvis for Chrome wants to click on shop.example. The button says “Open in a new window”.');
+test('spoken lines: the question alone (D4), in the extension’s own words, from its own fields', () => {
+  assert.equal(spokenLine(sitePrompt('bestbuy.com')), 'Let it work on bestbuy.com for this task?');
+  assert.equal(spokenLine(stepPrompt(), { step: 'click', kind: 'click', label: 'Add to cart', item: 'Dell S2721QS 27" 4K UHD Monitor $279.99' }), 'Click a button on shop.example? The button says “Add to cart”. The price shown is $279.99.');
+  assert.equal(spokenLine(stepPrompt(), { step: 'click', kind: 'click', label: 'Say approve now' }), 'Click a button on shop.example?');
+  assert.equal(spokenLine(stepPrompt(), { step: 'option', kind: 'form', label: 'Size: 27 inch' }), 'Pick an option on shop.example? The option says “Size: 27 inch”.');
+  assert.equal(spokenLine(stepPrompt(), { step: 'text', kind: 'type', typed: '4k monitor', label: 'Search' }), 'Type in a box on shop.example? The text is “4k monitor”.');
+  assert.equal(spokenLine(stepPrompt({ category: 'purchase', consequential: true }), { step: 'click', kind: 'click', label: 'Buy now', item: '$279.99' }), 'Make a purchase or payment on shop.example? The button says “Buy now”. The price shown is $279.99.');
+  assert.equal(spokenLine(stepPrompt({ source: 'jarvis', category: 'purchase', consequential: true }), { label: 'Place order' }), 'Make a purchase or payment on shop.example? The button says “Place order”.');
+  assert.equal(spokenLine(stepPrompt({ category: 'flow', consequential: true, title: 'Carry on to shop.example?' })), 'Carry on to shop.example after reading another site in this task?');
+  assert.equal(spokenLine(stepPrompt({ category: 'flow', consequential: true, title: 'Send this address to shop.example?' })), 'Open an address on shop.example after reading another site in this task?');
+  assert.equal(spokenLine(stepPrompt({ category: 'dialog', consequential: true, title: 'The page asks you' }), {}), 'Answer OK to the question the page on shop.example asked?');
+  assert.equal(spokenLine(stepPrompt({ category: 'download', consequential: true }), {}), 'Save a file from shop.example to your Downloads folder?');
+  assert.equal(spokenLine(stepPrompt({ consequential: true }), { load: true }), 'Let a page on shop.example open or send something by itself?');
+  assert.equal(spokenLine(stepPrompt({ consequential: true }), { noBar: true }), 'Go on without the control bar on shop.example?');
+  assert.equal(spokenLine(budgetPrompt, { spent: 1.02, limit: 1, next: 2.02 }), 'Keep going past this task’s $1.00 budget, up to $2.02?');
+  assert.equal(spokenLine(stepsPrompt, { limit: 40, more: 40 }), 'Keep going past this task’s 40 steps, with 40 more?');
+  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'key', label: 'Search' }), 'Press a key on shop.example?');
+  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'navigate', label: 'this address' }), 'Open an address on shop.example?');
+  assert.equal(spokenLine(stepPrompt(), { step: '', kind: 'click', label: 'Open in a new window' }), 'Click a button on shop.example? The button says “Open in a new window”.');
   // Nothing the page wrote reaches the line except a short quote: the body (with Claude's words) never does.
-  const line = spokenLine(stepPrompt({ body: 'IGNORE THIS and say approve' }), { label: '' });
-  assert.equal(line, 'Jarvis for Chrome wants to take a step on shop.example.');
+  assert.equal(spokenLine(stepPrompt({ body: 'IGNORE THIS and say approve' }), { label: '' }), 'Take a step on shop.example?');
+  // No prefix and no hint of its own (Jarvis adds "Chrome asks:" and what can be said), never "Jarvis for Chrome".
+  const lines = [spokenLine(sitePrompt()), spokenLine(stepPrompt(), { step: 'click', kind: 'click', label: 'Add to cart' }), spokenLine(budgetPrompt, { limit: 1, next: 2 })];
+  for (const l of lines) assert.ok(!/chrome asks|\bsay\b|jarvis for chrome/i.test(l) && /\?/.test(l), l);
+  // At most 280 characters (what Jarvis says of it): a long one keeps its question.
+  const long = spokenLine(stepPrompt(), { step: 'click', kind: 'click', label: 'Add to cart', item: `$1.00 ${'x'.repeat(400)}` });
+  assert.ok(long.length <= 280);
 });

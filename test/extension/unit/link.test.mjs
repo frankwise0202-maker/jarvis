@@ -331,9 +331,10 @@ test('prompts: the extension’s own spoken words, its hash, and whether voice m
   assert.equal(prompt.category, 'change');
   assert.equal(prompt.consequential, false);
   assert.equal(prompt.site, 'shop.example');
-  assert.equal(prompt.spoken, 'Jarvis for Chrome wants to click on shop.example. The button says “Add to cart”.');
+  assert.equal(prompt.spoken, 'Click a button on shop.example? The button says “Add to cart”.', 'the question alone (D4)');
   assert.deepEqual(prompt.choices, [{ id: 'approve', label: 'Approve' }, { id: 'cancel', label: 'Cancel' }]);
-  assert.deepEqual(prompt.voice, { allowed: false, why: CLICK_ONLY }, 'every approval is a click until the red-team round');
+  // Every approval is a click until the red-team round: nothing to add but that (Jarvis says it).
+  assert.deepEqual(prompt.voice, { allowed: false, why: '' });
   assert.equal(prompt.hash, await promptHash(s.controller.run.task.prompt));
 });
 
@@ -395,11 +396,12 @@ test('answer, with voice approvals on: a purchase is refused by voice and stays 
   const { prompt } = await untilStepPrompt(s, 'Place order');
   assert.equal(prompt.consequential, true);
   assert.equal(prompt.category, 'purchase');
-  assert.deepEqual(prompt.voice, { allowed: false, why: CLICK_ONLY });
+  assert.deepEqual(prompt.voice, { allowed: false, why: 'That’s a purchase.' }, 'the short reason (D4)');
+  assert.equal(prompt.spoken, 'Make a purchase or payment on shop.example? The button says “Place order”.');
   s.clock.offset += MIN_PROMPT_AGE_MS + 100;
   const r = await s.app.request('answer', { promptId: prompt.promptId, hash: prompt.hash, choice: 'approve', via: 'card' });
   assert.equal(r.reason, 'refused');
-  assert.equal(r.why, CLICK_ONLY);
+  assert.equal(r.why, 'That’s a purchase.');
   assert.equal(s.controller.run.task.prompt?.id, prompt.promptId, 'still open');
   assert.ok(!s.fb.activations.some((a) => a.name === 'Place order'));
   s.controller.decide(prompt.promptId, 'cancel');
