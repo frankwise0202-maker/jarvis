@@ -24,15 +24,15 @@
 // Everything in the second column but Deny, Cancel and Stop needs "Approve everyday steps by
 // voice" (a setting, off by default) and, before that, VOICE_APPROVALS_AVAILABLE: until the
 // red-team round passes, the setting is hidden and every approval is a click. A decision counts
-// only for the prompt it names, still open and unchanged (its hash), and at least 1.5 s after the
-// prompt appeared. One approval still covers one step on one element, once (README: Approving
-// steps): a voice approval goes through the same prompt as a click.
+// only for the prompt it names, still open and unchanged (its hash), and a yes only at least 1.5 s
+// after the prompt appeared (a no counts at once). One approval still covers one step on one
+// element, once (README: Approving steps): a voice approval goes through the same prompt as a click.
 //
 // What goes to Jarvis with each prompt (lead decision D4): `spoken`, the question alone ("Let it
 // work on bestbuy.com for this task?"), which Jarvis says after "Chrome asks:" and before what can
-// be said; and `voice.why`, one short sentence on why it needs a click ("That's a purchase."), or ''
-// when only the voice-approval switch stands in the way (Jarvis then says "That needs a click in the
-// Jarvis window."). A refused answer carries the same reason.
+// be said; and `voice.why`, one short sentence on why it needs a click ("That's a purchase.",
+// "Approving by voice is off."), or '' while voice approvals aren't offered at all (Jarvis then says
+// "That needs a click in the Jarvis window."). A refused answer carries the same reason.
 //
 // Pure: no chrome.* access.
 
