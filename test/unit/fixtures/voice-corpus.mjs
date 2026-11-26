@@ -429,16 +429,16 @@ export const WINDOWS = {
     ['front view', 'WINH', 'windows-hologram'],
     ['labels off', 'WINH', 'windows-hologram'],
     ['make it bigger', 'WINH', 'windows-hologram'],
-    // ROUTING-10: Optics on top here (live, or the live view on) keeps its own words; the hologram's window takes
-    // only words that name the hologram. The same words do what they do without the window (VL, LV).
+    // ROUTING-10: Optics on top here (live, or the live view on) keeps its own words ("close", "expand it", "show me
+    // the camera"); ROUTING-R2-1: every other hologram command still acts in the window (D3), free.
     ...['WINHO', 'WINHV'].flatMap((state) => [
       ['close', state, 'optics'],
       ['close it', state, 'optics'],
       ['expand it', state, 'optics'],
       ['expand the picture', state, 'optics'],
       ['show me the camera', state, 'optics'],
-      ['look at the battery', state, null],
-      ['show the cooling fan', state, null],
+      ['look at the battery', state, 'windows-hologram'],
+      ['show the cooling fan', state, 'windows-hologram'],
       ['explode the hologram', state, 'windows-hologram'],
       ['show the cooling fan in the hologram', state, 'windows-hologram'],
     ]),
@@ -476,6 +476,25 @@ export const WINDOWS = {
     ['open the second link', 'V0', null],
     ['click the first link', 'WINL', null],
     ['open the first result', 'WINL', null],
+    // ROUTING-R2-1 (D3 with Optics open here, live or frozen, or the live view on): the hologram's own commands act in
+    // its window; only Optics' own words ("close", "close it", "expand it", "expand the picture", "show me the camera")
+    // stay Optics'.
+    ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
+      ['explode it', state, 'windows-hologram:windows-hologram'],
+      ['show the battery', state, 'windows-hologram'],
+      ['rotate it', state, 'windows-hologram'],
+      ['zoom in', state, 'windows-hologram'],
+      ['isolate the fan', state, 'windows-hologram'],
+      ['select the keyboard', state, 'windows-hologram'],
+      ['labels on', state, 'windows-hologram'],
+      ['focus on the battery', state, 'windows-hologram'],
+      ['close the hologram', state, 'windows-hologram'],
+      ['close', state, 'optics'],
+      ['close it', state, 'optics'],
+      ['expand it', state, 'optics'],
+      ['expand the picture', state, 'optics'],
+      ['show me the camera', state, 'optics'],
+    ]),
   ],
   not: [
     'put them side by side in the photo',
@@ -495,6 +514,8 @@ export const WINDOWS = {
     // ROUTING-10: Optics open here (live; the live view on) and the hologram in its own window.
     WINHO: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null } },
     WINHV: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'live', liveView: true, card: null, cameraAllowed: 'granted', sceneChanged: null } },
+    // ROUTING-R2-1: the same with a Look frozen in Optics.
+    WINHF: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'frozen', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null } },
     WINL: { surface: 'voice', reply: { links: WIN_LINKS, hologram: null } },
     WINC: { surface: 'chat', via: 'typed', windows: WIN_TWO },
   },

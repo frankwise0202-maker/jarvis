@@ -697,7 +697,8 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
   it back"**: the window you're in, otherwise the newest one. **"Close all windows"** closes every window;
   **"close everything"** also closes what is open in the main window (Voice Mode stays).
 - **Voice follows the hologram**: with it in a window, "explode it", "show the battery", "front view" or
-  "isolate it" happen in that window. Photos, blueprints and the parts list still open in the main window.
+  "isolate it" happen in that window, Optics open or not (with Optics open, its own words stay Optics': "close",
+  "expand it", "show me the camera"). Photos, blueprints and the parts list still open in the main window.
 - **"Do this in this window"** (or "show it here"): the window you're looking at, otherwise the main one; Jarvis
   says which, and that window is "it" from then on. "Show the report here" puts the report in it.
 - **"Show me the hologram window"** brings it to the front. **"Swap them"** swaps two windows' places;

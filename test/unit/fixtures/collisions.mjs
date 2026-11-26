@@ -312,6 +312,25 @@ export const WINDOWS = {
     { words: 'open the first result', state: 'V0', winner: null, why: 'A page object with no Chrome context: a question for Jarvis.' },
     { words: 'open the cheapest one in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
     { words: 'open the second result in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
+    // ROUTING-R2-1: with Optics open here, the hologram's window takes what it takes without Optics (D3), Optics' own
+    // words aside: "stop that" holds the model in its window still, as in WIN2 and WINH.
+    ...['WINHO', 'WINHV', 'WINHF'].map((state) => ({ words: 'stop that', state, winner: 'windows-hologram', why: 'Holds the model in its window still (free, undoable), as without Optics (D3).' })),
+    // WINHF (a Look frozen in Optics) as WINHO: it names the hologram.
+    { words: 'open the hologram of the battery', state: 'WINHF', winner: 'windows-hologram', why: 'It names the hologram: the battery part in its window (free, undoable), Optics open or not.' },
+    // The layers in order, as in WIN2 and WINH: "stop" first, then the windows' own words, then the hologram's.
+    ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
+      { words: 'stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'okay stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), never the explode of the hologram in its window.' },
+      { words: 'bring everything back', state, winner: 'screens', why: 'Windows are open: they come back (as in VHW), not every part shown.' },
+    ]),
+    // WINHF as WINHO and WINHV for the words Optics and the windows share (the same winners as in VF).
+    { words: "that's enough", state: 'WINHF', winner: 'optics', why: "Optics' live view words come first while it is on top (v8.0), as in VF." },
+    { words: "what's on my screen", state: 'WINHF', winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in VF." },
+    { words: 'close that window', state: 'WINHF', winner: 'windows', why: 'The window with the focus, else the newest; not every window.' },
+    { words: 'do this in this window', state: 'WINHF', winner: 'windows', why: 'The owner picks the window to work in, even with the camera open.' },
+    { words: 'show me the hologram window', state: 'WINHF', winner: 'windows', why: 'Bring the hologram window to the front; not a question about the camera picture.' },
+    { words: 'put the picture to the side', state: 'WINHF', winner: 'screens', why: 'No Look card on screen: a Screens float, as in VF.' },
   ],
 };
 

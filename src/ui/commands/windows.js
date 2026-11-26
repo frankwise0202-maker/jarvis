@@ -30,6 +30,7 @@
 import { matchWindowCommand } from '../../lib/window-commands.js';
 import { matchChromeCommand } from '../../lib/chrome-commands.js';
 import { matchHologramCommand } from '../../lib/hologram-commands.js';
+import { matchOpticsCommand } from '../../lib/optics-commands.js';
 import { resolveThis } from '../../lib/this-target.js';
 import { WINDOW_HOLOGRAM_ACTIONS, screenAck, screenMessage } from '../screens/controller.js';
 import { commandAck } from '../voice-visuals.js';
@@ -45,6 +46,20 @@ const IN_WINDOW = new Set([...WINDOW_HOLOGRAM_ACTIONS, 'close']);
 // Words that name the hologram itself ("explode the hologram", "rotate the model"): its window takes them
 // even with Optics on top here (ROUTING-10).
 const NAMES_HOLOGRAM = /\b(?:holograms?|models?)\b/i;
+const CLOSE_WORDS = /^\W*(?:close|close it)\W*$/i;
+
+/**
+ * With Optics open here, the words Optics itself takes ("close", "close it", "expand it", "expand the picture",
+ * "show me the camera"): they stay Optics' unless they name the hologram (ROUTING-10). Every other hologram
+ * command still acts in the window, free (D3; ROUTING-R2-1).
+ */
+function opticsKeeps(text, state) {
+  const o = state && state.optics;
+  if (!(o && o.open)) return false;
+  const words = String(text || '');
+  if (NAMES_HOLOGRAM.test(words)) return false;
+  return CLOSE_WORDS.test(words) || !!matchOpticsCommand(words, { frozen: o.mode === 'frozen' });
+}
 
 /** The window showing a hologram (the one with the focus, else the newest: the last in the list). */
 function hologramWindow(state) {
@@ -92,15 +107,15 @@ export function register(router, deps = {}) {
   // D3: the hologram is in a window and no viewer is open here (a hologram, a blueprint): its words act
   // there. A command a window can't run (photos, a blueprint, the parts list) is left to the next one in
   // the order (the hologram shown last opens here again, as before). With Optics on top here, Optics keeps
-  // its own words ("close", "expand it", "show me the camera") and the rest go where they go without the
-  // window: the window takes only words that name the hologram (ROUTING-10).
+  // its own words ("close", "expand it", "show me the camera"; ROUTING-10) and the window everything else it
+  // takes, as without Optics ("explode it", "show the battery": ROUTING-R2-1).
   router.register({
     id: 'windows-hologram',
     layer: 'top',
     surfaces: ['voice'],
     match: (text, state) => {
       if ((state.hologram && state.hologram.open) || state.blueprintOpen) return null;
-      if (state.optics && state.optics.open && !NAMES_HOLOGRAM.test(String(text || ''))) return null;
+      if (opticsKeeps(text, state)) return null;
       const w = hologramWindow(state);
       if (!w) return null;
       const cmd = matchHologramCommand(String(text || ''), Array.isArray(w.parts) ? w.parts : [], { selected: w.selected || null });
