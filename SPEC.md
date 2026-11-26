@@ -5038,8 +5038,19 @@ with K2 from then on (its answer to the rekey too), and still opens K1 for 10 mi
 arrives under K2, then forgets K1. The app keeps K1 as `prev` until a message under K2 arrives (the confirmation),
 sending the rekey again (fresh envelopes, after 3, 6, 12, then every 30 s, for 10 minutes, and whenever a message
 under K1 still comes); meanwhile it seals with K1 (for 10 minutes after the rekey, or while the extension is still
-heard using K1) and opens both, K1 for 30 minutes at most. Once confirmed, both have forgotten K1: a message sealed
-with it is dropped, so an old code (clipboard history, a note) opens nothing. A lost rekey or a lost answer is covered:
+heard using K1) and opens both, K1 until the confirmation however long it takes (v8.1.1, CHROME-LINK-R2-3: it was 30
+minutes, after which an extension that had missed every rekey was never heard again until a reload). While it is
+unconfirmed and the status shows the extension reading but it has said nothing for a minute, the window holding the
+link sends the rekey again, at most once a minute. On the confirmation, that window sends `hello` under K2 at once, so
+the extension forgets K1 within a second or two (v8.1.1, CHROME-LINK-R2-2: before, it kept K1 until the app's next
+message, minutes later). Jarvis for Chrome 1.1.1 also refuses an `open`, `start` or `answer` that arrives under K1
+once it has switched (`gone`, "That link code has been replaced."); `stop`, `ping`, `hello`, `unlinked` and `rekey`
+are still taken under it. Once confirmed, both have forgotten K1: a message sealed with it is dropped, so an old code
+(clipboard history, a note) opens nothing. Linking itself needs the extension's first message to reach the app:
+Jarvis for Chrome 1.1.1 says `hello` (and the status) again after 5, 10, 20 s, then every 30 s while nothing from the
+app has opened under the link, and the app, while a code waits, asks an older Core (404) again every 15 s instead of
+every 5 minutes, so a home base that was restarting or updating itself as the code was pasted doesn't leave the link
+waiting (v8.1.1, CHROME-LINK-R2-4). A lost rekey or a lost answer is covered:
 the rekey is sent again, a repeated rekey with the same K2 is answered again, and the extension's next message under
 K2 confirms it. The extension refuses a rekey to any other key once it has switched, so the code can't move the link
 later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay in the two
@@ -5053,6 +5064,18 @@ the focus), it tries again when this window gets it; reading refused, it leaves 
 "Jarvis couldn't check your clipboard: if it still holds the link code, copy something else over it.". Either side can
 unlink: it sends `unlinked {}` first if it can (the app waits 5 s at most), then forgets its copy; the other side
 forgets its copy when the message arrives.
+
+**The code stays out of the chat** (REDTEAM-LINK-5, CHROME-LINK-R2-5). `containsLinkSecret(text)` (chrome-link.js)
+spots a link code (the fixed base64url start of `{"v":1,"core":"`, and a code's worth after it) or this device's link
+key (and K1 while a rekey is unconfirmed). Such words never start a turn, whatever surface they were typed in: app.js
+`send()`, where every turn starts, refuses them with the composer's line ("That’s the Jarvis for Chrome link code: it
+stays out of the chat. Paste it in Jarvis for Chrome’s side panel."). The chat box refuses first (the text stays in
+the box); Voice Mode's Type field says it (`startTurnForVoice` throws it, so Voice Mode apologises with it); a
+hologram's or blueprint's field and Optics' Ask field show it (`sendFromViewer`, `lookFromOptics`, `askFromOptics`).
+A key-shaped text (`containsApiKey`) is refused the same way ("That looks like an API key, so it stays out of the
+chat. To send it to Claude anyway, use the chat box."), except from the chat box, which asks first and passes
+`keyOk` once the owner chose **Send anyway** (a Retry of such a message is refused too: send it again from the chat
+box). A conversation holding either stays out of backups and sync (backup.js `mentionsKey`).
 
 The app keeps `{ v: 1, core, key, linkedAt, extSeenAt, madeAt }` (plus `prev`, `rekeyAt`, `prevSeenAt` while a rekey
 is unconfirmed) in localStorage `jarvis.chromeLink.v1`
@@ -5165,11 +5188,18 @@ localStorage `jarvis.chromeLink.starts.v1` (`{ v: 1, starts: [{ env, sentAt, gav
 (sessionStorage, which the review suggested, belongs to one tab: the window that holds the link, which reads the late
 answer, is often another one). News of a task from Jarvis (a `task` message, or a `status` whose task is `from:
 'voice'`) naming a task this device never got an `ok` for, after a start was given up (within 2 minutes), is a late
-start too: stopped and said in the same way. News seen while a start still waits is kept until that start is answered
-(its task is then known) or given up (then it is that start's task). The window that gave up handles it; a window that
-reloads or closes leaves its starts to the window holding the link (`pagehide`), which then handles them. Jarvis for
-Chrome, for its part, sends its reply to a `start` or a `stop` again (the same envelope) for about 10 s after the
-request was made, instead of once or twice.
+start too: stopped and said in the same way. News is never taken for a late start while any start, in any window,
+still waits for its answer (v8.1.1, CHROME-LINK-R2-1: Jarvis for Chrome sends a task's news before its reply, so the
+owner's retry after a failed start was taken for the failed start's late task and stopped): it is kept as a candidate
+in the same record (`cand: [{ task, at, env }]`) until that start is answered (its task is then known) or given up
+(then it is that start's task). A start whose POST got an HTTP answer (refused, rate-limited, a proxy's 502) never
+entered the box, so it is dropped at once, not watched; the 2-minute watch stays for a start with no reply in 10 s and
+for a network error, where the POST may have landed. Jarvis for Chrome 1.1.1 names the start a task came from (`re`,
+the start's id, in `task` and `status.task`): such news goes to that start only, at once (a late start's task is
+claimed even while another start waits; a retry's never is); without it (1.1.0) the rule above decides. The window
+that gave up handles it; a window that reloads or closes leaves its starts to the window holding the link
+(`pagehide`), which then handles them. Jarvis for Chrome, for its part, sends its reply to a `start` or a `stop` again
+(the same envelope) for about 10 s after the request was made, instead of once or twice.
 
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
 `state()` → `{ linked, online, voiceApprovals, task }` (plus `budgetUsd` and `maxSteps`, the extension's task budget
@@ -5325,7 +5355,8 @@ the envelope's 120 s.
 
 **32.2.5 What goes back.** `status` on every change of the running task, the switches or the task budget, and every
 60 s while a task runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it
-started from one typed in the panel; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+started from one typed in the panel, and since 1.1.1 `re`, the id of the `start` a task from Jarvis came from, as the
+`task` message does: CHROME-LINK-R2-1; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
 how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
 for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
 last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;
@@ -5345,9 +5376,14 @@ the kind of step, a price found in the step's label or item, the budget's or ste
 only as one quote of at most about 40 characters after "The button says" (or "The option says", "The text is"),
 only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
 allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4), nor, after a
-fold by sound (digits read as letters, doubled letters, k for c, a soft c, ph for f, a silent h), one of those or the
-stems aprov, ahprov, kancel, kansel, cancle, javis, spendmore and moresteps (REDTEAM-LINK-8: "Aprove", "Approove",
-"Ah-prove", "Kancel", "Appr0ve", "Alow once", "Spend more in Chrome"); a site whose
+fold by sound (digits read as letters, doubled letters, k for c, s for z, a soft c, ph for f, or for oar, a silent h),
+one of those or the stems aprov, ahprov, uprov, apruv, kancel, kansel, cancle, cansul, javis, jarvas, spendmore,
+spendmor, moresteps, morestep and morstep (REDTEAM-LINK-8: "Aprove", "Approove", "Ah-prove", "Kancel", "Appr0ve",
+"Alow once", "Spend more in Chrome"; CHROME-LINK-R2-6: "Uh-prove", "Apruve", "Cansul", "Jarviz", "Spend mor in
+Chrome", "Mor steps", "More stepz"), nor a word that folds to ye, yea, yeah, yeh, ya, yah, yas, yep or yup ("Yep",
+"Yeah"; whole words only, so "Yearly" and "Yuppie" are still quoted). A list of sounds always has neighbours
+("Stahp" is left, or "Staples" would go with it): the quote only describes the step, and the extension's own policy
+decides every answer. A site whose
 name holds such a word is "a site whose name is on the card in the Jarvis window". Claude's words (the card's body,
 request_confirmation's text) are never spoken. `voice.why` is one short sentence on why a yes needs a click ("That’s
 a purchase.", "That sends a message.", "That’s a keyboard shortcut.", "That carries what it read to another site.",

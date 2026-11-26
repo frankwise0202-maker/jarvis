@@ -7,10 +7,18 @@
 //                         iPhone only says where to link and never reads the relay.
 //   chrome-link-open      "open YouTube in Chrome" with the link online: the open message (url, no rectangle,
 //                         focused) and its reply, said; with the extension offline: the normal tab (G1).
+//   chrome-link-retry     CHROME-LINK-R2-1 (ported from the second review's r2-retry-stopped): a Chrome task said in
+//                         Voice Mode whose start can't reach the home base, said again 20 s later; Jarvis for Chrome
+//                         sends the task's news before its reply, as the real one does: the retry runs, never stopped
+//                         as a "late start".
+//   chrome-link-code-fields CHROME-LINK-R2-5 (ported from the second review's v-code-voice-type): a link code, or an
+//                         API key, typed in Voice Mode's Type field, a hologram's field or Optics' Ask field never goes
+//                         to Claude, as in the chat box; each says why where it was typed.
 
 import { readFileSync } from 'node:fs';
 import { tid } from '../harness.mjs';
 import { CORE_URL, CORE_ORIGIN, createFakeChromePeer, seedChromeLink, CHROME_TEST_KEY } from '../core-fakes.mjs';
+import { installFakeSpeech } from './features.mjs';
 
 const LINKED_HOME = { settings: { homeBaseUrl: CORE_URL } };
 // A read that waits for the relay is cut off when the page goes away (a reload): the browser logs it.
@@ -73,6 +81,27 @@ async function goOffline(peer) {
   peer.setOnline(false, { seenAgoMs: 5 * 60_000 });
   await new Promise((r) => setTimeout(r, 800));
 }
+
+// ---- Voice Mode for chrome-link-retry (the same as chrome-voice.mjs's, kept here so the two files stay apart) ----
+/** A Mac linked to the fake Jarvis for Chrome (online), the fake recognizer and voice, Voice Mode open. */
+async function linkedVoiceMode(t) {
+  const page = await t.newPage();
+  await seedChromeLink(page.context(), { key: CHROME_TEST_KEY });
+  await page.addInitScript(installFakeSpeech, { noSpeechMs: 4000 });
+  await page.addInitScript(() => {
+    window.__voice.queue = [''];
+  });
+  await t.goto('/');
+  const peer = createFakeChromePeer(t.core.relay, { autoTask: true }).start();
+  await t.waitFor(() => peer.received.some((m) => m.kind === 'hello'), { timeout: 15000, message: 'the app’s hello' });
+  await page.waitForTimeout(1500); // online once the extension's hello back has arrived
+  await (await t.visible('voice-open')).click();
+  await t.visible('voice-mode');
+  return { page, peer };
+}
+const saidLines = (t) => t.page.evaluate(() => window.__voice.said.map((s) => String(s).replace(/\s+/g, ' ').trim()));
+const hear = (t, text) => t.page.evaluate((x) => window.__voice.say({ parts: [{ at: 600, text: x, final: true, alts: [] }] }), text);
+const kinds = (peer, kind) => peer.received.filter((m) => m.kind === kind);
 
 export default [
   {
@@ -305,6 +334,123 @@ export default [
       } finally {
         await peer.stop();
       }
+    },
+  },
+  {
+    name: 'chrome-link-retry',
+    title: 'A Chrome task whose start couldn’t reach the home base, said again 20 s later: the retry runs; with its news before its reply (as the real Jarvis for Chrome sends them) it is never stopped as a “late start” (CHROME-LINK-R2-1)',
+    device: 'mac',
+    seed: LINKED_HOME,
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 180000,
+    async run(t) {
+      const { peer } = await linkedVoiceMode(t);
+      try {
+        await t.step('the first try: the home base can’t be reached as the start goes out', async () => {
+          await hear(t, 'Find a USB-C hub in Chrome.');
+          await t.waitFor(async () => (await saidLines(t)).some((l) => /find a USB-C hub\. Say cancel to stop\./.test(l)), { timeout: 20000, message: async () => `the check (said: ${JSON.stringify(await saidLines(t))})` });
+          t.core.relay.mode = 'unreachable';
+          await t.page.waitForTimeout(4500);
+          t.core.relay.mode = 'ok';
+          t.assert(kinds(peer, 'start').length === 0, 'no start reached Jarvis for Chrome');
+        });
+        await t.step('20 s later the owner says it again: it goes through (news, then the reply); never stopped', async () => {
+          await t.page.waitForTimeout(15000);
+          peer.answer('start', null); // the reply is sent by hand, after the task's news
+          const before = (await saidLines(t)).length;
+          await t.locator('voice-core').click(); // the owner taps the core to talk again
+          await hear(t, 'Find a USB-C hub in Chrome.');
+          await t.waitFor(async () => (await saidLines(t)).slice(before).some((l) => /find a USB-C hub\. Say cancel to stop\./.test(l)), { timeout: 20000, message: async () => `the second check (said: ${JSON.stringify((await saidLines(t)).slice(-4))})` });
+          const start = await peer.waitFor('start', { timeoutMs: 30000 });
+          await peer.task({ id: 'task-retry', status: 'running', text: 'find a USB-C hub', narration: 'Starting the task.' });
+          await peer.send('reply', { re: start.id, ok: true, id: 'task-retry' });
+          await t.waitFor(async () => (await saidLines(t)).some((l) => l.includes('Chrome is on it.')), { timeout: 20000, message: async () => `"Chrome is on it." (said: ${JSON.stringify((await saidLines(t)).slice(-4))})` });
+          await t.page.waitForTimeout(4000);
+          const said = await saidLines(t);
+          t.assert(kinds(peer, 'stop').length === 0, `the retried task was stopped (${kinds(peer, 'stop').length} stop(s)); said: ${JSON.stringify(said.slice(-3))}`);
+          t.assert(!said.some((l) => l.includes('Chrome started late')), 'no "started late" for the task the owner just started');
+        });
+      } finally {
+        await peer.stop();
+      }
+    },
+  },
+  {
+    name: 'chrome-link-code-fields',
+    title: 'A link code, or an API key, typed in Voice Mode’s Type field, a hologram’s field or Optics’ Ask field never goes to Claude, as in the chat box; each says why (CHROME-LINK-R2-5)',
+    device: 'mac',
+    timeout: 240000,
+    browserArgs: () => ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech, { noSpeechMs: 4000 });
+      await page.addInitScript(() => {
+        window.__voice.queue = [''];
+      });
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      const code = Buffer.from(JSON.stringify({ v: 1, core: 'https://alienware.tail4e5f6a.ts.net', key: 'B'.repeat(43) })).toString('base64url');
+      const apiKey = `sk-ant-api03-${'Q'.repeat(40)}`;
+      const sentToClaude = (from, secret) => t.requests('lead').slice(from).some((r) => JSON.stringify(r.body || {}).includes(secret));
+      const CODE_LINE = /Jarvis for Chrome link code: it stays out of the chat/;
+      const KEY_LINE = /looks like an API key, so it stays out of the chat/;
+      await t.step('the chat box refuses the code (as before)', async () => {
+        const input = await t.visible('composer-input');
+        await input.fill(code);
+        await (await t.visible('composer-send')).click();
+        await page.waitForTimeout(800);
+        t.assert((await t.count('turn-user')) === 0, 'the chat box sent the code');
+        await input.fill('');
+      });
+      await t.step('Voice Mode’s Type field: the code, then a key: neither goes to Claude; Jarvis says why', async () => {
+        await (await t.visible('voice-open')).click();
+        await t.visible('voice-mode');
+        await (await t.visible('voice-type-toggle')).click();
+        for (const [secret, line] of [
+          [code, CODE_LINE],
+          [apiKey, KEY_LINE],
+        ]) {
+          const before = t.requests('lead').length;
+          const said = (await saidLines(t)).length;
+          const input = await t.visible('voice-input');
+          await input.fill(secret);
+          await (await t.visible('voice-send')).click();
+          await t.waitFor(async () => (await saidLines(t)).slice(said).some((l) => line.test(l)), { timeout: 15000, message: async () => `Jarvis to say why (said: ${JSON.stringify((await saidLines(t)).slice(-3))})` });
+          await page.waitForTimeout(1500);
+          t.assert(!sentToClaude(before, secret) && t.requests('lead').length === before, `it went to Claude from Voice Mode’s Type field (${t.requests('lead').length - before} request(s))`);
+          if (!(await t.locator('voice-input').isVisible())) await (await t.visible('voice-type-toggle')).click(); // back to the field
+        }
+        await page.keyboard.press('Escape');
+        await page.locator(tid('voice-mode')).waitFor({ state: 'hidden', timeout: 10000 });
+      });
+      await t.step('a hologram’s field: the code doesn’t go to Claude; the viewer says why', async () => {
+        const turn = await t.send('[[hologram:alternator]] Show me how a car alternator works');
+        await t.waitForTurn(turn, ['done'], { timeout: 60000 });
+        await turn.locator(tid('hologram-open')).click();
+        await t.visible('hologram-viewer');
+        await t.waitFor(async () => (await page.locator(tid('hologram-viewer')).getAttribute('data-state')) === 'ready', { timeout: 45000, message: 'the viewer to be ready' });
+        const before = t.requests('lead').length;
+        const input = page.locator(tid('hologram-command'));
+        await input.fill(code);
+        await input.press('Enter');
+        const caption = page.locator(tid('hologram-caption'));
+        await t.waitFor(async () => CODE_LINE.test((await caption.textContent()) || ''), { timeout: 10000, message: async () => `the viewer to say why ("${(await caption.textContent()) || ''}")` });
+        await page.waitForTimeout(1000);
+        t.assert(!sentToClaude(before, code) && t.requests('lead').length === before, 'the code went to Claude from the hologram’s field');
+      });
+      await t.step('Optics’ Ask field: the code doesn’t go to Claude; Optics says why', async () => {
+        await t.goto('/?optics=1');
+        await t.visible('optics');
+        await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-camera')) === 'live', { timeout: 20000, message: 'the camera to go live' });
+        const before = t.requests('lead').length;
+        await page.locator(tid('optics-ask')).fill(code);
+        await page.locator(tid('optics-look')).click();
+        const answer = page.locator(tid('optics-answer-text'));
+        await t.waitFor(async () => CODE_LINE.test((await answer.textContent()) || ''), { timeout: 10000, message: async () => `Optics to say why ("${(await answer.textContent()) || ''}")` });
+        await page.waitForTimeout(1000);
+        t.assert(!sentToClaude(before, code) && t.requests('lead').length === before, 'the code went to Claude from Optics’ Ask field');
+      });
     },
   },
 ];

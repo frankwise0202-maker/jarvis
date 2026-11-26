@@ -25,7 +25,7 @@ import { REVIEW_MS, listenPhrases } from './voice-heard.js';
 import { partHint, nothingBackAck } from './voice-visuals.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
-import { createShareOptions, redactSecrets } from './share.js';
+import { createShareOptions, redactSecrets, containsApiKey } from './share.js';
 import { createFollowupChips, parseProtocolPrompt, exportCustomProtocols, importCustomProtocols, getProtocol } from './protocols.js';
 import { createPresence } from './presence/presence.js';
 import { exportHud, importHud } from './presence/hud-prefs.js';
@@ -114,7 +114,7 @@ import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
 import { register as registerChromeCommands } from './commands/chrome.js';
 // v8.1 chrome-relay: Jarvis for Chrome, linked through the home base (SPEC §32.1).
-import { installChromeLink } from '../platform/chrome-link.js';
+import { installChromeLink, containsLinkSecret } from '../platform/chrome-link.js';
 import { notify as notifyOwner } from './attention.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
@@ -685,7 +685,8 @@ export async function startApp(rootEl) {
     // The camera key opens Optics (live camera); false = no camera API here, use the system camera.
     onCamera: () => (opticsAvailable() ? openOpticsScreen() : false),
     getSettings: () => getSettings(),
-    onSend: (text, mode, extras) => send(text, mode, extras),
+    // The chat box refused a link code and asked about a key-shaped text first: one it sends was "Send anyway".
+    onSend: (text, mode, extras) => send(text, mode, { ...extras, keyOk: true }),
     // "Open this on my other screen", "float it", "bring it back": acted on here, free (Screens, v7),
     // also while Jarvis is working ("put mission control on screen 2").
     // Apple Music: "play Back in Black" is found here, free (no Claude request): a Music card.
@@ -1515,6 +1516,12 @@ export async function startApp(rootEl) {
     const clean = String(text || '').trim();
     const attachments = extras && Array.isArray(extras.attachments) ? extras.attachments.filter((a) => a && typeof a === 'object') : [];
     if (!clean && !attachments.length) return false;
+    // Every turn starts here, whichever surface it was typed in (CHROME-LINK-R2-5).
+    const secret = secretInWords(clean, extras);
+    if (secret) {
+      toast(secret, { level: 'warn', id: 'secret-words' });
+      return false;
+    }
     if (!state.demo && !safe(getApiKey, '')) {
       toast('Add your API key first.', { level: 'info' });
       openSettings({ section: 'apikey', focus: 'apikey-input' });
@@ -1574,6 +1581,17 @@ export async function startApp(rootEl) {
     return true;
   }
 
+  /**
+   * CHROME-LINK-R2-5: what the chat box keeps out of a turn stays out of every surface's: a Jarvis for Chrome link code
+   * (or the link's key) never goes to Claude, and a key-shaped text only from the chat box, after its "Send anyway"
+   * (`keyOk`). send() checks; Voice Mode, a viewer's field and Optics check first too, to say why where it was typed.
+   */
+  function secretInWords(text, extras) {
+    if (safe(() => containsLinkSecret(String(text || '')), false)) return 'That’s the Jarvis for Chrome link code: it stays out of the chat. Paste it in Jarvis for Chrome’s side panel.';
+    if (containsApiKey(String(text || '')) && !(extras && extras.keyOk === true)) return 'That looks like an API key, so it stays out of the chat. To send it to Claude anyway, use the chat box.';
+    return '';
+  }
+
   // ---- Voice Mode (SPEC §14.1) ----------------------------------------------------------------
   // send() reports problems with toasts or by opening Settings, both hidden behind the overlay,
   // so Voice Mode gets errors it can say out loud instead.
@@ -1594,6 +1612,8 @@ export async function startApp(rootEl) {
   let lastVoiceHologram = null; // REOPEN_ACTIONS (command-router.js): the commands that open it again
 
   function startTurnForVoice(text, { mode, blueprintFor, attachments, optics, newChat: freshChat = false } = {}) {
+    const secret = secretInWords(text); // CHROME-LINK-R2-5: said, not sent
+    if (secret) throw new Error(secret);
     if (!state.demo && !safe(getApiKey, '')) throw new Error('Add your Anthropic API key first: exit voice mode, then open Settings → API key.');
     if (!state.online) throw new Error('You’re offline. Reconnect and try again.');
     if (currentRunning()) throw new Error('I’m still working on the previous request.');
@@ -2455,6 +2475,8 @@ export async function startApp(rootEl) {
   const PRE_OPTICS_NOTE = 'New chat: labels need one (this chat is from before the camera).';
 
   function lookFromOptics({ text, frame, newChat = false }) {
+    const secret = secretInWords(text); // CHROME-LINK-R2-5
+    if (secret) return { error: secret };
     const problem = opticsProblem({ newChat });
     if (problem) return { error: problem };
     const { attachment, optics } = opticsAttachment(frame);
@@ -2472,6 +2494,8 @@ export async function startApp(rootEl) {
   }
 
   function askFromOptics({ text }) {
+    const secret = secretInWords(text); // CHROME-LINK-R2-5
+    if (secret) return { error: secret };
     const problem = opticsProblem();
     if (problem) return { error: problem };
     // A follow-up asked in Optics stays there when stopped (never put back in the chat box).
@@ -3211,6 +3235,8 @@ export async function startApp(rootEl) {
   async function sendFromViewer(text, { conversationId, mode = 'auto', blueprintFor = null, signal = null } = {}) {
     const clean = String(text || '').trim();
     if (!clean) return { error: 'Nothing to send.' };
+    const secret = secretInWords(clean); // CHROME-LINK-R2-5: before Voice Mode under the viewer, too
+    if (secret) return { error: secret };
     // v8.1: "put this on my other screen" and "play Back in Black" typed in a viewer are taken before
     // this, by the router (routeFromViewer).
     let conv = await viewerConversation(conversationId);

@@ -227,8 +227,9 @@ the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, u
 needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
 
 1. In Jarvis, in your usual Chrome: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link
-   code**. The code works once, for 30 minutes: as soon as the two are linked, Jarvis sends a new
-   key and both forget the code's, so an old code opens nothing.
+   code**. The code works once, for 30 minutes: as the two link, Jarvis sends a new key, and both
+   forget the code's within a second or two; from the switch, a task, a page or an answer sent with
+   the old code is refused, so an old code opens nothing.
 2. In the Jarvis window: open the side panel (⌥⇧J) → **Settings** → **Voice from Jarvis**, paste
    the code and press **Link**.
 3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.
@@ -270,11 +271,13 @@ Every question the side panel shows is also sent to Jarvis, which asks it aloud 
 its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add to cart”. Say
 approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of
 step, the site, what it looks like (a purchase…), a price. Of the page's own words it quotes at most
-about 40 characters, after "the button says", and never words that sound like an answer
+about 40 characters, after "the button says", and never the words used to answer
 ("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis", "spend more in Chrome",
-"more steps in Chrome"), also spaced out, accented, in look-alike letters or spelled by sound
-("Aprove", "Kancel", "Appr0ve"), so a page can't put words in Jarvis's mouth. (Jarvis for Chrome
-decides every answer itself; the quote only describes the step.) When a question needs a click, Jarvis says why in a few words (*"That's a
+"more steps in Chrome"), also spaced out, accented, in look-alike letters or in their commonest
+spellings by sound ("Aprove", "Uh-prove", "Kancel", "Appr0ve", "Spend mor", "Yep"), so a page can't
+easily put words in Jarvis's mouth. A list of sounds always has neighbours, so this is a courtesy,
+not the safeguard: Jarvis for Chrome decides every answer itself, and the quote only describes the
+step. When a question needs a click, Jarvis says why in a few words (*"That's a
 purchase."*) and that it needs a click in the Jarvis window.
 
 | Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |
