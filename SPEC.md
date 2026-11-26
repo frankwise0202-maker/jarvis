@@ -4136,10 +4136,11 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   without the rounds the meter only counted ahead; it passes the hold when a round ran past it (a search result far
   larger than counted ahead, at an hour that couldn't grow the hold, or one that came while a grow was refused). A
   stop before the next round ran (MONEY-R2-1's usual stop: the round counted ahead wouldn't fit) counts the hold and
-  leaves the room for the live view's looks. What ran past the hold but couldn't be counted because another window
-  holds the rest of the hour stays held by this window for the rest of the hour (a reservation of its own, counted
-  by every window, gone after 60 minutes; fix MONEY-R4-2), so it isn't offered again when that window's question
-  settles. So retries and the owner's Stop no longer fill the hour with reservations, and a stop never leaves room a
+  leaves the room for the live view's looks. What ran past the hold but couldn't be counted because other questions
+  hold the rest of the hour (in another window, or another chat of this one) stays held by this window for the rest
+  of the hour (a reservation of its own, counted by every window, gone after 60 minutes; fixes MONEY-R4-2 and
+  MONEY-R5-1: only the stopped request's own hold is left out of what is kept), so it isn't offered again when those
+  questions settle. So retries and the owner's Stop no longer fill the hour with reservations, and a stop never leaves room a
   round may have used on offer. With no meter figure (cut before `message_start`, or a request without a
   reservation): `keep`, the reservation counted as spent, as before.
 - **Every window.** Each window keeps its open reservations in localStorage under its own key
@@ -4165,9 +4166,10 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   very edge, could have the next round started before the stop reaches the API. The hour then counts the meter's
   figure up to all its room (it reads $1.00, and nothing more is sent until it has room again), but the real spend
   can pass $1 by a few cents: the round already ran, and the record never goes above $1 for it (fix MONEY-R3-1).
-  With another window's gated question open at that moment, the hour reads under $1.00 after the stop (that
-  window's hold isn't counted as spent); what the round may have used beside it stays held for the rest of the hour,
-  so it isn't offered again, but the real overshoot can be larger, up to the other window's hold (MONEY-R4-2). A
+  With another gated question open at that moment (in another window, or another chat of this one), the hour reads
+  under $1.00 after the stop (that question's hold isn't counted as spent); what the round may have used beside it
+  stays held for the rest of the hour, so it isn't offered again, but the real overshoot can be larger, up to the
+  other question's hold (MONEY-R4-2, MONEY-R5-1). A
   stopped or cut request counts all of its `max_tokens` (about 8¢ at 4,000 on the lead model): the output billed before
   the stop isn't known, so the upper bound is kept. With the live view on every answer is a quick one, at most 4,000
   then 1,000 tokens a request: a long answer may stop short ("Tell me more" goes on). In Voice Mode the refusal is said
@@ -4189,7 +4191,8 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   counts the meter's figure up to all its room, never passes $1, offers no room, and the line names when it has room
   again; asked again, the question is refused before it is sent; at an empty hour the same result completes; MONEY-R4-1:
   stopped before a round of 7,000-token searches runs at 65¢, 70¢ and 72¢, the hour counts the hold and keeps the room;
-  MONEY-R4-2: two windows, the room kept out once the other window settles), and
+  MONEY-R4-2 and MONEY-R5-1: two windows, and two chats of one window, the room kept out once the other question
+  settles), and
   `live-gate.r2` (v8.1.1, fixes MONEY-R2-1, MONEY-R2-2,
   MONEY-R2-3, from the second review's probes: at an empty hour, in a new chat and a warm one, two searches of about
   8,000 tokens and a third search complete at their real cost, and a page fetch ends with its own line, the question

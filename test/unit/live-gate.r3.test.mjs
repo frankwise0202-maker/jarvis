@@ -225,3 +225,30 @@ for (const [spent, tokens] of [
     assert.ok(budgetA.spent() <= 1 + 1e-9);
   });
 }
+
+// v8.1.1 fix MONEY-R5-1 (the second re-verify's one-window probe): the same with two chats of ONE window, each with a
+// question in flight (send() refuses only for the current chat; Optics offers "Look in a new chat now"). The other
+// chat's hold is this window's own, yet it too leaves room out of the stop's count: kept the same way.
+for (const [spent, tokens] of [
+  [0.4, 60000],
+  [0.45, 45000],
+]) {
+  test(`MONEY-R5-1: one window, two chats, the other chat holding a question while this one runs past its hold (${spent * 100}¢, ${tokens.toLocaleString('en-US')} tokens): once it settles, no room the round may have used is on offer`, async () => {
+    const { budget, gate } = liveHour(spent);
+    const other = await gate.reserveUpTo(0.2613, 0.05); // the other chat's question, in flight in this window
+    assert.ok(other.ok);
+    const h = createHarness({ handler: (req) => (req.kind === 'lead' ? reply(1, tokens, COLD) : { content: [blk.text('ok')], stop: 'end_turn' }) });
+    const meters = [];
+    const turn = await ask(h, h.jarvis.newConversation(), gate, meters);
+    assert.equal(turn.status, 'error');
+    const { m } = meters[0];
+    assert.equal(m.tripped, 'cost');
+    const ran = m.spent();
+    assert.ok(budget.spent() <= 1 + 1e-9, `the record never passes $1 ($${budget.spent().toFixed(4)})`);
+    await gate.settle(other.id, 0.03); // the other chat's answer came in at 3¢
+    const takenOut = budget.spent() + gate.reserved();
+    assert.ok(takenOut >= spent + ran + 0.03 - 1e-6, `what the round may have used stays out of the room ($${takenOut.toFixed(4)} spent and held, against $${(spent + ran + 0.03).toFixed(4)})`);
+    assert.ok(Math.abs(gate.room() - Math.max(0, 1 - takenOut)) < 1e-6, `room on offer $${gate.room().toFixed(4)}`);
+    assert.ok(budget.spent() <= 1 + 1e-9);
+  });
+}
