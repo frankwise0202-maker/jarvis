@@ -1131,7 +1131,8 @@ Chrome only points you there.
 With the link online, say these to Jarvis (in Voice Mode, or typed in the chat box):
 
 - **A task, with "in Chrome":** "find a 4K monitor under $300 and add it to the cart in Chrome". You can also start
-  with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". Before anything happens, Jarvis shows the
+  with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". It has to be something to do ("find", "add",
+  "open", "book", …): "my Gmail won't load in Chrome" is a question for Jarvis, never a task. Before anything happens, Jarvis shows the
   task on a card and says it back with its price: "Chrome, up to a dollar: find a 4K monitor under $300 and add it to
   the cart. Say cancel to stop." The price is the budget set in Jarvis for Chrome ("up to your Chrome budget" until
   it has told Jarvis), and the task never spends more than the price he said. Two seconds after he has said it all
@@ -1157,7 +1158,8 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   far.
   - Jarvis says the final answer.
   - "What are you doing in Chrome?" tells you the latest step (free).
-  - "Stop" or "stop Chrome" stops it: "Stopping Chrome…", and once Jarvis for Chrome confirms it, "Chrome stopped."
+  - "Stop" or "stop Chrome" stops it (so do "stop that", "cancel the task", "abort" or "cancel" while it runs, and a
+    stop said while it is still starting): "Stopping Chrome…", and once Jarvis for Chrome confirms it, "Chrome stopped."
     If it can't be reached within 10 seconds, Jarvis says so and where to press Stop (it keeps trying). The card's
     **Stop**, ⌘⇧. and the side panel's Stop still work.
   - Asked for a second task while one runs, Jarvis says "Chrome is busy with another task. Stop it first?". "Yes" or

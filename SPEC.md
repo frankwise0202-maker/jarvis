@@ -5330,6 +5330,9 @@ otherwise Claude's.
   "the screen protector" and "order history" are a page's); a question without page words (R4); with a hologram
   open, one of its parts' names or aliases (R10); what opening takes (above), unless it also asks for an action
   ("and add it to the cart") or names a page object; a reserved answer word.
+- **Only an instruction** (ROUTING-2): with a carrier, the words must start with a page verb (`INSTRUCTION_VERBS`:
+  "find", "add", "open", "book", …; "let's", "please" or a site and a colon may come first), or ask about the page
+  itself; "my Gmail won't load in Chrome", "explain how cookies work in Chrome" are questions for Jarvis.
 - **The task text** is the owner's words with their spelling ("$300", "4K"), without the carrier and fillers; a
   leading verb is lower-cased for the check line. `chat: 'same'` carries on the last task's chat (`state.chrome
   .lastTask`, kept after it ends): a context sentence after a task, or a follow-up word ("now …", "… too", "also",
@@ -5371,7 +5374,12 @@ name would set off his barge-in, critique M8): the lines say "Chrome", the link'
 
 **32.3.4 While a task runs.** The controller keeps the latest task from `app.chromeLink.state()` and its `subscribe`,
 and `onDone`: the card shows the status, the latest step (`narration` or `lastStep`), the cost against the budget
-and the final answer; **Stop** stops it. A stop ("stop", "stop Chrome", the card's Stop) says "Stopping Chrome…"
+and the final answer; **Stop** stops it. While a task runs (or waits, or its start is on its way), "stop that",
+"stop the task", "cancel the task", "abort", "halt", a bare "cancel" and "pause / end / kill" with what they stop are
+`chrome-stop`'s too (ROUTING-5). A start on its way (the countdown over, no reply yet) is no check any more: a stop
+then stops the task as soon as it has an id, never "nothing sent", never "Chrome is on it." (ROUTING-11). A bare
+"cancel" or "no" while a check counts is the check's, even with an owner question under it (ROUTING-1). A stop
+("stop", "stop Chrome", the card's Stop) says "Stopping Chrome…"
 (the card "Stopping…"), and the task is marked stopped only once Jarvis for Chrome confirms it (`stopTask()`
 resolving `{ ok: true }`, or the task's `done`), then "Chrome stopped."; 10 s unconfirmed: "I couldn't reach Chrome
 to stop it. Press Stop in its side panel." (the link keeps sending it). Voice's bare "stop" says what it did
