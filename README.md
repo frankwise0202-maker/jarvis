@@ -1294,15 +1294,35 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   claps and, if you turned it on, "Hey Jarvis". The sound is checked on the device and thrown
   away: nothing is recorded or sent, and the red **LISTENING ON THIS DEVICE** pill shows it the
   whole time (the pill says whenever the microphone is on; with only "Hey Jarvis" on, the
-  microphone stays off until it is ready). Leaving Standby turns the microphone off. On a phone it
-  also stops while Jarvis is not on screen; on a Mac it keeps listening in a background tab while
-  Standby is open. When he wakes, Voice Mode takes over as usual (your browser's speech service
-  hears what you say next; on a Mac that goes on while his window is in the background, with the
-  chimes and the tab's title saying when he listens: see [Hands-free on a Mac](#hands-free-on-a-mac),
-  and Settings → Voice → Wake Jarvis to turn it off); woken by claps, words heard in that first moment are not sent to
-  Claude (they may be the room talking). The "Hey Jarvis" models download once from the Jarvis
-  site itself, and what you played lately (for the music he offers, with Apple's ids for it)
-  stays on this device.
+  microphone stays off until it is ready). Leaving Standby turns the microphone off, in every
+  Jarvis window. On a phone it also stops while Jarvis is not on screen; on a Mac it keeps listening
+  in a background tab while Standby is open. When he wakes, Voice Mode takes over: your browser's
+  speech service hears what you say next (on a Mac, also in the background: next point). Woken by
+  claps, words heard in that first moment are not sent to Claude (they may be the room talking). The
+  "Hey Jarvis" models download once from the Jarvis site itself, and what you played lately (for the
+  music he offers, with Apple's ids for it) stays on this device.
+- **Hands-free on a Mac.** A conversation you started (two claps or "Hey Jarvis" on Standby, a tap, a
+  key) goes on while Jarvis's window is in the background or the display is asleep: your browser's
+  speech service hears the room then, as it does on screen. Nothing else opens the microphone for
+  questions, and Settings → Voice → Wake Jarvis → **Keep talking when Jarvis is in the background
+  (Mac)** turns this off. See [Hands-free on a Mac](#hands-free-on-a-mac).
+  - **It ends by itself.** After each answer he listens about 8 seconds for a follow-up, then goes back
+    to Standby. In the background he takes at most 3 questions in a row without "Hey Jarvis", a tap or
+    a key, then stops listening, so a TV can't keep him going.
+  - **Interrupting him by voice** (with "Speakerphone speaks, Mac listens" or "Switch", once the
+    hands-free Test passed) keeps Standby's microphone on through the whole conversation, listening on
+    the Mac for "Hey Jarvis" or two claps, as on Standby: nothing it hears is recorded or sent.
+  - **One window listens.** With Jarvis open in two windows, only one listens on Standby. Another
+    takes over by itself only when that window closes; when you leave Standby, the others leave it
+    too, so no microphone turns on by itself. **Use this window** moves it when you choose. While
+    Voice Mode is open in one window, Standby in another doesn't wake.
+  - **Chrome's questions are said out loud** (Jarvis for Chrome: "Chrome asks: …"), in Voice Mode and
+    at the next wake, and he listens up to 30 seconds for your answer, so anyone in the room can hear
+    them. With Voice Mode closed, a notification says Chrome is asking instead.
+  - **How to tell he is listening:** the chimes when he starts and stops, the tab's title ("Listening ·
+    Jarvis", "Thinking · Jarvis", "Speaking · Jarvis"), and one notification per conversation ("Jarvis
+    is listening"), gone when it ends. Chrome's red dot and the Mac's orange dot are on whenever
+    Standby listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question".
 - **Location** is never used unless you type one into Settings (it helps with local questions).
 - **Photos** you attach are shrunk and stripped of their location data before they are sent.
   Like the rest of the conversation, they are kept on this device only (and are included in
