@@ -169,6 +169,8 @@ export class Relay {
           if (!this.running) break;
           await this.receive(m);
         }
+        // (A message may have ended the link: an unlinked relay keeps nothing.)
+        if (!this.running) break;
         if (typeof data.last === 'string' && data.last.length <= 64) this.after = data.last;
         await this.save();
         if (this.now() - this.statusAt >= STATUS_EVERY_MS) await this.readStatus();
@@ -195,7 +197,7 @@ export class Relay {
     } catch {
       return;
     }
-    if (!opened.ok) return; // dropped without a word
+    if (!opened.ok || !this.running) return; // dropped without a word
     await this.save();
     this.appSeenAt = this.now();
     this.emitState();

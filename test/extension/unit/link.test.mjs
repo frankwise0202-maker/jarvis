@@ -516,4 +516,6 @@ test('unlink: from the panel, Jarvis is told first; from Jarvis, the link goes; 
   assert.equal(r.ok, true);
   await s2.waitFor(async () => (await s2.store.getLink()) === null);
   assert.equal(s2.link.relay, null);
+  await new Promise((res) => setTimeout(res, 100));
+  assert.deepEqual(await s2.store.getRelayState(), { after: '', seen: [] }, 'nothing of the link is kept');
 });

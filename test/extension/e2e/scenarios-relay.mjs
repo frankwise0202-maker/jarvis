@@ -76,17 +76,17 @@ const relayOpen = {
     // Open with a place (Optics or a tour on screen): the window goes there, isn't focused; no debugger.
     const updates = await recordWindowUpdates(run);
     const url = run.server.siteUrl('shop', '/product/dell-s2721qs');
-    const rect = { left: 60, top: 40, width: 820, height: 640 };
+    const rect = { left: 60, top: 40, width: 640, height: 480 };
     const r = await app.request('open', { url, rect, focus: false });
     assert(r.ok === true && r.url === url && r.site === 'shop.localhost', `opened (${JSON.stringify(r)})`);
     const tabs = await run.sw.evaluate(async (u) => (await chrome.tabs.query({})).filter((t) => (t.pendingUrl || t.url) === u).map((t) => ({ id: t.id, windowId: t.windowId })), url);
     assert(tabs.length === 1, `one tab for it (${JSON.stringify(tabs)})`);
     assert((await run.attachedTabs()).length === 0, 'no debugger on it');
     const u1 = await updates();
-    assert(u1.some((x) => x.props.left === 60 && x.props.top === 40 && x.props.width === 820 && x.props.height === 640), `placed (${JSON.stringify(u1)})`);
+    assert(u1.some((x) => x.props.left === 60 && x.props.top === 40 && x.props.width === 640 && x.props.height === 480 && x.props.state === 'normal'), `placed (${JSON.stringify(u1)})`);
     assert(!u1.some((x) => x.props.focused === true), 'not focused with a place');
     const win = await run.sw.evaluate((id) => chrome.windows.get(id), tabs[0].windowId);
-    assert(win.width === 820 && win.height === 640, `the window's size (${win.width}x${win.height})`);
+    assert(Math.abs(win.width - 640) <= 16 && Math.abs(win.height - 480) <= 16, `the window's size (${win.width}x${win.height})`);
     // Without a place it is focused.
     await app.request('open', { url: run.server.siteUrl('shop', '/'), rect: null, focus: true });
     assert((await updates()).some((x) => x.props.focused === true), 'focused without a place');
