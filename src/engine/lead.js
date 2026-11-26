@@ -389,12 +389,17 @@ async function waitToRetry(ctx, req, ms, label) {
   }
 }
 
-/** v8.1 (E0): a request the live view's gate refused: it would take the hour past its dollar. */
+/**
+ * v8.1 (E0): a request the live view's gate refused (it would take the hour past its dollar), or one its
+ * meter stopped (the hour, or a page beyond the budget: each with its own line). `sent` (MONEY-R2-1): the
+ * request had gone out (a meter stop), so the owner's message stays in the history.
+ */
 export class LiveCapRefused extends Error {
-  constructor(message, req) {
+  constructor(message, req, { sent = false } = {}) {
     super(message);
     this.name = 'LiveCapRefused';
     this.req = req;
+    this.sent = sent === true;
   }
 }
 
@@ -431,9 +436,10 @@ async function gateRequest(ctx, req) {
  */
 function meterFor(ctx, ticket) {
   if (!ticket || !(ticket.usd > 0) || typeof ticket.meter !== 'function') return null;
-  const meter = ticket.meter({ maxTokens: ctx.gateMaxTokens, tools: ctx.conv.tools });
-  if (!meter || typeof meter.onEvent !== 'function') return null;
   const controller = new AbortController();
+  // MONEY-R2-1: a stop decided after the event (a grow the hour turned down) aborts this request too.
+  const meter = ticket.meter({ maxTokens: ctx.gateMaxTokens, tools: ctx.conv.tools, onStop: () => controller.abort() });
+  if (!meter || typeof meter.onEvent !== 'function') return null;
   const follow = () => controller.abort();
   if (ctx.signal.aborted) controller.abort();
   else ctx.signal.addEventListener('abort', follow, { once: true });
@@ -452,13 +458,19 @@ function meterFor(ctx, ticket) {
  * A gated request that failed: released when the API turned it down before any output (an HTTP
  * error: not billed); kept when it may have been billed (stopped after it was sent, cut off
  * mid-stream, or a connection that dropped): the worst is assumed (its reservation counts; with no
- * reservation, what it already cost).
+ * reservation, what it already cost). MONEY-R2-3: a request whose meter saw its prompt billed counts
+ * at most what the meter says it may have cost (its prompt as billed, all of max_tokens, its searches
+ * and rounds), never more than was held: retries and the owner's Stop no longer fill the hour.
  */
-function settleFailedTicket(ctx, ticket, err) {
+function settleFailedTicket(ctx, ticket, err, metered = null) {
   const e = err && typeof err === 'object' ? err : {};
   const turnedDown = typeof e.status === 'number' && !e.jarvisStarted && !e.jarvisPartial && !isAbortError(err);
   if (turnedDown) {
     ticket.release();
+    return;
+  }
+  if (metered && metered.meter.started && typeof ticket.settleAtMost === 'function') {
+    ticket.settleAtMost(metered.meter.committed());
     return;
   }
   const partial = e.jarvisPartial;
@@ -497,13 +509,14 @@ async function leadRequest(ctx, req) {
       return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
       if (metered) metered.done();
-      if (ticket) settleFailedTicket(ctx, ticket, err);
+      if (ticket) settleFailedTicket(ctx, ticket, err, metered);
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
-      // The meter stopped it before it could pass its reservation (which is kept as spent): the turn
-      // ends with the gate's line, as a refused request's does.
+      // The meter stopped it (MONEY-R2-1): the hour couldn't hold its next round (the cap line), or it
+      // started to fetch a page beyond the budget (its own line). What it may have cost is counted.
       if (metered && metered.meter.tripped && !ctx.stopped) {
-        throw new LiveCapRefused(typeof ticket.message === 'function' ? ticket.message() : 'That would take the live view past its dollar this hour.', req);
+        const line = typeof ticket.message === 'function' ? ticket.message(metered.meter.tripped) : 'That would take the live view past its dollar this hour.';
+        throw new LiveCapRefused(line, req, { sent: true });
       }
       if (ctx.stopped || isAbortError(err)) throw err;
       if (isToolInputParseError(err) && jsonRetries < MAX_JSON_RETRIES) {
@@ -1031,9 +1044,10 @@ export async function runLeadTurn(ctx, { resume = false } = {}) {
         return failTurn(ctx, err.info, err.req);
       }
       if (err instanceof LiveCapRefused) {
-        // v8.1 (E0): nothing of this request was sent. Refused before the turn's first request, the
-        // owner's message leaves the history (nothing was built on it), so asked again it goes once.
-        if (err.req === 0 && !ctx.resumed) removeTurnFromHistory(ctx);
+        // v8.1 (E0): refused before the turn's first request was sent, the owner's message leaves the
+        // history (nothing was built on it), so asked again it goes once. Stopped by its meter after it
+        // was sent (MONEY-R2-1), the message stays, as after any request that went out.
+        if (err.req === 0 && !ctx.resumed && !err.sent) removeTurnFromHistory(ctx);
         return failTurn(ctx, { kind: 'live_cap', message: err.message, retryable: false }, err.req);
       }
       const info = classifyError(err, { model: ctx.leadModel });

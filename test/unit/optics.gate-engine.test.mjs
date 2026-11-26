@@ -3,7 +3,8 @@
 // kept short (4,000 tokens for the turn's first, 1,000 after), reserves its worst case in the live
 // view's hour first and settles at its real cost; at the edge it is never sent and the turn ends with
 // the gate's line; a request turned down before it was billed gives its room back; one stopped after
-// it was sent keeps it. With the live view off, every request is exactly as before.
+// it was sent counts at most what it may have cost (v8.1.1, MONEY-R2-3). With the live view off, every
+// request is exactly as before.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,6 +54,7 @@ function setup() {
     settle: (id, usd) => (outcomes.push(['settle', usd]), gate.settle(id, usd)),
     release: (id) => (outcomes.push(['release']), gate.release(id)),
     keep: (id) => (outcomes.push(['keep']), gate.keep(id)),
+    settleAtMost: (id, usd) => (outcomes.push(['settleAtMost', usd]), gate.settleAtMost(id, usd)),
   };
   // One per turn, as the app makes them (each remembers whether its turn counts in the hour).
   const newTurnGate = () => createTurnGate({ gate: spied, isOn: () => live.on });
@@ -135,7 +137,7 @@ test('a request turned down before it was billed (a 529) gives its room back; th
   assert.equal(gate.reserved(), 0);
 });
 
-test('a request stopped after it was sent keeps its reservation (it may have been billed)', async () => {
+test('a request stopped after it was sent counts at most what it may have cost: its meter\'s figure, never more than was held (MONEY-R2-3)', async () => {
   const { jarvis, budget, gate, turnGate, outcomes } = setup();
   const conv = jarvis.newConversation();
   const run = jarvis.startTurn(conv, { text: 'Tell me a long story [[slow]] [[long]]', mode: 'quick', gate: turnGate });
@@ -152,8 +154,10 @@ test('a request stopped after it was sent keeps its reservation (it may have bee
   run.abort();
   const turn = await run.done;
   assert.equal(turn.status, 'stopped');
-  assert.deepEqual(outcomes.map((o) => o[0]), ['keep']);
-  assert.ok(near(budget.spent(), held), `the whole reservation counts (${budget.spent()} vs ${held})`);
+  assert.deepEqual(outcomes.map((o) => o[0]), ['settleAtMost']);
+  assert.ok(near(budget.spent(), Math.min(held, outcomes[0][1])), `min(held, the meter's figure) counts (${budget.spent()} vs ${held}, ${outcomes[0][1]})`);
+  assert.ok(budget.spent() < held, 'less than the whole reservation');
+  assert.ok(budget.spent() >= turn.costUsd, `never below what it was billed so far (${budget.spent()} vs ${turn.costUsd})`);
   assert.equal(gate.reserved(), 0);
 });
 
