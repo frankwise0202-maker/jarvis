@@ -99,7 +99,8 @@ export function cleanRect(rect) {
   const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : NaN);
   const r = { left: n(rect.left), top: n(rect.top), width: n(rect.width), height: n(rect.height) };
   if (Object.values(r).some(Number.isNaN)) return null;
-  if (r.width < 200 || r.height < 150 || r.width > 16000 || r.height > 16000 || Math.abs(r.left) > 32000 || Math.abs(r.top) > 32000) return null;
+  // (The same bounds as the app's cleanRect.)
+  if (r.width < 100 || r.height < 100 || r.width > 100000 || r.height > 100000 || Math.abs(r.left) > 100000 || Math.abs(r.top) > 100000) return null;
   return r;
 }
 

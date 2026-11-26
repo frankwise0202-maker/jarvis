@@ -148,7 +148,8 @@ test('sites named in the words: as addresses only (no guessing from "best buy")'
 
 test('a window’s place from Jarvis: whole numbers in sane ranges, else none', () => {
   assert.deepEqual(cleanRect({ left: 10.4, top: 20, width: 800, height: 600 }), { left: 10, top: 20, width: 800, height: 600 });
-  for (const r of [null, {}, { left: 0, top: 0, width: 50, height: 600 }, { left: 'a', top: 0, width: 800, height: 600 }, { left: 0, top: 0, width: 800, height: Infinity }]) assert.equal(cleanRect(r), null);
+  for (const r of [null, {}, { left: 0, top: 0, width: 99, height: 600 }, { left: 'a', top: 0, width: 800, height: 600 }, { left: 0, top: 0, width: 800, height: Infinity }, { left: 200000, top: 0, width: 800, height: 600 }]) assert.equal(cleanRect(r), null);
+  assert.deepEqual(cleanRect({ left: -40, top: 0, width: 100, height: 100 }), { left: -40, top: 0, width: 100, height: 100 });
 });
 
 test('done: limits are told apart from a Stop', () => {
