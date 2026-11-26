@@ -3992,8 +3992,9 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
 (`startTurn(conv, { gate })`), app.js (`liveTurnGate`, `getLiveGate`).
 - **Which requests.** Every main-model request of a turn sent from a window whose live view is on (`liveViewOn()`: on
   or paused): a Look, its follow-ups, any question typed or said in that window, a quick research answer, and each
-  later request of the same turn (a tool round, a `pause_turn` continuation). app.js `send()` gives every turn a gate
-  (`createTurnGate({ gate, isOn })`, one per turn) and, while the live view is on, makes it a quick turn
+  later request of the same turn (a tool round, a `pause_turn` continuation), and a turn resumed with Resume
+  (`resumeTurn(conv, { gate })`). app.js `send()` gives every turn a gate (`createTurnGate({ gate, isOn })`, one per
+  turn; `resume()` too) and, while the live view is on, makes it a quick turn
   (`mode: 'quick'`: a swarm's agents are outside the gate). A research mission (its offer says so) and the home base
   are outside (`outsideLiveView`); the demo has no gate.
 - **The worst case** (`requestWorstUsd(params, { model })`): the request's input as sent (system, tools, messages;
