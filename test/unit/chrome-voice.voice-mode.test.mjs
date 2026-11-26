@@ -691,3 +691,18 @@ test('CHROME-VOICE-R2-2: Stop pressed over another line while Chrome\'s question
   await s.env.advance(8000);
   assert.equal(asks(s), 1, `said once the owner's listen ended (${JSON.stringify(s.said())})`);
 });
+
+// ---- v8.1.1: CHROME-VOICE-R2-3, ROUTING-R2-2: a trouble is the owner's question; an instruction is a task ---------
+
+test('CHROME-VOICE-R2-3: said in Voice Mode, "Log in doesn\'t work in Chrome." never starts a paid task; "Cancel my Netflix subscription in Chrome." is checked and sent', async (t) => {
+  const s = await setup(t, { script: (n) => (n === 0 ? 'Log in doesn’t work in Chrome.' : null) });
+  await s.env.advance(12000);
+  assert.deepEqual(s.fake.calls.startTask, [], `nothing goes to Chrome (said ${JSON.stringify(s.said())})`);
+  assert.ok(!s.said().some((x) => x.startsWith('Chrome, up to a dollar')), 'no check line');
+  assert.deepEqual(s.env.log.turns, ['Log in doesn’t work in Chrome.'], 'the owner\'s question');
+  const c = await setup(t, { script: (n) => (n === 0 ? 'Cancel my Netflix subscription in Chrome.' : null) });
+  await c.until(() => c.said().includes('Chrome, up to a dollar: cancel my Netflix subscription. Say cancel to stop.'), 'the check line');
+  await c.until(() => c.fake.calls.startTask.length === 1, 'the start', 20000);
+  assert.deepEqual(c.fake.calls.startTask[0], { text: 'cancel my Netflix subscription', chat: 'new', limitUsd: 1 });
+  assert.deepEqual(c.env.log.turns, [], 'no Claude turn');
+});
