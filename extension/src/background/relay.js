@@ -174,6 +174,8 @@ export class Relay {
         if (this.now() - this.statusAt >= STATUS_EVERY_MS) await this.readStatus();
         continue;
       }
+      // (A cursor the home base won't take is dropped: it then answers with every message it holds.)
+      if (res?.status === 400) this.after = '';
       this.failures += 1;
       this.emitState();
       await this.sleep(backoffMs(this.failures, res?.status === 429 ? res.retryAfter : 0));
