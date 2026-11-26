@@ -87,6 +87,7 @@ import { createHomeBaseView } from './homebase-sheet.js';
 import { matchBrainCommand, parseHomeBaseLink, briefingMarkdown, briefingSpeech, resultsMarkdown, resultsSpeech, brainProblem, briefingFallback, NO_KEY_MESSAGE, FRESH_BRIEFING_MS, deviceLabel } from '../lib/brain.js';
 import { createStandbyCapture } from '../platform/wake/capture.js';
 import { createAudioDevices } from '../platform/audio-devices.js';
+import '../styles/audio-devices.css'; // v8.1: Settings → Voice → Microphone and speaker, Always on, Standby's one-time line
 import { createWakeWord, createWakeWordStub } from '../platform/wake/wake-word.js';
 import { noteMusicPlayed, suggestedMusic } from '../platform/music-recent.js';
 import { standbyCommand } from '../lib/wake/phrases.js';

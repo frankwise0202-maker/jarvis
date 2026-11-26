@@ -1,4 +1,5 @@
-/* v8.1 (SPEC §28.2): Settings → Voice → Microphone and speaker (src/ui/audio-devices-card.js), on a computer.
+/* v8.1 (SPEC §28.2): Settings → Voice → Microphone and speaker (src/ui/audio-devices-card.js), on a computer;
+   imported by src/ui/app.js.
    The same quiet card style as Jarvis's voice: hairlines, plain notes, one accent for the recommended setup,
    the warning colour only for a device that isn't connected or a Chrome that can't be given a microphone.
    Standby's one-time line (.standby-tip) sits under its hint. */

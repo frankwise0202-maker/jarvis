@@ -54,7 +54,8 @@ import { micPermission, showMyDevices, openMic, recognizerTakesTrack } from '../
 import { notifyPermission } from './attention.js';
 import { isStandalone } from '../platform/env.js';
 import { levelFromSamples } from '../platform/voice/natural/audio-out.js';
-import '../styles/audio-devices.css';
+// Its stylesheet (src/styles/audio-devices.css) is imported by app.js: settings.js imports this module, and
+// settings.js must stay importable in plain Node (its pure helpers' unit tests).
 
 const MIC_TEST_MS = 5000;
 const HIDDEN_TEST_MS = 10000;
