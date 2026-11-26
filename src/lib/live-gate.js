@@ -674,7 +674,13 @@ export function createTurnGate({ gate, isOn, startedOn } = {}) {
       const r = typeof gate.reserveUpTo === 'function' ? await gate.reserveUpTo(worst, floor) : await gate.reserve(worst);
       if (!r || !r.ok) return { refused: true, message: capLine(r ? r.resumeAt : Infinity), usd: worst };
       const held = isNum(r.usd) ? r.usd : worst;
-      const fit = held + 1e-12 < worst ? fitRequest(params, { model, web: LIVE_WEB, usd: held }) : null;
+      const partial = held + 1e-12 < worst;
+      const fit = partial ? fitRequest(params, { model, web: LIVE_WEB, usd: held }) : null;
+      if (partial && !fit) {
+        // Not even a useful answer fits what was held (rounding at the floor): nothing is sent.
+        await gate.release(r.id);
+        return { refused: true, message: capLine(gate.resumeAt(floor)), usd: worst };
+      }
       const maxTokens = fit ? fit.maxTokens : isNum(params && params.max_tokens) ? params.max_tokens : null;
       const web = fit ? fit.web : LIVE_WEB;
       // One outcome per ticket: answered, failed before billing, or stopped after it was sent.

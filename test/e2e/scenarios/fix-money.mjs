@@ -15,7 +15,7 @@ import { tid } from '../harness.mjs';
 import { installCameraRig } from '../camera-rig.mjs';
 import { configureLive, isLiveRequest } from '../../mock/optics.mjs';
 import { installFakeSpeech } from './features.mjs';
-import { cameraArgs, instrument, openFromComposer, setHidden, slowCamera, waitLive } from './optics.mjs';
+import { cameraArgs, instrument, setHidden, slowCamera, waitLive } from './optics.mjs';
 import { toastText, typeCommand } from './screens.mjs';
 
 const MAC_CAMERAS = [{ label: 'FaceTime HD Camera (Built-in) (05ac:8514)' }, { label: 'Logitech BRIO (046d:085e)' }];
@@ -182,8 +182,8 @@ export default [
       await instrument(page);
       await page.context().grantPermissions(['camera', 'microphone']);
       configureLive(t.mock, { costUsd: 0.0001 });
-      await t.goto('/');
-      await openFromComposer(t);
+      await t.goto('/?optics=1');
+      await t.visible('optics');
       await waitLive(t);
       const cameraLabel = () => page.evaluate(() => {
         const live = (window.__opticsTracks || []).filter((x) => x.api === 'getUserMedia' && x.track.kind === 'video' && x.track.readyState === 'live');

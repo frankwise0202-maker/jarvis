@@ -2159,7 +2159,6 @@ export async function startApp(rootEl) {
         },
         offer: () => wakeOffer(),
         briefing: () => wakeBriefing(),
-        briefingUsd: () => briefingPrice(), // MONEY-4: said with the offer's paid briefing, before it is sent
         returnToStandby: () => getSettings().wakeReturn !== false,
         canSleep: () => !musicPlayer.isPlaying(),
         pending: () => wakePending.lines(), // v8.1 (D3): said before the greeting
