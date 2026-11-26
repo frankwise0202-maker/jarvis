@@ -257,28 +257,44 @@ const relayApproveRefused = {
 
 const relayReplay = {
   name: 'relay-replay',
-  title: 'Voice from Jarvis: a replayed start or decision, or a stale one, is dropped without a word',
+  title: 'Voice from Jarvis: a replayed decision, start or stop, or a stale one, is dropped without a word',
   start: { link: {}, approveSteps: false },
   async run(run) {
     const { mock, relay } = run.server;
     const app = run.app;
-    mock.script([() => ({ hold: true })]);
+    // A decision: Jarvis denies the site question by voice; the same envelope again is dropped.
+    mock.script([() => ({ calls: [read] }), (ctx) => ({ answer: ctx.results[0]?.isError ? 'You denied the site, so I stopped.' : 'Read it.' })]);
     const start = await app.post('start', { text: 'Look around shop.localhost', chat: 'new', from: 'voice' });
-    await app.waitFor((m) => m.kind === 'reply' && m.body.re === start.id);
-    await run.waitStatus('running');
-    // The same envelope again: dropped (no reply, no second task).
+    await app.waitFor((m) => m.kind === 'reply' && m.body.re === start.id && m.body.ok === true);
+    const prompt = (await app.waitFor((m) => m.kind === 'prompt' && m.body.kind === 'site', { timeoutMs: 30000 })).body;
+    const deny = await app.post('answer', { promptId: prompt.promptId, hash: prompt.hash, choice: 'deny', via: 'voice' });
+    const r1 = await app.waitFor((m) => m.kind === 'reply' && m.body.re === deny.id);
+    assert(r1.body.ok === true, JSON.stringify(r1.body));
+    await app.waitFor((m) => m.kind === 'done', { timeoutMs: 30000 });
+    relay.put('to-ext', { id: deny.id, iv: deny.iv, ct: deny.ct });
     relay.put('to-ext', { id: start.id, iv: start.iv, ct: start.ct });
     await sleep(1500);
     await app.poll();
-    assert(app.received.filter((m) => m.kind === 'reply' && m.body.re === start.id).length === 1, 'one reply');
+    assert(app.received.filter((m) => m.kind === 'reply' && m.body.re === deny.id).length === 1, 'one reply to the decision');
+    assert(app.received.filter((m) => m.kind === 'reply' && m.body.re === start.id).length === 1, 'one reply to the start');
     assert((await run.panel.locator(tid('task-card')).count()) === 1, 'one task');
+    const steps = await run.steps();
+    assert(steps.filter((st) => /^Answered by voice from Jarvis: “Deny”/.test(st.label)).length === 1, steps.map((st) => st.label).join(' | '));
+    // The same decision sealed afresh finds the question gone.
+    const again = await app.request('answer', { promptId: prompt.promptId, hash: prompt.hash, choice: 'deny', via: 'voice' });
+    assert(again.ok === false && again.reason === 'gone', JSON.stringify(again));
+
     // A stop, replayed after a new task started, must not stop it.
+    mock.script([() => ({ hold: true })]);
+    const r2 = await app.request('start', { text: 'Look again', chat: 'same', from: 'voice' });
+    assert(r2.ok === true, JSON.stringify(r2));
+    await run.waitStatus('running');
     const stop = await app.post('stop', {});
     await app.waitFor((m) => m.kind === 'reply' && m.body.re === stop.id && m.body.ok === true);
     await run.waitStatus('stopped');
     mock.script([() => ({ hold: true })]);
-    const r = await app.request('start', { text: 'Look again', chat: 'same', from: 'voice' });
-    assert(r.ok === true, JSON.stringify(r));
+    const r3 = await app.request('start', { text: 'Look once more', chat: 'same', from: 'voice' });
+    assert(r3.ok === true, JSON.stringify(r3));
     await run.waitStatus(['running', 'waiting']);
     relay.put('to-ext', { id: stop.id, iv: stop.iv, ct: stop.ct });
     await sleep(1500);
