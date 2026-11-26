@@ -135,10 +135,16 @@ test('Voice from Jarvis: off until linked; Link turns Tasks from Jarvis on; voic
   await fake.storage.local.set({ chromeLink: { v: 1, core: 'https://alienware.tail4e5f6a.ts.net', key: 'short' } });
   assert.equal(await store.getLink(), null);
   await store.setRelayState({ after: 'x', seen: ['a', 1, 'b'] });
-  assert.deepEqual(await store.getRelayState(), { after: 'x', seen: ['a', 'b'] });
+  assert.deepEqual(await store.getRelayState(), { after: 'x', seen: ['a', 'b'], heardAt: 0 });
+  await store.setRelayState({ after: 'x', seen: [], heardAt: 1_800_000_000_000 });
+  assert.equal((await store.getRelayState()).heardAt, 1_800_000_000_000, 'when Jarvis last answered with this key');
+  for (const heardAt of ['1800000000000', -5, 1.5, NaN, null]) {
+    await fake.storage.local.set({ 'jarvis.relay': { after: '', seen: [], heardAt } });
+    assert.equal((await store.getRelayState()).heardAt, 0, String(heardAt));
+  }
   await store.clearLink();
   assert.equal(await store.getLink(), null);
-  assert.deepEqual(await store.getRelayState(), { after: '', seen: [] });
+  assert.deepEqual(await store.getRelayState(), { after: '', seen: [], heardAt: 0 });
   assert.equal(await store.getDevVoiceApprovals(), false, 'never outside development builds');
 });
 

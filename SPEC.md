@@ -4083,18 +4083,21 @@ asked for by name when the owner links; the CSP's `connect-src` adds `https://*.
 extension's own: `extension/build/manifest.mjs` `VERSION`). In `chrome.storage.local`: `chromeLink` `{ v: 1, core,
 key, linkedAt }`; `jarvis.voice` `{ tasksFromJarvis, approvals }` (both off until linked; Link turns the first on);
 `jarvis.voiceTasks` `{ day, count }` (tasks from Jarvis on this computer's calendar day); `jarvis.relay` `{ after,
-seen }` (where reading `to-ext` left off, and the last 500 ids read).
+seen, heardAt }` (where reading `to-ext` left off, the last 500 ids read, and when a message from the app last opened
+with this key).
 
 **32.2.2 Linking.** The panel checks the code: base64url JSON `{ v: 1, core, key }`, `core` only
 `https://<machine>.<tailnet>.ts.net` (no port, path or user name), `key` 32 bytes. Inside the click it calls
-`chrome.permissions.request({ origins: [core + '/*'] })`; on Allow the link is saved (the old cursor first) and
-Tasks from Jarvis turns on. The worker sees the change, starts the relay, creates the alarm `jarvis-relay` (every
-0.5 min) and sends `hello` and `status`. The section shows "Linked · online" (the home base answers and the app read
-its box or spoke in the last 60 s), "Linked · waiting for Jarvis" (with what to do: keep Jarvis open; if Jarvis doesn't
-show Linked, copy a new link code there, Unlink here and paste it), "Linked · can't reach your home base" (check
-Tailscale and the home base) or "Linked · connecting…", with Unlink. Unlink (from the panel, or `unlinked` from the app) sends `unlinked {}` first when the
-panel unlinks, then forgets the key, the cursor and the alarm, and gives back the host permission. Development
-builds also take a local relay (`http://127.0.0.1:<port>`).
+`chrome.permissions.request({ origins: [core + '/*'] })`; on Allow the link is saved (the old cursor first) and Tasks
+from Jarvis turns on. The worker sees the change, starts the relay, creates the alarm `jarvis-relay` (every 0.5 min)
+and sends `hello` and `status`. The section shows "Linked · online" (the home base answers, a message from the app has
+opened with this key at least once, and the app read its box or spoke in the last 60 s; the home base seeing a reader
+alone isn't enough, since a replaced or expired code leaves the app reading with another key), "Linked · waiting for
+Jarvis" (with what to do: keep Jarvis open; if Jarvis doesn't show Linked, copy a new link code there, Unlink here and
+paste it), "Linked · can't reach your home base" (check Tailscale and the home base) or "Linked · connecting…", with
+Unlink. Unlink (from the panel, or `unlinked` from the app) sends `unlinked {}` first when the panel unlinks, then
+forgets the key, the cursor and the alarm, and gives back the host permission. Development builds also take a local
+relay (`http://127.0.0.1:<port>`).
 
 **32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
 runs, so 20 s without an answer means the home base is gone), each poll after one extension API call

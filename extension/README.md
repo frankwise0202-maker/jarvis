@@ -529,8 +529,8 @@ but is better for simple tasks. Pages with lots of text, and many screenshots, c
 - **The microphone doesn't work:** click the mic again and allow it in the tab Chrome opens.
 - **There's no "Voice from Jarvis" in Settings:** this is Jarvis for Chrome 1.0. Update it to 1.1.0
   (above).
-- **"Linked · waiting for Jarvis":** your home base answers, but Jarvis hasn't been heard from for a
-  minute. Open Jarvis in your usual Chrome and keep it open. If Jarvis doesn't show **Linked**, the
+- **"Linked · waiting for Jarvis":** your home base answers, but Jarvis hasn't answered on this link
+  in the last minute (or ever). Open Jarvis in your usual Chrome and keep it open. If Jarvis doesn't show **Linked**, the
   code you pasted was replaced or had expired: press **Link** in Jarvis for a new one, then
   **Unlink** in the side panel and paste the new code.
 - **"Linked · can't reach your home base":** check that this Mac is on Tailscale and that the home

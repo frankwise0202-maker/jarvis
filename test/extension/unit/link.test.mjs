@@ -194,6 +194,57 @@ test('the relay loop backs off while the home base can’t be reached, and start
   assert.ok(relay.requests.some((q) => q.path === '/api/relay/to-ext' && q.query.wait === '20'), 'a 20-s long poll');
 });
 
+test('online (the side panel): only once Jarvis has answered with this link’s key, and while it is heard from or reads its box', async () => {
+  let t = 1_800_000_000_000;
+  const now = () => t;
+  const relay = createFakeRelay({ waitScaleMs: 1, now });
+  const store = createStore(createFakeBrowser().chrome);
+  const key = newLinkKey();
+  await store.setLink({ core: CORE, key });
+  const got = [];
+  const make = () => new Relay({ chrome: { runtime: {} }, link: { core: CORE, key }, store, onMessage: (m) => got.push(m), fetch: relay.fetch, now, sleep: fast });
+  const until = async (fn, what) => {
+    const end = Date.now() + 3000;
+    while (!fn()) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((res) => setTimeout(res, 5));
+    }
+  };
+  const r = make();
+  assert.equal(await r.send('hello', { ext: 'jarvis-for-chrome', version: '1.1.0' }), true);
+  // Jarvis's box is read with another key (a link code that was replaced, or had expired): the home
+  // base saw a reader, but this key isn't proven. The panel says "Linked · waiting for Jarvis".
+  const stranger = await createAppPeer({ relay, key: newLinkKey(), now });
+  await stranger.poll();
+  await r.readStatus();
+  assert.ok(relay.seen.appSeenAt === t && r.appSeenAt === t, 'the home base says the app read its box');
+  assert.deepEqual(r.state(), { reachable: true, appOnline: false, failing: false });
+  // Jarvis answers with this key (its hello once it has heard from Jarvis for Chrome): online.
+  const app = await createAppPeer({ relay, key, now });
+  await app.post('hello', { app: 'jarvis', version: '8.1' });
+  r.start();
+  await until(() => got.length === 1, 'Jarvis’s hello');
+  r.stop();
+  assert.equal(r.state().appOnline, true);
+  assert.equal((await store.getRelayState()).heardAt, t, 'saved with the cursor');
+  // A minute later: online only while Jarvis still reads its box.
+  t += 61_000;
+  assert.equal(r.state().appOnline, false, 'nothing for a minute');
+  await app.poll();
+  await r.readStatus();
+  assert.equal(r.state().appOnline, true, 'Jarvis reads its box');
+  // A restart of the worker (a new loop, the same storage): the key is still proven.
+  const r2 = make();
+  r2.start();
+  await until(() => r2.heardAt > 0, 'the saved state');
+  r2.stop();
+  await r2.readStatus();
+  assert.equal(r2.state().appOnline, true, 'after a restart');
+  // A new link starts unproven.
+  await store.setLink({ core: CORE, key: newLinkKey() });
+  assert.equal((await store.getRelayState()).heardAt, 0);
+});
+
 // ---------------------------------------------------------------------------------------------
 // The link
 
@@ -612,5 +663,5 @@ test('unlink: from the panel, Jarvis is told first; from Jarvis, the link goes; 
   await s2.waitFor(async () => (await s2.store.getLink()) === null);
   assert.equal(s2.link.relay, null);
   await new Promise((res) => setTimeout(res, 100));
-  assert.deepEqual(await s2.store.getRelayState(), { after: '', seen: [] }, 'nothing of the link is kept');
+  assert.deepEqual(await s2.store.getRelayState(), { after: '', seen: [], heardAt: 0 }, 'nothing of the link is kept');
 });

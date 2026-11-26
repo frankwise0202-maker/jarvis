@@ -56,6 +56,9 @@ export class Relay {
     this.lastOkAt = 0;
     this.failures = 0;
     this.appSeenAt = 0;
+    // When a message from the app last opened with this link's key (saved): until then the key isn't
+    // proven, and the app reading its box (with whatever key it has) doesn't count as online.
+    this.heardAt = 0;
     this.statusAt = 0;
     this.abort = null;
     this.key = null;
@@ -91,11 +94,15 @@ export class Relay {
     return this.lastOkAt ? Math.max(0, now - this.lastOkAt) : Infinity;
   }
 
-  /** What the side panel shows: { reachable, appOnline, failing }. */
+  /**
+   * What the side panel shows: { reachable, appOnline, failing }. Online: Jarvis has answered with this
+   * link's key at least once, and it spoke or read its box in the last minute.
+   */
   state(now = this.now()) {
+    const recent = (t) => !!t && now - t < ONLINE_MS;
     return {
       reachable: this.unreachableFor(now) < ONLINE_MS && this.failures === 0,
-      appOnline: !!this.appSeenAt && now - this.appSeenAt < ONLINE_MS,
+      appOnline: !!this.heardAt && (recent(this.heardAt) || recent(this.appSeenAt)),
       failing: this.failures > 0,
     };
   }
@@ -144,9 +151,10 @@ export class Relay {
   }
 
   async run() {
-    const saved = await this.store.getRelayState().catch(() => ({ after: '', seen: [] }));
+    const saved = await this.store.getRelayState().catch(() => ({ after: '', seen: [], heardAt: 0 }));
     this.after = saved.after || '';
     this.seen = new SeenIds(saved.seen);
+    this.heardAt = Math.max(this.heardAt, Number(saved.heardAt) || 0);
     while (this.running) {
       // One extension API call before each poll: it tells Chrome the worker is busy.
       try {
@@ -185,7 +193,7 @@ export class Relay {
   }
 
   async save() {
-    await this.store.setRelayState({ after: this.after, seen: this.seen.toJSON() }).catch(() => {});
+    await this.store.setRelayState({ after: this.after, seen: this.seen.toJSON(), heardAt: this.heardAt }).catch(() => {});
   }
 
   /** One message from the box: opened, counted as read (and saved) before it is acted on. */
@@ -198,8 +206,8 @@ export class Relay {
       return;
     }
     if (!opened.ok || !this.running) return; // dropped without a word
+    this.heardAt = this.appSeenAt = this.now();
     await this.save();
-    this.appSeenAt = this.now();
     this.emitState();
     try {
       await this.onMessage(opened.message);

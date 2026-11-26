@@ -21,8 +21,9 @@
 //                     turns it on), and "Approve everyday steps by voice" (off; only offered once
 //                     VOICE_APPROVALS_AVAILABLE)
 //   jarvis.voiceTasks { day, count } tasks Jarvis started today (at most VOICE_TASKS_PER_DAY)
-//   jarvis.relay      { after, seen } where reading the home base's messages left off, and the ids
-//                     of the last 500 read (a message is never taken twice, also after a restart)
+//   jarvis.relay      { after, seen, heardAt } where reading the home base's messages left off, the
+//                     ids of the last 500 read (a message is never taken twice, also after a
+//                     restart), and when a message from Jarvis last opened with this link's key
 //
 // In development builds only, jarvis.dev.apiBase points the API client at a local mock (and
 // jarvis.dev.voiceApprovals lets the tests turn voice approvals on before they are available).
@@ -315,13 +316,18 @@ export function createStore(chromeLike = globalThis.chrome) {
       return count;
     },
 
-    /** Where reading the home base's messages left off: { after, seen } (see relay.js). */
+    /** Where reading the home base's messages left off, and when Jarvis last answered with this key: { after, seen, heardAt } (see relay.js). */
     async getRelayState() {
       const v = await get(KEYS.relay);
-      return { after: typeof v?.after === 'string' ? v.after : '', seen: Array.isArray(v?.seen) ? v.seen.filter((x) => typeof x === 'string') : [] };
+      const heardAt = typeof v?.heardAt === 'number' ? v.heardAt : 0;
+      return {
+        after: typeof v?.after === 'string' ? v.after : '',
+        seen: Array.isArray(v?.seen) ? v.seen.filter((x) => typeof x === 'string') : [],
+        heardAt: Number.isSafeInteger(heardAt) && heardAt > 0 ? heardAt : 0,
+      };
     },
-    async setRelayState({ after = '', seen = [] } = {}) {
-      await set(KEYS.relay, { after, seen });
+    async setRelayState({ after = '', seen = [], heardAt = 0 } = {}) {
+      await set(KEYS.relay, { after, seen, heardAt });
     },
 
     /** Development builds only: voice approvals on before they are available (the tests). */
