@@ -633,6 +633,53 @@ test('ROUTING-R2-5: during a task\'s check, "continue", "carry on", "keep going"
   for (const w of ['Yes, cancel it.', 'Okay, stop.', 'Sure, wait.', 'Yes, no, never mind.']) assert.notEqual((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
 });
 
+test('MISSED-R2V-1: with a walkthrough going or a hologram open, "pause it", "pause that", "halt" and the bare end forms are theirs, never a stop for the task that runs; "stop", "stop Chrome", "stop the task" still stop it', async () => {
+  const { matchChromeStop } = await import('../../src/lib/chrome-task-words.js');
+  const chrome = { linked: true, online: true, task: { id: 't1', status: 'running', text: 'find a 4K monitor' } };
+  const tour = { active: true, atChoice: false, choices: [], stepId: 's2' };
+  const hologram = { open: true, inWindow: false, parts: [], selected: null };
+  for (const [name, st] of [['tour', { chrome, tour }], ['hologram', { chrome, hologram }], ['both', { chrome, tour, hologram }]]) {
+    for (const w of ['pause it', 'pause that', 'pause this', 'halt', 'halt it', 'end it', 'end that', 'kill it']) assert.equal(matchChromeStop(w, st), null, `${name}: "${w}"`);
+    for (const w of ['stop', 'stop Chrome', 'stop the task', 'cancel the task', 'pause the task', 'end the task', 'stop the Chrome task']) assert.equal((matchChromeStop(w, st) || {}).do, 'chrome-stop', `${name}: "${w}"`);
+  }
+  // Nothing else open: ROUTING-5's plain forms still stop the task.
+  for (const w of ['pause it', 'halt', 'end it']) assert.equal((matchChromeStop(w, { chrome }) || {}).do, 'chrome-stop', w);
+});
+
+test('MISSED-R2V-1: in the app\'s router (every module), a running task with a walkthrough going: "pause it" pauses the walkthrough; with a hologram open "halt" and "pause that" hold it; "stop the task" stops the task', async () => {
+  const { DEFAULT_SETTINGS } = await import('../../src/platform/settings.js');
+  const router = createRouter();
+  registerTodayCommands(router);
+  const deps = new Proxy(
+    { getSettings: () => DEFAULT_SETTINGS, saveSettings: () => DEFAULT_SETTINGS, toast: () => {}, voice: () => null, routerState: (surface, local) => ({ ...emptyState(surface), ...(local || {}) }), phone: false, demo: false },
+    { get: (o, k) => (k in o ? o[k] : () => null) },
+  );
+  for (const m of ['mac', 'audio', 'tours', 'voice', 'chrome-voice', 'windows', 'optics', 'chrome']) (await import(`../../src/ui/commands/${m}.js`)).register(router, deps);
+  const chrome = { linked: true, online: true, task: { id: 't1', status: 'running', text: 'find a 4K monitor' }, contextUntil: 0 };
+  const hologram = { open: true, inWindow: false, parts: [{ id: 'battery', name: 'Battery', aka: [] }], selected: null, title: '14-inch laptop' };
+  const tour = { active: true, atChoice: false, choices: [], defaultId: null, stepId: 'apart', status: 'playing', paused: false, waits: false, justSaid: false };
+  const voice = { surface: 'voice', voiceOpen: true, standby: { available: true, open: false } };
+  const states = {
+    tour: { ...voice, hologram, tour, chrome }, // T with a task (a walkthrough over its hologram)
+    field: { surface: 'hologram', via: 'typed', hologram, tour, chrome }, // H0's field during a walkthrough
+    holo: { ...voice, hologram, chrome }, // VH with a task
+  };
+  const pick = (words, name) => {
+    const hit = router.route([words], { ...emptyState(states[name].surface), ...states[name] });
+    return hit ? hit.id : null;
+  };
+  for (const [words, name, want] of [
+    ['pause it', 'tour', 'tour'],
+    ['pause it', 'field', 'tour'],
+    ['halt', 'holo', 'hologram'],
+    ['pause that', 'holo', 'hologram'],
+    ['stop the task', 'tour', 'chrome-stop'],
+    ['stop the task', 'holo', 'chrome-stop'],
+    ['stop the task', 'field', 'chrome-stop'],
+    ['stop Chrome', 'tour', 'chrome-stop'],
+  ]) assert.equal(pick(words, name), want, `"${words}" (${name})`);
+});
+
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   for (const w of ['no no no', 'no, cancel that', 'Jarvis, no, cancel that', 'no wait', 'not now', 'nope nope']) {

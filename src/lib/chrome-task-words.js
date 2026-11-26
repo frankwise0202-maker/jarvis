@@ -469,6 +469,10 @@ export function matchChromeStop(text, state = {}) {
   // teaches), "whoa, stop". (With a hologram open, "stop that" / "stop this" stay its own: R10.)
   const holo = state && state.hologram && typeof state.hologram === 'object' && state.hologram.open;
   if (holo && /^stop (?:that|this)$/.test(s)) return null;
+  // MISSED-R2V-1: so are a walkthrough's and the viewer's own: "pause it", "pause that", "halt", "end it" (only the
+  // words that name the task stop it then: "stop the task", "stop Chrome").
+  const tour = state && state.tour && typeof state.tour === 'object' && state.tour.active;
+  if ((holo || tour) && /^(?:halt|(?:pause|end|kill|halt) (?:it|that|this))$/.test(s)) return null;
   // ("Pause", "end" and "kill" need what they stop: a bare "pause" is a walkthrough's word.)
   const what = '(?:it|that|this|the task|the job|what youre doing|what you are doing|clicking|working|that task|this task)';
   if (
