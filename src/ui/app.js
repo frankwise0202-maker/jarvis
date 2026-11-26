@@ -2435,8 +2435,21 @@ export async function startApp(rootEl) {
           choices: offer.choices.map((c) => ({ id: c.id, label: c.label, words: c.words, dear: c.dear })),
           match: (words) => matchOfferChoice(words, cheap),
           onAnswer: (choice) => pick(choice),
-          onExpire: () => {
-            if (researchAsk === entry) closeResearchOffer();
+          onExpire: (reason) => {
+            if (researchAsk !== entry) return;
+            if (reason === 'dropped') {
+              // Other words were heard. They may be the offer's dear answer ("mission", "home base": the
+              // router's optics-research-answer, which goes through the 2-second check first), so the
+              // offer stays answerable that way a little longer; its question and card are gone.
+              entry.handle = null;
+              if (entry.card) safe(() => entry.card.close());
+              entry.card = null;
+              entry.dropTimer = setTimeout(() => {
+                if (researchAsk === entry) closeResearchOffer();
+              }, 30000);
+              return;
+            }
+            closeResearchOffer();
           },
         }),
       );
@@ -2451,14 +2464,16 @@ export async function startApp(rootEl) {
     const entry = researchAsk;
     researchAsk = null;
     if (!entry) return;
+    clearTimeout(entry.dropTimer);
     if (entry.card) safe(() => entry.card.close());
   }
 
   /** Mission or Home base said for the open offer (after the 2-second check): the router's optics-research-answer. */
   function answerResearchOffer(choice) {
     const entry = researchAsk;
-    if (!entry) return false;
-    if (entry.handle) return safe(() => entry.handle.answer(choice), false) ? { say: '' } : false;
+    // Never "mission" sent to Claude as a question: the offer has gone, so say so.
+    if (!entry) return { say: 'That research offer has gone. Say research this again.' };
+    if (entry.handle && safe(() => entry.handle.answer(choice), false)) return { say: '' };
     closeResearchOffer();
     return runResearch(choice, entry.subject, { deep: entry.deep });
   }
@@ -2469,12 +2484,22 @@ export async function startApp(rootEl) {
    * dollar); Home base = the home base's own research job (words only). Returns { say }.
    */
   function runResearch(choice, subject, { deep = false } = {}) {
+    const voice = !!voiceApi && safe(() => isVoiceModeOpen(), false);
+    // In Voice Mode a turn starts on the next tick: an answer is acted on while Voice Mode is still
+    // taking the words (the router's run, a question's onAnswer), and a turn started then would be
+    // overwritten by its "One moment…"; on the next tick ask() takes over from it.
+    const later = (fn) =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          safe(fn);
+          resolve({ say: '' });
+        }, 0),
+      );
     if (choice === 'cancel') {
       const line = 'Okay, no research.';
-      if (voiceApi && safe(() => isVoiceModeOpen(), false)) safe(() => voiceApi.say(line));
+      if (voice) setTimeout(() => safe(() => voiceApi.say(line)), 0);
       return { say: line };
     }
-    const voice = !!voiceApi && safe(() => isVoiceModeOpen(), false);
     const optics = currentOptics();
     // Owner question 9 (LIVE_VIEW_COUNTS): a way that doesn't count toward the live view's dollar is
     // sent outside its gate (the send() of exactly its words).
@@ -2483,21 +2508,19 @@ export async function startApp(rootEl) {
       const text = researchPrompt(subject, 'quick');
       outsideLiveViewText = outside ? text : '';
       // With a Look on screen it is that Look's follow-up (the card shows it); else a quick question.
-      if (optics && safe(() => optics.card(), null)) {
-        safe(() => optics.followUp(text));
-        return { say: '' };
-      }
-      if (voice) voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'quick' }), null));
-      else send(text, 'quick', { keepOnStop: true });
+      const go = () => {
+        if (optics && safe(() => optics.card(), null)) safe(() => optics.followUp(text));
+        else if (voice) voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'quick' }), null));
+        else send(text, 'quick', { keepOnStop: true });
+      };
+      if (voice) return later(go);
+      go();
       return { say: '' };
     }
     if (choice === 'mission') {
       const text = researchPrompt(subject, 'mission');
       outsideLiveViewText = outside ? text : '';
-      if (voice) {
-        voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'swarm' }), null));
-        return { say: '' };
-      }
+      if (voice) return later(() => voiceTurnResult(safe(() => voiceApi.ask(text, { mode: 'swarm' }), null)));
       const ok = send(text, 'swarm');
       if (ok && optics) safe(() => optics.notice('The research mission is under way: it’s in the chat.'));
       return { say: ok ? 'The research mission is under way: it’s in the chat.' : 'I couldn’t start the mission.' };

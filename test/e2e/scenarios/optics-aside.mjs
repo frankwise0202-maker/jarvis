@@ -27,6 +27,9 @@
 //                             request with a web search; Mission: one swarm turn; Home base: one job on
 //                             the Core; with the live view on, the offer says the other two are outside
 //                             its dollar, and at 97¢ the quick answer isn't offered
+//   optics-research-voice     Mac, Voice Mode over Optics, a Look aside: "research this" asked aloud with
+//                             its prices (nothing sent); "cancel" said back; "mission" through the 2-second
+//                             check, then one swarm turn in words
 // Screenshots also go to $OPTICS_SHOTS (default test/artifacts/optics-shots/).
 
 import { tid } from '../harness.mjs';
@@ -599,6 +602,77 @@ export default [
         t.assert(/A quick answer would take the live view past its dollar this hour\./.test(text), `quick not offered (${text})`);
         t.assert(!(await page.locator(tid('optics-research-quick')).count()), 'no Quick button');
         await page.locator(tid('optics-research-cancel')).click();
+      });
+    },
+  },
+  {
+    name: 'optics-research-voice',
+    title: 'Mac, Voice Mode over Optics, a Look aside: "research this" is asked aloud with its prices (nothing sent); "cancel" says so; "mission" goes through the 2-second check, then one swarm turn in words',
+    device: 'mac',
+    timeout: 180000,
+    seed: { settings: { homeBaseUrl: CORE_URL } },
+    fakeCore: { brain: { key: true } },
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.context().addInitScript(installCameraRig, { devices: MAC_CAMERAS });
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await instrument(page);
+      await page.context().grantPermissions(['camera']);
+      await t.goto('/');
+      await (await t.visible('voice-open')).click();
+      await t.visible('voice-mode');
+      // The words are heard by the next listen: Voice Mode's own (after a question it listens), or one
+      // opened by a tap on Optics' mic (Voice Mode's) when it waits for a tap.
+      const speak = async (words) => {
+        await page.evaluate((w) => window.__voice.queue.push(...w), words);
+        await t.waitFor(
+          async () => {
+            if (!(await page.evaluate(() => window.__voice.queue.length))) return true;
+            if ((await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'idle') await page.locator(tid('optics-mic')).click().catch(() => {});
+            return false;
+          },
+          { timeout: 30000, interval: 700, message: `"${words.join(' ')}" heard` },
+        );
+      };
+      const OFFER = /Research this coffee mug\? A quick answer with a web search, about 10¢\. A research mission with 8 agents, about \$1\.70\. Or the home base can do it in the background, up to \$1\.25\./;
+      const offers = async () => (await said(page)).filter((s) => OFFER.test(s)).length;
+      await page.locator(tid('voice-look')).click();
+      await t.visible('optics');
+      await waitLive(t);
+      await speak(['What am I looking at?']);
+      await waitAside(t);
+      await waitAnswer(t);
+      await t.step('"research this": the offer asked aloud, prices first; nothing sent', async () => {
+        const before = leads(t).length;
+        await speak(['Research this.']);
+        await t.waitFor(async () => (await offers()) === 1, { timeout: 20000, message: async () => `the offer said (${JSON.stringify((await said(page)).slice(-3))})` });
+        t.assert((await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'research', 'the offer on Optics\' card too');
+        await page.waitForTimeout(500);
+        t.assert(leads(t).length === before && t.core.brain.jobs.length === 0, 'nothing sent');
+      });
+      await t.step('"cancel": "Okay, no research.", nothing sent', async () => {
+        const before = leads(t).length;
+        await speak(['Cancel.']);
+        await t.waitFor(async () => (await said(page)).some((s) => /^Okay, no research\.$/.test(s)), { timeout: 15000, message: '"Okay, no research."' });
+        t.assert(leads(t).length === before, 'nothing sent');
+      });
+      await t.step('"mission": the 2-second check, then one swarm turn with the subject in words', async () => {
+        await speak(['Research this.']);
+        await t.waitFor(async () => (await offers()) === 2, { timeout: 20000, message: 'the offer said again' });
+        const before = leads(t).length;
+        await speak(['Mission.']);
+        await t.waitFor(async () => /mission/i.test(await t.text(page.locator(tid('voice-review-text')))), { timeout: 10000, message: 'the 2-second check shows "mission"' });
+        t.assert(leads(t).length === before, 'nothing sent during the check');
+        await t.waitFor(() => leads(t).length > before, { timeout: 20000, message: 'the mission' });
+        const r = leads(t)[before];
+        t.assert(/^Research Coffee mug/.test(userText(r).split('\n').at(-1)), `the words (${userText(r).slice(-160)})`);
+        t.assert(/Mode: swarm/.test(JSON.stringify(r.body.messages.at(-1))), 'swarm mode');
+        t.assert(!hasImage(r), 'words only');
+        t.assert(t.core.brain.jobs.length === 0, 'no home base job');
       });
     },
   },
