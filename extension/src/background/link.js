@@ -484,7 +484,13 @@ export class JarvisLink {
 
   onTask(task) {
     if (!this.relay) return;
-    this.sendStatus().catch(() => {});
+    // (The status changes with the running task and its status; the switches send it themselves.)
+    const run = this.controller.run;
+    const sig = run ? `${run.task.id}|${run.task.status}` : '';
+    if (sig !== this.runSig) {
+      this.runSig = sig;
+      this.sendStatus().catch(() => {});
+    }
     if (!FINAL_STATUSES.has(task.status)) this.watch();
     if (task.from !== 'voice') return;
     if (FINAL_STATUSES.has(task.status)) {
@@ -555,8 +561,18 @@ export class JarvisLink {
   // -------------------------------------------------------------------------------------------
   // The approval window (when no side panel is open)
 
-  async showApprovalWindow() {
-    if (this.controller.hasPanel()) return;
+  /** Opens the approval window, or brings it to the front (one at a time, also when asked twice at once). */
+  showApprovalWindow() {
+    if (this.controller.hasPanel()) return Promise.resolve();
+    if (!this.windowOpening) {
+      this.windowOpening = this.openApprovalWindow().finally(() => {
+        this.windowOpening = null;
+      });
+    }
+    return this.windowOpening;
+  }
+
+  async openApprovalWindow() {
     const windows = this.chrome.windows;
     if (this.approvalWindowId !== null) {
       try {

@@ -47,6 +47,8 @@ const today = (run) => run.sw.evaluate(() => {
 const relayOpen = {
   name: 'relay-open',
   title: 'Voice from Jarvis: Link in Settings; open beside Jarvis (placed, not focused, no debugger); an address that acts waits for a click',
+  // (Real window sizes: with a fixed viewport, headless Chromium keeps every window at it.)
+  start: { nativeWindow: true },
   async run(run) {
     const p = run.panel;
     const { sites } = run.server;

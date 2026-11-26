@@ -497,6 +497,10 @@ test('no side panel open: a question that needs a click opens the approval windo
   await s.app.request('open', { url: 'https://shop.example/cart?add-to-cart=1', rect: null, focus: true });
   await s.waitFor(() => s.calls.windows.some((c) => c.op === 'update' && c.id === 77 && c.props.focused === true), 2000, 'the window focused again');
   assert.equal(s.calls.windows.filter((c) => c.op === 'create').length, 1, 'not a second window');
+  // Asked twice at once (the window not made yet): still one window.
+  s.link.approvalWindowId = null;
+  await Promise.all([s.link.showApprovalWindow(), s.link.showApprovalWindow()]);
+  assert.equal(s.calls.windows.filter((c) => c.op === 'create').length, 2, 'one more window, not two');
 });
 
 test('unlink: from the panel, Jarvis is told first; from Jarvis, the link goes; the key is forgotten', async (t) => {

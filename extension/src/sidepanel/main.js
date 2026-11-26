@@ -39,7 +39,7 @@ const ui = {
   listening: false,
   recognition: null,
   link: null, // Voice from Jarvis: the link's state (link.js linkState)
-  cards: [], // Voice from Jarvis: addresses waiting for a click
+  openCards: [], // Voice from Jarvis: addresses waiting for a click
 };
 
 const EXAMPLES = [
@@ -123,7 +123,7 @@ function onMessage(msg) {
       renderVoiceSection();
       break;
     case 'cards':
-      ui.cards = Array.isArray(msg.cards) ? msg.cards : [];
+      ui.openCards = Array.isArray(msg.cards) ? msg.cards : [];
       renderCards();
       break;
     default:
@@ -429,11 +429,11 @@ function renderMain() {
 function renderCards() {
   const box = ui.els.cards;
   if (!box) return;
-  const sig = ui.cards.map((c) => c.id).join(',');
+  const sig = ui.openCards.map((c) => c.id).join(',');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  replaceChildren(box, ui.cards.map((card) => openCard(card, { onChoose: (choice) => send({ type: 'open-card', cardId: card.id, choice }) })));
-  if (ui.cards.length) scrollToEnd();
+  replaceChildren(box, ui.openCards.map((card) => openCard(card, { onChoose: (choice) => send({ type: 'open-card', cardId: card.id, choice }) })));
+  if (ui.openCards.length) scrollToEnd();
 }
 
 function emptyState() {
