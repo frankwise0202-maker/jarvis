@@ -3058,10 +3058,10 @@ function createVoiceMode(opts) {
     const local = routeLocal(readings, parts);
     let hit = chromeCheckFirst(routeWords(readings, local)); // v8.1 chrome-voice: a check counting was asked last
     // v8.1 chrome-voice: words that aren't a Chrome check's own (cancel, start now, "no, I said …")
-    // withdraw it (nothing goes to Chrome), and are routed as usual. An answer to Chrome's question is
-    // answerPrompt's to weigh: during a check its own words come first (a bare "cancel" withdraws the
-    // approval; it is never the prompt's no then).
-    chromeOtherWords(hit);
+    // withdraw it (nothing goes to Chrome), said, and are routed as usual once that is said (ROUTING-R2-5). An answer
+    // to Chrome's question is answerPrompt's to weigh: during a check its own words come first (a bare "cancel"
+    // withdraws the approval; it is never the prompt's no then).
+    if (chromeOtherWords(hit, () => heard(text, alts, opts))) return;
     // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
     // of …?": anything but yes or no drops it, and the words are taken as usual). Words for Chrome's question
     // or its check (chrome-prompt) are an answer too, like the prompt's own.
@@ -3871,9 +3871,22 @@ function createVoiceMode(opts) {
   /**
    * Words heard during a check that no answer layer took for Chrome (`hit`: the router's pick, or null)
    * withdraw it: nothing goes to Chrome. Answers ('prompt', 'chrome-prompt') are answerPrompt's to weigh.
+   * With `then` (spoken words, ROUTING-R2-5): never silently: "Okay, nothing sent to Chrome." is said first, and
+   * then() routes the words once it is said (true: they wait for it); a tap or a barge-in over it drops them.
    */
-  function chromeOtherWords(hit) {
-    if (C.check && !(hit && (hit.id === 'prompt' || hit.id === 'chrome-prompt'))) withdrawCheck(C.check, 'other');
+  function chromeOtherWords(hit, then = null) {
+    const K = C.check;
+    if (!K || (hit && (hit.id === 'prompt' || hit.id === 'chrome-prompt'))) return false;
+    withdrawCheck(K, 'other');
+    if (typeof then !== 'function' || S.closed) return false;
+    const line = String(K.spec.cancelLine || 'Okay.');
+    showCaption('hint', '');
+    if (!S.ttsOk) {
+      showCaption('hint', line);
+      return false;
+    }
+    speak(line, 'ack', 0, { onEnd: (how) => (how === 'done' || how === 'failed') && !S.closed && then(), listenAfter: false });
+    return true;
   }
 
   /**

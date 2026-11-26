@@ -624,6 +624,15 @@ test('CHROME-VOICE-R2-3, ROUTING-R2-2: with a carrier, any instruction is a task
   }
 });
 
+test('ROUTING-R2-5: during a task\'s check, "continue", "carry on", "keep going", "go on", "done" and a yes-led sentence with no no-word let it count on', () => {
+  const check = { chromeCheck: { kind: 'task' } };
+  for (const w of ['Continue.', 'Yes, continue.', 'Okay, continue.', 'Carry on.', 'Keep going.', 'Sure, go on.', 'Go on.', 'Done.', 'Yes, that\'s right.', 'Okay, sounds good to me.']) {
+    assert.equal((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
+  }
+  // A no word anywhere: never a keep.
+  for (const w of ['Yes, cancel it.', 'Okay, stop.', 'Sure, wait.', 'Yes, no, never mind.']) assert.notEqual((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
+});
+
 test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
   const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
   for (const w of ['no no no', 'no, cancel that', 'Jarvis, no, cancel that', 'no wait', 'not now', 'nope nope']) {

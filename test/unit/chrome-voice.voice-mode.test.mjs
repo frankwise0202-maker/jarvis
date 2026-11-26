@@ -706,3 +706,37 @@ test('CHROME-VOICE-R2-3: said in Voice Mode, "Log in doesn\'t work in Chrome." n
   assert.deepEqual(c.fake.calls.startTask[0], { text: 'cancel my Netflix subscription', chat: 'new', limitUsd: 1 });
   assert.deepEqual(c.env.log.turns, [], 'no Claude turn');
 });
+
+// ---- v8.1.1: ROUTING-R2-5: affirmations keep the check counting; a withdrawal is always said -------------------
+
+test('ROUTING-R2-5: "Continue.", "Okay, continue.", "Carry on.", "Keep going.", "Done." during a task\'s check let it count on and go; never a paid question', async (t) => {
+  for (const words of ['Continue.', 'Okay, continue.', 'Carry on.', 'Keep going.', 'Sure, go on.', 'Done.']) {
+    const s = await setup(t);
+    await s.env.advance(1200);
+    s.next({ text: TASK_SAID, at: 400 });
+    s.next({ text: words, at: 300 });
+    s.vm.tap();
+    const line = await taskLineStarted(s);
+    await s.until(() => line.done, 'the line said in full');
+    await s.env.advance(8000);
+    assert.deepEqual(s.env.log.turns, [], `${words}: no Claude turn (said ${JSON.stringify(s.said())})`);
+    assert.equal(s.fake.calls.startTask.length, 1, `${words}: it counted on and went`);
+  }
+});
+
+test('ROUTING-R2-5: other words during a task\'s check withdraw it out loud first ("Okay, nothing sent to Chrome."), then they are the owner\'s question', async (t) => {
+  const s = await setup(t);
+  await s.env.advance(1200);
+  s.next({ text: TASK_SAID, at: 400 });
+  s.next({ text: 'What is the capital of France?', at: 300 });
+  s.vm.tap();
+  const line = await taskLineStarted(s);
+  await s.until(() => line.done, 'the line said in full');
+  await s.env.advance(8000);
+  assert.equal(s.fake.calls.startTask.length, 0, 'nothing sent');
+  const said = s.said();
+  assert.ok(said.includes(CANCELLED), `the withdrawal is said (${JSON.stringify(said)})`);
+  assert.deepEqual(s.env.log.turns, ['What is the capital of France?'], 'then the words are the owner\'s question');
+  const at = s.env.log.spoken.find((x) => x.text === CANCELLED);
+  assert.ok(at.done, 'said in full before the question went');
+});
