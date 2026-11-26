@@ -53,6 +53,12 @@ export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
 export const REPLY_RETRY_MS = 10 * 1000; // a reply to a start or a stop is tried this long after the request (MISSED-LINK-A)
 export const REKEY_GRACE_MS = 10 * 60 * 1000; // the code's key is still opened this long after a rekey (REDTEAM-LINK-4)
+// While nothing from Jarvis has opened under this link, hello is said again after these waits, then every 30 s: a first
+// hello lost to a home base that was restarting, or still older than Core 1.3, is never the only one (CHROME-LINK-R2-4).
+export const HELLO_AGAIN_MS = Object.freeze([5_000, 10_000, 20_000, 30_000]);
+// Under the code's key, once the link has switched to the new one, these are refused: a code found later can't start
+// anything in the minute before Jarvis's first message under the new key arrives (CHROME-LINK-R2-2).
+const NOT_UNDER_CODE_KEY = new Set(['start', 'open', 'answer']);
 export const OPEN_HOLD_MS = 30 * 1000; // downloads an address opened for Jarvis starts are held this long (REDTEAM-LINK-9)
 const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/;
 
@@ -199,6 +205,10 @@ export class JarvisLink {
 
   async useLink(link) {
     const same = link && this.link && link.core === this.link.core && link.key === this.link.key;
+    if (!same) {
+      clearInterval(this.helloTimer);
+      this.helloTimer = null;
+    }
     if (same) {
       // (The same link, maybe with the code's key dropped or kept: a rekey isn't a new link.)
       this.link = link;
@@ -232,8 +242,38 @@ export class JarvisLink {
       /* the loop still runs while the worker does */
     }
     this.sendState();
+    this.helloAt = this.now();
+    this.helloTries = 0;
+    clearInterval(this.helloTimer);
+    this.helloTimer = setInterval(() => this.helloWhileUnheard(), 2500);
+    this.helloTimer?.unref?.();
     await this.send('hello', await this.helloBody());
     await this.sendStatus({ force: true });
+  }
+
+  /**
+   * While no message from Jarvis has opened under this link (`heardAt` 0), hello and the status are said again after
+   * 5, 10, 20, then every 30 s (each time the home base answers a read): linking completes only when Jarvis opens a
+   * message from here, and the first one can be lost to a home base restarting or still older than Core 1.3 as the
+   * code is pasted (CHROME-LINK-R2-4).
+   */
+  helloWhileUnheard() {
+    const relay = this.relay;
+    if (!relay || relay.heardAt) {
+      clearInterval(this.helloTimer);
+      this.helloTimer = null;
+      return;
+    }
+    if (!relay.running) return; // (the loop stopped: the alarm starts it again, and then this goes on)
+    const now = this.now();
+    const wait = HELLO_AGAIN_MS[Math.min(this.helloTries || 0, HELLO_AGAIN_MS.length - 1)];
+    if (now - (this.helloAt || 0) < wait) return;
+    this.helloAt = now;
+    this.helloTries = (this.helloTries || 0) + 1;
+    this.helloBody()
+      .then((b) => this.send('hello', b))
+      .then(() => this.sendStatus({ force: true }))
+      .catch(() => {});
   }
 
   /** `hello`: who is there, and the task budget a task from Jarvis gets (MONEY-3: what Jarvis says is enforced). */
@@ -251,6 +291,8 @@ export class JarvisLink {
     const link = this.link;
     if (!link) return;
     if (tell) await this.send('unlinked', {});
+    clearInterval(this.helloTimer);
+    this.helloTimer = null;
     this.pauseForLinkEnd();
     this.relay?.stop();
     this.relay = null;
@@ -351,6 +393,9 @@ export class JarvisLink {
     if (!viaPrev && this.link?.prev) await this.dropPrevKey();
     // Too late to act on: Jarvis has already told the owner it didn't work (D5).
     if (tooLate(kind, at, this.now())) return this.reply(id, { ok: false, reason: 'gone', why: 'too late' });
+    // Under the code's key after the switch: an open, a start or an answer is refused (R2-2). Jarvis seals with the new
+    // key from its first message after the switch; only a code found later would still use the old one.
+    if (viaPrev && this.link?.prev && NOT_UNDER_CODE_KEY.has(kind)) return this.reply(id, { ok: false, reason: 'gone', why: 'That link code has been replaced.' });
     try {
       switch (kind) {
         case 'rekey':

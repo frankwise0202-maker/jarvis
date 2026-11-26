@@ -84,6 +84,7 @@ export const PENDING_MS = 30 * 60_000; // an unused link code is forgotten after
 export const CHROME_LINK_COPIED_KEY = 'jarvis.chromeLink.copied.v1';
 export const BACKOFF_MS = Object.freeze([2_000, 4_000, 8_000, 15_000, 30_000, 60_000]);
 export const OLD_CORE_RETRY_MS = 5 * 60_000;
+const PENDING_RETRY_MS = 15_000; // (an older Core while a link code waits: R2-4)
 export const TEXT_MAX = 2000; // a task's words, and what comes back about it
 export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
 export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
@@ -601,7 +602,9 @@ export function createChromeLink({
   }
 
   /** Whether a message under the code's key is still taken (only before the new key is confirmed, half an hour at most). */
-  const prevOpen = (rec) => !!rec.prev && now() - (rec.rekeyAt || 0) < PENDING_MS;
+  // (Until the new key is confirmed, however long: an extension that missed every rekey still uses the code's key, and
+  // is only heard, and sent the rekey again, through it. CHROME-LINK-R2-3: it was 30 minutes, then a reload.)
+  const prevOpen = (rec) => !!rec.prev;
 
   /** Send the new key, sealed with the code's (again until confirmed: on a schedule, and when the old key is heard). */
   function sendRekey({ force = false } = {}) {
@@ -629,6 +632,9 @@ export function createChromeLink({
     save(record);
     cancelLater(rekeyTimer);
     rekeyTimer = null;
+    // A message under the new key at once, so Jarvis for Chrome forgets the code's key within a second, not at the
+    // next request minutes later (CHROME-LINK-R2-2: until then the code could still start a task there).
+    if (holding) sendHello();
   }
 
   // ---- state and changes --------------------------------------------------------------------------------
@@ -1277,7 +1283,9 @@ export function createChromeLink({
 
   // ---- holding the link: the long poll and the status ------------------------------------------------------
   function backoff(failures, r) {
-    if (r && r.kind === 'http' && r.status === 404) return OLD_CORE_RETRY_MS;
+    // An older Core (404) is asked again every 5 minutes; while a link code waits for Jarvis for Chrome, every 15 s, so
+    // the link forms soon after the home base updates itself to 1.3 (CHROME-LINK-R2-4).
+    if (r && r.kind === 'http' && r.status === 404) return record && !record.linkedAt ? PENDING_RETRY_MS : OLD_CORE_RETRY_MS;
     const base = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1] || BACKOFF_MS[0];
     return Math.round(base * (0.8 + 0.4 * random()));
   }
@@ -1354,6 +1362,12 @@ export function createChromeLink({
     if (record.linkedAt && t - seenAt() < ONLINE_MS && (!proven || t - proven > PROVEN_MS - 90_000) && t - proofPingAt > 60_000) {
       proofPingAt = t;
       request('ping', {}, { needOnline: false }).catch(() => {});
+    }
+    // The rotation isn't confirmed and Jarvis for Chrome reads its box but has said nothing for a minute: it may have
+    // missed every rekey (its profile closed right after the paste). Sent again, at most once a minute, so it gets the
+    // new key without a reload (CHROME-LINK-R2-3).
+    if (record.prev && holding && t - seenAt() < ONLINE_MS && (!heard || t - heard > 60_000) && t - rekeyLastAt > 60_000) {
+      sendRekey({ force: true });
     }
     if (problem === 'old-core' || problem === 'unreachable' || problem === 'down') problem = null;
     if (pollWake) pollWake(); // the relay answers again (a Core just updated to 1.3, say): read now, not in 5 minutes

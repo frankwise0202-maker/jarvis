@@ -227,8 +227,9 @@ the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, u
 needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
 
 1. In Jarvis, in your usual Chrome: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link
-   code**. The code works once, for 30 minutes: as soon as the two are linked, Jarvis sends a new
-   key and both forget the code's, so an old code opens nothing.
+   code**. The code works once, for 30 minutes: as the two link, Jarvis sends a new key, and both
+   forget the code's within a second or two; from the switch, a task, a page or an answer sent with
+   the old code is refused, so an old code opens nothing.
 2. In the Jarvis window: open the side panel (⌥⇧J) → **Settings** → **Voice from Jarvis**, paste
    the code and press **Link**.
 3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.

@@ -5013,8 +5013,19 @@ with K2 from then on (its answer to the rekey too), and still opens K1 for 10 mi
 arrives under K2, then forgets K1. The app keeps K1 as `prev` until a message under K2 arrives (the confirmation),
 sending the rekey again (fresh envelopes, after 3, 6, 12, then every 30 s, for 10 minutes, and whenever a message
 under K1 still comes); meanwhile it seals with K1 (for 10 minutes after the rekey, or while the extension is still
-heard using K1) and opens both, K1 for 30 minutes at most. Once confirmed, both have forgotten K1: a message sealed
-with it is dropped, so an old code (clipboard history, a note) opens nothing. A lost rekey or a lost answer is covered:
+heard using K1) and opens both, K1 until the confirmation however long it takes (v8.1.1, CHROME-LINK-R2-3: it was 30
+minutes, after which an extension that had missed every rekey was never heard again until a reload). While it is
+unconfirmed and the status shows the extension reading but it has said nothing for a minute, the window holding the
+link sends the rekey again, at most once a minute. On the confirmation, that window sends `hello` under K2 at once, so
+the extension forgets K1 within a second or two (v8.1.1, CHROME-LINK-R2-2: before, it kept K1 until the app's next
+message, minutes later). Jarvis for Chrome 1.1.1 also refuses an `open`, `start` or `answer` that arrives under K1
+once it has switched (`gone`, "That link code has been replaced."); `stop`, `ping`, `hello`, `unlinked` and `rekey`
+are still taken under it. Once confirmed, both have forgotten K1: a message sealed with it is dropped, so an old code
+(clipboard history, a note) opens nothing. Linking itself needs the extension's first message to reach the app:
+Jarvis for Chrome 1.1.1 says `hello` (and the status) again after 5, 10, 20 s, then every 30 s while nothing from the
+app has opened under the link, and the app, while a code waits, asks an older Core (404) again every 15 s instead of
+every 5 minutes, so a home base that was restarting or updating itself as the code was pasted doesn't leave the link
+waiting (v8.1.1, CHROME-LINK-R2-4). A lost rekey or a lost answer is covered:
 the rekey is sent again, a repeated rekey with the same K2 is answered again, and the extension's next message under
 K2 confirms it. The extension refuses a rekey to any other key once it has switched, so the code can't move the link
 later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay in the two
