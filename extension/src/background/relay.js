@@ -270,7 +270,11 @@ export class Relay {
     this.statusAt = this.now();
     try {
       const res = await this.request('GET', 'status', null, SEND_TIMEOUT_MS);
-      const seenAt = Number(res?.data?.appSeenAt);
+      const raw = Number(res?.data?.appSeenAt);
+      // Judged on the home base's own clock when it gives it (REDTEAM-LINK-7): how long ago, not when.
+      const coreNow = Number(res?.data?.now);
+      // (A time ahead of the home base's own clock can't be: not believed.)
+      const seenAt = Number.isFinite(raw) && raw > 0 && Number.isFinite(coreNow) && coreNow > 0 ? (raw - coreNow > 1000 ? NaN : this.now() - Math.max(0, coreNow - raw)) : raw;
       if (res?.ok && Number.isFinite(seenAt) && seenAt > this.appSeenAt && seenAt <= this.now() + 60000) this.appSeenAt = seenAt;
       this.emitState();
     } catch {

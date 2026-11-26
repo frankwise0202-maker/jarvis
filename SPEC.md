@@ -4973,8 +4973,11 @@ app's, the extension's and the Core's tests all read it.
   message, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client; a long poll that
   finds no place, with nothing to read, gets 429 `busy` with `Retry-After: 2` (REDTEAM-LINK-2: an empty answer at
   once made a looping reader spin). A reader that hangs up lets go of its place.
-- `GET /api/relay/status` → `200 { extSeenAt, appSeenAt }`: when each side last read its box (ms, or null; a read
-  waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app.
+- `GET /api/relay/status` → `200 { extSeenAt, appSeenAt, now }`: when each side last read its box (ms, or null; a
+  read waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app. `now` is the
+  Core's own clock (REDTEAM-LINK-7): both ends judge how long ago against it (`now − extSeenAt`), never against their
+  own clock, so a clock apart by minutes on the home base can't make a working link look offline; a time ahead of
+  `now` isn't believed.
 
 Each box keeps at most 50 messages, each for 2 minutes, **in memory only**: nothing is logged (the routes have no
 logger, and an error never quotes a body) or written to disk, and a restart forgets everything. 120 requests a

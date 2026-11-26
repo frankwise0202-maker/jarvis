@@ -1006,10 +1006,10 @@ test('online follows the last 60 seconds: by a message, or by the relay\'s statu
     w.peer.setOnline(false, { seenAgoMs: 10 * 60_000 });
     await app.control.refresh();
     assert.equal(app.api.state().online, false, 'nothing for over a minute: offline');
-    w.relay.extSeenOverride = Date.now() + skew - 5000; // the relay: it read its box 5 s ago
+    w.relay.extSeenOverride = Date.now() - 5000; // the relay: it read its box 5 s ago (by the relay's clock: LINK-7)
     await app.control.refresh();
     assert.equal(app.api.state().online, true, 'the status says it reads its box');
-    w.relay.extSeenOverride = Date.now() + skew + 10 * 60_000; // a clock far ahead
+    w.relay.extSeenOverride = Date.now() + 10 * 60_000; // a time far ahead of the relay's own clock
     skew += ONLINE_MS + 1000;
     await app.control.refresh();
     assert.equal(app.api.state().online, false);
@@ -1028,18 +1028,41 @@ test('LINK-6: the relay seeing a reader is not enough: online needs a message fr
     await online(app);
     // Three minutes on, quiet, still reading: online (the status, and a message not long ago).
     skew = 3 * 60_000;
-    w.relay.extSeenOverride = Date.now() + skew - 5000;
+    w.relay.extSeenOverride = Date.now() - 5000; // (by the relay's own clock)
     await app.control.refresh();
     assert.equal(app.api.state().online, true, 'reading its box, heard from 3 minutes ago');
     // Six minutes on: something reads the box (a frame, another key), but Jarvis for Chrome has said nothing.
     w.peer.setOnline(false);
     skew = 6 * 60_000;
-    w.relay.extSeenOverride = Date.now() + skew - 5000;
+    w.relay.extSeenOverride = Date.now() - 5000;
     const posts = w.relay.posts['to-ext'];
     await app.control.refresh();
     assert.equal(app.api.state().online, false, 'the status alone is not enough');
     await until(() => w.relay.posts['to-ext'] > posts, { what: 'a ping to prove it' });
   } finally {
+    await w.close();
+  }
+});
+
+test('LINK-7: the relay\'s status is judged on the home base\'s own clock (its `now`): a clock 90 s apart doesn\'t make a working link offline', async () => {
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const app = w.open({ now });
+    await online(app);
+    w.peer.setOnline(false); // quiet, but reading its box (the status below says so)
+    skew = 2 * 60_000; // two minutes since its last message: the status must carry it
+    w.relay.intercept = (method, path) => {
+      if (method !== 'GET' || path !== '/api/relay/status') return null;
+      const coreNow = now() - 90_000; // the home base's clock, 90 s behind this one
+      return { status: 200, body: { extSeenAt: coreNow - 5000, appSeenAt: coreNow, now: coreNow } };
+    };
+    await app.control.refresh();
+    assert.equal(app.api.state().online, true, 'read 5 s ago by the home base\'s clock');
+  } finally {
+    w.relay.intercept = null;
     await w.close();
   }
 });

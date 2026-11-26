@@ -563,7 +563,7 @@ export function fakeRelay(seed = {}) {
     reads: { 'to-ext': 0, 'to-app': 0, status: 0 },
     extSeenOverride: undefined, // a fake peer that went offline long ago (setOnline(false, { seenAgoMs }))
     status() {
-      const s = relay.store.status();
+      const s = { ...relay.store.status(), now: Date.now() }; // (now: the Core's clock, REDTEAM-LINK-7)
       return relay.extSeenOverride === undefined ? s : { ...s, extSeenAt: relay.extSeenOverride };
     },
   };

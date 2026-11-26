@@ -11,8 +11,9 @@
 //        → 200 { messages: [{ id, iv, ct }], last }: the messages after `after` (all held ones when `after` is
 //        missing or no longer held), oldest first; `last` is the newest id held (or `after` when none is). With
 //        nothing to send it waits up to `wait` seconds (default 0) for a message, then answers messages: [].
-//   GET  /api/relay/status → 200 { extSeenAt, appSeenAt }: when each side last read its box (ms since 1970, or
+//   GET  /api/relay/status → 200 { extSeenAt, appSeenAt, now }: when each side last read its box (ms since 1970, or
 //        null); a read waiting right now counts as now. Reading to-ext counts as Jarvis for Chrome, to-app as the app.
+//        `now` is the Core's own clock: both ends judge those ages against it, not their own (REDTEAM-LINK-7).
 //   120 requests a minute per box (both methods) and for the status, for each client (its Tailscale login and its
 //   Origin): one client can't use up another's. The relay's requests never take from the API's general limit
 //   (server.mjs), so relay traffic can't starve speak, hear, sync or the brain (REDTEAM-LINK-2).
@@ -234,7 +235,7 @@ export function createRelayRoutes({ readBody, sendJson, HttpError, now = () => D
     if (name === 'status') {
       if (method !== 'GET') throw new HttpError(405, 'method_not_allowed', `${method} is not supported here`, { Allow: 'GET, OPTIONS' });
       take('status', client);
-      return sendJson(req, res, 200, relay.status(), cors);
+      return sendJson(req, res, 200, { ...relay.status(), now: now() }, cors);
     }
     if (method !== 'GET' && method !== 'POST') throw new HttpError(405, 'method_not_allowed', `${method} is not supported here`, { Allow: 'GET, POST, OPTIONS' });
     take(name, client);

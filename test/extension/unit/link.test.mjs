@@ -286,6 +286,27 @@ test('online (the side panel): only once Jarvis has answered with this link’s 
 // ---------------------------------------------------------------------------------------------
 // The link
 
+test('LINK-7: when Jarvis last read its box is judged on the home base’s clock (its `now`), not this one', async () => {
+  let t = 1_800_000_000_000;
+  const now = () => t;
+  const relay = createFakeRelay({ waitScaleMs: 1, now });
+  const store = createStore(createFakeBrowser().chrome);
+  const key = newLinkKey();
+  await store.setLink({ core: CORE, key });
+  await store.setRelayState({ after: '', seen: [], heardAt: t - 30 * 60_000 }); // proven with this key before
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key }, store, onMessage() {}, now, fetch: async (url, init) => {
+    if (String(url).endsWith('/api/relay/status')) {
+      // The home base's clock runs 90 s behind this Mac's: Jarvis read its box 5 s ago by that clock.
+      const coreNow = t - 90_000;
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ extSeenAt: coreNow, appSeenAt: coreNow - 5000, now: coreNow }), text: async () => JSON.stringify({ extSeenAt: coreNow, appSeenAt: coreNow - 5000, now: coreNow }) };
+    }
+    return relay.fetch(url, init);
+  } });
+  r.heardAt = t - 30 * 60_000; // (proven with this key before, as the loop loads it from storage)
+  await r.readStatus();
+  assert.equal(r.state(t).appOnline, true, 'read 5 s ago on the home base’s clock: online');
+});
+
 test('linked: hello and the status go to Jarvis; the alarm is set; ping answers with the status', async (t) => {
   const s = await setup();
   t.after(s.done);

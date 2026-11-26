@@ -321,12 +321,13 @@ test('HTTP: a long poll outlives the 15-second receive deadline (it only covers 
 test('HTTP: the status says when each side last read its box', async () => {
   clock = START + 70 * 60_000;
   const s0 = (await get('/api/relay/status')).json;
-  assert.deepEqual(Object.keys(s0).sort(), ['appSeenAt', 'extSeenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['appSeenAt', 'extSeenAt', 'now']);
+  assert.equal(s0.now, clock, 'the Core\'s own clock, so both ends judge ages on it (REDTEAM-LINK-7)');
   await get('/api/relay/to-ext');
   assert.equal((await get('/api/relay/status')).json.extSeenAt, clock);
   clock += 1000;
   await get('/api/relay/to-app');
-  assert.deepEqual((await get('/api/relay/status')).json, { extSeenAt: clock - 1000, appSeenAt: clock });
+  assert.deepEqual((await get('/api/relay/status')).json, { extSeenAt: clock - 1000, appSeenAt: clock, now: clock });
 });
 
 test('HTTP: methods', async () => {

@@ -1275,8 +1275,13 @@ export function createChromeLink({
       if (r.kind !== 'aborted') setProblem(problemOf(r));
       return;
     }
+    // Judged on the home base's own clock when it gives it (REDTEAM-LINK-7): two machines' clocks may differ by
+    // minutes; how long ago it read its box doesn't.
     const ext = posInt(r.data.extSeenAt);
-    if (ext && ext > statusSeen) statusSeen = ext;
+    const coreNow = posInt(r.data.now);
+    // (A time ahead of the home base's own clock can't be: not believed.)
+    const seen = ext && coreNow ? (ext - coreNow > 1000 ? 0 : now() - Math.max(0, coreNow - ext)) : ext;
+    if (seen && seen > statusSeen) statusSeen = seen;
     // The status says it reads its box, but it hasn't said anything for a while: a ping proves it is Jarvis for
     // Chrome reading, with this key (REDTEAM-LINK-6). At most one a minute.
     const t = now();
