@@ -21,7 +21,8 @@ import { createDemo } from './demo.js';
 import { createMissionControl } from './hud/mission-control.js';
 import { createCore } from './hud/core.js';
 import { openVoiceMode, isVoiceModeOpen, finalAnswerMarkdown, voiceModeSpoke } from './voice-mode.js';
-import { REVIEW_MS, listenPhrases, commandReading } from './voice-heard.js';
+import { REVIEW_MS, listenPhrases } from './voice-heard.js';
+import { partHint, nothingBackAck } from './voice-visuals.js';
 import { createMicBands } from './hud/voice-bands.js';
 import { recordTurn, createStatsView, createStatsLauncher, exportStats, importStats, getStats, dayKey } from './stats.js';
 import { createShareOptions, redactSecrets } from './share.js';
@@ -72,6 +73,7 @@ import { currentOptics, isOpticsOpen, openOptics, opticsCameraBridge } from './o
 import { runWatchLook } from '../engine/watch.js';
 import { LIVE_DEFAULT_MODEL, runLiveLook } from '../engine/live.js';
 import { estimateHologramCost, estimateLookCost } from '../lib/optics.js';
+import { createLiveBudget as liveViewBudget } from '../lib/live-view.js'; // v8.1 voice: the spend readout's live view hour
 import { voiceCameraRequest, voiceLiveViewRequest } from '../lib/optics-commands.js';
 import { cameraPermission, cameraSupported, screenLookSupported } from '../platform/camera.js';
 import { base64ByteLength } from './attachments.js';
@@ -1700,7 +1702,8 @@ export async function startApp(rootEl) {
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
           const reason = info && info.reason;
-          const back = reason === 'standby' || (info && info.wakeSession && safe(() => getSettings().wakeReturn !== false, true));
+          // v8.1: a sheet the owner asked for by voice ("open settings") is what they look at next.
+          const back = reason === 'standby' || (reason !== 'command' && info && info.wakeSession && safe(() => getSettings().wakeReturn !== false, true));
           setTimeout(() => {
             if (back && !state.demo) enterStandby({ again: true });
             else if (standby) safe(() => standby.release());
@@ -3374,14 +3377,15 @@ export async function startApp(rootEl) {
   }
 
   /**
-   * The reading of words from the chat's mic to use, by the composer's own local commands' matchers
-   * (so what the box shows is what they take): an alternative that is a screen command when the best
-   * reading is no command; an alternative that is an Apple Music command only when the best reading
-   * is nothing else (Voice Mode's rule).
+   * The reading of words from the chat's mic to use (so what the box shows is what the chat takes):
+   * v8.1, the router's pick in the chat's order, with its rule for other readings (R7: only for a
+   * free, undoable command, and never when the best reading is a question); Apple Music by another
+   * reading only when the best one is nothing else. No command: the best reading.
    */
   function chatReading(text, info) {
     const alts = info && Array.isArray(info.alternatives) ? info.alternatives : [];
-    return commandReading(text, alts, { isCommand: (words) => matchScreenCommand(words), isMusic: (words) => matchMusicCommand(words) });
+    const hit = safe(() => commandRouter.route([text, ...alts], routerState('chat', { via: 'voice' })), null);
+    return hit && hit.reading ? hit.reading : String(text || '').trim();
   }
 
   // ---- Mission Control ---------------------------------------------------------------------
@@ -4115,6 +4119,8 @@ export async function startApp(rootEl) {
     // ---- tours ▸ (s.tour)
     // ---- tours ◂
     // ---- voice ▸
+    // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
+    if (surface !== 'voice') s.speaking = !!state.speaking;
     // ---- voice ◂
     // ---- chrome-voice ▸
     // ---- chrome-voice ◂
@@ -4225,9 +4231,18 @@ export async function startApp(rootEl) {
   function runFromViewer(hit, text, viewer, opts) {
     const clean = text.trim();
     switch (hit.id) {
+      case 'standby':
+        // v8.1 (C2): the Standby words in the hologram's field too.
+        return standbyFromViewer() ? { handled: true } : null;
       case 'hologram': {
         const res = viewer ? safe(() => viewer.command(text, opts), null) : null;
-        return res && res.handled ? res : null;
+        if (!(res && res.handled)) return null;
+        // v8.1: "go back" with nothing to go back to is answered (C3); a part that took camera words
+        // says how to reach the camera (R10).
+        const cmd = res.command || {};
+        if (cmd.action === 'close-blueprint' && !getBlueprintViewer()) return { ...res, notice: Promise.resolve(nothingBackAck()) };
+        const hint = partHint(text, cmd);
+        return hint ? { ...res, notice: Promise.resolve(hint) } : res;
       }
       case 'screens': {
         // "Put this on my other screen" typed in a viewer: a screen command, not a message for Jarvis.
@@ -4243,7 +4258,9 @@ export async function startApp(rootEl) {
       default: {
         let said = null;
         const notice = new Promise((resolve) => (said = resolve));
-        return runRouted(hit, { surface: 'hologram', via: opts.source === 'voice' ? 'voice' : 'typed' }, (say) => said(say)) ? { handled: true, notice } : null;
+        // A line for a viewer that closed meanwhile ("open the library" closes it first) is a toast.
+        const present = (say) => (getHologramViewer() ? said(say) : (said(''), say && toast(say, { level: 'info', id: 'command' })));
+        return runRouted(hit, { surface: 'hologram', via: opts.source === 'voice' ? 'voice' : 'typed' }, present) ? { handled: true, notice } : null;
       }
     }
   }
@@ -4258,7 +4275,10 @@ export async function startApp(rootEl) {
     const words = String(text || '');
     const st = routerState('optics', { via: spoken ? 'voice' : 'typed' });
     for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
-      if (hit.id === 'screens') {
+      if (hit.id === 'standby') {
+        // v8.1 (C2): the Standby words in Optics' field too.
+        if (standbyFromViewer()) return { handled: true, ack: '' };
+      } else if (hit.id === 'screens') {
         if (screenCommand(words, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
       } else if (hit.id === 'optics') {
         const optics = currentOptics();
@@ -4267,10 +4287,149 @@ export async function startApp(rootEl) {
       } else {
         let said = null;
         const done = new Promise((resolve) => (said = resolve));
-        if (runRouted(hit, { surface: 'optics', via: spoken ? 'voice' : 'typed' }, (say) => said(say))) return { handled: true, ack: '', done };
+        const present = (say) => (currentOptics() ? said(say) : (said(''), say && toast(say, { level: 'info', id: 'command' })));
+        if (runRouted(hit, { surface: 'optics', via: spoken ? 'voice' : 'typed' }, present)) return { handled: true, ack: '', done };
       }
     }
     return null;
+  }
+
+  // ---- voice (Track 3): what the app's own commands do (src/ui/commands/voice.js) ---------------
+
+  /** "Go to standby" in a hologram's or Optics' field: the viewers close and Standby opens. */
+  function standbyFromViewer() {
+    if (state.demo || !standby) return false;
+    closeViewersForSheet();
+    return enterStandby();
+  }
+
+  /** Before a sheet opens by voice: the viewers that would cover it close (as the owner would, to tap its button). */
+  function closeViewersForSheet() {
+    const sheet = getBlueprintViewer();
+    if (sheet) safe(() => sheet.close());
+    const holo = getHologramViewer();
+    if (holo) safe(() => holo.close());
+    const optics = currentOptics();
+    if (optics) safe(() => optics.close());
+  }
+
+  /** The device's voice, by name, for "This is the Mac's own voice." */
+  function deviceName() {
+    if (onMac) return 'Mac';
+    if (safe(() => isIOS(), false)) return /iPad/.test(navigator.userAgent || '') ? 'iPad' : 'iPhone';
+    return phoneLike ? 'phone' : 'computer';
+  }
+
+  /** Open a sheet as its button does: { linked?, none? } for the line. */
+  function openSheetNow(sheet, section) {
+    switch (sheet) {
+      case 'history':
+        openHistory();
+        return {};
+      case 'settings':
+        openSettings(section ? { section } : {});
+        return {};
+      case 'library':
+        openLibrary();
+        return {};
+      case 'mission': {
+        const turn = state.conv ? turnsOf(state.conv).filter((t) => Object.keys(missionsOf(t)).length).pop() : null;
+        if (!turn) return { none: true };
+        openMission(turn);
+        return {};
+      }
+      case 'homebase':
+        if (!getSettings().homeBaseUrl || !brain) {
+          openSettings({ section: 'homebase', focus: 'homebase-url' });
+          return { linked: false };
+        }
+        return openHomeBase() ? {} : { linked: false };
+      default:
+        return {};
+    }
+  }
+
+  function voiceCommandDeps() {
+    return {
+      newChat: () => newChat(),
+      // From Voice Mode: Jarvis says the line, Voice Mode closes (not into Standby), then the sheet opens;
+      // from a viewer's field: the viewers close first. Mission Control with no mission opens nothing.
+      openSheet: (sheet, { section = null, surface = 'chat' } = {}) => {
+        if (sheet === 'mission' && !(state.conv && turnsOf(state.conv).some((t) => Object.keys(missionsOf(t)).length))) return { none: true };
+        if (sheet === 'homebase' && (!getSettings().homeBaseUrl || !brain)) {
+          if (surface === 'voice') return { linked: false, leave: () => openSheetNow(sheet, section) };
+          closeViewersForSheet();
+          return openSheetNow(sheet, section);
+        }
+        if (surface === 'voice' && safe(() => isVoiceModeOpen(), false)) return { leave: () => openSheetNow(sheet, section) };
+        if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
+        return openSheetNow(sheet, section);
+      },
+      useVoice: async (which) => {
+        const device = deviceName();
+        if (which === 'device') {
+          saveSettings({ naturalVoice: false, homeBaseSpeak: false, homeBaseSpeakBy: 'owner' });
+          return { ok: true, device };
+        }
+        // George from the home base when its voice can speak now; else the one on this device.
+        if (getSettings().homeBaseUrl && homeBaseVoice && !state.demo && safe(() => homeBaseVoice.canSpeak(), false)) {
+          saveSettings({ homeBaseSpeak: true, homeBaseSpeakBy: 'owner' });
+          return { ok: true, device };
+        }
+        const downloaded = naturalVoice ? await safe(() => naturalVoice.isDownloaded(), Promise.resolve(false)).catch(() => false) : false;
+        if (downloaded) {
+          saveSettings({ naturalVoice: true, naturalVoiceId: 'bm_george' });
+          return { ok: true, device };
+        }
+        openSettings({ section: 'voice' });
+        return { ok: false, needsDownload: !!naturalVoice, device };
+      },
+      spend: () => ({
+        todayUsd: safe(() => todaySpend(), 0),
+        monthUsd: safe(() => getSpend().monthUsd, 0),
+        liveUsd: safe(() => liveViewBudget().spent(), 0),
+      }),
+      // SHOULD C5: the one-tap button for a Look at the screen (its share picker needs a tap); the
+      // price on it. In the chat, the line is the toast that carries the button.
+      screenLook: ({ surface = 'chat' } = {}) => {
+        if (state.demo || !safe(() => screenLookSupported(), false)) return { supported: false };
+        const fromVoice = surface === 'voice' && !!voiceApi && safe(() => isVoiceModeOpen(), false);
+        const tap = () => openOpticsScreen({ start: 'screen', voice: fromVoice });
+        if (fromVoice) {
+          safe(() => voiceApi.offer({ label: 'Look at my screen · about 3¢', testid: 'voice-screen-look', onTap: tap }));
+          return { supported: true };
+        }
+        if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
+        toast('Tap Look to look at your screen. A Look costs about 3 cents.', { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
+        return { supported: true, shown: true };
+      },
+      // SHOULD C6: "brief me" with no home base (asked first in Voice Mode): the briefing protocol's words.
+      briefing: () => {
+        const p = safe(() => getProtocol('morning-briefing'), null);
+        const text = p ? safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '') : '';
+        if (!text) return false;
+        safe(() => presence.noteBriefing(new Date()));
+        return { send: text, mode: p.mode || 'swarm' };
+      },
+      stopTarget: (target) => {
+        switch (target) {
+          case 'liveview': {
+            const optics = currentOptics();
+            if (optics) safe(() => optics.stopLiveView());
+            break;
+          }
+          case 'music':
+            safe(() => musicPlayer.stop());
+            break;
+          case 'speech':
+            safe(() => stopSpeakingNow());
+            break;
+          // 'tour' (tours) and 'chrome' (chrome-voice) are added by their builders here.
+          default:
+            break;
+        }
+      },
+    };
   }
 
   /**
@@ -4301,7 +4460,7 @@ export async function startApp(rootEl) {
     // tours (src/ui/commands/tours.js):
     register('tour', registerTourCommands, { ...shared });
     // voice (src/ui/commands/voice.js):
-    register('voice', registerVoiceCommands, { ...shared });
+    register('voice', registerVoiceCommands, { ...shared, ...voiceCommandDeps() });
     // chrome-voice (src/ui/commands/chrome-voice.js):
     register('chrome-voice', registerChromeVoiceCommands, { ...shared });
     // windows (src/ui/commands/windows.js):

@@ -4,7 +4,7 @@
 // Mode summarizes is the text after the last hologram or blueprint (src/ui/voice-mode.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { commandAck, savedBlueprintAck, spokenPart, blueprintQuestion, confirmReply, spokenCost } from '../../src/ui/voice-visuals.js';
+import { commandAck, savedBlueprintAck, spokenPart, blueprintQuestion, confirmReply, spokenCost, partHint, nothingBackAck } from '../../src/ui/voice-visuals.js';
 import { createSpokenFeed, textClosed } from '../../src/ui/voice-stream.js';
 import { finalAnswerMarkdown } from '../../src/ui/voice-mode.js';
 import { matchHologramCommand } from '../../src/lib/hologram-commands.js';
@@ -124,3 +124,17 @@ test('"isolate it" with nothing selected asks which part; closing a sheet by nam
   assert.equal(commandAck({ action: 'close-blueprint' }), '');
   assert.equal(ack('close the blueprint'), '');
 });
+
+test('v8.1 R10: a camera part took the camera words: the hint names Optics; C3: nothing to go back to', () => {
+  const LAPTOP = [{ id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery' }];
+  for (const words of ['open the camera', 'Jarvis, turn on the camera', 'show me the camera', 'camera on', 'start the webcam']) {
+    const cmd = matchHologramCommand(words, LAPTOP, {}) || { action: 'select', partId: 'webcam', partName: 'Camera module' };
+    assert.equal(partHint(words, cmd), "Say 'open Optics' for your camera.", words);
+  }
+  assert.equal(partHint('show the battery', { action: 'select', partId: 'battery' }), '', 'not camera words');
+  assert.equal(partHint('open optics', { action: 'select', partId: 'webcam' }), '', 'Optics named: no hint');
+  assert.equal(partHint('open the camera', { action: 'explode' }), '', 'not a part command');
+  assert.equal(partHint('open the camera', null), '');
+  assert.equal(nothingBackAck(), "There's nothing to go back to.");
+});
+

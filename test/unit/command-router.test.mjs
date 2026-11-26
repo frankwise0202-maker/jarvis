@@ -1,22 +1,28 @@
-// The command router (v8.1, SPEC §30; src/lib/command-router.js): the skeleton (contract (b)), and
-// the T3 harness over the corpora and the collision table (u-voice §4.4). Voice (Track 3) owns this
-// file from Phase 0 on: the base corpora, the order, T1-T5.
+// The command router (v8.1, SPEC §30; src/lib/command-router.js): the skeleton (contract (b)), the
+// final order (src/lib/command-order.js), and T1-T5 over the corpora and the collision table (u-voice
+// §4.4). Voice (Track 3) owns this file: the base corpora, the order, T1-T5.
 //
-// The harness reads test/unit/fixtures/voice-corpus.mjs and collisions.mjs (a section per builder)
-// and, when it is there, voice's base corpora test/unit/fixtures/voice-corpus-base.mjs (named exports
-// MUST, NOT and STATES, each optional). It registers today's matchers and every src/ui/commands
-// module (with fake deps), then:
+// The harness reads test/unit/fixtures/voice-corpus.mjs and collisions.mjs (a section per builder) and
+// voice's base corpora test/unit/fixtures/voice-corpus-base.mjs. It registers today's matchers and every
+// src/ui/commands module (with fake deps), as app.js does, in the final order, then:
 //   T1  every NOT sentence, in every state, reaches Claude, unless the collision table declares a winner
-//   T2  every MUST row picks what it expects
+//   T2  every must row picks what it expects (a section's: an id or id:do; the base's: a layer, from
+//       its owner's matchers; a row whose owner has registered nothing yet waits, and says so)
 //   T3  a sentence two matchers claim alone, in a state, is declared in the collision table, and
-//       the router picks its declared winner; every declared row holds
+//       the router picks its declared winner; every declared row holds (a row whose winner isn't
+//       registered yet waits)
+//   T4  the same words pick the same matcher on every surface, but for the declared exceptions
+//   T5  another reading counts only when the best one isn't a question, and only for a free, undoable,
+//       unchecked action that touches neither the camera nor the microphone
+//   and in a Chrome context no ordinary sentence and no Jarvis command becomes a Chrome task (H3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { LAYERS, SURFACES, createRouter, emptyState, normalizeAction, alternativeAllowed, cleanReadings, registerTodayCommands } from '../../src/lib/command-router.js';
+import { LAYERS, SURFACES, createRouter, emptyState, normalizeAction, alternativeAllowed, cleanReadings, registerTodayCommands, TODAY_ORDER, FINAL_ORDER, MAX_WORDS } from '../../src/lib/command-router.js';
+import { ORDER } from '../../src/lib/command-order.js';
 import { DEFAULT_SETTINGS } from '../../src/platform/settings.js';
 import { SECTIONS as CORPUS_SECTIONS } from './fixtures/voice-corpus.mjs';
 import { SECTIONS as COLLISION_SECTIONS } from './fixtures/collisions.mjs';
+import * as BASE from './fixtures/voice-corpus-base.mjs';
 import { register as registerMacCommands } from '../../src/ui/commands/mac.js';
 import { register as registerAudioCommands } from '../../src/ui/commands/audio.js';
 import { register as registerTourCommands } from '../../src/ui/commands/tours.js';
@@ -134,16 +140,17 @@ test('the hit: its action with every flag filled in, and run() through the entry
   r.register({ id: 'new-chat', layer: 'app', match: word('new chat', { do: 'new-chat', extra: 1 }), run: (action, ctx) => ({ say: `${action.do} ${ctx.surface}` }) });
   r.register({ id: 'mute', layer: 'app', match: word('mute') });
   const hit = r.route(['New chat'], { surface: 'chat' });
-  assert.deepEqual(hit.action, { do: 'new-chat', extra: 1, free: true, undo: true, check: false, camera: false });
+  assert.deepEqual(hit.action, { do: 'new-chat', extra: 1, free: true, undo: true, check: false, camera: false, mic: false });
   assert.deepEqual(await r.run(hit, { surface: 'chat' }), { say: 'new-chat chat' });
   assert.equal(r.run(r.route(['mute'], { surface: 'chat' })), false, 'no run(): false');
   assert.equal(r.route(['mute'], { surface: 'chat' }).action.do, 'mute', 'do defaults to the id');
 });
 
 test('normalizeAction(), alternativeAllowed(), cleanReadings()', () => {
-  assert.deepEqual(normalizeAction({ do: 'x', free: 0, camera: 'yes' }), { do: 'x', free: false, undo: true, check: false, camera: true });
+  // v8.1: the `mic` flag (the microphone off, Voice Mode away) joins the others; R7 refuses it too.
+  assert.deepEqual(normalizeAction({ do: 'x', free: 0, camera: 'yes' }), { do: 'x', free: false, undo: true, check: false, camera: true, mic: false });
   assert.equal(alternativeAllowed({ do: 'x' }), true);
-  for (const flag of [{ free: false }, { undo: false }, { check: true }, { camera: true }]) assert.equal(alternativeAllowed({ do: 'x', ...flag }), false);
+  for (const flag of [{ free: false }, { undo: false }, { check: true }, { camera: true }, { mic: true }]) assert.equal(alternativeAllowed({ do: 'x', ...flag }), false);
   assert.deepEqual(cleanReadings([' Play it ', 'play it', '', null, 'Stop']), ['Play it', 'Stop']);
 });
 
@@ -155,37 +162,52 @@ test('emptyState(): every field of contract (b), for each surface', () => {
   assert.notEqual(emptyState('chat').questions, s.questions, 'a fresh object each time');
 });
 
-// =============================================================================== the T3 harness
+// =============================================================================== the final order
 
-const PARTS = [
-  { id: 'battery', name: 'Battery', aka: [] },
-  { id: 'fan', name: 'Fan', aka: ['cooling fan'] },
-  { id: 'keyboard', name: 'Keyboard', aka: [] },
-  { id: 'display', name: 'Display lid', aka: ['screen', 'display'] },
-  { id: 'webcam', name: 'Webcam', aka: ['camera'] },
-  { id: 'hinges', name: 'Hinges', aka: [] },
-  { id: 'bottom-cover', name: 'Bottom cover', aka: [] },
-];
-const LIVE = { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null };
-const VOICE_BASE = { standby: { available: true, open: false }, homebase: { available: true, linked: true }, camera: { supported: true, allowed: 'granted', ios: false }, voiceOpen: true };
+test('the final order (C1): one table for every surface, the layers in order, R3 and R7 on', () => {
+  for (const surface of SURFACES) assert.equal(FINAL_ORDER[surface], FINAL_ORDER.voice, `${surface}: the same passes (R1)`);
+  const r = createRouter();
+  r.register({ id: 'w1', layer: 'app', match: word('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen') });
+  r.register({ id: 'w2', layer: 'media', carrier: true, match: (t) => (/^play /.test(t) ? { do: 'music' } : null) });
+  const long = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen';
+  assert.equal(r.route([long], { surface: 'voice' }), null, `R3: more than ${MAX_WORDS} words is no command`);
+  assert.equal(r.route([`play ${long}`], { surface: 'voice' }).id, 'w2', 'a carrier keeps its long words');
+  // R7: the best reading is a question: no other reading is tried at all.
+  r.register({ id: 'w3', layer: 'app', match: word('new chat') });
+  assert.equal(r.route(['new jacket', 'new chat'], { surface: 'voice' }).id, 'w3');
+  assert.equal(r.route(["what's a new jacket", 'new chat'], { surface: 'voice' }), null);
+  // TODAY_ORDER keeps Phase 0's routing: no cap, no question rule.
+  const t = createRouter({ order: TODAY_ORDER });
+  t.register({ id: 'w3', layer: 'app', match: word('new chat') });
+  assert.equal(t.route(["what's a new jacket", 'new chat'], { surface: 'chat' }).id, 'w3');
+});
 
-/** The harness's own states (a section may add its own in voice-corpus.mjs). */
-export const HARNESS_STATES = {
-  V0: { surface: 'voice', ...VOICE_BASE },
-  S: { surface: 'voice', ...VOICE_BASE, speaking: true },
-  VH: { surface: 'voice', ...VOICE_BASE, hologram: { open: true, inWindow: false, parts: PARTS, selected: null } },
-  VL: { surface: 'voice', ...VOICE_BASE, optics: LIVE },
-  VF: { surface: 'voice', ...VOICE_BASE, optics: { ...LIVE, mode: 'frozen' } },
-  VW: { surface: 'voice', ...VOICE_BASE, windows: [{ id: 'w1', kind: 'camera', label: 'Camera', focused: false }] },
-  C0: { surface: 'chat', via: 'typed', standby: { available: true, open: false }, homebase: { available: true, linked: true } },
-  H0: { surface: 'hologram', via: 'typed', hologram: { open: true, inWindow: false, parts: PARTS, selected: null } },
-  OT: { surface: 'optics', via: 'typed', optics: LIVE },
-  OV: { surface: 'optics', via: 'voice', optics: LIVE },
-};
+test("the final order, as the app has it: today's matchers and every module's, layer by layer", () => {
+  const { router } = appRouter();
+  const flat = router.order('voice').flat();
+  const pos = (id) => flat.indexOf(id);
+  // (1) Standby, (2) the answers, (3) stop, (4) Screens, (5) the viewers, (6) the app, (7) media, (8) camera.
+  for (const [a, b] of [['standby', 'prompt'], ['prompt', 'question'], ['question', 'stop'], ['stop', 'screens'], ['screens', 'blueprint'], ['blueprint', 'hologram'], ['hologram', 'optics'], ['optics', 'voice-controls'], ['voice-controls', 'app'], ['app', 'music'], ['music', 'homebase'], ['homebase', 'brain'], ['brain', 'camera']]) {
+    assert.ok(pos(a) >= 0 && pos(a) < pos(b), `${a} before ${b} (${flat.join(', ')})`);
+  }
+  // The declared ids each layer asks first (src/lib/command-order.js).
+  assert.deepEqual([...ORDER.destination], ['chrome-task', 'chrome-open', 'windows', 'optics-card', 'screens', 'screen-look'], 'D1: a Chrome task before opening a page; the Look\'s card before Screens');
+  // The chat, a hologram's field and Optics' field: the same order, each with its own matchers.
+  for (const surface of ['chat', 'hologram', 'optics']) {
+    const ids = router.order(surface).flat();
+    const at = (id) => ids.indexOf(id);
+    assert.equal(ids[0], 'standby', `${surface}: Standby first`);
+    assert.ok(at('stop') > 0 && at('stop') < at('screens') && at('screens') < at('app'), `${surface}: stop, then Screens, then the app (${ids.join(', ')})`);
+  }
+});
+
+// =============================================================================== the harness (T1-T5)
+
+export const HARNESS_STATES = BASE.HARNESS_STATES;
 
 /** A state by name: emptyState(surface) with the named fields over it. */
 function stateOf(states, name) {
-  const over = states[name];
+  const over = typeof name === 'string' ? states[name] : name;
   if (!over) throw new Error(`no state named ${JSON.stringify(name)}`);
   return { ...emptyState(over.surface || 'voice'), ...over };
 }
@@ -205,29 +227,27 @@ function fakeDeps() {
 }
 
 const MODULES = { mac: registerMacCommands, audio: registerAudioCommands, tours: registerTourCommands, voice: registerVoiceCommands, 'chrome-voice': registerChromeVoiceCommands, windows: registerWindowCommands, optics: registerOpticsCommands, chrome: registerChromeCommands };
+// The builder each module belongs to (a corpus row's owner).
+const OWNER_MODULE = { voice: 'voice', optics: 'optics', windows: 'windows', tours: 'tours', 'chrome-voice': 'chrome-voice', 'mac-hf': 'mac', 'mac-dev': 'audio', 'chrome-relay': 'chrome' };
 
-/** The app's router: today's matchers, then every module's (as app.js registers them). */
+/** The app's router: today's matchers, then every module's (as app.js registers them); byModule: their ids. */
 function appRouter() {
   const r = createRouter();
   registerTodayCommands(r);
-  for (const fn of Object.values(MODULES)) fn(r, fakeDeps());
-  return r;
-}
-
-/** voice's base corpora (the u-voice probes), when the file is there. */
-async function baseCorpus() {
-  const url = new URL('./fixtures/voice-corpus-base.mjs', import.meta.url);
-  if (!existsSync(url)) return { MUST: [], NOT: [], STATES: {} };
-  const m = await import(url.href);
-  return { MUST: m.MUST || [], NOT: m.NOT || [], STATES: m.STATES || {} };
+  const byModule = {};
+  for (const [name, fn] of Object.entries(MODULES)) {
+    const ids = [];
+    fn({ ...r, register: (entry) => (ids.push(entry && entry.id), r.register(entry)) }, fakeDeps());
+    byModule[name] = ids;
+  }
+  return { router: r, byModule };
 }
 
 /** Everything the harness reads: the states, the corpora, the collision table. */
-async function corpora() {
-  const base = await baseCorpus();
-  const states = { ...HARNESS_STATES, ...base.STATES };
-  const must = [...base.MUST];
-  const not = [...base.NOT];
+function corpora() {
+  const states = { ...BASE.HARNESS_STATES, ...BASE.STATES };
+  const must = [];
+  const not = [...BASE.NOT];
   for (const [owner, section] of Object.entries(CORPUS_SECTIONS)) {
     for (const [name, st] of Object.entries(section.states || {})) {
       if (states[name] && states[name] !== st) throw new Error(`${owner}: the state "${name}" exists already`);
@@ -246,6 +266,7 @@ export function claimantsOf(router, words, state) {
   const out = [];
   for (const e of router.entries()) {
     if (!e.surfaces.includes(state.surface)) continue;
+    if (!e.carrier && cleanReadings([words])[0] && String(words).trim().split(/\s+/).length > MAX_WORDS) continue;
     let action = null;
     try {
       action = e.match(words, state, { readings: [words], index: 0, surface: state.surface });
@@ -263,9 +284,13 @@ const pick = (router, words, state) => {
 };
 const sameWords = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 const declared = (table, words, stateName) => table.find((row) => sameWords(row.words, words) && row.state === stateName);
+const winnersOf = (row) => (Array.isArray(row.winner) ? row.winner : [row.winner ?? null]);
 
-/** T3: every collision is declared, and every declared row holds. Returns the problems found. */
-export function checkCollisions(router, { sentences, states, table }) {
+/**
+ * T3: every collision is declared, and every declared row holds. Returns the problems found; `waiting`
+ * (when given) collects the rows whose winner isn't registered yet (its builder isn't merged).
+ */
+export function checkCollisions(router, { sentences, states, table, waiting = null, waitingFor = () => false }) {
   const problems = [];
   for (const stateName of Object.keys(states)) {
     const st = stateOf(states, stateName);
@@ -278,21 +303,33 @@ export function checkCollisions(router, { sentences, states, table }) {
   }
   for (const row of table) {
     if (!states[row.state]) {
-      problems.push(`the collision row "${row.words}" names an unknown state ${row.state}`);
+      // A row for another builder's state waits until that builder is merged (its section brings the state).
+      if (waiting && row.by && waitingFor(row)) waiting.push(`"${row.words}" in ${row.state} (${row.by}'s state) → ${winnersOf(row).join(' or ')}`);
+      else problems.push(`the collision row "${row.words}" names an unknown state ${row.state}`);
+      continue;
+    }
+    const want = winnersOf(row);
+    if (waiting && (!want.some((id) => id === null || router.has(id)) || waitingFor(row))) {
+      waiting.push(`"${row.words}" in ${row.state} → ${want.join(' or ')}`);
       continue;
     }
     const got = pick(router, row.words, stateOf(states, row.state));
-    if (got !== (row.winner ?? null)) problems.push(`wrong winner: "${row.words}" in ${row.state} goes to ${got}, declared ${row.winner}`);
+    if (!want.includes(got)) problems.push(`wrong winner: "${row.words}" in ${row.state} goes to ${got}, declared ${want.join(' or ')}`);
   }
   return problems;
 }
 
-/** T2: every must row picks what it expects ('id', 'id:do' or null). */
-export function checkMust(router, { must, states }) {
+/** T2: every must row picks what it expects ('id', 'id:do' or null); `waiting` collects rows whose id isn't registered. */
+export function checkMust(router, { must, states, waiting = null }) {
   const problems = [];
   for (const [words, stateName, expected] of must) {
     if (!states[stateName]) {
       problems.push(`"${words}": unknown state ${stateName}`);
+      continue;
+    }
+    const id = expected ? String(expected).split(':')[0] : null;
+    if (waiting && id && !router.has(id)) {
+      waiting.push(`"${words}" in ${stateName} → ${expected}`);
       continue;
     }
     const hit = router.route([words], stateOf(states, stateName));
@@ -302,8 +339,39 @@ export function checkMust(router, { must, states }) {
   return problems;
 }
 
-/** T1: every ordinary sentence reaches Claude in every state, unless the table declares a winner. */
-export function checkNot(router, { not, states, table }) {
+/** T2 for the base corpus: the layer (and the owner's matcher, or the id) each phrase must go to. */
+function checkMustBase(router, byModule, { rows, states, waiting }) {
+  const problems = [];
+  const layerOf = new Map(router.entries().map((e) => [e.id, e.layer]));
+  for (const row of rows) {
+    const module = OWNER_MODULE[row.owner];
+    const ready = row.owner === 'today' || (module && byModule[module] && byModule[module].length);
+    if (!ready || (row.id && !router.has(row.id))) {
+      waiting.push(`"${row.words}" in ${row.state} → ${row.owner} (${row.does})`);
+      continue;
+    }
+    const hit = router.route([row.words], stateOf(states, row.state));
+    if (!hit && row.should) {
+      waiting.push(`"${row.words}" in ${row.state} → ${row.owner}, a SHOULD item (${row.does})`);
+      continue;
+    }
+    const mine = row.owner === 'today' || !module || (byModule[module] || []).includes(hit && hit.id);
+    const ok = hit && (row.id ? hit.id === row.id : layerOf.get(hit.id) === row.layer && mine);
+    if (!ok) problems.push(`"${row.words}" in ${row.state}: ${hit ? `${hit.id} (${layerOf.get(hit.id)})` : 'Claude'}, expected ${row.id || `${row.owner}'s, in ${row.layer}`}`);
+  }
+  return problems;
+}
+
+/** Today's takes that stay on purpose, in any state where their thing is open (base KEPT_TAKES). */
+function keptTake(words, st, got) {
+  return BASE.KEPT_TAKES.some((k) => sameWords(k.words, words) && k.by === got && ((k.when === 'hologram' && st.hologram && st.hologram.open) || (k.when === 'optics' && st.optics && st.optics.open)));
+}
+
+/**
+ * T1: every ordinary sentence reaches Claude in every state, unless the table declares a winner.
+ * `waitingFor(words, state)`: a fix another builder makes is not merged yet (the take waits).
+ */
+export function checkNot(router, { not, states, table, waitingFor = () => false, waiting = null }) {
   const problems = [];
   for (const stateName of Object.keys(states)) {
     const st = stateOf(states, stateName);
@@ -311,8 +379,60 @@ export function checkNot(router, { not, states, table }) {
       const got = pick(router, words, st);
       if (got === null) continue;
       const row = declared(table, words, stateName);
-      if (!row || row.winner !== got) problems.push(`stolen: "${words}" in ${stateName} goes to ${got}`);
+      if (row && winnersOf(row).includes(got)) continue;
+      if (keptTake(words, st, got)) continue;
+      if (waitingFor(words, stateName)) {
+        if (waiting) waiting.push(`"${words}" in ${stateName} (a fix to come)`);
+        continue;
+      }
+      problems.push(`stolen: "${words}" in ${stateName} goes to ${got}`);
     }
+  }
+  return problems;
+}
+
+/**
+ * T4: the same words pick the same matcher on the surfaces where the state can be (Voice Mode and the
+ * chat with nothing open; Voice Mode and a hologram's field with a hologram; Voice Mode and Optics'
+ * field with Optics), but for the declared exceptions (a matcher that acts only on some surfaces).
+ */
+export function checkParity(router, { sentences, states, exceptions }) {
+  const problems = [];
+  const only = new Map(exceptions.map((e) => [e.id, e.surfaces]));
+  const pairs = [
+    ['V0', 'chat'],
+    ['VW', 'chat'],
+    ['VH', 'hologram'],
+    ['VL', 'optics'],
+  ];
+  for (const [name, surface] of pairs) {
+    const spoken = stateOf(states, name);
+    // Optics' field typed is the Look's question by design: its microphone is the surface to compare.
+    const there = { ...spoken, surface, via: surface === 'optics' ? 'voice' : 'typed', voiceOpen: surface === 'chat' ? false : spoken.voiceOpen };
+    for (const words of sentences) {
+      const a = pick(router, words, spoken);
+      const b = pick(router, words, there);
+      if (a === b) continue;
+      const excused = (id, s) => id !== null && only.has(id) && !only.get(id).includes(s);
+      if (excused(a, surface) || excused(b, 'voice')) continue;
+      problems.push(`"${words}" in ${name}: Voice Mode ${a}, ${surface} ${b}`);
+    }
+  }
+  return problems;
+}
+
+/** T5: the alternatives rows ({ best, alts, state, want: 'claude' | { id }, by? }). */
+function checkAlternatives(router, { rows, states, waiting, waitingFor = () => false }) {
+  const problems = [];
+  for (const row of rows) {
+    if ((row.want !== 'claude' && row.want.id && !router.has(row.want.id)) || waitingFor(row)) {
+      waiting.push(`${row.best} / ${row.alts.join(' / ')} → ${row.want.id}`);
+      continue;
+    }
+    const hit = router.route([row.best, ...row.alts], stateOf(states, row.state));
+    const got = hit ? hit.id : 'claude';
+    const want = row.want === 'claude' ? 'claude' : row.want.id;
+    if (got !== want) problems.push(`"${row.best}" (or ${row.alts.map((a) => `"${a}"`).join(', ')}) in ${row.state}: ${got}, expected ${want}`);
   }
   return problems;
 }
@@ -328,17 +448,56 @@ test('the harness finds an undeclared collision, a wrong winner and a stolen sen
   assert.deepEqual(checkMust(r, { must: [['stop', 'V0', 'stop-all'], ['go', 'V0', null], ['stop', 'V0', 'stop-all:stop']], states }), []);
   assert.deepEqual(checkMust(r, { must: [['go', 'V0', 'stop-all']], states }), ['"go" in V0: null, expected stop-all']);
   assert.deepEqual(checkNot(r, { not: ['stop', 'tell me a joke'], states, table: [] }), ['stolen: "stop" in V0 goes to stop-all']);
+  // A row whose winner isn't registered waits (its builder isn't merged yet) instead of failing.
+  const waiting = [];
+  assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [{ words: 'go', state: 'V0', winner: 'not-yet' }], waiting }), []);
+  assert.deepEqual(waiting, ['"go" in V0 → not-yet']);
+  // A row for a state another builder's section brings waits for that builder; without `by` it is an error.
+  const later = { words: 'go', state: 'X9', winner: 'stop-all', by: 'someone' };
+  assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [later], waiting, waitingFor: (row) => row.by === 'someone' }), []);
+  assert.equal(waiting.at(-1), '"go" in X9 (someone\'s state) → stop-all');
+  assert.deepEqual(checkCollisions(r, { sentences: [], states, table: [{ ...later, by: undefined }], waiting, waitingFor: () => true }), ['the collision row "go" names an unknown state X9']);
+  // T4: a matcher declared for some surfaces only may differ there; anything else is a difference.
+  const p = createRouter({ order: { voice: [{ use: ['@app'] }], chat: [{ use: ['@app'] }], hologram: [{ use: ['@app'] }], optics: [{ use: ['@app'] }] } });
+  p.register({ id: 'everywhere', layer: 'app', match: word('new chat') });
+  p.register({ id: 'voice-only', layer: 'app', surfaces: ['voice'], match: word('be quiet') });
+  const ps = { V0: { surface: 'voice' }, VW: { surface: 'voice' }, VH: { surface: 'voice' }, VL: { surface: 'voice' } };
+  assert.deepEqual(checkParity(p, { sentences: ['new chat'], states: ps, exceptions: [] }), []);
+  assert.equal(checkParity(p, { sentences: ['be quiet'], states: ps, exceptions: [] }).length, 4);
+  assert.deepEqual(checkParity(p, { sentences: ['be quiet'], states: ps, exceptions: [{ id: 'voice-only', surfaces: ['voice'] }] }), []);
 });
 
-test('T1-T3 over every section of the corpora and the collision table (today\'s matchers and every module)', async () => {
-  const router = appRouter();
-  const { states, must, not, table } = await corpora();
+test('T1-T3 over every section of the corpora and the collision table (today\'s matchers and every module)', (t) => {
+  const { router, byModule } = appRouter();
+  const { states, must, not, table } = corpora();
   // Every module registered (each may still have nothing in it).
-  for (const id of ['standby', 'question', 'screens', 'music', 'hologram', 'optics', 'camera']) assert.ok(router.has(id), id);
-  const sentences = [...new Set([...must.map((row) => row[0]), ...not, ...table.map((row) => row.words)])];
-  assert.deepEqual(checkMust(router, { must, states }), [], 'T2 must-match');
-  assert.deepEqual(checkNot(router, { not, states, table }), [], 'T1 no-steal');
-  assert.deepEqual(checkCollisions(router, { sentences, states, table }), [], 'T3 collisions');
+  for (const id of ['standby', 'question', 'screens', 'music', 'hologram', 'optics', 'camera', 'stop', 'voice-controls', 'app']) assert.ok(router.has(id), id);
+  const sentences = [...new Set([...must.map((row) => row[0]), ...BASE.MUST_BASE.map((row) => row.words), ...not, ...table.map((row) => row.words)])];
+  const waiting = [];
+  assert.deepEqual(checkMust(router, { must, states, waiting }), [], 'T2 must-match (the sections)');
+  assert.deepEqual(checkMustBase(router, byModule, { rows: BASE.MUST_BASE, states, waiting }), [], 'T2 must-match (the base corpus)');
+  const fixPending = (words, stateName) => BASE.WAITING_FIXES.some((f) => f.words === words && f.states.includes(stateName) && !(byModule[OWNER_MODULE[f.by]] || []).length);
+  assert.deepEqual(checkNot(router, { not, states, table, waitingFor: fixPending, waiting }), [], 'T1 no-steal');
+  const builderPending = (row) => !!row.by && !(byModule[OWNER_MODULE[row.by]] || []).length;
+  assert.deepEqual(checkCollisions(router, { sentences, states, table, waiting, waitingFor: builderPending }), [], 'T3 collisions');
+  if (waiting.length) t.diagnostic(`waiting for their builders' matchers (${waiting.length}): ${waiting.join('; ')}`);
+});
+
+test('T4 surface parity, T5 alternatives, and no Chrome task from an ordinary sentence or a Jarvis command (H3)', (t) => {
+  const { router, byModule } = appRouter();
+  const { states, must, not, table } = corpora();
+  const sentences = [...new Set([...must.map((row) => row[0]), ...BASE.MUST_BASE.map((row) => row.words), ...not, ...table.map((row) => row.words)])];
+  const exceptions = [...BASE.PARITY_EXCEPTIONS, ...Object.values(CORPUS_SECTIONS).flatMap((section) => section.parity || [])];
+  assert.deepEqual(checkParity(router, { sentences, states, exceptions }), [], 'T4 surface parity');
+  const waiting = [];
+  const builderPending = (row) => !!row.by && !(byModule[OWNER_MODULE[row.by]] || []).length;
+  assert.deepEqual(checkAlternatives(router, { rows: BASE.ALTERNATIVES, states, waiting, waitingFor: builderPending }), [], 'T5 alternatives');
+  const tasks = [];
+  for (const name of ['CC', 'CCL']) {
+    for (const words of [...BASE.CHROME_CONTEXT_NOT, ...not]) if (pick(router, words, stateOf(states, name)) === 'chrome-task') tasks.push(`${name}: "${words}"`);
+  }
+  assert.deepEqual(tasks, [], 'never a Chrome task');
+  if (waiting.length) t.diagnostic(`waiting: ${waiting.join('; ')}`);
 });
 
 test('every section of the fixtures has its arrays (one per builder)', () => {
@@ -351,5 +510,20 @@ test('every section of the fixtures has its arrays (one per builder)', () => {
   }
   for (const section of Object.values(COLLISION_SECTIONS)) {
     for (const row of section.rows) assert.ok(typeof row.words === 'string' && typeof row.state === 'string' && 'winner' in row, JSON.stringify(row));
+  }
+});
+
+test('critique H4, before every builder is merged: "continue" never answers the prompt or the research offer; "approve" never a question', () => {
+  const { router } = appRouter();
+  const states = { ...BASE.HARNESS_STATES, ...BASE.STATES };
+  for (const name of ['H4', 'H4O']) {
+    const st = stateOf(states, name);
+    for (const words of ['continue', 'go on', 'keep going', 'yes', 'okay', 'sure', 'go ahead']) {
+      const id = pick(router, words, st);
+      assert.ok(id !== 'prompt' && id !== 'question', `${name}: "${words}" went to ${id}`);
+    }
+    assert.equal(pick(router, 'approve', st), 'prompt', `${name}: approve`);
+    const stop = router.route(['stop'], st);
+    assert.deepEqual([stop.id, [...stop.action.targets]], ['stop', ['tour', 'chrome']], `${name}: stop pauses the tour and stops the task`);
   }
 });

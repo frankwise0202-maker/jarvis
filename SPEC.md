@@ -3890,7 +3890,125 @@ and `liveSpentText`.
 
 ## 30. v8.1: One router
 
-<!-- v8.1: voice writes this part. -->
+The owner asked to "use every single feature … like, hey Jarvis, open optics". Every sentence the owner says or types
+goes through one router, in one order, on every surface (Voice Mode, its typed field, the chat box and its microphone, a
+hologram's field and microphone, Optics' field and microphone). The app's own words are free local commands; anything
+no matcher takes goes to Claude once, as before. A sentence goes to exactly one place.
+
+**Files.**
+- `src/lib/command-router.js` (pure): `createRouter({ order = FINAL_ORDER, wordCap = MAX_WORDS, questionFirst = true })`
+  → `register({ id, layer, surfaces, carrier, match, run })`, `route(readings, state, { after })` → `{ id, layer, carrier,
+  action, reading, index, pos } | null` (null: Claude), `run(hit, ctx)`, `has`, `entries`, `order(surface)`,
+  `setOrder(surface, passes)`. A matcher that throws is skipped. `registerTodayCommands(router, { phase0 })`: today's
+  matchers (standby, prompt, question, reply-building, screens, homebase, brain, music, optics, blueprint, hologram,
+  camera) as v8.1 has them; `{ phase0: true }` and `TODAY_ORDER` keep Phase 0's for the proof that the router picked
+  what the old chains picked (test/unit/command-router.today.test.mjs). `emptyState(surface)`: every state field.
+- `src/lib/command-order.js` (pure): `LAYERS`; `ORDER` (the ids each layer asks first); `ORDER_STEPS`; `FINAL_ORDER` (every
+  surface's passes); `MAX_WORDS` (18); `isQuestion`; `isBareNo`, `isStopWord`, `askedLast(state)`.
+- `src/lib/app-commands.js` (pure): `matchAppCommand`, `matchVoiceControl`, `matchStopWord` (`stopTargets`,
+  `chromeTaskRunning`), the lines (`appCommandLine`, `spendLine`, `moneyWords`) and `nextVoiceRate`.
+- `src/ui/commands/voice.js`: registers `stop`, `voice-controls` and `app`; their `run()` uses app.js's deps (`newChat`,
+  `openSheet`, `useVoice`, `spend`, `stopTarget`). Voice Mode carries out `voice-controls` itself.
+- `src/ui/voice-heard.js` `COMMAND_PHRASES` (v8.1 adds Optics, Chrome, side by side, live view, video mode, new chat, walk
+  me through, enclosed, opened, approve; Chrome uses the list only with on-device recognition, which Jarvis doesn't ask
+  for, and stt.js drops it after `phrases-not-supported`); `src/ui/voice-visuals.js` `partHint`, `nothingBackAck`.
+
+**The order** (`FINAL_ORDER`, the same passes for the four surfaces; a matcher's `surfaces` say where it listens):
+0. The wake routine's answers: Voice Mode only, right after a wake (heard() asks them before the router).
+1. `standby`, from any reading: the Standby words, on every surface (a hologram's and Optics' fields close the viewers
+   and open Standby).
+2. The answers, from the best reading only: `prompt` (the Chrome prompt's reserved words), `question` (the top owner
+   question: the blueprint question, a tour decision, the research offer), `reply-building` (words heard while Voice
+   Mode's reply builds a hologram wait for it). A bare "cancel" or "no" answers whichever was asked last: Voice Mode
+   stamps `askedAt` on the prompt and each question when it says them, and `askedLast(state)` compares; the prompt's
+   no is its answer marked `negative`; a question without a choice for it is set aside (`dismissTop`, onExpire
+   `'dismissed'`), so it never goes on to Claude. "Stop" is never an answer.
+3. `stop`: a bare "stop" ("okay stop", "stop it", "stop everything") stops everything that runs (`stopTargets`): the
+   tour pauses; a Chrome task, the live view, a music preview and Jarvis's voice stop. Nothing running: "Okay.". With
+   a hologram or blueprint on top and nothing running it yields, and the viewer holds the model still.
+4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
+   `optics-card` (a Look's picture card, only while a Look is on screen: "put the picture to the side" goes back into
+   its card, not a Screens float), `screens`, `screen-look` ("look at my screen"). Lead decision D1: the task comes
+   first, and each declines the other's sentences: page objects ("the cheapest one", "the first result") and page
+   verbs ("click …", "sort by …") are tasks in a Chrome context or with "in Chrome"; addresses, sites, searches,
+   "pull this up in Chrome" and "open the Nth link" (when the newest reply has links) open a page. Screens' fixes
+   (C3): "expand this in a different window" is a window; "bring … back" and "close …" go to the hologram on top when
+   no screen is open and it takes them ("bring everything back" shows every part, the same in Voice Mode and the
+   hologram's field).
+5. `top`: `tour`, `tour-start`, any other top-layer matcher, then `blueprint`, `hologram`, `optics` (each only while
+   its thing is on top). Inside a hologram its part names win (R10).
+6. `app`: `voice-controls` (Voice Mode only), `app`, `optics-open`, `liveview`, `research`, then the rest of the layer.
+7. `media`: `music` (the best reading only here), `homebase`, `brain`.
+8. `camera`: camera and live view words with Optics closed (Voice Mode only).
+9. A last pass: Apple Music from another reading, when the best one is nothing else and names no part of the hologram on
+   screen. Then Claude, with the 2-second check (unless Settings say Send right away; typed words have no check).
+
+**The rules.**
+- R1: the same words pick the same matcher on every surface; the declared exceptions (test/unit/fixtures/
+  voice-corpus-base.mjs `PARITY_EXCEPTIONS`): Voice Mode's controls, the camera words, the answers and the words held
+  while a reply builds (Voice Mode); the home base (Voice Mode and the chat, where its answers are said or written);
+  Optics' words (Voice Mode and Optics; typed in Optics' field they are the Look's question); the hologram's words
+  (Voice Mode and its field); Apple Music in a hologram's field while Voice Mode is open (Voice Mode's); the surfaces
+  optics' and mac-dev's matchers register ("research this" in Voice Mode and Optics' field; "open optics", "close the
+  camera" and "which microphone are you using" are not taken in a viewer's field, where they are its question).
+- R3: whole sentences after the fillers; a reading of more than 18 words goes only to carriers (`carrier: true`: Chrome
+  tasks, Apple Music, the home base's research and watches, Optics' questions about "this").
+- R4: a sentence that starts like a question is never a command, except fixed forms a matcher names ("what am I looking
+  at?", "how much have I spent today?"). Optics' "this" question is not one when its only "this" is a time ("this
+  month", "this weekend").
+- R5: a matcher claims words only while its thing exists.
+- R6: a command that spends needs an explicit verb and object; the dearer ones say the price first and wait.
+- R7: the recognizer's other readings are tried only when the best reading isn't a question, and only for an action that
+  is free, undoable, unchecked and touches neither the camera nor the microphone (`alternativeAllowed`; actions carry
+  `{ do, free = true, undo = true, check = false, camera = false, mic = false }`). A Look, a Google search, a Chrome task,
+  an answer, "open optics", "stop listening" and "exit Voice Mode" act on the best reading only.
+- R8: commands act at once; one that carries the owner's words out (a Google search) has `check: true` and goes through
+  the 2-second check, which then runs the action it showed. A Chrome task has its own check (lead decision D2:
+  `check: false`, chrome-voice's spoken check).
+- R9: every local action says one short line, so a stolen sentence is noticed at once.
+- R10: inside a hologram its part names win, except "my …" and "Optics"; when a part takes camera words, Jarvis adds
+  "Say 'open Optics' for your camera." (`partHint`).
+
+**The app's words** (C2; every surface unless marked):
+| Words | Action | Line |
+|---|---|---|
+| "new chat", "start a new chat" | `new-chat` | "New chat." |
+| "open history", "show me my history" | `open` history | "Your history is open." |
+| "open settings", "open the voice settings" | `open` settings, `section` | "Settings are open." / "Voice settings are open." |
+| "open the library", "open my blueprints", "show my saved holograms" | `open` library | "Your library is open." |
+| "show mission control" | `open` mission | "Mission Control is open." / "There's no mission to show yet." |
+| "open the home base" | `open` homebase | "The home base is open." / none linked: Settings → Home base, "The home base isn't linked yet. Here's how to set it up." |
+| "speak slower", "speak faster", "slow down" | `voice-rate` (0.1 a step, 0.7-1.5) | "Slower." / "Faster." / "That's as slow as I go." |
+| "turn off continuous", "turn on continuous" | `setting` voiceContinuous | "Continuous conversation off. Tap me when you need me." |
+| "send right away", "show me what you heard first" | `setting` listenSend | "I'll send what I hear right away." |
+| "use George", "use the Mac's voice" | `voice` | "This is George." / "This is the Mac's own voice." / "George needs a one-time download first. Voice settings are open." |
+| "how much have I spent today / this month" | `spend` | "About 42 cents today." / "Nothing spent today." |
+| "how much has the live view cost" | `spend` live | "The live view has cost about 9 cents this hour." |
+| "stop talking", "be quiet", "that's enough" (Voice Mode) | `hush` | "Okay." |
+| "read the full answer", "read me the rest" (Voice Mode) | `read-full` | the details, read / "There's nothing more to read." |
+| "repeat that", "say that again" (Voice Mode) | `repeat` | the last answer (else the last line) / "I haven't said anything yet." |
+| "stop listening" (Voice Mode) | `mic-off` (mic) | "I've stopped listening. Tap me when you need me." / woken: back to Standby |
+| "exit Voice Mode" (Voice Mode) | `exit-voice` (mic, no undo) | "Closing Voice Mode.", then it closes |
+| "stop" | `stop`, `targets` | "Okay." / "The tour is paused and Chrome is stopping." |
+
+A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says the line, Voice Mode closes with the
+reason `'command'` (the app doesn't go back to Standby for it) and the sheet opens; from a hologram's or Optics' field the
+viewers close first and the line is a toast. The model and the mode stay in Settings (they change costs).
+
+**Tests.** test/unit/command-router.test.mjs registers today's matchers and every src/ui/commands module (with fake deps),
+as app.js does, and runs over every builder's section of test/unit/fixtures/voice-corpus.mjs and collisions.mjs and
+voice's base corpora (voice-corpus-base.mjs: 209 ordinary sentences, the 63 phrases of the study, 20 states):
+- T1 no-steal: every ordinary sentence reaches Claude in every state, unless the collision table declares a winner;
+- T2 must-match: a section's rows name an id (or id:do); the base corpus's name a layer and the builder whose matcher must
+  take the phrase;
+- T3 collisions: a sentence two matchers claim alone, in a state, must be declared with its winner, and the router must
+  pick it; with a Chrome prompt, a tour decision and a research offer all open, "continue" goes to the tour only,
+  "approve" to the prompt only, a bare "cancel" or "no" to whatever was asked last, "stop" pauses the tour and stops the
+  Chrome task;
+- T4 surface parity; T5 alternatives; and no ordinary sentence or Jarvis command becomes a Chrome task in a Chrome
+  context (critique H3).
+A row whose builder's matchers aren't registered yet waits (the test prints them) and holds once they are. E2E
+test/e2e/scenarios/voice-commands.mjs: `voice-commands-free`, `voice-commands-app`, `voice-commands-questions`.
 
 ## 31. v8.1: Windows and tabs
 

@@ -237,8 +237,9 @@ you off.
   - tap **Send now** (or the core) to send it straight away, or **Cancel**.
 - **Tap the core while you talk** to send at once, without the check.
 - **Commands act at once**, without the check: "expand it", "show the alternator", "put it on my
-  other screen", "what am I looking at?", "play Back in Black" and the other hologram, screen, camera
-  and [Apple Music](#apple-music) commands. They cost nothing, and a misheard song only shows the
+  other screen", "what am I looking at?", "play Back in Black", "new chat", "open settings" and the other
+  hologram, screen, camera, [Apple Music](#apple-music) and app commands ([Everything by
+  voice](#everything-by-voice)). They cost nothing, and a misheard song only shows the
   wrong card. While your words are shown, Music cards step aside and no preview plays.
 - **The microphone in the chat** puts your words in the message box and sends them after the same
   2 seconds (a ring runs around Send). Tap the box to stop that and change them, then send. A
@@ -246,16 +247,89 @@ you off.
 - **Don't want the check?** Settings → Voice → **After I stop talking** → **Send right away**.
 - **Better recognition.** Jarvis listens in your phone's or computer's language (Settings → Voice →
   **Listening language** → Automatic); pick another one there if you speak to Jarvis in a different
-  language or accent. When the speech service isn't sure, Jarvis also checks its other guesses: if
-  one of them is a command, or names a part of the hologram on screen ("the alternate her" → "the
-  alternator"), that one is used. A guess that is a music command is used only when what Jarvis
-  heard best is nothing else: not a command, and not about the hologram on screen ("clay Back in
-  Black" → "play Back in Black"). In Chrome, Jarvis also tells the speech service which words to
-  expect ("Jarvis", the commands and the hologram's parts).
+  language or accent. When the speech service isn't sure, Jarvis also checks its other guesses: one
+  that names a part of the hologram on screen is used for your question ("the alternate her" → "the
+  alternator"), and one that is a command is used only when the command is free and can be undone
+  ("new jacket" → "new chat"). Never for the camera, the microphone, a search, a Chrome task, an
+  answer to a question, or anything that costs money, and never when what Jarvis heard best is a
+  question: those act only on what he heard best. A guess that is a music command is used only when
+  what Jarvis heard best is nothing else ("clay Back in Black" → "play Back in Black"). Jarvis also
+  keeps a list of the words to expect ("Jarvis", the commands, the hologram's parts), but Chrome only
+  uses such a list when it recognizes speech on the device itself, which Jarvis doesn't ask for, so
+  today the list changes nothing.
 
 #### Everything by voice
 
-<!-- v8.1: voice writes this part. -->
+Say these in Voice Mode (after "Hey Jarvis" or two claps from Standby), or type them in the chat box,
+a hologram's field or Optics' field: the same words do the same thing everywhere. They act at once,
+cost nothing unless the table says so, and Jarvis says one short line so you know what he did ("New
+chat.", "Settings are open."). Anything else is a question for Jarvis, as before: it waits 2 seconds
+on screen first, and costs what a question costs.
+
+| Feature | Say | What happens |
+|---|---|---|
+| Voice Mode | "stop talking", "be quiet", "that's enough" | He stops talking |
+| | "read the full answer", "read me the rest" | He reads the details too |
+| | "repeat that", "say that again" | He says the last answer again |
+| | "stop listening" | He stops listening (back to Standby when Standby woke him) |
+| | "exit Voice Mode" | Voice Mode closes |
+| | "speak slower", "speak faster" | His speed, a step at a time (Settings → Voice) |
+| | "turn off continuous", "turn on continuous" | Listening again after each answer, off or on |
+| | "send right away", "show me what you heard first" | The 2-second check, off or on |
+| | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
+| Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
+| Stop | "stop" | Stops whatever runs: a walkthrough pauses; a Chrome task, the live view and a preview stop. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
+| Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
+| Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
+| | "open history", "show me my history" | History |
+| Settings | "open settings", "open the voice settings" | Settings, at that section |
+| Library | "open the library", "open my blueprints", "show my saved holograms" | Your saved holograms and blueprints |
+| Mission Control | "show mission control" | The mission's agents ("There's no mission to show yet." before one) |
+| Home base | "open the home base" | Its sheet (its setup in Settings when none is linked) |
+| | "how's the home base?", "brief me", "research … in the background", "what did the home base find?", "watch for … under $300" | As before (the home base pays for research and watches) |
+| Spending | "how much have I spent today", "… this month" | A readout of this device's estimates, free |
+| | "how much has the live view cost" | The live view's spending this hour |
+| Optics | "open optics", "open the camera", "camera on" | Optics opens, no Look ("Tap Look" on an iPhone) |
+| | "close the camera" | Camera off, from anywhere |
+| | "switch cameras", "use the Logitech camera" | Optics opens on that camera |
+| | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
+| | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs) |
+| | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac |
+| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose |
+| | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
+| Holograms | "expand it", "show the battery", "front view", "labels off", "photos of the fan" | As before, free |
+| Walkthroughs | "walk me through it", "walk me through the battery" | A walkthrough of the hologram on screen, free |
+| | "next", "back", "previous", "repeat", "pause", "resume", "continue", "skip to the fan", "take me to the battery", "stop the tour", "end the tour" | Moves through it |
+| | "enclosed", "opened", "both", "you pick" | Answers "enclosed or opened?" |
+| Screens and windows | "put it on my other screen", "float it", "bring it back" | As before |
+| | "put the camera in a window", "put the hologram in another window", "side by side", "camera on the left, hologram on the right" | Windows by voice (see [Windows by voice](#windows-by-voice)) |
+| | "close the camera window", "close everything", "do this in this window", "show it here" | That window, all of them, or here |
+| | "swap them", "make the camera window bigger", "show me the hologram window", "float yourself" | Swap, resize, raise; Jarvis in a small panel on top |
+| Chrome | "pull this up in Chrome", "open the second link", "google USB-C chargers", "open YouTube" | A page in Chrome, free (a search waits 2 seconds on screen) |
+| | "find a 4K monitor under $300 and add it to the cart in Chrome", "in Chrome, …", "have Chrome …", "click around for me" | A Jarvis for Chrome task: Jarvis says what it will do and its limit first (see [By voice from Jarvis](#by-voice-from-jarvis)); within 2 minutes, "add the cheapest one to the cart" or "sort by price" too |
+| | "approve", "allow once", "deny", "cancel Chrome", "stop Chrome" | Answers Chrome's question (purchases always need a click) |
+| | "what are you doing in Chrome?" | The task's latest step |
+| | "is Jarvis for Chrome linked?", "link Jarvis for Chrome" | Its status, or its link in Settings |
+| Apple Music | "play Back in Black", "stop the music" | As before |
+
+- **One sentence, one place.** When two features could take the same words, the one in front wins: a
+  question Jarvis just asked, then "stop", then a place you named (Chrome, a window, a screen), then
+  what is on top (a walkthrough, a hologram, Optics), then the app, then music and the home base, then
+  the camera. So "go back" during a walkthrough is its previous step (with only a hologram on screen,
+  "There's nothing to go back to."), "expand this in a different window" makes a window rather than
+  taking the hologram apart, and "open the camera" with a laptop hologram on screen selects its camera
+  part ("Say 'open Optics' for your camera.").
+- **A bare "cancel" or "no"** answers whatever Jarvis asked last. "Approve" only ever answers Chrome,
+  and "continue" never does.
+- **Long sentences are questions.** A command is a short whole sentence; more than about 18 words is a
+  question for Jarvis, except what carries your own words on (a Chrome task, a song, research for the
+  home base).
+- **Other guesses** count only for free things you can undo (see Better recognition above).
+- **While he talks** he can't hear you, except "Hey Jarvis" or two claps on a Mac (see
+  [Hands-free on a Mac](#hands-free-on-a-mac)): interrupt him first, then say the command.
+- **Opening something to look at** ("open settings", "open the library") from Voice Mode: Jarvis says
+  so, Voice Mode closes, and it opens as if you had tapped it (it doesn't go back to Standby, since you
+  asked to look at it).
 
 #### Hands-free on a Mac
 

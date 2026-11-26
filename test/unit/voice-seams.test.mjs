@@ -271,3 +271,38 @@ test("the check's bound action: sent unchanged it runs that action; corrected wo
   assert.equal(boundAction({ action: null, shown: 'what time is it' }, 'what time is it'), null, 'a turn: routed as before');
   assert.equal(boundAction(null, 'x'), null);
 });
+
+test('v8.1: a bare "cancel" or "no" said to the top question sets it aside even when it keeps; the one under is asked again', () => {
+  const log = [];
+  const clock = virtualClock();
+  const { stack, asked } = stackOn(clock);
+  stack.push(question('tour', log, { keep: true }));
+  stack.push(question('research', log, { keep: true }));
+  assert.equal(stack.dropTop(), false, 'other words leave a question that keeps');
+  assert.equal(stack.dismissTop('dismissed'), true);
+  assert.deepEqual(log, ['expire:research:dismissed']);
+  assert.equal(stack.top().id, 'tour');
+  assert.deepEqual(asked, ['ask:tour', 'ask:research', 'again:tour']);
+  assert.equal(stack.dismissTop(), true);
+  assert.equal(stack.dismissTop(), false, 'nothing left');
+  assert.deepEqual(log, ['expire:research:dismissed', 'expire:tour:dismissed']);
+});
+
+test("v8.1 the router's answer layer: a bare no answers what was asked last; with no choice for it, the question is set aside; stop is never an answer", () => {
+  const r = createRouter();
+  registerTodayCommands(r);
+  const tour = { id: 'tour', keep: true, askedAt: 1, choices: [{ id: 'enclosed', words: ['enclosed'] }] };
+  const offer = { id: 'research', askedAt: 2, choices: [{ id: 'quick', words: ['quick'] }, { id: 'cancel', words: ['cancel', 'no'] }] };
+  const prompt = { id: 'p1', askedAt: 3, answers: [{ id: 'approve', words: ['approve'], check: true }, { id: 'deny', words: ['deny', 'cancel chrome'], negative: true }] };
+  const st = (patch) => ({ ...emptyState('voice'), ...patch });
+  let hit = r.route(['no'], st({ questions: [offer, tour], prompt }));
+  assert.deepEqual([hit.id, hit.action.answer], ['prompt', 'deny'], 'the prompt was said last: its no');
+  hit = r.route(['cancel'], st({ questions: [offer, tour], prompt: { ...prompt, askedAt: 1.5 } }));
+  assert.deepEqual([hit.id, hit.action.choice], ['question', 'cancel'], "the research offer was said last: its own cancel");
+  hit = r.route(['no thanks'], st({ questions: [tour] }));
+  assert.deepEqual([hit.id, hit.action.choice, hit.action.dismiss], ['question', null, true], 'the tour decision has no "no": it is set aside');
+  assert.equal(r.route(['stop'], st({ questions: [{ id: 'bp', askedAt: 1, match: (t) => (/^(?:yes|no|stop)$/.test(t) ? 'no' : null) }] })), null, '"stop" is never an answer (and nothing runs here)');
+  assert.equal(r.route(['deny'], st({ questions: [tour] })), null, 'no prompt open: "deny" answers nothing');
+  hit = r.route(['approve'], st({ questions: [offer, tour], prompt: { ...prompt, askedAt: 0 } }));
+  assert.deepEqual([hit.id, hit.action.answer], ['prompt', 'approve'], 'a reserved word answers the prompt whatever was asked last');
+});

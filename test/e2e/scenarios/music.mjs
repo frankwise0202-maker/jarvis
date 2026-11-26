@@ -468,7 +468,7 @@ export default [
   {
     name: 'music-voice-listen',
     title:
-      'Voice Mode with listening (v7.2): a misheard "play" is found by the recognizer\'s other reading, at once with no 2-second check; while a check shows the cards step aside and no preview plays, and "cancel" brings them back; another reading that is a camera command comes first, and a question about a part of the hologram on screen is never taken for music',
+      'Voice Mode with listening (v7.2): a misheard "play" is found by the recognizer\'s other reading, at once with no 2-second check; while a check shows the cards step aside and no preview plays, and "cancel" brings them back; no other reading counts when the best one is a question (v8.1, R7: neither the camera nor Apple Music; "cancel" in the check sends nothing), and a question about a part of the hologram on screen is never taken for music',
     device: 'iphone13',
     fakeMusic: true,
     timeout: 180000,
@@ -518,12 +518,17 @@ export default [
         await t.waitFor(async () => (await playerState(c)) === 'playing', { timeout: 10000, message: 'Preview to play once the check is gone' });
       });
 
-      await t.step('another reading that is a camera command comes before one that is a music command', async () => {
+      // v8.1 (R7, critique L4): when the best reading is a question, no other reading counts: neither a
+      // camera command nor a music command. The words wait in the 2-second check; "cancel" sends nothing.
+      await t.step('the best reading is a question: no other reading counts, neither the camera nor Apple Music', async () => {
         await voiceListening(t, 'Voice Mode to listen again');
         t.assert((await playerState(c)) !== 'playing', 'the preview paused for the mic');
         const searches = t.music.searches.length;
         await say(t, { parts: [{ at: 100, text: 'What am I locking at?', alts: ['Play Locking At', 'What am I looking at?'] }] });
-        await t.waitFor(async () => (await said(t)).some((x) => /Tap Look, and show me\./.test(x)), { timeout: 10000, message: 'Jarvis to ask for Look' });
+        await checkShows(t, 'What am I locking at?');
+        t.assert(!(await said(t)).some((x) => /Tap Look/.test(x)), 'Look is not asked for');
+        await say(t, 'cancel');
+        await t.waitFor(async () => !(await t.page.locator(tid('voice-review')).isVisible()), { timeout: 8000, message: '"cancel" to drop the words' });
         t.assert(t.music.searches.length === searches, `Apple Music was not searched (${t.music.searches.slice(searches).join(' ')})`);
         t.assert(sentTexts(t).length === 0, 'nothing was sent');
       });
