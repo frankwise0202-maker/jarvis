@@ -245,13 +245,16 @@ export default [
       await t.newPage();
       await t.goto('/');
       const turn = await t.send('[[swarm:3]] [[slow]] Research tidal power');
-      await t.waitFor(async () => (await turn.getAttribute('data-status')) === 'running', { timeout: 10000, message: 'the mission to run' });
+      // Under way: its agents have started (each one paid).
+      await t.waitFor(() => t.requests('worker').length >= 1, { timeout: 20000, message: 'the mission\'s agents to start' });
+      t.assert((await turn.getAttribute('data-status')) === 'running', 'the mission runs');
       await t.step('"stop" + Enter while it runs', async () => {
         const input = await t.visible('composer-input');
         await input.fill('stop');
         await input.press('Enter');
-        await t.waitFor(async () => (await input.inputValue()) === '', { timeout: 5000, message: 'the composer to take "stop" as a command' });
         await t.waitForTurn(turn, ['stopped'], { timeout: 20000 });
+        t.assert((await input.inputValue()) !== 'stop', 'the composer took "stop" as a command (not left in the box)');
+        await t.waitFor(async () => (await t.page.locator('.toast-text').allTextContents()).map(norm).includes('The answer is stopped.'), { timeout: 5000, message: 'the line' });
         const toasts = (await t.page.locator('.toast-text').allTextContents()).map(norm);
         t.assert(toasts.includes('The answer is stopped.'), `the line says what stopped (toasts: ${JSON.stringify(toasts)})`);
         t.assert(!toasts.includes('Okay.'), `no bare "Okay." while a mission ran (toasts: ${JSON.stringify(toasts)})`);
