@@ -879,7 +879,7 @@ test('CHROME-VOICE-R3-1: an instruction ending "in Chrome" is a task; a trouble,
   for (const s of ['Queue up the next episode on Netflix in Chrome.', 'Plan a weekend trip to Rome in Chrome.', 'Shop for a new laptop under $800 in Chrome.', 'Chat with Comcast support in Chrome.', 'Reject the cookie banner in Chrome.', 'Pre-order the new iPhone in Chrome.', 'Rebook my flight to Friday in Chrome.', 'Toggle dark mode on GitHub in Chrome.']) {
     assert.ok(matchChromeTask(s, st), `${s}: a task`);
   }
-  for (const s of ['Price is wrong in Chrome.', 'Chat keeps freezing in Chrome.', 'Offer code doesn’t work in Chrome.', 'Queue is stuck in Chrome.', 'Flag icon is missing in Chrome.']) {
+  for (const s of ['Price is wrong in Chrome.', 'Chat keeps freezing in Chrome.', 'Offer code doesn’t work in Chrome.', 'Queue is stuck in Chrome.', 'Flag icon is missing in Chrome.', 'Help center is down in Chrome.', 'See more button is missing in Chrome.', 'Try again button doesn’t work in Chrome.', 'Get started page is blank in Chrome.']) {
     assert.equal(matchChromeTask(s, st), null, `${s}: the owner's question`);
   }
   // ROUTING-R2-2's residual: a name, then "is" or "has", is the instruction's object.

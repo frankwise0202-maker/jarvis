@@ -201,7 +201,7 @@ const INSTRUCTION_STARTS = new Set([
 const BEFORE_FIRST = new Set(['lets', 'please', 'maybe', 'perhaps', 'quickly', 'quick']);
 // Verbs that are never a noun: after them a name and a verb is the instruction's object ("tell Sam dinner is at 7", "ensure
 // autopay is on"), never a trouble.
-const ONLY_VERBS = new Set('confirm verify ensure make tell see ask help get keep try remind inform notify double-check doublecheck'.split(' '));
+const ONLY_VERBS = new Set('confirm verify ensure make tell remind inform notify double-check doublecheck'.split(' '));
 // A trouble said as a noun phrase: "login issues with my bank", "sync problems".
 const TROUBLE_NOUNS = new Set('problem problems issue issues error errors trouble troubles bug bugs glitch glitches'.split(' '));
 const SUBJECT_FIRST = new Set(
