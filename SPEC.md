@@ -2224,7 +2224,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   thumbnail of its own moment (`frozen.luma`); `sceneChanged()` compares the live one with it by Watch's measure
   (`changedFraction`, a pixel moved by more than `pixelDelta` 25, more than `changeFraction` 6% of them). Unknown (no
   thumbnail, the camera off or switched) counts as changed, so a question is never answered from an old picture by
-  accident. A new Look taken this way says "New look." first. Each answer is marked: the Look's header
+  accident. A new Look taken this way says "New look." first: over Voice Mode, `command()` answers with that ack and
+  no turn (Voice Mode says it at once), and the Look starts once Voice Mode is no longer busy saying it
+  (`afterVoiceLine`, from `setVoice`'s `busy`; at most 4 s), since the turn's start would cut the line; typed or said
+  into Optics' own mic, it is announced. Each answer is marked: the Look's header
   `optics-answer-mark` "NEW LOOK" (`data-kind="new"`, camera Looks, not a review) and each follow-up's question line
   "ABOUT THIS PICTURE" (`data-kind="card"`). Typed questions and Optics' mic take the same path (`onAskKey`, the mic's
   final words, through `routed()`).
@@ -2309,7 +2312,8 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   live view keeps looking while aside, pauses while expanded, goes on with Live; the hour counts the Look),
   `optics-aside-live-cap` (§27), `optics-aside-screen` (two monitors: Other screen; Optics stays live, the card folds;
   "bring it back"), `optics-open-by-voice` (Mac Voice Mode: "open optics" with no request to Claude, "close the
-  camera", "video mode"; Jarvis hidden: the line and one notification, whose click opens Optics),
+  camera", "video mode"; Jarvis hidden: the line and one notification, whose click opens Optics; a Look aside, then
+  "look again": "New look." said first),
   `optics-open-by-voice-iphone` ("Tap Look to turn the camera on."; the tap opens Optics with no
   Look) and `optics-research` (the offer shown and said; Cancel sends nothing; Quick one quick-mode request with a web
   search; Mission one swarm turn; Home base one job on the Core; with the live view on, the offer's wording, and at
