@@ -118,7 +118,7 @@ import { installChromeLink } from '../platform/chrome-link.js';
 import { notify as notifyOwner } from './attention.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
-import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
+import { GATE_LIMITS, createLiveGate, createTurnGate, gateNote, requestWorstUsd } from '../lib/live-gate.js';
 import { LIVE_VIEW_COUNTS, LOOK_FIRST_LINE, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
 import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
@@ -2556,7 +2556,10 @@ export async function startApp(rootEl) {
     const optics = currentOptics();
     return !!(optics && safe(() => optics.liveView.on, false));
   }
-  /** A gate for one turn (startTurn({ gate })): inert while the live view is off. */
+  /**
+   * A gate for one turn (startTurn({ gate })), made as the turn starts: a turn asked while the live
+   * view is off is never held by it, even if the live view starts before the turn ends (MONEY-2).
+   */
   function liveTurnGate() {
     return state.demo ? null : createTurnGate({ gate: getLiveGate(), isOn: liveViewOn });
   }
@@ -2569,19 +2572,18 @@ export async function startApp(rootEl) {
     outsideLiveViewText = '';
     return true;
   }
-  /** About what a quick answer in this chat would reserve now (its first request's worst case). */
+  /**
+   * Whether a quick answer would be sent now: the room left in the live view's hour covers its first
+   * request (as the engine builds it: this chat's, or a new chat's system prompt, tools and turn
+   * context, MONEY-6) with a useful answer and one web search.
+   */
   function quickAnswerFits(text = 'Research this with a web search.') {
     if (!liveViewOn()) return true;
-    const conv = state.conv;
     const model = getSettings().leadModel;
-    const params = {
-      model,
-      max_tokens: gateMaxTokens(true),
-      system: conv ? conv.system : '',
-      tools: conv ? conv.tools : [],
-      messages: [...(conv ? conv.apiMessages : []), { role: 'user', content: [{ type: 'text', text }] }],
-    };
-    return safe(() => getLiveGate().fits(requestWorstUsd(params, { model })), true);
+    const params = safe(() => engine.previewRequest(state.conv, { text, mode: 'quick', spoken: !!voiceApi, lines: [gateNote] }), null);
+    if (!params) return true;
+    const quick = { ...params, model, max_tokens: GATE_LIMITS.usefulTokens };
+    return safe(() => getLiveGate().room() >= requestWorstUsd(quick, { model, web: { searches: 1, fetches: 0 } }), true);
   }
 
   // ---- v8.1 (E2): "open optics" by voice, free (no Look) ------------------------------------------

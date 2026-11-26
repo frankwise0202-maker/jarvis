@@ -349,16 +349,20 @@ function leadMaxTokens(ctx) {
 
 function leadParams(ctx, features) {
   const maxTokens = ctx.maxTokensFor(ctx.leadModel, leadMaxTokens(ctx));
+  const gated = ctx.gateMaxTokens > 0;
   return buildMessageParams({
     model: ctx.leadModel,
     // v8.1 (E0): while the live view is on, its gate keeps each answer short (gateRequest).
-    maxTokens: ctx.gateMaxTokens > 0 ? Math.min(maxTokens, ctx.gateMaxTokens) : maxTokens,
+    maxTokens: gated ? Math.min(maxTokens, ctx.gateMaxTokens) : maxTokens,
     system: ctx.conv.system,
     tools: ctx.conv.tools,
     messages: [...ctx.conv.apiMessages, ...ctx.paused],
     showThinking: ctx.settings.showThinking,
     effort: ctx.depth.leadEffort,
-    features,
+    // A request the live view's gate holds goes out without a server-side fallback or compaction:
+    // each would add a whole attempt its reservation doesn't hold. Both are outside the history's
+    // prefix, so the earlier thinking and the prompt cache stay as they are.
+    features: gated ? { ...features, fallbacks: false, compaction: false } : features,
     compaction: true,
     container: ctx.leadContainer(),
     dropMismatchedThinking: ctx.conv.dropMismatchedThinking === true,
@@ -396,10 +400,11 @@ export class LiveCapRefused extends Error {
 
 /**
  * v8.1 (E0): the live view's gate (startTurn({ gate }); src/lib/live-gate.js createTurnGate), before
- * each attempt of a lead request. While the live view is on: max_tokens comes down (4,000 for the
- * turn's first request, 1,000 for later ones) and the request's worst case is reserved, or it is not
- * sent at all (LiveCapRefused: the turn ends with the gate's line). Returns the ticket (settle,
- * release, keep) or null (no gate, or the live view is off: the request goes out as today).
+ * each attempt of a lead request of a turn asked while the live view is on: max_tokens comes down
+ * (4,000 for the turn's first request, 1,000 for later ones) and the request's worst case is
+ * reserved, or all that is left of the hour (max_tokens then comes down to fit it), or it is not sent
+ * at all (LiveCapRefused: the turn ends with the gate's line). Returns the ticket (settle, release,
+ * keep, meter) or null (no gate, or a turn the live view doesn't hold: the request goes out as today).
  */
 async function gateRequest(ctx, req) {
   ctx.gateMaxTokens = null;
@@ -414,7 +419,33 @@ async function gateRequest(ctx, req) {
     throw abortError();
   }
   if (ticket && ticket.refused) throw new LiveCapRefused(ticket.message, req);
+  // Less room than its worst case: the request is made to fit what was reserved.
+  if (ticket && ctx.gateMaxTokens > 0 && ticket.maxTokens > 0) ctx.gateMaxTokens = Math.min(ctx.gateMaxTokens, ticket.maxTokens);
   return ticket || null;
+}
+
+/**
+ * The backstop of a gated request (src/lib/live-gate.js createRequestMeter): a running estimate of
+ * what it costs, from its stream, against its reservation. It gets its own abort, linked to the
+ * turn's, so the meter can stop this request alone. Null for a request with nothing reserved.
+ */
+function meterFor(ctx, ticket) {
+  if (!ticket || !(ticket.usd > 0) || typeof ticket.meter !== 'function') return null;
+  const meter = ticket.meter({ maxTokens: ctx.gateMaxTokens, tools: ctx.conv.tools });
+  if (!meter || typeof meter.onEvent !== 'function') return null;
+  const controller = new AbortController();
+  const follow = () => controller.abort();
+  if (ctx.signal.aborted) controller.abort();
+  else ctx.signal.addEventListener('abort', follow, { once: true });
+  return {
+    meter,
+    signal: controller.signal,
+    watch: (onEvent) => (event, snapshot) => {
+      if (!meter.tripped && meter.onEvent(event)) controller.abort();
+      onEvent(event, snapshot);
+    },
+    done: () => ctx.signal.removeEventListener('abort', follow),
+  };
 }
 
 /**
@@ -446,9 +477,11 @@ async function leadRequest(ctx, req) {
     const view = createLeadView(ctx, req);
     // v8.1 (E0): each attempt goes through the live view's gate while it is on.
     const ticket = await gateRequest(ctx, req);
+    const metered = meterFor(ctx, ticket);
     try {
-      const result = await requestWithFeatureFallback(ctx, (features) => leadParams(ctx, features), view.onEvent, {
+      const result = await requestWithFeatureFallback(ctx, (features) => leadParams(ctx, features), metered ? metered.watch(view.onEvent) : view.onEvent, {
         requestOptions: { maxRetries: ctx.sdkRetries(LEAD_SDK_MAX_RETRIES) },
+        signal: metered ? metered.signal : undefined,
         onContainerRejected: () => {
           ctx.conv.container = null;
         },
@@ -456,15 +489,22 @@ async function leadRequest(ctx, req) {
           ctx.conv.dropMismatchedThinking = true; // keep sending drop_block for this conversation
         },
       });
+      if (metered) metered.done();
       // The real cost replaces the reservation (the same cost accountUsage adds to the turn).
       if (ticket) ticket.settle(responseCost(result.message.model || ctx.leadModel, result.message.usage, ctx.leadModel));
       view.finalize(result.message.content);
       ctx.adoptContainer(result.message.container);
       return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
+      if (metered) metered.done();
       if (ticket) settleFailedTicket(ctx, ticket, err);
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
+      // The meter stopped it before it could pass its reservation (which is kept as spent): the turn
+      // ends with the gate's line, as a refused request's does.
+      if (metered && metered.meter.tripped && !ctx.stopped) {
+        throw new LiveCapRefused(typeof ticket.message === 'function' ? ticket.message() : 'That would take the live view past its dollar this hour.', req);
+      }
       if (ctx.stopped || isAbortError(err)) throw err;
       if (isToolInputParseError(err) && jsonRetries < MAX_JSON_RETRIES) {
         jsonRetries += 1;

@@ -4,7 +4,9 @@
 // registers its own self-checks when node --test runs it directly (not when imported).
 //
 // A handler receives each recorded request and returns a reply descriptor:
-//   { content: [blocks], stop: 'end_turn', usage?, model?, stopDetails?, container?, delayMs?, breakAfter?, gate? }
+//   { content: [blocks], stop: 'end_turn', usage?, startUsage?, model?, stopDetails?, container?, delayMs?, breakAfter?, gate? }
+//   (`startUsage`: what message_start reports, the first round's input, when it differs from the
+//   whole message's: message_delta then carries the cumulative input counts, as from the API)
 //   { error: { status, type, message, headers?, details? } }       → JSON error response
 //   { sseError: { type, message }, content?: [blocks] }              → stream that fails mid-way
 // Non-streaming requests (testApiKey) get the same content as a JSON message.
@@ -159,10 +161,10 @@ export function messageEvents(reply, model) {
         stop_reason: null,
         stop_sequence: null,
         usage: {
-          input_tokens: usage.input_tokens,
+          input_tokens: (reply.startUsage || usage).input_tokens,
           output_tokens: 1,
-          cache_creation_input_tokens: usage.cache_creation_input_tokens,
-          cache_read_input_tokens: usage.cache_read_input_tokens,
+          cache_creation_input_tokens: (reply.startUsage || usage).cache_creation_input_tokens,
+          cache_read_input_tokens: (reply.startUsage || usage).cache_read_input_tokens,
         },
       },
     },
@@ -170,6 +172,9 @@ export function messageEvents(reply, model) {
   ];
   content.forEach((block, i) => events.push(...blockEvents(block, i)));
   const deltaUsage = { output_tokens: usage.output_tokens };
+  if (reply.startUsage) {
+    for (const k of ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']) deltaUsage[k] = usage[k];
+  }
   if (usage.server_tool_use) deltaUsage.server_tool_use = usage.server_tool_use;
   if (usage.iterations) deltaUsage.iterations = usage.iterations;
   events.push({

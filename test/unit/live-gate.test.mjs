@@ -11,6 +11,7 @@ import { createLiveBudget, LIVE_SPEND_KEY } from '../../src/lib/live-view.js';
 import {
   GATE_LIMITS,
   LIVE_RESERVED_PREFIX,
+  LIVE_WEB,
   allowedSearches,
   capLine,
   createLiveGate,
@@ -255,7 +256,10 @@ test('a request\'s input in tokens: text at 3 characters a token, pictures from 
   assert.equal(estimateInputTokens({ system: 'abc' }), 1);
 });
 
-test('the worst case: all of the input at the cache-write price, all of max_tokens at the output price, 1¢ a web search', () => {
+// Changed on purpose (MONEY-1): the worst case now also counts what a request's own server tools add
+// (each search's results, each fetched page, and every later round reading the rest again), and a
+// question during the live view reserves its turn's web budget (LIVE_WEB), not the tools' own.
+test('the worst case: the input at the cache-write price, max_tokens at the output price, and each web search with its results and the rounds that read them again', () => {
   const tools = leadToolsLatest();
   assert.equal(allowedSearches(tools), 10, 'the lead may search 10 times a request');
   assert.equal(allowedSearches([{ name: 'update_memory' }]), 0);
@@ -269,16 +273,26 @@ test('the worst case: all of the input at the cache-write price, all of max_toke
   };
   const input = estimateInputTokens(params);
   const lead = MODELS['claude-opus-5-5'];
-  const usd = requestWorstUsd(params);
-  assert.ok(near(usd, (input * lead.cacheWrite5mPerM + 4000 * lead.outPerM) / 1e6 + 0.1), String(usd));
+  // Without web tools: all of the input at the cache-write price and max_tokens at the output price.
+  const bare = { ...params, tools: [] };
+  assert.ok(near(requestWorstUsd(bare), (estimateInputTokens(bare) * lead.cacheWrite5mPerM + 4000 * lead.outPerM) / 1e6));
+  // With them, during the live view: each of its 2 searches 1¢, its results (4,000 tokens) written to
+  // the cache, and every later round reading what came before again (the output written once).
+  const S = LIVE_WEB.searches;
+  const results = S * GATE_LIMITS.searchTokens;
+  const usd = requestWorstUsd(params, { web: LIVE_WEB });
+  const expected = (input * lead.cacheWrite5mPerM + results * lead.cacheWrite5mPerM + S * (input + results) * lead.cacheReadPerM + 4000 * (lead.outPerM + lead.cacheWrite5mPerM + S * lead.cacheReadPerM)) / 1e6 + S * 0.01;
+  assert.ok(near(usd, expected), `${usd} vs ${expected}`);
   // A Look's first request, in a new chat, during the live view: between 20¢ and 35¢ held (a Look
   // really costs about 3¢: the hour keeps its room for the worst case only while it runs).
   assert.ok(usd > 0.2 && usd < 0.35, `a Look's first request reserves ${usd}`);
-  const later = requestWorstUsd({ ...params, max_tokens: 1000 });
-  assert.ok(near(usd - later, (3000 * lead.outPerM) / 1e6), 'max_tokens 1,000: 6¢ less at the lead model\'s output price');
-  const small = requestWorstUsd(params, { model: 'claude-haiku-5-5' });
-  assert.ok(small - 0.1 < (usd - 0.1) / 20, 'priced at the model it goes to (the searches cost the same)');
+  const later = requestWorstUsd({ ...params, max_tokens: 1000 }, { web: LIVE_WEB });
+  assert.ok(near(usd - later, (3000 * (lead.outPerM + lead.cacheWrite5mPerM + S * lead.cacheReadPerM)) / 1e6), 'max_tokens 1,000: about 7.5¢ less');
+  const small = requestWorstUsd(params, { model: 'claude-haiku-5-5', web: LIVE_WEB });
+  assert.ok(small - S * 0.01 < (usd - S * 0.01) / 20, 'priced at the model it goes to (the searches cost the same)');
   assert.ok(near(requestWorstUsd({ model: 'claude-opus-5-5', max_tokens: 0, messages: [] }), 0));
+  // With the tools' own budget (10 searches, 8 pages of 12,000 tokens) one request could cost a dollar.
+  assert.ok(requestWorstUsd(params) > 0.9, String(requestWorstUsd(params)));
 });
 
 test('the line at the edge names the minute it can go on (rounded up), or says to stop the live view', () => {
@@ -295,16 +309,27 @@ test('the line at the edge names the minute it can go on (rounded up), or says t
   assert.match(capLine(at), /It can go on at \d{1,2}:\d{2}/, 'the device\'s own clock style');
 });
 
-test('the engine\'s side: off, nothing changes; on, max_tokens is capped and each request reserves, once', async () => {
+// Changed on purpose (MONEY-2): the turn gate is decided when the turn starts. One made while the live
+// view was off stays as today for the whole turn, even after the live view starts; a turn asked while
+// it is on is capped and reserves. And (MONEY-1 b) a request reserves all that is left when that still
+// covers its input and a useful answer, with max_tokens to fit; with less, it is refused.
+test('the engine\'s side: a turn asked with the live view off is left alone, even once it starts; asked while it is on, max_tokens is capped and each request reserves, once', async () => {
   const storage = memoryStorage();
   const clock = fakeClock();
   const { budget, gate } = windowOn(storage, clock);
   let on = false;
-  const turnGate = createTurnGate({ gate, isOn: () => on });
+  const asked = createTurnGate({ gate, isOn: () => on });
   const params = { model: 'claude-opus-5-5', max_tokens: 4000, system: 'hello', messages: [{ role: 'user', content: 'What is this?' }] };
-  assert.equal(turnGate.maxTokens(true), null, 'the live view off: as today');
-  assert.equal(await turnGate.reserve({ params }), null);
+  assert.equal(asked.active, false);
+  assert.equal(asked.turnNote, '');
+  assert.equal(asked.maxTokens(true), null, 'the live view off: as today');
+  assert.equal(await asked.reserve({ params }), null);
   on = true;
+  assert.equal(asked.maxTokens(true), null, 'the live view started during the turn: still as today');
+  assert.equal(await asked.reserve({ params }), null);
+  const turnGate = createTurnGate({ gate, isOn: () => on });
+  assert.equal(turnGate.active, true);
+  assert.match(turnGate.turnNote, /^Live view: .*at most 2 web searches, and do not use web_fetch\.$/);
   assert.equal(turnGate.maxTokens(true), 4000);
   assert.equal(turnGate.maxTokens(false), 1000);
   const ticket = await turnGate.reserve({ params, model: 'claude-opus-5-5' });
@@ -320,8 +345,17 @@ test('the engine\'s side: off, nothing changes; on, max_tokens is capped and eac
   await failed.release();
   assert.equal(gate.reserved(), 0);
   assert.ok(near(budget.spent(), 0.026));
-  // At 97¢ a request is refused with the line, and nothing is held.
+  // At 97¢ this small request still fits its input and a useful answer: all that is left is held,
+  // and its max_tokens comes down to fit it.
   budget.add(0.944);
+  const fitted = await turnGate.reserve({ params });
+  assert.ok(fitted && !fitted.refused);
+  assert.ok(fitted.usd <= 0.03 + 1e-9 && fitted.usd > 0.029, `held ${fitted.usd}`);
+  assert.ok(fitted.maxTokens >= 1000 && fitted.maxTokens < 4000, `max_tokens ${fitted.maxTokens}`);
+  assert.ok(requestWorstUsd({ ...params, max_tokens: fitted.maxTokens }, { web: fitted.web }) <= fitted.usd + 1e-9);
+  await fitted.release();
+  // At 99¢ not even that: refused with the line, and nothing is held.
+  budget.add(0.02);
   const refused = await turnGate.reserve({ params });
   assert.equal(refused.refused, true);
   assert.match(refused.message, /^That would take the live view past its dollar this hour\./);
