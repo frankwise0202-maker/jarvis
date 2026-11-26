@@ -4409,14 +4409,17 @@ watchdog, and `oneTry` (before: two tries of up to 12 s). Nobody speaks: a woken
 later (`SLEEP_SILENT_MS`). The wake routine's offer is listened for the same way (Continuous or not). A session opened
 by a tap with Jarvis on screen keeps Continuous as before; Continuous off: no listen.
 
-**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last wake
-(the greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`). A claps barge-in keeps
-the count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes, then the
-brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js;
-not a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector while he
-listens (MAC-V-1; nothing to interrupt there). While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no
-follow-up listen: Jarvis says "Say “Hey Jarvis” when you need me." and goes back to Standby (woken, Return to standby
-on: `S.sleepAfter`) or stops listening (`S.braked`, until the owner calls him again). A TV left on can't run up paid
+**The brake** (critique H2): `S.asked` counts the listens that heard words (not the wake window's) since the last "Hey
+Jarvis" (a word wake's greeting resets it), "Hey Jarvis" barge-in, tap or key (a listen started with `gesture`), or
+Jarvis on screen. It goes on across sessions (MAC-R2-3: app.js keeps it, `hiddenCount`): woken by claps in the
+background, a session starts from it, braked once it reached 3; it then hears its offer's answer once and takes only the
+routine's free answers (music, sleep); anything else gets the brake line and nothing is sent. A claps barge-in keeps the
+count (MAC-4: claps are the weak signal), and at the limit while hidden it opens no listen (he finishes, then the
+brake). A question that starts with the wake words ("Hey Jarvis, …": `startsWithWakeWords()`, src/lib/hands-free.js; not
+a bare "Jarvis, …") starts the count again, and so does "Hey Jarvis" heard by Standby's kept detector while he listens
+(MAC-V-1; nothing to interrupt there). While hidden, from `HANDS_FREE.hiddenQuestions` (3) on there is no follow-up
+listen: Jarvis says "Say “Hey Jarvis” when you need me." and goes back to Standby (woken, Return to standby on:
+`S.sleepAfter`) or stops listening (`S.braked`, until the owner calls him again). A TV left on can't run up paid
 questions. On screen the count doesn't matter. The claps' room-talk guard stays.
 
 **One Jarvis per Mac** (A9, critique M6; src/platform/standby-lock.js `createStandbyLock({ onChange, locks, name })` →

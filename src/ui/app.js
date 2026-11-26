@@ -1583,6 +1583,15 @@ export async function startApp(rootEl) {
   // so Voice Mode gets errors it can say out loud instead.
   let voiceApi = null; // the open Voice Mode: viewers opened from it route words and 2D requests through it
   let voiceOwnerStarted = false; // v8.1 (A1): the owner opened it (a tap, a key, a wake): it may go on hidden
+  // MAC-R2-3: the hidden count (A6) across sessions: woken by claps in the background, a session goes on from it, so a
+  // TV's false double bang can't buy 3 more paid questions each time. "Hey Jarvis", a tap or key, or Jarvis on screen
+  // start it again (Voice Mode, and here when the page shows).
+  let hiddenCount = { asked: 0, braked: false };
+  safe(() =>
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) hiddenCount = { asked: 0, braked: false };
+    }),
+  );
   let voiceInfo = null; // its listening state, mirrored on the mic button of a hologram viewer over it
   // The hologram last shown over this Voice Mode ({ segment, conversationId, turnId }): once its
   // viewer is closed, a command for it ("expand it", "show the separator") opens it again, free.
@@ -1792,6 +1801,13 @@ export async function startApp(rootEl) {
         // MAC-R2-1: while it can hear the owner or is answering (not while it merely sits open), a Standby in another
         // Jarvis window doesn't wake on the same words.
         onActive: (on, o) => voiceBusy && !state.demo && safe(() => voiceBusy.set('voice', on, o || {})),
+        // MAC-R2-3: the hidden count, kept across sessions.
+        hiddenCount: {
+          get: () => hiddenCount,
+          set: (c) => {
+            hiddenCount = { asked: Math.max(0, Number(c && c.asked) || 0), braked: !!(c && c.braked) };
+          },
+        },
         ...devVoiceOptions(), // v8.1 tests: a shorter hold
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.

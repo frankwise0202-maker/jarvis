@@ -502,6 +502,48 @@ test('MAC-R2-1: Voice Mode tells the app when it can hear the owner or is answer
   assert.equal(seen.at(-1), 'false:now', 'closed: at once');
 });
 
+// MAC-R2-3: the hidden count (A6) goes on across sessions until "Hey Jarvis", a tap or key, or Jarvis on screen: a
+// false double bang after the brake used to start it again, and a TV got 3 more paid questions every time.
+test('MAC-R2-3: after the brake, two more claps-woken hidden sessions take no question (only the routine’s free answers), each ends with the brake line; a "Hey Jarvis" wake starts the count again', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say(() => 'what is the capital of Spain'); // the TV, in every listen (the claps' wake window ignores it)
+  let carried = { asked: 0, braked: false };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  const session = async (trigger, n) => {
+    env.open({ wake: env.wakeHooks({ trigger }), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+    await until(env, () => env.log.closes.length >= n, `session ${n} to end`, 240000);
+  };
+  await session('clap', 1);
+  assert.equal(env.log.turns.length, 3, 'the first: 3 questions, then the brake');
+  for (const n of [2, 3]) {
+    await session('clap', n);
+    assert.equal(env.log.turns.length, 3, `claps wake ${n}: no paid question (${env.log.turns.length})`);
+    assert.deepEqual(env.log.closes.at(-1), { reason: 'standby', wakeSession: true }, 'back to Standby');
+  }
+  assert.equal(env.log.spoken.filter((s) => s.text === 'Say “Hey Jarvis” when you need me.').length, 3, 'each wake ended with the brake line');
+  await session('word', 4); // "Hey Jarvis": the owner calls him
+  assert.ok(env.log.turns.length > 3, `"Hey Jarvis" starts the count again (${env.log.turns.length})`);
+});
+
+test('MAC-R2-3: braked after claps, the routine’s free answers still work ("play it", "go back to sleep"), and on screen the count doesn’t carry', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say((n) => (n === 0 ? null : 'go back to sleep'));
+  let carried = { asked: 3, braked: true };
+  const hiddenCount = { get: () => carried, set: (c) => (carried = c) };
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+  await until(env, () => env.log.closes.length >= 1, 'the session to end', 60000);
+  assert.ok(env.log.spoken.some((s) => /^Very good, Tony/.test(s.text)), '"go back to sleep" taken (free)');
+  assert.equal(env.log.turns.length, 0);
+  // Jarvis on screen: the count starts again.
+  env.setHidden(false);
+  carried = { asked: 3, braked: true };
+  env.say(() => 'what is the capital of Spain');
+  env.open({ wake: env.wakeHooks(), listenWhileHidden: () => true, answer: 'Madrid.', extra: { hiddenCount } });
+  await until(env, () => env.log.turns.length >= 1, 'a question taken on screen', 60000);
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {

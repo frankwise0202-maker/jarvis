@@ -1029,4 +1029,41 @@ export default [
       });
     },
   },
+  {
+    name: 'mac-handsfree-brake-claps-wakes',
+    title: 'MAC-R2-3: hidden, a TV heard in every listen, and a false double bang each time Jarvis is back on Standby (claps wake, no barge-in): the brake holds across wakes — at most 3 paid questions over three wakes',
+    device: 'mac',
+    fakeMusic: true,
+    timeout: 400000,
+    async run(t) {
+      await setup(t, { speech: { noSpeechMs: 6000 } });
+      await enterStandby(t);
+      await setHidden(t.page, true);
+      // The TV: a sentence in every listen from now on.
+      await t.page.evaluate(() => {
+        window.__voice.queue.length = 0;
+        const proto = window.SpeechRecognition.prototype;
+        const start = proto.start;
+        proto.start = function tv(...args) {
+          if (!window.__voice.queue.length) window.__voice.queue.push('What is the capital of Spain?');
+          return start.apply(this, args);
+        };
+      });
+      const cycles = [];
+      for (let c = 1; c <= 3; c++) {
+        await waitListening(t, t.page, 60000);
+        await t.page.waitForTimeout(1700);
+        const before = leadCount(t);
+        await play(t.page, DOUBLE_CLAP);
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+        await t.page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 120000 });
+        const brakes = (await said(t.page)).filter((x) => /when you need me/.test(x)).length;
+        cycles.push({ cycle: c, requests: leadCount(t) - before, brakesSaidSoFar: brakes });
+      }
+      t.note(`cycles: ${JSON.stringify(cycles)}`);
+      t.assert(leadCount(t) <= 3, `at most 3 paid questions while hidden without "Hey Jarvis" or a tap (got ${leadCount(t)}: ${JSON.stringify(cycles)})`);
+      t.assert(cycles.every((x) => x.brakesSaidSoFar >= x.cycle), `each wake ends with the brake line (${JSON.stringify(cycles)})`);
+      await waitListening(t, t.page, 60000); // and he is back on Standby, listening
+    },
+  },
 ];

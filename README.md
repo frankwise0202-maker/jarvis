@@ -365,7 +365,9 @@ other windows, minimized, or with the display asleep.
   Jarvis" (to wake him, or at the start of a question), a tap or a key. Then he says "Say “Hey Jarvis” when you
   need me." and goes back to Standby (or just stops listening, if you started with a tap). A TV left on can't run
   up paid questions. Two claps can still stop him while he talks, but they don't start the count again (a door or
-  a bang on TV sounds like claps).
+  a bang on TV sounds like claps), not even by waking him again: after the brake, a wake by claps in the background
+  takes only his free answers ("play it", "go back to sleep"), until "Hey Jarvis", a tap or a key, or Jarvis on
+  screen.
 - **Interrupt him by voice.** While George is speaking, say "Hey Jarvis" or clap twice: he stops and listens (a
   walkthrough pauses at its step). It's free and stays on your Mac. It works with **Speakerphone speaks, Mac
   listens** and **Switch** (Settings → Voice → Microphone and speaker), once the second step of **Test hands-free**
