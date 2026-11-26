@@ -911,3 +911,17 @@ test('CHROME-VOICE-R4-4: a task running, "Tell Chrome to knock it off." (then "Y
   assert.equal(s.fake.calls.stopTask, 1, `the running task got its stop (said ${JSON.stringify(s.said())})`);
   assert.equal(s.fake.calls.startTask.length, 1, 'no task started');
 });
+
+test('CHROME-VOICE-R6-1: a task running and a second one in its check, "Tell Chrome to cancel everything." withdraws the new one and stops the running one too; "Tell Chrome to cancel that." only withdraws', async (t) => {
+  for (const [words, stops] of [['Tell Chrome to cancel everything.', 1], ['Ask Chrome to cancel everything.', 1], ['Tell Chrome to cancel that.', 0]]) {
+    const c = await setup(t, { script: (n) => (n === 0 ? TASK_SAID : null) });
+    await c.until(() => c.said().includes('Chrome is on it.'), 'the first task started');
+    await c.env.advance(3000);
+    c.next({ text: 'In Chrome, find a USB-C hub.', at: 400 });
+    c.next({ text: words, at: 400 });
+    c.vm.tap();
+    await c.env.advance(15000);
+    assert.equal(c.fake.calls.stopTask, stops, `${words}: stops (said ${JSON.stringify(c.said())})`);
+    assert.equal(c.fake.calls.startTask.length, 1, `${words}: nothing new starts`);
+  }
+});

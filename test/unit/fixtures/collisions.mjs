@@ -273,10 +273,14 @@ export const CHROME_VOICE = {
     { words: 'allow once in Chrome', state: 'CV-card', winner: 'chrome-typed', why: "a yes typed: the card's button answers it (typing isn't the check)" },
     // CHROME-VOICE-R4-1: during a check, "tell Chrome to cancel …" is the check's cancel: withdrawn, never a stop for the
     // task that runs (nor, typed, for the countdown's).
+    // CHROME-VOICE-R6-1: "tell Chrome to cancel everything" during a check withdraws it and stops the task that runs too
+    // (the check's own stop words); typed during a countdown, the same.
+    { words: 'Tell Chrome to cancel everything.', state: 'CV-check', winner: 'chrome-prompt', why: 'the check is withdrawn and the task that runs stops too, as with "cancel everything in Chrome"' },
+    { words: 'Tell Chrome to cancel everything.', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown is withdrawn and the task that runs stops too' },
     // "Chrome, stop." with a question or a check open: its own stop (the prompt's stop answer, or the check's).
     ...['CV-budget', 'CV-buy', 'CV-check', 'CV-prompt', 'CV-prompt-tour'].map((state) => ({ words: 'Chrome, stop.', state, winner: 'chrome-prompt', why: "the question's (or the check's) own stop, which stops the task too" })),
     { words: 'Chrome, stop.', state: 'CV-typed', winner: 'chrome-typed', why: "the countdown's own stop, typed" },
-    ...['Tell Chrome to cancel.', 'Tell Chrome to cancel that.', 'Tell Chrome to cancel the task.', 'Tell Chrome to cancel everything.'].flatMap((words) => [
+    ...['Tell Chrome to cancel.', 'Tell Chrome to cancel that.', 'Tell Chrome to cancel the task.'].flatMap((words) => [
       { words, state: 'CV-check', winner: 'chrome-prompt', why: "the check's own cancel: nothing sent, and the task that runs goes on" },
       { words, state: 'CV-typed', winner: 'chrome-typed', why: "the countdown's own cancel, typed: nothing sent, and the task that runs goes on" },
     ]),

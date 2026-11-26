@@ -304,8 +304,12 @@ export function matchChromeAnswer(text, state = {}, readings = null) {
     const said = normalizeAnswer(text);
     if (!said) return null;
     // "Chrome, cancel that", "tell Chrome to cancel": the check's own cancel, never a stop for a task that runs (R4-1).
-    if (/^(?:(?:tell|ask|get|have) (?:jarvis for )?chrome (?:to )?|chrome )cancel(?: (?:it|that|this|the task|the search|everything))?$/.test(said)) {
+    if (/^(?:(?:tell|ask|get|have) (?:jarvis for )?chrome (?:to )?|chrome )cancel(?: (?:it|that|this|the task|the search))?$/.test(said)) {
       return answerAction({ do: 'chrome-check', how: 'withdraw' });
+    }
+    // "Tell Chrome to cancel everything": the check, and the task that runs too (as "cancel everything in Chrome"; R6-1).
+    if (/^(?:(?:tell|ask|get|have) (?:jarvis for )?chrome (?:to )?|chrome )cancel (?:everything|all of it|it all)$/.test(said)) {
+      return answerAction({ do: 'chrome-check', how: 'withdraw', stop: true });
     }
     if (WITHDRAW_WORDS.test(said) || WITHDRAW_LEAD.test(said)) {
       return answerAction({ do: 'chrome-check', how: 'withdraw', ...(STOP_CHECK_WORDS.test(said) ? { stop: true } : {}) });
