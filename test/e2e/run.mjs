@@ -51,6 +51,7 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ---- mac-dev ▸
 // ---- mac-dev ◂
 // ---- mac-hf ▸
+import macHandsFree from './scenarios/mac-handsfree.mjs';
 // ---- mac-hf ◂
 // ---- tour-render ▸
 // ---- tour-render ◂
@@ -87,6 +88,7 @@ const V81_SCENARIOS = [
   // ---- mac-dev ▸
   // ---- mac-dev ◂
   // ---- mac-hf ▸
+  ...macHandsFree,
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂

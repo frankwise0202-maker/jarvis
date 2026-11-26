@@ -134,6 +134,7 @@
 //                           merges `local` (what Voice Mode knows: its questions, its prompt, whether
 //                           it speaks …) into the app's state; heard() carries out what it picks
 //                           (act()). Without one, only Voice Mode's own words are local.
+//   holdCapMs             v8.1 (tests: 'jarvis.dev.voice'): a shorter cap for hold() than its 2 minutes
 //   listenWhileHidden     v8.1 (Track 1 fills it): () -> boolean, Voice Mode goes on listening while
 //                           Jarvis is hidden (a Mac). Default () => false: away() is document.hidden.
 //                           v8.1 hands-free (SPEC §28.1): with it, such a session also restarts its
@@ -168,7 +169,7 @@ import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhr
 import { openingIntent, standbyCommand, routineReply, answerParts, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 import { createVoiceTag } from './voice-tag.js';
 import { createQuestionStack, createPromptChannel, boundAction } from '../lib/voice-questions.js';
-import { createVoiceHold } from '../lib/voice-hold.js';
+import { createVoiceHold, HOLD_CAP_MS } from '../lib/voice-hold.js';
 import { createRouter, registerTodayCommands, emptyState } from '../lib/command-router.js';
 import { followUp, createSelfMask } from '../lib/hands-free.js';
 import { sessionTitle, notify, closeNotify } from './attention.js';
@@ -330,6 +331,7 @@ function createVoiceMode(opts) {
     voiceLabel,
     router,
     listenWhileHidden,
+    holdCapMs,
   } = opts;
 
   const mount = container && typeof container.appendChild === 'function' ? container : document.body;
@@ -393,7 +395,8 @@ function createVoiceMode(opts) {
   // Standby while something holds it, at most 2 minutes after the owner's last words).
   const questions = createQuestionStack({ onAsk: (q, { again }) => askQuestion(q, again) });
   const prompts = createPromptChannel({ onSay: (p) => askQuestion(p, false) });
-  const hold = createVoiceHold();
+  // holdCapMs (v8.1, tests only: 'jarvis.dev.voice' through app.js): a shorter hold, never a longer one.
+  const hold = createVoiceHold(Number(holdCapMs) > 0 ? { capMs: Math.min(HOLD_CAP_MS, Number(holdCapMs)) } : {});
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
   const selfMask = createSelfMask(); // v8.1 (A8): his own "Jarvis" never interrupts him
   let ownRouter = null; // without the app's router: one with today's matchers, for Voice Mode's own words

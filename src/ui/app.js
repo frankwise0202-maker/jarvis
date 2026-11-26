@@ -1547,6 +1547,7 @@ export async function startApp(rootEl) {
         wake,
         // v8.1 (A1, SPEC §28.1): on a computer, a session the owner started goes on while Jarvis is hidden.
         listenWhileHidden: () => handsFreeHidden(),
+        ...devVoiceOptions(), // v8.1 tests: a shorter hold
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
         createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
@@ -1627,6 +1628,26 @@ export async function startApp(rootEl) {
    */
   function handsFreeHidden() {
     return !phoneLike && safe(() => getSettings().handsFreeBackground !== false, false) && voiceOwnerStarted;
+  }
+
+  /**
+   * v8.1 dev and test override ('jarvis.dev.voice' JSON { holdCapMs }): a held session's cap, shorter only (2 s to
+   * its 2 minutes). On localhost it also gives tests window.__jarvisVoice { hold(reason), release(reason) } for the
+   * open Voice Mode (nothing in the app holds a session yet besides a tour).
+   */
+  function devVoiceOptions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('jarvis.dev.voice') || 'null');
+      const v = raw && typeof raw === 'object' ? Number(raw.holdCapMs) : Number.NaN;
+      if (!Number.isFinite(v)) return {};
+      const host = location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        window.__jarvisVoice = { hold: (r) => !!voiceApi && safe(() => (voiceApi.hold(r), true), false), release: (r) => !!voiceApi && safe(() => (voiceApi.release(r), true), false) };
+      }
+      return { holdCapMs: Math.min(120000, Math.max(2000, v)) };
+    } catch {
+      return {};
+    }
   }
 
   // v8.1 (lead decision D3): the lines said before the wake greeting. wakePending.add(fn, { waits }):
