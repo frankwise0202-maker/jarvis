@@ -23,6 +23,7 @@
 //   audio.subscribe(fn)           fn(snapshot) after any change: { plan, devices, state, trackUse } -> off
 //   audio.wakeAudio() / audio.questionAudio()   for Standby's capture and the home base's capture:
 //                                 { id, processing } | null (null: nothing chosen, as before)
+//   audio.getQuestionMedia(c)     getUserMedia on the question microphone (Voice Mode's mic bands)
 //   audio.wrapStt(stt)            stt.js's API with every listen given the question microphone's track
 //                                 (audioTrack) when a microphone is chosen and the recognizer can take one
 //   audio.addSink(target)         George's context, the sounds context, the music <audio>: target.setSink(id)
@@ -476,6 +477,28 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     );
   }
 
+  /**
+   * getUserMedia for another listener of the questions (Voice Mode's mic bands, which drive the core while he
+   * listens): the chosen question microphone by exact id, the default one when it isn't there; nothing chosen:
+   * exactly what was asked. Without this, Chrome's own microphone (the speakerphone's, if macOS's default input
+   * is it) would open beside the Mac's in "Speakerphone speaks, Mac listens".
+   */
+  async function getQuestionMedia(constraints = {}) {
+    const md = mediaDevices(scope);
+    if (!md || typeof md.getUserMedia !== 'function') throw new Error('getUserMedia unavailable');
+    const want = questionAudio();
+    const c = constraints && typeof constraints === 'object' ? constraints : {};
+    if (!want || !want.id) return md.getUserMedia(c);
+    const audio = c.audio && typeof c.audio === 'object' ? c.audio : {};
+    try {
+      return await md.getUserMedia({ ...c, audio: { ...audio, deviceId: { exact: want.id } } });
+    } catch (err) {
+      const name = String((err && err.name) || '');
+      if (name !== 'NotFoundError' && name !== 'OverconstrainedError') throw err;
+      return md.getUserMedia(c);
+    }
+  }
+
   function wrapStt(stt) {
     if (!stt || typeof stt.startListening !== 'function') return stt;
     return {
@@ -594,6 +617,7 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     wakeAudio,
     questionAudio,
     questionTrack,
+    getQuestionMedia,
     wrapStt,
     addSink,
     noteMicClosed,

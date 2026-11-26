@@ -197,6 +197,9 @@ test('nothing chosen: no device anywhere, no setSinkId, listens as before', asyn
   const stt = audio.wrapStt({ startListening: (o) => (given = o), sttSupported: () => true });
   stt.startListening({ lang: 'en-GB' });
   assert.deepEqual(given, { lang: 'en-GB' }, 'no audioTrack');
+  const bands = await audio.getQuestionMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+  assert.deepEqual(scope.md.gets[scope.md.gets.length - 1], { audio: { echoCancellation: true, noiseSuppression: true }, video: false }, 'the mic bands ask exactly as before');
+  bands.getTracks().forEach((tr) => tr.stop());
   assert.equal(scope.md.watchers, 0, 'nothing to watch');
   audio.destroy();
 });
@@ -258,6 +261,12 @@ test('a setup chosen: Standby’s and the questions’ microphones, the speaker 
   audio.noteMicClosed({ id: 'sp-mic', label: 'Desk Speakerphone (Bluetooth)' });
   audio.noteMicClosed({ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' });
   assert.deepEqual(george.settles, [800, 800]);
+
+  // Voice Mode's mic bands open the question microphone too (else Chrome's own, perhaps the speakerphone's).
+  const n0 = scope.md.gets.length;
+  const bands = await audio.getQuestionMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+  assert.deepEqual(scope.md.gets[n0].audio, { echoCancellation: true, noiseSuppression: true, deviceId: { exact: 'sp-mic' } });
+  bands.getTracks().forEach((tr) => tr.stop());
 
   // Old Chrome (no start(track)): no track, the recognizer opens Chrome's own microphone.
   const old = createAudioDevices({ getSettings: () => SETUP1, scope: fakeScope({ userAgent: MAC_UA.replace('142', '130') }) });

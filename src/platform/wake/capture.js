@@ -16,6 +16,8 @@
 //                            George wait a moment: the speakerphone switches back to its music mode)
 //                            onTrack(type) (v8.1): the live track's 'ended', 'mute' or 'unmute' (the device
 //                            watcher checks whether the chosen microphone went away)
+//                            onSilence(silent) (v8.1, A12): true after exact digital silence for 10 s (a muted
+//                            microphone: a speakerphone's mute button), false at the first sound after it
 //   cap.prepare()            inside a tap: create/resume the AudioContext (iOS starts audio only there)
 //   await cap.start({ clap, sensitivity, word })  -> { ok: true } | { ok: false, reason }
 //                            reason: 'unsupported' | 'denied' | 'no-mic' | 'busy' | 'error'
@@ -39,7 +41,7 @@ import { audioConstraints } from '../../lib/audio-devices.js';
 const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 const PROCESSED = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false, device = null, onRelease = null, onTrack = null } = {}) {
+export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WORKLET_PATH, onClap = () => {}, onState = () => {}, processed = false, device = null, onRelease = null, onTrack = null, onSilence = null } = {}) {
   let ctx = null;
   let moduleReady = null; // Promise of addModule (per context)
   let stream = null;
@@ -173,6 +175,7 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
         node.port.onmessage = (e) => {
           const msg = e.data || {};
           if (msg.type === 'clap') fireClap(msg);
+          else if (msg.type === 'silence') fireSilence(msg.silent);
         };
         if (channel) node.port.postMessage({ type: 'word-port' }, [channel.port1]);
       } else {
@@ -184,6 +187,7 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
           sensitivity: cfg.sensitivity,
           word: cfg.word,
           onClap: (ev) => fireClap(ev),
+          onSilence: typeof onSilence === 'function' ? (silent) => fireSilence(silent) : null,
           onFrame: (frame) => {
             if (channel) channel.port1.postMessage({ type: 'frame', samples: frame }, [frame.buffer]);
           },
@@ -217,6 +221,15 @@ export function createStandbyCapture({ scope = globalThis, workletUrl = WAKE_WOR
     }
     setState('live', fellBack ? { fellBack: true } : {});
     return fellBack ? { ok: true, fellBack: true } : { ok: true };
+  }
+
+  function fireSilence(silent) {
+    if (state !== 'live' || typeof onSilence !== 'function') return;
+    try {
+      onSilence(!!silent);
+    } catch {
+      /* decoration */
+    }
   }
 
   function tell(type) {

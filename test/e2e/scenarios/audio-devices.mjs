@@ -16,6 +16,8 @@
 //                             the speaker gone: George's sink goes to the default
 //   standby-retry-backoff     Standby's capture fails twice, then works (2 s, then 5 s); a track that ends is
 //                             tried again in the background on a Mac
+//   standby-muted             (A12, SHOULD) the microphone's mute button: 10 s of exact digital silence makes
+//                             the pill ask "MICROPHONE MUTED?"; the first sound puts it back
 
 import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
@@ -27,6 +29,7 @@ import * as S from '../../unit/wake.signals.mjs';
 
 const pad = (x, before = 0.4, after = 0.9) => S.concat(S.silence(before), x, S.silence(after));
 const DOUBLE_CLAP = Array.from(pad(S.doubleClap({ gapMs: 420, at: 0.2, seconds: 1.0, peakDb: -10 })));
+const TALK = Array.from(S.speechLike({ seconds: 1.2, peakDb: -12 })); // for the level bar
 
 const SETUP1 = { audioSetup: 'speaker-mac-mic', audioInputId: 'mac-mic', audioInputLabel: 'MacBook Pro Microphone (Built-in)', audioOutputId: 'sp-out', audioOutputLabel: 'Desk Speakerphone (Bluetooth)' };
 const SETUP2 = { audioSetup: 'speakerphone-both', audioInputId: 'sp-mic', audioInputLabel: 'Desk Speakerphone (Bluetooth)', audioOutputId: 'sp-out', audioOutputLabel: 'Desk Speakerphone (Bluetooth)' };
@@ -140,6 +143,7 @@ export default [
         await t.page.evaluate(() => window.__voice.queue.push('testing one two'));
         await t.locator('audio-test-mic').click();
         await t.waitFor(async () => /Heard: testing one two/.test(await t.text(t.locator('audio-heard'))), { timeout: 8000, message: async () => `the words (${await t.text(t.locator('audio-heard'))})` });
+        await play(t, TALK);
         await play(t, DOUBLE_CLAP);
         await t.waitFor(async () => /Two claps heard/.test(await t.text(t.locator('audio-claps'))), { timeout: 8000, message: 'the claps' });
         const a = await A(t);
@@ -211,8 +215,9 @@ export default [
         const a = await A(t);
         const r = a.recStarts[a.recStarts.length - 1];
         t.assert(r.track && r.device === 'mac-mic', `recognition.start(track) on the Mac’s microphone (${JSON.stringify(a.recStarts)})`);
-        const q = a.gets.filter((x) => x.ns === true);
-        t.assert(q.length >= 1 && q.every((x) => x.deviceId === 'mac-mic' && x.ec === true && x.agc === true), `A processed track (${JSON.stringify(q)})`);
+        const q = a.gets.filter((x) => x.agc === true);
+        t.assert(q.length >= 1 && q.every((x) => x.deviceId === 'mac-mic' && x.ec === true && x.ns === true), `A processed track (${JSON.stringify(q)})`);
+        t.assert(a.gets.every((x) => x.deviceId === 'mac-mic'), `Every microphone opened is the Mac’s, the core’s mic bands too (${JSON.stringify(a.gets)})`);
       });
       await t.step('setup 3 (Switch): Standby stays on the Mac’s microphone; the question is heard on the speakerphone’s', async () => {
         await t.page.evaluate((s) => {
@@ -243,7 +248,7 @@ export default [
         t.assert(/Set Chrome’s microphone to MacBook Pro Microphone/.test(note) && /chrome:\/\/settings\/content\/microphone/.test(note), `The note (${note})`);
         await t.visible('audio-chrome-copy');
         await t.screenshot('1-old-chrome');
-        await t.page.keyboard.press('Escape');
+        await (await t.visible('settings-close')).click();
       });
       await t.step('Voice Mode listens as before: recognition.start() with no track, and no question microphone opened', async () => {
         const before = (await A(t)).gets.length;
@@ -251,7 +256,7 @@ export default [
         await t.waitFor(async () => (await A(t)).recStarts.length >= 1, { timeout: 8000, message: 'the recognizer started' });
         const a = await A(t);
         t.assert(a.recStarts.every((r) => !r.track), `No track (${JSON.stringify(a.recStarts)})`);
-        t.assert(a.gets.slice(before).every((g) => g.ns !== true), `No question microphone (${JSON.stringify(a.gets.slice(before))})`);
+        t.assert(!a.gets.slice(before).some((g) => g.agc === true), `No question track opened (${JSON.stringify(a.gets.slice(before))})`);
       });
     },
   },
@@ -340,6 +345,35 @@ export default [
         await t.waitFor(async () => (await A(t)).gets.length > before && (await standbyState(t))?.listening === 'live', { timeout: 8000, message: 'listening again, hidden' });
         t.assert(await t.page.evaluate(() => document.hidden), 'still hidden');
         await setHidden(t.page, false);
+      });
+    },
+  },
+  {
+    name: 'standby-muted',
+    title: 'Mac, Standby: the speakerphone’s mute button (exact digital silence) for 10 s: the pill asks “MICROPHONE MUTED?” and the hint says why; unmuted, it listens as before',
+    device: 'mac',
+    seed: { settings: SETUP2 },
+    timeout: 90000,
+    async run(t) {
+      await setup(t);
+      await enterStandby(t);
+      await pillIs(t, /^LISTENING ON DESK SPEAKERPHONE · TWO CLAPS$/);
+      await t.step('muted: after 10 s of exact zeros the pill asks', async () => {
+        const at = Date.now();
+        await t.page.evaluate(() => window.__audio.mute(true));
+        await t.page.waitForTimeout(6000);
+        t.assert(/^LISTENING ON/.test((await standbyState(t)).pill), 'not after 6 s');
+        await pillIs(t, /^MICROPHONE MUTED\?$/, 12000);
+        const took = Date.now() - at;
+        t.assert(took >= 9500, `about 10 s (${took} ms)`);
+        t.assert(/Is it muted \(the speakerphone’s mute button\)\?/.test((await standbyState(t)).hint), `the hint (${(await standbyState(t)).hint})`);
+        await t.screenshot('1-muted');
+      });
+      await t.step('unmuted: listening again, as before', async () => {
+        await t.page.evaluate(() => window.__audio.mute(false));
+        await pillIs(t, /^LISTENING ON DESK SPEAKERPHONE · TWO CLAPS$/, 4000);
+        await play(t, DOUBLE_CLAP);
+        await t.visible('voice-mode', { timeout: 8000, message: 'two claps still wake Jarvis' });
       });
     },
   },

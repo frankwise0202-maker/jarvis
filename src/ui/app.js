@@ -1572,7 +1572,8 @@ export async function startApp(rootEl) {
         wake,
         // Real mic bands for the core's voice band (SPEC 2.4.13). Not on iOS yet: Safari's speech
         // recognizer may hold the mic, so a second stream must be tested on a device first.
-        createMicBands: safe(() => isIOS(), false) ? null : createMicBands,
+        // v8.1: on the microphone chosen for questions (Settings → Voice → Microphone and speaker).
+        createMicBands: safe(() => isIOS(), false) ? null : audioDevices ? (o) => createMicBands({ ...o, getUserMedia: (c) => audioDevices.getQuestionMedia(c) }) : createMicBands,
         // Screens (v7): spoken "put it on my other screen" acts at once; Jarvis says a short line.
         screens: {
           command: (text) => {

@@ -92,6 +92,7 @@ export function createStandby(deps = {}) {
   let startedKey = null;
   let audioOffs = [];
   let tipAsked = false;
+  let muted = false; // v8.1 (A12): the live microphone has sent exact digital silence for 10 s
 
   const settings = () => {
     try {
@@ -215,7 +216,7 @@ export function createStandby(deps = {}) {
     } catch {
       /* decoration */
     }
-    if (!capture) capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    if (!capture) capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     try {
       capture.prepare(); // the AudioContext starts inside the tap (iOS)
     } catch {
@@ -227,7 +228,7 @@ export function createStandby(deps = {}) {
   /** Back to Standby after the wake routine or a conversation (no tap needed: the context is ready). */
   function resume() {
     if (phase === 'open') return;
-    if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     open();
   }
 
@@ -396,7 +397,15 @@ export function createStandby(deps = {}) {
     firstTimeTip();
   }
 
+  /** v8.1 (A12): exact digital silence for 10 s (a microphone's mute button), or sound again. */
+  function onCaptureSilence(silent) {
+    if (muted === !!silent) return;
+    muted = !!silent;
+    if (phase === 'open') render();
+  }
+
   function onCaptureState(info) {
+    if (info && info.state !== 'live') muted = false; // a new capture starts unmuted
     if (phase !== 'open' || !info) return;
     if (info.state === 'off' && info.reason === 'ended' && listen === 'live') {
       // The system took the microphone (a call, another app) or it went away (the speakerphone turned
@@ -637,7 +646,12 @@ export function createStandby(deps = {}) {
     const wordComing = wordOn() && (!ws || ws.state === 'loading' || ws.state === 'off' || (ws.state === 'ready' && !wordPortGiven));
     // v8.1: the microphone it listens on, when one is chosen (else "this device", as before).
     const named = audio && micOn ? safeCall(() => audio.pill(capture.device), null) : null;
-    if (what.length && named && named.gone) {
+    root.dataset.muted = micOn && muted ? 'true' : 'false';
+    if (micOn && muted) {
+      // v8.1 (A12): nothing at all comes from the microphone (exact zeros for 10 s): its mute button?
+      pill = 'MICROPHONE MUTED?';
+      tone = 'warn';
+    } else if (what.length && named && named.gone) {
       pill = `LISTENING ON ${named.name} · ${named.gone} DISCONNECTED`;
       tone = 'live';
     } else if (what.length) {
@@ -673,7 +687,7 @@ export function createStandby(deps = {}) {
     }
     setText(els.pillText, pill);
     els.pill.dataset.tone = tone;
-    els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
+    els.pill.setAttribute('aria-label', micOn && muted ? 'The microphone is on but sends no sound at all: is it muted?' : what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
     setText(els.hint, hintText(what, ws));
     setText(els.status, safeText(statusLine));
     const word0 = safeText(stateWord);
@@ -683,6 +697,7 @@ export function createStandby(deps = {}) {
 
   function hintText(what, ws) {
     const both = clapOn() && wordOn();
+    if (muted && capture && capture.live === true) return 'No sound at all is coming from the microphone. Is it muted (the speakerphone’s mute button)?';
     if (listen === 'denied') return 'Allow the microphone for Jarvis in your browser’s settings to wake him by clapping or by voice.';
     if (listen === 'no-mic') return 'Connect a microphone to wake Jarvis by clapping or by voice.';
     if (listen === 'needs-tap') return 'This browser needs one tap before it listens.';

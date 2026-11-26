@@ -15,6 +15,7 @@
 //   window.__audio.blip()                        a Bluetooth mode switch: ONE enumeration misses the speakerphone
 //                                                (devicechange fires; nothing ends), the next one lists it again
 //   window.__audio.failNext                      DOMException names: the next getUserMedia calls fail with them
+//   window.__audio.mute(on)                      a microphone's mute button: its tracks send exact digital silence
 //   window.__audio.permission                    'granted' | 'prompt' | 'denied' (navigator.permissions.query);
 //                                                before 'granted' the list has no names or ids, as in Chrome
 //   window.__audio.LISTS                         { mac, speakerphone }: the device sets the scenarios use
@@ -34,11 +35,19 @@ export function installAudioFakes(options) {
     recStarts: [],
     enumerations: 0,
     failNext: [],
-    permission: opts.permission || 'granted',
+    // Once allowed, it stays allowed across a reload (as Chrome's "Allow on every visit" does).
+    permission: (() => {
+      try {
+        return sessionStorage.getItem('__audioPermission') || opts.permission || 'granted';
+      } catch {
+        return opts.permission || 'granted';
+      }
+    })(),
     defaultOutput: opts.defaultOutput === 'speakerphone' ? 'sp-out' : 'mac-out',
     LISTS: { mac, speakerphone },
     tracks: [], // { device, track }
     missing: null, // ids one enumeration leaves out (blip)
+    muted: false,
   };
   window.__audio = A;
   A.devices = opts.speakerphone === false ? mac.slice() : [...mac, ...speakerphone];
@@ -81,11 +90,17 @@ export function installAudioFakes(options) {
     if (!realGet) throw new DOMException('No microphone (fake)', 'NotFoundError');
     const stream = await realGet(constraints);
     A.permission = 'granted';
+    try {
+      sessionStorage.setItem('__audioPermission', 'granted');
+    } catch {
+      /* storage unavailable */
+    }
     entry.device = device.deviceId;
     for (const track of stream.getAudioTracks()) {
       Object.defineProperty(track, 'label', { value: device.label, configurable: true });
       const settings = track.getSettings.bind(track);
       track.getSettings = () => ({ ...settings(), deviceId: device.deviceId, groupId: device.groupId });
+      track.enabled = !A.muted;
       A.tracks.push({ device: device.deviceId, track });
     }
     return stream;
@@ -101,6 +116,11 @@ export function installAudioFakes(options) {
       }
     }
     md.dispatchEvent(new Event('devicechange'));
+  };
+  /** The mute button: a disabled track sends exact digital silence (zeros), as a muted speakerphone does. */
+  A.mute = (on) => {
+    A.muted = !!on;
+    for (const t of A.tracks) if (t.track.readyState === 'live') t.track.enabled = !A.muted;
   };
   /** A Bluetooth mode switch: one enumeration misses the speakerphone; nothing ends. */
   A.blip = () => {
