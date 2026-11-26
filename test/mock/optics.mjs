@@ -24,6 +24,10 @@
 //     "What's this part? (the screwdriver you pinned on frame f1, at 466, 810)"  what that object
 //                         is, then pin_labels with that one label, then "I've marked it on the frame."
 
+//   Research (v8.1, Track 5 fills it): researchPlan(env), asked by behavior.mjs before the Optics
+//     follow-ups ("Research this …" in a conversation that has looked through the camera, the quick
+//     route with a web search); a plan, or null (not research).
+
 import { readFileSync } from 'node:fs';
 import { newToolUseId } from './util.mjs';
 
@@ -312,5 +316,15 @@ export function opticsFollowUpTextPlan({ think, prompt, frame, pinsTool }) {
       pace: 'quick',
     };
   }
+  return null;
+}
+
+/**
+ * v8.1 (Track 5): the mock's research behaviour (E3). env: { body, d, prompt (without directives),
+ * ctx, spoken, think(text), hasTool(name), userMsg, msgs, frame (the conversation's Optics frame, or
+ * null), pace }. A plan, or null: the mock goes on as before.
+ */
+export function researchPlan(env) {
+  void env;
   return null;
 }
