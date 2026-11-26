@@ -32,6 +32,8 @@
 //   chrome-voice-stop-quiet-off  on its card); the same with Continuous off
 //   chrome-voice-bargein-stop    CHROME-VOICE-R2-1: woken, George says Chrome's question; "Hey Jarvis" over it, then
 //                            "Stop.": the words are heard and the waiting task stops; the question isn't said again
+//   chrome-voice-bargein-quiet   CHROME-VOICE-R3-2: the same with "Be quiet.": Jarvis is quiet, the task goes on, the
+//                            question stays on its card and isn't said again by itself
 
 import { tid } from '../harness.mjs';
 import { installFakeSpeech } from './features.mjs';
@@ -785,6 +787,64 @@ export default [
         t.note(`stops ${kinds(peer, 'stop').length}; George: ${JSON.stringify(speaks.slice(-6))}`);
         await t.screenshot('after-bargein');
         t.assert(asked() === 1, `the question isn't said again over the owner's words ("Chrome asks" said ${asked()} times; George: ${JSON.stringify(speaks.slice(-6))})`);
+      });
+    },
+  },
+
+  {
+    name: 'chrome-voice-bargein-quiet',
+    title: 'CHROME-VOICE-R3-2: woken by "Hey Jarvis", George says Chrome\'s question; "Hey Jarvis" over it, then "Be quiet.": Jarvis says "Okay." and is quiet; the task goes on, and the question stays on its card without being said again',
+    device: 'mac',
+    fakeMusic: true,
+    fakeCore: { senses: { speak: 'ready' } },
+    allowConsole: NETWORK_NOISE,
+    timeout: 240000,
+    async run(t) {
+      const page = await t.newPage({ device: 'mac', settings: { ...GEORGE, ...BARGE_IN, wakeWord: true } });
+      await seedChromeLink(page.context(), { key: CHROME_TEST_KEY });
+      await page.addInitScript(installFakeSpeech, {});
+      await page.addInitScript(installFakeMic, { wakeLock: true });
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await page.addInitScript(
+        ({ test }) => {
+          localStorage.setItem('jarvis.handsFreeTest.v1', test);
+          localStorage.setItem('jarvis.dev.wakeWord', 'stub');
+        },
+        { test: TEST_PASSED },
+      );
+      await t.goto('/', { page });
+      const peer = createFakeChromePeer(t.core.relay, { autoTask: true }).start();
+      await withPeer(peer, async () => {
+        await t.waitFor(() => peer.received.some((m) => m.kind === 'hello'), { timeout: 15000, message: 'the app’s hello' });
+        await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+        await page.waitForTimeout(1500);
+        await (await t.visible('quick-key-standby')).click();
+        await t.waitFor(async () => (await page.evaluate(() => document.querySelector('[data-testid="standby"]')?.dataset.word)) === 'ready', { timeout: 15000, message: 'the wake word stand-in ready' });
+        // The wake window hears nobody; the offer's listen hears a question (the routine steps aside: a Claude turn).
+        await page.evaluate(() => window.__voice.queue.push('', 'What is the capital of France?'));
+        t.assert(await page.evaluate(() => window.__jarvisWake.say()), 'woken by the stand-in');
+        await page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+        await t.waitFor(() => t.core.senses.speaks.some((x) => /Paris/.test(x.text)), { timeout: 30000, message: () => `the answer (speaks: ${JSON.stringify(t.core.senses.speaks.map((x) => x.text))})` });
+        await t.waitFor(async () => ['listening', 'idle'].includes(await page.evaluate(() => document.querySelector('[data-testid="voice-mode"]')?.getAttribute('data-state'))), { timeout: 30000, message: 'the answer said' });
+        // A task waits on a click-only question; George says it.
+        await peer.task({ id: 'task-1', status: 'running', text: 'find a 4K monitor and add it to the cart', costUsd: 0.05, limitUsd: 1 });
+        await peer.prompt(PURCHASE);
+        const asked = () => t.core.senses.speaks.filter((x) => /Chrome asks/.test(x.text)).length;
+        await t.waitFor(() => asked() >= 1, { timeout: 30000, message: () => `George to say Chrome's question (speaks: ${JSON.stringify(t.core.senses.speaks.map((x) => x.text))})` });
+        await page.waitForTimeout(1600); // past the wake's 1.5 s guard, George mid-question
+        await page.evaluate(() => window.__voice.queue.push('Be quiet.'));
+        t.assert(await page.evaluate(() => window.__jarvisWake.say()), 'the stand-in heard "Hey Jarvis" over George');
+        await t.waitFor(() => t.core.senses.speaks.some((x) => /^Okay\.?$/.test(x.text.trim())), { timeout: 15000, message: () => `"Okay." for the owner's "Be quiet." (George: ${JSON.stringify(t.core.senses.speaks.map((x) => x.text).slice(-6))})` });
+        await page.waitForTimeout(9000);
+        const speaks = t.core.senses.speaks.map((x) => x.text);
+        t.note(`stops ${kinds(peer, 'stop').length}; George: ${JSON.stringify(speaks.slice(-6))}`);
+        await t.screenshot('after-quiet');
+        t.assert(asked() === 1, `the question isn't said again after "Be quiet." ("Chrome asks" said ${asked()} times; George: ${JSON.stringify(speaks.slice(-6))})`);
+        t.assert(kinds(peer, 'stop').length === 0, 'the task goes on (no stop)');
+        t.assert(kinds(peer, 'answer').length === 0, 'nothing answered');
+        t.assert(await page.locator(tid('voice-chrome-prompt-card')).isVisible(), 'the question stays on its card');
       });
     },
   },
