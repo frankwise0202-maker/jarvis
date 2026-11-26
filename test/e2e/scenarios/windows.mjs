@@ -355,7 +355,9 @@ export default [
         t.assert(t.page.context().pages().length === pages, 'the same floating panel');
         t.assert(/Jarvis is floating, in place of the hologram/.test(await toastText(t)), `said so (${await toastText(t)})`);
         t.assert((await screenAttr(pip, 'kind')) === 'jarvis', 'the panel shows Jarvis');
-        await t.waitFor(async () => (await pip.locator(tid('float-jarvis-word')).textContent()) === 'ONLINE', { timeout: 5000, message: 'the state word' });
+        // The panel's word is the app's own state word (Presence's: STANDING BY while idle).
+        const word = async () => (await pip.locator(tid('float-jarvis-word')).textContent()) || '';
+        await t.waitFor(async () => (await word()) === 'STANDING BY', { timeout: 5000, message: async () => `the state word (${await word()})` });
         await pip.setViewportSize({ width: 300, height: 260 });
         await pip.waitForTimeout(400);
         await t.screenshot('float-jarvis', pip);

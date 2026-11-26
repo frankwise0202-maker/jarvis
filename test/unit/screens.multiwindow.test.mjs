@@ -468,16 +468,25 @@ test('D5: a floating panel can\'t be resized by script, and a page can\'t be mov
   await p.evaluate(() => window.say('open the link in a window'));
   const page2 = await p.evaluate(async () => (await window.win({ op: 'size', size: 'fill', which: 'link' })).message);
   assert.equal(page2, 'I can’t move a page from another site. Close it and open it again where you want it.');
-  // His own window: "make your window bigger", or "this window" while the main window has the focus.
+  // His own window: "make your window bigger", or "this window" while the main window has the focus. While
+  // the floating panel has the focus (as it does once it opens), "this window" is the panel.
   const own = await p.evaluate(async () => {
     document.hasFocus = () => window.__focus === 'main';
     window.focusOn('main');
     const moves = window.__moves.length;
     const a = await window.win({ op: 'size', size: 'bigger', which: 'main' });
+    const panel = await window.win({ op: 'size', size: 'fill', which: null, here: true });
+    window.documentPictureInPicture.window.document.hasFocus = () => false;
     const b = await window.win({ op: 'size', size: 'fill', which: null, here: true });
-    return [a.status, a.message, b.message, window.__moves.length - moves];
+    return [a.status, a.message, panel.message, b.message, window.__moves.length - moves];
   });
-  assert.deepEqual(own, ['nothing', 'I can’t resize my own window. Drag its corner.', 'I can’t resize my own window. Drag its corner.', 0]);
+  assert.deepEqual(own, [
+    'nothing',
+    'I can’t resize my own window. Drag its corner.',
+    'Drag its corner; I can’t resize floating panels. Say “put it in a window” for one I can.',
+    'I can’t resize my own window. Drag its corner.',
+    0,
+  ]);
 });
 
 test('D6: "float yourself": one tap opens Jarvis on top (his core, the state word, the words heard); he takes a floating hologram\'s place, and says so', async () => {
