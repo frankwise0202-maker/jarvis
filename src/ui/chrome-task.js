@@ -980,13 +980,14 @@ export function createChromeVoice(deps = {}) {
    * window shows its cards; the window where Voice Mode is open says it; with Voice Mode open nowhere, the
    * window holding the link sends the notification.
    */
-  function onPrompt(raw, { relayed = false } = {}) {
+  function onPrompt(raw, { relayed = false, from = '' } = {}) {
     if (!raw || typeof raw !== 'object' || !raw.promptId) return;
     const prompt = { ...raw, promptId: String(raw.promptId) };
     if (!relayed) share({ t: 'prompt', prompt });
     let entry = S.prompts.get(prompt.promptId);
     if (!entry) {
-      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now(), direct: !relayed };
+      // from: the window that passed it on (CHROME-VOICE-R2-6: when it closes, this window notifies for it).
+      entry = { prompt, hash: prompt.hash, views: new Set(), handle: null, notified: false, answering: false, closing: 0, shownAt: now(), direct: !relayed, from: relayed ? from : '' };
       S.prompts.set(prompt.promptId, entry);
     } else {
       entry.prompt = prompt;
@@ -1219,10 +1220,15 @@ export function createChromeVoice(deps = {}) {
         break;
       case 'bye':
         S.peers.delete(from);
-        for (const entry of S.prompts.values()) if (!entry.handle) toVoiceOrNotice(entry);
+        for (const entry of S.prompts.values()) {
+          // The window that passed a question on has closed: this one notifies for it when Voice Mode is open nowhere
+          // (CHROME-VOICE-R2-6).
+          if (!entry.direct && entry.from === from) entry.direct = true;
+          if (!entry.handle) toVoiceOrNotice(entry);
+        }
         break;
       case 'prompt':
-        onPrompt(m.prompt, { relayed: true });
+        onPrompt(m.prompt, { relayed: true, from });
         break;
       case 'prompt-closed':
         onPromptClosed(m.promptId, { relayed: true });

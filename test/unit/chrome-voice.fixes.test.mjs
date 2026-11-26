@@ -291,6 +291,58 @@ test('REDTEAM-VOICE-7: two windows: Chrome\'s question, its closing and a task\'
   A.cv.destroy();
 });
 
+test('CHROME-VOICE-R2-6: two windows: the one holding the link closes, then Voice Mode closes in the other: Chrome\'s waiting question is notified there (once)', async () => {
+  const channel = channels();
+  const fakeA = createFakeChromeLink();
+  const A = createChromeVoice({ link: fakeA.link, voice: () => null, channel, toast: () => {}, notify: () => {}, closeNotice: () => {}, hidden: () => false });
+  const vB = createFakeVoice();
+  delete vB.card;
+  let open = true;
+  const notes = [];
+  const quietLink = { ...createFakeChromeLink().link, onPrompt: () => () => {}, onPromptClosed: () => () => {}, onDone: () => () => {} };
+  const B = createChromeVoice({ link: quietLink, voice: () => (open ? vB : null), channel, toast: () => {}, notify: (n) => notes.push(n), closeNotice: () => {}, hidden: () => false });
+  try {
+    B.voiceChanged();
+    await flush();
+    fakeA.prompt(PROMPTS.cart);
+    await flush();
+    assert.equal(vB.prompts.length, 1, 'B\'s Voice Mode has it');
+    A.destroy(); // window A (the link's) closes: pagehide, "bye"
+    await flush();
+    assert.equal(notes.length, 0, 'not while B\'s Voice Mode has it');
+    open = false; // B's Voice Mode closes (or goes to Standby)
+    B.voiceChanged();
+    await flush();
+    assert.equal(B.state().waiting, 1, 'the question is still open in B');
+    assert.equal(notes.length, 1, `a "Chrome asks" notification (got ${notes.length})`);
+    assert.equal(notes[0].title, 'Chrome asks');
+    // Control: with A still open, A (the link's window) notifies, B doesn't.
+  } finally {
+    B.destroy();
+  }
+  const fakeA2 = createFakeChromeLink();
+  const aNotes = [];
+  const A2 = createChromeVoice({ link: fakeA2.link, voice: () => null, channel, toast: () => {}, notify: (n) => aNotes.push(n), closeNotice: () => {}, hidden: () => false });
+  const vB2 = createFakeVoice();
+  delete vB2.card;
+  let open2 = true;
+  const bNotes = [];
+  const B2 = createChromeVoice({ link: quietLink, voice: () => (open2 ? vB2 : null), channel, toast: () => {}, notify: (n) => bNotes.push(n), closeNotice: () => {}, hidden: () => false });
+  try {
+    B2.voiceChanged();
+    await flush();
+    fakeA2.prompt(PROMPTS.cart);
+    await flush();
+    open2 = false;
+    B2.voiceChanged();
+    await flush();
+    assert.deepEqual([aNotes.length, bNotes.length], [1, 0], 'A notifies, B doesn\'t');
+  } finally {
+    A2.destroy();
+    B2.destroy();
+  }
+});
+
 // ---- REDTEAM-VOICE-8: prompts closed without a word -------------------------------------------------------
 
 test('REDTEAM-VOICE-8: a task\'s end closes its prompts (no stale "Chrome is waiting for you"); so does the link reporting no task; a "gone" refusal closes it and says so', async () => {
