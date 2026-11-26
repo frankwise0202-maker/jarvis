@@ -198,6 +198,19 @@ test('a setup chosen: Standby’s and the questions’ microphones, the speaker 
   const music = sink();
   audio.addSink(music);
   assert.deepEqual(music.ids, ['sp-out']);
+  // George's context reports an error (its output device went away): the devices are checked.
+  let tell = null;
+  const before = scope.md.list.length;
+  audio.addSink({ setSink: () => Promise.resolve(true), onDevice: (fn) => ((tell = fn), () => (tell = null)) });
+  const listed = [];
+  const enumerate = scope.md.enumerateDevices;
+  scope.md.enumerateDevices = async () => (listed.push(1), enumerate());
+  tell({ type: 'error', state: 'suspended' });
+  clock.advance(250);
+  await flush();
+  assert.equal(listed.length, 1, 'enumerated once the burst settled');
+  scope.md.enumerateDevices = enumerate;
+  assert.equal(scope.md.list.length, before);
   assert.deepEqual(audio.standbyPill({ id: 'mac-mic', label: 'MacBook Pro Microphone (Built-in)' }), { name: 'THE MAC’S MICROPHONE', gone: '' });
 
   // The recognizer gets a processed track on the question microphone, closed at the end.

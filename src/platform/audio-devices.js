@@ -28,7 +28,8 @@
 //   audio.addSink(target)         George's context, the sounds context, the music <audio>: target.setSink(id)
 //                                 is called with the planned speaker ('' = default) now and on every change;
 //                                 target.settle(ms) (George) after a Bluetooth microphone closes; target.probe()
-//                                 after the Mac slept. -> off
+//                                 after the Mac slept; target.onDevice(fn) (George's context: its error and
+//                                 statechange events) makes the watcher check the devices. -> off
 //   audio.noteMicClosed({ id, label })  a Jarvis microphone closed (capture.js onRelease): a Bluetooth one makes
 //                                 George wait SETTLE_MS before he starts
 //   audio.holdChime(name, opts)   setup 3: 'listen-start' waits for the question track's first sound (or 1.2 s);
@@ -551,7 +552,12 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     if (!target || typeof target.setSink !== 'function') return () => {};
     sinks.add(target);
     if (applied) giveSink(target, applied);
-    return () => sinks.delete(target);
+    // George's context says when its output device went away (error) or it stopped: check the devices.
+    const off = typeof target.onDevice === 'function' ? safe(() => target.onDevice(() => check()), null) : null;
+    return () => {
+      sinks.delete(target);
+      if (typeof off === 'function') safe(() => off());
+    };
   }
 
   function subscribe(fn) {
