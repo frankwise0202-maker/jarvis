@@ -403,7 +403,7 @@ function createVoiceMode(opts) {
   //   askedAt    when the open prompt (askedKey) was last said; saidAt when that ended in full (the 30 s)
   //   greeting   { id, line }: a prompt the wake greeting says ("Chrome is waiting for you: …")
   //   lastDone   { text, at }: the last line spoken to the end
-  const C = { check: null, askedAt: 0, askedKey: 0, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '' };
+  const C = { check: null, askedAt: 0, askedKey: 0, saidAt: 0, saidKey: 0, greeting: null, lastDone: null, hint: '', pump: 0 };
   // holdCapMs (v8.1, tests only: 'jarvis.dev.voice' through app.js): a shorter hold, never a longer one.
   const hold = createVoiceHold(Number(holdCapMs) > 0 ? { capMs: Math.min(HOLD_CAP_MS, Number(holdCapMs)) } : {});
   const listenHidden = typeof listenWhileHidden === 'function' ? listenWhileHidden : () => false;
@@ -3391,7 +3391,9 @@ function createVoiceMode(opts) {
     if (S.closed || !spec || typeof spec !== 'object') return { update: () => false, close: () => false };
     // v8.1 chrome-voice: what to say to it (a bare "yes" never answers it: Jarvis says this instead).
     C.hint = typeof spec.hint === 'string' ? spec.hint.slice(0, 200) : '';
-    return prompts.open(spec);
+    const handle = prompts.open(spec);
+    promptPump();
+    return handle;
   }
 
   /**
@@ -3524,6 +3526,22 @@ function createVoiceMode(opts) {
     const p = prompts.current();
     if (!p) return null;
     return { ...p, chrome: true, askedAt: C.askedKey === p.key ? C.askedAt : 0, saidAt: C.saidKey === p.key ? C.saidAt : 0 };
+  }
+
+  /**
+   * A prompt waiting to be said (askQuestion put it aside: Voice Mode was busy) is said as soon as Voice
+   * Mode is free, also when nothing else is spoken first (a listen of the owner's that ends in silence).
+   */
+  function promptPump() {
+    if (C.pump) return;
+    C.pump = setInterval(() => {
+      if (S.closed || !prompts.current()) {
+        clearInterval(C.pump);
+        C.pump = 0;
+        return;
+      }
+      if (S.pendingAsk && S.pendingAsk.isPrompt && canSayNow()) sayPendingAsk();
+    }, 400);
   }
 
   /** Say the prompt (`before`: a line first, said with it), with one listen for its answer after it. */
@@ -3760,6 +3778,7 @@ function createVoiceMode(opts) {
   /** "In Chrome, …", "click around for me", "stop Chrome", "what are you doing in Chrome?": run, then its line. */
   function actChrome(hit) {
     if (!router || typeof router.run !== 'function') return false;
+    showCaption('quote', `“${hit.reading}”`); // first: the check that may start says its own line over it
     let out;
     try {
       out = router.run(hit, { surface: 'voice', via: 'voice', reading: hit.reading, spoken: true, voice: api });
@@ -3768,7 +3787,6 @@ function createVoiceMode(opts) {
       out = false;
     }
     if (out === false) return false;
-    showCaption('quote', `“${hit.reading}”`);
     Promise.resolve(out).then(
       (o) => {
         const line = o && typeof o.say === 'string' ? o.say : '';
@@ -4844,6 +4862,7 @@ function createVoiceMode(opts) {
     if (inertObserver) callQuietly(() => inertObserver.disconnect());
     callQuietly(() => questions.clear('closed'));
     callQuietly(() => endCheck('closed')); // v8.1 chrome-voice: a Chrome check withdrawn, nothing sent
+    clearInterval(C.pump);
     callQuietly(() => prompts.close());
     S.pendingAsk = null;
     S.heldWords = '';

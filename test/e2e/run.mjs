@@ -60,6 +60,7 @@ import macHandsFree from './scenarios/mac-handsfree.mjs';
 // ---- voice ▸
 // ---- voice ◂
 // ---- chrome-voice ▸
+import chromeVoice from './scenarios/chrome-voice.mjs';
 // ---- chrome-voice ◂
 // ---- windows ▸
 import windowsScenarios from './scenarios/windows.mjs';
@@ -100,6 +101,7 @@ const V81_SCENARIOS = [
   // ---- voice ▸
   // ---- voice ◂
   // ---- chrome-voice ▸
+  ...chromeVoice,
   // ---- chrome-voice ◂
   // ---- windows ▸
   ...windowsScenarios,

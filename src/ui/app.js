@@ -4366,6 +4366,14 @@ export async function startApp(rootEl) {
   function chromeLinkForVoice() {
     return chromeLink || null;
   }
+  // Tests on localhost only ('jarvis.dev.chromeVoice' = '1'): window.__jarvisChromeVoice.question(spec) asks an owner
+  // question in the open Voice Mode (the chrome-voice-stack E2E: a stand-in for a tour's decision beside a prompt).
+  safe(() => {
+    const host = location.hostname;
+    if ((host === 'localhost' || host === '127.0.0.1') && localStorage.getItem('jarvis.dev.chromeVoice') === '1') {
+      window.__jarvisChromeVoice = { question: (spec) => !!voiceApi && safe(() => !!voiceApi.question(spec), false) };
+    }
+  });
   // ---- chrome-voice ◂
 
   function registerCommandModules() {
