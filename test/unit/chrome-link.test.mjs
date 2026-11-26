@@ -7,7 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS } from '../../src/platform/chrome-link.js';
+import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
 import { fakeRelay, answerRelay, createFakeChromePeer, chromeLinkRecord, CHROME_TEST_KEY, CORE_ORIGIN, CORE_URL } from '../e2e/core-fakes.mjs';
 import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode } from '../../src/lib/relay-envelope.js';
 
@@ -203,6 +203,7 @@ function world({ linked = false, peer: peerOpts = {}, storage: initial = null } 
         setTimer: opts.setTimer || ((fn, ms) => setTimeout(fn, ms)),
         random: () => 0.5,
         win,
+        ...(opts.notice ? { notice: opts.notice } : {}),
       });
       const handle = { ...link, log, clipboard, win, reads: () => log.filter((l) => l === 'GET /api/relay/to-app').length };
       windows.push(handle);
@@ -507,6 +508,69 @@ test('offline: nothing sent while Jarvis for Chrome is away (stop excepted); no 
     const t0 = Date.now();
     assert.deepEqual(await app.api.open('https://www.example.com/'), { ok: false, reason: 'offline' });
     assert.ok(Date.now() - t0 >= 250);
+  } finally {
+    await w.close();
+  }
+});
+
+test('fresh requests only (D5): a late ok for a start given up on is stopped at once and said; a late refusal does nothing; a late open is only noted', async () => {
+  const fast = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 300 : ms);
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: fast, notice: (n) => notices.push(n) });
+    await online(app);
+    const stops = () => w.peer.received.filter((m) => m.kind === 'stop').length;
+    // No reply in time: the owner hears "offline"; then the extension's ok comes after all.
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await w.peer.waitFor('stop');
+    await until(() => notices.length === 1, { what: 'the notice' });
+    assert.deepEqual(notices, [{ kind: 'late-start', line: LATE_START_LINE }]);
+    assert.equal(LATE_START_LINE, 'Chrome started late, so I stopped it.');
+    // The extension refused it as too late (its side of D5): nothing more.
+    assert.deepEqual(await app.api.startTask({ text: 'again' }), { ok: false, reason: 'offline' });
+    const start2 = await w.peer.waitFor('start');
+    await w.peer.send('reply', { re: start2.id, ok: false, reason: 'gone', why: 'too late' });
+    // A late ok for an open: only noted.
+    w.peer.answer('open', null);
+    assert.deepEqual(await app.api.open('https://www.example.com/'), { ok: false, reason: 'offline' });
+    const open = await w.peer.waitFor('open');
+    await w.peer.send('reply', { re: open.id, ok: true, url: 'https://www.example.com/', site: 'www.example.com' });
+    await until(() => app.control.info().late === 1, { what: 'the late open noted' });
+    await sleep(100);
+    assert.equal(stops(), 1, 'one stop: for the late start only');
+    assert.equal(notices.length, 1);
+    // The same late reply twice (a replay can't get through the envelope, but the map forgets it anyway).
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await sleep(150);
+    assert.equal(stops(), 1);
+  } finally {
+    await w.close();
+  }
+});
+
+test('fresh requests only (D5) across windows: a late ok for another window\'s start reaches it through the holder', async () => {
+  const fast = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 300 : ms);
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const noticesA = [];
+    const noticesB = [];
+    const a = w.open({ setTimer: fast, notice: (n) => noticesA.push(n) });
+    await online(a);
+    const b = w.open({ setTimer: fast, notice: (n) => noticesB.push(n) });
+    await until(() => b.api.state().online, { what: 'b online' });
+    w.peer.answer('start', null);
+    assert.deepEqual(await b.api.startTask({ text: 'from the other window' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late-b' });
+    await w.peer.waitFor('stop');
+    await until(() => noticesB.length === 1, { what: 'b told' });
+    assert.equal(noticesA.length, 0, 'only the window that gave up says it');
   } finally {
     await w.close();
   }

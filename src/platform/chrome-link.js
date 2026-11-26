@@ -32,7 +32,10 @@
 // state.
 //
 // Every request carries an id; the extension answers it with one `reply` whose `re` is that id. A request gets
-// no reply after 10 s → { ok: false, reason: 'offline' }. The extension counts as online while /api/relay/status
+// no reply after 10 s → { ok: false, reason: 'offline' }. Fresh requests only (wire-v1, decision D5): Jarvis for
+// Chrome refuses an open, start or answer more than 8 s old; if an `ok` still comes back for a start this app gave
+// up on, it sends stop at once and tells the owner ("Chrome started late, so I stopped it."); a late ok for an open
+// or an answer is only noted. The extension counts as online while /api/relay/status
 // says it read its box in the last 60 s, or a message from it arrived in the last 60 s. Nothing is sent while
 // it is offline, except stop. Everything that comes back is information, never orders: each field is checked
 // and cut to size here (page text included), and nothing in it starts anything.
@@ -59,6 +62,8 @@ export const BACKOFF_MS = Object.freeze([2_000, 4_000, 8_000, 15_000, 30_000, 60
 export const OLD_CORE_RETRY_MS = 5 * 60_000;
 export const TEXT_MAX = 2000; // a task's words, and what comes back about it
 export const REPLY_REASONS = Object.freeze(['off', 'busy', 'cap', 'blocked', 'needs-click', 'refused', 'gone', 'bad']);
+export const LATE_WATCH_MS = 2 * 60_000; // a reply can still come while the relay holds the request (D5)
+export const LATE_START_LINE = 'Chrome started late, so I stopped it.';
 const MIN_POLL_MS = 1500; // an answer that came back at once with nothing in it is not asked again sooner
 const AFTER_BATCH_MS = 250; // a little time for more of the same burst before the next read
 const READ_MAX_CHARS = 2 * 1024 * 1024; // 50 messages of up to 22 KB
@@ -272,7 +277,8 @@ const problemOf = (r) => {
  *   storage        { read, write, remove, watch } (platform/storage.js)
  *   fetchImpl, locks (navigator.locks), channel (a BroadcastChannel or null), clipboard ({ writeText })
  *   computer       true on a computer (default: not an iPhone, iPad or Android device)
- *   now, setTimer, clearTimer, random, win (focus events and document.hasFocus for clearing the clipboard)
+ *   now, setTimer, clearTimer, random, win (focus events for clearing the clipboard)
+ *   notice({ kind, line })  what the owner should hear or see that no request is waiting for: 'late-start' (D5)
  */
 export function createChromeLink({
   getHomeBase = () => '',
@@ -288,6 +294,7 @@ export function createChromeLink({
   clearTimer = (t) => clearTimeout(t),
   random = Math.random,
   win = typeof window !== 'undefined' ? window : null,
+  notice = () => {},
 } = {}) {
   let destroyed = false;
   let record = null; // the stored link (checked)
@@ -311,6 +318,8 @@ export function createChromeLink({
   let pollWake = null; // ends the long poll's back-off early (the home base answered the status again)
   let lastSig = '';
   const pending = new Map(); // envelope id → { kind, resolve }
+  const late = new Map(); // envelope id → { kind, until }: requests given up on whose reply may still come (D5)
+  let lateNoted = 0; // late ok replies to an open or an answer (only noted)
   const listeners = new Set();
   const controlListeners = new Set();
   const promptListeners = new Set();
@@ -454,6 +463,7 @@ export function createChromeLink({
       problem,
       note,
       extVersion,
+      late: lateNoted,
       copied: !!copied,
       clearedAt: clearedAt || null,
     };
@@ -509,7 +519,7 @@ export function createChromeLink({
         if (!reply) break;
         const entry = pending.get(reply.re);
         if (entry) entry.resolve(interpret(entry.kind, reply));
-        else broadcast({ t: 'reply', reply }); // another window's request
+        else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
         break;
       }
       case 'hello':
@@ -617,15 +627,53 @@ export function createChromeLink({
           resolve(value);
         },
       };
-      entry.timer = later(() => entry.resolve({ ok: false, reason: 'offline' }), REPLY_TIMEOUT_MS);
+      // Given up on: its reply may still come (the relay keeps the request for 2 minutes), so it is remembered.
+      const giveUp = () => {
+        if (pending.get(envelope.id) !== entry) return;
+        gaveUp(envelope.id, kind);
+        entry.resolve({ ok: false, reason: 'offline' });
+      };
+      entry.timer = later(giveUp, REPLY_TIMEOUT_MS);
       pending.set(envelope.id, entry);
       post(rec, envelope).then(
         (r) => {
-          if (!r.ok) entry.resolve({ ok: false, reason: 'offline' });
+          if (!r.ok) giveUp();
         },
-        () => entry.resolve({ ok: false, reason: 'offline' }),
+        () => giveUp(),
       );
     });
+  }
+
+  function gaveUp(id, kind) {
+    if (kind !== 'start' && kind !== 'open' && kind !== 'answer') return;
+    const t = now();
+    for (const [k, v] of Array.from(late)) if (v.until <= t) late.delete(k);
+    late.set(id, { kind, until: t + LATE_WATCH_MS });
+    while (late.size > 64) late.delete(late.keys().next().value);
+  }
+
+  /**
+   * A reply to a request this window gave up on (D5): true when it was one. A late ok for a start means a task
+   * runs that the owner was told never started: it is stopped at once and the owner is told. A late ok for an open
+   * or an answer is only noted; a late refusal changes nothing.
+   */
+  function lateReply(reply) {
+    const entry = late.get(reply.re);
+    if (!entry) return false;
+    late.delete(reply.re);
+    if (entry.until <= now() || !reply.ok) return true;
+    if (entry.kind === 'start') {
+      request('stop', {}, { needOnline: false });
+      try {
+        notice({ kind: 'late-start', line: LATE_START_LINE });
+      } catch {
+        /* the app's own trouble */
+      }
+    } else {
+      lateNoted += 1;
+    }
+    changed();
+    return true;
   }
 
   function interpret(kind, reply) {
@@ -826,6 +874,7 @@ export function createChromeLink({
       const reply = cleanReply(m.reply);
       const entry = reply && pending.get(reply.re);
       if (entry) entry.resolve(interpret(entry.kind, reply));
+      else if (reply) lateReply(reply);
     } else if (m.t === 'state' && !holding) {
       task = isObj(m.task) ? cleanTask(m.task) : null;
       voiceApprovals = m.voiceApprovals === true;
@@ -1009,11 +1058,12 @@ export function createChromeLink({
 }
 
 /**
- * app.js (part 2): one call. Returns { api: app.chromeLink, control: for Settings, destroy }.
- *   getSettings: platform/settings.js getSettings (the home base's address).
+ * app.js: one call. Returns { api: app.chromeLink, control: for Settings, destroy }.
+ *   getSettings: platform/settings.js getSettings (the home base's address); notice({ kind, line }): see above.
  */
-export function installChromeLink({ getSettings, version } = {}) {
+export function installChromeLink({ getSettings, version, notice } = {}) {
   return createChromeLink({
+    ...(typeof notice === 'function' ? { notice } : {}),
     getHomeBase: () => {
       try {
         return (getSettings && getSettings().homeBaseUrl) || '';
