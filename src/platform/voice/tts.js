@@ -368,8 +368,9 @@ let pausesWhenHidden = true; // v8.1: false on a computer, where speech goes on 
  * iPhone or iPad: hidden time doesn't count. False on a computer: it counts, like visible time.
  */
 export function setPausesWhenHidden(on) {
-  vnow(); // the time so far counts under the old rule
+  vnow(); // the time so far counts under the old rule ...
   pausesWhenHidden = on !== false;
+  clock.hidden = pausedHidden(); // ... and from now on under the new one
 }
 
 /** The page is hidden, and speech pauses there (an iPhone). */
