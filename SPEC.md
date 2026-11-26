@@ -4164,7 +4164,7 @@ missed.) No Web Locks (or a request that throws): `unsupported`, as before.
 **Standby at launch** (A11, SHOULD; u1 gap 4). Setting `standbyAtLaunch` (`''` automatic, `'on'`, `'off'`; Settings →
 Voice → Wake Jarvis → **Open Standby when Jarvis starts (Mac)**, computers only): on a computer, set up, not the demo,
 `'on'` or automatic with "Hey Jarvis" on (`wakeWord`), the boot opens Standby (`enterStandby({ again: true })`) after
-the onboarding check. Standby's `needsClick()` dep: not a phone, `navigator.userActivation.hasBeenActive` false, and
+the onboarding check, unless the address asks for something else (`?optics=1`, `?homebase=…` from a notification). Standby's `needsClick()` dep: not a phone, `navigator.userActivation.hasBeenActive` false, and
 George can't speak without a click (`georgeWithoutClick()`: his voice, the home base's or this Mac's, on and ready,
 and Jarvis installed, `isStandalone()`). While it holds, the state line says **CLICK ONCE SO JARVIS CAN SPEAK**. The
 line is asked once per opening when Standby renders (Chrome makes the page active before the click or key reaches
