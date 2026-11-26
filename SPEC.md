@@ -4349,9 +4349,12 @@ through `sayable()`, and nothing in it is ever routed as the owner's words.
 | `chrome-status` | destination | all | "what are you doing in Chrome?", "what's Chrome doing", "is Chrome done yet" → the latest step (free) |
 | `chrome-answer` | destination | all | a reserved yes that names Chrome ("allow once in Chrome", "spend more in Chrome", "more steps in Chrome") with no Chrome prompt open → "Chrome isn’t asking anything right now." (free); with a prompt's card waiting where no voice can answer it → "Chrome’s question is on its card: tap its button to answer." Never a task, never an answer |
 
-`chrome-task` comes before `chrome.open` (G1) in the destination layer (the lead's D1); each declines the other's
-sentences (`chrome-task` declines what opening takes: "pull this up in Chrome", "look it up in Chrome", "open the
-second link", "search for … in Chrome", "google …", "open YouTube in Chrome", "go to amazon.com", "… in a new tab").
+`chrome-task` comes before `chrome-open` (G1) in the destination layer (the lead's D1); each declines the other's
+sentences (`chrome-task` declines what opening takes: "pull this up in Chrome", "look it up in Chrome", "search for …
+in Chrome", "google …", "open YouTube in Chrome", "go to amazon.com", "… in a new tab", and "open the second link"
+when the newest reply has links, `state.reply.links`). With no links in the newest reply, "open the second link",
+"open link 3" or "follow the link" is a link on the page: a task in a Chrome context or with "in Chrome" (D1),
+otherwise Claude's.
 
 **32.3.2 Which sentences are tasks** (`matchChromeTask(text, state)`, owner question 4's default):
 - **Any time:** a carrier anchored at either end: "in (Google) Chrome, …" / "… in (Google) Chrome" (also "on

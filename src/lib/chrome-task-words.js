@@ -244,6 +244,9 @@ const OPEN_THIS =
 const OPEN_LINK = /^(?:open|pull up|bring up|show me|go to|load)(?: up)? (?:the )?(?:(?:first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|top) )?(?:link|links|source|sources|website|site)(?: \d+)?$|^open link \d+$/;
 const OPEN_SEARCH = /^(?:google|search(?: on)? google for|look (?:on )?google for|search(?: for)?|look up) (?!(?:it|this|that)$)\S|^(?:search|look) .+ up$/;
 const OPEN_SITE = /^(?:open|go to|pull up|bring up|load|take me to|show me)(?: up)? (?!(?:it|this|that)$)\S/;
+// "Open the second link", "follow the link", "open link 3": the newest reply's link when it has links (G1);
+// with none, a link on the page, a task's (lead decision D1, as the windows builder's LINK_RE leaves it).
+const LINK_WORDS = /^(?:open|pull up|bring up|show me|go to|load|follow|visit)(?: up)? (?:the )?(?:(?:first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|top) )?(?:link|source)(?: (?:number )?(?:\d|one|two|three|four|five))?$|^open link \d+$/;
 // Words that make it more than opening: an action on the page, or the page itself.
 const ACTION = new RegExp(
   '(?:^|\\s)(?:(?:and|then|and then) (?:add|click|compare|pick|choose|select|buy|order|sort|filter|scroll|tell me|read|check|show me|find|open|put|' +
@@ -253,6 +256,14 @@ const ACTION = new RegExp(
 
 // "Open that in a new tab", "put it in another tab": a tab of the owner's (G1).
 const IN_A_TAB = /^(?:pull|bring|put|open|show|load|get)(?: up)? (?:this|that|it|the \S+(?: \S+)?)(?: up)? (?:in|into|on) (?:a |another |a new |new )?tab$/;
+
+/** How many links the newest reply has (the router's state.reply.links: a list, or a count). */
+function replyLinkCount(state) {
+  const links = state && state.reply ? state.reply.links : null;
+  if (Array.isArray(links)) return links.length;
+  const n = Number(links);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 function isOpening(s, carrier) {
   if (OPEN_THIS.test(s) || OPEN_LINK.test(s) || IN_A_TAB.test(s)) return true;
@@ -323,10 +334,12 @@ export function matchChromeTask(text, state = {}) {
   if (holo && holo.open && namesPart(p.all, holo.parts)) return null;
   if (matchClickAround(text) || matchChromeStatus(text) || ANSWER_WORDS.test(s)) return null;
   if (QUESTION.test(s) && !PAGE_WORDS.test(s)) return null; // R4
-  if (isOpening(s, p.carrier)) return null; // G1 opens it (free)
+  // A link with no links in the newest reply is one on the page: never G1's then (D1).
+  const pageLink = LINK_WORDS.test(s) && !replyLinkCount(st);
+  if (!pageLink && isOpening(s, p.carrier)) return null; // G1 opens it (free)
   let via = null;
   if (p.carrier) via = 'carrier';
-  else if (inChromeContext(st) && pageBound(s)) via = 'context';
+  else if (inChromeContext(st) && (pageLink || pageBound(s))) via = 'context';
   if (!via) return null;
   const words = taskWords(p.words);
   if (words.split(' ').length < 2 && !/^scroll\b/.test(s)) return null;

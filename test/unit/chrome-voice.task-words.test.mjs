@@ -30,6 +30,9 @@ const none = { now: NOW, chrome: { linked: true, online: true, task: null, conte
 const ctx = { now: NOW, chrome: { linked: true, online: true, task: null, contextUntil: NOW + 60000 } };
 const afterTask = { now: NOW, chrome: { linked: true, online: true, task: { id: 't1', status: 'done', text: 'find a 4K monitor' }, contextUntil: NOW + 60000 } };
 const running = { now: NOW, chrome: { linked: true, online: true, task: { id: 't1', status: 'running' }, contextUntil: 0 } };
+// The newest reply has links (the router's state.reply.links): "open the second link" is then G1's (lead decision D1).
+const LINKS = { reply: { links: [{ url: 'https://example.com/monitors', title: 'Monitors' }, { url: 'https://example.org/review', title: 'A review' }] } };
+const withLinks = (st) => ({ ...st, ...LINKS });
 const taskText = (s, st) => {
   const r = matchChromeTask(s, st);
   return r ? r.text : null;
@@ -79,15 +82,22 @@ const DRAFT_NOT_TASKS = [
 const DRAFT_TASKS = ['pick the cheaper one', 'sort by price', 'scroll down'];
 
 test('the critique probe: its 8 free commands and 12 ordinary sentences never become tasks, in a Chrome context or not', () => {
+  // As in the probe, the newest reply has the links its "open the first link" opens.
   for (const s of [...PROBE_COMMANDS, ...PROBE_SENTENCES]) {
     for (const [name, st] of [['none', none], ['context', ctx], ['after a task', afterTask], ['running', running]]) {
-      assert.equal(matchChromeTask(s, st), null, `${name}: ${s}`);
+      assert.equal(matchChromeTask(s, withLinks(st)), null, `${name}: ${s}`);
+    }
+  }
+  for (const s of PROBE_SENTENCES) {
+    for (const [name, st] of [['none', none], ['context', ctx], ['after a task', afterTask], ['running', running]]) {
+      assert.equal(matchChromeTask(s, st), null, `${name}, no reply links: ${s}`);
     }
   }
 });
 
 test('the probe\'s draft commands in a Chrome context: Jarvis\'s own stay his; only page-bound words go to Chrome', () => {
-  for (const s of DRAFT_NOT_TASKS) assert.equal(matchChromeTask(s, ctx), null, s);
+  // (After "pull this up in Chrome" opened one of the newest reply's links: the reply has links.)
+  for (const s of DRAFT_NOT_TASKS) assert.equal(matchChromeTask(s, withLinks(ctx)), null, s);
   for (const s of DRAFT_TASKS) {
     assert.ok(matchChromeTask(s, ctx), `in context: ${s}`);
     assert.equal(matchChromeTask(s, none), null, `no context: ${s}`);
@@ -150,8 +160,20 @@ test('opening a page is G1\'s (free, no task): "pull this up", links, searches, 
     'go to amazon.com',
     'open bestbuy.com',
   ]) {
-    assert.equal(matchChromeTask(s, none), null, `none: ${s}`);
-    assert.equal(matchChromeTask(s, ctx), null, `context: ${s}`);
+    assert.equal(matchChromeTask(s, withLinks(none)), null, `none: ${s}`);
+    assert.equal(matchChromeTask(s, withLinks(ctx)), null, `context: ${s}`);
+  }
+  // "Open the Nth link" is the reply's link only when the newest reply has links (D1). With none, it is a
+  // link on the page: a task in a Chrome context or with "in Chrome", else Claude's (null here).
+  for (const s of ['open the second link', 'open the first link', 'open link 3', 'follow the link']) {
+    assert.equal(taskText(s, ctx), s, `context, no reply links: ${s}`);
+    assert.equal(matchChromeTask(s, ctx).via, 'context');
+    assert.equal(matchChromeTask(s, none), null, `no context: ${s}`);
+    assert.equal(matchChromeTask(s, withLinks(ctx)), null, `the reply's link: ${s}`);
+  }
+  assert.equal(taskText('open the second link in Chrome', none), 'open the second link', 'no reply links: "in Chrome" makes it a task');
+  for (const s of ['pull this up in Chrome', 'open youtube in Chrome', 'google usb c chargers', 'open that in a new tab']) {
+    assert.equal(matchChromeTask(s, ctx), null, `G1's with or without reply links: ${s}`);
   }
   // With an action or a thing on the page, it is a task; so is "find …" (not one of G1's searches).
   assert.equal(taskText('find a 4K monitor and add it to the cart in Chrome', none), 'find a 4K monitor and add it to the cart');
