@@ -27,7 +27,7 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText, isOpticsOpenRequest } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest, normalizeOpticsText, isOpticsOpenRequest, matchOpticsClosedWords } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
 import { LAYERS, FINAL_ORDER, MAX_WORDS, isQuestion, isBareNo, isStopWord, askedLast } from './command-order.js';
 
@@ -48,7 +48,11 @@ export const SURFACES = Object.freeze(['voice', 'chat', 'hologram', 'optics']);
  *   prompt         the standing prompt (Jarvis for Chrome): { id, answers: [{ id, words, check, negative }],
  *                  askedAt } | null (an answer with `negative` is what a bare "cancel" or "no" means)
  *   replying       Voice Mode's own reply is streaming (words wait for it: a hologram building)
- *   running        a turn of the open chat runs: an answer, a mission, a Look's answer ("stop" stops it)
+ *   running        a turn runs in this window, in the open chat or another: an answer, a mission, a Look's
+ *                  answer ("stop" stops them all)
+ *   runningElsewhere  another Jarvis window runs a turn ("stop" says where: it can't be stopped here)
+ *   researchOffer  the research offer's card in Optics: { choices: [{ id, label, words, dear }] } | null (its answers
+ *                  in Optics' field: src/ui/commands/optics.js optics-research-field)
  *   tour           { active, atChoice, choices, stepId } | null                       (Track 2)
  *   hologram       the viewer on screen: { open, inWindow, parts: [{ id, name, aka }], selected } | null
  *   blueprintOpen  a blueprint sheet is on screen
@@ -75,6 +79,8 @@ export function emptyState(surface = 'voice') {
     prompt: null,
     replying: false,
     running: false,
+    runningElsewhere: false,
+    researchOffer: null,
     tour: null,
     hologram: null,
     blueprintOpen: false,
@@ -317,8 +323,8 @@ export function createRouter({ order = FINAL_ORDER, wordCap = order === TODAY_OR
 export const REOPEN_ACTIONS = Object.freeze(new Set(['explode', 'collapse', 'select', 'focus', 'isolate', 'labels-on', 'labels-off', 'view', 'parts-list', 'photos', 'show-all', 'zoom-in', 'zoom-out', 'rotate', 'blueprint']));
 
 const opticsOnTop = (s) => !!(s.optics && s.optics.open) && !s.hologram && !s.blueprintOpen;
-// "My camera", "my webcam": the owner's own camera, never a hologram's camera part (R10's "my …", ROUTING-7).
-const MY_CAMERA = /\bmy (?:camera|webcam|web cam|cam)\b/i;
+// "My screen", "my camera": the owner's own, never a hologram's part (R10's "my …": ROUTING-7, ROUTING-R2-8).
+const MY_THING = /\bmy (?:screen|display|monitor|camera|webcam|web cam|cam)\b/i;
 
 /** A hologram command for the parts given (or one that needs a part: "isolate it"). */
 function partsCommand(text, parts, selected) {
@@ -500,18 +506,21 @@ const TODAY_COMMANDS = [
     },
   },
   // The hologram's commands: on screen, or (Voice Mode) the one shown last, which opens again for them.
-  // R10's "my …": "open my camera" said in Voice Mode opens Optics (optics-open), not the camera part.
+  // R10's "my …": "show my screen", "open my camera" are the owner's, never a part (ROUTING-7, ROUTING-R2-8). The
+  // one shown last opens again only for a command about it: not for E2's camera words (Optics opens), Optics' own
+  // words with Optics closed ("expand the picture": MONEY-7's line) nor a question (R4): ROUTING-R2-7.
   {
     id: 'hologram',
     layer: 'top',
     surfaces: ['voice', 'hologram'],
     match: (text, s) => {
       if (s.surface === 'voice' && opticsOnTop(s)) return null;
-      if (s.surface === 'voice' && MY_CAMERA.test(String(text || '')) && isOpticsOpenRequest(text)) return null;
+      if (MY_THING.test(String(text || ''))) return null;
       if (s.hologram && s.hologram.open) return partsCommand(text, s.hologram.parts, s.hologram.selected);
       if (s.surface !== 'voice' || s.blueprintOpen) return null;
       const last = s.reply && s.reply.hologram;
       if (!last || !Array.isArray(last.parts) || !last.parts.length) return null;
+      if (isOpticsOpenRequest(text) || isQuestion(text) || matchOpticsClosedWords(text)) return null;
       const cmd = matchHologramCommand(String(text || ''), last.parts, {});
       return cmd && REOPEN_ACTIONS.has(cmd.action) ? { do: 'hologram', command: cmd, reopen: true, free: cmd.action !== 'blueprint' } : null;
     },
@@ -549,6 +558,18 @@ const PHASE0 = {
       if (!cmd) return null;
       if (s.surface === 'optics' && s.via === 'typed' && !(cmd.action === 'liveview' || (cmd.action === 'watch' && !cmd.on))) return null;
       return opticsAction(cmd);
+    },
+  },
+  // Before R10's "my …" and the reopen's guards (ROUTING-7, ROUTING-R2-7, ROUTING-R2-8).
+  hologram: {
+    match: (text, s) => {
+      if (s.surface === 'voice' && opticsOnTop(s)) return null;
+      if (s.hologram && s.hologram.open) return partsCommand(text, s.hologram.parts, s.hologram.selected);
+      if (s.surface !== 'voice' || s.blueprintOpen) return null;
+      const last = s.reply && s.reply.hologram;
+      if (!last || !Array.isArray(last.parts) || !last.parts.length) return null;
+      const cmd = matchHologramCommand(String(text || ''), last.parts, {});
+      return cmd && REOPEN_ACTIONS.has(cmd.action) ? { do: 'hologram', command: cmd, reopen: true, free: cmd.action !== 'blueprint' } : null;
     },
   },
 };

@@ -146,10 +146,14 @@ export function isQuestion(text) {
 // ---------------------------------------------------------------------------------------------
 // The answer layer (2): which open question a bare "cancel" or "no" answers
 
-const BARE_NO = /^(?:no|nope|nah|cancel|cancel (?:it|that|this)|no thanks|no thank you|never ?mind|forget it|not now|dont|do not|dont do it|do not do it)$/;
+// A no, alone or emphatic ("no no no", "nope, nope"), with an optional tail ("no, cancel that", "no wait", "no,
+// never mind", "no, forget it", "no not now"), or a no-word alone ("cancel", "never mind"): ROUTING-R2-4. "Wait"
+// and "thanks" are a no only after one ("wait" alone is the tour's and the check's own word).
+const NO_ALONE = '(?:cancel(?: (?:it|that|this))?|never ?mind|forget it|not now|dont|do not|dont do it|do not do it)';
+const BARE_NO = new RegExp(`^(?:(?:no|nope|nah)(?: (?:no|nope|nah))*(?: (?:${NO_ALONE}|wait|thanks|thank you))?|${NO_ALONE})$`);
 const STOP_WORD = /^(?:(?:ok|okay|no|wait|oh) )?stop(?: (?:it|now|everything|stop|right there|right now))*$/;
 
-/** A bare "cancel" or "no" ("no thanks", "never mind"): it answers whatever was asked last. */
+/** A bare "cancel" or "no" ("no thanks", "never mind", "no no no", "no, cancel that"): it answers whatever was asked last. */
 export function isBareNo(text) {
   return BARE_NO.test(plain(text).replace(/(?: (?:please|jarvis|thanks|thank you))+$/, ''));
 }

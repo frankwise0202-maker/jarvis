@@ -141,6 +141,8 @@ export const NOT = Object.freeze([
   "what's this weekend's weather", "what's this morning's news", "what's this weekend looking like", 'what is this week looking like',
   // ROUTING-3: statements about a Google product, never a search for the words after "Google"
   "Google Home isn't responding", "Google Docs won't open", 'Google Maps keeps freezing', 'Google Meet has no sound',
+  // ROUTING-R2-6: the same said "in Chrome" or "on Google"
+  "Google Docs won't open in Chrome", "Google Home isn't responding in Chrome", 'Google Maps keeps crashing in Chrome', "Google Sheets won't save in Google Chrome",
   // command words inside questions
   'how do I open a new window in Chrome', 'how do I close all my Chrome tabs', 'can I open two windows side by side on a Mac',
   'what is the best webcam for streaming', 'why is my camera blurry', 'how do I switch cameras on Zoom',

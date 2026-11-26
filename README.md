@@ -285,7 +285,7 @@ Mode or Optics first.
 | | "send right away", "show me what you heard first" | The 2-second check, off or on |
 | | "use George", "use the Mac's voice" | Which voice speaks (George may need his one-time download first) |
 | Microphone and speaker | "which microphone are you using?", "is the speakerphone connected?" | Which microphone and speaker Jarvis uses (Mac) |
-| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped."). Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
+| Stop | "stop" | Stops whatever runs: a walkthrough pauses; Jarvis's answer or mission in any chat of this window (a Look's answer too), a Chrome task, Watch, the live view and a preview stop, and he says what stopped ("The answer is stopped.", "The answer in your other chat is stopped."). One running in another Jarvis window: he says so, to stop it there. Nothing running: "Okay." (With a hologram on screen and nothing running, it holds the model still.) |
 | Standby | "go to sleep", "standby", "good night" | Back to Standby, from anywhere (a hologram's field too) |
 | Chats | "new chat", "start a new chat" | A new chat (the old one stays in History) |
 | | "open history", "show me my history" | History |
@@ -302,7 +302,7 @@ Mode or Optics first.
 | | "what am I looking at?", "look at this", "take a picture", "look again", "new look" | A Look, about 3¢ |
 | | "video mode", "start live view" · "video mode off", "stop live view", "that's enough" | The live view on or off (its price: see What it costs). With Optics closed, "video mode off", "stop live view" and "stop watching" just say "The live view is off.", free |
 | | "expand the picture", "show the picture big", "back to live", "show the live video", "close the picture", "put the picture aside" | The picture and the live video, on a Mac (with no picture on screen: "There's no picture on screen.", free) |
-| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field; typed in the chat it is a question) |
+| | "research this", "look this up", "dig into this", "research this in the background", then "quick", "mission", "home base" or "cancel" | The price first; nothing is spent until you choose (in Voice Mode and Optics' field, where you can also type the way or tap it on the card; said to Optics' own microphone, "mission" and "home base" need that tap; typed in the chat it is a question) |
 | | "look at my screen" | A button to tap (your screen's share picker needs a tap), with a Look's price on it |
 | Holograms | "expand it", "show the battery", "front view", "labels off", "photos of the fan" | As before, free |
 | Walkthroughs | "walk me through it", "walk me through the battery" | A walkthrough of the hologram on screen, free |
@@ -326,7 +326,7 @@ Mode or Optics first.
   "There's nothing to go back to."), "expand this in a different window" makes a window rather than
   taking the hologram apart, and "open the camera" with a laptop hologram on screen selects its camera
   part ("Say 'open Optics' for your camera.").
-- **A bare "cancel" or "no"** answers whatever Jarvis asked last. "Approve" only ever answers Chrome,
+- **A bare "cancel" or "no"** (also "no no no", "no, cancel that", "no wait") answers whatever Jarvis asked last. "Approve" only ever answers Chrome,
   and "continue" never does.
 - **Long sentences are questions.** A command is a short whole sentence; more than about 18 words is a
   question for Jarvis, except what carries your own words on (a Chrome task, a song, research for the
@@ -623,7 +623,7 @@ Jarvis's home screen now tells you what is going on before you ask.
 - **While it plays**, say **next**, **back** (or "go back", "previous"), **repeat** ("say that
   again"), **wait** or **pause**, **continue**, **skip to the fan**, or **stop the tour** ("that's
   enough"). They act at once and cost nothing. **Back** shows and says the step before, then waits
-  there: say "back" again to go further back, or "next" to go on. Outside a walkthrough these words do what they did
+  there: say "back" again to go further back, "repeat" to hear it again, or "next" to go on. Outside a walkthrough these words do what they did
   before: "back" alone still turns the hologram to its back view.
 - **The walkthrough bar** under the hologram shows what Jarvis is saying, "3 of 8", **Back**,
   **Pause** (or **Play**), **Next** and **End**, and the choice buttons when he asks. On a Mac, ←
@@ -701,7 +701,8 @@ can drag across; on an iPhone (one screen) it opens full screen in the app.
   it back"**: the window you're in, otherwise the newest one. **"Close all windows"** closes every window;
   **"close everything"** also closes what is open in the main window (Voice Mode stays).
 - **Voice follows the hologram**: with it in a window, "explode it", "show the battery", "front view" or
-  "isolate it" happen in that window. Photos, blueprints and the parts list still open in the main window.
+  "isolate it" happen in that window, Optics open or not (with Optics open, its own words stay Optics': "close",
+  "expand it", "show me the camera"). Photos, blueprints and the parts list still open in the main window.
 - **"Do this in this window"** (or "show it here"): the window you're looking at, otherwise the main one; Jarvis
   says which, and that window is "it" from then on. "Show the report here" puts the report in it.
 - **"Show me the hologram window"** brings it to the front. **"Swap them"** swaps two windows' places;

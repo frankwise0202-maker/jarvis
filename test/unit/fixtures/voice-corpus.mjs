@@ -235,12 +235,39 @@ export const VOICE = {
     ['bring everything back', 'H0', 'hologram'],
     ['bring everything back', 'VW', 'screens'],
     ['go back', 'VH', 'hologram:hologram'],
+    // ROUTING-R2-4: every form of no answers whatever was asked last: the research offer (optics' VQ, as app.js asks
+    // it) and a walkthrough's decision (TD), never a paid question.
+    ...['VQ', 'TD'].flatMap((state) =>
+      ['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'no, forget it', 'no not now', 'nah nah'].map((words) => [words, state, 'question:answer']),
+    ),
+    // ROUTING-R2-8, R10's "my …": the owner's screen and camera are never a hologram's part, on screen (VH), in its field
+    // (H0) or shown last and closed (VLC): the words go where they go without the hologram.
+    ...['VH', 'H0', 'VLC'].flatMap((state) => ['show my screen', 'open my screen', 'is my screen on', 'is my camera on', 'show my display', 'show me my monitor'].map((words) => [words, state, null])),
+    // ROUTING-R2-7: a laptop hologram shown last and closed (VLC) doesn't open again for E2's camera words (Optics opens)
+    // or for a question (R4); it still does for a command about the model.
+    ['open the camera', 'VLC', 'optics-open'],
+    ['camera on', 'VLC', 'optics-open'],
+    ['show me the camera', 'VLC', 'optics-open'],
+    ['is the camera on', 'VLC', null],
+    ['what does the battery do', 'VLC', null],
+    ['expand it', 'VLC', 'hologram:hologram'],
+    ['show the battery', 'VLC', 'hologram:hologram'],
+    ['expand the picture', 'VLC', 'optics-idle'],
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',
     'read me the full story of Dune', 'exit the voice chat on discord', 'use George Foreman grill tips',
   ],
   states: {
+    // ROUTING-R2-7, R2-8: nothing on screen; a laptop hologram (a camera and a display among its parts) shown last over
+    // Voice Mode, closed, which can open again for a command about it.
+    VLC: {
+      surface: 'voice',
+      standby: { available: true, open: false },
+      camera: { supported: true, allowed: 'granted', ios: false },
+      voiceOpen: true,
+      reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }] } },
+    },
   },
 };
 
@@ -429,16 +456,16 @@ export const WINDOWS = {
     ['front view', 'WINH', 'windows-hologram'],
     ['labels off', 'WINH', 'windows-hologram'],
     ['make it bigger', 'WINH', 'windows-hologram'],
-    // ROUTING-10: Optics on top here (live, or the live view on) keeps its own words; the hologram's window takes
-    // only words that name the hologram. The same words do what they do without the window (VL, LV).
+    // ROUTING-10: Optics on top here (live, or the live view on) keeps its own words ("close", "expand it", "show me
+    // the camera"); ROUTING-R2-1: every other hologram command still acts in the window (D3), free.
     ...['WINHO', 'WINHV'].flatMap((state) => [
       ['close', state, 'optics'],
       ['close it', state, 'optics'],
       ['expand it', state, 'optics'],
       ['expand the picture', state, 'optics'],
       ['show me the camera', state, 'optics'],
-      ['look at the battery', state, null],
-      ['show the cooling fan', state, null],
+      ['look at the battery', state, 'windows-hologram'],
+      ['show the cooling fan', state, 'windows-hologram'],
       ['explode the hologram', state, 'windows-hologram'],
       ['show the cooling fan in the hologram', state, 'windows-hologram'],
     ]),
@@ -476,6 +503,30 @@ export const WINDOWS = {
     ['open the second link', 'V0', null],
     ['click the first link', 'WINL', null],
     ['open the first result', 'WINL', null],
+    // ROUTING-R2-1 (D3 with Optics open here, live or frozen, or the live view on): the hologram's own commands act in
+    // its window; only Optics' own words ("close", "close it", "expand it", "expand the picture", "show me the camera")
+    // stay Optics'.
+    ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
+      ['explode it', state, 'windows-hologram:windows-hologram'],
+      ['show the battery', state, 'windows-hologram'],
+      ['rotate it', state, 'windows-hologram'],
+      ['zoom in', state, 'windows-hologram'],
+      ['isolate the fan', state, 'windows-hologram'],
+      ['select the keyboard', state, 'windows-hologram'],
+      ['labels on', state, 'windows-hologram'],
+      ['focus on the battery', state, 'windows-hologram'],
+      ['close the hologram', state, 'windows-hologram'],
+      ['close', state, 'optics'],
+      ['close it', state, 'optics'],
+      ['expand it', state, 'optics'],
+      ['expand the picture', state, 'optics'],
+      ['show me the camera', state, 'optics'],
+    ]),
+    // MISSED-R2V-2: everyday searches that start with a Google product's word stay searches (of exactly those words:
+    // test/unit/screens.chrome.test.mjs), never a paid question.
+    ['google TV shows like Breaking Bad', 'V0', 'chrome-open:chrome-open'],
+    ['google home remedies for a cold', 'V0', 'chrome-open:chrome-open'],
+    ['google TV shows like Breaking Bad in Chrome', 'C0', 'chrome-open:chrome-open'],
   ],
   not: [
     'put them side by side in the photo',
@@ -495,6 +546,8 @@ export const WINDOWS = {
     // ROUTING-10: Optics open here (live; the live view on) and the hologram in its own window.
     WINHO: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null } },
     WINHV: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'live', liveView: true, card: null, cameraAllowed: 'granted', sceneChanged: null } },
+    // ROUTING-R2-1: the same with a Look frozen in Optics.
+    WINHF: { surface: 'voice', windows: [WIN_TWO[1]], optics: { open: true, mode: 'frozen', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null } },
     WINL: { surface: 'voice', reply: { links: WIN_LINKS, hologram: null } },
     WINC: { surface: 'chat', via: 'typed', windows: WIN_TWO },
   },
@@ -532,11 +585,12 @@ export const OPTICS = {
     ['camera on', 'H0', 'optics-camera-part'],
     ['open optics', 'VH', 'optics-open'],
     // ROUTING-7, R10's "my …": "open my camera" said over a hologram is the owner's camera (Optics), not the part.
-    // Typed in the hologram's field (no "open optics" there) it stays the part, with the hint.
+    // ROUTING-R2-8: typed in the hologram's field too it is no part: a question for Jarvis ("open optics" isn't a
+    // command there either).
     ['open my camera', 'VH', 'optics-open'],
     ['show me my camera', 'VH', 'optics-open'],
     ['open my webcam', 'VH', 'optics-open'],
-    ['open my camera', 'H0', 'optics-camera-part'],
+    ['open my camera', 'H0', null],
     ['close the camera', 'V0', 'optics-close'],
     ['camera off', 'OC0', 'optics-close'],
     ['close the camera', 'VL', 'optics'],
@@ -590,6 +644,20 @@ export const OPTICS = {
     ['look here', 'VL', 'optics'],
     ['look at this', 'VL', 'optics'],
     ['take a look at this', 'VF', 'optics'],
+    // ROUTING-R2-10: the research offer's answers in Optics' field while its card is up: typed, any of its ways (as the
+    // card's buttons); said to Optics' microphone, the cheap ones act and a dear one asks for the card's tap (it has no
+    // 2-second check there). Other words stay the Look's question.
+    ['mission', 'OTQ', 'optics-research-field:research-answer'],
+    ['quick', 'OTQ', 'optics-research-field:research-answer'],
+    ['home base', 'OTQ', 'optics-research-field:research-answer'],
+    ['cancel', 'OTQ', 'optics-research-field:research-answer'],
+    ["let's do the mission", 'OTQ', 'optics-research-field:research-answer'],
+    ['quick', 'OVQ', 'optics-research-field:research-answer'],
+    ['cancel', 'OVQ', 'optics-research-field:research-answer'],
+    ['mission', 'OVQ', 'optics-research-field:research-tap'],
+    ['the home base', 'OVQ', 'optics-research-field:research-tap'],
+    ['what is this mug made of', 'OTQ', null],
+    ['mission', 'OPT', null],
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
@@ -625,6 +693,9 @@ export const OPTICS = {
       voiceOpen: true,
       questions: [{ id: 'research-offer', say: 'Research this USB-C charger? …', choices: RESEARCH_CHOICES, match: (text) => (/^(?:quick|quick answer|the quick one|cancel|no|never mind)$/i.test(String(text).trim()) ? (/^(?:cancel|no|never mind)$/i.test(String(text).trim()) ? 'cancel' : 'quick') : null), check: false }],
     },
+    // ROUTING-R2-10: Optics' field, typed (OTQ) or by its microphone (OVQ), with the research offer's card up.
+    OTQ: { surface: 'optics', via: 'typed', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
+    OVQ: { surface: 'optics', via: 'voice', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
   },
 };
 

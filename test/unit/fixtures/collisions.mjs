@@ -207,6 +207,13 @@ export const VOICE = {
       r('this one', s, 'optics', 'a Look of the scene now (by design)'),
       r('is this ripe', s, 'optics', 'a question about "this" with the camera on is a Look (by design)'),
     ]),
+    // ROUTING-R2-4: the emphatic no's are bare no's: with Chrome's question asked last (H4) they are its no, as "no" is
+    // (voice's prompt entry first; chrome-voice's chrome-prompt says the same).
+    ...['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'nah nah', 'no no'].map((w) => r(w, 'H4', 'prompt', 'asked last: the prompt (its no)')),
+    // ROUTING-R2-7: the laptop shown last and closed (VLC) still opens again for a command about the model.
+    r('open the hologram of the battery', 'VLC', 'hologram', 'opens the laptop again on its battery (free, undoable)'),
+    r('expand this in a different window', 'VLC', 'screens', 'a window (C3), as with nothing shown last'),
+    r('bring everything back', 'VLC', 'screens', "Screens' words with no hologram on screen, as in V0"),
   ],
 };
 
@@ -312,6 +319,25 @@ export const WINDOWS = {
     { words: 'open the first result', state: 'V0', winner: null, why: 'A page object with no Chrome context: a question for Jarvis.' },
     { words: 'open the cheapest one in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
     { words: 'open the second result in Chrome', state: 'WINL', winner: 'chrome-task', why: 'A page object "in Chrome": a Chrome task, even when the reply has links.' },
+    // ROUTING-R2-1: with Optics open here, the hologram's window takes what it takes without Optics (D3), Optics' own
+    // words aside: "stop that" holds the model in its window still, as in WIN2 and WINH.
+    ...['WINHO', 'WINHV', 'WINHF'].map((state) => ({ words: 'stop that', state, winner: 'windows-hologram', why: 'Holds the model in its window still (free, undoable), as without Optics (D3).' })),
+    // WINHF (a Look frozen in Optics) as WINHO: it names the hologram.
+    { words: 'open the hologram of the battery', state: 'WINHF', winner: 'windows-hologram', why: 'It names the hologram: the battery part in its window (free, undoable), Optics open or not.' },
+    // The layers in order, as in WIN2 and WINH: "stop" first, then the windows' own words, then the hologram's.
+    ...['WINHO', 'WINHV', 'WINHF'].flatMap((state) => [
+      { words: 'stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'okay stop', state, winner: 'stop', why: 'Stop comes first, as with the hologram in the main window.' },
+      { words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), never the explode of the hologram in its window.' },
+      { words: 'bring everything back', state, winner: 'screens', why: 'Windows are open: they come back (as in VHW), not every part shown.' },
+    ]),
+    // WINHF as WINHO and WINHV for the words Optics and the windows share (the same winners as in VF).
+    { words: "that's enough", state: 'WINHF', winner: 'optics', why: "Optics' live view words come first while it is on top (v8.0), as in VF." },
+    { words: "what's on my screen", state: 'WINHF', winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in VF." },
+    { words: 'close that window', state: 'WINHF', winner: 'windows', why: 'The window with the focus, else the newest; not every window.' },
+    { words: 'do this in this window', state: 'WINHF', winner: 'windows', why: 'The owner picks the window to work in, even with the camera open.' },
+    { words: 'show me the hologram window', state: 'WINHF', winner: 'windows', why: 'Bring the hologram window to the front; not a question about the camera picture.' },
+    { words: 'put the picture to the side', state: 'WINHF', winner: 'screens', why: 'No Look card on screen: a Screens float, as in VF.' },
   ],
 };
 
@@ -325,8 +351,7 @@ export const OPTICS = {
     { words: 'camera on', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'VH', winner: 'optics-camera-part', why: 'A laptop hologram is on screen: its camera part, with the hint for Optics.' },
     { words: 'open the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
-    // ROUTING-7: "my camera" typed in the hologram's field stays its camera part with the hint (no "open optics" there).
-    ...['open my camera', 'show me my camera', 'open my webcam'].map((words) => ({ words, state: 'H0', winner: 'optics-camera-part', why: "Typed in the hologram's field: its camera part, with the hint for Optics." })),
+
     { words: 'camera on', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'show me the camera', state: 'H0', winner: 'optics-camera-part', why: 'Typed in the hologram\'s field: its camera part, with the hint for Optics.' },
     { words: 'open optics', state: 'VH', winner: 'optics-open', why: '"Open Optics" always opens Optics, a hologram on screen or not.' },
@@ -341,6 +366,11 @@ export const OPTICS = {
     { words: 'put the picture to the side', state: 'OPA', winner: 'optics-card', why: 'A Look is on screen: back into its card, not a Screens float.' },
     { words: 'close the picture', state: 'OPA', winner: 'optics-card', why: 'The card goes; the camera stays on.' },
     { words: 'put the picture to the side', state: 'OPT', winner: 'optics-card', why: 'Typed with a Look on screen: back into its card.' },
+    // ROUTING-R2-10: Optics' microphone with the research offer's card up (OVQ) is OV for everything but the offer's words.
+    { words: "what's on my screen", state: 'OVQ', winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in OV." },
+    { words: 'do this in this window', state: 'OVQ', winner: 'windows', why: 'The owner picks the window to work in, as in OV.' },
+    { words: 'show me the hologram window', state: 'OVQ', winner: 'windows', why: 'Bring the hologram window to the front, as in OV.' },
+    { words: 'put the picture to the side', state: 'OVQ', winner: 'screens', why: 'No Look on screen: a Screens float, as in OV.' },
   ],
 };
 

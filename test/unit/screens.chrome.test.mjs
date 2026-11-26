@@ -26,7 +26,8 @@ test('ROUTING-3: a sentence about a Google product is no search; "google stock p
   // A search whose subject is Google itself keeps the word.
   assert.deepEqual(target('google stock price'), { kind: 'search', query: 'google stock price', where: 'auto', check: true });
   assert.deepEqual(target('google earnings today'), { kind: 'search', query: 'google earnings today', where: 'auto', check: true });
-  assert.deepEqual(target('google home depot hours'), { kind: 'search', query: 'google home depot hours', where: 'auto', check: true });
+  // (MISSED-R2V-2: a product word with more than a short attribute is an everyday search: "home depot hours".)
+  assert.deepEqual(target('google home depot hours'), { kind: 'search', query: 'home depot hours', where: 'auto', check: true });
   // Unchanged: a plain search, a question searched, Google Maps opened.
   assert.deepEqual(target('google USB-C chargers'), { kind: 'search', query: 'usb-c chargers', where: 'auto', check: true });
   assert.deepEqual(target('google how do I reset Google Home'), { kind: 'search', query: 'how do i reset google home', where: 'auto', check: true });
@@ -253,4 +254,36 @@ test('what Jarvis says', () => {
   assert.equal(chromeLine({ status: 'error', why: 'files on this computer are off limits' }), 'I can’t open that address: files on this computer are off limits.');
   assert.equal(chromeLine({ status: 'closed', count: 1 }), 'Closed the tab.');
   assert.equal(chromeLine({ status: 'closed', count: 0 }), 'I can only close a tab I opened.');
+});
+
+test('ROUTING-R2-6, MISSED-R2V-2: "google … in Chrome" and "… on Google" get the product test; everyday searches keep their words', () => {
+  // A statement about a Google product, said with "in Chrome": Jarvis, never a search for the words after "Google".
+  for (const t of ["Google Docs won't open in Chrome", "Google Home isn't responding in Chrome", 'Google Maps keeps crashing in Chrome', "Google Sheets won't save in Google Chrome", "Google Docs won't open on Google"]) {
+    assert.equal(matchChromeCommand(t, NO_LINKS), null, t);
+  }
+  // Google itself is the subject: "google" stays in the query, in every form.
+  for (const t of ['google stock price', 'google stock price in Chrome', 'google stock price on Google']) {
+    assert.deepEqual(target(t), { kind: 'search', query: 'google stock price', where: 'auto', check: true }, t);
+  }
+  assert.deepEqual(target('google earnings today in Chrome'), { kind: 'search', query: 'google earnings today', where: 'auto', check: true });
+  // A product word with a short attribute is about the product.
+  assert.deepEqual(target('google drive storage'), { kind: 'search', query: 'google drive storage', where: 'auto', check: true });
+  assert.deepEqual(target('google play store'), { kind: 'search', query: 'google play store', where: 'auto', check: true });
+  // Everyday searches that start with a product word: exactly the words after "google", as in v8.1 before ROUTING-3.
+  for (const [t, q] of [
+    ['google TV shows like Breaking Bad', 'tv shows like breaking bad'],
+    ['google TV shows for kids', 'tv shows for kids'],
+    ['google home remedies for a cold', 'home remedies for a cold'],
+    ['google photos of the Eiffel Tower', 'photos of the eiffel tower'],
+    ['google play dough recipe', 'play dough recipe'],
+    ['google drive times to Boston', 'drive times to boston'],
+    ['google one way flights to Denver', 'one way flights to denver'],
+    ['google lens cleaning tips', 'lens cleaning tips'],
+    ['google keep warm tips', 'keep warm tips'],
+    ['google pay stubs template', 'pay stubs template'],
+    ['google voice actors in Shrek', 'voice actors in shrek'],
+    ['google TV shows like Breaking Bad in Chrome', 'tv shows like breaking bad'],
+  ]) {
+    assert.deepEqual(target(t), { kind: 'search', query: q, where: 'auto', check: true }, t);
+  }
 });

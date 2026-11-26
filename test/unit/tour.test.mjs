@@ -1294,3 +1294,43 @@ test('the router: what each tour word does to the viewer, and the line it says',
   assert.deepEqual(await run(picked, 'show it enclosed', HOLO_STATE({ hologram: { open: true, parts: LAPTOP_PARTS, selected: 'battery', title: '' } })), { say: "Here's the battery, enclosed." });
   assert.deepEqual(picked.calls.at(-1), ['showView', 'enclosed', 'battery']);
 });
+
+test('ROUTING-R2-9: "repeat" on a step "back" went to says that step again and waits there again', async () => {
+  const { clock, narr, asker, player } = setup();
+  await player.start();
+  await clock.tick(0);
+  narr.chunk(0);
+  narr.chunk(1);
+  narr.end();
+  await clock.tick(0);
+  asker.last().onAnswer('enclosed', { via: 'voice' });
+  const lines = narr.last().lines.length;
+  for (let i = 0; i < lines; i++) narr.chunk(i);
+  narr.end();
+  await clock.tick(0);
+  player.back();
+  narr.chunk(0);
+  narr.end();
+  await clock.tick(0);
+  assert.deepEqual([player.getState().stepId, player.getState().status], ['neighbours', 'waiting']);
+  // "Say that again" while it waits: that step alone, then it waits again (B5: "repeat" says the step again).
+  player.repeat();
+  assert.equal(narr.last().lines.length, 1, 'only that step is said');
+  assert.match(narr.last().lines[0], /^Next to it:/);
+  narr.chunk(0);
+  narr.end();
+  await clock.tick(0);
+  assert.deepEqual([player.getState().stepId, player.getState().status], ['neighbours', 'waiting']);
+  // Said while the step gone back to is being said: the same.
+  player.back();
+  assert.equal(player.getState().status, 'playing');
+  player.repeat();
+  assert.equal(narr.last().lines.length, 1);
+  narr.chunk(0);
+  narr.end();
+  await clock.tick(0);
+  assert.equal(player.getState().status, 'waiting');
+  // "next" goes on as before.
+  player.next();
+  assert.equal(player.getState().status, 'playing');
+});

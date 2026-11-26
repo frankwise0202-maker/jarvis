@@ -4920,9 +4920,13 @@ export async function startApp(rootEl) {
     }
     // ---- optics ◂
     // ---- fix-routing ▸ (REGRESS-2: what else a bare "stop" stops: the chat's turn, an answer, a mission or a
-    // Look's answer, as its Stop button does; and Optics' Watch)
-    s.running = currentRunning();
+    // Look's answer, as its Stop button does; and Optics' Watch. ROUTING-R2-3: every chat's run in this window, and
+    // whether another window runs one, which "stop" can only name)
+    s.running = state.runs.size > 0;
+    s.runningElsewhere = [...remoteRuns.values()].some((entry) => !entry.ending);
     if (s.optics) s.optics.watch = !!opticsLive.watch;
+    // ROUTING-R2-10: the research offer's card in Optics: its ways, for its answers typed or said in Optics' field.
+    s.researchOffer = researchAsk && researchAsk.card && researchAsk.offer ? { choices: safe(() => researchAsk.offer.choices.map((c) => ({ id: c.id, label: c.label, words: c.words, dear: !!c.dear })), []) } : null;
     // ---- fix-routing ◂
     // ---- chrome-relay ▸ (s.chrome)
     if (chromeLink) {
@@ -5210,10 +5214,18 @@ export async function startApp(rootEl) {
       },
       stopTarget: (target) => {
         switch (target) {
-          case 'answer':
-            // The chat's turn (an answer, a mission, a Look's answer), as its Stop button stops it (REGRESS-2).
-            safe(() => stop());
-            break;
+          case 'answer': {
+            // Every chat's turn in this window (an answer, a mission, a Look's answer), as each chat's Stop button
+            // stops it (REGRESS-2, ROUTING-R2-3): { here, other } for the line ("… in your other chat is stopped").
+            const openId = state.conv ? state.conv.id : null;
+            const did = { here: 0, other: 0 };
+            for (const [id, entry] of [...state.runs.entries()]) {
+              if (!entry || !entry.run || !safe(() => (entry.run.abort(), true), false)) continue;
+              if (id === openId) did.here += 1;
+              else did.other += 1;
+            }
+            return did;
+          }
           case 'watch': {
             const optics = currentOptics();
             if (optics) safe(() => optics.stopWatch());

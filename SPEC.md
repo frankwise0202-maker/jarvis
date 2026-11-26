@@ -2303,6 +2303,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     answers, at once; "mission" and "home base" are the router's `optics-research-answer` (answer layer,
     `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
     `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
+    While the card is up, its ways typed in Optics' field answer it as its buttons do (the router's
+    `optics-research-field`, from routerState's `researchOffer`); said to Optics' own microphone, "quick" and "cancel"
+    answer it and "mission" or "home base" get "Tap Mission on the card to start it." (no 2-second check there):
+    never a one-word question about the Look (ROUTING-R2-10).
     Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
     Voice Mode drops an open question when other words are routed, but not for an answer-layer entry's words: the
     offer stays open while "mission" waits in its check, so a correction there ("no, I said quick") still answers
@@ -4704,14 +4708,17 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
    and open Standby).
 2. The answers, from the best reading only: `prompt` (the Chrome prompt's reserved words), `question` (the top owner
    question: the blueprint question, a tour decision, the research offer), `reply-building` (words heard while Voice
-   Mode's reply builds a hologram wait for it). A bare "cancel" or "no" answers whichever was asked last: Voice Mode
+   Mode's reply builds a hologram wait for it). A bare "cancel" or "no" (`isBareNo`: emphatic forms too, "no no no",
+   "no, cancel that", "no wait", "nope, nope"; ROUTING-R2-4) answers whichever was asked last: Voice Mode
    stamps `askedAt` on the prompt and each question when it says them, and `askedLast(state)` compares; the prompt's
    no is its answer marked `negative`; a question without a choice for it is set aside (`dismissTop`, onExpire
    `'dismissed'`), so it never goes on to Claude. "Stop" is never an answer.
 3. `stop`: a bare "stop" ("okay stop", "stop it", "stop everything") stops everything that runs (`stopTargets`): the
-   tour pauses; the chat's turn (`state.running`: an answer, a research mission, a Look's answer; as its Stop button
-   does), a Chrome task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop,
-   and the line says what stopped. Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
+   tour pauses; every chat's turn in this window (`state.running`: an answer, a research mission, a Look's answer, in
+   the open chat or another; as each chat's Stop button does: "The answer in your other chat is stopped."), a Chrome
+   task, Optics' Watch (`state.optics.watch`), the live view, a music preview and Jarvis's voice stop, and the line
+   says what stopped. A turn another Jarvis window runs (`state.runningElsewhere`) can't be stopped here: "I'm still
+   answering in another window. Stop it there." Nothing running: "Okay." (never while a paid run goes on). With a hologram (or a
    blueprint over it) on top and nothing running it yields, and the viewer holds the model still (a blueprint sheet
    alone has no "stop": "Okay.").
 4. `destination`: `chrome-task` (a Jarvis for Chrome task, a carrier), `chrome-open` (a page in Chrome), `windows`,
@@ -4756,7 +4763,11 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   `check: false`, chrome-voice's spoken check).
 - R9: every local action says one short line, so a stolen sentence is noticed at once.
 - R10: inside a hologram its part names win, except "my …" and "Optics"; when a part takes camera words, Jarvis adds
-  "Say 'open Optics' for your camera." (`partHint`).
+  "Say 'open Optics' for your camera." (`partHint`). "My screen", "my display", "my monitor", "my camera", "my webcam"
+  and "my cam" are never a part, on screen, in the hologram's field or shown last (ROUTING-7, ROUTING-R2-8). The
+  hologram shown last over Voice Mode, closed, opens again only for a command about it: never for E2's camera words
+  ("open the camera": Optics opens), Optics' own words with Optics closed ("expand the picture") or a question
+  ("is the camera on?"): ROUTING-R2-7.
 
 **The app's words** (C2; every surface unless marked):
 | Words | Action | Line |
@@ -4778,7 +4789,7 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
 | "repeat that", "say that again" (Voice Mode) | `repeat` | the last answer (else the last line) / "I haven't said anything yet." |
 | "stop listening" (Voice Mode) | `mic-off` (mic) | "I've stopped listening. Tap me when you need me." / woken: back to Standby |
 | "exit Voice Mode" (Voice Mode) | `exit-voice` (mic, no undo) | "Closing Voice Mode.", then it closes |
-| "stop" | `stop`, `targets` | "Okay." / "The answer is stopped." / "The tour is paused and Chrome is stopping." / "Watch is off." |
+| "stop" | `stop`, `targets` | "Okay." / "The answer is stopped." / "The answer in your other chat is stopped." / "I'm still answering in another window. Stop it there." / "The tour is paused and Chrome is stopping." / "Watch is off." |
 
 A sheet opened by voice opens as its button does. From Voice Mode, Jarvis says the line, Voice Mode closes with the
 reason `'command'` and the sheet opens. A woken session isn't over for good then (MAC-2): Standby stays woken (its lock
@@ -4869,9 +4880,11 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   `parts-list`, or without BroadcastChannel: the app opens the hologram in the main window as before.
   `screens.shown(kind)` → `{ id, label, mode, kind, title, ref, parts, selected }`.
 - Routing: with no hologram or blueprint viewer open here, `windows-hologram` takes a hologram command for the window
-  showing one (the router's `windows` list carries its parts and selection). With Optics open here it takes only words
-  that name the hologram ("explode the hologram"): Optics keeps its own ("close", "expand it", "show me the camera") and
-  the rest go where they go without the window. Today's `hologram` matcher can still take
+  showing one (the router's `windows` list carries its parts and selection). With Optics open here (live, frozen or
+  with the live view on), Optics keeps the words it takes itself (`matchOpticsCommand` with its frozen state, and
+  "close", "close it": "expand it", "expand the picture", "show me the camera") unless they name the hologram ("close
+  the hologram"); every other hologram command still acts in the window, free ("explode it", "show the battery",
+  "rotate it"). Today's `hologram` matcher can still take
   it first through the hologram shown last over Voice Mode (`reply.hologram`); then app.js `voiceCommand` sends it to
   the window (`windowHologramCommand`) instead of opening the hologram here again. Its window closed by hand: the
   hologram comes back here, as before.
@@ -4918,9 +4931,12 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   - `this`: "pull/bring/put/open/show this|that|it (up) in|on (Google) Chrome / my browser / a new tab".
   - `link` `{ ordinal }`: "open the (second) link|source (in Chrome)", "open link 3" (1-5, last), only when the
     newest reply has links (`state.reply.links`; otherwise declined: a Chrome task's in a Chrome context).
-  - `search` `{ query }` (`check: true`): "google …" (not a statement about Google: "google is a company", nor about
-    one of its products: "Google Docs won't open"; a product or its stock keeps "google" in the query: "google stock
-    price"), "search
+  - `search` `{ query }` (`check: true`): "google …", also "google … in Chrome / on Google" (`googleQuery`: not a
+    statement about Google, "google is a company", nor about one of its products, a product word followed at most a
+    word on by a finite verb, "Google Docs won't open (in Chrome)"; Google itself as the subject keeps "google" in the
+    query, "google stock price", and so does a product word with at most a short attribute, "google drive storage";
+    any other search starting with a product's word is searched as said, "google TV shows like …" searches "tv shows
+    like …"), "search
     (for) … in Chrome / on Google", "look up … on Google", "search Google for …", "open <not a site> in Chrome".
     A query that goes on to act ("… and add it to the cart") is left to Jarvis for Chrome's tasks (`TASKISH`);
     "find" is not a search verb.

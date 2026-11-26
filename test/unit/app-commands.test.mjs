@@ -332,3 +332,23 @@ test('MONEY-8: "look at my screen" says a Look\'s own price, warm or cold (a new
   assert.equal(lookFirstLine(0.0257), 'Let me look first: about 3¢.');
   assert.equal(lookFirstLine(undefined), LOOK_FIRST_LINE);
 });
+
+test('ROUTING-R2-3: "stop" stops every run in this window and says which; a run in another window is said, never "Okay."', () => {
+  const s = (name, patch) => stateFor(name, patch);
+  // A mission runs in the chat the owner left (state.running: any run in this window).
+  assert.deepEqual(pick(matchStopWord('stop', s('C0', { running: true }))), { do: 'stop', targets: ['answer'] });
+  // What stopped, as the stop target says (here: the open chat's; other: the other chats' runs).
+  const line = (stopped, targets = ['answer']) => appCommandLine(act('stop', { targets }), { stopped });
+  assert.equal(line({ answer: { here: 1, other: 0 } }), 'The answer is stopped.');
+  assert.equal(line({ answer: { here: 0, other: 1 } }), 'The answer in your other chat is stopped.');
+  assert.equal(line({ answer: { here: 0, other: 2 } }), 'The answers in your other chats are stopped.');
+  assert.equal(line({ answer: { here: 1, other: 1 } }), 'The answers are stopped.');
+  assert.equal(line({ answer: { here: 0, other: 1 }, tour: undefined }, ['tour', 'answer']), 'The tour is paused and the answer in your other chat is stopped.');
+  // A run in another Jarvis window: this one can't stop it, so Jarvis says where it runs.
+  const there = s('C0', { runningElsewhere: true });
+  assert.deepEqual(pick(matchStopWord('stop', there)), { do: 'stop', targets: ['elsewhere'] });
+  assert.deepEqual(pick(matchStopWord('stop', s('VH', { runningElsewhere: true }))), { do: 'stop', targets: ['elsewhere'] }, 'not the hologram\'s hold-still while a paid run goes on');
+  assert.equal(appCommandLine(matchStopWord('stop', there)), "I'm still answering in another window. Stop it there.");
+  assert.equal(line({ answer: { here: 1, other: 0 } }, ['answer', 'elsewhere']), "The answer is stopped. I'm still answering in another window: stop it there.");
+  for (const t of ['answer', 'elsewhere']) assert.doesNotMatch(appCommandLine(act('stop', { targets: [t] })), /Jarvis|^Okay\.$/);
+});

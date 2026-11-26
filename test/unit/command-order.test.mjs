@@ -71,3 +71,10 @@ test('askedLast: the newest of the Chrome prompt and the top owner question (que
   assert.equal(askedLast({}), null);
   assert.equal(askedLast(null), null);
 });
+
+test('ROUTING-R2-4: the emphatic no\'s are bare no\'s too; a no that says more is not', () => {
+  for (const t of ['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'Nope, nope.', 'no no, never mind', 'no, forget it', 'no not now', 'nah nah', 'no no thanks', 'no, cancel it please']) {
+    assert.equal(isBareNo(t), true, t);
+  }
+  for (const t of ['no, I said Boston', 'no way that is true', 'no problem', 'no no I meant the other one', 'nope not that one', 'no stop', 'no cancel Chrome']) assert.equal(isBareNo(t), false, t);
+});
