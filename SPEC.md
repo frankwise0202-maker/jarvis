@@ -2289,9 +2289,10 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
     `check: true`), so they go through the 2-second check. In Optics it is a card (`data-kind="research"`,
     `optics-research-offer`, buttons `optics-research-quick|mission|homebase|cancel`), said aloud where Jarvis speaks.
     Offline: "I can't research while offline." Nothing is sent before a choice; Cancel: "Okay, no research."
-    Voice Mode drops an open question when other words are routed, and "mission" is routed (to the answer entry)
-    before it is checked: so a dropped offer stays answerable by its dear ways for 30 s (its question and card
-    gone), an answer to an offer that has gone is said back ("That research offer has gone…"), never sent to
+    Voice Mode drops an open question when other words are routed, but not for an answer-layer entry's words: the
+    offer stays open while "mission" waits in its check, so a correction there ("no, I said quick") still answers
+    it (ROUTING-12). An offer dropped by other words stays answerable by its dear ways for 30 s (its question and
+    card gone), an answer to an offer that has gone is said back ("That research offer has gone…"), never sent to
     Claude, and in Voice Mode the research turn starts on the next tick (after Voice Mode's own note for the routed
     command).
   - **The ways** (`researchPrompt`): Quick → a follow-up on the open Look (`optics.followUp`) or a quick turn ("Research

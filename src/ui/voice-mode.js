@@ -1075,7 +1075,7 @@ function createVoiceMode(opts) {
     const local = { ...routeLocal([text]), via: 'typed' };
     let hit = routeWords([text], local);
     chromeOtherWords(hit); // v8.1 chrome-voice: other words withdraw a Chrome check, typed too
-    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
+    if (dropsQuestion(hit)) questions.dropTop('dropped');
     while (hit) {
       // An approval for Chrome keeps its check, typed too (it approves a step on a web page).
       if (act(hit, [text], { reviewed: hit.id !== 'prompt', typed: true })) return;
@@ -3035,7 +3035,7 @@ function createVoiceMode(opts) {
     // A question waiting that doesn't keep goes once other words are heard ("Shall I draw a blueprint
     // of …?": anything but yes or no drops it, and the words are taken as usual). Words for Chrome's question
     // or its check (chrome-prompt) are an answer too, like the prompt's own.
-    if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
+    if (dropsQuestion(hit)) questions.dropTop('dropped');
     while (hit) {
       if (act(hit, readings, opts)) return;
       hit = routeWords(readings, local, hit);
@@ -3045,6 +3045,18 @@ function createVoiceMode(opts) {
     const words = pickHeard(text, readings.slice(1), parts);
     if (opts.reviewed || opts.sendNow || !reviewOn()) send(words);
     else startReview(words);
+  }
+
+  /**
+   * Whether words the router gave to `hit` drop the question waiting on top (one that doesn't keep). Not the
+   * Standby words, nor an answer: the question's own, the prompt's, Chrome's, or another answer-layer entry's
+   * (the research offer's "mission", which waits in the 2-second check: corrected there, "no, I said quick" is
+   * still the offer's answer; ROUTING-12). Words held while a reply builds are no answer.
+   */
+  function dropsQuestion(hit) {
+    if (!hit) return true;
+    if (hit.id === 'standby' || hit.id === 'question' || hit.id === 'prompt' || hit.id === 'chrome-prompt') return false;
+    return !(hit.layer === 'answer' && hit.id !== 'reply-building');
   }
 
   /** What Voice Mode adds to the router's state (contract (b)): its own part of the moment. */
