@@ -5077,10 +5077,15 @@ with K2 from then on (its answer to the rekey too), and still opens K1 for 10 mi
 arrives under K2, then forgets K1. The app keeps K1 as `prev` until a message under K2 arrives (the confirmation),
 sending the rekey again (fresh envelopes, after 3, 6, 12, then every 30 s, for 10 minutes, and whenever a message
 under K1 still comes); meanwhile it seals with K1 (for 10 minutes after the rekey, or while the extension is still
-heard using K1) and opens both, K1 until the confirmation however long it takes (v8.1.1, CHROME-LINK-R2-3: it was 30
-minutes, after which an extension that had missed every rekey was never heard again until a reload). While it is
-unconfirmed and the status shows the extension reading but it has said nothing for a minute, the window holding the
-link sends the rekey again, at most once a minute. On the confirmation, that window sends `hello` under K2 at once, so
+heard using K1) and opens both, K1 until the confirmation and at most 30 minutes (PENDING_MS) after the rekey. While
+it is unconfirmed and the status shows the extension reading but it has said nothing for a minute, the window holding
+the link sends the rekey again, at most once a minute, so an extension that missed every rekey comes back within that
+half hour without a reload (v8.1.1, CHROME-LINK-R2-3); a message under K1 just after a rekey went brings the rekey
+again 2 s later. Past the half hour the rotation is given up, never recovered through K1 (v8.1.1, CHROME-LINK-R3-1,
+R3-S1): `sendRekey` itself refuses (whoever calls it: opening Jarvis, a lock handover, a message under K1, the resend
+timer, the status), nothing is sealed with K1, a message under K1 is dropped, and the app forgets the link (on its
+timer, at the next status, or when Jarvis is opened) and Settings says "Jarvis for Chrome never confirmed the new key.
+Link again." The owner links again with a fresh code. On the confirmation, that window sends `hello` under K2 at once, so
 the extension forgets K1 within a second or two (v8.1.1, CHROME-LINK-R2-2: before, it kept K1 until the app's next
 message, minutes later). Jarvis for Chrome 1.1.1 also refuses an `open`, `start` or `answer` that arrives under K1
 once it has switched (`gone`, "That link code has been replaced."); `stop`, `ping`, `hello`, `unlinked` and `rekey`
@@ -5092,8 +5097,11 @@ every 5 minutes, so a home base that was restarting or updating itself as the co
 waiting (v8.1.1, CHROME-LINK-R2-4). A lost rekey or a lost answer is covered:
 the rekey is sent again, a repeated rekey with the same K2 is answered again, and the extension's next message under
 K2 confirms it. The extension refuses a rekey to any other key once it has switched, so the code can't move the link
-later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay in the two
-minutes the rekey is kept there could learn K2 (a key exchange would close that; not in this release).
+later. Limit: the rekey travels sealed with K1, so someone who already holds the code and reads the relay while a
+rekey is kept there (2 minutes after each send) could learn K2. While the rotation is unconfirmed, rekeys are sent
+again (on the schedule above, at each opening of Jarvis or lock handover, when a message under K1 comes, and from the
+status), so that exposure lasts as long as the rotation stays unconfirmed: at most 30 minutes after the rekey, then
+the link is given up (R3-1). A key exchange would close it; not in this release.
 
 **The clipboard** (critique L9, REDTEAM-LINK-4, PRIVACY-6). When this tab copied the code (its sessionStorage keeps
 `jarvis.chromeLink.copied.v1` = `{ at, hash }`, a SHA-256 of the code, never the code, so a reload doesn't forget it),

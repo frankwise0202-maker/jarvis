@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, containsLinkSecret, linkSecrets, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
 import { fakeRelay, answerRelay, createFakeChromePeer, chromeLinkRecord, CHROME_TEST_KEY, CORE_ORIGIN, CORE_URL } from '../e2e/core-fakes.mjs';
-import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode, makeLinkCode } from '../../src/lib/relay-envelope.js';
+import { importLinkKey, sealEnvelope, openEnvelope, newLinkKey, parseLinkCode, makeLinkCode } from '../../src/lib/relay-envelope.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1334,6 +1334,93 @@ test('Web Locks missing: the window holds the link by itself', async () => {
     const app = w.open({ locks: null });
     await online(app);
     assert.equal(app.control.info().holder, true);
+  } finally {
+    await w.close();
+  }
+});
+
+// ---- CHROME-LINK-R3-1 / R3-S1: a rotation that was never confirmed ---------------------------------------------
+// Ported from the third review's probes (r3-oldcode, r3-readonly, and the skeptic's p-r31 send | read | reopen): Jarvis
+// for Chrome said hello with the code and was never heard again; 40 minutes later someone holding the old code acts.
+
+/**
+ * A link whose new key was never confirmed, 40 minutes on: { w, app, codeKey, post, openAll, now, clock }. `closed`:
+ * Jarvis was closed meanwhile (app destroyed before the 40 minutes pass).
+ */
+async function abandonedRotation({ closed = false } = {}) {
+  const clock = { skew: 0 };
+  const now = () => Date.now() + clock.skew;
+  const w = world();
+  const app = w.open({ now, setTimer: quick });
+  app.control.begin();
+  const codeKey = await importLinkKey(parseLinkCode(app.control.code()).link.key);
+  const post = async (key, kind, body) => w.relay.store.post('to-app', await sealEnvelope(key, { box: 'to-app', kind, body, at: now() }));
+  /** What in to-ext opens with `key` (read as anyone on the tailnet can). */
+  const openAll = async (key) => {
+    const out = [];
+    for (const env of w.relay.store.read('to-ext', null).messages) {
+      const o = await openEnvelope(key, env, { box: 'to-ext', now: now() });
+      if (o && o.ok) out.push(o.message.kind);
+    }
+    return out;
+  };
+  await post(codeKey, 'hello', { ext: 'jarvis-for-chrome', version: '1.1.0', budgetUsd: 1, maxSteps: 40 });
+  await until(() => app.api.state().linked, { what: 'Jarvis linked' });
+  await sleep(300);
+  if (closed) app.destroy();
+  clock.skew = 40 * 60_000; // the extension never read the rekey; 40 minutes on
+  w.relay.store.close(); // (what was in the boxes has expired)
+  await sleep(1500); // the app's pending rekey timers fire once now
+  w.relay.store.close();
+  return { w, app, codeKey, post, openAll, now, clock };
+}
+
+test('R3-1 (send): 40 minutes after a link never confirmed, a hello under the old code brings nothing back: not online, no rekey, no request sealed with it; Settings says link again', async () => {
+  const { w, app, codeKey, post, openAll } = await abandonedRotation();
+  try {
+    await post(codeKey, 'hello', { ext: 'jarvis-for-chrome', version: '1.1.0', budgetUsd: 1, maxSteps: 40 });
+    await sleep(1500);
+    assert.equal(app.api.state().online, false, 'a hello under the old code brought the link online');
+    const p = app.api.startTask({ text: 'pay the credit card bill', limitUsd: 1 }).catch(() => null);
+    await sleep(800);
+    assert.deepEqual(await openAll(codeKey), [], 'something in to-ext opens with the old code (a rekey, or the owner’s request)');
+    await p;
+    assert.equal(app.api.state().linked, false, 'the unconfirmed link is given up');
+    assert.equal(app.control.info().note, 'unconfirmed', 'Settings is told why: "never confirmed the new key. Link again."');
+    assert.equal(readLinkRecord((k) => w.storage.map.get(k) ?? null), null, 'no link record (and no key) is kept');
+  } finally {
+    await w.close();
+  }
+});
+
+test('R3-1 (read): 40 minutes after a link never confirmed, reading to-ext alone never yields the new key', async () => {
+  const { w, app, codeKey, openAll, clock } = await abandonedRotation();
+  try {
+    clock.skew += 61_000; // (a minute since the last rekey the pending timers sent)
+    const got = [];
+    for (let i = 0; i < 8; i++) {
+      got.push(...(await openAll(codeKey))); // reads to-ext (the status shows it read), as the code holder would
+      await sleep(500);
+    }
+    assert.deepEqual(got, [], `to-ext held messages sealed with the old code: ${JSON.stringify(got)}`);
+    assert.equal(app.api.state().online, false);
+  } finally {
+    await w.close();
+  }
+});
+
+test('R3-S1 (reopen): Jarvis opened again 40 minutes after a link never confirmed sends no rekey sealed with the old code, and says link again', async () => {
+  const { w, codeKey, post, openAll, now } = await abandonedRotation({ closed: true });
+  try {
+    const again = w.open({ now, setTimer: quick }); // the owner opens Jarvis again (or another window takes the link)
+    await sleep(1200);
+    assert.deepEqual(await openAll(codeKey), [], 'Jarvis reopened sent something sealed with the old code (the new key)');
+    await post(codeKey, 'hello', { ext: 'jarvis-for-chrome', version: '1.1.0', budgetUsd: 1, maxSteps: 40 });
+    await sleep(1200);
+    assert.equal(again.api.state().online, false, 'a message under the old code brought the link online');
+    assert.deepEqual(await openAll(codeKey), []);
+    assert.equal(again.api.state().linked, false);
+    assert.equal(again.control.info().note, 'unconfirmed');
   } finally {
     await w.close();
   }
