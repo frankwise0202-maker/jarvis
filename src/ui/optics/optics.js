@@ -1764,8 +1764,10 @@ export function openOptics(deps = {}) {
     answerState.dataset.tone = tone;
     setText(answerState, tone === 'busy' ? 'ANALYZING' : tone === 'error' ? 'NO ANSWER' : 'ANSWER');
     // v8.1: which answer this is, beside the state: a fresh picture ("NEW LOOK"); follow-ups say
-    // "ABOUT THIS PICTURE" on their own question lines. Only for Looks taken with the camera live.
-    const marked = frozen.mark === 'new' && mode !== 'review' && frozen.source !== 'screen';
+    // "ABOUT THIS PICTURE" on their own question lines. Only for Looks taken with the camera live, and
+    // only on a computer's layout, where a question may go either way (a phone keeps its sheet as it was).
+    const marks = el.dataset.layout === 'desktop';
+    const marked = marks && frozen.mark === 'new' && mode !== 'review' && frozen.source !== 'screen';
     answerMark.hidden = !marked;
     answerMark.dataset.kind = marked ? 'new' : '';
     setText(answerMark, marked ? 'NEW LOOK' : '');
@@ -1783,7 +1785,7 @@ export function openOptics(deps = {}) {
           'p',
           { class: 'optics-answer-q optics-answer-q--follow' },
           h('span', { text: f.question }),
-          f.mark === 'card' ? h('span', { class: 'optics-answer-mark', text: 'ABOUT THIS PICTURE', attrs: { 'data-testid': 'optics-answer-mark', 'data-kind': 'card' } }) : null,
+          f.mark === 'card' && marks ? h('span', { class: 'optics-answer-mark', text: 'ABOUT THIS PICTURE', attrs: { 'data-testid': 'optics-answer-mark', 'data-kind': 'card' } }) : null,
         ),
         f.text ? renderMarkdown(f.text, { streaming: f.status === 'analyzing' }) : h('p', { class: 'optics-answer-wait', text: f.status === 'error' ? 'No answer.' : 'Jarvis is thinking…' }),
       );
