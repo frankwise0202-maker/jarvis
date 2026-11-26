@@ -163,14 +163,15 @@ export function accountPartialUsage(ctx, err, model, target = null) {
  * - a code-execution container the API no longer accepts: `opts.onContainerRejected()` forgets it;
  * - a thinking block that fails the history check: `opts.onThinkingMismatch()` turns on drop_block;
  * - an output-tokens-per-minute limit below max_tokens (429): `ctx.capMaxTokens(model, cap)`.
- * `opts.requestOptions` (e.g. { maxRetries }) go to the SDK call.
+ * `opts.requestOptions` (e.g. { maxRetries }) go to the SDK call. `opts.signal`: the request's own
+ * abort when it has one (one that follows ctx.signal), else ctx.signal.
  */
 export async function requestWithFeatureFallback(ctx, makeParams, onEvent, opts = {}) {
   for (let recoveries = 0; ; recoveries++) {
     const params = makeParams(ctx.features);
     const state = { started: false };
     try {
-      return await streamMessage({ client: ctx.client, params, signal: ctx.signal, onEvent, state, requestOptions: opts.requestOptions });
+      return await streamMessage({ client: ctx.client, params, signal: opts.signal || ctx.signal, onEvent, state, requestOptions: opts.requestOptions });
     } catch (err) {
       // Each recovery changes the request (a flag off, a field gone or capped), so none can loop;
       // the counter is a backstop. A concurrent request may already have switched a flag off; it

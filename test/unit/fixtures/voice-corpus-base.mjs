@@ -295,6 +295,19 @@ export const ALTERNATIVES = Object.freeze(
     { best: 'yep', alts: ['yes'], state: 'TD', want: 'claude' },
     { best: 'clay Back in Black', alts: ['play Back in Black'], state: 'V0', want: { id: 'music' } },
     { best: 'what role does OPEC play in oil prices', alts: ['play oil prices'], state: 'V0', want: 'claude' },
+    // v8.1 fixes: camera words never from another reading (rule 4, R7).
+    // PRIVACY-5: Screens' camera views and the camera's window.
+    { best: 'put the cameras on my other screen', alts: ['put the camera on my other screen'], state: 'V0', want: 'claude' },
+    { best: 'put the cameras on my other screen', alts: ['put the camera on my other screen'], state: 'C0', want: 'claude' },
+    { best: 'show the camera on my brother screen', alts: ['show the camera on my other screen'], state: 'V0', want: 'claude' },
+    { best: 'put the camera in a widow', alts: ['put the camera in a window'], state: 'V0', want: 'claude' },
+    { best: 'put the life you on my other screen', alts: ['put the live view on my other screen'], state: 'V0', want: 'claude' },
+    { best: 'make the camera widow bigger', alts: ['make the camera window bigger'], state: 'VW', want: 'claude' },
+    // PRIVACY-4: with Optics live and nothing looked at, "research this" takes a Look first.
+    { best: 'we search this', alts: ['research this'], state: 'VL', want: 'claude' },
+    // PRIVACY-3: Optics' own microphone gives the router every reading (the live view, a camera switch).
+    { best: 'lie view', alts: ['live view'], state: 'OV', want: 'claude' },
+    { best: 'use the logic tech camera', alts: ['use the logitech camera'], state: 'OV', want: 'claude' },
   ].map((r) => Object.freeze(r)),
 );
 

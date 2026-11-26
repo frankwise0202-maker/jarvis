@@ -81,6 +81,9 @@ import chromeLink from './scenarios/chrome-link.mjs';
 // ---- integrator ▸ (the joins: where the tracks meet)
 import joins from './scenarios/joins.mjs';
 // ---- integrator ◂
+// ---- fix-money ▸
+import fixMoney from './scenarios/fix-money.mjs';
+// ---- fix-money ◂
 
 /** Wave B (SPEC §15): photo & PDF attachment scenarios, owned by B2 (registered when present). */
 async function optionalScenarios(rel) {
@@ -131,6 +134,9 @@ const V81_SCENARIOS = [
   // ---- integrator ▸
   ...joins,
   // ---- integrator ◂
+  // ---- fix-money ▸
+  ...fixMoney,
+  // ---- fix-money ◂
 ];
 export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...opticsLive2, ...naturalVoice, ...V81_SCENARIOS];
 

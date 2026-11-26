@@ -165,7 +165,7 @@ import { h, clear, setText, on } from './dom.js';
 import { icon } from './icons.js';
 import { createSpokenFeed, splitSentences } from './voice-stream.js';
 import { commandAck, savedBlueprintAck, blueprintQuestion, confirmReply, partHint, nothingBackAck } from './voice-visuals.js';
-import { appCommandLine } from '../lib/app-commands.js';
+import { act as appAction, appCommandLine } from '../lib/app-commands.js';
 import { REVIEW_MS, reviewReply, planCorrection, pickHeard, namesPart, listenPhrases } from './voice-heard.js';
 import { openingIntent, routineReply, answerParts, greetingLine, suggestionLine, partOfDayFor } from '../lib/wake/phrases.js';
 import { createVoiceTag } from './voice-tag.js';
@@ -2938,7 +2938,7 @@ function createVoiceMode(opts) {
    * said. v7.6: `done` may give { send, mode } instead (the home base couldn't brief: out of reach, a
    * 1.0 Core): those words are asked of Jarvis as before (`newChat`: the wake routine's briefing).
    */
-  function sayLocal(text, done, status, failLine, { newChat = false } = {}) {
+  function sayLocal(text, done, status, failLine, { newChat = false, priceFirst = null } = {}) {
     showCaption('quote', `“${text}”`);
     const marker = { pending: true, viewer: true, homeBase: true };
     S.run = marker;
@@ -2948,6 +2948,11 @@ function createVoiceMode(opts) {
       (out) => {
         if (S.closed || S.run !== marker) return;
         S.run = null;
+        // MONEY-4: what it falls back to is paid (the briefing protocol): its price is asked first.
+        if (out && out.paid === true && typeof out.send === 'string' && out.send.trim() && typeof priceFirst === 'function') {
+          priceFirst(out);
+          return;
+        }
         if (out && typeof out.send === 'string' && out.send.trim()) {
           const sendOpts = { caption: text };
           if (out.mode) sendOpts.mode = out.mode;
@@ -3313,6 +3318,43 @@ function createVoiceMode(opts) {
           return;
         }
         const res = send(out.send, { caption: words, mode: out.mode, newChat: true });
+        if (res && res.error) speakAck(res.error);
+      },
+    });
+    return true;
+  }
+
+  /**
+   * MONEY-4, MAC-5: a paid briefing the wake routine would start (the briefing protocol, with no home
+   * base or one that can't brief) is asked first, as C6's "brief me" is: "Your briefing sends a team of
+   * agents to look up the news, about $1.55. Shall I run it?" (`b.usd`: the owner's team size and
+   * depth, MONEY-5). Only "yes" sends `b.text`, in a chat of its own; "no" sends nothing.
+   */
+  function askPaidBriefing(words, b) {
+    if (words) showCaption('quote', `“${words}”`);
+    // Heard while the routine's listen is still open: it ends here, so the question is said at once.
+    if (S.listen) stopListening();
+    const usd = Number(b && b.usd);
+    askNew({
+      id: 'briefing',
+      say: appCommandLine(appAction('brief', usd > 0 ? { free: false, usd } : { free: false })),
+      match: (text) => {
+        const reply = confirmReply(text);
+        return reply === 'yes' || reply === 'no' ? reply : null;
+      },
+      timeoutMs: CONFIRM_MS,
+      onAnswer: (choice, { words: answer }) => {
+        showCaption('quote', `“${answer}”`);
+        if (choice !== 'yes') {
+          speakAck('Okay, no briefing.');
+          return;
+        }
+        try {
+          if (b && typeof b.sent === 'function') b.sent();
+        } catch {
+          /* bookkeeping only */
+        }
+        const res = send(b.text, { mode: b.mode, caption: answer, newChat: true });
         if (res && res.error) speakAck(res.error);
       },
     });
@@ -4219,9 +4261,13 @@ function createVoiceMode(opts) {
       if (reply === 'brief') {
         const b = typeof wake.briefing === 'function' ? wake.briefing() : null;
         clearMusicCard();
-        // v7.6: with a home base linked, its own briefing, said out loud (free: no turn).
+        // v7.6: with a home base linked, its own briefing, said out loud (free: no turn). When it
+        // can't brief, the protocol it falls back to is asked first with its price (MONEY-4).
         if (b && b.done && typeof b.done.then === 'function') {
-          sayLocal(words, b.done, 'Getting your briefing from the home base…', 'I couldn’t reach the home base just now.', { newChat: true });
+          sayLocal(words, b.done, 'Getting your briefing from the home base…', 'I couldn’t reach the home base just now.', {
+            newChat: true,
+            priceFirst: (out) => askPaidBriefing(null, { text: out.send, mode: out.mode, usd: out.usd, sent: out.sent }),
+          });
           return true;
         }
         if (!b || !b.text) {
@@ -4229,8 +4275,9 @@ function createVoiceMode(opts) {
           speakAck('I can’t run the briefing just now.');
           return true;
         }
-        send(b.text, { mode: b.mode, caption: words, newChat: true });
-        return true;
+        // MONEY-4, MAC-5: the briefing protocol is a paid team of agents: its price first, then "yes"
+        // (C6's question). Room talk answering the offer, while hidden or after claps, never starts it.
+        return askPaidBriefing(words, b);
       }
       goToStandby(words, { offered: true });
       return true;

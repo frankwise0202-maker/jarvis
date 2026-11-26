@@ -28,13 +28,16 @@
 //                    (top) R10: with a hologram on top, camera words that name its camera part ("open
 //                    the camera", "camera on" over a laptop hologram) select that part as today, and
 //                    Jarvis adds "Say 'open Optics' for your camera." ("open optics" always opens Optics).
+//   optics-idle      (app) v8.1 fix MONEY-7: with Optics closed, "stop video mode", "video mode off",
+//                    "stop live view", "stop watching", "expand the picture", "back to live", "close the
+//                    picture": a free line ("The live view is off.", "There's no picture on screen.").
 //
 // What acts is the app's (its deps, below): this module stays importable in Node (no DOM): the T3
 // harness (test/unit/command-router.test.mjs) registers it with fake deps. Its phrases are in the
 // optics section of test/unit/fixtures/voice-corpus.mjs, its collisions in collisions.mjs.
 
 import { matchHologramCommand } from '../../lib/hologram-commands.js';
-import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsCommand } from '../../lib/optics-commands.js';
+import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsClosedWords, matchOpticsCommand, opticsClosedLine } from '../../lib/optics-commands.js';
 import { matchOfferChoice, matchResearchThis } from '../../lib/research-offer.js';
 
 /** The research offer's id on Voice Mode's question stack (app.js researchThis). */
@@ -114,9 +117,13 @@ export function register(router, deps) {
     id: 'optics-research',
     layer: 'top',
     surfaces: ['voice', 'optics'],
-    match(text) {
+    match(text, s) {
       const m = matchResearchThis(text);
-      return m ? { do: 'research', where: m.where, deep: m.deep } : null;
+      if (!m) return null;
+      // PRIVACY-4: with Optics open, "research this" may take a Look first (a picture to Claude, paid),
+      // so it is taken from the best reading only (R7), never from one the recognizer was less sure of.
+      const looks = !!(s && s.optics && s.optics.open);
+      return looks ? { do: 'research', where: m.where, deep: m.deep, camera: true, free: false } : { do: 'research', where: m.where, deep: m.deep };
     },
     run: (action, ctx) => call('researchThis', { where: action.where, deep: action.deep, surface: ctx.surface, via: ctx.via, text: ctx.reading }),
   });
@@ -165,5 +172,21 @@ export function register(router, deps) {
       return isCameraCloseRequest(text) ? { do: 'camera-off', open } : null;
     },
     run: (action, ctx) => (action.open ? call('opticsCommand', ctx.reading, ctx) : call('closeCamera', { surface: ctx.surface })),
+  });
+
+  // MONEY-7: with Optics closed, the live view's and Watch's off words and the picture's own words
+  // ("stop video mode", "stop live view", "stop watching", "expand the picture", "back to live", "close
+  // the picture") have nothing to act on: a free line ("The live view is off."), never a paid question.
+  router.register({
+    id: 'optics-idle',
+    layer: 'app',
+    match(text, s) {
+      // Only with nothing those words could be about: Optics, a hologram or blueprint, a window.
+      if ((s.optics && s.optics.open) || (s.hologram && s.hologram.open) || s.blueprintOpen) return null;
+      const m = matchOpticsClosedWords(text);
+      if (!m || (m.kind === 'picture' && Array.isArray(s.windows) && s.windows.length)) return null;
+      return { do: 'optics-idle', kind: m.kind };
+    },
+    run: (action) => ({ say: opticsClosedLine(action.kind) }),
   });
 }

@@ -646,7 +646,8 @@ export default [
       await waitLive(t);
       await t.step('"research this" with nothing looked at yet: "Let me look first: about 3¢." said whole, one Look, then the offer asked aloud, prices first', async () => {
         await speak(['Research this.']);
-        await t.waitFor(async () => (await said(page)).some((s) => /^Let me look first: about 3¢\.$/.test(s)), { timeout: 15000, message: async () => `the line (${JSON.stringify((await said(page)).slice(-3))})` });
+        // Changed on purpose (v8.1 fix MONEY-8): the Look's own price, warm or cold (a new chat's first Look is about 8¢).
+        await t.waitFor(async () => (await said(page)).some((s) => /^Let me look first: about \d+¢\.$/.test(s)), { timeout: 15000, message: async () => `the line (${JSON.stringify((await said(page)).slice(-3))})` });
         await waitAside(t);
         await waitAnswer(t);
         t.assert(leads(t).filter((r) => hasImage(r)).length === 1, 'one Look');

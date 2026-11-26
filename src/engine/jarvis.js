@@ -677,9 +677,10 @@ export function createJarvis(deps = {}) {
      * the glowing or selected part, exploded or not, a walkthrough's step) adds one line to this
      * turn's <turn_context> (buildViewerLine), in the new message only. Throws (before anything is
      * appended) when the input is invalid, e.g. an attachment Claude would reject; the error message
-     * is worded for the owner. `gate` (v8.1, E0; src/lib/live-gate.js createTurnGate): while the live
-     * view is on, each lead request of the turn is kept short and reserves its worst case in the live
-     * view's hour first, or is refused (the turn ends with error kind 'live_cap'); without it, as before.
+     * is worded for the owner. `gate` (v8.1, E0; src/lib/live-gate.js createTurnGate): a turn asked
+     * while the live view is on (gate.active) carries the gate's line in its turn context, and each of
+     * its lead requests is kept short and reserves its worst case (or what is left) in the live view's
+     * hour first, or is refused (the turn ends with error kind 'live_cap'); without it, as before.
      */
     startTurn(conv, { text, mode, attachments, maxAgents, keepOnStop, spoken, blueprintFor, optics, viewer, gate } = {}) {
       assertConversation(conv, 'startTurn');
@@ -747,16 +748,57 @@ export function createJarvis(deps = {}) {
       const opticsLines = opticsContextLines(conv, frame, d);
       const fullContext = opticsLines.length ? withTurnContextBlocks(turnContext, opticsLines) : turnContext;
       const viewerLine = buildViewerLine(viewer); // what the owner sees, so "that" has a meaning
+      // v8.1 (E0): a turn asked while the live view is on is told the web budget its gate holds it to
+      // (in the new message only: the conversation's tools and earlier messages stay as they were).
+      const gateLine = gate && gate.active === true && typeof gate.turnNote === 'string' ? singleLine(gate.turnNote) : '';
+      const extraLines = [viewerLine, gateLine].filter(Boolean);
       // Where this turn's messages start: a refused turn is removed from the history from here on.
       turn.apiStart = conv.apiMessages.length;
       // SPEC §15.1 order: turn context, attachments, then the owner's text (or the default text).
-      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: viewerLine ? withTurnContextBlocks(fullContext, [viewerLine]) : fullContext }, ...content] });
+      conv.apiMessages.push({ role: 'user', content: [{ type: 'text', text: extraLines.length ? withTurnContextBlocks(fullContext, extraLines) : fullContext }, ...content] });
       conv.updatedAt = ts;
       conv.pending = { turnId: turn.id, toolUses: [], req: 0 };
       return launch(conv, turn, settings, { resume: false, req: 0, keepOnStop: keepOnStop === true, gate });
     },
 
     canResume,
+
+    /**
+     * v8.1 (MONEY-6): the first request a turn of `text` would send now in `conv` (a new chat when
+     * null): the conversation's system prompt and tools, its history, and the new message with its
+     * turn context (`spoken`, `mode`, and `lines` such as the live view gate's line), as startTurn
+     * builds it, without starting anything. For pricing an answer before it is offered. A version 4
+     * conversation's saved-items block (added just before the first request) is not in it.
+     */
+    previewRequest(conv, { text = '', mode, spoken = false, lines = [] } = {}) {
+      const c = conv && typeof conv === 'object' && Array.isArray(conv.apiMessages) ? conv : { system: LEAD_SYSTEM_LATEST, tools: leadToolsLatest(), apiMessages: [] };
+      const settings = turnSettings(readSettings(), {});
+      const turnMode = MODES[mode] ? mode : settings.mode;
+      const context = buildTurnContext({
+        localTime: formatLocalTime(nowDate()),
+        userName: settings.userName,
+        location: settings.location,
+        tone: settings.tone,
+        verbosity: settings.verbosity,
+        mode: turnMode,
+        maxAgents: settings.maxAgents,
+        maxWaves: settings.maxWaves,
+        memoryEnabled: settings.memoryEnabled,
+        memoryFacts: settings.memoryEnabled ? memoryFacts() : [],
+        spoken: spoken === true,
+        visuals: spoken === true && hasVisualTools(c, 'show_hologram'),
+      });
+      const extra = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === 'string' && l.trim()).map(singleLine);
+      const body = String(text || '').trim() || ATTACHMENT_ONLY_TEXT;
+      const message = { role: 'user', content: [{ type: 'text', text: extra.length ? withTurnContextBlocks(context, extra) : context }, { type: 'text', text: body }] };
+      return {
+        model: settings.leadModel,
+        max_tokens: (DEPTHS[settings.depth] || DEPTHS.balanced).leadMaxTokens,
+        system: [{ type: 'text', text: c.system }],
+        tools: c.tools,
+        messages: [...c.apiMessages, message],
+      };
+    },
 
     // v8.1 (E0): `gate`, as for startTurn: a turn resumed while the live view is on goes through it too.
     resumeTurn(conv, { gate = null } = {}) {

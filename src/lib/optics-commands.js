@@ -324,6 +324,33 @@ export function asideQuestionRoute(text, { cmd = null, labels = [], sceneChanged
 }
 
 /**
+ * v8.1 fix MONEY-7: the live view's and Watch's off words and the picture's own words said or typed
+ * with Optics closed ("stop video mode", "video mode off", "stop live view", "stop watching", "expand
+ * the picture", "back to live", "close the picture"): nothing to stop or show, so a free line, never a
+ * question to Claude. { kind: 'liveview' | 'watch' | 'picture' }, or null.
+ */
+const BACK_TO_LIVE = /^(?:go )?back to (?:the )?(?:live|live video|live camera)$/;
+const ENOUGH = /^(?:that's enough|thats enough|that is enough)$/;
+// The picture's own words, naming the picture (never "expand it": a hologram's or a window's then).
+const EXPAND_PICTURE = /^(?:expand|enlarge|maximi[sz]e|blow up) (?:the |this |that )?picture$|^(?:show|make) (?:me )?(?:the |this |that )?picture (?:big|bigger|large|larger|full size|full screen)$/;
+const CLOSE_PICTURE = /^(?:close|hide|dismiss|clear|remove|put away) (?:the |this |that )?picture$/;
+export function matchOpticsClosedWords(text) {
+  const n = normalizeOpticsText(text);
+  if (!n || n.length > 200) return null;
+  if (LIVE_VIEW_OFF.test(n) && !ENOUGH.test(n)) return { kind: 'liveview' }; // "that's enough" stays Voice Mode's hush
+  if (WATCH_OFF.test(n)) return { kind: 'watch' };
+  if (EXPAND_PICTURE.test(n) || CLOSE_PICTURE.test(n) || BACK_TO_LIVE.test(n)) return { kind: 'picture' };
+  return null;
+}
+
+/** The line for those words with Optics closed (MONEY-7). */
+export function opticsClosedLine(kind) {
+  if (kind === 'liveview') return 'The live view is off.';
+  if (kind === 'watch') return 'Watch is off.';
+  return 'There’s no picture on screen.';
+}
+
+/**
  * Words said or typed while Optics is open. `frozen`: an answer is on screen (a question about
  * "this" is then a follow-up on that frame, not a new Look). Returns null for anything that is
  * not an Optics command.

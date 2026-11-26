@@ -118,8 +118,9 @@ import { installChromeLink } from '../platform/chrome-link.js';
 import { notify as notifyOwner } from './attention.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
-import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
-import { LIVE_VIEW_COUNTS, LOOK_FIRST_LINE, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { GATE_LIMITS, createLiveGate, createTurnGate, gateNote, requestWorstUsd } from '../lib/live-gate.js';
+import { LIVE_VIEW_COUNTS, OFFLINE_LINE, lookFirstLine, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { briefingUsd } from '../lib/app-commands.js'; // v8.1 fix (MONEY-5): the briefing's price
 import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { commandAck as viewerAck } from './voice-visuals.js';
@@ -1785,6 +1786,7 @@ export async function startApp(rootEl) {
         onClose: (info) => {
           voiceApi = null;
           voiceInfo = null;
+          withdrawCameraNote(); // PRIVACY-2: what was asked for in this session goes with it
           safe(() => chromeVoice && chromeVoice.voiceChanged()); // v8.1 chrome-voice: its prompts go to notifications
           lastVoiceHologram = null;
           // Back to Standby: "go to sleep", or the end of a conversation Standby started (Settings).
@@ -2203,6 +2205,9 @@ export async function startApp(rootEl) {
       const text = safe(() => p.buildPrompt({ input: '', settings: getSettings(), now: new Date() }), '');
       return text ? { text, mode: p.mode || 'swarm' } : null;
     };
+    // MONEY-4, MAC-5: the protocol is a paid team of agents: Voice Mode asks first with its price
+    // (MONEY-5: at the owner's team size and depth), and it is noted as given only once it is sent.
+    const noted = () => safe(() => presence.noteBriefing(new Date()));
     if (brain && brain.base()) {
       safe(() => presence.noteBriefing(new Date()));
       const done = Promise.resolve(runBrainCommand({ kind: 'brief' }))
@@ -2210,14 +2215,19 @@ export async function startApp(rootEl) {
         .then((r) => {
           // The home base can't brief (out of reach, a 1.0 Core): the briefing protocol, as before v7.6.
           const fallback = r && r.fallback ? protocol() : null;
-          return fallback ? { send: fallback.text, mode: fallback.mode } : { ack: (r && r.speech) || 'No briefing from the home base just now.' };
+          return fallback ? { send: fallback.text, mode: fallback.mode, usd: briefingPrice(), paid: true } : { ack: (r && r.speech) || 'No briefing from the home base just now.' };
         });
       return { done };
     }
     const b = protocol();
     if (!b) return null;
-    safe(() => presence.noteBriefing(new Date()));
-    return b;
+    return { ...b, usd: briefingPrice(), paid: true, sent: noted };
+  }
+
+  /** MONEY-5: what the briefing protocol costs now, at the owner's team size and depth (app-commands.js briefingUsd). */
+  function briefingPrice() {
+    const s = getSettings();
+    return briefingUsd({ maxAgents: s.maxAgents, depth: s.depth, location: s.location });
   }
 
   // ---- Optics (the camera) ----------------------------------------------------------------------
@@ -2417,6 +2427,8 @@ export async function startApp(rootEl) {
     const warm = !!(conv && conv.apiMessages && conv.apiMessages.length && Date.now() - (conv.updatedAt || 0) < 4.5 * 60 * 1000);
     return estimateLookCost({ model: getSettings().leadModel, prefixCached: warm }).usd;
   }
+  /** Whole cents, at least 1: "about 3¢" warm, "about 8¢" in a new or quiet chat (MONEY-8). */
+  const centsOf = (usd) => Math.max(1, Math.round(Number(usd) * 100) || 1);
 
   // ---- Optics over Voice Mode: a Look, a question or a hologram is a Voice Mode turn (spoken) ----
   function voiceTurnResult(res) {
@@ -2478,14 +2490,48 @@ export async function startApp(rootEl) {
   /**
    * v8.1 (E2): Jarvis hidden on a Mac (he listens there, A1): the camera only runs on screen, so one
    * notification brings him up, and its click opens Optics (`open`: what to do then).
+   * PRIVACY-2: the notification says what its click does (`intent`: 'look' with a Look's price, 'live'
+   * with the live view's cap, else 'open': the camera only). It is good for the same 30 s as a tap on
+   * Look: then, and when Voice Mode closes, it is withdrawn, and a click that still comes later (a
+   * hidden tab's timers run late) only opens Optics: no Look, no live view.
    */
-  function cameraNeedsFront(open) {
+  let cameraNote = null; // { at, timer }: the camera notification showing now
+  function withdrawCameraNote() {
+    const note = cameraNote;
+    cameraNote = null;
+    if (note && note.timer) clearTimeout(note.timer);
+    safe(() => closeNotify('jarvis-optics'));
+  }
+  function cameraNoteBody(intent) {
+    if (intent === 'look') return `Click to bring Jarvis up and look through the camera (about ${centsOf(lookEstimate())}¢).`;
+    if (intent === 'live') return 'Click to bring Jarvis up and start the live view (up to $1 an hour).';
+    return 'Click to bring Jarvis up and turn the camera on.';
+  }
+  function cameraNeedsFront(open, intent = 'open') {
+    withdrawCameraNote();
+    const note = { at: Date.now(), timer: null };
+    cameraNote = note;
+    note.timer = setTimeout(() => {
+      if (cameraNote === note) withdrawCameraNote();
+    }, PENDING_LOOK_MS);
     safe(() =>
       notifyOwner({
         tag: 'jarvis-optics',
         title: 'Jarvis: the camera',
-        body: 'Click to bring Jarvis up and turn the camera on.',
-        onClick: () => safe(() => open()),
+        body: cameraNoteBody(intent),
+        onClick: () => {
+          const fresh = cameraNote === note && Date.now() - note.at <= PENDING_LOOK_MS;
+          withdrawCameraNote();
+          if (fresh) return safe(() => open());
+          // Late: the camera comes on, and nothing more. Once Optics is up, a line where Jarvis may speak
+          // (Voice Mode free), else shown.
+          safe(() => openOpticsScreen({ voice: !!voiceApi }));
+          const line = 'Optics is on. Ask me again, or tap Look.';
+          setTimeout(() => {
+            if (!safe(() => sayLiveLine(line), false)) safe(() => toast(line, { level: 'info', id: 'optics-late' }));
+          }, 1200);
+          return undefined;
+        },
       }),
     );
     return 'The camera only runs while I’m on screen. Click the notification to bring me up.';
@@ -2502,7 +2548,7 @@ export async function startApp(rootEl) {
     const hidden = !!document.hidden && !safe(() => isIOS(), false);
     // "Live view", "watch me", "keep watching", "video mode": the camera opens by the same rule, then the live view.
     const live = safe(() => voiceLiveViewRequest(text, { viewerOpen, cameraAllowed, ios: isIOS(), hidden }), null);
-    if (live === 'need-front') return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLive: true })) } };
+    if (live === 'need-front') return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLive: true }), 'live') } };
     if (live === 'need-tap') {
       pendingVoiceLook = { text: '', at: Date.now(), live: true };
       return { handled: true, command: { action: 'optics', kind: 'need-tap', ack: 'Tap Look, and I’ll keep watching.' } };
@@ -2518,7 +2564,7 @@ export async function startApp(rootEl) {
     if (!kind) return null;
     if (kind === 'need-front') {
       const words = String(text).trim().slice(0, 500);
-      return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLook: words })) } };
+      return { handled: true, command: { action: 'optics', kind: 'need-front', ack: cameraNeedsFront(() => openOpticsScreen({ voice: !!voiceApi, autoLook: words }), 'look') } };
     }
     if (kind === 'need-tap') {
       // The question waits for that tap (30 s): Look then looks at once, with these words.
@@ -2556,7 +2602,10 @@ export async function startApp(rootEl) {
     const optics = currentOptics();
     return !!(optics && safe(() => optics.liveView.on, false));
   }
-  /** A gate for one turn (startTurn({ gate })): inert while the live view is off. */
+  /**
+   * A gate for one turn (startTurn({ gate })), made as the turn starts: a turn asked while the live
+   * view is off is never held by it, even if the live view starts before the turn ends (MONEY-2).
+   */
   function liveTurnGate() {
     return state.demo ? null : createTurnGate({ gate: getLiveGate(), isOn: liveViewOn });
   }
@@ -2569,19 +2618,18 @@ export async function startApp(rootEl) {
     outsideLiveViewText = '';
     return true;
   }
-  /** About what a quick answer in this chat would reserve now (its first request's worst case). */
+  /**
+   * Whether a quick answer would be sent now: the room left in the live view's hour covers its first
+   * request (as the engine builds it: this chat's, or a new chat's system prompt, tools and turn
+   * context, MONEY-6) with a useful answer and one web search.
+   */
   function quickAnswerFits(text = 'Research this with a web search.') {
     if (!liveViewOn()) return true;
-    const conv = state.conv;
     const model = getSettings().leadModel;
-    const params = {
-      model,
-      max_tokens: gateMaxTokens(true),
-      system: conv ? conv.system : '',
-      tools: conv ? conv.tools : [],
-      messages: [...(conv ? conv.apiMessages : []), { role: 'user', content: [{ type: 'text', text }] }],
-    };
-    return safe(() => getLiveGate().fits(requestWorstUsd(params, { model })), true);
+    const params = safe(() => engine.previewRequest(state.conv, { text, mode: 'quick', spoken: !!voiceApi, lines: [gateNote] }), null);
+    if (!params) return true;
+    const quick = { ...params, model, max_tokens: GATE_LIMITS.usefulTokens };
+    return safe(() => getLiveGate().room() >= requestWorstUsd(quick, { model, web: { searches: 1, fetches: 0 } }), true);
   }
 
   // ---- v8.1 (E2): "open optics" by voice, free (no Look) ------------------------------------------
@@ -2657,7 +2705,7 @@ export async function startApp(rootEl) {
    * The router's optics-research: the subject in words, the offer with each way's price (Voice Mode:
    * a question said and answered by voice; Optics: a card with its buttons, said where Jarvis speaks),
    * then the way the owner picks. Nothing is spent before that. No subject yet with the camera live:
-   * "Let me look first: about 3¢." (a Look, then the offer).
+   * "Let me look first: about 3¢." (a Look, then the offer; its price warm or cold, MONEY-8).
    */
   function researchThis({ where = 'offer', deep = false, surface = 'voice' } = {}) {
     if (!state.online) return { say: OFFLINE_LINE };
@@ -2680,7 +2728,7 @@ export async function startApp(rootEl) {
       };
       if (voiceApi && safe(() => isVoiceModeOpen(), false)) afterVoiceSays(go);
       else go();
-      return { say: LOOK_FIRST_LINE };
+      return { say: lookFirstLine(lookEstimate()) }; // MONEY-8: warm or cold, as the LOOK button says
     }
     const settings = getSettings();
     const offer = researchOffer({
@@ -2880,7 +2928,7 @@ export async function startApp(rootEl) {
       onCapture: () => presence.cue('capture'),
       // v8.1: words typed or said in Optics go to the router first ("put the camera on my other
       // screen", then Optics' own words: routeFromOptics).
-      route: (text, { spoken = false } = {}) => routeFromOptics(text, { spoken }),
+      route: (text, { spoken = false, alternatives = [] } = {}) => routeFromOptics(text, { spoken, alternatives }),
       onClose: ({ cameraOff } = {}) => {
         if (cameraOff) toast('Camera off.', { level: 'info', id: 'optics-off' });
         if (!chat.isEmpty()) chat.scrollToBottom(false);
@@ -4700,6 +4748,10 @@ export async function startApp(rootEl) {
     // ---- voice ▸
     // The chat's Speak reading an answer aloud: "stop" typed (or said in a viewer's field) stops it.
     if (surface !== 'voice') s.speaking = !!state.speaking;
+    // The prices the paid commands say first (MONEY-5, MONEY-8): the briefing at the owner's team size and
+    // depth, a Look warm or cold in this chat.
+    s.briefingUsd = safe(() => briefingPrice(), 0);
+    s.lookUsd = safe(() => lookEstimate(), 0);
     // ---- voice ◂
     // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
     if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
@@ -4859,18 +4911,27 @@ export async function startApp(rootEl) {
    * "stop watching"): { handled: true, ack, done? } (Optics announces the ack, and done's line), or
    * null: Optics takes them as the Look's question (live) or a follow-up (frozen).
    */
-  function routeFromOptics(text, { spoken = false } = {}) {
+  function routeFromOptics(text, { spoken = false, alternatives = [] } = {}) {
     const words = String(text || '');
+    // PRIVACY-3: Optics' own microphone gives every reading, best first; the router takes another one
+    // only for what R7 allows (never the camera, a paid action or the microphone), and the command acts
+    // on the reading it chose.
+    const readings = [words];
+    for (const a of Array.isArray(alternatives) ? alternatives : []) {
+      const r = typeof a === 'string' ? a.trim() : '';
+      if (r && !readings.some((x) => x.toLowerCase() === r.toLowerCase())) readings.push(r);
+    }
     const st = routerState('optics', { via: spoken ? 'voice' : 'typed' });
-    for (let hit = commandRouter.route([words], st); hit; hit = commandRouter.route([words], st, { after: hit })) {
+    for (let hit = commandRouter.route(readings, st); hit; hit = commandRouter.route(readings, st, { after: hit })) {
+      const chosen = typeof hit.reading === 'string' && hit.reading ? hit.reading : words;
       if (hit.id === 'standby') {
         // v8.1 (C2): the Standby words in Optics' field too.
         if (standbyFromViewer()) return { handled: true, ack: '' };
       } else if (hit.id === 'screens') {
-        if (screenCommand(words, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
+        if (screenCommand(chosen, null, spoken ? 'voice' : 'typed')) return { handled: true, ack: '' };
       } else if (hit.id === 'optics') {
         const optics = currentOptics();
-        const res = optics ? safe(() => optics.command(words), null) : null;
+        const res = optics ? safe(() => optics.command(chosen), null) : null;
         if (res && res.handled) return { handled: true, ack: (res.command && res.command.ack) || '' };
       } else {
         let said = null;
@@ -4984,11 +5045,12 @@ export async function startApp(rootEl) {
         const fromVoice = surface === 'voice' && !!voiceApi && safe(() => isVoiceModeOpen(), false);
         const tap = () => openOpticsScreen({ start: 'screen', voice: fromVoice });
         if (fromVoice) {
-          safe(() => voiceApi.offer({ label: 'Look at my screen · about 3¢', testid: 'voice-screen-look', onTap: tap }));
+          safe(() => voiceApi.offer({ label: `Look at my screen · about ${centsOf(lookEstimate())}¢`, testid: 'voice-screen-look', onTap: tap }));
           return { supported: true };
         }
         if (surface === 'hologram' || surface === 'optics') closeViewersForSheet();
-        toast('Tap Look to look at your screen. A Look costs about 3 cents.', { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
+        const cents = centsOf(lookEstimate());
+        toast(`Tap Look to look at your screen. A Look costs about ${cents} cent${cents === 1 ? '' : 's'}.`, { level: 'info', id: 'screen-look', timeout: 30000, action: { label: 'Look', fn: tap } });
         return { supported: true, shown: true };
       },
       // SHOULD C6: "brief me" with no home base (asked first in Voice Mode): the briefing protocol's words.

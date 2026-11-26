@@ -1,30 +1,49 @@
 // The live view's $1 an hour, for answers too (v8.1, E0): pure (no DOM, no network; the clock, the
 // storage and the lock are injected). v8.0's createLiveBudget (src/lib/live-view.js) keeps what was
 // spent in the hour, shared by every Jarvis tab and window through localStorage. This adds
-// reservations, kept in the same storage: before each main-model request sent while the live view
-// is on (a Look, a follow-up, a quick research answer, and each later request of that turn), its
-// worst case is reserved; if the hour's spending, every window's reservations and this one would
-// pass the cap, the request is not sent. After it, the real cost replaces the reservation.
+// reservations, kept in the same storage: before each main-model request of a turn asked while the
+// live view is on (a Look, a follow-up, a quick research answer, and each later request of that
+// turn), its worst case is reserved, or what is left of the hour when that covers the input and a
+// useful answer (max_tokens then comes down to fit); with less room than that the request is not
+// sent. While it streams, a meter follows what it costs and stops it before it could pass what was
+// reserved (a page it would fetch, a search round that would not fit). After it, the real cost
+// replaces the reservation.
 //
 //   GATE_LIMITS            max_tokens 4,000 for a turn's first request and 1,000 for later ones;
-//                          $0.01 for each web search a request may make
+//                          $0.01 for each web search; the web budget of such a turn (2 searches, no
+//                          page fetches), a search's results at 4,000 tokens at least
+//   LIVE_WEB               { searches: 2, fetches: 0 }: what a turn asked during the live view is
+//                          told it may use (gateNote), and what its requests reserve for
+//   gateNote               the line its turn context carries, asking for that budget
 //   gateMaxTokens(first)   4,000 | 1,000
 //   estimateInputTokens(params)
 //                          a request's input in tokens (system, tools, messages; images from their
 //                          real size), on the high side
-//   requestWorstUsd(params) the worst case of one request: its input at the cache-write price,
-//                          max_tokens at the output price, and $0.01 per web search it may make
+//   requestWorstUsd(params, { model, web })
+//                          the worst case of one request: its input at the cache-write price, all of
+//                          max_tokens at the output price, and for each web search (or fetched page)
+//                          it may make, $0.01 plus its results written to the cache and every later
+//                          round reading what came before again from the cache
+//   requestFloorUsd(params, { model })
+//                          the least worth sending: the input and a useful answer (1,000 tokens)
+//   fitRequest(params, { model, web, usd })
+//                          { maxTokens, web } that keep the worst case within `usd`, or null
 //   createLiveGate({ budget, storage, now, lock })
-//                          { budget, reserve(usd), settle(id, usd), release(id), keep(id), count(usd),
-//                            reserved(), fits(usd), resumeAt(usd) }
+//                          { budget, reserve(usd), reserveUpTo(usd, floorUsd), settle(id, usd),
+//                            release(id), keep(id), count(usd), reserved(), room(), fits(usd),
+//                            resumeAt(usd) }
 //   capLine(resumeAt)      "That would take the live view past its dollar this hour. It can go on at
 //                          2:41 PM, or say 'stop live view' and ask again."
-//   createTurnGate({ gate, isOn })
+//   createRequestMeter({ model, maxTokens, limitUsd, web, tools })
+//                          the running estimate of one request from its stream events: onEvent(event)
+//                          says when it must stop
+//   createTurnGate({ gate, isOn, startedOn })
 //                          the object the engine's startTurn({ gate }) consults before each request
-//                          of one turn (make one per turn): while the live view is on it keeps each
-//                          request short, reserves it and refuses it at the edge; once a request of
-//                          the turn went out that way, the rest of the turn is counted too (v8.0's
-//                          rule: a question asked during the live view counts in full)
+//                          of one turn (make one per turn, when the turn starts): a turn asked while
+//                          the live view is on keeps each request short, reserves it and refuses it
+//                          at the edge, and is counted in full even after the live view stops
+//                          (v8.0's rule); a turn asked while it was off is never touched, even if
+//                          the live view starts before it ends
 
 import { WEB_SEARCH_USD, priceOf } from '../engine/models.js';
 import { imageSizeOf, imageTokens } from './optics.js';
@@ -34,7 +53,22 @@ export const GATE_LIMITS = Object.freeze({
   firstMaxTokens: 4000, // a Look writes about 450 (lib/optics.js estimateLookCost)
   laterMaxTokens: 1000, // the closing sentence after its labels, a continuation
   searchUsd: WEB_SEARCH_USD,
+  // The web budget of a turn asked during the live view. The conversation's tools stay as they are
+  // (a changed tool list would make the API drop or refuse the earlier thinking and write the whole
+  // prompt cache again): the turn context asks for this, the reservation holds it, and the meter
+  // stops a request that goes beyond what was reserved.
+  searches: 2,
+  fetches: 0,
+  searchTokens: 4000, // a search's results, at least (their snippets come encrypted)
+  fetchTokens: 25000, // a page fetched with no max_content_tokens (a PDF is never capped)
+  usefulTokens: 1000, // the least output worth sending a request for
 });
+
+/** What a turn asked while the live view is on may use of the web, and what its requests reserve for. */
+export const LIVE_WEB = Object.freeze({ searches: GATE_LIMITS.searches, fetches: GATE_LIMITS.fetches });
+
+/** The turn context line of a turn asked while the live view is on (startTurn adds the gate's turnNote). */
+export const gateNote = `Live view: the owner's camera live view is on, and this answer counts toward its $1 an hour. Keep it short, use at most ${LIVE_WEB.searches} web searches, and do not use web_fetch.`;
 
 /** Where each window keeps its open reservations: one key per window, so no window overwrites another's. */
 export const LIVE_RESERVED_PREFIX = 'jarvis.liveView.reserved.';
@@ -120,24 +154,100 @@ export function estimateInputTokens(params) {
   return tokens;
 }
 
+function webTool(tools, name) {
+  if (!Array.isArray(tools)) return null;
+  return tools.find((x) => x && typeof x === 'object' && (x.name === name || String(x.type || '').startsWith(name))) || null;
+}
+
 /** How many web searches a request may make: its web_search tool's max_uses (none without the tool). */
 export function allowedSearches(tools) {
-  if (!Array.isArray(tools)) return 0;
-  const t = tools.find((x) => x && typeof x === 'object' && (x.name === 'web_search' || String(x.type || '').startsWith('web_search')));
+  const t = webTool(tools, 'web_search');
   if (!t) return 0;
   return isNum(t.max_uses) && t.max_uses >= 0 ? Math.floor(t.max_uses) : 10;
 }
 
+/** How many pages a request may fetch: its web_fetch tool's max_uses (none without the tool). */
+export function allowedFetches(tools) {
+  const t = webTool(tools, 'web_fetch');
+  if (!t) return 0;
+  return isNum(t.max_uses) && t.max_uses >= 0 ? Math.floor(t.max_uses) : 10;
+}
+
+/** What one fetched page may add, in tokens: its tool's max_content_tokens (a PDF is not capped by it). */
+export function fetchTokensOf(tools) {
+  const t = webTool(tools, 'web_fetch');
+  return t && isNum(t.max_content_tokens) && t.max_content_tokens > 0 ? Math.floor(t.max_content_tokens) : GATE_LIMITS.fetchTokens;
+}
+
+/** The web budget a worst case counts: `web` ({ searches, fetches }) within what the tools allow, else the tools' own. */
+function webBudget(tools, web) {
+  const maxS = allowedSearches(tools);
+  const maxF = allowedFetches(tools);
+  const pick = (v, max) => (isNum(v) ? Math.min(max, Math.max(0, Math.floor(v))) : max);
+  return { searches: pick(web && web.searches, maxS), fetches: pick(web && web.fetches, maxF), fetchTokens: fetchTokensOf(tools) };
+}
+
+/**
+ * The worst case in USD of a request with `input` tokens, `out` max_tokens and web budget `b`, priced
+ * as the API bills server tools: each search costs $0.01, each result is written to the prompt cache
+ * (the API inserts a cache write after tool results) and every later round reads what came before
+ * again from the cache. Its parts: { fixed: without output, perOut: per max_tokens token }.
+ */
+function worstParts(input, b, price) {
+  const write = price.cacheWrite5mPerM / 1e6;
+  const read = price.cacheReadPerM / 1e6;
+  const results = b.searches * GATE_LIMITS.searchTokens + b.fetches * b.fetchTokens;
+  const rounds = b.searches + b.fetches;
+  const fixed = input * write + results * write + rounds * (input + results) * read + b.searches * GATE_LIMITS.searchUsd;
+  // The output, and with tool rounds what it wrote read again: written to the cache once, then read.
+  const perOut = price.outPerM / 1e6 + (rounds ? write + rounds * read : 0);
+  return { fixed, perOut };
+}
+
 /**
  * The worst case of one request, in USD: all of its input at the 5-minute cache-write price (the
- * prompt cache may be cold), all of max_tokens at the output price, and $0.01 for every web search
- * it may make. `model`: the model it goes to (default: params.model).
+ * prompt cache may be cold), all of max_tokens at the output price, and for every web search it may
+ * make $0.01 plus its results (4,000 tokens at least) and for every page it may fetch the page (its
+ * max_content_tokens), each written to the cache, with every later round reading what came before
+ * again from the cache. `model`: the model it goes to (default: params.model). `web`: { searches,
+ * fetches } it may use (default: what its tools allow).
  */
-export function requestWorstUsd(params, { model } = {}) {
+export function requestWorstUsd(params, { model, web } = {}) {
   const p = params && typeof params === 'object' ? params : {};
   const price = priceOf(model || p.model);
   const out = isNum(p.max_tokens) && p.max_tokens > 0 ? p.max_tokens : 0;
-  return (estimateInputTokens(p) * price.cacheWrite5mPerM + out * price.outPerM) / 1e6 + allowedSearches(p.tools) * GATE_LIMITS.searchUsd;
+  const { fixed, perOut } = worstParts(estimateInputTokens(p), webBudget(p.tools, web), price);
+  return fixed + out * perOut;
+}
+
+/** The least worth sending: the request's input at the cache-write price and a useful answer (1,000 tokens). */
+export function requestFloorUsd(params, { model } = {}) {
+  const p = params && typeof params === 'object' ? params : {};
+  const price = priceOf(model || p.model);
+  const max = isNum(p.max_tokens) && p.max_tokens > 0 ? p.max_tokens : GATE_LIMITS.usefulTokens;
+  return (estimateInputTokens(p) * price.cacheWrite5mPerM + Math.min(GATE_LIMITS.usefulTokens, max) * price.outPerM) / 1e6;
+}
+
+/**
+ * The request made to fit `usd`: the most of its max_tokens (at least a useful answer's) and of its
+ * web budget (`web`, fewer searches before less output) whose worst case stays within it.
+ * Returns { maxTokens, web: { searches, fetches } }, or null when not even a useful answer fits.
+ */
+export function fitRequest(params, { model, web, usd } = {}) {
+  const p = params && typeof params === 'object' ? params : {};
+  const price = priceOf(model || p.model);
+  const max = isNum(p.max_tokens) && p.max_tokens > 0 ? Math.floor(p.max_tokens) : 0;
+  const input = estimateInputTokens(p);
+  const full = webBudget(p.tools, web);
+  const useful = Math.min(GATE_LIMITS.usefulTokens, max);
+  if (!max || !isNum(usd)) return null;
+  for (let s = full.searches; s >= 0; s -= 1) {
+    const b = { ...full, searches: s, fetches: s === full.searches ? full.fetches : 0 };
+    const { fixed, perOut } = worstParts(input, b, price);
+    const fits = Math.min(max, Math.floor((usd - fixed) / perOut));
+    if (fits >= useful && fits > 0) return { maxTokens: fits, web: { searches: b.searches, fetches: b.fetches } };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -264,6 +374,16 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
 
   const reservedUsd = (t = time()) => reservedNano(t) / NANO;
 
+  function hold(t, n) {
+    seq += 1;
+    const id = `${instance}.${seq}`;
+    if (n > 0) {
+      mine.set(id, { id, t, nano: n });
+      writeOwn();
+    }
+    return { ok: true, id, usd: n / NANO };
+  }
+
   function tryReserve(usd) {
     const t = time();
     const n = nano(usd);
@@ -271,13 +391,27 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
     // twice (safe), never not at all.
     const held = reservedUsd(t);
     if (!budget.canSpend(held + n / NANO)) return { ok: false, resumeAt: budget.resumeAt(held + n / NANO) };
-    seq += 1;
-    const id = `${instance}.${seq}`;
-    if (n > 0) {
-      mine.set(id, { id, t, nano: n });
-      writeOwn();
-    }
-    return { ok: true, id };
+    return hold(t, n);
+  }
+
+  /** USD left in the hour now: the cap less the hour's spending and every window's reservations. */
+  function roomUsd(t = time()) {
+    const cap = isNum(budget.capUsd) && budget.capUsd >= 0 ? budget.capUsd : 1;
+    const spent = typeof budget.spent === 'function' ? Number(budget.spent()) || 0 : 0;
+    return Math.max(0, cap - spent - reservedUsd(t));
+  }
+
+  // `usd` when it fits; else all that is left, when that is at least `floorUsd`; else refused.
+  function tryReserveUpTo(usd, floorUsd) {
+    const t = time();
+    const want = nano(usd);
+    const held = reservedUsd(t);
+    if (budget.canSpend(held + want / NANO)) return hold(t, want);
+    const floor = Math.min(want, nano(floorUsd));
+    // A nano-dollar short of the room, so rounding never takes it past the cap.
+    const room = Math.floor(roomUsd(t) * NANO) - 1;
+    if (room > 0 && room >= floor && budget.canSpend(held + room / NANO)) return hold(t, room);
+    return { ok: false, resumeAt: budget.resumeAt(held + Math.max(floor, 1) / NANO) };
   }
 
   function drop(id) {
@@ -293,6 +427,9 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
     /** v8.0's budget this gate reserves beside (the live view's own looks add to it). */
     budget,
     reserve: (usd) => run(() => tryReserve(usd)),
+    /** { ok, id, usd }: `usd`, or all that is left when that is at least `floorUsd`; else { ok: false, resumeAt }. */
+    reserveUpTo: (usd, floorUsd = usd) => run(() => tryReserveUpTo(usd, floorUsd)),
+    room: () => roomUsd(),
     settle: (id, usd) =>
       run(() => {
         if (!mine.has(id)) return false;
@@ -351,20 +488,156 @@ export function capLine(resumeAt, { formatTime = defaultTime } = {}) {
   return when ? `${head} It can go on at ${when}, or say 'stop live view' and ask again.` : `${head} Say 'stop live view' and ask again.`;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The backstop: one request's running cost, from its stream
+
+/** Tokens a server tool's result adds to the context, measured from its JSON (3 characters a token). */
+function resultTokensOf(block) {
+  let chars = 0;
+  try {
+    chars = JSON.stringify(block).length;
+  } catch {
+    chars = 0;
+  }
+  const measured = Math.ceil(chars / CHARS_PER_TOKEN);
+  const c = block && block.content;
+  const failed = c && typeof c === 'object' && !Array.isArray(c) && (typeof c.error_code === 'string' || /error/.test(String(c.type || '')));
+  if (failed) return measured;
+  return block.type === 'web_search_tool_result' ? Math.max(GATE_LIMITS.searchTokens, measured) : Math.max(1000, measured);
+}
+
+/**
+ * The running cost of one request sent while the live view is on, on the high side, from its stream
+ * events, against `limitUsd` (what was reserved for it). Like the home base's brain client
+ * (core/server/brain/claude.mjs), but held to the reservation:
+ *   - its prompt as message_start reports it (cache reads, cache writes and the rest, each at its
+ *     price), and all of max_tokens at the output price from the start;
+ *   - each web search $0.01 when it starts;
+ *   - each server-tool round: its result written to the cache (4,000 tokens at least for a search,
+ *     its measured size once it arrives), and everything before it read again from the cache (the
+ *     prompt's uncached part at the write price), the output written once;
+ *   - a round a running tool will start is counted ahead (a search as 4,000 tokens, a page as its
+ *     max_content_tokens), so the request stops before that round rather than after it.
+ * onEvent(event) → true once it must stop now: the estimate would pass `limitUsd`, or it starts to
+ * fetch a page beyond `web.fetches` (a fetched PDF has no size limit, so none is let run).
+ * spent() / committed() in USD; tripped: why it stopped ('cost' | 'fetch') or null.
+ */
+export function createRequestMeter({ model, maxTokens, limitUsd, web = LIVE_WEB, tools } = {}) {
+  const price = priceOf(model);
+  const write = price.cacheWrite5mPerM / 1e6;
+  const read = price.cacheReadPerM / 1e6;
+  const out = isNum(maxTokens) && maxTokens > 0 ? maxTokens : 0;
+  const limit = isNum(limitUsd) ? limitUsd : 0;
+  const fetchTokens = fetchTokensOf(tools);
+  const fetchBudget = web && isNum(web.fetches) ? web.fetches : allowedFetches(tools);
+  let promptUsd = 0; // the first round's input, as billed
+  let rereadUsd = 0; // the prompt read again in a later round
+  let searches = 0;
+  let fetches = 0;
+  let resultTokens = 0;
+  let roundsUsd = 0;
+  let rounds = 0;
+  const blocks = new Map(); // stream index → { type, name, id }
+  const pending = new Map(); // server_tool_use id → the tokens its result is expected to add
+  let tripped = null;
+
+  // A later round: everything before it read again from the cache, `added` tokens written to it.
+  const roundUsd = (added) => rereadUsd + (out + resultTokens) * read + added * write;
+  const outputUsd = () => out * (price.outPerM / 1e6) + (rounds || pending.size ? out * write : 0);
+  const spent = () => promptUsd + outputUsd() + searches * GATE_LIMITS.searchUsd + roundsUsd;
+  const committed = () => {
+    let usd = spent();
+    for (const tokens of pending.values()) usd += roundUsd(tokens);
+    return usd;
+  };
+  const check = (reason = 'cost') => {
+    if (!tripped && committed() > limit + 1e-9) tripped = reason;
+    return !!tripped;
+  };
+
+  function onEvent(event) {
+    if (tripped) return true;
+    if (!event || typeof event !== 'object') return false;
+    if (event.type === 'message_start') {
+      const u = (event.message && event.message.usage) || {};
+      const tok = (v) => (isNum(v) && v > 0 ? v : 0);
+      const uncached = tok(u.input_tokens);
+      const cached = tok(u.cache_creation_input_tokens) + tok(u.cache_read_input_tokens);
+      promptUsd = (uncached * price.inPerM + tok(u.cache_creation_input_tokens) * price.cacheWrite5mPerM + tok(u.cache_read_input_tokens) * price.cacheReadPerM) / 1e6;
+      rereadUsd = cached * read + uncached * write;
+      return check();
+    }
+    if (event.type === 'content_block_start') {
+      const b = event.content_block || {};
+      const type = typeof b.type === 'string' ? b.type : '';
+      blocks.set(event.index, { type, name: b.name, id: b.id });
+      if (type === 'server_tool_use') {
+        if (b.name === 'web_search') searches += 1;
+        else if (b.name === 'web_fetch') {
+          fetches += 1;
+          if (fetches > fetchBudget) {
+            tripped = 'fetch'; // stopped before it runs
+            return true;
+          }
+        }
+        return check();
+      }
+      if (type.endsWith('_tool_result')) {
+        // A server tool answered: the next round reads everything so far again, this result included.
+        if (typeof b.tool_use_id === 'string') pending.delete(b.tool_use_id);
+        const tokens = resultTokensOf(b);
+        roundsUsd += roundUsd(tokens);
+        resultTokens += tokens;
+        rounds += 1;
+        return check();
+      }
+      return false;
+    }
+    if (event.type === 'content_block_stop') {
+      const b = blocks.get(event.index);
+      blocks.delete(event.index);
+      if (b && b.type === 'server_tool_use' && typeof b.id === 'string') {
+        // The tool runs now, on Anthropic's side: the round its result starts is counted ahead.
+        pending.set(b.id, b.name === 'web_fetch' ? fetchTokens : b.name === 'web_search' ? GATE_LIMITS.searchTokens : 1000);
+        return check();
+      }
+    }
+    return false;
+  }
+
+  return {
+    onEvent,
+    spent,
+    committed,
+    limitUsd: limit,
+    get tripped() {
+      return tripped;
+    },
+  };
+}
+
 /**
  * What the engine consults before each lead request of a turn (startTurn({ gate }), lead.js). One per
- * turn (it remembers whether the turn has counted toward the live view's hour).
- *   maxTokens(first)   null while the live view is off (the request goes out as usual), else 4,000
- *                      for the turn's first request and 1,000 for later ones
- *   reserve({ params, model }) → null (nothing to do: the live view is off and this turn never went
- *                      through it), { refused: true, message } (don't send: the turn ends with
- *                      `message`), or a ticket { usd, settle(cost), release(), keep(partialCost) }.
- *                      A turn that sent a request while the live view was on keeps counting after it
- *                      stops (v8.0's rule: a question asked during the live view counts in full):
- *                      its later requests get a ticket of 0 that counts their real cost.
+ * turn, made when the turn starts: whether the live view is on then decides it (`startedOn`,
+ * default: isOn() now). A turn asked while the live view was off is never shortened, refused or
+ * counted, even if the live view starts before it ends (a mission's summary after its agents).
+ *   active             the turn was asked while the live view was on
+ *   turnNote           the line for its turn context (gateNote), or '' when not active
+ *   maxTokens(first)   null when not active or once the live view is off (the request goes out as
+ *                      usual), else 4,000 for the turn's first request and 1,000 for later ones
+ *   reserve({ params, model }) → null (nothing to do), { refused: true, message } (don't send: the
+ *                      turn ends with `message`), or a ticket { usd, maxTokens, web, settle(cost),
+ *                      release(), keep(partialCost), meter({ maxTokens, tools }), message() }. The
+ *                      ticket holds the request's worst case with LIVE_WEB, or all that is left of
+ *                      the hour when that covers its input and a useful answer (maxTokens then
+ *                      fits it: fitRequest); `meter` follows the request against it (lead.js stops
+ *                      the request when it trips; `message()` is the line the turn then ends with).
+ *                      A turn asked during the live view keeps counting after it stops (v8.0's
+ *                      rule: a question asked during the live view counts in full): its later
+ *                      requests get a ticket of 0 that counts their real cost.
  * `isOn()`: whether the live view is on in this window now (paused counts as on).
  */
-export function createTurnGate({ gate, isOn }) {
+export function createTurnGate({ gate, isOn, startedOn } = {}) {
   const on = () => {
     try {
       return !!isOn();
@@ -372,13 +645,17 @@ export function createTurnGate({ gate, isOn }) {
       return false;
     }
   };
+  const active = typeof startedOn === 'boolean' ? startedOn : on();
   let counting = false;
   return {
-    maxTokens: (first) => (on() ? gateMaxTokens(first) : null),
+    active,
+    turnNote: active ? gateNote : '',
+    maxTokens: (first) => (active && on() ? gateMaxTokens(first) : null),
     get counting() {
       return counting;
     },
     async reserve({ params, model } = {}) {
+      if (!active) return null;
       if (!on()) {
         if (!counting) return null;
         // The live view stopped during this turn: nothing to keep short or refuse, but it counts.
@@ -391,9 +668,21 @@ export function createTurnGate({ gate, isOn }) {
         return { usd: 0, settle: (cost) => finish(cost), release: () => finish(0), keep: (partial) => finish(partial) };
       }
       counting = true;
-      const usd = requestWorstUsd(params, { model });
-      const r = await gate.reserve(usd);
-      if (!r || !r.ok) return { refused: true, message: capLine(r ? r.resumeAt : Infinity), usd };
+      const worst = requestWorstUsd(params, { model, web: LIVE_WEB });
+      const floor = requestFloorUsd(params, { model });
+      const lineFor = (r) => capLine(r && isNum(r.resumeAt) ? r.resumeAt : gate.resumeAt(floor));
+      const r = typeof gate.reserveUpTo === 'function' ? await gate.reserveUpTo(worst, floor) : await gate.reserve(worst);
+      if (!r || !r.ok) return { refused: true, message: capLine(r ? r.resumeAt : Infinity), usd: worst };
+      const held = isNum(r.usd) ? r.usd : worst;
+      const partial = held + 1e-12 < worst;
+      const fit = partial ? fitRequest(params, { model, web: LIVE_WEB, usd: held }) : null;
+      if (partial && !fit) {
+        // Not even a useful answer fits what was held (rounding at the floor): nothing is sent.
+        await gate.release(r.id);
+        return { refused: true, message: capLine(gate.resumeAt(floor)), usd: worst };
+      }
+      const maxTokens = fit ? fit.maxTokens : isNum(params && params.max_tokens) ? params.max_tokens : null;
+      const web = fit ? fit.web : LIVE_WEB;
       // One outcome per ticket: answered, failed before billing, or stopped after it was sent.
       let done = false;
       const finish = (fn) => {
@@ -402,10 +691,14 @@ export function createTurnGate({ gate, isOn }) {
         return fn();
       };
       return {
-        usd,
+        usd: held,
+        maxTokens,
+        web,
         settle: (cost) => finish(() => gate.settle(r.id, Number(cost) || 0)),
         release: () => finish(() => gate.release(r.id)),
         keep: () => finish(() => gate.keep(r.id)),
+        meter: ({ maxTokens: max, tools } = {}) => createRequestMeter({ model, maxTokens: isNum(max) ? max : maxTokens, limitUsd: held, web, tools }),
+        message: () => lineFor(null),
       };
     },
   };

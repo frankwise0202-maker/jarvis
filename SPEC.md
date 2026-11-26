@@ -2263,7 +2263,22 @@ entries, §30), `src/ui/app.js` (deps: `openOpticsByWords`, `researchThis`, `run
   'open Optics' for your camera." (`hologramPartByWords`). "Close the camera" with Optics closed
   (`optics-close`): a camera view on another screen goes off ("Camera off."), else "The camera is off."; typed in
   Optics' own field it closes Optics. "Video mode" is the live view (`LIVE_VIEW_ON` / `LIVE_VIEW_OFF`: "video mode",
-  "go into / switch to video mode", "stop / exit / leave video mode").
+  "go into / switch to video mode", "stop / exit / leave video mode"). With Optics closed (and no hologram, blueprint
+  or window those words could be about), the live view's and Watch's off words and the picture's own words ("stop
+  video mode", "video mode off", "stop live view", "stop watching", "expand the picture", "back to live", "close the
+  picture") get a free line on every surface (`optics-idle`, app layer, `matchOpticsClosedWords`: "The live view is
+  off.", "Watch is off.", "There's no picture on screen."; v8.1 fix MONEY-7), never a question to Claude.
+- **Never from another reading (v8.1 fixes PRIVACY-2 to PRIVACY-5).** Optics' own microphone gives the router every
+  reading, best first (`deps.route(best, { spoken, alternatives })` → `routeFromOptics`), so R7 decides there as in
+  Voice Mode and the chat; the old promotion of a less-sure reading (`commandReading`) is gone, and a switch to a
+  named camera is a camera action (`OPTICS_CAMERA`). "Research this" with Optics open (`optics-research`) is
+  `camera: true, free: false` (it may take a Look first). Screens' camera views (`what: 'camera'`) and the camera's
+  window (window-commands.js `action()` with `which`, `a` or `b` 'camera') are `camera: true`. Hidden on a Mac,
+  camera words leave one notification that says what its click does, with the price ("…look through the camera
+  (about 8¢)", "…start the live view (up to $1 an hour)", else "…turn the camera on"): good for 30 s like a tap on
+  Look, withdrawn then and when Voice Mode closes; a later click only opens Optics. A Look waiting for the camera
+  (`autoLook`) ends when the camera pauses ("The camera turns off while Jarvis is in the background."; MAC-3), so
+  it is never sent later by itself.
 - **A Look on another screen (E5).** Screens' look panel taking the Look calls `optics.sendAway(frameId)` (app.js
   `closeViewerFor`): with the camera live the card folds (`closeCard`), the Look's row in the log reads "ON YOUR OTHER
   SCREEN" (`data-away`) and keeps its whole picture, the notice says "On your other screen.", and the camera and the
@@ -3009,14 +3024,17 @@ before; on iOS they never do.
   ("play Back in Black by AC/DC", "play some <artist>": a local exchange in the chat, "Here's Back In Black by AC/DC.
   Tap Open in Apple Music to play it.", showing what the offer found, no second search; then a tap; a preview plays
   in-app after a tap; "yes" with no music offered is the briefing); "brief me" / "the briefing" / "catch me up" /
-  "sure, run the briefing" / "no, just the briefing" → `wake.briefing()`: the briefing protocol for the time of day sent
-  as a spoken Voice Mode turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid
-  request); "no" / "not now, thanks" / "go back to sleep" / "no thanks, go back to sleep" … → "Very good, Frank." then
+  "sure, run the briefing" / "no, just the briefing" → `wake.briefing()`: the briefing protocol for the time of day,
+  a paid team of agents, so (v8.1 fixes MONEY-4, MAC-5) asked first with its price as C6's "brief me" is
+  (`askPaidBriefing`: "Your briefing sends a team of agents to look up the news, about $1.55. Shall I run it?", the
+  price from `briefingUsd` at the owner's team size and depth, MONEY-5); only "yes" sends it as a spoken Voice Mode
+  turn in a chat of its own (`newChat`; captioned with the owner's words; the first paid request), "no" sends
+  nothing. Room talk answering the offer (woken in the background, or by claps) never starts it alone; "no" / "not now, thanks" / "go back to sleep" / "no thanks, go back to sleep" … → "Very good, Frank." then
   Voice Mode closes into Standby (`onClose({ reason: 'standby' })`); an answer word then a music command ("Yes, play
   some AC/DC", "No, play Highway to Hell") → that command, local and free (the offer's card when it names the offered
   artist); anything else → an ordinary turn (the 2-second check). `standbyCommand` takes the same pieces anywhere in
   Voice Mode ("No thanks, go back to sleep", "Okay, standby").
-- The routine itself never calls Claude (E2E: no lead request until "brief me").
+- The routine itself never calls Claude (E2E: no lead request until "brief me", its price and "yes").
 - After a woken conversation (`wakeSession`) Voice Mode goes back to Standby when `wakeReturn` is on: on Exit (onClose
   `{ wakeSession: true }`), "go back to sleep", 2.5 s after it stopped listening for silence, or after a minute idle
   (not while a preview plays: `wake.canSleep()`).
@@ -3275,7 +3293,8 @@ none of these commands exist; every sentence goes to Claude as before. In Voice 
 are said (`homeBase.command`, no turn; a briefing the Core can't give: the words are sent as a turn).
 The Standby wake routine's "brief me" uses the home base's briefing, said out loud, when a home base
 is linked (`wake.briefing()` → `{ done }`; free), and the paid briefing protocol (a chat of its own)
-when it can't answer; otherwise the protocol as before. Old conversations, tools and prompts are
+when it can't answer (v8.1: its price asked first, then "yes": `{ send, paid: true, usd }`); otherwise the
+protocol as before, its price asked first. Old conversations, tools and prompts are
 unchanged.
 
 **Tests.** Unit `brain` (the views and their guards: a key-like hint, bad sources, music; failures;
@@ -4025,22 +4044,40 @@ and `liveSpentText`.
 for its looks. One mechanism, in the engine, over v8.0's budget: `src/lib/live-gate.js` (pure; the clock, the storage
 and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), `src/engine/jarvis.js`
 (`startTurn(conv, { gate })`), app.js (`liveTurnGate`, `getLiveGate`).
-- **Which requests.** Every main-model request of a turn sent from a window whose live view is on (`liveViewOn()`: on
-  or paused): a Look, its follow-ups, any question typed or said in that window, a quick research answer, and each
-  later request of the same turn (a tool round, a `pause_turn` continuation), and a turn resumed with Resume
-  (`resumeTurn(conv, { gate })`). app.js `send()` gives every turn a gate (`createTurnGate({ gate, isOn })`, one per
-  turn; `resume()` too) and, while the live view is on, makes it a quick turn
-  (`mode: 'quick'`: a swarm's agents are outside the gate). A research mission (its offer says so) and the home base
-  are outside (`outsideLiveView`); the demo has no gate.
-- **The worst case** (`requestWorstUsd(params, { model })`): the request's input as sent (system, tools, messages;
-  text and JSON at 3 characters a token; a picture from its real size, read from the JPEG or PNG header, else the
-  4,784-token cap; a PDF about one token per 20 bytes) at the 5-minute cache-write price (the cache may be cold), all
-  of `max_tokens` at the output price, and $0.01 for each web search its tools allow (`max_uses`). While the live view
-  is on, `max_tokens` is 4,000 for a turn's first request and 1,000 for later ones (`gateMaxTokens`; `leadParams`
-  takes the smaller): a Look's worst case is then about 27¢ (19,000 input tokens, 4,000 out, ten searches), a
-  follow-up's about 28¢, so questions are refused from about 72¢ spent in the hour.
-- **Reserve, then send** (`gateRequest`, in `leadRequest` before each request). `reserve(usd)` adds every window's
-  open reservations to the hour's spending; if that and this request would pass $1 the request is not sent:
+- **Which requests.** Every main-model request of a turn asked from a window whose live view is on when the turn
+  starts (`liveViewOn()`: on or paused): a Look, its follow-ups, any question typed or said in that window, a quick
+  research answer, and each later request of the same turn (a tool round, a `pause_turn` continuation), and a turn
+  resumed with Resume while it is on (`resumeTurn(conv, { gate })`). app.js `send()` gives every turn a gate
+  (`createTurnGate({ gate, isOn })`, made as the turn starts; `resume()` too) and, while the live view is on, makes it
+  a quick turn (`mode: 'quick'`: a swarm's agents are outside the gate). Whether the live view is on when the turn
+  starts decides it for the whole turn (`active`): a turn asked while it was off (a swarm whose agents are still out,
+  a briefing) is never shortened, refused or counted, even if the live view starts before it ends (fix MONEY-2). A
+  research mission (its offer says so) and the home base are outside (`outsideLiveView`); the demo has no gate.
+- **The web budget.** A turn asked while the live view is on carries one more line in its turn context
+  (`gateNote`, through the gate's `turnNote`): "Live view: the owner's camera live view is on, and this answer counts
+  toward its $1 an hour. Keep it short, use at most 2 web searches, and do not use web_fetch." (`LIVE_WEB`). The
+  conversation's tools are sent as they are: a changed tool list is an edit of the history's prefix, so the API would
+  drop (or, on enforced accounts, refuse) the earlier thinking blocks and the whole prompt cache would be written
+  again. Its requests go out without a server-side fallback or compaction (`leadParams`: each would add a whole
+  attempt); both are outside the prefix.
+- **The worst case** (`requestWorstUsd(params, { model, web })`): the request's input as sent (system, tools,
+  messages; text and JSON at 3 characters a token; a picture from its real size, read from the JPEG or PNG header,
+  else the 4,784-token cap; a PDF about one token per 20 bytes) at the 5-minute cache-write price (the cache may be
+  cold), all of `max_tokens` at the output price, and what its server tools add inside the request, priced as the API
+  bills them: each web search $0.01 and its results (4,000 tokens at least), each fetched page (its tool's
+  `max_content_tokens`), written to the prompt cache (the API puts a cache write after tool results), and every later
+  round reading what came before again at the cache-read price, the output written once. `web` is the budget counted:
+  `LIVE_WEB` (2 searches, no pages) for a gated request; without it, what the tools allow (10 searches and 8 pages of
+  12,000 tokens: about a dollar). While the live view is on, `max_tokens` is 4,000 for a turn's first request and
+  1,000 for later ones (`gateMaxTokens`; `leadParams` takes the smaller): a Look's worst case is then about 27¢
+  (19,000 input tokens, 4,000 out, 2 searches), a follow-up's about the same. The least worth sending
+  (`requestFloorUsd`) is the input at the cache-write price and a useful answer (1,000 tokens): about 12¢ in a new
+  chat.
+- **Reserve, then send** (`gateRequest`, in `leadRequest` before each request). `reserveUpTo(worst, floor)` adds
+  every window's open reservations to the hour's spending and holds the worst case when it fits; else all that is left
+  of the hour, when that still covers the floor, and then `max_tokens` comes down so the worst case fits what was held
+  (`fitRequest`: fewer searches first, then less output, never under 1,000 tokens). With less left than the floor the
+  request is not sent:
   `LiveCapRefused`, and the turn fails with `{ kind: 'live_cap', retryable: false }` and `capLine(resumeAt)`: "That
   would take the live view past its dollar this hour. It can go on at 2:41 PM, or say 'stop live view' and ask
   again." (the time rounded up to the minute like the live view's own note; without one, "Say 'stop live view' and
@@ -4048,37 +4085,55 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
   meanwhile wins over the refusal. Optics shows and says it (`sayAloud`: `sayNotice` where Jarvis may speak, not over
   Voice Mode); Voice Mode says it as the turn's error; the chat shows it on the turn. This is the only refusal: the
   live view's own looks keep their pause at the limit (above), and nothing else refuses a question.
+- **The meter** (fix MONEY-1; `createRequestMeter`, wired by `meterFor` in `leadRequest`). While a held request
+  streams, a running estimate on the high side follows it, as the home base's brain client does
+  (core/server/brain/claude.mjs): its prompt as `message_start` bills it, all of `max_tokens` at the output price, each
+  web search's $0.01 as it starts, and each server-tool round (its result written to the cache at its measured size, at
+  least 4,000 tokens for a search, and everything before it read again). A round a running tool will start is counted
+  ahead (a search as 4,000 tokens, a page as its `max_content_tokens`). When the estimate would pass what was held, or
+  the request starts to fetch a page (a fetched PDF has no size limit, so none runs while the live view holds the
+  turn), the meter stops that request alone (its own abort, linked to the turn's): before the tool runs, so the round
+  never starts. Its reservation is kept as spent and the turn ends with `capLine`, as a refused one does. So no
+  request sent while the live view is on can settle the hour above $1.
 - **Settle.** Answered: `settle(id, responseCost(model, usage))`, the real cost into v8.0's budget (`budget.add`) and
   the reservation gone. Failed with an HTTP status before any output (429, 529, 500…): `release`, nothing counted.
-  Stopped or cut after it was sent: `keep`, the reservation counted as spent (it may have been billed; the worst is
-  assumed).
+  Stopped or cut after it was sent (by the owner, a dropped connection, or the meter): `keep`, the reservation counted
+  as spent (it may have been billed; the worst is assumed).
 - **Every window.** Each window keeps its open reservations in localStorage under its own key
   (`jarvis.liveView.reserved.<tag>`) beside v8.0's `jarvis.liveView.spend`, so every window sees every other's and
   none can drop another's. A Web Lock (`navigator.locks`, `jarvis.liveView.gate`) makes the check and the reservation
   one step across windows; without Web Locks two windows at the edge can each reserve once. A reservation never
   settled (its window closed or reloaded mid-request) counts until it is an hour old. The looks check `gate.fits()`
   (`deps.liveGate`: reservations included), so a look never takes room an answer holds; the meter shows spending.
-- **Counted once.** v8.0's rule stays: a turn that sent a request while the live view was on keeps counting after the
-  live view stops (Live, the LIVE pill, Optics closed): the turn gate is sticky, and its later requests get a ticket
-  of 0 that counts their real cost (`gate.count`). v8.0's `countLiveRun` is off when the gate is wired
-  (`liveCount: !!liveView && !deps.liveGate`), so no question is counted twice. A turn that never sent a request while
-  the live view was on goes out exactly as before.
+- **Counted once.** v8.0's rule stays: a turn asked while the live view was on keeps counting after the live view
+  stops (Live, the LIVE pill, Optics closed): the turn gate is sticky, and its later requests get a ticket of 0 that
+  counts their real cost (`gate.count`). v8.0's `countLiveRun` is off when the gate is wired
+  (`liveCount: !!liveView && !deps.liveGate`), so no question is counted twice. A turn asked while the live view was
+  off goes out exactly as before, start to end.
+- **The research offer's quick answer** (`quickAnswerFits`, app.js) is offered while the room left covers its first
+  request as the engine would build it (`engine.previewRequest(conv, { text, mode, spoken, lines })`: this chat's, or a
+  new chat's system prompt, tools and turn context; fix MONEY-6) with a useful answer and one web search.
 - **Hologram of this** stops the live view first (the hologram covers Optics, which stops it anyway), so its turn is
   an ordinary one, not held to 4,000 tokens.
 - **Known limits.** Only a window whose live view is on gates its answers: a question asked in another window
-  meanwhile is neither gated nor counted. The worst case can't bound what a server tool adds inside its own request
-  (a web search's results, a fetched page of up to 12,000 tokens) nor a refusal's fallback to another model: the real
-  cost is what is counted, so such a request can take the hour past $1 by its difference, and the next request is
-  then refused.
-  With the live view on every answer is a quick one, at most 4,000 then 1,000 tokens a request: a long answer may
-  stop short ("Tell me more" goes on). In Voice Mode the refusal is said with Voice Mode's apology for a failed turn.
+  meanwhile is neither gated nor counted. The web budget is asked for, not enforced by the API: a request that goes
+  beyond it is stopped by the meter (the answer ends there with the line). The meter counts a search's results as
+  4,000 tokens until they arrive; results much larger than that, arriving at the very edge, could have the next round
+  started before the stop reaches the API. With the live view on every answer is a quick one, at most 4,000 then 1,000
+  tokens a request: a long answer may stop short ("Tell me more" goes on). In Voice Mode the refusal is said with
+  Voice Mode's apology for a failed turn.
 - **Tests.** Unit `live-gate` (reserve, settle, release, keep; refused at the edge; two windows sharing storage; the
   lock; a closed window's reservations; storage that throws or is full; the worst case of a Look, a tool round and a
   web search; `capLine`; the engine side; the sticky turn gate) and `optics.gate-engine` (the strict mock: 4,000 then
   1,000 `max_tokens`, settled to the real cost; the live view off changes nothing; refused at 97¢ with the question
   out of the history, then answered after "stop live view"; a 529 released, then settled; Stop keeps the reservation;
   the hour filled mid-turn refuses the next request; a web search with `pause_turn`; the live view stopped mid-turn
-  keeps counting). E2E `optics-aside-live-cap` (Mac, replies read aloud, 97¢ spent: "Tell me more" typed is refused
+  keeps counting), and `live-gate.backstop` (fixes MONEY-1, MONEY-2, MONEY-6, against a scripted API that bills server
+  rounds as the API does: at 70¢ a research answer with 3 searches and 2 fetched pages is stopped before its first
+  page and never settles the hour above $1; searches beyond the budget stopped by their cost; 15¢ left sends a
+  question with `max_tokens` to fit, 5¢ refuses it; the meter alone; the worst case with results, pages and rounds;
+  a swarm turn asked with the live view off keeps its limits when it starts mid-mission, at 0¢ and at 80¢; a new
+  chat's quick answer priced from `previewRequest`). E2E `optics-aside-live-cap` (Mac, replies read aloud, 97¢ spent: "Tell me more" typed is refused
   out loud and nothing is sent; "stop live view"; the same question answered) and `optics-research` (at 97¢ no quick
   answer is offered). Changed on purpose: unit `optics.liveview` ("New picture" is a new Look, not the camera's Live).
 
