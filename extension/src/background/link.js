@@ -9,10 +9,15 @@
 //   open             open an address in the Jarvis window, beside Jarvis (no debugger, no task).
 //                    An address that does something waits for the owner's click on its card here.
 //   start            a task from the owner's spoken words (only while "Tasks from Jarvis" is on, at
-//                    most 30 a day, one task at a time), marked "From Jarvis (voice)"
+//                    most 30 a day, one task at a time), marked "From Jarvis (voice)"; it runs within
+//                    `limitUsd`, the budget the owner heard, never above this profile's (MONEY-3)
 //   stop             stops the running task
 //   answer           the owner's answer to a prompt, by voice or on Jarvis's card (voice-policy.js)
 //   unlinked         Jarvis unlinked: so does the extension
+//   rekey            the link's new key, sent by Jarvis under the code's key right after linking
+//                    (REDTEAM-LINK-4): the extension switches and answers under the new key; the
+//                    code's key is still opened until Jarvis uses the new one (or 10 minutes), so
+//                    the code works once
 // An open, start or answer more than 8 s old is refused as 'gone' ("too late") and does nothing
 // (lead decision D5): Jarvis gave up on it at 10 s and told the owner it didn't work, so a worker
 // woken late by its alarm must not start a task the owner was told never started. stop, ping,
@@ -20,13 +25,16 @@
 // To Jarvis: reply, hello, status (on every change, every 60 s while a task runs), task and done
 // (tasks from Jarvis only; no pictures), prompt (every prompt the side panel shows), prompt-closed.
 //
-// A task from Jarvis pauses itself, as Take over does, when the home base has been unreachable for
-// 20 s: a Stop said to Jarvis must never be lost on the way. The side panel's Stop and ⌘⇧. always
-// work. When no side panel is open, a question that needs a click opens a small approval window.
+// A task from Jarvis pauses itself, as Take over does, when Jarvis's box at the home base hasn't
+// been read for 20 s (the extension's own posts getting through don't count), and when the link
+// ends mid-task (REDTEAM-LINK-3): a Stop said to Jarvis must never be lost on the way. The side
+// panel's Stop and ⌘⇧. always work. When no side panel is open, a question that needs a click opens
+// a small approval window.
 
 import { ALARM, ALARM_PERIOD_MIN, Relay, UNREACHABLE_MS } from './relay.js';
 import { VOICE_APPROVALS_AVAILABLE, approvalsOn, promptFields, promptHash, spokenLine, voiceDecision, voiceSummary } from './voice-policy.js';
 import { addressAction } from './actions.js';
+import { fileKind } from './controller.js';
 import { MAX_NAVIGATE_URL, addressConcern, blockedReason, cardAddress, siteOf } from './sites.js';
 import { FINAL_STATUSES } from '../shared/protocol.js';
 import { VOICE_TASKS_PER_DAY } from '../shared/storage.js';
@@ -43,6 +51,10 @@ export const APPROVAL_WINDOW = Object.freeze({ width: 420, height: 620 });
 export const FRESH_MS = 8 * 1000; // D5: an open, start or answer older than this is too late
 export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
+export const REPLY_RETRY_MS = 10 * 1000; // a reply to a start or a stop is tried this long after the request (MISSED-LINK-A)
+export const REKEY_GRACE_MS = 10 * 60 * 1000; // the code's key is still opened this long after a rekey (REDTEAM-LINK-4)
+export const OPEN_HOLD_MS = 30 * 1000; // downloads an address opened for Jarvis starts are held this long (REDTEAM-LINK-9)
+const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/;
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
 
@@ -136,6 +148,8 @@ export class JarvisLink {
     this.relay = null;
     this.cards = [];
     this.openedSites = new Map(); // site -> when Jarvis opened it (the voice policy's "Allow once")
+    this.openHolds = []; // { url, site, until }: addresses opened for Jarvis whose downloads wait for a click (LINK-9)
+    this.heldDownloads = new Map(); // card id -> { item, suggest, settled }
     this.sentTask = new Map(); // taskId -> { status, at } of the last `task` message
     this.doneSent = new Set();
     this.statusSig = '';
@@ -169,10 +183,10 @@ export class JarvisLink {
     if (told) this.controller.persistSoon();
   }
 
-  /** chrome.storage changed: the link (the side panel linked or unlinked) or the switches. */
+  /** chrome.storage changed: the link (the side panel linked or unlinked), the switches or the budget. */
   onStorageChanged(changes) {
     if (changes?.chromeLink) this.store.getLink().then((link) => this.useLink(link), () => {});
-    if (changes?.['jarvis.voice'] || changes?.['jarvis.sites']) {
+    if (changes?.['jarvis.voice'] || changes?.['jarvis.sites'] || changes?.['jarvis.settings']) {
       this.sendStatus();
       this.sendState();
     }
@@ -185,7 +199,13 @@ export class JarvisLink {
 
   async useLink(link) {
     const same = link && this.link && link.core === this.link.core && link.key === this.link.key;
-    if (same) return this.ensureRunning();
+    if (same) {
+      // (The same link, maybe with the code's key dropped or kept: a rekey isn't a new link.)
+      this.link = link;
+      this.relay?.setKeys(link);
+      return this.ensureRunning();
+    }
+    if (this.link) this.pauseForLinkEnd(); // a new link, or none: the old one can't bring a Stop any more
     this.relay?.stop();
     this.relay = null;
     this.link = link;
@@ -212,8 +232,18 @@ export class JarvisLink {
       /* the loop still runs while the worker does */
     }
     this.sendState();
-    await this.send('hello', { ext: EXT_NAME, version: this.version });
+    await this.send('hello', await this.helloBody());
     await this.sendStatus({ force: true });
+  }
+
+  /** `hello`: who is there, and the task budget a task from Jarvis gets (MONEY-3: what Jarvis says is enforced). */
+  async helloBody() {
+    return { ext: EXT_NAME, version: this.version, ...(await this.budgetFields()) };
+  }
+
+  async budgetFields() {
+    const settings = await this.store.getSettings().catch(() => null);
+    return settings ? { budgetUsd: settings.budgetUsd, maxSteps: settings.maxSteps } : {};
   }
 
   /** Unlinks: tells Jarvis (when it can), then forgets the key and the home base's permission. */
@@ -221,6 +251,7 @@ export class JarvisLink {
     const link = this.link;
     if (!link) return;
     if (tell) await this.send('unlinked', {});
+    this.pauseForLinkEnd();
     this.relay?.stop();
     this.relay = null;
     this.link = null;
@@ -245,7 +276,7 @@ export class JarvisLink {
    * its prompt-closed). `body` may be a function that makes it. Resolves false when unlinked or
    * the home base doesn't take it.
    */
-  send(kind, body) {
+  send(kind, body, opts = {}) {
     const relay = this.relay;
     if (!relay) return Promise.resolve(false);
     const made = this.now();
@@ -253,14 +284,23 @@ export class JarvisLink {
       // (One that waited a minute behind an unreachable home base is stale: Jarvis would drop it.)
       if (this.relay !== relay || this.now() - made > STALE_MS) return false;
       const b = typeof body === 'function' ? await body() : body;
-      return b ? relay.send(kind, b) : false;
+      return b ? relay.send(kind, b, opts) : false;
     });
     this.queue = job.catch(() => false);
     return job;
   }
 
-  reply(re, body) {
-    return this.send('reply', { re, ...body });
+  reply(re, body, opts = {}) {
+    return this.send('reply', { re, ...body }, opts);
+  }
+
+  /**
+   * The reply to a start or a stop: tried again until about 10 s after the request was made (and
+   * at least a couple of seconds), so a moment's failure can't leave Jarvis telling the owner a task
+   * never started while it runs, or that a stop didn't arrive (MISSED-LINK-A).
+   */
+  replyHard(re, at, body) {
+    return this.reply(re, body, { until: Math.max((Number(at) || 0) + REPLY_RETRY_MS, this.now() + 2000) });
   }
 
   async approvalsAvailableNow() {
@@ -298,30 +338,35 @@ export class JarvisLink {
 
   sendCards(port = null) {
     const now = this.now();
+    for (const c of this.cards) if (c.kind === 'download' && now - c.at >= CARD_LIFE_MS) this.settleDownload(c.id, false); // unanswered: not saved
     this.cards = this.cards.filter((c) => now - c.at < CARD_LIFE_MS);
-    this.controller.post({ type: 'cards', cards: this.cards.map(({ id, shown, site, detail, at }) => ({ id, shown, site, detail, at })) }, port);
+    this.controller.post({ type: 'cards', cards: this.cards.map(({ id, kind, shown, site, detail, name, at }) => ({ id, ...(kind ? { kind } : {}), shown, site, detail, ...(name ? { name } : {}), at })) }, port);
   }
 
   // -------------------------------------------------------------------------------------------
   // From Jarvis
 
-  async onMessage({ kind, id, at, body }) {
+  async onMessage({ kind, id, at, body, viaPrev = false }) {
+    // Jarvis seals with the link's new key: the code's key is no longer needed (REDTEAM-LINK-4).
+    if (!viaPrev && this.link?.prev) await this.dropPrevKey();
     // Too late to act on: Jarvis has already told the owner it didn't work (D5).
     if (tooLate(kind, at, this.now())) return this.reply(id, { ok: false, reason: 'gone', why: 'too late' });
     try {
       switch (kind) {
+        case 'rekey':
+          return this.reply(id, await this.rekey(body, viaPrev));
         case 'hello':
           await this.reply(id, { ok: true });
-          await this.send('hello', { ext: EXT_NAME, version: this.version });
+          await this.send('hello', await this.helloBody());
           return this.sendStatus({ force: true });
         case 'ping':
           return this.reply(id, { ok: true, status: await this.statusBody() });
         case 'open':
           return this.reply(id, await this.open(body));
         case 'start':
-          return this.reply(id, await this.startTask(body));
+          return this.replyHard(id, at, await this.startTask(body));
         case 'stop':
-          return this.reply(id, this.stopTask());
+          return this.replyHard(id, at, this.stopTask());
         case 'answer':
           return this.reply(id, await this.answer(body));
         case 'unlinked':
@@ -335,6 +380,38 @@ export class JarvisLink {
     }
   }
 
+  /**
+   * `rekey { key }` (REDTEAM-LINK-4): Jarvis replaces the code's key with a new one right after
+   * linking, sealed with the code's key. The first one switches the link: messages go out under the
+   * new key from now on (this reply too), and the code's key is still opened until Jarvis uses the
+   * new one, or REKEY_GRACE_MS. The same new key again (Jarvis didn't hear the answer) is answered
+   * again; any other is refused, so the code can't move the link once it has been used.
+   */
+  async rekey(body, viaPrev) {
+    const next = typeof body?.key === 'string' ? body.key : '';
+    const link = this.link;
+    if (!link || !KEY_TEXT.test(next)) return { ok: false, reason: 'bad', why: WHY.bad };
+    if (link.prev) return next === link.key ? { ok: true } : { ok: false, reason: 'bad', why: WHY.bad };
+    if (viaPrev || next === link.key) return { ok: false, reason: 'bad', why: WHY.bad };
+    const updated = { ...link, key: next, prev: link.key, prevUntil: this.now() + REKEY_GRACE_MS };
+    this.link = updated; // first, so the storage change reads as the same link
+    this.relay?.setKeys(updated);
+    await this.store.rekeyLink(updated).catch(() => {});
+    return { ok: true };
+  }
+
+  /** Jarvis has switched to the new key: the code's key is forgotten here too. */
+  async dropPrevKey() {
+    const link = this.link;
+    if (!link?.prev) return;
+    const updated = { ...link, prev: undefined, prevUntil: undefined };
+    delete updated.prev;
+    delete updated.prevUntil;
+    this.link = updated;
+    this.relay?.setKeys(updated);
+    await this.store.rekeyLink({ key: updated.key }).catch(() => {});
+  }
+
   /** `open { url, rect, focus }`: see openVerdict. */
   async open(body) {
     const v = openVerdict(body?.url);
@@ -345,9 +422,67 @@ export class JarvisLink {
       return { ok: false, reason: 'needs-click', why: v.why };
     }
     if (!v.ok) return { ok: false, reason: v.reason, why: v.why };
+    this.holdDownloadsFrom(v.url, v.site);
     await this.openTab(v.url, { rect, focus });
     this.noteOpened(v.site);
     return { ok: true, url: v.url, site: v.site };
+  }
+
+  /** For OPEN_HOLD_MS, a download from this address (or its site's pages) waits for a click (LINK-9). */
+  holdDownloadsFrom(url, site) {
+    const now = this.now();
+    this.openHolds = [...this.openHolds.filter((h) => h.until > now), { url, site, until: now + OPEN_HOLD_MS }].slice(-5);
+  }
+
+  /**
+   * A download that starts while no task runs (controller.holdDownload left it): if it comes, within
+   * OPEN_HOLD_MS, from an address opened for Jarvis or a page of its site (a redirect to an installer,
+   * a Content-Disposition: attachment), it is held on a card like an address that acts (REDTEAM-LINK-9):
+   * saved only on the owner's Save, in the side panel or the approval window. Returns true when held.
+   */
+  holdDownload(item, suggest) {
+    const now = this.now();
+    this.openHolds = this.openHolds.filter((h) => h.until > now);
+    if (!this.openHolds.length || typeof suggest !== 'function') return false;
+    const url = String(item?.url || '');
+    const finalUrl = String(item?.finalUrl || url);
+    const referrer = String(item?.referrer || '');
+    const hold = this.openHolds.find((h) => url === h.url || referrer === h.url || (h.site && (siteOf(url) === h.site || siteOf(referrer) === h.site)));
+    if (!hold) return false;
+    const name = String(item?.filename || '').split(/[\\/]/).pop() || (() => {
+      try {
+        return new URL(finalUrl).pathname.split('/').pop() || 'a file';
+      } catch {
+        return 'a file';
+      }
+    })();
+    const kind = fileKind(name);
+    const card = { id: uid('card_'), kind: 'download', url: finalUrl, shown: cardAddress(finalUrl), site: siteOf(finalUrl) || hold.site, name: truncate(name, 120), detail: kind.warn || '', at: now };
+    this.heldDownloads.set(card.id, { item, suggest, settled: false });
+    this.cards = [...this.cards, card].slice(-5);
+    this.sendCards();
+    this.showApprovalWindow();
+    return true;
+  }
+
+  /** The owner's answer to a held download: Save lets Chrome go on; anything else cancels it. */
+  async settleDownload(cardId, save) {
+    const held = this.heldDownloads.get(cardId);
+    if (!held || held.settled) return;
+    held.settled = true;
+    this.heldDownloads.delete(cardId);
+    if (!save) {
+      try {
+        await this.chrome.downloads?.cancel?.(held.item?.id);
+      } catch {
+        /* already gone */
+      }
+    }
+    try {
+      held.suggest();
+    } catch {
+      /* Chrome stopped waiting */
+    }
   }
 
   /** The site Jarvis opened by voice counts as "opened by voice" for the task it is part of. */
@@ -399,10 +534,12 @@ export class JarvisLink {
     if (!card) return;
     this.cards = this.cards.filter((c) => c !== card);
     this.sendCards();
+    if (card.kind === 'download') return this.settleDownload(card.id, msg.choice === 'save');
     if (msg.choice !== 'open') return;
     // Checked again: what opens is exactly the address the card showed, and still not refused.
     const v = openVerdict(card.url);
     if (!v.ok && v.reason !== 'needs-click') return;
+    this.holdDownloadsFrom(card.url, card.site);
     await this.openTab(card.url, { rect: card.rect, focus: card.focus });
     this.noteOpened(card.site);
   }
@@ -429,9 +566,12 @@ export class JarvisLink {
       windowId = undefined;
     }
     const taskId = uid('task_');
+    // The budget the owner heard ("Chrome, up to a dollar: …"): the task never goes past it without asking (MONEY-3).
+    const heard = Number(body.limitUsd);
+    const budgetCapUsd = Number.isFinite(heard) && heard > 0 && heard <= 1000 ? heard : null;
     const started = await new Promise((resolve) => {
       this.controller
-        .start({ text, windowId, from: 'voice', taskId, voiceSites, onStarted: (task) => resolve(task) })
+        .start({ text, windowId, from: 'voice', taskId, voiceSites, budgetCapUsd, onStarted: (task) => resolve(task) })
         .catch(() => {})
         .finally(() => resolve(null));
     });
@@ -483,7 +623,8 @@ export class JarvisLink {
   async statusBody() {
     const voice = await this.store.getVoice().catch(() => ({ tasksFromJarvis: false }));
     const run = this.controller.run;
-    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status } : null };
+    // (`from` since the review: Jarvis tells a task it started from one typed in the panel, MISSED-LINK-A.)
+    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel' } : null, ...(await this.budgetFields()) };
   }
 
   /** `status` when it changed (or `force`), and every 60 s while a task runs. */
@@ -570,9 +711,10 @@ export class JarvisLink {
   }
 
   /**
-   * A task from Jarvis pauses itself (as Take over does) once the home base has been unreachable
-   * for UNREACHABLE_MS: a Stop said to Jarvis could be lost on the way. Once per outage: if the
-   * owner presses Continue in the side panel, it goes on.
+   * A task from Jarvis pauses itself (as Take over does) once Jarvis's box hasn't been read for
+   * UNREACHABLE_MS (REDTEAM-LINK-3: reads, not the extension's own posts): a Stop said to Jarvis
+   * could be lost on the way. Once per outage: if the owner presses Continue in the side panel, it
+   * goes on.
    */
   checkRelay() {
     const run = this.controller.run;
@@ -585,10 +727,21 @@ export class JarvisLink {
     const relay = this.relay;
     if (!relay || run.task.from !== 'voice' || run.takeover || run.stopping) return;
     const now = this.now();
-    if (relay.unreachableFor(now) < UNREACHABLE_MS) return;
-    if (run.relayPausedAt && relay.lastOkAt <= run.relayPausedAt) return;
+    if (relay.unreadFor(now) < UNREACHABLE_MS) return;
+    if (run.relayPausedAt && relay.lastReadAt <= run.relayPausedAt) return;
     run.relayPausedAt = now;
     run.task.steps.push({ id: uid('s'), at: now, kind: 'notice', level: 'warn', label: 'Paused: Jarvis for Chrome couldn’t reach your home base for 20 seconds, so a Stop said to Jarvis might not arrive. Press Continue here to go on, or Stop.', status: 'done' });
+    this.controller.takeover();
+  }
+
+  /**
+   * The link ended (Unlink, `unlinked` from Jarvis) or changed (a new link) while a task from Jarvis
+   * runs: nothing can bring its Stop any more, so it pauses as Take over does (REDTEAM-LINK-3).
+   */
+  pauseForLinkEnd() {
+    const run = this.controller.run;
+    if (!run || run.task.from !== 'voice' || run.takeover || run.stopping || FINAL_STATUSES.has(run.task.status)) return;
+    run.task.steps.push({ id: uid('s'), at: this.now(), kind: 'notice', level: 'warn', label: 'Paused: the link with Jarvis ended, so a Stop said to Jarvis can’t arrive. Press Continue here to go on, or Stop.', status: 'done' });
     this.controller.takeover();
   }
 

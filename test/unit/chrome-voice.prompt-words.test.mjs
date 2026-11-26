@@ -201,7 +201,9 @@ test('the answer layer (chrome-prompt): the prompt\'s words, a bare "cancel" or 
   assert.deepEqual(pick1('approve'), { free: true, undo: false, check: false, camera: false, do: 'chrome-answer', answer: 'approve' }, 'never from another reading (undo: false)');
   assert.equal(pick1('cancel Chrome').answer, 'deny');
   assert.equal(pick1('stop Chrome').answer, 'stop');
-  for (const w of ['stop', 'tell me a joke', 'approve it now please do']) assert.equal(pick1(w), null, w);
+  for (const w of ['stop', 'tell me a joke']) assert.equal(pick1(w), null, w);
+  // A sentence with "approve" that isn't a reserved one: never an answer, never Claude's: the hint (REDTEAM-VOICE-14).
+  for (const w of ['approve it now please do', 'approved', 'yeah approve', 'sure approve', 'yes I approve', 'go ahead and approve']) assert.equal((pick1(w) || {}).do, 'chrome-hint', w);
   // A bare yes never answers it: asked last, with nothing else open, Jarvis says what to say.
   for (const w of ['yes', 'okay', 'continue', 'go ahead', 'sure']) assert.equal(pick1(w).do, 'chrome-hint', w);
   assert.equal(pick1('continue', st({ tour: { active: true } })), null, 'a tour: "continue" is the tour\'s');
@@ -219,7 +221,10 @@ test('the answer layer (chrome-prompt): the prompt\'s words, a bare "cancel" or 
 test('the answer layer while a check counts down: withdraw, correct, go, keep; other words aren\'t its', () => {
   const st = { chromeCheck: { kind: 'task' } };
   for (const w of ['cancel', 'no', 'stop', 'Stop!', 'never mind', 'wait', 'okay stop', 'cancel Chrome']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'withdraw', w);
-  for (const w of ['start now', 'send it', 'go ahead', 'do it']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'go', w);
+  for (const w of ['start now', 'Start now.', 'send it', 'send it now', 'go ahead', 'do it now']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'go', w);
+  // The short words that sound like a withdraw word ("go"/"no", "start it"/"stop it", "do it"/"don't") never let
+  // it go at once: they let it count on (REDTEAM-VOICE-3).
+  for (const w of ['go', 'Go.', 'start', 'start it', 'do it']) assert.equal((matchChromeAnswer(w, st) || {}).how, 'keep', w);
   // An affirmation lets it count on (never sooner, never other words), for a task's check and a yes's.
   for (const kind of ['task', 'approve']) {
     for (const w of ['yes', 'Yes.', 'yeah', 'okay', 'Okay, thanks.', 'sure', 'yes please', 'thank you', 'sounds good']) assert.equal((matchChromeAnswer(w, { chromeCheck: { kind } }) || {}).how, 'keep', `${kind}: ${w}`);

@@ -324,6 +324,7 @@ const STOPPED = {
  *   spend             { todayUsd, monthUsd, liveUsd }
  *   read-full, repeat { none: true }          nothing to read or repeat
  *   mic-off           { woken: true }         a woken session goes back to Standby
+ *   stop              { stopped: { chrome: { withdrawn, stopping } } }   what the Chrome target did
  */
 export function appCommandLine(action, outcome = {}) {
   const a = action && typeof action === 'object' ? action : {};
@@ -367,10 +368,14 @@ export function appCommandLine(action, outcome = {}) {
     case 'brief':
       return `Your briefing sends a team of agents to look up the news, ${moneyWords(a.usd > 0 ? a.usd : BRIEFING_USD)}. Shall I run it?`;
     case 'stop': {
-      const parts = (Array.isArray(a.targets) ? a.targets : []).map((t) => STOPPED[t]).filter(Boolean);
-      if (!parts.length) return 'Okay.';
+      // The Chrome target says what it did (o.stopped.chrome: { withdrawn, stopping }): a task still in its
+      // check was withdrawn ("Okay, nothing sent to Chrome."), a task that runs is stopping, or both.
+      const chrome = o.stopped && typeof o.stopped === 'object' && o.stopped.chrome && typeof o.stopped.chrome === 'object' ? o.stopped.chrome : null;
+      const lead = chrome && chrome.withdrawn ? (chrome.stopping ? 'Okay, nothing sent.' : 'Okay, nothing sent to Chrome.') : '';
+      const parts = (Array.isArray(a.targets) ? a.targets : []).map((t) => (t === 'chrome' && chrome && !chrome.stopping ? '' : STOPPED[t])).filter(Boolean);
+      if (!parts.length) return lead || 'Okay.';
       const said = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-      return `${cap(said)}.`;
+      return lead ? `${lead} ${cap(said)}.` : `${cap(said)}.`;
     }
     default:
       return '';

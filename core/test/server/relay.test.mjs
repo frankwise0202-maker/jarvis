@@ -129,6 +129,32 @@ test('origins: the relay also takes chrome-extension:// and an extension\'s own 
   assert.equal(checkOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, false);
   assert.equal(checkRelayOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }), access, opts).ok, false);
   assert.equal(checkRelayOrigin(req({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'script' }), access, opts).ok, false);
+  // REDTEAM-LINK-6: a page's frame or a navigation is never let in (checkOrigin admits navigations, for the dashboard).
+  for (const headers of [
+    { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    { 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    { origin: APP, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    { origin: EXT, 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' },
+    { 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'iframe' },
+  ]) {
+    assert.equal(checkRelayOrigin(req(headers), access, opts).ok, false, JSON.stringify(headers));
+  }
+  assert.equal(checkOrigin(req({ 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }), access, opts).ok, true, 'other routes keep checkOrigin (the dashboard)');
+  // The real callers still pass: the app's and the extension's fetches, and clients that send neither header.
+  assert.equal(checkRelayOrigin(req({ origin: APP, 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, true);
+  assert.equal(checkRelayOrigin(req({ origin: EXT, 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), access, opts).ok, true);
+  assert.equal(checkRelayOrigin(req({}), access, opts).ok, true);
+});
+
+test('HTTP: LINK-6: a frame of the relay is refused: no waiting read, the extension not counted as seen', async () => {
+  const before = (await get('/api/relay/status')).json.extSeenAt;
+  const framed = await get('/api/relay/to-ext?wait=2', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' });
+  assert.equal(framed.status, 403, `refused (${framed.status})`);
+  assert.equal(api.relay.store.sizes()['to-ext'].waiting, 0, 'holds no place');
+  assert.equal((await get('/api/relay/status')).json.extSeenAt, before, 'and the extension is not counted as seen');
+  const page = await get('/api/relay/to-app', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' });
+  assert.equal(page.status, 403, 'a top-level navigation neither');
 });
 
 // ------------------------------------------------------------------------------------- over HTTP, a fake clock
@@ -295,12 +321,13 @@ test('HTTP: a long poll outlives the 15-second receive deadline (it only covers 
 test('HTTP: the status says when each side last read its box', async () => {
   clock = START + 70 * 60_000;
   const s0 = (await get('/api/relay/status')).json;
-  assert.deepEqual(Object.keys(s0).sort(), ['appSeenAt', 'extSeenAt']);
+  assert.deepEqual(Object.keys(s0).sort(), ['appSeenAt', 'extSeenAt', 'now']);
+  assert.equal(s0.now, clock, 'the Core\'s own clock, so both ends judge ages on it (REDTEAM-LINK-7)');
   await get('/api/relay/to-ext');
   assert.equal((await get('/api/relay/status')).json.extSeenAt, clock);
   clock += 1000;
   await get('/api/relay/to-app');
-  assert.deepEqual((await get('/api/relay/status')).json, { extSeenAt: clock - 1000, appSeenAt: clock });
+  assert.deepEqual((await get('/api/relay/status')).json, { extSeenAt: clock - 1000, appSeenAt: clock, now: clock });
 });
 
 test('HTTP: methods', async () => {
@@ -426,3 +453,58 @@ test('the Core is 1.3.0 or later: the relay\'s version', () => {
   const [major, minor] = VERSION.split('.').map(Number);
   assert.ok(major > 1 || (major === 1 && minor >= 3), VERSION);
 });
+
+// ------------------------------------------------------------- REDTEAM-LINK-2: outside waiters, its own limiter
+
+test('LINK-2: 8 outside waiters hold to-ext; the extension\'s own long poll is refused with 429 and Retry-After (never answered at once), short reads still work, and relay traffic never takes from the API\'s limit', async () => {
+  // A home base with the API's real limits (60 at once, 20 a second, one bucket per Tailscale login).
+  const { core: fc, config } = fixtureCore('ok', { warmupSec: 5 });
+  const srv = createApiServer({ getCore: () => fc, config, ask: () => ({ answer: 'ok' }), info: () => ({ name: 'jarvis-core' }) });
+  const { port: p } = await srv.listen(0, '127.0.0.1');
+  const OTHER = (c) => `chrome-extension://${c.repeat(32)}`; // other extensions, in other Chrome profiles
+  const open = [];
+  const hold = (origin) => {
+    const req = http.request({ host: '127.0.0.1', port: p, path: '/api/relay/to-ext?wait=20', headers: { ...TS, origin }, agent: false }, () => {});
+    req.on('error', () => {});
+    req.end();
+    open.push(req);
+  };
+  try {
+    // One outside client may hold at most 4 waiting reads; a fifth is refused at once.
+    for (let i = 0; i < 4; i++) hold(OTHER('b'));
+    await waitUntil(() => srv.relay.store.sizes()['to-ext'].waiting === 4);
+    const fifth = await request(p, '/api/relay/to-ext?wait=20', { headers: { ...TS, origin: OTHER('b') } });
+    assert.equal(fifth.status, 429, 'one client holds at most 4 of the 8 places');
+    for (let i = 0; i < 4; i++) hold(OTHER('c'));
+    await waitUntil(() => srv.relay.store.sizes()['to-ext'].waiting === 8);
+    // The box is full: Jarvis for Chrome's own long poll is refused, not answered at once with nothing.
+    const t0 = Date.now();
+    const mine = await request(p, '/api/relay/to-ext?wait=20', { headers: { ...TS, origin: EXT } });
+    assert.equal(mine.status, 429, `refused (${mine.status} ${mine.body})`);
+    assert.equal(mine.json.error, 'busy');
+    assert.ok(Number(mine.headers['retry-after']) >= 1, 'with Retry-After');
+    assert.ok(Date.now() - t0 < 2000, 'at once');
+    assert.equal(srv.relay.store.sizes()['to-ext'].waiting, 8);
+    // A short read (wait=0) still reads the box; the app can still post.
+    assert.equal((await request(p, '/api/relay/to-ext', { headers: { ...TS, origin: EXT } })).status, 200);
+    // Relay traffic has its own limits: 150 relay requests from the owner's login leave the API's 60 untouched.
+    for (let i = 0; i < 150; i++) await request(p, '/api/relay/status', { headers: { ...TS, origin: i % 2 ? EXT : APP } });
+    for (let i = 0; i < 10; i++) {
+      const ping = await request(p, '/api/ping', { headers: { ...TS, origin: APP } });
+      assert.equal(ping.status, 200, `the API's own routes are not starved (ping ${i + 1}: ${ping.status})`);
+    }
+    const stop = await request(p, '/api/relay/to-ext', { method: 'POST', headers: { ...TS, origin: APP, 'content-type': 'application/json' }, body: JSON.stringify(fake(1)) });
+    assert.equal(stop.status, 200, 'the app\'s post still goes in');
+  } finally {
+    for (const r of open) r.destroy();
+    await srv.close();
+  }
+});
+
+async function waitUntil(fn, ms = 3000) {
+  const end = Date.now() + ms;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error('timed out');
+    await sleep(10);
+  }
+}

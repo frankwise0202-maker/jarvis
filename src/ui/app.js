@@ -108,7 +108,7 @@ import { register as registerAudioCommands } from './commands/audio.js';
 import { register as registerTourCommands } from './commands/tours.js';
 import { register as registerVoiceCommands } from './commands/voice.js';
 import { register as registerChromeVoiceCommands } from './commands/chrome-voice.js';
-import { createChromeVoice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
+import { CHROME_VOICE_CHANNEL, createChromeVoice, voiceAdapter } from './chrome-task.js'; // v8.1 chrome-voice
 import { notify as notifyAttention, closeNotify } from './attention.js'; // v8.1 chrome-voice
 import { register as registerWindowCommands } from './commands/windows.js';
 import { register as registerOpticsCommands } from './commands/optics.js';
@@ -439,10 +439,11 @@ export async function startApp(rootEl) {
   function chromeLinkNotice(n) {
     const line = n && typeof n.line === 'string' ? n.line : '';
     if (!line) return;
-    safe(() => toast(line, { level: 'warn', timeout: 8000 }));
+    const shown = typeof n.show === 'string' && n.show ? n.show : line; // (`line` is said; `show` may hold ⌘⇧.)
+    safe(() => toast(shown, { level: 'warn', timeout: 8000 }));
     const voice = safe(() => (voiceApi && isVoiceModeOpen() ? voiceApi : null), null);
     if (voice && typeof voice.say === 'function') safe(() => voice.say(line));
-    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: line }));
+    else if (document.hidden) safe(() => notifyOwner({ tag: 'chrome-link', title: 'Jarvis', body: shown }));
   }
   // ---- chrome-relay ◂
   const morningCard = brain
@@ -4753,9 +4754,6 @@ export async function startApp(rootEl) {
     s.briefingUsd = safe(() => briefingPrice(), 0);
     s.lookUsd = safe(() => lookEstimate(), 0);
     // ---- voice ◂
-    // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
-    if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
-    // ---- chrome-voice ◂
     // ---- windows ▸ (s.windows, s.reply.links)
     // The windows Jarvis opened (the one with the focus marked); a hologram's window carries its parts and
     // selection, for its words said here (windows-hologram, D3). The newest reply's links ("open the second link").
@@ -4788,6 +4786,11 @@ export async function startApp(rootEl) {
       if (c) s.chrome = { ...(s.chrome || {}), linked: c.linked, online: c.online, task: c.task };
     }
     // ---- chrome-relay ◂
+    // ---- chrome-voice ▸ (s.chrome: the link, the latest task, the Chrome context)
+    // After chrome-relay's block: a task in its check ('starting', before Jarvis for Chrome has it) is the task a
+    // typed "stop" or "cancel" withdraws (REDTEAM-VOICE-5); the rest comes from the same link.
+    if (chromeVoice) s.chrome = { ...s.chrome, ...safe(() => chromeVoice.state(), {}) };
+    // ---- chrome-voice ◂
     return local ? Object.assign(s, local) : s;
   }
 
@@ -5081,9 +5084,9 @@ export async function startApp(rootEl) {
             break;
           }
           case 'chrome':
-            // v8.1 chrome-voice: a bare "stop" stops the Chrome task too (its line is said: "Chrome is stopping").
-            safe(() => chromeVoice && chromeVoice.stopFromVoice());
-            break;
+            // v8.1 chrome-voice: a bare "stop" withdraws a Chrome check and stops the Chrome task too; what it did
+            // ({ withdrawn, stopping }) makes voice's line ("Chrome is stopping.", "Okay, nothing sent to Chrome.").
+            return safe(() => (chromeVoice ? chromeVoice.stopFromVoice() : undefined), undefined);
           default:
             break;
         }
@@ -5112,9 +5115,12 @@ export async function startApp(rootEl) {
         focusApp: () => safe(() => window.focus()),
         toast: (msg, opts) => toast(msg, opts),
         hidden: () => !!document.hidden,
+        // This device's other Jarvis windows: prompts, their closing and a task's end reach each of them (REDTEAM-VOICE-7).
+        channel: () => (typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHROME_VOICE_CHANNEL) : null),
       }),
     null,
   );
+  safe(() => window.addEventListener('pagehide', () => safe(() => chromeVoice && chromeVoice.bye())));
   // Tests on localhost only ('jarvis.dev.chromeVoice' = '1'): window.__jarvisChromeVoice.question(spec) asks an owner
   // question in the open Voice Mode (the chrome-voice-stack E2E: a stand-in for a tour's decision beside a prompt).
   safe(() => {

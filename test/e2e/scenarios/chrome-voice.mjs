@@ -15,10 +15,24 @@
 //                            click in the Jarvis window; "deny" goes out at once
 //   chrome-voice-stack       an owner question that keeps (a tour decision's stand-in) and Chrome's question
 //                            open together: "continue" and "enclosed" answer the question, "approve" the prompt
+// The fixes after the red team, with a voice slow enough (12 characters a second) for a line to be cut:
+//   chrome-voice-check-cut   REDTEAM-VOICE-1, MAC-1: Stop or a tap while the check line is said, or Stop during the
+//                            countdown, withdraws it; nothing reaches Jarvis for Chrome (control: said in full, it goes)
+//   chrome-voice-approve-cut REDTEAM-VOICE-1: Stop during "Approving. Say cancel to stop." approves nothing
+//   chrome-voice-pending     REDTEAM-VOICE-6: Chrome's question waiting while Jarvis speaks, then an owner question:
+//                            both are said
+//   chrome-voice-homebase    VT-MISSED-1: hearing through the home base (no live words), "Cancel." said during the
+//                            countdown pauses it while the home base hears it, and withdraws it
+//   chrome-voice-two-windows REDTEAM-VOICE-7: two Jarvis windows, Voice Mode open in the one that doesn't hold the link:
+//                            Chrome's question is said and answered there, a task said there is ended there
+//   chrome-voice-mic-off     REDTEAM-VOICE-11, PRIVACY-1: Continuous off: Chrome's question opens no microphone
+//                            ("Tap me to answer."); after a tap, "approve" counts
 
 import { tid } from '../harness.mjs';
 import { installFakeSpeech } from './features.mjs';
+import { installFakeMic } from '../fake-mic.mjs';
 import { CORE_URL, createFakeChromePeer, seedChromeLink, CHROME_TEST_KEY } from '../core-fakes.mjs';
+import * as Sig from '../../unit/wake.signals.mjs';
 
 const LINKED_HOME = { settings: { homeBaseUrl: CORE_URL } };
 // A read that waits for the relay is cut off when the page goes away (a reload): the browser logs it.
@@ -50,11 +64,15 @@ const PURCHASE = {
   voice: { allowed: false, why: 'That’s a purchase.' },
 };
 
-/** A Mac with Jarvis for Chrome linked (the fake extension online), the fake recognizer and voice, Voice Mode open. */
-async function linkedVoiceMode(t, { queue = [''], dev = false } = {}) {
+/**
+ * A Mac with Jarvis for Chrome linked (the fake extension online), the fake recognizer and voice, Voice Mode open.
+ * cps: the fake voice's speed (characters a second; slow enough for a line to be cut); mic: the fake microphone too.
+ */
+async function linkedVoiceMode(t, { queue = [''], dev = false, cps = undefined, mic = false } = {}) {
   const page = await t.newPage();
   await seedChromeLink(page.context(), { key: CHROME_TEST_KEY });
-  await page.addInitScript(installFakeSpeech, { noSpeechMs: 4000 });
+  await page.addInitScript(installFakeSpeech, { noSpeechMs: 4000, ...(cps ? { cps } : {}) });
+  if (mic) await page.addInitScript(installFakeMic);
   await page.addInitScript(
     ({ q, devHook }) => {
       window.__voice.queue = q;
@@ -83,6 +101,17 @@ async function waitSaid(t, test, what, { timeout = 20000 } = {}) {
 const hear = (t, text, { alts = [], at = 600 } = {}) => t.page.evaluate(({ text: x, alts: a, at: when }) => window.__voice.say({ parts: [{ at: when, text: x, final: true, alts: a }] }), { text, alts, at });
 
 const kinds = (peer, kind) => peer.received.filter((m) => m.kind === kind);
+
+/** The fake voice's log entry for the latest saying of `text`: { at, endAt } (endAt 0 while it is being said). */
+const sayingOf = (t, text) =>
+  t.page.evaluate((x) => {
+    const n = (s) => String(s).replace(/\s+/g, ' ').trim();
+    const e = [...window.__voice.log].reverse().find((l) => n(l.text) === x);
+    return e ? { at: e.at, endAt: e.endAt } : null;
+  }, text);
+const TASK_LINE = 'Chrome, up to a dollar: find a 4K monitor under $300 and add it to the cart. Say cancel to stop.';
+const HUB_LINE = 'Chrome, up to a dollar: find a USB-C hub. Say cancel to stop.';
+const WITHDRAWN = 'Okay, nothing sent to Chrome.';
 
 async function withPeer(peer, fn) {
   try {
@@ -182,10 +211,12 @@ export default [
           const after = (await saidLines(t)).slice(before);
           t.assert(!after.some((l) => /Chrome, up to/.test(l)), `no Chrome check (${JSON.stringify(after)})`);
           t.assert(kinds(peer, 'start').length === 1, 'no second task');
-          // It went on as usual: Optics (once its own "open the camera" is there) or a question for Jarvis.
+          // It went on as usual: Optics' own "open the camera" (by voice on a Mac it asks for the tap the camera needs:
+          // "Tap Look to turn the camera on.", or it opens), or a question for Jarvis.
           const optics = await t.page.locator(tid('optics')).count();
           const review = await t.page.locator(tid('voice-review')).isVisible().catch(() => false);
-          t.assert(optics > 0 || review || t.requests('lead').length > 0, 'the words went on as usual (Optics, or Jarvis)');
+          const opticsLine = after.includes('Tap Look to turn the camera on.');
+          t.assert(optics > 0 || opticsLine || review || t.requests('lead').length > 0, `the words went on as usual (Optics, or Jarvis): ${JSON.stringify(after)}`);
         });
       });
     },
@@ -367,6 +398,276 @@ export default [
           t.assert(a.body.promptId === p.promptId && a.body.hash === p.hash && a.body.choice === 'approve', `the prompt's decision (${JSON.stringify(a.body)})`);
           t.assert(!(await answers()).includes('approve'), 'never the question');
         });
+      });
+    },
+  },
+  {
+    name: 'chrome-voice-check-cut',
+    title: 'REDTEAM-VOICE-1, MAC-1 (a voice at 12 characters a second): Stop while the check line is said, a tap on the core while it is said, and Stop during the countdown each withdraw it, said; nothing reaches Jarvis for Chrome. Control: said in full, it goes 2 s later',
+    device: 'mac',
+    seed: LINKED_HOME,
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 240000,
+    async run(t) {
+      const { peer } = await linkedVoiceMode(t, { queue: ['Find a 4K monitor under $300 and add it to the cart in Chrome.'], cps: 12 });
+      await withPeer(peer, async () => {
+        const withdrawnCount = async () => (await saidLines(t)).filter((l) => l === WITHDRAWN).length;
+        await t.step('Stop (the dock\'s button) while the line is said: withdrawn at once, said', async () => {
+          await waitSaid(t, TASK_LINE, 'the check line');
+          await t.page.waitForTimeout(1500); // the line lasts about 8 s at 12 characters a second
+          const line = await sayingOf(t, TASK_LINE);
+          t.assert(line && !line.endAt, 'still being said');
+          const btn = t.locator('voice-mic');
+          t.assert((await btn.getAttribute('data-action')) === 'stop', `the button reads Stop (${await btn.getAttribute('data-action')})`);
+          await btn.click();
+          await t.waitFor(async () => (await withdrawnCount()) === 1, { timeout: 15000, message: async () => `the withdrawal said (said: ${JSON.stringify(await saidLines(t))})` });
+          await t.page.waitForTimeout(4000);
+          t.assert(kinds(peer, 'start').length === 0, `nothing sent (${kinds(peer, 'start').length})`);
+          t.assert((await t.locator('voice-chrome-task-card').getAttribute('data-status')) === 'cancelled', 'the card says it wasn\'t sent');
+          await t.screenshot('1-stopped-mid-line');
+        });
+        await t.step('a tap on the core while the line is said, then silence: withdrawn', async () => {
+          await t.waitFor(async () => (await t.locator('voice-mode').getAttribute('data-state')) === 'listening', { timeout: 20000, message: 'listening again' });
+          await hear(t, 'In Chrome, find a USB-C hub.');
+          await waitSaid(t, HUB_LINE, 'the second check line');
+          await t.page.waitForTimeout(1200);
+          await t.locator('voice-core').click();
+          await t.waitFor(async () => (await withdrawnCount()) === 2, { timeout: 15000, message: 'withdrawn' });
+          await t.page.waitForTimeout(5000);
+          t.assert(kinds(peer, 'start').length === 0, 'nothing sent');
+        });
+        await t.step('Stop during the countdown (the line said in full): withdrawn', async () => {
+          await t.waitFor(async () => (await t.locator('voice-mode').getAttribute('data-state')) === 'listening', { timeout: 20000, message: 'listening again' });
+          const before = (await saidLines(t)).filter((l) => l === HUB_LINE).length;
+          await hear(t, 'In Chrome, find a USB-C hub.');
+          await t.waitFor(async () => (await saidLines(t)).filter((l) => l === HUB_LINE).length > before, { timeout: 15000, message: 'the third check line' });
+          await t.waitFor(async () => ((await sayingOf(t, HUB_LINE)) || {}).endAt > 0, { timeout: 20000, message: 'said in full' });
+          await t.page.waitForTimeout(700);
+          const btn = t.locator('voice-mic');
+          t.assert((await btn.getAttribute('data-action')) === 'stop', 'the button reads Stop during the countdown');
+          await btn.click();
+          await t.waitFor(async () => (await withdrawnCount()) === 3, { timeout: 15000, message: 'withdrawn' });
+          await t.page.waitForTimeout(4000);
+          t.assert(kinds(peer, 'start').length === 0, 'nothing sent');
+        });
+        await t.step('control: the same task with nothing pressed goes 2 s after the line said in full', async () => {
+          await t.waitFor(async () => (await t.locator('voice-mode').getAttribute('data-state')) === 'listening', { timeout: 20000, message: 'listening again' });
+          const before = (await saidLines(t)).filter((l) => l === HUB_LINE).length;
+          await hear(t, 'In Chrome, find a USB-C hub.');
+          await t.waitFor(async () => (await saidLines(t)).filter((l) => l === HUB_LINE).length > before, { timeout: 15000, message: 'the check line' });
+          const start = await peer.waitFor('start', { timeoutMs: 30000 });
+          const line = await sayingOf(t, HUB_LINE);
+          t.assert(line && line.endAt > 0, 'the start came after the line was said in full');
+          t.assert(start.body.text === 'find a USB-C hub', `the words (${start.body.text})`);
+          await waitSaid(t, 'Chrome is on it.', '"Chrome is on it."');
+        });
+        t.assert(t.requests('lead').length === 0, `no Claude request (${t.requests('lead').length})`);
+      });
+    },
+  },
+
+  {
+    name: 'chrome-voice-approve-cut',
+    title: 'REDTEAM-VOICE-1 (a voice at 12 characters a second): Stop pressed during "Approving. Say cancel to stop." approves nothing ("Okay, not approved."); the prompt stays open',
+    device: 'mac',
+    seed: LINKED_HOME,
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 180000,
+    async run(t) {
+      const { peer } = await linkedVoiceMode(t, { cps: 12 });
+      await withPeer(peer, async () => {
+        await peer.task({ id: 'task-8', status: 'running', text: 'find a 4K monitor and add it to the cart', narration: 'On bestbuy.com.', costUsd: 0.05, limitUsd: 1 });
+        await peer.prompt(CART);
+        await waitSaid(t, 'Chrome asks: Add the 27-inch 4K monitor', 'the prompt');
+        await t.waitFor(async () => (await t.locator('voice-mode').getAttribute('data-state')) === 'listening', { timeout: 30000, message: 'its answer listen' });
+        await hear(t, 'Approve.');
+        await waitSaid(t, 'Approving. Say cancel to stop.', 'the approval\'s check');
+        await t.page.waitForTimeout(800); // mid-line
+        t.assert(!((await sayingOf(t, 'Approving. Say cancel to stop.')) || {}).endAt, 'still being said');
+        await t.locator('voice-mic').click();
+        await waitSaid(t, 'Okay, not approved.', 'the withdrawal');
+        await t.page.waitForTimeout(4000);
+        t.assert(kinds(peer, 'answer').length === 0, `no decision (${JSON.stringify(kinds(peer, 'answer').map((m) => m.body))})`);
+        t.assert((await t.page.locator(tid('voice-chrome-prompt-card')).count()) === 1, 'the prompt is still open');
+        t.assert(t.requests('lead').length === 0, 'no Claude request');
+      });
+    },
+  },
+
+  {
+    name: 'chrome-voice-pending',
+    title: 'REDTEAM-VOICE-6 (a voice at 12 characters a second): Chrome\'s question arrives during a long line, then an owner question (a tour decision\'s stand-in) is asked before Jarvis is free: both are said, neither replaces the other',
+    device: 'mac',
+    seed: LINKED_HOME,
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 180000,
+    async run(t) {
+      const { page, peer } = await linkedVoiceMode(t, { dev: true, cps: 12 });
+      await withPeer(peer, async () => {
+        await peer.task({ id: 'task-6', status: 'running', text: 'find a 4K monitor under $300 and add it to the cart', narration: 'Comparing three 27-inch monitors on bestbuy.com, then the reviews of the cheapest one.', costUsd: 0.04, limitUsd: 1 });
+        await page.waitForTimeout(1500);
+        await hear(t, 'What are you doing in Chrome?');
+        await waitSaid(t, /^Chrome is working on: /, 'the long status line');
+        await peer.prompt(CART);
+        await page.waitForTimeout(1500); // the prompt is in, waiting for Jarvis to be free
+        t.assert(!((await sayingOf(t, (await saidLines(t)).find((l) => l.startsWith('Chrome is working on: ')))) || {}).endAt, 'the status line is still being said');
+        const asked = await page.evaluate(() =>
+          window.__jarvisChromeVoice.question({
+            id: 'tour-case',
+            say: 'Shall I keep the case on, or take it off?',
+            keep: true,
+            choices: [
+              { id: 'on', label: 'Keep it on', words: ['keep it on', 'on'] },
+              { id: 'off', label: 'Take it off', words: ['take it off', 'off'] },
+            ],
+            onAnswer: () => {},
+          }),
+        );
+        t.assert(asked, 'the owner question was asked');
+        await waitSaid(t, 'Shall I keep the case on, or take it off?', 'the owner question', { timeout: 40000 });
+        await waitSaid(t, /^Chrome asks: Add the 27-inch 4K monitor/, 'Chrome\'s question too', { timeout: 40000 });
+        t.assert(kinds(peer, 'answer').length === 0, 'nothing answered');
+      });
+    },
+  },
+
+  {
+    name: 'chrome-voice-homebase',
+    title: 'VT-MISSED-1: hearing through the home base (Whisper: no live words), "Cancel." said during the task\'s countdown pauses it while the home base hears it, then withdraws it: nothing reaches Jarvis for Chrome, and "Cancel." is never a question for Claude',
+    device: 'mac',
+    seed: { settings: { homeBaseUrl: CORE_URL, homeBaseHear: true } },
+    fakeCore: { senses: { hear: 'ready', speak: 'ready', hearQueue: ['Find a 4K monitor under $300 and add it to the cart in Chrome.', 'Cancel.'] } },
+    allowConsole: NETWORK_NOISE,
+    timeout: 180000,
+    async run(t) {
+      const { page, peer } = await linkedVoiceMode(t, { mic: true });
+      await withPeer(peer, async () => {
+        await t.visible('voice-homebase-mark', { timeout: 10000 });
+        const speech = (seconds, seed) => Array.from(Sig.concat(Sig.silence(0.3), Sig.speechLike({ seconds, peakDb: -14, seed }), Sig.silence(1.6)));
+        await page.evaluate((x) => window.__fakeMic.play(x), speech(2.2, 21));
+        await waitSaid(t, TASK_LINE, 'the check line (heard through the home base)');
+        // "Cancel." as soon as the countdown's listen is open (the 2 s run from the end of the line).
+        const cancel = Array.from(Sig.concat(Sig.silence(0.15), Sig.speechLike({ seconds: 0.6, peakDb: -14, seed: 5 }), Sig.silence(1.6)));
+        const timing = await page.evaluate(
+          async ({ line, samples }) => {
+            const n = (s) => String(s).replace(/\s+/g, ' ').trim();
+            const until = (f) => new Promise((res) => { const tick = () => (f() ? res() : setTimeout(tick, 15)); tick(); });
+            await until(() => window.__voice.log.some((l) => n(l.text) === line && l.endAt > 0));
+            const end = [...window.__voice.log].reverse().find((l) => n(l.text) === line).endAt;
+            await until(() => document.querySelector('[data-testid="voice-mode"]').getAttribute('data-state') === 'listening');
+            const playAt = performance.now() - end;
+            await window.__fakeMic.play(samples);
+            return { playAt };
+          },
+          { line: TASK_LINE, samples: cancel },
+        );
+        t.note(`"Cancel." played ${Math.round(timing.playAt)} ms after the line ended`);
+        await waitSaid(t, WITHDRAWN, 'the withdrawal', { timeout: 20000 });
+        await page.waitForTimeout(3000);
+        t.assert(kinds(peer, 'start').length === 0, `nothing sent to Jarvis for Chrome (${kinds(peer, 'start').length})`);
+        t.assert(t.requests('lead').length === 0, `"Cancel." never became a Claude request (${t.requests('lead').length})`);
+        t.assert(t.core.senses.hears.filter((h) => h.seconds > 0.5).length >= 2, 'both utterances went to the home base');
+      });
+    },
+  },
+  {
+    name: 'chrome-voice-two-windows',
+    title: 'REDTEAM-VOICE-7: two Jarvis windows, Voice Mode open in the second (the first holds the link): Chrome\'s question is said and shown there, "approve" there goes out with its hash, and a task said there is ended there; the first window shows the cards and stays quiet',
+    device: 'mac',
+    seed: LINKED_HOME,
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 240000,
+    async run(t) {
+      const a = await t.newPage();
+      await seedChromeLink(a.context(), { key: CHROME_TEST_KEY });
+      await a.addInitScript(installFakeSpeech, { noSpeechMs: 4000 });
+      await a.addInitScript(() => {
+        window.__voice.queue = [''];
+      });
+      await t.goto('/');
+      const peer = createFakeChromePeer(t.core.relay, { autoTask: true }).start();
+      await withPeer(peer, async () => {
+        await t.waitFor(() => peer.received.some((m) => m.kind === 'hello'), { timeout: 15000, message: 'the first window\'s hello' });
+        await a.waitForTimeout(1500);
+        // The second window: the same profile (its storage, its locks, its channels), opened after the first.
+        const b = await a.context().newPage();
+        t.attachPageGuards(b);
+        await b.addInitScript(installFakeSpeech, { noSpeechMs: 4000 });
+        await b.addInitScript(() => {
+          window.__voice.queue = [''];
+        });
+        await t.goto('/', { page: b });
+        await (await t.visible('voice-open', { page: b })).click();
+        await t.visible('voice-mode', { page: b });
+        await b.waitForTimeout(1500);
+        const saidIn = (page) => page.evaluate(() => window.__voice.said.map((x) => String(x).replace(/\s+/g, ' ').trim()));
+        const hearIn = (page, text) => page.evaluate((x) => window.__voice.say({ parts: [{ at: 600, text: x, final: true }] }), text);
+        await t.step('Chrome asks: said and shown in the window where Voice Mode is open', async () => {
+          await peer.task({ id: 'task-2w', status: 'running', text: 'find a 4K monitor and add it to the cart', narration: 'On bestbuy.com.', costUsd: 0.05, limitUsd: 1 });
+          const p = await peer.prompt(CART);
+          await t.waitFor(async () => (await saidIn(b)).some((l) => l.startsWith('Chrome asks: Add the 27-inch 4K monitor')), { timeout: 20000, message: async () => `said in the second window (${JSON.stringify(await saidIn(b))})` });
+          t.assert((await b.locator(tid('voice-chrome-prompt-card')).count()) === 1, 'its card in Voice Mode there');
+          t.assert((await a.locator(tid('chrome-prompt-card')).count()) === 1, 'the first window shows the card in its chat');
+          t.assert(!(await saidIn(a)).some((l) => l.startsWith('Chrome asks')), 'the first window says nothing');
+          await t.screenshot('1-second-window', b);
+          await t.waitFor(async () => (await b.locator(tid('voice-mode')).getAttribute('data-state')) === 'listening', { timeout: 20000, message: 'its answer listen' });
+          await hearIn(b, 'Approve.');
+          await t.waitFor(async () => (await saidIn(b)).includes('Approving. Say cancel to stop.'), { timeout: 15000, message: 'the approval\'s check' });
+          const ans = await peer.waitFor('answer', { timeoutMs: 20000 });
+          t.assert(ans.body.promptId === p.promptId && ans.body.hash === p.hash && ans.body.choice === 'approve', `the decision with its hash (${JSON.stringify(ans.body)})`);
+          await peer.promptClosed(p.promptId, 'voice');
+          await t.waitFor(async () => (await b.locator(tid('voice-chrome-prompt-card')).count()) === 0, { timeout: 15000, message: 'the card goes in the second window' });
+        });
+        await t.step('a task said in the second window ends there', async () => {
+          await peer.done({ id: 'task-2w', status: 'done', answer: '' });
+          await b.waitForTimeout(1500);
+          await t.waitFor(async () => (await b.locator(tid('voice-mode')).getAttribute('data-state')) === 'listening', { timeout: 20000, message: 'listening' });
+          await hearIn(b, 'In Chrome, find a USB-C hub.');
+          const start = await peer.waitFor('start', { timeoutMs: 30000 });
+          t.assert(start.body.text === 'find a USB-C hub', `the words (${start.body.text})`);
+          await t.waitFor(async () => (await saidIn(b)).includes('Chrome is on it.'), { timeout: 15000, message: '"Chrome is on it." there' });
+          await peer.done({ status: 'done', answer: 'The Anker 7-in-1 hub is $34.99.' }); // (the task it runs now)
+          await t.waitFor(async () => (await saidIn(b)).some((l) => l === 'Chrome is done. The Anker 7-in-1 hub is $34.99.'), { timeout: 20000, message: async () => `the end said in the second window (${JSON.stringify(await saidIn(b))})` });
+          await t.waitFor(async () => (await b.locator(tid('voice-chrome-task-card')).getAttribute('data-status')) === 'done', { timeout: 10000, message: 'its card says done' });
+          t.assert(!(await saidIn(a)).some((l) => l.startsWith('Chrome is done')), 'the first window says nothing');
+        });
+        t.assert(t.requests('lead').length === 0, `no Claude request (${t.requests('lead').length})`);
+      });
+    },
+  },
+
+  {
+    name: 'chrome-voice-mic-off',
+    title: 'REDTEAM-VOICE-11, PRIVACY-1: Continuous off: Chrome\'s question is said with "Tap me to answer." and opens no microphone; after a tap, "approve" counts and goes out with its hash',
+    device: 'mac',
+    seed: { settings: { homeBaseUrl: CORE_URL, voiceContinuous: false } },
+    fakeCore: true,
+    allowConsole: NETWORK_NOISE,
+    timeout: 180000,
+    async run(t) {
+      const { page, peer } = await linkedVoiceMode(t);
+      await withPeer(peer, async () => {
+        // The opening listen (a tap's) hears nobody; Continuous off, he waits for a tap.
+        await t.waitFor(async () => (await t.locator('voice-mode').getAttribute('data-state')) !== 'listening', { timeout: 30000, message: 'idle' });
+        await page.waitForTimeout(1000);
+        const listens = await page.evaluate(() => window.__voice.listens);
+        await peer.task({ id: 'task-m', status: 'running', text: 'find a 4K monitor and add it to the cart', narration: 'On bestbuy.com.', costUsd: 0.05, limitUsd: 1 });
+        const p = await peer.prompt(CART);
+        await waitSaid(t, 'Chrome asks: Add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com? Say approve, or cancel. Tap me to answer.', 'the prompt with "Tap me to answer."');
+        // Nothing listens after it (so room talk can't become a Claude question).
+        await page.waitForTimeout(6000);
+        t.assert((await page.evaluate(() => window.__voice.listens)) === listens, `no listen opened by the extension (${(await page.evaluate(() => window.__voice.listens)) - listens})`);
+        t.assert((await t.locator('voice-mode').getAttribute('data-state')) !== 'listening', 'not listening');
+        // The owner taps and says "approve".
+        await t.locator('voice-core').click();
+        await hear(t, 'Approve.', { at: 1200 });
+        await waitSaid(t, 'Approving. Say cancel to stop.', 'the approval\'s check (the 30 s counted from the tap)');
+        const ans = await peer.waitFor('answer', { timeoutMs: 20000 });
+        t.assert(ans.body.promptId === p.promptId && ans.body.hash === p.hash && ans.body.choice === 'approve', `one decision with its hash (${JSON.stringify(ans.body)})`);
       });
     },
   },

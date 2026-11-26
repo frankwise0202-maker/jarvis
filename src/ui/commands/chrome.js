@@ -58,10 +58,21 @@ export function matchChromeLinkCommand(text) {
   return null;
 }
 
-export const LINK_STEPS_SAID = 'To link Jarvis for Chrome, open Settings, then Jarvis for Chrome, press Link and copy the code. Then, in the Jarvis window, open its side panel, Settings, Voice from Jarvis, and paste it.';
+// Said aloud, the lines never name "Jarvis for Chrome": his own name would set off his barge-in (G5, A8;
+// REDTEAM-VOICE-15). They say "Chrome", "your Chrome link"; what is shown keeps the name.
+export const LINK_STEPS_SAID = 'To link Chrome, open Settings, then the Chrome section, press Link and copy the code. Then, in the Jarvis window, open its side panel, Settings, Voice from Jarvis, and paste it.';
 
-/** What Jarvis says about the link (state: app.chromeLink.state(), or null when there is none). */
-export function chromeLinkLine(state, { phone = false } = {}) {
+/**
+ * What Jarvis says (spoken: true) or shows about the link (state: app.chromeLink.state(), or null when there is
+ * none).
+ */
+export function chromeLinkLine(state, { phone = false, spoken = false } = {}) {
+  if (spoken) {
+    if (phone) return 'Your Chrome link is made on your Mac: link it from Settings there.';
+    if (!state || !state.linked) return 'Chrome isn’t linked. Say “connect Chrome to Jarvis” to set it up.';
+    if (state.online) return 'Chrome is linked and online.';
+    return 'Chrome is linked, but I can’t reach it. Open the Jarvis window and keep it open.';
+  }
   if (phone) return 'Jarvis for Chrome links with Jarvis on your Mac: link it from Settings there.';
   if (!state || !state.linked) return 'Jarvis for Chrome isn’t linked. Say “link Jarvis for Chrome” to set it up.';
   if (state.online) return 'Jarvis for Chrome is linked and online.';
@@ -89,9 +100,9 @@ export function register(router, deps) {
       } catch {
         state = null;
       }
-      if (action.do === 'chrome-link-status') return { say: chromeLinkLine(state, { phone }) };
       // Set up: typed, Settings opens there; said, the steps (a sheet over Voice Mode would hide it).
       const said = !!(ctx && ctx.surface === 'voice');
+      if (action.do === 'chrome-link-status') return { say: chromeLinkLine(state, { phone, spoken: said }) };
       if (!said && deps && typeof deps.openSettings === 'function') {
         try {
           deps.openSettings({ section: 'chrome' });
@@ -99,8 +110,8 @@ export function register(router, deps) {
           /* Settings couldn't open: the words still say where */
         }
       }
-      if (phone) return { say: chromeLinkLine(null, { phone }) };
-      if (state && state.linked) return { say: `Jarvis for Chrome is already linked${state.online ? ' and online' : ''}.${said ? '' : ' Its settings are open.'}` };
+      if (phone) return { say: chromeLinkLine(null, { phone, spoken: said }) };
+      if (state && state.linked) return { say: `${said ? 'Chrome' : 'Jarvis for Chrome'} is already linked${state.online ? ' and online' : ''}.${said ? '' : ' Its settings are open.'}` };
       return { say: said ? LINK_STEPS_SAID : 'Here’s Jarvis for Chrome in Settings: press Link, then Copy link code, and paste it in its side panel.' };
     },
   });

@@ -7,9 +7,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
+import { createChromeLink, cleanPrompt, cleanOpenUrl, cleanRect, cleanText, readLinkRecord, containsLinkSecret, linkSecrets, CHROME_LINK_KEY, CHROME_LINK_INBOX_KEY, REPLY_TIMEOUT_MS, PENDING_MS, ONLINE_MS, LATE_START_LINE } from '../../src/platform/chrome-link.js';
 import { fakeRelay, answerRelay, createFakeChromePeer, chromeLinkRecord, CHROME_TEST_KEY, CORE_ORIGIN, CORE_URL } from '../e2e/core-fakes.mjs';
-import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode } from '../../src/lib/relay-envelope.js';
+import { importLinkKey, sealEnvelope, newLinkKey, parseLinkCode, makeLinkCode } from '../../src/lib/relay-envelope.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -134,6 +134,10 @@ function relayFetch(relay, log) {
     log.push(`${method} ${u.pathname}`);
     const signal = init.signal;
     if (signal && signal.aborted) throw new DOMException('aborted', 'AbortError');
+    // A test may answer a request itself first (a 429, a dropped connection): relay.intercept(method, path).
+    const forced = typeof relay.intercept === 'function' ? relay.intercept(method, u.pathname) : null;
+    if (forced === 'drop') throw new TypeError('Failed to fetch');
+    if (forced) return new Response(JSON.stringify(forced.body || {}), { status: forced.status, headers: { 'content-type': 'application/json', ...(forced.headers || {}) } });
     const answer = answerRelay(relay, { method, pathname: u.pathname, search: u.search, body: typeof init.body === 'string' ? init.body : '', contentType: (init.headers && init.headers['Content-Type']) || '', signal });
     const aborted = new Promise((_, reject) => signal && signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true }));
     const out = await Promise.race([answer, aborted]);
@@ -145,20 +149,33 @@ function relayFetch(relay, log) {
 function fakeClipboard() {
   const c = {
     writes: [],
-    allow: true,
+    text: '', // what the clipboard holds now
+    allow: true, // false: the page isn't focused (both calls refused)
+    readDenied: false, // the owner refused Jarvis reading the clipboard
     async writeText(text) {
       if (!c.allow) throw new DOMException('Document is not focused.', 'NotAllowedError');
       c.writes.push(text);
+      c.text = text;
+    },
+    async readText() {
+      if (!c.allow || c.readDenied) throw new DOMException('Read permission denied.', 'NotAllowedError');
+      return c.text;
     },
   };
   return c;
 }
 
+/** sessionStorage: one per tab (a reload keeps it; another window has its own). */
+function tabSession() {
+  const map = new Map();
+  return { map, read: (k) => (map.has(k) ? map.get(k) : null), write: (k, v) => map.set(k, String(v)), remove: (k) => map.delete(k) };
+}
+
 function fakeWindow() {
   const listeners = new Map();
-  return {
+  const w = {
     focused: true,
-    document: { hasFocus: () => this?.focused ?? true },
+    document: { hasFocus: () => w.focused },
     addEventListener(type, fn) {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type).add(fn);
@@ -170,6 +187,7 @@ function fakeWindow() {
       }
     },
   };
+  return w;
 }
 
 /** One home base, its relay, a fake Jarvis for Chrome and any number of Jarvis windows. */
@@ -198,6 +216,7 @@ function world({ linked = false, peer: peerOpts = {}, storage: initial = null } 
         locks: opts.locks === undefined ? locks : opts.locks,
         channel: hub.create(),
         clipboard,
+        session: opts.session || tabSession(),
         computer: opts.computer ?? true,
         now: opts.now || (() => Date.now()),
         setTimer: opts.setTimer || ((fn, ms) => setTimeout(fn, ms)),
@@ -244,6 +263,16 @@ test('open: only http(s) addresses without a user name; the window\'s rectangle 
   for (const bad of ['javascript:alert(1)', 'chrome://settings', 'file:///etc/passwd', 'https://user:pw@example.com/', 'not a url', '', 'https://x.example/' + 'a'.repeat(2100), 42]) assert.equal(cleanOpenUrl(bad), null, String(bad).slice(0, 40));
   assert.deepEqual(cleanRect({ left: 760.4, top: -0.2, width: 680, height: 900 }), { left: 760, top: 0, width: 680, height: 900 });
   for (const bad of [null, { left: 0, top: 0, width: 50, height: 900 }, { left: NaN, top: 0, width: 600, height: 600 }, { left: 1e9, top: 0, width: 600, height: 600 }, [1, 2, 3, 4]]) assert.equal(cleanRect(bad), null, JSON.stringify(bad));
+});
+
+test('LINK-5: a link code or this device\'s link key is spotted in any text (the chat refuses it; backups leave it out)', () => {
+  const key = newLinkKey();
+  const prev = newLinkKey();
+  const code = makeLinkCode({ core: CORE_ORIGIN, key });
+  for (const text of [code, `here: ${code} thanks`, `\n${code}\n`, `my key ${key}`, `old ${prev}`]) assert.equal(containsLinkSecret(text, [key, prev]), true, text.slice(0, 30));
+  for (const text of ['pull this up in Chrome', 'eyJ2IjoxLCJjb3JlIjoi', 'sk-ant-xyz', '', null, 42]) assert.equal(containsLinkSecret(text, [key, prev]), false, String(text));
+  const stored = new Map([[CHROME_LINK_KEY, JSON.stringify({ v: 1, core: CORE_ORIGIN, key, linkedAt: 1, madeAt: 1, prev, rekeyAt: Date.now(), prevSeenAt: Date.now() })]]);
+  assert.deepEqual(linkSecrets((k) => stored.get(k) ?? null), [key, prev], 'the stored key, and the code\'s while a rekey is unconfirmed');
 });
 
 // ---- linking ---------------------------------------------------------------------------------------------
@@ -315,6 +344,67 @@ test('Link: needs a home base and a computer; an unused code is forgotten after 
   }
 });
 
+test('LINK-4 / PRIVACY-6: the clipboard is cleared once linked for the code\'s whole life (copied 11 minutes before), also after a reload', async () => {
+  const w = world();
+  try {
+    const session = tabSession();
+    const clipboard = fakeClipboard();
+    const first = w.open({ session, clipboard });
+    first.control.begin();
+    const code = first.control.code();
+    await first.control.copyCode();
+    assert.ok(session.map.size >= 1, 'the copy is noted in the tab\'s session');
+    assert.ok(!JSON.stringify(Array.from(session.map.values())).includes(code), 'but not the code itself');
+    first.destroy(); // the tab reloads while the owner updates Jarvis for Chrome (D6)
+    for (const [k, v] of session.map) session.map.set(k, JSON.stringify({ ...JSON.parse(v), at: Date.now() - 11 * 60_000 })); // 11 minutes ago
+    const again = w.open({ session, clipboard });
+    w.peer.start();
+    await w.peer.link(code);
+    await until(() => again.api.state().linked, { what: 'linked' });
+    await until(() => clipboard.writes.length === 2, { what: 'cleared' });
+    assert.deepEqual(clipboard.writes, [code, ''], 'the code is gone from the clipboard (critique L9)');
+    assert.equal(again.control.info().clipboard, 'cleared');
+  } finally {
+    await w.close();
+  }
+});
+
+test('PRIVACY-6: only the code is cleared: something copied since stays; a clipboard Jarvis may not read is left, and the card is told', async () => {
+  const w = world();
+  try {
+    const clipboard = fakeClipboard();
+    const app = w.open({ clipboard });
+    app.control.begin();
+    const code = app.control.code();
+    await app.control.copyCode();
+    clipboard.text = 'my grocery list'; // the owner copied something else meanwhile
+    w.peer.start();
+    await w.peer.link(code);
+    await until(() => app.api.state().linked, { what: 'linked' });
+    await sleep(100);
+    assert.deepEqual(clipboard.writes, [code], 'nothing wiped');
+    assert.equal(clipboard.text, 'my grocery list');
+  } finally {
+    await w.close();
+  }
+  const w2 = world();
+  try {
+    const clipboard = fakeClipboard();
+    const app = w2.open({ clipboard });
+    app.control.begin();
+    const code = app.control.code();
+    await app.control.copyCode();
+    clipboard.readDenied = true;
+    w2.peer.start();
+    await w2.peer.link(code);
+    await until(() => app.api.state().linked, { what: 'linked' });
+    await until(() => app.control.info().clipboard === 'unchecked', { what: 'the card told' });
+    assert.deepEqual(clipboard.writes, [code], 'not wiped blindly');
+  } finally {
+    await w2.close();
+  }
+});
+
 test('the clipboard: cleared only if this window copied the code, and only when it can (on focus)', async () => {
   const w = world();
   try {
@@ -324,12 +414,14 @@ test('the clipboard: cleared only if this window copied the code, and only when 
     app.control.begin();
     await app.control.copyCode();
     clipboard.allow = false; // the owner is in the Jarvis window: this page isn't focused
+    win.focused = false;
     w.peer.start();
     await w.peer.link(app.control.code());
     await until(() => app.api.state().linked, { what: 'linked' });
     await sleep(50);
     assert.deepEqual(clipboard.writes.length, 1, 'not cleared while it can\'t be');
     clipboard.allow = true;
+    win.focused = true;
     win.fire('focus');
     await until(() => clipboard.writes.length === 2, { what: 'cleared on focus' });
     assert.equal(clipboard.writes[1], '');
@@ -496,13 +588,15 @@ test('offline: nothing sent while Jarvis for Chrome is away (stop excepted); no 
     assert.deepEqual(await app.api.open('https://www.example.com/'), { ok: false, reason: 'offline' });
     assert.deepEqual(await app.api.startTask({ text: 'buy it' }), { ok: false, reason: 'offline' });
     assert.equal(w.relay.posts['to-ext'], before, 'nothing went out');
-    await app.api.stopTask(); // goes out all the same, and gives up after the timeout
+    const stopping = app.api.stopTask(); // goes out all the same, and is sent again until confirmed (LINK-1)
+    await until(() => w.relay.posts['to-ext'] === before + 1, { what: 'the stop sent' });
     assert.equal(w.relay.posts['to-ext'], before + 1, 'stop is sent even offline');
     assert.deepEqual(await app.control.ping(), { ok: false, reason: 'offline' }, 'Settings → Test asks anyway, and says when nothing answers');
-    assert.equal(w.relay.posts['to-ext'], before + 2);
+    assert.equal(w.relay.posts['to-ext'] >= before + 2, true);
     // Online by the status (it reads its box), but it never answers: the request gives up.
     w.peer.setOnline(true);
     w.peer.start();
+    assert.deepEqual(await stopping, { ok: true }, 'the stop is confirmed once Jarvis for Chrome reads it');
     w.peer.answer('open', null);
     await until(async () => (await app.control.refresh()).online, { what: 'online by the status' });
     const t0 = Date.now();
@@ -553,6 +647,330 @@ test('fresh requests only (D5): a late ok for a start given up on is stopped at 
   }
 });
 
+// ---- stop is confirmed and sent again (REDTEAM-LINK-1) -------------------------------------------------------
+
+/** Timers 20 times faster (a stop's 2-s resends, its 2 minutes, the poll's pauses). */
+const quick = (fn, ms) => setTimeout(fn, Math.max(1, ms / 20));
+
+test('stop (LINK-1): a stop whose POST is refused (429) is sent again until Jarvis for Chrome confirms it; stopTask says so', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: true, id: 'task-1' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 429, body: { error: 'rate_limited' }, headers: { 'retry-after': '1' } } : null);
+    const r = await app.api.stopTask();
+    assert.deepEqual(r, { ok: true }, 'confirmed by Jarvis for Chrome');
+    assert.equal(refused >= 2, true, 'the first POST was refused, a later one went through');
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length >= 1, true, 'the extension got the stop');
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.status === 'stopped'), 'and the task stopped');
+  } finally {
+    await w.close();
+  }
+});
+
+test('stop (LINK-1): a stop the relay lost (a restart before the extension read it) is sent again; the extension stops', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    await app.api.startTask({ text: 'find a 4K monitor' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    w.peer.setOnline(false); // between two reads
+    const posts = w.relay.posts['to-ext'];
+    const stopping = app.api.stopTask();
+    await until(() => w.relay.posts['to-ext'] > posts, { what: 'the stop posted' });
+    w.relay.store.close(); // the home base restarts: its boxes are empty
+    w.peer.setOnline(true);
+    assert.deepEqual(await stopping, { ok: true });
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length >= 1, true, 'a stop sent again reached it');
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.status === 'stopped'), 'and the task stopped');
+  } finally {
+    await w.close();
+  }
+});
+
+test('stop (LINK-1): one pending stop, resent with back-off; a done or a status without the task confirms it; unlinked and 2 minutes say so', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const app = w.open({ setTimer: quick });
+    await online(app);
+    await app.api.startTask({ text: 'find a 4K monitor' });
+    await until(() => app.api.state().task, { what: 'the task' });
+    // Jarvis for Chrome reads but never answers the stop; its status then shows no task: confirmed.
+    w.peer.answer('stop', null);
+    const t0 = w.relay.posts['to-ext'];
+    const a = app.api.stopTask();
+    const b = app.api.stopTask(); // a second "stop": the same pending stop, sent again now
+    await until(() => w.relay.posts['to-ext'] >= t0 + 3, { what: 'resent' });
+    await w.peer.status({ task: null });
+    assert.deepEqual(await a, { ok: true });
+    assert.deepEqual(await b, { ok: true });
+    const sent = w.relay.posts['to-ext'] - t0;
+    await sleep(400);
+    assert.equal(w.relay.posts['to-ext'] - t0, sent, 'no more resends once confirmed');
+    // A done for the task confirms it too.
+    w.peer.answer('start', undefined);
+    await app.api.startTask({ text: 'another' });
+    await until(() => app.api.state().task && app.api.state().task.id === 'task-2', { what: 'task-2' });
+    const c = app.api.stopTask();
+    await sleep(30);
+    await w.peer.done({ id: 'task-2', status: 'stopped' });
+    assert.deepEqual(await c, { ok: true });
+    // Nobody reads: resent with back-off, then offline after 2 minutes (scaled).
+    w.peer.setOnline(false);
+    const t1 = w.relay.posts['to-ext'];
+    const started = Date.now();
+    const d = await app.api.stopTask();
+    assert.deepEqual(d, { ok: false, reason: 'offline' });
+    const tries = w.relay.posts['to-ext'] - t1;
+    assert.ok(tries >= 5 && tries <= 15, `sent again with back-off (${tries} sends in 2 minutes)`);
+    assert.ok(Date.now() - started >= (2 * 60_000) / 20 - 50, 'it kept trying for 2 minutes');
+    // Not linked: said at once.
+    await app.control.unlink();
+    assert.deepEqual(await app.api.stopTask(), { ok: false, reason: 'unlinked' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('fresh requests only (D5) with LINK-1: the late start\'s stop is sent again until confirmed, and only then is the owner told', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    // The late ok comes, but the first stop's POST is refused.
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 502, body: {} } : null);
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await sleep(60);
+    assert.deepEqual(notices, [], 'not said before the stop is confirmed');
+    await w.peer.waitFor('stop');
+    await until(() => notices.length === 1, { what: 'the notice' });
+    assert.deepEqual(notices[0], { kind: 'late-start', line: LATE_START_LINE });
+    // Never confirmed: after 10 s the owner hears that it couldn't be stopped.
+    w.relay.intercept = null;
+    w.peer.answer('start', null);
+    await app.api.startTask({ text: 'again' });
+    const start2 = await w.peer.waitFor('start');
+    w.peer.answer('stop', null);
+    w.peer.setOnline(false);
+    await w.peer.send('reply', { re: start2.id, ok: true, id: 'task-late-2' });
+    await until(() => notices.length === 2, { timeoutMs: 8000, what: 'the unconfirmed notice' });
+    assert.equal(notices[1].kind, 'late-start-unconfirmed');
+    assert.match(notices[1].line, /couldn’t reach it to stop it\. Press Stop in its side panel/);
+  } finally {
+    await w.close();
+  }
+});
+
+// ---- what a task may cost (MONEY-3) ---------------------------------------------------------------------------
+
+test('MONEY-3: the extension\'s task budget is known from its hello and status; startTask passes the limit the owner heard', async () => {
+  const w = world({ linked: true, peer: { budgetUsd: 5, maxSteps: 60 } });
+  try {
+    w.peer.start();
+    const app = w.open();
+    await online(app);
+    await until(() => app.api.state().budgetUsd === 5, { what: 'the budget from its hello' });
+    assert.equal(app.api.state().maxSteps, 60);
+    await w.peer.status({ budgetUsd: 2.5 });
+    await until(() => app.api.state().budgetUsd === 2.5, { what: 'a changed budget from the status' });
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor', limitUsd: 2.5 }), { ok: true, id: 'task-1' });
+    assert.equal((await w.peer.waitFor('start')).body.limitUsd, 2.5, 'the limit said goes with the task');
+    await app.api.startTask({ text: 'another', limitUsd: 'a lot' });
+    assert.equal('limitUsd' in (await w.peer.waitFor('start')).body, false, 'not a sum: left out');
+    // Another window sees it too.
+    const other = w.open();
+    await until(() => other.api.state().budgetUsd === 2.5, { what: 'the other window' });
+  } finally {
+    await w.close();
+  }
+});
+
+// ---- the code works once (REDTEAM-LINK-4) ---------------------------------------------------------------------
+
+/** Link a fresh app window with the fake extension through the code; returns { app, code, codeKey }. */
+async function linkWithCode(w, opts = {}) {
+  const app = w.open({ setTimer: quick, ...opts });
+  app.control.begin();
+  const code = app.control.code();
+  const codeKey = parseLinkCode(code).link.key;
+  await until(() => app.reads() >= 1, { what: 'the first read of to-app' });
+  w.peer.start();
+  await w.peer.link(code);
+  await until(() => app.api.state().linked, { what: 'linked' });
+  return { app, code, codeKey };
+}
+
+test('LINK-4: linking replaces the code\'s key: rekey sealed with it, Jarvis for Chrome switches and answers under the new key; both forget the code\'s', async () => {
+  const w = world();
+  try {
+    const { app, codeKey } = await linkWithCode(w);
+    const rekey = await w.peer.waitFor('rekey');
+    const stored = () => readLinkRecord((k) => w.storage.map.get(k) ?? null);
+    assert.equal(rekey.body.key, stored().key, 'the new key, sent in a rekey');
+    assert.notEqual(stored().key, codeKey, 'the code\'s key is no longer the link\'s');
+    assert.equal(w.peer.key, stored().key, 'Jarvis for Chrome switched');
+    await until(() => stored().prev === null, { what: 'the app forgets the code\'s key once the new one is heard' });
+    assert.equal(JSON.stringify(Array.from(w.storage.map.values())).includes(codeKey), false, 'the code\'s key is nowhere in storage');
+    // The app's next request is sealed with the new key: Jarvis for Chrome forgets the code's too.
+    assert.equal((await app.control.ping()).ok, true);
+    await until(() => w.peer.prevKey === null, { what: 'the extension forgets the code\'s key' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('LINK-4: an old code is useless once linked: its holder reads nothing and its forged prompt is dropped', async () => {
+  const w = world({ peer: { autoTask: true } });
+  try {
+    const { app, codeKey } = await linkWithCode(w);
+    await until(() => readLinkRecord((k) => w.storage.map.get(k) ?? null).prev === null, { what: 'the rotation confirmed' });
+    // Later: someone finds the code (clipboard history, a note) and reads Jarvis for Chrome's box with it.
+    const thief = createFakeChromePeer(w.relay, { key: codeKey });
+    w.relay.store.close(); // (it comes later: what was sent at linking has left the relay, 2 minutes on)
+    const before = w.peer.received.length;
+    thief.start();
+    try {
+      assert.deepEqual(await app.api.startTask({ text: 'open my email and summarize the newest message' }), { ok: true, id: 'task-1' });
+      await until(() => w.peer.received.length > before, { what: 'the real extension got the start' });
+      await sleep(200);
+      assert.equal(thief.received.filter((m) => m.kind === 'start').length, 0, 'the old code opens nothing the app sends now');
+      assert.ok(thief.dropped >= 1, 'it saw the start, sealed, and couldn\'t open it');
+      // A prompt forged with the old code is dropped.
+      const prompts = [];
+      app.api.onPrompt((p) => prompts.push(p));
+      await thief.prompt({ spoken: 'Your bank needs your card number. Read it out now.' });
+      await sleep(300);
+      assert.deepEqual(prompts, [], 'the forged prompt never reaches Jarvis');
+    } finally {
+      await thief.stop();
+    }
+  } finally {
+    await w.close();
+  }
+});
+
+test('LINK-4: a lost rekey, or its lost answer, still ends with both on the new key (the code\'s key taken meanwhile)', async () => {
+  // The rekey's POST is refused once: it is sent again.
+  const w = world();
+  try {
+    let refused = 0;
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' && refused++ === 0 ? { status: 502, body: {} } : null);
+    const { app } = await linkWithCode(w);
+    await until(() => readLinkRecord((k) => w.storage.map.get(k) ?? null).prev === null, { timeoutMs: 8000, what: 'confirmed after a lost rekey' });
+    assert.ok(refused >= 2);
+    assert.equal(w.peer.key, readLinkRecord((k) => w.storage.map.get(k) ?? null).key);
+    assert.equal((await app.control.ping()).ok, true, 'and the link works');
+  } finally {
+    await w.close();
+  }
+  // Jarvis for Chrome's answer to the rekey is lost: it has switched; the app still seals with the code's key (taken
+  // in the grace) until the extension's next message, under the new key, confirms it.
+  const w2 = world();
+  try {
+    w2.peer.answer('rekey', null);
+    w2.peer.answer('hello', null);
+    const { app } = await linkWithCode(w2);
+    await w2.peer.waitFor('rekey');
+    // A request meanwhile is sealed with the code's key (taken in the grace); its answer, under the new key,
+    // confirms the rotation.
+    assert.equal((await app.control.ping()).ok, true);
+    await until(() => readLinkRecord((k) => w2.storage.map.get(k) ?? null).prev === null, { what: 'confirmed by its next message' });
+    assert.equal((await app.control.ping()).ok, true);
+  } finally {
+    await w2.close();
+  }
+});
+
+// ---- a start whose reply was lost (MISSED-LINK-A) -------------------------------------------------------------
+
+test('MISSED-LINK-A: the reply to a start is lost but the task runs: its news after the start gave up is a late start, stopped and said', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    // Jarvis for Chrome starts the task, but its reply never arrives; the task's news does.
+    w.peer.answer('start', null);
+    const starting = app.api.startTask({ text: 'find a 4K monitor' });
+    await w.peer.waitFor('start');
+    await w.peer.task({ id: 'task-lost', status: 'running', narration: 'Looking.' });
+    assert.deepEqual(await starting, { ok: false, reason: 'offline' }, 'the owner was told it didn\'t start');
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await until(() => notices.length === 1, { what: 'the notice' });
+    assert.deepEqual(notices[0], { kind: 'late-start', line: LATE_START_LINE });
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.id === 'task-lost' && m.body.status === 'stopped'), 'the task was stopped');
+    // News that comes only after the give-up (a status naming a voice task) counts the same way.
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'again' }), { ok: false, reason: 'offline' });
+    await w.peer.status({ task: { id: 'task-lost-2', status: 'running', from: 'voice' } });
+    await until(() => notices.length === 2, { what: 'the second notice' });
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 2);
+  } finally {
+    await w.close();
+  }
+});
+
+test('MISSED-LINK-A: the window that gave up reloads before the late ok: the new window stops the task and says so', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices1 = [];
+    const first = w.open({ setTimer: quick, notice: (n) => notices1.push(n) });
+    await online(first);
+    w.peer.answer('start', null);
+    assert.deepEqual(await first.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    first.destroy(); // reloaded (or closed): its memory is gone
+    const notices2 = [];
+    const second = w.open({ setTimer: quick, notice: (n) => notices2.push(n) });
+    await until(() => second.control.info().holder, { what: 'the new window holds the link' });
+    w.peer.answer('stop', undefined);
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await until(() => notices2.length === 1, { what: 'the new window tells' });
+    assert.deepEqual(notices2[0], { kind: 'late-start', line: LATE_START_LINE });
+    assert.equal(notices1.length, 0);
+  } finally {
+    await w.close();
+  }
+});
+
+test('MISSED-LINK-A: no false alarm: a task whose start was answered, a task from the side panel, news with no start given up', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    // A voice task that started normally, then a start given up on while it runs: its news is not a late start.
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: true, id: 'task-1' });
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'another' }), { ok: false, reason: 'offline' });
+    await w.peer.task({ id: 'task-1', status: 'running', narration: 'Still going.' });
+    // A task typed in the side panel shows only in the status, as from the panel.
+    await w.peer.status({ task: { id: 'task-panel', status: 'running', from: 'panel' } });
+    await sleep(300);
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 0, 'nothing stopped');
+    assert.deepEqual(notices, []);
+  } finally {
+    await w.close();
+  }
+});
+
 test('fresh requests only (D5) across windows: a late ok for another window\'s start reaches it through the holder', async () => {
   const fast = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 300 : ms);
   const w = world({ linked: true });
@@ -588,14 +1006,63 @@ test('online follows the last 60 seconds: by a message, or by the relay\'s statu
     w.peer.setOnline(false, { seenAgoMs: 10 * 60_000 });
     await app.control.refresh();
     assert.equal(app.api.state().online, false, 'nothing for over a minute: offline');
-    w.relay.extSeenOverride = Date.now() + skew - 5000; // the relay: it read its box 5 s ago
+    w.relay.extSeenOverride = Date.now() - 5000; // the relay: it read its box 5 s ago (by the relay's clock: LINK-7)
     await app.control.refresh();
     assert.equal(app.api.state().online, true, 'the status says it reads its box');
-    w.relay.extSeenOverride = Date.now() + skew + 10 * 60_000; // a clock far ahead
+    w.relay.extSeenOverride = Date.now() + 10 * 60_000; // a time far ahead of the relay's own clock
     skew += ONLINE_MS + 1000;
     await app.control.refresh();
     assert.equal(app.api.state().online, false);
   } finally {
+    await w.close();
+  }
+});
+
+test('LINK-6: the relay seeing a reader is not enough: online needs a message from Jarvis for Chrome in the last few minutes; a ping goes out to prove it', async () => {
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const app = w.open({ now });
+    await online(app);
+    // Three minutes on, quiet, still reading: online (the status, and a message not long ago).
+    skew = 3 * 60_000;
+    w.relay.extSeenOverride = Date.now() - 5000; // (by the relay's own clock)
+    await app.control.refresh();
+    assert.equal(app.api.state().online, true, 'reading its box, heard from 3 minutes ago');
+    // Six minutes on: something reads the box (a frame, another key), but Jarvis for Chrome has said nothing.
+    w.peer.setOnline(false);
+    skew = 6 * 60_000;
+    w.relay.extSeenOverride = Date.now() - 5000;
+    const posts = w.relay.posts['to-ext'];
+    await app.control.refresh();
+    assert.equal(app.api.state().online, false, 'the status alone is not enough');
+    await until(() => w.relay.posts['to-ext'] > posts, { what: 'a ping to prove it' });
+  } finally {
+    await w.close();
+  }
+});
+
+test('LINK-7: the relay\'s status is judged on the home base\'s own clock (its `now`): a clock 90 s apart doesn\'t make a working link offline', async () => {
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const app = w.open({ now });
+    await online(app);
+    w.peer.setOnline(false); // quiet, but reading its box (the status below says so)
+    skew = 2 * 60_000; // two minutes since its last message: the status must carry it
+    w.relay.intercept = (method, path) => {
+      if (method !== 'GET' || path !== '/api/relay/status') return null;
+      const coreNow = now() - 90_000; // the home base's clock, 90 s behind this one
+      return { status: 200, body: { extSeenAt: coreNow - 5000, appSeenAt: coreNow, now: coreNow } };
+    };
+    await app.control.refresh();
+    assert.equal(app.api.state().online, true, 'read 5 s ago by the home base\'s clock');
+  } finally {
+    w.relay.intercept = null;
     await w.close();
   }
 });

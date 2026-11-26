@@ -1129,10 +1129,14 @@ leave each other messages on your home base. You link them once, on the Mac:
 2. In Jarvis, open **Settings → Jarvis for Chrome**, press **Link**, then **Copy link code**.
 3. In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then **Settings → Voice
    from Jarvis**, and paste the code. When Chrome asks, let Jarvis for Chrome reach your home base.
-4. Both sides now say **Linked · online**, and Jarvis clears the code from your clipboard. **Test** checks the link
-   any time, and so does asking "is Jarvis for Chrome linked?" ("link Jarvis for Chrome" brings you to its settings).
+4. Both sides now say **Linked · online**, and Jarvis clears the code from your clipboard if it's still there (it
+   reads the clipboard first, so something you copied since stays; if it can't, Settings says so). **Test** checks
+   the link any time, and so does asking "is Jarvis for Chrome linked?" ("link Jarvis for Chrome" brings you to its
+   settings).
 
-The code works once, for 30 minutes: it holds the key that locks your messages, so don't share it. Keep the Jarvis
+The code works once, for 30 minutes: the moment the two are linked, they agree a new key and forget the code's, so an
+old code (in your clipboard history, say) opens nothing. Until then it holds the key that locks your messages, so
+don't share it. Keep the Jarvis
 window open (it can sit behind other windows): if it's closed, Settings says **Linked · offline**, "pull this up in
 Chrome" opens a normal tab instead, and Jarvis tells you he can't reach Jarvis for Chrome rather than start a task
 there. **Unlink** on either side ends the link. The link belongs to your Mac: on the iPhone, Settings → Jarvis for
@@ -1143,14 +1147,19 @@ Chrome only points you there.
 With the link online, say these to Jarvis (in Voice Mode, or typed in the chat box):
 
 - **A task, with "in Chrome":** "find a 4K monitor under $300 and add it to the cart in Chrome". You can also start
-  with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". Before anything happens, Jarvis shows the
+  with "in Chrome, …", "use Jarvis for Chrome to …" or "have Chrome …". It has to be something to do ("find", "add",
+  "open", "book", …): "my Gmail won't load in Chrome" is a question for Jarvis, never a task. Before anything happens, Jarvis shows the
   task on a card and says it back with its price: "Chrome, up to a dollar: find a 4K monitor under $300 and add it to
-  the cart. Say cancel to stop." Two seconds after he finishes (five while Jarvis is behind other windows) it starts,
-  and he says "Chrome is on it."
-  - To stop it from starting, say "cancel", "no" or "stop", or press the card's **Cancel**. **Start now** skips the
-    wait. "Yes" or "okay" just lets it count on.
-  - To change the words, say "no, I said …".
-  - Typed in the chat, the card shows the price and starts after two seconds, with nothing said.
+  the cart. Say cancel to stop." The price is the budget set in Jarvis for Chrome ("up to your Chrome budget" until
+  it has told Jarvis), and the task never spends more than the price he said. Two seconds after he has said it all
+  (five while Jarvis is behind other windows) it starts, and he says "Chrome is on it."
+  - To stop it from starting, say "cancel", "no" or "stop", or press the card's **Cancel**, the **Stop** button or
+    the core while he says it or counts down. **Start now** skips the wait. "Yes" or "okay" just lets it count on
+    (so do "go" and "start it": they sound too much like "no" and "stop it" to start anything at once).
+  - If you interrupt him ("Hey Jarvis" or two claps) and say nothing, nothing is sent; "okay" has him say it again.
+  - To change the words, say "no, I said …" (it stays a Chrome task).
+  - Typed in the chat, the card shows the price and starts after two seconds, with nothing said. Type "cancel" or
+    press **Cancel** to stop it.
 - **"Click around for me":** Jarvis asks "What should I do in Chrome?", and your answer is the task (checked the
   same way).
 - **Words for the page:** for two minutes after a page opens in the Jarvis window ("pull this up in Chrome"), after a
@@ -1165,7 +1174,12 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   far.
   - Jarvis says the final answer.
   - "What are you doing in Chrome?" tells you the latest step (free).
-  - "Stop" or "stop Chrome" stops it at once. The card's **Stop**, ⌘⇧. and the side panel's Stop still work.
+  - "Stop" or "stop Chrome" stops it (so do "stop that", "cancel the task", "abort" or "cancel" while it runs, and a
+    stop said while it is still starting): "Stopping Chrome…", and once Jarvis for Chrome confirms it, "Chrome stopped."
+    If it can't be reached within 10 seconds, Jarvis says so and where to press Stop (it keeps trying). The card's
+    **Stop**, ⌘⇧. and the side panel's Stop still work.
+  - Asked for a second task while one runs, Jarvis says "Chrome is busy with another task. Stop it first?". "Yes" or
+    "stop it" stops the first and then starts the second; "no" leaves both as they are.
 - **When Chrome asks something:** Jarvis shows it on a card and says it, in Jarvis for Chrome's own words (never
   words picked out of the page): "Chrome asks: add the 27-inch 4K monitor, $279.99, to the cart on bestbuy.com?
   Say approve, or cancel."
@@ -1177,6 +1191,9 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
 
     A plain "yes", "okay", "sure", "go ahead" or "continue" never answers Chrome. "Cancel" or "no" on its own answers
     whatever Jarvis asked last.
+  - **Jarvis opens the microphone for it only when he would listen anyway** (Continuous on, and not after he has
+    gone quiet behind other windows). Otherwise he ends with "Tap me to answer.", and the 30 seconds start when you
+    do.
   - **A yes counts only within 30 seconds of the question being said in full.** If Jarvis may have heard "no"
     instead, he asks again. Then he says "Approving · say cancel" and waits two seconds (five while he is behind
     other windows): "cancel", "no" or "stop" takes it back.
@@ -1186,15 +1203,18 @@ With the link online, say these to Jarvis (in Voice Mode, or typed in the chat b
   - **For now, every step needs a click.** Approving everyday steps by voice comes with the setting **Approve everyday
     steps by voice** in Jarvis for Chrome, after its security review. Until then you can say no by voice, and Jarvis
     tells you where to click.
-  - **In the chat,** the card's buttons answer it. Typed words don't.
+  - **In the chat,** the card's buttons answer it. Typed, "deny" or "no" says no as the card's button would;
+    "approve" points you to the card's button.
   - **With Voice Mode closed or on Standby,** a notification tells you Chrome is asking. When you wake Jarvis, he
-    starts with "Chrome is waiting for you: …".
+    starts with "Chrome is waiting for you: …". "Hey Jarvis, stop Chrome" (or "… deny") acts at once.
+  - **With two Jarvis windows open,** the one where you talk to Jarvis says Chrome's questions and its answers; the
+    other shows the cards.
 - **What it never does:**
   - Start a task from anything but your own words: never from a web page, Jarvis's answers or Jarvis for Chrome.
   - Approve a step without your "approve" or a click.
   - Keep Jarvis awake: a task running in Chrome never stops him from going back to Standby.
 - **Costs:** the words above are free. A task is paid with Jarvis for Chrome's own key, at its model's price, within
-  its budget (a dollar unless you changed it); it asks before going over.
+  its budget (a dollar unless you changed it) and never above the price Jarvis said; it asks before going over.
 
 ## What it costs
 

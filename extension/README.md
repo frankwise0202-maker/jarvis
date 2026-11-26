@@ -227,7 +227,8 @@ the bottom, and an older one has no **Voice from Jarvis** there. To get 1.1.0, u
 needs its home base (Settings → Home base, Jarvis Core 1.3 or later).
 
 1. In Jarvis, in your usual Chrome: **Settings** → **Jarvis for Chrome** → **Link** → **Copy link
-   code**. The code works once, for 30 minutes.
+   code**. The code works once, for 30 minutes: as soon as the two are linked, Jarvis sends a new
+   key and both forget the code's, so an old code opens nothing.
 2. In the Jarvis window: open the side panel (⌥⇧J) → **Settings** → **Voice from Jarvis**, paste
    the code and press **Link**.
 3. Chrome asks to let Jarvis for Chrome reach your home base (its `…ts.net` address): allow it.
@@ -250,7 +251,9 @@ or sent anywhere. Linking works only with your home base's Tailscale address, as
   `?add-to-cart=42` or `/orders/7/cancel`, an installer or another file, or one with hidden or
   disguised characters) waits for your click: its card shows the whole address in the side
   panel, and it opens only when you press **Open it**. Chrome's own pages, files, the Chrome Web
-  Store and addresses with a user name or password are never opened.
+  Store and addresses with a user name or password are never opened. For 30 seconds after Jarvis
+  opens a page, a download it starts (a link that turns out to be an installer, say) waits on a
+  card too, and is saved only when you press **Save**.
 - **Start a task**, from your own spoken words (never from a web page or from Claude): only
   while **Tasks from Jarvis** is on, at most 30 a day, and one at a time, as here. It runs with
   this extension's model, budget and step limit, and its card says **From Jarvis (voice)**.
@@ -268,8 +271,10 @@ its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add t
 approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of
 step, the site, what it looks like (a purchase…), a price. Of the page's own words it quotes at most
 about 40 characters, after "the button says", and never words that sound like an answer
-("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words
-in Jarvis's mouth. When a question needs a click, Jarvis says why in a few words (*"That's a
+("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis", "spend more in Chrome",
+"more steps in Chrome"), also spaced out, accented, in look-alike letters or spelled by sound
+("Aprove", "Kancel", "Appr0ve"), so a page can't put words in Jarvis's mouth. (Jarvis for Chrome
+decides every answer itself; the quote only describes the step.) When a question needs a click, Jarvis says why in a few words (*"That's a
 purchase."*) and that it needs a click in the Jarvis window.
 
 | Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |
@@ -296,10 +301,11 @@ purchase."*) and that it needs a click in the Jarvis window.
 - When no side panel is open, a question that needs a click opens a small Jarvis for Chrome
   window with the same card, and **Stop**. Its answers take a click only after a second, so a
   click meant for another window can't answer it; it closes by itself once nothing waits.
-- If Jarvis for Chrome can't reach your home base for 20 seconds while a task from Jarvis runs,
-  the task pauses itself (as **Take over** does), so a *"stop"* said to Jarvis can't be lost on the
-  way; press **Continue** in the side panel to go on. **⌘⇧.** and the side panel's **Stop** always
-  work.
+- If Jarvis for Chrome can't read what Jarvis sends it through your home base for 20 seconds
+  while a task from Jarvis runs (its own messages getting through to Jarvis don't count), or the
+  link with Jarvis ends mid-task (Unlink on either side, or a new link), the task pauses itself (as
+  **Take over** does), so a *"stop"* said to Jarvis is never lost on the way; press **Continue** in
+  the side panel to go on. **⌘⇧.** and the side panel's **Stop** always work.
 
 Opening pages and the relay cost nothing; a task costs what any task costs (see [Costs](#costs)).
 

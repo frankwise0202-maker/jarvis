@@ -67,3 +67,35 @@ test('the extension’s relay loop and Jarvis’s end, through Core’s own rela
     relay.stop();
   }
 });
+
+test('LINK-2: with 8 outside reads holding to-ext, the extension’s loop doesn’t spin (it was about 35 reads a second)', async () => {
+  const http = await import('node:http');
+  const { port } = new URL(core);
+  const open = [];
+  const { last } = await (await fetch(`${core}/api/relay/to-ext`)).json(); // (what earlier tests left there is read)
+  for (const c of ['b', 'c']) {
+    for (let i = 0; i < 4; i++) {
+      const req = http.request({ host: '127.0.0.1', port, path: `/api/relay/to-ext?wait=20${last ? `&after=${last}` : ''}`, headers: { origin: `chrome-extension://${c.repeat(32)}` }, agent: false }, () => {});
+      req.on('error', () => {});
+      req.end();
+      open.push(req);
+    }
+  }
+  const end = Date.now() + 3000;
+  while (api.relay.store.sizes()['to-ext'].waiting < 8 && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(api.relay.store.sizes()['to-ext'].waiting, 8);
+  let reads = 0;
+  const counted = (url, init) => {
+    if (String(url).includes('/api/relay/to-ext') && (init?.method || 'GET') === 'GET') reads += 1;
+    return extFetch(url, init);
+  };
+  const relay = new Relay({ chrome: { runtime: {} }, link: { core, key: newLinkKey() }, store: createStore(createFakeBrowser().chrome), onMessage() {}, fetch: counted });
+  relay.start();
+  try {
+    await new Promise((r) => setTimeout(r, 3000));
+    assert.ok(reads <= 4, `${reads} reads in 3 s`);
+  } finally {
+    relay.stop();
+    for (const r of open) r.destroy();
+  }
+});

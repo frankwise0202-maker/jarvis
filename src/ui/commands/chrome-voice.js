@@ -10,26 +10,31 @@
 //   chrome-prompt  answer       Voice Mode only: a Chrome check's words ("cancel", "no, I said …", "start
 //                               now"), the open prompt's reserved words, a bare "cancel" / "no" when the
 //                               prompt was asked last, a bare "yes" (never an answer: Jarvis says what to say)
+//   chrome-typed   answer       typed (the chat, a hologram's or Optics' field): the same words for a task's
+//                               countdown ("cancel", "stop", "start now"), and for a prompt's card (a no goes
+//                               out as the card's would; a yes points to the card's button)
 //   chrome-stop    stop         "stop Chrome", "cancel the Chrome task" (a bare "stop" is voice's 'stop')
 //   chrome-task    destination  "… in Chrome", "have Chrome …", page words in a Chrome context: a carrier
 //                               (no word cap). Its action says check: false: the task has one check, its
 //                               own spoken one (the lead's D2), never the generic 2-second check. Paid and
 //                               not undoable, so never from another reading.
 //   chrome-ask     destination  "click around for me" ("What should I do in Chrome?")
-//   chrome-status  destination  "what are you doing in Chrome?" (free)
+//   chrome-status  destination  "what are you doing in Chrome?" (free; a bare "how's it going?" only while a
+//                               task runs)
 //   chrome-answer  destination  a yes naming Chrome with nothing asked ("Chrome isn't asking anything right
 //                               now."; with a card waiting in the chat: its buttons answer it)
 //
 // Typed (the chat, a hologram's or Optics' field), a task gets its card with the price and a 2-s countdown
-// in the chat; a field over the chat shows the check's line too.
+// in the chat; a field over the chat shows the check's line too. On a phone (never linked) every one of these
+// says that Chrome tasks run from Jarvis on the Mac.
 //
 // Keep this module importable in Node (no DOM at import time): the T3 harness
 // (test/unit/command-router.test.mjs) registers every module with fake deps. Its phrases go in the
 // chrome-voice section of test/unit/fixtures/voice-corpus.mjs, and its collisions in the chrome-voice section of
 // test/unit/fixtures/collisions.mjs.
 
-import { matchChromeStatus, matchChromeStop, matchChromeTask, matchClickAround, taskRefusal } from '../../lib/chrome-task-words.js';
-import { matchChromeAnswer, matchNothingAsked } from '../../lib/chrome-prompt-words.js';
+import { TASK_PHONE_LINE, matchChromeStatus, matchChromeStop, matchChromeTask, matchClickAround, taskRefusal } from '../../lib/chrome-task-words.js';
+import { matchChromeAnswer, matchNothingAsked, matchTypedChrome } from '../../lib/chrome-prompt-words.js';
 
 /**
  * @param {{ register: Function }} router  the app's command router
@@ -49,6 +54,8 @@ export function register(router, deps = {}) {
   /** The controller acts; its line is said in Voice Mode and shown elsewhere. False: it couldn't after all. */
   const run = (action, ctx = {}) => {
     const surface = ctx && typeof ctx.surface === 'string' ? ctx.surface : 'voice';
+    // A phone never links Jarvis for Chrome: its tasks run from the Mac (REDTEAM-VOICE-13).
+    if (deps && deps.phone) return { say: surface === 'voice' ? TASK_PHONE_LINE.say : TASK_PHONE_LINE.show };
     const c = controller();
     if (!c) {
       // (No controller: the link may still say why nothing can go to Chrome.)
@@ -79,8 +86,10 @@ export function register(router, deps = {}) {
     );
   }
 
-  // Voice Mode only, like its 'prompt' and 'question': in the chat a prompt's card answers it.
-  router.register({ id: 'chrome-prompt', layer: 'answer', surfaces: ['voice'], match: (text, state) => matchChromeAnswer(text, state), run });
+  // Voice Mode only, like its 'prompt' and 'question' (the other readings come too: a "no" heard as "go").
+  router.register({ id: 'chrome-prompt', layer: 'answer', surfaces: ['voice'], match: (text, state, ctx) => matchChromeAnswer(text, state, ctx && ctx.readings), run });
+  // Typed (the chat, a hologram's or Optics' field): a task's countdown and a prompt's card take the same words.
+  router.register({ id: 'chrome-typed', layer: 'answer', surfaces: ['chat', 'hologram', 'optics'], match: (text, state) => matchTypedChrome(text, state), run });
   router.register({
     id: 'chrome-stop',
     layer: 'stop',
@@ -101,6 +110,6 @@ export function register(router, deps = {}) {
     run,
   });
   router.register({ id: 'chrome-ask', layer: 'destination', match: (text) => matchClickAround(text), run });
-  router.register({ id: 'chrome-status', layer: 'destination', match: (text) => matchChromeStatus(text), run });
+  router.register({ id: 'chrome-status', layer: 'destination', match: (text, state) => matchChromeStatus(text, state), run });
   router.register({ id: 'chrome-answer', layer: 'destination', match: (text, state) => matchNothingAsked(text, state), run });
 }

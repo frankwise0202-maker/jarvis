@@ -93,6 +93,39 @@ test('the link key and code are in no export, no sync backup and no sync upload;
   }
 });
 
+test('LINK-5: a conversation holding the link code or the link key stays out of exports and sync; elsewhere they are masked', async () => {
+  const page = await h.newPage();
+  const r = await page.evaluate(async (BASE) => {
+    const { link, backup, settings, db, memory, prompts } = window.__mods;
+    settings.saveSettings({ homeBaseUrl: BASE });
+    const made = link.createChromeLink({ getHomeBase: () => settings.getSettings().homeBaseUrl, fetchImpl: async () => new Response('{}', { status: 404 }), locks: null, channel: null, clipboard: null, computer: true });
+    made.control.begin();
+    const code = made.control.code();
+    const key = JSON.parse(localStorage.getItem(link.CHROME_LINK_KEY)).key;
+    made.destroy();
+    const conv = (id, text) => ({
+      id, v: 1, title: 'Chat', createdAt: 1000, updatedAt: 2000, system: prompts.LEAD_SYSTEM_LATEST, tools: prompts.leadToolsLatest(),
+      apiMessages: [{ role: 'user', content: [{ type: 'text', text }] }],
+      turns: [{ id: `u-${id}`, role: 'user', text, mode: 'auto', createdAt: 1000 }], pending: null,
+    });
+    await db.saveConversation(conv('with-code', `here is the code ${code}`));
+    await db.saveConversation(conv('with-key', `the key is ${key}`));
+    await db.saveConversation(conv('plain', 'pull this up in Chrome'));
+    memory.addMemory(`The Chrome code was ${code}`);
+    const file = await (await backup.exportBackup()).text();
+    const built = await backup.buildSyncBackup();
+    return { file, sync: built.json, excluded: built.excluded.map((x) => x.id).sort(), code, key };
+  }, BASE);
+  for (const [label, text] of [['export', r.file], ['sync', r.sync]]) {
+    assert.equal(text.includes(r.code), false, `${label}: no link code`);
+    assert.equal(text.includes(r.key), false, `${label}: no link key`);
+    const data = JSON.parse(text);
+    assert.deepEqual(data.conversations.map((c) => c.id), ['plain'], `${label}: the conversations holding one are left out`);
+    assert.ok(JSON.stringify(data.memory).includes('[link code removed]'), `${label}: masked in a remembered fact`);
+  }
+  assert.deepEqual(r.excluded, ['with-code', 'with-key']);
+});
+
 test('a backup that carries a link (someone else\'s) never plants one; Reset forgets the link', async () => {
   const page = await h.newPage();
   const r = await page.evaluate(async () => {

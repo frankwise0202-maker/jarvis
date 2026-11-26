@@ -121,6 +121,29 @@ test('dropped: an id seen before (the last 500 are kept)', async () => {
   assert.equal(new SeenIds(ring.toJSON()).has('id1'), true, 'kept across a restart');
 });
 
+test('LINK-10: the lengths are checked on the strings before anything is decoded: a huge field costs nothing', async () => {
+  const key = await importLinkKey(KEY);
+  const realAtob = globalThis.atob;
+  let decoded = 0;
+  globalThis.atob = (...a) => {
+    decoded += 1;
+    return realAtob(...a);
+  };
+  try {
+    const t0 = Date.now();
+    const huge = 'A'.repeat(1024 * 1024);
+    assert.equal((await unseal(key, { box: BOX_TO_EXT, msg: { id: randomB64u(16), iv: randomB64u(12), ct: huge }, now: NOW })).reason, 'size');
+    assert.equal((await unseal(key, { box: BOX_TO_EXT, msg: { id: huge, iv: randomB64u(12), ct: 'A'.repeat(96) }, now: NOW })).reason, 'shape');
+    assert.equal((await unseal(key, { box: BOX_TO_EXT, msg: { id: randomB64u(16), iv: huge, ct: 'A'.repeat(96) }, now: NOW })).reason, 'shape');
+    assert.equal((await unseal(key, { box: BOX_TO_EXT, msg: { id: randomB64u(16), iv: randomB64u(12), ct: 'A'.repeat(97) }, now: NOW })).reason, 'shape', 'a length base64url never has');
+    assert.equal((await unseal(key, { box: BOX_TO_EXT, msg: { id: randomB64u(16), iv: randomB64u(12), ct: 'A'.repeat(23) }, now: NOW })).reason, 'shape', 'too short for a tag');
+    assert.equal(decoded, 0, 'nothing was decoded');
+    assert.ok(Date.now() - t0 < 1000, `at once (${Date.now() - t0} ms)`);
+  } finally {
+    globalThis.atob = realAtob;
+  }
+});
+
 test('dropped: a plaintext over 16,384 bytes; sealing one refuses too', async () => {
   const key = await importLinkKey(KEY);
   const id = randomB64u(16);

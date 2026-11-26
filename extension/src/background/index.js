@@ -57,8 +57,9 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 });
 
 // Every download that starts while a task runs is held until the owner approves it (no file is
-// written meanwhile); downloads while no task runs, or during Take over, are left alone.
-chrome.downloads?.onDeterminingFilename?.addListener((item, suggest) => (controller.holdDownload(item, suggest) ? true : undefined));
+// written meanwhile); so is one that an address opened for Jarvis starts in the next 30 s (REDTEAM-LINK-9:
+// a redirect to an installer). Other downloads while no task runs, or during Take over, are left alone.
+chrome.downloads?.onDeterminingFilename?.addListener((item, suggest) => (controller.holdDownload(item, suggest) || link.holdDownload(item, suggest) ? true : undefined));
 
 chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area !== 'local') return;

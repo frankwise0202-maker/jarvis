@@ -71,8 +71,10 @@
 //   await peer.unlink()                            // sends unlinked and forgets the key
 //   await peer.stop()
 // Its default replies: ping { status }, open { url, site }, start { id: 'task-1', 'task-2', … } (and, with
-// { autoTask: true }, a task message for it), stop {} (and done 'stopped' for a running task), answer { promptId };
-// any other request { ok: false, reason: 'bad' }. It answers the app's hello with its own (and says hello once
+// { autoTask: true }, a task message for it), stop {} (and done 'stopped' for a running task), answer { promptId },
+// rekey {} (REDTEAM-LINK-4: it switches to the new key as Jarvis for Chrome does, still opening the code's key until
+// a message under the new one comes; peer.answer('rekey', null) loses its answer); any other request
+// { ok: false, reason: 'bad' }. It answers the app's hello with its own (and says hello once
 // when it links). replyDelayMs delays every reply.
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -561,7 +563,7 @@ export function fakeRelay(seed = {}) {
     reads: { 'to-ext': 0, 'to-app': 0, status: 0 },
     extSeenOverride: undefined, // a fake peer that went offline long ago (setOnline(false, { seenAgoMs }))
     status() {
-      const s = relay.store.status();
+      const s = { ...relay.store.status(), now: Date.now() }; // (now: the Core's clock, REDTEAM-LINK-7)
       return relay.extSeenOverride === undefined ? s : { ...s, extSeenAt: relay.extSeenOverride };
     },
   };
@@ -644,9 +646,11 @@ export async function seedChromeLink(context, opts = {}) {
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fake Jarvis for Chrome on `relay` (see the header). */
-export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '1.1.0', online = true, answers = {}, replyDelayMs = 0, autoTask = false, tasksFromJarvis = true, voiceApprovals = false } = {}) {
+export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '1.1.0', online = true, answers = {}, replyDelayMs = 0, autoTask = false, tasksFromJarvis = true, voiceApprovals = false, budgetUsd = 1, maxSteps = 40 } = {}) {
   let linkKey = key;
   let cryptoKey = null;
+  let prevKey = null; // the code's key after a rekey, until a message under the new key comes (REDTEAM-LINK-4)
+  let prevCrypto = null;
   let running = false;
   let loop = null;
   let halt = null; // aborts the read in progress when the peer stops (the relay's own timer doesn't hold the process)
@@ -663,6 +667,9 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
     dropped: 0,
     get key() {
       return linkKey;
+    },
+    get prevKey() {
+      return prevKey;
     },
     get linked() {
       return !!linkKey;
@@ -728,7 +735,7 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
       return peer.send('prompt-closed', { promptId, how });
     },
     status(fields = {}) {
-      return peer.send('status', { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, ...fields });
+      return peer.send('status', { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, budgetUsd, maxSteps, ...fields });
     },
     /** Take a link code the app made (as pasting it into Jarvis for Chrome): its key, then hello. */
     async link(code) {
@@ -737,8 +744,10 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
       if (parsed.link.core !== CORE_ORIGIN) throw new Error(`the code names another home base: ${parsed.link.core}`);
       linkKey = parsed.link.key;
       cryptoKey = null;
+      prevKey = null;
+      prevCrypto = null;
       seen = createSeenIds();
-      await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+      await peer.send('hello', { ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps });
       return parsed.link;
     },
     async unlink() {
@@ -791,14 +800,27 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
     const pick = (fallback) => (typeof scripted === 'function' ? scripted(body, message) : scripted === undefined ? fallback : scripted);
     switch (kind) {
       case 'hello':
-        await peer.send('hello', { ext: 'jarvis-for-chrome', version });
+        if (pick({}) === null) return; // (peer.answer('hello', null): it says nothing back)
+        await peer.send('hello', { ext: 'jarvis-for-chrome', version, budgetUsd, maxSteps });
         return;
       case 'unlinked':
         linkKey = null;
         cryptoKey = null;
+        prevKey = null;
         return;
+      case 'rekey': {
+        const next = body && typeof body.key === 'string' ? body.key : '';
+        if (!/^[A-Za-z0-9_-]{43}$/.test(next)) return reply(message, { ok: false, reason: 'bad' });
+        if (prevKey) return reply(message, next === linkKey ? pick({ ok: true }) : { ok: false, reason: 'bad' }); // again
+        if (next === linkKey) return reply(message, { ok: false, reason: 'bad' });
+        prevKey = linkKey;
+        prevCrypto = cryptoKey;
+        linkKey = next;
+        cryptoKey = null;
+        return reply(message, pick({ ok: true })); // sealed with the new key
+      }
       case 'ping':
-        return reply(message, pick({ ok: true, status: { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null } }));
+        return reply(message, pick({ ok: true, status: { online: true, tasksFromJarvis, voiceApprovals, task: current ? { id: current.id, status: current.status } : null, budgetUsd, maxSteps } }));
       case 'open':
         return reply(message, pick({ ok: true, url: body.url, site: hostOf(body.url) }));
       case 'start': {
@@ -834,12 +856,22 @@ export function createFakeChromePeer(relay, { key = CHROME_TEST_KEY, version = '
       cursor = out.last;
       for (const env of out.messages) {
         if (!linkKey) break;
-        const r = await openEnvelope(await cryptoOf(), env, { box: 'to-ext', now: Date.now(), seen });
+        let r = await openEnvelope(await cryptoOf(), env, { box: 'to-ext', now: Date.now(), seen });
+        let viaPrev = false;
+        if (!r.ok && r.reason === 'tag' && prevKey) {
+          if (!prevCrypto) prevCrypto = await importLinkKey(prevKey);
+          r = await openEnvelope(prevCrypto, env, { box: 'to-ext', now: Date.now(), seen });
+          viaPrev = r.ok;
+        }
         if (!r.ok) {
           peer.dropped += 1;
           continue;
         }
-        const message = { ...r.message };
+        if (!viaPrev && prevKey) {
+          prevKey = null; // Jarvis uses the new key: the code's is forgotten
+          prevCrypto = null;
+        }
+        const message = { ...r.message, ...(viaPrev ? { viaPrev: true } : {}) };
         peer.received.push(message);
         const i = waiters.findIndex((w) => w.kind === message.kind && w.where(message));
         if (i >= 0) {

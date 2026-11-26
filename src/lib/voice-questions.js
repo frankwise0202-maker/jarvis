@@ -328,7 +328,8 @@ export function createPromptChannel({ onSay = () => {} } = {}) {
     /** The open prompt `id` was answered: its onAnswer runs (the prompt stays until its owner closes it). */
     answer(id, answerId, info = {}) {
       if (!cur || cur.spec.id !== id) return false;
-      call(cur.spec.onAnswer, answerId, { words: typeof info.words === 'string' ? info.words : '', via: info.via === 'tap' ? 'tap' : 'voice' });
+      // quiet (v8.1 chrome-voice): Voice Mode says the line itself (a stop said during an approval's check).
+      call(cur.spec.onAnswer, answerId, { words: typeof info.words === 'string' ? info.words : '', via: info.via === 'tap' ? 'tap' : 'voice', ...(info.quiet === true ? { quiet: true } : {}) });
       return true;
     },
     close: () => closeCurrent(),

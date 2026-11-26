@@ -158,6 +158,29 @@ const VERBS_SAID_FIRST = new Set(
     'switch remove delete change set close log apply print copy follow visit navigate press tap hit').split(' '),
 );
 
+// With a carrier, only an instruction is a task (ROUTING-2): its first word is a verb for a page ("find", "add",
+// "open", …). "My Gmail won't load in Chrome", "it says access denied in Chrome" are the owner's troubles, and
+// "explain how cookies work in Chrome" a question: Jarvis's, never a paid task.
+const INSTRUCTION_VERBS = new Set([
+  ...VERBS_SAID_FIRST,
+  ...('enter browse research explore track unsubscribe message reply post share like upload pay rate review schedule zoom translate summarise ' +
+    'extract collect gather note bookmark favorite favourite clear empty refresh reload accept submit checkout dismiss fix update edit rename mute ' +
+    'unmute pause resume skip turn fetch scan sign log order buy book reserve click scroll sort filter search look compare pick choose select').split(' '),
+]);
+const NOT_INSTRUCTION = /^(?:show me how|show me why|teach me|tell me how|tell me why|help me understand|open (?:when|whenever|on startup|at startup|every time)\b)/;
+
+/**
+ * The words after the carrier read as an instruction (ROUTING-2): a page verb first ("let's" and "please" may come
+ * before it; so may a site and a colon: "Best Buy: add …").
+ */
+function isInstruction(p) {
+  const ws = p.words.map((x) => x.w);
+  let k = ws[0] === 'lets' || ws[0] === 'please' ? 1 : 0;
+  const colon = p.words.slice(0, 4).findIndex((x) => /:$/.test(x.raw));
+  if (colon >= 0 && !INSTRUCTION_VERBS.has(ws[k])) k = colon + 1;
+  return !!ws[k] && INSTRUCTION_VERBS.has(ws[k]) && !NOT_INSTRUCTION.test(ws.slice(k).join(' '));
+}
+
 /** The owner's own words for a task: their spelling, without the carrier, fillers or end stops. */
 function taskWords(words) {
   let text = words
@@ -338,7 +361,8 @@ export function matchChromeTask(text, state = {}) {
   const pageLink = LINK_WORDS.test(s) && !replyLinkCount(st);
   if (!pageLink && isOpening(s, p.carrier)) return null; // G1 opens it (free)
   let via = null;
-  if (p.carrier) via = 'carrier';
+  // (A question about the page itself, "what's the return policy on this page in Chrome", is a task too.)
+  if (p.carrier) via = isInstruction(p) || pageLink || (QUESTION.test(s) && PAGE_WORDS.test(s)) ? 'carrier' : null;
   else if (inChromeContext(st) && (pageLink || pageBound(s))) via = 'context';
   if (!via) return null;
   const words = taskWords(p.words);
@@ -399,18 +423,43 @@ export function matchChromeStop(text, state = {}) {
   }
   const chrome = state && state.chrome && typeof state.chrome === 'object' ? state.chrome : {};
   const running = !!(chrome.task && typeof chrome.task === 'object' && ['running', 'waiting', 'paused', 'starting'].includes(chrome.task.status));
-  if (running && /^(?:stop|stop it|stop now|stop stop)$/.test(s)) return { do: 'chrome-stop', named: false, free: true, undo: false };
+  if (!running) return null;
+  if (/^(?:stop|stop it|stop now|stop stop)$/.test(s)) return { do: 'chrome-stop', named: false, free: true, undo: false };
+  // While a task runs, the plain ways of stopping it are Chrome's too (ROUTING-5): "stop that", "stop the task",
+  // "cancel the task", "abort", "halt", "kill it", "stop what you're doing", a bare "cancel" (what every check
+  // teaches), "whoa, stop". (With a hologram open, "stop that" / "stop this" stay its own: R10.)
+  const holo = state && state.hologram && typeof state.hologram === 'object' && state.hologram.open;
+  if (holo && /^stop (?:that|this)$/.test(s)) return null;
+  // ("Pause", "end" and "kill" need what they stop: a bare "pause" is a walkthrough's word.)
+  const what = '(?:it|that|this|the task|the job|what youre doing|what you are doing|clicking|working|that task|this task)';
+  if (
+    new RegExp(`^(?:stop|cancel|abort|halt)(?: ${what})?$`).test(s) ||
+    new RegExp(`^(?:end|pause|kill) ${what}$`).test(s) ||
+    /^(?:whoa|woah|hey|hold on) stop(?: it| that)?$/.test(s)
+  ) {
+    return { do: 'chrome-stop', named: true, free: true, undo: false };
+  }
   return null;
 }
 
-/** "What are you doing in Chrome?": the latest step (free, local). */
-export function matchChromeStatus(text) {
+/**
+ * "What are you doing in Chrome?": the latest step (free, local). The bare "how's it going?" is an everyday
+ * greeting: it is Chrome's only while a task runs or waits (`state.chrome.task`), or with "Chrome" or "the
+ * task" in it (REDTEAM-VOICE-13).
+ */
+export function matchChromeStatus(text, state = {}) {
   const p = parse(text);
   if (!p) return null;
   const s = p.carrier ? `${p.s} in chrome` : p.s;
   const re =
     /^(?:what are you doing in chrome|what are you up to in chrome|whats happening in chrome|what is happening in chrome|whats going on in chrome|what is going on in chrome|(?:what|whats|what is) chrome doing|(?:how|hows|how is) chrome doing|(?:how|hows|how is) (?:it going|the task going|the chrome task going)(?: in chrome)?|(?:how|hows|how is) the chrome task(?: going)?|where (?:are you|is chrome) (?:at )?(?:in chrome|with the task)|what step is chrome on|what has chrome done(?: so far)?|whats chrome done(?: so far)?|is chrome (?:done|finished)(?: yet)?|chrome status|(?:whats |what is )?the status of the chrome task)$/;
-  return re.test(s) ? { do: 'chrome-status', free: true, undo: true } : null;
+  if (!re.test(s)) return null;
+  if (/^(?:how|hows|how is) it going$/.test(s)) {
+    const chrome = state && typeof state.chrome === 'object' && state.chrome ? state.chrome : {};
+    const t = chrome.task && typeof chrome.task === 'object' ? chrome.task : null;
+    if (!t || !['running', 'waiting', 'paused', 'starting'].includes(t.status)) return null;
+  }
+  return { do: 'chrome-status', free: true, undo: true };
 }
 
 // ------------------------------------------------------------------------------ what is said
@@ -442,11 +491,19 @@ export function taskCheckMs({ hidden = false } = {}) {
   return hidden ? TASK_CHECK_HIDDEN_MS : TASK_CHECK_MS;
 }
 
-/** The spoken (and shown) check: "Chrome, up to a dollar: <the task>. Say cancel to stop." */
-export function taskCheckLine({ text, limitUsd = DEFAULT_TASK_LIMIT_USD } = {}) {
+/** Said for the price while Jarvis for Chrome hasn't told the app its budget yet (MONEY-3, REDTEAM-VOICE-9). */
+export const UNKNOWN_BUDGET_SAID = 'your Chrome budget';
+
+/**
+ * The spoken (and shown) check: "Chrome, up to a dollar: <the task>. Say cancel to stop." The price is the
+ * budget Jarvis for Chrome reported (limitUsd); while none has been reported (null), "up to your Chrome
+ * budget". Typed (`typed`: the chat, a hologram's or Optics' field), nothing listens: "Press Cancel to stop."
+ */
+export function taskCheckLine({ text, limitUsd = DEFAULT_TASK_LIMIT_USD, typed = false } = {}) {
   const words = String(text ?? '').replace(/\s+/g, ' ').trim();
   const stop = /[?!]$/.test(words) ? '' : '.';
-  return `Chrome, up to ${dollarsSaid(limitUsd)}: ${words}${stop} Say cancel to stop.`;
+  const price = Number(limitUsd) > 0 ? dollarsSaid(limitUsd) : UNKNOWN_BUDGET_SAID;
+  return `Chrome, up to ${price}: ${words}${stop} ${typed ? 'Press Cancel to stop.' : 'Say cancel to stop.'}`;
 }
 
 export const TASK_ASK_LINE = 'What should I do in Chrome?';
@@ -454,6 +511,12 @@ export const TASK_STARTED_LINE = 'Chrome is on it.';
 export const TASK_CANCELLED_LINE = 'Okay, nothing sent to Chrome.';
 export const NOTHING_TO_STOP_LINE = 'Okay.';
 export const TASK_STOPPED_LINE = 'Stopped Chrome.';
+/** A stop on its way (the task is marked stopped only once Jarvis for Chrome confirms it). */
+export const TASK_STOPPING_LINE = 'Stopping Chrome…';
+/** A stop not confirmed after 10 s (REDTEAM-LINK-1's resends go on meanwhile). */
+export const TASK_STOP_UNREACHED_LINE = 'I couldn’t reach Chrome to stop it. Press Stop in its side panel.';
+/** On a phone: Chrome tasks run from the Mac (REDTEAM-VOICE-13). */
+export const TASK_PHONE_LINE = { show: 'Jarvis for Chrome works with Jarvis on your Mac.', say: 'Chrome tasks work from Jarvis on your Mac.' };
 
 /**
  * Why a task couldn't start (startTask's reason, contract (f)), as { show, say }: `show` on screen

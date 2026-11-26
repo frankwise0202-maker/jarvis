@@ -22,9 +22,13 @@ before(async () => {
   ({ createChromeVoice } = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`));
 });
 
-/** A controller with a fake link and (unless `voice: null`) an open, card-less Voice Mode. */
-function setup({ voice = true, hidden = false, link: linkOpts = {} } = {}) {
+/**
+ * A controller with a fake link and (unless `voice: null`) an open, card-less Voice Mode. `budget`: what Jarvis for
+ * Chrome reports as its budget (hello and status carry budgetUsd: MONEY-3); null: not reported yet.
+ */
+function setup({ voice = true, hidden = false, link: linkOpts = {}, budget = 1 } = {}) {
   const fake = createFakeChromeLink(linkOpts);
+  if (budget !== null) fake.set({ budgetUsd: budget });
   const v = voice ? createFakeVoice() : null;
   if (v) delete v.card; // no DOM in Node
   const toasts = [];
@@ -76,7 +80,7 @@ test('a task by voice: the spoken check with the price binds the task, then it s
   spec.onCount(2000); // Voice Mode said it in full and counts
   spec.onGo();
   await flush();
-  assert.deepEqual(t.fake.calls.startTask, [{ text: TASK.text, chat: 'new' }], 'exactly the checked words');
+  assert.deepEqual(t.fake.calls.startTask, [{ text: TASK.text, chat: 'new', limitUsd: 1 }], 'exactly the checked words, and the limit the owner heard');
   assert.deepEqual(t.v.said, ['Chrome is on it.']);
   await flush();
   assert.equal(t.cv.state().task.status, 'running');
@@ -147,11 +151,17 @@ test('"stop" during the check withdraws it; "stop" while a task runs stops it at
   t.cv.run(TASK);
   t.v.checks[1].spec.onGo();
   await flush();
-  assert.deepEqual(t.cv.run({ do: 'chrome-stop', named: true }), { ack: 'Chrome stopped.', show: 'Chrome stopped.' });
-  await flush();
+  // Jarvis for Chrome confirms the stop a moment later (as over the relay): "Stopping Chrome…", the card says
+  // "Stopping…", and only once it is confirmed is the task stopped, with "Chrome stopped." said once.
+  const stopNow = t.fake.link.stopTask;
+  t.fake.link.stopTask = () => new Promise((resolve) => setTimeout(() => resolve(stopNow()), 5));
+  assert.deepEqual(t.cv.run({ do: 'chrome-stop', named: true }), { ack: 'Stopping Chrome…', show: 'Stopping Chrome…' });
+  assert.equal(t.cv.state().task.status, 'running', 'not stopped before Jarvis for Chrome confirms it');
+  await new Promise((r) => setTimeout(r, 20));
   assert.equal(t.fake.calls.stopTask, 1);
-  assert.equal(t.cv.state().task.status, 'stopped');
-  assert.ok(!t.v.said.includes('Chrome stopped.'), 'the done event doesn\'t say it twice');
+  assert.equal(t.cv.state().task.status, 'stopped', 'stopped once Jarvis for Chrome confirmed it (its done)');
+  assert.equal(t.v.said.filter((l) => l === 'Chrome stopped.').length, 1, '"Chrome stopped." once it is confirmed, and only once (the done event doesn\'t say it twice)');
+  t.fake.link.stopTask = stopNow;
   assert.deepEqual(t.cv.run({ do: 'chrome-stop', named: true }), { ack: 'Okay.', show: 'Okay.' });
 });
 
@@ -181,7 +191,7 @@ test('not linked, offline, off, busy, at the cap: said plainly, nothing runs any
   assert.deepEqual(late.v.said, ['I can’t reach Chrome. Open the Jarvis window and keep it open.']);
   // No link at all (before chrome-relay's link exists): "not linked".
   const none = createChromeVoice({ link: null, voice: () => null, toast: () => {} });
-  assert.deepEqual(none.state(), { linked: false, online: false, task: null, lastTask: null, contextUntil: 0 });
+  assert.deepEqual(none.state(), { linked: false, online: false, task: null, lastTask: null, contextUntil: 0, checking: false, waiting: 0 });
   assert.deepEqual(none.run({ do: 'chrome-ask' }), { ack: 'Chrome isn’t linked yet. Link it in Settings.', show: 'Jarvis for Chrome isn’t linked yet. Link it in Settings → Jarvis for Chrome.' });
 });
 
@@ -200,7 +210,7 @@ test('busy: "Chrome is busy with another task. Stop it first?" — yes stops it 
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(t.fake.calls.stopTask, 1);
   assert.equal(t.fake.calls.startTask.length, 3);
-  assert.deepEqual(t.fake.calls.startTask[2], { text: 'find a USB-C hub and add it to the cart', chat: 'new' });
+  assert.deepEqual(t.fake.calls.startTask[2], { text: 'find a USB-C hub and add it to the cart', chat: 'new', limitUsd: 1 });
 });
 
 test('"click around for me": "What should I do in Chrome?", and the answer is the task (checked)', async () => {
@@ -397,7 +407,8 @@ test('a yes naming Chrome with nothing asked where it was said; a task typed in 
   assert.equal(t.cv.run({ do: 'chrome-check', how: 'withdraw' }, { surface: 'chat' }), null, 'a check is Voice Mode\'s alone');
   const field = setup({ voice: false });
   const out = field.cv.run(TASK, { surface: 'hologram' });
-  assert.equal(out.show, 'Chrome, up to a dollar: find a 4K monitor under $300 and add it to the cart. Say cancel to stop.');
+  // Typed, nothing listens: the field says how to stop it (REDTEAM-VOICE-5).
+  assert.equal(out.show, 'Chrome, up to a dollar: find a 4K monitor under $300 and add it to the cart. Press Cancel to stop.');
   assert.deepEqual(field.cv.run(TASK, { surface: 'chat' }).show, '', 'in the chat the card says it');
 });
 
@@ -415,16 +426,16 @@ test('the wake greeting: pending() gives "Chrome is waiting for you: …" and te
 test('a bare "stop" (voice\'s stop layer) stops the task quietly, or withdraws its check; nothing said twice', async () => {
   const t = setup();
   t.cv.run(TASK);
-  assert.equal(t.cv.stopFromVoice(), true, 'the check is withdrawn');
+  assert.deepEqual(t.cv.stopFromVoice(), { withdrawn: true, stopping: false, busyYes: false, none: false }, 'the check is withdrawn');
   await flush();
   assert.equal(t.fake.calls.startTask.length, 0);
   t.cv.run(TASK);
   t.v.checks[1].spec.onGo();
   await flush();
   const said = t.v.said.length;
-  await t.cv.stopFromVoice();
+  assert.deepEqual(t.cv.stopFromVoice(), { withdrawn: false, stopping: true, busyYes: false, none: false, confirmed: true }, 'the task stops (the fake confirms at once)');
   await flush();
   assert.equal(t.fake.calls.stopTask, 1);
   assert.equal(t.v.said.length, said, 'voice\'s stop says "Chrome is stopping"; nothing more here');
-  assert.equal(await t.cv.stopFromVoice(), false, 'nothing running');
+  assert.deepEqual(t.cv.stopFromVoice(), { withdrawn: false, stopping: false, busyYes: false, none: true }, 'nothing running');
 });

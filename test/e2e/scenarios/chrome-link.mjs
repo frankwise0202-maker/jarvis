@@ -57,6 +57,7 @@ async function rewindLastHeard(page, agoMs) {
         const r = JSON.parse(localStorage.getItem('jarvis.chromeLink.v1') || 'null');
         if (r) {
           r.extSeenAt = Date.now() - ago;
+          if (r.heardAt) r.heardAt = Date.now() - ago; // (the last message from it, kept since REDTEAM-LINK-6)
           localStorage.setItem('jarvis.chromeLink.v1', JSON.stringify(r));
         }
       } catch {
