@@ -3738,7 +3738,9 @@ function createVoiceMode(opts) {
     }
     // A yes: only from the best reading (the router never takes it from another), in the window, and
     // when no other reading is a no; then the check.
-    const verdict = chooseAnswer({ readings: [words, ...readings.filter((r) => r !== words)], answers: [answer], saidAt: C.saidKey === p.key && C.saidAt ? C.saidAt : null, now: Date.now() });
+    // (The router matched these words to this answer: they count as its words here too, whatever fillers.)
+    const asMatched = { ...answer, words: [...(Array.isArray(answer.words) ? answer.words : []), words] };
+    const verdict = chooseAnswer({ readings: [words, ...readings.filter((r) => r !== words)], answers: [asMatched], saidAt: C.saidKey === p.key && C.saidAt ? C.saidAt : null, now: Date.now() });
     if (!verdict) return false;
     if (verdict.again) {
       sayPrompt(p, againLine(verdict.again));
