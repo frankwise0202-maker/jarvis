@@ -596,6 +596,27 @@ test('a message sealed with another key, or too old, gets no answer at all', asy
   assert.equal(s.controller.tasks.length, 0);
 });
 
+test('MISSED-LINK-A: the reply to a start and to a stop is sent again for about 10 s when the posts fail', async (t) => {
+  const s = await setup();
+  t.after(s.done);
+  await s.store.allowSiteAlways('shop.example');
+  s.mock.script([() => ({ hold: true })]);
+  // The extension's posts fail for a while as the start arrives: its reply must still reach Jarvis.
+  s.relay.failPosts = true;
+  setTimeout(() => {
+    s.relay.failPosts = false;
+  }, 400);
+  const r = await s.app.request('start', { text: 'Find a monitor on shop.example', chat: 'new', from: 'voice' }, { timeoutMs: 8000 });
+  assert.equal(r.ok, true, 'the reply to the start arrived after the posts came back');
+  await s.waitFor(() => s.controller.run);
+  s.relay.failPosts = true;
+  setTimeout(() => {
+    s.relay.failPosts = false;
+  }, 400);
+  const stop = await s.app.request('stop', {}, { timeoutMs: 8000 });
+  assert.equal(stop.ok, true, 'and so did the reply to the stop');
+});
+
 test('stop from Jarvis stops the task; the step list says so', async (t) => {
   const s = await setup();
   t.after(s.done);

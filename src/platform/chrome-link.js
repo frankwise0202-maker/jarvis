@@ -56,6 +56,12 @@ import { importLinkKey, newLinkKey, sealEnvelope, openEnvelope, createSeenIds, m
 
 export const CHROME_LINK_KEY = 'jarvis.chromeLink.v1';
 export const CHROME_LINK_INBOX_KEY = 'jarvis.chromeLink.inbox.v1';
+// Starts this device sent and hasn't had an answer to, and the voice tasks it knows it started (MISSED-LINK-A):
+// { v: 1, starts: [{ env, sentAt, gaveUpAt, until, win }], known: [taskId] }. Nothing secret (envelope ids and task
+// ids, which the relay or the status show anyway). localStorage, so every window of this device and a reloaded one
+// see it: the window that holds the link reads the late answer or the task's news, and the window that gave up may
+// be gone.
+export const CHROME_LINK_STARTS_KEY = 'jarvis.chromeLink.starts.v1';
 export const CHROME_LINK_LOCK = 'jarvis-chrome-link';
 export const CHROME_LINK_CHANNEL = 'jarvis-chrome-link';
 export const REPLY_TIMEOUT_MS = 10_000;
@@ -133,7 +139,8 @@ export function cleanReply(body) {
 /** status { online, tasksFromJarvis, voiceApprovals, task: null | { id, status } }. */
 export function cleanStatus(body) {
   const b = isObj(body) ? body : {};
-  const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE) } : null;
+  // (`from`: 'voice' for a task from Jarvis, 'panel' for one typed in the side panel; since the review.)
+  const t = isObj(b.task) ? { id: token(b.task.id), status: token(b.task.status, WORD_RE), ...(token(b.task.from, WORD_RE) ? { from: token(b.task.from, WORD_RE) } : {}) } : null;
   return { online: b.online === true, tasksFromJarvis: b.tasksFromJarvis === true, voiceApprovals: b.voiceApprovals === true, task: t && t.id ? t : null };
 }
 
@@ -336,7 +343,9 @@ export function createChromeLink({
   let pollWake = null; // ends the long poll's back-off early (the home base answered the status again)
   let lastSig = '';
   const pending = new Map(); // envelope id → { kind, resolve }
-  const late = new Map(); // envelope id → { kind, until }: requests given up on whose reply may still come (D5)
+  const late = new Map(); // envelope id → { kind, until }: opens and answers given up on whose reply may still come (D5)
+  const winId = Math.floor(random() * 2 ** 48).toString(36) + Math.floor(Math.random() * 2 ** 30).toString(36); // this window
+  const candidates = new Map(); // voice task id → when first seen while one of this window's starts waited (MISSED-LINK-A)
   let lateNoted = 0; // late ok replies to an open or an answer (only noted)
   let stopper = null; // the pending stop (LINK-1): { taskId, ids: Set of envelope ids, rec, started, sends, timer, over, promise, resolve }
   const listeners = new Set();
@@ -441,6 +450,7 @@ export function createChromeLink({
   function forget(why = null) {
     storage.remove(CHROME_LINK_KEY);
     storage.remove(CHROME_LINK_INBOX_KEY);
+    storage.remove(CHROME_LINK_STARTS_KEY);
     note = why;
     problem = null;
     reload();
@@ -540,8 +550,10 @@ export function createChromeLink({
         if (!reply) break;
         if (stopEvidence({ reply })) break; // this window's stop, confirmed (or refused: sent again)
         const entry = pending.get(reply.re);
-        if (entry) entry.resolve(interpret(entry.kind, reply));
-        else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
+        if (entry) {
+          if (entry.kind === 'start') resolveStart(reply.re, reply);
+          entry.resolve(interpret(entry.kind, reply));
+        } else if (!lateReply(reply)) broadcast({ t: 'reply', reply }); // another window's request
         break;
       }
       case 'hello':
@@ -554,6 +566,7 @@ export function createChromeLink({
         else if (!task || task.id !== s.task.id) task = { id: s.task.id, status: s.task.status || 'running', text: '', narration: '', lastStep: '', costUsd: null, limitUsd: null };
         else task = { ...task, status: s.task.status || task.status };
         ev = { status: { task: s.task } };
+        if (s.task && s.task.from === 'voice') voiceTaskSeen(s.task.id);
         break;
       }
       case 'task': {
@@ -561,6 +574,7 @@ export function createChromeLink({
         if (t) {
           task = t;
           ev = { task: { id: t.id, status: t.status } };
+          voiceTaskSeen(t.id); // (task news is sent for tasks from Jarvis only)
         }
         break;
       }
@@ -658,11 +672,13 @@ export function createChromeLink({
       // Given up on: its reply may still come (the relay keeps the request for 2 minutes), so it is remembered.
       const giveUp = () => {
         if (pending.get(envelope.id) !== entry) return;
-        gaveUp(envelope.id, kind);
+        if (kind === 'start') giveUpStart(envelope.id);
+        else gaveUp(envelope.id, kind);
         entry.resolve({ ok: false, reason: 'offline' });
       };
       entry.timer = later(giveUp, REPLY_TIMEOUT_MS);
       pending.set(envelope.id, entry);
+      if (kind === 'start') noteStartSent(envelope.id);
       post(rec, envelope).then(
         (r) => {
           if (!r.ok) giveUp();
@@ -687,6 +703,7 @@ export function createChromeLink({
    * nothing.
    */
   function lateReply(reply) {
+    if (lateStartReply(reply)) return true;
     const entry = late.get(reply.re);
     if (!entry) return false;
     late.delete(reply.re);
@@ -695,6 +712,147 @@ export function createChromeLink({
     else lateNoted += 1;
     changed();
     return true;
+  }
+
+  // ---- starts whose answer never came (MISSED-LINK-A) -----------------------------------------------------
+  // A start's reply can be lost while the task runs: the owner hears it didn't start. So every start is noted (in
+  // this device's localStorage, for all its windows); a late ok for it, or news of a task from Jarvis that this
+  // device never started, coming after the start was given up, is a late start (D5): stopped, and said once the
+  // stop is confirmed. The window that gave up handles it; if it is gone, the window holding the link does.
+
+  function readStarts() {
+    const raw = readJson(storage.read, CHROME_LINK_STARTS_KEY);
+    const t = now();
+    const starts = (isObj(raw) && Array.isArray(raw.starts) ? raw.starts : [])
+      .filter((e) => isObj(e) && ID_RE.test(e.env || '') && posInt(e.sentAt))
+      .map((e) => {
+        const out = { env: e.env, sentAt: e.sentAt, gaveUpAt: posInt(e.gaveUpAt), until: posInt(e.until), win: typeof e.win === 'string' ? e.win : null };
+        // Unanswered past its 10 s and never given up: its window went away without a word.
+        if (!out.gaveUpAt && t > out.sentAt + REPLY_TIMEOUT_MS + 2000) {
+          out.gaveUpAt = out.sentAt + REPLY_TIMEOUT_MS;
+          out.until = out.gaveUpAt + LATE_WATCH_MS;
+          out.win = null;
+        }
+        return out;
+      })
+      .filter((e) => !e.until || e.until > t)
+      .slice(-16);
+    const known = (isObj(raw) && Array.isArray(raw.known) ? raw.known : []).map((x) => token(x)).filter(Boolean).slice(-20);
+    return { starts, known };
+  }
+
+  function writeStarts(data) {
+    storage.write(CHROME_LINK_STARTS_KEY, JSON.stringify({ v: 1, starts: data.starts.slice(-16), known: data.known.slice(-20) }));
+  }
+
+  const isLateEntry = (e, t) => !!e.gaveUpAt && t >= e.gaveUpAt && (!e.until || t < e.until);
+  const mayHandle = (e) => e.win === winId || (e.win === null && !!holding);
+
+  function addKnown(data, taskId) {
+    if (taskId && !data.known.includes(taskId)) data.known.push(taskId);
+    candidates.delete(taskId);
+  }
+
+  function noteStartSent(env) {
+    const data = readStarts();
+    data.starts.push({ env, sentAt: now(), gaveUpAt: null, until: null, win: winId });
+    writeStarts(data);
+  }
+
+  /** A reply to this window's start came in time: it is no longer waited on (its task, if any, is known). */
+  function resolveStart(env, reply) {
+    const data = readStarts();
+    data.starts = data.starts.filter((e) => e.env !== env);
+    if (reply.ok && reply.id) addKnown(data, reply.id);
+    writeStarts(data);
+  }
+
+  /** This window gave up on its start: a task seen while it waited is that start's, and stopped. */
+  function giveUpStart(env) {
+    const data = readStarts();
+    const e = data.starts.find((x) => x.env === env);
+    if (!e) return;
+    const t = now();
+    e.gaveUpAt = t;
+    e.until = t + LATE_WATCH_MS;
+    const hit = Array.from(candidates).find(([taskId, seenAt]) => seenAt >= e.sentAt && !data.known.includes(taskId));
+    if (!hit) {
+      writeStarts(data);
+      return;
+    }
+    claimLate(data, e, hit[0]);
+  }
+
+  function claimLate(data, e, taskId) {
+    data.starts = data.starts.filter((x) => x.env !== e.env);
+    if (taskId && data.known.includes(taskId)) {
+      writeStarts(data);
+      return;
+    }
+    addKnown(data, taskId);
+    writeStarts(data);
+    stopLateStart(taskId || null);
+    changed();
+  }
+
+  /** A late reply to a start (this window's, or one whose window is gone): true when it was one. */
+  function lateStartReply(reply) {
+    const data = readStarts();
+    const e = data.starts.find((x) => x.env === reply.re);
+    if (!e || !mayHandle(e)) return false;
+    if (!reply.ok || !isLateEntry(e, now())) {
+      // A refusal, or an ok in time for a start whose window went away: nothing runs that the owner wasn't told of.
+      data.starts = data.starts.filter((x) => x !== e);
+      if (reply.ok && reply.id) addKnown(data, reply.id);
+      writeStarts(data);
+      return true;
+    }
+    claimLate(data, e, reply.id || null);
+    return true;
+  }
+
+  /**
+   * News of a task from Jarvis (a `task` message, or a status naming one from voice). One this device never started,
+   * after a start was given up, is a late start; while a start waits, it is remembered until that start is answered
+   * or given up. With no start waiting anywhere, it is a task this device already knew of.
+   */
+  function voiceTaskSeen(taskId) {
+    if (!taskId) return;
+    const data = readStarts();
+    if (data.known.includes(taskId)) return;
+    const t = now();
+    if (!data.starts.length) {
+      addKnown(data, taskId);
+      writeStarts(data);
+      return;
+    }
+    const e = data.starts.find((x) => isLateEntry(x, t) && mayHandle(x));
+    if (e) {
+      claimLate(data, e, taskId);
+      return;
+    }
+    if (data.starts.some((x) => x.win === winId && !isLateEntry(x, t)) && !candidates.has(taskId)) candidates.set(taskId, t);
+  }
+
+  /** This window is going away: its starts are left to whichever window holds the link. */
+  function orphanStarts() {
+    let data;
+    try {
+      data = readStarts();
+    } catch {
+      return;
+    }
+    let touched = false;
+    for (const e of data.starts) {
+      if (e.win !== winId) continue;
+      e.win = null;
+      if (!e.gaveUpAt) {
+        e.gaveUpAt = e.sentAt + REPLY_TIMEOUT_MS;
+        e.until = e.gaveUpAt + LATE_WATCH_MS;
+      }
+      touched = true;
+    }
+    if (touched) writeStarts(data);
   }
 
   function tellOwner(n) {
@@ -1001,8 +1159,10 @@ export function createChromeLink({
       const reply = cleanReply(m.reply);
       if (reply && stopEvidence({ reply })) return;
       const entry = reply && pending.get(reply.re);
-      if (entry) entry.resolve(interpret(entry.kind, reply));
-      else if (reply) lateReply(reply);
+      if (entry) {
+        if (entry.kind === 'start') resolveStart(reply.re, reply);
+        entry.resolve(interpret(entry.kind, reply));
+      } else if (reply) lateReply(reply);
     } else if (m.t === 'state' && !holding) {
       task = isObj(m.task) ? cleanTask(m.task) : null;
       voiceApprovals = m.voiceApprovals === true;
@@ -1012,8 +1172,14 @@ export function createChromeLink({
       if (isObj(m.ev)) {
         const e = m.ev;
         if (isObj(e.done)) stopEvidence({ done: { id: token(e.done.id) } });
-        else if (isObj(e.status)) stopEvidence({ status: { task: isObj(e.status.task) && token(e.status.task.id) ? { id: token(e.status.task.id) } : null } });
-        else if (isObj(e.task)) stopEvidence({ task: { id: token(e.task.id), status: token(e.task.status, WORD_RE) } });
+        else if (isObj(e.status)) {
+          const st = isObj(e.status.task) && token(e.status.task.id) ? { id: token(e.status.task.id), from: token(e.status.task.from, WORD_RE) } : null;
+          stopEvidence({ status: { task: st } });
+          if (st && st.from === 'voice') voiceTaskSeen(st.id);
+        } else if (isObj(e.task)) {
+          stopEvidence({ task: { id: token(e.task.id), status: token(e.task.status, WORD_RE) } });
+          voiceTaskSeen(token(e.task.id));
+        }
       }
       changed();
     } else if (m.t === 'ask' && holding) {
@@ -1050,6 +1216,7 @@ export function createChromeLink({
       note = null;
       clearedAt = 0;
       storage.remove(CHROME_LINK_INBOX_KEY);
+      storage.remove(CHROME_LINK_STARTS_KEY);
       save({ v: 1, core, key: newLinkKey(), linkedAt: null, extSeenAt: null, madeAt: now() });
       reload();
       return record ? { ok: true } : { ok: false, reason: 'storage' };
@@ -1155,6 +1322,14 @@ export function createChromeLink({
 
   // ---- start ------------------------------------------------------------------------------------------------
   const unwatch = storage.watch ? storage.watch(CHROME_LINK_KEY, () => reload()) : () => {};
+  // A reload or a closed window: its unanswered starts are left to the window that holds the link (MISSED-LINK-A).
+  if (win && typeof win.addEventListener === 'function') {
+    try {
+      win.addEventListener('pagehide', () => orphanStarts());
+    } catch {
+      /* not a window */
+    }
+  }
   if (channel) {
     try {
       channel.onmessage = onChannel;
@@ -1176,6 +1351,7 @@ export function createChromeLink({
     } catch {
       /* ignore */
     }
+    orphanStarts(); // (before release(): another window may take the link over and must find them)
     release();
     for (const [, entry] of Array.from(pending)) entry.resolve({ ok: false, reason: 'offline' });
     endStop(stopper, { ok: false, reason: 'offline' });

@@ -686,6 +686,83 @@ test('fresh requests only (D5) with LINK-1: the late start\'s stop is sent again
   }
 });
 
+// ---- a start whose reply was lost (MISSED-LINK-A) -------------------------------------------------------------
+
+test('MISSED-LINK-A: the reply to a start is lost but the task runs: its news after the start gave up is a late start, stopped and said', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    // Jarvis for Chrome starts the task, but its reply never arrives; the task's news does.
+    w.peer.answer('start', null);
+    const starting = app.api.startTask({ text: 'find a 4K monitor' });
+    await w.peer.waitFor('start');
+    await w.peer.task({ id: 'task-lost', status: 'running', narration: 'Looking.' });
+    assert.deepEqual(await starting, { ok: false, reason: 'offline' }, 'the owner was told it didn\'t start');
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await until(() => notices.length === 1, { what: 'the notice' });
+    assert.deepEqual(notices[0], { kind: 'late-start', line: LATE_START_LINE });
+    assert.ok(w.peer.sent.some((m) => m.kind === 'done' && m.body.id === 'task-lost' && m.body.status === 'stopped'), 'the task was stopped');
+    // News that comes only after the give-up (a status naming a voice task) counts the same way.
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'again' }), { ok: false, reason: 'offline' });
+    await w.peer.status({ task: { id: 'task-lost-2', status: 'running', from: 'voice' } });
+    await until(() => notices.length === 2, { what: 'the second notice' });
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 2);
+  } finally {
+    await w.close();
+  }
+});
+
+test('MISSED-LINK-A: the window that gave up reloads before the late ok: the new window stops the task and says so', async () => {
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices1 = [];
+    const first = w.open({ setTimer: quick, notice: (n) => notices1.push(n) });
+    await online(first);
+    w.peer.answer('start', null);
+    assert.deepEqual(await first.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const start = await w.peer.waitFor('start');
+    first.destroy(); // reloaded (or closed): its memory is gone
+    const notices2 = [];
+    const second = w.open({ setTimer: quick, notice: (n) => notices2.push(n) });
+    await until(() => second.control.info().holder, { what: 'the new window holds the link' });
+    w.peer.answer('stop', undefined);
+    await w.peer.send('reply', { re: start.id, ok: true, id: 'task-late' });
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await until(() => notices2.length === 1, { what: 'the new window tells' });
+    assert.deepEqual(notices2[0], { kind: 'late-start', line: LATE_START_LINE });
+    assert.equal(notices1.length, 0);
+  } finally {
+    await w.close();
+  }
+});
+
+test('MISSED-LINK-A: no false alarm: a task whose start was answered, a task from the side panel, news with no start given up', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: quick, notice: (n) => notices.push(n) });
+    await online(app);
+    // A voice task that started normally, then a start given up on while it runs: its news is not a late start.
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: true, id: 'task-1' });
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'another' }), { ok: false, reason: 'offline' });
+    await w.peer.task({ id: 'task-1', status: 'running', narration: 'Still going.' });
+    // A task typed in the side panel shows only in the status, as from the panel.
+    await w.peer.status({ task: { id: 'task-panel', status: 'running', from: 'panel' } });
+    await sleep(300);
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 0, 'nothing stopped');
+    assert.deepEqual(notices, []);
+  } finally {
+    await w.close();
+  }
+});
+
 test('fresh requests only (D5) across windows: a late ok for another window\'s start reaches it through the holder', async () => {
   const fast = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 300 : ms);
   const w = world({ linked: true });

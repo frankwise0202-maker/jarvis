@@ -45,6 +45,7 @@ export const APPROVAL_WINDOW = Object.freeze({ width: 420, height: 620 });
 export const FRESH_MS = 8 * 1000; // D5: an open, start or answer older than this is too late
 export const FRESH_KINDS = Object.freeze(new Set(['open', 'start', 'answer']));
 export const STALE_MS = 60 * 1000; // a message to Jarvis not sent within this long is dropped
+export const REPLY_RETRY_MS = 10 * 1000; // a reply to a start or a stop is tried this long after the request (MISSED-LINK-A)
 
 const STOPPED_AT_LIMIT = /^Stopped at (your budget|the step limit)\b/;
 
@@ -249,7 +250,7 @@ export class JarvisLink {
    * its prompt-closed). `body` may be a function that makes it. Resolves false when unlinked or
    * the home base doesn't take it.
    */
-  send(kind, body) {
+  send(kind, body, opts = {}) {
     const relay = this.relay;
     if (!relay) return Promise.resolve(false);
     const made = this.now();
@@ -257,14 +258,23 @@ export class JarvisLink {
       // (One that waited a minute behind an unreachable home base is stale: Jarvis would drop it.)
       if (this.relay !== relay || this.now() - made > STALE_MS) return false;
       const b = typeof body === 'function' ? await body() : body;
-      return b ? relay.send(kind, b) : false;
+      return b ? relay.send(kind, b, opts) : false;
     });
     this.queue = job.catch(() => false);
     return job;
   }
 
-  reply(re, body) {
-    return this.send('reply', { re, ...body });
+  reply(re, body, opts = {}) {
+    return this.send('reply', { re, ...body }, opts);
+  }
+
+  /**
+   * The reply to a start or a stop: tried again until about 10 s after the request was made (and
+   * at least a couple of seconds), so a moment's failure can't leave Jarvis telling the owner a task
+   * never started while it runs, or that a stop didn't arrive (MISSED-LINK-A).
+   */
+  replyHard(re, at, body) {
+    return this.reply(re, body, { until: Math.max((Number(at) || 0) + REPLY_RETRY_MS, this.now() + 2000) });
   }
 
   async approvalsAvailableNow() {
@@ -323,9 +333,9 @@ export class JarvisLink {
         case 'open':
           return this.reply(id, await this.open(body));
         case 'start':
-          return this.reply(id, await this.startTask(body));
+          return this.replyHard(id, at, await this.startTask(body));
         case 'stop':
-          return this.reply(id, this.stopTask());
+          return this.replyHard(id, at, this.stopTask());
         case 'answer':
           return this.reply(id, await this.answer(body));
         case 'unlinked':
@@ -487,7 +497,8 @@ export class JarvisLink {
   async statusBody() {
     const voice = await this.store.getVoice().catch(() => ({ tasksFromJarvis: false }));
     const run = this.controller.run;
-    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status } : null };
+    // (`from` since the review: Jarvis tells a task it started from one typed in the panel, MISSED-LINK-A.)
+    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel' } : null };
   }
 
   /** `status` when it changed (or `force`), and every 60 s while a task runs. */

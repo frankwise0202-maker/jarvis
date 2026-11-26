@@ -81,9 +81,10 @@ export class Relay {
     return this.loop;
   }
 
-  /** Stops the loop at once (the poll in flight is abandoned). */
+  /** Stops the loop at once (the poll in flight is abandoned); messages still being retried give up. */
   stop() {
     this.running = false;
+    this.ended = true;
     try {
       this.abort?.abort();
     } catch {
@@ -252,8 +253,11 @@ export class Relay {
   /**
    * Sends one message to the app; resolves true once the home base has it. One retry, unless the
    * home base isn't answering anyway (then it fails fast: what waits behind it isn't held up).
+   * With `until` (ms, this clock), it is tried again every second or so until then (the same
+   * envelope: the home base keeps a repeated id once): a reply to a start or a stop must not be
+   * lost to a moment's failure (MISSED-LINK-A).
    */
-  async send(kind, body = {}) {
+  async send(kind, body = {}, { until = 0 } = {}) {
     let msg;
     try {
       msg = await seal(await this.cryptoKey(), { box: BOX_TO_APP, kind, body, at: this.now() });
@@ -261,7 +265,8 @@ export class Relay {
       return false;
     }
     const attempts = this.failures > 0 ? 1 : 2;
-    for (let attempt = 0; attempt < attempts; attempt++) {
+    for (let attempt = 0; ; attempt++) {
+      let wait = 1000;
       try {
         const res = await this.request('POST', 'to-app', msg, SEND_TIMEOUT_MS);
         if (res.ok) {
@@ -269,11 +274,14 @@ export class Relay {
           return true;
         }
         if (res.status === 400 || res.status === 413) return false;
+        if (res.status === 429 && res.retryAfter > 0) wait = Math.min(5000, res.retryAfter * 1000);
       } catch {
-        /* try once more */
+        /* try again */
       }
-      if (attempt + 1 < attempts) await this.sleep(1000);
+      const left = until - this.now();
+      const again = until ? left > 0 && !this.ended : attempt + 1 < attempts;
+      if (!again) return false;
+      await this.sleep(until ? Math.max(0, Math.min(wait, left)) : wait);
     }
-    return false;
   }
 }

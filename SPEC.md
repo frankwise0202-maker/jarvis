@@ -5007,6 +5007,18 @@ notification while Jarvis is hidden); not confirmed within 10 s, it says instead
 the task and to press Stop in its side panel. A late `ok` for an `open` or an `answer` is only noted, and a late
 refusal changes nothing. The window that gave up is the one that tells (the holder passes it the reply).
 
+A start's reply can also be lost while the task runs (MISSED-LINK-A). So the app notes every `start` it sends in
+localStorage `jarvis.chromeLink.starts.v1` (`{ v: 1, starts: [{ env, sentAt, gaveUpAt, until, win }], known:
+[taskId] }`: envelope and task ids only, nothing secret), which every window of the device and a reloaded one see
+(sessionStorage, which the review suggested, belongs to one tab: the window that holds the link, which reads the late
+answer, is often another one). News of a task from Jarvis (a `task` message, or a `status` whose task is `from:
+'voice'`) naming a task this device never got an `ok` for, after a start was given up (within 2 minutes), is a late
+start too: stopped and said in the same way. News seen while a start still waits is kept until that start is answered
+(its task is then known) or given up (then it is that start's task). The window that gave up handles it; a window that
+reloads or closes leaves its starts to the window holding the link (`pagehide`), which then handles them. Jarvis for
+Chrome, for its part, sends its reply to a `start` or a `stop` again (the same envelope) for about 10 s after the
+request was made, instead of once or twice.
+
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
 `state()` → `{ linked, online, voiceApprovals, task }`, `subscribe(fn)`, `open(url, { rect, focus })`,
 `startTask({ text, chat })`, `stopTask()` → `{ ok: true }` or `{ ok: false, reason: 'unlinked' | 'offline' }`
@@ -5133,6 +5145,8 @@ the envelope's 120 s.
   and the controller runs it with the extension's own model, budget and step limit in the last focused Jarvis
   window, marked `from: 'voice'` (its card, and History, say "From Jarvis (voice)"), counted for the day. → `{ id }`.
 - `stop` → the running task stops (the step list says "Stopped by voice from Jarvis."); `gone` when none runs.
+- The reply to a `start` or a `stop` is tried again (the same envelope) until about 10 s after the request's `at`
+  (and at least 2 s), so a moment's failure of the extension's posts can't lose it (MISSED-LINK-A).
 - `answer { promptId, hash, choice, via }` → `gone` unless that prompt is open; `bad` for a choice it doesn't have;
   `refused` (with a short reason, §32.2.6; the prompt stays open) when the hash differs, the policy says no, or a
   yes comes less than 1.5 s after the prompt appeared; else it is decided through the same path as a click
@@ -5141,7 +5155,8 @@ the envelope's 120 s.
 - `unlinked` → reply, then unlink. Any other kind → `bad`.
 
 **32.2.5 What goes back.** `status` on every change of the running task or the switches, and every 60 s while a task
-runs; `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it started from one
+typed in the panel); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
 how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
 for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
 last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;
