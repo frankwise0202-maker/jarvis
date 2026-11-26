@@ -41,6 +41,9 @@
 //                         microphone and "Hey Jarvis" stay on through the session instead of being released;
 //                         two claps or "Hey Jarvis" then go to detected() (Voice Mode decides: George
 //                         speaking, not his own "Jarvis"), and Standby takes the same microphone back after.
+//   needsClick() -> boolean  (A11) the page has had no click yet and George can't speak (Chrome lets the built-in
+//                         voice speak only after one, e.g. after a restart): Standby says "CLICK ONCE SO JARVIS CAN
+//                         SPEAK", and a click (or Enter, Space) then unlocks speech instead of leaving Standby.
 // OLED: a black page, dim text, the content shifted a few pixels every minute, dimmer after 5 min.
 
 import { h, setText } from './dom.js';
@@ -80,6 +83,7 @@ export function createStandby(deps = {}) {
     audio = null,
     createLock = null,
     bargeIn = null,
+    needsClick = () => false,
   } = deps;
 
   let phase = 'closed'; // 'closed' | 'open' | 'awaiting' (woken: Voice Mode is up)
@@ -703,13 +707,15 @@ export function createStandby(deps = {}) {
   function onTap(event) {
     if (phase !== 'open') return;
     if (event) event.preventDefault();
+    const forSpeech = clickNeeded();
+    if (forSpeech) clickedOnce(); // v8.1 (A11): this click is the one speech needed
     // iOS may want one tap before its microphone and audio start: this tap starts them.
     if (listen === 'needs-tap' && capture) {
       capture.prepare();
       startListening();
       return;
     }
-    exit();
+    if (!forSpeech) exit(); // otherwise Standby stays
   }
 
   function onKey(event) {
@@ -729,6 +735,12 @@ export function createStandby(deps = {}) {
       }
       return;
     }
+    if ((event.key === 'Enter' || event.key === ' ') && clickNeeded()) {
+      event.preventDefault();
+      event.stopPropagation();
+      clickedOnce(); // v8.1 (A11): a key counts as the click speech needed
+      return;
+    }
     if (event.key === 'Escape' || event.key === 'Esc' || event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       event.stopPropagation();
@@ -740,6 +752,20 @@ export function createStandby(deps = {}) {
       return;
     }
     event.stopPropagation(); // the app's shortcuts do not act underneath
+  }
+
+  /** v8.1 (A11): the built-in voice can't speak until the page gets a click (and George can't). */
+  function clickNeeded() {
+    return safeCall(() => needsClick() === true, false);
+  }
+
+  function clickedOnce() {
+    try {
+      unlock({ tap: true }); // inside this gesture: the voice that will greet the owner can speak from now on
+    } catch {
+      /* decoration */
+    }
+    render();
   }
 
   function onVisibility() {
@@ -841,7 +867,7 @@ export function createStandby(deps = {}) {
     els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
     setText(els.hint, hintText(what, ws));
     setText(els.status, safeText(statusLine));
-    const word0 = safeText(stateWord);
+    const word0 = clickNeeded() ? 'CLICK ONCE SO JARVIS CAN SPEAK' : safeText(stateWord); // v8.1 (A11)
     setText(els.word, word0 && word0 !== 'STANDING BY' ? word0 : '');
     els.word.hidden = !els.word.textContent;
   }

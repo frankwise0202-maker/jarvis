@@ -190,12 +190,14 @@ async function setup(t) {
   const locks = createFakeLocks();
   const log = [];
   log.caps = {};
-  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null } = {}) => {
+  const make = (who, { bargeIn = null, lock = true, settings = { wakeClap: true, wakeWord: false }, createWakeWord = null, needsClick, unlock } = {}) => {
     const woken = [];
     const sb = createStandby({
       getSettings: () => settings,
       createCapture: fakeCapture(log, who),
       createWakeWord,
+      needsClick,
+      unlock,
       onWake: (w) => woken.push(w.trigger),
       createLock: lock ? (onChange) => createStandbyLock({ locks: locks.as(who), onChange }) : null,
       bargeIn,
@@ -433,4 +435,25 @@ test('A12: the network coming back starts a failed "Hey Jarvis" again at once; l
   a.sb.exit();
   await new Promise((r) => setTimeout(r, 2200));
   assert.equal(w.starts, 2, 'no retry after Standby closed');
+});
+
+test('A11: after a restart with no click yet (and George unavailable), Standby says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; the next one leaves', async (t) => {
+  const { make, shown } = await setup(t);
+  let clicked = false;
+  const unlocks = [];
+  const a = make('A', { lock: false, needsClick: () => !clicked, unlock: (o) => {
+    unlocks.push(o);
+    if (o && o.tap) clicked = true; // the page has had its click now
+  } });
+  a.sb.enter({ again: true }); // opened by itself at launch: no tap behind it
+  await settle();
+  const root = shown().at(-1);
+  assert.equal(root.find('standby-state').textContent, 'CLICK ONCE SO JARVIS CAN SPEAK');
+  assert.equal(root.find('standby-state').hidden, false);
+  root.click();
+  assert.equal(a.sb.isOpen(), true, 'Standby stays');
+  assert.deepEqual(unlocks.at(-1), { tap: true }, 'speech unlocked inside the click');
+  assert.equal(root.find('standby-state').textContent, '', 'the line goes');
+  root.click();
+  assert.equal(a.sb.isOpen(), false, 'an ordinary tap leaves, as before');
 });
