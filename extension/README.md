@@ -269,8 +269,10 @@ its card (*"Chrome asks: Click a button on bestbuy.com? The button says “Add t
 approve, or cancel."*). Jarvis for Chrome writes the question, from its own facts: the kind of
 step, the site, what it looks like (a purchase…), a price. Of the page's own words it quotes at most
 about 40 characters, after "the button says", and never words that sound like an answer
-("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis"), so a page can't put words
-in Jarvis's mouth. When a question needs a click, Jarvis says why in a few words (*"That's a
+("approve", "cancel", "yes", "say", "allow", "deny", "stop", "Jarvis", "spend more in Chrome",
+"more steps in Chrome"), also spaced out, accented, in look-alike letters or spelled by sound
+("Aprove", "Kancel", "Appr0ve"), so a page can't put words in Jarvis's mouth. (Jarvis for Chrome
+decides every answer itself; the quote only describes the step.) When a question needs a click, Jarvis says why in a few words (*"That's a
 purchase."*) and that it needs a click in the Jarvis window.
 
 | Jarvis for Chrome asks | Answered from Jarvis (by voice, or on its card) | A click here |

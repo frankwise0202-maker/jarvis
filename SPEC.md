@@ -5216,7 +5216,10 @@ at most 280 characters. It is built from the extension's own fields (the kind of
 the kind of step, a price found in the step's label or item, the budget's or step limit's numbers). Page text appears
 only as one quote of at most about 40 characters after "The button says" (or "The option says", "The text is"),
 only Latin letters, digits and plain punctuation, and never when its letters contain approve, cancel, say, yes,
-allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4); a site whose
+allow, deny, stop or jarvis (checked with spaces, accents and look-alike forms removed: critique M4), nor, after a
+fold by sound (digits read as letters, doubled letters, k for c, a soft c, ph for f, a silent h), one of those or the
+stems aprov, ahprov, kancel, kansel, cancle, javis, spendmore and moresteps (REDTEAM-LINK-8: "Aprove", "Approove",
+"Ah-prove", "Kancel", "Appr0ve", "Alow once", "Spend more in Chrome"); a site whose
 name holds such a word is "a site whose name is on the card in the Jarvis window". Claude's words (the card's body,
 request_confirmation's text) are never spoken. `voice.why` is one short sentence on why a yes needs a click ("That’s
 a purchase.", "That sends a message.", "That’s a keyboard shortcut.", "That carries what it read to another site.",
