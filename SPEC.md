@@ -4108,7 +4108,8 @@ gets its second try. Settings → Voice → Wake Jarvis → **Keep talking when 
 - `setVoiceState` calls attention.js `sessionTitle(state)`: while the page is hidden the title is "Listening · Jarvis",
   "Thinking · Jarvis" (thinking or working) or "Speaking · Jarvis", composed with the "(n) " marker of
   `missionFinished`; idle, shown again, or the session closed: the app's title again;
-- one notification per session, when it is or becomes hidden (`notify({ tag: 'session', title: 'Jarvis is listening',
+- one notification per session, when it is or becomes hidden (woken hidden: at the wake itself, MAC-7, since a question
+  said in one breath with "Hey Jarvis" skips the greeting; `notify({ tag: 'session', title: 'Jarvis is listening',
   body: 'Ask away, or say “go back to sleep”.' })`; its click brings Jarvis forward), closed at `close()`
   (`closeNotify('session')`). app.js's old wake notification ("… Switch to Jarvis to answer.") stays for sessions that
   can't go on hidden;
@@ -4122,7 +4123,9 @@ listens, so they can't tell "waiting for Hey Jarvis" from "hearing your question
 
 **Lines before the greeting** (lead decision D3): src/lib/wake/pending.js `createWakePending()` →
 `{ add(fn, { waits }) → remove(), lines() }`; app.js holds one (`wakePending`, also `deps.wakePending` for the command
-modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`. Each
+modules) and passes `wake.pending: () => wakePending.lines()`. `greetWake` says `[...lines, greeting, offer]`; when a
+question said in one breath with "Hey Jarvis" takes the greeting's place, the lines are said before its answer
+(`S.preface`, MAC-7). Each
 `fn()` returns a line or null at each wake; lines with `waits: true` (Chrome's question) come first, then the others
 in the order added; a throwing `fn` counts as null; lines are tidied and cut at 240 characters.
 

@@ -454,6 +454,37 @@ test('MAC-V-1: two claps heard while he listens do nothing to the count', async 
   assert.equal(env.log.turns.length, 3, 'the brake after three, as without them');
 });
 
+// MAC-7: the most natural hidden wake, a question straight after "Hey Jarvis" in one breath, never reached greetWake:
+// no "Jarvis is listening" notification, and the lines that waited (D3) weren't said.
+test('MAC-7: woken hidden by “Hey Jarvis, what is …” in one breath: one “Jarvis is listening” notification, and the lines that waited (wake.pending()) are said before the answer', async (t) => {
+  const env = await voiceEnv(t);
+  env.setHidden(true);
+  env.say(onlyAfter(0, Q)); // the wake window hears the question
+  let asked = 0;
+  const pending = () => {
+    asked += 1;
+    return ['I’m on the Mac’s speakers; the speakerphone isn’t connected.'];
+  };
+  env.open({ wake: env.wakeHooks({ trigger: 'word', pending }), listenWhileHidden: () => true, answer: ANSWER });
+  await until(env, () => env.log.spoken.some((s) => s.text.includes(ANSWER)), 'the answer');
+  assert.deepEqual(env.log.turns, [Q], 'the question was asked (the routine stepped aside)');
+  assert.equal(env.log.notes.length, 1, 'one notification');
+  assert.equal(env.log.notes[0].title, 'Jarvis is listening');
+  assert.equal(asked, 1, 'the lines were asked for once');
+  assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, `I’m on the Mac’s speakers; the speakerphone isn’t connected. ${ANSWER}`);
+  await until(env, () => env.log.closes.length > 0, 'the end of the session');
+  assert.equal(env.log.notes[0].closed, true, 'closed with the session');
+});
+
+test('MAC-7: on screen, the same one-breath wake shows no notification; with nothing waiting the answer is said as before', async (t) => {
+  const env = await voiceEnv(t);
+  env.say(onlyAfter(0, Q));
+  env.open({ wake: env.wakeHooks({ trigger: 'word' }), listenWhileHidden: () => true, answer: ANSWER });
+  await until(env, () => env.log.spoken.some((s) => s.text.includes(ANSWER)), 'the answer');
+  assert.equal(env.log.notes.length, 0);
+  assert.equal(env.log.spoken.find((s) => s.text.includes(ANSWER)).text, ANSWER);
+});
+
 // ---- D3: wake.pending() --------------------------------------------------------------------------------------
 
 test('D3: the lines that waited for the owner (wake.pending()) come before the greeting', async (t) => {

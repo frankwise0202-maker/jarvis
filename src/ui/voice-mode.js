@@ -4116,6 +4116,7 @@ function createVoiceMode(opts) {
     }
     if (S.sttOk && !away()) startListening({ wakeWindow: true });
     else W.timer = setTimeout(() => greetWake(false), WAKE_BOOT_MS);
+    noteAway(); // MAC-7: woken in the background on a Mac: the notification at once (a question may skip the greeting)
   }
 
   /** The greeting and the offer: "Good evening, Frank. Shall I put on some AC/DC? Or I can …". */
@@ -4202,9 +4203,12 @@ function createVoiceMode(opts) {
         greetWake(false);
         return true;
       }
-      // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question.
+      // "Hey Jarvis, what's the weather?": the routine steps aside; that is the question. MAC-7: what waited for
+      // the owner (D3: the speakerphone line, Chrome's question) is said before its answer instead of the greeting.
       S.wake = null;
       clearTimeout(W.timer);
+      const waited = wakePendingLines().join(' ');
+      if (waited) S.preface = { text: waited, at: Date.now() };
       return false;
     }
     if (W.phase !== 'asking') return false;
