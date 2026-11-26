@@ -469,8 +469,9 @@ Jarvis's home screen now tells you what is going on before you ask.
   the bar keeps the count and the buttons, and the words show over the hologram.
 - **Questions on the way**, like "what does that do?" or "is it glued in?", go to Jarvis as normal
   questions (paid like any other, about 3–5¢). He is told which part is glowing and which step
-  you're on, so "that" means the part on screen. When he asks "enclosed or opened?" he waits for
-  your answer for up to a minute, and asking something else in between doesn't lose your place.
+  you're on, so "that" means the part on screen. When he asks "enclosed or opened?", he listens
+  for your answer for up to a minute (the buttons and the words work any time after that), and
+  asking something else in between doesn't lose your place.
 - **"Show it enclosed"** and **"show it opened"** also work without a walkthrough: tap a part (or
   say its name), then say which view you want.
 - **In Voice Mode** Jarvis says each step as the hologram moves. He listens only where you're
