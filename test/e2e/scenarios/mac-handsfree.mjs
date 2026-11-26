@@ -13,6 +13,7 @@ import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { installFakeMic } from '../fake-mic.mjs';
+import { installAudioFakes } from '../audio-fakes.mjs';
 import { setHidden } from './optics.mjs';
 import * as S from '../../unit/wake.signals.mjs';
 
@@ -245,6 +246,84 @@ const queue = (page, ...items) => page.evaluate((list) => window.__voice.queue.p
 
 // ---- v8.1.1 (review 2) --------------------------------------------------------------------------------------
 
+// The owner's setup: setup 1 (the speakerphone speaks, the Mac's microphone listens), the Test passed on it.
+const SETUP1 = { audioSetup: 'speaker-mac-mic', audioInputId: 'mac-mic', audioInputLabel: 'MacBook Pro Microphone (Built-in)', audioOutputId: 'sp-out', audioOutputLabel: 'Desk Speakerphone (Bluetooth)' };
+const TEST_PASSED_SETUP1 = { at: 1_800_000_000_000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true, measured: { setup: 'speaker-mac-mic', wakeMic: 'mac-mic', speaker: 'sp-out', clap: true, word: true } };
+
+/**
+ * George's sources (24 kHz contexts) as intervals, recognizer sessions open at once, and the recognizer started while
+ * George or the device voice is audible (the owner run's checks; from the review's probe).
+ */
+function installTalkProbe() {
+  const P = { george: [], overlapsRec: 0, recOpen: 0, recMax: 0, recWhileTalking: [] };
+  window.__talk = P;
+  const now = () => performance.now();
+  if (window.AudioContext) {
+    const start = AudioBufferSourceNode.prototype.start;
+    const stop = AudioBufferSourceNode.prototype.stop;
+    AudioBufferSourceNode.prototype.start = function probed(when = 0, offset = 0, duration) {
+      try {
+        const ctx = this.context;
+        if (ctx && ctx.sampleRate === 24000 && this.buffer) {
+          const lead = Math.max(0, (Number(when) || 0) - ctx.currentTime) * 1000;
+          const len = (duration !== undefined ? Number(duration) : this.buffer.duration - (Number(offset) || 0)) * 1000;
+          const rec = { from: now() + lead, to: now() + lead + len, stopped: 0 };
+          this.__rec = rec;
+          P.george.push(rec);
+        }
+      } catch {
+        /* bookkeeping */
+      }
+      return start.apply(this, arguments);
+    };
+    AudioBufferSourceNode.prototype.stop = function probedStop() {
+      try {
+        if (this.__rec && !this.__rec.stopped) {
+          this.__rec.stopped = now();
+          if (this.__rec.to > this.__rec.stopped) this.__rec.to = Math.max(this.__rec.from, this.__rec.stopped);
+        }
+      } catch {
+        /* bookkeeping */
+      }
+      return stop.apply(this, arguments);
+    };
+  }
+  const talkingNow = () => {
+    const t = now();
+    const g = P.george.some((r) => r.from <= t && t < r.to);
+    const d = (window.__voice && window.__voice.log ? window.__voice.log : []).some((e) => e.at <= t && (!e.endAt || t < e.endAt));
+    return g ? 'george' : d ? 'device' : '';
+  };
+  const patch = () => {
+    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!R || !R.prototype || R.prototype.__talkPatched) return;
+    const start = R.prototype.start;
+    const end = R.prototype.end;
+    R.prototype.start = function s(...args) {
+      if (!this.__open) {
+        this.__open = true;
+        P.recOpen += 1;
+        P.recMax = Math.max(P.recMax, P.recOpen);
+        if (P.recOpen > 1) P.overlapsRec += 1;
+      }
+      const talk = talkingNow();
+      if (talk) P.recWhileTalking.push({ at: Math.round(now()), talk });
+      return start.apply(this, args);
+    };
+    if (end) {
+      R.prototype.end = function e(...args) {
+        if (this.__open) {
+          this.__open = false;
+          P.recOpen -= 1;
+        }
+        return end.apply(this, args);
+      };
+    }
+    R.prototype.__talkPatched = true;
+  };
+  patch();
+  document.addEventListener('DOMContentLoaded', patch);
+}
 
 /** Two windows of one browser: A on Standby (hidden) with claps and the "Hey Jarvis" stand-in; B on the app. */
 async function twoWindows(t, { speechB = {} } = {}) {
@@ -1064,6 +1143,115 @@ export default [
       t.assert(leadCount(t) <= 3, `at most 3 paid questions while hidden without "Hey Jarvis" or a tap (got ${leadCount(t)}: ${JSON.stringify(cycles)})`);
       t.assert(cycles.every((x) => x.brakesSaidSoFar >= x.cycle), `each wake ends with the brake line (${JSON.stringify(cycles)})`);
       await waitListening(t, t.page, 60000); // and he is back on Standby, listening
+    },
+  },
+  {
+    name: 'mac-handsfree-owner-10x',
+    title: 'The owner’s setup, ten rounds: setup 1 (the speakerphone speaks, the Mac’s microphone listens), the Test passed, George, Jarvis hidden the whole time; wake by claps or "Hey Jarvis", ask, answer, barge-in by "Hey Jarvis", claps or none, follow-up, back to Standby: never deaf, never stuck, never two listens at once, never talking over himself',
+    device: 'mac',
+    fakeMusic: true,
+    fakeCore: { senses: { speak: 'ready' } },
+    settings: { wakeWord: true, ...SETUP1 },
+    timeout: 1500000,
+    async run(t) {
+      const page = await t.newPage({ device: 'mac', settings: { ...t.scenario.settings, ...GEORGE } });
+      await page.addInitScript(installFakeSpeech, { noSpeechMs: 60000 });
+      await page.addInitScript(installFakeMic, { wakeLock: true });
+      await page.addInitScript(installAudioFakes, {});
+      await page.addInitScript(installTalkProbe);
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await page.addInitScript(
+        ({ test }) => {
+          try {
+            localStorage.setItem('jarvis.handsFreeTest.v1', test);
+            localStorage.setItem('jarvis.dev.wakeWord', 'stub');
+          } catch {
+            /* storage unavailable */
+          }
+        },
+        { test: JSON.stringify(TEST_PASSED_SETUP1) },
+      );
+      await t.goto('/', { page });
+      await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+      await (await t.visible('quick-key-standby', { page })).click();
+      await t.waitFor(async () => (await standbyState(page))?.word === 'ready' && (await standbyState(page))?.listening === 'live', { timeout: 20000, message: 'Standby with the stand-in ready' });
+      await setHidden(page, true);
+      const speaks = () => t.core.senses.speaks.map((x) => x.text);
+      const sayNow = (text) => page.evaluate((x) => window.__voice.say(x), text);
+      const waitState = async (st, timeout = 30000) => t.waitFor(async () => (await voiceState(page)) === st, { timeout, message: async () => `Voice Mode ${st} (${await voiceState(page)} “${await voiceStatus(page)}”)` });
+      const results = [];
+      const countries = ['France', 'Spain', 'Italy', 'Germany', 'Japan', 'Portugal', 'Canada', 'Egypt', 'Norway', 'Sweden', 'Ireland', 'Australia'];
+      for (let round = 1; round <= 10; round++) {
+        const r = { round, wake: round % 2 ? 'claps' : 'word', barge: ['word', 'clap', 'none'][round % 3], ok: true, notes: [] };
+        const lead0 = leadCount(t);
+        const sp0 = t.core.senses.speaks.length;
+        try {
+          await waitListening(t, page, 30000);
+          await page.waitForTimeout(1700);
+          if (r.wake === 'claps') {
+            await play(page, DOUBLE_CLAP);
+            await page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+            await t.waitFor(() => speaks().slice(sp0).some((x) => /Shall I|Good (?:morning|afternoon|evening)|Welcome/.test(x)), { timeout: 30000, message: 'the greeting' });
+            await waitState('listening', 30000);
+            await page.waitForTimeout(300);
+            await sayNow('Tell me about solar panels [[long]]');
+          } else {
+            await page.evaluate(() => window.__jarvisWake.say());
+            await page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 10000 });
+            await waitState('listening', 15000); // the wake window: one breath
+            await sayNow('Tell me about solar panels [[long]]');
+          }
+          await t.waitFor(() => leadCount(t) === lead0 + 1, { timeout: 30000, message: 'the question sent once' });
+          await t.waitFor(() => speaks().slice(sp0).some((x) => /detailed guide/.test(x)), { timeout: 30000, message: 'George starts the answer' });
+          if (r.barge !== 'none') {
+            await page.waitForTimeout(2200);
+            const st = await voiceState(page);
+            if (st !== 'speaking') r.notes.push(`not speaking at barge-in (${st})`);
+            if (r.barge === 'word') await page.evaluate(() => window.__jarvisWake.say());
+            else await play(page, DOUBLE_CLAP);
+            await waitState('listening', 8000);
+            await page.waitForTimeout(300);
+            await sayNow(`What is the capital of ${countries[round]}?`);
+            await t.waitFor(() => leadCount(t) === lead0 + 2, { timeout: 30000, message: 'the follow-up sent once' });
+            await t.waitFor(() => speaks().slice(sp0).some((x) => /The capital of/.test(x)), { timeout: 30000, message: 'George answers the follow-up' });
+          }
+          await page.locator(tid('voice-mode')).waitFor({ state: 'detached', timeout: 60000 }); // nobody speaks: back by himself
+          await waitListening(t, page, 20000);
+          r.leads = leadCount(t) - lead0;
+          const P = await page.evaluate(() => ({ recMax: window.__talk.recMax, recOpen: window.__talk.recOpen }));
+          const expected = r.barge === 'none' ? 1 : 2;
+          if (r.leads !== expected) {
+            r.ok = false;
+            r.notes.push(`requests ${r.leads}, expected ${expected}`);
+          }
+          if (P.recMax > 1) {
+            r.ok = false;
+            r.notes.push(`two recognizer sessions open at once (max ${P.recMax})`);
+          }
+        } catch (err) {
+          r.ok = false;
+          r.notes.push(`FAILED: ${String(err && err.message ? err.message : err).slice(0, 300)}`);
+          results.push(r);
+          await t.screenshot(`round-${round}-failed`);
+          break;
+        }
+        results.push(r);
+      }
+      const talk = await page.evaluate(() => {
+        const g = window.__talk.george.map((x) => [x.from, x.to]).sort((a, b) => a[0] - b[0]);
+        const d = (window.__voice.log || []).map((e) => [e.at, e.endAt || e.at]);
+        let gg = 0;
+        for (let i = 1; i < g.length; i++) if (g[i][0] < g[i - 1][1] - 50) gg += 1;
+        let gd = 0;
+        for (const [a, b] of d) for (const [c, e] of g) if (a < e - 50 && c < b - 50) gd += 1;
+        return { georgeSources: g.length, georgeOverGeorge: gg, georgeOverDevice: gd, recWhileTalking: window.__talk.recWhileTalking.length };
+      });
+      t.note(`rounds: ${JSON.stringify(results.map((x) => ({ round: x.round, wake: x.wake, barge: x.barge, ok: x.ok, leads: x.leads, notes: x.notes })))}; talk: ${JSON.stringify(talk)}`);
+      const bad = results.filter((x) => !x.ok);
+      t.assert(results.length === 10 && !bad.length, `10 of 10 rounds (${results.length}, failed: ${JSON.stringify(bad)})`);
+      t.assert(talk.georgeOverGeorge === 0 && talk.georgeOverDevice === 0, `never talking over himself (${JSON.stringify(talk)})`);
     },
   },
 ];
