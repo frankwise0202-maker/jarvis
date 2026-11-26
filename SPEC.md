@@ -4084,8 +4084,6 @@ and the lock injected), `src/engine/lead.js` (`gateRequest`, `LiveCapRefused`), 
 
 ## 28. v8.1: Hands-free on a Mac
 
-<!-- v8.1: mac-hf writes 28.1, 28.4 and 28.5; mac-dev writes 28.2 and 28.3. -->
-
 ### 28.1 Listening in the background
 
 The owner keeps Jarvis on Standby in Chrome on a Mac day and night, behind other windows or with the display asleep,
@@ -4136,7 +4134,6 @@ background listens there).
 
 ### 28.2 Microphone and speaker
 
-<!-- v8.1: mac-dev writes this part. -->
 Settings → Voice → **Microphone and speaker** (after Jarvis's voice): which microphone Jarvis listens on and which
 speaker he plays on, on a computer in Chrome or Edge. With nothing chosen everything is as before v8.1: no device
 ids, no `setSinkId`, `recognition.start()`, Standby's raw request.
@@ -4257,7 +4254,6 @@ default output is Bluetooth, `standby-tip` says "Using a Bluetooth speakerphone?
 
 ### 28.3 The speakerphone coming and going
 
-<!-- v8.1: mac-dev writes this part. -->
 **One watcher** (the controller of §28.2): `devicechange` on `navigator.mediaDevices` (once a choice is made; the
 card also asks while it is open), debounced 250 ms; the live tracks' `ended`, `mute` and `unmute` (Standby's capture
 through `onTrack`, the question track); George's context `error` and `statechange` (`audio-out.js` `onDevice`). Each
@@ -4386,11 +4382,7 @@ line, its click and Enter in Chrome's order). E2E `mac-handsfree-followup-window
 
 ## 29. v8.1: Walkthroughs
 
-<!-- v8.1: tours writes 29.1 and 29.3; tour-render writes 29.2. -->
-
 ### 29.1 The tour and the planner
-
-<!-- v8.1: tours writes this part. -->
 
 The owner asked: "walk me through it … move the hologram into that one part that's talking about … it explodes it,
 zooms into the battery … it asks me a question … Do you want to see this enclosed or opened? … show me that enclosed,
@@ -4401,7 +4393,8 @@ it assembles it and then it shows me the battery where it's at enclosed." A walk
 (the router's matchers); `src/ui/hologram/viewer.js` (the tour's host); `src/styles/hologram.css` (the bar);
 `test/unit/fixtures/laptop-generic.json` (a generic 16-part laptop, no brand or model).
 
-**The plan (v1).** `{ v: 1, title, for: partId | null, source: 'local' | 'claude', steps }`. A step: `id`, `say`
+**The plan (v1).** `{ v: 1, title, for: partId | null, source: 'local' | 'claude', steps }` (v8.1 plans are all
+`'local'`: walkthroughs written by Claude, with their price asked first, come in a later release). A step: `id`, `say`
 (spoken and shown, at most 280 characters), `parts` (the main one first), `show` (what a step leaves out stays as it
 was: `explode` 0..1, `glow`, `ghost` (ids or `'shells'`), `hide`, `others` 0..1, `labels` `none` | `parts` | `all`,
 `frame` `parts` | `all`, `camera` (a view name, `'access'`: from the side the main part comes out of, or
@@ -4543,8 +4536,6 @@ walkthrough step needs. Without an emphasis the look and the behaviour are as be
   reviewed).
 
 ### 29.3 Narration and voice
-
-<!-- v8.1: tours writes this part. -->
 
 **Narration.** A run is said as one `api.narrate({ text, kind: 'tour', onChunk, onEnd, listenAfter })` (§ contract
 (a)), one step per line (`narrationText(steps)`: `{ text, lines: [{ id, start, end }] }`; a line break is one space in
@@ -4899,8 +4890,6 @@ Several named windows by voice, layouts that keep Jarvis in view, voice that fol
   request in tests); a 1440×900 laptop screen is stubbed, with moveTo/resizeTo recorded in the windows themselves.
 
 ## 32. v8.1: Jarvis for Chrome by voice
-
-<!-- v8.1: chrome-relay writes 32.1, chrome-ext 32.2 and chrome-voice 32.3. -->
 
 ### 32.1 The link and the relay
 

@@ -34,7 +34,7 @@ export const CHROME_LINK_WORDS = Object.freeze({
   offlineHelp: 'Open the Jarvis window (the Chrome profile with Jarvis for Chrome) and keep it open. Until then, “pull this up in Chrome” opens a normal tab here.',
   steps: [
     'Copy the link code.',
-    'In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then Settings → Voice from Jarvis, and paste the code.',
+    'In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then Settings → Voice from Jarvis, and paste the code. (Voice from Jarvis needs Jarvis for Chrome 1.1.0 or later.)',
     'When Chrome asks, let Jarvis for Chrome reach your home base.',
   ],
   codeNote: 'The code works once, for 30 minutes. Jarvis clears it from your clipboard as soon as the two are linked.',

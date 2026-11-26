@@ -375,7 +375,6 @@ other windows, minimized, or with the display asleep.
 
 #### Always on: the Mac checklist
 
-<!-- v8.1: mac-dev writes this part. -->
 For Jarvis to be listening and speaking on the Mac day and night, with a speakerphone across the room. Jarvis
 can't change these himself, so check them once:
 
@@ -583,8 +582,6 @@ Jarvis's home screen now tells you what is going on before you ask.
   itself. Your old chats stay in History.
 
 #### Walkthroughs
-
-<!-- v8.1: tours writes this part. -->
 
 - **"Walk me through it"**, with a hologram on screen (or right after Jarvis showed you one): Jarvis
   talks you through it part by part, and the hologram moves to each part as he starts talking about
@@ -807,7 +804,6 @@ runs on your own computer at home, and nothing goes to any cloud.
 
 #### Microphone and speaker (Mac)
 
-<!-- v8.1: mac-dev writes this part. -->
 Where Jarvis listens and speaks on a computer: **Settings → Voice → Microphone and speaker** (Chrome or Edge on a
 Mac; the card isn't there on iPhone).
 
@@ -1109,8 +1105,11 @@ Buy and add it to the cart".
 Jarvis (in your usual Chrome) and Jarvis for Chrome (in its own profile) can't see each other, on purpose, so they
 leave each other messages on your home base. You link them once, on the Mac:
 
-1. Make sure Jarvis for Chrome is installed (above) and your home base is linked (**Settings → Home base**). It needs
-   Jarvis Core 1.3 or later, which it installs by itself (or run `jarvis-core update` on the Alienware).
+1. Make sure **Jarvis for Chrome 1.1.0 or later** is installed (above; its side panel shows the version at the bottom
+   of Settings). To update an older one, download **jarvis-for-chrome.zip** again, replace the unzipped folder, and
+   press **Reload** on Jarvis for Chrome in `chrome://extensions`: your key and settings are kept. Your home base must
+   be linked too (**Settings → Home base**), with Jarvis Core 1.3 or later, which it installs by itself (or run
+   `jarvis-core update` on the Alienware).
 2. In Jarvis, open **Settings → Jarvis for Chrome**, press **Link**, then **Copy link code**.
 3. In the Jarvis window (the Chrome profile with Jarvis for Chrome), open its side panel, then **Settings → Voice
    from Jarvis**, and paste the code. When Chrome asks, let Jarvis for Chrome reach your home base.
@@ -1203,6 +1202,8 @@ from the credit in your account. Rough examples:
 | Live view (Optics) | about 30–50¢ an hour for the looks (one a second on the small, cheap model), which never take the hour past $1; questions asked while it's on (about 3¢ each, kept short) count in the same hour, and one whose worst case (about 30¢, set aside while it's answered) would take it past $1 isn't sent: Jarvis says so. Each device has its own hour (on an iPhone the Home Screen app and Safari each have their own) |
 | Research this (Optics) | the price is said first, and nothing is spent until you pick: a quick answer with a web search about 10¢ (6–16¢); a research mission at your team size and depth (8 agents at Balanced, about $1.70); the home base up to $1.25 a job ($3 in depth). With the live view on, only the quick answer counts in its hour |
 | Opening Optics by voice ("open optics", "camera on") | free (no picture is taken) |
+| Commands, said or typed ("new chat", "open settings", windows, "pull this up in Chrome", "which microphone are you using?") | free (see [Everything by voice](#everything-by-voice)) |
+| A Jarvis for Chrome task by voice ("… in Chrome") | paid by Jarvis for Chrome with its own key, within the task's budget (a dollar unless you change it there): Jarvis says the limit before it starts. Linking and the messages through your home base are free |
 | The natural voice | free (it runs on your device) |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
@@ -1288,7 +1289,9 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   microphone stays off until it is ready). Leaving Standby turns the microphone off. On a phone it
   also stops while Jarvis is not on screen; on a Mac it keeps listening in a background tab while
   Standby is open. When he wakes, Voice Mode takes over as usual (your browser's speech service
-  hears what you say next); woken by claps, words heard in that first moment are not sent to
+  hears what you say next; on a Mac that goes on while his window is in the background, with the
+  chimes and the tab's title saying when he listens: see [Hands-free on a Mac](#hands-free-on-a-mac),
+  and Settings → Voice → Wake Jarvis to turn it off); woken by claps, words heard in that first moment are not sent to
   Claude (they may be the room talking). The "Hey Jarvis" models download once from the Jarvis
   site itself, and what you played lately (for the music he offers, with Apple's ids for it)
   stays on this device.
@@ -1337,7 +1340,8 @@ Other websites (at other addresses) cannot read it.
   until you turn it on, because it is a download) and your home base's address (only on a device with
   no home base linked: an import never unlinks this device or changes its address). It never changes your models,
   agent limits or spending warning. The camera you chose in
-  Optics is not in a backup: it belongs to that browser. Only conversations that Jarvis itself made are imported (any
+  Optics, and the microphone and speaker you chose (Settings → Voice → Microphone and speaker), are not in a backup:
+  they belong to that browser. Only conversations that Jarvis itself made are imported (any
   others are skipped, and Jarvis says so), and a reply that was still running or interrupted
   comes back as stopped: it can't be resumed.
 - **Only import your own backups.** Never import a backup someone else gave you: its
