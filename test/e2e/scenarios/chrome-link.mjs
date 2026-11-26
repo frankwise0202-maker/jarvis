@@ -231,6 +231,9 @@ export default [
       try {
         await t.step('linked and online: the extension opens it', async () => {
           await t.waitFor(() => peer.received.some((m) => m.kind === 'hello'), { timeout: 10000, message: 'the app’s hello' });
+          const card = await openChromeSettings(t);
+          await waitCard(t, card, 'linked', true); // its hello back has arrived: online
+          await closeSettings(t);
           const input = await t.visible('composer-input');
           await input.fill('open YouTube in Chrome');
           await (await t.visible('composer-send')).click();
