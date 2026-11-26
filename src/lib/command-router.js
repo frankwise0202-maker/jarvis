@@ -22,7 +22,7 @@ import { matchMusicCommand } from './music-commands.js';
 import { matchHomeBaseCommand } from './homebase.js';
 import { matchBrainCommand } from './brain.js';
 import { matchHologramCommand, commandNeedingPart, normalizeCommandText } from './hologram-commands.js';
-import { matchOpticsCommand, voiceCameraRequest, isLiveViewRequest } from './optics-commands.js';
+import { matchOpticsCommand, voiceCameraRequest, voiceLiveViewRequest } from './optics-commands.js';
 import { matchQuestionAnswer, matchPromptAnswer } from './voice-questions.js';
 
 /** The layers, in the final order (C1): what a new matcher declares it is. */
@@ -413,15 +413,18 @@ const TODAY_COMMANDS = [
       return cmd && REOPEN_ACTIONS.has(cmd.action) ? { do: 'hologram', command: cmd, reopen: true, free: cmd.action !== 'blueprint' } : null;
     },
   },
-  // Camera words with Optics closed (Voice Mode): "what am I looking at?", "live view".
+  // Camera words with Optics closed (Voice Mode): "what am I looking at?", "live view"; never while
+  // a hologram or blueprint is on screen (the words are about it, v8.0).
   {
     id: 'camera',
     layer: 'camera',
     surfaces: ['voice'],
     match: (text, s) => {
       if ((s.optics && s.optics.open) || !(s.camera && s.camera.supported)) return null;
-      if (isLiveViewRequest(text)) return { do: 'camera', live: true, free: false, camera: true };
-      const look = voiceCameraRequest(text, { viewerOpen: !!(s.hologram || s.blueprintOpen), cameraAllowed: s.camera.allowed, ios: !!s.camera.ios });
+      const how = { viewerOpen: !!(s.hologram || s.blueprintOpen), cameraAllowed: s.camera.allowed, ios: !!s.camera.ios };
+      const live = voiceLiveViewRequest(text, how);
+      if (live) return { do: 'camera', live, free: false, camera: true };
+      const look = voiceCameraRequest(text, how);
       return look ? { do: 'camera', look, free: false, camera: true } : null;
     },
   },

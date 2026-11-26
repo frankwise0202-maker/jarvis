@@ -32,6 +32,7 @@ import regressions from './scenarios/regressions.mjs';
 import optics from './scenarios/optics.mjs';
 import opticsCamera from './scenarios/optics-camera.mjs';
 import opticsLive from './scenarios/optics-live.mjs';
+import opticsLive2 from './scenarios/optics-live-2.mjs';
 import naturalVoice from './scenarios/natural-voice.mjs';
 import holograms from './scenarios/holograms.mjs';
 import hologramsReal from './scenarios/holograms-real.mjs';
@@ -104,7 +105,7 @@ const V81_SCENARIOS = [
   // ---- chrome-ext ▸
   // ---- chrome-ext ◂
 ];
-export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...naturalVoice, ...V81_SCENARIOS];
+export const SCENARIOS = [...onboarding, ...firstrun, ...chat, ...swarm, ...pwa, ...layout, ...features, ...holograms, ...hologramsReal, ...attachments, ...presence, ...security, ...interaction, ...regressions, ...voiceSpeech, ...voiceListen, ...screens, ...music, ...standby, ...homebase, ...homebaseBrain, ...homebaseSync, ...homebaseSenses, ...voiceGeorge, ...voiceGeorgeStuck, ...optics, ...opticsCamera, ...opticsLive, ...opticsLive2, ...naturalVoice, ...V81_SCENARIOS];
 
 function parseArgs(argv) {
   const opts = { only: [], headed: false, list: false, build: true, mockSpeed: undefined, slowMo: 0 };

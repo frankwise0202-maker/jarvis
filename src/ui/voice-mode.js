@@ -3178,20 +3178,25 @@ function createVoiceMode(opts) {
       return;
     }
     if (o.error) speakAck(asSentence(clip(singleLine(o.error), 220)));
+    // What happened, said (Optics' live view started by voice: "Live view on…", or the pause at the limit).
+    else if (typeof o.ack === 'string' && o.ack.trim()) speakAck(clip(singleLine(o.ack), 220));
     else speakAck(o.opened ? savedBlueprintAck(cmd) : '');
   }
 
   /**
    * v8.0 Optics' live view: a line Jarvis says by himself ("That's a Duracell AA"), only while Voice
    * Mode is free: no turn, no speech, no 2-second check or question waiting, the wake routine over,
-   * and no words heard. A listen that has heard nothing yet is put aside for the line (the microphone
-   * never hears Jarvis) and, with Continuous on, listening starts again after it. True when said.
+   * and no words heard. A listen the owner opened (a tap, or any listen with Continuous off, which
+   * only a tap or a question of Jarvis's opens) is theirs: the line is only shown, so their question
+   * is never lost. Continuous's own listen that has heard nothing yet is put aside for the line (the
+   * microphone never hears Jarvis) and listening starts again after it. True when said.
    */
   function sayLine(text) {
     const line = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (S.closed || !line || !S.ttsOk) return false;
     if (S.run || S.speech || S.review || questions.size() || prompts.current() || S.wake || S.mic) return false;
     const L = S.listen;
+    if (L && (L.gesture || !S.continuous)) return false;
     if (L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening'))) return false;
     if (L) stopListening();
     clearRetry();
@@ -3261,10 +3266,14 @@ function createVoiceMode(opts) {
     return prompts.open(spec);
   }
 
-  /** Voice Mode can say a line now: no turn, no speech, no check, no routine, no words being heard. */
+  /**
+   * Voice Mode can say a line now: no turn, no speech, no check, no routine, and no listen of the
+   * owner's (a tap's, or any with Continuous off) or with words heard (sayLine()'s rule, v8.0).
+   */
   function canSayNow() {
     if (S.closed || S.run || S.speech || S.review || S.wake || S.mic) return false;
     const L = S.listen;
+    if (L && (L.gesture || !S.continuous)) return false;
     return !(L && (L.text || L.heard || L.duringBuild || (L.hb && L.hb !== 'listening')));
   }
 

@@ -65,8 +65,9 @@ function viewerStep(words, s) {
     if (cmd && REOPEN_ACTIONS.has(cmd.action)) return 'hologram';
   }
   if (!opticsOpen && s.camera.supported) {
-    if (voiceLiveViewRequest(words, { cameraAllowed: s.camera.allowed, ios: s.camera.ios })) return 'camera';
-    if (voiceCameraRequest(words, { viewerOpen: !!(s.hologram || s.blueprintOpen), cameraAllowed: s.camera.allowed, ios: s.camera.ios })) return 'camera';
+    const how = { viewerOpen: !!(s.hologram || s.blueprintOpen), cameraAllowed: s.camera.allowed, ios: s.camera.ios };
+    if (voiceLiveViewRequest(words, how)) return 'camera';
+    if (voiceCameraRequest(words, how)) return 'camera';
   }
   return null;
 }
@@ -115,7 +116,8 @@ const SENTENCES = [
   // Optics
   'what am I looking at?', 'what is this?', 'flip', 'switch cameras', 'close the camera', 'go live', 'tell me more',
   "what's this part?", 'hologram of this', 'watch this', 'stop watching', 'live view', 'stop live view', "that's enough",
-  'look at this', 'look up the battery part number', 'take a look', 'is this ripe?',
+  'look at this', 'look up the battery part number', 'take a look', 'is this ripe?', 'show me the live view',
+  'back to the live view', 'resume live view', 'back to the camera',
   // the hologram
   'expand it', 'explode it', 'put it back together', 'show the battery', 'isolate the fan', 'isolate it', 'zoom in',
   'rotate', 'stop rotating', 'labels off', 'front view', 'back', 'go back', 'close the blueprint', 'blueprint the battery',
