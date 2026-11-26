@@ -2,6 +2,11 @@
 // attributes and maps attribute/varying/gl_FragColor to GLSL ES 3.0). Everything is unlit and
 // drawn with additive blending and no depth buffer, so draw order never matters.
 
+/** A walkthrough's glowing parts pulse: alpha × (1 + 0.35 · sin 4t). uPulse 0 (every other part) leaves it as it was. */
+export const PULSE_AMPLITUDE = 0.35;
+export const PULSE_RATE = 4; // radians a second: one pulse about every 1.6 s
+const PULSE = /* glsl */ `(1.0 + ${PULSE_AMPLITUDE.toFixed(2)} * uPulse * sin(${PULSE_RATE.toFixed(1)} * uTime))`;
+
 // Shared by part fills and part edges: the materialize sweep. A shape appears bottom to top over
 // uReveal seconds after it arrived (aBorn), with a bright band at the sweep front.
 const REVEAL = /* glsl */ `
@@ -17,6 +22,7 @@ const COMMON_UNIFORMS = /* glsl */ `
   uniform float uVis;
   uniform float uSel;
   uniform float uHover;
+  uniform float uPulse;
   uniform float uTime;
   uniform float uReveal;
   uniform vec2 uFade;
@@ -68,7 +74,7 @@ export const FILL_FS = /* glsl */ `
     float a = uAlpha * (0.14 + 1.35 * rim) * rows;
     a *= 1.0 + 1.1 * uSel + 0.5 * uHover;
     a += scan * 0.16 * uAlpha;
-    a *= fade * uVis * uFlicker;
+    a *= fade * uVis * uFlicker * ${PULSE};
     vec3 col = mix(uColor, vec3(0.86, 1.0, 1.0), clamp(0.1 + 0.45 * uSel + 0.3 * rim * rim, 0.0, 1.0));
     gl_FragColor = vec4(col * a + vec3(0.65, 1.0, 1.0) * front * 0.5 * uVis, 1.0);
   }
@@ -106,7 +112,7 @@ export const LINE_FS = /* glsl */ `
     ${REVEAL}
     float fade = 1.0 - 0.62 * smoothstep(uFade.x, uFade.y, vDepth);
     float scan = exp(-pow((vWY - uScanY) / uScanW, 2.0));
-    float a = uAlpha * vW * fade * uVis * uFlicker * (1.0 + 0.8 * uSel + 0.45 * uHover);
+    float a = uAlpha * vW * fade * uVis * uFlicker * (1.0 + 0.8 * uSel + 0.45 * uHover) * ${PULSE};
     a += (scan * 0.22 + front) * uVis;
     vec3 col = mix(uColor, vec3(0.9, 1.0, 1.0), clamp(0.28 + 0.55 * uSel + 0.25 * uHover, 0.0, 1.0));
     gl_FragColor = vec4(col * a, 1.0);
