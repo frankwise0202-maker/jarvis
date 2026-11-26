@@ -13,8 +13,10 @@
 // task from Jarvis runs it waits 10 s, so 20 s without an answer means the home base can't be
 // reached (link.js then pauses that task). A chrome.alarms tick every 30 s starts the loop again
 // when Chrome stopped the worker. While the home base can't be reached the loop backs off (1 s up
-// to 30 s). Where it left off and the ids it has read are kept (chrome.storage.local), so a message
-// is never taken twice, also after a restart.
+// to 30 s). A poll answered in under a second with nothing in it is followed by a pause of at least
+// 1.5 s (REDTEAM-LINK-2: a home base that answers at once must not make the loop spin). Where it
+// left off and the ids it has read are kept (chrome.storage.local), so a message is never taken
+// twice, also after a restart.
 //
 // Nothing here is logged: not the messages, not the key, not the home base's answers.
 
@@ -29,6 +31,8 @@ export const UNREACHABLE_MS = 20 * 1000;
 export const ONLINE_MS = 60 * 1000;
 export const STATUS_EVERY_MS = 30 * 1000;
 export const BACKOFF_MS = Object.freeze([1000, 2000, 5000, 10000, 20000, 30000]);
+export const QUICK_EMPTY_MS = 1000; // a poll answered sooner than this with nothing in it didn't wait
+export const MIN_POLL_MS = 1500; // ... and the next one waits at least this long (REDTEAM-LINK-2)
 export const ALARM = 'jarvis-relay';
 export const ALARM_PERIOD_MIN = 0.5; // 30 s: Chrome's shortest
 const MAX_MESSAGES = 50;
@@ -163,6 +167,7 @@ export class Relay {
         /* not needed for the poll itself */
       }
       const wait = this.busy() ? POLL_WAIT_BUSY_S : POLL_WAIT_S;
+      const asked = this.now();
       let res = null;
       try {
         res = await this.request('GET', `to-ext?${this.after ? `after=${encodeURIComponent(this.after)}&` : ''}wait=${wait}`, null, wait * 1000 + POLL_GRACE_MS);
@@ -172,6 +177,8 @@ export class Relay {
       if (!this.running) break;
       const data = res?.ok ? res.data : null;
       if (data && Array.isArray(data.messages)) {
+        // An answer at once with nothing in it: the poll didn't wait (REDTEAM-LINK-2).
+        const quickEmpty = !data.messages.length && this.now() - asked < QUICK_EMPTY_MS;
         this.answered();
         for (const m of data.messages.slice(0, MAX_MESSAGES)) {
           if (!this.running) break;
@@ -182,6 +189,7 @@ export class Relay {
         if (typeof data.last === 'string' && data.last.length <= 64) this.after = data.last;
         await this.save();
         if (this.now() - this.statusAt >= STATUS_EVERY_MS) await this.readStatus();
+        if (quickEmpty && this.running) await this.sleep(MIN_POLL_MS);
         continue;
       }
       // (A cursor the home base won't take is dropped: it then answers with every message it holds.)

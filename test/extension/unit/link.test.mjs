@@ -194,6 +194,44 @@ test('the relay loop backs off while the home base can’t be reached, and start
   assert.ok(relay.requests.some((q) => q.path === '/api/relay/to-ext' && q.query.wait === '20'), 'a 20-s long poll');
 });
 
+test('LINK-2: a poll answered at once with nothing doesn’t loop right away: at least 1.5 s before the next; one that waited doesn’t', async () => {
+  // The home base answers every long poll at once, empty (an old Core whose places were all taken, a proxy).
+  const relay = createFakeRelay({ waitScaleMs: 0 });
+  const store = createStore(createFakeBrowser().chrome);
+  const slept = [];
+  let clock = 1_800_000_000_000;
+  const r = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store, onMessage() {}, fetch: relay.fetch, now: () => clock, sleep: async (ms) => {
+    slept.push(ms);
+    clock += ms;
+    await new Promise((res) => setTimeout(res, 1));
+  } });
+  r.start();
+  const end = Date.now() + 3000;
+  const polls = () => relay.requests.filter((q) => q.path === '/api/relay/to-ext').length;
+  while (polls() < 6 && Date.now() < end) await new Promise((res) => setTimeout(res, 5));
+  r.stop();
+  const n = polls();
+  assert.ok(n >= 6, `it went on polling (${n})`);
+  assert.ok(slept.filter((ms) => ms >= 1500).length >= n - 1, `a pause of 1.5 s at least between answers that came at once (${n} polls, slept ${JSON.stringify(slept)})`);
+  // A poll that really waited (its 20 s went by) and came back empty is followed by the next at once.
+  const relay2 = createFakeRelay({ waitScaleMs: 0 });
+  const slept2 = [];
+  let clock2 = 1_800_000_000_000;
+  const waited = async (url, init) => {
+    clock2 += 20_000;
+    return relay2.fetch(url, init);
+  };
+  const r2 = new Relay({ chrome: { runtime: {} }, link: { core: CORE, key: newLinkKey() }, store: createStore(createFakeBrowser().chrome), onMessage() {}, fetch: waited, now: () => clock2, sleep: async (ms) => {
+    slept2.push(ms);
+    await new Promise((res) => setTimeout(res, 1));
+  } });
+  r2.start();
+  const end2 = Date.now() + 3000;
+  while (relay2.requests.filter((q) => q.path === '/api/relay/to-ext').length < 4 && Date.now() < end2) await new Promise((res) => setTimeout(res, 2));
+  r2.stop();
+  assert.deepEqual(slept2.filter((ms) => ms >= 1500), [], 'no pause after a poll that waited');
+});
+
 test('online (the side panel): only once Jarvis has answered with this link’s key, and while it is heard from or reads its box', async () => {
   let t = 1_800_000_000_000;
   const now = () => t;

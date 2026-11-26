@@ -4949,14 +4949,18 @@ app's, the extension's and the Core's tests all read it.
   `unsupported_type`, 429 `rate_limited`. The same id again is kept once (a sender's retry).
 - `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…`: `200 { messages: [{ id, iv, ct }], last }`,
   the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest
-  id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0; at most 8
-  waiting reads a box) for a message, then answers `messages: []`. A reader that hangs up lets go of its place.
+  id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0) for a
+  message, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client; a long poll that
+  finds no place, with nothing to read, gets 429 `busy` with `Retry-After: 2` (REDTEAM-LINK-2: an empty answer at
+  once made a looping reader spin). A reader that hangs up lets go of its place.
 - `GET /api/relay/status` → `200 { extSeenAt, appSeenAt }`: when each side last read its box (ms, or null; a read
   waiting right now counts as now). Reading `to-ext` counts as the extension, `to-app` as the app.
 
 Each box keeps at most 50 messages, each for 2 minutes, **in memory only**: nothing is logged (the routes have no
 logger, and an error never quotes a body) or written to disk, and a restart forgets everything. 120 requests a
-minute per box (both methods) and for the status, on top of the API's general limit. Access: the usual check (the
+minute per box (both methods) and for the status, for each client (its Tailscale login and its Origin). The relay's
+requests never take from the API's general limit, which every device of the owner's login shares, so relay traffic
+can't starve George's voice, hearing, sync or the brain (REDTEAM-LINK-2). Access: the usual check (the
 tailnet or this computer, §23); for these three routes only, `access.mjs checkRelayOrigin` also allows a
 `chrome-extension://<32 letters a-p>` origin (and answers its private-network preflight) and a CORS-mode fetch that
 carries no Origin (`Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest: empty`: an extension's own request; a web page's
@@ -5101,7 +5105,8 @@ relay (`http://127.0.0.1:<port>`).
 
 **32.2.3 The relay loop.** `GET <core>/api/relay/to-ext?after=<id>&wait=20` (`wait=10` while a task from Jarvis
 runs, so 20 s without an answer means the home base is gone), each poll after one extension API call
-(`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. Failures back off 1, 2, 5,
+(`chrome.runtime.getPlatformInfo`); a poll with no answer 5 s past its wait has failed. A poll answered in under a
+second with nothing in it is followed by a pause of at least 1.5 s (REDTEAM-LINK-2: it must never spin). Failures back off 1, 2, 5,
 10, 20, 30 s (a 429's Retry-After counts, up to 60 s); a 400 drops the cursor. Each message is opened (§32.1.2's
 drops), counted as read and saved before it is acted on, so none is taken twice, also across a worker or browser
 restart. `/api/relay/status` is read at most every 30 s for the panel. Messages to `to-app` leave in the order they

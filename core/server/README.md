@@ -390,13 +390,15 @@ their shape on the strings' lengths and alphabet, never decodes or decrypts them
 | | |
 |---|---|
 | `POST /api/relay/to-ext`, `POST /api/relay/to-app` | body `{id, iv, ct}` (JSON, at most 24 KB): `id` 22 and `iv` 16 base64url characters, `ct` 24-21,867 → `{ok: true}`; the same `id` again is kept once (a retry). 400 `bad_json` / `bad_envelope`, 413 `too_large`, 415 `unsupported_type`, 429 `rate_limited` |
-| `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…` | `{messages: [{id, iv, ct}], last}`: the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0; at most 8 waiting reads a box) for one, then answers `messages: []`. 400 `bad_after`, `bad_wait` |
+| `GET /api/relay/to-ext?after=<id>&wait=<s>`, `GET /api/relay/to-app?…` | `{messages: [{id, iv, ct}], last}`: the messages after `after` (all held ones when it is missing or no longer held), oldest first; `last` is the newest id held (or `after` when none is). With nothing to send it waits up to `wait` seconds (0-25, default 0) for one, then answers `messages: []`. At most 8 reads wait on a box, 4 of them from one client: a long poll that finds no place (and nothing to read) gets 429 `busy` with `Retry-After: 2`, never an empty answer at once. 400 `bad_after`, `bad_wait` |
 | `GET /api/relay/status` | `{extSeenAt, appSeenAt}`: when each side last read its box (ms since 1970, or `null`); a read waiting right now counts as now. Reading `to-ext` counts as the extension, `to-app` as the app |
 
 Each box keeps at most 50 messages, each for 2 minutes (in memory; a sweep every 10 s, and a restart forgets
-them). 120 requests a minute per box (both methods), and 120 a minute for the status, on top of the API's
-general limit. Tests: `test/server/relay.test.mjs` (the shared vectors `test/fixtures/relay-vectors.json`, the
-sizes, the 2-minute life, the long poll, the rate limit, the origins, and nothing on disk or in the log).
+them). 120 requests a minute per box (both methods), and 120 a minute for the status, for each client (its
+Tailscale login and its Origin), so one client can't use up another's; relay requests never take from the API's
+general limit, so relay traffic can't starve speak, hear, sync or the brain (REDTEAM-LINK-2). Tests:
+`test/server/relay.test.mjs` (the shared vectors `test/fixtures/relay-vectors.json`, the sizes, the 2-minute life,
+the long poll, the rate limit, the origins, 8 outside waiters, and nothing on disk or in the log).
 
 ## What only the real machine can verify
 

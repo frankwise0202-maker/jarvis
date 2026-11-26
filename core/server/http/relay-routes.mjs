@@ -13,7 +13,12 @@
 //        nothing to send it waits up to `wait` seconds (default 0) for a message, then answers messages: [].
 //   GET  /api/relay/status → 200 { extSeenAt, appSeenAt }: when each side last read its box (ms since 1970, or
 //        null); a read waiting right now counts as now. Reading to-ext counts as Jarvis for Chrome, to-app as the app.
-//   120 requests a minute per box (both methods), and 120 a minute for the status.
+//   120 requests a minute per box (both methods) and for the status, for each client (its Tailscale login and its
+//   Origin): one client can't use up another's. The relay's requests never take from the API's general limit
+//   (server.mjs), so relay traffic can't starve speak, hear, sync or the brain (REDTEAM-LINK-2).
+//   At most 8 reads wait on a box at once, 4 of them from one client. A long poll that finds them taken (and
+//   nothing to read) is refused with 429 busy and Retry-After, never answered at once: an answer at once made a
+//   reader that loops right away spin (REDTEAM-LINK-2). A short read (wait=0) is never refused for this.
 //
 // The access check (the tailnet or this computer) and the origin rule run first, in server.mjs: for these routes
 // only, access.mjs checkRelayOrigin also allows chrome-extension:// origins. The shape is checked on the strings'
@@ -27,7 +32,9 @@ export const RELAY_MAX_MESSAGES = 50;
 export const RELAY_TTL_MS = 2 * 60_000;
 export const RELAY_WAIT_MAX_S = 25;
 export const RELAY_PER_MINUTE = 120;
-export const RELAY_MAX_WAITERS = 8; // long polls waiting on one box at once (more answer at once)
+export const RELAY_MAX_WAITERS = 8; // long polls waiting on one box at once (more are refused: 429 busy)
+export const RELAY_MAX_WAITERS_PER_CLIENT = 4; // of them, from one client (its login and Origin)
+export const RELAY_BUSY_RETRY_S = 2; // Retry-After for a long poll refused because the box's places are taken
 const SWEEP_MS = 10_000;
 
 // The envelope's sizes (src/lib/relay-envelope.js): id 16 bytes, iv 12 bytes, ct = a plaintext of at most
@@ -62,7 +69,7 @@ export function isRelayEnvelope(value) {
  * status() → { extSeenAt, appSeenAt }; sweep() drops expired messages; close() answers every waiting read and
  * forgets everything.
  */
-export function createRelayStore({ now = () => Date.now(), maxMessages = RELAY_MAX_MESSAGES, ttlMs = RELAY_TTL_MS, maxWaiters = RELAY_MAX_WAITERS } = {}) {
+export function createRelayStore({ now = () => Date.now(), maxMessages = RELAY_MAX_MESSAGES, ttlMs = RELAY_TTL_MS, maxWaiters = RELAY_MAX_WAITERS, maxWaitersPerClient = RELAY_MAX_WAITERS_PER_CLIENT } = {}) {
   const boxes = new Map(RELAY_BOXES.map((name) => [name, { messages: [], seenAt: null, waiters: new Set() }]));
   const box = (name) => {
     const b = boxes.get(name);
@@ -103,13 +110,31 @@ export function createRelayStore({ now = () => Date.now(), maxMessages = RELAY_M
     return { stored: true };
   }
 
-  function wait(name, afterId = null, ms = 0, signal = null) {
+  /** Whether a long poll from `client` would find a place to wait on `name` (8 a box, 4 a client). */
+  function admits(name, client = null) {
+    const b = box(name);
+    if (b.waiters.size >= maxWaiters) return false;
+    if (client === null || client === undefined) return true;
+    let mine = 0;
+    for (const w of b.waiters) if (w.client === client) mine += 1;
+    return mine < maxWaitersPerClient;
+  }
+
+  /** How many messages a read after `afterId` would get now (marks nothing as read). */
+  function pending(name, afterId = null) {
+    const b = box(name);
+    prune(b, now());
+    return after(b, afterId).messages.length;
+  }
+
+  function wait(name, afterId = null, ms = 0, signal = null, client = null) {
     const first = read(name, afterId);
     const b = box(name);
-    if (first.messages.length || ms <= 0 || b.waiters.size >= maxWaiters || (signal && signal.aborted)) return Promise.resolve(first);
+    if (first.messages.length || ms <= 0 || !admits(name, client) || (signal && signal.aborted)) return Promise.resolve(first);
     return new Promise((resolve) => {
       let timer = null;
       const waiter = {
+        client,
         wake() {
           const out = read(name, afterId);
           if (out.messages.length) finish(out);
@@ -153,6 +178,8 @@ export function createRelayStore({ now = () => Date.now(), maxMessages = RELAY_M
     post,
     read,
     wait,
+    admits,
+    pending,
     status,
     sweep,
     /** How many messages and waiting reads each box holds (tests and the dashboard's counters; never the contents). */
@@ -176,10 +203,11 @@ export function createRelayStore({ now = () => Date.now(), maxMessages = RELAY_M
  */
 export function createRelayRoutes({ readBody, sendJson, HttpError, now = () => Date.now(), perMinute = RELAY_PER_MINUTE, store = null, maxMessages, ttlMs } = {}) {
   const relay = store ?? createRelayStore({ now, maxMessages, ttlMs });
-  const limiter = createRateLimiter({ capacity: perMinute, refillPerSec: perMinute / 60, maxKeys: 4, now });
+  // Its own buckets, one per box (and the status) per client: never the API's general limit (REDTEAM-LINK-2).
+  const limiter = createRateLimiter({ capacity: perMinute, refillPerSec: perMinute / 60, maxKeys: 64, now });
 
-  const take = (key) => {
-    const r = limiter.take(key);
+  const take = (key, client) => {
+    const r = limiter.take(`${key}|${client ?? ''}`);
     if (!r.ok) throw new HttpError(429, 'rate_limited', 'too many relay requests; slow down', { 'Retry-After': String(r.retryAfterSec) });
   };
 
@@ -197,16 +225,19 @@ export function createRelayRoutes({ readBody, sendJson, HttpError, now = () => D
     return { afterId: afterId || null, wait };
   }
 
-  async function handle(req, res, { route, url, cors = {} }) {
+  /**
+   * client: who asks, for the per-client limits (server.mjs: the Tailscale login, or 'local', and the Origin).
+   */
+  async function handle(req, res, { route, url, cors = {}, client = null }) {
     const name = route.replace(/\/+$/, '').slice('/api/relay/'.length);
     const method = req.method;
     if (name === 'status') {
       if (method !== 'GET') throw new HttpError(405, 'method_not_allowed', `${method} is not supported here`, { Allow: 'GET, OPTIONS' });
-      take('status');
+      take('status', client);
       return sendJson(req, res, 200, relay.status(), cors);
     }
     if (method !== 'GET' && method !== 'POST') throw new HttpError(405, 'method_not_allowed', `${method} is not supported here`, { Allow: 'GET, POST, OPTIONS' });
-    take(name);
+    take(name, client);
     if (method === 'POST') {
       const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
       if (type !== 'application/json') throw new HttpError(415, 'unsupported_type', 'send JSON: Content-Type: application/json');
@@ -224,12 +255,16 @@ export function createRelayRoutes({ readBody, sendJson, HttpError, now = () => D
     }
     const { afterId, wait } = readQuery(url);
     let out;
+    // Every place to wait is taken and nothing waits to be read: refused, so a reader that loops can't spin.
+    if (wait > 0 && !relay.admits(name, client) && relay.pending(name, afterId) === 0) {
+      throw new HttpError(429, 'busy', 'too many reads are waiting on this box; try again in a moment', { 'Retry-After': String(RELAY_BUSY_RETRY_S) });
+    }
     if (wait > 0) {
       const gone = new AbortController();
       const onClose = () => gone.abort();
       res.once('close', onClose);
       try {
-        out = await relay.wait(name, afterId, wait * 1000, gone.signal);
+        out = await relay.wait(name, afterId, wait * 1000, gone.signal, client);
       } finally {
         res.off('close', onClose);
       }
