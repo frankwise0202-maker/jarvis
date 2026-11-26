@@ -1381,10 +1381,10 @@ export function createScreens(deps = {}) {
       });
     },
     commandIn,
-    /** The window showing `kind` (the focused, picked or newest one): { id, label, mode, kind, title, parts, selected } | null. */
+    /** The window showing `kind` (the focused, picked or newest one): { id, label, mode, kind, title, ref, parts, selected } | null. */
     shown(kind) {
       const e = pickOf([...screens.values()].filter((s) => s.kind === kind && !s.external && s.mode !== 'inapp' && alive(s)));
-      return e ? { id: e.id, label: e.label, mode: e.mode, kind: e.kind, title: e.title, parts: e.parts ? e.parts.slice() : null, selected: e.selected || null } : null;
+      return e ? { id: e.id, label: e.label, mode: e.mode, kind: e.kind, title: e.title, ref: { ...(e.ref || {}) }, parts: e.parts ? e.parts.slice() : null, selected: e.selected || null } : null;
     },
     /**
      * A web page in a window (v8.1: "pull this up in Chrome" beside Jarvis): placed at `rect`, or
