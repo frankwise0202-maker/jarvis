@@ -3952,7 +3952,8 @@ fails, `silentNarrator` moves the words on by estimate (14.5 characters a second
 from the first with the choices made so far, else the defaults), Back, Pause/Play, Next, End, and the choices at a
 decision (in place of Pause and Next). While a tour runs it takes the place of the assembly row and the tools
 (`.hv[data-tour='on']`); its height never changes during the tour. Phones keep the count and the buttons; the step's
-words are the viewer's caption (`data-state="tour"`). ← and → step and Space plays or pauses (heard on the window
+words are the viewer's caption (`data-state="tour"`). A finished reply's caption goes when a tour starts (a reply still
+coming keeps it). ← and → step and Space plays or pauses (heard on the window
 while the viewer is on top, never in a text field; Space on another button never clicks it); Esc ends the tour first,
 then closes as before. A press on the model pauses it. A hidden page pauses it and lets go of the hold; shown again,
 it goes on (an owner's pause stays paused).
