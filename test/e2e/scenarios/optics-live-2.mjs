@@ -410,7 +410,11 @@ export default [
         await sayInOptics(t, page, 'Go live.');
         const reply = await nextSaid(t, page, n, '"go live"');
         note(t, `"go live": ${JSON.stringify(reply)}`);
-        t.assert(reply.some((s) => /^This is the camera\.$/.test(s)), `"This is the camera." (${JSON.stringify(reply)})`);
+        // v8.1 (changed on purpose): on a Mac the question's Look is still aside beside the live video,
+        // so the camera's words say that the live video is on and the picture stays beside it.
+        const camera = /^This is the camera\.$|^The live video is on\. The picture stays beside it\.$/;
+        t.assert(reply.some((s) => camera.test(s)), `the camera's words (${JSON.stringify(reply)})`);
+        t.assert(!reply.some((s) => /live view/i.test(s)), `never a claim about the live view (${JSON.stringify(reply)})`);
         t.assert((await attr(page, 'liveview')) === 'on', 'the live view goes on');
       });
       await page.locator(tid('optics-live-pill')).click();
