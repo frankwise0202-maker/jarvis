@@ -1608,7 +1608,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     safe(() => t.player.end(reason));
     t.bar.destroy();
     const ds = el.dataset;
-    for (const k of ['tour', 'tourStatus', 'tourStep', 'tourIndex', 'tourTotal', 'tourView', 'tourHold']) delete ds[k];
+    for (const k of ['tour', 'tourStatus', 'tourStep', 'tourShown', 'tourIndex', 'tourTotal', 'tourView', 'tourHold']) delete ds[k];
     if (!caption.hidden && caption.dataset.state === 'tour') hideCaption();
     layoutSoon();
     return true;
@@ -1620,6 +1620,7 @@ export function openHologramViewer({ source, deps = {} } = {}) {
     const ds = el.dataset;
     ds.tourStatus = st.status;
     ds.tourStep = st.stepId || '';
+    ds.tourShown = st.shown || ''; // the step whose look shows (it changes when its words begin)
     ds.tourIndex = String(st.index || 0);
     ds.tourTotal = String(st.total || 0);
     ds.tourView = st.view || '';

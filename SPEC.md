@@ -3972,7 +3972,8 @@ pauses the tour. Lines (R9): pause "Paused. Say continue when you're ready." (at
 "Okay, that's the end of the tour.", next at the end "That was the last step. …"; a word that moves the tour on says
 none of its own (its step is the line).
 
-**Test hooks.** On the viewer: `data-tour`, `data-tour-status`, `data-tour-step`, `data-tour-index`,
+**Test hooks.** On the viewer: `data-tour`, `data-tour-status`, `data-tour-step` (the step being said, or about to
+be), `data-tour-shown` (the step whose look shows: it changes when its words begin), `data-tour-index`,
 `data-tour-total`, `data-tour-view`, `data-tour-hold`, the renderer's emphasis as `data-glow`, `data-ghost`,
 `data-hide`, and `data-flying`. The bar: `tour-bar` (`data-status`, `data-step`, `data-decision`), `tour-words`,
 `tour-count`, `tour-back`, `tour-toggle`, `tour-next`, `tour-end`, `tour-choice` (`data-choice`). The mock's

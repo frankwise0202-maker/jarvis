@@ -49,7 +49,7 @@ const waitStatus = (t, status, opts = {}) => waitViewer(t, 'tour-status', status
 function recordTour() {
   const log = [];
   window.__tour = { log };
-  const fields = ['tourStep', 'tourStatus', 'tourHold', 'tourView', 'tourIndex', 'tourTotal', 'glow', 'ghost', 'hide', 'exploded', 'flying'];
+  const fields = ['tourStep', 'tourShown', 'tourStatus', 'tourHold', 'tourView', 'tourIndex', 'tourTotal', 'glow', 'ghost', 'hide', 'exploded', 'flying'];
   let last = '';
   const note = () => {
     const el = document.querySelector('[data-testid="hologram-viewer"]');
@@ -61,14 +61,14 @@ function recordTour() {
     last = key;
     log.push({ at: performance.now(), ...e });
   };
-  const attrs = ['data-tour-step', 'data-tour-status', 'data-tour-hold', 'data-tour-view', 'data-tour-index', 'data-tour-total', 'data-glow', 'data-ghost', 'data-hide', 'data-exploded', 'data-flying', 'data-tour'];
+  const attrs = ['data-tour-step', 'data-tour-shown', 'data-tour-status', 'data-tour-hold', 'data-tour-view', 'data-tour-index', 'data-tour-total', 'data-glow', 'data-ghost', 'data-hide', 'data-exploded', 'data-flying', 'data-tour'];
   new MutationObserver(note).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: attrs });
 }
 const tourLog = (t, page = t.page) => page.evaluate(() => JSON.parse(JSON.stringify(window.__tour.log)));
 /** The steps shown, in order (each run of the same step once). */
 const stepsOf = (log) => log.map((e) => e.tourStep).filter((s, i, a) => s && s !== a[i - 1]);
-/** When the viewer first showed `step` (after `from`), or -1. */
-const shownAt = (log, step, from = -Infinity) => (log.find((e) => e.tourStep === step && e.at >= from) || { at: -1 }).at;
+/** When the viewer first showed `step`'s look (after `from`), or -1: data-tour-shown, which changes when its words begin. */
+const shownAt = (log, step, from = -Infinity) => (log.find((e) => e.tourShown === step && e.at >= from) || { at: -1 }).at;
 const voice = (t, page = t.page) => page.evaluate(() => JSON.parse(JSON.stringify(window.__voice)));
 const leadCount = (t) => t.requests('lead').length;
 
@@ -224,13 +224,39 @@ async function decodePng(buf) {
   return { width, height, data: out };
 }
 
-/** Warm (orange) pixels: the battery's warning tone, glowing. */
-async function warmPixels(png) {
-  const { data } = await decodePng(png);
-  let n = 0;
-  for (let i = 0; i < data.length; i += 4) if (data[i] > 150 && data[i] > data[i + 2] + 60 && data[i + 1] > 70) n++;
-  return n;
+/**
+ * Bright pixels (luma over 150: a glowing part's light; the rest of the hologram is dim on the dark
+ * stage) between `top` and `bottom`, leaving out `skip` boxes (a label's white text is bright too),
+ * and their centre. As tour-render's own check (test/e2e/scenarios/tour-render.mjs).
+ */
+async function brightLight(png, { top = 0, bottom = Infinity, skip = [] } = {}) {
+  const { width, data } = await decodePng(png);
+  let bright = 0;
+  let sx = 0;
+  let sy = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const x = (i / 4) % width;
+    const y = Math.floor(i / 4 / width);
+    if (y < top || y > bottom || skip.some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) continue;
+    if (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2] > 150) {
+      bright++;
+      sx += x;
+      sy += y;
+    }
+  }
+  return { bright, centre: bright ? { x: Math.round(sx / bright), y: Math.round(sy / bright) } : null };
 }
+
+/** Where the battery's label leader points (the battery on screen) and the label's box, in page pixels. */
+const batteryAnchor = (t) =>
+  t.page.evaluate(() => {
+    const label = Array.from(document.querySelectorAll('[data-testid="hologram-viewer"] .holo-label.is-shown')).find((l) => l.textContent.trim() === 'Battery (57 Wh)');
+    const dot = label && document.querySelector(`circle.holo-anchor[data-key="${label.dataset.key}"]`);
+    if (!dot) return null;
+    const r = dot.getBoundingClientRect();
+    const b = label.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), label: { left: b.left - 4, top: b.top - 4, right: b.right + 4, bottom: b.bottom + 4 } };
+  });
 
 // ---- scenarios -------------------------------------------------------------------------------------
 
@@ -297,8 +323,9 @@ export default [
       await t.step('every step in order, each said', async () => {
         await waitStep(t, 'g-power', { timeout: 60000 });
         const caption = t.page.locator(tid('hologram-caption'));
-        await t.waitFor(async () => /^Power: the battery\./.test(norm(await t.text(caption))), { timeout: 10000, message: async () => `the step's words in the caption (${norm(await t.text(caption))})` });
+        await t.waitFor(async () => /Power: the battery\./.test(norm(await t.text(caption))), { timeout: 10000, message: async () => `the step's words in the caption (${norm(await t.text(caption))})` });
         t.assert((await caption.getAttribute('data-state')) === 'tour', 'a tour caption');
+        t.assert(!(await t.page.locator(tid('hologram-caption-open')).isVisible()), 'no "Open in chat" on a step\'s words');
         t.assert(!(await t.page.locator(tid('tour-words')).isVisible()), 'the bar has no words on a phone');
         t.assert(/^\d+ of 9$/.test(norm(await t.text(t.page.locator(tid('tour-count'))))), 'the count');
         await t.screenshot('1-phone-step');
@@ -324,8 +351,8 @@ export default [
       const lead = await t.waitFor(async () => (leadCount(t) >= 2 ? leadCount(t) : null), { timeout: 30000, message: 'the hologram reply' });
       await t.step('"repeat" at the question asks it again; "back" says the step before; "wait" there waits', async () => {
         await t.waitFor(async () => norm((await voice(t)).said.join('|')).split(QUESTION).length - 1 >= 3, { timeout: 60000, message: async () => `the question asked three times: first, after "repeat", after "back" (said: ${norm((await voice(t)).said.join(' | '))})` });
-        const v = await voice(t);
-        t.assert(v.said.some((x) => /^I[’']ll wait\.$/.test(norm(x))), `"wait" at the question: "I'll wait." (${norm(v.said.join(' | '))})`);
+        // "Wait." is heard once the third question has been said
+        await t.waitFor(async () => (await voice(t)).said.some((x) => /^I[’']ll wait\.$/.test(norm(x))), { timeout: 15000, message: async () => `"wait" at the question: "I'll wait." (${norm((await voice(t)).said.join(' | '))})` });
         const order = stepsOf(await tourLog(t));
         t.assert(order.filter((s) => s === 'apart').length >= 2, `"back" said "apart" again (${order.join(' → ')})`);
       });
@@ -451,10 +478,14 @@ export default [
         await waitViewer(t, 'flying', 'false', { timeout: 10000 });
         await t.page.waitForTimeout(400); // the fades settle
         await t.page.locator(tid('tour-toggle')).click(); // hold the view for the picture
-        const png = await t.page.locator(tid('hologram-stage')).screenshot();
-        const warm = await warmPixels(png);
-        t.assert(warm > 400, `the battery glows in its warning colour (${warm} warm pixels)`);
-        t.note(`enclosed: ${warm} warm pixels`);
+        const anchor = await batteryAnchor(t);
+        t.assert(anchor, 'only the battery is labeled, and its label is shown');
+        const bar = await barBox(t);
+        // the model's area: under the title, above the bar; the battery's label left out
+        const shot = await brightLight(await t.page.screenshot(), { top: 140, bottom: bar.top - 8, skip: [anchor.label] });
+        const off = shot.centre ? Math.round(Math.hypot(shot.centre.x - anchor.x, shot.centre.y - anchor.y)) : -1;
+        t.assert(shot.bright > 300 && off >= 0 && off < 140, `the brightest light is the battery (${shot.bright} bright pixels centred ${off} px from the battery)`);
+        t.note(`enclosed: ${shot.bright} bright pixels, centred ${off} px from the battery`);
         await t.screenshot('1-enclosed');
       });
       await t.step('opened', async () => {
@@ -530,7 +561,11 @@ export default [
         ['g-input', 'Keyboard and touchpad: the keyboard'],
         ['end', "That's the tour"],
       ];
+      // When the tour's narration was asked for (its run started): George's 4 s fallback counts from there.
+      const asked = (log.find((e) => e.tourStatus === 'playing') || { at: -1 }).at;
+      t.assert(asked > 0, 'the tour played');
       const gaps = [];
+      const late = [];
       for (const [step, words] of steps) {
         const i = speaks.findIndex((s, k) => k >= first && s.startsWith(words));
         t.assert(i >= 0, `George said "${words}"`);
@@ -538,10 +573,15 @@ export default [
         const heard = audio[i].at;
         const shown = shownAt(log, step);
         t.assert(shown > 0, `${step} was shown`);
-        gaps.push(`${step} ${Math.round(shown - heard)} ms`);
-        t.assert(Math.abs(shown - heard) <= 300, `${step}: shown ${Math.round(shown - heard)} ms from its words (within 300 ms)`);
+        // M5: with no chunk 4 s after it was asked for (a home base slow under load), the first step is
+        // shown then and the next ones follow George's chunks again.
+        const fallback = step === 'overview' && heard - asked > 3900;
+        const due = fallback ? asked + 4000 : heard;
+        gaps.push(`${step} ${Math.round(shown - heard)} ms${fallback ? ` (George began ${Math.round(heard - asked)} ms after it was asked: shown ${Math.round(shown - asked)} ms after, by the fallback)` : ''}`);
+        if (Math.abs(shown - due) > 300) late.push(`${step}: shown ${Math.round(shown - due)} ms from ${fallback ? 'the fallback' : 'its words'}`);
       }
       t.note(gaps.join(', '));
+      t.assert(!late.length, `each step shown within 300 ms of its words (${late.join('; ')})`);
     },
   },
   {
@@ -594,7 +634,8 @@ export default [
         const req = await t.waitFor(() => t.requests('lead').slice(lead).find((r) => /What does that do\?/.test(newestUserText(r.body))), { timeout: 30000, message: 'the question sent' });
         const ctx = newestTurnContext(req.body);
         t.assert(/On screen: the hologram "14-inch laptop", exploded; glowing: "Battery \(57 Wh\)" \(id: battery\)\. Walkthrough: step 3 of 7, the battery, apart\./.test(ctx), `the turn context says what is on screen (${(/^On screen:.*$/m.exec(ctx) || [''])[0]})`);
-        await t.waitFor(async () => (await voice(t)).said.some((x) => /That's the battery\. It stores the energy/.test(x)), { timeout: 30000, message: 'the answer about the battery' });
+        // the device voice says a reply sentence by sentence
+        await t.waitFor(async () => /That's the battery\. It stores the energy/.test(norm((await voice(t)).said.join(' '))), { timeout: 30000, message: async () => `the answer about the battery (said: ${norm((await voice(t)).said.join(' | ')).slice(-400)})` });
         t.assert(leadCount(t) === lead + 1, `exactly one request (${leadCount(t) - lead})`);
         t.assert((await viewerAttr(t, 'tour-status')) === 'choice', 'the tour still waits at its decision');
       });

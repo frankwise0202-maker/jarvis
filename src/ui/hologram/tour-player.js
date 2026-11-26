@@ -7,7 +7,7 @@
 //   await player.start()          after target.settled() (at most 10 s): the first step
 //   player.next() / back() / repeat() / pause(reason) / resume() / toggle() / end(reason)
 //   player.choose(choiceId) / jump(partId) / showView('enclosed' | 'opened') / setHidden(hidden)
-//   player.getState()             { status, stepId, index, total, say, ask, choices, … }
+//   player.getState()             { status, stepId, shown (the step whose look shows), index, total, say, ask, choices, … }
 //
 // Steps are spoken in runs: from a step up to the next decision or `wait` step, one step per line,
 // in one narrate() call. A step's look is applied when its line starts to be heard (the voice's
@@ -96,6 +96,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
   let pausedFor = null; // owner | touch | speech | hidden | jump
   let hiddenFrom = null; // what it was doing when the page was hidden
   let stepId = steps.length ? steps[0].id : null; // the step being said (or about to be)
+  let shownId = null; // the step whose look was shown last (when its words began: B5)
   let history = []; // the steps visited, in order (back goes through it)
   const chosen = {}; // decision id -> choice id
   let look = {}; // what the hologram shows now (every step's show merged)
@@ -158,6 +159,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
     const show = step.show || {};
     look = { ...look, ...show };
     stepId = step.id;
+    shownId = step.id;
     if (history[history.length - 1] !== step.id) history.push(step.id);
     const ids = partsOf(step);
     safe(() => target.setEmphasis({ glow: look.glow || [], ghost: look.ghost || [], hide: look.hide || [], others: look.others }));
@@ -551,6 +553,7 @@ export function createTourPlayer({ plan, target, narrator = null, asker = null, 
       status,
       pausedFor,
       stepId,
+      shown: shownId,
       index: at >= 0 ? at + 1 : Math.max(1, history.length),
       total: Math.max(path.length, at + 1),
       say: s && s.say ? s.say : '',

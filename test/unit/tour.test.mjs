@@ -748,12 +748,15 @@ test('player: waits for the meshes, then says the first run; the camera moves wh
   // nothing moves when the speech is asked for
   assert.equal(target.flights.length, 0);
   assert.equal(target.emphasis, null);
+  assert.equal(player.getState().shown, null); // no step's look shows yet (the hook data-tour-shown)
   narr.chunk(0);
   assert.equal(player.getState().stepId, 'overview');
+  assert.equal(player.getState().shown, 'overview');
   assert.equal(target.exploded, 0);
   assert.equal(target.flights.at(-1).view, 'front-left');
   narr.chunk(1);
   assert.equal(player.getState().stepId, 'apart');
+  assert.equal(player.getState().shown, 'apart');
   assert.equal(target.exploded, 1);
   assert.deepEqual(target.emphasis.glow, ['battery']);
   assert.deepEqual(target.flights.at(-1), { ids: ['battery'], frame: 'parts', view: 'access' });
