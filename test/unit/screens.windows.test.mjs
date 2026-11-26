@@ -86,7 +86,6 @@ test('not window commands: questions, ordinary sentences, what Screens takes', (
     'is this window open',
     'how do I close everything on my Mac',
     // Screens' own words stay Screens' (one matcher each)
-    'close that window',
     'close the window',
     'close the other screen',
     'close all windows',
@@ -97,7 +96,12 @@ test('not window commands: questions, ordinary sentences, what Screens takes', (
     'a '.repeat(30) + 'side by side',
   ];
   for (const t of negatives) assert.equal(matchWindowCommand(t, TWO), null, `"${t}"`);
-  for (const t of ['close that window', 'close the window', 'close all windows', 'bring the hologram back', 'put the camera in a window']) assert.ok(matchScreenCommand(t), `Screens takes "${t}"`);
+  for (const t of ['close the window', 'close all windows', 'bring the hologram back', 'put the camera in a window']) assert.ok(matchScreenCommand(t), `Screens takes "${t}"`);
+  // "Close that window" with a window open: this matcher's (the window with the focus, else the newest; it
+  // comes before Screens in the destination layer); with none open, not a command here.
+  assert.deepEqual(pick(matchWindowCommand('close that window', TWO)), { op: 'close', which: null });
+  assert.deepEqual(pick(matchWindowCommand('close this window', ONE)), { op: 'close', which: null });
+  assert.equal(matchWindowCommand('close that window', NONE), null);
 });
 
 test('names: spoken names to kinds, and what Jarvis calls each window', () => {

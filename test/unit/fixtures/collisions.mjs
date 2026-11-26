@@ -186,6 +186,11 @@ const WINDOWS_OVER_OPTICS = ['VL', 'VF', 'OV'].flatMap((state) => [
 export const WINDOWS = {
   rows: [
     ...WINDOWS_OVER_OPTICS,
+    // The hologram in a window takes what it takes in the main window (voice's ALL_HOLOS rows), by design.
+    ...['WIN2', 'WINH'].flatMap((state) => [
+      { words: 'stop that', state, winner: 'windows-hologram', why: 'Holds the model in its window still (free, undoable), as in the main window.' },
+      { words: 'open the hologram of the battery', state, winner: 'windows-hologram', why: 'Selects the battery part in its window (free, undoable), as in the main window.' },
+    ]),
     // Lead decision D1 (chrome.task before chrome.open): "open the Nth link" is the reply's link only when the
     // newest reply has links; page words are never chrome.open's. Out of a Chrome context these reach Claude;
     // the Chrome-context rows (and "… in Chrome" with a page object) have the Chrome task as winner and go in with

@@ -67,6 +67,8 @@ const HERE_RE = [
 const CLOSE = '(?:close|shut|kill|dismiss|hide|get rid of)';
 const CLOSE_NAMED_RE = new RegExp(`^${CLOSE} ${THE}(${THING}) ${WIN}$`);
 const CLOSE_ALL_RE = /^(?:close|shut|kill) (?:everything|it all|all of it|all of them|them all|every window|all windows and viewers)$/;
+// "Close that window", "close this window", "close the last window": the one with the focus, else the newest.
+const CLOSE_THAT_RE = new RegExp(`^${CLOSE} (?:that|this|the last|the newest|the latest|that last) ${WIN}$`);
 
 // Layouts.
 const PAIR = `${THE}(${THING}) and ${THE}(${THING})`;
@@ -129,6 +131,7 @@ export function matchWindowCommand(text, state = {}) {
 
   let m = CLOSE_NAMED_RE.exec(s);
   if (m) return action('close', { which: kindOf(m[1]) });
+  if (CLOSE_THAT_RE.test(s) && open >= 1) return action('close', { which: null });
   if (CLOSE_ALL_RE.test(s)) return action('close-all', { viewers: true });
 
   m = PAIR_SIDE_RE.exec(s);

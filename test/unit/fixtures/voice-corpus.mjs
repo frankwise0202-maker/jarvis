@@ -236,7 +236,7 @@ export const WINDOWS = {
     ['close the hologram window', 'WIN2', 'windows'],
     ['close the camera window', 'WINC', 'windows'],
     ['bring the hologram back', 'WIN2', 'screens'],
-    ['close that window', 'WIN2', 'screens'],
+    ['close that window', 'WIN2', 'windows'],
     ['close all windows', 'WIN2', 'screens'],
     ['close everything', 'WIN2', 'windows'],
     // D2: layouts
