@@ -1733,9 +1733,13 @@ export async function startApp(rootEl) {
     return (home || local) && safe(() => isStandalone(), false) && !safe(() => tts.audioStuck(), false);
   }
 
-  /** v8.1 (A11): open Standby when Jarvis starts: a computer, Settings (automatic: on when "Hey Jarvis" is on). */
+  /**
+   * v8.1 (A11): open Standby when Jarvis starts: a computer, Settings (automatic: on when "Hey Jarvis" is on). Not
+   * when the address asks for something else (?optics=1, or ?homebase=… from a tapped notification).
+   */
   function standbyAtLaunch() {
     const s = getSettings();
+    if (params.get('optics') === '1' || params.get('homebase')) return false;
     return !phoneLike && !state.demo && !!s.onboarded && (s.standbyAtLaunch === 'on' || (s.standbyAtLaunch !== 'off' && s.wakeWord === true));
   }
 
