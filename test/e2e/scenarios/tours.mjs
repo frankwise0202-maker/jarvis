@@ -27,6 +27,7 @@
 
 import { tid } from '../harness.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
+import { installFakeMic } from '../fake-mic.mjs';
 import { installFakeSpeech } from './features.mjs';
 
 const LAPTOP = '[[hologram:laptop]] Show me a laptop.';
@@ -634,3 +635,50 @@ export default [
     },
   },
 ];
+
+/**
+ * tour-barge-in, a join with mac-hf (A8 + B5): not in the default list on this branch, because it needs v81-mac-hf's
+ * barge-in (Voice Mode's bargeIn, Standby's capture kept through a woken session, the setup-1 gate). After merging
+ * both, the integrator adds it to run.mjs (`...tours, tourBargeIn`). It follows mac-hf's own mac-barge-in setup.
+ */
+export const tourBargeIn = {
+  name: 'tour-barge-in',
+  title: 'Mac, setup 1 with the hands-free Test passed: woken by "Hey Jarvis", Jarvis walks through the laptop in George\'s voice; "Hey Jarvis" while he narrates stops him, the tour pauses at its step and he listens; "continue" goes on from that step',
+  device: 'mac',
+  fakeCore: { senses: { speak: 'ready' } },
+  settings: { wakeWord: true, homeBaseUrl: CORE_URL, homeBaseSpeak: true, homeBaseSpeakBy: 'owner', audioSetup: 'speaker-mac-mic' },
+  timeout: 240000,
+  async run(t) {
+    const page = await t.newPage();
+    await page.addInitScript(installFakeSpeech, { cps: 40 });
+    await page.addInitScript(installFakeMic, { wakeLock: true });
+    await page.addInitScript(recordTour);
+    await page.addInitScript(() => {
+      window.__voice.queue = [];
+      try {
+        localStorage.setItem('jarvis.handsFreeTest.v1', JSON.stringify({ at: 1800000000000, hiddenWords: true, selfTrigger: 'passed', heardSpeaker: true }));
+        localStorage.setItem('jarvis.dev.wakeWord', 'stub');
+      } catch {
+        /* storage unavailable */
+      }
+    });
+    await t.goto('/', { page });
+    await t.waitFor(async () => t.core.senses.gets >= 1, { timeout: 10000, message: 'George ready' });
+    await (await t.visible('quick-key-standby', { page })).click();
+    await t.waitFor(async () => (await page.evaluate(() => document.querySelector('[data-testid="standby"]')?.dataset.word || '')) === 'ready', { timeout: 15000, message: 'the "Hey Jarvis" stand-in ready' });
+    await page.evaluate((list) => window.__voice.queue.push(...list), ['', LAPTOP, 'Walk me through it.']);
+    await page.evaluate(() => window.__jarvisWake.say());
+    await page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
+    await waitViewer(t, 'state', 'ready', { timeout: 60000, page });
+    await waitStatus(t, 'playing', { timeout: 60000, page });
+    await t.waitFor(() => t.core.senses.speaks.some((s) => /Taken apart, it has 16 main parts/.test(s.text)), { timeout: 60000, message: 'George narrating the tour' });
+    await page.waitForTimeout(1600); // past the wake's own guard
+    const step = await viewerAttr(t, 'tour-step', page);
+    t.assert(await page.evaluate(() => window.__jarvisWake.say()), 'the stand-in heard "Hey Jarvis"');
+    await waitStatus(t, 'paused', { timeout: 5000, page });
+    await t.waitFor(async () => (await page.locator(tid('voice-mode')).getAttribute('data-state')) === 'listening', { timeout: 5000, message: 'Jarvis listening' });
+    t.assert((await viewerAttr(t, 'tour-step', page)) === step, `paused at its step (${step})`);
+    await page.evaluate(() => window.__voice.queue.push('Continue.'));
+    await waitStatus(t, 'playing', { timeout: 15000, page });
+  },
+};
