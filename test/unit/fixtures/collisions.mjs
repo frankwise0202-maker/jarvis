@@ -212,6 +212,14 @@ export const VOICE = {
     ...['no no no', 'No, no, no.', 'no, cancel that', 'Jarvis, no, cancel that.', 'no wait', 'nope, nope', 'no no, never mind', 'nah nah', 'no no'].map((w) => r(w, 'H4', 'prompt', 'asked last: the prompt (its no)')),
     // ROUTING-R2-7: the laptop shown last and closed (VLC) still opens again for a command about the model.
     r('open the hologram of the battery', 'VLC', 'hologram', 'opens the laptop again on its battery (free, undoable)'),
+    r('open the hologram of the battery', 'VLCW', 'hologram', 'opens the laptop again on its battery (free, undoable), as in VLC'),
+    // ROUTING-R3-1's VLCW (a camera window open): windows' and Screens' words first, as with any window open.
+    r('expand this in a different window', 'VLCW', 'screens', 'a window (C3)'),
+    r('bring everything back', 'VLCW', 'screens', 'a window is open: it comes back'),
+    r('close that window', 'VLCW', 'windows', 'the window with the focus, else the newest'),
+    r('make it bigger', 'VLCW', 'windows', 'the window, as with any window open and no hologram on screen'),
+    // ROUTING-R3-3's no's with Chrome's question asked last (H4): its no, as "no" is.
+    ...['nope', 'nah'].map((w) => r(w, 'H4', 'prompt', 'asked last: the prompt (its no)')),
     r('expand this in a different window', 'VLC', 'screens', 'a window (C3), as with nothing shown last'),
     r('bring everything back', 'VLC', 'screens', "Screens' words with no hologram on screen, as in V0"),
   ],
@@ -371,6 +379,11 @@ export const OPTICS = {
     { words: 'do this in this window', state: 'OVQ', winner: 'windows', why: 'The owner picks the window to work in, as in OV.' },
     { words: 'show me the hologram window', state: 'OVQ', winner: 'windows', why: 'Bring the hologram window to the front, as in OV.' },
     { words: 'put the picture to the side', state: 'OVQ', winner: 'screens', why: 'No Look on screen: a Screens float, as in OV.' },
+    // ROUTING-R3-S1's OVLV (Optics' microphone, the live view on) is OV for these.
+    { words: "what's on my screen", state: 'OVLV', winner: 'screen-look', why: "The owner's screen, not a Look of the camera (C5), as in OV." },
+    { words: 'do this in this window', state: 'OVLV', winner: 'windows', why: 'The owner picks the window to work in, as in OV.' },
+    { words: 'show me the hologram window', state: 'OVLV', winner: 'windows', why: 'Bring the hologram window to the front, as in OV.' },
+    { words: 'put the picture to the side', state: 'OVLV', winner: 'screens', why: 'No Look on screen: a Screens float, as in OV.' },
     // v8.1.1 (MONEY-R2-4's states): a hologram over Optics is a hologram on screen, for its words as for VH and H0.
     ...['OHO', 'OHOT'].map((state) => ({ words: 'expand this in a different window', state, winner: 'screens', why: 'A window (C3), as with any hologram on screen (Optics under it).' })),
   ],

@@ -373,7 +373,9 @@ export function matchOpticsCommand(text, { frozen = false } = {}) {
   if (EXPAND.test(n)) return { action: 'expand' };
   if (ASIDE.test(n)) return { action: 'aside' };
   if (CLOSE_CARD.test(n)) return { action: 'close-card' };
+  // Every camera-off form ("turn the camera off", "switch off the webcam") is Optics' close too (ROUTING-R3-S1).
   for (const re of CLOSE) if (re.test(n)) return { action: 'close' };
+  if (CAMERA_OFF.test(n)) return { action: 'close' };
   for (const re of LIVE) if (re.test(n)) return { action: 'live' };
   const named = NAMED_CAMERA.exec(n);
   if (named) return { action: 'camera', name: named[1].replace(/^built ?in$/, 'built-in') };

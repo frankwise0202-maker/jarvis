@@ -4806,7 +4806,12 @@ no matcher takes goes to Claude once, as before. A sentence goes to exactly one 
   another reading of them ("open my camera" heard, "open the camera" the other reading: v8.1.1). The
   hologram shown last over Voice Mode, closed, opens again only for a command about it: never for E2's camera words
   ("open the camera": Optics opens), Optics' own words with Optics closed ("expand the picture") or a question
-  ("is the camera on?"): ROUTING-R2-7.
+  ("is the camera on?"): ROUTING-R2-7. A polite request ("would you rotate it", "will you explode it") is no question
+  there: it reopens the model (ROUTING-R3-7). Camera-off words ("turn the camera off", `isCameraCloseRequest`) are
+  never the model's, on screen, shown last or in a Screens window: Optics closes, or with Optics closed the camera goes
+  off (`optics-close`); the hologram's "turn …" never takes a phrase ending in "on" or "off" ("turn the lights on")
+  (ROUTING-R3-1). With Optics open, every camera-off form is Optics' own close (`matchOpticsCommand`), and Optics'
+  `question()` never takes a Look for them (ROUTING-R3-S1).
 
 **The app's words** (C2; every surface unless marked):
 | Words | Action | Line |

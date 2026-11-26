@@ -41,6 +41,7 @@
 import { matchHologramCommand } from '../../lib/hologram-commands.js';
 import { isCameraCloseRequest, isOpticsOpenRequest, matchOpticsClosedWords, matchOpticsCommand, opticsClosedLine } from '../../lib/optics-commands.js';
 import { matchOfferChoice, matchResearchThis } from '../../lib/research-offer.js';
+import { isBareNo } from '../../lib/command-order.js';
 
 // "My screen", "my camera": the owner's own, never a hologram's part (R10's "my …": ROUTING-7, ROUTING-R2-8).
 const MY_THING = /\bmy (?:screen|display|monitor|camera|webcam|web cam|cam)\b/i;
@@ -162,7 +163,8 @@ export function register(router, deps) {
     match(text, s) {
       const offer = s.researchOffer;
       if (!offer || !Array.isArray(offer.choices)) return null;
-      const id = matchOfferChoice(text, offer.choices);
+      // Every form of no Voice Mode takes since R2-4 ("nope", "no, cancel that") is the offer's cancel (ROUTING-R3-3).
+      const id = matchOfferChoice(text, offer.choices) || (isBareNo(text) && offer.choices.some((c) => c && c.id === 'cancel') ? 'cancel' : null);
       if (!id) return null;
       const choice = offer.choices.find((c) => c && c.id === id) || {};
       if (choice.dear && s.via === 'voice') return { do: 'research-tap', choice: id, label: String(choice.label || ''), undo: false };

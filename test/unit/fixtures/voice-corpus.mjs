@@ -253,6 +253,25 @@ export const VOICE = {
     ['expand it', 'VLC', 'hologram:hologram'],
     ['show the battery', 'VLC', 'hologram:hologram'],
     ['expand the picture', 'VLC', 'optics-idle'],
+    // ROUTING-R3-1: "turn the camera off" is never the hologram's turn (on screen, shown last, a camera window on, or in a
+    // Screens window with Optics open): the camera goes off.
+    ...['turn the camera off', 'turn the webcam off', 'turn the camera off please'].flatMap((w) => [
+      [w, 'VLC', 'optics-close'],
+      [w, 'VLCW', 'optics-close'],
+      [w, 'VH', 'optics-close'],
+      [w, 'VHW', 'optics-close'],
+      [w, 'WINHO', 'optics:optics'],
+    ]),
+    ['turn the mic off', 'VH', 'voice-controls:mic-off'],
+    ['turn the lights on', 'VH', null],
+    // ROUTING-R3-7: a polite request reopens the laptop shown last, as on screen; a real question doesn't.
+    ['would you rotate it', 'VLC', 'hologram:hologram'],
+    ['will you explode it', 'VLC', 'hologram:hologram'],
+    ['would you show me the battery', 'VLC', 'hologram:hologram'],
+    ['could you rotate it', 'VLC', 'hologram:hologram'],
+    ['where is the camera', 'VLC', null],
+    // ROUTING-R3-S2: the microphone off, in Voice Mode.
+    ...['turn the mic off', 'turn the microphone off', 'switch the mic off', 'turn your mic off'].map((w) => [w, 'V0', 'voice-controls:mic-off']),
   ],
   not: [
     'speak to me about history', 'how much did I spend at the store', 'stop it from overheating', 'repeat after me',
@@ -266,6 +285,15 @@ export const VOICE = {
       standby: { available: true, open: false },
       camera: { supported: true, allowed: 'granted', ios: false },
       voiceOpen: true,
+      reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }] } },
+    },
+    // ROUTING-R3-1: VLC with the camera in a Screens window.
+    VLCW: {
+      surface: 'voice',
+      standby: { available: true, open: false },
+      camera: { supported: true, allowed: 'granted', ios: false },
+      voiceOpen: true,
+      windows: [{ id: 'w1', kind: 'camera', label: 'Camera', focused: false }],
       reply: { links: [], hologram: { title: 'Laptop', parts: [{ id: 'display', name: 'Display panel', aka: ['screen'] }, { id: 'webcam', name: 'Camera module', aka: ['webcam', 'camera'] }, { id: 'battery', name: 'Battery', aka: ['battery pack'] }] } },
     },
   },
@@ -888,6 +916,19 @@ export const OPTICS = {
       [w, 'OHO', 'optics-idle'],
       [w, 'OHOT', 'optics-idle'],
     ]),
+    // ROUTING-R3-S1: with Optics open, every camera-off form closes it: in Voice Mode (VL), said to Optics' own microphone
+    // (OV, OVLV with the live view on: never a new Look) and typed in its field (OT: optics-close).
+    ...['turn the camera off', 'turn the webcam off', 'switch the camera off', 'switch off the camera', 'turn my camera off'].flatMap((w) => [
+      [w, 'VL', 'optics:optics'],
+      [w, 'OV', 'optics:optics'],
+      [w, 'OVLV', 'optics:optics'],
+      [w, 'OT', 'optics-close'],
+    ]),
+    // ROUTING-R3-3: every form of no answers the research offer in Optics' field too (R2-4's no's), typed or said.
+    ...['nope', 'nah', 'no no', 'no, not now', 'no, forget it', 'no, cancel that', 'no wait'].flatMap((w) => [
+      [w, 'OTQ', 'optics-research-field:research-answer'],
+      [w, 'OVQ', 'optics-research-field:research-answer'],
+    ]),
   ],
   not: [
     // E4: the 16 steals of the voice study's probe (8 sentences, with the camera live and a Look on screen).
@@ -929,6 +970,8 @@ export const OPTICS = {
     // ROUTING-R2-10: Optics' field, typed (OTQ) or by its microphone (OVQ), with the research offer's card up.
     OTQ: { surface: 'optics', via: 'typed', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
     OVQ: { surface: 'optics', via: 'voice', optics: { open: true, mode: 'live', liveView: false, card: null, cameraAllowed: 'granted', sceneChanged: null }, researchOffer: { choices: RESEARCH_CHOICES } },
+    // ROUTING-R3-S1: Optics' own microphone with the live view on.
+    OVLV: { surface: 'optics', via: 'voice', optics: { open: true, mode: 'live', liveView: true, card: null, cameraAllowed: 'granted', sceneChanged: null } },
   },
 };
 

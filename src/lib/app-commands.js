@@ -203,7 +203,8 @@ const HUSH = /^(?:stop (?:talking|speaking|reading)(?: please)?|be quiet|quiet|h
 const READ_FULL = /^(?:read (?:me |out )?(?:the )?(?:full|whole|entire|complete|long) (?:answer|reply|response|thing|text|version)|read (?:me |out )?(?:the )?rest(?: of it| of the answer| of the reply)?|read (?:me |out )?(?:all )?(?:the )?details|read (?:me )?(?:all of it|everything|it all)|keep reading|read on)$/;
 // ("Again" at the end is a filler, so "say that again" arrives as "say that".)
 const REPEAT = /^(?:sorry )?(?:repeat(?: that| it| yourself| the answer| the last part| what you said)?|say (?:that|it)(?: again)?|(?:say|repeat) (?:that|it) one more time|what did you (?:just )?say|what was that|come again|pardon(?: me)?|i didnt (?:catch|hear|get) (?:that|it|what you said))$/;
-const MIC_OFF = /^(?:stop listening(?: to me)?|dont listen|quit listening|pause listening|stop the (?:mic|microphone)|(?:mute|turn off|switch off|close) (?:the |your )?(?:mic|microphone)|(?:mic|microphone) off)$/;
+// ("Turn the mic off", "switch your microphone off" too: ROUTING-R3-S2.)
+const MIC_OFF = /^(?:stop listening(?: to me)?|dont listen|quit listening|pause listening|stop the (?:mic|microphone)|(?:mute|turn off|switch off|close) (?:the |your |my )?(?:mic|microphone)|(?:turn|switch|shut) (?:the |your |my )?(?:mic|microphone) off|(?:mic|microphone) off)$/;
 const EXIT_VOICE = /^(?:exit|close|leave|quit|end|turn off|stop|get out of|switch off|shut) (?:the )?voice(?: mode)?$/;
 
 /** One of Voice Mode's controls in `text` (see the header), or null. */
