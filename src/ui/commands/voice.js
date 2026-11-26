@@ -32,7 +32,8 @@ const call = (fn, ...args) => (typeof fn === 'function' ? fn(...args) : undefine
  *   useVoice(which)                  'george' | 'device' → Promise<{ ok, needsDownload, device }>
  *   spend()                          { todayUsd, monthUsd, liveUsd }
  *   stopTarget(target)               stops one thing a bare "stop" names ('tour', 'answer', 'chrome',
- *                                    'watch', 'liveview', 'music', 'speech')
+ *                                    'watch', 'liveview', 'music', 'speech'; 'elsewhere' is only said) and
+ *                                    returns what it did for the line ('answer': { here, other })
  *   screenLook({ surface })          offers the button: { supported, shown } (shown: its line is on it already)
  *   briefing()                       the briefing protocol's words: { send, mode } | false
  */

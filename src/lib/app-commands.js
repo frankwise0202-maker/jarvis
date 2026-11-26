@@ -30,11 +30,13 @@
 //                                    asked first: state.briefingUsd, else BRIEFING_USD)
 //   briefingUsd({ maxAgents, depth, location })   the briefing's price at the owner's team size and depth
 //   matchStopWord(text, state)       the `stop` layer: a bare "stop" stops what runs, all of it:
-//     { do: 'stop', targets }                      targets ⊂ ['tour', 'answer', 'chrome', 'watch',
-//                                                  'liveview', 'music', 'speech'] (pause the tour; stop
-//                                                  the chat's turn: an answer, a mission, a Look's
-//                                                  answer; the Chrome task, Optics' Watch, the live
-//                                                  view, a music preview, Jarvis's voice); [] when
+//     { do: 'stop', targets }                      targets ⊂ ['tour', 'answer', 'elsewhere', 'chrome',
+//                                                  'watch', 'liveview', 'music', 'speech'] (pause the
+//                                                  tour; stop every chat's turn in this window: an
+//                                                  answer, a mission, a Look's answer; say where
+//                                                  another window's runs; the Chrome task, Optics'
+//                                                  Watch, the live view, a music preview, Jarvis's
+//                                                  voice); [] when
 //                                                  nothing runs ("Okay."). With a hologram on screen
 //                                                  and nothing running: null, so the viewer's own
 //                                                  "stop" (hold still) takes it (a blueprint sheet
@@ -229,14 +231,17 @@ export function chromeTaskRunning(state = {}) {
 }
 
 /**
- * What a bare "stop" stops in `state`, in the order Jarvis says it. `state.running`: a turn of the open
- * chat runs (an answer, a research mission, a Look's answer), stopped as its Stop button stops it;
- * `state.optics.watch`: Optics' Watch is on. Both cost money while they run (REGRESS-2).
+ * What a bare "stop" stops in `state`, in the order Jarvis says it. `state.running`: a turn runs in this
+ * window, in the open chat or another one (an answer, a research mission, a Look's answer), stopped as each
+ * chat's Stop button stops it; `state.optics.watch`: Optics' Watch is on. Both cost money while they run
+ * (REGRESS-2, ROUTING-R2-3). `state.runningElsewhere`: another Jarvis window runs one, which this window can't
+ * stop: 'elsewhere' says where it runs (never "Okay." while a paid run goes on).
  */
 export function stopTargets(state = {}) {
   const out = [];
   if (state.tour && state.tour.active) out.push('tour');
   if (state.running) out.push('answer');
+  if (state.runningElsewhere) out.push('elsewhere');
   if (chromeTaskRunning(state)) out.push('chrome');
   if (state.optics && state.optics.watch) out.push('watch');
   if (state.optics && state.optics.liveView) out.push('liveview');
@@ -319,6 +324,19 @@ const SECTION_NAMES = {
   profile: 'Profile settings are open.',
   data: 'Data settings are open.',
 };
+const ELSEWHERE = "I'm still answering in another window. Stop it there.";
+const ELSEWHERE_AFTER = "I'm still answering in another window: stop it there.";
+
+/** The answer target's part, from what it stopped: the open chat's run (here) and other chats' (other). */
+function answersStopped({ here = 0, other = 0 } = {}) {
+  const h = Number(here) || 0;
+  const n = Number(other) || 0;
+  if (h && n) return 'the answers are stopped';
+  if (n === 1) return 'the answer in your other chat is stopped';
+  if (n > 1) return 'the answers in your other chats are stopped';
+  return h ? 'the answer is stopped' : '';
+}
+
 const STOPPED = {
   tour: 'the tour is paused',
   answer: 'the answer is stopped',
@@ -385,10 +403,17 @@ export function appCommandLine(action, outcome = {}) {
       // check was withdrawn ("Okay, nothing sent to Chrome."), a task that runs is stopping, or both.
       const chrome = o.stopped && typeof o.stopped === 'object' && o.stopped.chrome && typeof o.stopped.chrome === 'object' ? o.stopped.chrome : null;
       const lead = chrome && chrome.withdrawn ? (chrome.stopping ? 'Okay, nothing sent.' : 'Okay, nothing sent to Chrome.') : '';
-      const parts = (Array.isArray(a.targets) ? a.targets : []).map((t) => (t === 'chrome' && chrome && !chrome.stopping ? '' : STOPPED[t])).filter(Boolean);
-      if (!parts.length) return lead || 'Okay.';
+      // The answer target says which chats' runs it stopped (o.stopped.answer: { here, other }: ROUTING-R2-3).
+      const answer = o.stopped && typeof o.stopped === 'object' && o.stopped.answer && typeof o.stopped.answer === 'object' ? o.stopped.answer : null;
+      const part = (t) => (t === 'chrome' && chrome && !chrome.stopping ? '' : t === 'answer' && answer ? answersStopped(answer) : STOPPED[t]);
+      const targets = Array.isArray(a.targets) ? a.targets : [];
+      const parts = targets.map(part).filter(Boolean);
+      // Another window's run can't be stopped here: where it runs, last (never "Okay." while it goes on).
+      const there = targets.includes('elsewhere');
+      if (!parts.length) return lead ? `${lead}${there ? ` ${ELSEWHERE}` : ''}` : there ? ELSEWHERE : 'Okay.';
       const said = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-      return lead ? `${lead} ${cap(said)}.` : `${cap(said)}.`;
+      const line = lead ? `${lead} ${cap(said)}.` : `${cap(said)}.`;
+      return there ? `${line} ${ELSEWHERE_AFTER}` : line;
     }
     default:
       return '';

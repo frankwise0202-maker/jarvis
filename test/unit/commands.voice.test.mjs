@@ -131,3 +131,13 @@ test('Voice Mode\'s controls are matched only in Voice Mode', async () => {
   assert.equal(router.route(['exit voice mode', 'x'], { ...emptyState('voice') }).id, 'voice-controls');
   assert.equal(router.route(['exit voice mod', 'exit voice mode'], { ...emptyState('voice') }), null, 'never from another reading (mic)');
 });
+
+test('ROUTING-R2-3: "stop" with a run in another chat stops it through the deps and says so; another window is said', async () => {
+  const { run, calls } = setup({ stopTarget: (target) => (calls.push(['stop', target]), target === 'answer' ? { here: 0, other: 1 } : undefined) });
+  const other = await run('stop', { surface: 'chat', via: 'typed', running: true });
+  assert.deepEqual(calls, [['stop', 'answer']]);
+  assert.deepEqual(other.out, { say: 'The answer in your other chat is stopped.' });
+  const elsewhere = await run('stop', { surface: 'voice', runningElsewhere: true });
+  assert.equal(elsewhere.hit.id, 'stop');
+  assert.deepEqual(elsewhere.out, { say: "I'm still answering in another window. Stop it there." });
+});

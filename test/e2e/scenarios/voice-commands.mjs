@@ -267,6 +267,46 @@ export default [
     },
   },
   {
+    // ROUTING-R2-3 (the reviewer's zzv-stop-new-chat, kept): a mission runs on in the chat the owner left; "stop"
+    // typed in the new chat stops it too, as its own Stop button would, and says so. Before, "Okay." while it billed.
+    name: 'voice-commands-stop-other-chat',
+    title: '"stop" typed in a new chat while a research mission runs in the previous one stops that mission ("The answer in your other chat is stopped."), never a bare "Okay."; no agent starts after it',
+    device: 'mac',
+    timeout: 150000,
+    async run(t) {
+      await t.newPage();
+      await t.goto('/');
+      await t.send('[[swarm:3]] [[slow]] Research tidal power');
+      await t.waitFor(() => t.requests('worker').length >= 1, { timeout: 20000, message: 'the mission\'s first agent to start' });
+      const input = await t.visible('composer-input');
+      await input.fill('new chat');
+      await input.press('Enter');
+      await t.waitFor(async () => (await t.page.locator(tid('turn-jarvis')).count()) === 0, { timeout: 10000, message: 'an empty new chat' });
+      await t.step('"stop" in the new chat', async () => {
+        await input.fill('stop');
+        await input.press('Enter');
+        await t.waitFor(async () => (await t.page.locator('.toast-text').allTextContents()).map(norm).some((x) => /stopped/.test(x)), { timeout: 5000, message: 'the line' });
+        const toasts = (await t.page.locator('.toast-text').allTextContents()).map(norm);
+        t.assert(toasts.includes('The answer in your other chat is stopped.'), `the line says what stopped (toasts: ${JSON.stringify(toasts)})`);
+        t.assert(!toasts.includes('Okay.'), `no bare "Okay." while a mission ran (toasts: ${JSON.stringify(toasts)})`);
+        // Agents already asked for may still answer; none starts later.
+        await t.page.waitForTimeout(1500);
+        const workers = t.requests('worker').length;
+        await t.page.waitForTimeout(8000);
+        t.assert(t.requests('worker').length === workers, `no agent started after the stop (${workers} → ${t.requests('worker').length})`);
+      });
+      await t.step('the mission in the previous chat ended "stopped"', async () => {
+        await t.page.evaluate(() => {
+          const item = document.querySelector('[data-testid="history-item"]');
+          (item.querySelector('button, a') || item).click();
+        });
+        await t.waitFor(async () => (await t.page.locator(tid('turn-jarvis')).count()) > 0, { timeout: 10000, message: 'the previous chat to open' });
+        await t.waitFor(async () => (await t.page.locator(tid('turn-jarvis')).last().getAttribute('data-status')) === 'stopped', { timeout: 10000, message: async () => `the mission to show "stopped" (is "${await t.page.locator(tid('turn-jarvis')).last().getAttribute('data-status')}")` });
+        await t.screenshot('1-stopped-in-history');
+      });
+    },
+  },
+  {
     name: 'voice-commands-questions',
     title:
       'Voice for everything: ten ordinary questions, some of them with Optics open, each reach Jarvis exactly once (one request each), and none is taken by a command',
