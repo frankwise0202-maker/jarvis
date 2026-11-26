@@ -545,9 +545,9 @@ export function createStandby(deps = {}) {
       // The system took the microphone (a call, another app) or it went away (the speakerphone turned
       // off): try again with back-off (v8.1; before, once after 1.5 s and only on screen).
       listen = 'paused';
-      render();
       if (audio) safeCall(() => audio.check()); // gone? the device watcher decides (two enumerations)
       retry.failed();
+      render(); // after the retry is scheduled: the hint says it tries again by itself
     }
   }
 
