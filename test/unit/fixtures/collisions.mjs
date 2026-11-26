@@ -37,11 +37,29 @@ export const TOURS = {
     ...TOUR_STATES.flatMap((state) => TOUR_OVER_HOLOGRAM.map(([words, why]) => ({ words, state, winner: 'tour', why }))),
     { words: 'open it up', state: 'TOUR_AT', winner: 'tour', why: 'the "opened" choice at the decision (the hologram would explode)' },
     ...TOUR_ASKED_WORDS.map((words) => ({ words, state: 'TOUR_ASKED', winner: 'question', why: "the tour's decision, answered as Voice Mode's question" })),
+    // While a tour runs, its "repeat", "say that again", "repeat that" and "that's enough" are the tour's: they come
+    // before Voice Mode's own controls (top before app). In voice's tour states too (T, TD, H4, H4O).
+    ...[...TOUR_STATES.filter((st) => st !== 'TOUR_FIELD'), 'T', 'TD', 'H4', 'H4O'].flatMap((state) =>
+      ['repeat', 'say that again', 'repeat that', "that's enough"]
+        .filter((words) => !(state === 'T' && (words === 'repeat that' || words === "that's enough"))) // voice's rows
+        .map((words) => ({ words, state, winner: 'tour', why: "the tour's word while it runs (Voice Mode's control otherwise)" })),
+    ),
+    // voice's tour states: the tour's words over the hologram's (as in this section's own states)
+    ...['T', 'TD', 'H4', 'H4O'].flatMap((state) =>
+      [...TOUR_OVER_HOLOGRAM.filter(([words]) => !(state === 'T' && (words === 'back' || words === 'go back'))), ['open it up', 'the opened choice at the decision']]
+        .filter(([words]) => !(state === 'T' && words === 'open it up'))
+        .map(([words, why]) => ({ words, state, winner: 'tour', why })),
+    ),
+    // voice's tour decision with its question on the stack (TD): the question takes the choice words first
+    ...['show me that enclosed', 'show it opened', 'opened', 'both', 'you pick'].map((words) => ({ words, state: 'TD', winner: 'question', why: "the tour's decision, answered as Voice Mode's question" })),
+    // A bare "stop" is the stop layer's in a tour state (it stops the voice; the tour pauses with it)
+    ...TOUR_STATES.flatMap((state) => ['stop', 'okay stop'].map((words) => ({ words, state, winner: 'stop', why: 'the stop layer: everything that runs stops, the tour pauses' }))),
     // Today's harmless takes with a hologram on screen (voice's base allows them in its hologram states): the same
     // in these states, where a hologram is on screen too.
     ...[...TOUR_STATES, 'HOLO_PICKED'].flatMap((state) => [
       { words: 'stop that', state, winner: 'hologram', why: 'holds the model still (free, undoable), as with any hologram on screen' },
       { words: 'open the hologram of the battery', state, winner: 'hologram', why: 'selects the battery part (free, undoable), as with any hologram on screen' },
+      { words: 'expand this in a different window', state, winner: 'screens', why: 'a window, as with any hologram on screen (C3)' },
     ]),
   ],
 };
