@@ -42,6 +42,37 @@ async function waitCard(t, card, state, online = null) {
 
 const relayCalls = (t) => t.core.requests.filter((r) => r.includes('/api/relay/'));
 
+/**
+ * On the next load of `page` only, the stored link says Jarvis for Chrome was last heard from `agoMs` ago, as if
+ * that much time had passed. Set before the app's code runs, so nothing the page before it still had in flight (a
+ * status check that saves the record) can write over it.
+ */
+async function rewindLastHeard(page, agoMs) {
+  const tag = `__e2e_rewind_${Math.random().toString(36).slice(2)}`;
+  await page.addInitScript(
+    ({ tag: once, agoMs: ago }) => {
+      try {
+        if (sessionStorage.getItem(once)) return;
+        sessionStorage.setItem(once, '1');
+        const r = JSON.parse(localStorage.getItem('jarvis.chromeLink.v1') || 'null');
+        if (r) {
+          r.extSeenAt = Date.now() - ago;
+          localStorage.setItem('jarvis.chromeLink.v1', JSON.stringify(r));
+        }
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    { tag, agoMs },
+  );
+}
+
+/** The fake Jarvis for Chrome stops reading its box (a read in progress ends first). */
+async function goOffline(peer) {
+  peer.setOnline(false, { seenAgoMs: 5 * 60_000 });
+  await new Promise((r) => setTimeout(r, 800));
+}
+
 export default [
   {
     name: 'chrome-link-settings',
@@ -128,14 +159,10 @@ export default [
 
         await t.step('offline when Jarvis for Chrome stops reading (the relay last saw it long ago); online again', async () => {
           await closeSettings(t);
-          peer.setOnline(false, { seenAgoMs: 5 * 60_000 });
+          await goOffline(peer);
           // Its hello a moment ago still counts for a minute; a page opened two minutes later wouldn't. Reload with
           // the stored "last heard" moved back, as if two minutes had passed.
-          await t.page.evaluate(() => {
-            const r = JSON.parse(localStorage.getItem('jarvis.chromeLink.v1'));
-            r.extSeenAt = Date.now() - 2 * 60_000;
-            localStorage.setItem('jarvis.chromeLink.v1', JSON.stringify(r));
-          });
+          await rewindLastHeard(t.page, 2 * 60_000);
           await t.reload();
           card = await openChromeSettings(t);
           await waitCard(t, card, 'linked', false);
@@ -163,16 +190,17 @@ export default [
         });
 
         await t.step('the iPhone: one line about linking on the computer; never reads the relay', async () => {
-          const before = relayCalls(t).length;
           const phone = await t.newPage({ device: 'iphone13', seed: LINKED_HOME });
-          await seedChromeLink(phone.context());
+          const phoneCore = t.core; // the newest context's fake Core: the iPhone's own requests
+          await seedChromeLink(phone.context()); // even with a link stored, the iPhone doesn't use it
           await t.goto('/', { page: phone });
           const phoneCard = await openChromeSettings(t, phone);
           await waitCard(t, phoneCard, 'phone');
           t.assert(/on your computer/.test(await t.text(phoneCard)), 'where to link it');
           t.assert(!(await phoneCard.locator(tid('chrome-link-link')).isVisible()), 'no Link on the iPhone');
           await new Promise((r) => setTimeout(r, 1000));
-          t.assert(relayCalls(t).length === before, `the iPhone never reads the relay (${relayCalls(t).slice(before).join(', ')})`);
+          const phoneRelay = phoneCore.requests.filter((r) => r.includes('/api/relay/'));
+          t.assert(phoneRelay.length === 0, `the iPhone never reads the relay (${phoneRelay.join(', ')})`);
           await t.screenshot('6-iphone', phone);
           await t.checkNoHorizontalOverflow('the iPhone card', phone);
         });
@@ -258,12 +286,8 @@ export default [
         });
 
         await t.step('offline: the normal tab, said once', async () => {
-          peer.setOnline(false, { seenAgoMs: 5 * 60_000 });
-          await page.evaluate(() => {
-            const r = JSON.parse(localStorage.getItem('jarvis.chromeLink.v1'));
-            r.extSeenAt = Date.now() - 2 * 60_000;
-            localStorage.setItem('jarvis.chromeLink.v1', JSON.stringify(r));
-          });
+          await goOffline(peer);
+          await rewindLastHeard(page, 2 * 60_000);
           await t.reload();
           await page.evaluate(() => {
             window.__opened = [];
