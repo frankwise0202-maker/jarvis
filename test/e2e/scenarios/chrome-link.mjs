@@ -193,14 +193,33 @@ export default [
     async run(t) {
       const page = await t.newPage();
       await seedChromeLink(page.context(), { key: CHROME_TEST_KEY });
-      // The normal tab (G1) is window.open: recorded here instead of a real page outside the test.
+      // The normal tab (G1) is window.open (a blank tab whose address is then set): recorded here instead of a
+      // real page outside the test.
       await page.addInitScript(() => {
         window.__opened = [];
         window.open = (url) => {
-          window.__opened.push(String(url));
-          return { closed: false, focus() {}, close() {}, opener: null };
+          const rec = { url: String(url), sent: null };
+          window.__opened.push(rec);
+          return {
+            opener: null,
+            closed: false,
+            location: {
+              replace(u) {
+                rec.sent = String(u);
+              },
+              assign(u) {
+                rec.sent = String(u);
+              },
+            },
+            focus() {},
+            close() {},
+            moveTo() {},
+            resizeTo() {},
+            document: { hasFocus: () => false },
+          };
         };
       });
+      const opened = () => page.evaluate(() => window.__opened.map((r) => (r.url === 'about:blank' ? r.sent : r.url)).filter(Boolean));
       await t.goto('/');
       const peer = createFakeChromePeer(t.core.relay).start();
       try {
@@ -212,7 +231,7 @@ export default [
           const open = await peer.waitFor('open');
           t.assert(open.body.url === 'https://www.youtube.com/', `the address (${open.body.url})`);
           t.assert(open.body.rect === null && open.body.focus === true, `no rectangle, focused (${JSON.stringify(open.body)})`);
-          t.assert((await page.evaluate(() => window.__opened.length)) === 0, 'no normal tab');
+          t.assert((await opened()).length === 0, 'no normal tab');
           t.assert(t.requests('lead').length === 0, 'free: no Claude request');
           await t.screenshot('1-opened');
         });
@@ -224,7 +243,7 @@ export default [
           await (await t.visible('composer-send')).click();
           await peer.waitFor('open');
           await t.waitFor(async () => /blocked list/.test(await t.text(page.locator(tid('turn-jarvis')).last())), { timeout: 10000, message: 'the reason, said' });
-          t.assert((await page.evaluate(() => window.__opened.length)) === 0, 'no normal tab for a refusal');
+          t.assert((await opened()).length === 0, 'no normal tab for a refusal');
           peer.answer('open', undefined);
         });
 
@@ -243,8 +262,8 @@ export default [
           const input = await t.visible('composer-input');
           await input.fill('open YouTube in Chrome');
           await (await t.visible('composer-send')).click();
-          await t.waitFor(async () => (await page.evaluate(() => window.__opened.length)) === 1, { timeout: 10000, message: 'a normal tab' });
-          t.assert((await page.evaluate(() => window.__opened[0])) === 'https://www.youtube.com/', 'the same address');
+          await t.waitFor(async () => (await opened()).length === 1, { timeout: 10000, message: 'a normal tab' });
+          t.assert((await opened())[0] === 'https://www.youtube.com/', `the same address (${(await opened())[0]})`);
           t.assert(peer.received.filter((m) => m.kind === 'open').length === sent, 'nothing sent to an offline extension');
           await t.screenshot('2-normal-tab');
         });
