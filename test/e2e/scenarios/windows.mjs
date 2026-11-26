@@ -9,6 +9,8 @@
 //                           only, and Jarvis says which; "close the window" closes the newest
 //   windows-side-by-side    "side by side", "report on the left, hologram on the right": on one monitor (a
 //                           strip of Jarvis kept) and with two (on the other monitor, Jarvis in full view)
+//   windows-swap-resize     D5: "swap them", "make the report window smaller", "… fill the screen" (Jarvis's
+//                           strip kept); a floating panel says to drag its corner
 //   windows-follow-content  the hologram in a window: "explode it", "show the hybrid battery" said in Voice
 //                           Mode act there (no viewer opens here, nothing goes to Claude); its window
 //                           closed by hand, "expand it" opens it here again, as before
@@ -242,6 +244,42 @@ export default [
         const h = await placeOf(t, holo);
         const r = await placeOf(t, report);
         t.assert(JSON.stringify([h, r]) === JSON.stringify([[1440, 0, 1280, 1415], [2720, 0, 1280, 1415]]), `halves of the second monitor (${h} / ${r})`);
+      });
+    },
+  },
+
+  {
+    name: 'windows-swap-resize',
+    title: '"Swap them", "make the report window smaller", "make the report window fill the screen" (a strip of Jarvis kept); a floating panel can\'t be resized by script, and Jarvis says to drag its corner',
+    device: 'desktop',
+    timeout: 300000,
+    async run(t) {
+      await start(t);
+      const { holo, report } = await openBoth(t);
+
+      await t.step('"swap them": the two windows change places', async () => {
+        await typeCommand(t, 'swap them');
+        await t.waitFor(async () => /Swapped/.test(await toastText(t)), { timeout: 5000, message: async () => `said so (${await toastText(t)})` });
+        t.assert(JSON.stringify(await placeOf(t, holo)) === JSON.stringify([880, 25, 560, 875]), `the hologram on the right (${await placeOf(t, holo)})`);
+        t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([320, 25, 560, 875]), `the report on the left (${await placeOf(t, report)})`);
+      });
+
+      await t.step('smaller, then filling the screen beside Jarvis', async () => {
+        await typeCommand(t, 'make the report window smaller');
+        t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([376, 113, 448, 700]), `smaller around its centre (${await placeOf(t, report)})`);
+        await typeCommand(t, 'make the report window fill the screen');
+        t.assert(JSON.stringify(await placeOf(t, report)) === JSON.stringify([320, 25, 1120, 875]), `all but Jarvis's strip (${await placeOf(t, report)})`);
+        t.assert(/fills the screen/i.test(await toastText(t)), `said so (${await toastText(t)})`);
+      });
+
+      await t.step('a floating panel: "drag its corner"', async () => {
+        await typeCommand(t, 'close all windows');
+        await t.waitFor(() => holo.isClosed() && report.isClosed(), { timeout: 8000, message: 'the windows to close' });
+        const pip = await opensPage(t, () => typeCommand(t, 'float the report'));
+        await pip.waitForSelector(tid('screen'), { timeout: 10000 });
+        await typeCommand(t, 'make the report window bigger');
+        await t.waitFor(async () => /Drag its corner/.test(await toastText(t)), { timeout: 5000, message: async () => `said why (${await toastText(t)})` });
+        await typeCommand(t, 'close the float');
       });
     },
   },
