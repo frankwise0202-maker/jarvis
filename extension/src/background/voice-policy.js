@@ -141,10 +141,19 @@ export const approvalsOn = (setting, available = VOICE_APPROVALS_AVAILABLE) => a
 /** Why the switch stands in the way: '' while voice approvals aren't offered, else that it's off. */
 const switchReason = (ctx) => (ctx.available ? WHY_SWITCH_OFF : '');
 
-/** The row's reason for a yes-answer: null when the table allows it. */
-function rowReason(prompt, facts, choice, ctx) {
+// Reasons about something the owner could change (name the site, set it to Always, a task that
+// read nothing else): said only while voice approvals are on; otherwise the switch is the reason.
+const CONDITIONS = new Set([WHY_SITE_NOT_NAMED, WHY_NOT_ALWAYS, WHY_READ_ELSEWHERE]);
+
+/**
+ * Why a yes-answer can't come from Jarvis (a short sentence; '' when only the switch stands in the
+ * way while voice approvals aren't offered), or null when it may.
+ */
+function yesReason(prompt, facts, choice, ctx) {
   const row = VOICE_ROWS.find((r) => r.kind === prompt.kind && r.choice === choice);
-  return row ? row.allows(prompt, facts, ctx) : CLICK_ONLY;
+  const why = row ? row.allows(prompt, facts, ctx) : CLICK_ONLY;
+  if (why && (ctx.approvals || !CONDITIONS.has(why))) return why;
+  return ctx.approvals ? null : switchReason(ctx);
 }
 
 /**
@@ -157,9 +166,8 @@ export function voiceDecision(prompt, facts, choice, ctx) {
   const ids = (prompt?.choices || []).map((c) => c.id);
   if (!ids.includes(choice)) return { ok: false, reason: 'bad', why: WHY_NO_SUCH_CHOICE };
   if (DECLINES[prompt.kind] === choice) return { ok: true };
-  const why = rowReason(prompt, facts, choice, ctx);
-  if (why) return { ok: false, reason: 'refused', why };
-  if (!ctx.approvals) return { ok: false, reason: 'refused', why: switchReason(ctx) || CLICK_ONLY };
+  const why = yesReason(prompt, facts, choice, ctx);
+  if (why !== null) return { ok: false, reason: 'refused', why: why || CLICK_ONLY };
   if (!(ctx.now - ctx.shownAt >= MIN_PROMPT_AGE_MS)) return { ok: false, reason: 'refused', why: WHY_TOO_SOON };
   return { ok: true };
 }
@@ -172,11 +180,11 @@ export function voiceSummary(prompt, facts, ctx) {
   const yes = (prompt?.choices || []).map((c) => c.id).filter((id) => DECLINES[prompt.kind] !== id);
   let why = null;
   for (const choice of yes) {
-    const no = rowReason(prompt, facts, choice, ctx);
-    if (!no) return ctx.approvals ? { allowed: true, why: '' } : { allowed: false, why: switchReason(ctx) };
+    const no = yesReason(prompt, facts, choice, ctx);
+    if (no === null) return { allowed: true, why: '' };
     if (why === null) why = no;
   }
-  return { allowed: false, why: why ?? CLICK_ONLY };
+  return { allowed: false, why: why ?? '' };
 }
 
 // ---------------------------------------------------------------------------------------------

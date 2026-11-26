@@ -79,6 +79,7 @@ test('row: a new site, Allow once: only a site the owner named or opened by voic
   assert.ok(ok(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]) }))), 'named or opened by voice');
   assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set(['shop.example.co']) }))), 'a look-alike name is another site');
   assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]), approvals: false })), WHY_SWITCH_OFF), 'needs the setting');
+  assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ approvals: false })), WHY_SWITCH_OFF), 'the switch, not the name, when it is off');
   assert.ok(refused(voiceDecision(p, {}, 'once', ctx({ voiceSites: new Set([SITE]), approvals: false, available: false })), CLICK_ONLY), 'and the setting needs its release');
 });
 
@@ -171,6 +172,16 @@ test('what the app is told: voice.allowed mirrors the policy for the prompt; why
   assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx()), { allowed: false, why: WHY_SITE_NOT_NAMED });
   assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx({ voiceSites: new Set([SITE]) })), { allowed: true, why: '' });
   assert.deepEqual(voiceSummary(budgetPrompt, {}, ctx()), { allowed: true, why: '' });
+  // What the owner could change (name the site, Always, nothing else read) is said only while voice
+  // approvals are on: otherwise the switch is the reason, and while they aren't offered, nothing.
+  assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx({ approvals: false })), { allowed: false, why: WHY_SWITCH_OFF });
+  assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx({ approvals: false, available: false })), { allowed: false, why: '' });
+  assert.deepEqual(voiceSummary(stepPrompt(), { step: 'click' }, ctx({ approvals: false, available: false, alwaysSites: {} })), { allowed: false, why: '' });
+  assert.deepEqual(voiceSummary(stepPrompt(), { step: 'text' }, ctx({ approvals: false, readElsewhere: () => true })), { allowed: false, why: WHY_SWITCH_OFF });
+  assert.deepEqual(voiceSummary(budgetPrompt, {}, ctx({ approvals: false, available: false })), { allowed: false, why: '' });
+  // What the step is, though, is always said: it needs a click whatever the switch.
+  assert.deepEqual(voiceSummary(sitePrompt(), {}, ctx({ approvals: false, available: false, voiceSites: new Set([SITE]) })).why, '');
+  assert.deepEqual(voiceSummary(stepPrompt(), { step: '', kind: 'key' }, ctx({ approvals: false, available: false })), { allowed: false, why: WHY_KIND.key });
 });
 
 test('the hash: the same prompt gives the same hash; any change to what was shown gives another', async () => {
