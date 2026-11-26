@@ -651,24 +651,37 @@ browser asks for permission.
   something is worth a word (what you're holding up, with the brand and model when he can read
   them; a mistake or a risk in what you're doing) he says it: out loud in Voice Mode or when replies
   are read aloud, never while you're talking or he's already speaking, and at most once every 15
-  seconds (the lines in between are only shown). The last five things he said are listed.
+  seconds (the lines in between are only shown, without a sound). Where he can't speak (Voice Mode
+  closed and replies not read aloud), a soft chime marks a new line, at most once every 15 seconds
+  and never while you're talking. The last five things he said are listed; on a phone only the
+  newest shows, so the picture stays clear: tap it to see all five.
   - **Start and stop.** Tap **Live view**, or say or type "live view", "watch me" or "keep
-    watching"; stop it with the key, "stop live view", "stop watching" or "that's enough". It
-    never turns the camera on by itself: the camera must already be live in Optics. In Voice Mode
-    with Optics closed, "live view" opens the camera on a Mac where you've allowed it; on an iPhone
-    Jarvis asks you to tap **Look**, and the live view starts with that tap.
+    watching" (or "show me the live view", "resume live view"); stop it with the key, "stop live
+    view", "stop watching" or "that's enough". While Watch is on, "keep watching" keeps Watch going.
+    It never turns the camera on by itself: the camera must already be live in Optics. In Voice
+    Mode with Optics closed, "live view" opens the camera on a Mac where you've allowed it (but not
+    while a hologram or blueprint is on screen: then the words are for Jarvis, as "what is this?"
+    is); on an iPhone Jarvis asks you to tap **Look**, and the live view starts with that tap.
+    Jarvis says "Live view on" only once it is: if the hour's $1 is already spent, or another app is
+    using the camera, he tells you that instead.
   - **Questions** work as always ("what brand is this?"): a Look on your usual model, about 3¢.
     While its picture and answer are on screen the live view pauses ("Paused while you look at
-    this") and goes on when you tap **Live**.
-  - **Never more than $1 an hour.** The meter is always on screen ("LIVE VIEW · 12 min · 9¢ this
-    hour · limit $1"). The limit counts the last 60 minutes across every Jarvis tab and window on
-    the device, questions asked during the live view included, and a reload doesn't reset it (on an
-    iPhone the Home Screen app and Safari keep separate storage, so each counts its own hour). From
-    90¢ Jarvis looks only every 5 seconds; at $1 the live view pauses and tells you when it can go
-    on ("It can go on at 2:41 PM"), with a **Resume** button that works from then. The looks cost
-    about 30–50¢ an hour; questions about 3¢ each, counted in the limit.
-  - **An hour at most.** After 60 minutes it stops by itself: tap **Live view** to keep going.
-    Live view and Watch never run together: starting one stops the other.
+    this") and goes on when you tap **Live** or say "live view".
+  - **$1 an hour for the looks.** The meter is always on screen ("LIVE VIEW · 12 min · 9¢ this hour
+    · limit $1"). The hour counts the last 60 minutes across every Jarvis tab and window on the
+    device, and a reload doesn't reset it (on an iPhone the Home Screen app and Safari keep separate
+    storage, so each counts its own hour). From 90¢ Jarvis looks only every 5 seconds, and his looks
+    never take the hour past $1: there the live view pauses and tells you when it can go on ("It
+    can go on at 2:41 PM"), with a **Resume** button that works from then (or say "resume live
+    view"). Questions you ask during the live view count in the hour too, even if you tap **Live**
+    or close Optics before the answer ends, but a question is always answered: after one at the
+    limit the meter can read a few cents over $1 ("$1.03 this hour"), and the live view waits until
+    the hour is back under it. The looks cost about 30–50¢ an hour; questions about 3¢ each.
+  - **An hour at most.** After 60 minutes it stops by itself: tap **Live view** to keep going. In
+    Voice Mode, or with replies read aloud, Jarvis also says it when the live view stops or pauses
+    by itself (the hour is over, the $1 is reached, the camera was unplugged), so his silence never
+    means he's still watching. Live view and Watch never run together: starting one stops the
+    other.
   - **Off means off.** It stops (it doesn't pause) whenever the camera stops: Optics closed, the
     app or window hidden, the camera unplugged, a hologram over Optics, **Esc**, or the **LIVE**
     pill. It runs only in Optics itself, not in a camera view on your other screen. Offline it
@@ -749,7 +762,7 @@ from the credit in your account. Rough examples:
 | A follow-up about the same picture (Tell me more, What's this part?) | about the same as a quick question |
 | Hologram of this | the price of a hologram, about 10–30¢ (shown on the button) |
 | Watch | about 0.6¢ each time Jarvis looks again, at most about 17¢ for a 5-minute session; up to 60 looks a day |
-| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on Claude Haiku 5.5); questions about 3¢ each, counted in the limit; never more than $1 in any hour |
+| Live view (Optics) | about 30–50¢ an hour for the looks (one a second on Claude Haiku 5.5), which never take the hour past $1; questions about 3¢ each, counted in the hour and always answered (so a question at the limit can take the hour a few cents over $1) |
 | The natural voice | free (it runs on your device) |
 
 For example, $200 of credit a month covers roughly 100 Balanced swarm missions (more if some
@@ -796,9 +809,11 @@ of a new conversation costs about 3¢ more; later messages reuse them for a tent
   **live view** is on: then a picture goes to Anthropic about once a second, only while it's on (you
   start it, its meter is on screen, it stops after an hour or whenever the camera stops). There is
   no video stream anyone could log into: each picture goes straight from your device to
-  Anthropic's API and is gone; nothing of the live view is recorded or saved, by Jarvis or by the
-  home base (only the short lines Jarvis said stay on screen until you close Optics), and
-  Anthropic doesn't use API data to train its models. Jarvis never
+  Anthropic's API, one at a time. Anthropic keeps API data only for a limited time (by default it
+  deletes it within 30 days; longer only if a request is flagged under its usage policy or the law
+  requires it) and doesn't use it to train its models. Nothing of the live view is recorded or
+  saved by Jarvis or by the home base (only the short lines Jarvis said stay on screen until you
+  close Optics). Jarvis never
   turns the camera on by himself: if he offers to show it on another screen while it's off, you
   get a **Turn on camera** button, and nothing happens until you tap it. Pictures are made fresh from
   the camera, so they carry no location data. Each Look is kept in the conversation on this device
