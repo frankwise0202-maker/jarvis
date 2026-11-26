@@ -173,6 +173,21 @@ export const CHROME_VOICE = {
     { words: 'cancel Chrome', state: 'CV-prompt-tour', winner: 'chrome-prompt', why: 'Chrome asked: its no, at once' },
     { words: 'stop Chrome', state: 'CV-check', winner: 'chrome-prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
     { words: 'cancel Chrome', state: 'CV-check', winner: 'chrome-prompt', why: 'the check counting down is withdrawn: nothing goes to Chrome' },
+    { words: 'stop', state: 'CV-check', winner: 'chrome-prompt', why: 'the check counting down is withdrawn (nothing goes to Chrome); no task runs yet for the stop layer' },
+    { words: 'okay stop', state: 'CV-check', winner: 'chrome-prompt', why: 'the check counting down is withdrawn (nothing goes to Chrome)' },
+    // Voice's H4 states (a Chrome prompt with its answers, a tour's decision, the research offer): the prompt's
+    // own words go to voice's 'prompt' first in the answer layer; Voice Mode carries both ids out the same way
+    // (answerPrompt: a no at once, a yes in its window and then its check).
+    ...['H4', 'H4O'].flatMap((state) => [
+      { words: 'stop Chrome', state, winner: 'prompt', why: "the prompt's Stop: the task stops (never the stop layer's, never a tour's)" },
+      { words: 'yes, approve', state, winner: 'prompt', why: "the prompt's Approve, then its check" },
+    ]),
+    { words: 'deny', state: 'H4', winner: 'prompt', why: "the prompt's own word: its no, at once" },
+    { words: 'cancel Chrome', state: 'H4', winner: 'prompt', why: 'names Chrome: the prompt\'s no, at once' },
+    { words: 'approve', state: 'H4O', winner: 'prompt', why: "the prompt's Approve, then its check (the research offer was asked last, but approve is never its word)" },
+    // A hologram open in a Chrome context: today's hologram and screen takes stay (R10, C3).
+    { words: 'stop that', state: 'CV-holo', winner: 'hologram', why: 'holds the model still (free, undoable), as with any hologram open' },
+    { words: 'expand this in a different window', state: 'CV-holo', winner: 'screens', why: 'a window (C3), as with any hologram open' },
   ],
 };
 
