@@ -1034,6 +1034,7 @@ function createVoiceMode(opts) {
       return;
     }
     S.typing = !S.typing;
+    S.typingForced = false; // v8.1 (A2): the owner's own choice from here (typing holds off Standby)
     if (S.typing) {
       if (S.listen) {
         stopListening();
@@ -1291,6 +1292,8 @@ function createVoiceMode(opts) {
    */
   function noteAway() {
     if (S.closed || S.awayNoted || !document.hidden || !handsFree()) return;
+    // Only while the session is under way (an idle one, after the brake for instance, listens to nothing).
+    if (!(S.listen || S.review || S.run || S.speech || S.retryTimer || S.wake)) return;
     S.awayNoted = true;
     callQuietly(() => notify({ tag: SESSION_NOTE, title: 'Jarvis is listening', body: 'Ask away, or say “go back to sleep”.' }));
   }
@@ -4097,7 +4100,6 @@ function createVoiceMode(opts) {
     W.line = line;
     S.asked = 0; // v8.1 (A6): woken: the questions count from here
     S.braked = false;
-    noteAway(); // v8.1 (A1): woken in the background on a Mac: one notification ("Jarvis is listening …")
     if (music) {
       showMusicCard(music.segment, { fresh: true });
       S.noRelisten = false; // the offer waits for an answer, not for a tap
@@ -4108,6 +4110,7 @@ function createVoiceMode(opts) {
       /* decoration */
     }
     speakAck(line);
+    noteAway(); // v8.1 (A1): woken in the background on a Mac: one notification ("Jarvis is listening …")
   }
 
   /** v8.1 (D3): the lines said before the greeting (wake.pending()), tidied; [] without the hook. */
@@ -4842,9 +4845,11 @@ function createVoiceMode(opts) {
     const once = !!after && typeof after === 'object';
     // Woken: the offer was just made, so Jarvis listens for the answer (Continuous or not).
     const asking = !!S.wake && S.wake.phase === 'asking';
-    // v8.1 (A6): a woken session, and every session while Jarvis is hidden, listens once for a follow-up (8 s);
-    // while hidden, after 3 questions in a row without the wake words, claps, a tap or a key: the brake.
-    const plan = once ? null : followUp({ woken: S.wakeSession, away: !!document.hidden, continuous: S.continuous, asking, asked: S.asked });
+    // v8.1 (A6): in a hands-free session (a computer: handsFree()), a woken session and every session while Jarvis
+    // is hidden listen once for a follow-up (8 s); while hidden, after 3 questions in a row without the wake words,
+    // claps, a tap or a key: the brake. Elsewhere (an iPhone, the setting off): today's rule.
+    const hf = handsFree();
+    const plan = once ? null : followUp({ woken: S.wakeSession && hf, away: !!document.hidden && hf, continuous: S.continuous, asking, asked: S.asked });
     if (plan && plan.brake) {
       brake();
       return;

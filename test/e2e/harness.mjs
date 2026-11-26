@@ -216,7 +216,9 @@ export class TestContext {
         'jarvis.apiKey': s.apiKey ?? MOCK_API_KEY,
         // v7.8: a set-up device whose owner already chose George's voice from the home base (on or off), so
         // a linked fake Core doesn't turn it on by itself; the auto-enable scenarios seed homeBaseSpeakBy ''.
-        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', homeBaseSpeakBy: 'owner', ...(s.settings || {}), ...settings }),
+        // v8.1: and whose owner chose not to open Standby at launch, so a scenario with "Hey Jarvis" on still starts
+        // on the home screen; mac-standby-at-launch seeds standbyAtLaunch '' (automatic).
+        'jarvis.settings.v1': JSON.stringify({ onboarded: true, userName: 'Tony', homeBaseSpeakBy: 'owner', standbyAtLaunch: 'off', ...(s.settings || {}), ...settings }),
       };
     } else if (seed === 'fresh') {
       values = { 'jarvis.dev.apiBase': origin };

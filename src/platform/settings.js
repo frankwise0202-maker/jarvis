@@ -79,12 +79,24 @@ export const DEFAULT_SETTINGS = deepFreeze({
   homeBaseSpeakBy: '',
   // ==== v8.1: each builder's settings (key: default, // what it is) go between its two markers ====
   // ---- mac-dev ▸ audioSetup, audioInputId, audioInputLabel, audioOutputId, audioOutputLabel (A4)
+  // Microphone and speaker (v8.1, Settings → Voice; a computer in Chrome or Edge, SPEC §28.2): the setup ('' =
+  // none chosen; 'speaker-mac-mic' | 'speakerphone-both' | 'switch') and the devices picked, each remembered by
+  // id and label (ids are per site and browser). All '' = the Mac's own sound settings, as before. This
+  // computer's own: never in a backup or sync (platform/backup.js EXCLUDED_SETTINGS).
+  audioSetup: '',
+  audioInputId: '',
+  audioInputLabel: '',
+  audioOutputId: '',
+  audioOutputLabel: '',
   // ---- mac-dev ◂
   // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
   // Settings → Voice → Wake Jarvis → "Keep talking when Jarvis is in the background (Mac)" (owner question 2:
   // on by default). On a computer, a session the owner started (a wake, a tap, a key) goes on listening and
   // speaking while Jarvis is hidden; off: as before v8.1. An iPhone or iPad pauses while hidden either way.
   handsFreeBackground: true,
+  // Settings → Voice → Wake Jarvis → "Open Standby when Jarvis starts (Mac)" (A11): '' automatic (on when "Hey
+  // Jarvis" is on), 'on' or 'off' (the owner's choice). Computers only.
+  standbyAtLaunch: '',
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂
@@ -229,9 +241,15 @@ const VALIDATORS = {
   homeBaseSpeakBy: oneOf(['', 'auto', 'owner']),
   // ==== v8.1: each builder's validators (one per setting above) go between its two markers ====
   // ---- mac-dev ▸ audioSetup, audioInputId, audioInputLabel, audioOutputId, audioOutputLabel (A4)
+  audioSetup: oneOf(['', 'speaker-mac-mic', 'speakerphone-both', 'switch']),
+  audioInputId: (v, fb) => (typeof v === 'string' && v.length <= 256 && /^[\x21-\x7e]*$/.test(v) ? v : fb),
+  audioInputLabel: line({ maxLength: 200 }),
+  audioOutputId: (v, fb) => (typeof v === 'string' && v.length <= 256 && /^[\x21-\x7e]*$/.test(v) ? v : fb),
+  audioOutputLabel: line({ maxLength: 200 }),
   // ---- mac-dev ◂
   // ---- mac-hf ▸ handsFreeBackground (A1), the Standby at launch (A11)
   handsFreeBackground: bool,
+  standbyAtLaunch: oneOf(['', 'on', 'off']),
   // ---- mac-hf ◂
   // ---- tour-render ▸
   // ---- tour-render ◂

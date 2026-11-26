@@ -17,10 +17,26 @@
 // collisions.mjs when two matchers can claim it.
 
 // ==== mac-dev =========================================================================================
+// "Which microphone are you using?" (src/ui/commands/audio.js, audio-status): Jarvis says where he listens and
+// speaks. Whole sentences only: questions about microphones in general stay Claude's.
 export const MAC_DEV = {
   must: [
+    ['which microphone are you using', 'V0', 'audio-status'],
+    ['Jarvis, which mic are you using?', 'V0', 'audio-status'],
+    ['What speaker are you using?', 'V0', 'audio-status'],
+    ['which microphone and speaker are you using', 'S', 'audio-status'],
+    ['Is the speakerphone connected?', 'V0', 'audio-status'],
+    ['are you on the speakerphone', 'VH', 'audio-status'],
+    ['where are you listening', 'V0', 'audio-status'],
+    ['which microphone are you using', 'C0', 'audio-status'],
   ],
   not: [
+    'which microphone should I buy for podcasting',
+    'what microphone does the iPhone 17 use',
+    'is a speakerphone better than headphones for calls',
+    'which speaker is better for a living room',
+    'where are you from',
+    'are you listening to me',
   ],
   states: {
   },

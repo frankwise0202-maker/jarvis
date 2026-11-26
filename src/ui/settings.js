@@ -28,6 +28,7 @@ import { createSyncSettings } from './sync.js';
 import { createSensesSettings } from './senses-settings.js';
 import { createJarvisVoiceCard } from './voice-card.js';
 import { createChromeLinkSettings } from './chrome-link-settings.js'; // v8.1 chrome-relay
+import { createAudioDevicesCard, createAlwaysOnCard } from './audio-devices-card.js';
 
 export const SETTINGS_SECTIONS = [
   { id: 'profile', label: 'Profile & style', short: 'Profile', icon: 'user' },
@@ -656,8 +657,19 @@ export function createSettingsPanel(o) {
   // ---- v8.1 slots: each builder fills its own (the panel's options `o` bring what it needs from
   // app.js); an empty slot shows nothing (no card, no section, no nav button) ----------------------
   // Settings → Voice → Microphone and speaker, after Jarvis's voice (mac-dev): a card element, or null.
+  // v8.1 (SPEC §28.2): only on a computer in Chrome or Edge (AudioContext.setSinkId); nothing in the demo.
+  // A10 (SHOULD): the "Always on" card follows it.
   function micSpeakerSlot() {
-    return null;
+    const a = o.audioDevices;
+    if (!a || !a.audio) return null;
+    const audioCard = createAudioDevicesCard({ audio: a.audio, stt: a.stt, tts: a.tts, createCapture: a.createCapture, createWakeWord: a.createWakeWord, getSettings, commit, toast: o.toast });
+    if (!audioCard) return null;
+    const alwaysCard = safeCall(() => createAlwaysOnCard({ audio: a.audio, getSettings, george: a.george }), null);
+    const cards = alwaysCard ? [audioCard, alwaysCard] : [audioCard];
+    for (const c of cards) cleanups.push(() => c.destroy());
+    const offChange = safeCall(() => onSettingsChange(() => cards.forEach((c) => c.sync())), null);
+    if (typeof offChange === 'function') cleanups.push(offChange);
+    return h('div', { class: 'ad-slot' }, ...cards.map((c) => c.el));
   }
   // Settings → Holograms (tours): the section's cards ([]: no section).
   function hologramsSlot() {
@@ -837,6 +849,15 @@ export function createSettingsPanel(o) {
             help: 'After “Hey Jarvis”, two claps, or a tap, he goes on hearing you and answering while his window is behind other windows or the display sleeps. You hear a chime each time he listens, and the tab says what he is doing.',
             forId: fieldId('handsFreeBackground'),
             control: switchField('handsFreeBackground', { label: 'Keep talking when Jarvis is in the background (Mac)', get: (st) => st.handsFreeBackground !== false }),
+          }),
+      // v8.1 (A11): computers only; automatic until the owner chooses (on when "Hey Jarvis" is on).
+      currentOs() === 'ios' || currentOs() === 'android'
+        ? null
+        : row({
+            label: 'Open Standby when Jarvis starts (Mac)',
+            help: 'After a restart or an update, Jarvis opens Standby by himself, so “Hey Jarvis” works again without a click. On when “Hey Jarvis” is on, until you choose.',
+            forId: fieldId('standbyAtLaunch'),
+            control: switchField('standbyAtLaunch', { label: 'Open Standby when Jarvis starts (Mac)', get: (st) => st.standbyAtLaunch === 'on' || (st.standbyAtLaunch !== 'off' && st.wakeWord === true), patch: (v) => ({ standbyAtLaunch: v ? 'on' : 'off' }) }),
           }),
       h('div', { class: 'set-row-actions' }, goBtn),
     );

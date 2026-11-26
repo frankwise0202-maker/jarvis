@@ -111,6 +111,11 @@ export function createStandby(deps = {}) {
   let startedKey = null;
   let audioOffs = [];
   let tipAsked = false;
+  let muted = false; // v8.1 (A12): the live microphone has sent exact digital silence for 10 s
+  // v8.1 (A11): the screen says CLICK ONCE SO JARVIS CAN SPEAK (decided when shown: Chrome marks the page active
+  // before the click or key reaches Standby), and whether this opening already took that click.
+  let clickAsked = false;
+  let clickTaken = false;
   const lock = typeof createLock === 'function' ? safeLock(() => createLock((st) => onLockChange(st))) : null;
   const wordRetry = createBackoff(() => restartWord()); // v8.1 (A12): "Hey Jarvis" started again after a failure
 
@@ -207,6 +212,7 @@ export function createStandby(deps = {}) {
 
   function unmount() {
     if (!root) return;
+    if (els.tip) els.tip.hidden = true; // v8.1: the one-time line is for that first Standby only
     for (const el of inerted) if (el.isConnected) el.inert = false;
     inerted = [];
     root.hidden = true;
@@ -236,7 +242,7 @@ export function createStandby(deps = {}) {
     } catch {
       /* decoration */
     }
-    if (!capture) capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    if (!capture) capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     try {
       capture.prepare(); // the AudioContext starts inside the tap (iOS)
     } catch {
@@ -248,12 +254,14 @@ export function createStandby(deps = {}) {
   /** Back to Standby after the wake routine or a conversation (no tap needed: the context is ready). */
   function resume() {
     if (phase === 'open') return;
-    if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState });
+    if (!capture && typeof createCapture === 'function') capture = createCapture({ onClap: () => trigger('clap'), onState: onCaptureState, onSilence: onCaptureSilence });
     open();
   }
 
   function open() {
     phase = 'open';
+    clickAsked = false;
+    clickTaken = false;
     mount();
     shiftIndex = 0;
     applyShift();
@@ -436,6 +444,7 @@ export function createStandby(deps = {}) {
       event.stopPropagation(); // not the tap that leaves Standby
     }
     if (phase !== 'open' || !lock || lock.state !== 'elsewhere') return;
+    if (clickAsked) clickedOnce(); // v8.1 (A11): this click counts as the one speech needed too
     lock.take();
     render();
   }
@@ -529,15 +538,23 @@ export function createStandby(deps = {}) {
     firstTimeTip();
   }
 
+  /** v8.1 (A12): exact digital silence for 10 s (a microphone's mute button), or sound again. */
+  function onCaptureSilence(silent) {
+    if (muted === !!silent) return;
+    muted = !!silent;
+    if (phase === 'open') render();
+  }
+
   function onCaptureState(info) {
+    if (info && info.state !== 'live') muted = false; // a new capture starts unmuted
     if (phase !== 'open' || !info) return;
     if (info.state === 'off' && info.reason === 'ended' && listen === 'live') {
       // The system took the microphone (a call, another app) or it went away (the speakerphone turned
       // off): try again with back-off (v8.1; before, once after 1.5 s and only on screen).
       listen = 'paused';
-      render();
       if (audio) safeCall(() => audio.check()); // gone? the device watcher decides (two enumerations)
       retry.failed();
+      render(); // after the retry is scheduled: the hint says it tries again by itself
     }
   }
 
@@ -707,7 +724,7 @@ export function createStandby(deps = {}) {
   function onTap(event) {
     if (phase !== 'open') return;
     if (event) event.preventDefault();
-    const forSpeech = clickNeeded();
+    const forSpeech = clickAsked; // as the screen asked: the page is already active inside this click
     if (forSpeech) clickedOnce(); // v8.1 (A11): this click is the one speech needed
     // iOS may want one tap before its microphone and audio start: this tap starts them.
     if (listen === 'needs-tap' && capture) {
@@ -735,7 +752,7 @@ export function createStandby(deps = {}) {
       }
       return;
     }
-    if ((event.key === 'Enter' || event.key === ' ') && clickNeeded()) {
+    if ((event.key === 'Enter' || event.key === ' ') && clickAsked) {
       event.preventDefault();
       event.stopPropagation();
       clickedOnce(); // v8.1 (A11): a key counts as the click speech needed
@@ -759,7 +776,19 @@ export function createStandby(deps = {}) {
     return safeCall(() => needsClick() === true, false);
   }
 
+  /**
+   * v8.1 (A11): whether the screen asks for the click. Once asked, the line stays until Standby takes a click or
+   * Enter/Space (the click that answers it has already made the page active); one per opening, so a later tap
+   * always leaves.
+   */
+  function askForClick() {
+    if (!clickAsked && !clickTaken && clickNeeded()) clickAsked = true;
+    return clickAsked;
+  }
+
   function clickedOnce() {
+    clickAsked = false;
+    clickTaken = true;
     try {
       unlock({ tap: true }); // inside this gesture: the voice that will greet the owner can speak from now on
     } catch {
@@ -823,7 +852,12 @@ export function createStandby(deps = {}) {
     const wordComing = wordOn() && (!ws || ws.state === 'loading' || ws.state === 'off' || (ws.state === 'ready' && !wordPortGiven));
     // v8.1: the microphone it listens on, when one is chosen (else "this device", as before).
     const named = audio && micOn ? safeCall(() => audio.pill(capture.device), null) : null;
-    if (what.length && named && named.gone) {
+    root.dataset.muted = micOn && muted ? 'true' : 'false';
+    if (micOn && muted) {
+      // v8.1 (A12): nothing at all comes from the microphone (exact zeros for 10 s): its mute button?
+      pill = 'MICROPHONE MUTED?';
+      tone = 'warn';
+    } else if (what.length && named && named.gone) {
       pill = `LISTENING ON ${named.name} · ${named.gone} DISCONNECTED`;
       tone = 'live';
     } else if (what.length) {
@@ -864,10 +898,10 @@ export function createStandby(deps = {}) {
     els.useHere.hidden = listen !== 'elsewhere';
     setText(els.pillText, pill);
     els.pill.dataset.tone = tone;
-    els.pill.setAttribute('aria-label', what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
+    els.pill.setAttribute('aria-label', micOn && muted ? 'The microphone is on but sends no sound at all: is it muted?' : what.length ? `The microphone is on, on this device only, listening for ${what.map((w) => w.toLowerCase()).join(' and ')}.` : micOn ? `The microphone is on, on this device only${wordComing ? '; “Hey Jarvis” is getting ready' : ''}.` : pill.toLowerCase());
     setText(els.hint, hintText(what, ws));
     setText(els.status, safeText(statusLine));
-    const word0 = clickNeeded() ? 'CLICK ONCE SO JARVIS CAN SPEAK' : safeText(stateWord); // v8.1 (A11)
+    const word0 = askForClick() ? 'CLICK ONCE SO JARVIS CAN SPEAK' : safeText(stateWord); // v8.1 (A11)
     setText(els.word, word0 && word0 !== 'STANDING BY' ? word0 : '');
     els.word.hidden = !els.word.textContent;
   }
@@ -875,6 +909,7 @@ export function createStandby(deps = {}) {
   function hintText(what, ws) {
     const both = clapOn() && wordOn();
     if (listen === 'elsewhere') return 'Standby is on in another Jarvis window.';
+    if (muted && capture && capture.live === true) return 'No sound at all is coming from the microphone. Is it muted (the speakerphone’s mute button)?';
     if (listen === 'denied') return 'Allow the microphone for Jarvis in your browser’s settings to wake him by clapping or by voice.';
     if (listen === 'no-mic') return 'Connect a microphone to wake Jarvis by clapping or by voice.';
     if (listen === 'needs-tap') return 'This browser needs one tap before it listens.';

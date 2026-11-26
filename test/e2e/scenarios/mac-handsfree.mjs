@@ -134,6 +134,34 @@ function installGeorgeProbe() {
   };
 }
 
+/**
+ * A page Chrome opened after a restart: no click yet. `navigator.userActivation` follows Chrome's rule from a clean
+ * start (active from the first press or key on, before the page's own handlers see it): a test page opened by the
+ * harness may count as already active, so this stands in for it. `window.__activation.real` keeps Chrome's value.
+ */
+function installNoClickYet() {
+  let active = false;
+  const real = navigator.userActivation;
+  const mark = (e) => {
+    if (e.isTrusted) active = true;
+  };
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchend']) window.addEventListener(type, mark, true);
+  const ua = {
+    get hasBeenActive() {
+      return active;
+    },
+    get isActive() {
+      return active;
+    },
+  };
+  window.__activation = { real: () => (real ? real.hasBeenActive : null), fake: () => active };
+  try {
+    Object.defineProperty(Navigator.prototype, 'userActivation', { configurable: true, get: () => ua });
+  } catch {
+    /* Chrome's own stays */
+  }
+}
+
 // ---- helpers ----------------------------------------------------------------------------------------------
 
 const play = (page, samples) => page.evaluate((x) => window.__fakeMic.play(x), samples);
@@ -171,13 +199,14 @@ async function backInStandby(t, page = t.page, timeout = 20000) {
   await waitListening(t, page);
 }
 
-async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, page = null } = {}) {
-  const p = page || (await t.newPage({ device, settings: { ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
+async function setup(t, { device = 'mac', speech = {}, settings = {}, george = false, bargeIn = false, wordStub = false, devVoice = null, noClickYet = false, page = null } = {}) {
+  const p = page || (await t.newPage({ device, settings: { ...(t.scenario.settings || {}), ...(george ? GEORGE : {}), ...(bargeIn ? BARGE_IN : {}), ...settings } }));
   await p.addInitScript(installFakeSpeech, speech);
   await p.addInitScript(installFakeMic, { wakeLock: true });
   await p.addInitScript(installNotifyProbe);
   await p.addInitScript(installSoundProbe);
   if (george) await p.addInitScript(installGeorgeProbe);
+  if (noClickYet) await p.addInitScript(installNoClickYet);
   await p.addInitScript(() => {
     window.__voice.queue = [];
   });
@@ -249,8 +278,8 @@ export default [
     device: 'mac',
     timeout: 120000,
     async run(t) {
-      await setup(t);
-      await queue(t.page, { parts: [{ at: 2500, text: 'What is the capital' }, { at: 3300, text: QUESTION }] });
+      await setup(t, { speech: { noSpeechMs: 6000 } }); // the recognizer waits for the words that come later
+      await queue(t.page, { parts: [{ at: 2500, text: 'What is the capital' }, { at: 3300, revise: QUESTION }] });
       await (await t.visible('voice-open')).click();
       await waitVoice(t, 'listening');
       const sessions = await t.page.evaluate(() => window.__voice.sessions.length);
@@ -349,9 +378,11 @@ export default [
       await setup(t);
       await enterStandby(t);
       await setHidden(t.page, true);
-      const chimesBefore = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
       await queue(t.page, '', QUESTION);
       await wakeByClaps(t);
+      await waitSaid(t, /Shall I put on some/);
+      // After the wake chime: the listen chimes of the offer's listen and the ones after.
+      const chimesBefore = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
       await t.waitFor(() => leadCount(t) === 1, { timeout: 30000, message: 'the question to be sent' });
       await waitSaid(t, ANSWER, { timeout: 30000 });
       await backInStandby(t, t.page, 30000);
@@ -365,7 +396,7 @@ export default [
       t.assert(mine[0].closed, 'closed when the session ended');
       t.assert(!notes.some((n) => /Switch to Jarvis/.test(n.body)), 'not the old “Switch to Jarvis to answer.”');
       const chimes = await t.page.evaluate(() => window.__chimes.filter((c) => c.hidden).length);
-      t.assert(chimes > chimesBefore + 4, `chimes played while hidden (the wake, then each listen): ${chimes - chimesBefore} voices`);
+      t.assert(chimes > chimesBefore, `the listen chimes played while hidden, after the wake chime: ${chimes - chimesBefore} voices`);
     },
   },
   // ---- A3: a hidden stall hands over ---------------------------------------------------------------------------
@@ -410,14 +441,9 @@ export default [
         await waitSaid(t, /The capital of Germany is Berlin\./, { timeout: 30000 });
       });
       await t.step('then 8 s of silence: Standby', async () => {
-        const listenAt = await t.page.evaluate(async () => {
-          const n = window.__voice.listenLog.length;
-          await new Promise((r) => {
-            const tick = () => (window.__voice.listenLog.length > n ? r() : setTimeout(tick, 50));
-            tick();
-          });
-          return window.__voice.listenLog.at(-1);
-        });
+        // Listens: the wake window, the offer's, the first follow-up, then the one that hears nobody.
+        await t.waitFor(async () => (await t.page.evaluate(() => window.__voice.listenLog.length)) >= 4, { message: 'the second follow-up listen' });
+        const listenAt = await t.page.evaluate(() => window.__voice.listenLog[3]);
         await backInStandby(t, t.page, 30000);
         const took = (await t.page.evaluate(() => performance.now())) - listenAt;
         t.assert(took >= 8000 && took < 16000, `back to Standby ${Math.round(took)} ms after the listen began (8 s window, then the 2.5 s return)`);
@@ -537,11 +563,13 @@ export default [
       await (await t.visible('quick-key-standby')).click();
       await t.waitFor(async () => (await standbyState(t.page))?.word === 'ready', { timeout: 15000, message: 'the stand-in ready' });
       await queue(t.page, '', 'Tell me about solar panels [[long]]');
+      const stopsBefore = await t.page.evaluate(() => window.__fakeMic.stops);
       await t.page.evaluate(() => window.__jarvisWake.say());
       await t.page.locator(tid('voice-mode')).waitFor({ state: 'attached', timeout: 8000 });
       await t.step('the microphone stays on through the session', async () => {
-        const m = await t.page.evaluate(() => window.__fakeMic.standby);
-        t.assert(m === 1, `Standby’s capture is still live (${m})`);
+        await t.page.waitForTimeout(500);
+        const m = await t.page.evaluate(() => ({ stops: window.__fakeMic.stops, live: window.__fakeMic.live, log: window.__fakeMic.log.slice() }));
+        t.assert(m.stops === stopsBefore && m.live >= 1, `Standby’s capture was not released at the wake (${JSON.stringify(m)})`);
       });
       await t.step('while George speaks the answer, "Hey Jarvis": he stops and listens', async () => {
         await t.waitFor(() => leadCount(t) === 1, { timeout: 30000, message: 'the question to be sent' });
@@ -587,6 +615,83 @@ export default [
         await t.waitFor(async () => (await t.page.evaluate(() => window.__selfFired.length)) > 0, { timeout: 30000, message: 'George to say "Jarvis"' });
         await t.page.waitForTimeout(600);
         t.assert((await voiceState(t.page)) === 'speaking', `still speaking (${await voiceState(t.page)})`);
+      });
+      await t.step('the same detection a few words later (outside the mask): he stops and listens', async () => {
+        await t.page.waitForTimeout(1900); // past about 1 s after "Jarvis"
+        t.assert((await voiceState(t.page)) === 'speaking', 'he is still answering');
+        await t.page.evaluate(() => window.__jarvisWake.say());
+        await waitVoice(t, 'listening', { timeout: 5000 });
+      });
+    },
+  },
+  // ---- SHOULD: A11 and A12 ------------------------------------------------------------------------------------
+  {
+    name: 'mac-standby-at-launch',
+    title: 'Mac with "Hey Jarvis" on: after a restart (no click yet) Jarvis opens Standby by himself and says CLICK ONCE SO JARVIS CAN SPEAK; that click unlocks speech and Standby stays; an iPhone, or an address asking for something else, doesn’t open it',
+    device: 'mac',
+    settings: { wakeWord: true, standbyAtLaunch: '' }, // automatic (the harness seeds 'off')
+    timeout: 120000,
+    async run(t) {
+      await setup(t, { wordStub: true, noClickYet: true });
+      await t.step('Standby opens by itself at launch', async () => {
+        await t.visible('standby', { message: 'Standby at launch' });
+        t.note(`navigator.userActivation.hasBeenActive in the test page before any click: ${await t.page.evaluate(() => window.__activation.real())} (stood in for: false)`);
+        await t.waitFor(async () => /CLICK ONCE SO JARVIS CAN SPEAK/.test(await t.text(t.locator('standby-state'))), { message: 'the click-once line' });
+        await t.screenshot('1-standby-at-launch');
+      });
+      await t.step('the click unlocks speech; Standby stays and listens', async () => {
+        await t.locator('standby').click({ position: { x: 40, y: 40 } });
+        await t.page.waitForTimeout(500);
+        t.assert(await t.locator('standby').isVisible(), 'still on Standby');
+        t.assert(!/CLICK ONCE/.test(await t.text(t.locator('standby-state'))), 'the line is gone');
+        await waitListening(t);
+      });
+      await t.step('an iPhone with the same settings doesn’t open it', async () => {
+        const page = await t.newPage({ device: 'iphone13', settings: { wakeWord: true, standbyAtLaunch: '' } });
+        await setup(t, { page });
+        await page.waitForTimeout(1500);
+        t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch on an iPhone');
+      });
+      await t.step('a Mac opened at an address that asks for something else (?homebase=… from a notification) doesn’t open it', async () => {
+        const page = await t.newPage({ device: 'mac', settings: { wakeWord: true, standbyAtLaunch: '' } });
+        await page.addInitScript(installFakeMic, { wakeLock: true });
+        await page.addInitScript(installNoClickYet);
+        await t.goto('/?homebase=briefing', { page });
+        await page.waitForTimeout(1500);
+        t.assert(!(await page.locator(tid('standby')).count()), 'no Standby at launch with ?homebase=');
+      });
+    },
+  },
+  {
+    name: 'standby-word-restart',
+    title: '"Hey Jarvis" whose download failed starts again by itself with back-off (the hint says so); once the download works, Standby listens for it',
+    device: 'mac',
+    settings: { wakeClap: false, wakeWord: true },
+    allowConsole: [/status of 503/],
+    timeout: 180000,
+    async run(t) {
+      await setup(t);
+      let failing = true;
+      let asked = 0;
+      await t.page.context().route('**/models/openwakeword/**', (route) => {
+        asked += 1;
+        return failing ? route.fulfill({ status: 503, body: 'down' }) : route.continue();
+      });
+      await (await t.visible('quick-key-standby')).click();
+      await t.visible('standby');
+      await t.step('the download fails: the hint says he tries again', async () => {
+        await t.waitFor(async () => (await standbyState(t.page))?.word === 'error', { timeout: 30000, message: async () => `the wake word to fail (${JSON.stringify(await standbyState(t.page))})` });
+        const st = await standbyState(t.page);
+        t.assert(/couldn’t load/.test(st.hint) && /Jarvis tries again by himself\./.test(st.hint), `the hint (${st.hint})`);
+        t.assert((await t.page.evaluate(() => window.__fakeMic.gets)) === 0, 'the microphone stays off meanwhile (claps are off)');
+      });
+      await t.step('the network is back: the next try downloads it and Standby listens for it', async () => {
+        const before = asked;
+        failing = false;
+        await t.waitFor(async () => (await standbyState(t.page))?.word === 'ready', { timeout: 120000, message: async () => `the wake word to be ready (${JSON.stringify(await standbyState(t.page))})` });
+        t.assert(asked > before, 'asked again by itself');
+        await waitListening(t);
+        t.assert((await standbyState(t.page)).pill === 'LISTENING ON THIS DEVICE · “HEY JARVIS”', (await standbyState(t.page)).pill);
       });
     },
   },

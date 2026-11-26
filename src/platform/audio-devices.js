@@ -23,12 +23,14 @@
 //   audio.subscribe(fn)           fn(snapshot) after any change: { plan, devices, state, trackUse } -> off
 //   audio.wakeAudio() / audio.questionAudio()   for Standby's capture and the home base's capture:
 //                                 { id, processing } | null (null: nothing chosen, as before)
+//   audio.getQuestionMedia(c)     getUserMedia on the question microphone (Voice Mode's mic bands)
 //   audio.wrapStt(stt)            stt.js's API with every listen given the question microphone's track
 //                                 (audioTrack) when a microphone is chosen and the recognizer can take one
 //   audio.addSink(target)         George's context, the sounds context, the music <audio>: target.setSink(id)
 //                                 is called with the planned speaker ('' = default) now and on every change;
 //                                 target.settle(ms) (George) after a Bluetooth microphone closes; target.probe()
-//                                 after the Mac slept. -> off
+//                                 after the Mac slept; target.onDevice(fn) (George's context: its error and
+//                                 statechange events) makes the watcher check the devices. -> off
 //   audio.noteMicClosed({ id, label })  a Jarvis microphone closed (capture.js onRelease): a Bluetooth one makes
 //                                 George wait SETTLE_MS before he starts
 //   audio.holdChime(name, opts)   setup 3: 'listen-start' waits for the question track's first sound (or 1.2 s);
@@ -449,6 +451,8 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     return openMic(want, { scope }).then(
       (mic) => {
         const dev = trackDevice({ label: mic.label, id: mic.deviceId });
+        // Its microphone going away (ended) or switching (mute, unmute): the watcher has a look.
+        for (const type of ['ended', 'mute', 'unmute']) safe(() => mic.track.addEventListener(type, () => check()));
         if (chime) {
           firstSound(mic.track, SWITCH_CHIME_MAX_MS, scope).then(() => releaseChime());
         }
@@ -471,6 +475,28 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
         return null; // the recognizer's own microphone, as before
       },
     );
+  }
+
+  /**
+   * getUserMedia for another listener of the questions (Voice Mode's mic bands, which drive the core while he
+   * listens): the chosen question microphone by exact id, the default one when it isn't there; nothing chosen:
+   * exactly what was asked. Without this, Chrome's own microphone (the speakerphone's, if macOS's default input
+   * is it) would open beside the Mac's in "Speakerphone speaks, Mac listens".
+   */
+  async function getQuestionMedia(constraints = {}) {
+    const md = mediaDevices(scope);
+    if (!md || typeof md.getUserMedia !== 'function') throw new Error('getUserMedia unavailable');
+    const want = questionAudio();
+    const c = constraints && typeof constraints === 'object' ? constraints : {};
+    if (!want || !want.id) return md.getUserMedia(c);
+    const audio = c.audio && typeof c.audio === 'object' ? c.audio : {};
+    try {
+      return await md.getUserMedia({ ...c, audio: { ...audio, deviceId: { exact: want.id } } });
+    } catch (err) {
+      const name = String((err && err.name) || '');
+      if (name !== 'NotFoundError' && name !== 'OverconstrainedError') throw err;
+      return md.getUserMedia(c);
+    }
   }
 
   function wrapStt(stt) {
@@ -551,7 +577,12 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     if (!target || typeof target.setSink !== 'function') return () => {};
     sinks.add(target);
     if (applied) giveSink(target, applied);
-    return () => sinks.delete(target);
+    // George's context says when its output device went away (error) or it stopped: check the devices.
+    const off = typeof target.onDevice === 'function' ? safe(() => target.onDevice(() => check()), null) : null;
+    return () => {
+      sinks.delete(target);
+      if (typeof off === 'function') safe(() => off());
+    };
   }
 
   function subscribe(fn) {
@@ -586,6 +617,7 @@ export function createAudioDevices({ getSettings = () => ({}), scope = globalThi
     wakeAudio,
     questionAudio,
     questionTrack,
+    getQuestionMedia,
     wrapStt,
     addSink,
     noteMicClosed,
