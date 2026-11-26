@@ -15,12 +15,16 @@
 //   requestWorstUsd(params) the worst case of one request: its input at the cache-write price,
 //                          max_tokens at the output price, and $0.01 per web search it may make
 //   createLiveGate({ budget, storage, now, lock })
-//                          { budget, reserve(usd), settle(id, usd), release(id), keep(id),
+//                          { budget, reserve(usd), settle(id, usd), release(id), keep(id), count(usd),
 //                            reserved(), fits(usd), resumeAt(usd) }
 //   capLine(resumeAt)      "That would take the live view past its dollar this hour. It can go on at
 //                          2:41 PM, or say 'stop live view' and ask again."
 //   createTurnGate({ gate, isOn })
 //                          the object the engine's startTurn({ gate }) consults before each request
+//                          of one turn (make one per turn): while the live view is on it keeps each
+//                          request short, reserves it and refuses it at the edge; once a request of
+//                          the turn went out that way, the rest of the turn is counted too (v8.0's
+//                          rule: a question asked during the live view counts in full)
 
 import { WEB_SEARCH_USD, priceOf } from '../engine/models.js';
 import { imageSizeOf, imageTokens } from './optics.js';
@@ -178,6 +182,8 @@ function parseReserved(raw) {
  *   release(id)       it failed before it was billed: the reservation goes
  *   keep(id)          it was stopped after it was sent (it may have been billed): the reservation
  *                     is counted as spent
+ *   count(usd)        real money with no reservation (a request of a counted turn sent after the
+ *                     live view stopped: nothing to refuse, but it counts)
  *   reserved()        USD reserved now by every window (open reservations in the hour)
  *   fits(usd)         whether `usd` more fits now, reservations included (the live view's own looks)
  *   resumeAt(usd)     budget.resumeAt() with the reservations included
@@ -304,6 +310,12 @@ export function createLiveGate({ budget, storage = null, now = Date.now, lock = 
         drop(id);
         return true;
       }),
+    count: (usd) =>
+      run(() => {
+        if (nano(usd) <= 0) return false;
+        budget.add(usd);
+        return true;
+      }),
     reserved: () => reservedUsd(),
     fits: (usd) => {
       const held = reservedUsd();
@@ -340,11 +352,16 @@ export function capLine(resumeAt, { formatTime = defaultTime } = {}) {
 }
 
 /**
- * What the engine consults before each lead request of a turn (startTurn({ gate }), lead.js):
+ * What the engine consults before each lead request of a turn (startTurn({ gate }), lead.js). One per
+ * turn (it remembers whether the turn has counted toward the live view's hour).
  *   maxTokens(first)   null while the live view is off (the request goes out as usual), else 4,000
  *                      for the turn's first request and 1,000 for later ones
- *   reserve({ params, model }) → null (the live view is off), { refused: true, message } (don't send:
- *                      the turn ends with `message`), or a ticket { settle(usd), release(), keep() }
+ *   reserve({ params, model }) → null (nothing to do: the live view is off and this turn never went
+ *                      through it), { refused: true, message } (don't send: the turn ends with
+ *                      `message`), or a ticket { usd, settle(cost), release(), keep(partialCost) }.
+ *                      A turn that sent a request while the live view was on keeps counting after it
+ *                      stops (v8.0's rule: a question asked during the live view counts in full):
+ *                      its later requests get a ticket of 0 that counts their real cost.
  * `isOn()`: whether the live view is on in this window now (paused counts as on).
  */
 export function createTurnGate({ gate, isOn }) {
@@ -355,10 +372,25 @@ export function createTurnGate({ gate, isOn }) {
       return false;
     }
   };
+  let counting = false;
   return {
     maxTokens: (first) => (on() ? gateMaxTokens(first) : null),
+    get counting() {
+      return counting;
+    },
     async reserve({ params, model } = {}) {
-      if (!on()) return null;
+      if (!on()) {
+        if (!counting) return null;
+        // The live view stopped during this turn: nothing to keep short or refuse, but it counts.
+        let done = false;
+        const finish = (usd) => {
+          if (done) return undefined;
+          done = true;
+          return Number(usd) > 0 ? gate.count(Number(usd)) : undefined;
+        };
+        return { usd: 0, settle: (cost) => finish(cost), release: () => finish(0), keep: (partial) => finish(partial) };
+      }
+      counting = true;
       const usd = requestWorstUsd(params, { model });
       const r = await gate.reserve(usd);
       if (!r || !r.ok) return { refused: true, message: capLine(r ? r.resumeAt : Infinity), usd };

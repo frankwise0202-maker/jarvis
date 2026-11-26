@@ -54,8 +54,9 @@ function setup() {
     release: (id) => (outcomes.push(['release']), gate.release(id)),
     keep: (id) => (outcomes.push(['keep']), gate.keep(id)),
   };
-  const turnGate = createTurnGate({ gate: spied, isOn: () => live.on });
-  return { jarvis, mock: fetch.mock, budget, gate, live, turnGate, outcomes };
+  // One per turn, as the app makes them (each remembers whether its turn counts in the hour).
+  const newTurnGate = () => createTurnGate({ gate: spied, isOn: () => live.on });
+  return { jarvis, mock: fetch.mock, budget, gate, live, turnGate: newTurnGate(), newTurnGate, outcomes };
 }
 
 const leads = (mock) => mock.requests.filter((r) => r.kind === 'lead');
@@ -94,16 +95,17 @@ test('the live view off: no gate, the requests exactly as before, nothing counte
 });
 
 test('at 97¢ the Look is refused: nothing is sent, the turn says why and leaves no message behind; after "stop live view" the same question is answered', async () => {
-  const { jarvis, mock, budget, gate, live, turnGate } = setup();
+  const { jarvis, mock, budget, gate, live, newTurnGate } = setup();
   const conv = jarvis.newConversation();
   // An earlier question in this chat (the live view off then).
   live.on = false;
-  await jarvis.startTurn(conv, { text: 'What is the capital of France?', mode: 'quick', gate: turnGate }).done;
+  await jarvis.startTurn(conv, { text: 'What is the capital of France?', mode: 'quick', gate: newTurnGate() }).done;
+  assert.equal(budget.spent(), 0, 'asked with the live view off: not in its hour');
   live.on = true;
   budget.add(0.97);
   const before = conv.apiMessages.length;
   const sent = leads(mock).length;
-  const refused = await jarvis.startTurn(conv, { text: 'What is this?', mode: 'quick', gate: turnGate }).done;
+  const refused = await jarvis.startTurn(conv, { text: 'What is this?', mode: 'quick', gate: newTurnGate() }).done;
   assert.equal(refused.status, 'error');
   assert.equal(refused.error.kind, 'live_cap');
   assert.match(refused.error.message, /^That would take the live view past its dollar this hour\. It can go on at .+, or say 'stop live view' and ask again\.$/);
@@ -112,11 +114,12 @@ test('at 97¢ the Look is refused: nothing is sent, the turn says why and leaves
   assert.ok(refused.segments.some((s) => s.kind === 'error' && s.error.kind === 'live_cap'), 'the transcript says why');
   assert.equal(gate.reserved(), 0);
   assert.ok(near(budget.spent(), 0.97), 'nothing more counted');
-  // "Stop live view", and ask again: answered, once.
+  // "Stop live view", and ask again: answered, once, and not in the live view's hour.
   live.on = false;
-  const again = await jarvis.startTurn(conv, { text: 'What is this?', mode: 'quick', gate: turnGate }).done;
+  const again = await jarvis.startTurn(conv, { text: 'What is this?', mode: 'quick', gate: newTurnGate() }).done;
   assert.equal(again.status, 'done');
   assert.equal(leads(mock).length, sent + 1);
+  assert.ok(near(budget.spent(), 0.97));
   const users = conv.apiMessages.filter((m) => m.role === 'user' && JSON.stringify(m.content).includes('What is this?'));
   assert.equal(users.length, 1, 'the question is in the history once');
   assert.deepEqual(mock.violations, []);
@@ -189,4 +192,25 @@ test('a web-search answer reserves its searches (1¢ each that it may make) and 
   assert.ok(reqs.slice(1).every((r) => r.body.max_tokens === 1000));
   assert.ok(outcomes.every((o) => o[0] === 'settle'));
   assert.ok(near(budget.spent(), turn.costUsd));
+});
+
+test('the live view stopped during a turn: the rest of it goes out as usual and still counts in the hour (v8.0: a question asked during the live view counts in full)', async () => {
+  const { jarvis, mock, budget, gate, live, turnGate, outcomes } = setup();
+  const conv = jarvis.newConversation();
+  const run = look(jarvis, conv, 'What is on my desk?', turnGate);
+  // The owner stops the live view while the first request is answered (its labels' round follows).
+  const off = run.on('segment', (e) => {
+    if (e.segment.kind === 'pins') {
+      live.on = false;
+      off();
+    }
+  });
+  const turn = await run.done;
+  assert.equal(turn.status, 'done');
+  const reqs = leads(mock);
+  assert.equal(reqs[0].body.max_tokens, 4000, 'kept short while it was on');
+  assert.equal(reqs[1].body.max_tokens, DEPTHS[DEFAULT_TEST_SETTINGS.depth || 'balanced'].visualLeadMaxTokens, 'as usual once it was off');
+  assert.deepEqual(outcomes.map((o) => o[0]), ['settle'], 'only the first was reserved');
+  assert.ok(near(budget.spent(), turn.costUsd), `the whole turn counts (${budget.spent()} vs ${turn.costUsd})`);
+  assert.equal(gate.reserved(), 0);
 });

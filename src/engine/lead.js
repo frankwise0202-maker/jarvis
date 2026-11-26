@@ -406,8 +406,8 @@ async function gateRequest(ctx, req) {
   const gate = ctx.gate;
   if (!gate) return null;
   const limit = gate.maxTokens(req === 0);
-  if (!(limit > 0)) return null;
-  ctx.gateMaxTokens = limit;
+  ctx.gateMaxTokens = limit > 0 ? limit : null;
+  // Asked even with the live view off: a turn that went through it keeps counting (createTurnGate).
   const ticket = await gate.reserve({ params: leadParams(ctx, ctx.features), model: ctx.leadModel });
   if (ctx.stopped) {
     if (ticket && !ticket.refused) ticket.release(); // stopped before it was sent: nothing billed
@@ -420,13 +420,18 @@ async function gateRequest(ctx, req) {
 /**
  * A gated request that failed: released when the API turned it down before any output (an HTTP
  * error: not billed); kept when it may have been billed (stopped after it was sent, cut off
- * mid-stream, or a connection that dropped): the worst is assumed.
+ * mid-stream, or a connection that dropped): the worst is assumed (its reservation counts; with no
+ * reservation, what it already cost).
  */
-function settleFailedTicket(ticket, err) {
+function settleFailedTicket(ctx, ticket, err) {
   const e = err && typeof err === 'object' ? err : {};
   const turnedDown = typeof e.status === 'number' && !e.jarvisStarted && !e.jarvisPartial && !isAbortError(err);
-  if (turnedDown) ticket.release();
-  else ticket.keep();
+  if (turnedDown) {
+    ticket.release();
+    return;
+  }
+  const partial = e.jarvisPartial;
+  ticket.keep(partial ? responseCost(partial.model || ctx.leadModel, partial.usage, ctx.leadModel) : 0);
 }
 
 /**
@@ -457,7 +462,7 @@ async function leadRequest(ctx, req) {
       ctx.adoptContainer(result.message.container);
       return { ...result, planning: view.planning, visuals: view.visuals, pins: view.pins };
     } catch (err) {
-      if (ticket) settleFailedTicket(ticket, err);
+      if (ticket) settleFailedTicket(ctx, ticket, err);
       accountPartialUsage(ctx, err, ctx.leadModel, null);
       view.flushLive();
       if (ctx.stopped || isAbortError(err)) throw err;

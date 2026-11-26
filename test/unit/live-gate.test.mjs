@@ -334,3 +334,32 @@ test('the engine\'s side: off, nothing changes; on, max_tokens is capped and eac
   });
   assert.equal(throwingIsOn.maxTokens(true), null, 'an isOn that throws counts as off');
 });
+
+test('one turn gate per turn: a turn that went through the live view keeps counting after it stops; one that never did is left alone', async () => {
+  const storage = memoryStorage();
+  const clock = fakeClock();
+  const { budget, gate } = windowOn(storage, clock);
+  let on = true;
+  const params = { model: 'claude-opus-5-5', max_tokens: 4000, system: 'hello', messages: [{ role: 'user', content: 'What is this?' }] };
+  const asked = createTurnGate({ gate, isOn: () => on });
+  const first = await asked.reserve({ params });
+  assert.ok(first.usd > 0 && asked.counting);
+  await first.settle(0.03);
+  on = false;
+  assert.equal(asked.maxTokens(false), null, 'off: as usual');
+  const later = await asked.reserve({ params });
+  assert.equal(later.usd, 0, 'nothing reserved: nothing to refuse');
+  await later.settle(0.012);
+  await later.settle(0.5);
+  assert.ok(near(budget.spent(), 0.042), 'but its real cost counts, once');
+  const cut = await asked.reserve({ params });
+  await cut.keep(0.004);
+  assert.ok(near(budget.spent(), 0.046), 'a request cut after it was sent counts what it already cost');
+  const failed = await asked.reserve({ params });
+  await failed.release();
+  assert.ok(near(budget.spent(), 0.046), 'one turned down before billing costs nothing');
+  const other = createTurnGate({ gate, isOn: () => on });
+  assert.equal(await other.reserve({ params }), null, 'a turn asked with the live view off never counts');
+  assert.equal(other.counting, false);
+  assert.equal(gate.reserved(), 0);
+});
