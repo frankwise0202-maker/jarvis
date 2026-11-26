@@ -591,7 +591,7 @@ export default [
   },
   {
     name: 'optics-look-screen',
-    title: 'Mac, two monitors: with a labeled Look on screen, "put this on my other screen" puts that Look (frame, labels, answer) on screen 2, not the live camera; "bring it back" reopens it frozen, camera off',
+    title: 'Mac, two monitors: with a labeled Look on screen, "put this on my other screen" puts that Look (frame, labels, answer) on screen 2, not the live camera; v8.1: Optics stays open and live here (the card folds) and "bring it back" opens the card again, the camera still live',
     device: 'mac',
     timeout: 120000,
     browserArgs: cameraArgs('desk-landscape.y4m'),
@@ -620,16 +620,21 @@ export default [
       await t.waitFor(async () => (await screen.locator(tid('screen-look-pin')).count()) === 5, { timeout: 10000, message: 'its five labels on screen 2' });
       t.assert(/That's your desk, sir/.test(await t.text(screen.locator(tid('screen-look')))), 'with the answer');
       t.assert((await t.count('screen-camera', undefined, screen)) === 0 && (await liveTracks(screen)) === 0, 'no live camera on screen 2');
-      await t.waitFor(async () => (await t.count('optics')) === 0, { timeout: 5000, message: 'Optics to close here (the Look moved out)' });
-      t.assert((await liveTracks(page)) === 0, 'and the camera is off');
+      // v8.1 (E5, changed on purpose): a Look on the other screen is its picture, labels and answer; Optics
+      // stays open and live here, and the Look's card folds (before, Optics closed and the camera went off).
+      await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-state')) === 'live', { timeout: 5000, message: 'the card folded, Optics live here' });
+      t.assert((await t.count('optics')) === 1 && (await liveTracks(page)) === 1, 'Optics open, the camera live');
       await screen.waitForTimeout(400);
       await t.screenshot('screen2-look', screen);
-      await typeCommand(t, 'bring it back');
+      // Optics is still in front: "bring it back" is typed in its own field (Screens takes it there, free).
+      const leadBefore = t.requests('lead').length;
+      await page.locator(tid('optics-ask')).fill('bring it back');
+      await page.locator(tid('optics-ask')).press('Enter');
       await t.waitFor(() => screen.isClosed(), { timeout: 8000, message: 'screen 2 to close' });
-      await t.visible('optics', { message: 'the Look back in Optics' });
-      t.assert((await page.locator(tid('optics')).getAttribute('data-state')) === 'review', 'frozen, as a reviewed Look');
+      t.assert(t.requests('lead').length === leadBefore, '"bring it back" costs nothing');
+      await t.waitFor(async () => (await page.locator(tid('optics')).getAttribute('data-aside')) === 'true', { timeout: 5000, message: 'the card back beside the live video' });
       await t.waitFor(async () => (await t.count('optics-pin')) === 5, { timeout: 5000, message: 'with its labels' });
-      t.assert((await liveTracks(page)) === 0, 'the camera stays off');
+      t.assert((await liveTracks(page)) === 1, 'the camera still live');
     },
   },
   {

@@ -384,7 +384,7 @@ export function openOptics(deps = {}) {
   const answerActions = h('div', { class: 'optics-answer-actions' }, liveBtn, moreBtn);
   // v8.1, the card's own actions while it is aside: Expand, Other screen (Screens), Close.
   const expandBtn = h('button', { class: 'btn btn-sm optics-expand-btn', type: 'button', attrs: { 'data-testid': 'optics-expand', 'aria-label': 'Expand: the picture big, the live video in a corner' }, on: { click: () => expandLook() } }, icon('fit', { size: 16 }), h('span', { text: 'Expand' }));
-  const awayBtn = h('button', { class: 'btn btn-sm optics-away-btn', type: 'button', hidden: typeof deps.screenCommand !== 'function', attrs: { 'data-testid': 'optics-other-screen', 'aria-label': 'Show this Look on your other screen' }, on: { click: () => lookToOtherScreen() } }, icon('external', { size: 16 }), h('span', { text: 'Other screen' }));
+  const awayBtn = h('button', { class: 'btn btn-sm optics-away-btn', type: 'button', hidden: typeof deps.route !== 'function', attrs: { 'data-testid': 'optics-other-screen', 'aria-label': 'Show this Look on your other screen' }, on: { click: () => lookToOtherScreen() } }, icon('external', { size: 16 }), h('span', { text: 'Other screen' }));
   const closeCardBtn = h('button', { class: 'btn btn-sm optics-close-card', type: 'button', attrs: { 'data-testid': 'optics-close-card', 'aria-label': 'Close the picture (the camera stays on)' }, on: { click: () => closeCard() } }, icon('close', { size: 16 }), h('span', { text: 'Close' }));
   const asideActions = h('div', { class: 'optics-answer-actions optics-aside-actions', hidden: true, attrs: { 'data-testid': 'optics-aside-actions' } }, expandBtn, awayBtn, closeCardBtn);
   const answer = h(
@@ -1625,14 +1625,10 @@ export function openOptics(deps = {}) {
     return Promise.resolve(null);
   }
 
-  /** The card's Other screen: Screens puts this Look there (E5: Optics stays live here). */
+  /** The card's Other screen: Screens puts this Look there, through the app's router (E5: Optics stays live here). */
   function lookToOtherScreen() {
-    if (!frozen || typeof deps.screenCommand !== 'function') return;
-    try {
-      deps.screenCommand('put this on my other screen', { spoken: false });
-    } catch (err) {
-      console.warn('[jarvis] the other screen failed:', err);
-    }
+    if (!frozen) return;
+    routed('put this on my other screen', false);
   }
 
   /**
@@ -1769,7 +1765,7 @@ export function openOptics(deps = {}) {
     asideActions.hidden = !aside;
     answerActions.hidden = aside;
     answer.dataset.aside = aside ? 'true' : 'false';
-    awayBtn.hidden = typeof deps.screenCommand !== 'function' || !frozen.frameId;
+    awayBtn.hidden = typeof deps.route !== 'function' || !frozen.frameId;
     keepFollowUpInView();
   }
 

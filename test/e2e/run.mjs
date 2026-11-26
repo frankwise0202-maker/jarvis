@@ -63,6 +63,7 @@ import voiceGeorgeStuck from './scenarios/voice-george-stuck.mjs';
 // ---- windows ▸
 // ---- windows ◂
 // ---- optics ▸
+import opticsAside from './scenarios/optics-aside.mjs';
 // ---- optics ◂
 // ---- chrome-relay ▸
 // ---- chrome-relay ◂
@@ -99,6 +100,7 @@ const V81_SCENARIOS = [
   // ---- windows ▸
   // ---- windows ◂
   // ---- optics ▸
+  ...opticsAside,
   // ---- optics ◂
   // ---- chrome-relay ▸
   // ---- chrome-relay ◂
