@@ -193,7 +193,9 @@ const INSTRUCTION_STARTS = new Set([
     'disallow lock unlock reset configure customize customise adjust increase decrease raise lower reduce extend apply enroll enrol withdraw ' +
     'deposit tip pin unpin highlight compile convert merge combine backup back activate deactivate opt ask inform notify message dm ping ' +
     'draft compose proofread rewrite publish stream view preview display retry test monitor watch bring pull push place google set-up setup ' +
-    'sign-up signup log-in check-out unsubscribe subscribe hide unhide collapse expand print stop').split(' '),
+    'sign-up signup log-in check-out unsubscribe subscribe hide unhide collapse expand print stop queue rewind fax spell price bid offer ' +
+    'negotiate ignore flag paste plan shop locate count calculate total sum estimate alert exit launch begin toggle grant revoke chat ' +
+    'preorder pre-order rebook re-book swap replace split measure design build generate prepare arrange rank shortlist reject').split(' '),
 ]);
 // Before an instruction's first word: "let's", "please", "maybe" … ("maybe find a cheaper one").
 const BEFORE_FIRST = new Set(['lets', 'please', 'maybe', 'perhaps', 'quickly', 'quick']);

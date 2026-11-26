@@ -875,6 +875,13 @@ test('CHROME-VOICE-R3-1: an instruction ending "in Chrome" is a task; a trouble,
   const lost = R3_INSTRUCTIONS.filter((s) => !matchChromeTask(s, st));
   const taken = R3_NOT_TASKS.filter((s) => matchChromeTask(s, st)).map((s) => `${s} -> "${matchChromeTask(s, st).text}"`);
   assert.deepEqual({ lost, taken }, { lost: [], taken: [] });
+  // More first words (errands), and troubles that start with them: the shape still makes those the owner's.
+  for (const s of ['Queue up the next episode on Netflix in Chrome.', 'Plan a weekend trip to Rome in Chrome.', 'Shop for a new laptop under $800 in Chrome.', 'Chat with Comcast support in Chrome.', 'Reject the cookie banner in Chrome.', 'Pre-order the new iPhone in Chrome.', 'Rebook my flight to Friday in Chrome.', 'Toggle dark mode on GitHub in Chrome.']) {
+    assert.ok(matchChromeTask(s, st), `${s}: a task`);
+  }
+  for (const s of ['Price is wrong in Chrome.', 'Chat keeps freezing in Chrome.', 'Offer code doesn’t work in Chrome.', 'Queue is stuck in Chrome.', 'Flag icon is missing in Chrome.']) {
+    assert.equal(matchChromeTask(s, st), null, `${s}: the owner's question`);
+  }
   // ROUTING-R2-2's residual: a name, then "is" or "has", is the instruction's object.
   for (const [s, text] of [
     ['Check Netflix is cancelled in Chrome.', 'check Netflix is cancelled'],
