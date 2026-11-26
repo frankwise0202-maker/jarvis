@@ -102,7 +102,7 @@ import { register as registerChromeCommands } from './commands/chrome.js';
 // v8.1 Optics (Track 5): the live view's gate for answers, "open optics", "research this".
 import { createLiveBudget } from '../lib/live-view.js';
 import { createLiveGate, createTurnGate, requestWorstUsd, gateMaxTokens } from '../lib/live-gate.js';
-import { LIVE_VIEW_COUNTS, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
+import { LIVE_VIEW_COUNTS, LOOK_FIRST_LINE, OFFLINE_LINE, matchOfferChoice, researchOffer, researchPrompt, researchSubject } from '../lib/research-offer.js';
 import { matchOpticsCommand, opticsOpenLine, voiceOpticsOpen } from '../lib/optics-commands.js';
 import { resolveThis } from '../lib/this-target.js';
 import { notify as notifyOwner } from './attention.js';
@@ -2396,12 +2396,17 @@ export async function startApp(rootEl) {
       resolved: optics ? null : thisOutsideOptics(),
     });
     if (!subject && optics && safe(() => optics.canLook(), false)) {
-      // A Look first (by name, about 3¢), then the offer about what it found.
-      const looking = Promise.resolve(safe(() => optics.question('What am I looking at?'), null)).then((res) => (res && res.run && res.run.done ? res.run.done : null));
-      looking.then((turn) => {
-        if (turn && turn.status === 'done') researchThis({ where, deep, surface });
-      });
-      return { say: 'Let me look first: about 3¢.' };
+      // A Look first (by name, about 3¢), then the offer about what it found. In Voice Mode the Look
+      // starts once Jarvis has said so (its turn would cut the line short).
+      const go = () => {
+        const looking = Promise.resolve(safe(() => optics.question('What am I looking at?'), null)).then((res) => (res && res.run && res.run.done ? res.run.done : null));
+        looking.then((turn) => {
+          if (turn && turn.status === 'done') researchThis({ where, deep, surface });
+        });
+      };
+      if (voiceApi && safe(() => isVoiceModeOpen(), false)) afterVoiceSays(go);
+      else go();
+      return { say: LOOK_FIRST_LINE };
     }
     const settings = getSettings();
     const offer = researchOffer({
@@ -2457,6 +2462,26 @@ export async function startApp(rootEl) {
     if (optics) entry.card = safe(() => optics.offerResearch(offer, (choice) => (entry.handle ? entry.handle.answer(choice) : pick(choice))), null);
     if (entry.handle) return { say: '' }; // Voice Mode says the question itself
     return { say: surface === 'voice' ? offer.say : '' };
+  }
+
+  /**
+   * Runs `fn` once Voice Mode has said what it is saying now (its `busy`, as it syncs it): when it is no
+   * longer busy after it was, after 400 ms if it never was; at most 4 s.
+   */
+  function afterVoiceSays(fn) {
+    const t0 = Date.now();
+    let seen = false;
+    const tick = () => {
+      const busy = !!(voiceInfo && voiceInfo.busy);
+      if (busy) seen = true;
+      const waited = Date.now() - t0;
+      if ((!busy && (seen || waited >= 400)) || waited >= 4000) {
+        safe(fn);
+        return;
+      }
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
   }
 
   /** The open research offer goes (answered, expired, replaced). */

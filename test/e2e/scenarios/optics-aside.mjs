@@ -27,9 +27,10 @@
 //                             request with a web search; Mission: one swarm turn; Home base: one job on
 //                             the Core; with the live view on, the offer says the other two are outside
 //                             its dollar, and at 97¢ the quick answer isn't offered
-//   optics-research-voice     Mac, Voice Mode over Optics, a Look aside: "research this" asked aloud with
-//                             its prices (nothing sent); "cancel" said back; "mission" through the 2-second
-//                             check, then one swarm turn in words
+//   optics-research-voice     Mac, Voice Mode over Optics: "research this" with nothing looked at: "Let me
+//                             look first: about 3¢." said whole, a Look, then the offer asked aloud with its
+//                             prices; "cancel" said back; "mission" through the 2-second check, then one
+//                             swarm turn in words
 // Screenshots also go to $OPTICS_SHOTS (default test/artifacts/optics-shots/).
 
 import { tid } from '../harness.mjs';
@@ -615,7 +616,7 @@ export default [
   },
   {
     name: 'optics-research-voice',
-    title: 'Mac, Voice Mode over Optics, a Look aside: "research this" is asked aloud with its prices (nothing sent); "cancel" says so; "mission" goes through the 2-second check, then one swarm turn in words',
+    title: 'Mac, Voice Mode over Optics: "research this" with nothing looked at says "Let me look first: about 3¢.", looks, then asks the offer aloud with its prices; "cancel" says so; "mission" goes through the 2-second check, then one swarm turn in words',
     device: 'mac',
     timeout: 180000,
     seed: { settings: { homeBaseUrl: CORE_URL } },
@@ -624,7 +625,7 @@ export default [
     async run(t) {
       const page = await t.newPage();
       await page.context().addInitScript(installCameraRig, { devices: MAC_CAMERAS });
-      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(installFakeSpeech, { cps: 30 }); // lines take their time, so a cut one shows
       await page.addInitScript(() => {
         window.__voice.queue = [];
       });
@@ -651,16 +652,21 @@ export default [
       await page.locator(tid('voice-look')).click();
       await t.visible('optics');
       await waitLive(t);
-      await speak(['What am I looking at?']);
-      await waitAside(t);
-      await waitAnswer(t);
-      await t.step('"research this": the offer asked aloud, prices first; nothing sent', async () => {
-        const before = leads(t).length;
+      await t.step('"research this" with nothing looked at yet: "Let me look first: about 3¢." said whole, one Look, then the offer asked aloud, prices first', async () => {
         await speak(['Research this.']);
-        await t.waitFor(async () => (await offers()) === 1, { timeout: 20000, message: async () => `the offer said (${JSON.stringify((await said(page)).slice(-3))})` });
+        await t.waitFor(async () => (await said(page)).some((s) => /^Let me look first: about 3¢\.$/.test(s)), { timeout: 15000, message: async () => `the line (${JSON.stringify((await said(page)).slice(-3))})` });
+        await waitAside(t);
+        await waitAnswer(t);
+        t.assert(leads(t).filter((r) => hasImage(r)).length === 1, 'one Look');
+        await t.waitFor(async () => (await offers()) === 1, { timeout: 30000, message: async () => `the offer said (${JSON.stringify((await said(page)).slice(-3))})` });
+        // Said to its end (an utterance cut by cancel() never gets its endAt).
+        const log = await page.evaluate(() => (window.__voice.log || []).map((e) => ({ text: String(e.text).slice(0, 40), at: Math.round(e.at), endAt: Math.round(e.endAt || 0) })));
+        const line = log.find((e) => /^Let me look first/.test(e.text));
+        t.assert(line && line.endAt > 0, `the line was said to its end, not cut by the Look (${JSON.stringify(line)})`);
         t.assert((await page.locator(tid('optics-card')).getAttribute('data-kind')) === 'research', 'the offer on Optics\' card too');
+        const before = leads(t).length;
         await page.waitForTimeout(500);
-        t.assert(leads(t).length === before && t.core.brain.jobs.length === 0, 'nothing sent');
+        t.assert(leads(t).length === before && t.core.brain.jobs.length === 0, 'nothing more sent');
       });
       await t.step('"cancel": "Okay, no research.", nothing sent', async () => {
         const before = leads(t).length;
