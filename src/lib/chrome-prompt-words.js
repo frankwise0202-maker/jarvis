@@ -89,9 +89,16 @@ export function namesChromeAnswer(text) {
 
 export const NOTHING_ASKED_LINE = 'Chrome isn’t asking anything right now.';
 
-/** A bare "cancel" or "no": it answers the prompt only when the prompt was asked last. */
+/**
+ * A bare "cancel" or "no": it answers the prompt only when the prompt was asked last. Emphatic ones count too ("no
+ * no no", "no, cancel that", "no wait"; ROUTING-8), and "not now" (its "now" comes off with the fillers).
+ */
 export function isBareNo(text) {
-  return /^(?:no|nope|nah|cancel|cancel it|cancel that|no thanks|no thank you|never ?mind|dont|do not|dont do it|do not do it|not now)$/.test(normalizeAnswer(text));
+  const s = normalizeAnswer(text);
+  return (
+    /^(?:no|nope|nah|not|cancel|cancel it|cancel that|no thanks|no thank you|never ?mind|dont|do not|dont do it|do not do it|not now)$/.test(s) ||
+    /^(?:no|nope|nah)(?: (?:no|nope|nah))*(?: (?:cancel(?: it| that)?|wait|thanks|thank you|never ?mind|dont|do not))?$/.test(s)
+  );
 }
 
 /**
@@ -220,13 +227,13 @@ export function chooseAnswer({ readings, answers, saidAt = null, now = Date.now(
 //   - The short words that sound like a withdraw word ("go" / "no", "start it" / "stop it", "do it" /
 //     "don't") only let it count on, never go at once (REDTEAM-VOICE-3).
 //   - A stop word ("stop", "stop Chrome") is marked `stop`: a task that runs stops too (REDTEAM-VOICE-4).
-const WITHDRAW_WORDS = /^(?:no|nope|nah|cancel|cancel it|cancel that|cancel cancel|stop|stop it|stop now|stop stop|stop everything|wait|hold on|hold it|hold off|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|stop it in chrome|stop the chrome task|chrome stop|deny)$/;
+const WITHDRAW_WORDS = /^(?:no|nope|nah|not|cancel|cancel it|cancel that|cancel cancel|stop|stop it|stop now|stop stop|stop everything|wait|hold on|hold it|hold off|hang on|one second|one sec|just a second|just a sec|give me a second|never ?mind|forget it|no thanks|no thank you|dont|do not|dont do it|do not do it|not now|cancel chrome|stop chrome|stop it in chrome|stop the chrome task|chrome stop|deny)$/;
 // (Not "stop …" or "cancel …": "stop that" with a hologram open, "stop the music", are other words.)
 const WITHDRAW_LEAD = /^(?:no|nope|nah|wait|hold on|hold it|hold off|never ?mind|forget it|not now|dont|do not)(?:\s|$)/;
 const STOP_CHECK_WORDS = /^(?:stop|stop it|stop now|stop stop|stop everything|stop chrome|stop it in chrome|stop the chrome task|stop the task|chrome stop)$/;
 // (Matched before the fillers come off: "start now" lets it go, "start" alone only lets it count on.)
 const GO_WORDS = /^(?:(?:(?:hey |ok |okay )?jarvis|please|okay|ok) )*(?:start (?:it )?(?:right )?now|send it(?: right)?(?: now)?|go ahead(?: and start(?: it)?)?|do it (?:right )?now|yes (?:start(?: it)?(?: now)?|go ahead|send it))(?: (?:please|jarvis|thanks|thank you))*$/;
-const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|thanks|thank you|uh huh|mhm|mm hmm|go|start|start it|do it)$/;
+const KEEP_WORDS = /^(?:yes|yeah|yep|yup|yes please|okay|ok|okay then|sure|fine|alright|all right|right|correct|thats right|exactly|good|great|perfect|cool|sounds good|sounds right|thanks|thank you|uh huh|mhm|mm hmm|go|start|start it|do it|go for it|proceed)$/;
 
 // A question (R4), as the answers see it (normalized): never taken for a hint.
 const ASKING = /^(?:what|whats|why|how|hows|which|who|whos|when|where|wheres|is|are|was|were|does|do|did|should|shall|could|can|would|will|has|have|had|am)(?:\s|$)/;

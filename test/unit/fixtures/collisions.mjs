@@ -243,8 +243,16 @@ export const CHROME_VOICE = {
     // REDTEAM-VOICE-13: "how's it going?" asks about the Chrome task only while one runs, waits or is starting (with
     // nothing running it is a greeting for Jarvis: the section's `not` rows).
     ...['H4', 'H4O', 'CV-run', 'CV-prompt', 'CV-typed', 'CV-card'].flatMap((state) =>
-      ["how's it going", "how's it going, Jarvis"].map((words) => ({ words, state, winner: 'chrome-status', why: 'a Chrome task runs (or waits): the question is about it (free, local)' })),
+      ["how's it going", "how's it going, Jarvis", 'how is it going', "hey Jarvis, how's it going"].map((words) => ({ words, state, winner: 'chrome-status', why: 'a Chrome task runs (or waits): the question is about it (free, local)' })),
     ),
+    // ROUTING-5: while a Chrome task runs (or waits, or starts), "stop that" stops it (with no hologram open; with one,
+    // its own "stop that" holds the model still).
+    ...['CV-run', 'CV-prompt', 'CV-typed', 'CV-card'].map((state) => ({ words: 'stop that', state, winner: 'chrome-stop', why: 'a Chrome task runs: the plain way of stopping it stops it (never Claude)' })),
+    // A bare "cancel" while a task runs stops it, unless something asked for it: Chrome's question asked last (its
+    // no), a countdown typed in the chat (withdrawn), a prompt's card waiting in the chat (its no).
+    { words: 'cancel', state: 'CV-prompt', winner: 'chrome-prompt', why: "Chrome's question was asked last: a bare cancel is its no" },
+    { words: 'cancel', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn: nothing goes to Chrome' },
+    { words: 'cancel', state: 'CV-card', winner: 'chrome-typed', why: "the card's no, as its button" },
     // REDTEAM-VOICE-5: typed during a countdown, the check's own words come first (the answer layer): "stop" withdraws
     // it (and stops a task that runs) before voice's bare stop.
     { words: 'stop', state: 'CV-typed', winner: 'chrome-typed', why: 'the countdown in the chat is withdrawn: nothing goes to Chrome' },

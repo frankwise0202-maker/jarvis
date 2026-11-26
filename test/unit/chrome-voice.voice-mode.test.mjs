@@ -519,3 +519,31 @@ test('REDTEAM-VOICE-10: woken by "Hey Jarvis, stop Chrome" (or "… stop" while 
     assert.deepEqual(s.fake.calls.answer.map((a) => a.choice), ['cancel'], `${trigger}: the no went out`);
   }
 });
+
+// ---- ROUTING-1: the check counting was asked last -------------------------------------------------------------
+
+test('ROUTING-1: a walkthrough\'s decision open and a task\'s check counting: "Cancel." withdraws the check, said; the decision stays', async (t) => {
+  const s = await setup(t);
+  await s.env.advance(1200);
+  const expired = [];
+  s.vm.question({
+    id: 'tour:case',
+    say: 'Do you want to see it enclosed, or opened?',
+    keep: true,
+    choices: [
+      { id: 'enclosed', label: 'Enclosed', words: ['enclosed'] },
+      { id: 'opened', label: 'Opened', words: ['opened'] },
+    ],
+    onAnswer: () => {},
+    onExpire: (why) => expired.push(why),
+  });
+  await s.until(() => s.said().includes('Do you want to see it enclosed, or opened?'), 'the decision asked');
+  s.next({ text: TASK_SAID, at: 400 });
+  s.next({ text: 'Cancel.', at: 400 });
+  await s.until(() => s.said().includes(TASK_LINE), 'the check line');
+  await s.until(() => s.said().includes(CANCELLED), 'the check withdrawn, said', 20000);
+  await s.env.advance(4000);
+  assert.equal(s.fake.calls.startTask.length, 0, 'nothing sent');
+  assert.deepEqual(expired, [], 'the decision is still open');
+  assert.ok(!s.said().includes('Okay.'), `not the decision's "Okay." (${JSON.stringify(s.said())})`);
+});

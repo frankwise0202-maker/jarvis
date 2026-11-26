@@ -327,6 +327,13 @@ export const CHROME_VOICE = {
     ['yes I approve', 'CV-prompt', 'chrome-prompt:chrome-hint'],
     // "how's it going?" is Chrome's only while a task runs (REDTEAM-VOICE-13)
     ["how's it going", 'CV-run', 'chrome-status'],
+    // while a task runs, the plain ways of stopping it stop it (ROUTING-5)
+    ['stop that', 'CV-run', 'chrome-stop'],
+    ['stop the task', 'CV-run', 'chrome-stop'],
+    ['cancel the task', 'CV-run', 'chrome-stop'],
+    ['abort', 'CV-run', 'chrome-stop'],
+    ["stop what you're doing", 'CV-run', 'chrome-stop'],
+    ['cancel', 'CV-run', 'chrome-stop'],
     // typed: a countdown in the chat takes the check's words (REDTEAM-VOICE-5); a prompt's card waiting takes a
     // typed no as its button would, and points a typed yes to its button (REDTEAM-VOICE-14)
     ['cancel', 'CV-typed', 'chrome-typed'],
@@ -351,6 +358,17 @@ export const CHROME_VOICE = {
     // an everyday greeting, no task running (REDTEAM-VOICE-13)
     "how's it going",
     "how's it going, Jarvis",
+    'how is it going',
+    "hey Jarvis, how's it going",
+    // a trouble or a request for help that ends "in Chrome" is a question, not a task (ROUTING-2)
+    "my Gmail won't load in Chrome",
+    'YouTube is really slow in Chrome',
+    'Netflix keeps buffering in Chrome',
+    "I can't log in to my bank in Chrome",
+    'something is wrong in Chrome',
+    'it says access denied in Chrome',
+    'explain how cookies work in Chrome',
+    'teach me how to use bookmarks in Chrome',
   ],
   states: {
     'CV-ctx': { surface: 'voice', chrome: CV_CONTEXT },

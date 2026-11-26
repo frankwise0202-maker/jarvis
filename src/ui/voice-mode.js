@@ -1082,7 +1082,7 @@ function createVoiceMode(opts) {
     // v8.1 (C1): typed here, the words go through the router like spoken ones (R1: the same words do
     // the same thing): one reading, and no 2-second check (Enter sends; a command acts at once).
     const local = { ...routeLocal([text]), via: 'typed' };
-    let hit = routeWords([text], local);
+    let hit = chromeCheckFirst(routeWords([text], local)); // v8.1 chrome-voice: a check counting was asked last
     chromeOtherWords(hit); // v8.1 chrome-voice: other words withdraw a Chrome check, typed too
     if (!hit || (hit.id !== 'standby' && hit.id !== 'question' && hit.id !== 'prompt' && hit.id !== 'chrome-prompt')) questions.dropTop('dropped');
     while (hit) {
@@ -3043,7 +3043,7 @@ function createVoiceMode(opts) {
     if (S.wake && wakeHeard(readings)) return;
     const parts = partNamesNow();
     const local = routeLocal(readings, parts);
-    let hit = routeWords(readings, local);
+    let hit = chromeCheckFirst(routeWords(readings, local)); // v8.1 chrome-voice: a check counting was asked last
     // v8.1 chrome-voice: words that aren't a Chrome check's own (cancel, start now, "no, I said …")
     // withdraw it (nothing goes to Chrome), and are routed as usual. An answer to Chrome's question is
     // answerPrompt's to weigh: during a check its own words come first (a bare "cancel" withdraws the
@@ -3812,6 +3812,17 @@ function createVoiceMode(opts) {
    */
   function chromeOtherWords(hit) {
     if (C.check && !(hit && (hit.id === 'prompt' || hit.id === 'chrome-prompt'))) withdrawCheck(C.check, 'other');
+  }
+
+  /**
+   * A Chrome check counting down was asked last ("… Say cancel to stop."): a bare "cancel" or "no" is its own,
+   * never an owner question's under it (a walkthrough's decision stays and keeps waiting; ROUTING-1). The router asks
+   * the questions first in the answer layer; this hands such words to the check.
+   */
+  function chromeCheckFirst(hit) {
+    if (!C.check || !hit || hit.id !== 'question') return hit;
+    const own = matchChromeAnswer(hit.reading, { chromeCheck: { kind: C.check.kind } });
+    return own && own.how === 'withdraw' ? { ...hit, id: 'chrome-prompt', action: own } : hit;
   }
 
   /** The open prompt as the router sees it (state.prompt): its answers, when it was asked (voice's order) and said. */

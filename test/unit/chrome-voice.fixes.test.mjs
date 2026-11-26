@@ -446,3 +446,83 @@ test('REDTEAM-VOICE-7: a task\'s end heard twice (from the link and from another
     t.cv.destroy();
   }
 });
+
+// ---- the routing review (ROUTING-11, -5, -2, -8) -------------------------------------------------------------
+
+test('ROUTING-11: "stop" while the start is on its way: "Chrome is stopping.", never "nothing sent"; the task is stopped as soon as it has an id, and never "Chrome is on it."', async () => {
+  for (const words of ['stop', 'stop Chrome']) {
+    const t = setup();
+    const r = routerFor(t.cv);
+    let answer = null;
+    const startNow = t.fake.link.startTask;
+    t.fake.link.startTask = (args) => new Promise((resolve) => (answer = () => resolve(startNow(args)))); // the relay round trip
+    t.cv.run(TASK);
+    t.v.checks[0].spec.onGo(); // the countdown ended: the start is on its way
+    await flush();
+    assert.equal(t.cv.state().task.status, 'starting', 'the router sees the start on its way');
+    assert.equal(t.cv.checking(), false, 'no check any more');
+    const res = await r.run(words, 'voice');
+    assert.ok(res, words);
+    assert.match(res.out.say, /^(?:Chrome is stopping\.|Stopping Chrome…)$/, `${words}: what is true (${res.out.say})`);
+    assert.equal(t.fake.calls.stopTask, 0, 'nothing to stop yet');
+    answer();
+    await flush();
+    await flush();
+    assert.equal(t.fake.calls.stopTask, 1, `${words}: stopped as soon as it had an id`);
+    assert.ok(!t.v.said.includes('Chrome is on it.'), `${words}: never "Chrome is on it." (${JSON.stringify(t.v.said)})`);
+    assert.equal(t.cv.state().lastTask.status, 'stopped');
+  }
+  // The start refused after all: nothing ran, no stop sent.
+  const f = setup();
+  let refuse = null;
+  f.fake.link.startTask = () => new Promise((resolve) => (refuse = () => resolve({ ok: false, reason: 'off' })));
+  f.cv.run(TASK);
+  f.v.checks[0].spec.onGo();
+  await flush();
+  f.cv.stopFromVoice();
+  refuse();
+  await flush();
+  assert.equal(f.fake.calls.stopTask, 0);
+  assert.equal(f.cv.state().task, null, 'nothing runs');
+});
+
+test('ROUTING-5: while a task runs, "stop that", "stop the task", "cancel the task", "abort", "halt", "kill it" and a bare "cancel" stop it (never Claude)', async () => {
+  for (const words of ['stop that', 'stop this', 'stop the task', 'cancel the task', 'abort the task', 'cancel that', 'cancel it', 'stop clicking', "stop what you're doing", 'abort', 'halt', 'whoa, stop', 'pause the task', 'end the task', 'kill it', 'cancel']) {
+    for (const surface of ['voice', 'chat']) {
+      const t = setup();
+      const r = routerFor(t.cv);
+      t.cv.run(TASK);
+      t.v.checks[0].spec.onGo();
+      await flush();
+      const res = await r.run(words, surface);
+      assert.ok(res && res.id === 'chrome-stop', `${words} (${surface}): Chrome's stop (${res && res.id})`);
+      await flush();
+      assert.equal(t.fake.calls.stopTask, 1, `${words} (${surface}): stopped`);
+    }
+  }
+  // Nothing running: not Chrome's.
+  const idle = setup();
+  for (const words of ['stop that', 'cancel', 'abort']) assert.notEqual((routerFor(idle.cv).route(words, 'voice') || {}).id, 'chrome-stop', words);
+});
+
+test('ROUTING-2: a statement or a trouble that ends "in Chrome" is the owner\'s question, never a task; instructions still are', () => {
+  for (const s of ["my Gmail won't load in Chrome", 'YouTube is really slow in Chrome', 'Netflix keeps buffering in Chrome', 'my bookmarks are gone in Chrome', "I can't log in to my bank in Chrome", 'something is wrong in Chrome', 'the sound is not working in Chrome', 'it says access denied in Chrome', 'this page looks broken in Chrome', 'have Chrome open when I log in', 'explain how cookies work in Chrome', 'teach me how to use bookmarks in Chrome', 'remind me how to turn on dark mode in Chrome', 'show me how to clear cookies in Chrome']) {
+    assert.equal(matchChromeTask(s, {}), null, s);
+  }
+  for (const [s, text] of [
+    ['find a 4K monitor under $300 and add it to the cart in Chrome', 'find a 4K monitor under $300 and add it to the cart'],
+    ['can you find me a hotel in Bath in Chrome', 'find me a hotel in Bath'],
+    ['Best Buy: add a 4K monitor under $300 to the cart in Chrome', 'Best Buy: add a 4K monitor under $300 to the cart'],
+    ["what's the return policy on this page in Chrome", "what's the return policy on this page"],
+  ]) assert.equal((matchChromeTask(s, {}) || {}).text, text, s);
+});
+
+test('ROUTING-8: emphatic no\'s answer Chrome\'s question asked last; during a check "not now", "no no no", "one second" withdraw it, "go for it" lets it count on', () => {
+  const prompt = { id: 'chrome:p1', askedAt: 3000, ...PROMPTS.cart };
+  for (const w of ['no no no', 'no, cancel that', 'Jarvis, no, cancel that', 'no wait', 'not now', 'nope nope']) {
+    assert.equal((promptWords.matchChromeAnswer(w, { prompt, questions: [] }) || {}).answer, 'deny', w);
+  }
+  const check = { chromeCheck: { kind: 'task' } };
+  for (const w of ['not now', 'Not now.', 'no no no', 'no, cancel that', 'one second', 'give me a second', 'hang on']) assert.equal((promptWords.matchChromeAnswer(w, check) || {}).how, 'withdraw', w);
+  for (const w of ['go for it', 'proceed']) assert.equal((promptWords.matchChromeAnswer(w, check) || {}).how, 'keep', w);
+});
