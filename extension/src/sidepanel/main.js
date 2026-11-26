@@ -1035,7 +1035,7 @@ async function renderHistory(detailId = null) {
         h(
           'section',
           { class: 'card' },
-          h('div', { class: 'card__top' }, h('span', { class: 'pill', dataset: { tone: t.status === 'done' ? 'ok' : t.status === 'error' ? 'err' : 'warn' }, text: STATUS_TEXT[t.status] || t.status }), h('span', { class: 'card__spacer' }), h('span', { class: 'card__cost', text: `≈ ${formatUsd(t.cost)}` })),
+          h('div', { class: 'card__top' }, h('span', { class: 'pill', dataset: { tone: t.status === 'done' ? 'ok' : t.status === 'error' ? 'err' : 'warn' }, text: STATUS_TEXT[t.status] || t.status }), t.from === 'voice' ? h('span', { class: 'chip chip--voice', text: 'From Jarvis (voice)' }) : null, h('span', { class: 'card__spacer' }), h('span', { class: 'card__cost', text: `≈ ${formatUsd(t.cost)}` })),
           h(
             'ol',
             { class: 'steps' },
@@ -1076,7 +1076,7 @@ async function renderHistory(detailId = null) {
                   'button',
                   { class: 'history__item', type: 'button', on: { click: () => renderHistory(t.id) } },
                   h('span', { class: 'history__dot', dataset: { status: t.status } }),
-                  h('span', { class: 'history__text' }, h('span', { class: 'history__title', text: truncate(t.text, 90) }), h('span', { class: 'history__meta', text: `${new Date(t.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${STATUS_TEXT[t.status] || t.status} · ≈ ${formatUsd(t.cost)}` })),
+                  h('span', { class: 'history__text' }, h('span', { class: 'history__title', text: truncate(t.text, 90) }), h('span', { class: 'history__meta', text: `${new Date(t.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${STATUS_TEXT[t.status] || t.status} · ≈ ${formatUsd(t.cost)}${t.from === 'voice' ? ' · From Jarvis (voice)' : ''}` })),
                   icon('chevron-right', { size: 16 }),
                 ),
               ),

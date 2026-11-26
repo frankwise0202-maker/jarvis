@@ -457,6 +457,7 @@ export class Controller {
       startedAt: task.startedAt,
       endedAt: task.endedAt,
       injections: task.injections,
+      ...(task.from === 'voice' ? { from: 'voice' } : {}),
       steps: task.steps.map((s) => ({ kind: s.kind, label: s.label, status: s.status, ...(thumbs.get(s.id) ? { thumb: thumbs.get(s.id) } : {}) })),
     });
   }

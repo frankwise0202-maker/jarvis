@@ -283,6 +283,8 @@ test('a task from Jarvis: marked, counted, task and done go back (no pictures), 
   const task = s.controller.tasks.find((x) => x.id === r.id);
   assert.equal(task.from, 'voice', 'marked From Jarvis (voice)');
   assert.equal(await s.store.voiceTasksToday(s.now()), 1);
+  await s.waitFor(async () => (await s.store.getHistory()).find((h) => h.id === r.id), 2000, 'the history entry');
+  assert.equal((await s.store.getHistory()).find((h) => h.id === r.id).from, 'voice', 'and so in the history');
   const updates = s.app.of('task');
   assert.ok(updates.length >= 1 && updates.every((m) => m.body.id === r.id && m.body.from === 'voice'));
   for (const m of updates) {
