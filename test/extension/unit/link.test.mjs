@@ -466,10 +466,14 @@ test('a task from Jarvis: marked, counted, task and done go back (no pictures), 
   const updates = s.app.of('task');
   assert.ok(updates.length >= 1 && updates.every((m) => m.body.id === r.id && m.body.from === 'voice'));
   for (const m of updates) {
-    assert.deepEqual(Object.keys(m.body).sort(), ['costUsd', 'from', 'id', 'lastStep', 'limitUsd', 'narration', 'status', 'text']);
+    assert.deepEqual(Object.keys(m.body).sort(), ['costUsd', 'from', 'id', 'lastStep', 'limitUsd', 'narration', 're', 'status', 'text']);
     assert.ok(!JSON.stringify(m.body).includes('data:image'), 'no pictures');
   }
   assert.ok(s.app.of('status').some((m) => m.body.task?.id === r.id), 'the status names the running task');
+  // CHROME-LINK-R2-1: the task's news names the start it came from (`re`: the start's own id).
+  const startMsg = s.app.sent.find((x) => x.kind === 'start');
+  assert.ok(updates.every((m) => m.body.re === startMsg.msg.id), 'task news names its start');
+  assert.ok(s.app.of('status').filter((m) => m.body.task?.id === r.id).every((m) => m.body.task.re === startMsg.msg.id), 'and so does the status');
   assert.equal(s.app.of('done').length, 1, 'done once');
 });
 

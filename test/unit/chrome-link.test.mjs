@@ -971,6 +971,146 @@ test('MISSED-LINK-A: no false alarm: a task whose start was answered, a task fro
   }
 });
 
+// ---- a retry after a failed start (CHROME-LINK-R2-1: ported from the second review's probes) -----------------------
+
+/**
+ * The owner's start fails on the way (`how`: a 502, a dropped connection, or the relay took it and lost it), then the
+ * owner says it again and it works. Jarvis for Chrome sends the task's news before its reply to the start
+ * (`newsFirst`: as the real extension does) or after it. The retried task must never be stopped as a "late start".
+ */
+async function retryAfterFailedStart({ how, newsFirst, gapMs = 300 }) {
+  const fastReply = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 400 : ms);
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: fastReply, notice: (n) => notices.push(n) });
+    await online(app);
+    await sleep(300);
+    w.relay.intercept = (method, path) => {
+      if (method !== 'POST' || path !== '/api/relay/to-ext') return null;
+      if (how === '502') return { status: 502, body: {} };
+      if (how === 'drop') return 'drop';
+      return { status: 200, body: { ok: true } }; // 'lost': taken, then gone (a restart empties the boxes)
+    };
+    const first = await app.api.startTask({ text: 'find a USB-C hub' });
+    w.relay.intercept = null;
+    await sleep(gapMs);
+    w.peer.answer('start', null); // the reply is sent by hand, in the order asked
+    const second = app.api.startTask({ text: 'find a USB-C hub' });
+    const start = await w.peer.waitFor('start', { where: (m) => m.body.text === 'find a USB-C hub' });
+    if (newsFirst) {
+      await w.peer.task({ id: 'task-retry', status: 'running', narration: 'Starting the task.' });
+      await w.peer.send('reply', { re: start.id, ok: true, id: 'task-retry' });
+    } else {
+      await w.peer.send('reply', { re: start.id, ok: true, id: 'task-retry' });
+      await w.peer.task({ id: 'task-retry', status: 'running', narration: 'Starting the task.' });
+    }
+    w.peer.answer('start', undefined);
+    const r2 = await second;
+    await sleep(1200);
+    const stops = w.peer.received.filter((m) => m.kind === 'stop').length;
+    return { first, second: r2, stops, notices, starts: JSON.parse(w.storage.map.get('jarvis.chromeLink.starts.v1') || '{}') };
+  } finally {
+    await w.close();
+  }
+}
+
+for (const how of ['502', 'drop', 'lost']) {
+  for (const newsFirst of [true, false]) {
+    test(`R2-1: the first start ${how === '502' ? 'refused (502)' : how === 'drop' ? 'dropped on the way' : 'lost by the relay'}, the retry works, its news ${newsFirst ? 'before' : 'after'} its reply: the retried task is not stopped`, async () => {
+      const out = await retryAfterFailedStart({ how, newsFirst });
+      assert.deepEqual(out.first, { ok: false, reason: 'offline' });
+      assert.deepEqual(out.second, { ok: true, id: 'task-retry' });
+      assert.equal(out.stops, 0, `the task the owner just started was stopped (${JSON.stringify(out)})`);
+      assert.deepEqual(out.notices, []);
+      if (how === '502') assert.equal((out.starts.starts || []).length, 0, 'a start the home base refused is never watched: it never reached the box');
+    });
+  }
+}
+
+test('R2-1: two windows; the holder\'s start is refused at the POST; the other window\'s retry works: its task is not stopped', async () => {
+  const w = world({ linked: true, peer: { autoTask: true } });
+  try {
+    w.peer.start();
+    const notices = [];
+    const a = w.open({ notice: (n) => notices.push(['a', n]) });
+    await online(a);
+    const b = w.open({ notice: (n) => notices.push(['b', n]) });
+    await until(() => b.api.state().online, { what: 'b online' });
+    assert.equal(a.control.info().holder, true);
+    await sleep(300);
+    w.relay.intercept = (method, path) => (method === 'POST' && path === '/api/relay/to-ext' ? { status: 502, body: {} } : null);
+    assert.deepEqual(await a.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    w.relay.intercept = null;
+    assert.equal((await b.api.startTask({ text: 'find a 4K monitor' })).ok, true);
+    await sleep(1200);
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 0, 'the retried task was not stopped');
+    assert.deepEqual(notices, []);
+  } finally {
+    await w.close();
+  }
+});
+
+test('R2-1: news while another start still waits is never claimed; once that start is refused, the late start\'s task is (MISSED-LINK-A holds)', async () => {
+  const fastReply = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 400 : ms);
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: fastReply, notice: (n) => notices.push(n) });
+    await online(app);
+    // The first start reaches Jarvis for Chrome, which starts it, but its reply is lost: given up.
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    // The owner tries again; while that start waits, the first task's news comes: not claimed yet.
+    const again = app.api.startTask({ text: 'find a 4K monitor' });
+    const second = await w.peer.waitFor('start', { where: (m) => m.body.text === 'find a 4K monitor' && w.peer.received.filter((x) => x.kind === 'start').length >= 2 });
+    await w.peer.task({ id: 'task-first', status: 'running', narration: 'Looking.' });
+    await sleep(150);
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 0, 'nothing stopped while a start waits');
+    // That start is refused (busy: the first task runs). Now the first task is the late start: stopped and said.
+    await w.peer.send('reply', { re: second.id, ok: false, reason: 'busy' });
+    assert.equal((await again).reason, 'busy');
+    await w.peer.status({ task: { id: 'task-first', status: 'running', from: 'voice' } });
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await until(() => notices.length === 1, { what: 'the late-start notice' });
+    assert.equal(notices[0].kind, 'late-start');
+  } finally {
+    await w.close();
+  }
+});
+
+test('R2-1: news that names its start (Jarvis for Chrome 1.1.1, `re`) goes to that start only: a retry\'s is never claimed, a late start\'s is at once', async () => {
+  const fastReply = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 400 : ms);
+  const w = world({ linked: true });
+  try {
+    w.peer.start();
+    const notices = [];
+    const app = w.open({ setTimer: fastReply, notice: (n) => notices.push(n) });
+    await online(app);
+    // The first start arrives and its task starts, but its reply is lost.
+    w.peer.answer('start', null);
+    assert.deepEqual(await app.api.startTask({ text: 'find a 4K monitor' }), { ok: false, reason: 'offline' });
+    const first = await w.peer.waitFor('start');
+    // A retry waits for its answer; its own task's news (naming it) comes first: kept, not claimed.
+    const again = app.api.startTask({ text: 'find a 4K monitor' });
+    const second = await w.peer.waitFor('start');
+    await w.peer.task({ id: 'task-retry', status: 'running', re: second.id });
+    // The first start's late task, named as such, while the retry still waits: claimed at once.
+    await w.peer.task({ id: 'task-first', status: 'running', re: first.id });
+    await w.peer.waitFor('stop', { timeoutMs: 5000 });
+    await w.peer.send('reply', { re: second.id, ok: true, id: 'task-retry' });
+    assert.deepEqual(await again, { ok: true, id: 'task-retry' });
+    await until(() => notices.length === 1, { what: 'the late-start notice' });
+    await sleep(300);
+    assert.equal(w.peer.received.filter((m) => m.kind === 'stop').length, 1, 'one stop: the late start\'s, not the retry\'s');
+    // Without `re` (Jarvis for Chrome 1.1.0) the rule above decides, and the retry is safe too: see the R2-1 tests.
+  } finally {
+    await w.close();
+  }
+});
+
 test('fresh requests only (D5) across windows: a late ok for another window\'s start reaches it through the holder', async () => {
   const fast = (fn, ms) => setTimeout(fn, ms === REPLY_TIMEOUT_MS ? 300 : ms);
   const w = world({ linked: true });

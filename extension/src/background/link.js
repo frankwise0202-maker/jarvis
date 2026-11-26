@@ -364,7 +364,7 @@ export class JarvisLink {
         case 'open':
           return this.reply(id, await this.open(body));
         case 'start':
-          return this.replyHard(id, at, await this.startTask(body));
+          return this.replyHard(id, at, await this.startTask(body, id));
         case 'stop':
           return this.replyHard(id, at, this.stopTask());
         case 'answer':
@@ -544,8 +544,11 @@ export class JarvisLink {
     this.noteOpened(card.site);
   }
 
-  /** `start { text, chat, from: 'voice' }`. */
-  async startTask(body) {
+  /**
+   * `start { text, chat, from: 'voice' }`. `re` is the start's own id: the task's news (`task`, `status.task`) names
+   * it, so Jarvis matches the news to the start it came from (CHROME-LINK-R2-1; it comes before the reply).
+   */
+  async startTask(body, re = '') {
     const text = typeof body?.text === 'string' ? displayText(body.text).trim() : '';
     if (!text || text.length > MAX_TASK_TEXT) return { ok: false, reason: 'bad', why: WHY.bad };
     const voice = await this.store.getVoice();
@@ -571,7 +574,18 @@ export class JarvisLink {
     const budgetCapUsd = Number.isFinite(heard) && heard > 0 && heard <= 1000 ? heard : null;
     const started = await new Promise((resolve) => {
       this.controller
-        .start({ text, windowId, from: 'voice', taskId, voiceSites, budgetCapUsd, onStarted: (task) => resolve(task) })
+        .start({
+          text,
+          windowId,
+          from: 'voice',
+          taskId,
+          voiceSites,
+          budgetCapUsd,
+          onStarted: (task) => {
+            if (re) task.jarvisRe = re; // (before its first news goes out)
+            resolve(task);
+          },
+        })
         .catch(() => {})
         .finally(() => resolve(null));
     });
@@ -624,7 +638,7 @@ export class JarvisLink {
     const voice = await this.store.getVoice().catch(() => ({ tasksFromJarvis: false }));
     const run = this.controller.run;
     // (`from` since the review: Jarvis tells a task it started from one typed in the panel, MISSED-LINK-A.)
-    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel' } : null, ...(await this.budgetFields()) };
+    return { online: true, tasksFromJarvis: voice.tasksFromJarvis, voiceApprovals: await this.approvals().catch(() => false), task: run ? { id: run.task.id, status: run.task.status, from: run.task.from === 'voice' ? 'voice' : 'panel', ...(run.task.jarvisRe ? { re: run.task.jarvisRe } : {}) } : null, ...(await this.budgetFields()) };
   }
 
   /** `status` when it changed (or `force`), and every 60 s while a task runs. */
@@ -699,6 +713,7 @@ export class JarvisLink {
       costUsd: task.cost || 0,
       limitUsd: task.limits?.budgetLimit ?? null,
       from: 'voice',
+      ...(task.jarvisRe ? { re: task.jarvisRe } : {}),
     });
   }
 

@@ -5140,11 +5140,18 @@ localStorage `jarvis.chromeLink.starts.v1` (`{ v: 1, starts: [{ env, sentAt, gav
 (sessionStorage, which the review suggested, belongs to one tab: the window that holds the link, which reads the late
 answer, is often another one). News of a task from Jarvis (a `task` message, or a `status` whose task is `from:
 'voice'`) naming a task this device never got an `ok` for, after a start was given up (within 2 minutes), is a late
-start too: stopped and said in the same way. News seen while a start still waits is kept until that start is answered
-(its task is then known) or given up (then it is that start's task). The window that gave up handles it; a window that
-reloads or closes leaves its starts to the window holding the link (`pagehide`), which then handles them. Jarvis for
-Chrome, for its part, sends its reply to a `start` or a `stop` again (the same envelope) for about 10 s after the
-request was made, instead of once or twice.
+start too: stopped and said in the same way. News is never taken for a late start while any start, in any window,
+still waits for its answer (v8.1.1, CHROME-LINK-R2-1: Jarvis for Chrome sends a task's news before its reply, so the
+owner's retry after a failed start was taken for the failed start's late task and stopped): it is kept as a candidate
+in the same record (`cand: [{ task, at, env }]`) until that start is answered (its task is then known) or given up
+(then it is that start's task). A start whose POST got an HTTP answer (refused, rate-limited, a proxy's 502) never
+entered the box, so it is dropped at once, not watched; the 2-minute watch stays for a start with no reply in 10 s and
+for a network error, where the POST may have landed. Jarvis for Chrome 1.1.1 names the start a task came from (`re`,
+the start's id, in `task` and `status.task`): such news goes to that start only, at once (a late start's task is
+claimed even while another start waits; a retry's never is); without it (1.1.0) the rule above decides. The window
+that gave up handles it; a window that reloads or closes leaves its starts to the window holding the link
+(`pagehide`), which then handles them. Jarvis for Chrome, for its part, sends its reply to a `start` or a `stop` again
+(the same envelope) for about 10 s after the request was made, instead of once or twice.
 
 **32.1.5 app.chromeLink** (`src/platform/chrome-link.js`, made once by `installChromeLink` in app.js; contract (f)):
 `state()` → `{ linked, online, voiceApprovals, task }` (plus `budgetUsd` and `maxSteps`, the extension's task budget
@@ -5300,7 +5307,8 @@ the envelope's 120 s.
 
 **32.2.5 What goes back.** `status` on every change of the running task, the switches or the task budget, and every
 60 s while a task runs (its `task` carries `from: 'voice' | 'panel'` since the review, so Jarvis can tell a task it
-started from one typed in the panel; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
+started from one typed in the panel, and since 1.1.1 `re`, the id of the `start` a task from Jarvis came from, as the
+`task` message does: CHROME-LINK-R2-1; `hello` and `status` carry `budgetUsd` and `maxSteps`, MONEY-3); `prompt` for every prompt the side panel shows (also for tasks typed in the panel); `prompt-closed { promptId,
 how }` (`clicked` in the panel or the approval window, `voice`, `stopped` when the task ended or let go, `expired`);
 for tasks from Jarvis only, `task` (at once on a status change, else at most every 2 s; text 2,000, narration 500,
 last step 300 characters; no pictures) and one `done` (`limit` when it stopped at its budget or step limit;
