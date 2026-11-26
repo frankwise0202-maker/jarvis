@@ -182,10 +182,13 @@ export default [
           const after = (await saidLines(t)).slice(before);
           t.assert(!after.some((l) => /Chrome, up to/.test(l)), `no Chrome check (${JSON.stringify(after)})`);
           t.assert(kinds(peer, 'start').length === 1, 'no second task');
-          // It went on as usual: Optics (once its own "open the camera" is there) or a question for Jarvis.
+          // It went on as usual: Optics' own "open the camera" took it (E2). v8.1 (changed on purpose, ROUTING-14): with
+          // the camera not allowed yet, as in this harness, E2's line is "Tap Look to turn the camera on." (Optics opens
+          // with that tap); with it allowed, Optics opens. Never a question for Jarvis, never a Chrome task.
           const optics = await t.page.locator(tid('optics')).count();
-          const review = await t.page.locator(tid('voice-review')).isVisible().catch(() => false);
-          t.assert(optics > 0 || review || t.requests('lead').length > 0, 'the words went on as usual (Optics, or Jarvis)');
+          const tapLook = after.includes('Tap Look to turn the camera on.');
+          t.assert(optics > 0 || tapLook, `the words went on as usual: Optics, or E2's "Tap Look" (said: ${JSON.stringify(after)})`);
+          t.assert(t.requests('lead').length === 0, `no question for Jarvis (${t.requests('lead').length} requests)`);
         });
       });
     },
