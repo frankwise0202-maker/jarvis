@@ -7,7 +7,7 @@ import { tid } from '../harness.mjs';
 import { installFakeSpeech } from './features.mjs';
 import { typeCommand, toastText } from './screens.mjs';
 import { installCameraRig } from '../camera-rig.mjs';
-import { cameraArgs, instrument, waitLive, waitAnswer } from './optics.mjs';
+import { cameraArgs, instrument, waitLive, waitAnswer, liveTracks } from './optics.mjs';
 import { configureLive } from '../../mock/optics.mjs';
 import { CORE_URL } from '../core-fakes.mjs';
 
@@ -358,6 +358,42 @@ export default [
         });
       }
       await t.screenshot('1-after');
+    },
+  },
+  {
+    // ROUTING-R3-S1 (the skeptic's zzrv-optics-mic-camera-off, kept): Optics on its own, its microphone hears a
+    // camera-off form Optics' own close words didn't take: before, a new Look (a picture) went to Claude and the camera
+    // stayed on.
+    name: 'voice-commands-optics-mic-camera-off',
+    title: 'Optics on its own; its microphone hears "Turn the camera off." and then (opened again) "Switch off the camera.": the camera goes off each time and no Look (no picture) is sent',
+    device: 'mac',
+    timeout: 150000,
+    browserArgs: cameraArgs('desk-landscape.y4m'),
+    async run(t) {
+      const page = await t.newPage();
+      await page.addInitScript(installFakeSpeech);
+      await page.addInitScript(() => {
+        window.__voice.queue = [];
+      });
+      await instrument(page);
+      await page.context().grantPermissions(['camera', 'microphone']);
+      configureLive(t.mock, { costUsd: 0.0001 });
+      const withImage = () => t.requests('lead').filter((r) => JSON.stringify((r.body && r.body.messages) || []).includes('"type":"image"')).length;
+      for (const [i, words] of ['Turn the camera off.', 'Switch off the camera.'].entries()) {
+        await t.step(`"${words}" to Optics' own microphone`, async () => {
+          await t.goto('/?optics=1');
+          await t.visible('optics');
+          await waitLive(t);
+          const before = await liveTracks(page);
+          await page.evaluate((w) => window.__voice.queue.push(w), words);
+          await (await t.visible('optics-mic')).click();
+          await t.waitFor(async () => (await liveTracks(page)) === 0, { timeout: 10000, message: async () => `the camera to go off (live video tracks: ${before} -> ${await liveTracks(page)})` });
+          await page.waitForTimeout(1500);
+          t.assert(withImage() === 0, `no picture was sent for "${words}" (lead requests with an image: ${withImage()})`);
+          t.assert(t.requests('lead').length === 0, `nothing went to Jarvis (lead requests: ${t.requests('lead').length})`);
+          if (i === 0) await t.screenshot('1-camera-off');
+        });
+      }
     },
   },
   {
